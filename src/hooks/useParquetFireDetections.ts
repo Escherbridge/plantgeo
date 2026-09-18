@@ -22,9 +22,10 @@ import {
 import type { ParquetBrowserReaderResult } from "@/lib/environmental/parquet-presentation";
 import { isLayerPermanentlyWithheld } from "@/lib/map/layer-registry";
 import type { ZoomTier } from "@/lib/map/zoom-tiers";
+import { WORLD_EXTENT_BBOX } from "@/lib/map/world-extent";
 
 /** Placeholder bbox for a viewport that has no bbox; the query is disabled in that case. */
-const NO_VIEWPORT_BBOX = "-180,-90,180,90";
+const NO_VIEWPORT_BBOX = WORLD_EXTENT_BBOX;
 
 /**
  * FIRMS revises the live edge within the day and never revises a settled one, and the key holds

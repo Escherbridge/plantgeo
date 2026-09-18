@@ -135,3 +135,24 @@ budget and must defer WTU rather than silently widening acquisition.
 - [ ] Field-map reconciliation over `occurrence.txt` and the v16.42/v16.43
   native-ID comparison remain open before any occurrence release is
   admitted. `admitted_releases` stays empty.
+
+## Ledger note — September 13, two ledgers tracking separate concerns
+
+The governance JSON `evidence/admission-decisions.json` tracks **owner-signed admissions** (which
+releases are cleared to serve per the governance gates in `evidence/owner-risk-decision-20260913.md`),
+while the Parquet `current.json` pointer and generation timestamp `956c0be7...` track **published data**.
+These are two separate ledgers for a reason:
+
+- `admitted_releases` in the governance file stays empty because the **post-capture gates** (field-map
+  reconciliation, v16.42/v16.43 native-ID stability comparison) remain open, per line 584-590 of
+  RUNBOOK (September 13 update, Critical finding). The `serving_but_not_admitted` array records the
+  honest state — UBC v16.43 is live in production Parquet per line 610 — without claiming it has passed
+  gates it has not yet passed.
+- `admission_reconciliation_note` in the governance file (lines 585-591 of RUNBOOK) documents this
+  discrepancy and leaves the decision to extend authorization or require the gates to close first
+  **explicitly to the owner** rather than guessing.
+- Filling `admitted_releases` with `956c0be7...` is an owner signature, not an engineering change, and
+  should not happen automatically at publication time. It is an explicit, owner-authorized flip once the
+  deferred gates close.
+
+See RUNBOOK lines 574-670 (botanical handoff) and the evidence folder for the full context.

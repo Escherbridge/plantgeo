@@ -134,9 +134,10 @@ win is ~39%, worth taking but not dramatic.
 
 ## Not done yet
 
-Both formats are published and catalogued (6 COG + 6 PMTiles live in `geo.published_raster`),
-and the server read path exists — `src/lib/server/services/raster-catalog.ts` and the
-`environmental.getPublishedSoilRasters` tRPC procedure. But **nothing is drawn yet**:
+Both formats are published and catalogued (6 COG + 6 PMTiles live in `geo.published_raster`).
+`environmental.getPublishedSoilRasters` is a stub returning `[]`; `src/lib/server/services/raster-catalog.ts`
+had zero importers and was removed 2026-09-18 in the readability pass. The server read path does
+not exist yet. Nothing is drawn:
 
 1. `getEnvironmentalTileTemplate` in `src/lib/vegetation.ts` still returns `""`. It is a
    *synchronous client* function while the catalog is *async server* state — that mismatch is

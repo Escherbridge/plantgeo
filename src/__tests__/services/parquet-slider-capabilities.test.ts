@@ -393,7 +393,7 @@ describe("getParquetSliderCapabilities", () => {
    * MTBS publishes roughly five release days across 2015-2026, so the census's own evidence for the
    * lane is a handful of single days separated by multi-year `gapRanges`. Synthesized literally,
    * that axis marks nearly every day between releases as uncovered -- while
-   * `getParquetBurnSeverity` (`parquet-trpc-readers.ts:2122`) walks back and unions every release at
+   * `getParquetBurnSeverity` (`parquet-trpc-readers/burn-severity.ts`) walks back and unions every release at
    * or before the viewed day, so those days draw perfectly. The scrubber would forbid days the
    * renderer handles, which is the one direction of error the slider contract must never take.
    */

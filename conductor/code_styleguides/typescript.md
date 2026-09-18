@@ -155,9 +155,14 @@ compiler's strict mode; it does not replace it.
 - Full-word identifiers: `boundingBox`, `horizontalPadding`, `requestTimeoutMs`.
   No `bb`, `padH`, `tmo`. Field-standard terms (`NDVI`, `HUC12`, `bbox` inside a
   type or query-parameter name that the API already exposes) count as words.
-- Name the algorithm at its implementation in one line (`// Douglas-Peucker`)
-  and link a reference for an esoteric one; everything else about *why* goes in
-  the nearest `AGENTS.md` with a one-line pointer from the code.
+- Name the algorithm at its implementation in one line (`// Douglas-Peucker`);
+  a reference link for an esoteric one goes in the nearest `AGENTS.md`, never
+  as a URL in a `src/**` file (`check:data-boundary` fails the image build on
+  any unapproved browser-visible URL, comments included). Everything else
+  about *why* goes in that `AGENTS.md` with a one-line pointer from the code.
+- The release sweep is `npm run check:data-boundary`, `npm run type-check`,
+  lint and vitest together; a verifier that skips the first ships a green
+  tree that Railway refuses to build.
 - Soft size ceiling, applied in review, not by lint: modules ~600 lines,
   functions ~60, nesting ≤3. The 2026-09-18 readability pass split
   `parquet-trpc-readers.ts` (2,601 → 77-line barrel over

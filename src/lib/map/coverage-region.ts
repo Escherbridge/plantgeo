@@ -1,3 +1,5 @@
+import { getRegion } from "@/lib/region/region";
+
 export interface CoverageBbox {
   west: number;
   south: number;
@@ -10,9 +12,16 @@ interface NamedRegion {
   bbox: CoverageBbox;
 }
 
-/** Named regions the ingestion bbox may target, widest match wins ties. */
+/**
+ * Named regions the ingestion bbox may target, widest match wins ties.
+ *
+ * The "Pacific Northwest" row reads its bbox from the region manifest (`getRegion().envelope`)
+ * rather than restating it; the other three rows describe footprints this deployment does not
+ * serve and stay literal until a multi-region manifest registry exists to read them from — see
+ * `src/lib/map/AGENTS.md` §coverage-region and `src/lib/region/AGENTS.md`.
+ */
 const NAMED_COVERAGE_REGIONS: NamedRegion[] = [
-  { name: "Pacific Northwest", bbox: { west: -126, south: 41, east: -110, north: 50 } },
+  { name: getRegion().displayName, bbox: getRegion().envelope },
   { name: "California", bbox: { west: -125, south: 32, east: -114, north: 42.5 } },
   { name: "Western United States", bbox: { west: -126, south: 31, east: -102, north: 50 } },
   { name: "North America", bbox: { west: -170, south: 14, east: -52, north: 72 } },
@@ -74,14 +83,12 @@ export function describeCoverageRegion(bbox: CoverageBbox): string {
 /**
  * Opening-camera fallback used only when NEXT_PUBLIC_INGEST_BBOX is unset; the env var always wins.
  *
- * A pilot-region footprint literal; see `src/lib/map/AGENTS.md` §coverage-region.
+ * Reads the region manifest's `defaultCameraEnvelope` — the narrower box, NOT `envelope` — so the
+ * manifest migration stays behaviour-neutral: the opening camera and `ServiceAreaLayer`'s fallback
+ * bounds keep the pre-manifest `(-125, 42, -111, 49)` value. See `src/lib/map/AGENTS.md`
+ * §coverage-region and `src/lib/region/AGENTS.md` §default_camera_envelope.
  */
-export const FALLBACK_COVERAGE_BBOX: CoverageBbox = {
-  west: -125,
-  south: 42,
-  east: -111,
-  north: 49,
-};
+export const FALLBACK_COVERAGE_BBOX: CoverageBbox = getRegion().defaultCameraEnvelope;
 
 /** Parses the "west,south,east,north" format shared with the server-side INGEST_BBOX parsing in layers.ts. */
 export function parseCoverageBbox(raw: string | undefined | null): CoverageBbox | null {

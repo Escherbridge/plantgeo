@@ -508,25 +508,37 @@ acceptance or refusal contract.
 `coverage-region.ts` turns an ingestion bbox into something a person can read, and gives the map a
 camera it can paint before any network call resolves.
 
-**`NAMED_COVERAGE_REGIONS` and `FALLBACK_COVERAGE_BBOX` are footprint literals on the migration
-list** (`conductor/code_styleguides/federation.md` section 5). They are the migration list, not a
-pattern to copy: new code takes the region as a typed value. They are deliberately left in place
-here — moving them is its own reviewed push.
+**`federation.md` §5 step 1 landed: the `"Pacific Northwest"` row and `FALLBACK_COVERAGE_BBOX` now
+read `getRegion()` (`src/lib/region/region.ts`) instead of restating a literal.** `"California"`,
+`"Western United States"` and `"North America"` are still footprint literals on the migration
+list — they describe footprints outside this deployment's one manifest, so there is nothing yet
+to read them from; see `src/lib/region/AGENTS.md` for where a future multi-region registry would
+put them.
 
-**Why the synchronous camera exists.** The opening map view should land on the ingestion coverage
-bbox without waiting for `getIngestionCoverage`'s tRPC round trip. `src/stores/map-store.ts`
-(`DEFAULT_VIEWPORT`) and `src/components/map/ServiceAreaLayer.tsx` (the first `fitBounds` call) are
-the two consumers.
+**`FALLBACK_COVERAGE_BBOX` kept its pre-manifest value, on purpose.** It now reads
+`getRegion().defaultCameraEnvelope`, NOT `getRegion().envelope` — the manifest step deliberately
+did not fold the fallback into the wider named-region box. `defaultCameraEnvelope` is
+`foundation/region`'s own field for exactly this literal (`-125,42,-111,49`, the MTBS burn
+envelope it happened to be typed with); see `foundation/region/AGENTS.md`
+"`default_camera_envelope`". An earlier version of this migration pointed the fallback at
+`.envelope` instead, widening the opening camera by ~1° on every side as an unintended side
+effect; that regression was caught and reversed before landing, and
+`src/__tests__/lib/map/coverage-region.test.ts` pins the narrower value so it cannot silently
+recur.
 
-**Why the fallback box is safe.** It mirrors the `INGEST_BBOX` value verified directly against
-production on 2026-08-16 — every layer's feature extent falls inside it, and fire-detections is
-exactly this box. `NEXT_PUBLIC_INGEST_BBOX` always wins when present, which keeps the value
-server-configurable; the fallback only covers the case where the variable has not been plumbed
-through the Docker build's ARG list. If a deployment truly has no ingestion coverage (server
-`INGEST_BBOX` unset, `getIngestionCoverage` returns `configured: false`), `ServiceAreaLayer` never
-masks or locks bounds, so the fallback paints an opening camera rather than making a wrong
-service-area claim.
+**Why the fallback box was chosen this size, historically.** It mirrors the `INGEST_BBOX` value
+verified directly against production on 2026-08-16 — every layer's feature extent fell inside
+it, and fire-detections was exactly this box. `NEXT_PUBLIC_INGEST_BBOX` always wins when present,
+which keeps the value server-configurable, and the fallback only matters when the variable has
+not been plumbed through the Docker build's ARG list. If a deployment truly has no ingestion
+coverage (server `INGEST_BBOX` unset, `getIngestionCoverage` returns `configured: false`),
+`ServiceAreaLayer` never masks or locks bounds, so the fallback paints an opening camera rather
+than making a wrong service-area claim.
 
 **`viewportForBbox` is a spherical Web Mercator (EPSG:3857) inverse fit**, unfloored, matching what
 MapLibre's `fitBounds` would choose. It exists so an initial camera and a later `fitBounds` to the
 same bbox agree closely enough that the second can be instant rather than animated.
+
+## drawing.ts
+
+`douglasPeucker` implements Ramer-Douglas-Peucker line simplification on planar degrees: https://en.wikipedia.org/wiki/Ramer%E2%80%93Douglas%E2%80%93Peucker_algorithm . The link lives here, not in the source, because `check:data-boundary` rejects bare URLs in `src/**`.

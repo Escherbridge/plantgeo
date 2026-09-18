@@ -75,6 +75,7 @@ import { BOTANICAL_DETAIL_MIN_ZOOM } from "@/lib/botanical-occurrences";
 import { botanicalRichnessToGeoJSON } from "@/components/map/layers/BotanicalRichnessLayer";
 import { botanicalEffortToGeoJSON } from "@/components/map/layers/BotanicalCollectionEffortLayer";
 import { ParquetLayerFaultBanner } from "@/components/map/ParquetLayerFaultBanner";
+import { WORLD_EXTENT_BBOX } from "@/lib/map/world-extent";
 
 const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
   type: "FeatureCollection",
@@ -417,7 +418,7 @@ export default function LayerManager() {
   // the one row that carries a slider for them. Gauges and wells sharing a day is a property of
   // there being a single control over them, not an assumption about the two upstreams.
   const streamflowQuery = trpc.environmental.getStreamflow.useQuery(
-    { bbox: bbox ?? "-180,-90,180,90", date: waterDay.requestDate, zoom },
+    { bbox: bbox ?? WORLD_EXTENT_BBOX, date: waterDay.requestDate, zoom },
     {
       enabled: waterEnabled && bbox !== null,
       staleTime: 15 * 60 * 1000,
@@ -429,7 +430,7 @@ export default function LayerManager() {
     [streamflowQuery.data]
   );
   const groundwaterQuery = trpc.environmental.getGroundwater.useQuery(
-    { bbox: bbox ?? "-180,-90,180,90", date: waterDay.requestDate },
+    { bbox: bbox ?? WORLD_EXTENT_BBOX, date: waterDay.requestDate },
     {
       enabled: waterEnabled && bbox !== null,
       staleTime: 60 * 60 * 1000,
@@ -446,7 +447,7 @@ export default function LayerManager() {
   // the groundwater/watershed cadence rather than the 15-minute observation feeds. A named
   // day slides that per-cell window to end there instead of at now.
   const vegetationQuery = trpc.environmental.getVegetationIndex.useQuery(
-    { bbox: bbox ?? "-180,-90,180,90", date: vegetationDay.requestDate, zoom },
+    { bbox: bbox ?? WORLD_EXTENT_BBOX, date: vegetationDay.requestDate, zoom },
     {
       enabled: vegetationEnabled && bbox !== null,
       staleTime: 60 * 60 * 1000,
@@ -696,7 +697,7 @@ export default function LayerManager() {
   // nearest one -- so the wind layer reflects the full spread of
   // warehouse-backed samples instead of a single point.
   const weatherQuery = trpc.wildfire.getWeatherForBbox.useQuery(
-    { bbox: bbox ?? "-180,-90,180,90", date: weatherDay.requestDate, zoom },
+    { bbox: bbox ?? WORLD_EXTENT_BBOX, date: weatherDay.requestDate, zoom },
     {
       enabled: weatherEnabled && bbox !== null,
       staleTime: 15 * 60 * 1000,

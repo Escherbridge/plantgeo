@@ -97,8 +97,12 @@ room. The code has to teach itself.
   `create_flex_board`), never cryptic abbreviations. Domain terms the whole
   field uses (`NDVI`, `HUC12`, `SRID`, `bbox` inside a type name) are words.
 - **Name the algorithm at its implementation** (`# Boyer-Moore search`,
-  `// Douglas-Peucker simplification`) and link the paper or wiki page for a
-  genuinely esoteric one. That is a "what", not a rationale essay.
+  `// Douglas-Peucker simplification`); for a genuinely esoteric one, put the
+  paper or wiki link in the directory's `AGENTS.md`, **never as a bare URL in
+  a `src/**` source file**: `npm run check:data-boundary` rejects any
+  browser-visible URL outside its approved list, and a link in a comment
+  broke the frontend image build on 2026-09-18 (`64a586e1`). That is a
+  "what", not a rationale essay.
 - **Rationale lives in the directory's `AGENTS.md`**, with a one-line pointer
   from code (`see pipeline/lanes/AGENTS.md §soil`). A newcomer reads the
   directory before the file.

@@ -137,8 +137,9 @@ was 10 until measured live on 2026-08-05: day ranges 1-5 answered HTTP 200, and
 6/7/10 all answered `400 Invalid day range. Expects [1..5].` — the same for
 dated and undated requests (`firms.py:100-104`, `ingest/AGENTS.md:93-98`).
 **Latent trap for the future serving layer:** the TypeScript serving side
-(`src/lib/server/services/environmental-time.ts:55,69`,
-`src/lib/server/services/nasa-firms.ts:96,110`) still clamps to 10, so
+(`src/lib/server/services/environmental-time.ts:55,69`) still clamps to 10 —
+`src/lib/server/services/nasa-firms.ts` carried the same clamp but had zero importers and was
+removed 2026-09-18 — so
 `FIRMS_DAY_RANGE=7` today would *ingest* 5 days but *serve* a 7-day window — a
 window the ingester never filled. Nothing sets the variable in production today
 so this is latent, not live (`ingest/AGENTS.md:104-111`), but whoever builds the

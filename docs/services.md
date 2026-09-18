@@ -13,87 +13,23 @@ PlantGeo includes 30+ backend services that integrate with external APIs, perfor
 
 ## Fire Detection & Analysis Services
 
-### nasa-firms.ts
+### nasa-firms.ts (removed 2026-09-18)
 
-Fetch active fire detections from NASA FIRMS API.
-
-**Key Functions:**
-- `fetchActiveFiresNASA(bbox?: string, dayRange?: number): Promise<GeoJSON.FeatureCollection>`
-
-**Purpose:** Ingest real-time fire detections from MODIS and VIIRS satellites.
-
-**External API:** NASA FIRMS EOSDIS API
-- Endpoint: `https://firms.modaps.eosdis.nasa.gov/api/country/csv`
-- Auth: API key in `NASA_FIRMS_KEY`
-
-**Data returned:**
-- Latitude, longitude
-- Detection confidence
-- Brightness (radiative temperature)
-- Fire Radiative Power (FRP)
-
-**Caching:** Redis key `fire:detections:{bbox}`, TTL 30 minutes
-
-**Rate limiting:** 1 request per minute to NASA API
+Deleted. `fetchActiveFiresNASA` had no callers in `src/`; live fire detections are served
+by the governed Parquet lane (`getParquetFireDetections` in `parquet-trpc-readers/fire-detections.ts`).
 
 ---
 
-### fire-risk.ts
+### fire-risk.ts (removed 2026-09-18)
 
-Calculate fire risk score based on terrain and weather conditions.
-
-**Key Functions:**
-- `calculateFireRisk(params: FireRiskParams): number`
-
-**Purpose:** Compute 0-100 fire risk score using NFDRS (National Fire Danger Rating System) methodology.
-
-**Inputs:**
-- Vegetation type (mixed_forest, grassland, shrubland, etc)
-- Slope (0-90 degrees)
-- Aspect (0-360 degrees)
-- Relative humidity (0-100%)
-- Wind speed (km/h)
-- Fuel load factor (optional)
-
-**Algorithm:** Weighted combination of:
-- Vegetation flammability
-- Topographic factors (slope, aspect)
-- Weather conditions (humidity, wind)
-
-**Output:** 0-100 risk score (0=safe, 100=extreme danger)
-
-**Caching:** No caching (lightweight computation)
+Deleted. `calculateFireRisk` had no callers in `src/`.
 
 ---
 
-### fire-weather-index.ts
+### fire-weather-index.ts (removed 2026-09-18)
 
-Calculate Canadian Fire Weather Index (FWI) system components.
-
-**Key Functions:**
-- `calculateFullFWI(weather: WeatherInputs, previousFWI?: FWIState): FWIComponents`
-
-**Purpose:** Compute FWI indices used in fire prediction models.
-
-**Inputs:**
-- Temperature (°C)
-- Relative humidity (0-100%)
-- Wind speed (km/h)
-- Precipitation (mm)
-- Month (1-12)
-- Previous FWI state (optional)
-
-**Components calculated:**
-- FFMC: Fine Fuel Moisture Code (0-101)
-- DMC: Duff Moisture Code (0-650)
-- DC: Drought Code (0-1200)
-- ISI: Initial Spread Index (0-50)
-- BUI: Buildup Index (0-400)
-- FWI: Fire Weather Index (0-100+)
-
-**External Reference:** Canadian Forest Fire Weather Index (FWI) System
-
-**Caching:** Per-location weather cache
+Deleted. `calculateFullFWI` and the component functions (`calculateFFMC`, `calculateDMC`,
+`calculateDC`, `calculateISI`, `calculateBUI`, `calculateFWI`) had no callers in `src/`.
 
 ---
 
@@ -170,54 +106,20 @@ Get watershed boundaries and hydrological data.
 
 ---
 
-### drought.ts
+### drought.ts (removed 2026-09-18)
 
-Monitor drought conditions and indices.
-
-**Key Functions:**
-- `getDroughtStatus(lat: number, lon: number): Promise<DroughtIndex>`
-
-**Purpose:** Track drought severity via multiple indices.
-
-**Data Sources:**
-- NOAA Drought Monitor (weekly polygons)
-- USGS water data (streamflow percentiles)
-- NDVI vegetation stress (via vegetation.ts)
-
-**Output:** Composite drought severity (0-100)
-
-**Caching:** Redis key `drought:status:{lat},{lon}`, TTL 24 hours
+Deleted. `getDroughtClassification`/`getDroughtByDate` had no callers in `src/` — the same
+name is a `getParquetDroughtClassification`-backed tRPC procedure with no dependency on this
+module. It also fetched an upstream directly, against services/AGENTS.md's "governed Parquet
+readers only" boundary, which was a second reason to retire rather than repair it.
 
 ---
 
 ## Vegetation & Land Cover Services
 
-### vegetation.ts
+### vegetation.ts (removed 2026-09-18)
 
-Get vegetation health and biomass data.
-
-**Key Functions:**
-- `getVegetationIndex(lat: number, lon: number): Promise<VegetationMetrics>`
-- `getNDVITimeSeries(bbox: string, startDate: Date, endDate: Date): Promise<NDVIData[]>`
-
-**Purpose:** Monitor vegetation health via satellite vegetation indices.
-
-**Indices calculated:**
-- NDVI: Normalized Difference Vegetation Index (-1 to +1)
-- EVI: Enhanced Vegetation Index (improved over NDVI)
-- LAI: Leaf Area Index
-
-**Data Sources:**
-- Sentinel-2 (10m resolution, 5-day revisit)
-- MODIS (250m-1km, daily)
-- Landsat (30m, 16-day)
-
-**Output:**
-- Current NDVI/EVI values
-- 30-day trend
-- Anomaly from historical mean
-
-**Caching:** Redis key `vegetation:ndvi:{lat},{lon}`, TTL 24 hours
+Deleted. This was an 11-line pure re-export of `@/lib/vegetation` with no importers in `src/`.
 
 ---
 
@@ -297,26 +199,9 @@ Get USDA soil survey data and classifications.
 
 ---
 
-### usle.ts
+### usle.ts (removed 2026-09-18)
 
-Calculate Universal Soil Loss Equation (USLE) erosion estimates.
-
-**Key Functions:**
-- `calculateUSLE(params: USLEParams): ErosionEstimate`
-
-**Purpose:** Estimate annual soil loss due to sheet and rill erosion.
-
-**USLE Factors:**
-- R (rainfall-runoff erosivity)
-- K (soil erodibility, from soilgrids)
-- L (slope length factor)
-- S (slope steepness factor)
-- C (cover-management factor)
-- P (support practice factor)
-
-**Output:** Tons/acre/year erosion estimate
-
-**Caching:** Per-location result cached
+Deleted. `calculateErosionRisk`/`classifyErosionRisk` had no callers in `src/`.
 
 ---
 
@@ -446,23 +331,9 @@ Email notification service for alerts and digests.
 
 ---
 
-### geofence.ts
+### geofence.ts (removed 2026-09-18)
 
-Geofence monitoring and alert triggers.
-
-**Key Functions:**
-- `checkGeofenceProximity(assetId, currentLat, currentLon): Promise<GeofenceAlert[]>`
-
-**Purpose:** Monitor asset positions against predefined geographic fences.
-
-**Alert Triggers:**
-- On enter (asset enters geofence boundary)
-- On exit (asset leaves geofence boundary)
-- Dwelling (asset stationary within geofence > X minutes)
-
-**Data:** Geofences stored in PostgreSQL tracking.geofences table
-
-**Caching:** Active geofences cached in Redis
+Deleted. `checkGeofences` had no callers in `src/`.
 
 ---
 
@@ -773,7 +644,6 @@ Background jobs defined in `/src/lib/server/jobs/`:
 
 | Service | Env Variables |
 |---------|---------------|
-| NASA FIRMS | `NASA_FIRMS_KEY` |
 | Mapillary | `MAPILLARY_ACCESS_TOKEN` |
 | USDA/USGS | No auth (public) |
 | ISRIC SoilGrids | No auth (public) |
@@ -789,21 +659,14 @@ Background jobs defined in `/src/lib/server/jobs/`:
 
 ```
 alert-engine
-  ├→ nasa-firms (fire detections)
   ├→ usgs-water (water data)
-  ├→ drought (drought status)
   └→ email (notifications)
 
 strategy-scoring
-  ├→ fire-risk
-  ├→ vegetation
-  ├→ carbon-potential
-  └→ geofence
+  └→ carbon-potential
 
 regional-context
-  ├→ vegetation
   ├→ usgs-water
-  ├→ fire-risk
   ├→ soilgrids
   └→ carbon-potential
 
@@ -813,6 +676,9 @@ ai-prompt
 realtime
   └→ Redis Pub/Sub
 ```
+
+(`nasa-firms.ts`, `drought.ts`, `fire-risk.ts`, `vegetation.ts`, and `geofence.ts` were removed
+2026-09-18 — see the per-service notes above.)
 
 ## Performance & Caching Strategy
 

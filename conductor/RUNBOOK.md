@@ -419,6 +419,53 @@ is owed for the outage (memory: `plantgeo-power-solar-regressed-2026-09-18`). De
 `46605492`; receipt, push and deployment recorded in the evidence file when observed. **No whole QA
 case or checklist item is promoted; the 220-case matrix is unchanged.**
 
+### Session 22 — styleguide hardening, readability swarm, federation manifest, ultrapilot run (2026-09-18)
+
+**Styleguides hardened (`f90b3044`).** Owner grilled once; rulings recorded in
+`conductor/code_styleguides/federation.md`: one typed region manifest is the only home for
+footprint literals; regional sources bind behind a per-layer source protocol with declared
+`coverage`; module size is soft guidance, not lint. Pillar 5 (portability) and checklist items 7–8
+added to `engineering-principles.md`; readability/portability sections in the TypeScript, Python
+and SQL guides; lane contract §1b. The plugin skill file lists all guides with a reading order.
+
+**Readability swarm (`4592e868` web, `64a586e1` agri).** Five agents on disjoint partitions, one
+verifier sweep. `parquet-trpc-readers.ts` 2,601→77-line barrel over 14 per-layer modules;
+`routers/teams.ts` 1,676→28-line composer; `availability_index.py` 3,164→911,
+`snapshot_products.py` 2,398→454, `gap_fill.py` 2,386→321, `job_executor_service.py` 2,552→1,784,
+every original re-exporting its public names. Real bug fixed: botanical `support.py` binned cells
+with IEEE division, filing an origin record into the neighbouring cell. The verifier repaired
+eleven mechanical faults (a corrupted duplicate function, a deleted monkeypatch seam, a sibling
+module bypassing the patched `SNAPSHOT_PRODUCTS`) and normalised 49 CRLF files. Logs in
+`.omc/swarm-readability-20260918/`.
+
+**Push regression and hotfix.** `64a586e1` deployed Martin, parquet-api and job-executor but the
+`plantgeo-main` image failed build step 6/10 (`npm run check:data-boundary`) on a Wikipedia link
+in a `drawing.ts` comment; Railway kept `d0e57bfa` serving, so the site ran old frontend against
+new backends for ~16 minutes. Hotfix `8451ebcf` (19:15Z) removed the URL; the reference moved to
+`src/lib/map/AGENTS.md`. Lesson folded into the styleguides and memory: **every web verifier sweep
+runs `check:data-boundary`, and a push is not green until all four services report the same
+commit.** Evidence: `tracks/platform_experience_qa_20260911/evidence/release-checkpoint-20260918-64a586e1.md`
+— 13 layer readers, named-day rule, slider capabilities, teams router (clean 401), botanical query
+(2,698 records) all PASS on the new backends; shortwave `availability_stale` is the POWER outage.
+
+**Owner gates answered (memory `plantgeo-owner-decisions-2026-09-18`):** botanical bbox ceiling →
+rung-select by zoom and bbox size; land-context → gains an automatic viewport-bbox query; NDVI
+promotion checksum → per day-partition content SHA.
+
+**Ultrapilot wave 1 (in flight at the time of writing; backlog `.omc/ultrapilot-20260918/BACKLOG.md`,
+36 items).** W1-A: typed `Region` manifest in both trees (`foundation/region/pnw.json` +
+`src/lib/region/`, parity test), `coverage-region.ts` reads it (federation §5 step 1). W1-B:
+eight dead service modules deleted (719 lines; `analytics.ts` kept — the swarm census was wrong,
+`routers/analytics.ts` imports it), `WORLD_EXTENT_BBOX` sentinel unified. W1-C: executor
+`AGENTS.md`, botanical ledger note, GBIF empty state. W1-D (worktree branch
+`wave1-botanical-wiring`): current-pointer resolution and the Next.js botanical proxy; the
+`LayerManager` mount is wave 2. Verifier-W1 then commit agent; each push records a checkpoint file.
+
+**Remaining after wave 1:** federation §5 steps 2–4 (`PACIFIC_NORTHWEST_BBOX`, `SEED_ENVELOPE`,
+`PNW_STATE_CODES`, burn envelope ×3 → manifest; source protocols for soil/drought/burn; boot-with-
+global-lanes test); botanical B7–B8 + rung-select ceiling; land-context R3–R5 with auto viewport;
+NDVI promotion arming (P4); the E1–E4/W1–W2/A1 track items unchanged.
+
 ## Recovery
 
 - Disable the affected current schedule and preserve the last valid immutable generation and pointer.

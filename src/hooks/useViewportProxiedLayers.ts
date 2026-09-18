@@ -15,6 +15,7 @@ import { useMemo } from "react";
 import { keepPreviousData } from "@tanstack/react-query";
 import { isLayerPermanentlyWithheld as isWithheld } from "@/lib/map/layer-registry";
 import { bboxSquareDegrees, viewportBbox } from "@/lib/map/viewport-bbox";
+import { WORLD_EXTENT_BBOX } from "@/lib/map/world-extent";
 
 /**
  * `MAX_WATERSHED_BBOX_SQUARE_DEGREES` from `src/lib/server/services/hydrosheds.ts`, restated
@@ -42,7 +43,7 @@ import {
 const DEFAULT_ZOOM = 8;
 
 /** Placeholder input for a viewport that has no bbox; the query is disabled in that case. */
-const NO_VIEWPORT_BBOX = "-180,-90,180,90";
+const NO_VIEWPORT_BBOX = WORLD_EXTENT_BBOX;
 
 /** HUC12: Redis holds the viewport an hour upstream, so a pan back re-reads rather than re-asks. */
 const WATERSHEDS_STALE_TIME_MS = 60 * 60 * 1000;

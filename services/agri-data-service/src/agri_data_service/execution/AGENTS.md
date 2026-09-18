@@ -4,6 +4,31 @@
 continuous `plantgeo-job-executor` service with `agri-service ops jobs-executor`; Railway cron
 schedules and per-source scheduler services are prohibited.
 
+## File organization (2026-09-18 split)
+
+`job_executor_service.py` (~1,784 lines after the split) owns the scheduler leader lock, definition
+registration, turn-report bookkeeping (`TurnReport`/`_LANE_TURN_REPORTS`/`record_turn_report`/
+`summarize_turn_report`/`parse_terminal_report`), the subprocess wrapper and monitoring
+(`CommandOutputTail`, `_monitor_subprocess`, `run_scheduled_command`), tick planning, and the
+service loop. Three new sibling modules hold purely declarative or computational logic:
+
+- `lane_specs.py` (634 lines) — `LaneExecutionSpec`, the `_JOBS_SPECS`/`_MIGRATION_INPUT_SPECS`/
+  `LANE_SPECS` table, `ActivationConfig`/`parse_activation`, and constants. Zero database I/O.
+- `lane_scheduling.py` (186 lines) — cadence-bucket math (`scheduled_bucket`, `fair_due_order`,
+  `DueLane`, `LatestRun`, `CheckpointVerdict`, `judge_failed_checkpoint`, `supersession_command`).
+  Pure functions and dataclasses.
+- `turn_reports.py` (127 lines) — per-tick result containers (`LaneTickState`, `LaneTickResult`,
+  `ExecutorTickSummary`, `OperatorAction`). No process-held mutable state.
+
+`run_scheduled_command` stayed in `job_executor_service.py` on purpose: `tests/execution/test_command_stderr_capture.py`
+monkeypatches `job_executor_service` module globals (`LANE_SPECS`, `parse_activation`, `_LANE_TURN_REPORTS`,
+etc.) and expects `run_scheduled_command` to read those same rebound names. A `from x import y` at
+import time binds a copy of the reference; monkeypatching the source after that has no effect on an
+unqualified global inside the moved function. Moving it would be a test breakage. Every other
+monkeypatch site (`test_gap_repair.py`, `test_lane_cadence.py`, `test_self_healing.py`,
+`test_job_run_supersession_agri_db.py`) targets functions that stayed in `job_executor_service.py`
+and are unaffected.
+
 ## Lane activation
 
 `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` is the only deployment activation control. An empty value keeps
@@ -12,8 +37,8 @@ free of a declared active-lane conflict. Removed services do not participate in 
 and must not be represented by service IDs, owner constants, or acknowledgement variables.
 
 Lane cadence, phase offset, command, timeout, catch-up policy, and publication contract live in
-`LANE_SPECS`. Keep each current source-direct lane as a separate failure domain. New recurring work
-must be registered there instead of adding a Railway cron.
+`LANE_SPECS` (see `lane_specs.py`). Keep each current source-direct lane as a separate failure domain.
+New recurring work must be registered there instead of adding a Railway cron.
 
 ## Durable execution
 
