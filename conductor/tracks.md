@@ -1,6 +1,6 @@
 ---
 type: track-registry
-updated_on: 2026-09-14
+updated_on: 2026-09-18
 ---
 
 # Current tracks
@@ -58,3 +58,5 @@ This registry contains planned, active, and blocked work only. Completed impleme
 | [ML to Mojo conversion](tracks/ml_mojo_conversion_20260823/spec.md) | blocked |
 | [Mycelium cloud-seeding spike](tracks/mycelium_cloud_seeding_spike_20260802/plan.md) | blocked |
 | [Observability log capture](tracks/observability_log_capture_20260903/plan.md) | blocked |
+
+## [ ] Track: Publish LANDFIRE Existing Vegetation Type as a governed Parquet static_lookup lane (composition lattice + raster) [vegetation_type_landfire_evt_20260918]

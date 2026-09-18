@@ -1,0 +1,293 @@
+{
+  "id": "vegetation_type_landfire_evt_20260918",
+  "description": "Publish LANDFIRE Existing Vegetation Type (LF2025 EVT) for the PNW envelope as a governed Parquet static_lookup lane: composition lattice at coarse rungs, 30 m raster at fine rungs",
+  "type": "feature",
+  "created_at": "2026-09-18T13:38:28.416330+00:00",
+  "status": "pending",
+  "design_documents": [
+    ".omc/research/runbook-20260915-vegetation-type/PLAN.md",
+    ".omc/research/runbook-20260915-vegetation-type/ROW-CAP-ANALYSIS.md"
+  ],
+  "owner_decisions": {
+    "grain": "hybrid: composition lattice coarse, raster fine",
+    "row_cap": "keep MAX_DERIVATION_ROWS=5M as a per-call guard; add latitude-band folding with 0.2 deg edges",
+    "base_rung": "0.005 deg first, 0.0025 after banding is proven",
+    "coverage": "CONUS-only acceptable; BC is outside the envelope",
+    "phase_0": "done in a17650b4 (landfire.ts deleted, About row removed)"
+  },
+  "partitions": {
+    "computed_at": "2026-09-18T13:38:28.416330+00:00",
+    "computed_at_commit": "0cc0ff88a2a69f6cbd4610073a6754f00eadbe87",
+    "confidence": "planned",
+    "slices": [
+      {
+        "id": "p1a-grid-keys",
+        "task": "GridAggregation.key_columns_by_tier (default None keeps every lane byte-identical); dropped keys first/null; MAX_DERIVATION_ROWS re-documented as per-call",
+        "owns": [
+          "services/agri-data-service/src/agri_data_service/warehouse/parquet/tiers.py",
+          "services/agri-data-service/src/agri_data_service/warehouse/parquet/AGENTS.md",
+          "services/agri-data-service/tests/parquet/test_tiers.py",
+          {
+            "path": "services/agri-data-service/tests/parquet/test_grid_per_tier_keys.py",
+            "status": "future"
+          }
+        ],
+        "model": "opus",
+        "depends_on": []
+      },
+      {
+        "id": "p1b-banding",
+        "task": "TierDerivation.band_height_degrees; band edges multiples of 0.2 deg; z9/z5 per band, z0 from z5; mean and sha256-lines refused in banded mode; part receipts carry cell_lat bounds",
+        "owns": [
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/derivation.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/objectstore.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/AGENTS.md",
+          "services/agri-data-service/tests/parquet/test_derivation_and_drain.py",
+          "services/agri-data-service/tests/parquet/test_objectstore_writer.py",
+          {
+            "path": "services/agri-data-service/tests/parquet/test_banded_derivation.py",
+            "status": "future"
+          }
+        ],
+        "model": "opus",
+        "depends_on": [
+          "p1a-grid-keys"
+        ]
+      },
+      {
+        "id": "p1c-lane-package",
+        "task": "pipeline/direct/vegetation_type: windowed LFPS exportImage fetch, EPSG:5070 composition reducer, 1 percent cutoff to evt_code -1, NoData class row -9999, resumable windows, about 250k rows per part band-major; schema; validation; lane doc",
+        "owns": [
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/vegetation_type/**",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/warehouse/schemas/vegetation_type.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/validation/vegetation_type.py",
+            "status": "future"
+          },
+          {
+            "path": "docs/lanes/vegetation-type.md",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/direct/test_vegetation_type_*.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/parquet/test_vegetation_type_schema.py",
+            "status": "future"
+          }
+        ],
+        "model": "opus",
+        "depends_on": [
+          "p1b-banding"
+        ]
+      },
+      {
+        "id": "p1d-registration",
+        "task": "LaneRegistration plus shadow LANE_SPECS entry; executor memory limit read and recorded",
+        "owns": [
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
+          "services/agri-data-service/src/agri_data_service/execution/job_executor_service.py",
+          "services/agri-data-service/tests/test_job_executor_service.py",
+          "services/agri-data-service/tests/parquet/test_lane_contract.py",
+          {
+            "path": "conductor/tracks/vegetation_type_landfire_evt_20260918/evidence/*",
+            "status": "future"
+          }
+        ],
+        "model": "sonnet",
+        "depends_on": [
+          "p1c-lane-package"
+        ]
+      },
+      {
+        "id": "p2-python-plane",
+        "task": "planes/vegetation_type.py with composition, dominant-class and bbox_too_large_for_zoom shapes",
+        "owns": [
+          {
+            "path": "services/agri-data-service/src/agri_data_service/planes/vegetation_type.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/parquet/test_vegetation_type_serving.py",
+            "status": "future"
+          }
+        ],
+        "model": "opus",
+        "depends_on": [
+          "p1d-registration"
+        ]
+      },
+      {
+        "id": "p2-ts-reader-slider",
+        "task": "TS reader, tRPC procedure, slider capability row (snapshot, vintage badge, forecastable never), registry entry",
+        "owns": [
+          "src/lib/server/services/parquet-trpc-readers.ts",
+          "src/lib/server/trpc/routers/environmental.ts",
+          "src/lib/server/services/parquet-slider-capabilities.ts",
+          "src/lib/map/layer-registry.ts"
+        ],
+        "model": "opus",
+        "depends_on": [
+          "p2-python-plane"
+        ]
+      },
+      {
+        "id": "p2-agent-tools",
+        "task": "two agent tools with km neighbours and a typed single-vintage refusal",
+        "owns": [
+          "src/lib/server/services/regional-evidence-tools.ts",
+          {
+            "path": "src/lib/server/services/vegetation-type-tools.ts",
+            "status": "future"
+          }
+        ],
+        "model": "opus",
+        "depends_on": [
+          "p2-ts-reader-slider"
+        ]
+      },
+      {
+        "id": "p3-raster-scripts",
+        "task": "truecolour RGB PMTiles mosaic, tiles, verify and publish scripts",
+        "owns": [
+          "scripts/raster/AGENTS.md",
+          {
+            "path": "scripts/raster/build-evt-mosaic.py",
+            "status": "future"
+          },
+          {
+            "path": "scripts/raster/build-evt-tiles.py",
+            "status": "future"
+          },
+          {
+            "path": "scripts/raster/verify-evt-tiles.py",
+            "status": "future"
+          },
+          {
+            "path": "scripts/raster/publish-evt-raster.py",
+            "status": "future"
+          }
+        ],
+        "model": "opus",
+        "depends_on": [
+          "p1c-lane-package"
+        ]
+      },
+      {
+        "id": "p3-raster-read",
+        "task": "getPublishedVegetationTypeRaster procedure plus raster-catalog read",
+        "owns": [
+          {
+            "path": "src/__tests__/services/raster-catalog.test.ts",
+            "status": "future"
+          }
+        ],
+        "model": "sonnet",
+        "depends_on": [
+          "p2-ts-reader-slider",
+          "p3-raster-scripts"
+        ]
+      },
+      {
+        "id": "p4-layer-legend",
+        "task": "VegetationTypeLayer (raster z>=9, lattice z<=8, hover reads lattice), generated legend pinned to the Python CSV, layer-legends spec importing renderer colours",
+        "owns": [
+          "src/lib/map/layer-legends.ts",
+          "src/components/map/AGENTS.md",
+          "src/components/map/LayerManager.tsx",
+          {
+            "path": "src/components/map/layers/VegetationTypeLayer.tsx",
+            "status": "future"
+          },
+          {
+            "path": "src/lib/environmental/vegetation-type-legend.ts",
+            "status": "future"
+          },
+          {
+            "path": "scripts/generate-vegetation-type-legend.mjs",
+            "status": "future"
+          }
+        ],
+        "model": "opus",
+        "depends_on": [
+          "p3-raster-read"
+        ]
+      },
+      {
+        "id": "p4-panel-about",
+        "task": "three panel subsections without a new PanelId, About attribution row, flip the about-page LANDFIRE assertion deliberately",
+        "owns": [
+          "src/components/panels/VegetationDetails.tsx",
+          "src/lib/map/dock-sections.ts",
+          "src/app/about/page.tsx",
+          "src/__tests__/app/about-page.test.tsx",
+          {
+            "path": "src/__tests__/components/VegetationDetails.test.tsx",
+            "status": "future"
+          }
+        ],
+        "model": "sonnet",
+        "depends_on": [
+          "p2-ts-reader-slider"
+        ]
+      },
+      {
+        "id": "p4-browser-evidence",
+        "task": "standalone Playwright config against the deployed build; never the repo playwright.config.ts",
+        "owns": [
+          {
+            "path": "conductor/tracks/vegetation_type_landfire_evt_20260918/evidence/playwright.evt.config.ts",
+            "status": "future"
+          },
+          {
+            "path": "conductor/tracks/vegetation_type_landfire_evt_20260918/evidence/evt-layer.spec.ts",
+            "status": "future"
+          },
+          {
+            "path": "conductor/tracks/vegetation_type_landfire_evt_20260918/evidence/browser-*/*",
+            "status": "future"
+          }
+        ],
+        "model": "sonnet",
+        "depends_on": [
+          "p4-layer-legend",
+          "p4-panel-about"
+        ]
+      }
+    ],
+    "shared_writes": [
+      {
+        "path": "src/lib/server/trpc/routers/environmental.ts",
+        "owner": "p2-ts-reader-slider",
+        "reason": "p3-raster-read adds one procedure after it lands; sequence, do not parallelize"
+      },
+      {
+        "path": "src/lib/map/layer-registry.ts",
+        "owner": "p2-ts-reader-slider",
+        "reason": "single registry; p4 lanes read it only"
+      },
+      {
+        "path": "conductor/RUNBOOK.md",
+        "owner": "coordinator",
+        "reason": "concurrent sessions share it; one section per phase; never git add conductor/ wholesale"
+      }
+    ],
+    "tripwires": [
+      "band edges must be multiples of both 0.2 deg and the base rung, or flooring stops composing exactly",
+      "z0 is derived from the z5 rung in banded mode, never from the base",
+      "key_columns_by_tier default None must leave every existing lane byte-identical (pin with a digest test)",
+      "NoData is a class row (evt_code -9999), not a per-row count: a per-row count summed over class rows double-counts",
+      "about-page.test.tsx asserts LANDFIRE is named nowhere; phase 4 flips it deliberately, not by accident",
+      "getPublishedSoilRasters returns [] today: there is no raster draw path to copy; phase 3 builds it",
+      "never use the repo playwright.config.ts (it boots the app locally); use the standalone evidence config"
+    ],
+    "integration_slice": null
+  }
+}
