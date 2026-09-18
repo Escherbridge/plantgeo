@@ -114,6 +114,33 @@ Coverage: MTBS, SSURGO, WFIGS, USGS NWIS, NOAA NWS, USDM and the Oregon OEM feed
 (`regional`); FIRMS, Sentinel-2, Open-Meteo, HydroSHEDS, the ERA5-Land/NASA POWER blend and GBIF
 serve outside the US too (`global`).
 
+## Source coverage claims, and why they are checked on ISO codes
+
+`source_coverage.py` and `bindings.py` land `federation.md` §2's other half: the manifest says
+WHICH source fills a layer here, and the source itself says WHERE it can fill one. A binding is
+servable only when the two agree.
+
+A source's `iso_country_codes` is **not** a footprint literal under §1. `("US",)` on the MTBS,
+USDM and SSURGO claims is a fact about those source systems -- MTBS maps United States fires and
+will not grow a Kenyan cohort because this deployment moves -- and §1 explicitly permits
+"source-system constants that are genuinely about the source". The deployment's own footprint stays
+in `pnw.json` and nowhere else; §3's "a region-specific assumption is written down where it is
+made" is why each claim sits in its own source module rather than in a shared table here.
+
+Containment is evaluated on **ISO country codes, not geometry**. `federation.md` §2 words the rule
+as "coverage contains the region's envelope", and the honest cheap reading of that is set
+containment of the codes both sides already declare: the manifest lists `iso_country_codes`, a
+regional source lists the countries it serves. A polygon intersection would need each source's real
+service boundary as geometry, which no source here publishes, and would turn a boot assertion into
+a spatial computation. A region that straddles a source's national boundary partially is therefore
+reported as uncovered, which is the safe direction to be wrong in.
+
+`unverified_binding_slugs` exists because the protocol migration is staged three layers at a time
+(`federation.md` §5 step 3 covers soil-survey, drought and burn-severity only). A binding whose
+source has declared no claim yet is *not looked at*, and saying so is different from saying it is
+fine -- the same distinction `layer-lanes.md` §1a draws between "current" and "not looked at".
+Boot does not fail for those; it fails only for a claim that actively disagrees with its binding.
+
 ## Timezone
 
 `America/Los_Angeles` is the manifest's one declared zone. The pilot's own `admin_codes`

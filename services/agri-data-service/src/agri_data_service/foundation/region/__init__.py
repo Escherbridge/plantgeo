@@ -15,6 +15,11 @@ calling this function explicitly (`federation.md` §1; `python.md` "the region i
 constant").
 """
 
+from agri_data_service.foundation.region.bindings import (
+    RegionBindingNotServableError,
+    assert_region_bindings_are_servable,
+    unverified_binding_slugs,
+)
 from agri_data_service.foundation.region.manifest import (
     LatticeOriginRule,
     LayerBinding,
@@ -23,12 +28,21 @@ from agri_data_service.foundation.region.manifest import (
     SourceCoverage,
     load_region,
 )
+from agri_data_service.foundation.region.source_coverage import (
+    GLOBAL_SOURCE_COVERAGE,
+    SourceCoverageClaim,
+)
 
 __all__ = [
+    "GLOBAL_SOURCE_COVERAGE",
     "LatticeOriginRule",
     "LayerBinding",
     "Region",
+    "RegionBindingNotServableError",
     "RegionEnvelope",
     "SourceCoverage",
+    "SourceCoverageClaim",
+    "assert_region_bindings_are_servable",
     "load_region",
+    "unverified_binding_slugs",
 ]
