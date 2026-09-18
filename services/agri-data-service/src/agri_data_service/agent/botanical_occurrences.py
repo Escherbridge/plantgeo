@@ -115,8 +115,10 @@ async def botanical_occurrence_current_release() -> str:
     the generation it currently names, plus when it was published; call it once per conversation (or
     whenever a fresh pin is wanted), then pass its `release_set_id` into the other three tools.
 
-    Returns `state: current` with `release_set_id` and `published_at` when a generation is published,
-    or `state: unavailable` when none is -- never a fabricated id.
+    Returns `state: current` with `release_set_id`, `published_at` and the pointer provenance
+    (`generation_id`, `manifest_sha256`) when a generation is published, or `state: unavailable`
+    with a closed reason (`pointer_missing`, `pointer_malformed`, `pointer_stale`,
+    `pointer_checksum_invalid`, `transport_unavailable`) when none resolves -- never a fabricated id.
     """
     result = read_current_botanical_release(root=_generation_root.get())
     return _payload({"tool": "botanical_occurrence_current_release", **result})
