@@ -117,19 +117,19 @@ beforeEach(() => {
 
 describe("selectServingRung", () => {
   it("takes the finest published rung whose own ceiling admits the area", () => {
-    expect(selectServingRung([13, 9, 5, 0], 0.25)).toBe(13);
-    expect(selectServingRung([13, 9, 5, 0], 98)).toBe(9);
-    expect(selectServingRung([13, 9, 5, 0], 500)).toBe(5);
+    expect(selectServingRung([13, 9, 5, 0], 0.25)).toEqual({ kind: "selected", rung: 13 });
+    expect(selectServingRung([13, 9, 5, 0], 98)).toEqual({ kind: "selected", rung: 9 });
+    expect(selectServingRung([13, 9, 5, 0], 500)).toEqual({ kind: "selected", rung: 5 });
   });
 
   it("steps past a published-but-too-tight rung instead of refusing on it", () => {
     // The 2026-09-14 botanical defect in miniature: 98 sq deg over a 4 sq deg detail rung.
-    expect(selectServingRung([13, 5], 98)).toBe(5);
+    expect(selectServingRung([13, 5], 98)).toEqual({ kind: "selected", rung: 5 });
   });
 
-  it("returns null, never a guessed rung, when nothing published admits the area", () => {
-    expect(selectServingRung([13], 98)).toBeNull();
-    expect(selectServingRung([], 0.1)).toBeNull();
+  it("names 'no_rung_admits_area', never a guessed rung, when nothing published admits the area", () => {
+    expect(selectServingRung([13], 98)).toEqual({ kind: "no_rung_admits_area" });
+    expect(selectServingRung([], 0.1)).toEqual({ kind: "no_rung_admits_area" });
   });
 
   it("bounds the whole ladder", () => {

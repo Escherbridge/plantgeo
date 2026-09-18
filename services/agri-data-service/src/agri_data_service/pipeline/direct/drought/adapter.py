@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from agri_data_service.pipeline.direct.drought.source import DroughtDaySource
+    from agri_data_service.pipeline.direct.drought.source_protocol import DroughtReleaseDay as DroughtDaySource
     from agri_data_service.pipeline.parquet.lane_registry import LaneRunResult
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 

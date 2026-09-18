@@ -8,6 +8,7 @@ from __future__ import annotations
 import ast
 import importlib
 from pathlib import Path
+from typing import Final
 
 import pytest
 
@@ -392,7 +393,7 @@ def test_domain_isolation_actually_has_domains_to_police() -> None:
 #: as an import of `soil_survey` -- or the reverse -- would either fire falsely forever or stop firing
 #: at all. Naming the three keeps the lane discovery honest the way
 #: `test_domain_isolation_actually_has_domains_to_police` does for domains.
-FEDERATED_SOURCE_LAYER_LANES: tuple[str, ...] = ("burn_severity", "drought", "soil_survey")
+FEDERATED_SOURCE_LAYER_LANES: Final[tuple[str, ...]] = ("burn_severity", "drought", "soil_survey")
 
 
 def test_the_source_protocol_layers_are_lanes_the_lattice_actually_sees() -> None:

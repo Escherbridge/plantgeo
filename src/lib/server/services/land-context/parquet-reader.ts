@@ -10,7 +10,7 @@
 import { getParquetLatestRelease, getParquetWarehouseCoverage } from "@/lib/server/services/parquet-plane-client";
 import type { ParquetLaneCoverage } from "@/lib/server/services/parquet-plane-client";
 import { ZOOM_TIERS, zoomTierPathSegment, type ZoomTier } from "@/lib/map/zoom-tiers";
-import { selectFinestAdmittingRung } from "@/lib/map/rung-selection";
+import { type RungSelectionResult, selectFinestAdmittingRungResult } from "@/lib/map/rung-selection";
 import { parquetUpstreamFailure } from "@/lib/server/services/parquet-trpc-readers/shared";
 import { assertExhaustiveParquetPlaneState } from "@/lib/server/services/parquet-envelope";
 import { z } from "zod";
@@ -124,7 +124,11 @@ export function bboxSquareDegrees(bbox: BboxDegrees): number {
 }
 
 /**
- * The finest published rung whose own ceiling admits this bbox, or null when none does.
+ * The finest published rung whose own ceiling admits this bbox, as a discriminated result (S8, W3
+ * review). This call site never sets `finestAllowed`, so `rung_not_on_ladder` is structurally
+ * unreachable here -- callers still switch on `kind` because the type is shared with the botanical
+ * plane's call, which DOES set it, and a caller that only checked `=== null` is exactly how the
+ * two refusal kinds collapsed into one sentence in the first place.
  *
  * Finest-that-fits, walking the ladder from z13 down: a caller that asks for a small area gets
  * the most detailed rung published for it, and a caller that asks for a regional one is moved
@@ -136,8 +140,8 @@ export function bboxSquareDegrees(bbox: BboxDegrees): number {
 export function selectServingRung(
   publishedTiers: readonly ZoomTier[],
   bboxAreaSquareDegrees: number
-): ZoomTier | null {
-  return selectFinestAdmittingRung({
+): RungSelectionResult<ZoomTier> {
+  return selectFinestAdmittingRungResult({
     coarsestFirst: ZOOM_TIERS,
     maxBboxSquareDegrees: RUNG_MAX_BBOX_SQUARE_DEGREES,
     areaSquareDegrees: bboxAreaSquareDegrees,
@@ -228,14 +232,23 @@ async function resolveServingPartition(
   }
 
   const publishedTiers = readable.map((lane) => lane.zoomTier);
-  const zoomTier = selectServingRung(publishedTiers, bboxAreaSquareDegrees);
-  if (zoomTier === null) {
+  const rungSelection = selectServingRung(publishedTiers, bboxAreaSquareDegrees);
+  if (rungSelection.kind === "rung_not_on_ladder") {
+    // Structurally unreachable from this call site (no `finestAllowed` is ever set above), but
+    // named so a future caller that DOES set one is not silently folded into the area refusal.
+    return refusal(
+      "unknown_coverage",
+      `rung z${rungSelection.rung} was selected but is not on the published ladder for "${layer}"`
+    );
+  }
+  if (rungSelection.kind === "no_rung_admits_area") {
     const coarsest = Math.min(...publishedTiers) as ZoomTier;
     return refusal(
       "unknown_coverage",
       `a ${bboxAreaSquareDegrees.toFixed(2)} square degree request exceeds every published rung of "${layer}"; the coarsest published rung (z${coarsest}) is bounded at ${RUNG_MAX_BBOX_SQUARE_DEGREES[coarsest]} square degrees`
     );
   }
+  const zoomTier = rungSelection.rung;
 
   const lane = readable.find((candidate) => candidate.zoomTier === zoomTier);
   // `selectServingRung` chose from `publishedTiers`, so the lane it named is always present.

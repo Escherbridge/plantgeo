@@ -41,5 +41,13 @@ moving `rows.py` onto it is a later push.
 ## Wave-4 deletion list
 
 - `source.py` — a deprecation shim re-exporting `BurnSeverityDaySource`, `BurnSeverityFetchError`
-  and `fetch_burn_severity_release_day` from `mtbs.py`. Delete once `adapter.py`, `forward.py` and
-  `tests/direct/test_burn_severity_direct_adapter.py` import `mtbs.py` directly.
+  and `fetch_burn_severity_release_day` from `mtbs.py`. `forward.py` no longer imports it
+  (2026-09-18, S5 fix): it resolves the fetch through
+  `pipeline/source_bindings.py::resolve_burn_severity_source()`, which reads the region's OWN
+  binding per call rather than naming `mtbs.py`, so a second region binding a different
+  burn-severity source changes this lane by editing a manifest, not this file. The shim's terminal
+  step is therefore NOT "repoint every importer at `mtbs.py` directly" — that would be the
+  opposite of resolving through the binding — it is deleting the shim once
+  `tests/direct/test_burn_severity_direct_adapter.py` is the last importer left, which it does not
+  have to be bound-resolved (it constructs `BurnSeverityDaySource` fixtures directly, never
+  through the manifest).

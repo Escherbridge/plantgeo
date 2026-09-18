@@ -62,9 +62,6 @@ from agri_data_service.pipeline.direct.burn_severity.products import (
     governed_release_days,
     release_days_by_ignition_year,
 )
-from agri_data_service.pipeline.direct.burn_severity.source import (
-    fetch_burn_severity_release_day,
-)
 from agri_data_service.pipeline.parquet.availability_extension import AvailabilityExtensionTally
 from agri_data_service.pipeline.parquet.availability_index import BotoAvailabilityStorage
 from agri_data_service.pipeline.parquet.gap_fill import (
@@ -74,6 +71,7 @@ from agri_data_service.pipeline.parquet.gap_fill import (
     unlocked_lane_day,
 )
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
+from agri_data_service.pipeline.source_bindings import resolve_burn_severity_source
 from agri_data_service.warehouse.parquet.tiers import DERIVED_ZOOM_TIERS
 from agri_data_service.warehouse.schemas.burn_severity import BURN_SEVERITY_STREAM
 
@@ -84,8 +82,10 @@ if TYPE_CHECKING:
 
     from agri_data_service.foundation.parquet.paths import PartitionDayStatus
     from agri_data_service.foundation.parquet.zoom import ZoomTier
-    from agri_data_service.ingest.mtbs import BoundingBox
-    from agri_data_service.pipeline.direct.burn_severity.source import BurnSeverityDaySource
+    from agri_data_service.pipeline.direct.burn_severity.source_protocol import BoundingBox
+    from agri_data_service.pipeline.direct.burn_severity.source_protocol import (
+        BurnSeverityReleaseDay as BurnSeverityDaySource,
+    )
     from agri_data_service.pipeline.parquet.availability_index import AvailabilityStorage
     from agri_data_service.pipeline.parquet.lane_registry import LaneRegistration
 
@@ -377,7 +377,10 @@ async def _publish_locked_release_day_with_retries(  # noqa: PLR0913
         if time.monotonic() >= deadline:
             return _skipped_result(day, outcome=BURN_SEVERITY_TIME_BUDGET_OUTCOME)
         adapter = DirectBurnSeverityAdapter(
-            fetch_source=lambda: fetch_burn_severity_release_day(
+            # Resolved fresh from the region's OWN binding on every call (S5, W3 review), never
+            # `mtbs.py`'s module functions by name: a different region binding a different
+            # burn-severity source changes this lane by editing the manifest, not this file.
+            fetch_source=lambda: resolve_burn_severity_source().fetch_release_day(
                 day,
                 ignition_years,
                 bounding_box=bounding_box,

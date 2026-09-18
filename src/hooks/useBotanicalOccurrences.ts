@@ -16,6 +16,7 @@ import {
   type BotanicalSpatialQuality,
   type BotanicalSupportBand,
 } from "@/lib/botanical-occurrences";
+import type { RungSelectionResult } from "@/lib/map/rung-selection";
 
 /**
  * Viewport-scoped read of the botanical-occurrences plane through the Next.js proxy route.
@@ -94,13 +95,15 @@ const IDLE: BotanicalOccurrencesSnapshot = {
 };
 
 /**
- * The rung this viewport selects, or null when no rung admits it -- the ONE case still refused
- * without spending a round trip. The route runs the same selection over the same table, so this
- * copy can only agree with it or be wrong, never be stricter.
+ * The rung this viewport selects, as a discriminated result (S8, W3 review) -- the ONE refusal
+ * still checked without spending a round trip. The route runs the same selection over the same
+ * table, so this copy can only agree with it or be wrong, never be stricter.
  */
-function servingBandForViewport(bbox: string, zoom: number): BotanicalSupportBand | null {
+function servingBandForViewport(bbox: string, zoom: number): RungSelectionResult<BotanicalSupportBand> {
   const [west, south, east, north] = bbox.split(",").map((part) => Number(part));
-  if (![west, south, east, north].every(Number.isFinite)) return botanicalSupportBandForZoom(zoom);
+  if (![west, south, east, north].every(Number.isFinite)) {
+    return { kind: "selected", rung: botanicalSupportBandForZoom(zoom) };
+  }
   return botanicalServingBandForViewport(zoom, (east - west) * (north - south));
 }
 
@@ -144,8 +147,11 @@ export function useBotanicalOccurrences(
 
   const band = botanicalSupportBandForZoom(options.zoom);
   // The rung this viewport will be served from, which the route re-derives identically.
-  const selectedBand =
-    options.bbox === null ? band : servingBandForViewport(options.bbox, options.zoom);
+  const rungSelection: RungSelectionResult<BotanicalSupportBand> =
+    options.bbox === null
+      ? { kind: "selected", rung: band }
+      : servingBandForViewport(options.bbox, options.zoom);
+  const selectedBand = rungSelection.kind === "selected" ? rungSelection.rung : null;
   const latestRequest = useRef(0);
 
   useEffect(() => {
@@ -153,14 +159,21 @@ export function useBotanicalOccurrences(
       setSnapshot(IDLE);
       return;
     }
-    if (selectedBand === null) {
+    if (rungSelection.kind !== "selected") {
+      // S8, W3 review: the two refusal kinds get distinct detail text now, rather than both
+      // reading as "the viewport is too wide" -- `rung_not_on_ladder` is a configuration defect
+      // (the zoom-selected band fell off the ladder), never a viewport the user could narrow.
+      const detail =
+        rungSelection.kind === "no_rung_admits_area"
+          ? `no published rung answers a bbox wider than ${BOTANICAL_MAX_BBOX_SQUARE_DEGREES} square degrees`
+          : `zoom ${options.zoom} selects band "${rungSelection.rung}", which is not on the published ladder`;
       setSnapshot({
         phase: "error",
         answer: null,
         error: {
           error: "The viewport is wider than every published rung",
           reason: "bbox_too_large_for_zoom",
-          detail: `no published rung answers a bbox wider than ${BOTANICAL_MAX_BBOX_SQUARE_DEGREES} square degrees`,
+          detail,
         },
         isStale: false,
         isPartial: false,

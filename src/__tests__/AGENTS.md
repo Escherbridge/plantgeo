@@ -17,18 +17,40 @@ trick for comment-stripping without a full tokenizer: a `//` inside a quoted URL
 string content before the comment branch is ever tried), then blanks `//`/`/* */` comments
 character-for-character so line numbers stay correct.
 
-**The western-hemisphere discriminator matters here too**: `[0, 5, 9, 13]` (zoom tiers,
-`lib/map/zoom-tiers.ts`), RGBA colour arrays (`lib/map/deck-config.ts`), and NLCD class codes
-(`lib/environmental/nlcd.ts`) are all "four numbers in lon/lat range" without it. Requiring `west <
-0 && east < 0` for the object/array forms is what keeps the scan from flooding on those.
+**The scan is hemisphere-neutral, filtered by shape and by name/span instead** (2026-09-18, B2/S1
+fix). The prior `west < 0 && east < 0` discriminator could only ever police the pilot's own
+hemisphere and, worse, required the closing brace/bracket immediately after the fourth number, so a
+Prettier-formatted multi-line literal (every multi-line bbox this repo actually declares) matched
+neither pattern at all -- both bugs are fixed together since the multi-line self-test exercises the
+same code path the hemisphere removal does. `[0, 5, 9, 13]` (zoom tiers, `lib/map/zoom-tiers.ts`)
+and RGBA colour arrays (`lib/map/deck-config.ts`) are now excluded by explicit shape predicates
+(`isPlausibleZoomLadder`, `isPlausibleColorTuple`) rather than by hemisphere. What remains -- in
+range, ordered, not a ladder or colour -- is a footprint when it carries literal
+`west`/`south`/`east`/`north` keys (the object pattern always does), is declared near a
+footprint-hinting name (`bbox`/`envelope`/`bounds`/`extent`/`lat`/`lon`, underscore-normalised so
+`SCREAMING_SNAKE_CASE` names still hit a word boundary), or its span is plausible for a region
+(0.5-60 degrees each axis). `footprint-literals.test.ts` also now pins the guard's own detection —
+a planted single-line object, a planted multi-line object, a planted multi-line array, and a
+fabricated eastern-hemisphere (Kenya) box — not just its verdict on the live tree, which is how the
+multi-line gap shipped invisible in the first place.
 
-**`KNOWN_OFFENDERS` holds two real entries as of the 2026-09-18 push**:
-`coverage-region.ts`'s `NAMED_COVERAGE_REGIONS` California/Western-US/North-America rows (they
-describe footprints this deployment does not serve — `src/lib/region/AGENTS.md` "Remaining
-footprint literals `coverage-region.ts` still carries" names the future multi-region registry that
-moves them), and `OfflinePanel.tsx`'s offline-download default bbox (a genuinely different
-footprint from the manifest's `defaultCameraEnvelope` — reading the manifest here would silently
-widen the pre-existing default download area, which is a behaviour change this guard is not
-authorised to make). A third candidate, `useLandContextQuery.ts`'s `resolveBoundaryInArea`
+**`KNOWN_OFFENDERS` is keyed by `(path, description)`, never line number** (S2 fix): the
+description already carries the offending value, and a line-keyed entry fails this test on any
+unrelated edit above it, in both directions at once. It holds two real entries as of the
+2026-09-18 push: `coverage-region.ts`'s `NAMED_COVERAGE_REGIONS` California/Western-US/North-America
+rows (they describe footprints this deployment does not serve — `src/lib/region/AGENTS.md`
+"Remaining footprint literals `coverage-region.ts` still carries" names the future multi-region
+registry that moves them), and `OfflinePanel.tsx`'s offline-download default bbox (a genuinely
+different footprint from the manifest's `defaultCameraEnvelope` — reading the manifest here would
+silently widen the pre-existing default download area, which is a behaviour change this guard is
+not authorised to make). A third candidate, `useLandContextQuery.ts`'s `resolveBoundaryInArea`
 fallback, matched `getRegion().defaultCameraEnvelope` exactly and was fixed in the same push rather
 than added to the debt list.
+
+**The exemption is every `__tests__` directory and every `*.test.ts(x)` file, not just a fixture
+named for its region** (NIT 10, W3 review). `federation.md` §1 only permits "test fixtures that
+state the region they model in their name"; this scan is deliberately wider than that, because a
+regex over an unnamed multi-line fixture string (this file's own self-tests, planting a Kenya box
+or a multi-line PNW literal to prove the guard finds it) would otherwise flag the guard's own test
+data as the offense it exists to catch. The tradeoff is a blind spot for a genuine offender that
+happens to live in a `*.test.ts` file; accepted, stated here rather than left implicit.

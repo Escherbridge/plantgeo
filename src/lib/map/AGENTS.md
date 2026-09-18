@@ -606,3 +606,15 @@ matters: `drought-areas` is served by the manifest layer `drought`, and all twel
 field streams are derived products of the one `signal` plane — they bind no source of their own and
 go dark together with it. `interventions` and `strategy-recommendations` are absent from the table
 on purpose; neither is a federated layer, so neither can be "unavailable in this region".
+**Two refusals used to share one `null` (S8, W3 review, fixed 2026-09-18).**
+`selectFinestAdmittingRung` returns `null` for BOTH "no rung on the ladder admits this area" and
+"`finestAllowed` names a rung that is not even on the ladder" -- a configuration defect, not a
+viewport that is too wide. Every caller that only checked `=== null` rendered the same "no
+published rung answers a bbox wider than..." sentence for either, so a ladder/band mismatch was
+reported as a wide viewport at every zoom, forever. `selectFinestAdmittingRungResult` is the
+preferred entry point for a new caller: it returns
+`{ kind: "selected", rung } | { kind: "no_rung_admits_area" } | { kind: "rung_not_on_ladder", rung }`
+so the two refusals stay distinguishable. `botanicalServingBandForViewport` and `selectServingRung`
+both moved onto it; `selectFinestAdmittingRung` itself keeps its original `TRung | null` signature
+because `landContextRungForViewport` (`src/hooks/useLandContextViewport.ts`) still calls it
+directly and migrating that hook is a separate change.

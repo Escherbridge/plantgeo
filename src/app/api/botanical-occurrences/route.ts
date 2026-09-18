@@ -134,8 +134,8 @@ export async function GET(request: NextRequest) {
   }
 
   const { bbox, zoom } = parsed.data;
-  const servingRung = botanicalServingBandForViewport(zoom, bboxSquareDegrees(bbox));
-  if (servingRung === null) {
+  const rungSelection = botanicalServingBandForViewport(zoom, bboxSquareDegrees(bbox));
+  if (rungSelection.kind === "no_rung_admits_area") {
     // Refused BEFORE the upstream call and before the pointer is resolved, exactly as the plane
     // refuses before opening a generation: a bound that depended on what is published would leak
     // what is published. Reached only above the COARSEST rung's ceiling now -- every narrower
@@ -147,6 +147,17 @@ export async function GET(request: NextRequest) {
       `no published rung answers a bbox wider than ${BOTANICAL_MAX_BBOX_SQUARE_DEGREES} square degrees`
     );
   }
+  if (rungSelection.kind === "rung_not_on_ladder") {
+    // The zoom-selected band is not on the ladder at all -- a configuration defect, not a viewport
+    // that is too wide, and reported distinctly rather than reusing the area-refusal sentence.
+    return failure(
+      400,
+      "Invalid botanical-occurrences query",
+      "bbox_too_large_for_zoom",
+      `zoom ${zoom} selects band "${rungSelection.rung}", which is not on the published ladder`
+    );
+  }
+  const servingRung = rungSelection.rung;
   // The zoom that makes the plane answer from the rung selected above; the caller's own zoom
   // whenever it already selects it.
   const servingZoom = botanicalServingZoomForBand(servingRung, zoom);
@@ -169,9 +180,14 @@ export async function GET(request: NextRequest) {
     // decoded shape ever drifts from `botanicalProxyAnswerSchema`, this assignment stops compiling
     // instead of the hook receiving a field it cannot find.
     // Spread per branch rather than once over the union: a discriminated union assembled by one
-    // spread loses its discriminant to TypeScript, and this assignment exists to be checked.
+    // spread loses its discriminant to TypeScript, and this assignment exists to be checked. The
+    // `satisfies Extract<...>` target differs per arm ON PURPOSE (NIT 6, W3 review) -- textually
+    // identical arms invite a future reader to "simplify" this into the single-spread form that
+    // loses the discriminant; a visibly different target per branch is the reminder not to.
     const body: BotanicalProxyAnswer =
-      result.state === "detail" ? { ...result, servingRung } : { ...result, servingRung };
+      result.state === "detail"
+        ? ({ ...result, servingRung } satisfies Extract<BotanicalProxyAnswer, { state: "detail" }>)
+        : ({ ...result, servingRung } satisfies Extract<BotanicalProxyAnswer, { state: "aggregate" }>);
     return NextResponse.json(body, { headers: PRIVATE_EPHEMERAL_HEADERS });
   } catch (error) {
     if (error instanceof BotanicalOccurrencesUnavailableError) {
