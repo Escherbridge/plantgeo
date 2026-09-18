@@ -19,9 +19,9 @@ artifacts, both required (owner D1, PLAN §8):
 1. **The composition lattice** — the queryable truth. One row per `(cell, class)` carrying pixel
    counts on a regular degree lattice, base rung 0.005°, coarsened along the four-rung ladder
    `TIER_RESOLUTION_DEGREES = {9: 0.01, 5: 0.2, 0: 5.0}` (`warehouse/parquet/tiers.py:95`) with the
-   class vocabulary coarsening in step: EVT code (1,069) at z13 → `EVT_GP` (192) at z9 →
-   `EVT_PHYS` (20) at z5 → `EVT_LF` (10) at z0. The agent, the hover card and the slider capability
-   read this plane.
+   class vocabulary coarsening in step as a **joint-key ladder**: EVT code (1,069) at z13 →
+   `(EVT_GP, EVT_PHYS, EVT_LF)` at z9 → `(EVT_PHYS, EVT_LF)` at z5 → `EVT_LF` at z0. The agent, the
+   hover card and the slider capability read this plane.
 2. **The raster picture** — a categorical PMTiles archive cut from the same `exportImage` windows,
    coloured with the legend's own `R,G,B`, published through `geo.raster_release` and read via
    `src/lib/server/services/raster-catalog.ts`. It is drawn where composition rows cannot be served
@@ -60,6 +60,16 @@ disagree, those win and this document has a bug.
   z9 (0.01°, `EVT_GP`) ~6.2 M rows; z5 ≤ 49 k; z0 ≤ 39. Arrow width 291 B/row with strings and
   WKB, 44–60 B/row numeric-only. Disk ~8 B/row zstd → ~179 MB per version at 0.005°.
   `exportImage` returns 2,000 px S16 TIFF windows in 2.3–11.1 s; the envelope is ~306 such windows.
+- **The legend does NOT nest functionally (measured 2026-09-18 by slice p1a on all 1,069 rows,
+  fixture `services/agri-data-service/tests/parquet/fixtures/lf2025-evt-hierarchy.csv`).**
+  `VALUE→EVT_GP` is functional (0 violations). `EVT_GP→EVT_PHYS` is violated by 47 of 193 groups,
+  including core PNW groups — 645 Western Red-cedar–Western Hemlock spans Conifer/Riparian, 632 Red
+  Alder, 629 Western Oak Woodland spans Grassland/Hardwood, 609 Pacific Coastal Scrub, 617/618
+  Grassland and Steppe, 651 Alpine-Subalpine Barrens, 731 Managed Tree Plantation.
+  `EVT_PHYS→EVT_LF` is violated by 4 of 20 (Riparian, Agricultural, Developed, Exotic Tree-Shrub
+  each span Tree/Shrub/Herb). `EVT_GP→EVT_GP_N` is not 1:1 (codes 785 and 826 carry two names;
+  three names map to two codes — Alaska/Caribbean, outside the envelope). A `first` aggregate on a
+  dropped hierarchy column would therefore fabricate labels; the ladder is joint-keyed instead (FR-3).
 - The SoilGrids "picture" the owner cited as the model is published (six COG + six PMTiles in
   `geo.published_raster`, `scripts/raster/AGENTS.md` §"Not done yet") but **not drawn**:
   `environmental.getPublishedSoilRasters` is `publicProcedure.query(() => [])`
@@ -94,52 +104,81 @@ volatile fields removed; a digest change on the same folder name is a change eve
   fixtures; no network in tests.
 - Priority: P0.
 
-### FR-3 Base schema and grain (layer-lane-standard §4; ROW-CAP §4.1 pt 3, §4.2)
+### FR-3 Base schema and grain — a JOINT-KEY ladder (layer-lane-standard §4; ROW-CAP §4.1 pt 3, §4.2)
 `warehouse/schemas/vegetation_type.py` registers stream `vegetation-type`, grain
-`("cell_lon", "cell_lat", "evt_code")`, with these columns:
+`("cell_lon", "cell_lat", "evt_code")`. **Why joint keys, not `first`:** the legend hierarchy does
+not nest (Background, measured on the 1,069-row fixture
+`tests/parquet/fixtures/lf2025-evt-hierarchy.csv`): 47 of 193 groups span more than one
+`EVT_PHYS`, 4 of 20 `EVT_PHYS` span more than one `EVT_LF`. A dropped hierarchy column aggregated
+with `first` would label the z9 Western Red-cedar–Western Hemlock row "Conifer" for pixels that
+are "Riparian". So every hierarchy column a rung still reports is a **key** at that rung, and a
+column the rung drops is `null` there. The platform rule that one `how` holds per column across all
+rungs (`GridAggregation.key_columns_by_tier`, resolver `grid_key_columns`, guard tests in
+`tests/parquet/test_grid_per_tier_keys.py`) is satisfied without a per-rung `how`.
 
-| column | type | null | aggregate at coarse rungs | note |
-|---|---|---|---|---|
-| `cell_lon`, `cell_lat` | float64 | no | re-floored | cell ORIGIN, floored (`tiers.py:161-165`) |
-| `class_system` | string | no | `first` | `"LANDFIRE_EVT_LF2025"`; a future producer is distinguishable, never blended |
-| `evt_code` | int32 | yes | key at z13; `null` above | the raster value; `-1` = `Other` (cutoff mass), `-9999` = NoData |
-| `evt_group_code` | int32 | yes | key at z9; `first` at z13; `null` above z9 | legend `EVT_GP` |
-| `evt_phys` | string | yes | key at z5; `first` below; `null` at z0 | legend `EVT_PHYS` (20 values) |
-| `evt_lifeform` | string | no | key at z0; `first` below | legend `EVT_LF` (10 values); `"Fill-NoData"` for the NoData row, `"Other"` for the cutoff row |
-| `pixel_count` | int64 | no | `sum` | 30 m pixels of this class inside the cell, counted in EPSG:5070 |
-| `observed_at` | timestamp(us, UTC) | no | `first` | the LANDFIRE release date, not the fetch clock |
-| `data_available_at` | timestamp(us, UTC) | no | `first` | publication; the leakage boundary |
-| `release_day` | date32 | no | `first` | the version stamp = partition day = watermark day |
+Key ladder: `{13: ("evt_code",), 9: ("evt_group_code", "evt_phys", "evt_lifeform"),
+5: ("evt_phys", "evt_lifeform"), 0: ("evt_lifeform",)}`. Each rung's tuple is a subset of the finer
+rung's, which is what makes z0-from-z5 equal z0-from-base (FR-5 relies on it). Row cost of the
+joint keys over a pure vocabulary ladder is bounded by the 47 extra `(group, phys)` combinations
+at z9 and ~7 extra `(phys, lifeform)` at z5 — negligible against ROW-CAP-ANALYSIS §2.3.
+
+| column | type | null | `how` (one per column, applied wherever the column is not a key) | key at | note |
+|---|---|---|---|---|---|
+| `cell_lon`, `cell_lat` | float64 | no | re-floored | all rungs | cell ORIGIN, floored (`tiers.py:161-165`) |
+| `class_system` | string | no | `first` | — | `"LANDFIRE_EVT_LF2025"`, constant per version; a future producer is distinguishable, never blended |
+| `evt_code` | int32 | yes | `null` | z13 | the raster value; `-1` = `Other` (cutoff mass), `-9999` = NoData; null at z9/z5/z0 |
+| `evt_group_code` | int32 | yes | `null` | z9 | legend `EVT_GP`; functional from `evt_code` at z13; null at z5/z0 |
+| `evt_phys` | string | yes | `null` | z9, z5 | legend `EVT_PHYS` (20 values); null at z0 |
+| `evt_lifeform` | string | no | — (never dropped) | z9, z5, z0 | legend `EVT_LF` (10 values); `"Fill-NoData"` for the NoData row, `"Other"` for the cutoff row |
+| `pixel_count` | int64 | no | `sum` | — | 30 m pixels of this class inside the cell, counted in EPSG:5070 |
+| `observed_at` | timestamp(us, UTC) | no | `first` | — | the LANDFIRE release date, not the fetch clock; constant per version |
+| `data_available_at` | timestamp(us, UTC) | no | `first` | — | publication; the leakage boundary; constant per version |
+| `release_day` | date32 | no | `first` | — | the version stamp = partition day = watermark day |
+
+`first` appears only on columns that are constant across the whole version (`class_system`,
+`observed_at`, `data_available_at`, `release_day`); a test asserts each has exactly one distinct
+value per partition, so `first` can never pick.
 
 Not stored, on purpose: `evt_name` / `evt_group_name` (joined from the vendored legend at read
-time — 291 → ~50 B/row in Arrow), `geom` (a cell polygon is `origin + rung resolution`), any
-fraction (`area_fraction`, `nodata_fraction`), and `dominant_class` (an argmax that would drift).
-NoData is a **class row** (`evt_code = -9999`) rather than a per-row `nodata_pixel_count` column,
-because a per-row count summed across the class rows of one cell double-counts; the brief's intent
-— counts, not fractions, so `sum` is the only aggregate — is met with one column. Fractions are
+time — 291 → ~50 B/row in Arrow; the group-name join must refuse an ambiguous `EVT_GP`, FR-6/FR-8),
+`geom` (a cell polygon is `origin + rung resolution`), any fraction (`area_fraction`,
+`nodata_fraction`), and `dominant_class` (an argmax that would drift).
+NoData is a **class row** (`evt_code = -9999`, `evt_group_code = -9999`, `evt_phys = "Fill-NoData"`,
+`evt_lifeform = "Fill-NoData"`) rather than a per-row `nodata_pixel_count` column, because a per-row
+count summed across the class rows of one cell double-counts; the brief's intent — counts, not
+fractions, so `sum` is the only aggregate — is met with one column. Fractions are
 `pixel_count / sum(pixel_count) over the cell` computed by the reader, with and without NoData
 stated separately.
 - AC: a test proves `sum(pixel_count)` over all rows of a cell (including `Other` and NoData) equals
   the pixel count of that cell's footprint, on the eight retained windows.
-- AC: a test proves the legend's functional dependencies hold (`EVT_GP → EVT_PHYS → EVT_LF`), which
-  is what makes `first` a lawful aggregate for the dropped-key columns; the test reads the vendored CSV.
+- AC: a test proves `VALUE→EVT_GP` is functional on the vendored CSV (the one dependency the base
+  row relies on) and **records** the measured non-nesting counts (47/193, 4/20) as expectations, so
+  a future legend that starts nesting — or nests worse — changes a test, not a silent label.
 - AC: `TierDerivation.required_at_base` names `evt_code`, `evt_group_code`, `evt_phys` non-null at
   z13 even though the arrow schema permits null (`tiers.py:233-239`).
 - Priority: P0.
 
 ### FR-4 Per-rung key columns on `GridAggregation` (platform change)
 Add `key_columns_by_tier: Mapping[ZoomTier, tuple[str, ...]] | None = None` to `GridAggregation`
-(`tiers.py:153-171`). `None` keeps today's behaviour for every existing lane byte-for-byte. When
-set, `_derive_grid_tier` (`tiers.py:416-444`) uses the tier's tuple as the grain and requires that
-every key column NOT in the tier's tuple has a `ColumnAggregation` of `first` or `null`. The
-vocabulary ladder for this lane is `{13: ("evt_code",), 9: ("evt_group_code",), 5: ("evt_phys",),
-0: ("evt_lifeform",)}`.
-- AC: existing `tests/parquet/test_tiers.py` passes unchanged; a new test proves a lane with
-  `key_columns_by_tier=None` derives identically before and after the change on a fixture.
+(`tiers.py:153-171`) with resolver `grid_key_columns(strategy, tier)`. `None` keeps today's
+behaviour for every existing lane byte-for-byte. When set, `_derive_grid_tier` (`tiers.py:416-444`)
+uses the tier's tuple as the grain and requires that every key column NOT in the tier's tuple has
+a `ColumnAggregation` of `first` or `null` — one `how` per column across all rungs, never a per-rung
+
+**Chain safety (stricter than the dropped-key rule, and what makes the fold lawful):** a coarser
+derived rung may be built from the finer derived rung above it (z0 from the written z5), so every key
+the coarser rung needs must SURVIVE the finer one — be one of its keys, or be carried through it by
+`first`; a key nulled at the finer rung cannot key the coarser rung. `GridAggregation` refuses such a
+ladder at construction, naming the rung pair (`tiers.py`, chain-safety check). The joint-key ladder
+satisfies it without `first`, because each coarser tuple is a subset of the finer one.
+`how`. This lane's ladder is the joint-key ladder of FR-3.
+- AC: existing `tests/parquet/test_tiers.py` passes unchanged; `tests/parquet/test_grid_per_tier_keys.py`
+  proves a lane with `key_columns_by_tier=None` derives identically before and after the change on a fixture.
 - AC: a test proves a dropped key column with a `sum`/`mean` aggregate is refused with a message
   naming the column and the rung.
-- AC: a test proves z0 derived from the z5 rung equals z0 derived from the base (associativity along
-  the ladder) on the fixture.
+- AC: a test proves z0 derived from the z5 rung equals z0 derived from the base on the
+  `lf2025-evt-hierarchy.csv` fixture (each rung's key tuple is a subset of the finer rung's; `sum`
+  is associative).
 - Priority: P0. Reviewed on its own before FR-6 lands.
 
 ### FR-5 Latitude-band folding in `derive_and_write_day_tiers` (platform change)
@@ -174,6 +213,11 @@ function — `gap_fill.py:1204,1354,1541,1822,1973,2276`, `drain.py:659`,
 `pipeline/direct/vegetation_type/` (files: `source.py`, `legend.py`, `reducer.py`, `rows.py`,
 `watermark.py`, `adapter.py`, `forward.py`, `products.py`, `support.py`, `__main__.py`, and a
 vendored `data/LF2025_EVT.csv` with its sha256 pinned in `legend.py`):
+- `legend.py` parses the vendored CSV keyed by `VALUE`; the per-`VALUE` row supplies
+  `EVT_GP`, `EVT_GP_N`, `EVT_PHYS`, `EVT_LF`, `R,G,B`. A **group-name lookup by `EVT_GP` alone
+  refuses when the code maps to more than one `EVT_GP_N`** (codes 785 and 826 in LF2025) rather
+  than picking one; callers that need a group name at z9 join by `(evt_group_code)` and surface the
+  refusal as "name ambiguous in legend" — never a guessed name.
 - `source.py` fetches `LF2025_EVT_CONUS/ImageServer/exportImage` windows ≤ 2,000 × 2,000 px with
   `bboxSR=imageSR=5070&format=tiff&pixelType=S16&noDataInterpretation=esriNoDataMatchAny&interpolation=RSP_NearestNeighbor&f=image`
   over a disjoint window tiling of the envelope's 5070 footprint (~306 windows). Any interpolating
@@ -193,6 +237,8 @@ vendored `data/LF2025_EVT.csv` with its sha256 pinned in `legend.py`):
 - `pipeline/validation/vegetation_type.py` re-identifies N random land points against
   `.../ImageServer/identify` and asserts the returned class has `pixel_count > 0` in the written
   cell or falls in that cell's `Other` mass; mismatches name the point, the cell and the source response.
+- AC: `legend.py` test — lookup of group name for 785 and 826 raises a typed refusal naming both
+  candidate names; lookup for an unambiguous code returns one name; sha256 mismatch refuses the CSV.
 - AC: reducer tests on the eight retained windows reproduce `classes_per_cell.json` rows/cell within
   the tile range; a two-window fixture proves straddle-cell sums.
 - AC: the writer refuses a window whose TIFF dimensions or pixel type differ from the request.
@@ -227,8 +273,11 @@ The reader answers one of three shapes and names which:
    projection does (ROW-CAP §3.4: z10 fits at 13.9 k rows);
 3. a typed **`bbox_too_large_for_zoom`** refusal otherwise (z9 at 55.6 k projected rows), pointing the
    client at the raster.
-Fractions are computed here from `pixel_count`; the legend names are joined here from the vendored
-CSV; every response carries `class_system`, `release_day` and the vintage label.
+Fractions are computed here from `pixel_count`; legend names are joined here from the vendored CSV
+— `evt_name` by `evt_code` at z13, `evt_group_name` by `evt_group_code` at z9 through the refusing
+lookup of FR-6 (an ambiguous group is returned with `name: null, nameAmbiguous: true`, never a
+guess); every response carries `class_system`, `release_day`, the served rung's key tuple and the
+vintage label.
 - AC: tests cover each shape and the boundary between them with synthetic parts; no network.
 - AC: the reader never reads `kind=forecast` (hardcoded `observed`, as `planes/watersheds.py:45`).
 - Priority: P0.
@@ -277,8 +326,8 @@ would say so.
   `src/lib/map/sources.ts:108-110`) at z ≥ 9; lattice cells filled by dominant class at z ≤ 8; hover
   and click read FR-8 at every zoom — the picture never answers, the lattice does.
 - `src/lib/environmental/vegetation-type-legend.ts`: a generated `evt_code → {name, group, phys,
-  lifeform, rgb}` table from the same vendored CSV, with a test that its sha256 matches the Python
-  pin so the client legend cannot drift from the tiles.
+  lifeform, rgb}` table from the same vendored CSV (keyed by `VALUE`, so no ambiguity arises), with
+  a test that its sha256 matches the Python pin so the client legend cannot drift from the tiles.
 - `src/lib/map/layer-legends.ts`: a spec whose colours are imported from the renderer module
   (rule 1 at `layer-legends.ts:8-11`); legend shows the 10 lifeform classes with the number of
   finer classes each summarises, and the hover card shows the composition.
@@ -351,8 +400,10 @@ string is confirmed against landfire.gov terms before Phase 3 publishes it (PLAN
 - **Cutoff semantics.** The 1 % rule is near-inert at 0.005° (ROW-CAP §2.2) and does not bound
   rows/cell; it is kept because it is the declared owner rule (D7). The reducer reports the dropped
   mass per window in its receipt.
-- **`first` as an aggregate for dropped keys** is lawful only because the legend nests
-  functionally (FR-3 AC). If a future legend breaks the nesting, the test fails before the schema does.
+- **The joint-key ladder is the honesty mechanism.** A coarse rung reports exactly the hierarchy
+  columns it keys on and nulls the rest; no label is ever inferred from a sibling column. The
+  measured non-nesting (Background) is pinned as test expectations so a legend change is a test
+  change, never a silent relabel.
 - **Raster catalogue in Postgres.** `geo.raster_release` exists in `drizzle/0000_baseline.sql`.
   `conductor/tracks/environmental_parquet_serving_20260912/spec.md:13` permits "small reference
   lookups explicitly outside the environmental payload plane"; a release row is one. The soil stub

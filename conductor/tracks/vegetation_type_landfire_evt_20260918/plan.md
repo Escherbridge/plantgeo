@@ -25,6 +25,13 @@ watch it fail, implement, refactor. `path:line` citations are the touchpoints as
 Source of truth for decisions: `.omc/research/runbook-20260915-vegetation-type/PLAN.md` §8 and
 `ROW-CAP-ANALYSIS.md` §4. Nothing below reopens them.
 
+**Amendment 2026-09-18 (slice p1a measurement):** the LF2025 legend does not nest functionally
+(`EVT_GP→EVT_PHYS` violated by 47/193 groups, `EVT_PHYS→EVT_LF` by 4/20, `EVT_GP→EVT_GP_N` not 1:1;
+fixture `services/agri-data-service/tests/parquet/fixtures/lf2025-evt-hierarchy.csv`). The
+vocabulary ladder is therefore a **joint-key ladder** — `{13: ("evt_code",), 9: ("evt_group_code",
+"evt_phys","evt_lifeform"), 5: ("evt_phys","evt_lifeform"), 0: ("evt_lifeform",)}` — with dropped
+codes `null`, one `how` per column across all rungs. Tasks below reflect that; spec FR-3/FR-4/FR-6.
+
 ---
 
 ## Phase 1: Schema first, then banding, then the lane
@@ -39,8 +46,9 @@ executor. Three pushes minimum: 1A, 1B, then 1C+1D.
       lane using `key_columns` only; assert z9/z5/z0 output is byte-identical before and after the
       change (golden frame). (TDD: write test, implement, refactor)
 - [ ] Task: Add `key_columns_by_tier: Mapping[ZoomTier, tuple[str, ...]] | None = None` to
-      `GridAggregation` at `services/agri-data-service/src/agri_data_service/warehouse/parquet/tiers.py:153-171`;
-      docstring states the `first`/`null` rule for dropped keys, terse; rationale goes to
+      `GridAggregation` at `services/agri-data-service/src/agri_data_service/warehouse/parquet/tiers.py:153-171`
+      with resolver `grid_key_columns(strategy, tier)`; docstring states the `first`/`null` rule for
+      dropped keys and that one `how` holds per column across all rungs, terse; rationale goes to
       `warehouse/parquet/AGENTS.md`.
 - [ ] Task: Teach `_derive_grid_tier` (`tiers.py:416-444`) to resolve the tier's key tuple; refuse a
       dropped key column whose `ColumnAggregation.how` is not `first`/`null`, naming column and rung
@@ -48,11 +56,18 @@ executor. Three pushes minimum: 1A, 1B, then 1C+1D.
 - [ ] Task: Extend `register_tier_derivation`'s conflict/validation path (`tiers.py:700-780`,
       `named = {...}` at `:777`) so per-tier keys are included in the "every named column exists in
       the schema" check. Test: a tier tuple naming an unknown column is refused at registration.
-- [ ] Task: Associativity test — z0 from z5 equals z0 from base on a fixture with a three-level
-      functional hierarchy; documents why `first` is lawful.
+- [ ] Task: Ladder guard tests in `tests/parquet/test_grid_per_tier_keys.py` over
+      `tests/parquet/fixtures/lf2025-evt-hierarchy.csv` (all 1,069 rows): (a) `VALUE→EVT_GP` is
+      functional (0 violations); (b) `EVT_GP→EVT_PHYS` has exactly 47 violating groups and
+      `EVT_PHYS→EVT_LF` exactly 4 — pinned as expectations so a legend change is a test change;
+      (c) a `first` aggregate on `evt_phys` or `evt_lifeform` at z9 is REFUSED for a lane whose key
+      tuple drops them while the fixture shows them non-functional — i.e. the joint-key ladder is
+      the only registration that passes; (d) z0 from z5 equals z0 from base under the joint ladder
+      (each rung's key tuple is a subset of the finer rung's; `sum` is associative).
 - [ ] Task: Re-document `MAX_DERIVATION_ROWS` at `tiers.py:97-101` as "rows one `derive_tier` CALL
-      may hold" (comment only; ROW-CAP §4.1 pt 1) and update `pipeline/parquet/AGENTS.md:1058-1063`
-      to point at 1B.
+      may hold" (comment only; ROW-CAP §4.1 pt 1) with the full reading in
+      `warehouse/parquet/AGENTS.md`; `pipeline/parquet/AGENTS.md:1058-1063` is p1b's file and gets
+      its pointer updated there (see Partitions).
 - [ ] Verification: monitor sweep (`uv run --frozen pytest tests/parquet`, `mypy --strict`, ruff
       deferred per owner); independent `/code-review high` verdict recorded in
       `conductor/tracks/vegetation_type_landfire_evt_20260918/evidence/review-1A.md` [checkpoint marker]
@@ -92,7 +107,9 @@ executor. Three pushes minimum: 1A, 1B, then 1C+1D.
       edits; assert via the existing `tests/parquet/test_derivation_and_drain.py` and
       `tests/parquet/test_gap_fill.py` passing untouched.
 - [ ] Task: Document the design in `pipeline/parquet/AGENTS.md` (replace the "needs this function
-      taught to fold" paragraph at `:1058-1063` with the banded contract and its invariant).
+      taught to fold" paragraph at `:1058-1063` with the banded contract and its invariant), and in
+      the same edit repoint that paragraph's row-cap reference to the per-call reading now in
+      `warehouse/parquet/AGENTS.md` (p1a moved it; the stale pointer would say "one lane-day").
 - [ ] Verification: monitor sweep of `tests/parquet`; `oh-my-claudecode:critic` asked to refute the
       exactness claim (flooring composition, z0-from-z5); `/code-review high`; verdict in
       `evidence/review-1B.md` [checkpoint marker]
@@ -101,19 +118,24 @@ executor. Three pushes minimum: 1A, 1B, then 1C+1D.
 
 - [ ] Task: Write `docs/lanes/vegetation-type.md` first (seven sections as `docs/lanes/watersheds.md:20-385`),
       so `floor_basis` can cite it. State the ~0.005° rung, the 1 % cutoff, NoData-as-a-class-row,
-      `horizon: none`.
+      the joint-key ladder and the measured non-nesting that forces it, `horizon: none`.
 - [ ] Task: Vendor `LF2025_EVT.csv` (from `.omc/research/runbook-20260915-vegetation-type/LF2025_EVT.csv`,
       309,948 bytes, 1,069 rows) at `pipeline/direct/vegetation_type/data/LF2025_EVT.csv`; `legend.py`
-      pins its sha256 and parses `VALUE, EVT_NAME, EVT_GP, EVT_GP_N, EVT_PHYS, EVT_LF, R, G, B`.
-      Tests: checksum mismatch refuses; `EVT_GP → EVT_PHYS → EVT_LF` is functional (the `first`
-      lawfulness test, FR-3); NoData/`Other` sentinels are not legend members.
+      pins its sha256 and parses `VALUE, EVT_NAME, EVT_GP, EVT_GP_N, EVT_PHYS, EVT_LF, R, G, B`
+      keyed by `VALUE`. **`legend.py` must refuse an ambiguous `EVT_GP→EVT_GP_N` join** — a
+      group-name lookup by code alone raises a typed refusal naming every candidate name when the
+      code maps to more than one (785 and 826 in LF2025), and never picks one. Tests: checksum
+      mismatch refuses; `VALUE→EVT_GP` functional; lookups for 785/826 raise with both names; an
+      unambiguous code returns one name; NoData/`Other` sentinels are not legend members.
 - [ ] Task: `warehouse/schemas/vegetation_type.py` — `VEGETATION_TYPE_STREAM`, grain
       `("cell_lon","cell_lat","evt_code")`, arrow schema per spec FR-3, `register_tier_derivation`
       with `GridAggregation(key_columns=("evt_code",), key_columns_by_tier={13: ("evt_code",),
-      9: ("evt_group_code",), 5: ("evt_phys",), 0: ("evt_lifeform",)}, aggregations=(sum pixel_count,
-      first/null per spec))`, `band_height_degrees=1.0`, `required_at_base=("evt_code",
-      "evt_group_code","evt_phys")`. Test: schema conformance of a reducer output frame; a frame with
-      a fraction column is refused.
+      9: ("evt_group_code","evt_phys","evt_lifeform"), 5: ("evt_phys","evt_lifeform"),
+      0: ("evt_lifeform",)}, aggregations=(sum pixel_count; null evt_code, evt_group_code, evt_phys;
+      first class_system, observed_at, data_available_at, release_day))`, `band_height_degrees=1.0`,
+      `required_at_base=("evt_code","evt_group_code","evt_phys")`. Tests: schema conformance of a
+      reducer output frame; a frame with a fraction column is refused; each `first` column has
+      exactly one distinct value per partition.
 - [ ] Task: `pipeline/direct/vegetation_type/source.py` — window tiling of the envelope's 5070
       footprint (≤ 2,000 px, disjoint, deterministic order) and the `exportImage` request with the
       `Final` parameter string (`RSP_NearestNeighbor`, S16, `esriNoDataMatchAny`). Tests: tiling
@@ -124,7 +146,8 @@ executor. Three pushes minimum: 1A, 1B, then 1C+1D.
       mass reported. Tests: on the eight retained windows, rows/cell within `classes_per_cell.json`
       tile range; `sum(pixel_count)` per cell (incl. sentinels) equals footprint pixel count; a
       two-window straddle fixture sums correctly.
-- [ ] Task: `rows.py` + `support.py` — reducer output → arrow rows with `class_system`, legend codes,
+- [ ] Task: `rows.py` + `support.py` — reducer output → arrow rows with `class_system`, legend codes
+      (`evt_group_code`, `evt_phys`, `evt_lifeform` from the `VALUE` row),
       `observed_at`/`data_available_at` from the cited release constants, `release_day` broadcast;
       band-major sort by `cell_lat`; ~250,000 rows/part. Test: part count and row order on a
       synthetic 3-band frame.
@@ -181,10 +204,11 @@ catalogue as a snapshot, and answers the agent at the selected place.
 
 - [ ] Task: `planes/vegetation_type.py` — bbox + rung read over `kind=observed` only
       (`planes/watersheds.py:45` pattern); composition / dominant-class projection / refusal shapes
-      per spec FR-8; fractions from `pixel_count`; legend join from the vendored CSV. Tests in
-      `tests/parquet/test_vegetation_type_serving.py` (model:
-      `tests/parquet/test_watersheds_serving.py`): each shape, the budget boundary, `release_day`
-      and `class_system` on every response.
+      per spec FR-8; fractions from `pixel_count`; legend join from the vendored CSV by `evt_code`
+      at z13 and by `evt_group_code` at z9 through the refusing lookup (ambiguous → `name: null,
+      name_ambiguous: true`). Tests in `tests/parquet/test_vegetation_type_serving.py` (model:
+      `tests/parquet/test_watersheds_serving.py`): each shape, the budget boundary, `release_day`,
+      `class_system` and the served key tuple on every response, the ambiguous-group path.
 - [ ] Task: Static coverage semantics — assert `resolve_static_lane` reports `current` vs `stale`
       vs `source_empty` vs `watermark_unread` distinctly for this lane, and that "current" and "not
       looked at" are different strings in the coverage inventory (layer-lanes §1a). Test with the
@@ -264,9 +288,10 @@ high zoom, and the About page states what ships.
 
 - [ ] Task: `src/lib/environmental/vegetation-type-legend.ts` — generated table
       `evt_code → {name, groupCode, groupName, phys, lifeform, rgb}` from the vendored CSV via
-      `scripts/generate-vegetation-type-legend.mjs`; test asserts the embedded CSV sha256 equals the
-      Python pin (`legend.py`) so client and tiles cannot drift; exports
-      `VEGETATION_TYPE_LIFEFORM_COLORS` (10) and `VEGETATION_TYPE_SENTINEL_LABELS`.
+      `scripts/generate-vegetation-type-legend.mjs` (keyed by `VALUE`, so the client table carries no
+      ambiguous join); test asserts the embedded CSV sha256 equals the Python pin (`legend.py`) so
+      client and tiles cannot drift; exports `VEGETATION_TYPE_LIFEFORM_COLORS` (10) and
+      `VEGETATION_TYPE_SENTINEL_LABELS`.
 - [ ] Task: `src/components/map/layers/VegetationTypeLayer.tsx` — raster source via
       `createPmtilesSource` (`src/lib/map/sources.ts:108-110`) at z ≥ 9 from
       `getPublishedVegetationTypeRaster`; lattice fill by dominant class at z ≤ 8 from
@@ -305,7 +330,7 @@ high zoom, and the About page states what ships.
 | risk | phase | mitigation in this plan |
 |---|---|---|
 | executor memory unknown; grid derivation has no memory guard | 1 | read the limit first (1D); 1.0° bands asserted ≤ 5 M rows and ≤ 1/3 memory in a test; banding is exact so bands can shrink without changing results |
-| `first` on dropped keys is only lawful if the legend nests | 1 | the functional-dependency test over the vendored CSV runs on every sweep |
+| the legend does not nest (47/193, 4/20 measured); any `first` on a hierarchy column fabricates labels | 1 | joint-key ladder with `null` on dropped codes; the non-nesting counts are pinned as test expectations in `test_grid_per_tier_keys.py`; `legend.py` refuses the ambiguous `EVT_GP→EVT_GP_N` join |
 | z9–z10 cannot serve composition rows at any cap | 2, 3 | three named shapes in the reader; raster is the picture; dominant-class projection is the stated fallback |
 | raster catalogue may not belong in Postgres under the pivot | 3 | OQ-3 asked before publish; default is the brief's `raster-catalog.ts` path |
 | `about-page.test.tsx` forbids the word LANDFIRE | 4 | flipped deliberately with a hand-spelled positive claim |
@@ -319,13 +344,19 @@ Candidate disjoint write partitions per phase, for `metadata.json` (`confidence:
 `computed_at_commit: ec172e88`; re-verify `owns` with a grep when HEAD has moved). `status: future`
 files do not exist yet.
 
+**Cross-partition pointer obligation:** `pipeline/parquet/AGENTS.md:1058-1063` belongs to
+`p1b-banding`, but p1a relocated the authoritative `MAX_DERIVATION_ROWS` reading ("rows one
+`derive_tier` CALL may hold") into `warehouse/parquet/AGENTS.md`. p1b must update that paragraph's
+row-cap pointer to the per-call reading in `warehouse/parquet/AGENTS.md` in the same edit that
+documents banding; p1a must not touch `pipeline/parquet/AGENTS.md`.
+
 | phase | partition id | owns (existing) | owns (`status: future`) | shared-read only |
 |---|---|---|---|---|
-| 1A | `p1a-grid-keys` | `services/agri-data-service/src/agri_data_service/warehouse/parquet/tiers.py`, `services/agri-data-service/src/agri_data_service/warehouse/parquet/AGENTS.md`, `services/agri-data-service/tests/parquet/test_tiers.py` | `services/agri-data-service/tests/parquet/test_grid_per_tier_keys.py` | `pipeline/parquet/derivation.py` |
-| 1B | `p1b-banding` | `services/agri-data-service/src/agri_data_service/pipeline/parquet/derivation.py`, `services/agri-data-service/src/agri_data_service/pipeline/parquet/objectstore.py`, `services/agri-data-service/src/agri_data_service/pipeline/parquet/AGENTS.md`, `services/agri-data-service/tests/parquet/test_derivation_and_drain.py`, `services/agri-data-service/tests/parquet/test_objectstore_writer.py` | `services/agri-data-service/tests/parquet/test_banded_derivation.py` | `tiers.py` (reads `band_height_degrees` after 1A lands — sequence 1A before 1B, or 1B owns the `TierDerivation` field addition and 1A stops at `GridAggregation`) |
-| 1C | `p1c-lane-package` | — | `services/agri-data-service/src/agri_data_service/pipeline/direct/vegetation_type/{__init__,__main__,source,legend,reducer,rows,support,watermark,stage,adapter,forward,products}.py`, `services/agri-data-service/src/agri_data_service/pipeline/direct/vegetation_type/data/LF2025_EVT.csv`, `services/agri-data-service/src/agri_data_service/warehouse/schemas/vegetation_type.py`, `services/agri-data-service/src/agri_data_service/pipeline/validation/vegetation_type.py`, `docs/lanes/vegetation-type.md`, `services/agri-data-service/tests/direct/test_vegetation_type_*.py`, `services/agri-data-service/tests/parquet/test_vegetation_type_schema.py` | `pipeline/direct/watersheds/*` (template), `pipeline/direct/burn_severity/stage.py` |
+| 1A | `p1a-grid-keys` | `services/agri-data-service/src/agri_data_service/warehouse/parquet/tiers.py`, `services/agri-data-service/src/agri_data_service/warehouse/parquet/AGENTS.md`, `services/agri-data-service/tests/parquet/test_tiers.py` | `services/agri-data-service/tests/parquet/test_grid_per_tier_keys.py`, `services/agri-data-service/tests/parquet/fixtures/lf2025-evt-hierarchy.csv` | `pipeline/parquet/derivation.py`; `pipeline/parquet/AGENTS.md` (read only — the pointer update is p1b's) |
+| 1B | `p1b-banding` | `services/agri-data-service/src/agri_data_service/pipeline/parquet/derivation.py`, `services/agri-data-service/src/agri_data_service/pipeline/parquet/objectstore.py`, `services/agri-data-service/src/agri_data_service/pipeline/parquet/AGENTS.md` (incl. the `:1058-1063` row-cap pointer → `warehouse/parquet/AGENTS.md`), `services/agri-data-service/tests/parquet/test_derivation_and_drain.py`, `services/agri-data-service/tests/parquet/test_objectstore_writer.py` | `services/agri-data-service/tests/parquet/test_banded_derivation.py` | `tiers.py` (reads `band_height_degrees` after 1A lands — sequence 1A before 1B, or 1B owns the `TierDerivation` field addition and 1A stops at `GridAggregation`) |
+| 1C | `p1c-lane-package` | — | `services/agri-data-service/src/agri_data_service/pipeline/direct/vegetation_type/{__init__,__main__,source,legend,reducer,rows,support,watermark,stage,adapter,forward,products}.py`, `services/agri-data-service/src/agri_data_service/pipeline/direct/vegetation_type/data/LF2025_EVT.csv`, `services/agri-data-service/src/agri_data_service/warehouse/schemas/vegetation_type.py`, `services/agri-data-service/src/agri_data_service/pipeline/validation/vegetation_type.py`, `docs/lanes/vegetation-type.md`, `services/agri-data-service/tests/direct/test_vegetation_type_*.py`, `services/agri-data-service/tests/parquet/test_vegetation_type_schema.py` | `pipeline/direct/watersheds/*` (template), `pipeline/direct/burn_severity/stage.py`, `tests/parquet/fixtures/lf2025-evt-hierarchy.csv` |
 | 1D | `p1d-registration` | `services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py`, `services/agri-data-service/src/agri_data_service/execution/job_executor_service.py`, `services/agri-data-service/tests/test_job_executor_service.py`, `services/agri-data-service/tests/parquet/test_lane_contract.py`, `conductor/RUNBOOK.md` (one new § only) | `conductor/tracks/vegetation_type_landfire_evt_20260918/evidence/*` | imports 1C's `products.py`/`watermark.py` — sequence after 1C |
-| 2 | `p2-python-plane` | — | `services/agri-data-service/src/agri_data_service/planes/vegetation_type.py`, `services/agri-data-service/tests/parquet/test_vegetation_type_serving.py` | `planes/watersheds.py`, `parquet_ops/serving.py` |
+| 2 | `p2-python-plane` | — | `services/agri-data-service/src/agri_data_service/planes/vegetation_type.py`, `services/agri-data-service/tests/parquet/test_vegetation_type_serving.py` | `planes/watersheds.py`, `parquet_ops/serving.py`, `pipeline/direct/vegetation_type/legend.py` (the refusing lookup) |
 | 2 | `p2-ts-reader-slider` | `src/lib/server/services/parquet-trpc-readers.ts`, `src/lib/server/trpc/routers/environmental.ts`, `src/lib/server/services/parquet-slider-capabilities.ts`, `src/lib/map/layer-registry.ts`, `src/__tests__/services/parquet-slider-capabilities.test.ts`, `src/__tests__/lib/map/layer-registry.test.ts` | — | `src/lib/server/services/parquet-plane-client.ts` |
 | 2 | `p2-agent-tools` | `src/lib/server/services/regional-evidence-tools.ts`, `src/__tests__/services/regional-evidence-tools.test.ts` | `src/lib/server/services/vegetation-type-tools.ts`, `src/__tests__/services/vegetation-type-tools.test.ts` | `src/lib/server/services/land-context-tools.ts` (pattern) |
 | 3 | `p3-raster-scripts` | `scripts/raster/AGENTS.md` | `scripts/raster/build-evt-mosaic.py`, `scripts/raster/build-evt-tiles.py`, `scripts/raster/verify-evt-tiles.py`, `scripts/raster/publish-evt-raster.py` | `scripts/raster/build-soil-tiles.py`, `scripts/raster/publish-soil-rasters.py` |

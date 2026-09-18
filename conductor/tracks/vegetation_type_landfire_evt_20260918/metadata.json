@@ -22,13 +22,17 @@
     "slices": [
       {
         "id": "p1a-grid-keys",
-        "task": "GridAggregation.key_columns_by_tier (default None keeps every lane byte-identical); dropped keys first/null; MAX_DERIVATION_ROWS re-documented as per-call",
+        "task": "GridAggregation.key_columns_by_tier (default None keeps every lane byte-identical); dropped keys first/null; MAX_DERIVATION_ROWS re-documented as per-call; legend guard tests pin measured NON-nesting (47/193 groups, 4/20 phys); MUST NOT touch pipeline/parquet/AGENTS.md",
         "owns": [
           "services/agri-data-service/src/agri_data_service/warehouse/parquet/tiers.py",
           "services/agri-data-service/src/agri_data_service/warehouse/parquet/AGENTS.md",
           "services/agri-data-service/tests/parquet/test_tiers.py",
           {
             "path": "services/agri-data-service/tests/parquet/test_grid_per_tier_keys.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/parquet/fixtures/lf2025-evt-hierarchy.csv",
             "status": "future"
           }
         ],
@@ -37,7 +41,7 @@
       },
       {
         "id": "p1b-banding",
-        "task": "TierDerivation.band_height_degrees; band edges multiples of 0.2 deg; z9/z5 per band, z0 from z5; mean and sha256-lines refused in banded mode; part receipts carry cell_lat bounds",
+        "task": "TierDerivation.band_height_degrees; band edges multiples of 0.2 deg; z9/z5 per band, z0 from z5; mean and sha256-lines refused in banded mode; part receipts carry cell_lat bounds; also repoint pipeline/parquet/AGENTS.md:1058-1063 row-cap reference to the per-call reading in warehouse/parquet/AGENTS.md",
         "owns": [
           "services/agri-data-service/src/agri_data_service/pipeline/parquet/derivation.py",
           "services/agri-data-service/src/agri_data_service/pipeline/parquet/objectstore.py",
@@ -56,7 +60,7 @@
       },
       {
         "id": "p1c-lane-package",
-        "task": "pipeline/direct/vegetation_type: windowed LFPS exportImage fetch, EPSG:5070 composition reducer, 1 percent cutoff to evt_code -1, NoData class row -9999, resumable windows, about 250k rows per part band-major; schema; validation; lane doc",
+        "task": "pipeline/direct/vegetation_type: windowed LFPS exportImage fetch, EPSG:5070 composition reducer, 1 percent cutoff to evt_code -1, NoData class row -9999, resumable windows, about 250k rows per part band-major; schema; validation; lane doc; key_columns_by_tier is the JOINT ladder {13:(evt_code,),9:(evt_group_code,evt_phys,evt_lifeform),5:(evt_phys,evt_lifeform),0:(evt_lifeform,)}; legend.py refuses ambiguous EVT_GP->EVT_GP_N (785, 826)",
         "owns": [
           {
             "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/vegetation_type/**",
@@ -286,8 +290,12 @@
       "NoData is a class row (evt_code -9999), not a per-row count: a per-row count summed over class rows double-counts",
       "about-page.test.tsx asserts LANDFIRE is named nowhere; phase 4 flips it deliberately, not by accident",
       "getPublishedSoilRasters returns [] today: there is no raster draw path to copy; phase 3 builds it",
-      "never use the repo playwright.config.ts (it boots the app locally); use the standalone evidence config"
+      "never use the repo playwright.config.ts (it boots the app locally); use the standalone evidence config",
+      "the LF2025 legend does NOT nest functionally (47/193 groups span physiognomies, 4/20 physiognomies span lifeforms): never aggregate evt_phys/evt_lifeform with first below the rung that keys them",
+      "one how per column across all rungs; a per-rung how is not a platform concept"
     ],
-    "integration_slice": null
+    "integration_slice": null,
+    "amended_at": "2026-09-18T14:01:46.002004+00:00",
+    "amendment": "FR-3/FR-4/1A/1C amended after p1a measured the legend; see plan.md Overview \"Amendment 2026-09-18\""
   }
 }
