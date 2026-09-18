@@ -160,14 +160,16 @@ export function useWatershedsQuery(
 }
 
 /**
- * SSURGO map units for the viewport, read from the warehouse (uncovered ground is warmed
- * from USDA Soil Data Access on first sight).
- * `zoom` selects render granularity server-side (real map units at high zoom,
- * progressively coarser drainage-class averages below it -- see
- * `src/lib/server/services/usda-soil.ts` §soil-survey-zoom) and is part of the query
- * key, so the map and the panel must pass the *same* zoom or they split into two
- * cache entries -- both read it from the one `useViewportBounds()` derivation, same
- * as `bbox`. Omitted callers keep the pre-zoom-aware behavior.
+ * SSURGO map units for the viewport. `environmental.getSoilSurvey` is currently an
+ * unconditional stub answering `soil_survey_parquet_lane_not_published`: no lane publishes
+ * the survey and nothing proxies USDA Soil Data Access (`usda-soil.ts` no longer exists), so
+ * every call returns an empty, unavailable collection until a soil-survey lane ships.
+ * `zoom` is still validated and selects render granularity server-side (real map units at
+ * high zoom, progressively coarser drainage-class averages below it -- see
+ * `src/lib/server/services/zoom-granularity.ts`) and is part of the query key, so the map
+ * and the panel must pass the *same* zoom or they split into two cache entries -- both read
+ * it from the one `useViewportBounds()` derivation, same as `bbox`. Omitted callers keep
+ * the pre-zoom-aware behavior.
  */
 export function useSoilSurveyQuery(
   bbox: string | null | undefined,

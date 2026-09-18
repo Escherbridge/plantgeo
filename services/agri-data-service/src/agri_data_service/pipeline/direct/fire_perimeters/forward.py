@@ -91,6 +91,7 @@ if TYPE_CHECKING:
     from agri_data_service.foundation.parquet.lane_contract import SourceWatermark
     from agri_data_service.foundation.parquet.paths import PartitionDayStatus
     from agri_data_service.foundation.parquet.zoom import ZoomTier
+    from agri_data_service.pipeline.direct.fire_perimeters.rows import FirePerimeterPopulation
     from agri_data_service.pipeline.direct.fire_perimeters.watermark import DirectWatermarkReading, PublishedLadder
     from agri_data_service.pipeline.parquet.availability_index import AvailabilityStorage
     from agri_data_service.pipeline.parquet.lane_registry import LaneRegistration
@@ -127,18 +128,23 @@ FIRE_PERIMETERS_TIME_BUDGET_OUTCOME: Final = TIME_BUDGET_EXHAUSTED
 #:
 #: THE TWO CELLS BELOW ARE NOT THE SAME ANSWER TO THE SAME QUESTION, and the whole "fire-perimeters
 #: refuses while watersheds publishes" comparison turns on that. A WFIGS record whose identity will
-#: not build is COUNTED as `rejected` and the snapshot publishes (`rows.py:242`) -- byte-identical to
-#: what `watersheds` does with `rejected_basins`. A perimeter whose geometry is invalid or empty
-#: refuses the WHOLE snapshot (`support.py:75`) -- and so does watersheds (`watersheds/support.py:130`).
-#: The two writers' declared contracts are IDENTICAL on both axes. What differs is which defect their
-#: live data happens to contain, which is why one lane is blocked in production and the other is not.
+#: not build is COUNTED as `rejected` and the snapshot publishes (`rows.py::fire_perimeter_population`)
+#: -- byte-identical to what `watersheds` does with `rejected_basins`. A perimeter whose geometry is
+#: STILL invalid or empty AFTER `support.py`'s repair chain refuses the WHOLE snapshot -- the same
+#: `refuse_whole_release` every repairing sibling (`evacuation_zones`, `burn_severity`, `drought`)
+#: declares, and the same word `watersheds` declares for a shape that converts to empty. The chain is
+#: `evacuation_zones`'s exactly and strictly stricter than the other two, which check only `is_empty`
+#: after repair (`burn_severity/support.py:147`, `drought/support.py:128`); this lane, like the
+#: trigger, also checks `is_valid`.
 #:
-#: THE GEOMETRY REFUSAL IS DELIBERATE AND IS NOT THIS PASS'S TO CHANGE. Its basis is not taste:
-#: `geo_features_sync_geom` raises SQLSTATE 22023 for an invalid shape and aborts the INSERT that
-#: carried it, so PostgreSQL never held such a perimeter either. Dropping it here would publish a
-#: version the PostgreSQL population disagrees with; keeping it would publish a shape PostGIS refuses.
-#: If an owner decides a named, counted loss is preferable to a blocked lane, the change is to
-#: `support.py`'s refusal plus this declaration, together, in one diff.
+#: THE POLICY NAMES THE FATE OF A SHAPE WITH NO HONEST REPAIR, NOT WHETHER A REPAIR IS ATTEMPTED.
+#: Until 2026-09-15 this lane refused every INVALID shape outright, on a reading of the PostGIS
+#: trigger that was the opposite of what `drizzle/0000_baseline.sql:106-159` does; with 41 of 99 live
+#: perimeters invalid that day, it failed every tick. `support.py` now runs the trigger's own
+#: ST_MakeValid / ST_CollectionExtract chain and flags each row it changed; the flag is printed as
+#: `perimeters_repaired` / `geometry_repairs` on the report and as the
+#: `fire_perimeters_forward_geometry_repaired` event, never written to the frozen Parquet schema.
+#: History and the schema decision: `fire_perimeters/AGENTS.md`, "Geometry repair".
 WRITER_CONTRACT: Final = DirectWriterContract(
     slug="fire-perimeters",
     identity_defect=SKIP_AND_COUNT,
@@ -159,7 +165,10 @@ WRITER_CONTRACT: Final = DirectWriterContract(
     "lane's coverage has only ONE bound: skipping would leave the previously published version serving "
     "under a coverage claim this turn never re-proved, and publishing over an unstated extent would "
     "stamp a version whose coverage nobody can cite (source.py:86). Evacuation-zones is bounded twice "
-    "and can therefore skip safely; see that writer's own contract for the other half of the split.",
+    "and can therefore skip safely; see that writer's own contract for the other half of the split. "
+    "The geometry refusal applies AFTER support.py's ST_MakeValid / ST_CollectionExtract chain -- the "
+    "baseline trigger's own -- so it names a shape with no honest repair, never a merely invalid ring; "
+    "a repaired row is flagged per row and printed on the report rather than accepted in silence.",
 )
 
 
@@ -254,8 +263,10 @@ async def run_fire_perimeters_forward(config: FirePerimetersForwardConfig) -> di
             "rows_conformed": len(population.rows),
             "rejected": population.rejected,
             "collapsed_duplicate_identifiers": population.collapsed,
+            "geometry_repaired": len(population.repairs),
         }
     )
+    _emit_geometry_repairs(run_id, population)
 
     store = ObjectStore.from_settings()
     ladder = await _retry_async(
@@ -297,7 +308,7 @@ async def run_fire_perimeters_forward(config: FirePerimetersForwardConfig) -> di
             lane=lane,
             today=today,
             source_fetched_at=source.fetched_at,
-            population_rows=len(population.rows),
+            population=population,
             reading=reading,
             ladder=ladder,
             verdict_state=verdict.state,
@@ -333,7 +344,7 @@ async def run_fire_perimeters_forward(config: FirePerimetersForwardConfig) -> di
         lane=lane,
         today=today,
         source_fetched_at=source.fetched_at,
-        population_rows=len(population.rows),
+        population=population,
         reading=reading,
         ladder=ladder,
         verdict_state=verdict.state,
@@ -527,13 +538,40 @@ def _tier_status_for_version(store: ObjectStore, day: date) -> dict[ZoomTier, Pa
     }
 
 
+def _repairs_summary(population: FirePerimeterPopulation) -> list[dict[str, object]]:
+    """Render every repaired perimeter as one small record, in row order, for the event and the report."""
+    return [
+        {"unique_fire_identifier": repair.unique_fire_identifier, "area_change": repair.area_change}
+        for repair in population.repairs
+    ]
+
+
+def _emit_geometry_repairs(run_id: str, population: FirePerimeterPopulation) -> None:
+    """Name every repaired incident on stderr, and stay silent when the chain changed nothing.
+
+    Per incident, so the fidelity trade `support.py` makes is auditable from the run log without
+    reading the Parquet back -- the frozen schema carries no repair column (`AGENTS.md`, "Where the
+    repair flag lives"). Silent on an all-valid population: an empty event every tick would be noise
+    a monitor learns to ignore, and the count already rides on `fire_perimeters_forward_fetched`.
+    """
+    if not population.repairs:
+        return
+    emit(
+        {
+            "event": "fire_perimeters_forward_geometry_repaired",
+            "run_id": run_id,
+            "repairs": _repairs_summary(population),
+        }
+    )
+
+
 def _report(  # noqa: PLR0913 - one coordinate of the finished turn per arg
     run_id: str,
     *,
     lane: LaneRegistration,
     today: date,
     source_fetched_at: datetime,
-    population_rows: int,
+    population: FirePerimeterPopulation,
     reading: DirectWatermarkReading,
     ladder: PublishedLadder,
     verdict_state: str,
@@ -557,7 +595,9 @@ def _report(  # noqa: PLR0913 - one coordinate of the finished turn per arg
         "nature": lane.nature,
         "today": today.isoformat(),
         "fetched_at": source_fetched_at.isoformat(),
-        "perimeters_conformed": population_rows,
+        "perimeters_conformed": len(population.rows),
+        "perimeters_repaired": len(population.repairs),
+        "geometry_repairs": _repairs_summary(population),
         "content_digest": reading.fresh_digest,
         "published_version_read_back": reading.published is not None,
         "row_count_short_circuit": reading.short_circuited,

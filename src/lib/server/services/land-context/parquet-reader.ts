@@ -9,12 +9,22 @@
  * as a real coverage finding — it reflects "nothing is wired in", not a
  * verified absence.
  *
- * TODO(worker-1/integrator): replace this module's bodies with real Parquet
- * reads against the boundary_versions / organizations_offices /
+ * TODO(lane owner): replace this module's bodies with real Parquet reads
+ * against the boundary_versions / organizations_offices /
  * public_contact_routes / place_office_topic_relationships / source_releases
- * lanes once `@/lib/server/db/schema/land-context` lands and the physical
- * lane layout is frozen. Keep the pruning-then-intersection call shape so
- * callers in this directory do not need to change.
+ * lanes. The schema this once waited on has landed
+ * (`@/lib/server/db/schema/land-context`, `drizzle/0003_land_context.sql`);
+ * what remains is the chartered ingest itself -- BLM is the only family
+ * cleared to acquire (rights-gate verdicts, 2026-09-12) -- and the physical
+ * lane layout. Keep the pruning-then-intersection call shape so callers in
+ * this directory do not need to change. Everything downstream is wired as of
+ * 2026-09-15: `reader.ts` passes `boundary` through as `sourceFeature`
+ * unchanged, the router decodes `boundary.geometryWkb` (hex WKB/EWKB, or
+ * `null` when the source has no geometry -- never an invented shape) via
+ * `./geometry/attach-decoded-geometry.ts`, and the map draws the result.
+ * `boundary.familyType` must use the keys `useLandContextQuery` maps to
+ * toggle groups: `parcel` | `land_use` | `electric_service_territory` |
+ * `blm_surface_management` | `state_managed_land`.
  */
 
 import type {

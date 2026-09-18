@@ -21,11 +21,13 @@ export function LandContextController() {
   const enabledGroups = useLandContextStore((state) => state.enabledGroups);
   const setResults = useLandContextStore((state) => state.setResults);
 
-  const { data, meta } = useLandContextQuery(selection, enabledGroups);
+  const { data, meta, status } = useLandContextQuery(selection, enabledGroups);
 
+  // `status` rides along so the store can tell a settled empty answer from one still in flight
+  // (`LandContextStatusNotice` must never say "no features" mid-request); one writer, one call.
   useEffect(() => {
-    setResults(data, meta);
-  }, [data, meta, setResults]);
+    setResults(data, meta, status);
+  }, [data, meta, status, setResults]);
 
   return null;
 }

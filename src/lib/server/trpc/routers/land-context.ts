@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { router, publicProcedure } from "@/lib/server/trpc/init";
 import {
+  attachDecodedGeometries,
+  attachDecodedGeometryToOne,
   draftInquiry,
   readBoundedAoiIntersection,
   readBoundaryByParcelKey,
@@ -47,7 +49,9 @@ export const landContextRouter = router({
   /**
    * Boundary resolution by point containment. Returns every containing
    * feature (never just the nearest), each with its overlap basis and
-   * source reference.
+   * source reference. Each result also carries `geometry`, the boundary's
+   * WKB decoded server-side (see `attachDecodedGeometry`): browser code may
+   * not import the decoder, and the frozen contract carries only hex WKB.
    */
   resolveBoundaryAtPoint: publicProcedure
     .input(
@@ -58,7 +62,9 @@ export const landContextRouter = router({
       })
     )
     .query(async ({ input }) => {
-      return readPointContainment(input.lon, input.lat, { maxFeatures: input.maxFeatures });
+      return attachDecodedGeometries(
+        await readPointContainment(input.lon, input.lat, { maxFeatures: input.maxFeatures })
+      );
     }),
 
   /**
@@ -75,14 +81,16 @@ export const landContextRouter = router({
       })
     )
     .query(async ({ input }) => {
-      return readBoundedAoiIntersection(input.bbox, { maxFeatures: input.maxFeatures });
+      return attachDecodedGeometries(
+        await readBoundedAoiIntersection(input.bbox, { maxFeatures: input.maxFeatures })
+      );
     }),
 
   /** Boundary resolution by a validated parcel key (county/source namespace + original ID). */
   resolveBoundaryByParcelKey: publicProcedure
     .input(parcelKeySchema)
     .query(async ({ input }) => {
-      return readBoundaryByParcelKey(input);
+      return attachDecodedGeometryToOne(await readBoundaryByParcelKey(input));
     }),
 
   /**

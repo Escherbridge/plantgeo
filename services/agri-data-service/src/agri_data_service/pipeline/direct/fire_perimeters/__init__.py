@@ -30,13 +30,15 @@ Modules, in dependency order:
 
 * `products.py`  -- the lane's identity, kind and tier ladder, read from the registry.
 * `source.py`    -- one bounded WFIGS `_Current` walk, reusing `ingest/wfigs.py`'s fetch and parse.
-* `support.py`   -- the DuckDB spatial session and the GeoJSON-to-WKB conversion that reproduces
-                    `geo.sync_feature_geom_from_properties`.
+* `support.py`   -- the DuckDB spatial session and the GeoJSON-to-WKB repair chain that reproduces
+                    `geo.sync_feature_geom_from_properties`, flagging every row it changed.
 * `rows.py`      -- conform one fetched population to `FIRE_PERIMETERS_SCHEMA`.
 * `watermark.py` -- reproduce the Postgres watermark's semantics against the object store.
 * `adapter.py`   -- write one version's base rung under the caller's lane-day lock.
 * `forward.py`   -- one bounded turn: fetch, resolve, publish at most one version, report.
-* `parity.py`    -- the read-only counted receipt against what PostgreSQL still holds.
+
+Rationale that outgrew a docstring -- the geometry-repair history and where the repair flag lives --
+is in this directory's `AGENTS.md`; the turn's shape is in `pipeline/direct/AGENTS.md`, "Fire perimeters".
 """
 
 from __future__ import annotations

@@ -73,6 +73,8 @@ export function LandContextPanel({
 }: LandContextPanelProps) {
   const budgetExceeded = useLandContextStore((state) => state.resultMeta?.budgetExceeded ?? null);
   const partialCoverage = useLandContextStore((state) => state.resultMeta?.partialCoverage ?? false);
+  const selection = useLandContextStore((state) => state.selection);
+  const queryStatus = useLandContextStore((state) => state.queryStatus);
 
   if (!data) {
     if (budgetExceeded) {
@@ -82,9 +84,21 @@ export function LandContextPanel({
         </div>
       );
     }
+    // Say what is actually true for this moment: no selection yet, a lookup pending or in
+    // flight (the store sets `idle` with a selection until the controller flips it), or a
+    // selection whose candidates are listed but none focused. The old fixed sentence read
+    // "select a point" right after the user had selected one.
+    const emptyMessage =
+      selection === null
+        ? "Click a point on the map, or pick a bounded project area, to see place details and public routes."
+        : queryStatus !== "settled" && queryStatus !== "error"
+          ? "Looking up what governs the selected place…"
+          : typeof resultsCount === "number" && resultsCount > 0
+            ? "Pick one of the listed candidates to see its details and public routes."
+            : "No admitted source answered for the selected place. The map notice states each family's gap.";
     return (
-      <div className="p-4 text-xs text-zinc-500">
-        Select a point or bounded area on the map to see place details and public routes.
+      <div className="p-4 text-xs text-zinc-500" role="status">
+        {emptyMessage}
       </div>
     );
   }

@@ -33,9 +33,9 @@ vi.mock("maplibre-gl", () => {
       };
     }
     // MapLibre's real `on`/`off` overload on a third, layer-id argument for a layer-scoped
-    // listener (`map.on("click", layerId, handler)`, as `LandContextLayer` uses for its
-    // hover/click wiring) -- this fake never filters by layer, so it just needs to find the
-    // actual handler regardless of which position it landed in.
+    // listener (`map.on("mousemove", layerId, handler)`, as `LandContextLayer` uses for its
+    // hover wiring; its click is a bare map listener) -- this fake never filters by layer, so
+    // it just needs to find the actual handler regardless of which position it landed in.
     on(type: string, layerIdOrHandler: string | ((...args: unknown[]) => void), maybeHandler?: (...args: unknown[]) => void) {
       const handler = maybeHandler ?? (layerIdOrHandler as (...args: unknown[]) => void);
       const set = this.handlers.get(type) ?? new Set();

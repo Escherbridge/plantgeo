@@ -1,4 +1,32 @@
-"""Fetch the bounded USGS NWIS IV feed and append it directly to water-gauges Parquet."""
+"""Fetch the bounded USGS NWIS IV feed and append it directly to water-gauges Parquet.
+
+THE BUCKET'S EXIT STATUS FAILS ONLY WHEN NO DAY WROTE. Until 2026-09-15 `run` returned 1 unless EVERY
+publisher day was `written`, so one per-day refusal failed the whole fetch -- the construct that, on
+`sensors-direct-forward`, turned two stale absence markers into three consecutive exit-1 buckets and a
+week-long breaker hold over days that were never broken (`pipeline/direct/sensors/forward.py`). On this
+lane the hazard is live and ordinary rather than historical: one IV snapshot names a publisher day per
+gauge `updatedAt`, so a single stale gauge can drag an old day into the bucket, and that day's
+`merge_water_gauges_day` "ambiguous refresh" refusal (`pipeline/direct/AGENTS.md`, "Water gauges") would
+have failed every other day's clean write with it. `_bucket_verdict` separates the two claims the exit
+code was conflating: `outcome` stays `complete`/`incomplete` -- the word
+`pipeline/direct/__init__.py::INCOMPLETE` reserves for a monitor,
+and as of 2026-09-18 the executor (`execution/job_executor_service.py`) parses the last JSON line of the child's
+stdout into a `TurnReport` and records `days_unwritten` and the `unwritten` list on the completed checkpoint cursor,
+so a partial bucket at exit 0 is visible in the ledger; the stderr `water_gauges_forward_bucket_incomplete` event is
+kept
+because stderr is teed to the log stream on every exit -- while the exit code says whether the lane can write AT ALL:
+0 when at
+least one day published, 1 only when none did. A partial bucket is therefore `incomplete` at exit 0, with
+every unwritten day listed by outcome and detail under `unwritten`, and because exit 0 would otherwise
+leave the degradation invisible, `_report_bucket_incomplete` ALSO emits
+`water_gauges_forward_bucket_incomplete` on stderr with the same list. A partial bucket thus neither
+passes for a clean success nor spends the lane's run on a degradation the next quarter-hourly fetch will
+re-attempt. THAT RE-ATTEMPT IS WHAT MAKES EXIT 0 SOUND: every fetch reads the whole IV snapshot and
+re-derives the same publisher days from it, so an unwritten day is re-selected automatically for as long
+as NWIS still serves it. The rule must not be lifted into a lane whose unwritten day is NOT re-offered by
+its next turn. The breaker exists for a lane that cannot write; a lane writing some of its days is
+degraded, visibly, not broken.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +34,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import sys
 import time
 from collections import Counter
 from dataclasses import dataclass, replace
@@ -22,6 +51,7 @@ from agri_data_service.ingest.http import upstream_client
 from agri_data_service.ingest.policy import resolve_bounded_bbox, resolve_max_source_records
 from agri_data_service.ingest.usgs_nwis import NWIS_BOUNDS, build_gauge_write, fetch_streamflow_gauges
 from agri_data_service.pipeline.constants import WATER_GAUGES_DIRECT_WRITER_START_DAY
+from agri_data_service.pipeline.direct import COMPLETE, INCOMPLETE
 from agri_data_service.pipeline.direct.water_gauges import (
     WATER_GAUGES_SOURCE_COLUMNS,
     DirectWaterGaugesForwardAdapter,
@@ -39,10 +69,11 @@ from agri_data_service.warehouse.schemas.water_gauges import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from agri_data_service.pipeline.direct.water_gauges import OverturnedAbsence
     from agri_data_service.pipeline.parquet.availability_index import AvailabilityStorage
     from agri_data_service.pipeline.parquet.lane_registry import LaneAdapter
 
@@ -87,6 +118,72 @@ class ForwardDayResult:
     rows: int
     written_bytes: int
     detail: str | None
+    #: The governed absence this day's fetch overturned, when it did; carried on failures too, since the
+    #: marker is already gone by the time a later write can fail (`pipeline/direct/water_gauges.py`).
+    absence_overturned: OverturnedAbsence | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ForwardBucketVerdict:
+    """What one fetch's day publications add up to, and the exit status that sum earns."""
+
+    outcome: str
+    exit_code: int
+    days_written: int
+    unwritten: tuple[ForwardDayResult, ...]
+    absences_overturned: tuple[date, ...]
+
+    @property
+    def days_unwritten(self) -> int:
+        """How many publisher days this fetch owned but did not publish, whatever the reason."""
+        return len(self.unwritten)
+
+
+def _bucket_verdict(results: Sequence[ForwardDayResult]) -> ForwardBucketVerdict:
+    """Exit 1 only when NO day wrote; some written and some not is `incomplete` at exit 0 -- see module docstring."""
+    unwritten = tuple(result for result in results if result.outcome != "written")
+    days_written = len(results) - len(unwritten)
+    return ForwardBucketVerdict(
+        outcome=COMPLETE if results and not unwritten else INCOMPLETE,
+        exit_code=0 if days_written else 1,
+        days_written=days_written,
+        unwritten=unwritten,
+        absences_overturned=tuple(result.day for result in results if result.absence_overturned is not None),
+    )
+
+
+def _unwritten_event(result: ForwardDayResult) -> dict[str, object]:
+    """Name one unpublished day by what stopped it, so the terminal report needs no per-day log walk."""
+    return {
+        "day": result.day.isoformat(),
+        "outcome": result.outcome,
+        "attempts": result.attempts,
+        "incoming_rows": result.incoming_rows,
+        "detail": result.detail,
+    }
+
+
+def _report_bucket_incomplete(run_id: str, verdict: ForwardBucketVerdict) -> None:
+    """Announce every unwritten day on stderr, where an exit-0 partial bucket is otherwise silent (module docstring)."""
+    if not verdict.unwritten:
+        return
+    print(
+        json.dumps(
+            {
+                "event": "water_gauges_forward_bucket_incomplete",
+                "layer": WATER_GAUGES_STREAM,
+                "run_id": run_id,
+                "outcome": verdict.outcome,
+                "exit_code": verdict.exit_code,
+                "days_written": verdict.days_written,
+                "days_unwritten": verdict.days_unwritten,
+                "unwritten": [_unwritten_event(result) for result in verdict.unwritten],
+            },
+            sort_keys=True,
+        ),
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 def emit(event: str, **fields: object) -> None:
@@ -255,6 +352,7 @@ def _result_after_failure(  # noqa: PLR0913 - preserve bounded attempt evidence 
         rows=rows,
         written_bytes=written_bytes,
         detail=detail,
+        absence_overturned=adapter.absence_overturned,
     )
 
 
@@ -339,6 +437,7 @@ async def _publish_day(  # noqa: PLR0912, PLR0913, PLR0915 - one bounded lane-da
             actual_z13_rows=None if content is None else content.actual_rows,
             incoming_rows_verified=None if content is None else content.incoming_rows_verified,
             detail=detail,
+            absence_overturned=None if adapter.absence_overturned is None else adapter.absence_overturned.as_event(),
         )
         if outcome == "written":
             if adapter.merge is None or content is None:
@@ -359,6 +458,7 @@ async def _publish_day(  # noqa: PLR0912, PLR0913, PLR0915 - one bounded lane-da
                 rows=rows,
                 written_bytes=written_bytes,
                 detail=detail,
+                absence_overturned=adapter.absence_overturned,
             )
         if outcome == "contended":
             waited = time.monotonic() - contention_started
@@ -448,6 +548,11 @@ async def run(args: argparse.Namespace) -> int:
             rows_added=0,
             rows_updated=0,
             bytes=0,
+            exit_code=0,
+            days_written=0,
+            days_unwritten=0,
+            unwritten=[],
+            absences_overturned=[],
             **availability.to_summary(),
         )
         return 0
@@ -497,14 +602,15 @@ async def run(args: argparse.Namespace) -> int:
                 rows=result.rows,
                 bytes=result.written_bytes,
                 detail=result.detail,
+                absence_overturned=None if result.absence_overturned is None else result.absence_overturned.as_event(),
             )
 
     outcomes = Counter(result.outcome for result in results)
-    complete = len(outcomes) == 1 and outcomes["written"] == len(results)
+    verdict = _bucket_verdict(results)
     emit(
         "water_gauges_forward_complete",
         run_id=run_id,
-        outcome="complete" if complete else "incomplete",
+        outcome=verdict.outcome,
         days=len(results),
         outcomes=dict(sorted(outcomes.items())),
         incoming_rows=sum(result.incoming_rows for result in results),
@@ -517,9 +623,15 @@ async def run(args: argparse.Namespace) -> int:
         parts=sum(result.parts for result in results),
         rows=sum(result.rows for result in results),
         bytes=sum(result.written_bytes for result in results),
+        exit_code=verdict.exit_code,
+        days_written=verdict.days_written,
+        days_unwritten=verdict.days_unwritten,
+        unwritten=[_unwritten_event(result) for result in verdict.unwritten],
+        absences_overturned=[day.isoformat() for day in verdict.absences_overturned],
         **availability.to_summary(),
     )
-    return 0 if all(result.outcome == "written" for result in results) else 1
+    _report_bucket_incomplete(run_id, verdict)
+    return verdict.exit_code
 
 
 async def main() -> int:

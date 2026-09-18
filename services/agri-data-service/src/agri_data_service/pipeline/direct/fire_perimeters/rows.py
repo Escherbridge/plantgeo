@@ -29,6 +29,12 @@ THE THREE COLUMNS THAT CANNOT COME FROM UPSTREAM, and what each is instead:
 
 `data_available_at` stays NULL, which is not a shortcut: it is 100% NULL in production across every
 layer, and `build_fire_perimeter_identity` supplies none, so a value here would be invented.
+
+TWO KEYS RIDE ON EVERY ROW AND ARE NOT COLUMNS. `geometry_repaired` and
+`geometry_repaired_area_change` are the trigger's `properties.geometry_repaired: true` stamp,
+reproduced per row so the fidelity trade `support.py` makes is auditable per incident. The frozen
+`FIRE_PERIMETERS_SCHEMA` has no column for them, so `fire_perimeters_table` projects them off and
+`forward.py` prints them instead -- this directory's `AGENTS.md`, "Where the repair flag lives".
 """
 
 from __future__ import annotations
@@ -44,7 +50,7 @@ from agri_data_service.ingest.identity import MissingNativeKeyError
 from agri_data_service.ingest.wfigs import build_perimeter_write, resolve_fire_perimeters_layer_name
 from agri_data_service.pipeline.direct.fire_perimeters.support import (
     fire_perimeter_geometry_session,
-    perimeter_geometries_to_wkb,
+    repair_perimeter_geometries_to_wkb,
 )
 from agri_data_service.warehouse.schemas.fire_perimeters import FIRE_PERIMETERS_SCHEMA
 
@@ -59,6 +65,12 @@ DIRECT_FEATURE_ID_PREFIX: Final = "direct"
 
 #: `geo.features.status`' schema default, reproduced. See the module docstring.
 PUBLISHED_STATUS: Final = "published"
+
+#: The trigger's `geometry_repaired: true` stamp, per row. NOT a schema column -- see the module
+#: docstring and `AGENTS.md`, "Where the repair flag lives".
+GEOMETRY_REPAIRED_KEY: Final = "geometry_repaired"
+#: `support.RepairedPerimeterGeometry.area_change`, per row; `None` wherever the row was not repaired.
+GEOMETRY_REPAIRED_AREA_CHANGE_KEY: Final = "geometry_repaired_area_change"
 
 #: The COALESCE chain of `geo.feature_observation_day`
 #: (`drizzle/0018_fire_discovery_observation_day.sql`), in its exact order. The first two keys are
@@ -192,6 +204,21 @@ def _optional_text(properties: Mapping[str, object], key: str) -> str | None:
     return value
 
 
+def _optional_area_change(value: object) -> float | None:
+    """Narrow one row's recorded area ratio back to a float; `None` where the repair left no denominator."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value)
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryRepair:
+    """One perimeter the repair chain changed: which incident, and the planar area ratio it moved by."""
+
+    unique_fire_identifier: str
+    area_change: float | None
+
+
 @dataclass(frozen=True, slots=True)
 class FirePerimeterPopulation:
     """One conformed WFIGS population, WITHOUT its version stamp, plus what it refused on the way.
@@ -211,6 +238,18 @@ class FirePerimeterPopulation:
     fetched_at: datetime
     rejected: int
     collapsed: int
+
+    @property
+    def repairs(self) -> tuple[GeometryRepair, ...]:
+        """Every row the repair chain changed, in row order -- what the turn's report and stderr event print."""
+        return tuple(
+            GeometryRepair(
+                unique_fire_identifier=str(row["unique_fire_identifier"]),
+                area_change=_optional_area_change(row.get(GEOMETRY_REPAIRED_AREA_CHANGE_KEY)),
+            )
+            for row in self.rows
+            if row.get(GEOMETRY_REPAIRED_KEY) is True
+        )
 
 
 def fire_perimeter_population(source: FirePerimetersSource) -> FirePerimeterPopulation:
@@ -248,7 +287,7 @@ def fire_perimeter_population(source: FirePerimetersSource) -> FirePerimeterPopu
     ordered = sorted(documents.items())
     identities = [identity for identity, _ in ordered]
     with fire_perimeter_geometry_session() as session:
-        geometry_wkb = perimeter_geometries_to_wkb(
+        geometries = repair_perimeter_geometries_to_wkb(
             session,
             [properties.get("geometry") for _, properties in ordered],
             identities,
@@ -276,9 +315,11 @@ def fire_perimeter_population(source: FirePerimetersSource) -> FirePerimeterPopu
             "status": PUBLISHED_STATUS,
             "data_available_at": None,
             "updated_at": source.fetched_at,
-            "geometry_wkb": wkb,
+            "geometry_wkb": geometry.wkb,
+            GEOMETRY_REPAIRED_KEY: geometry.repaired,
+            GEOMETRY_REPAIRED_AREA_CHANGE_KEY: geometry.area_change,
         }
-        for (identity, properties), wkb in zip(ordered, geometry_wkb, strict=True)
+        for (identity, properties), geometry in zip(ordered, geometries, strict=True)
     )
     return FirePerimeterPopulation(rows=rows, fetched_at=source.fetched_at, rejected=rejected, collapsed=collapsed)
 
@@ -291,8 +332,17 @@ def fire_perimeters_table(population: FirePerimeterPopulation, *, snapshot_day: 
     under the same day is exactly how that version is corrected
     (`foundation/parquet/lane_contract.py`).
     """
+    # THE REPAIR-AUDIT KEYS STOP HERE. Projecting onto the registered column names is what keeps
+    # `geometry_repaired` / `geometry_repaired_area_change` off the Parquet: the L1 schema is frozen
+    # and the serving reader is `.strict()` over it (`AGENTS.md`, "Where the repair flag lives").
     return pa.Table.from_pylist(
-        [{**row, "snapshot_day": snapshot_day} for row in population.rows],
+        [
+            {
+                **{column: row.get(column) for column in FIRE_PERIMETERS_SCHEMA.column_names},
+                "snapshot_day": snapshot_day,
+            }
+            for row in population.rows
+        ],
         schema=FIRE_PERIMETERS_SCHEMA.arrow_schema,
     )
 
@@ -325,11 +375,14 @@ def chunk_row_indices_by_geometry_bytes(geometry_lengths: Sequence[int], *, max_
 
 __all__ = [
     "DIRECT_FEATURE_ID_PREFIX",
+    "GEOMETRY_REPAIRED_AREA_CHANGE_KEY",
+    "GEOMETRY_REPAIRED_KEY",
     "MAX_PART_PAYLOAD_BYTES",
     "OBSERVATION_DAY_KEYS",
     "PUBLISHED_STATUS",
     "FirePerimeterPopulation",
     "FirePerimeterRowError",
+    "GeometryRepair",
     "chunk_row_indices_by_geometry_bytes",
     "direct_feature_id",
     "fire_perimeter_population",

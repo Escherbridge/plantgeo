@@ -143,6 +143,7 @@ vi.mock("@/components/panels/land-context", () => ({ LandContextPanelHost: stub 
 
 const { default: MapView } = await import("@/components/map/MapView");
 const { useMapStore, DEFAULT_VIEWPORT } = await import("@/stores/map-store");
+const { useLandContextStore } = await import("@/stores/land-context-store");
 
 function clickMap() {
   act(() => {
@@ -154,7 +155,17 @@ function clickMap() {
 }
 
 beforeEach(() => {
-  fakeMap.features = [];
+  // Real ground: the basemap's unfiltered `earth` fill is under every land pixel in production
+  // (styles.ts), so "empty ground" must be modelled as that feature, never as `[]`.
+  fakeMap.features = [{ layer: { id: "earth" } }];
+  useLandContextStore.setState({
+    enabledGroups: {
+      "parcels-land-use": false,
+      "electric-utility-territories": false,
+      "blm-lands": false,
+      "state-managed-lands": false,
+    },
+  });
   useMapStore.setState({
     viewport: { ...DEFAULT_VIEWPORT },
     activeLayers: [],
@@ -185,11 +196,60 @@ describe("MapView stands down over intervention features", () => {
     "does not open the AI popup for a click on %s",
     (layerId) => {
       render(<MapView />);
-      fakeMap.features = [{ layer: { id: layerId } }];
+      fakeMap.features = [{ layer: { id: "earth" } }, { layer: { id: layerId } }];
       clickMap();
       expect(screen.queryByTestId("agent-popup")).toBeNull();
     }
   );
+
+  it("stands down while a land-context group is on; right-click still reaches the popup", () => {
+    render(<MapView />);
+    useLandContextStore.setState((state) => ({
+      enabledGroups: { ...state.enabledGroups, "blm-lands": true },
+    }));
+
+    clickMap();
+    expect(screen.queryByTestId("agent-popup")).toBeNull();
+
+    act(() => {
+      fakeMap.fire!("contextmenu", {
+        preventDefault: () => {},
+        point: { x: 10, y: 10 },
+        lngLat: { lng: -120, lat: 46 },
+      });
+    });
+    expect(screen.getByTestId("agent-popup")).toBeTruthy();
+  });
+
+  it("opens the AI popup through a drought fill on a fine pointer, and stands down on a coarse one", () => {
+    fakeMap.features = [{ layer: { id: "earth" } }, { layer: { id: "drought-fill" } }];
+    window.matchMedia = vi.fn().mockReturnValue({ matches: false }) as unknown as typeof window.matchMedia;
+    const fine = render(<MapView />);
+    clickMap();
+    expect(screen.getByTestId("agent-popup")).toBeTruthy();
+    fine.unmount();
+
+    window.matchMedia = vi.fn().mockReturnValue({ matches: true }) as unknown as typeof window.matchMedia;
+    render(<MapView />);
+    clickMap();
+    expect(screen.queryByTestId("agent-popup")).toBeNull();
+    // @ts-expect-error -- jsdom implements no matchMedia by default; undo the per-test stub.
+    delete window.matchMedia;
+  });
+
+  it("stands down for a botanical occurrence dot on a fine pointer, which has its own click handler", () => {
+    render(<MapView />);
+    fakeMap.features = [{ layer: { id: "earth" } }, { layer: { id: "botanical-occurrences-exact" } }];
+    clickMap();
+    expect(screen.queryByTestId("agent-popup")).toBeNull();
+  });
+
+  it("stands down for a GBIF occurrence dot, which has its own click handler", () => {
+    render(<MapView />);
+    fakeMap.features = [{ layer: { id: "earth" } }, { layer: { id: "gbif-occurrences-generalized" } }];
+    clickMap();
+    expect(screen.queryByTestId("agent-popup")).toBeNull();
+  });
 
   it("stands down even while the intervention layers are inspection-suppressed", () => {
     render(<MapView />);

@@ -259,7 +259,7 @@ export const BOTANICAL_LAYER_DEFINITIONS = [
   },
   {
     toggleId: "botanical-richness",
-    label: "Documented Taxon Richness",
+    label: "Herbarium Specimen Richness",
     icon: "layers",
     panelId: "botanical",
   },

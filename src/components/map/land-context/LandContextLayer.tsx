@@ -1,7 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef } from "react";
-import type { Map as MapLibreMap, MapLayerMouseEvent, GeoJSONSource } from "maplibre-gl";
+import type {
+  Map as MapLibreMap,
+  MapLayerMouseEvent,
+  MapMouseEvent,
+  GeoJSONSource,
+  PointLike,
+} from "maplibre-gl";
 import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
 import {
   LAND_CONTEXT_GROUP_IDS,
@@ -10,6 +16,8 @@ import {
   type LandContextGroupId,
 } from "@/stores/land-context-store";
 import { WideAreaSelectionAction } from "@/components/map/land-context/mobile/WideAreaSelectionAction";
+import { LandContextStatusNotice } from "@/components/map/land-context/LandContextStatusNotice";
+import { isClickOwnedByAnotherSurface } from "@/components/map/land-context/click-ownership";
 
 /**
  * Native MapLibre GL rendering for the four land-context groups.
@@ -27,6 +35,10 @@ import { WideAreaSelectionAction } from "@/components/map/land-context/mobile/Wi
  * gets its own fill+line layer pair filtered by `properties.group`, so
  * toggling a group is a `setLayoutProperty("visibility", ...)` call, never a
  * re-fetch.
+ *
+ * Interaction is one bare `click` listener per map (see the click effect
+ * below): features only draw once a selection exists, so the entry into a
+ * selection cannot itself require a drawn feature.
  */
 const SOURCE_ID = "land-context-results";
 
@@ -63,7 +75,28 @@ function toFeatureCollection(features: LandContextFeature[]): GeoJSON.FeatureCol
   };
 }
 
+const FILL_LAYER_IDS = LAND_CONTEXT_GROUP_IDS.map(fillLayerId);
 const ALL_LAYER_IDS = LAND_CONTEXT_GROUP_IDS.flatMap((group) => [fillLayerId(group), lineLayerId(group)]);
+
+function anyGroupEnabled(enabledGroups: Record<LandContextGroupId, boolean>): boolean {
+  return LAND_CONTEXT_GROUP_IDS.some((group) => enabledGroups[group]);
+}
+
+/**
+ * The land-context feature under a screen point, if a group fill layer is
+ * present AND visible there (`visibility: none` excludes a layer from
+ * `queryRenderedFeatures`, so a toggled-off group can never be hit). Only
+ * layers that exist are queried: MapLibre answers a `layers` entry it cannot
+ * find by firing an `error` event and returning nothing, and MapView's
+ * `error` handler would report that as a basemap fault.
+ */
+export function pickRenderedLandContextFeatureId(map: MapLibreMap, point: PointLike): string | null {
+  const presentLayers = FILL_LAYER_IDS.filter((id) => Boolean(map.getLayer(id)));
+  if (presentLayers.length === 0) return null;
+  const hit = map.queryRenderedFeatures(point, { layers: presentLayers })[0];
+  const featureId = hit?.properties?.featureId;
+  return typeof featureId === "string" ? featureId : null;
+}
 
 interface LandContextLayerProps {
   map: MapLibreMap | null;
@@ -72,10 +105,6 @@ interface LandContextLayerProps {
 export function LandContextLayer({ map }: LandContextLayerProps) {
   const results = useLandContextStore((state) => state.results);
   const enabledGroups = useLandContextStore((state) => state.enabledGroups);
-  const setHoveredFeature = useLandContextStore((state) => state.setHoveredFeature);
-  const setSelection = useLandContextStore((state) => state.setSelection);
-  const setCandidateIndex = useLandContextStore((state) => state.setCandidateIndex);
-  const openPanel = useLandContextStore((state) => state.openPanel);
 
   const resultsRef = useRef(results);
   const enabledGroupsRef = useRef(enabledGroups);
@@ -178,52 +207,97 @@ export function LandContextLayer({ map }: LandContextLayerProps) {
   }, [map, enabledGroups]);
 
   // Hover: concise identity card, keyed by the same `LandContextFeature` the accessible list uses.
+  // Layer-delegated listeners, registered once per map; current results come from the store at
+  // event time, so nothing changing can re-register them.
   useEffect(() => {
     if (!map) return;
 
-    const findFeature = (featureId: string): LandContextFeature | null =>
-      resultsRef.current.find((f) => f.id === featureId) ?? null;
-
     const onMouseMove = (event: MapLayerMouseEvent) => {
+      const { results: current, setHoveredFeature } = useLandContextStore.getState();
       const hit = event.features?.[0];
       if (!hit || typeof hit.properties?.featureId !== "string") {
         setHoveredFeature(null);
         return;
       }
-      const feature = findFeature(hit.properties.featureId);
+      const feature = current.find((f) => f.id === hit.properties?.featureId) ?? null;
       setHoveredFeature(feature, { x: event.point.x, y: event.point.y });
     };
 
-    const onMouseLeave = () => setHoveredFeature(null);
+    const onMouseLeave = () => useLandContextStore.getState().setHoveredFeature(null);
 
-    const onClick = (event: MapLayerMouseEvent) => {
-      const hit = event.features?.[0];
-      if (!hit || typeof hit.properties?.featureId !== "string") return;
-      const index = resultsRef.current.findIndex((f) => f.id === hit.properties?.featureId);
-      if (index === -1) return;
-      setSelection({ mode: "point", point: [event.lngLat.lng, event.lngLat.lat] });
-      setCandidateIndex(index);
-      openPanel();
-    };
-
-    const interactiveLayers = ALL_LAYER_IDS.filter((id) => id.startsWith("land-context-fill-"));
-    for (const layerId of interactiveLayers) {
+    for (const layerId of FILL_LAYER_IDS) {
       map.on("mousemove", layerId, onMouseMove);
       map.on("mouseleave", layerId, onMouseLeave);
-      map.on("click", layerId, onClick);
     }
 
     return () => {
-      for (const layerId of interactiveLayers) {
+      for (const layerId of FILL_LAYER_IDS) {
         map.off("mousemove", layerId, onMouseMove);
         map.off("mouseleave", layerId, onMouseLeave);
-        map.off("click", layerId, onClick);
       }
     };
-  }, [map, setHoveredFeature, setSelection, setCandidateIndex, openPanel]);
+  }, [map]);
 
-  // Mount point only: the accessible area-selection alternative renders its own affordance
-  // (visible whenever a point selection exists) but owns no map click/hover wiring of its own --
-  // see `WideAreaSelectionAction.tsx` for the interaction-pattern rationale.
-  return <WideAreaSelectionAction />;
+  // Click: ONE bare map listener per map, registered once. Deps are `[map]`-shaped and every
+  // changing value is read from the store at click time, so toggles/results can never
+  // re-register it (see `src/components/map/AGENTS.md` "Picking a point to query" for why a
+  // per-map click handler reads the store imperatively).
+  //
+  // Two meanings, resolved in one handler so a single click can never fire both:
+  //  1. a click ON a drawn land-context feature focuses that candidate precisely and pins the
+  //     panel -- WITHOUT touching the selection. An area selection is therefore never collapsed
+  //     to the clicked point (spec: "browse multiple features without losing the selected
+  //     project area"), and `results` is not wiped from under the index being set, which is what
+  //     the previous layer-scoped handler did by calling `setSelection` first.
+  //  2. a click on bare canvas makes a new POINT selection at the clicked coordinate. This is the
+  //     entry that breaks the deadlock: features only draw for a selection, and the only click
+  //     path used to be a listener on those very features. It is active only while at least one
+  //     group is toggled on, and the point is always the click -- never the viewport centre
+  //     (spec: "Never substitute the viewport centre"; the store has no "viewport" mode).
+  //     The panel is NOT pinned here: with no candidate focused it has nothing to show, and
+  //     "arbitrarily choose the first overlap" is forbidden -- the drawn features and the
+  //     accessible list are the candidate pickers.
+  //
+  // Order matters: the land-context pick runs FIRST, so a click on a drawn land-context feature
+  // wins outright. Only a click that hit no drawn feature is then checked against the other
+  // click owners ("one click, one meaning": a panel capturing query points, an intervention
+  // feature, a popup/tap-pinned feature layer) before it may become a new point selection. That
+  // predicate is shared with MapView's agent-popup handler -- see `click-ownership.ts`.
+  useEffect(() => {
+    if (!map) return;
+
+    const onClick = (event: MapMouseEvent) => {
+      const store = useLandContextStore.getState();
+      if (!anyGroupEnabled(store.enabledGroups)) return;
+
+      const hitId = pickRenderedLandContextFeatureId(map, event.point);
+      if (hitId !== null) {
+        const index = store.results.findIndex((feature) => feature.id === hitId);
+        if (index !== -1) {
+          store.setCandidateIndex(index);
+          store.openPanel();
+          return;
+        }
+      }
+
+      if (isClickOwnedByAnotherSurface(map, event.point)) return;
+      store.setSelection({ mode: "point", point: [event.lngLat.lng, event.lngLat.lat] });
+    };
+
+    map.on("click", onClick);
+    return () => {
+      map.off("click", onClick);
+    };
+  }, [map]);
+
+  // Mount point for the two store-driven affordances that need no map wiring of their own: the
+  // honest status notice (what is admitted, what a click does, what came back) and the
+  // accessible area-selection alternative (visible whenever a point selection exists) -- see
+  // `LandContextStatusNotice.tsx` and `WideAreaSelectionAction.tsx`.
+  return (
+    <>
+      <LandContextStatusNotice />
+      <WideAreaSelectionAction />
+    </>
+  );
 }

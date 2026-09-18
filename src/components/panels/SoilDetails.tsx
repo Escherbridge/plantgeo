@@ -332,7 +332,11 @@ export function SoilDetails({
     { lat: queryPoint?.lat ?? 0, lon: queryPoint?.lon ?? 0 },
     { enabled: !!queryPoint }
   );
-
+  // `getSoilProperties` refuses every point with PRECONDITION_FAILED until its source-direct
+  // Parquet lane is published (environmental.ts §getSoilProperties); nothing in src/ calls
+  // ISRIC. That refusal is OUR gap and is named as such below -- any other error is a real
+  // failure of the request and keeps the ordinary try-again wording.
+  const soilPointQueryNotServed = soilQuery.error?.data?.code === "PRECONDITION_FAILED";
 
   function handlePropertyChange(prop: SoilProperty) {
     setProperty(prop);
@@ -359,9 +363,16 @@ export function SoilDetails({
   // USDA holds more map units than it serves for one view and returned a subset; the
   // count below then describes part of the view, not the view.
   const soilSurveyTruncated = soilSurvey?.truncated === true;
-  // A provider fault, not a coverage answer: `features: []` here means SDA did not
-  // answer, which the map paints exactly like ground the survey found nothing on.
+  // Two different absences ride `availability: "unavailable"`, and the map paints both exactly
+  // like ground the survey found nothing on. `reason` is what tells them apart: a
+  // `*_lane_not_published` reason is OUR gap -- no lane publishes the survey, so the read answers
+  // before any provider is asked -- and every other reason is a provider fault. Blaming USDA for
+  // the first was the defect this split ends: `environmental.getSoilSurvey` has answered
+  // `soil_survey_parquet_lane_not_published` for every viewport since the Parquet pivot, and no
+  // code path in src/ calls Soil Data Access.
   const soilSurveyUnavailable = soilSurvey?.availability === "unavailable";
+  const soilSurveyLaneNotPublished =
+    soilSurveyUnavailable && (soilSurvey?.reason ?? "").endsWith("_lane_not_published");
   const soilSurveyCount = soilSurvey?.features.length ?? 0;
   // Map units SDA did serve whose geometry this reader could not parse. They are dropped
   // rather than drawn at a guessed outline, so the ground under them paints blank -- a
@@ -409,14 +420,14 @@ export function SoilDetails({
         />
       ))}
 
-      {/* What the survey layer is actually drawing. Both dishonest cases -- a subset
-          served past USDA's row ceiling, and an upstream fault -- reach the map as
-          polygons that stop, indistinguishable from ground the survey found nothing on,
-          so this section is the only surface that can tell them apart. Same treatment
-          WaterDetails gives the watershed collection. The registry's unavailableReason
-          channel cannot carry this: soil-survey is upstream-proxied with no
-          warehouseLayerName, so it has no per-day capability to be unavailable at, and
-          a reason there would also disable the switch while the layer is still drawing. */}
+      {/* What the survey layer is actually drawing. All three dishonest cases -- a subset
+          served past USDA's row ceiling, an upstream fault, and a lane nobody has published
+          -- reach the map as polygons that stop, indistinguishable from ground the survey
+          found nothing on, so this section is the only surface that can tell them apart.
+          Same treatment WaterDetails gives the watershed collection. The registry's
+          per-day unavailableReason channel cannot carry these: they are properties of one
+          viewport's response, not of a day, and a permanent reason there would also disable
+          the switch -- see the soil-survey entry in layer-registry.ts for why it is not. */}
       {soilSurveyVisible && (
         <div className="mt-1.5 flex flex-col gap-1.5">
           {/* `isFetching`, never `isLoading` -- see the field section above for why. */}
@@ -464,15 +475,36 @@ export function SoilDetails({
             </p>
           )}
 
-          {soilSurveyUnavailable && (
+          {/* Ours, not USDA's: the lane behind this layer has not been published, so the read
+              answered before any provider was asked. Naming a provider fault here was the lie
+              this branch replaces. */}
+          {soilSurveyLaneNotPublished && (
             <p
               role="status"
               aria-live="polite"
               className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
             >
-              USDA Soil Data Access did not return a map-unit table for this view.
-              Nothing is drawn — that is a provider fault, not an absence of soil. The
-              view was not recorded as covered, so returning to it asks USDA again.
+              The SSURGO survey is not served yet: no lane publishes it, so nothing is drawn
+              and nothing was asked of USDA. Blank ground here is a gap on our side, not an
+              absence of soil and not a provider fault.
+            </p>
+          )}
+
+          {/* Any other unavailable reason. No producer emits one today -- `getSoilSurvey` is
+              an unconditional stub -- so this is a fallback, not a live branch: it names the
+              reason code rather than a provider, because the copy that used to sit here blamed
+              USDA Soil Data Access for a fault no code path could have asked it to produce.
+              Rendering nothing would paint the view like surveyed-and-empty ground, which is
+              the one reading an unavailable answer must never get. */}
+          {soilSurveyUnavailable && !soilSurveyLaneNotPublished && (
+            <p
+              role="status"
+              aria-live="polite"
+              className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
+            >
+              The soil survey feed answered unavailable
+              {soilSurvey?.reason ? ` (${soilSurvey.reason})` : ""}. Nothing is drawn — that
+              is a gap in the feed, not an absence of soil.
             </p>
           )}
 
@@ -601,21 +633,28 @@ export function SoilDetails({
               </p>
               {/* One sentence, not a ternary over a constant: ENVIRONMENTAL_TILES_CONFIGURED is
                   a literal `false` in src/lib/vegetation.ts, so the other branch was unreachable
-                  copy describing a capability that has never existed. */}
+                  copy describing a capability that has never existed. The point query is in the
+                  same state -- `getSoilProperties` refuses every point until its lane is
+                  published -- so "the values below" may not be promised as if they appear. */}
               <p className="text-[10px] text-[hsl(var(--muted-foreground))] leading-relaxed">
-                No soil raster is published, so nothing is drawn for this property. The values
-                below are ISRIC SoilGrids model estimates for the top 0–5 cm at the point
-                you click, not on-site soil samples.
+                No soil raster is published, so nothing is drawn for this property, and the
+                point query behind it is not served yet either: no lane publishes SoilGrids
+                estimates. The readout here is intended to be ISRIC SoilGrids model
+                estimates for the top 0–5 cm at the point you click, not on-site soil samples.
               </p>
             </div>
 
             {/* Queried point data. Capture is armed for as long as this section is mounted --
-                the dock's Soil section owns it -- so the instruction below is always true
-                here, and collapsing the section disarms it and drops the pin. */}
+                the dock's Soil section owns it -- so the pin mechanics below are always true
+                here, and collapsing the section disarms it and drops the pin. What the pin
+                READS is not promised: the query behind it is refused until its lane publishes,
+                and an instruction that invites a click which then fails is the same false
+                capability claim the About page was just cleared of. */}
             {!queryPoint && (
               <p className="text-xs text-[hsl(var(--muted-foreground))]">
-                Click anywhere on the map to query soil properties at that point. Click the
-                pin again, or press Escape, to clear it.
+                Click anywhere on the map to drop a query pin. SoilGrids point estimates are
+                not served yet, so the pin reads no values until a lane publishes them. Click
+                the pin again, or press Escape, to clear it.
               </p>
             )}
 
@@ -628,9 +667,36 @@ export function SoilDetails({
               </button>
             )}
 
+            {/* "Querying SoilGrids…" named a call to ISRIC that never happens; the request goes
+                to our own procedure, which is what may be said. */}
             {queryPoint && soilQuery.isLoading && (
               <p className="text-xs text-[hsl(var(--muted-foreground))]">
-                Querying SoilGrids…
+                Querying soil properties at the pin…
+              </p>
+            )}
+
+            {/* The pin's only reachable outcome today. Previously nothing rendered here at all:
+                the loading line vanished and the pin stood over a silence that read as "no
+                data at this point" -- a claim about the soil, made by a procedure that had
+                refused to look. `role="status"`, not alert: a withheld lane is not an error. */}
+            {queryPoint && soilQuery.isError && soilPointQueryNotServed && (
+              <p
+                role="status"
+                aria-live="polite"
+                className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
+              >
+                SoilGrids point estimates are not served yet: no lane publishes them, so this
+                pin reads nothing. That is a gap on our side, not a fault at ISRIC and not an
+                absence of soil.
+              </p>
+            )}
+
+            {queryPoint && soilQuery.isError && !soilPointQueryNotServed && (
+              <p
+                role="alert"
+                className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
+              >
+                Soil properties could not be loaded for this pin. Try again shortly.
               </p>
             )}
 

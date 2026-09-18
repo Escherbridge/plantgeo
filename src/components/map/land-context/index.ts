@@ -8,6 +8,12 @@
  * 2. `<LandContextLayer map={mapInstance} />` renders native MapLibre
  *    source/layers (not deck.gl -- see the note at the top of
  *    `LandContextLayer.tsx` for why) and wires hover/click into the store.
+ *    Its return also mounts `LandContextStatusNotice` (the per-family
+ *    "what is admitted / what a click does / what came back" pills) and
+ *    `WideAreaSelectionAction`, so neither needs its own MapView slot.
+ *    `deriveLandContextNotices` is the pure derivation behind the notice,
+ *    in LayerManager's `parquetLayerFaults` entry shape, should the
+ *    integrator prefer one shared notice stack.
  * 3. `<LandContextIdentityCard />` (dismissible hover/focus identity card)
  *    and `<LandContextAccessibleFeatureList />` (keyboard-reachable textual
  *    equivalent of the map layer, spec "equivalent textual feature/contact
@@ -26,3 +32,8 @@ export { LandContextIdentityCard } from "@/components/map/land-context/LandConte
 export { LandContextAccessibleFeatureList } from "@/components/map/land-context/LandContextAccessibleFeatureList";
 export { useLandContextQuery } from "@/components/map/land-context/useLandContextQuery";
 export { WideAreaSelectionAction } from "@/components/map/land-context/mobile/WideAreaSelectionAction";
+export {
+  LandContextStatusNotice,
+  deriveLandContextNotices,
+} from "@/components/map/land-context/LandContextStatusNotice";
+export type { LandContextNotice, LandContextNoticeInput } from "@/components/map/land-context/LandContextStatusNotice";

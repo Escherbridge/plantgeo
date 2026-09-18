@@ -1,7 +1,7 @@
 ---
 type: runbook
 status: active
-updated_on: 2026-09-15
+updated_on: 2026-09-18
 ---
 
 # Current operating runbook
@@ -328,6 +328,53 @@ values, legends, accessibility, picking or agent parity.
 
 **No whole QA case or checklist item is promoted; the 220-case matrix is unchanged.** See
 `evidence/runbook-session19-20260915.md` and `evidence/check-receipt-session19-20260915.json`.
+
+### Session 20 (stale lanes, self-healing, false claims, land-context spine) — nine lanes on `fable`
+
+The owner redirected the run to three symptoms — herbaria barely covering, land-context layers
+drawing nothing, layer dates not reaching today — then added a fourth: layers had stopped
+ingesting with no date receipts, and the pipeline must self-heal. Measured rather than assumed
+(`evidence/runbook-session20-20260915.md`, live captures under
+`.omc/research/runbook-20260915-session20/live-0918/`): the executor runs hourly (the
+once-per-UTC-day reading was a log-parsing artifact — Railway structures JSON stdout lines into
+fields with an empty `message`); every daily lane sits at its provider edge (climate 5 d, soil
+9 d, vegetation 7 d — reanalysis products cannot reach today; that needs the forecast lane);
+`sensors` was genuinely dead for nine days, withheld from the map as `availability_stale`,
+because two governed-absence markers from the retired PostgreSQL adapter made the direct writer
+refuse two of seven days and the forward failed the whole bucket; shortwave was dead since
+2026-05-31 behind a self-admittedly unmeasured 75-day lag, then behind HTTP 429 on a second
+fan-out, both hidden by a turn that reported `published` while writing nothing; fire-perimeters
+ran in shadow, and 41 of 99 live WFIGS perimeters were invalid geometries the writer would have
+refused wholesale. Herbaria: 92 % of the UBC release has no coordinates and the dense cluster
+sits outside the platform envelope — the owner accepted it cannot be the path to vegetation
+type; LANDFIRE EVT is designed as a lane in
+`.omc/research/runbook-20260915-vegetation-type/PLAN.md` (§8 records the owner's grain, row-cap
+and charter decisions). Land context is a façade over zero rows with a selection deadlock nobody
+had named. The About page carried five false capability claims; the served UBC release was
+misattributed to the consortium portal (it came from the Canadensys IPT).
+
+Nine author lanes on disjoint partitions, every one independently reviewed in a separate
+context, several through three to five passes; the review ledger with every verdict and the
+findings that only adversarial passes caught (a publish-path `_report` keyword mismatch that 203
+green tests could not see; a click-ownership predicate that vetoed every basemap pixel; a
+self-healing selector that authored nothing for the very stalled-publisher case it was built
+for; a breaker auto-release that a crash loop would defeat) is in the session record. Landed:
+sensors, weather-observations and water-gauges reconcile a disproven absence and exit 1 only
+when no day wrote; shortwave lag 75→6 with a 429 pause series, an honest product outcome, an
+unchanged-partial gate and round-robin rechecks; fire-perimeters repairs and flags invalid
+geometry as the baseline trigger did; an independent measured freshness horizon kept off the
+frozen wire; bounded source-direct gap repair authored autonomously every six hours; child
+stdout/stderr into the ledger with exit-0 partial buckets recorded on the checkpoint; a
+process-start breaker release that **ships disabled**; every About claim traced to a reachable
+path or removed; `landfire.ts` deleted; the richness layer reframed as herbarium collecting
+effort; land-context enterable by a bare canvas click with pointer-aware click ownership,
+server-side WKB decode, honest per-family notices, and the agent popup now opening over vector
+ground where at HEAD it fired only beyond the PNW extract.
+
+Integrated sweep: Python format, lint, mypy and full pytest passed (eight lint findings fixed mechanically at the sweep, five by hand); frontend boundary, type check and lint passed; frontend suite 201 files / 2,676 tests, exit zero. Deployment: PENDING-DEPLOY. Owner gate after deploy: the
+sensors breaker supersession (CLI, explicit), the fire-perimeters allow-list activation (the
+repair-audit durability trade is recorded as an owner decision), and the desktop click-reach
+change. **No whole QA case or checklist item is promoted; the 220-case matrix is unchanged.**
 
 ## Recovery
 

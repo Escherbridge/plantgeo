@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import time
 from dataclasses import replace
 from datetime import date, timedelta
 from decimal import Decimal
@@ -13,8 +15,15 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
-from agri_data_service.pipeline.direct.climate.products import CLIMATE_SOURCE_PARAMETERS
+from agri_data_service.pipeline.direct.climate import source as climate_source
+from agri_data_service.pipeline.direct.climate.products import (
+    CLIMATE_DEFAULT_TIME_BUDGET_SECONDS,
+    CLIMATE_SOURCE_PARAMETERS,
+)
 from agri_data_service.pipeline.direct.climate.source import (
+    NASA_POWER_POINT_CONCURRENCY,
+    NASA_POWER_QUOTA_PAUSE_DEADLINE_RESERVE_SECONDS,
+    NASA_POWER_QUOTA_PAUSE_LIMIT,
     ClimateProviderDeferredError,
     ClimateSourceCache,
     ClimateSourceUnsettledError,
@@ -22,6 +31,7 @@ from agri_data_service.pipeline.direct.climate.source import (
     climate_point_url,
     fill_cell_day_cache,
     parse_climate_point_body,
+    quota_pause_seconds,
 )
 from agri_data_service.pipeline.direct.climate.support import (
     NASA_POWER_SUPPORT_CELL_COUNT,
@@ -43,11 +53,40 @@ from tests.parquet.test_availability_index import MemoryAvailabilityStorage
 if TYPE_CHECKING:
     from agri_data_service.pipeline.direct.climate.support import NasaPowerSupport
 
+FETCH_CELL_DAY: Final = "agri_data_service.pipeline.direct.climate.source._fetch_cell_day"
+#: How many 429s in a row make one turn give a day up: one per pause, then the one it will not pause for.
+TERMINAL_QUOTA_ANSWERS: Final = NASA_POWER_QUOTA_PAUSE_LIMIT + 1
+
+
+def quota_answers() -> list[ClimateProviderDeferredError]:
+    """Enough consecutive 429 answers to spend every pause a turn has and then be refused."""
+    return [ClimateProviderDeferredError("NASA POWER answered 429; provider quota exceeded")] * TERMINAL_QUOTA_ANSWERS
+
+
+def no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Record every 429 cooldown the fan-out would have slept, and sleep none of it."""
+    slept: list[float] = []
+
+    async def record(seconds: float) -> None:
+        slept.append(seconds)
+
+    monkeypatch.setattr(climate_source.asyncio, "sleep", record)
+    return slept
+
+
+async def yield_control() -> None:
+    """Let every other ready task run once, without going through the (possibly patched) `asyncio.sleep`."""
+    loop = asyncio.get_running_loop()
+    resumed: asyncio.Future[None] = loop.create_future()
+    loop.call_soon(resumed.set_result, None)
+    await resumed
+
 
 @pytest.mark.asyncio
 async def test_a_new_turn_resumes_only_verified_nonfill_responses(
     support: NasaPowerSupport, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    no_sleep(monkeypatch)
     storage = MemoryAvailabilityStorage()
     checkpoints = SourceResponseCheckpoints(storage)
     cache = ClimateSourceCache(request_budget=len(support.cells), checkpoints=checkpoints)
@@ -55,15 +94,15 @@ async def test_a_new_turn_resumes_only_verified_nonfill_responses(
         cell_day_response(support.cells[0], day=DAY),
         request_url=climate_point_url(support.cells[0], day=DAY),
     )
-    fetch = AsyncMock(side_effect=[first, ClimateProviderDeferredError("quota")])
-    monkeypatch.setattr("agri_data_service.pipeline.direct.climate.source._fetch_cell_day", fetch)
+    fetch = AsyncMock(side_effect=[first, *quota_answers()])
+    monkeypatch.setattr(FETCH_CELL_DAY, fetch)
     with pytest.raises(ClimateProviderDeferredError):
         await fill_cell_day_cache(day=DAY, support=support, cache=cache, concurrency=1, now=FETCHED_AT)
 
     resumed = ClimateSourceCache(request_budget=len(support.cells) - 1, checkpoints=SourceResponseCheckpoints(storage))
     remaining = [cell_day_response(cell, day=DAY) for cell in support.cells[1:]]
     resumed_fetch = AsyncMock(side_effect=remaining)
-    monkeypatch.setattr("agri_data_service.pipeline.direct.climate.source._fetch_cell_day", resumed_fetch)
+    monkeypatch.setattr(FETCH_CELL_DAY, resumed_fetch)
     await fill_cell_day_cache(
         day=DAY, support=support, cache=resumed, concurrency=1, now=FETCHED_AT + timedelta(days=1)
     )
@@ -80,11 +119,12 @@ async def test_a_new_turn_resumes_only_verified_nonfill_responses(
 
 @pytest.mark.asyncio
 async def test_fill_values_are_never_checkpointed(support: NasaPowerSupport, monkeypatch: pytest.MonkeyPatch) -> None:
+    no_sleep(monkeypatch)
     storage = MemoryAvailabilityStorage()
     cache = ClimateSourceCache(request_budget=len(support.cells), checkpoints=SourceResponseCheckpoints(storage))
     response = cell_day_response(support.cells[0], day=DAY, values=dict.fromkeys(CLIMATE_SOURCE_PARAMETERS))
-    fetch = AsyncMock(side_effect=[response, ClimateProviderDeferredError("quota")])
-    monkeypatch.setattr("agri_data_service.pipeline.direct.climate.source._fetch_cell_day", fetch)
+    fetch = AsyncMock(side_effect=[response, *quota_answers()])
+    monkeypatch.setattr(FETCH_CELL_DAY, fetch)
     with pytest.raises(ClimateProviderDeferredError):
         await fill_cell_day_cache(day=DAY, support=support, cache=cache, concurrency=1, now=FETCHED_AT)
     assert storage.objects == {}
@@ -261,7 +301,13 @@ def test_the_synthetic_eleven_parameter_body_serves_the_three_soil_wetness_depth
 
 
 def test_the_captured_solar_value_is_a_fill_and_the_meteorology_values_are_not() -> None:
-    """The 75-day solar lag, observed directly: thirteen days back, only ALLSKY_SFC_SW_DWN is filled."""
+    """A solar cell that trailed: thirteen days back, only ALLSKY_SFC_SW_DWN was filled in this capture.
+
+    NOT evidence of a 75-day lag, which is what this capture was once read as. Re-probed on
+    2026-09-15 the same cell-day reads 23.73, so POWER trailed on this cell and revised it in, while
+    its release edge sat 4 days back (`.omc/research/runbook-20260915-shortwave/`). What the capture
+    does prove is the shape the writer must handle: a fill beside real meteorology values.
+    """
     response = parse_climate_point_body(
         capture_cell(),
         day=CAPTURE_DAY,
@@ -381,28 +427,35 @@ async def test_provider_quota_stops_queued_requests_and_keeps_completed_response
     support: NasaPowerSupport,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A refused fan-out cannot burn the remaining queue or restart it for another product."""
+    """A refused fan-out cannot burn the remaining queue or restart it for another product.
+
+    Refused means POWER kept answering 429 through every pause the turn had. The one response held
+    before that stays held, and a second call for the same turn asks nothing: the circuit is open.
+    """
+    slept = no_sleep(monkeypatch)
     cache = ClimateSourceCache(request_budget=len(support.cells) * 2)
     response = cell_day_response(support.cells[0], day=DAY)
-    fetch = AsyncMock(side_effect=[response, ClimateProviderDeferredError("provider quota exceeded")])
-    monkeypatch.setattr("agri_data_service.pipeline.direct.climate.source._fetch_cell_day", fetch)
+    fetch = AsyncMock(side_effect=[response, *quota_answers()])
+    monkeypatch.setattr(FETCH_CELL_DAY, fetch)
 
-    expected_requests = 2
-    for _attempt in range(expected_requests):
+    for _call in range(2):
         with pytest.raises(ClimateProviderDeferredError, match="provider quota"):
             await fill_cell_day_cache(day=DAY, support=support, cache=cache, concurrency=1)
 
-    assert fetch.await_count == expected_requests
-    assert cache.requests_spent == expected_requests
+    assert fetch.await_count == 1 + TERMINAL_QUOTA_ANSWERS, "one held answer, then every pause spent on one cell"
+    assert cache.requests_spent == 1 + TERMINAL_QUOTA_ANSWERS
+    assert cache.quota_pauses == NASA_POWER_QUOTA_PAUSE_LIMIT
+    assert slept == [quota_pause_seconds(pause) for pause in range(NASA_POWER_QUOTA_PAUSE_LIMIT)]
     assert list(cache.responses.values()) == [response]
 
 
 @pytest.mark.asyncio
-async def test_http_429_becomes_a_provider_deferral_before_the_remaining_fan_out(
+async def test_http_429_pauses_the_fan_out_and_defers_only_once_every_pause_is_spent(
     support: NasaPowerSupport,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Exercise the HTTP boundary, including the bounded response's status classification."""
+    slept = no_sleep(monkeypatch)
     requests: list[httpx.Request] = []
 
     def quota_response(request: httpx.Request) -> httpx.Response:
@@ -416,6 +469,127 @@ async def test_http_429_becomes_a_provider_deferral_before_the_remaining_fan_out
     cache = ClimateSourceCache(request_budget=len(support.cells))
     with pytest.raises(ClimateProviderDeferredError, match="429"):
         await fill_cell_day_cache(day=DAY, support=support, cache=cache, concurrency=1)
-    assert len(requests) == 1
-    assert cache.requests_spent == 1
+    assert len(requests) == TERMINAL_QUOTA_ANSWERS
+    assert cache.requests_spent == TERMINAL_QUOTA_ANSWERS
+    assert cache.quota_pauses == NASA_POWER_QUOTA_PAUSE_LIMIT
+    assert len(slept) == NASA_POWER_QUOTA_PAUSE_LIMIT
     assert not cache.responses
+
+
+@pytest.mark.asyncio
+async def test_one_429_pauses_the_fan_out_once_and_the_day_still_completes_in_this_turn(
+    support: NasaPowerSupport,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The production shape of 2026-09-15/16: the second fan-out of a turn met a 429 partway through.
+
+    Deferring on that first 429 handed the day to "a later turn" that selected a newer day and met
+    the same answer, so the shortwave product wrote nothing for 107 days. The day has to finish HERE.
+    """
+    slept = no_sleep(monkeypatch)
+    answers = iter([ClimateProviderDeferredError("NASA POWER answered 429")])
+
+    async def fetch(_client: object, cell: object, *, day: date, now: object) -> object:  # noqa: ARG001
+        refusal = next(answers, None)
+        if refusal is not None:
+            raise refusal
+        return cell_day_response(cell, day=day)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(FETCH_CELL_DAY, fetch)
+    cache = ClimateSourceCache(request_budget=len(support.cells) + 1)
+
+    await fill_cell_day_cache(day=DAY, support=support, cache=cache, concurrency=1)
+
+    assert len(cache.responses) == NASA_POWER_SUPPORT_CELL_COUNT
+    assert cache.requests_spent == NASA_POWER_SUPPORT_CELL_COUNT + 1, "the refused request is charged, and asked again"
+    assert cache.quota_pauses == 1
+    # The refused worker waits the whole pause; with `asyncio.sleep` recorded rather than slept, the
+    # clock never reaches the resume instant, so every later cell also waits out "the remainder" of
+    # that same pause. One pause, never a second one.
+    assert slept[0] == quota_pause_seconds(0)
+    assert max(slept) <= quota_pause_seconds(0)
+    assert cache.deferred_refusal is None
+
+
+@pytest.mark.asyncio
+async def test_one_burst_of_429s_across_the_concurrent_workers_is_one_pause(
+    support: NasaPowerSupport,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Four workers in flight meet the same 429 within a second; that is one pause, not four."""
+    slept = no_sleep(monkeypatch)
+    burst = NASA_POWER_POINT_CONCURRENCY
+    issued = 0
+
+    async def fetch(_client: object, cell: object, *, day: date, now: object) -> object:  # noqa: ARG001
+        nonlocal issued
+        issued += 1
+        ordinal = issued
+        await yield_control()  # every in-flight worker has asked before any of them reads its answer
+        if ordinal <= burst:
+            raise ClimateProviderDeferredError("NASA POWER answered 429")
+        return cell_day_response(cell, day=day)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(FETCH_CELL_DAY, fetch)
+    cache = ClimateSourceCache(request_budget=len(support.cells) + burst)
+
+    await fill_cell_day_cache(day=DAY, support=support, cache=cache, concurrency=burst)
+
+    assert len(cache.responses) == NASA_POWER_SUPPORT_CELL_COUNT
+    assert cache.quota_pauses == 1, "four refusals within one pause are one pause"
+    assert cache.requests_spent == NASA_POWER_SUPPORT_CELL_COUNT + burst
+    assert len(slept) >= burst, "each refused worker waits the one shared cooldown out"
+    assert all(0 < waited <= quota_pause_seconds(0) for waited in slept), "never longer than the first pause"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "budget_left_seconds",
+    [
+        quota_pause_seconds(0) / 2,
+        quota_pause_seconds(0) + NASA_POWER_QUOTA_PAUSE_DEADLINE_RESERVE_SECONDS / 2,
+    ],
+    ids=["shorter-than-the-pause", "pause-fits-but-not-the-reserve"],
+)
+async def test_a_pause_that_would_outlast_the_turn_deadline_or_its_reserve_is_a_deferral_at_once(
+    support: NasaPowerSupport,
+    monkeypatch: pytest.MonkeyPatch,
+    budget_left_seconds: float,
+) -> None:
+    """A cooldown the turn cannot afford is not slept; the day is handed to a later turn without waiting.
+
+    Afford means the pause AND the reserve after it: the products queued behind this one each still
+    need a lock, a write and three derivations, and a pause ending at the deadline hands every one
+    of them `time_budget_exhausted`.
+    """
+    slept = no_sleep(monkeypatch)
+    fetch = AsyncMock(side_effect=ClimateProviderDeferredError("NASA POWER answered 429"))
+    monkeypatch.setattr(FETCH_CELL_DAY, fetch)
+    cache = ClimateSourceCache(request_budget=len(support.cells))
+
+    with pytest.raises(ClimateProviderDeferredError, match="429"):
+        await fill_cell_day_cache(
+            day=DAY,
+            support=support,
+            cache=cache,
+            concurrency=1,
+            deadline=time.monotonic() + budget_left_seconds,
+        )
+
+    assert fetch.await_count == 1
+    assert cache.quota_pauses == 0
+    assert slept == []
+
+
+def test_the_pause_series_fits_inside_one_turn_beside_two_fan_outs() -> None:
+    """20 s doubling to 160 s is 300 s of waiting at most, inside a 900 s turn that already spends ~2 min fetching."""
+    series = [quota_pause_seconds(pause) for pause in range(NASA_POWER_QUOTA_PAUSE_LIMIT)]
+
+    assert series == [20.0, 40.0, 80.0, 160.0]
+    assert sum(series) == 300.0  # noqa: PLR2004 - the whole point is the number
+    assert quota_pause_seconds(NASA_POWER_QUOTA_PAUSE_LIMIT) == series[-1], "capped, never past the last step"
+    # Two 397-cell fan-outs measured at roughly a minute each in production; allow them two apiece,
+    # and the reserve the last pause must still leave for the products queued behind.
+    two_fan_outs = 2 * 120.0
+    spent = sum(series) + two_fan_outs + NASA_POWER_QUOTA_PAUSE_DEADLINE_RESERVE_SECONDS
+    assert spent < CLIMATE_DEFAULT_TIME_BUDGET_SECONDS

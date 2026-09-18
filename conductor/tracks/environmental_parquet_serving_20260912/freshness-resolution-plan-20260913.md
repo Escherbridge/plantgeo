@@ -51,12 +51,20 @@ Owner: gapless publication; shared infrastructure. Priority P1; can be developed
 
 - [ ] Add bounded executor reconciliation for object-complete/index-missing days, pending claims,
   missing bootstrap and incomplete ladders, consuming retained source evidence where valid.
+  - Status 2026-09-15 (lane A3): bounded gap repair scaffold landed -- `execution/gap_repair_contract.py`,
+    `execution/gap_repair.py` (`ops jobs-plan-gap-repair`, needs one registration line in
+    `interface/cli/ops.py`), repair kind + `_plan_repair_runs` in `job_executor_service.py`. Repairs run
+    the lanes' own writers with `--max-days`; index-missing/ladder reconciliation is NOT covered.
 - [ ] Report acquisition, object completion and serving publication separately. A green acquisition
   must not satisfy the end-to-end freshness gate while availability is owed.
 - [ ] Keep immutable generations, lane-day locks, conditional pointer updates and marker-last writes.
   Run bootstrap only in the explicit offline path; never add request-time historical scans.
 - [ ] Add independent freshness reporting that compares publication against a current expected
   horizon and a measured source horizon, retaining the age of each measurement.
+  - Status 2026-09-15 (lane A3): `parquet_ops/freshness.py` computes `expected_horizon_day`,
+    `staleness_days`, `behind_provider` on every coverage row from the registered lag, independent of the
+    pointer. NOT on the frozen `/api/v1/parquet/coverage` wire: requires the schema-3-to-4 contract
+    change recorded in `parquet_ops/AGENTS.md`, "Independent freshness". Measurement age not yet carried.
 
 Exit: injected availability failure, restart, retry, missing bootstrap and pointer-race cases recover
 without refetching already durable data or declaring an unserved product published.
@@ -79,6 +87,10 @@ Owner: gapless publication. Priority P1 for measured gaps; follows inventory and
 - [ ] Reconcile burn-severity cohort and release semantics for the two measured gap intervals;
   separately admit any older source scope instead of relabeling the current cohort complete.
 - [ ] Register periodic gap detection that authors durable work for every supported product horizon.
+  - Status 2026-09-18 (lane A3): the executor leader now authors the same bounded work itself every
+    `PLANTGEO_JOB_EXECUTOR_REPAIR_INTERVAL_SECONDS` (default 6 h) via `_author_due_repairs`, and a new
+    process releases a breaker-held lane once (`ProcessStartRelease`); lanes without a bounded writer
+    knob are still reported `no_repair_binding` with the reason. Verb kept for on-demand turns.
 
 Exit: every targeted missing interval has validated objects and required rungs plus an availability
 entry, or a source-backed governed absence/refusal. Include an outage longer than the forward

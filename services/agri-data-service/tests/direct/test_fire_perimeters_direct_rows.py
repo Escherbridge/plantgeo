@@ -2,8 +2,9 @@
 
 `publisher_named_day` and `chunk_row_indices_by_geometry_bytes` are pure and need nothing. The
 `fire_perimeter_population` tests NEED DuckDB's `spatial` extension loadable, because every row's
-geometry goes through `support.perimeter_geometries_to_wkb` -- the same requirement
-`test_drought_rows.py` carries.
+geometry goes through `support.repair_perimeter_geometries_to_wkb` -- the same requirement
+`test_drought_rows.py` carries. The repair-audit tests reuse the real 2026-09-15 WFIGS perimeters
+`test_fire_perimeters_direct_support.py` loads, under synthetic incident identities.
 """
 
 # ruff: noqa: PLR2004 - the small literal counts ARE the assertion; naming each one hides it.
@@ -17,8 +18,11 @@ import pytest
 
 from agri_data_service.pipeline.direct.fire_perimeters.rows import (
     DIRECT_FEATURE_ID_PREFIX,
+    GEOMETRY_REPAIRED_AREA_CHANGE_KEY,
+    GEOMETRY_REPAIRED_KEY,
     OBSERVATION_DAY_KEYS,
     PUBLISHED_STATUS,
+    GeometryRepair,
     chunk_row_indices_by_geometry_bytes,
     direct_feature_id,
     fire_perimeter_population,
@@ -27,6 +31,12 @@ from agri_data_service.pipeline.direct.fire_perimeters.rows import (
 )
 from agri_data_service.pipeline.direct.fire_perimeters.source import FirePerimetersSource
 from agri_data_service.warehouse.schemas.fire_perimeters import FIRE_PERIMETERS_SCHEMA
+from tests.direct.test_fire_perimeters_direct_support import (
+    EGYPT_INVALID_POLYGON,
+    REPAIRED_IDENTITIES,
+    SKULL_INVALID_MULTIPOLYGON,
+    wfigs_fixture_geometries,
+)
 
 FETCHED_AT = datetime(2026, 9, 6, 14, 30, tzinfo=UTC)
 SNAPSHOT_DAY = date(2026, 9, 6)
@@ -216,3 +226,68 @@ def test_chunk_indices_stay_contiguous_and_cover_every_row_exactly_once() -> Non
 @pytest.mark.parametrize("bad_day", ["2026-13-01", "2026-04-31", "20260830"])
 def test_a_day_prefix_that_is_not_a_real_iso_day_is_undated(bad_day: str) -> None:
     assert publisher_named_day({"polygonDateTime": f"{bad_day}T00:00:00.000Z"}) is None
+
+
+def _live_identity(source_oid: str) -> str:
+    return f"2026-WFIGS-{source_oid}"
+
+
+def _live_source() -> FirePerimetersSource:
+    """The five real 2026-09-15 perimeters, each under a synthetic identity built from its poly_SourceOID."""
+    geometries = wfigs_fixture_geometries()
+    return _source(*(_perimeter(_live_identity(oid), geometry=geometry) for oid, geometry in geometries.items()))
+
+
+def test_a_mixed_live_feed_conforms_every_perimeter_rather_than_refusing_the_snapshot() -> None:
+    """Two valid and three invalid real perimeters in one population: five rows, nothing refused."""
+    population = fire_perimeter_population(_live_source())
+
+    assert len(population.rows) == 5
+    assert population.rejected == 0
+
+
+def test_every_row_says_whether_the_repair_chain_changed_it() -> None:
+    population = fire_perimeter_population(_live_source())
+
+    flagged = {row["unique_fire_identifier"] for row in population.rows if row[GEOMETRY_REPAIRED_KEY]}
+    assert flagged == {_live_identity(oid) for oid in REPAIRED_IDENTITIES}
+    for row in population.rows:
+        if row[GEOMETRY_REPAIRED_KEY]:
+            assert isinstance(row[GEOMETRY_REPAIRED_AREA_CHANGE_KEY], float)
+        else:
+            assert row[GEOMETRY_REPAIRED_AREA_CHANGE_KEY] is None
+
+
+def test_the_repairs_view_names_each_repaired_incident_with_its_area_ratio_in_row_order() -> None:
+    """What `forward.py` prints: per incident, so the fidelity trade is auditable without reading Parquet."""
+    population = fire_perimeter_population(_live_source())
+
+    repairs = population.repairs
+
+    assert all(isinstance(repair, GeometryRepair) for repair in repairs)
+    expected_order = sorted(_live_identity(oid) for oid in REPAIRED_IDENTITIES)
+    assert [repair.unique_fire_identifier for repair in repairs] == expected_order
+    by_identity = {repair.unique_fire_identifier: repair.area_change for repair in repairs}
+    assert by_identity[_live_identity(SKULL_INVALID_MULTIPOLYGON)] == pytest.approx(-0.0756, abs=0.001)
+    assert by_identity[_live_identity(EGYPT_INVALID_POLYGON)] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_an_unrepaired_population_reports_no_repairs() -> None:
+    population = fire_perimeter_population(_source(_perimeter("OR-A")))
+
+    assert population.repairs == ()
+    assert population.rows[0][GEOMETRY_REPAIRED_KEY] is False
+    assert population.rows[0][GEOMETRY_REPAIRED_AREA_CHANGE_KEY] is None
+
+
+def test_the_repair_audit_keys_ride_on_the_row_and_stop_at_the_arrow_table() -> None:
+    """The frozen schema has no repair column and the serving reader is `.strict()` over it (AGENTS.md)."""
+    population = fire_perimeter_population(_live_source())
+
+    table = fire_perimeters_table(population, snapshot_day=SNAPSHOT_DAY)
+
+    assert GEOMETRY_REPAIRED_KEY in population.rows[0]
+    assert GEOMETRY_REPAIRED_KEY not in table.column_names
+    assert GEOMETRY_REPAIRED_AREA_CHANGE_KEY not in table.column_names
+    assert table.schema.equals(FIRE_PERIMETERS_SCHEMA.arrow_schema)
+    assert table.num_rows == 5

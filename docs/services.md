@@ -97,25 +97,9 @@ Calculate Canadian Fire Weather Index (FWI) system components.
 
 ---
 
-### landfire.ts
+### landfire.ts (removed 2026-09-15)
 
-Get vegetation and fuel data from LANDFIRE dataset.
-
-**Key Functions:**
-- `getLandFireEVT(lat: number, lon: number): Promise<EVTData>`
-
-**Purpose:** Retrieve vegetation and fuel type information for fire modeling.
-
-**External API:** LANDFIRE WMS/API
-- Endpoint: `https://lfps.usgs.gov/`
-- Data: Existing Vegetation Type (EVT)
-
-**Data returned:**
-- Vegetation type classification
-- Fuel load parameters
-- Canopy height, density
-
-**Caching:** Redis key `landfire:evt:{lat},{lon}`, TTL 24 hours
+Deleted. `getLandFireEVT` had no callers, its ArcGIS host had moved (HTTP 404), and it mapped FBFM40 fuel-model codes against Existing Vegetation Type values, so it never returned a real classification. Vegetation type is being designed as a governed Parquet lane (`.omc/research/runbook-20260915-vegetation-type/PLAN.md`); nothing serves it today.
 
 ---
 

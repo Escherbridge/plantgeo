@@ -346,6 +346,49 @@ async def supersede_failed_run(  # noqa: PLR0913 - one parameter per fact the re
     return replace(receipt, outcome="recorded", incident_id=required_column(row, "id", uuid.UUID))
 
 
+#: One resolved `agri.job_incident` row per (deployment, lane) marks that a process start already released
+#: the lane's breaker under that deployment. Same table and statement as a supersession, distinct namespace.
+PROCESS_START_RELEASE_INCIDENT_TYPE: Final = "plantgeo.executor.process_start_release"
+PROCESS_START_RELEASE_FINGERPRINT_PREFIX: Final = "plantgeo.executor.process-start-release:"
+
+
+def process_start_release_fingerprint(*, deployment: str, lane_id: str) -> str:
+    """The unique marker fingerprint for one deployment's single breaker release of one lane."""
+    return f"{PROCESS_START_RELEASE_FINGERPRINT_PREFIX}{deployment}:{lane_id}"
+
+
+async def claim_process_start_release(  # noqa: PLR0913 - one fact of the marker per argument
+    session: AsyncSession,
+    *,
+    lane_id: str,
+    deployment: str,
+    operator: str,
+    now: datetime,
+    detail: Mapping[str, object],
+) -> bool:
+    """Record, once per deployment and lane, that a process start released the breaker; `False` when it already had.
+
+    The insert's `ON CONFLICT (fingerprint) DO NOTHING` is the whole atomicity argument: two restarts of the
+    same deployment cannot both see "not yet released", because the second insert returns no row. Runs on
+    the caller's transaction; the caller commits it together with the supersession it guards.
+    """
+    row = await fetch_row(
+        session,
+        _INSERT_SUPERSESSION_INCIDENT,
+        {
+            "fingerprint": process_start_release_fingerprint(deployment=deployment, lane_id=lane_id),
+            "incident_type": PROCESS_START_RELEASE_INCIDENT_TYPE,
+            "job_run_id": None,
+            "job_work_item_id": None,
+            "summary": f"executor process start released the breaker on {lane_id} once for deployment {deployment}",
+            "owner": operator,
+            "acknowledged_by": operator,
+            "detail": canonical_json({**detail, "recorded_at": now.isoformat(), "recorded_by": operator}),
+        },
+    )
+    return row is not None
+
+
 def _utc_now() -> datetime:
     return datetime.now(UTC)
 
@@ -477,13 +520,17 @@ def jobs_supersede_run(lane_id: str, run_id: uuid.UUID, evidence: str, operator:
 __all__ = [
     "EVIDENCE_MAX_LENGTH",
     "OPERATOR_MAX_LENGTH",
+    "PROCESS_START_RELEASE_FINGERPRINT_PREFIX",
+    "PROCESS_START_RELEASE_INCIDENT_TYPE",
     "LedgerFailedAfterReceipt",
     "RunWorkItem",
     "SupersessionOutcome",
     "SupersessionReceipt",
     "SupersessionRefusal",
+    "claim_process_start_release",
     "jobs_supersede_run",
     "ledger_target",
+    "process_start_release_fingerprint",
     "resolve_executor_lane",
     "supersede_failed_run",
     "supersession_fingerprint",

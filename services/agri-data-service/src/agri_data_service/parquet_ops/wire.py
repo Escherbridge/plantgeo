@@ -272,9 +272,15 @@ class LaneCoverage:
     #: census proves each rung on its own and binds no cross-rung contract to state here.
     required_rungs: tuple[int, ...] = ()
     withheld_reason: CoverageWithholding | None = None
+    #: Independent freshness, measured from the lane's REGISTERED lag and today rather than from the
+    #: pointer; see `parquet_ops/freshness.py`. NOT rendered by `to_wire()`: the coverage contract is
+    #: frozen at schema version 3, and these ride a sibling report until the bump named in `AGENTS.md`.
+    expected_horizon_day: date | None = None
+    staleness_days: int | None = None
+    behind_provider: bool | None = None
 
     def to_wire(self) -> dict[str, object]:
-        """Render one lane's coverage row."""
+        """Render one lane's coverage row exactly as frozen; the freshness fields deliberately stay off it."""
         return {
             "layer": self.layer,
             "nature": self.nature,

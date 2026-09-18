@@ -13,6 +13,7 @@ import structlog
 from agri_data_service.foundation.parquet.lane_contract import nature_has_time_axis
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.parquet_ops.coverage import LaneDays, close_lane_coverage
+from agri_data_service.parquet_ops.freshness import PUBLICATION_GRACE_DAYS, measure_lane_freshness, with_freshness
 from agri_data_service.parquet_ops.snapshot_products import (
     FORWARD_PARTITION_KIND,
     ForwardAvailability,
@@ -86,8 +87,9 @@ AVAILABILITY_LANE_WORKERS: Final = 3
 #: issue is quiet, and a lane that has missed a period AND the grace on top of it has a publisher
 #: that stopped. Too tight a value greys out healthy lanes on a single missed cron tick, which is
 #: strictly worse than serving a horizon a few days old -- that horizon is itself on the wire as
-#: `source_ceiling_day`, so a client can judge it.
-AVAILABILITY_STALE_GRACE_DAYS: Final = 3
+#: `source_ceiling_day`, so a client can judge it. The literal is `freshness.PUBLICATION_GRACE_DAYS`,
+#: which judges PUBLICATION against the lane's expected horizon with the same slack: one number, two questions.
+AVAILABILITY_STALE_GRACE_DAYS: Final = PUBLICATION_GRACE_DAYS
 
 _GENERATION_KEY_MARKER: Final = "/availability/generation="
 
@@ -556,31 +558,53 @@ def lane_coverage_from_proven_days(  # noqa: PLR0913 - one already-proven fact a
     """
     days = LaneDays(data=published_days, absent=absent_days, conflict=frozenset())
     pointer_key = availability_pointer_key(lane_root(lane))
+    today = now.astimezone(UTC).date()
     return tuple(
-        replace(
-            close_lane_coverage(
-                lane=lane,
-                tier=tier,
-                horizon=source_ceiling,
-                days=days,
-                # The publisher already subtracted this lane's publication lag when it declared the
-                # ceiling; charging it again would hide one lag period of the real gap tail.
-                horizon_already_lag_adjusted=True,
-                carry_horizon=now.astimezone(UTC).date(),
+        # Freshness is measured LAST and from `today`, never from the ceiling this row was closed
+        # against: the ceiling is the publisher's own claim, and the whole point of the second horizon
+        # is that a stalled publisher cannot move it.
+        with_freshness(
+            replace(
+                close_lane_coverage(
+                    lane=lane,
+                    tier=tier,
+                    horizon=source_ceiling,
+                    days=days,
+                    # The publisher already subtracted this lane's publication lag when it declared the
+                    # ceiling; charging it again would hide one lag period of the real gap tail.
+                    horizon_already_lag_adjusted=True,
+                    carry_horizon=today,
+                ),
+                coverage_authority=COVERAGE_AUTHORITY_AVAILABILITY,
+                availability_generation_sha256=generation_sha256,
+                availability_pointer_key=pointer_key,
+                source_ceiling_day=source_ceiling,
+                required_rungs=required_rungs,
             ),
-            coverage_authority=COVERAGE_AUTHORITY_AVAILABILITY,
-            availability_generation_sha256=generation_sha256,
-            availability_pointer_key=pointer_key,
-            source_ceiling_day=source_ceiling,
-            required_rungs=required_rungs,
+            lane=lane,
+            today=today,
         )
         for tier in ZOOM_TIERS
     )
 
 
-def withheld_lane_coverage(lane: CensusLane, *, reason: CoverageWithholding) -> tuple[LaneCoverage, ...]:
-    """Publish one lane's rungs with NO selectable days and the exact reason none may be published."""
+def withheld_lane_coverage(
+    lane: CensusLane,
+    *,
+    reason: CoverageWithholding,
+    now: datetime | None = None,
+) -> tuple[LaneCoverage, ...]:
+    """Publish one lane's rungs with NO selectable days and the exact reason none may be published.
+
+    `now` lets the row still state the horizon its PROVIDER should have reached: that figure comes
+    from the registration and the calendar, not from the index being withheld, so an operator reads
+    "expected through X, nothing proven" rather than a row that says nothing at all.
+    """
     pointer_key = availability_pointer_key(lane_root(lane))
+    expected_horizon = None
+    if now is not None:
+        today = now.astimezone(UTC).date()
+        expected_horizon = measure_lane_freshness(lane, latest_recorded_day=None, today=today).expected_horizon_day
     return tuple(
         LaneCoverage(
             layer=lane.layer,
@@ -596,6 +620,7 @@ def withheld_lane_coverage(lane: CensusLane, *, reason: CoverageWithholding) -> 
             coverage_authority=COVERAGE_AUTHORITY_AVAILABILITY,
             availability_pointer_key=pointer_key,
             withheld_reason=reason,
+            expected_horizon_day=expected_horizon,
         )
         for tier in ZOOM_TIERS
     )
@@ -661,13 +686,13 @@ def _read_lane(
     try:
         index = reader.read(lane, now=now)
     except AvailabilityChecksumError as exc:
-        return _withheld(lane, reason=WITHHELD_AVAILABILITY_CHECKSUM_INVALID, detail=str(exc))
+        return _withheld(lane, reason=WITHHELD_AVAILABILITY_CHECKSUM_INVALID, detail=str(exc), now=now)
     except AvailabilityMalformedError as exc:
-        return _withheld(lane, reason=WITHHELD_AVAILABILITY_MALFORMED, detail=str(exc))
+        return _withheld(lane, reason=WITHHELD_AVAILABILITY_MALFORMED, detail=str(exc), now=now)
     except AvailabilityUnavailableError as exc:
         if exc.code == "availability_missing":
-            return _no_pointer(reader, lane, policy=policy, detail=str(exc))
-        return _withheld(lane, reason=WITHHELD_AVAILABILITY_STALE, detail=str(exc))
+            return _no_pointer(reader, lane, policy=policy, detail=str(exc), now=now)
+        return _withheld(lane, reason=WITHHELD_AVAILABILITY_STALE, detail=str(exc), now=now)
     return _LaneOutcome(rows=lane_coverage_from_index(index, lane=lane, now=now), withholding=None, census=False)
 
 
@@ -715,6 +740,7 @@ def _no_pointer(
     *,
     policy: CoverageAuthorityPolicy,
     detail: str,
+    now: datetime | None = None,
 ) -> _LaneOutcome:
     """Decide what a lane with NO pointer owes, which turns on whether it was ever bootstrapped.
 
@@ -729,7 +755,7 @@ def _no_pointer(
     except AvailabilityMalformedError as exc:
         # A marker whose bytes are not the frozen shape settles nothing, and settling nothing is not
         # permission to scan: corruption never falls back, here as everywhere else on this path.
-        return _withheld(lane, reason=WITHHELD_AVAILABILITY_MALFORMED, detail=str(exc))
+        return _withheld(lane, reason=WITHHELD_AVAILABILITY_MALFORMED, detail=str(exc), now=now)
     if bootstrapped:
         logger.warning(
             "availability_pointer_lost",
@@ -741,7 +767,7 @@ def _no_pointer(
                 "it is withheld rather than re-proven by the listing census the index replaced"
             ),
         )
-        return _withheld(lane, reason=WITHHELD_AVAILABILITY_UNPUBLISHED, detail=detail)
+        return _withheld(lane, reason=WITHHELD_AVAILABILITY_UNPUBLISHED, detail=detail, now=now)
     if policy == "census_until_bootstrap":
         logger.warning(
             "availability_census_fallback",
@@ -751,12 +777,18 @@ def _no_pointer(
             reason="no bootstrap receipt and no pointer, so this lane still costs a whole-stream listing",
         )
         return _LaneOutcome(rows=(), withholding=None, census=True)
-    return _withheld(lane, reason=WITHHELD_AVAILABILITY_UNPUBLISHED, detail=detail)
+    return _withheld(lane, reason=WITHHELD_AVAILABILITY_UNPUBLISHED, detail=detail, now=now)
 
 
-def _withheld(lane: CensusLane, *, reason: CoverageWithholding, detail: str) -> _LaneOutcome:
+def _withheld(
+    lane: CensusLane,
+    *,
+    reason: CoverageWithholding,
+    detail: str,
+    now: datetime | None = None,
+) -> _LaneOutcome:
     return _LaneOutcome(
-        rows=withheld_lane_coverage(lane, reason=reason),
+        rows=withheld_lane_coverage(lane, reason=reason, now=now),
         withholding=LaneWithholding(layer=lane.layer, kind=lane.kind, reason=reason, detail=detail),
         census=False,
     )

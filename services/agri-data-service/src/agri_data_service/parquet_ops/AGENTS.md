@@ -297,6 +297,44 @@ be: the reader's `LIMIT` selects in ITS order, so a truncated forward day return
 ordered SUBSET presented in lon/lat order. That is what `truncated` on the envelope is for — a
 partial day is declared partial, and its last row is not the day's last row.
 
+## Independent freshness: the expected horizon is not the pointer
+
+`source_ceiling_day` is written by the publisher and advances only when a day is actually published,
+so a stalled publisher reports a ceiling that agrees with its own newest day. `latest_recorded_day ==
+source_ceiling_day` is therefore near-tautological and cannot tell a healthy lane from one whose
+writer stopped -- which is how `climate-field-shortwave-radiation` sat 107 days stale for three
+months (audit 2026-09-13; plan R2 "independent freshness reporting").
+
+`freshness.py` derives a SECOND horizon from nothing the publisher controls: the lane's REGISTERED
+`publication_lag_days` and today, through the same `lane_ceiling.allowed_source_ceiling` the publisher
+is supposed to use. Every coverage row now carries three fields the frozen `to_wire()` does NOT render:
+
+- `expected_horizon_day` -- `today - publication_lag_days`; `None` on a `static_lookup`.
+- `staleness_days` -- `expected_horizon_day - latest_recorded_day`, floored at zero; `None` with no
+  recorded day. The RECORDED day, never the carried edge, for the same reason `source_ceiling_day` is
+  weighed against it.
+- `behind_provider` -- `staleness_days > cadence_days + PUBLICATION_GRACE_DAYS`. One cadence period
+  of slack plus the same grace `AVAILABILITY_STALE_GRACE_DAYS` gives the pointer, spelled from one
+  literal so the two questions cannot drift.
+
+`horizon_gap_days` (expected horizon minus pointer ceiling) is the stalled-publisher discriminator:
+zero while the publisher declares a ceiling every period, growing daily once it stops. Attached in
+`lane_coverage_from_proven_days`, `build_coverage`/`build_lane_coverage` and, as the horizon alone, on
+withheld rows, so an operator reads "expected through X, nothing proven" rather than a row that says
+nothing. `render_freshness_report` is the sibling payload (`freshness_schema_version: 1`), consumed
+today by `execution/gap_repair.py`'s plan output.
+
+**Putting these on `/api/v1/parquet/coverage` is a contract change, not an addition.** The Python
+contract is `extra="forbid"` and `tests/interface/test_parquet_routes.py` validates the live payload
+against it; both goldens are reproduced byte-for-byte by the builders. The exact change, in ONE
+commit: `COVERAGE_SCHEMA_VERSION` 3 -> 4 in `parquet_ops/wire.py`, `tests/contract/wire_contract.py`
+and `src/lib/server/services/parquet-plane-client.ts`; the three fields added to `LaneCoverage.to_wire()`,
+to `WireCoverageLane`, to the zod `wireCoverageSchema` and `ParquetLaneCoverage` (camelCase
+`expectedHorizonDay`, `stalenessDays`, `behindProvider`) with the `decodeCoverage` mapping; every lane in
+`tests/contract/fixtures/coverage.json` and `coverage_availability.json` gains them; then
+`parquet-slider-capabilities.ts` can surface `expectedHorizonDay`/`stalenessDays` beside
+`sourceCeilingDay`. Until then the fields live on the dataclass and the sibling report only.
+
 ## Coverage rollup — one object, proven per lane against that lane's own pointer
 
 **What the measurement actually said (2026-09-07, against production).** The cold coverage cost was

@@ -17,9 +17,10 @@ from agri_data_service.foundation.parquet.paths import completion_marker_path, p
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct.climate import forward
-from agri_data_service.pipeline.direct.climate.adapter import CLIMATE_DIRECT_KIND
+from agri_data_service.pipeline.direct.climate.adapter import CLIMATE_DIRECT_KIND, DirectClimateFieldAdapter
 from agri_data_service.pipeline.direct.climate.products import (
     CLIMATE_DISTINCT_PUBLICATION_CLOCKS,
+    CLIMATE_FIELD_PRODUCTS,
     CLIMATE_METEOROLOGY_PUBLICATION_LAG_DAYS,
     CLIMATE_PRODUCT_IDS,
     CLIMATE_SHORTWAVE_RADIATION_PUBLICATION_LAG_DAYS,
@@ -29,15 +30,17 @@ from agri_data_service.pipeline.direct.climate.source import (
     ClimateProviderDeferredError,
     ClimateSourceCache,
     ClimateTimeBudgetExhaustedError,
+    climate_day_from_cache,
 )
 from agri_data_service.pipeline.direct.climate.support import NASA_POWER_SUPPORT_CELL_COUNT
 from agri_data_service.pipeline.parquet.availability_extension import (
     AvailabilityExtensionOutcome,
     AvailabilityExtensionTally,
 )
-from agri_data_service.pipeline.parquet.gap_fill import GAP_FILL_PARTITION_KIND
+from agri_data_service.pipeline.parquet.gap_fill import GAP_FILL_PARTITION_KIND, fill_one_lane_day, unlocked_lane_day
+from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
-from tests.direct.climate.conftest import product_for
+from tests.direct.climate.conftest import filled_cache, product_for
 from tests.parquet.test_objectstore_writer import RecordingBackend
 
 if TYPE_CHECKING:
@@ -52,6 +55,18 @@ SEEDED_AT = datetime(2026, 8, 26, tzinfo=UTC)
 SEEDED_ROW_COUNT = 397
 EXPECTED_DEFAULT_MAX_DAYS = 1
 EXPECTED_DISTINCT_CLOCKS = 2
+#: The day POWER's live solar edge was measured, and the clock the catch-up arithmetic is stated at.
+#: `products.SHORTWAVE_LAG_MEASUREMENT_EVIDENCE`.
+MEASUREMENT_DAY = date(2026, 9, 15)
+#: The measured 4-day solar edge plus the couple of days the edge moved between the August (5-day)
+#: and September (3-day) meteorology readings -- jitter, not a copied margin.
+EXPECTED_SHORTWAVE_LAG_DAYS = 6
+#: 2026-06-01 through 2026-09-09 inclusive: the owed tail the corrected lag makes eligible at once.
+EXPECTED_CATCH_UP_DAYS = 101
+#: A day written while one support cell still answered POWER's fill: 396 rows under a complete marker.
+SHORT_ROW_COUNT = NASA_POWER_SUPPORT_CELL_COUNT - 1
+#: The two all-rungs-complete days a fifteen-day census window holds in the marker-read test below.
+EXPECTED_MARKER_READS = 2
 #: Long enough that an unclamped wait is unmistakable, short enough that the test stays fast.
 OVERSHOOT_SECONDS = 0.1
 NARROW_BUDGET_SECONDS = 0.02
@@ -124,9 +139,21 @@ class SessionDouble:
         self.rollbacks += 1
 
 
-def seed_complete_day(backend: RecordingBackend, stream: str, day: date) -> None:
+class CountingBackend(RecordingBackend):
+    """The in-memory backend, counting every single-object read so a census's read cost can be asserted."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.reads: list[str] = []
+
+    def get(self, key: str) -> bytes | None:
+        self.reads.append(key)
+        return super().get(key)
+
+
+def seed_complete_day(backend: RecordingBackend, stream: str, day: date, *, row_count: int = SEEDED_ROW_COUNT) -> None:
     """Write one day's parts and completion markers at every rung, as a finished export leaves them."""
-    marker = PartitionCompletion(part_count=1, row_count=SEEDED_ROW_COUNT, completed_at=SEEDED_AT, run_id="seed")
+    marker = PartitionCompletion(part_count=1, row_count=row_count, completed_at=SEEDED_AT, run_id="seed")
     for tier in ZOOM_TIERS:
         backend.put(partition_path(stream, CLIMATE_DIRECT_KIND, tier, day), b"parquet", content_type="x")
         backend.put(
@@ -146,14 +173,91 @@ def test_the_meteorology_settled_edge_is_todays_date_minus_the_measured_lag() ->
     assert product.publication_lag_days == CLIMATE_METEOROLOGY_PUBLICATION_LAG_DAYS
 
 
-def test_shortwave_radiation_waits_far_longer_than_the_meteorology_products() -> None:
-    """The solar product publishes months behind; sharing the meteorology lag would fabricate absences."""
+def test_shortwave_radiation_waits_exactly_one_day_longer_than_the_meteorology_products() -> None:
+    """MEASURED 2026-09-15: POWER's solar edge was 2026-09-11 and its T2M edge 2026-09-12, one day apart.
+
+    The lag was 75 until that measurement, inferred from a stale snapshot's internal 67-day gap, and it
+    held this lane's settled ceiling 107 days behind its siblings in production. Sharing the
+    meteorology lag outright would be the opposite failure: a fetch after a day POWER has not produced
+    is a governed absence that is simply wrong, so the solar clock keeps its own extra day.
+    """
+    shortwave = product_for(SHORTWAVE_STREAM)
+    meteorology = product_for(PLANE_STREAM)
+
+    assert CLIMATE_SHORTWAVE_RADIATION_PUBLICATION_LAG_DAYS == EXPECTED_SHORTWAVE_LAG_DAYS
+    assert shortwave.publication_lag_days == CLIMATE_SHORTWAVE_RADIATION_PUBLICATION_LAG_DAYS
+    assert shortwave.publication_lag_days - meteorology.publication_lag_days == 1
+    assert forward.settled_through(shortwave, today=TODAY) == forward.settled_through(
+        meteorology, today=TODAY
+    ) - timedelta(days=1)
+
+
+def test_a_premature_absence_is_always_inside_the_recheck_window() -> None:
+    """What the recheck window guards: a WRONG ABSENCE behind the frontier, at either lag.
+
+    If the whole lattice ever trails past a lag, the all-fill day behind the frontier is governed
+    absent against a later published day, and that marker is only undone by
+    `adapter._retract_disproven_absence`, which runs on selected days only -- so the absence must
+    still be inside the window the walk comes back to. This says NOTHING about a day where SOME
+    cells trail: that day is written short and is `data` everywhere; see the partial-day tests below.
+    """
+    assert forward.CLIMATE_ABSENCE_RECHECK_DAYS > CLIMATE_SHORTWAVE_RADIATION_PUBLICATION_LAG_DAYS
+    assert forward.CLIMATE_ABSENCE_RECHECK_DAYS > CLIMATE_METEOROLOGY_PUBLICATION_LAG_DAYS
+
+
+def test_the_clock_count_is_derived_from_the_products_and_reads_two_while_the_solar_lag_differs() -> None:
+    """Not pinned: were every product to share one lag it would read 1, and a budget of 397 would be right.
+
+    One distinct day is one 397-cell fan-out however many products read it, because the turn cache is
+    keyed by cell and day. The cost of a second clock is therefore not a smaller budget but a SECOND
+    fan-out in the same turn -- the one POWER answered 429 in production on 2026-09-15 and 2026-09-16.
+    """
+    distinct_lags = {product.publication_lag_days for product in CLIMATE_FIELD_PRODUCTS}
+
+    assert len(distinct_lags) == CLIMATE_DISTINCT_PUBLICATION_CLOCKS
+    assert CLIMATE_DISTINCT_PUBLICATION_CLOCKS == EXPECTED_DISTINCT_CLOCKS
+    assert CLIMATE_SHORTWAVE_RADIATION_PUBLICATION_LAG_DAYS != CLIMATE_METEOROLOGY_PUBLICATION_LAG_DAYS
+
+
+@pytest.mark.asyncio
+async def test_one_turn_censuses_the_whole_owed_solar_tail_and_takes_only_its_newest_day(
+    support: NasaPowerSupport,
+) -> None:
+    """The floor needs no correction: one turn's census reaches 2026-06-01, so the walk owns the whole tail.
+
+    Driven through `_publish_product` on the measurement day over an empty bucket, with a request
+    budget of zero so no socket opens: the census is real, the selection is real, and the one
+    selected day is stopped at the budget check. Under the old 75 the ceiling sat at 2026-07-02 and
+    most of the tail was not eligible. What this turn reports is also the operational cost: at the
+    default `--max-days` of 1 a turn takes ONE owed day, so `backlog_days` is the number of drain
+    turns owed, on top of the one turn a day the advancing ceiling takes -- IF the executor runs
+    the lane hourly. Once a day, as observed in production on 2026-09-15/16, the number never falls.
+    """
     shortwave = product_for(SHORTWAVE_STREAM)
 
-    assert shortwave.publication_lag_days == CLIMATE_SHORTWAVE_RADIATION_PUBLICATION_LAG_DAYS
-    assert forward.settled_through(shortwave, today=TODAY) < forward.settled_through(
-        product_for(PLANE_STREAM), today=TODAY
+    result = await forward._publish_product(
+        SessionDouble(),
+        ObjectStore(RecordingBackend()),
+        shortwave,
+        support=support,
+        cache=ClimateSourceCache(request_budget=0),
+        today=MEASUREMENT_DAY,
+        run_id="census-run",
+        config=bounded_config(product_id="shortwave-radiation"),
+        deadline=time.monotonic() + 60,
+        availability_storage=None,
+        availability=AvailabilityExtensionTally(),
     )
+
+    assert result["settled_through"] == "2026-09-09"
+    assert result["scan_first_day"] == shortwave.history_floor.isoformat() == "2026-06-01"
+    assert result["backlog_days"] == EXPECTED_CATCH_UP_DAYS
+    assert result["partial_day_rechecks"] == 0
+    days = result["days"]
+    assert isinstance(days, list)
+    assert [day["day"] for day in days] == ["2026-09-09"], "one owed day per turn, newest first"
+    assert days[0]["outcome"] == forward.CLIMATE_REQUEST_BUDGET_OUTCOME
+    assert result["outcome"] == forward.CLIMATE_REQUEST_BUDGET_OUTCOME, "a turn that wrote nothing says so"
 
 
 def test_shortwave_radiation_owns_the_nine_weeks_the_other_products_do_not() -> None:
@@ -194,6 +298,42 @@ def test_every_rung_complete_across_the_window_selects_nothing_at_all() -> None:
     statuses = forward._tier_status_window(store, product, first_day, first_day + timedelta(days=2))
 
     assert forward._pending_days(product, statuses) == ()
+
+
+def test_a_turn_that_only_met_an_unsettled_day_does_not_report_itself_as_published() -> None:
+    """The mask that hides this exact defect: a green `published` for a turn that wrote nothing.
+
+    `source_unsettled` is deliberately non-failing, so a lane whose lag is too large -- or whose
+    source stopped publishing -- ticks green forever while its edge stands still. The product-level
+    word has to be the day's own.
+    """
+    unsettled = forward._stopped_day(date(2026, 9, 1), outcome=forward.CLIMATE_SOURCE_UNSETTLED_OUTCOME)
+
+    assert forward._product_outcome([date(2026, 9, 1)], [unsettled]) == forward.CLIMATE_SOURCE_UNSETTLED_OUTCOME
+
+
+@pytest.mark.parametrize(
+    ("day_outcomes", "expected"),
+    [
+        ((), "idempotent_noop"),
+        (("written",), "published"),
+        (("absent",), "published"),
+        ((forward.CLIMATE_TIME_BUDGET_OUTCOME,), forward.CLIMATE_TIME_BUDGET_OUTCOME),
+        ((forward.CLIMATE_REQUEST_BUDGET_OUTCOME,), forward.CLIMATE_REQUEST_BUDGET_OUTCOME),
+        ((forward.CLIMATE_SOURCE_UNSETTLED_OUTCOME, "written"), "published"),
+    ],
+)
+def test_the_product_outcome_is_the_word_the_days_actually_earned(day_outcomes: tuple[str, ...], expected: str) -> None:
+    """Every bound reaches the run report under its own name, and a settled day still reads published."""
+    backlog = [date(2026, 9, 1) + timedelta(days=offset) for offset in range(len(day_outcomes))]
+    days = [{"outcome": outcome} for outcome in day_outcomes]
+
+    assert forward._product_outcome(backlog, days) == expected
+
+
+def test_an_empty_backlog_is_still_an_idempotent_no_op() -> None:
+    """Idempotence is the whole contract of an hourly writer over a window it has already filled."""
+    assert forward._product_outcome([], []) == "idempotent_noop"
 
 
 def test_the_newest_owed_day_is_taken_first() -> None:
@@ -676,3 +816,225 @@ def test_the_mirrored_past_proof_is_the_next_published_day_or_nothing() -> None:
     assert forward._mirrored_past_day(statuses, newest) is None, (
         "the newest owed day can never satisfy the proof, so the leading edge refuses"
     )
+
+
+# --- A day written short of the support is re-examined too, or its missing cells are permanent -------
+
+
+def test_a_completed_day_short_of_the_support_is_re_selected_as_a_recheck_behind_real_work() -> None:
+    """DO NOT DELETE. A mixed day is written short, stamped complete, and is `data` at every rung.
+
+    Nothing about its statuses distinguishes it from a whole day, so before this a fill cell caught
+    at the edge -- `fixtures/nasa-power-point-response-2026-09-02.json` shows one thirteen days back
+    -- was a permanent silent hole, at lag 5 for the seven siblings as much as at any solar lag. Named
+    in `partial_days`, it is a recheck: behind every day that owes real work, newest first.
+    """
+    product = products_for("all")[0]
+    newest = date(2026, 8, 20)
+    gap = newest - timedelta(days=1)
+    short = newest - timedelta(days=2)
+    whole = newest - timedelta(days=3)
+    statuses = _statuses({whole: "data", short: "data", gap: "missing", newest: "data"})
+
+    assert forward._pending_days(product, statuses, partial_days={short}) == (gap, short)
+    assert forward._pending_days(product, statuses) == (gap,), "unnamed, a short day is invisible"
+
+
+def test_a_short_day_older_than_the_recheck_window_is_left_alone() -> None:
+    """Bounded like the absences: a cell that has trailed for a fortnight is not re-asked for every hour forever."""
+    product = products_for("all")[0]
+    newest = date(2026, 8, 20)
+    stale = newest - timedelta(days=forward.CLIMATE_ABSENCE_RECHECK_DAYS)
+    statuses = _statuses({stale: "data", newest: "data"})
+
+    assert forward._pending_days(product, statuses, partial_days={stale}) == ()
+
+
+def test_short_days_are_read_off_the_base_marker_for_completed_days_inside_the_window_only() -> None:
+    """The base completion marker's `row_count` is the durable record of a short day; reading it is bounded.
+
+    One GET per all-rungs-`data` day inside the recheck window, none for the days outside it, so a
+    turn's census cost grows by at most `CLIMATE_ABSENCE_RECHECK_DAYS` small reads per product.
+    """
+    backend = CountingBackend()
+    store = ObjectStore(backend)
+    product = product_for(PLANE_STREAM)
+    newest = date(2026, 9, 9)
+    short = newest - timedelta(days=1)
+    stale_short = newest - timedelta(days=forward.CLIMATE_ABSENCE_RECHECK_DAYS)
+    seed_complete_day(backend, PLANE_STREAM, newest)
+    seed_complete_day(backend, PLANE_STREAM, short, row_count=SHORT_ROW_COUNT)
+    seed_complete_day(backend, PLANE_STREAM, stale_short, row_count=SHORT_ROW_COUNT)
+    statuses = forward._tier_status_window(store, product, stale_short, newest)
+    backend.reads.clear()
+
+    partial = forward._partial_days_in_recheck_window(store, product, statuses)
+
+    assert partial == {short: SHORT_ROW_COUNT}, "keyed to the count the re-bind must strictly exceed"
+    assert len(backend.reads) == EXPECTED_MARKER_READS, "the two complete days inside the window, and nothing else"
+    pending = forward._pending_days(product, statuses, partial_days=partial)
+    assert pending[-1] == short, "a recheck, so behind every unseeded day of the window that owes real work"
+    assert stale_short not in pending
+
+
+@pytest.mark.asyncio
+async def test_a_short_day_is_re_bound_whole_through_the_same_lane_day_path_and_its_marker_counts_every_cell(
+    support: NasaPowerSupport,
+) -> None:
+    """End to end: written short, censused as short, re-selected, re-bound whole, censused as whole.
+
+    The re-bind goes through `fill_one_lane_day` exactly as the first write did: `write_partition`
+    retracts the marker as it overwrites `part-0`, the coarse rungs are re-derived, and the base
+    marker is re-stamped with the count that was actually written.
+    """
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    product = product_for(PLANE_STREAM)
+    day = date(2026, 8, 20)
+
+    async def publish(cache: ClimateSourceCache, *, existing_row_count: int | None = None) -> tuple[str, int]:
+        async def fetch() -> Any:
+            return climate_day_from_cache(product, day=day, support=support, cache=cache)
+
+        adapter = DirectClimateFieldAdapter(
+            product=product,
+            fetch_source=fetch,
+            mirrored_past_proof=lambda: "proof",
+            existing_row_count=existing_row_count,
+        )
+        outcome, _parts, rows, _written_bytes, _detail = await fill_one_lane_day(
+            SessionDouble(),
+            store,
+            replace(LANE_REGISTRY[PLANE_STREAM], adapter=adapter),
+            day=day,
+            run_id="rebind-run",
+            now=lambda: SEEDED_AT,
+            today=TODAY,
+            lane_day_lock=unlocked_lane_day,
+        )
+        return outcome, rows
+
+    def census() -> tuple[dict[date, int], tuple[date, ...]]:
+        statuses = forward._tier_status_window(store, product, day, day)
+        partial = forward._partial_days_in_recheck_window(store, product, statuses)
+        return partial, forward._pending_days(product, statuses, partial_days=partial)
+
+    trailing_cell = support.cells[3].cell_key
+    assert await publish(filled_cache(support, day=day, fill_cell_keys=[trailing_cell])) == ("written", SHORT_ROW_COUNT)
+    partial, pending = census()
+    assert partial == {day: SHORT_ROW_COUNT}, "one fill cell made a short day, and the census sees it"
+    assert pending == (day,)
+
+    assert await publish(filled_cache(support, day=day), existing_row_count=partial[day]) == (
+        "written",
+        NASA_POWER_SUPPORT_CELL_COUNT,
+    )
+    marker = store.read_completion_marker(PLANE_STREAM, CLIMATE_DIRECT_KIND, LANE_BASE_ZOOM_TIER, day)
+    assert marker is not None
+    assert marker.row_count == NASA_POWER_SUPPORT_CELL_COUNT
+    assert store.read_partition(PLANE_STREAM, CLIMATE_DIRECT_KIND, LANE_BASE_ZOOM_TIER, day).num_rows == (
+        NASA_POWER_SUPPORT_CELL_COUNT
+    )
+    assert census() == ({}, ()), "whole now, so an idempotent no-op again"
+
+
+@pytest.mark.asyncio
+async def test_a_short_day_whose_cell_still_trails_is_left_exactly_as_it_is(
+    support: NasaPowerSupport,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DO NOT DELETE. A recheck that finds the same short answer must not touch the bucket at all.
+
+    `write_partition` clears the base completion marker as it uploads `part-0` and it is re-stamped
+    only after the prune and three derivations; every reader spanning the day faults `day_incomplete`
+    in between. Rewriting an identical 396-row day every idle hour would be a served outage per
+    product for nothing. The refetched count did not grow, so: no write, no delete, no marker clear,
+    and the honest word `idempotent_noop` rather than `published`.
+    """
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    product = product_for(PLANE_STREAM)
+    day = date(2026, 8, 20)
+    seed_complete_day(backend, PLANE_STREAM, day, row_count=SHORT_ROW_COUNT)
+    cache = filled_cache(support, day=day, fill_cell_keys=[support.cells[3].cell_key])
+
+    async def still_short(*_args: object, **_kwargs: object) -> Any:
+        return climate_day_from_cache(product, day=day, support=support, cache=cache)
+
+    monkeypatch.setattr(forward, "fetch_climate_day", still_short)
+    before = dict(backend.objects)
+
+    result = await forward._publish_locked_day(
+        SessionDouble(),
+        store,
+        product,
+        day,
+        support=support,
+        cache=cache,
+        today=TODAY,
+        run_id="recheck-run",
+        config=bounded_config(),
+        deadline=time.monotonic() + 60,
+        availability_storage=None,
+        availability=AvailabilityExtensionTally(),
+        mirrored_past=None,
+        existing_row_count=SHORT_ROW_COUNT,
+    )
+
+    assert result["outcome"] == "idempotent_noop"
+    assert result["fill_value_cells"] == 1, "the receipt still says which cell is trailing"
+    assert result["parts"] == 0
+    assert backend.objects == before, "not one object written or replaced"
+    assert backend.deleted == [], "not one marker cleared"
+    marker = store.read_completion_marker(PLANE_STREAM, CLIMATE_DIRECT_KIND, LANE_BASE_ZOOM_TIER, day)
+    assert marker is not None
+    assert marker.row_count == SHORT_ROW_COUNT
+    assert forward._product_outcome([day], [result]) == "idempotent_noop"
+
+
+def test_rechecks_are_visited_round_robin_so_a_standing_short_day_cannot_starve_the_others() -> None:
+    """DO NOT DELETE. An idle turn takes ONE recheck; two short days with a trailing cell must both come up.
+
+    Newest-first took the same newest short day every hour while its cell trailed and never returned
+    to the older one; oldest-first would do the same from the other end once the oldest was a
+    standing no-op. Rotated by the turn's clock hour, successive idle turns visit each in turn.
+    """
+    product = products_for("all")[0]
+    newest = date(2026, 8, 20)
+    older, newer = newest - timedelta(days=2), newest - timedelta(days=1)
+    absent = newest - timedelta(days=3)
+    statuses = _statuses({absent: "absent", older: "data", newer: "data", newest: "data"})
+    rechecks = {older, newer}
+
+    first_choices = [
+        forward._pending_days(product, statuses, partial_days=rechecks, recheck_rotation=turn)[0] for turn in range(6)
+    ]
+
+    assert first_choices == [absent, older, newer, absent, older, newer], "oldest first, then round the list"
+    every_turn = [
+        set(forward._pending_days(product, statuses, partial_days=rechecks, recheck_rotation=turn)) for turn in range(6)
+    ]
+    assert every_turn == [rechecks | {absent}] * 6, "rotation reorders, it never drops"
+
+
+def test_a_real_gap_still_outranks_every_recheck_whatever_the_rotation() -> None:
+    """Rotation applies to the rechecks alone; a day with no data at all is taken first on every turn."""
+    product = products_for("all")[0]
+    newest = date(2026, 8, 20)
+    gap = newest - timedelta(days=1)
+    statuses = _statuses({newest - timedelta(days=2): "data", gap: "missing", newest: "data"})
+
+    for turn in range(3):
+        pending = forward._pending_days(
+            product, statuses, partial_days={newest, newest - timedelta(days=2)}, recheck_rotation=turn
+        )
+        assert pending[0] == gap
+
+
+def test_the_clock_rotation_advances_by_one_per_hourly_turn() -> None:
+    """Consecutive hourly turns must land on consecutive rechecks, or the rotation is decorative."""
+    first = datetime(2026, 9, 15, 0, 40, tzinfo=UTC)
+
+    rotations = [forward._clock_recheck_rotation(first + timedelta(hours=hour)) for hour in range(3)]
+
+    assert rotations == [rotations[0], rotations[0] + 1, rotations[0] + 2]

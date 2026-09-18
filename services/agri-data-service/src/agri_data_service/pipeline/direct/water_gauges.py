@@ -1,15 +1,32 @@
-"""Transform parsed USGS NWIS readings into the dedicated water-gauges Parquet namespace."""
+"""Transform parsed USGS NWIS readings into the dedicated water-gauges Parquet namespace.
+
+A PUBLISHED DAY GOVERNED `absent` IS RECONCILED, NOT REFUSED, WHEN THE FETCH CARRIES ROWS FOR IT.
+Until 2026-09-15 `DirectWaterGaugesForwardAdapter` raised on a `status=absent` day outright -- the
+construct that held `sensors-direct-forward`'s breaker for a week (`sensors/adapter.py`, 2026-09-06..13)
+when a retired Postgres adapter had governed days absent that the live poll later answered with rows.
+Observed rows disprove an absence claim, so the marker is retracted at every tier immediately before the
+first write -- the shape of `sensors/adapter.py::_retract_disproven_absence` -- with the marker's full
+provenance carried out on `OverturnedAbsence`, which `pipeline/parquet/water_gauges_forward.py` re-emits
+on the day's checkpoint. A marker with NO incoming rows is never touched: the merge's own empty-day
+refusal runs first. On THIS lane the branch is closure of the class rather than a live repair: the
+forward owns only days at or after `WATER_GAUGES_DIRECT_WRITER_START_DAY`, and the registry's
+`writer_ceiling` kept the retired walker below that floor, so the two windows never overlapped.
+"""
 
 from __future__ import annotations
 
+import json
+import sys
 from collections import defaultdict
-from dataclasses import dataclass
-from datetime import date, datetime
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Final
 
 import pyarrow as pa  # type: ignore[import-untyped]
 
+from agri_data_service.foundation.parquet.absence import GovernedAbsenceError
 from agri_data_service.foundation.parquet.paths import partition_day_statuses
+from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.ingest.identity import build_streamflow_gauge_identity
 from agri_data_service.ingest.usgs_nwis import USGS_PROPERTY_SOURCE
 from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
@@ -24,6 +41,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from agri_data_service.foundation.parquet.absence import GovernedAbsence
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 
 
@@ -72,6 +91,50 @@ class DirectWaterGaugesMerge:
     added_rows: int
     updated_rows: int
     recovered_duplicate_rows: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class RetractedAbsenceMarker:
+    """One governed-absence marker exactly as it stood at one tier when this writer retracted it."""
+
+    tier: ZoomTier
+    absence: GovernedAbsence
+
+    def as_event(self) -> dict[str, object]:
+        """Render the marker's whole provenance; nothing the original producer recorded is summarised away."""
+        return {
+            "tier": self.tier,
+            "reason": self.absence.reason,
+            "upstream_response": self.absence.upstream_response,
+            "recorded_at": self.absence.recorded_at.astimezone(UTC).isoformat(),
+            "run_id": self.absence.run_id,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class OverturnedAbsence:
+    """The audit trail of one governed absence this fetch disproved with observed rows, marker by marker."""
+
+    day: date
+    overturned_by_run_id: str
+    incoming_rows: int
+    markers: tuple[RetractedAbsenceMarker, ...]
+
+    @property
+    def tiers(self) -> tuple[ZoomTier, ...]:
+        """Every tier a marker was retracted from, base rung last like the ladder that wrote them."""
+        return tuple(marker.tier for marker in self.markers)
+
+    def as_event(self) -> dict[str, object]:
+        """Render the retraction for the forward's JSON report and the sibling-shaped stderr event."""
+        return {
+            "day": self.day.isoformat(),
+            "overturned_by": "observed_rows",
+            "overturned_by_run_id": self.overturned_by_run_id,
+            "incoming_rows": self.incoming_rows,
+            "tiers": list(self.tiers),
+            "markers": [marker.as_event() for marker in self.markers],
+        }
 
 
 def publisher_named_day(record: Mapping[str, object]) -> date:
@@ -248,6 +311,9 @@ class DirectWaterGaugesForwardAdapter:
 
     incoming: pa.Table
     merge: DirectWaterGaugesMerge | None = None
+    #: The absence this fetch overturned, kept across retries: a retraction whose following write
+    #: failed must still be reported, or the marker vanished with no record of who removed it.
+    absence_overturned: OverturnedAbsence | None = field(default=None, init=False)
 
     async def __call__(
         self,
@@ -258,7 +324,7 @@ class DirectWaterGaugesForwardAdapter:
         run_id: str,
     ) -> DirectWaterGaugesWriteResult:
         """Write one full z13 part; the shared finalizer owns tiers, prune, and markers."""
-        del session, run_id
+        del session
         keys = store.list_partition_keys(
             WATER_GAUGES_STREAM,
             "observed",
@@ -277,7 +343,10 @@ class DirectWaterGaugesForwardAdapter:
         if status == "data":
             existing = store.read_partition(WATER_GAUGES_STREAM, "observed", LANE_BASE_ZOOM_TIER, day)
             merged = merge_water_gauges_day(existing, self.incoming, day=day)
-        elif status == "missing":
+        elif status in ("missing", "absent"):
+            # `absent`: a marker calls this day empty and the fetch holds rows for it. The rows win, and
+            # `_retract_disproven_absence` removes the marker below -- AFTER this merge has proven the
+            # fetch non-empty and well-formed, so a marker is never touched for a fetch that says nothing.
             merged = merge_water_gauges_day(None, self.incoming, day=day)
         elif status == "incomplete":
             if self.merge is not None:
@@ -292,11 +361,13 @@ class DirectWaterGaugesForwardAdapter:
                 merged = merge_water_gauges_day(existing, self.incoming, day=day)
         else:
             raise DirectWaterGaugesError(
-                f"refusing to merge IV rows into water-gauges z13 {day.isoformat()} with status={status}"
+                f"refusing to merge IV rows into water-gauges z13 {day.isoformat()} with status={status}: a day "
+                "holding both part files and an absence marker needs an admin to decide which claim is true"
             )
         # Save the complete intended population before the first object mutation. Object-store
         # retries and the post-write content verifier both consume this checkpoint.
         self.merge = merged
+        self._retract_disproven_absence(store, day=day, run_id=run_id)
         receipt = store.write_partition(
             merged.table,
             layer=WATER_GAUGES_STREAM,
@@ -310,6 +381,78 @@ class DirectWaterGaugesForwardAdapter:
             byte_count=receipt.byte_count,
         )
 
+    def _retract_disproven_absence(self, store: ObjectStore, *, day: date, run_id: str) -> OverturnedAbsence | None:
+        """Retract an absence this fetch's rows disprove -- inside the lock, before the first write, provenance kept.
+
+        The shape of `sensors/adapter.py::_retract_disproven_absence`: EVERY TIER, not only the base
+        rung, because an absence is propagated up the ladder and a base-only retraction leaves
+        z0/z05/z09 asserting a governed absence over a day that now carries rows. The inverse stays
+        fail-closed -- no fetch ever removes published data or governs a day absent.
+
+        Every marker is READ BEFORE ANY IS CLEARED. A marker this lane could meet was written by the
+        retired Postgres-reading gap-fill adapter, so its `reason`/`run_id` are the only record of why
+        the day was ever called empty; a marker that cannot be decoded is refused rather than deleted
+        blind.
+        """
+        markers: list[RetractedAbsenceMarker] = []
+        for tier in ZOOM_TIERS:
+            if not store.absence_exists(WATER_GAUGES_STREAM, "observed", tier, day):
+                continue
+            try:
+                absence = store.read_absence(WATER_GAUGES_STREAM, "observed", tier, day)
+            except GovernedAbsenceError as error:
+                raise DirectWaterGaugesError(
+                    f"water-gauges z{tier} {day.isoformat()} carries an absence marker this writer cannot decode, "
+                    f"so it is refused rather than retracted without its provenance: {error}"
+                ) from error
+            if absence is None:  # retracted by another hand between the listing and this read
+                continue
+            markers.append(RetractedAbsenceMarker(tier=tier, absence=absence))
+        if not markers:
+            return None
+        cleared: list[RetractedAbsenceMarker] = []
+        try:
+            for marker in markers:
+                store.clear_absence_marker(WATER_GAUGES_STREAM, "observed", marker.tier, day)
+                cleared.append(marker)
+        finally:
+            # A clear refused part-way has already removed every marker before it. Record those NOW,
+            # so the bounded retry (which re-reads the survivors and clears them) reports the UNION of
+            # tiers across attempts rather than losing the first attempt's removals with its exception.
+            if cleared:
+                self._record_retraction(day=day, run_id=run_id, cleared=tuple(cleared))
+        return self.absence_overturned
+
+    def _record_retraction(self, *, day: date, run_id: str, cleared: tuple[RetractedAbsenceMarker, ...]) -> None:
+        """Fold one attempt's cleared markers into the adapter's running record and announce the UNION on stderr.
+
+        Emitted once per attempt that cleared anything; the last one is the union. A log reader taking
+        the last event per (run_id, day) therefore gets the truth without summing across attempts.
+        """
+        previous = self.absence_overturned
+        self.absence_overturned = OverturnedAbsence(
+            day=day,
+            overturned_by_run_id=run_id,
+            incoming_rows=self.incoming.num_rows,
+            markers=cleared if previous is None else previous.markers + cleared,
+        )
+        # stderr, matching every sibling retraction: stdout carries the forward's parsed report,
+        # which re-emits the running record on the day's attempt and checkpoint (`water_gauges_forward.py`).
+        print(
+            json.dumps(
+                {
+                    "event": "water_gauges_forward_absence_retracted",
+                    "layer": WATER_GAUGES_STREAM,
+                    "run_id": run_id,
+                    "tier": LANE_BASE_ZOOM_TIER,
+                    **self.absence_overturned.as_event(),
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+            flush=True,
+        )
+
 
 __all__ = [
     "WATER_GAUGES_PROVENANCE_COLUMNS",
@@ -319,6 +462,8 @@ __all__ = [
     "DirectWaterGaugesForwardAdapter",
     "DirectWaterGaugesMerge",
     "DirectWaterGaugesWriteResult",
+    "OverturnedAbsence",
+    "RetractedAbsenceMarker",
     "merge_water_gauges_day",
     "publisher_named_day",
     "tables_by_publisher_day",

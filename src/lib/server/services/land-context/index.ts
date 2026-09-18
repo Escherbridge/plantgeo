@@ -17,3 +17,9 @@ export {
 export { draftInquiry } from "./inquiry-draft";
 export type { DraftInquiryInput, DraftInquiryResult } from "./inquiry-draft";
 export type { BboxDegrees } from "./parquet-reader";
+export {
+  attachDecodedGeometry,
+  attachDecodedGeometries,
+  attachDecodedGeometryToOne,
+} from "./geometry/attach-decoded-geometry";
+export type { LandContextResultWithGeometry } from "./geometry/attach-decoded-geometry";

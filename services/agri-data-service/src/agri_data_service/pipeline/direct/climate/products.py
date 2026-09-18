@@ -81,6 +81,11 @@ CANONICAL_SNAPSHOT_LAST_DAY: Final = date(2026, 8, 6)
 #: same script pins EXPECTED_LAST_DAY=2026-05-31: the snapshot's source ledger reached 2026-08-06 for
 #: meteorology and only 2026-05-31 for ALLSKY_SFC_SW_DWN, so that product's immutable history ends
 #: nine weeks earlier and its forward floor is nine weeks earlier with it.
+#: THE FLOOR IS CORRECT AND STAYS. The 2026-09-15 solar measurement (SHORTWAVE_LAG_MEASUREMENT_EVIDENCE
+#: below) found real POWER values for every day of June, July and August, so once the lag is honest
+#: the forward walk owns and fills 2026-06-01 onward itself: `forward.py` scans
+#: CLIMATE_BACKLOG_SCAN_DAYS (400) back from the settled ceiling, which reaches past this floor in one
+#: census. Raising the floor to hide the tail would hand those days to nobody.
 SHORTWAVE_RADIATION_SNAPSHOT_LAST_DAY: Final = date(2026, 5, 31)
 
 #: First day the direct writer owns for the seven meteorology products: the day after the immutable
@@ -91,13 +96,45 @@ CLIMATE_DIRECT_WRITER_START_DAY: Final = date(2026, 8, 7)
 #: PUBLICATION_LAG_DAYS["nasa-power-daily"] = 5. Applies to every MERRA-2-derived parameter.
 CLIMATE_METEOROLOGY_PUBLICATION_LAG_DAYS: Final = 5
 
-#: The solar lag, deliberately larger and deliberately conservative. NOT measured against the POWER
-#: live edge -- it is derived from the one in-tree measurement of the two products relative latency:
-#: the canonical snapshot reached 2026-08-06 for meteorology and 2026-05-31 for ALLSKY_SFC_SW_DWN in
-#: the same build, a 67-day difference, plus the 5-day meteorology lag and three days of slack.
-#: Over-waiting delays a real day by one tick; under-waiting sends a fetch after a day POWER has not
-#: produced and turns it into a governed absence that is simply wrong.
-CLIMATE_SHORTWAVE_RADIATION_PUBLICATION_LAG_DAYS: Final = 75
+#: Where the 2026-09-15 solar-edge measurement lives: five PNW point captures, their edge summary,
+#: and the production turn reports read off the executor on 2026-09-15 and 2026-09-16. Cited by
+#: `lane_registry._climate_floor_basis` so a lag with no artifact behind it fails
+#: `tests/direct/climate/test_lane_registrations.py`.
+SHORTWAVE_LAG_MEASUREMENT_EVIDENCE: Final = ".omc/research/runbook-20260915-shortwave/"
+
+#: The solar lag, MEASURED against POWER's own live edge on 2026-09-15 (SHORTWAVE_LAG_MEASUREMENT_EVIDENCE,
+#: five PNW points including -122.3/47.6 and -116.2/43.6):
+#: `https://power.larc.nasa.gov/api/temporal/daily/point?parameters=ALLSKY_SFC_SW_DWN,T2M&
+#: community=AG&longitude=-122.3&latitude=47.6&start=20260501&end=20260915&format=JSON`
+#: returned ALLSKY_SFC_SW_DWN real through 2026-09-11 and T2M through 2026-09-12 at every point, with
+#: NO interior fill days across June, July and August -- a 4-day solar latency beside a 3-day
+#: meteorology one, so the two products are ONE day apart, not the 67 the old 75 was inferred from.
+#: That 67 was a property of the stale canonical snapshot artifact, never of the provider.
+#:
+#: THE MARGIN IS THE OBSERVED JITTER OF THE EDGE, NOT A COPY OF THE METEOROLOGY CONSTANT'S. The
+#: in-tree 5 was measured on 2026-08-11 with NO margin at all (`execution/coverage_census.py`
+#: PUBLICATION_LAG_DAYS: POWER's newest day was then 5 days back); the same edge read 3 days back on
+#: 2026-09-15. The edge moves a couple of days between measurements, so 6 is the measured 4 plus that
+#: jitter -- about 0-1 day of margin over the solar edge on the September reading, roughly what 5
+#: carries over meteorology today. Over-waiting delays a real day by one tick; under-waiting at the
+#: frontier is harmless (an all-fill newest day has no later published day to mirror against, so it
+#: is `source_unsettled` and writes nothing), and under-waiting BEHIND the frontier is what makes a
+#: wrong governed absence, which `forward.CLIMATE_ABSENCE_RECHECK_DAYS` (14, which must stay greater
+#: than this lag) exists to retract.
+#:
+#: WHAT THE ALL-CELL PREDICATE DOES AND DOES NOT PROTECT. A day is governed absent only when EVERY
+#: support cell answers a fill, so a late whole-lattice release cannot become a wrong absence at
+#: the frontier and is retracted behind it. It does NOTHING for a day where SOME cells still trail:
+#: `source.build_climate_day` drops each fill cell with no row and the day is written short, stamped
+#: complete at every rung, and (before `forward._partial_days_in_recheck_window`) never selected
+#: again. `tests/direct/climate/fixtures/nasa-power-point-response-2026-09-02.json` is the proof of
+#: that mode, not of safety: -119/46 was fill for 2026-08-20 THIRTEEN days back, and reads 23.73
+#: today. Lag 6 accepts exactly the per-cell exposure the ten lag-5 siblings (seven climate fields
+#: and three soil-wetness depths) already carry; the partial-day recheck in `forward.py` is what
+#: bounds it, for all eleven products alike.
+#:
+#: Re-measure with the URL above before moving it, and record the reading in the evidence directory.
+CLIMATE_SHORTWAVE_RADIATION_PUBLICATION_LAG_DAYS: Final = 6
 
 #: The `agri.signal_observation.support_key` every NASA POWER lane writes; `execution/coverage_contract.py`.
 NASA_POWER_SUPPORT_KEY: Final = "surface"
@@ -266,6 +303,10 @@ CLIMATE_SOURCE_PARAMETERS: Final[tuple[str, ...]] = tuple(
 
 #: How many distinct settled edges one turn can select days at: the meteorology lag and the solar
 #: one. It is what a per-turn request budget multiplies `--max-days` by; see `pipeline/direct/AGENTS.md`.
+#: DERIVED, NOT PINNED: were every product to share one lag this would read 1 and the budget 397,
+#: which would be exactly right -- one distinct day is one 397-cell fan-out however many products
+#: read it (`source.ClimateSourceCache` is keyed by cell and day). A second clock is a second
+#: fan-out in the same turn, and that second fan-out is what POWER answered 429 in production.
 CLIMATE_DISTINCT_PUBLICATION_CLOCKS: Final = len({product.publication_lag_days for product in CLIMATE_FIELD_PRODUCTS})
 
 
@@ -294,6 +335,7 @@ __all__ = [
     "CLIMATE_SOURCE_PARAMETERS",
     "NASA_POWER_SOURCE_KEY",
     "NASA_POWER_SUPPORT_KEY",
+    "SHORTWAVE_LAG_MEASUREMENT_EVIDENCE",
     "SHORTWAVE_RADIATION_SNAPSHOT_LAST_DAY",
     "ClimateFieldProduct",
     "ClimateProductId",

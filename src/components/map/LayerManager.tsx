@@ -941,7 +941,7 @@ export default function LayerManager() {
       ? {
           layerId: "botanical-below-detail-floor",
           tone: "notice" as const,
-          message: `Individual specimen points draw at zoom ${BOTANICAL_DETAIL_MIN_ZOOM} and above. Zoom in to see them, or turn on Documented Taxon Richness / Collection Evidence & Effort for this zoom.`,
+          message: `Individual specimen points draw at zoom ${BOTANICAL_DETAIL_MIN_ZOOM} and above. Zoom in to see them, or turn on Herbarium Specimen Richness / Collection Evidence & Effort for this zoom.`,
         }
       : null,
     gbifOccurrencesVisible && botanicalBand !== "detail"

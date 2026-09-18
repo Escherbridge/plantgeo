@@ -255,7 +255,9 @@ describe('layer registry derivations', () => {
       // The three herbarium rows. These have no <LayerToggle> predecessor: they were built as
       // unmounted components and reached the map on 2026-09-13.
       'botanical-occurrences': 'Botanical Specimen Occurrences',
-      'botanical-richness': 'Documented Taxon Richness',
+      // Renamed from "Documented Taxon Richness" on 2026-09-18: a herbarium richness surface
+      // measures collecting effort, and the old name read as biodiversity.
+      'botanical-richness': 'Herbarium Specimen Richness',
       'botanical-collection-effort': 'Collection Evidence & Effort',
       // A separate source from the three UBC rows above, not a fourth herbarium row -- see
       // layer-registry.ts's own comment on this entry for why it is a sibling toggle.
@@ -286,6 +288,21 @@ describe('layer registry derivations', () => {
       'evacuation-zones': 'Evacuation Zones',
       'burn-severity': 'Burn History (MTBS)',
     })
+  })
+
+  /**
+   * Owner decision 2026-09-18: UBC v16.43 keeps serving, acquisition stops, and the richness
+   * row must not be read as biodiversity. 92 % of the release has no coordinates and the
+   * georeferenced cluster is a map of where botanists collected, so the description has to
+   * name the source, say what the number is, and carry the sampling-effort caveat.
+   */
+  it('frames herbarium specimen richness as collecting effort, not biodiversity', () => {
+    const { label, description } = LAYER_REGISTRY['botanical-richness']
+    expect(label).not.toMatch(/taxon richness/i)
+    expect(description).toContain('UBC vascular herbarium')
+    expect(description).toContain('georeferenced')
+    expect(description).toContain('92 % of the release has no coordinates')
+    expect(description).toContain('Not a biodiversity estimate')
   })
 
   /**
@@ -333,11 +350,12 @@ describe('layer registry derivations', () => {
     expect(panelIdForLayerToggle('3f6c1e2a-0000-4000-8000-000000000000')).toBeNull()
   })
 
-  // soil-survey is proxied live from the USDA Soil Data Mart through
-  // environmental.getSoilSurvey. Nothing publishes it into geo.layers, so claiming a
-  // warehouse layer name would make useLayerRenderState look up a slider capability that
-  // can never exist and caption the layer with a history nobody measured. Its governance
-  // stub is lifted, so it may not carry a withheld reason either.
+  // soil-survey is answered by environmental.getSoilSurvey, which is currently an
+  // unconditional stub returning `soil_survey_parquet_lane_not_published`: no lane publishes
+  // the survey and nothing proxies USDA Soil Data Access any more (usda-soil.ts is gone).
+  // Claiming a warehouse layer name would make useLayerRenderState look up a slider
+  // capability that can never exist and caption the layer with a history nobody measured.
+  // Its governance stub is lifted, so it may not carry a withheld reason either.
   // soil-moisture is served out of the agri MODEL plane (agri.signal_observation), not out
   // of geo.features, so it has no geo.layers ROW -- but it does have a published stream
   // capability, which is a different thing and the one the slider reads.
@@ -505,5 +523,17 @@ describe('layer registry derivations', () => {
       (toggleId) => LAYER_REGISTRY[toggleId].permanentlyUnavailableReason !== null
     )
     expect(withheld).toEqual(['soil'])
+  })
+
+  // The withheld caption used to send readers to a point query -- "Click the map with the Soil
+  // section open to read SoilGrids model estimates at a point" -- that
+  // environmental.getSoilProperties refuses with PRECONDITION_FAILED for every point. A
+  // caption on a disabled row is the one place a reader is guaranteed to look, so it may not
+  // invite a click that fails; it may say what the click does not do.
+  it('does not invite the point query the soil caption once sent readers to', () => {
+    const caption = LAYER_REGISTRY.soil.permanentlyUnavailableReason
+    expect(caption).not.toBeNull()
+    expect(caption).not.toMatch(/Click the map .* to read/)
+    expect(caption).toMatch(/point query is not served yet/)
   })
 })

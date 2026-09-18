@@ -312,6 +312,14 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   // Three toggles over ONE query: all three read the same viewport/zoom answer, and the zoom
   // band decides which of them can draw at all (see LayerManager's botanical block). Separate
   // switches because a reader may want richness without the effort context under it.
+  //
+  // Owner decision 2026-09-18: UBC v16.43 keeps serving and acquisition stops. The richness row
+  // was renamed from "Documented Taxon Richness" because a herbarium richness surface is a
+  // COLLECTING-EFFORT surface -- the release has 192,948 records, 15,220 with usable coordinates
+  // (92 % nonspatial), and the mappable cluster sits near Vancouver (~49.26 °N), OUTSIDE the
+  // platform envelope `-125,42,-111,49` (agri_data_service/ingest/policy.py:17); Boise is a true
+  // zero. Label/description/legend say so; ids, source ids and paint are unchanged (a live
+  // harness pins them).
   "botanical-occurrences": {
     toggleId: "botanical-occurrences",
     label: "Botanical Specimen Occurrences",
@@ -326,9 +334,9 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   },
   "botanical-richness": {
     toggleId: "botanical-richness",
-    label: "Documented Taxon Richness",
+    label: "Herbarium Specimen Richness",
     description:
-      "How many distinct taxa are documented per support cell, at regional and coarse zoom. Reflects what has been collected, not what grows there.",
+      "Distinct taxa with georeferenced UBC vascular herbarium specimens per cell, at regional and coarse zoom. Tracks where botanists collected (roads, campuses, trailheads), and 92 % of the release has no coordinates at all. Not a biodiversity estimate.",
     icon: "layers",
     renderKind: "component",
     styleLayerIds: [],
@@ -340,7 +348,7 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     toggleId: "botanical-collection-effort",
     label: "Collection Evidence & Effort",
     description:
-      "Where collecting effort has concentrated, as context for the richness layer above. A context layer, not an abundance heatmap.",
+      "Where UBC collecting effort has concentrated, as context for the specimen richness layer above. A context layer, not an abundance heatmap.",
     icon: "users",
     renderKind: "component",
     styleLayerIds: [],
@@ -380,21 +388,32 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     // returns "" unconditionally, so this switch has never had anything behind it. It read as
     // an ordinary working toggle -- flip it, watch nothing happen, conclude the data is
     // missing. The capability is withheld, and the row now says so instead of pretending.
+    //
+    // The point query this caption used to send readers to is in the same state:
+    // `environmental.getSoilProperties` throws PRECONDITION_FAILED for every point until its
+    // source-direct Parquet lane is published, and nothing in src/ calls ISRIC. Inviting the
+    // click was a capability claim with nothing behind it, so the caption now says what the
+    // click does (drops a pin) and what it does not (read anything).
     permanentlyUnavailableReason:
-      "Soil property rasters are not published yet: no first-party SoilGrids tile release exists, so this layer has no tiles to draw. Click the map with the Soil section open to read SoilGrids model estimates at a point.",
+      "Soil property rasters are not published yet: no first-party SoilGrids tile release exists, so this layer has no tiles to draw. The point query is not served yet either: no lane publishes SoilGrids estimates, so a map click with the Soil section open drops a pin that reads nothing.",
   },
-  // USDA SSURGO map units, rendered per viewport through environmental.getSoilSurvey.
-  // Distinct from `soil` above, which draws the SoilGrids raster: this one is the vector
-  // survey polygons. See soilSurveyLayer in layers.ts.
+  // USDA SSURGO map units, read per viewport through environmental.getSoilSurvey. Distinct
+  // from `soil` above, which would draw the SoilGrids raster: this one is the vector survey
+  // polygons. See soilSurveyLayer in layers.ts.
   //
-  // `warehouseLayerName` was null here until the conformance audit found the drop: 0013's
-  // 0013_soil_survey_persistence.sql gave this layer a real `geo.layers` row on 2026-08-05
-  // ('soil-survey', see the migration's INSERT), and geo.mv_soil_survey_grid/_union (the
-  // pre-aggregation layer, 2026-08-15) give it a genuinely cheap history to report -- but
-  // nobody repointed the registry after persistence landed, so this toggle silently lost its
-  // §9 catalogue row: no axis, no scrubbing, no date-filtered read, and no error anywhere
-  // saying why. The proxy-per-viewport READ path is unaffected; only the capability name
-  // changes, from null to the geo.layers row it has carried since 2026-08-05.
+  // NOT SERVED YET, and honestly so through two channels rather than a gate here. The
+  // procedure is an unconditional stub answering `soil_survey_parquet_lane_not_published`
+  // for every viewport: no lane publishes the survey and nothing is queried from USDA.
+  // `warehouseLayerName: "soil-survey"` is what lets the capability payload list it under
+  // `withheldParquetCapabilities` as `lane_never_written`, which LayerRow's time-status slot
+  // captions "never published"; and SoilDetails reads the response's reason and says the lane
+  // is not served, never that a provider faulted. The About page states the same.
+  //
+  // Deliberately no `permanentlyUnavailableReason`, for the reason soil-temperature below
+  // gives: that field is a governance gate a publish step would have to remember to reopen,
+  // and it reads false in `useLayerVisibility`, which would silence the section that carries
+  // the honest caption. `soil` is gated because it has no warehouse name and so no
+  // capability channel to be honest through; this row has one.
   "soil-survey": {
     toggleId: "soil-survey",
     label: "Soil Survey (SSURGO)",

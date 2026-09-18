@@ -25,7 +25,11 @@ import pytest
 from agri_data_service.foundation.parquet.completion import PartitionCompletion
 from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct.fire_perimeters.products import FIRE_PERIMETERS_DIRECT_KIND
-from agri_data_service.pipeline.direct.fire_perimeters.rows import FirePerimeterPopulation
+from agri_data_service.pipeline.direct.fire_perimeters.rows import (
+    GEOMETRY_REPAIRED_AREA_CHANGE_KEY,
+    GEOMETRY_REPAIRED_KEY,
+    FirePerimeterPopulation,
+)
 from agri_data_service.pipeline.direct.fire_perimeters.watermark import (
     DIGESTED_COLUMNS,
     VERSION_STAMP_COLUMNS,
@@ -105,6 +109,23 @@ def _publish(
 def _store() -> tuple[ObjectStore, RecordingBackend]:
     backend = RecordingBackend()
     return ObjectStore(backend), backend
+
+
+def test_the_repair_audit_keys_are_outside_the_digest_so_a_flag_alone_never_reads_as_a_change() -> None:
+    """They are not registered columns, so `DIGESTED_COLUMNS` never sees them and `_encode` never meets a bool.
+
+    A population that repaired a shape digests by the shape it PUBLISHED, exactly as the trigger-fed
+    exporter's did; the flag rides beside the row for the report (`rows.py`, `AGENTS.md`).
+    """
+    plain = _population(_row("OR-A"))
+    repair_keys = {GEOMETRY_REPAIRED_KEY: True, GEOMETRY_REPAIRED_AREA_CHANGE_KEY: -0.0756}
+    flagged = _population(_row("OR-A", **repair_keys))
+
+    assert GEOMETRY_REPAIRED_KEY not in DIGESTED_COLUMNS
+    assert GEOMETRY_REPAIRED_AREA_CHANGE_KEY not in DIGESTED_COLUMNS
+    assert content_digest(flagged.rows) == content_digest(plain.rows)
+    assert [repair.unique_fire_identifier for repair in flagged.repairs] == ["OR-A"]
+    assert plain.repairs == ()
 
 
 def test_exactly_the_two_version_stamps_are_excluded_from_the_digest() -> None:

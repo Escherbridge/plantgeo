@@ -478,16 +478,26 @@ def test_fire_perimeters_and_watersheds_agree_on_both_defect_axes() -> None:
 
     "fire-perimeters refuses a whole snapshot while watersheds publishes beside `rejected_basins: 0`"
     is a comparison ACROSS the defect axis, not along it. Both count an identity defect and publish
-    (`fire_perimeters/rows.py:242`, `watersheds/source.py::_accept`); both refuse the whole
-    population for a geometry that converts to empty (`fire_perimeters/support.py:75`,
-    `watersheds/support.py:130`). What differed was which defect their live data contained.
+    (`fire_perimeters/rows.py::fire_perimeter_population`, `watersheds/source.py::_accept`); both
+    refuse the whole population for a shape that ends up empty or invalid. What differed was which
+    defect their live data contained.
 
-    If this ever fails, one of the two lanes really did change policy and the "they were always the
+    SINCE 2026-09-15 THE TWO REACH THAT REFUSAL BY DIFFERENT ROADS, AND THE WORD IS THE SAME ON PURPOSE.
+    `fire_perimeters/support.py` now runs the baseline trigger's ST_MakeValid / ST_CollectionExtract
+    chain first, flags every row it changed, and refuses only what is STILL invalid or empty -- 41 of
+    99 live perimeters were invalid that day, so refusing them outright had failed every tick.
+    `watersheds/support.py` converts without repair and refuses on empty. `geometry_defect` names the
+    fate of a shape with no honest repair, not whether a repair was attempted, which is why
+    `evacuation_zones` and `burn_severity` -- both repairing -- declare the same word; the third
+    assertion pins fire-perimeters to that repairing `static_lookup` sibling.
+
+    If this ever fails, one of the lanes really did change policy and the "they were always the
     same" reading in `pipeline/direct/__init__.py` needs rewriting rather than repeating.
     """
     perimeters, watersheds = _contract("fire_perimeters"), _contract("watersheds")
     assert perimeters.identity_defect == watersheds.identity_defect == SKIP_AND_COUNT
     assert perimeters.geometry_defect == watersheds.geometry_defect == REFUSE_WHOLE_RELEASE
+    assert perimeters.geometry_defect == _contract("evacuation_zones").geometry_defect
 
 
 def test_fire_detections_is_still_the_lone_identity_refuser_and_says_so() -> None:

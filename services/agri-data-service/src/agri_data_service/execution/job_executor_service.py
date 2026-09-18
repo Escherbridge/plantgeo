@@ -6,10 +6,11 @@ import asyncio
 import json
 import os
 import socket
+import sys
 import time
 import uuid
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal
@@ -23,6 +24,28 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 from agri_data_service.config import settings
 from agri_data_service.db.engine import local_source_loader_pool
 from agri_data_service.db.sql_queries import load_query_sql
+from agri_data_service.execution.gap_repair_contract import (
+    EXECUTOR_REPAIR_WORK_ITEM_KIND,
+    REPAIR_LANE_IDS,
+    REPAIR_LANE_SUFFIX,
+    RepairRequest,
+    RepairRequestError,
+)
+from agri_data_service.execution.lane_ids import (
+    BURN_SEVERITY_DIRECT_LANE_ID,
+    CLIMATE_DIRECT_LANE_ID,
+    DROUGHT_DIRECT_LANE_ID,
+    EVACUATION_ZONES_DIRECT_LANE_ID,
+    FIRE_DETECTIONS_DIRECT_LANE_ID,
+    FIRE_PERIMETERS_DIRECT_LANE_ID,
+    MTBS_FORWARD_LANE_ID,
+    SENSORS_DIRECT_LANE_ID,
+    SOIL_DIRECT_LANE_ID,
+    VEGETATION_DIRECT_LANE_ID,
+    WATER_GAUGES_DIRECT_LANE_ID,
+    WATERSHEDS_DIRECT_LANE_ID,
+    WEATHER_OBSERVATIONS_DIRECT_LANE_ID,
+)
 from agri_data_service.jobs import (
     JobDefinitionRecord,
     JobDefinitionSpec,
@@ -38,7 +61,14 @@ from agri_data_service.jobs import (
     run_job_slice,
     shutdown_signal,
 )
-from agri_data_service.jobs.lease import apply_statement_timeout, canonical_json, fetch_row, required_column
+from agri_data_service.jobs.lease import (
+    FAILURE_SUMMARY_MAX_LENGTH,
+    apply_statement_timeout,
+    canonical_json,
+    fetch_row,
+    redact_text,
+    required_column,
+)
 from agri_data_service.pipeline.constants import (
     FIRE_DETECTIONS_DIRECT_WRITER_START_DAY,
     WATER_GAUGES_DIRECT_WRITER_START_DAY,
@@ -66,7 +96,8 @@ from agri_data_service.pipeline.direct.weather_observations.forward import (
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
+    from collections.abc import Set as AbstractSet
 
 logger = structlog.get_logger(__name__)
 
@@ -74,6 +105,9 @@ EXECUTOR_DEFINITION_PREFIX: Final = "plantgeo.executor."
 EXECUTOR_DEFINITION_VERSION: Final = "2"
 EXECUTOR_HANDLER_TOKEN: Final = "plantgeo.executor.command.v1"
 EXECUTOR_WORK_ITEM_KIND: Final = "scheduled-command"
+#: The two work item kinds the one handler runs: a cadence bucket's command, or a bounded repair turn of the
+#: same command. See execution/AGENTS.md, "Bounded gap repair".
+EXECUTOR_WORK_ITEM_KINDS: Final[frozenset[str]] = frozenset({EXECUTOR_WORK_ITEM_KIND, EXECUTOR_REPAIR_WORK_ITEM_KIND})
 EXECUTOR_LEADER_LOCK_KEY: Final = "plantgeo:unified-job-executor:v1"
 EXECUTOR_REQUESTED_BY: Final = "agri-service ops jobs-executor"
 
@@ -92,6 +126,15 @@ FAILURE_STREAK_PROBE_LIMIT: Final = 3
 ACTIVE_LANES_VARIABLE: Final = "PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES"
 POLL_SECONDS_VARIABLE: Final = "PLANTGEO_JOB_EXECUTOR_POLL_SECONDS"
 MAX_LANES_PER_TICK_VARIABLE: Final = "PLANTGEO_JOB_EXECUTOR_MAX_LANES_PER_TICK"
+#: How often the leader re-reads Parquet coverage and authors bounded repair turns; `0` disables authoring.
+REPAIR_INTERVAL_VARIABLE: Final = "PLANTGEO_JOB_EXECUTOR_REPAIR_INTERVAL_SECONDS"
+DEFAULT_REPAIR_INTERVAL_SECONDS: Final = 6 * 3600.0
+#: How long an authored layer sits out of the pass budget so the other layers get their turn.
+DEFAULT_REPAIR_ROTATION_SECONDS: Final = 24 * 3600.0
+#: Whether a NEW executor process releases a breaker-held lane once. `0` keeps every hold for an operator.
+PROCESS_START_RELEASE_VARIABLE: Final = "PLANTGEO_JOB_EXECUTOR_PROCESS_START_RELEASES_BREAKER"
+PROCESS_START_RELEASE_OPERATOR: Final = "executor:process-start"
+DEPLOYMENT_ID_VARIABLE: Final = "RAILWAY_DEPLOYMENT_ID"
 
 DEFAULT_POLL_SECONDS: Final = 30.0
 MIN_LANES_PER_TICK: Final = 2
@@ -103,6 +146,22 @@ COMMAND_CLEANUP_MARGIN_SECONDS: Final = 300
 COMMAND_TERMINATE_GRACE_SECONDS: Final = 30
 COMMAND_KILL_WAIT_SECONDS: Final = 10
 WORKER_ID_MAX_LENGTH: Final = 255
+#: How much of a child's stderr the wrapper keeps for the ledger. The TAIL, because a Python traceback ends
+#: with the exception that matters and a bounded head would keep only the warnings that preceded it.
+COMMAND_STDERR_TAIL_BYTES: Final = 4096
+COMMAND_STDERR_READ_BYTES: Final = 4096
+#: How long the wrapper waits for the child's stderr pipe to reach EOF once the child has exited or been killed.
+COMMAND_STDERR_DRAIN_SECONDS: Final = 5.0
+#: Characters of that tail allowed into `last_error_summary`, leaving the headline room inside the ledger's clamp.
+COMMAND_STDERR_SUMMARY_CHARS: Final = FAILURE_SUMMARY_MAX_LENGTH - 120
+#: How much of a child's stdout the wrapper keeps: enough for the ONE terminal JSON report every direct writer
+#: prints last, whose `unwritten` list is what the ledger must not lose at exit 0.
+COMMAND_STDOUT_TAIL_BYTES: Final = 64 * 1024
+#: How many unwritten days one checkpoint records verbatim, and how long each day's detail may be.
+TURN_REPORT_UNWRITTEN_MAX: Final = 12
+TURN_REPORT_DETAIL_CHARS: Final = 200
+#: The blocker string prefix `_held_checkpoint_result` writes; the typed `operator_action` carries the same command.
+OPERATOR_SUPERSESSION_BLOCKER_PREFIX: Final = "operator supersession required: "
 
 LaneWorkClass = Literal["incremental", "backlog"]
 MigrationDisposition = Literal["consolidatable", "source-specific", "snapshot-only"]
@@ -306,16 +365,10 @@ def _spec(  # noqa: PLR0913 - this is the declarative constructor for the code-o
 # schedules were removed from the executor catalog on 2026-09-12; they were the last reactivation
 # surface for a PostgreSQL-backed environmental export. Direct source packages own acquisition and
 # publication, and an unadmitted product remains unavailable until its Parquet contract is published.
-CLIMATE_DIRECT_LANE_ID: Final = "climate-nasa-power-direct-forward"
-SOIL_DIRECT_LANE_ID: Final = "soil-era5-land-direct-forward"
-VEGETATION_DIRECT_LANE_ID: Final = "vegetation-sentinel2-ndvi-direct-forward"
-WEATHER_OBSERVATIONS_DIRECT_LANE_ID: Final = "weather-observations-direct-forward"
-DROUGHT_DIRECT_LANE_ID: Final = "drought-direct-forward"
-FIRE_PERIMETERS_DIRECT_LANE_ID: Final = "fire-perimeters-direct-forward"
-SENSORS_DIRECT_LANE_ID: Final = "sensors-direct-forward"
-WATERSHEDS_DIRECT_LANE_ID: Final = "watersheds-direct-forward"
-EVACUATION_ZONES_DIRECT_LANE_ID: Final = "evacuation-zones-direct-forward"
-BURN_SEVERITY_DIRECT_LANE_ID: Final = "burn-severity-direct-forward"
+# Bounded gap repair of what those writers publish is NOT a generic lane either: it is a per-lane repair
+# definition that runs the owning writer's own command (`repair_lane_spec`, `gap_repair_contract.py`).
+# The lane identifiers themselves live in `execution/lane_ids.py`, a leaf, so the repair contract can name
+# a lane without importing this scheduler.
 
 # PostgreSQL materialized-view refresh jobs were retired with the forecast/source cutover.
 _DURABLE_JOB_SCHEDULES: Final[tuple[tuple[str, int, int, int, str, CatchUpPolicy], ...]] = ()
@@ -353,7 +406,7 @@ _JOBS_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
 
 _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
     _spec(
-        "fire-detections-direct-forward",
+        FIRE_DETECTIONS_DIRECT_LANE_ID,
         command=("python", "-m", "agri_data_service.pipeline.direct.fire_detections"),
         phase_offset_seconds=900,
         schedule="15 * * * *",
@@ -364,7 +417,7 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
         writer_floor=FIRE_DETECTIONS_DIRECT_WRITER_START_DAY.isoformat(),
     ),
     _spec(
-        "water-gauges-direct-forward",
+        WATER_GAUGES_DIRECT_LANE_ID,
         command=("python", "-m", "agri_data_service.pipeline.parquet.water_gauges_forward"),
         disposition="source-specific",
         phase_offset_seconds=900,
@@ -377,7 +430,7 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
         writer_floor=WATER_GAUGES_DIRECT_WRITER_START_DAY.isoformat(),
     ),
     _spec(
-        "mtbs-forward",
+        MTBS_FORWARD_LANE_ID,
         command=("python", "-m", "agri_data_service.pipeline.direct.burn_severity"),
         cadence_seconds=604800,
         phase_offset_seconds=460500,
@@ -403,7 +456,8 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
         timeout_seconds=int(CLIMATE_DEFAULT_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS,
         description=(
             "Direct NASA POWER forward writer for the eight climate-field streams and the three "
-            "soil-wetness depths; shadow until the snapshot readers can see forward days."
+            "soil-wetness depths. ACTIVE in production: the ledger opens and runs one bucket per hour "
+            "(measured 2026-09-15, buckets 00:40, 01:40, 12:40, 13:40, 23:40 each `ran`/`succeeded`)."
         ),
         writer_floor=min(product.history_floor for product in CLIMATE_FIELD_PRODUCTS).isoformat(),
     ),
@@ -424,7 +478,7 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
         timeout_seconds=int(SOIL_DEFAULT_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS,
         description=(
             "Direct Open-Meteo ERA5-Land forward writer for the three moisture, four temperature and "
-            "one VPD streams; shadow until the snapshot readers can see forward days."
+            "one VPD streams. ACTIVE in production, one bucket per hour at :50 (measured 2026-09-15)."
         ),
         writer_floor=min(product.history_floor for product in SOIL_FIELD_PRODUCTS).isoformat(),
     ),
@@ -796,6 +850,11 @@ class LaneTickResult:
     command: tuple[str, ...] | None = None
     blockers: tuple[str, ...] = ()
     due_prediction: str | None = None
+    #: The exact `jobs-supersede-run` invocation that releases this lane, when only an operator can. Typed so
+    #: a consumer never parses it back out of `blockers`; see execution/AGENTS.md, "Operator action surface".
+    operator_action: str | None = None
+    #: What the lane's own terminal report said this bucket, when the command ran in this process.
+    turn_report: TurnReport | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -809,6 +868,124 @@ class LaneTickResult:
             "command": None if self.command is None else list(self.command),
             "blockers": list(self.blockers),
             "due_prediction": self.due_prediction,
+            "operator_action": self.operator_action,
+            "turn_report": None if self.turn_report is None else self.turn_report.to_dict(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class TurnReport:
+    """The bounded facts kept from a writer's terminal stdout report: did the turn leave days unwritten?
+
+    A direct lane exits 0 when at least one day wrote and reports `outcome=incomplete` with an `unwritten`
+    list; before this nothing consumed that list, so a day stuck refusing re-refused every bucket silently.
+    `consecutive_incomplete_buckets` is held per DEFINITION in THIS process (`_LANE_TURN_REPORTS`, a repair
+    definition counts separately from its owning lane) and is honest about that: a restart resets it to
+    the buckets seen since. See execution/AGENTS.md, "Turn reports".
+    """
+
+    outcome: str | None
+    days_unwritten: int
+    unwritten: tuple[Mapping[str, object], ...]
+    unwritten_truncated: bool
+    consecutive_incomplete_buckets: int = 0
+
+    @property
+    def incomplete(self) -> bool:
+        return self.days_unwritten > 0
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "outcome": self.outcome,
+            "days_unwritten": self.days_unwritten,
+            "unwritten": [dict(entry) for entry in self.unwritten],
+            "unwritten_truncated": self.unwritten_truncated,
+            "consecutive_incomplete_buckets": self.consecutive_incomplete_buckets,
+        }
+
+
+#: Per owning lane, the newest turn report this process ran and its incomplete-bucket streak.
+_LANE_TURN_REPORTS: dict[str, TurnReport] = {}
+
+
+def parse_terminal_report(stdout_tail: bytes) -> Mapping[str, object] | None:
+    """Return the LAST stdout line that is a JSON object -- the one terminal report a writer prints -- or `None`."""
+    for raw in reversed(stdout_tail.decode("utf-8", errors="replace").splitlines()):
+        line = raw.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            parsed = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _unwritten_entries(report: Mapping[str, object]) -> list[Mapping[str, object]]:
+    """Collect `unwritten` entries from the report and from any per-product `results` it fans out into."""
+    found: list[Mapping[str, object]] = []
+    own = report.get("unwritten")
+    if isinstance(own, list):
+        found.extend(entry for entry in own if isinstance(entry, dict))
+    results = report.get("results")
+    if isinstance(results, list):
+        for product in results:
+            if isinstance(product, dict):
+                found.extend(_unwritten_entries(product))
+    return found
+
+
+def summarize_turn_report(report: Mapping[str, object] | None, *, previous: TurnReport | None) -> TurnReport | None:
+    """Bound one parsed report to what a checkpoint may hold, continuing the lane's incomplete-bucket streak."""
+    if report is None:
+        return None
+    entries = _unwritten_entries(report)
+    declared = report.get("days_unwritten")
+    days_unwritten = declared if isinstance(declared, int) and not isinstance(declared, bool) else len(entries)
+    # Redacted HERE because the cursor path (`record_checkpoint`) canonicalises but never redacts; a child
+    # that echoed a keyed URL into a day's detail must not put it on a durable row.
+    kept = tuple(
+        {
+            "day": entry.get("day"),
+            "outcome": entry.get("outcome"),
+            "detail": redact_text(str(entry.get("detail", "")))[:TURN_REPORT_DETAIL_CHARS],
+        }
+        for entry in entries[:TURN_REPORT_UNWRITTEN_MAX]
+    )
+    outcome = report.get("outcome", report.get("status"))
+    streak = (previous.consecutive_incomplete_buckets if previous is not None else 0) + 1 if days_unwritten else 0
+    return TurnReport(
+        outcome=str(outcome) if outcome is not None else None,
+        days_unwritten=days_unwritten,
+        unwritten=kept,
+        unwritten_truncated=len(entries) > len(kept),
+        consecutive_incomplete_buckets=streak,
+    )
+
+
+def record_turn_report(lane_id: str, report: Mapping[str, object] | None) -> TurnReport | None:
+    """Fold one bucket's report into the process-held streak for its owning lane and return what was kept."""
+    kept = summarize_turn_report(report, previous=_LANE_TURN_REPORTS.get(lane_id))
+    if kept is not None:
+        _LANE_TURN_REPORTS[lane_id] = kept
+    return kept
+
+
+@dataclass(frozen=True, slots=True)
+class OperatorAction:
+    """One held lane and the single command that releases it."""
+
+    lane_id: str
+    run_id: uuid.UUID | None
+    command: str
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "lane_id": self.lane_id,
+            "run_id": None if self.run_id is None else str(self.run_id),
+            "command": self.command,
         }
 
 
@@ -822,12 +999,36 @@ class ExecutorTickSummary:
     def failed(self) -> bool:
         return any(lane.state == "failed" for lane in self.lanes)
 
+    @property
+    def operator_actions(self) -> tuple[OperatorAction, ...]:
+        """Every lane this tick found held behind a recorded-supersession requirement, with its release command."""
+        return tuple(
+            OperatorAction(lane_id=lane.lane_id, run_id=lane.run_id, command=lane.operator_action)
+            for lane in self.lanes
+            if lane.operator_action is not None
+        )
+
+    @property
+    def incomplete_lanes(self) -> tuple[LaneTickResult, ...]:
+        """Every lane that ran this tick, exited 0, and still reported days it could not write."""
+        return tuple(lane for lane in self.lanes if lane.turn_report is not None and lane.turn_report.incomplete)
+
     def to_dict(self) -> dict[str, object]:
         return {
             "event": "plantgeo_job_executor_tick",
             "observed_at": self.observed_at.isoformat(),
             "leader": self.leader,
             "failed": self.failed,
+            "operator_actions": [action.to_dict() for action in self.operator_actions],
+            "incomplete_lanes": [
+                {
+                    "lane_id": lane.lane_id,
+                    "days_unwritten": lane.turn_report.days_unwritten,
+                    "consecutive_incomplete_buckets": lane.turn_report.consecutive_incomplete_buckets,
+                }
+                for lane in self.incomplete_lanes
+                if lane.turn_report is not None
+            ],
             "lanes": [lane.to_dict() for lane in self.lanes],
         }
 
@@ -1030,6 +1231,7 @@ def _held_checkpoint_result(spec: LaneExecutionSpec, latest: LatestRun, verdict:
             f"releases this {spec.catch_up_policy} lane, so bucket {verdict.next_bucket.isoformat()} waits for a "
             "recorded operator supersession"
         )
+    command = supersession_command(spec, latest.run_id) if needs_operator else None
     return LaneTickResult(
         lane_id=spec.lane_id,
         state="failed",
@@ -1037,9 +1239,8 @@ def _held_checkpoint_result(spec: LaneExecutionSpec, latest: LatestRun, verdict:
         run_id=latest.run_id,
         run_status=latest.status,
         detail=detail,
-        blockers=(
-            (f"operator supersession required: {supersession_command(spec, latest.run_id)}",) if needs_operator else ()
-        ),
+        blockers=(f"{OPERATOR_SUPERSESSION_BLOCKER_PREFIX}{command}",) if command is not None else (),
+        operator_action=command,
     )
 
 
@@ -1123,6 +1324,12 @@ async def _execute_due_lane(
     )
     if candidate.superseded_run_id is not None:
         detail = f"supersedes run {candidate.superseded_run_id} by {candidate.supersession}; {detail}"
+    turn_report = _LANE_TURN_REPORTS.get(candidate.spec.lane_id) if summary.claimed else None
+    if turn_report is not None and turn_report.incomplete:
+        detail = (
+            f"{detail}; left {turn_report.days_unwritten} day(s) unwritten for "
+            f"{turn_report.consecutive_incomplete_buckets} consecutive bucket(s) in this process"
+        )
     return LaneTickResult(
         lane_id=candidate.spec.lane_id,
         state="failed" if failed else "ran",
@@ -1131,6 +1338,7 @@ async def _execute_due_lane(
         run_status=summary.run_status,
         detail=detail,
         slice_summary=summary.to_summary(),
+        turn_report=turn_report,
     )
 
 
@@ -1232,10 +1440,155 @@ async def _plan_prior_version_run(
     )
 
 
-async def _plan_active_lanes(
+@dataclass(slots=True)
+class ProcessStartRelease:
+    """OPT-IN: a new DEPLOYMENT releases each breaker-held lane once, by recording a real supersession.
+
+    A breaker hold means "this code failed three buckets running; a human must look". A deploy IS the human
+    having looked, so under `PLANTGEO_JOB_EXECUTOR_PROCESS_START_RELEASES_BREAKER=1` the lane gets exactly
+    one bucket per deployment; if that fails, the streak is longer than before and the hold returns until
+    the NEXT deployment. Off by default (owner decision 2026-09-18: the sensors release is an explicit CLI
+    supersession until the fix has proven itself). Three bounds, in order of strength: only a run whose
+    bucket lies strictly before this process's start bucket qualifies, so a bucket this process opened is
+    never its own release; the ledger marker `claim_process_start_release` is one row per (deployment,
+    lane), so a container restart under the same deployment re-releases nothing; `released` is the
+    process-local memo that keeps a refused or failed attempt from being retried every tick.
+    """
+
+    started_at: datetime
+    deployment: str
+    released: set[uuid.UUID] = field(default_factory=set)
+
+    @classmethod
+    def from_environment(
+        cls, *, now: datetime, environment: Mapping[str, str] | None = None
+    ) -> ProcessStartRelease | None:
+        source = os.environ if environment is None else environment
+        if source.get(PROCESS_START_RELEASE_VARIABLE, "0").strip().lower() not in {"1", "true", "yes", "on"}:
+            return None
+        return cls(started_at=now, deployment=source.get(DEPLOYMENT_ID_VARIABLE, "").strip() or "local")
+
+    def qualifies(self, spec: LaneExecutionSpec, latest: LatestRun) -> bool:
+        """True for a held run whose BUCKET settled strictly before the bucket this process started in."""
+        return latest.scheduled_for < scheduled_bucket(spec, self.started_at) and latest.run_id not in self.released
+
+    def evidence(self, latest: LatestRun, verdict: CheckpointVerdict) -> str:
+        return (
+            f"released once by executor process start at {self.started_at.isoformat()} (deployment "
+            f"{self.deployment}); the breaker held run {latest.run_id} after {verdict.consecutive_failures} "
+            "consecutive failed bucket(s) settled before this process existed, and a fresh process earns one bucket"
+        )
+
+
+def _ledger_label() -> str:
+    """Name the ledger for a receipt without ever echoing its credential; `unknown` when no DSN resolves."""
+    from agri_data_service.execution.job_run_supersession import ledger_target  # noqa: PLC0415 - import cycle
+
+    try:
+        return ledger_target(settings.require_local_source_loader_database_url())
+    except Exception:  # a label, never a gate: the recording itself proves the ledger answered
+        return "unknown"
+
+
+async def _release_by_process_start(  # noqa: PLR0913 - the held run, its verdict, the clock and the policy
+    session: AsyncSession,
+    spec: LaneExecutionSpec,
+    latest: LatestRun,
+    verdict: CheckpointVerdict,
+    *,
+    now: datetime,
+    release: ProcessStartRelease,
+) -> LatestRun | None:
+    """Record this deployment's one supersession of a breaker-held run; `None` when it was not recorded.
+
+    Marker first, supersession second, one commit: the marker's `ON CONFLICT DO NOTHING` refuses a second
+    release under the same deployment before any supersession is written. Every refusal and every ledger
+    fault rolls back, logs and returns `None` -- a planning tick must never abort because a release could
+    not be recorded -- and `released` is only extended once the ledger has answered, so a transient fault
+    is retried on a later tick rather than remembered as done.
+    """
+    from agri_data_service.execution.job_run_supersession import (  # noqa: PLC0415 - import cycle
+        SupersessionRefusal,
+        claim_process_start_release,
+        supersede_failed_run,
+    )
+
+    try:
+        claimed = await claim_process_start_release(
+            session,
+            lane_id=spec.lane_id,
+            deployment=release.deployment,
+            operator=PROCESS_START_RELEASE_OPERATOR,
+            now=now,
+            detail={
+                "lane_id": spec.lane_id,
+                "deployment": release.deployment,
+                "run_id": str(latest.run_id),
+                "process_started_at": release.started_at.isoformat(),
+            },
+        )
+        if not claimed:
+            await _rollback_planning_transaction(session)
+            release.released.add(latest.run_id)
+            logger.info(
+                "plantgeo_job_executor_breaker_release_already_spent",
+                lane_id=spec.lane_id,
+                run_id=str(latest.run_id),
+                deployment=release.deployment,
+                detail="this deployment already released this lane once; the hold waits for an operator",
+            )
+            return None
+        receipt = await supersede_failed_run(
+            session,
+            spec,
+            latest.run_id,
+            ledger=_ledger_label(),
+            evidence=release.evidence(latest, verdict),
+            operator=PROCESS_START_RELEASE_OPERATOR,
+            now=now,
+            apply=True,
+        )
+        if receipt.outcome not in {"recorded", "already_superseded"}:
+            await _rollback_planning_transaction(session)
+            return None
+        await _commit_planning_transaction(session)
+    except SupersessionRefusal as refusal:
+        await _rollback_planning_transaction(session)
+        release.released.add(latest.run_id)
+        logger.warning(
+            "plantgeo_job_executor_breaker_release_refused",
+            lane_id=spec.lane_id,
+            run_id=str(latest.run_id),
+            reason=str(refusal),
+        )
+        return None
+    except SQLAlchemyError as error:
+        await _rollback_planning_transaction(session)
+        logger.error(
+            "plantgeo_job_executor_breaker_release_failed",
+            lane_id=spec.lane_id,
+            run_id=str(latest.run_id),
+            error_type=type(error).__name__,
+        )
+        return None
+    release.released.add(latest.run_id)
+    logger.error(
+        "plantgeo_job_executor_breaker_released_by_process_start",
+        lane_id=spec.lane_id,
+        run_id=str(latest.run_id),
+        consecutive_failures=verdict.consecutive_failures,
+        deployment=release.deployment,
+        detail="one bucket is granted; a failure now re-holds the lane for an operator or the next process start",
+    )
+    return replace(latest, superseded_by_operator=True)
+
+
+async def _plan_active_lanes(  # noqa: PLR0912 - one branch per lane state the planner can find
     session: AsyncSession,
     activation: ActivationConfig,
     now: datetime,
+    *,
+    breaker_release: ProcessStartRelease | None = None,
 ) -> tuple[list[LaneTickResult], list[DueLane]]:
     results: list[LaneTickResult] = []
     due: list[DueLane] = []
@@ -1291,6 +1644,19 @@ async def _plan_active_lanes(
         current_bucket = scheduled_bucket(spec, now)
         if latest is not None and latest.status in SETTLED_WITHOUT_SUCCESS:
             verdict = judge_failed_checkpoint(spec, latest, now)
+            if (
+                not verdict.released
+                and verdict.release == "operator"
+                and not latest.superseded_by_operator
+                and breaker_release is not None
+                and breaker_release.qualifies(spec, latest)
+            ):
+                released = await _release_by_process_start(
+                    session, spec, latest, verdict, now=now, release=breaker_release
+                )
+                if released is not None:
+                    latest = released
+                    verdict = judge_failed_checkpoint(spec, latest, now)
             if not verdict.released:
                 results.append(_held_checkpoint_result(spec, latest, verdict))
                 continue
@@ -1351,13 +1717,199 @@ async def _plan_active_lanes(
     return results, due
 
 
-async def run_executor_tick(
+def repair_lane_spec(spec: LaneExecutionSpec) -> LaneExecutionSpec:
+    """Derive the definition a lane's bounded gap repairs run under: the same command and timeout, its own ledger name.
+
+    A SEPARATE definition, not a second work item on the cadence definition: `select_latest_run.sql` reads a
+    lane's newest terminal run as its cadence checkpoint, so a repair run filed under the forward definition
+    would settle a bucket the forward writer never ran. Backlog class, so `fair_due_order` never lets a repair
+    take the incremental turn its owning lane's hourly bucket needs.
+    """
+    return replace(
+        spec,
+        lane_id=f"{spec.lane_id}{REPAIR_LANE_SUFFIX}",
+        conflicts_with=(),
+        work_class="backlog",
+        schedule=None,
+        catch_up_policy="coalesce_latest",
+        selection_policy="operator-authored bounded repair turns; the writer selects the days",
+        description=(
+            f"Bounded gap repair for {spec.lane_id}: the same source-direct writer with a --max-days bound, "
+            "authored from Parquet coverage by `agri-service ops jobs-plan-gap-repair`, never scheduled."
+        ),
+    )
+
+
+async def ensure_lane_definition(session: AsyncSession, spec: LaneExecutionSpec) -> JobDefinitionRecord | None:
+    """Register the lane's durable definition if absent and return it, or `None` while its pause switch is set."""
+    return await _load_or_register_definition(session, spec)
+
+
+async def _plan_repair_runs(
+    session: AsyncSession,
+    activation: ActivationConfig,
+    *,
+    forward_due: AbstractSet[str],
+) -> tuple[list[LaneTickResult], list[DueLane]]:
+    """Drive the repair runs an operator already authored. Never authors one, registers nothing, lists nothing.
+
+    A repair definition that does not exist in the ledger costs one probe and is skipped: the tick must not
+    create definitions for work nobody asked for. A repair run that settled is history; the authoring verb
+    opens the next one under a new logical key. `forward_due` keeps a lane's forward bucket and its repair
+    out of the same tick, so one turn never doubles that lane's egress.
+    """
+    results: list[LaneTickResult] = []
+    due: list[DueLane] = []
+    for lane_id in sorted(REPAIR_LANE_IDS):
+        spec = LANE_SPECS.get(lane_id)
+        if spec is None or not activation.is_active(lane_id):
+            continue
+        repair = repair_lane_spec(spec)
+        state = await _definition_state(session, repair)
+        if state is None:
+            await _rollback_planning_transaction(session)
+            continue
+        definition = await _load_or_register_definition(session, repair)
+        latest = await read_lane_checkpoint(session, repair)
+        await _rollback_planning_transaction(session)
+        if definition is None:
+            results.append(
+                LaneTickResult(
+                    lane_id=repair.lane_id,
+                    state="paused",
+                    detail="the repair definition's pause switch is set",
+                )
+            )
+            continue
+        if latest is None or not latest.open:
+            continue
+        if lane_id in forward_due:
+            results.append(
+                LaneTickResult(
+                    lane_id=repair.lane_id,
+                    state="deferred_fairness",
+                    scheduled_for=latest.scheduled_for,
+                    run_id=latest.run_id,
+                    detail="the owning lane's forward bucket is due this tick; its repair waits for the next one",
+                )
+            )
+            continue
+        blocked = _blocked_open_run_result(repair, latest, prior_version=False)
+        if blocked is not None:
+            results.append(blocked)
+            continue
+        due.append(
+            DueLane(
+                spec=repair,
+                definition=definition,
+                scheduled_for=latest.scheduled_for,
+                existing_run_id=latest.run_id,
+                last_scheduled_for=latest.scheduled_for,
+            )
+        )
+    return results, due
+
+
+@dataclass(slots=True)
+class RepairAuthoringClock:
+    """When the leader last authored repairs, and how long it waits before reading coverage again.
+
+    Coverage is one pointer GET per lane, so it is read on this interval and never per tick. A failed
+    authoring pass advances the clock too: a broken object store must not be probed every 30 seconds.
+    """
+
+    interval_seconds: float
+    last_authored: float | None = None
+    #: Layer -> monotonic instant it was last authored for, in THIS process. A layer inside
+    #: `rotation_seconds` is excluded from the next pass so two persistently unfillable layers cannot take
+    #: the pass budget every interval and starve the rest (`deferred_by_rotation`). Process-held on purpose:
+    #: a restart forgets the rotation, which costs at most one pass of the old ordering.
+    recently_authored: dict[str, float] = field(default_factory=dict)
+    rotation_seconds: float = DEFAULT_REPAIR_ROTATION_SECONDS
+
+    @classmethod
+    def from_environment(cls, environment: Mapping[str, str] | None = None) -> RepairAuthoringClock | None:
+        source = os.environ if environment is None else environment
+        raw = source.get(REPAIR_INTERVAL_VARIABLE, "").strip()
+        if not raw:
+            return cls(interval_seconds=DEFAULT_REPAIR_INTERVAL_SECONDS)
+        try:
+            interval = float(raw)
+        except ValueError as error:
+            raise ExecutorConfigurationError(f"{REPAIR_INTERVAL_VARIABLE} must be a number") from error
+        if interval < 0:
+            raise ExecutorConfigurationError(f"{REPAIR_INTERVAL_VARIABLE} must not be negative")
+        return None if interval == 0 else cls(interval_seconds=interval)
+
+    def due(self, monotonic_now: float) -> bool:
+        return self.last_authored is None or monotonic_now - self.last_authored >= self.interval_seconds
+
+    def mark(self, monotonic_now: float) -> None:
+        self.last_authored = monotonic_now
+
+    def excluded(self, monotonic_now: float) -> frozenset[str]:
+        """Layers authored within the rotation window; the next pass looks past them."""
+        return frozenset(
+            layer for layer, when in self.recently_authored.items() if monotonic_now - when < self.rotation_seconds
+        )
+
+    def remember(self, layers: Iterable[str], monotonic_now: float) -> None:
+        for layer in layers:
+            self.recently_authored[layer] = monotonic_now
+
+
+async def _author_due_repairs(
+    session: AsyncSession,
+    activation: ActivationConfig,
+    *,
+    now: datetime,
+    clock: RepairAuthoringClock,
+) -> dict[str, object] | None:
+    """Author the bounded repair turns the measured gaps call for, once per interval, with no hand on the ledger.
+
+    The self-healing half of gap repair: `gap_repair.py`'s verb does exactly this by hand, and after a stall
+    nobody is at the keyboard. One coverage read (availability authority, never a listing), one plan, one
+    committed pass; the tick then drives whatever was opened through `_plan_repair_runs` like any other run.
+    """
+    from agri_data_service.execution import gap_repair  # noqa: PLC0415 - import cycle
+    from agri_data_service.execution.gap_repair_contract import RepairBudget  # noqa: PLC0415 - import cycle
+
+    started = time.monotonic()
+    clock.mark(started)
+    try:
+        coverage = await asyncio.to_thread(gap_repair.read_parquet_coverage, now=now)
+        plan = gap_repair.plan_gap_repairs(
+            coverage,
+            activation=activation,
+            now=now,
+            budget=RepairBudget(),
+            recently_authored=clock.excluded(started),
+        )
+        receipts = await gap_repair.author_gap_repairs(session, plan=plan, now=now, apply=True)
+        await _commit_planning_transaction(session)
+    except Exception as error:  # authoring is best-effort; the forward lanes never wait on it
+        await _rollback_planning_transaction(session)
+        logger.error("plantgeo_job_executor_repair_authoring_failed", error_type=type(error).__name__)
+        return None
+    clock.remember((receipt.layer for receipt in receipts), started)
+    summary: dict[str, object] = {
+        "authorized": [candidate.layer for candidate in plan.authorized],
+        "verdicts": {candidate.layer: candidate.verdict for candidate in plan.candidates},
+        "receipts": [receipt.to_dict() for receipt in receipts],
+    }
+    logger.info("plantgeo_job_executor_repairs_authored", **summary)
+    return summary
+
+
+async def run_executor_tick(  # noqa: PLR0913 - one operator-tunable knob of the tick per argument
     session: AsyncSession,
     *,
     activation: ActivationConfig,
     now: datetime,
     max_lanes_per_tick: int,
     stop: ShutdownSignal | None = None,
+    breaker_release: ProcessStartRelease | None = None,
+    repair_clock: RepairAuthoringClock | None = None,
 ) -> ExecutorTickSummary:
     """Run one leader-elected, durable, fairly selected scheduler tick."""
     if max_lanes_per_tick < MIN_LANES_PER_TICK:
@@ -1377,7 +1929,16 @@ async def run_executor_tick(
     logger.info("plantgeo_job_executor_leader_acquired", observed_at=now.isoformat())
     primary_error: BaseException | None = None
     try:
-        results, due = await _plan_active_lanes(session, activation, now)
+        results, due = await _plan_active_lanes(session, activation, now, breaker_release=breaker_release)
+        if repair_clock is not None and repair_clock.due(time.monotonic()):
+            await _author_due_repairs(session, activation, now=now, clock=repair_clock)
+        repair_results, repair_due = await _plan_repair_runs(
+            session,
+            activation,
+            forward_due={candidate.spec.lane_id for candidate in due},
+        )
+        results.extend(repair_results)
+        due.extend(repair_due)
         ordered = fair_due_order(due)
         selected = ordered[:max_lanes_per_tick]
         for index, candidate in enumerate(selected):
@@ -1505,12 +2066,150 @@ async def _monitor_subprocess(
         raise
 
 
+def _write_through(stream: object, chunk: bytes) -> None:
+    buffer = getattr(stream, "buffer", None)
+    if buffer is not None:
+        buffer.write(chunk)
+        buffer.flush()
+        return
+    stream.write(chunk.decode("utf-8", errors="replace"))  # type: ignore[attr-defined]
+    stream.flush()  # type: ignore[attr-defined]
+
+
+def _default_stderr_sink(chunk: bytes) -> None:
+    """Re-emit one chunk of a child's stderr on this process's stderr, so the Railway log stream still carries it."""
+    _write_through(sys.stderr, chunk)
+
+
+def _default_stdout_sink(chunk: bytes) -> None:
+    """Re-emit one chunk of a child's stdout on this process's stdout: the log stream keeps the JSON report."""
+    _write_through(sys.stdout, chunk)
+
+
+class CommandOutputTail:
+    """Tee one of a child's output streams through to this process while keeping only its bounded TAIL.
+
+    stderr: before this the child inherited it outright, its traceback reached the log stream and nothing
+    else, and `agri.job_attempt.last_error_summary` read only `command exited with status 1`. The tail is
+    what `run_scheduled_command` folds into every failure reason; `jobs.lease.fail_work_item` then redacts
+    and clamps it like any other summary, so a secret printed by a child still never reaches the ledger.
+
+    stdout: the one terminal JSON report a writer prints last is parsed out of the tail at exit 0, so an
+    `outcome=incomplete` turn is persisted rather than lost with the stream.
+    """
+
+    def __init__(
+        self,
+        *,
+        limit: int = COMMAND_STDERR_TAIL_BYTES,
+        sink: Callable[[bytes], None] | None = None,
+    ) -> None:
+        self._limit = limit
+        self._sink = _default_stderr_sink if sink is None else sink
+        self._tail = bytearray()
+        self.bytes_seen = 0
+
+    @property
+    def tail(self) -> bytes:
+        """The bytes kept, at most `limit` of them and always the newest."""
+        return bytes(self._tail)
+
+    @property
+    def truncated(self) -> bool:
+        """True when the child wrote more than the tail holds, so the summary is the END of its output."""
+        return self.bytes_seen > len(self._tail)
+
+    def feed(self, chunk: bytes) -> None:
+        """Forward one chunk to the sink and fold it into the bounded tail."""
+        if not chunk:
+            return
+        self.bytes_seen += len(chunk)
+        self._sink(chunk)
+        self._tail.extend(chunk)
+        if len(self._tail) > self._limit:
+            del self._tail[: len(self._tail) - self._limit]
+
+    def summary(self, *, max_chars: int = COMMAND_STDERR_SUMMARY_CHARS) -> str | None:
+        """One line: the tail's non-blank lines joined with ` | `, cut from the FRONT so the last line survives."""
+        text = self._tail.decode("utf-8", errors="replace")
+        lines = (" ".join(line.split()) for line in text.splitlines())
+        joined = " | ".join(line for line in lines if line)
+        if not joined:
+            return None
+        if len(joined) <= max_chars:
+            return joined
+        return "..." + joined[-(max_chars - 3) :]
+
+    def metrics(self) -> dict[str, object]:
+        """Counts only, never content: `metrics` is stored unredacted, so the tail itself goes through `reason`."""
+        return {"stderr_bytes": self.bytes_seen, "stderr_truncated": self.truncated}
+
+
+#: The stderr-flavoured name the first tests were written against; one class serves both streams.
+CommandStderrTail = CommandOutputTail
+
+
+async def _drain_stream(stream: asyncio.StreamReader, tail: CommandOutputTail) -> None:
+    """Read one child stream to EOF; running concurrently keeps a chatty child from blocking on a full pipe."""
+    while True:
+        chunk = await stream.read(COMMAND_STDERR_READ_BYTES)
+        if not chunk:
+            return
+        tail.feed(chunk)
+
+
+async def _drain_both(
+    process: asyncio.subprocess.Process, *, stdout: CommandOutputTail, stderr: CommandOutputTail
+) -> None:
+    if process.stdout is None or process.stderr is None:  # pragma: no cover - PIPE always yields readers
+        raise RuntimeError("the child's output pipes were not created")
+    await asyncio.gather(_drain_stream(process.stdout, stdout), _drain_stream(process.stderr, stderr))
+
+
+async def _finish_drain(drain: asyncio.Task[None]) -> None:
+    """Wait a bounded moment for EOF after exit or kill; a grandchild holding the pipe must not hold the attempt."""
+    try:
+        await asyncio.wait_for(asyncio.shield(drain), timeout=COMMAND_STDERR_DRAIN_SECONDS)
+    except TimeoutError:
+        drain.cancel()
+        with suppress(asyncio.CancelledError):
+            await drain
+    except Exception:  # a broken pipe reader must not mask the child's own exit status
+        logger.exception("plantgeo_job_executor_stderr_drain_failed")
+
+
+def _command_failure_reason(headline: str, tail: CommandOutputTail) -> str:
+    """Attach the bounded stderr tail to a failure headline; the ledger's own clamp bounds the whole."""
+    summary = tail.summary()
+    if summary is None:
+        return f"{headline}; stderr: nothing captured"
+    marker = " tail" if tail.truncated else ""
+    return f"{headline}; stderr{marker}: {summary}"
+
+
+def _resolve_command(spec: LaneExecutionSpec, invocation: JobInvocation) -> tuple[str, ...]:
+    """Return the exact argv this work item runs: the lane's own command, plus a repair's bounded knobs.
+
+    A repair item stores its REQUEST, never a command: the argv is rebuilt here from the registered spec and
+    a payload `RepairRequest.from_payload` has already refused to accept out of bounds, so a stored payload
+    cannot smuggle an argument the writer's contract does not expose.
+    """
+    if spec.command is None:
+        raise RepairRequestError(f"lane {spec.lane_id!r} has no executor command")
+    if invocation.kind == EXECUTOR_WORK_ITEM_KIND:
+        return spec.command
+    request = RepairRequest.from_payload(invocation.payload)
+    if request.lane_id != spec.lane_id:
+        raise RepairRequestError(f"repair request names lane {request.lane_id!r}, work item names {spec.lane_id!r}")
+    return (*spec.command, *request.command_arguments())
+
+
 @job_handler(EXECUTOR_HANDLER_TOKEN)
 async def run_scheduled_command(  # noqa: PLR0911, PLR0912 - each terminal state maps to a ledger outcome
     invocation: JobInvocation,
 ) -> JobHandlerOutcome:
     """Execute one registry-bound command under the outer work item's fence."""
-    if invocation.kind != EXECUTOR_WORK_ITEM_KIND:
+    if invocation.kind not in EXECUTOR_WORK_ITEM_KINDS:
         return JobHandlerOutcome.failed("unknown_work_item_kind", f"unexpected kind {invocation.kind!r}")
     lane_id = invocation.payload.get("lane_id")
     if not isinstance(lane_id, str) or lane_id not in LANE_SPECS:
@@ -1527,6 +2226,10 @@ async def run_scheduled_command(  # noqa: PLR0911, PLR0912 - each terminal state
         )
     if spec.command is None:
         return JobHandlerOutcome.failed("source_specific_lane", f"lane {lane_id!r} has no executor command")
+    try:
+        command = _resolve_command(spec, invocation)
+    except RepairRequestError as error:
+        return JobHandlerOutcome.failed("invalid_repair_request", f"lane {lane_id!r}: {error}")
 
     scheduled_for = invocation.payload.get("scheduled_for")
     if invocation.cursor is None:
@@ -1551,45 +2254,67 @@ async def run_scheduled_command(  # noqa: PLR0911, PLR0912 - each terminal state
     if timeout <= 0:
         return JobHandlerOutcome.yielded(reason="no command budget remains in this scheduler slice")
 
-    process = await asyncio.create_subprocess_exec(*spec.command)
+    tail = CommandOutputTail()
+    stdout = CommandOutputTail(limit=COMMAND_STDOUT_TAIL_BYTES, sink=_default_stdout_sink)
+    # Both streams are piped and teed back through this process chunk by chunk, so the Railway log stream
+    # carries exactly what it did before. stderr's tail is folded into the failure reason; stdout's tail is
+    # where the writer's one terminal JSON report is parsed from, whatever the exit status.
+    process = await asyncio.create_subprocess_exec(
+        *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+    )
+    drain = asyncio.create_task(_drain_both(process, stdout=stdout, stderr=tail))
     started = time.monotonic()
-    monitor_state, return_code = await _monitor_subprocess(process, invocation, timeout=timeout)
+    try:
+        monitor_state, return_code = await _monitor_subprocess(process, invocation, timeout=timeout)
+    finally:
+        await _finish_drain(drain)
     elapsed = round(time.monotonic() - started, 3)
+    # Keyed by the DEFINITION that ran, not the owning lane: a `--max-days 5` repair turn is legitimately
+    # partial and must not count against the hourly lane's incomplete-bucket streak.
+    report_key = lane_id if invocation.kind == EXECUTOR_WORK_ITEM_KIND else f"{lane_id}{REPAIR_LANE_SUFFIX}"
+    turn_report = record_turn_report(report_key, parse_terminal_report(stdout.tail))
+    metrics: dict[str, object] = {
+        "elapsed_seconds": elapsed,
+        **tail.metrics(),
+        "days_unwritten": None if turn_report is None else turn_report.days_unwritten,
+    }
     if monitor_state == "shutdown":
         return JobHandlerOutcome.yielded(
             cursor=invocation.cursor,
             progress_fraction=invocation.progress_fraction,
             reason=f"lane {lane_id!r} stopped for service shutdown before command completion",
-            metrics={"elapsed_seconds": elapsed},
+            metrics=metrics,
         )
     if monitor_state == "fence_lost":
         return JobHandlerOutcome.failed(
             "executor_lease_lost",
-            f"lane {lane_id!r} lost its fenced lease while the command was running",
-            metrics={"elapsed_seconds": elapsed},
+            _command_failure_reason(f"lane {lane_id!r} lost its fenced lease while the command was running", tail),
+            metrics=metrics,
         )
     if monitor_state == "timeout":
         return JobHandlerOutcome.failed(
             "scheduled_command_timeout",
-            f"lane {lane_id!r} exceeded its {int(timeout)} second command budget",
-            metrics={"elapsed_seconds": elapsed},
+            _command_failure_reason(f"lane {lane_id!r} exceeded its {int(timeout)} second command budget", tail),
+            metrics=metrics,
         )
     if return_code is None:  # pragma: no cover - exited always carries Process.wait's integer
         return JobHandlerOutcome.failed("scheduled_command_exit", f"lane {lane_id!r} returned no exit status")
     if return_code != 0:
         return JobHandlerOutcome.failed(
             "scheduled_command_exit",
-            f"lane {lane_id!r} command exited with status {return_code}",
-            metrics={"elapsed_seconds": elapsed, "exit_code": return_code},
+            _command_failure_reason(f"lane {lane_id!r} command exited with status {return_code}", tail),
+            metrics={**metrics, "exit_code": return_code},
         )
     cursor = {
         "state": "completed",
         "scheduled_for": scheduled_for if isinstance(scheduled_for, str) else invocation.shard_key,
         "completed_at": datetime.now(UTC).isoformat(),
+        # The checkpoint row is where an exit-0-but-incomplete turn survives the log stream's retention.
+        "turn_report": None if turn_report is None else turn_report.to_dict(),
     }
     return JobHandlerOutcome.completed(
         cursor=cursor,
-        metrics={"elapsed_seconds": elapsed, "exit_code": return_code},
+        metrics={**metrics, "exit_code": return_code},
     )
 
 
@@ -1613,6 +2338,37 @@ async def _wait_for_shutdown(stop: ShutdownSignal, delay_seconds: float) -> bool
     return True
 
 
+def announce_operator_actions(summary: ExecutorTickSummary, announced: set[tuple[str, str | None]]) -> None:
+    """Log each held lane's release command ONCE per process while it holds, and once more when it clears.
+
+    The tick already printed the same command inside `blockers` every thirty seconds for a week with nothing
+    consuming it; a flood is as invisible as silence. One `error`-severity event per held run, at top level
+    with the exact verb to run, is what a log-based alert or a human skim can actually see. `announced` is
+    the caller's per-process memory; a restart re-announces, which is the right side to err on.
+    """
+    if not summary.leader:
+        # A follower sees no lanes at all; treating that as "cleared" would re-announce on every leadership flip.
+        return
+    current = {
+        (action.lane_id, None if action.run_id is None else str(action.run_id)): action
+        for action in summary.operator_actions
+    }
+    for key, action in current.items():
+        if key in announced:
+            continue
+        announced.add(key)
+        logger.error(
+            "plantgeo_job_executor_operator_action_required",
+            lane_id=action.lane_id,
+            run_id=key[1],
+            command=action.command,
+            detail="the clock no longer releases this lane; nothing runs on it until this command is recorded",
+        )
+    for key in [key for key in announced if key not in current]:
+        announced.discard(key)
+        logger.info("plantgeo_job_executor_operator_action_cleared", lane_id=key[0], run_id=key[1])
+
+
 async def _service_loop(
     *,
     activation: ActivationConfig,
@@ -1621,6 +2377,9 @@ async def _service_loop(
     once: bool,
 ) -> int:
     failures = 0
+    announced: set[tuple[str, str | None]] = set()
+    breaker_release = ProcessStartRelease.from_environment(now=datetime.now(UTC))
+    repair_clock = RepairAuthoringClock.from_environment()
     database_url = settings.require_local_source_loader_database_url()
     async with local_source_loader_pool(database_url) as loader_pool, shutdown_signal() as stop:
         while not stop.requested:
@@ -1638,18 +2397,33 @@ async def _service_loop(
                         now=datetime.now(UTC),
                         max_lanes_per_tick=max_lanes_per_tick,
                         stop=stop,
+                        breaker_release=breaker_release,
+                        repair_clock=repair_clock,
                     )
                 click.echo(json.dumps(summary.to_dict(), sort_keys=True))
+                announce_operator_actions(summary, announced)
+                for lane in summary.incomplete_lanes:
+                    if lane.turn_report is not None:
+                        logger.warning(
+                            "plantgeo_job_executor_lane_incomplete",
+                            lane_id=lane.lane_id,
+                            days_unwritten=lane.turn_report.days_unwritten,
+                            consecutive_incomplete_buckets=lane.turn_report.consecutive_incomplete_buckets,
+                            unwritten=[dict(entry) for entry in lane.turn_report.unwritten],
+                        )
                 if summary.failed:
                     logger.error(
                         "plantgeo_job_executor_tick_unhealthy",
                         failing_lanes=[lane.lane_id for lane in summary.lanes if lane.state == "failed"],
+                        incomplete_lanes=[lane.lane_id for lane in summary.incomplete_lanes],
+                        operator_actions=[action.command for action in summary.operator_actions],
                     )
                 else:
                     logger.info(
                         "plantgeo_job_executor_tick_healthy",
                         leader=summary.leader,
                         lane_count=len(summary.lanes),
+                        incomplete_lanes=[lane.lane_id for lane in summary.incomplete_lanes],
                     )
                 failures = 0
                 if once:
@@ -1732,14 +2506,20 @@ def jobs_executor(once: bool, inventory_only: bool) -> None:
 __all__ = [
     "ACTIVE_LANES_VARIABLE",
     "CLOCK_RELEASE_STREAK_LIMIT",
+    "COMMAND_STDERR_SUMMARY_CHARS",
+    "COMMAND_STDERR_TAIL_BYTES",
+    "EXECUTOR_WORK_ITEM_KINDS",
     "FAILURE_STREAK_PROBE_LIMIT",
     "LANE_SPECS",
+    "OPERATOR_SUPERSESSION_BLOCKER_PREFIX",
     "RUN_SUPERSESSION_FINGERPRINT_PREFIX",
     "RUN_SUPERSESSION_INCIDENT_TYPE",
     "SETTLED_WITHOUT_SUCCESS",
     "SUPERSEDE_RUN_COMMAND",
     "ActivationConfig",
     "CheckpointVerdict",
+    "CommandOutputTail",
+    "CommandStderrTail",
     "DueLane",
     "ExecutorConfigurationError",
     "ExecutorLeaderUnlockError",
@@ -1747,16 +2527,26 @@ __all__ = [
     "LaneExecutionSpec",
     "LaneTickResult",
     "LatestRun",
+    "OperatorAction",
+    "ProcessStartRelease",
+    "RepairAuthoringClock",
+    "TurnReport",
+    "announce_operator_actions",
     "bucket_after",
+    "ensure_lane_definition",
     "executor_inventory",
     "fair_due_order",
     "jobs_executor",
     "judge_failed_checkpoint",
     "next_scheduled_bucket",
     "parse_activation",
+    "parse_terminal_report",
     "read_lane_checkpoint",
+    "record_turn_report",
+    "repair_lane_spec",
     "run_executor_tick",
     "run_scheduled_command",
     "scheduled_bucket",
+    "summarize_turn_report",
     "supersession_command",
 ]

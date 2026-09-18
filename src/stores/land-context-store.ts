@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { devtools } from "zustand/middleware";
+import type { CoverageState } from "@/lib/environmental/land-context-contract";
 
 /**
  * The four independently toggleable land-context groups. See
@@ -99,7 +100,21 @@ export interface LandContextResultMeta {
     limit: number;
     requested: number | null;
   } | null;
+  /**
+   * Coverage statements the reader returned INSTEAD of features: every non-"matched" result's
+   * typed state plus its verbatim `unresolvedGaps`. This is how "no source admitted for reads
+   * yet" (the reader's own gap string) reaches the UI instead of being dropped with the result
+   * it rode in on -- see `LandContextStatusNotice`. Empty/absent when every result matched.
+   */
+  coverageNotices?: { coverageState: CoverageState; gaps: string[] }[];
 }
+
+/**
+ * Where the current selection's lookup stands. "idle" = nothing to ask (no selection or no
+ * group on); "settled" = the reader answered, so an empty `results` is a real answer and not a
+ * pending one. The notice component needs this to avoid claiming "no features" mid-flight.
+ */
+export type LandContextQueryStatus = "idle" | "loading" | "settled" | "error";
 
 interface LandContextState {
   /** Per-group on/off, independent of any other group. */
@@ -115,7 +130,13 @@ interface LandContextState {
   /** All intersecting features across all enabled groups for the current selection. */
   results: LandContextFeature[];
   resultMeta: LandContextResultMeta | null;
-  setResults: (results: LandContextFeature[], meta: LandContextResultMeta | null) => void;
+  queryStatus: LandContextQueryStatus;
+  /** The controller is the only writer; `status` defaults to "settled" for callers that only carry data. */
+  setResults: (
+    results: LandContextFeature[],
+    meta: LandContextResultMeta | null,
+    status?: LandContextQueryStatus
+  ) => void;
 
   /**
    * A "next candidate" cursor into `results`, not a single `selectedFeature`. Lets the user
@@ -167,13 +188,22 @@ export const useLandContextStore = create<LandContextState>()(
 
     selection: null,
     setSelection: (selection) =>
-      set({ selection, results: [], resultMeta: null, candidateIndex: null }),
+      set({ selection, results: [], resultMeta: null, candidateIndex: null, queryStatus: "idle" }),
     clearSelection: () =>
-      set({ selection: null, results: [], resultMeta: null, candidateIndex: null, panelOpen: false }),
+      set({
+        selection: null,
+        results: [],
+        resultMeta: null,
+        candidateIndex: null,
+        queryStatus: "idle",
+        panelOpen: false,
+      }),
 
     results: [],
     resultMeta: null,
-    setResults: (results, meta) => set({ results, resultMeta: meta }),
+    queryStatus: "idle",
+    setResults: (results, meta, status = "settled") =>
+      set({ results, resultMeta: meta, queryStatus: status }),
 
     candidateIndex: null,
     setCandidateIndex: (index) => set({ candidateIndex: index }),

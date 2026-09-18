@@ -18,6 +18,7 @@ from agri_data_service.foundation.parquet.lane_contract import nature_has_time_a
 from agri_data_service.foundation.parquet.paths import zoom_prefix
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.parquet_ops import faults
+from agri_data_service.parquet_ops.freshness import with_freshness
 from agri_data_service.parquet_ops.serving import day_status_sets
 from agri_data_service.parquet_ops.wire import DayRange, LaneCoverage, WarehouseCoverage, contiguous_ranges
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRATIONS
@@ -129,7 +130,11 @@ def build_lane_coverage(
     today: date,
 ) -> LaneCoverage:
     """Census one physical lane rung, closing its ranges against the live edge."""
-    return close_lane_coverage(lane=lane, tier=tier, horizon=today, days=_tier_days(listing, lane=lane, tier=tier))
+    return with_freshness(
+        close_lane_coverage(lane=lane, tier=tier, horizon=today, days=_tier_days(listing, lane=lane, tier=tier)),
+        lane=lane,
+        today=today,
+    )
 
 
 def close_lane_coverage(  # noqa: PLR0913 - one already-proven fact about the lane being closed per arg
@@ -291,11 +296,15 @@ def build_coverage(
         generated_at=generated_at,
         evaluated_through_day=today,
         lanes=tuple(
-            close_lane_coverage(
+            with_freshness(
+                close_lane_coverage(
+                    lane=lane,
+                    tier=tier,
+                    horizon=today,
+                    days=days,
+                ),
                 lane=lane,
-                tier=tier,
-                horizon=today,
-                days=days,
+                today=today,
             )
             for (_index, lane), facts in zip(jobs, stream_facts, strict=True)
             for tier, days in zip(ZOOM_TIERS, facts, strict=True)

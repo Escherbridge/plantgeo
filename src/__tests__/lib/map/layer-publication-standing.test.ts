@@ -28,6 +28,10 @@ const LANE_BACKED_TOGGLE_IDS: LayerToggleId[] = [
   "sensors",
   "watersheds",
   "vegetation",
+  // Listed as lane-backed by classification only: environmental.getSoilSurvey is an
+  // unconditional stub answering `soil_survey_parquet_lane_not_published` (no lane publishes
+  // the survey; usda-soil.ts and its Soil Data Access proxy are gone). It stays here because
+  // the registry carries no standing for it -- moving it is a registry decision, not a test one.
   "soil-survey",
   "soil-moisture",
   "soil-temperature",

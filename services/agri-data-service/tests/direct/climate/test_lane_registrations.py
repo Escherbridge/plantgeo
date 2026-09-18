@@ -16,7 +16,9 @@ from agri_data_service.execution.job_executor_service import (
 from agri_data_service.pipeline.direct.climate.products import (
     CLIMATE_DEFAULT_TIME_BUDGET_SECONDS,
     CLIMATE_FIELD_PRODUCTS,
+    CLIMATE_METEOROLOGY_PUBLICATION_LAG_DAYS,
     CLIMATE_SHORTWAVE_RADIATION_PUBLICATION_LAG_DAYS,
+    SHORTWAVE_LAG_MEASUREMENT_EVIDENCE,
 )
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY, LaneRegistryError
 from agri_data_service.warehouse.parquet.schema import get_stream_schema
@@ -58,11 +60,21 @@ def test_every_climate_floor_cites_the_snapshot_it_was_read_off() -> None:
         assert "daily_series" in basis, product.stream
         assert "SOURCE-DIRECT" in basis, product.stream
         assert product.snapshot_last_day.isoformat() in basis, product.stream
-        assert "coverage_census.py" in basis or "CONSERVATIVE AND NOT MEASURED" in basis, product.stream
+        # BOTH lags are measured now: the meteorology one against `execution/coverage_census.py`, the
+        # solar one against POWER's live edge on 2026-09-15. An uncited lag is the defect this guards,
+        # so the word alone is not enough -- each lag must name the artifact it was read off.
+        assert "MEASURED" in basis, product.stream
+        assert "NOT MEASURED" not in basis, product.stream
+        artifact = (
+            "coverage_census.py"
+            if product.publication_lag_days == CLIMATE_METEOROLOGY_PUBLICATION_LAG_DAYS
+            else SHORTWAVE_LAG_MEASUREMENT_EVIDENCE
+        )
+        assert artifact in basis, product.stream
 
 
 def test_the_shortwave_floor_and_lag_differ_from_the_meteorology_ones() -> None:
-    """Its immutable history ends nine weeks earlier and its source publishes months behind."""
+    """Its immutable history ends nine weeks earlier and its source publishes one day behind theirs."""
     shortwave = LANE_REGISTRY["climate-field-shortwave-radiation"]
     meteorology = LANE_REGISTRY["climate-field-air-temperature-mean"]
 

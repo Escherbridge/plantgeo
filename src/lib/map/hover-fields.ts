@@ -594,7 +594,7 @@ function formatBotanicalRichnessCell(props: Properties): HoverContent | null {
   const excludedByQc = toFiniteNumber(props.excluded_by_qc);
   const possibleOnly = toFiniteNumber(props.possible_only_records);
 
-  return buildContent("Documented taxon richness", [
+  return buildContent("Herbarium specimen richness", [
     evaluation && evaluation !== "documented"
       ? `Cell state: ${humanizeSnakeCase(evaluation)}`
       : null,

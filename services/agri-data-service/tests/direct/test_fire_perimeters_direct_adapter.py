@@ -37,7 +37,7 @@ from agri_data_service.pipeline.direct.fire_perimeters.products import FIRE_PERI
 from agri_data_service.pipeline.direct.fire_perimeters.rows import FirePerimeterPopulation
 from agri_data_service.pipeline.direct.fire_perimeters.support import (
     fire_perimeter_geometry_session,
-    perimeter_geometries_to_wkb,
+    repair_perimeter_geometries_to_wkb,
 )
 from agri_data_service.pipeline.parquet.gap_fill import fill_one_lane_day, unlocked_lane_day
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
@@ -65,7 +65,7 @@ def valid_square_wkb() -> bytes:
     every row-building test in this module shares one session for the whole run.
     """
     with fire_perimeter_geometry_session() as session:
-        return perimeter_geometries_to_wkb(session, [VALID_SQUARE], ["OR-SQUARE"])[0]
+        return repair_perimeter_geometries_to_wkb(session, [VALID_SQUARE], ["OR-SQUARE"])[0].wkb
 
 
 class SessionDouble:

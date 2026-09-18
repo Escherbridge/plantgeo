@@ -68,7 +68,7 @@ from agri_data_service.pipeline.parquet.source_checkpoint import SourceResponseC
 from agri_data_service.warehouse.parquet.tiers import DERIVED_ZOOM_TIERS
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Collection, Mapping, Sequence
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -96,11 +96,17 @@ CLIMATE_MIN_DELAY_SECONDS: Final = 0.1
 #: How far back one turn is willing to look for an unfilled day before reporting a backlog. The
 #: whole owed window is bounded by the history floor, but a single turn must stay bounded too.
 CLIMATE_BACKLOG_SCAN_DAYS: Final = 400
-#: How far back a turn re-examines a day it has ALREADY governed as absent. POWER revises a
-#: fill-value day into real values once its inputs land, and `adapter._retract_disproven_absence` is
-#: the only thing that undoes such a marker -- it runs only on a day the walk selects, so an absence
-#: the walk skipped forever was permanent whatever the source did next. Rechecks are queued BEHIND
-#: real gaps, so they can never starve a day that has no data at all.
+#: How far back a turn re-examines a day it has ALREADY settled, in either of two shapes. An ABSENT
+#: day: POWER revises a fill-value day into real values once its inputs land, and
+#: `adapter._retract_disproven_absence` is the only thing that undoes such a marker -- it runs only on
+#: a day the walk selects, so an absence the walk skipped forever was permanent whatever the source
+#: did next. A PARTIAL day: a completed day whose base marker counts fewer rows than the 397 support
+#: cells, because some cells still answered a fill when it was written (`_partial_days_in_recheck_window`).
+#: The all-cell absence predicate never sees such a day, and a `data` rung is never re-selected on its
+#: own, so without this the missing cells were a permanent silent hole at every lag. Rechecks are
+#: queued BEHIND real gaps, so they can never starve a day that has no data at all -- which also
+#: means a product with a standing backlog rechecks nothing until that backlog drains; see
+#: `pipeline/direct/AGENTS.md`, "A governed absence is re-examined, or it is permanent".
 CLIMATE_ABSENCE_RECHECK_DAYS: Final = 14
 #: The one outcome a bounded turn reports instead of failing when its wall clock runs out.
 CLIMATE_TIME_BUDGET_OUTCOME: Final = TIME_BUDGET_EXHAUSTED
@@ -109,6 +115,9 @@ CLIMATE_TIME_BUDGET_OUTCOME: Final = TIME_BUDGET_EXHAUSTED
 CLIMATE_SOURCE_UNSETTLED_OUTCOME: Final = SOURCE_UNSETTLED
 #: The one outcome a bounded turn reports instead of fetching past its per-turn request budget.
 CLIMATE_REQUEST_BUDGET_OUTCOME: Final = REQUEST_BUDGET_EXHAUSTED
+#: The two day outcomes that mean the writer settled the day: values written, or an absence governed
+#: with a proof. Every other word `_publish_locked_day` can return is a day left owed.
+CLIMATE_DAY_WROTE_OUTCOMES: Final[frozenset[str]] = frozenset({"written", "absent"})
 
 #: What this writer promises about its own failure policy, CLI surface and reported words; see
 #: `pipeline/direct/__init__.py` for the axes and `tests/direct/test_direct_writer_contract.py` for
@@ -160,6 +169,9 @@ class ClimateForwardConfig:
     contention_timeout_seconds: float
     run_id: str | None = None
     today: date | None = None
+    #: Which recheck an idle turn takes first; `None` derives it from the wall clock (hours since the
+    #: epoch), so successive hourly turns walk the recheck list round-robin. See `_pending_days`.
+    recheck_rotation: int | None = None
 
     @property
     def request_budget(self) -> int:
@@ -274,7 +286,9 @@ async def _publish_product(  # noqa: PLR0913 - the store, product, support, cach
     )
     first_day = max(product.history_floor, ceiling - timedelta(days=CLIMATE_BACKLOG_SCAN_DAYS - 1))
     statuses = await asyncio.to_thread(_tier_status_window, store, product, first_day, ceiling)
-    backlog = _pending_days(product, statuses)
+    partial_days = await asyncio.to_thread(_partial_days_in_recheck_window, store, product, statuses)
+    rotation = config.recheck_rotation if config.recheck_rotation is not None else _clock_recheck_rotation()
+    backlog = _pending_days(product, statuses, partial_days=partial_days, recheck_rotation=rotation)
     selected = backlog[: config.max_days]
     published: list[dict[str, object]] = []
     for day in selected:
@@ -309,20 +323,46 @@ async def _publish_product(  # noqa: PLR0913 - the store, product, support, cach
                 availability_storage=availability_storage,
                 availability=availability,
                 mirrored_past=_mirrored_past_day(statuses, day),
+                existing_row_count=partial_days.get(day),
             )
         )
     return {
         "layer": product.stream,
         "product": product.product_id,
-        "outcome": "idempotent_noop" if not backlog else "published",
+        "outcome": _product_outcome(backlog, published),
+        "source_unsettled_days": sum(1 for day in published if day["outcome"] == CLIMATE_SOURCE_UNSETTLED_OUTCOME),
         "history_floor": product.history_floor.isoformat(),
         "settled_through": ceiling.isoformat(),
         "publication_lag_days": product.publication_lag_days,
         "scan_first_day": first_day.isoformat(),
         "backlog_days": len(backlog),
+        "partial_day_rechecks": len(partial_days),
         "availability_retried_days": retried,
         "days": published,
     }
+
+
+def _product_outcome(backlog: Sequence[date], published: Sequence[Mapping[str, object]]) -> str:
+    """Report what the turn actually did to this product, never `published` for a day it did not write.
+
+    THE MASK THIS REMOVES: a turn whose only selected day came back `source_unsettled` is a turn that
+    wrote nothing, and reporting it as `published` is how a lane ticks green for months while its
+    edge stands still -- exactly the shape of the 107-day shortwave stall. The two production turn
+    reports of 2026-09-15 and 2026-09-16 (`.omc/research/runbook-20260915-shortwave/prod-logs/`)
+    each read `"outcome": "published"` for shortwave radiation beside ONE day whose own outcome was
+    `source_unsettled` with detail "NASA POWER answered 429"; nothing above the day level said so.
+    A too-small lag manufactures wrong absences loudly; a too-large one, a source that stops
+    publishing, or a quota refusal on every turn is silent unless the turn says so. The word is the
+    FIRST day's own outcome, so `source_unsettled`, `time_budget_exhausted` and
+    `request_budget_exhausted` each reach the run report under their own name.
+    """
+    # `max_days` is at least 1, so an empty `published` beside a non-empty backlog cannot arise; it is
+    # still not a publication, and naming it a no-op keeps the word honest either way.
+    if not backlog or not published:
+        return IDEMPOTENT_NOOP
+    if any(day["outcome"] in CLIMATE_DAY_WROTE_OUTCOMES for day in published):
+        return PUBLISHED
+    return str(published[0]["outcome"])
 
 
 async def _retry_owed_availability(  # noqa: PLR0913 - one coordinate of the product's turn per arg
@@ -380,9 +420,11 @@ def _skipped(product: ClimateFieldProduct, *, today: date, outcome: str) -> dict
         "layer": product.stream,
         "product": product.product_id,
         "outcome": outcome,
+        "source_unsettled_days": 0,
         "history_floor": product.history_floor.isoformat(),
         "settled_through": settled_through(product, today=today).isoformat(),
         "publication_lag_days": product.publication_lag_days,
+        "partial_day_rechecks": 0,
         "days": [],
     }
 
@@ -418,6 +460,7 @@ async def _publish_day_with_retries(  # noqa: PLR0913 - one lane-day coordinate 
     availability_storage: AvailabilityStorage,
     availability: AvailabilityExtensionTally,
     mirrored_past: date | None,
+    existing_row_count: int | None = None,
 ) -> dict[str, object]:
     """Acquire the lane-day lock once, then refetch and republish under it for every bounded attempt."""
     refuse_immutable_day(product, day)
@@ -446,6 +489,7 @@ async def _publish_day_with_retries(  # noqa: PLR0913 - one lane-day coordinate 
                     availability_storage=availability_storage,
                     availability=availability,
                     mirrored_past=mirrored_past,
+                    existing_row_count=existing_row_count,
                 )
         await session.rollback()
         remaining = contention_deadline - time.monotonic()
@@ -473,7 +517,7 @@ async def _publish_day_with_retries(  # noqa: PLR0913 - one lane-day coordinate 
         await asyncio.sleep(delay)
 
 
-async def _publish_locked_day(  # noqa: PLR0913 - one lane-day coordinate per argument
+async def _publish_locked_day(  # noqa: PLR0913, PLR0911 - one lane-day coordinate per argument; one return per distinct day outcome
     session: AsyncSession,
     store: ObjectStore,
     product: ClimateFieldProduct,
@@ -488,6 +532,7 @@ async def _publish_locked_day(  # noqa: PLR0913 - one lane-day coordinate per ar
     availability_storage: AvailabilityStorage,
     availability: AvailabilityExtensionTally,
     mirrored_past: date | None,
+    existing_row_count: int | None = None,
 ) -> dict[str, object]:
     """Refetch before every write attempt while one advisory lock stays held, then prove all four rungs."""
     lane = LANE_REGISTRY[product.stream]
@@ -503,6 +548,7 @@ async def _publish_locked_day(  # noqa: PLR0913 - one lane-day coordinate per ar
             product=product,
             fetch_source=lambda: fetch_climate_day(product, day=day, support=support, cache=cache, deadline=deadline),
             mirrored_past_proof=lambda: _mirrored_past_proof(product, day=day, mirrored_past=mirrored_past),
+            existing_row_count=existing_row_count,
         )
         try:
             outcome, parts, rows, written_bytes, detail = await fill_one_lane_day(
@@ -528,6 +574,21 @@ async def _publish_locked_day(  # noqa: PLR0913 - one lane-day coordinate per ar
                 await session.rollback()
             outcome, parts, rows, written_bytes = "raised", 0, 0, 0
             detail = f"{type(error).__name__}: {error}"
+        if adapter.unchanged_partial is not None:
+            # A SHORT DAY THAT HAS NOT GROWN IS LEFT ALONE. Nothing was cleared and nothing was
+            # written; the day stays served and stays a recheck. Reported under the no-op name so a
+            # turn that only met such days does not read `published`.
+            return _day_result(
+                product,
+                day,
+                adapter=adapter,
+                outcome=IDEMPOTENT_NOOP,
+                parts=0,
+                rows=0,
+                written_bytes=0,
+                attempts=attempt,
+                detail=str(adapter.unchanged_partial),
+            )
         if adapter.unsettled_refusal is not None:
             # NOT A FAILURE AND NOT A RETRY. POWER has not published this day, so refetching it inside
             # the same turn asks the same question of the same release; the next turn is the soonest
@@ -692,20 +753,72 @@ def _tier_status_day(
     }
 
 
+def _recheck_floor(days: Collection[date]) -> date:
+    """Return the oldest day of the recheck window: the newest censused day minus the window, inclusive."""
+    return max(days) - timedelta(days=CLIMATE_ABSENCE_RECHECK_DAYS - 1)
+
+
+def _partial_days_in_recheck_window(
+    store: ObjectStore,
+    product: ClimateFieldProduct,
+    statuses: Mapping[ZoomTier, Mapping[date, PartitionDayStatus]],
+) -> dict[date, int]:
+    """Return the completed days of the recheck window whose base marker counts fewer rows than support cells.
+
+    Keyed to the marker's `row_count`, which the re-bind must strictly exceed before it writes.
+
+    THE BASE COMPLETION MARKER IS THE DURABLE PER-DAY RECORD OF A SHORT DAY. `build_climate_day` drops
+    a fill cell with no row and `_finalize_written_day` stamps `row_count` with what was written, so a
+    day written while some cells still answered POWER's fill reads `row_count < 397` forever, with no
+    new state to keep. Bounded: at most `CLIMATE_ABSENCE_RECHECK_DAYS` marker reads per product per
+    turn, and only for days every rung already calls `data`.
+    """
+    base = statuses[LANE_BASE_ZOOM_TIER]
+    if not base:
+        return {}
+    floor = _recheck_floor(base)
+    partial: dict[date, int] = {}
+    for day in base:
+        if day < floor or any(statuses[tier][day] != "data" for tier in CLIMATE_DIRECT_ALL_TIERS):
+            continue
+        marker = store.read_completion_marker(product.stream, CLIMATE_DIRECT_KIND, LANE_BASE_ZOOM_TIER, day)
+        if marker is not None and marker.row_count < NASA_POWER_SUPPORT_CELL_COUNT:
+            partial[day] = marker.row_count
+    return partial
+
+
+def _clock_recheck_rotation(now: datetime | None = None) -> int:
+    """Hours since the epoch: consecutive for consecutive hourly turns, so the rechecks are walked round-robin."""
+    stamped = now if now is not None else datetime.now(UTC)
+    return int(stamped.timestamp()) // 3600
+
+
 def _pending_days(
     product: ClimateFieldProduct,
     statuses: Mapping[ZoomTier, Mapping[date, PartitionDayStatus]],
+    *,
+    partial_days: Collection[date] = frozenset(),
+    recheck_rotation: int = 0,
 ) -> tuple[date, ...]:
-    """Return the owed days newest first, then the recent ABSENCES this turn should re-examine.
+    """Return the owed days newest first, then the recent settled days this turn should re-examine.
 
-    A governed absence is not permanent evidence -- POWER revises a fill-value day once its inputs
-    land -- so the newest `CLIMATE_ABSENCE_RECHECK_DAYS` of them are re-selected, behind every day
-    that owes real work. See `pipeline/direct/AGENTS.md`.
+    Two kinds of settled day are re-selected, both bounded to the newest `CLIMATE_ABSENCE_RECHECK_DAYS`
+    and both queued behind every day that owes real work: a governed ABSENCE, because POWER revises a
+    fill-value day once its inputs land, and a PARTIAL day named in `partial_days`, because a day
+    written short of the support is otherwise `data` at every rung and never selected again.
+
+    THE RECHECKS ARE ROUND-ROBIN, NOT NEWEST-FIRST. A turn takes `--max-days` (1) days, so an idle
+    turn takes exactly one recheck; newest-first would take the same newest short day every hour
+    while a cell trails, and a day behind it would never be re-examined again. Oldest-first alone
+    starves the other way once the oldest is a standing no-op. The list is oldest-first and rotated
+    by `recheck_rotation`, which the driver derives from the clock hour, so successive idle turns
+    visit each recheck in turn. See `pipeline/direct/AGENTS.md`, "A governed absence is re-examined,
+    or it is permanent".
     """
     days = tuple(statuses[CLIMATE_DIRECT_ALL_TIERS[0]])
     if not days:
         return ()
-    recheck_floor = max(days) - timedelta(days=CLIMATE_ABSENCE_RECHECK_DAYS - 1)
+    recheck_floor = _recheck_floor(days)
     pending: list[date] = []
     rechecks: list[date] = []
     for day in reversed(days):
@@ -722,7 +835,13 @@ def _pending_days(
             continue
         if any(status != "data" for status in rung.values()):
             pending.append(day)
-    return (*pending, *rechecks)
+        elif day in partial_days and day >= recheck_floor:
+            rechecks.append(day)
+    if not rechecks:
+        return tuple(pending)
+    oldest_first = rechecks[::-1]
+    offset = recheck_rotation % len(oldest_first)
+    return (*pending, *oldest_first[offset:], *oldest_first[:offset])
 
 
 def _mirrored_past_day(
@@ -837,6 +956,7 @@ async def main(argv: Sequence[str] | None = None) -> int:
 __all__ = [
     "CLIMATE_ABSENCE_RECHECK_DAYS",
     "CLIMATE_BACKLOG_SCAN_DAYS",
+    "CLIMATE_DAY_WROTE_OUTCOMES",
     "CLIMATE_DEFAULT_TIME_BUDGET_SECONDS",
     "CLIMATE_DIRECT_ALL_TIERS",
     "CLIMATE_MAX_DAYS",

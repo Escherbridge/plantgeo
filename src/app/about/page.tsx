@@ -180,7 +180,7 @@ const attributionIndex = [
   {
     term: "Open-Meteo",
     description:
-      "Current conditions — temperature, humidity, wind, precipitation — sampled across the coverage grid, plus the live reading behind a map click.",
+      "Current conditions — temperature, humidity, wind, precipitation — sampled across the coverage grid each hour. The fire panel shows the nearest published sample to the centre of the view; nothing is fetched live for a click.",
     note: "Hourly",
   },
   {
@@ -203,8 +203,8 @@ const attributionIndex = [
   {
     term: "Sentinel-2 L2A",
     description:
-      "Red and near-infrared bands read from the Earth Search STAC catalogue on AWS, reduced to NDVI on a fixed 0.25° lattice anchored to the global origin.",
-    note: "Daily, 05:00 UTC",
+      "Red and near-infrared bands read from the Earth Search STAC catalogue on AWS, reduced to NDVI on a fixed 0.25° lattice anchored to the global origin. Each run fills one product-day.",
+    note: "Hourly poll, one product-day per run",
   },
   {
     term: "U.S. Drought Monitor",
@@ -233,19 +233,14 @@ const attributionIndex = [
   {
     term: "USDA NRCS SSURGO",
     description:
-      "Soil survey attributes for a queried point, via the Soil Data Access service.",
-    note: "On request",
-  },
-  {
-    term: "LANDFIRE",
-    description:
-      "Fuel model and existing vegetation type identified at a queried point.",
-    note: "On request",
+      "Soil survey map units, the vector polygons behind the Soil Survey toggle. Not served yet: no lane publishes the survey, so the viewport read answers unavailable rather than drawing, and nothing is queried from USDA on request.",
+    note: "Withheld",
   },
   {
     term: "USGS NHDPlus HR",
-    description: "High-resolution hydrography — flowlines and waterbodies.",
-    note: "On request",
+    description:
+      "HUC12 watershed boundaries — the one hydrography layer we read. Flowlines and waterbodies are not drawn. The basins on the map come from a stored snapshot; the Water panel lists the basins in view by asking USGS live.",
+    note: "Daily check, list on request",
   },
   {
     term: "OpenStreetMap",
@@ -254,9 +249,9 @@ const attributionIndex = [
     note: "Rebuilt on demand",
   },
   {
-    term: "Consortium of Pacific Northwest Herbaria",
+    term: "UBC Herbarium, via Canadensys IPT",
     description:
-      "Vascular plant occurrence records feeding the botanical layers. One release is live and being served; it is not yet formally admitted — reconciliation against the herbarium's own field map, and a stability check against the prior release, are still open.",
+      "Vascular plant specimen records feeding the botanical layers: the University of British Columbia Herbarium's own vascular-specimen release, v16.43, taken from the Canadensys IPT archive under CC0 1.0. UBC is a member of the Consortium of Pacific Northwest Herbaria, but the consortium portal was not the source of what is served. The release is live; it is not yet formally admitted — reconciliation against the herbarium's own field map, and a stability check against the prior release, are still open.",
     note: "Serving, admission pending",
   },
   {
@@ -458,8 +453,8 @@ export default function AboutPage() {
             <p>
               Parity claims are cheap, so here is the ledger. Each row names a
               capability, the open component that provides it, and where it
-              honestly stands today. Two rows say <em>Open</em>. We would rather
-              publish them than round them up.
+              honestly stands today. One row says <em>Open</em>. We would rather
+              publish it than round it up.
             </p>
           </EditorialProse>
           <EditorialDefinitionList items={parityIndex} />
@@ -546,7 +541,10 @@ export default function AboutPage() {
               <em>Backfilled</em>, the history was walked once and is not
               re-polled — the series is a closed window, not a live feed.
               Where it says <em>On request</em>, nothing is stored in advance:
-              the upstream is queried for the point you clicked.
+              the upstream is queried for the view in front of you. Where it
+              says <em>Withheld</em>, the row is listed because the map offers
+              the toggle, but no lane publishes the data yet and nothing is
+              drawn.
             </p>
             <p>
               A cadence is an upper bound on staleness, not a promise of

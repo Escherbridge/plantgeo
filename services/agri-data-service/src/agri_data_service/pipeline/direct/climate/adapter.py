@@ -39,6 +39,16 @@ class DirectClimateFieldError(RuntimeError):
     """Raised when a product-day cannot support a complete direct publication."""
 
 
+class ClimatePartialDayUnchangedError(RuntimeError):
+    """Raised, and recorded, when a re-examined short day is still exactly as short: nothing to write.
+
+    NOT a failure and NOT a write. `gap_fill._export_one_day` turns every adapter exception into
+    `raised`, so the forward walk reads `DirectClimateFieldAdapter.unchanged_partial` to tell this
+    apart and reports the day `idempotent_noop`. See `pipeline/direct/AGENTS.md`, "A governed
+    absence is re-examined, or it is permanent".
+    """
+
+
 def refuse_immutable_day(product: ClimateFieldProduct, day: date) -> None:
     """Refuse any day this product's immutable snapshot history already owns, whatever asked for it.
 
@@ -68,7 +78,15 @@ class DirectClimateFieldAdapter:
     #: is only a governed absence once that is known; see `pipeline/direct/AGENTS.md`,
     #: "An all-null day is a refusal until the mirror is proven past it".
     mirrored_past_proof: Callable[[], str | None] = no_mirrored_past_proof
+    #: The base marker's `row_count` when this day is a PARTIAL-DAY RECHECK, else `None`. A recheck
+    #: writes only when the refetched non-fill cell count strictly exceeds it: `write_partition`
+    #: clears the base completion marker as it uploads `part-0`, and every reader that spans the day
+    #: faults `day_incomplete` until the coarse rungs are re-derived and the marker re-stamped, so
+    #: rewriting an identical short day is a served outage that does no work.
+    existing_row_count: int | None = None
     source: ClimateDaySource | None = field(default=None, init=False)
+    #: The no-op this attempt made instead of rewriting a short day that has not grown.
+    unchanged_partial: ClimatePartialDayUnchangedError | None = field(default=None, init=False)
     #: The refusal this attempt made instead of governing an unproven all-fill day. Recorded as well
     #: as raised because `gap_fill._export_one_day` turns every adapter exception into `raised`, and
     #: the forward walk has to tell "not settled yet, come back next tick" from a real failure.
@@ -122,6 +140,13 @@ class DirectClimateFieldAdapter:
                     day=day,
                 )
             )
+        if self.existing_row_count is not None and len(source.values) <= self.existing_row_count:
+            self.unchanged_partial = ClimatePartialDayUnchangedError(
+                f"{self.product.stream} {day.isoformat()}: POWER still answers {source.fill_value_cells} fill cell(s), "
+                f"so the refetched {len(source.values)} value(s) do not exceed the {self.existing_row_count} rows "
+                "already published; the short day is left exactly as it is"
+            )
+            raise self.unchanged_partial
         self._retract_disproven_absence(store, day=day, run_id=run_id)
         return normalise_export_outcome(
             store.write_partition(
@@ -186,6 +211,7 @@ class DirectClimateFieldAdapter:
 
 __all__ = [
     "CLIMATE_DIRECT_KIND",
+    "ClimatePartialDayUnchangedError",
     "DirectClimateFieldAdapter",
     "DirectClimateFieldError",
     "no_mirrored_past_proof",

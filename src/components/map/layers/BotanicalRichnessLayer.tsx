@@ -23,12 +23,14 @@ const EVALUATION_COLORS: Record<Exclude<BotanicalCellEvaluation, "documented">, 
 };
 
 /**
- * Legend rows for the richness layer. Labels are the four EXACT strings the spec requires --
- * `LayerLegend`-style consumers and the test suite both key off this literal text, so a future
- * edit to these strings must be deliberate.
+ * Legend rows for the richness layer. The four evaluation-state labels are the EXACT strings the
+ * spec requires -- `LayerLegend`-style consumers and the test suite both key off this literal
+ * text, so a future edit to these strings must be deliberate. The ramp row names what the
+ * colour actually counts (taxa with georeferenced specimens, i.e. collecting effort), not
+ * biodiversity; see layer-registry.ts's botanical block for the owner decision behind that.
  */
 export const BOTANICAL_RICHNESS_LEGEND = [
-  { label: "documented taxa (sequential, darker = more)", color: "#0f6b3c" },
+  { label: "taxa with georeferenced specimens (darker = more collected)", color: "#0f6b3c" },
   { label: "zero documented records", color: EVALUATION_COLORS.evaluated_zero },
   { label: "outside admitted coverage", color: "#1f2937" },
   { label: "withheld/generalized only", color: EVALUATION_COLORS.withheld_or_generalized_only },
@@ -102,7 +104,9 @@ interface BotanicalRichnessLayerProps {
 }
 
 /**
- * Aggregate documented-taxon-richness choropleth for zoom bands below the detail threshold.
+ * Aggregate herbarium-specimen-richness choropleth for zoom bands below the detail threshold:
+ * distinct taxa with georeferenced UBC specimens per cell, which is a record of where botanists
+ * collected rather than a biodiversity estimate (92 % of the release carries no coordinates).
  * Follows `DroughtLayer`'s add/remove-on-style-load lifecycle. Tooltip content (documented
  * taxa, record_count, collection_count, excluded_by_qc, release_set_id) is read by the
  * consuming panel via `queryRenderedFeatures`, matching how other choropleth layers in this

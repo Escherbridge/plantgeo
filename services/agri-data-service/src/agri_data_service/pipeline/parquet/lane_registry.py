@@ -55,6 +55,7 @@ from agri_data_service.pipeline.direct.climate.products import (
     CLIMATE_FIELD_PRODUCTS,
     CLIMATE_METEOROLOGY_PUBLICATION_LAG_DAYS,
     CLIMATE_SHORTWAVE_RADIATION_PUBLICATION_LAG_DAYS,
+    SHORTWAVE_LAG_MEASUREMENT_EVIDENCE,
 )
 from agri_data_service.pipeline.direct.evacuation_zones.watermark import read_evacuation_zones_source_watermark
 from agri_data_service.pipeline.direct.soil.products import (
@@ -866,12 +867,13 @@ def _climate_floor_basis(product: ClimateFieldProduct) -> str:
         "`execution/coverage_census.py` PUBLICATION_LAG_DAYS['nasa-power-daily']."
         if product.publication_lag_days == CLIMATE_METEOROLOGY_PUBLICATION_LAG_DAYS
         else (
-            f"Lag {CLIMATE_SHORTWAVE_RADIATION_PUBLICATION_LAG_DAYS} is CONSERVATIVE AND NOT MEASURED against "
-            "POWER's live solar edge. It is 5 (the measured meteorology lag) plus the 67-day difference between "
-            "the canonical snapshot's meteorology last day (2026-08-06) and its ALLSKY_SFC_SW_DWN last day "
-            "(2026-05-31) in the same build, plus three days of slack. MEASURE POWER's own solar edge and "
-            "replace it: over-waiting delays a real day by one tick, under-waiting manufactures a wrong "
-            "governed absence."
+            f"Lag {CLIMATE_SHORTWAVE_RADIATION_PUBLICATION_LAG_DAYS} is MEASURED against POWER's live solar edge "
+            f"on 2026-09-15 at five PNW points ({SHORTWAVE_LAG_MEASUREMENT_EVIDENCE}): ALLSKY_SFC_SW_DWN was real "
+            "through 2026-09-11 and T2M through 2026-09-12, with no interior fill days across June, July and "
+            "August -- a 4-day solar latency beside a 3-day meteorology one. The margin is the edge's observed "
+            "jitter: the meteorology edge read 5 days on 2026-08-11 and 3 on 2026-09-15, so 6 is the measured 4 "
+            "plus that couple of days. It REPLACES a conservative 75 inferred from the canonical snapshot's "
+            "67-day internal gap, which was a property of that stale artifact and not of the provider."
         )
     )
     return (

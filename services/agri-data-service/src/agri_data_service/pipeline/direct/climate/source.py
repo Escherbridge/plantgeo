@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import sys
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -52,6 +53,30 @@ NASA_POWER_POINT_BOUNDS: Final = UpstreamBounds(
 
 #: Simultaneous point requests against a public, key-free API. See `pipeline/direct/AGENTS.md`.
 NASA_POWER_POINT_CONCURRENCY: Final = 4
+
+#: How many times ONE TURN pauses its whole fan-out on a POWER 429 before it defers the day to a later
+#: turn, and the pause series (20, 40, 80, 160 s -- 300 s in all, inside the 900 s turn budget).
+#: WHAT IS MEASURED: on 2026-09-15 and 2026-09-16 in production (`.omc/research/
+#: runbook-20260915-shortwave/prod-logs/climate-turn-reports-extracted.json`) the first 397-cell
+#: fan-out of a turn completed in about a minute, and the SECOND distinct day's fan-out in the same
+#: turn met a 429 after 360 and 329 requests. Deferring on the first 429, as this module did, handed
+#: the day to "a later turn" that selected a newer day and met the same 429 -- the shortwave product
+#: wrote nothing for 107 days.
+#: WHAT IS NOT: the series itself. POWER documents the 429 and not its window, and no `Retry-After`
+#: reaches this module, so 20/40/80/160 s is a HYPOTHESIS that the quota is a short rolling window
+#: (~700 requests in a couple of minutes); the first production turn under it is the test. If the
+#: pauses are all spent, the day is deferred exactly as before and the next turn resumes it from its
+#: checkpointed cells. Under hourly turns only ONE turn a day (the one where the ceiling advances)
+#: needs two fan-outs; the other 23 drain one owed day each regardless of how this series performs.
+#: See `pipeline/direct/AGENTS.md`, "POWER answers 429 to the second fan-out of a turn".
+NASA_POWER_QUOTA_PAUSE_LIMIT: Final = 4
+NASA_POWER_QUOTA_PAUSE_BASE_SECONDS: Final = 20.0
+NASA_POWER_QUOTA_PAUSE_MAX_SECONDS: Final = 160.0
+#: A pause is refused unless this much of the turn budget would remain after it. The products queued
+#: behind the paused one each still need their turn -- a shared cache read for the same day, but a
+#: lock, a write and three derivations apiece -- and a pause that ends exactly at the deadline hands
+#: every one of them `time_budget_exhausted`.
+NASA_POWER_QUOTA_PAUSE_DEADLINE_RESERVE_SECONDS: Final = 60.0
 
 POINT_ORDINATE_COUNT: Final = 2
 
@@ -102,6 +127,10 @@ class ClimateSourceCache:
     deferred_refusal: ClimateProviderDeferredError | None = None
     checkpoints: SourceResponseCheckpoints | None = None
     restored_days: set[tuple[str, date]] = field(default_factory=set)
+    #: How many 429 cooldowns this turn has served, across every day it fetched, and the monotonic
+    #: instant the current one ends. One burst of 429s across the concurrent workers is ONE pause.
+    quota_pauses: int = 0
+    quota_resume_at: float | None = None
 
     @property
     def remaining_requests(self) -> int:
@@ -262,15 +291,26 @@ async def fill_cell_day_cache(  # noqa: PLR0913 - the day, support, cache, clock
 
     async def one(cell: NasaPowerSupportCell, client: httpx.AsyncClient) -> ClimateCellDayResponse:
         async with gate:
-            require_time_remaining(deadline, day=day)
-            if cache.deferred_refusal is not None:
-                raise cache.deferred_refusal
-            cache.requests_spent += 1
-            try:
-                response = await _fetch_cell_day(client, cell, day=day, now=now)
-            except ClimateProviderDeferredError as error:
-                cache.deferred_refusal = error
-                raise
+            while True:
+                require_time_remaining(deadline, day=day)
+                if cache.deferred_refusal is not None:
+                    raise cache.deferred_refusal
+                await _wait_out_quota_pause(cache, deadline=deadline, day=day)
+                pauses_seen = cache.quota_pauses
+                if cache.deferred_refusal is not None:  # another worker gave up during the pause
+                    raise cache.deferred_refusal
+                cache.requests_spent += 1
+                try:
+                    response = await _fetch_cell_day(client, cell, day=day, now=now)
+                except ClimateProviderDeferredError as error:
+                    # A 429 IS A PAUSE BEFORE IT IS A DEFERRAL. The fan-out waits out one bounded
+                    # cooldown shared by every worker and asks again; only a turn that has spent its
+                    # pauses, or has no time left for one, hands the day to a later turn.
+                    if _begin_quota_pause(cache, error, pauses_seen=pauses_seen, deadline=deadline, day=day):
+                        continue
+                    cache.deferred_refusal = error
+                    raise
+                break
             cache.hold(response)
             if cache.checkpoints is not None and response.body is not None and _checkpoint_eligible(response):
                 await asyncio.to_thread(
@@ -472,6 +512,69 @@ def require_time_remaining(deadline: float | None, *, day: date) -> None:
         raise ClimateTimeBudgetExhaustedError(f"the turn's time budget ran out before {day.isoformat()} completed")
 
 
+def quota_pause_seconds(pauses_served: int) -> float:
+    """Return the length of the next 429 cooldown: 20 s doubling to 160 s, so four pauses are 300 s in all."""
+    return float(min(NASA_POWER_QUOTA_PAUSE_MAX_SECONDS, NASA_POWER_QUOTA_PAUSE_BASE_SECONDS * (2**pauses_served)))
+
+
+def _begin_quota_pause(
+    cache: ClimateSourceCache,
+    error: ClimateProviderDeferredError,
+    *,
+    pauses_seen: int,
+    deadline: float | None,
+    day: date,
+) -> bool:
+    """Start one turn-wide cooldown after a 429, or return False when this turn may not pause again.
+
+    A BURST COUNTS ONCE. Four workers in flight meet the same 429 within a second of each other; the
+    first to arrive starts the pause and the other three join it, judged by the pause count they saw
+    before their request rather than by the clock, so a mocked or skewed clock cannot turn one burst
+    into four pauses. The cap and the deadline are what keep the loop in `fill_cell_day_cache` bounded.
+    """
+    if cache.quota_pauses > pauses_seen:
+        return True
+    if cache.quota_pauses >= NASA_POWER_QUOTA_PAUSE_LIMIT:
+        return False
+    delay = quota_pause_seconds(cache.quota_pauses)
+    now = time.monotonic()
+    if deadline is not None and now + delay + NASA_POWER_QUOTA_PAUSE_DEADLINE_RESERVE_SECONDS >= deadline:
+        return False
+    cache.quota_pauses += 1
+    cache.quota_resume_at = now + delay
+    # stderr, because stdout carries the one terminal report a caller parses.
+    print(
+        json.dumps(
+            {
+                "event": "climate_forward_quota_pause",
+                "day": day.isoformat(),
+                "pause": cache.quota_pauses,
+                "pause_limit": NASA_POWER_QUOTA_PAUSE_LIMIT,
+                "resume_in_seconds": delay,
+                "requests_spent": cache.requests_spent,
+                "detail": str(error),
+            },
+            sort_keys=True,
+        ),
+        file=sys.stderr,
+        flush=True,
+    )
+    return True
+
+
+async def _wait_out_quota_pause(cache: ClimateSourceCache, *, deadline: float | None, day: date) -> None:
+    """Sleep until the turn's current 429 cooldown ends, never past the turn deadline."""
+    if cache.quota_resume_at is None:
+        return
+    remaining = cache.quota_resume_at - time.monotonic()
+    if remaining <= 0:
+        return
+    if deadline is not None:
+        remaining = min(remaining, max(0.0, deadline - time.monotonic()))
+    await asyncio.sleep(remaining)
+    require_time_remaining(deadline, day=day)
+
+
 async def _fetch_cell_day(
     client: httpx.AsyncClient,
     cell: NasaPowerSupportCell,
@@ -591,6 +694,10 @@ __all__ = [
     "NASA_POWER_POINT_CONCURRENCY",
     "NASA_POWER_POINT_MAX_BYTES",
     "NASA_POWER_POINT_TIMEOUT_SECONDS",
+    "NASA_POWER_QUOTA_PAUSE_BASE_SECONDS",
+    "NASA_POWER_QUOTA_PAUSE_DEADLINE_RESERVE_SECONDS",
+    "NASA_POWER_QUOTA_PAUSE_LIMIT",
+    "NASA_POWER_QUOTA_PAUSE_MAX_SECONDS",
     "ClimateCellDayResponse",
     "ClimateCellValue",
     "ClimateDaySource",
@@ -606,5 +713,6 @@ __all__ = [
     "fetch_climate_day",
     "fill_cell_day_cache",
     "parse_climate_point_body",
+    "quota_pause_seconds",
     "receipt_clock",
 ]

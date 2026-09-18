@@ -1,6 +1,6 @@
 """The fire-perimeters lane's identity, partition kind and rung ladder, read from the registry.
 
-Holds the constants `rows.py`, `watermark.py`, `adapter.py`, `forward.py` and `parity.py` all need,
+Holds the constants `rows.py`, `watermark.py`, `adapter.py` and `forward.py` all need,
 in one place a test can import without pulling the whole driver -- the same reason
 `drought/products.py`, `climate/products.py` and `soil/products.py` exist.
 

@@ -59,6 +59,12 @@ type SoilPropertiesResult = {
   isLoading: boolean;
   isError: boolean;
   /**
+   * The tRPC error envelope the panel reads the code off. Optional so every existing case stays
+   * a settled read; only the shape `error.data?.code` is declared because that is all the panel
+   * dereferences (the same way ContributionQueue reads FORBIDDEN/UNAUTHORIZED).
+   */
+  error?: { data?: { code?: string } | null } | null;
+  /**
    * The retention pair. These reads hold the previous answer while the next loads
    * (`keepPreviousData`, see `useViewportProxiedLayers`), which sets `status: "success"` -- so
    * `isLoading` is permanently false after the first success and a spinner keyed on it never
@@ -282,7 +288,10 @@ describe("SoilDetails SSURGO coverage", () => {
     expect(screen.queryByText(/1,?000 SSURGO map units drawn/)).toBeNull();
   });
 
-  it("distinguishes an upstream fault from a view USDA surveyed and found nothing in", () => {
+  it("names any other unavailable reason as a feed gap, without blaming a provider nobody asked", () => {
+    // No producer emits a reason other than `*_lane_not_published` today; this pins the
+    // fallback shape so a future lane's fault is neither silently blank nor blamed on USDA
+    // Soil Data Access, which no code path in src/ calls.
     queries.getSoilSurvey.mockReturnValue({
       data: soilSurveyCollection(0, {
         availability: "unavailable",
@@ -294,9 +303,39 @@ describe("SoilDetails SSURGO coverage", () => {
 
     renderPanel();
 
-    expect(screen.getByText(/did not return a map-unit table/)).toBeTruthy();
-    // The empty-coverage claim belongs only to a published answer: USDA never said
-    // there is no soil here.
+    expect(
+      screen.getByText(/answered unavailable \(soil_survey_upstream_returned_no_table\)/)
+    ).toBeTruthy();
+    expect(screen.queryByText(/Soil Data Access/)).toBeNull();
+    // The empty-coverage claim belongs only to a published answer: nobody said there
+    // is no soil here.
+    expect(screen.queryByText(/no surveyed SSURGO map units/)).toBeNull();
+  });
+
+  // The answer production has given for every viewport since the Parquet pivot:
+  // `environmental.getSoilSurvey` is an unconditional stub returning this reason, and no code
+  // path in src/ calls Soil Data Access. Rendering it as a provider fault blamed USDA, on every
+  // view, for a lane PlantGeo has not published -- the About page was just cleared of the same
+  // class of claim, and this is the panel's copy of it.
+  it("names an unpublished lane as our gap, not as a USDA fault", () => {
+    queries.getSoilSurvey.mockReturnValue({
+      data: soilSurveyCollection(0, {
+        availability: "unavailable",
+        reason: "soil_survey_parquet_lane_not_published",
+        coverage: { cells: 0, covered: 0, ingested: 0 },
+      }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderPanel();
+
+    expect(screen.getByText(/not served yet: no lane publishes it/)).toBeTruthy();
+    expect(screen.getByText(/nothing was asked of USDA/)).toBeTruthy();
+    // Neither of the two claims this response cannot support: a provider fault, or a survey
+    // that looked and found nothing.
+    expect(screen.queryByText(/did not return a map-unit table/)).toBeNull();
+    expect(screen.queryByText(/provider fault, not an absence/)).toBeNull();
     expect(screen.queryByText(/no surveyed SSURGO map units/)).toBeNull();
   });
 
@@ -903,12 +942,53 @@ describe("SoilDetails soil-temperature field", () => {
  * the pin is clearable from the panel when there is.
  */
 describe("SoilDetails queried point", () => {
-  it("tells the user how to pick a point, and how to clear it", () => {
+  // The instruction may describe what a click DOES (drop a pin) but not promise what the pin
+  // reads: `environmental.getSoilProperties` refuses every point with PRECONDITION_FAILED until
+  // its lane is published, so "click to query soil properties" invited a click that failed.
+  it("tells the user how to pick a point, what it will not read yet, and how to clear it", () => {
     renderWithProviders(<SoilDetails bbox={VIEWPORT_BBOX} />);
 
-    expect(screen.getByText(/Click anywhere on the map to query soil properties/)).toBeTruthy();
+    expect(screen.getByText(/Click anywhere on the map to drop a query pin/)).toBeTruthy();
+    expect(screen.getByText(/not served yet, so the pin reads no values/)).toBeTruthy();
+    expect(screen.queryByText(/to query soil properties at that point/)).toBeNull();
     expect(screen.getByText(/press Escape, to clear it/)).toBeTruthy();
     expect(screen.queryByText("Clear queried point")).toBeNull();
+  });
+
+  // The only outcome a pin can reach today. Before this branch existed the loading line
+  // vanished and nothing took its place, so the pin stood over a silence that read as "no
+  // data at this point" -- a claim about the soil, made by a procedure that had refused to look.
+  it("names the refused point query as our gap, not as a SoilGrids fault or an absence of soil", () => {
+    queries.getSoilProperties.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: { data: { code: "PRECONDITION_FAILED" } },
+    });
+
+    renderWithProviders(<SoilDetails bbox={VIEWPORT_BBOX} queryPoint={{ lat: 43.6, lon: -116.2 }} />);
+
+    const note = screen.getByText(/SoilGrids point estimates are not served yet/);
+    expect(note.getAttribute("role")).toBe("status");
+    expect(note.textContent).toContain("not a fault at ISRIC");
+    expect(screen.queryByText(/could not be loaded for this pin/)).toBeNull();
+    expect(screen.queryByText(/Querying soil properties/)).toBeNull();
+  });
+
+  // Any other failure is a failure of the request, not a withheld capability, and keeps the
+  // ordinary try-again wording the field and survey sections use.
+  it("reports any other point-query failure as a load failure, not as an unpublished lane", () => {
+    queries.getSoilProperties.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: { data: { code: "INTERNAL_SERVER_ERROR" } },
+    });
+
+    renderWithProviders(<SoilDetails bbox={VIEWPORT_BBOX} queryPoint={{ lat: 43.6, lon: -116.2 }} />);
+
+    expect(screen.getByRole("alert").textContent).toContain("could not be loaded for this pin");
+    expect(screen.queryByText(/SoilGrids point estimates are not served yet/)).toBeNull();
   });
 
   it("clears the pin through the handler the dock's Soil section supplied", () => {

@@ -2,6 +2,7 @@
 
 import click
 
+from agri_data_service.execution.gap_repair import jobs_plan_gap_repair
 from agri_data_service.execution.job_executor_service import jobs_executor
 from agri_data_service.execution.job_lane_control import jobs_set_lane_enabled
 from agri_data_service.execution.job_run_supersession import jobs_supersede_run
@@ -23,6 +24,7 @@ register_commands(
         ("job-logs-maintain", commands.job_logs_maintain),
         ("jobs-executor", jobs_executor),
         ("jobs-supersede-run", jobs_supersede_run),
+        ("jobs-plan-gap-repair", jobs_plan_gap_repair),
         ("jobs-set-lane-enabled", jobs_set_lane_enabled),
     ),
 )

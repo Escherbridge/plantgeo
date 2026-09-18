@@ -205,6 +205,49 @@ original absence is still standing (the later day is still published), so the ma
 rewritten. A recheck of a day the source has backfilled retracts the marker at all four rungs and
 publishes the rows.
 
+**Partial days are rechecked the same way (climate).** The all-cell absence predicate protects
+against a WRONG ABSENCE and against nothing else: a day where some cells still answer POWER's fill is
+written short -- `build_climate_day` drops each fill cell with no row -- stamped complete at every
+rung, and is `data` everywhere, so nothing re-selected it and the missing cells were a permanent
+silent hole at every lag. `forward._partial_days_in_recheck_window` reads the BASE completion marker
+of every all-rungs-`data` day inside the recheck window (at most 14 one-object GETs per product per
+turn) and names the days whose `row_count` is below the 397 support cells; `_pending_days` queues
+them as rechecks beside the absences, newest first. A re-selected day is re-bound through the same
+lane-day path: `write_partition` retracts the marker as it overwrites `part-0`,
+`_finalize_written_day` re-derives the coarse rungs and re-stamps the marker with the new count. The
+source checkpoints make this cheap while they last: the cells that WERE real are restored for seven
+days, so a recheck inside that window re-asks POWER only for the cells that were fill. Days 8-14 of
+the window are past checkpoint expiry, so a recheck there re-asks all 397 cells once -- that is what
+a `requests_spent` spike on an otherwise idle turn is. The exposure is the same for all eleven
+products (eight climate fields and three soil-wetness depths) -- it is a property of the mixed-day
+rule, not of any lag -- and this is one shared, bounded mitigation for all of them.
+
+**A short day that has not grown is not rewritten.** The re-bind is gated on the adapter
+(`DirectClimateFieldAdapter.existing_row_count`, the base marker's `row_count`): it writes only when
+the refetched non-fill cell count strictly exceeds it, and otherwise records `unchanged_partial` and
+the day is reported `idempotent_noop`. Why it matters: `write_partition` clears the base completion
+marker as it uploads `part-0`, and the marker is re-stamped only after the prune and all three coarse
+derivations, so every reader whose window spans the day faults `day_incomplete` for that whole
+interval. Rewriting an identical 396-row day would be a served outage per product per hour, for
+nothing.
+
+**Rechecks are visited round-robin.** `_pending_days` sorts rechecks (absences and partial days
+together) oldest-first and rotates them by `recheck_rotation`, which the driver derives from the
+clock hour (`_clock_recheck_rotation`; `ClimateForwardConfig.recheck_rotation` pins it for a test).
+An idle turn takes one recheck, so newest-first would take the same newest short day every hour
+while a cell trails and never return to the one behind it; a fixed oldest-first would do the same
+from the other end once the oldest is a standing no-op. With rotation each recheck comes up every
+`len(rechecks)` idle turns -- at most every 14, about every 15 hours under the hourly schedule.
+
+**Rechecks starve while a backlog drains.** `_pending_days` returns `(*pending, *rechecks)` and
+`--max-days` is 1, so no recheck of either kind is selected while the product owes a real day. For a
+product at its edge that is one turn in twenty-four under the hourly schedule; for a product draining
+a backlog it is every turn until the backlog is gone, so a 14-day window is really 14 minus the drain
+length -- shortwave radiation's 101-day tail at hourly turns is ~4.4 days of drain and a ~9.6-day
+effective window. Under the once-a-day executor cadence observed in production on 2026-09-15/16 (see
+"Lags and floors, both measured") EVERY product owes its new day on EVERY turn, and no recheck runs
+at all.
+
 ## One distinct day per turn, across all eight products
 
 The per-turn request budget is sized in DAYS, not in product-days: one archive request carries every
@@ -397,11 +440,50 @@ day nothing revisits.
 
 `ClimateForwardConfig.request_budget` is `397 x --max-days x CLIMATE_DISTINCT_PUBLICATION_CLOCKS`,
 where the clock count (2) is derived from the distinct `publication_lag_days` across the eight
-products -- the meteorology lag of 5 and the solar lag of 75 -- because that is how many distinct
+products -- the meteorology lag of 5 and the solar lag of 6 -- because that is how many distinct
 settled edges a turn can select days at. At the defaults that is 794 requests, roughly 1 MB, and about
 two minutes at concurrency 4. `_publish_product` checks `cache.can_afford(support, day)` BEFORE it
 starts a day and reports `request_budget_exhausted` for that day rather than beginning a fan-out it
 cannot finish; `fill_cell_day_cache` refuses as a backstop if it is reached anyway.
+
+The clock count is DERIVED from the products, never pinned. If all eleven shared one lag they would
+select the same day, share the cache, and spend 397 -- and a budget of 397 would be exactly right.
+The cost of a second clock is not a halved budget; it is a second 397-cell fan-out in the same turn,
+which is the fan-out POWER answered 429 in production (next section).
+
+### POWER answers 429 to the second fan-out of a turn
+
+MEASURED off the production turn reports of 2026-09-15T00:43Z and 2026-09-16T00:43Z
+(`.omc/research/runbook-20260915-shortwave/prod-logs/climate-turn-reports-extracted.json`). Ten
+products at lag 5 selected the same day and wrote it -- 397 requests, `fill_cell_count` 0, about a
+minute. Shortwave radiation at the old lag 75 selected 2026-07-02 (then 2026-07-03): a SECOND
+distinct day, a second 397-cell fan-out in the same turn, and POWER answered `429` at request 360
+(then 329). `requests_spent` was 757 (then 726) of 794. The day was refused `source_unsettled` --
+"deferred until a later turn" -- and the later turn selected the newer ceiling day and met the same
+429, because newest-first is the selection rule and the deferred day's checkpointed cells sit behind
+it. Under the old `_publish_product` the product-level word was `published` both times, so no census
+saw a product that had written nothing since 2026-05-31; `_product_outcome` now says
+`source_unsettled`. Under lag 6 the shape is identical -- the siblings select D, shortwave D-1 -- so
+the lag correction alone would not have moved the product.
+
+What changed: `source.fill_cell_day_cache` treats a 429 as a turn-wide PAUSE first (20, 40, 80, 160
+s; at most `NASA_POWER_QUOTA_PAUSE_LIMIT` = 4 per turn, and never unless
+`NASA_POWER_QUOTA_PAUSE_DEADLINE_RESERVE_SECONDS` (60) of the turn budget would remain after it, so
+the products queued behind the paused one still get their turn), resumes the fan-out, and only
+defers once the pauses are spent. One burst across the four workers is one pause. The pauses fit
+inside the 900 s turn budget beside the two fan-outs (~2-3 minutes), and each is reported on stderr
+as `climate_forward_quota_pause`.
+
+THE SERIES IS A HYPOTHESIS, NOT A MEASURED FIX. What was measured is the 429 and where it landed;
+POWER documents the code but not its window
+(`.omc/research/runbook-20260915-shortwave/power-api-docs-20260915.html`), and
+`ingest/http.py::BoundedResponse` carries no `Retry-After`, so 20/40/80/160 s is a guess that the
+quota is a short rolling window. The first production turn under it is the test: a
+`climate_forward_quota_pause` followed by `written` confirms it, four pauses followed by
+`source_unsettled` refutes it and the day is deferred exactly as before. Under hourly turns only ONE
+turn a day needs two fan-outs (the one where the ceiling advances and the siblings owe a new day);
+the other 23 take one owed shortwave day each and drain regardless. See `climate/AGENTS.md`,
+"Provider quota handling".
 
 ### Fill cells, absence and refusal
 
@@ -412,6 +494,15 @@ refusing the day would hold the whole lane behind one cell for as long as that s
 the shrunk support visible instead is `fill_cell_count` on the receipt, carried into every progress
 record and into the absence marker. This deliberately reverses the earlier rule that refused any mixed
 day; that rule was written for a single regional response, where a mix genuinely was ambiguous.
+
+The price of that rule, stated plainly: a mixed day is written SHORT and stamped complete, and a
+`data` rung is never re-selected on its own. The all-cell predicate below guards against a wrong
+absence; it guards against no part of this. What brings the missing cells back is the partial-day
+recheck in "A governed absence is re-examined, or it is permanent" above, which reads the base
+marker's `row_count` and re-binds any short day inside the recheck window. The capture
+`tests/direct/climate/fixtures/nasa-power-point-response-2026-09-02.json` is the measured shape of
+the exposure -- one cell fill thirteen days back, real today -- and it applies to every product at
+every lag, not to the solar one alone.
 
 A day in which EVERY support cell reports a fill is a REFUSAL (`source_unsettled`) unless a later
 settled day of the product is already published with values -- see "An all-null day is a refusal
@@ -444,20 +535,73 @@ retry ladder permits `retry_attempts x (fetch + retry_max_seconds)` on top of it
 command timeout of 1200 s (`execution/AGENTS.md`, "`command_timeout_seconds` is derived from the CLI
 default"). A `SIGKILL` at that ceiling would land while the lane holds a session advisory lock.
 
-### Lags, floors, and the one number that is not measured
+### Lags and floors, both measured
 
 Meteorology lag is 5, NASA POWER's measured value in `execution/coverage_census.py`. Shortwave
-radiation's is 75 and is CONSERVATIVE RATHER THAN MEASURED: 5 plus the 67-day difference between the
-canonical snapshot's meteorology last day (2026-08-06) and its `ALLSKY_SFC_SW_DWN` last day
-(2026-05-31) in the same build, plus three days of slack. Measure POWER's own live solar edge and
-replace it. Over-waiting delays a real day by one tick; under-waiting sends a fetch after a day
-POWER has not produced and turns it into a governed absence that is simply wrong.
+radiation's is 6, MEASURED on 2026-09-15 against POWER's own live edge at five PNW points
+(`products.SHORTWAVE_LAG_MEASUREMENT_EVIDENCE` = `.omc/research/runbook-20260915-shortwave/`):
+`ALLSKY_SFC_SW_DWN` real through 2026-09-11, `T2M` through 2026-09-12, no interior fill days across
+June, July or August. That is a 4-day solar latency beside a 3-day meteorology one, so the two
+products are ONE day apart.
+
+**The margin is the edge's observed jitter, not a copy of the meteorology constant's.** The in-tree
+5 was measured on 2026-08-11 with NO margin -- POWER's newest day was then 5 days back
+(`coverage_census.py` PUBLICATION_LAG_DAYS). The same edge read 3 days back on 2026-09-15. The edge
+moves a couple of days between measurements; 6 is the measured 4 plus that jitter, which is roughly
+0-1 day over the September solar reading -- about what 5 carries over meteorology today. Do not read
+"5 is 2 past its edge, so 6 is 2 past ours": the 3-day edge is the September observation, not the
+one the 5 was measured against.
+
+This replaced a conservative 75 derived from the 67-day difference between the canonical snapshot's
+meteorology last day (2026-08-06) and its `ALLSKY_SFC_SW_DWN` last day (2026-05-31). That difference
+was a property of the stale snapshot artifact, not of the provider, and the 75 held the lane's
+settled ceiling 107 days behind its siblings in production. The asymmetry it guarded is real but
+narrower than it was stated: over-waiting delays a real day by one tick; under-waiting AT the
+frontier is harmless (an all-fill newest day has no later published day to mirror against and is
+`source_unsettled`); under-waiting BEHIND the frontier is what manufactures a wrong governed
+absence, which the 14-day recheck retracts. What no lag protects against is the per-cell trail: a
+day fetched while some cells still answer fill is written short (see "Fill cells, absence and
+refusal"). Lag 6 accepts exactly the per-cell exposure the ten lag-5 siblings already carry; the
+partial-day recheck is what bounds it, for all eleven. Re-measure before moving the lag, and
+record the reading in the evidence directory.
+
+**Why the lag correction alone moved nothing in production.** The turn reports of 2026-09-15/16
+show the lane WAS draining as designed at lag 75 -- `backlog_days` 32 then 33, ceiling 2026-07-02
+then 2026-07-03, scan floor 2026-06-01 -- and the one selected day came back `source_unsettled`
+both times with "NASA POWER answered 429": the second fan-out of the turn, see "POWER answers 429
+to the second fan-out of a turn". The product outcome read `published` both times; that mask is
+gone. Independently, the executor ran the lane ONCE per UTC day in that deployment (the
+`climate_forward_complete` report appears at 00:43Z on both days and at no other hour; the
+12:39-12:47Z, 13:00-14:00Z and 01:00-02:00Z windows of 2026-09-15 hold only 30-second ticks --
+`.omc/research/runbook-20260915-shortwave/prod-logs/`), against a `40 * * * *` schedule and a
+3600 s cadence, while the same lane settled its 13:40Z bucket on 2026-09-13. That is
+`execution/job_executor_service.py` territory and is reported there, not fixed here.
 
 Floors follow the same asymmetry and are per-product, not global: the day after THIS product's own
 immutable history. Seven products floor at 2026-08-07; shortwave radiation floors at 2026-06-01,
 because the snapshot's source ledger only reached 2026-05-31 for that parameter. A single
 2026-08-07 floor would have left the nine weeks from 2026-06-01 owned by nobody, which is most of
 the 94-day tail this lane was built to close.
+
+The floor needs no correction of its own. With the lag at 6 the settled ceiling is 2026-09-09 on
+2026-09-15, `CLIMATE_BACKLOG_SCAN_DAYS` (400) reaches far past 2026-06-01, so ONE census sees the
+whole 101-day backlog (`tests/direct/climate/test_forward_command.py` drives `_publish_product` at
+that date and reads `backlog_days` 101 off the turn). Draining it is the slow part, and the
+arithmetic depends on the executor cadence:
+
+- **Hourly turns, as scheduled.** `CLIMATE_DEFAULT_MAX_DAYS` is 1, so a turn drains one owed day;
+  the ceiling adds a day every 24 turns. Roughly 101 + 101/23, about 105 turns or 4.4 days, plus one
+  turn a day lost to the 429 pause series if POWER keeps answering the second fan-out that way (the
+  pauses should absorb it; if they do not, the deferred day is re-selected by the next hourly turn
+  with its checkpointed cells restored). Expect `backlog_days` to fall by about 23 a day.
+- **Once-a-day turns, as observed in production on 2026-09-15/16.** One owed day drained per day
+  against a ceiling that advances one day per day: `backlog_days` does not fall, whatever the lag.
+  Newest-first keeps the visible edge current and the June-September tail is never reached. Fix the
+  cadence, or raise `--max-days` (max 5, which also multiplies the request budget and the number
+  of distinct fan-outs POWER sees in one turn), before expecting the tail to close.
+
+`backlog_days` in each turn report is the number that must fall; a lane that reports it flat is
+stuck, not draining.
 
 ### Ownership, and why the registered adapter refuses
 
@@ -504,9 +648,11 @@ socket at import. Without it the extension step is silently inert, and under
 readers while every rung it wrote looked healthy.
 
 The executor lane is `climate-nasa-power-direct-forward`, hourly at :40 -- distinct from the direct
-fire and water writers at :15 and the SoilGrids warmer at :25. IT SHIPS IN SHADOW: it is in no
-active lane list, and activation stays an explicit operator act through the executor's allow-list
-variable.
+fire and water writers at :15 and the SoilGrids warmer at :25. It shipped in shadow; activation is
+an explicit operator act through the executor's allow-list variable, and since at least 2026-09-13
+production's `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` names it (the freshness audit of that date and the
+turn reports of 2026-09-15/16 both show it running). The "shadow until the snapshot readers can see
+forward days" description on its spec in `execution/job_executor_service.py` is stale.
 
 ## ERA5-Land soil fields
 

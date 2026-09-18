@@ -1,0 +1,472 @@
+{
+  "type": "check_receipt",
+  "session": 20,
+  "candidate": 1,
+  "date": "2026-09-18",
+  "recorded_at": "2026-09-18T08:09:13.613472+00:00",
+  "author": "nine author lanes on fable, disjoint partitions",
+  "gate_executor": "coordinator/integrator",
+  "canonical_packet_review": "independent reviewer per partition, separate contexts; all nine APPROVE (A1, A2, A6, A7 after multiple passes; A3 after two)",
+  "base_commit": "57879289",
+  "engineering_status": "locally_verified_all_partitions_approved",
+  "deployment_status": "pending_at_receipt",
+  "post_fix_live_status": "not_executed",
+  "overall_runbook_status": "RED_full_platform_qa_open",
+  "whole_case_promotions": [],
+  "formal_case_matrix": {
+    "accepted": 0,
+    "total": 220,
+    "changed_by_this_session": false
+  },
+  "checks": [
+    {
+      "name": "python_format",
+      "command": "ruff format --check src tests scripts",
+      "status": "passed",
+      "detail": "708 files already formatted after one reformat (test_weather_observations_adapter.py)"
+    },
+    {
+      "name": "python_lint",
+      "command": "ruff check src tests scripts",
+      "status": "passed",
+      "detail": "8 errors at first sweep: 3 auto-fixed (I001 and unused-noqa class), 5 hand-fixed (PLR0911 noqa with reason on _publish_locked_day; TC003/TC002 annotation-only imports under TYPE_CHECKING; two PT018 compound asserts split); All checks passed"
+    },
+    {
+      "name": "python_mypy",
+      "command": "mypy src scripts",
+      "status": "passed",
+      "duration_seconds": 5.25
+    },
+    {
+      "name": "python_pytest",
+      "command": "pytest -q",
+      "status": "passed",
+      "duration_seconds": 167.68,
+      "detail": "full service suite in the sweep; the four lint-touched test files re-run inline afterward: 49 passed"
+    },
+    {
+      "name": "frontend_data_boundary",
+      "command": "npm run check:data-boundary",
+      "status": "passed"
+    },
+    {
+      "name": "frontend_type_check",
+      "command": "npm run type-check",
+      "status": "passed"
+    },
+    {
+      "name": "frontend_lint",
+      "command": "npx eslint . --ignore-pattern .omc/** --ignore-pattern .agentgraph/**",
+      "status": "passed",
+      "errors": 0,
+      "detail": "warnings unchanged from baseline class"
+    },
+    {
+      "name": "frontend_suite",
+      "command": "npm test",
+      "status": "passed",
+      "files_passed": 201,
+      "tests_passed": 2676,
+      "duration_seconds": 205.96,
+      "detail": "prior recorded total 2,593 tests / 193 files; increase is this batch"
+    }
+  ],
+  "python_receipt": {
+    "regenerated_in_this_commit": false,
+    "note": "QUALITY_RECEIPT.json is regenerated from the committed tree inside the retained QA image (.omc/research/runbook-20260915-session20/receipt/) and committed separately"
+  },
+  "changed_sources": {
+    "conductor/tracks/environmental_parquet_serving_20260912/freshness-resolution-plan-20260913.md": {
+      "bytes": 9209,
+      "sha256": "475a3ccfcd3394e11041bb96b509ce35049b0929ccb26ae9fb7d5508ce830a0a"
+    },
+    "docs/services.md": {
+      "bytes": 21585,
+      "sha256": "80d33ea741a000663cce39340c6e981e6d035302964139e7e31974a2f5405901"
+    },
+    "services/agri-data-service/src/agri_data_service/execution/AGENTS.md": {
+      "bytes": 11814,
+      "sha256": "54bbba907deba1744e7b5f7bf9401c3697d86506e4d97636acc8317e393f1c6f"
+    },
+    "services/agri-data-service/src/agri_data_service/execution/job_executor_service.py": {
+      "bytes": 116408,
+      "sha256": "957758effc335ca3e9971c2bf44e59c745c9fd1f1f6575a56f4d7103663c89cf"
+    },
+    "services/agri-data-service/src/agri_data_service/execution/job_run_supersession.py": {
+      "bytes": 22618,
+      "sha256": "693c479b61b7077ad2279665a85031375d4f885d308761e639b33a020f602379"
+    },
+    "services/agri-data-service/src/agri_data_service/interface/cli/ops.py": {
+      "bytes": 1020,
+      "sha256": "19654424284da2edfa14d0cb968900b44f267491a48aaf1547366d16686a99bd"
+    },
+    "services/agri-data-service/src/agri_data_service/parquet_ops/AGENTS.md": {
+      "bytes": 54009,
+      "sha256": "1a500174922fd75f3a0c8a0de792fc42a657df6dfb5e6575c48553e695a100de"
+    },
+    "services/agri-data-service/src/agri_data_service/parquet_ops/availability_coverage.py": {
+      "bytes": 38694,
+      "sha256": "f6bd7ee910c752ca7905639ce7c636e2b91aad8c41d2052d7d85e807dec550bf"
+    },
+    "services/agri-data-service/src/agri_data_service/parquet_ops/coverage.py": {
+      "bytes": 25056,
+      "sha256": "95c1271bcac4e5ed3f79f2084043aadd39be9379e6807fcc85d525a488ae35c4"
+    },
+    "services/agri-data-service/src/agri_data_service/parquet_ops/wire.py": {
+      "bytes": 14853,
+      "sha256": "d026cb502ca583df00ba0bc4ced2c370971055401586386a933a3e218c275b56"
+    },
+    "services/agri-data-service/src/agri_data_service/pipeline/direct/AGENTS.md": {
+      "bytes": 124226,
+      "sha256": "30768d52b905ceabe984b0850ed66f572adfbf35e34b01fed7f41d7eb3b716ab"
+    },
+    "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/AGENTS.md": {
+      "bytes": 2866,
+      "sha256": "9d4059939b65a30f0a2bdfbe34a637485902811471fc0f0970e4f0e179267275"
+    },
+    "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/adapter.py": {
+      "bytes": 10818,
+      "sha256": "c8cd6e31fc13c26629a543ac3fd17599a66e64844c45e8e65399972df50a4b16"
+    },
+    "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/forward.py": {
+      "bytes": 44477,
+      "sha256": "731cca0564f159cf44651562c264c8fea828259cb3a078a33bae9c1f7bbb5c72"
+    },
+    "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/products.py": {
+      "bytes": 17804,
+      "sha256": "68d98510bd0c116dee44c99f42504632e80ad4d65771a7f5133796d32ea59c5d"
+    },
+    "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/source.py": {
+      "bytes": 30810,
+      "sha256": "63af1bf3fffe59dd3620ca53bb5c2e3259e7ad7ae1114f4338c26dadf71a6a05"
+    },
+    "services/agri-data-service/src/agri_data_service/pipeline/direct/fire_perimeters/__init__.py": {
+      "bytes": 3151,
+      "sha256": "460b9440363987829739841113bc2769b53c61984907ec10ab0b2c43e03eebda"
+    },
+    "services/agri-data-service/src/agri_data_service/pipeline/direct/fire_perimeters/forward.py": {
+      "bytes": 36069,
+      "sha256": "ea3896a4d50afc33f52f07b4f33f35d5ba2fd556f686f6bfdce08871425724f9"
+    },
+    "services/agri-data-service/src/agri_data_service/pipeline/direct/fire_perimeters/products.py": {
+      "bytes": 2924,
+      "sha256": "444619635ffa58ea932aa782e7e7c09ed8322e33afe5f3b6c93d395f8cee6c34"
+    },
+    "services/agri-data-service/src/agri_data_service/pipeline/direct/fire_perimeters/rows.py": {
+      "bytes": 20786,
+      "sha256": "ee7a0625939ffe221264bd4fcc4e25769569d1f208b8e95cb927758b821bf1c7"
+    },
+    "services/agri-data-service/src/agri_data_service/pipeline/direct/fire_perimeters/support.py": {
+      "bytes": 13937,
+      "sha256": "376d530b49c9caa78c7be2a473a0b5debd278c4c3b61b402996a20be0714a371"
+    },
+    "services/agri-data-service/src/agri_data_service/pipeline/direct/sensors/adapter.py": {
+      "bytes": 20886,
+      "sha256": "5aee3022a96a5c1d5b61e121092d9b00bd45264dead0d59a47d5ff9d8b643528"
+    },
+    "services/agri-data-service/src/agri_data_service/pipeline/direct/sensors/forward.py": {
+      "bytes": 33398,
+      "sha256": "6bf32afc4843adfc216ca0fba16f50417328966624d70202c3be33c57933a471"
+    },
+    "services/agri-data-service/src/agri_data_service/pipeline/direct/water_gauges.py": {
+      "bytes": 20090,
+      "sha256": "e4689fa5551ce87c59734450f40ce4c01b3ea65b9c21a1246d9b5e29afb72628"
+    },
+    "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/adapter.py": {
+      "bytes": 17509,
+      "sha256": "41ed94dee9cc87a9e35aea2a76b2da9b98141b9136a149c5d4b268d84babb5c1"
+    },
+    "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/forward.py": {
+      "bytes": 35662,
+      "sha256": "b98b49a10325149dfc5fb02478e8c53abca3385b039303bd1fcc0166813c0d33"
+    },
+    "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py": {
+      "bytes": 59673,
+      "sha256": "03d966dd6831ebaab4eb840cb5d4adf61f266ef412752066733394de48385cbc"
+    },
+    "services/agri-data-service/src/agri_data_service/pipeline/parquet/water_gauges_forward.py": {
+      "bytes": 29736,
+      "sha256": "cdcef7e382b57105bb19382ade4649aaab41bbaa9649969ad399f8e7706dff6c"
+    },
+    "services/agri-data-service/tests/direct/climate/test_forward_command.py": {
+      "bytes": 45520,
+      "sha256": "32b6f80ff37f09ad47692fbaf6aaef548c5493dc5588eab42c36308291cb26a1"
+    },
+    "services/agri-data-service/tests/direct/climate/test_lane_registrations.py": {
+      "bytes": 6593,
+      "sha256": "648e12fb0e0eae20da217866669fe15c4a0507dffb133ebe81531803a70fd351"
+    },
+    "services/agri-data-service/tests/direct/climate/test_source.py": {
+      "bytes": 27366,
+      "sha256": "0381d2b3447414915e26fddc548651733e7ead19a53195f8aa49be4ffeb29c4d"
+    },
+    "services/agri-data-service/tests/direct/test_direct_writer_contract.py": {
+      "bytes": 32784,
+      "sha256": "93c21318c8efd878b9a734cedbda12e5a6a906e4c5a2445b7340ec6936bf804a"
+    },
+    "services/agri-data-service/tests/direct/test_fire_perimeters_direct_adapter.py": {
+      "bytes": 11175,
+      "sha256": "7544aef76d9a9db9065d2a7b13ca257aa3248ece6425a11f12debffc0ab9906a"
+    },
+    "services/agri-data-service/tests/direct/test_fire_perimeters_direct_forward.py": {
+      "bytes": 12134,
+      "sha256": "07f5903f786793d1cb783e21b35c6e96a7bf43d41af02ce89290275fb4569c27"
+    },
+    "services/agri-data-service/tests/direct/test_fire_perimeters_direct_rows.py": {
+      "bytes": 12519,
+      "sha256": "4088611bb966737bb3380f372e03c600a059976e2033b17ef6e8242ee0c316ad"
+    },
+    "services/agri-data-service/tests/direct/test_fire_perimeters_direct_support.py": {
+      "bytes": 12740,
+      "sha256": "f2d33139bdf03932bc6eeed05e8d1bd57c7fd4d767314b5eb8ea428d02feda20"
+    },
+    "services/agri-data-service/tests/direct/test_fire_perimeters_direct_watermark.py": {
+      "bytes": 13854,
+      "sha256": "198b4c7a6ad9b5966517ff1ce1df7c1137f5aa9456f4278f4026d8d55a2837eb"
+    },
+    "services/agri-data-service/tests/direct/test_sensors_direct_adapter.py": {
+      "bytes": 20714,
+      "sha256": "d3f21595db0250d7c49a927d6558b098313214f46dcc6a54101d05359850d52f"
+    },
+    "services/agri-data-service/tests/direct/test_sensors_direct_forward.py": {
+      "bytes": 14006,
+      "sha256": "ecb961f4be6fd921c322f9695f8867a4f1ca63b3c6975db2bbd337af0211bc1d"
+    },
+    "services/agri-data-service/tests/direct/test_weather_observations_adapter.py": {
+      "bytes": 18409,
+      "sha256": "9dc635f3c0857e479b562be42a4b002c57d13a8dda03562b4a54028f7c086070"
+    },
+    "services/agri-data-service/tests/direct/test_weather_observations_forward.py": {
+      "bytes": 12747,
+      "sha256": "2e29ded4cb254dc9c9cea92ebaf15f03947a59f2cb4dc694500108d18ffaae52"
+    },
+    "src/__tests__/components/SoilDetails.test.tsx": {
+      "bytes": 38520,
+      "sha256": "eac4f68af642620c439b5993b3bc0769e271d74197bc70ef6b16d8af823729b7"
+    },
+    "src/__tests__/components/intervention-click-standdown.test.tsx": {
+      "bytes": 8989,
+      "sha256": "73eb3f505409c61f19e0c39d507d33405380dc56e20e23edbc12d613cb85c1bd"
+    },
+    "src/__tests__/components/map-view-render-count.test.tsx": {
+      "bytes": 12316,
+      "sha256": "a20db093b9769c8d01a791a04a6054d698cf80b33bae42774d64360527dac97a"
+    },
+    "src/__tests__/components/map-view-workspace.test.tsx": {
+      "bytes": 9877,
+      "sha256": "fe2e28e623974bf7c50a847502635818a4074bdc57abd23ba37bcc5603a9a045"
+    },
+    "src/__tests__/lib/map/layer-publication-standing.test.ts": {
+      "bytes": 7261,
+      "sha256": "678c170329bd5ecf124e56581ddaf128a7b29eb34207c8a664a4b47a899c1fc5"
+    },
+    "src/__tests__/lib/map/layer-registry.test.ts": {
+      "bytes": 28420,
+      "sha256": "bdedc5d8b4b9327a63545d4a5dba29b72163d72bd210f3f27223daa32efa53a5"
+    },
+    "src/app/about/page.tsx": {
+      "bytes": 28229,
+      "sha256": "3a7b84823b6495813eb976a4f94ed60d2e2e1f9420100eb736f8e513b1146352"
+    },
+    "src/components/map/AGENTS.md": {
+      "bytes": 136517,
+      "sha256": "71ee483022960aaaaafd0eec1b9c109b6051c9a9cd48617f882ec9dd1376526c"
+    },
+    "src/components/map/LayerManager.tsx": {
+      "bytes": 84758,
+      "sha256": "deb7a7cc661558ae25a83f76c57b1e034a651369bdbbf56d5f418caf1c92af85"
+    },
+    "src/components/map/MapView.tsx": {
+      "bytes": 25540,
+      "sha256": "a10966bc7978a34d2da181483a969c1baedae8b51ccbc0dd365d12e66e039809"
+    },
+    "src/components/map/land-context/LandContextController.tsx": {
+      "bytes": 1683,
+      "sha256": "fa8863d75c7ea74212b786fbe1fe4eba489c26e356ac90f2c732254e72bae6e4"
+    },
+    "src/components/map/land-context/LandContextLayer.tsx": {
+      "bytes": 12108,
+      "sha256": "7b49d29ac9a0f6059ecf889d5cc308defa2fdf407aa56df1927664af04211cc9"
+    },
+    "src/components/map/land-context/index.ts": {
+      "bytes": 2552,
+      "sha256": "97a0bef1de494a35b01cf512cd64eeaf3739ca193ee3a8a1489eaf0b9d396ed7"
+    },
+    "src/components/map/land-context/useLandContextQuery.ts": {
+      "bytes": 7803,
+      "sha256": "338db19076c53ebab3072b3c7870516b355510eb3c543a67654087faa9b394e9"
+    },
+    "src/components/map/layers/BotanicalRichnessLayer.tsx": {
+      "bytes": 7172,
+      "sha256": "924121c9c4c01f7e85a8c2ecd3806cce6cb45d3cc5af26fb79bb01a2947e7ffd"
+    },
+    "src/components/panels/SoilDetails.tsx": {
+      "bytes": 37362,
+      "sha256": "404f0edbcbb64c4d6112dcfcaa3fe96a0aee43eb2a82227847b4b8e8b0941c32"
+    },
+    "src/components/panels/land-context/LandContextPanel.tsx": {
+      "bytes": 8778,
+      "sha256": "aa29c5821e15772222bd7527dc2e93c84cdb2c71d2e47cd1d8e3ceb4cfdd0687"
+    },
+    "src/hooks/useViewportProxiedLayers.ts": {
+      "bytes": 18392,
+      "sha256": "7a044e012c13aa5767213c5790e584c759a191a07abfa9ac93b9dcee16e4fac7"
+    },
+    "src/lib/botanical-occurrences.ts": {
+      "bytes": 10499,
+      "sha256": "36bac4289be2ec66ba8b61a536d7146e6a8858aae027edca4bc183f4be5f4a15"
+    },
+    "src/lib/map/hover-fields.ts": {
+      "bytes": 32290,
+      "sha256": "79aa71b39d52e946415212849fec2acc18212fcc79f073581dac6ca7f1d7eb81"
+    },
+    "src/lib/map/layer-legends.ts": {
+      "bytes": 27801,
+      "sha256": "bd55eb2a99ade554a110afaf62303238e3595f3feb5a80de52bbd7096ff01d28"
+    },
+    "src/lib/map/layer-registry.ts": {
+      "bytes": 33728,
+      "sha256": "7597be7e6735e79d183b9d8e0f907f7ee1d6cd808e9ecd2a1b3a1bdb7c25c3b5"
+    },
+    "src/lib/server/services/land-context/index.ts": {
+      "bytes": 919,
+      "sha256": "90029c87d65d6758b79efe9edc30d06852f62934502b9c1d11d9bc6eb51b100d"
+    },
+    "src/lib/server/services/land-context/parquet-reader.ts": {
+      "bytes": 5819,
+      "sha256": "61c8959f5384a92dbe3d7ebc258e407f9037d35f036b939f60561ef9fcee5480"
+    },
+    "src/lib/server/services/landfire.ts": {
+      "deleted": true
+    },
+    "src/lib/server/trpc/routers/land-context.ts": {
+      "bytes": 7731,
+      "sha256": "bb62beb2ca6f83446cbd036159d2ddda430e9497482ed2c3bd9e7f237c48e0df"
+    },
+    "src/stores/land-context-store.ts": {
+      "bytes": 9681,
+      "sha256": "33e1f5c82ed1a983b6defcfbfd3e42d829bce4b795698de6de7bf9487974d1bc"
+    },
+    "conductor/tracks/platform_experience_qa_20260911/evidence/runbook-session20-20260915.md": {
+      "bytes": 28061,
+      "sha256": "1468fe18f30b65d6a4baff7a77be9051e6d6bbb93c9cafb412dfd82c76fd1195"
+    },
+    "services/agri-data-service/src/agri_data_service/execution/gap_repair.py": {
+      "bytes": 15274,
+      "sha256": "b5288bfe3b2681e8329c8b8c27ad1aec117b03613048c87f9aa2857fb47f519f"
+    },
+    "services/agri-data-service/src/agri_data_service/execution/gap_repair_contract.py": {
+      "bytes": 26034,
+      "sha256": "899fba53d2d64aaf61e8525639edf570d2b3e7fe5548d092b220c0c9abe0e434"
+    },
+    "services/agri-data-service/src/agri_data_service/execution/lane_ids.py": {
+      "bytes": 1503,
+      "sha256": "8f08a2a437f8e8a0e414aa795426bddd48bc9975bf0b760e26e82b8695f0fd75"
+    },
+    "services/agri-data-service/src/agri_data_service/parquet_ops/freshness.py": {
+      "bytes": 7079,
+      "sha256": "8cc395a2df0544f0d52461f67a5bc8b9fe290bd747d74455888b676fa464e664"
+    },
+    "services/agri-data-service/src/agri_data_service/pipeline/direct/fire_perimeters/AGENTS.md": {
+      "bytes": 7046,
+      "sha256": "d2d3ad041fd619576678c2ff3d8ac28a24fa4e2a9d2f240165c9032aab9663f5"
+    },
+    "services/agri-data-service/tests/direct/fixtures/wfigs-current-pnw-subset-2026-09-15.geojson": {
+      "bytes": 84883,
+      "sha256": "d492dd4ba6fc5fcef2112767dad8e1480ff37f7304f8238ac28d4ae545bfd2b9"
+    },
+    "services/agri-data-service/tests/direct/test_water_gauges_direct_adapter.py": {
+      "bytes": 14622,
+      "sha256": "e772f2c4e6daf57ca629fa10efe7a48a80d8fce270b7a9b05aea18b9a02d44a4"
+    },
+    "services/agri-data-service/tests/direct/test_water_gauges_direct_forward.py": {
+      "bytes": 9237,
+      "sha256": "2cc6119662fdee16d2678d8924ec2393fef05f1af3ea9aa7c6eb225d1d2e7813"
+    },
+    "services/agri-data-service/tests/execution/__init__.py": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "services/agri-data-service/tests/execution/test_command_stderr_capture.py": {
+      "bytes": 14104,
+      "sha256": "11195c4f2f582fd7b49068949aedbfc96fb6353027694d75e999d2b9c018b3b5"
+    },
+    "services/agri-data-service/tests/execution/test_gap_repair.py": {
+      "bytes": 26195,
+      "sha256": "6f95e38bdddcd7185a279afccc4a93b768730d675f3e5e90f6384cace402dbf0"
+    },
+    "services/agri-data-service/tests/execution/test_lane_cadence.py": {
+      "bytes": 5180,
+      "sha256": "e90c171c5935c6a767398930187912ddeaaaba92cab19d98040dd44d16f3b20f"
+    },
+    "services/agri-data-service/tests/execution/test_operator_action_surface.py": {
+      "bytes": 4173,
+      "sha256": "23a1dd4f17933d35760d9c812077121ff4e3212f3a21976729d9b974cf7392b7"
+    },
+    "services/agri-data-service/tests/execution/test_self_healing.py": {
+      "bytes": 18523,
+      "sha256": "4aba1596d6f8b43fb71b626aade8a12f8ef848aa750d3f4bbdccdf35dd1624a8"
+    },
+    "services/agri-data-service/tests/parquet_ops/test_freshness.py": {
+      "bytes": 9938,
+      "sha256": "4d339b3b6684710ad672ad8273f32c341835c6c62e2f61cce11550cdd512e04b"
+    },
+    "src/__tests__/app/about-page.test.tsx": {
+      "bytes": 5098,
+      "sha256": "d5fc9b62d06b3e072bad3911f84d3ebcf31fc15183a7e77c2305c00cc5c9e422"
+    },
+    "src/__tests__/components/LandContextLayer.test.tsx": {
+      "bytes": 16395,
+      "sha256": "4578a49632ef7197b1164973c75e88296917ad74d8a7d6f3995edd25714152d4"
+    },
+    "src/__tests__/components/LandContextStatusNotice.test.tsx": {
+      "bytes": 9788,
+      "sha256": "b7adb923ed8678fb1ebef9f860b256e1a63250952989440f2c8edb363e7ac777"
+    },
+    "src/__tests__/components/click-ownership.test.tsx": {
+      "bytes": 6332,
+      "sha256": "22edb80907348d4ecf408a2b7aba2784aa5f09d4cc002e99de730da4a79fcd73"
+    },
+    "src/__tests__/components/useLandContextQuery.test.tsx": {
+      "bytes": 7843,
+      "sha256": "3891cf582504e4007ff8f7e54d131439a5c30a876459d1ff43cb41a0d60e8231"
+    },
+    "src/__tests__/trpc/land-context-geometry.test.ts": {
+      "bytes": 4231,
+      "sha256": "bd0961d57016a18ecc2aae8184c73a59276f047d79fb4c4bbccf9bda1552ced1"
+    },
+    "src/components/map/land-context/AGENTS.md": {
+      "bytes": 5752,
+      "sha256": "213a30c10c960facb9d114207c39146a8c0020893c68e11bcc6baf304a9789e2"
+    },
+    "src/components/map/land-context/LandContextStatusNotice.tsx": {
+      "bytes": 9625,
+      "sha256": "df9b2c29c844692cd7cf009ac8e81d5f3d157c724e7145814abe8e9af4e6112d"
+    },
+    "src/components/map/land-context/click-ownership.ts": {
+      "bytes": 5080,
+      "sha256": "825d3e9691fdcdd27de3944b394ecc6137e740c603e5059d1e586b50dce7a4d0"
+    },
+    "src/lib/server/services/land-context/__tests__/geometry-passthrough.test.ts": {
+      "bytes": 4201,
+      "sha256": "7d211c87440f706da238764c020275e15885e5a49978a4282e3dceab1a63577d"
+    },
+    "src/lib/server/services/land-context/geometry/__tests__/attach-decoded-geometry.test.ts": {
+      "bytes": 6339,
+      "sha256": "c09f1c2de22d616b5225c7de479da318eec8d5e1feaa6e2e6262263228701206"
+    },
+    "src/lib/server/services/land-context/geometry/attach-decoded-geometry.ts": {
+      "bytes": 3348,
+      "sha256": "0cd133b4ae237692bf476e1bfe2811a82b4e0a5c31113dd625aa7b0a06d27fe4"
+    },
+    "conductor/RUNBOOK.md": {
+      "bytes": 63878,
+      "sha256": "059030c0e7561d96c28bde2e5d8a8528971eae1144d838bb1930011e6d5f46c0"
+    }
+  },
+  "deploy_gate_decisions_for_owner": [
+    "sensors breaker release: explicit CLI supersession after deploy (ProcessStartRelease ships OFF)",
+    "fire-perimeters activation: add fire-perimeters-direct-forward to PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES and redeploy; repair-audit durability trade recorded",
+    "inform: desktop left click over tap-only layers and vector ground now opens the agent popup"
+  ]
+}

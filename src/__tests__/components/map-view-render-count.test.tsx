@@ -206,16 +206,40 @@ afterEach(() => {
 });
 
 describe("MapView store subscriptions", () => {
-  it("treats suppressed scalar hits as empty ground while other rendered features still own the click", () => {
+  it("treats suppressed scalar hits as empty ground while a dedicated click owner still owns the click", () => {
+    // The rule since 2026-09-18 (`land-context/click-ownership.ts`): a rendered feature owns the
+    // click only if its layer answers a click on THIS pointer. `water-gauges-circle` has its own
+    // popup and owns it on every pointer; `sensors` is tap-only and owns it on a coarse pointer
+    // only. jsdom has no `matchMedia`, so the pointer reads as a mouse unless stubbed.
     mountSettled();
     setScalarFieldInspectionSuppressed(fakeMap.instance!, ["vegetation-ndvi-cells-fill", "vegetation-ndvi-cells-outline", "vegetation-ndvi-cells-values"], true);
-    fakeMap.features = [{ layer: { id: "vegetation-ndvi-cells-fill" } }, { layer: { id: "sensors" } }];
     const click = () => fakeMap.fire!("click", { point: { x: 10, y: 10 }, lngLat: { lng: -120, lat: 46 } });
+
+    fakeMap.features = [{ layer: { id: "vegetation-ndvi-cells-fill" } }, { layer: { id: "water-gauges-circle" } }];
     act(click);
     expect(commits).toBe(0);
+
     fakeMap.features = ["vegetation-ndvi-cells-fill", "vegetation-ndvi-cells-outline", "vegetation-ndvi-cells-values"].map(id => ({ layer: { id } }));
     act(click);
     expect(commits).toBeGreaterThan(0);
+  });
+
+  it("a tap-only layer owns the click on a coarse pointer and yields it on a fine one", () => {
+    const click = () => fakeMap.fire!("click", { point: { x: 10, y: 10 }, lngLat: { lng: -120, lat: 46 } });
+
+    mountSettled();
+    fakeMap.features = [{ layer: { id: "sensors" } }];
+    act(click);
+    expect(commits).toBeGreaterThan(0);
+    cleanup();
+
+    window.matchMedia = vi.fn().mockReturnValue({ matches: true }) as unknown as typeof window.matchMedia;
+    commits = 0;
+    mountSettled();
+    act(click);
+    expect(commits).toBe(0);
+    // @ts-expect-error -- jsdom implements no matchMedia by default; undo the per-test stub.
+    delete window.matchMedia;
   });
 
   it("does not re-render when a map-store field it never reads changes", () => {

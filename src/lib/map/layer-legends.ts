@@ -468,7 +468,7 @@ const STATIC_LAYER_LEGENDS: Partial<Record<LayerToggleId, LayerLegendSpec>> = {
     ],
   },
   "botanical-richness": {
-    title: "Documented taxon richness",
+    title: "Herbarium specimen richness",
     blocks: [
       {
         kind: "classes",
@@ -479,9 +479,11 @@ const STATIC_LAYER_LEGENDS: Partial<Record<LayerToggleId, LayerLegendSpec>> = {
       {
         kind: "note",
         text:
-          "Counts taxa that have been COLLECTED in a cell, not taxa that grow there: an " +
-          "unvisited cell and a genuinely species-poor one are different states and are " +
-          "coloured differently.",
+          "Distinct taxa with georeferenced UBC vascular herbarium specimens per cell. This " +
+          "tracks collecting effort, not biodiversity: 92 % of the release has no coordinates, " +
+          "and the georeferenced cluster sits around Vancouver, outside the platform's " +
+          "-125,42,-111,49 envelope, so an unvisited cell and a genuinely species-poor one are " +
+          "different states and are coloured differently.",
       },
     ],
   },
@@ -495,7 +497,7 @@ const STATIC_LAYER_LEGENDS: Partial<Record<LayerToggleId, LayerLegendSpec>> = {
       },
       {
         kind: "note",
-        text: `Context for the richness layer, not an abundance surface. Measures offered: ${Object.values(
+        text: `Context for the specimen richness layer, not an abundance surface. Measures offered: ${Object.values(
           BOTANICAL_EFFORT_MEASURE_LABELS
         ).join("; ")}.`,
       },

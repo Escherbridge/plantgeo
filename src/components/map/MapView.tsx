@@ -5,6 +5,8 @@ import dynamic from "next/dynamic";
 import maplibregl from "maplibre-gl";
 import { Protocol } from "pmtiles";
 import { DEFAULT_VIEWPORT, useMapStore } from "@/stores/map-store";
+import { LAND_CONTEXT_GROUP_IDS, useLandContextStore } from "@/stores/land-context-store";
+import { isClickOwnedByAnotherSurface } from "@/components/map/land-context/click-ownership";
 import { DataLoadingChip } from "@/components/map/DataLoadingChip";
 import { SyncIndicator } from "@/components/ui/SyncIndicator";
 import { getStyle, skyThemes } from "@/lib/map/styles";
@@ -12,8 +14,6 @@ import { MapProvider } from "@/lib/map/map-context";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MapFocus } from "./MapFocus";
 import { readMapFocus } from "@/lib/map/focus-params";
-import { isScalarFieldInspectionAllowed } from "@/lib/map/scalar-field-inspection";
-import { isInterventionStyleLayerId } from "@/lib/map/layer-registry";
 import { ReverseGeocode } from "@/components/search/ReverseGeocode";
 import MapKeyboardShortcuts from "./MapKeyboardShortcuts";
 import { ManagerRail } from "./layer-panel/ManagerRail";
@@ -136,6 +136,14 @@ function AgentAnalysisPrompt({
       onClose={onClose}
     />
   );
+}
+
+
+// True while at least one land-context group is toggled on; the canvas click is then a
+// land-context selection, never an agent query (see land-context/AGENTS.md).
+function landContextOwnsClick(): boolean {
+  const enabled = useLandContextStore.getState().enabledGroups;
+  return LAND_CONTEXT_GROUP_IDS.some((group) => Boolean(enabled[group]));
 }
 
 export default function MapView() {
@@ -276,22 +284,15 @@ export default function MapView() {
     m.on("resize", publishViewport);
 
     m.on("click", (e) => {
-      // A panel capturing query points owns the click: without this stand-down, one click
-      // both drops the soil query pin and opens the agent popup over it. Read from the
-      // store rather than a prop so this handler stays registered once, for the life of
-      // the map -- see src/components/map/AGENTS.md "Picking a point to query".
-      if (useMapStore.getState().isCapturingQueryPoint) return;
+      // One click, one meaning. `isClickOwnedByAnotherSurface` is the single predicate every
+      // bare-click registrant checks: a panel capturing a query point, an intervention feature
+      // (which opens its own modal), or a scalar cell under inspection each own the click and
+      // the agent popup must not open over them. Land context additionally owns the click while
+      // any of its groups is on (it makes the point selection). Read from stores, not props, so
+      // this handler stays registered once for the life of the map -- see map/AGENTS.md.
+      if (isClickOwnedByAnotherSurface(m, e.point)) return;
+      if (landContextOwnsClick()) return;
       // Do not send coordinates to the analysis service until the user confirms.
-      const features = m.queryRenderedFeatures(e.point);
-      // An intervention feature owns its click unconditionally: it opens the
-      // detail modal (use-intervention-detail-clicks.ts), and the AI popup must
-      // not open behind it. The `isScalarFieldInspectionAllowed` arm alone would
-      // hand the click back the moment those layers were ever suppressed, which
-      // is a state the drafts overlay reaches while a submission refetches.
-      if (features?.some(feature =>
-        isInterventionStyleLayerId(feature.layer.id) ||
-        isScalarFieldInspectionAllowed(m, feature.layer.id)
-      )) return;
       const { lat, lng } = e.lngLat;
       setAgentCoords([lng, lat]);
     });
