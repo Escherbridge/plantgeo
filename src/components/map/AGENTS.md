@@ -10,6 +10,26 @@ shared result cannot establish complete GBIF coverage, and says so explicitly. L
 placeholder, and errored responses cannot support a current-view empty claim. The GBIF
 toggle controls these notices without changing the shared query or its source partition.
 
+As of 2026-09-18 the "settled" half of that gate is expressed through `gbifReadPhase`, the same
+read-state vocabulary `describeBotanicalOccurrencesState` speaks, so the two botanical lanes on
+this component cannot disagree about when a read has landed. The MESSAGE stays authored in
+`LayerManager` because it is a statement about the GBIF SLICE of a shared answer, which the
+lane-wide vocabulary has no sentence for -- and `LayerManager.test.tsx` pins it verbatim.
+
+## The botanical detail layer reads the proxy route
+
+`BotanicalOccurrencesLayer` is fed by `useBotanicalOccurrences` (the `/api/botanical-occurrences`
+proxy), not by the shared tRPC occurrence query, and takes its `readPhase` from the same hook.
+That is what puts the UBC points behind the zoom-AND-bbox rung selection of the 2026-09-18 owner
+decision: a viewport too wide for its zoom's own rung is answered from the next rung out rather
+than refused, and `botanical-viewport-read` is the notice that says which rung answered. The
+aggregate layers, GBIF and the botanical store stay on the tRPC query -- see
+`src/hooks/AGENTS.md` "useBotanicalOccurrences: the proxy detail lane" for why both lanes run and
+what it costs.
+
+Clicks are resolved against BOTH lanes' features, because both draw: searching only one would
+make a click on the other lane's dot clear the details panel instead of opening it.
+
 Which spatial form a layer may be drawn in is frozen in `src/lib/map/AGENTS.md` §The layer render contract.
 
 Location selection is a privacy boundary. `AgentInteraction` requires an explicit user choice before analysis begins and defaults to an approximate (two-decimal) location; exact coordinates are opt-in. Regional analysis remains informational only: it cannot take external actions, and unavailable data must remain visibly unavailable rather than producing substitute recommendations.

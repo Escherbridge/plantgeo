@@ -23,6 +23,8 @@
  * module's own text for the latter.
  */
 
+import { selectFinestAdmittingRung } from "@/lib/map/rung-selection";
+
 /** One admitted collecting-event date's precision. Interval and partial dates stay visible as such. */
 export type BotanicalEventPrecision = "day" | "month" | "year" | "interval" | "unknown";
 
@@ -271,6 +273,61 @@ export function botanicalSupportBandForZoom(zoom: number): BotanicalSupportBand 
 /** The widest bbox, in square degrees, the plane will answer at this zoom. */
 export function botanicalBboxCeilingForZoom(zoom: number): number {
   return BOTANICAL_BBOX_CEILING_SQUARE_DEGREES[botanicalSupportBandForZoom(zoom)];
+}
+
+/** The ladder, coarsest first. Index order is what `selectFinestAdmittingRung` walks. */
+export const BOTANICAL_SUPPORT_BANDS_COARSEST_FIRST = [
+  "grid-0.25",
+  "grid-0.05",
+  "detail",
+] as const satisfies readonly BotanicalSupportBand[];
+
+/** The widest bbox any published rung answers; above it the request is refused, not coarsened. */
+export const BOTANICAL_MAX_BBOX_SQUARE_DEGREES =
+  BOTANICAL_BBOX_CEILING_SQUARE_DEGREES["grid-0.25"];
+
+/**
+ * The rung that serves this viewport, from ZOOM AND BBOX SIZE together, or null when none does.
+ *
+ * Owner decision 2026-09-18 (`conductor/RUNBOOK.md`, "Finding 1"): a viewport wider than the rung
+ * its zoom alone would select is served from the next rung out rather than refused. A normal wide
+ * PNW viewport at z7-z10 measures ~140 square degrees against the `grid-0.05` rung's ceiling of
+ * 100, and was refused where the rung right below it answers 1600 comfortably. The rung is never
+ * finer than the zoom's own band -- coarsening is the only direction this moves -- and above the
+ * coarse rung's ceiling the refusal stands, because there is nothing left to coarsen to.
+ *
+ * The same rule `selectServingRung` applies on the land-context plane; both go through
+ * `selectFinestAdmittingRung` so the two lanes cannot drift into two selection rules.
+ */
+export function botanicalServingBandForViewport(
+  zoom: number,
+  areaSquareDegrees: number
+): BotanicalSupportBand | null {
+  return selectFinestAdmittingRung({
+    coarsestFirst: BOTANICAL_SUPPORT_BANDS_COARSEST_FIRST,
+    maxBboxSquareDegrees: BOTANICAL_BBOX_CEILING_SQUARE_DEGREES,
+    areaSquareDegrees,
+    finestAllowed: botanicalSupportBandForZoom(zoom),
+  });
+}
+
+/**
+ * The lowest zoom that still selects a given band, which is how a chosen rung is REQUESTED.
+ *
+ * The plane takes no `support_id` parameter (`planes/botanical_occurrences.py`'s `_PARAMETERS`);
+ * `BotanicalOccurrenceRequest.support_id` is derived from `zoom` alone. So forwarding a rung means
+ * forwarding a zoom inside that rung's band, and this table is that translation -- not a second
+ * opinion about which rung is right.
+ */
+const BOTANICAL_BAND_FLOOR_ZOOM: Readonly<Record<BotanicalSupportBand, number>> = {
+  detail: BOTANICAL_DETAIL_MIN_ZOOM,
+  "grid-0.05": BOTANICAL_FINE_SUPPORT_MIN_ZOOM,
+  "grid-0.25": BOTANICAL_FINE_SUPPORT_MIN_ZOOM - 1,
+};
+
+/** The zoom to send upstream so the plane answers from `band`; the caller's own zoom when it already does. */
+export function botanicalServingZoomForBand(band: BotanicalSupportBand, zoom: number): number {
+  return botanicalSupportBandForZoom(zoom) === band ? zoom : BOTANICAL_BAND_FLOOR_ZOOM[band];
 }
 
 /**

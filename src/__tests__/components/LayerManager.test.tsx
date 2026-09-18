@@ -206,6 +206,45 @@ vi.mock("@/lib/trpc/client", () => ({
   },
 }));
 
+/**
+ * The two hooks LayerManager mounted in the 2026-09-18 wave-3 pass, stubbed at their own
+ * boundary. Neither is a tRPC read the `trpc` mock above could answer: `useBotanicalOccurrences`
+ * issues a plain `fetch` at the proxy route, and `useLandContextViewport` queries the
+ * `landContext` router, which this file's mock does not carry. Both default to their quiet state
+ * so every case that is not about them is unaffected.
+ */
+const botanicalProxyLane = vi.hoisted(() => ({
+  snapshot: {
+    phase: "idle",
+    answer: null,
+    error: null,
+    isStale: false,
+    isPartial: false,
+    band: "grid-0.25",
+    servingBand: "grid-0.25",
+  } as Record<string, unknown>,
+  /** The options each render passed, newest last -- this is where the `enabled` gate is read. */
+  calls: [] as Record<string, unknown>[],
+}));
+
+vi.mock("@/hooks/useBotanicalOccurrences", () => ({
+  useBotanicalOccurrences: (options: Record<string, unknown>) => {
+    botanicalProxyLane.calls.push(options);
+    return botanicalProxyLane.snapshot;
+  },
+}));
+
+const landContextLane = vi.hoisted(() => ({ state: "no_group_enabled" as string }));
+
+vi.mock("@/hooks/useLandContextViewport", () => ({
+  useLandContextViewport: () => ({
+    bbox: null,
+    expectedZoomTier: null,
+    state: landContextLane.state,
+    query: { data: undefined, isError: false, isFetching: false },
+  }),
+}));
+
 /** A one-polygon stand-in for either viewport-proxied collection. */
 function polygonCollection(): GeoJSON.FeatureCollection {
   return {
@@ -2597,4 +2636,163 @@ it("shows MTBS capture, availability and partial mapping separately from row tru
   expect(notice).toContain("Fire years 2018–2026");
   expect(notice).toContain("Mapping remains incomplete for 2023, 2024, 2025, 2026");
   expect(notice).not.toContain("row budget");
+});
+
+/**
+ * The two mounts of the 2026-09-18 wave-3 pass. Both hooks are stubbed above, so these cases are
+ * about what LayerManager DOES with what they report -- which layer is fed, which caption is
+ * raised, and which state is allowed to look like a fault.
+ */
+describe("botanical proxy lane and land-context viewport mounts", () => {
+  const readNotice = "parquet-layer-unavailable-botanical-viewport-read";
+  const budgetNotice = "parquet-layer-unavailable-land-context-area-over-budget";
+
+  /** One decoded proxy answer in the camelCase vocabulary the contract publishes. */
+  function proxyDetailAnswer(collectionKeys: string[], servingRung = "detail") {
+    return {
+      state: "detail",
+      servingRung,
+      releaseSetId: "published-release",
+      publishedAt: "2026-09-13T00:00:00Z",
+      taxonomyRecipeVersion: "taxonomy-v1",
+      qcPolicyVersion: "qc-v1",
+      truncated: false,
+      nextCursor: null,
+      counts: {
+        returned: collectionKeys.length,
+        matched: collectionKeys.length,
+        withheld: 0,
+        nonspatial: 0,
+        excludedByQc: 0,
+      },
+      features: collectionKeys.map((collectionKey, index) => ({
+        occurrenceId: `proxy-occurrence-${index}`,
+        collectionKey,
+        sourceRecordKey: `proxy-source-${index}`,
+        taxonConceptId: "taxon-1",
+        resolutionState: "resolved",
+        scientificName: "Acer macrophyllum",
+        family: "Sapindaceae",
+        eventInterval: { start: "2025-06-01", end: "2025-06-01", precision: "day" },
+        longitude: -123.1,
+        latitude: 49.2,
+        coordinateUncertaintyMeters: 10,
+        spatialClass: "exact",
+        membership: "confirmed",
+        catalogNumber: null,
+        recordedBy: null,
+        basisOfRecord: "PRESERVED_SPECIMEN",
+        rightsUri: null,
+        attributionText: null,
+      })),
+    };
+  }
+
+  function setProxySnapshot(snapshot: Record<string, unknown>): void {
+    botanicalProxyLane.snapshot = {
+      phase: "success",
+      answer: null,
+      error: null,
+      isStale: false,
+      isPartial: false,
+      band: "detail",
+      servingBand: "detail",
+      ...snapshot,
+    };
+  }
+
+  beforeEach(() => {
+    botanicalProxyLane.calls.length = 0;
+    setProxySnapshot({ phase: "idle", band: "grid-0.25", servingBand: "grid-0.25" });
+    landContextLane.state = "no_group_enabled";
+    useMapStore.setState({
+      activeLayers: ["botanical-occurrences"],
+      viewport: { ...INITIAL_MAP_STATE.viewport, zoom: 12, widthPx: 1024, heightPx: 768 },
+    });
+  });
+
+  it("draws the detail layer from the proxy lane and hands it that lane's read phase", () => {
+    setProxySnapshot({ phase: "success", answer: proxyDetailAnswer(["ubc:herbarium"]) });
+
+    const rendered = renderLayerManager(createFakeMap());
+
+    const props = lastRenderOf("BotanicalOccurrencesLayer");
+    expect(props?.readPhase).toBe("success");
+    expect(props?.geojson).toMatchObject({
+      features: [{ properties: { occurrence_id: "proxy-occurrence-0" } }],
+    });
+    // The tRPC lane answered nothing here, so the points can only have come from the proxy lane.
+    expect(rendered.queryByTestId("parquet-layer-unavailable-botanical-request-failed")).toBeNull();
+  });
+
+  it("keeps GBIF's own points out of the UBC collection the proxy lane feeds", () => {
+    setProxySnapshot({
+      phase: "success",
+      answer: proxyDetailAnswer([GBIF_COLLECTION_KEY, "ubc:herbarium"]),
+    });
+
+    renderLayerManager(createFakeMap());
+
+    const geojson = lastRenderOf("BotanicalOccurrencesLayer")?.geojson as GeoJSON.FeatureCollection;
+    expect(geojson.features).toHaveLength(1);
+    expect(geojson.features[0].properties?.collection_key).toBe("ubc:herbarium");
+  });
+
+  it("asks the proxy lane for nothing when the occurrence toggle is off", () => {
+    act(() => useMapStore.setState({ activeLayers: [] }));
+    renderLayerManager(createFakeMap());
+
+    expect(botanicalProxyLane.calls.at(-1)?.enabled).toBe(false);
+  });
+
+  it("says which rung answered when it is not the one this zoom asked for", () => {
+    setProxySnapshot({
+      phase: "success",
+      answer: proxyDetailAnswer(["ubc:herbarium"], "grid-0.25"),
+      band: "detail",
+      servingBand: "grid-0.25",
+    });
+
+    const rendered = renderLayerManager(createFakeMap());
+
+    const caption = rendered.getByTestId(readNotice).textContent;
+    expect(caption).toContain("grid-0.25 support rung");
+    expect(caption).toContain("wider than individual specimen points");
+  });
+
+  it("stays silent when the rung the zoom asked for is the rung that answered", () => {
+    setProxySnapshot({ phase: "success", answer: proxyDetailAnswer(["ubc:herbarium"]) });
+
+    const rendered = renderLayerManager(createFakeMap());
+
+    expect(rendered.queryByTestId(readNotice)).toBeNull();
+  });
+
+  it("reports a failed proxy read as a fault, not as an empty view", () => {
+    setProxySnapshot({
+      phase: "error",
+      error: { error: "unreachable", reason: "request_failed" },
+    });
+
+    const rendered = renderLayerManager(createFakeMap());
+
+    expect(rendered.getByTestId(readNotice).textContent).toContain("request_failed");
+    expect(lastRenderOf("BotanicalOccurrencesLayer")?.readPhase).toBe("error");
+  });
+
+  it("captions an over-budget land-context viewport instead of refusing it", () => {
+    landContextLane.state = "area_over_budget";
+
+    const rendered = renderLayerManager(createFakeMap());
+
+    expect(rendered.getByTestId(budgetNotice).textContent).toContain("Zoom in");
+  });
+
+  it("says nothing about land-context while it is reading normally", () => {
+    landContextLane.state = "reading";
+
+    const rendered = renderLayerManager(createFakeMap());
+
+    expect(rendered.queryByTestId(budgetNotice)).toBeNull();
+  });
 });

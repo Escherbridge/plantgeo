@@ -207,3 +207,35 @@ const enabledGroups = useLandContextStore((state) => state.enabledGroups);
 const landContextViewport = useLandContextViewport({ enabledGroups });
 // `state` is a caption, not a failure: "area_over_budget" means zoom in, not that anything broke.
 ```
+
+### land-context-viewport: mounted
+
+The snippet above is **applied** as of the 2026-09-18 wave-3 mount: `LayerManager.tsx` holds the
+hook beside its other viewport reads, and `area_over_budget` renders through
+`ParquetLayerFaultBanner` with `tone: "notice"` -- the caption tone, never the fault tone. An
+automatic read that silently does not fire is indistinguishable from one that failed, which is the
+whole reason the state is surfaced at all.
+
+`landContextRungForViewport` now delegates its walk to `selectFinestAdmittingRung`
+(`src/lib/map/rung-selection.ts`); the ladder, the ceilings and the zoom gate stay here. See
+`src/lib/map/AGENTS.md` "rung-selection.ts".
+
+## useBotanicalOccurrences: the proxy detail lane
+
+Mounted in `LayerManager.tsx` as of 2026-09-18, feeding `BotanicalOccurrencesLayer`'s geojson and
+its `readPhase`, with `describeBotanicalOccurrencesState` as the one caption wording.
+
+**Two botanical lanes run at a detail zoom, deliberately.** This hook (the proxy route) draws the
+UBC detail points; `useBotanicalOccurrencesQuery` (tRPC) still serves the two aggregate layers,
+GBIF's own toggle, and the store the filters and details panels read. They are the same generation
+under the same filters, so they cannot disagree about what is published -- but with the UBC toggle
+on at a detail zoom, one viewport does cost two upstream reads. Collapsing them is the follow-up
+owed when the aggregate layers move to the proxy too; narrowing the tRPC gate first would take the
+release-set pin and the filters panel's state down with it.
+
+**The rung is selected, not assumed.** `servingBand` is the rung that actually answered -- the
+route's `servingRung` once an answer lands, the hook's own selection before that, and null only
+when no rung admits the viewport (the one case still refused client-side, without a round trip).
+`describeBotanicalOccurrencesState` says so out loud whenever the served rung is not the one the
+zoom asked for: a coarser rung is a SUBSTITUTION OF EVIDENCE, and a reader who is not told has no
+way to know the drawing changed meaning.

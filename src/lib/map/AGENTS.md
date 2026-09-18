@@ -542,3 +542,33 @@ same bbox agree closely enough that the second can be instant rather than animat
 ## drawing.ts
 
 `douglasPeucker` implements Ramer-Douglas-Peucker line simplification on planar degrees: https://en.wikipedia.org/wiki/Ramer%E2%80%93Douglas%E2%80%93Peucker_algorithm . The link lives here, not in the source, because `check:data-boundary` rejects bare URLs in `src/**`.
+
+## rung-selection.ts
+
+`selectFinestAdmittingRung` is the ONE walk that decides which published rung answers a viewport,
+shared by three call sites that each own a different ladder:
+
+- `botanicalServingBandForViewport` (`src/lib/botanical-occurrences.ts`) over
+  `detail` / `grid-0.05` / `grid-0.25`;
+- `selectServingRung` (`src/lib/server/services/land-context/parquet-reader.ts`) over `ZOOM_TIERS`,
+  gated by what the census proved published;
+- `landContextRungForViewport` (`src/hooks/useLandContextViewport.ts`), the client's label for the
+  same selection.
+
+It lives in `src/lib/map/` because that is the one directory all three may import: the reader is
+server-only and the hook may not reach into `@/lib/server/**`
+(`scripts/check-client-server-imports.mjs`), so a helper in either of their own trees could not be
+shared without a boundary violation. The module holds no ladder and no ceiling of its own --
+those stay where their provenance is, beside the plane that publishes them.
+
+**The rule, in one line: the finest published rung, no finer than `finestAllowed`, whose ceiling
+admits the bbox area.** `finestAllowed` is normally the rung the map zoom selects, so selection
+only ever moves COARSER -- serving a continental viewport from a detail rung would answer a
+regional question with point evidence. Owner decision 2026-09-18 (`conductor/RUNBOOK.md`
+"Finding 1"): a viewport too wide for its zoom's own rung is answered from the next rung out
+rather than refused, which is what the botanical plane was doing to an ordinary wide PNW viewport
+at z7-z10 (~140 square degrees against a ceiling of 100).
+
+**Null is a refusal, not a fallback.** When no rung admits the area the walk returns null and the
+caller must say so. Returning the coarsest rung instead would answer a question about one area
+with evidence about another and give the reader no way to tell.

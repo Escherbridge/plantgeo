@@ -52,6 +52,17 @@ const wireDetail = {
   counts: { returned: 0, matched: 0, withheld: 3, nonspatial: 3, excluded_by_qc: 3 },
 };
 
+/** The aggregate answer for one rung; the plane names the rung it served in `support_id`. */
+function wireAggregate(supportId: string) {
+  return {
+    ...wireDetail,
+    state: "aggregate",
+    support_id: supportId,
+    cells: [],
+    counts: { returned: 0, matched: 0 },
+  };
+}
+
 /** The route reads only `nextUrl`; a bare NextRequest over a full URL is the whole fixture. */
 function requestFor(query: string): NextRequest {
   return new NextRequest(`http://plantgeo.test/api/botanical-occurrences?${query}`);
@@ -102,31 +113,75 @@ describe("ingress validation", () => {
     expect(mockedFetch).not.toHaveBeenCalled();
   });
 
-  /**
-   * The ingress bound must MATCH the plane's, not merely exist: 4 square degrees at detail zoom,
-   * 100 at the 0.05 rung. A viewport 6 degrees wide is refused at zoom 13 and accepted at zoom 8.
-   */
-  it("refuses a bbox wider than the detail band's ceiling before spending a round trip", async () => {
-    const response = await GET(requestFor("bbox=-126,45,-120,51&zoom=13"));
+  it("accepts a viewport at an aggregate zoom, where the 0.05 rung's ceiling is 100", async () => {
+    mockedFetch.mockResolvedValueOnce(wirePointer);
+    mockedFetch.mockResolvedValueOnce(wireAggregate("grid-0.05"));
+
+    const response = await GET(requestFor("bbox=-126,45,-120,51&zoom=8"));
+
+    expect(response.status).toBe(200);
+  });
+});
+
+/**
+ * Owner decision 2026-09-18 (`conductor/RUNBOOK.md` "Finding 1"): the rung is chosen from ZOOM AND
+ * BBOX SIZE, so a viewport too wide for its zoom's own rung is answered from the next rung out
+ * instead of refused. The plane takes no `support_id` parameter, so "forwarding a rung" means
+ * forwarding a zoom inside that rung's band -- which is what `forwardedZoom` reads back.
+ */
+describe("serving-rung selection", () => {
+  /** The zoom the route actually asked the plane for; call 0 is the pointer GET. */
+  function forwardedZoom(): string | null {
+    return (mockedFetch.mock.calls[1][0] as URL).searchParams.get("zoom");
+  }
+
+  it.each([
+    // 1 square degree at a detail zoom: the finest rung admits it, nothing is substituted.
+    { area: "-124,48,-123,49", requestedZoom: 13, rung: "detail", forwarded: "13" },
+    // 36 square degrees: past `detail`'s ceiling of 4, inside `grid-0.05`'s 100.
+    { area: "-126,45,-120,51", requestedZoom: 13, rung: "grid-0.05", forwarded: "7" },
+    // 140 square degrees: past `grid-0.05`'s 100, inside `grid-0.25`'s 1600. THE RUNBOOK CASE --
+    // an ordinary wide PNW viewport, which the pre-decision route refused outright.
+    { area: "-130,40,-110,50", requestedZoom: 8, rung: "grid-0.25", forwarded: "6" },
+  ])(
+    "serves a $area viewport at zoom $requestedZoom from the $rung rung",
+    async ({ area, requestedZoom, rung, forwarded }) => {
+      mockedFetch.mockResolvedValueOnce(wirePointer);
+      mockedFetch.mockResolvedValueOnce(
+        rung === "detail" ? wireDetail : wireAggregate(rung)
+      );
+
+      const response = await GET(requestFor(`bbox=${area}&zoom=${requestedZoom}`));
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(botanicalProxyAnswerSchema.safeParse(body).success).toBe(true);
+      // The chosen rung travels back so a caption can name the evidence the reader is looking at.
+      expect(body.servingRung).toBe(rung);
+      expect(forwardedZoom()).toBe(forwarded);
+    }
+  );
+
+  it("refuses above the coarsest rung's ceiling, where there is nothing left to coarsen to", async () => {
+    // 60 x 40 degrees = 2400, past `grid-0.25`'s 1600.
+    const response = await GET(requestFor("bbox=-130,10,-70,50&zoom=8"));
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({ reason: "bbox_too_large_for_zoom" });
     expect(mockedFetch).not.toHaveBeenCalled();
   });
 
-  it("accepts that same bbox at an aggregate zoom, where the 0.05 rung's ceiling is 100", async () => {
+  it("never selects a rung FINER than the zoom asked for", async () => {
     mockedFetch.mockResolvedValueOnce(wirePointer);
-    mockedFetch.mockResolvedValueOnce({
-      ...wireDetail,
-      state: "aggregate",
-      support_id: "grid-0.05",
-      cells: [],
-      counts: { returned: 0, matched: 0 },
-    });
+    mockedFetch.mockResolvedValueOnce(wireAggregate("grid-0.25"));
 
-    const response = await GET(requestFor("bbox=-126,45,-120,51&zoom=8"));
+    // A single square degree at zoom 3: `detail` would admit the area, but answering continental
+    // zoom with specimen points would draw a distribution this lane does not publish.
+    const response = await GET(requestFor("bbox=-124,48,-123,49&zoom=3"));
+    const body = await response.json();
 
-    expect(response.status).toBe(200);
+    expect(body.servingRung).toBe("grid-0.25");
+    expect(forwardedZoom()).toBe("3");
   });
 });
 

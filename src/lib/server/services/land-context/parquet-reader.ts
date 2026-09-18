@@ -10,6 +10,7 @@
 import { getParquetLatestRelease, getParquetWarehouseCoverage } from "@/lib/server/services/parquet-plane-client";
 import type { ParquetLaneCoverage } from "@/lib/server/services/parquet-plane-client";
 import { ZOOM_TIERS, zoomTierPathSegment, type ZoomTier } from "@/lib/map/zoom-tiers";
+import { selectFinestAdmittingRung } from "@/lib/map/rung-selection";
 import { parquetUpstreamFailure } from "@/lib/server/services/parquet-trpc-readers/shared";
 import { assertExhaustiveParquetPlaneState } from "@/lib/server/services/parquet-envelope";
 import { z } from "zod";
@@ -127,19 +128,20 @@ export function bboxSquareDegrees(bbox: BboxDegrees): number {
  * Finest-that-fits, walking the ladder from z13 down: a caller that asks for a small area gets
  * the most detailed rung published for it, and a caller that asks for a regional one is moved
  * DOWN the ladder rather than refused -- the third of the three fix directions the 2026-09-14
- * handoff left undecided for the botanical plane, applied here where no published lane yet
- * depends on either of the other two.
+ * handoff left undecided for the botanical plane, and since the owner decision of 2026-09-18 the
+ * rule on that plane too. The walk itself lives in `@/lib/map/rung-selection` so the two lanes
+ * cannot drift into two selection rules; only the ladder and its ceilings are local.
  */
 export function selectServingRung(
   publishedTiers: readonly ZoomTier[],
   bboxAreaSquareDegrees: number
 ): ZoomTier | null {
-  const finestFirst = [...ZOOM_TIERS].sort((left, right) => right - left);
-  for (const tier of finestFirst) {
-    if (!publishedTiers.includes(tier)) continue;
-    if (bboxAreaSquareDegrees <= RUNG_MAX_BBOX_SQUARE_DEGREES[tier]) return tier;
-  }
-  return null;
+  return selectFinestAdmittingRung({
+    coarsestFirst: ZOOM_TIERS,
+    maxBboxSquareDegrees: RUNG_MAX_BBOX_SQUARE_DEGREES,
+    areaSquareDegrees: bboxAreaSquareDegrees,
+    isPublished: (tier) => publishedTiers.includes(tier),
+  });
 }
 
 /** A read that produced no partition to touch, with the census's own words for why. */
