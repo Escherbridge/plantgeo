@@ -76,7 +76,12 @@ async def query_botanical_occurrences(request: Request) -> HTTPResponse:
 
 @botanical_occurrences_bp.get("/current")
 async def current_botanical_release(request: Request) -> HTTPResponse:
-    """Resolve the mutable pointer to the release_set_id a caller should pin for `/query`."""
+    """Resolve the checksum-bound pointer to the release_set_id a caller should pin for `/query`.
+
+    Fails closed (503) with a stable `reason` -- `pointer_missing`, `pointer_malformed`,
+    `pointer_stale`, `pointer_checksum_invalid`, `transport_unavailable` -- rather than guessing a
+    generation, per layer-lanes 4a.
+    """
     root = getattr(request.app.ctx, "botanical_occurrences_root", None)
     target = getattr(request.app.ctx, "botanical_occurrences_target", None)
     result = read_current_botanical_release(root=root, target=target)

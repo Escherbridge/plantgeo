@@ -23,12 +23,17 @@ from botocore.exceptions import ConnectionError as ObjectStoreConnectionError  #
 from botocore.exceptions import HTTPClientError
 
 from agri_data_service.config import settings as default_settings
+from agri_data_service.pipeline.direct.botanical_occurrences.pointer import (
+    BotanicalPointerMalformedError,
+    manifest_digest,
+    parse_latest_pointer,
+)
 from agri_data_service.pipeline.direct.botanical_occurrences.publish import (
     COMPLETION_MARKER,
     PART_NAME,
     LocalPublicationTarget,
     generation_prefix,
-    pointer_path,
+    latest_pointer_path,
     publication_target,
     read_manifest,
 )
@@ -512,41 +517,88 @@ def read_botanical_occurrences(
         ) from error
 
 
+def pointer_unavailable(reason: str, detail: str) -> dict[str, Any]:
+    """A fail-closed pointer answer: a STABLE reason a caller can branch on, plus human detail.
+
+    Separate from `unavailable()` because that one carries free prose in `reason`; a reader deciding
+    whether to retry, alarm, or say "nothing published yet" needs a closed vocabulary, and the four
+    fail-closed conditions layer-lanes 4a names are exactly that vocabulary.
+    """
+    return {
+        "product": PRODUCT,
+        "state": "unavailable",
+        "reason": reason,
+        "detail": detail,
+        "note": "The current pointer did not resolve, so nothing follows about what is published.",
+    }
+
+
 def read_current_botanical_release(
     *,
     root: str | Path | None = None,
     source: Settings | None = None,
     target: PublicationTarget | None = None,
 ) -> dict[str, Any]:
-    """Resolve the pointer to its pinned generation id, or answer `unavailable` when it cannot.
+    """Resolve the checksum-bound pointer to its generation, or fail closed saying exactly why.
 
-    Reads `current.json` directly rather than through `read_pointer`, because a malformed or
-    key-missing pointer must answer `unavailable` here (never raise) -- this is the one place a
-    caller asks "what do I pin?" without already knowing an id to check. Target resolution mirrors
-    `open_generation`: an explicit target wins, otherwise one is built from `root`/`source`.
+    ONE POINTER GET AND ONE DATA GET, never a listing (layer-lanes 4a). The manifest is fetched by
+    the key the pointer names and admitted only when its digest matches the one the pointer bound,
+    so a half-advanced pointer, a replaced manifest and a truncated write are all caught here rather
+    than surfacing later as an answer from a generation nobody reconciled. The completion marker is
+    deliberately NOT re-read: the pointer is written after it, and the digest binds the exact bytes.
+
+    STALE means the binding is broken -- the manifest is gone, or names a different generation --
+    not that the pointer is old. A release set may legitimately be the current one for months, so a
+    wall-clock ceiling here would refuse correct data on a calendar.
     """
     try:
         resolved_target = target or publication_target(root, source=source)
     except ValueError:
-        return unavailable("no generation has ever been published for botanical-occurrences")
+        return pointer_unavailable("pointer_missing", "no generation has ever been published for botanical-occurrences")
     try:
-        payload = resolved_target.read_bytes(pointer_path())
+        payload = resolved_target.read_bytes(latest_pointer_path())
         if payload is None:
-            return unavailable("no generation has ever been published for botanical-occurrences")
+            return pointer_unavailable(
+                "pointer_missing", "no generation has ever been published for botanical-occurrences"
+            )
         try:
-            pointer = json.loads(payload)
-            release_set_id = pointer["release_set_id"]
-        except (json.JSONDecodeError, KeyError, TypeError) as error:
-            return unavailable(f"the current pointer is not readable: {error}")
-        if not isinstance(release_set_id, str) or not release_set_id:
-            return unavailable("the current pointer does not name a release_set_id")
-        manifest = read_manifest(resolved_target, release_set_id) or {}
+            pointer = parse_latest_pointer(payload)
+        except BotanicalPointerMalformedError as error:
+            return pointer_unavailable("pointer_malformed", str(error))
+        if pointer.product != PRODUCT:
+            return pointer_unavailable(
+                "pointer_malformed", f"the pointer names product {pointer.product}, not {PRODUCT}"
+            )
+        manifest_bytes = resolved_target.read_bytes(pointer.manifest_key)
     except (ObjectStoreConnectionError, HTTPClientError):
-        return unavailable(_TRANSPORT_UNAVAILABLE_REASON)
+        return pointer_unavailable("transport_unavailable", _TRANSPORT_UNAVAILABLE_REASON)
+    if manifest_bytes is None:
+        return pointer_unavailable(
+            "pointer_stale", f"the pointer names {pointer.manifest_key}, which no longer exists"
+        )
+    if manifest_digest(manifest_bytes) != pointer.manifest_sha256:
+        return pointer_unavailable(
+            "pointer_checksum_invalid", f"{pointer.manifest_key} does not match the digest the pointer bound"
+        )
+    try:
+        manifest: dict[str, Any] = json.loads(manifest_bytes)
+    except json.JSONDecodeError as error:
+        return pointer_unavailable("pointer_malformed", f"the bound manifest is not readable JSON: {error}")
+    if manifest.get("release_set_id") != pointer.generation_id:
+        return pointer_unavailable(
+            "pointer_stale", f"the bound manifest names a generation other than {pointer.generation_id}"
+        )
     result: dict[str, Any] = {
         "product": PRODUCT,
         "state": "current",
-        "release_set_id": release_set_id,
+        "release_set_id": pointer.generation_id,
+        "generation_id": pointer.generation_id,
+        "manifest_sha256": pointer.manifest_sha256,
+        "manifest_key": pointer.manifest_key,
+        "pointer_schema_version": pointer.pointer_schema_version,
+        "pointer_written_at": pointer.pointer_written_at,
+        "taxonomy_recipe_version": manifest.get("taxonomy_recipe_version"),
+        "qc_policy_version": manifest.get("qc_policy_version"),
     }
     published_at = manifest.get("published_at")
     if published_at is not None:
@@ -581,6 +633,7 @@ __all__ = [
     "encode_cursor",
     "open_generation",
     "parse_botanical_occurrence_request",
+    "pointer_unavailable",
     "read_botanical_occurrences",
     "read_current_botanical_release",
     "refused",
