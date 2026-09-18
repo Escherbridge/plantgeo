@@ -134,8 +134,8 @@ export async function GET(request: NextRequest) {
   }
 
   const { bbox, zoom } = parsed.data;
-  const servingRung = botanicalServingBandForViewport(zoom, bboxSquareDegrees(bbox));
-  if (servingRung === null) {
+  const rungSelection = botanicalServingBandForViewport(zoom, bboxSquareDegrees(bbox));
+  if (rungSelection.kind === "no_rung_admits_area") {
     // Refused BEFORE the upstream call and before the pointer is resolved, exactly as the plane
     // refuses before opening a generation: a bound that depended on what is published would leak
     // what is published. Reached only above the COARSEST rung's ceiling now -- every narrower
@@ -147,6 +147,17 @@ export async function GET(request: NextRequest) {
       `no published rung answers a bbox wider than ${BOTANICAL_MAX_BBOX_SQUARE_DEGREES} square degrees`
     );
   }
+  if (rungSelection.kind === "rung_not_on_ladder") {
+    // The zoom-selected band is not on the ladder at all -- a configuration defect, not a viewport
+    // that is too wide, and reported distinctly rather than reusing the area-refusal sentence.
+    return failure(
+      400,
+      "Invalid botanical-occurrences query",
+      "bbox_too_large_for_zoom",
+      `zoom ${zoom} selects band "${rungSelection.rung}", which is not on the published ladder`
+    );
+  }
+  const servingRung = rungSelection.rung;
   // The zoom that makes the plane answer from the rung selected above; the caller's own zoom
   // whenever it already selects it.
   const servingZoom = botanicalServingZoomForBand(servingRung, zoom);

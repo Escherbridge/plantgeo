@@ -23,7 +23,7 @@
  * module's own text for the latter.
  */
 
-import { selectFinestAdmittingRung } from "@/lib/map/rung-selection";
+import { type RungSelectionResult, selectFinestAdmittingRungResult } from "@/lib/map/rung-selection";
 
 /** One admitted collecting-event date's precision. Interval and partial dates stay visible as such. */
 export type BotanicalEventPrecision = "day" | "month" | "year" | "interval" | "unknown";
@@ -275,19 +275,33 @@ export function botanicalBboxCeilingForZoom(zoom: number): number {
   return BOTANICAL_BBOX_CEILING_SQUARE_DEGREES[botanicalSupportBandForZoom(zoom)];
 }
 
-/** The ladder, coarsest first. Index order is what `selectFinestAdmittingRung` walks. */
-export const BOTANICAL_SUPPORT_BANDS_COARSEST_FIRST = [
-  "grid-0.25",
-  "grid-0.05",
-  "detail",
-] as const satisfies readonly BotanicalSupportBand[];
+/**
+ * The ladder, coarsest first, DERIVED from `BOTANICAL_BBOX_CEILING_SQUARE_DEGREES` rather than
+ * hand-listed (S9, W3 review). `satisfies readonly BotanicalSupportBand[]` on a hand-written array
+ * checks each listed element IS a valid band; it does not check every band IS listed -- adding a
+ * fourth band to `BotanicalSupportBand` would silently leave the ladder three rungs long, and
+ * `selectFinestAdmittingRung` would return `null`/`rung_not_on_ladder` for every viewport in the
+ * missing band. `BOTANICAL_BBOX_CEILING_SQUARE_DEGREES` is a `Record<BotanicalSupportBand, ...>`,
+ * which the compiler DOES check exhaustive, so deriving the ladder from its keys makes a missing
+ * band a compile error at the ceiling map instead of a silent gap in the walk. Sorted by ceiling
+ * descending: the coarsest rung (the widest area it admits) comes first, matching
+ * `selectFinestAdmittingRung`'s "index order IS the ladder" contract.
+ */
+export const BOTANICAL_SUPPORT_BANDS_COARSEST_FIRST: readonly BotanicalSupportBand[] = (
+  Object.keys(BOTANICAL_BBOX_CEILING_SQUARE_DEGREES) as BotanicalSupportBand[]
+).sort(
+  (left, right) =>
+    BOTANICAL_BBOX_CEILING_SQUARE_DEGREES[right] - BOTANICAL_BBOX_CEILING_SQUARE_DEGREES[left]
+);
 
 /** The widest bbox any published rung answers; above it the request is refused, not coarsened. */
 export const BOTANICAL_MAX_BBOX_SQUARE_DEGREES =
   BOTANICAL_BBOX_CEILING_SQUARE_DEGREES["grid-0.25"];
 
 /**
- * The rung that serves this viewport, from ZOOM AND BBOX SIZE together, or null when none does.
+ * The rung that serves this viewport, from ZOOM AND BBOX SIZE together -- a discriminated result
+ * (S8, W3 review) so "no rung on the ladder admits this area" and "the zoom-selected band is not
+ * on the ladder at all" (a configuration defect) are two different answers, not both `null`.
  *
  * Owner decision 2026-09-18 (`conductor/RUNBOOK.md`, "Finding 1"): a viewport wider than the rung
  * its zoom alone would select is served from the next rung out rather than refused. A normal wide
@@ -297,13 +311,13 @@ export const BOTANICAL_MAX_BBOX_SQUARE_DEGREES =
  * coarse rung's ceiling the refusal stands, because there is nothing left to coarsen to.
  *
  * The same rule `selectServingRung` applies on the land-context plane; both go through
- * `selectFinestAdmittingRung` so the two lanes cannot drift into two selection rules.
+ * `@/lib/map/rung-selection` so the two lanes cannot drift into two selection rules.
  */
 export function botanicalServingBandForViewport(
   zoom: number,
   areaSquareDegrees: number
-): BotanicalSupportBand | null {
-  return selectFinestAdmittingRung({
+): RungSelectionResult<BotanicalSupportBand> {
+  return selectFinestAdmittingRungResult({
     coarsestFirst: BOTANICAL_SUPPORT_BANDS_COARSEST_FIRST,
     maxBboxSquareDegrees: BOTANICAL_BBOX_CEILING_SQUARE_DEGREES,
     areaSquareDegrees,

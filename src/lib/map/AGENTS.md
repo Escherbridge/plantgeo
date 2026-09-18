@@ -572,3 +572,16 @@ at z7-z10 (~140 square degrees against a ceiling of 100).
 **Null is a refusal, not a fallback.** When no rung admits the area the walk returns null and the
 caller must say so. Returning the coarsest rung instead would answer a question about one area
 with evidence about another and give the reader no way to tell.
+
+**Two refusals used to share one `null` (S8, W3 review, fixed 2026-09-18).**
+`selectFinestAdmittingRung` returns `null` for BOTH "no rung on the ladder admits this area" and
+"`finestAllowed` names a rung that is not even on the ladder" -- a configuration defect, not a
+viewport that is too wide. Every caller that only checked `=== null` rendered the same "no
+published rung answers a bbox wider than..." sentence for either, so a ladder/band mismatch was
+reported as a wide viewport at every zoom, forever. `selectFinestAdmittingRungResult` is the
+preferred entry point for a new caller: it returns
+`{ kind: "selected", rung } | { kind: "no_rung_admits_area" } | { kind: "rung_not_on_ladder", rung }`
+so the two refusals stay distinguishable. `botanicalServingBandForViewport` and `selectServingRung`
+both moved onto it; `selectFinestAdmittingRung` itself keeps its original `TRung | null` signature
+because `landContextRungForViewport` (`src/hooks/useLandContextViewport.ts`) still calls it
+directly and migrating that hook is a separate change.

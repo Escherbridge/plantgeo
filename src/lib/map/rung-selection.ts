@@ -48,3 +48,32 @@ export function selectFinestAdmittingRung<TRung extends string | number>(
   }
   return null;
 }
+
+/**
+ * `selectFinestAdmittingRung`'s answer, naming WHICH refusal this is (S8, W3 review) instead of
+ * collapsing "no rung on the ladder admits this area" and "`finestAllowed` names a rung that is
+ * not even on the ladder" -- a configuration defect -- into the same `null`. Both callers of
+ * `selectFinestAdmittingRung` rendered the SAME sentence ("no published rung answers a bbox wider
+ * than...") for either failure, so a ladder/band mismatch was reported to the user as a viewport
+ * that is too wide, forever, with no way to tell the two apart.
+ */
+export type RungSelectionResult<TRung extends string | number> =
+  | { kind: "selected"; rung: TRung }
+  | { kind: "no_rung_admits_area" }
+  | { kind: "rung_not_on_ladder"; rung: TRung };
+
+/**
+ * `selectFinestAdmittingRung`, with its refusal named. Prefer this over the bare function for any
+ * new caller; `selectFinestAdmittingRung` itself stays `TRung | null` because
+ * `useLandContextViewport.ts` still calls it directly and is out of scope for this change.
+ */
+export function selectFinestAdmittingRungResult<TRung extends string | number>(
+  request: RungSelectionRequest<TRung>
+): RungSelectionResult<TRung> {
+  const { coarsestFirst, finestAllowed } = request;
+  if (finestAllowed !== undefined && !coarsestFirst.includes(finestAllowed)) {
+    return { kind: "rung_not_on_ladder", rung: finestAllowed };
+  }
+  const rung = selectFinestAdmittingRung(request);
+  return rung === null ? { kind: "no_rung_admits_area" } : { kind: "selected", rung };
+}
