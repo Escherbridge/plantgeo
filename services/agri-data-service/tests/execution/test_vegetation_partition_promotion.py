@@ -297,16 +297,49 @@ async def test_an_indexed_governed_absence_is_reported_with_the_index_reason() -
     # `RefusingBackend` proves the claim: an indexed absence is answered from the index alone.
 
 
-async def test_a_day_the_index_calls_published_but_the_store_cannot_serve_is_a_conflict(store: ObjectStore) -> None:
-    """Index says published, no part file exists: corruption, raised, never rendered as an absence (B2)."""
+async def test_a_day_the_index_still_calls_published_after_a_re_read_is_a_conflict(store: ObjectStore) -> None:
+    """Index says published, no part file, and the re-read agrees: corruption, raised (B2, W5 S4)."""
     session = cast("AsyncSession", object())
     availability = AvailabilityIndexDays(verdicts={DAY: IndexedDay(state="published")})
+    re_reads = 0
+
+    def winning_generation() -> AvailabilityIndexDays:
+        nonlocal re_reads
+        re_reads += 1
+        return availability
 
     with pytest.raises(AvailabilityPartitionConflictError) as raised:
-        await run_vegetation_promotion(session, store, days=[DAY], availability=availability)
+        await run_vegetation_promotion(
+            session, store, days=[DAY], availability=availability, refresh_availability=winning_generation
+        )
 
     assert DAY.isoformat() in str(raised.value)
     assert raised.value.layer == VEGETATION_PLANE_STREAM
+    assert re_reads == 1, "the pointer is re-read exactly once, and only on the conflict path"
+
+
+async def test_a_prune_inside_the_turn_window_is_reclassified_not_paged(store: ObjectStore) -> None:
+    """The TOCTOU window, closed: the day the winning generation states is the day that is reported.
+
+    A retention pass removing a day BETWEEN the turn's availability snapshot and the object open
+    used to raise `AvailabilityPartitionConflictError` -- an operator page, for a benign race the
+    mid-read path already names `ConcurrentPrunePartitionError` (STYLE-REVIEW-W5 S4).
+    """
+    session = cast("AsyncSession", object())
+    snapshot = AvailabilityIndexDays(verdicts={DAY: IndexedDay(state="published")})
+    after_prune = AvailabilityIndexDays(
+        verdicts={DAY: IndexedDay(state="governed_absence", absence_reason="pruned_by_retention")}
+    )
+
+    report = await run_vegetation_promotion(
+        session, store, days=[DAY], availability=snapshot, refresh_availability=lambda: after_prune
+    )
+
+    assert report["absent_days"] == [DAY.isoformat()]
+    (entry,) = cast("list[dict[str, object]]", report["days"])
+    assert entry["status"] == "absent"
+    assert entry["reason"] == "pruned_by_retention"
+    assert entry["reclassified"] == "availability_index_advanced_during_turn"
 
 
 async def test_a_day_the_index_has_no_row_for_is_skipped_as_not_yet_indexed(store: ObjectStore) -> None:
@@ -339,21 +372,45 @@ async def test_a_turn_whose_every_day_is_absent_does_not_complete(store: ObjectS
     assert exit_code_for(report) == 1
 
 
-async def test_a_turn_that_only_skipped_unindexed_days_does_not_complete(store: ObjectStore) -> None:
-    """A lane whose writer has never reached these days must not print success forever (B1)."""
+async def test_a_turn_whose_every_day_is_unindexed_waits_for_the_writer(store: ObjectStore) -> None:
+    """The steady state of the intended configuration is not a failure (W5 S3).
+
+    The lane is disabled by default, its forward writer has not started, and `--max-days` defaults
+    to 1 -- so every scheduled turn evaluates exactly one `not_yet_indexed` day. Exiting non-zero
+    for that would page, every turn, indefinitely. It still may not read as `completed`: nothing was
+    promoted, and the status says which of the three outcomes this is.
+    """
     session = cast("AsyncSession", object())
 
     report = await run_vegetation_promotion(session, store, days=[DAY], availability=EMPTY_AVAILABILITY_INDEX)
+
+    assert report["status"] == "waiting_for_writer"
+    assert report["reason"] == "forward_writer_has_indexed_none_of_these_days"
+    assert report["not_yet_indexed_days"] == [DAY.isoformat()]
+    assert exit_code_for(report) == 0
+
+
+async def test_a_mixed_turn_that_promoted_nothing_still_fails(store: ObjectStore) -> None:
+    """`waiting_for_writer` is the ALL-unindexed case only; a mixed no-progress turn stays non-zero."""
+    session = cast("AsyncSession", object())
+    other_day = date(2026, 9, 11)
+    availability = AvailabilityIndexDays(
+        verdicts={DAY: IndexedDay(state="governed_absence", absence_reason="upstream_scene_not_published")}
+    )
+
+    report = await run_vegetation_promotion(session, store, days=[DAY, other_day], availability=availability)
 
     assert report["status"] == "no_days_promoted"
     assert report["reason"] == "no_indexed_day_promoted"
     assert exit_code_for(report) == 1
 
 
-def test_a_completed_turn_exits_zero() -> None:
-    """The only shape that exits 0 is one that promoted or confirmed at least one day (B1)."""
+def test_only_a_promoting_or_waiting_turn_exits_zero() -> None:
+    """Three terminal statuses, two exit codes, and `waiting_for_writer` is not `completed` (W5 S3)."""
     assert exit_code_for({"status": "completed"}) == 0
+    assert exit_code_for({"status": "waiting_for_writer"}) == 0
     assert exit_code_for({"status": "no_days_promoted", "reason": "all_days_absent"}) == 1
+    assert exit_code_for({"status": "no_days_promoted", "reason": "no_indexed_day_promoted"}) == 1
 
 
 def test_an_absent_day_and_a_race_are_different_exception_types(store: ObjectStore) -> None:

@@ -115,6 +115,27 @@ def test_region_rejects_a_nonpositive_lattice_pitch() -> None:
             timezone="America/Los_Angeles",
             iso_country_codes=("US",),
             admin_codes=("US-WA",),
+            platform_layers=("sensors",),
+            enabled_layers=(LayerBinding(layer_slug="sensors", source_slug="noaa_nws", coverage="regional"),),
+        )
+
+
+def test_region_rejects_a_binding_outside_its_platform_vocabulary() -> None:
+    """A bound layer the manifest does not also state as a platform layer can be neither reported
+    available nor reported as a governed absence, so it is refused where it is written."""
+    with pytest.raises(ValidationError, match="platform_layers"):
+        Region(
+            slug="broken-vocabulary",
+            display_name="Broken Vocabulary",
+            envelope=RegionEnvelope(west=-126.0, south=41.0, east=-110.0, north=50.0),
+            default_camera_envelope=RegionEnvelope(west=-125.0, south=42.0, east=-111.0, north=49.0),
+            crs=4326,
+            lattice_pitch_degrees=0.01,
+            lattice_origin_rule="floor_to_cell_origin",
+            timezone="America/Los_Angeles",
+            iso_country_codes=("US",),
+            admin_codes=("US-WA",),
+            platform_layers=("drought",),
             enabled_layers=(LayerBinding(layer_slug="sensors", source_slug="noaa_nws", coverage="regional"),),
         )
 

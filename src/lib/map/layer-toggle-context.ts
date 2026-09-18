@@ -18,7 +18,7 @@ import {
   type LayerToggleId,
 } from "@/lib/map/layer-registry";
 import { DEFAULT_LAYER_OPACITY } from "@/lib/map/layer-opacity";
-import { isLayerUnboundInRegion } from "@/lib/map/layer-region-binding";
+import { toggleBindingInRegion } from "@/lib/map/layer-region-binding";
 import { climateRenderForm, useClimateStore } from "@/stores/climate-store";
 import { useLayerStore } from "@/stores/layer-store";
 import { useMapStore } from "@/stores/map-store";
@@ -78,9 +78,12 @@ export function useLayerToggle(layerId: string): boolean {
  * legend -- without each of the twenty-odd layer components having to learn about regions. The
  * caption that explains the empty switch is `LayerRow`'s, next to the control it disabled.
  *
- * Fail-OPEN on silence: `isLayerUnboundInRegion` is true only when the payload names the layer
- * `unbound`, so a null payload or a serving side that states no bindings leaves every toggle
- * exactly where it is today.
+ * ONE binding rule, shared with the land-context lane: `toggleBindingInRegion` answers from the
+ * payload when it states a row and from the compiled manifest otherwise, and only its `unbound`
+ * verdict switches a layer off. Payload silence about a layer the manifest BINDS still leaves the
+ * toggle exactly where it is, so a deploy window cannot blank a working layer; payload silence
+ * about a layer the manifest declares unbound is no longer read as availability, because the
+ * manifest states the region's complete binding set (`src/lib/map/AGENTS.md` §layer-region-binding).
  */
 export function useLayerVisibility(): LayerVisibility {
   const activeLayers = useActiveLayerToggles();
@@ -90,7 +93,7 @@ export function useLayerVisibility(): LayerVisibility {
     for (const toggleId of LAYER_TOGGLE_IDS) {
       visibility[toggleId] =
         LAYER_REGISTRY[toggleId].permanentlyUnavailableReason === null &&
-        !isLayerUnboundInRegion(capabilities, toggleId) &&
+        toggleBindingInRegion(capabilities, toggleId) !== "unbound" &&
         activeLayers.includes(toggleId);
     }
     return visibility;

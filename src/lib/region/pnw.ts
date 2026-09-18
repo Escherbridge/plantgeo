@@ -38,6 +38,27 @@ export const PNW = {
   // `PnwStateCode`, `parcelKeySchema` and the Drizzle enum promising three codes the manifest no
   // longer has (STYLE-REVIEW-W4 S2).
   adminCodes: [...PNW_ADMIN_CODES] satisfies readonly (typeof PNW_ADMIN_CODES)[number][],
+  // The platform's whole layer VOCABULARY, not this region's bindings: a slug here and absent from
+  // `enabledLayers` is a governed absence, a slug absent from here is not a federated layer at all,
+  // and `layerBindingInRegion` needs both answers to tell those apart offline. Mirrors
+  // `foundation/region/layer_availability.py`'s `PLATFORM_LAYER_SLUGS` (STYLE-REVIEW-W5 B1).
+  // `land-context` is in the vocabulary and bound by nothing: no land-context lane is published.
+  platformLayers: [
+    "botanical-occurrences",
+    "burn-severity",
+    "drought",
+    "evacuation-zones",
+    "fire-detections",
+    "fire-perimeters",
+    "land-context",
+    "sensors",
+    "signal",
+    "soil-survey",
+    "vegetation",
+    "water-gauges",
+    "watersheds",
+    "weather-observations",
+  ],
   enabledLayers: [
     { layerSlug: "soil-survey", sourceSlug: "ssurgo", coverage: "regional" },
     { layerSlug: "fire-detections", sourceSlug: "firms", coverage: "global" },

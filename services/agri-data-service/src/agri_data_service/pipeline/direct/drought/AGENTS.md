@@ -34,7 +34,7 @@ honest about the debt and useless to the type checker — `adapter.py` handed th
 | `source_url` | `str` | `rows.py` (the row's provenance column) |
 | `areas` | `Sequence[DroughtAreaPayload]` | `rows.py`, `adapter.py`, `forward.py`'s evidence count |
 
-`DroughtAreaPayload` is the same treatment one level down: `drought_monitor_category: int` and
+`DroughtAreaPayload` is the same treatment one level down: `drought_intensity_class: int` and
 `geometry: Mapping[str, object]` (WGS84 GeoJSON), which is all `support.py::repair_drought_areas_to_wkb`
 touches. `rows.py` and `support.py` now take the payload protocols and no longer import
 `ingest.usdm` at all, so lane logic names no source's type — `federation.md` §2's actual ask, which
@@ -52,8 +52,19 @@ source's spelling. `ingest/usdm.py::DroughtRelease.release_day` now does that co
 `valid_date` stays as USDM's own field for the fetch/parse path that speaks in it. Byte-identical
 output: `_require_tuesday` already proved the string round-trips as canonical ISO.
 
-**Still not normalized**, stated rather than hidden — nothing in the release payload itself, but
-two source names survive elsewhere in this lane:
+**Still not normalized**, stated rather than hidden. The earlier claim that *nothing* in the
+release payload is un-normalised was wrong, and STYLE-REVIEW-W5 S1 is the correction:
+
+- `drought_intensity_class` is a five-step `0..4` scale, and those five steps are USDM's. The
+  member no longer carries the source's NAME (it was `drought_monitor_category`), and the protocol
+  docstring now declares the scale as THE LAYER's with the mapping obligation on the source
+  implementation — but a national monitor publishing three or six classes still has to squeeze onto
+  five, which is a real conversion debt of the same family as `acres`. It clears when a source with
+  a different class count is actually bound and the scale becomes either a declared per-source
+  ladder or a continuous intensity with a class derived from it; until then the mapping is written
+  in the source, never in the lane.
+
+Two source names also survive elsewhere in this lane:
 
 - `adapter.py` imports `ingest.usdm.usdm_source_url` to build the governed-absence marker's
   `requested_url` and the unsettled refusal's message. That is lane logic naming one source's

@@ -7,9 +7,9 @@ unbound". The fabricated region here is the next deployment standing the pilot's
 PlantGeo has no US-specific feeds: MTBS, SSURGO, USDM, WFIGS, USGS NWIS, NOAA NWS and the Oregon OEM
 portal all stop at the border, so seven layers arrive unbound and must each say so.
 
-The PNW half of the file is the regression that makes the rest behaviour-neutral: the pilot binds
-every platform layer, so nothing here is unbound and the census payload gains one additive field
-whose every entry is `bound_*`.
+The PNW half of the file is the regression that keeps the rest honest: the pilot binds every
+platform layer but `land-context`, which is in the vocabulary precisely so a surface can ask about
+it and be told `unbound` with a reason rather than nothing at all (STYLE-REVIEW-W5 B1).
 """
 
 from __future__ import annotations
@@ -55,16 +55,25 @@ GLOBAL_LAYER_BINDINGS = (
     LayerBinding(layer_slug="botanical-occurrences", source_slug="gbif", coverage="global"),
 )
 
-#: The seven platform layers the fabricated region binds nothing for -- every regionally-sourced
-#: layer in the pilot. Derived from the two lists above rather than typed a third time, so adding a
-#: platform layer cannot leave this test asserting over a stale set.
+#: The platform layers the fabricated region binds nothing for -- every regionally-sourced layer in
+#: the pilot, plus `land-context`, which no region binds yet. Derived from the two lists above
+#: rather than typed a third time, so adding a platform layer cannot leave this test asserting over
+#: a stale set.
 UNBOUND_LAYER_SLUGS = tuple(
     layer_slug
     for layer_slug in PLATFORM_LAYER_SLUGS
     if layer_slug not in {binding.layer_slug for binding in GLOBAL_LAYER_BINDINGS}
 )
 
+#: The platform layers the PILOT itself leaves unbound. `land-context` is in the vocabulary because
+#: a surface must be able to ask about it and get a governed absence with a reason; no land-context
+#: lane is published in any region, so the honest manifest answer is `unbound`, not silence
+#: (STYLE-REVIEW-W5 B1).
+PILOT_UNBOUND_LAYER_SLUGS = ("land-context",)
+
 #: Which agent surface name reaches each unbound layer, for the per-layer refusal proof below.
+#: `land-context` is deliberately absent: it is a reference plane read over tRPC and has no agent
+#: surface at all, so there is no tool refusal to prove for it.
 UNBOUND_LAYER_AGENT_SURFACES = {
     "burn-severity": "burn-severity",
     "drought": "drought-areas",
@@ -94,6 +103,8 @@ def _global_only_region() -> Region:
         timezone="Africa/Nairobi",
         iso_country_codes=("KE",),
         admin_codes=("KE-30",),
+        # The vocabulary is the PLATFORM's, identical in every manifest; only the bindings differ.
+        platform_layers=PLATFORM_LAYER_SLUGS,
         enabled_layers=GLOBAL_LAYER_BINDINGS,
     )
 
@@ -192,7 +203,16 @@ def test_the_capabilities_payload_marks_the_regional_layers_unbound(
     assert bindings["fire-detections"].reason is None
 
 
-@pytest.mark.parametrize("layer_slug", UNBOUND_LAYER_SLUGS)
+def test_every_unbound_layer_with_an_agent_surface_is_covered_below() -> None:
+    """The parametrized refusal proof walks a hand-spelled map; this is what keeps it complete.
+
+    Only `land-context` may be missing from it, and only because it has no agent surface to refuse
+    through -- any OTHER unbound layer dropping out of the map would silently shrink the proof.
+    """
+    assert set(UNBOUND_LAYER_SLUGS) - set(UNBOUND_LAYER_AGENT_SURFACES) == {"land-context"}
+
+
+@pytest.mark.parametrize("layer_slug", sorted(UNBOUND_LAYER_AGENT_SURFACES))
 async def test_every_unbound_layers_coverage_tool_refuses_by_region(
     global_only_region: Region,
     layer_slug: str,
@@ -257,19 +277,44 @@ async def test_a_globally_bound_layers_tool_is_not_refused_by_region(
 # --- The PNW regression --------------------------------------------------------------
 
 
-def test_the_pilot_binds_every_platform_layer() -> None:
-    """Behaviour-neutrality, stated as a test: nothing in the pilot is unbound, so nothing changes."""
+def test_the_pilot_binds_every_platform_layer_but_land_context() -> None:
+    """The pilot's one governed absence, stated as a test rather than as an omission."""
     pnw = load_region("pnw")
     availability = region_layer_availability(pnw)
     assert set(availability) == set(PLATFORM_LAYER_SLUGS)
-    assert [status.layer_slug for status in availability.values() if status.binding == "unbound"] == []
-    assert all(is_layer_bound(pnw, layer_slug) for layer_slug in PLATFORM_LAYER_SLUGS)
+    unbound = [status.layer_slug for status in availability.values() if status.binding == "unbound"]
+    assert unbound == sorted(PILOT_UNBOUND_LAYER_SLUGS)
+    assert availability["land-context"].source_slug is None
+    assert availability["land-context"].reason == "no_source_bound_in_region"
+    assert all(
+        is_layer_bound(pnw, layer_slug)
+        for layer_slug in PLATFORM_LAYER_SLUGS
+        if layer_slug not in PILOT_UNBOUND_LAYER_SLUGS
+    )
 
 
-def test_the_pilots_census_field_is_additive_and_every_entry_is_bound() -> None:
-    """The payload delta the client contract survives: one new field, no entry of it `unbound`."""
+def test_the_pilots_manifest_restates_the_platform_vocabulary_exactly() -> None:
+    """The manifest field the WEB tree compiles in, pinned to the service's own enumeration.
+
+    `src/lib/region/pnw.ts` carries the same list and `src/__tests__/region/manifest-parity.test.ts`
+    diffs it against `pnw.json`; this is the other end of that chain. A slug added here and not
+    there leaves the two trees disagreeing about whether a layer is a governed absence or not a
+    federated layer at all (STYLE-REVIEW-W5 B1).
+    """
+    assert load_region("pnw").platform_layers == PLATFORM_LAYER_SLUGS
+
+
+def test_the_pilots_census_field_carries_the_whole_vocabulary_with_one_absence() -> None:
+    """The payload delta the client contract survives: one field, every platform layer stated."""
     bindings = region_layer_bindings()
     assert {binding.layer for binding in bindings} == set(PLATFORM_LAYER_SLUGS)
-    assert all(binding.binding in {"bound_global", "bound_regional"} for binding in bindings)
-    assert all(binding.source is not None and binding.reason is None for binding in bindings)
+    bound = [binding for binding in bindings if binding.layer not in PILOT_UNBOUND_LAYER_SLUGS]
+    assert all(binding.binding in {"bound_global", "bound_regional"} for binding in bound)
+    assert all(binding.source is not None and binding.reason is None for binding in bound)
+    land_context = next(binding for binding in bindings if binding.layer == "land-context")
+    assert (land_context.binding, land_context.source, land_context.reason) == (
+        "unbound",
+        None,
+        "no_source_bound_in_region",
+    )
     assert set(bindings[0].to_wire()) == {"layer", "binding", "source", "reason"}

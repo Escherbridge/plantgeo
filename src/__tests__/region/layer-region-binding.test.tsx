@@ -20,8 +20,9 @@ import { renderWithProviders } from "@/test/utils";
 import { LayerRow } from "@/components/map/layer-panel/LayerRow";
 import { DEFAULT_LEGEND_CONTEXT } from "@/lib/map/layer-legends";
 import {
-  isLayerUnboundInRegion,
+  layerBindingInRegion,
   regionLayerSlugForToggle,
+  toggleBindingInRegion,
   unboundLayerCaption,
 } from "@/lib/map/layer-region-binding";
 import { LAYER_TOGGLE_IDS, type LayerToggleId } from "@/lib/map/layer-registry";
@@ -147,13 +148,13 @@ describe("the binding lookup itself", () => {
     // `interventions` is not a layer some region declined to bind a source for -- it has no source
     // binding concept at all -- so it can never be "unavailable in this region".
     expect(regionLayerSlugForToggle("interventions")).toBeNull();
-    expect(isLayerUnboundInRegion(capabilities(globalOnlyBindings()), "interventions")).toBe(false);
+    expect(toggleBindingInRegion(capabilities(globalOnlyBindings()), "interventions")).toBe("not_federated");
   });
 
-  it("fails OPEN on every form of silence", () => {
-    // The whole deploy-window safety argument, as four assertions: a serving side that predates the
+  it("fails OPEN on payload silence about a layer the manifest BINDS", () => {
+    // The deploy-window safety argument, as four assertions: a serving side that predates the
     // field, one that states an empty list, a payload that has not landed, and a layer the list
-    // does not mention must all leave the toggle exactly where it is today.
+    // does not mention must all leave a manifest-bound toggle exactly where it is today.
     expect(unboundLayerCaption(capabilities(), "soil-survey")).toBeNull();
     expect(unboundLayerCaption(capabilities([]), "soil-survey")).toBeNull();
     expect(unboundLayerCaption(null, "soil-survey")).toBeNull();
@@ -178,7 +179,51 @@ describe("the binding lookup itself", () => {
       }))
     );
     for (const layerId of LAYER_TOGGLE_IDS) {
-      expect(isLayerUnboundInRegion(pilot, layerId)).toBe(false);
+      expect(toggleBindingInRegion(pilot, layerId)).not.toBe("unbound");
     }
+  });
+});
+
+/**
+ * The deploy-window matrix: payload present or absent, crossed with what the compiled manifest says.
+ *
+ * Two helpers used to answer this question in opposite directions three files apart -- payload
+ * silence always fail-OPEN for a toggle, manifest silence always fail-CLOSED for land-context --
+ * and the second one answered from a slug the vocabulary could not even state (STYLE-REVIEW-W5 B1).
+ * One rule now covers all six cells, and these are the six.
+ */
+describe("layerBindingInRegion across the deploy window", () => {
+  const statedBound: SliderLayerBinding[] = [
+    { layerSlug: "land-context", binding: "bound_regional", sourceSlug: "a-parcel-source", reason: null },
+  ];
+  const statedUnbound: SliderLayerBinding[] = [
+    { layerSlug: "soil-survey", binding: "unbound", sourceSlug: null, reason: "no_source_bound_in_region" },
+  ];
+  const statedUnboundUnknownSlug: SliderLayerBinding[] = [
+    { layerSlug: "a-layer-this-build-never-heard-of", binding: "unbound", sourceSlug: null, reason: "x" },
+  ];
+
+  it("lets a stated payload row outrank the compiled manifest, in both directions", () => {
+    // The manifest is a deploy behind: it does not bind land-context, and it does bind soil-survey.
+    expect(layerBindingInRegion(capabilities(statedBound), "land-context")).toBe("bound");
+    expect(layerBindingInRegion(capabilities(statedUnbound), "soil-survey")).toBe("unbound");
+  });
+
+  it("reads the manifest when the payload states nothing at all", () => {
+    for (const silent of [null, capabilities(), capabilities([]), capabilities(statedUnbound)]) {
+      expect(layerBindingInRegion(silent, "drought")).toBe("bound");
+      // In the vocabulary, bound by nothing: a STATEMENT, which is why this one is not fail-open.
+      expect(layerBindingInRegion(silent, "land-context")).toBe("unbound");
+      // Outside the vocabulary: a genuine unknown, and an unknown layer is not an unbound one.
+      expect(layerBindingInRegion(silent, "a-layer-this-build-never-heard-of")).toBe("not_federated");
+    }
+  });
+
+  it("honours a payload that names a slug outside this build's vocabulary", () => {
+    // A newer manifest binding a layer this bundle has never heard of is a real deployment; the
+    // serving side is the authority on it, and the compiled fallback never gets to overrule it.
+    expect(
+      layerBindingInRegion(capabilities(statedUnboundUnknownSlug), "a-layer-this-build-never-heard-of")
+    ).toBe("unbound");
   });
 });

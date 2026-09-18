@@ -21,7 +21,8 @@ The AVAILABILITY INDEX is this turn's authority on what a day's outcome is, not 
 `availability/_LATEST.json` through the same verified path serving uses, and reports a day the index
 states `governed_absence` with the index's own `absence_reason`. It therefore does not mint a
 governed absence of its own -- an absence the index has not recorded is `not_yet_indexed`, and an
-index that claims a day the store cannot serve is a conflict that fails the turn.
+index that STILL claims a day the store cannot serve, after one re-read of the pointer, is a
+conflict that fails the turn.
 
 Evaluation-only artifacts (`kind != "observed"`) are never promotable: `VegetationDayPartitionKey`
 refuses construction for anything else, so an evaluation-only day can never reach the register verb
@@ -97,6 +98,12 @@ class AvailabilityPartitionConflictError(RuntimeError):
     index that claims a day the store cannot serve is corruption on one of the two sides. It fails
     the turn loudly rather than degrading into "the source had nothing" (`engineering-principles.md`
     §2, STYLE-REVIEW-W4 B2).
+
+    Raised only AFTER the turn re-reads the pointer once: a prune landing between the turn's
+    availability snapshot and the object open is a race whose winning generation states the day
+    itself, and paging an operator for it would make the benign case indistinguishable from the
+    corrupt one (STYLE-REVIEW-W5 S4). The mid-read form of the same event already has its own name,
+    `ConcurrentPrunePartitionError` (`pipeline/parquet/objectstore.py`).
     """
 
     def __init__(self, *, layer: str, day: date) -> None:
@@ -363,13 +370,33 @@ def default_promotion_days(*, today: date, max_days: int) -> tuple[date, ...]:
     return tuple(sorted(ceiling - timedelta(days=offset) for offset in range(max_days)))
 
 
-async def run_vegetation_promotion(
+def _non_promotable_entry(day: date, indexed: IndexedDay) -> dict[str, object] | None:
+    """The turn's result entry for a day the index does not state `published`, or `None` if it does."""
+    if indexed.state == "governed_absence":
+        return {
+            "day": day.isoformat(),
+            "layer": VEGETATION_PLANE_STREAM,
+            "status": "absent",
+            "reason": indexed.absence_reason or "governed_absence_without_recorded_reason",
+        }
+    if indexed.state == "not_yet_indexed":
+        return {
+            "day": day.isoformat(),
+            "layer": VEGETATION_PLANE_STREAM,
+            "status": "not_yet_indexed",
+            "reason": "availability_index_has_no_row_for_this_day",
+        }
+    return None
+
+
+async def run_vegetation_promotion(  # noqa: PLR0913 - one coordinate of the turn per argument, plus the re-read seam
     session: AsyncSession,
     store: ObjectStore,
     *,
     days: Sequence[date],
     availability: LaneAvailability,
     now: datetime | None = None,
+    refresh_availability: Callable[[], LaneAvailability] | None = None,
 ) -> dict[str, object]:
     """Promote every named day, newest last, each idempotent against its own last receipt.
 
@@ -380,10 +407,18 @@ async def run_vegetation_promotion(
     - `governed_absence` -- recorded as an absence carrying the INDEX'S OWN `absence_reason`, with no
       object read attempted at all. This is the honest gap §4 asks for.
     - `not_yet_indexed` -- the lane has published no row for this day yet, so there is nothing to
-      promote and nothing to report as missing. Skipped, and neutral for the turn's exit code.
-    - `published` -- read and promoted. If the store then holds no part file, the index and the store
-      disagree and `AvailabilityPartitionConflictError` fails the turn: that is corruption, not an
-      absence (STYLE-REVIEW-W4 B1/B2).
+      promote and nothing to report as missing. Skipped; it cannot turn a turn that DID promote into
+      a failure, and a turn whose EVERY day is one exits 0 as `waiting_for_writer` (see
+      `_promotion_report`).
+    - `published` -- read and promoted. If the store then holds no part file, the index snapshot this
+      turn opened with is RE-READ once before anything is raised: a pointer that advanced in between
+      means a prune or retention pass landed inside the turn's window, which is a race retried from
+      the winning generation (§4a), not corruption. Only a still-current pointer claiming a day the
+      store cannot serve raises `AvailabilityPartitionConflictError` (STYLE-REVIEW-W4 B1/B2, W5 S4).
+
+    `refresh_availability` is that re-read, injected so a test can state the winning generation
+    without an object store; it defaults to this module's own `read_lane_availability`. It is called
+    at most ONCE per turn, and only on the conflict path.
 
     A partition that exists and is empty still raises, because that is the writer misbehaving rather
     than the source having nothing.
@@ -393,34 +428,33 @@ async def run_vegetation_promotion(
     from agri_data_service.pipeline.parquet.objectstore import PartitionNotWrittenError  # noqa: PLC0415
 
     results: list[dict[str, object]] = []
+    #: The winning generation, read lazily and at most once, for the whole turn.
+    winning_availability: LaneAvailability | None = None
+    has_reread_availability = False
     for day in days:
-        indexed = availability.indexed_day(day)
-        if indexed.state == "governed_absence":
-            results.append(
-                {
-                    "day": day.isoformat(),
-                    "layer": VEGETATION_PLANE_STREAM,
-                    "status": "absent",
-                    "reason": indexed.absence_reason or "governed_absence_without_recorded_reason",
-                }
-            )
-            emit({"event": "vegetation_promotion_day", **results[-1]})
-            continue
-        if indexed.state == "not_yet_indexed":
-            results.append(
-                {
-                    "day": day.isoformat(),
-                    "layer": VEGETATION_PLANE_STREAM,
-                    "status": "not_yet_indexed",
-                    "reason": "availability_index_has_no_row_for_this_day",
-                }
-            )
+        skipped = _non_promotable_entry(day, availability.indexed_day(day))
+        if skipped is not None:
+            results.append(skipped)
             emit({"event": "vegetation_promotion_day", **results[-1]})
             continue
         try:
             cell_values = read_day_partition_cell_values(store, day)
         except PartitionNotWrittenError as conflict:
-            raise AvailabilityPartitionConflictError(layer=VEGETATION_PLANE_STREAM, day=day) from conflict
+            if not has_reread_availability:
+                has_reread_availability = True
+                winning_availability = (refresh_availability or read_lane_availability)()
+            reclassified = (
+                None
+                if winning_availability is None
+                else _non_promotable_entry(day, winning_availability.indexed_day(day))
+            )
+            if reclassified is None:
+                raise AvailabilityPartitionConflictError(layer=VEGETATION_PLANE_STREAM, day=day) from conflict
+            # The index moved under the turn: classify per the FRESH row, which is the winning
+            # generation's own statement about this day, and never the snapshot's stale one.
+            results.append({**reclassified, "reclassified": "availability_index_advanced_during_turn"})
+            emit({"event": "vegetation_promotion_day", **results[-1]})
+            continue
         if not cell_values:
             raise EmptyDayPartitionError(layer=VEGETATION_PLANE_STREAM, day=day)
         previous_receipt = load_promotion_receipt(store, day=day)
@@ -443,30 +477,68 @@ async def run_vegetation_promotion(
             }
         )
         emit({"event": "vegetation_promotion_day", **results[-1]})
-    return _promotion_report(results)
+    report = _promotion_report(results)
+    if report["status"] == "waiting_for_writer":
+        # Once per turn, not once per day: the whole point of this status is that it must be
+        # readable in a log without being an alarm.
+        emit(
+            {
+                "event": "vegetation_promotion_waiting_for_writer",
+                "layer": VEGETATION_PLANE_STREAM,
+                "days": report["not_yet_indexed_days"],
+                "reason": report["reason"],
+            }
+        )
+    return report
+
+
+#: The terminal statuses a turn may end on. `waiting_for_writer` is deliberately NOT `completed`:
+#: it exits 0, but a reader must be able to tell a turn that promoted from one that had nothing to
+#: promote yet.
+SUCCESSFUL_TURN_STATUSES: Final[frozenset[str]] = frozenset({"completed", "waiting_for_writer"})
 
 
 def _promotion_report(results: list[dict[str, object]]) -> dict[str, object]:
-    """Render the terminal report, naming WHY a turn that promoted nothing did not complete.
+    """Render the terminal report, naming WHY a turn that promoted nothing ended as it did.
 
-    A turn completes only when at least one day was promoted or confirmed unchanged. Without that
-    rule a lane whose forward writer has not started prints a finished report and exits 0 forever,
-    which is exactly the vacuous success `engineering-principles.md` §2 forbids (STYLE-REVIEW-W4 B1).
-    A `not_yet_indexed` day is neutral: it neither counts as progress nor as an absence, so it cannot
-    by itself turn a turn that DID promote into a failure.
+    Three terminal statuses, because the turn has three genuinely different outcomes:
+
+    - `completed` -- at least one day was promoted or confirmed unchanged. Exit 0.
+    - `waiting_for_writer` -- EVERY day evaluated is `not_yet_indexed`. Exit 0, named, logged once.
+      This is the steady state of the intended configuration, not a failure: the lane's forward
+      writer has not started (module docstring), `--max-days` defaults to 1, so a scheduled turn
+      evaluates exactly one unpublished day. Failing it would page every turn, indefinitely, for a
+      lane that is behaving exactly as configured -- and a status nobody can act on is noise, not
+      the loudness `engineering-principles.md` §2 asks for (STYLE-REVIEW-W5 S3; the recorded owner
+      ruling that bounded catch-up turns exit 0, `.omc` memory `plantgeo-owner-decisions-2026-09-04`).
+    - `no_days_promoted` -- everything else: every day a governed absence, or a mixed turn that
+      promoted nothing. Exit non-zero, which is what stops a lane reporting success forever against
+      days that do not exist (STYLE-REVIEW-W4 B1).
+
+    A `not_yet_indexed` day is still neutral WITHIN a turn: it counts as neither progress nor
+    absence, so it cannot turn a turn that DID promote into a failure.
     """
     absent_days = [str(entry["day"]) for entry in results if entry["status"] == "absent"]
     not_yet_indexed_days = [str(entry["day"]) for entry in results if entry["status"] == "not_yet_indexed"]
     progressed = [entry for entry in results if entry["status"] in ("promoted", "unchanged")]
+    waiting_for_writer = bool(results) and len(not_yet_indexed_days) == len(results)
+    if progressed:
+        status = "completed"
+    elif waiting_for_writer:
+        status = "waiting_for_writer"
+    else:
+        status = "no_days_promoted"
     report: dict[str, object] = {
-        "status": "completed" if progressed else "no_days_promoted",
+        "status": status,
         "days": results,
         # Surfaced at the top level so a scheduled turn's report states its absences without the
         # reader walking every day entry.
         "absent_days": absent_days,
         "not_yet_indexed_days": not_yet_indexed_days,
     }
-    if not progressed:
+    if status == "waiting_for_writer":
+        report["reason"] = "forward_writer_has_indexed_none_of_these_days"
+    elif status == "no_days_promoted":
         report["reason"] = (
             "all_days_absent" if results and len(absent_days) == len(results) else "no_indexed_day_promoted"
         )
@@ -476,11 +548,13 @@ def _promotion_report(results: list[dict[str, object]]) -> dict[str, object]:
 def exit_code_for(report: Mapping[str, object]) -> int:
     """Map one terminal report onto the process exit code.
 
-    Zero ONLY for a completed turn -- one that promoted or confirmed-unchanged at least one day. A
-    turn that made no progress exits non-zero with its reason already named in the report, which is
-    what stops a scheduled lane from reporting success forever against days that do not exist yet.
+    Zero for a turn that promoted (`completed`) and for one that had nothing to promote yet
+    (`waiting_for_writer`, named in the report and distinguishable from the first). Non-zero for a
+    turn that made no progress for any OTHER reason -- an all-absent window, or a mixed turn that
+    promoted nothing -- with that reason already in the report.
     """
-    return 0 if report.get("status") == "completed" else 1
+    status = report.get("status")
+    return 0 if isinstance(status, str) and status in SUCCESSFUL_TURN_STATUSES else 1
 
 
 def read_lane_availability() -> LaneAvailability:
@@ -507,8 +581,10 @@ def read_lane_availability() -> LaneAvailability:
 async def main(argv: Sequence[str] | None = None) -> int:
     """Run one bounded promotion turn over explicitly named days and emit one terminal report.
 
-    Exits NON-ZERO on a turn that promoted and confirmed nothing, naming the reason in the report, so
-    a scheduled lane cannot succeed vacuously against days its forward writer has never reached.
+    Exits NON-ZERO on a turn that promoted and confirmed nothing for a reason an operator can act
+    on -- an all-absent window, or a mixed turn that promoted nothing -- naming it in the report, so
+    a scheduled lane cannot succeed vacuously. A turn whose every day is simply not indexed yet is
+    `waiting_for_writer` and exits 0: see `_promotion_report`.
     """
     from agri_data_service.config import settings  # noqa: PLC0415 - CLI-only
     from agri_data_service.db.engine import local_source_loader_session  # noqa: PLC0415 - CLI-only
@@ -536,6 +612,7 @@ async def main(argv: Sequence[str] | None = None) -> int:
 __all__ = [
     "DEFAULT_MAX_DAYS",
     "PROMOTABLE_KIND",
+    "SUCCESSFUL_TURN_STATUSES",
     "AvailabilityIndexDays",
     "AvailabilityPartitionConflictError",
     "EmptyDayPartitionError",

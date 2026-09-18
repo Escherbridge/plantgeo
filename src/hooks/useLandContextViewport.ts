@@ -134,8 +134,9 @@ export interface UseLandContextViewportOptions {
    *
    * The second half of `federation.md` §2's "no fetch issued": an unbound region must not pay one
    * tRPC round trip per pan for a plane nothing here can answer. Defaults to bound so a caller
-   * that has not been taught about regions behaves exactly as before; `isRegionLayerBoundHere`
-   * (`@/lib/map/layer-region-binding`) is the one function that answers it.
+   * that has not been taught about regions behaves exactly as before; `layerBindingInRegion`
+   * (`@/lib/map/layer-region-binding`) is the one function that answers it, and only its `unbound`
+   * verdict may be passed as `false` here -- `not_federated` is an unknown, not an absence.
    */
   isLayerBoundInRegion?: boolean;
 }

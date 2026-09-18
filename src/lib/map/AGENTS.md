@@ -593,12 +593,31 @@ issued" true without teaching twenty-odd layer components about regions. `LayerR
 switch and states the reason next to it; the legend needs no change at all, because it renders
 drawn layers and an unbound layer cannot be drawn.
 
-**Fail open on silence, always.** `isLayerUnboundInRegion` is true only when the payload explicitly
-names the layer `unbound`. A null payload, an empty binding list, a layer the list does not mention
-and a toggle with no manifest layer all read as available. The deploy window between the two trees
-therefore cannot blank a working layer, and that asymmetry is deliberate: the cost of a missing
-caption for one poll cycle is a sentence nobody saw; the cost of a false `unbound` is a layer that
-silently vanishes from the map.
+**One rule, one function: `layerBindingInRegion(capabilities, slug)` → `bound` | `unbound` |
+`not_federated`.** The payload row wins when it states one; otherwise the COMPILED manifest answers:
+in `platformLayers` and in `enabledLayers` → `bound`; in `platformLayers` and not in `enabledLayers`
+→ `unbound`; in neither → `not_federated`, which means binding is not a question that applies to the
+slug (an uploaded layer, `interventions`, a slug from a newer manifest) and is treated as available.
+`toggleBindingInRegion` is the same verdict keyed by `LayerToggleId`; a toggle with no manifest layer
+is `not_federated`. Only `unbound` switches anything off, in `useLayerVisibility` and in
+`useLandContextViewportBoundaries` alike.
+
+**Why "fail open on silence, always" was wrong, and what replaced it.** The old rule read payload
+silence as availability unconditionally, and a second helper next to it (`isRegionLayerBoundHere`)
+read manifest silence as unavailability — same evidence, two verdicts, three files apart
+(STYLE-REVIEW-W5 B1). The repair is to distinguish the two SILENCES rather than the two callers.
+Payload silence is a gap: the coverage response is a deploy behind, or has not arrived, and reading
+it as `unbound` would blank a working layer for a poll cycle. Manifest silence is not silence at
+all, once the vocabulary is compiled in: `platformLayers` enumerates every layer the platform has,
+so a slug listed there and missing from `enabledLayers` is the manifest STATING that nothing fills
+it here, and drawing that toggle as available produces exactly the outage-shaped empty map
+`federation.md` §2 forbids. A slug outside the vocabulary remains a genuine unknown and fails open.
+
+**`platformLayers` is the manifest field that makes the third answer possible.** It mirrors
+`foundation/region/layer_availability.py`'s `PLATFORM_LAYER_SLUGS`, is diffed by
+`src/__tests__/region/manifest-parity.test.ts`, and is the reason `land-context` — a platform layer
+no region binds a source for — now answers `unbound` from a statement instead of from an omission
+the serving side could never have emitted a row for.
 
 **The warehouse-name → manifest-layer table is hand-spelled**, mirroring `agent/surfaces.py`'s
 `SURFACE_REGION_LAYER_SLUGS` entry for entry, because the two namespaces disagree exactly where it

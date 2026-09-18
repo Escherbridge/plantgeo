@@ -31,8 +31,24 @@ class DroughtAreaPayload(Protocol):
 
     #: Read-only properties, not plain attributes -- see `DroughtReleaseDay` for why.
     @property
-    def drought_monitor_category(self) -> int:
-        """The severity step this area covers, `0`..`4` (D0 abnormally dry .. D4 exceptional)."""
+    def drought_intensity_class(self) -> int:
+        """The severity step this area covers on THE LAYER's scale: `0`..`4`, driest step highest.
+
+        The scale is the layer's, not a source's: `0` is "abnormally dry", `4` is "exceptional
+        drought", and every source maps onto it. It is USDM-SHAPED -- the pilot's source publishes
+        exactly these five steps, and the scale was chosen because the first binding already used
+        it -- which is a debt this contract states rather than hides (`drought/AGENTS.md`, "Still
+        not normalized"). A source with a different number of classes (the EU Combined Drought
+        Indicator's three, a national monitor's six) maps onto these five IN ITS OWN
+        IMPLEMENTATION, next to the rest of its unit and calendar normalisation
+        (`federation.md` §2), and never by teaching the lane about its scale: a branch on the
+        source's class count anywhere in `rows.py`, `support.py`, `adapter.py`, the Parquet schema
+        or the serving plane is the bug that rule exists to prevent.
+
+        The member no longer carries a source system's NAME (it was `drought_monitor_category`
+        until STYLE-REVIEW-W5 S1): "Drought Monitor" is the US Drought Monitor, and a layer
+        contract naming one region's institution is the fork's first ancestor.
+        """
         ...
 
     @property

@@ -10,11 +10,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
 from agri_data_service.foundation.region import (
+    PLATFORM_LAYER_SLUGS,
     Region,
     RegionBindingNotServableError,
     assert_region_bindings_are_servable,
@@ -39,7 +40,9 @@ from agri_data_service.pipeline.direct.drought.usdm import USDM_DROUGHT_SOURCE
 from agri_data_service.pipeline.direct.soil_survey.source_protocol import SoilSurveySource
 from agri_data_service.pipeline.direct.soil_survey.ssurgo import SSURGO_SOIL_SURVEY_SOURCE
 from agri_data_service.pipeline.source_bindings import (
+    SourceRegistry,
     UnboundLayerError,
+    declared_layer_source_contracts,
     declared_source_coverage_claims,
     resolve_drought_source,
 )
@@ -96,6 +99,33 @@ def test_the_pilot_region_is_servable_and_names_its_unverified_bindings() -> Non
     assert "firms" in unverified, "a source with no protocol yet must be reported, not silently passed"
 
 
+def test_a_source_bound_to_the_wrong_layer_is_refused_at_boot() -> None:
+    """STYLE-REVIEW-W5 B2: `drought -> ssurgo` passes every coverage gate and implements nothing.
+
+    SSURGO is `regional`/`US`, exactly like USDM, so the coverage word agrees and the ISO codes
+    cover; before the conformance guard the only thing that noticed was `forward.py` calling
+    `fetch_release_day` on a soil-survey source, on a scheduled turn, in the next region.
+    """
+    region = _region_bound_to_fake_source("ssurgo")
+
+    with pytest.raises(RegionBindingNotServableError) as refusal:
+        assert_region_bindings_are_servable(
+            region, declared_source_coverage_claims(), declared_layer_source_contracts()
+        )
+
+    message = str(refusal.value)
+    assert "drought" in message
+    assert "ssurgo" in message
+    assert "DroughtSource" in message
+
+
+def test_the_pilots_own_bindings_pass_the_conformance_guard() -> None:
+    """The other direction, and what keeps the test above from passing for a trivial reason."""
+    assert_region_bindings_are_servable(
+        load_region(), declared_source_coverage_claims(), declared_layer_source_contracts()
+    )
+
+
 def _region_outside_the_united_states() -> Region:
     """A fabricated single-layer region in Kenya, bound to the pilot's US-only drought source.
 
@@ -113,6 +143,7 @@ def _region_outside_the_united_states() -> Region:
         timezone="Africa/Nairobi",
         iso_country_codes=("KE",),
         admin_codes=("KE-30",),
+        platform_layers=PLATFORM_LAYER_SLUGS,
         enabled_layers=(
             {"layer_slug": "drought", "source_slug": "usdm", "coverage": "regional"},
             {"layer_slug": "fire-detections", "source_slug": "firms", "coverage": "global"},
@@ -187,6 +218,7 @@ def _region_bound_to_fake_source(source_slug: str) -> Region:
         timezone="America/Los_Angeles",
         iso_country_codes=("US",),
         admin_codes=("US-WA",),
+        platform_layers=PLATFORM_LAYER_SLUGS,
         enabled_layers=({"layer_slug": "drought", "source_slug": source_slug, "coverage": "regional"},),
     )
 
@@ -203,10 +235,13 @@ def test_resolve_drought_source_calls_whatever_the_regions_own_binding_names(mon
         source_slug = "fake-drought-source"
         coverage = None
 
-    fake_source = FakeDroughtSource()
+    # A deliberate non-implementation: this test is about the LOOKUP, not about conformance, and
+    # the registry is typed per layer now, so the fake needs a cast to sit in the drought map.
+    fake_source = cast("DroughtSource", FakeDroughtSource())
 
-    def fake_registry() -> dict[str, object]:
-        return {"fake-drought-source": fake_source}
+    def fake_registry() -> SourceRegistry:
+        # Registered UNDER `drought`: the registry is keyed by layer now, so a fake belongs to one.
+        return SourceRegistry(drought={"fake-drought-source": fake_source}, burn_severity={}, soil_survey={})
 
     monkeypatch.setattr("agri_data_service.pipeline.source_bindings._source_registry", fake_registry)
 
@@ -249,7 +284,7 @@ def test_the_usdm_release_satisfies_the_drought_payload_protocols() -> None:
     release = DroughtRelease(
         valid_date="2026-09-15",
         source_url="https://droughtmonitor.unl.edu/data/json/usdm_20260915.json",
-        areas=(DroughtArea(drought_monitor_category=0, geometry=_WGS84_RING),),
+        areas=(DroughtArea(drought_intensity_class=0, geometry=_WGS84_RING),),
     )
 
     assert isinstance(release, DroughtReleasePayload)
@@ -263,7 +298,7 @@ def test_a_fabricated_non_usdm_release_satisfies_the_same_drought_payload_protoc
 
     @dataclass(frozen=True)
     class FabricatedDroughtArea:
-        drought_monitor_category: int
+        drought_intensity_class: int
         geometry: Mapping[str, object]
 
     @dataclass(frozen=True)
@@ -275,7 +310,7 @@ def test_a_fabricated_non_usdm_release_satisfies_the_same_drought_payload_protoc
     release = FabricatedNationalDroughtRelease(
         release_day=date(2026, 9, 15),
         source_url="https://example.invalid/national-drought/20260915.json",
-        areas=(FabricatedDroughtArea(drought_monitor_category=3, geometry=_WGS84_RING),),
+        areas=(FabricatedDroughtArea(drought_intensity_class=3, geometry=_WGS84_RING),),
     )
 
     assert isinstance(release, DroughtReleasePayload)

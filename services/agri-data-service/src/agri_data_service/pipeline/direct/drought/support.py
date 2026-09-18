@@ -114,7 +114,7 @@ def repair_drought_areas_to_wkb(
         return {}
     frame = pa.table(
         {
-            "dm_category": [area.drought_monitor_category for area in areas],
+            "dm_category": [area.drought_intensity_class for area in areas],
             "geojson": [json.dumps(area.geometry, allow_nan=False, separators=(",", ":")) for area in areas],
         }
     )
@@ -136,7 +136,7 @@ def repair_drought_areas_to_wkb(
         # dm_category) DO UPDATE` performs the identical last-write-wins collapse on the same key.
         # Equivalent behaviour, not a bug -- do not "fix" this into keeping every duplicate.
         repaired[int(dm_category)] = bytes(wkb)
-    if repaired.keys() != {area.drought_monitor_category for area in areas}:
+    if repaired.keys() != {area.drought_intensity_class for area in areas}:
         raise DroughtGeometryError("the DuckDB repair round trip returned a different set of classes than it was given")
     return repaired
 

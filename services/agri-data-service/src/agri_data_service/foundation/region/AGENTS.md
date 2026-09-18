@@ -144,6 +144,19 @@ source has declared no claim yet is *not looked at*, and saying so is different 
 fine -- the same distinction `layer-lanes.md` §1a draws between "current" and "not looked at".
 Boot does not fail for those; it fails only for a claim that actively disagrees with its binding.
 
+**Coverage is not the only thing a binding can get wrong: the LAYER can be.** `drought -> ssurgo`
+passes every coverage gate above — SSURGO is `regional`/`US` exactly as USDM is — and then fails as
+an `AttributeError` for a missing `fetch_release_day`, inside a scheduled lane, in whichever region
+deployed it (STYLE-REVIEW-W5 B2). `assert_region_bindings_are_servable` therefore takes a third
+argument, `LayerSourceContracts`: the `runtime_checkable` Protocol each layer expects, beside every
+registered source instance keyed by slug. The two maps are keyed differently on purpose — a
+cross-layer mis-binding is precisely the case where the bound source is registered under some other
+layer, so a per-layer implementation map would fail to find it and report nothing. The contracts
+are passed IN from `pipeline/source_bindings.py::declared_layer_source_contracts()` because
+`foundation` may not import `pipeline`, the same seam `declared_source_coverage_claims()` already
+uses. A layer with no protocol yet is absent from the map and unchecked, exactly as an unclaimed
+source is.
+
 ## Layer availability, and why the catalogue is hand-spelled
 
 `layer_availability.py` answers `federation.md` §2's last bullet — "the platform must run with a
@@ -157,8 +170,26 @@ manifest can only ever contain layers the manifest binds, so every layer would b
 function could never return `unbound` — it would answer the question by construction. The platform's
 vocabulary is a property of this build (the layers it has planes, lanes, tools and legends for); a
 region's bindings are a property of the deployment. Keeping the two lists separate is the whole
-mechanism. Today the PNW manifest binds all thirteen, which is why landing this changes nothing
-visible in the pilot.
+mechanism. The PNW manifest binds thirteen of the fourteen; `land-context` is the one governed
+absence.
+
+**The manifest restates the vocabulary in `platform_layers`, and that is not a second truth.**
+`PLATFORM_LAYER_SLUGS` stays this build's authority and
+`tests/foundation/test_region_layer_availability.py` pins the pilot manifest's field to it; the
+field exists because the WEB tree has no access to a Python constant and the two trees were
+answering "is this slug a federated layer at all" from different artefacts — the service from the
+vocabulary, the web from `enabledLayers` alone, which cannot tell a governed absence from a slug
+nobody has ever heard of (STYLE-REVIEW-W5 B1). `src/lib/region/pnw.ts` carries the same list,
+`src/__tests__/region/manifest-parity.test.ts` diffs it against `pnw.json`, and `Region` refuses a
+manifest that binds a layer its own `platform_layers` omits.
+
+**`land-context` is in the vocabulary and bound by nothing.** No region has a published
+land-context lane (the web tree's reference plane reads Parquet the pilot has never written), so
+the manifest states it `unbound` with `no_source_bound_in_region` rather than leaving it unsayable.
+Before this, the slug was absent from both the vocabulary and every manifest, so no serving side
+could emit a row for it and the web's fail-closed gate answered `false` from an omission — an
+answer with no evidence behind it, and the exact failure this module's own docstring warns about.
+It has no agent surface, so no tool refusal exists for it; the caption is the map's.
 
 **`interventions` stays out of the vocabulary**, as it stays out of `enabled_layers` above and out
 of `agent/surfaces.py`'s `SURFACE_PARQUET_LANES`. It is not a layer this region declined to bind a

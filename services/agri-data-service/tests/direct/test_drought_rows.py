@@ -26,8 +26,8 @@ def _release(valid_date: str = "2026-08-18") -> DroughtRelease:
         valid_date=valid_date,
         source_url=f"https://droughtmonitor.unl.edu/data/json/usdm_{valid_date.replace('-', '')}.json",
         areas=(
-            DroughtArea(drought_monitor_category=0, geometry=VALID_SQUARE),
-            DroughtArea(drought_monitor_category=2, geometry=VALID_SQUARE),
+            DroughtArea(drought_intensity_class=0, geometry=VALID_SQUARE),
+            DroughtArea(drought_intensity_class=2, geometry=VALID_SQUARE),
         ),
     )
 

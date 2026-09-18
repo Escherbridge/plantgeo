@@ -45,6 +45,7 @@ interface PythonRegion {
   timezone: string;
   iso_country_codes: string[];
   admin_codes: string[];
+  platform_layers: string[];
   enabled_layers: PythonLayerBinding[];
 }
 
@@ -122,6 +123,22 @@ describe("PNW manifest parity between the service and web trees", () => {
   it("agrees on the ISO country and admin codes", () => {
     expect(pnwTypeScript.isoCountryCodes).toEqual(pnwPython.iso_country_codes);
     expect(pnwTypeScript.adminCodes).toEqual(pnwPython.admin_codes);
+  });
+
+  it("agrees on the platform layer vocabulary, in order", () => {
+    // Order matters here and not for `enabledLayers`: this list is the platform's enumeration, and
+    // the Python side asserts the same tuple against `PLATFORM_LAYER_SLUGS`, which is sorted. A
+    // slug added to one tree's vocabulary and forgotten in the other makes the two trees disagree
+    // about whether a layer is a governed absence or not federated at all (STYLE-REVIEW-W5 B1).
+    expect(pnwTypeScript.platformLayers).toEqual(pnwPython.platform_layers);
+  });
+
+  it("states every bound layer in the platform vocabulary", () => {
+    for (const binding of pnwTypeScript.enabledLayers) {
+      expect(pnwTypeScript.platformLayers, `binding ${binding.layerSlug} is outside the vocabulary`).toContain(
+        binding.layerSlug
+      );
+    }
   });
 
   it("agrees on every enabled layer binding, slug for slug", () => {

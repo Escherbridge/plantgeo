@@ -41,7 +41,7 @@ def test_the_source_url_matches_the_provenance_production_stored() -> None:
 
 def test_a_release_sorts_its_classes_and_records_its_provenance() -> None:
     release = parse_drought_release(LATEST_TUESDAY, _collection(3, 0, 1))
-    assert [area.drought_monitor_category for area in release.areas] == [0, 1, 3]
+    assert [area.drought_intensity_class for area in release.areas] == [0, 1, 3]
     assert release.source_url.endswith("usdm_20260728.json")
     assert release.valid_date == LATEST_TUESDAY
 
@@ -99,7 +99,7 @@ def test_a_single_part_polygon_class_is_accepted_rather_than_rejecting_the_whole
             ],
         },
     )
-    assert [area.drought_monitor_category for area in release.areas] == [0, 1, 2, 3, 4]
+    assert [area.drought_intensity_class for area in release.areas] == [0, 1, 2, 3, 4]
     assert release.areas[4].geometry["type"] == "Polygon"
 
 

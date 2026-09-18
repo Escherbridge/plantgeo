@@ -11,17 +11,36 @@ itself, per call, never at import time or module scope, and looks up the region'
 the layer rather than importing `usdm.py`/`mtbs.py` module functions directly. A region whose
 manifest binds `drought` to a different `source_slug` gets that implementation without any lane
 code changing, as long as the implementation is registered below.
+
+The registry is typed PER LAYER (`SourceRegistry`), so a resolver returns its layer's protocol
+without a cast and the three `# type: ignore[return-value]`/`[attr-defined]` comments this module
+used to carry are gone. That erasure to `object` was what let a manifest bind `drought` to `ssurgo`
+and fail as an `AttributeError` inside a scheduled lane instead of at boot (STYLE-REVIEW-W5 B2);
+`declared_layer_source_contracts()` below hands `assert_region_bindings_are_servable` the
+runtime-checkable protocol each layer expects, which is where that binding is now refused.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Final
+
+from agri_data_service.foundation.region.bindings import LayerSourceContracts
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from agri_data_service.foundation.region.manifest import Region
     from agri_data_service.foundation.region.source_coverage import SourceCoverageClaim
     from agri_data_service.pipeline.direct.burn_severity.source_protocol import BurnSeveritySource
     from agri_data_service.pipeline.direct.drought.source_protocol import DroughtSource
+    from agri_data_service.pipeline.direct.soil_survey.source_protocol import SoilSurveySource
+
+#: The manifest layer slugs this module resolves sources for. Spelled once so a resolver, the
+#: protocol map and a failure message cannot drift apart.
+DROUGHT_LAYER_SLUG: Final = "drought"
+BURN_SEVERITY_LAYER_SLUG: Final = "burn-severity"
+SOIL_SURVEY_LAYER_SLUG: Final = "soil-survey"
 
 
 class UnboundLayerError(RuntimeError):
@@ -29,8 +48,63 @@ class UnboundLayerError(RuntimeError):
     binding names a source slug with no registered implementation."""
 
 
-def _source_registry() -> dict[str, object]:
-    """`{source_slug: source_instance}` for every source that implements its layer's protocol.
+@dataclass(frozen=True, slots=True)
+class SourceRegistry:
+    """Every registered source implementation, grouped by the LAYER whose protocol it satisfies.
+
+    One map per layer rather than one flat `{slug: object}`: a flat registry cannot say which layer
+    an implementation is for, so the resolvers could only assert conformance (three coded
+    `type: ignore`s) and the boot check could not test it at all.
+    """
+
+    drought: Mapping[str, DroughtSource]
+    burn_severity: Mapping[str, BurnSeveritySource]
+    soil_survey: Mapping[str, SoilSurveySource]
+
+    def coverage_claims(self) -> dict[str, SourceCoverageClaim]:
+        """`{source_slug: coverage claim}` across every layer; each protocol declares `coverage`."""
+        return {
+            slug: source.coverage
+            for layer_sources in (self.drought, self.burn_severity, self.soil_survey)
+            for slug, source in layer_sources.items()
+        }
+
+    def source_instances(self) -> dict[str, object]:
+        """`{source_slug: instance}` across every layer -- the map the boot check looks a binding up in."""
+        return {
+            slug: source
+            for layer_sources in (self.drought, self.burn_severity, self.soil_survey)
+            for slug, source in layer_sources.items()
+        }
+
+    def layer_contracts(self) -> LayerSourceContracts:
+        """The protocol each layer expects, beside every registered source instance.
+
+        The boot check's argument. The protocol classes are imported INSIDE so they exist at
+        runtime for the `isinstance` guard, not merely as `TYPE_CHECKING` names.
+        """
+        from agri_data_service.pipeline.direct.burn_severity.source_protocol import (  # noqa: PLC0415
+            BurnSeveritySource as BurnSeveritySourceProtocol,
+        )
+        from agri_data_service.pipeline.direct.drought.source_protocol import (  # noqa: PLC0415
+            DroughtSource as DroughtSourceProtocol,
+        )
+        from agri_data_service.pipeline.direct.soil_survey.source_protocol import (  # noqa: PLC0415
+            SoilSurveySource as SoilSurveySourceProtocol,
+        )
+
+        return LayerSourceContracts(
+            protocol_by_layer={
+                DROUGHT_LAYER_SLUG: DroughtSourceProtocol,
+                BURN_SEVERITY_LAYER_SLUG: BurnSeveritySourceProtocol,
+                SOIL_SURVEY_LAYER_SLUG: SoilSurveySourceProtocol,
+            },
+            source_by_slug=self.source_instances(),
+        )
+
+
+def _source_registry() -> SourceRegistry:
+    """Every source implementation, under the layer it implements.
 
     The three source modules are imported INSIDE this function on purpose. Each pulls its layer's
     ingest transport (`httpx`) and lane registry, and the callers are the boot check in `app.py`
@@ -42,8 +116,11 @@ def _source_registry() -> dict[str, object]:
     from agri_data_service.pipeline.direct.drought.usdm import USDM_DROUGHT_SOURCE  # noqa: PLC0415
     from agri_data_service.pipeline.direct.soil_survey.ssurgo import SSURGO_SOIL_SURVEY_SOURCE  # noqa: PLC0415
 
-    sources = (MTBS_BURN_SEVERITY_SOURCE, USDM_DROUGHT_SOURCE, SSURGO_SOIL_SURVEY_SOURCE)
-    return {source.source_slug: source for source in sources}
+    return SourceRegistry(
+        drought={USDM_DROUGHT_SOURCE.source_slug: USDM_DROUGHT_SOURCE},
+        burn_severity={MTBS_BURN_SEVERITY_SOURCE.source_slug: MTBS_BURN_SEVERITY_SOURCE},
+        soil_survey={SSURGO_SOIL_SURVEY_SOURCE.source_slug: SSURGO_SOIL_SURVEY_SOURCE},
+    )
 
 
 def declared_source_coverage_claims() -> dict[str, SourceCoverageClaim]:
@@ -53,17 +130,40 @@ def declared_source_coverage_claims() -> dict[str, SourceCoverageClaim]:
     through `unverified_binding_slugs` rather than treating as a failure — `federation.md` §5 lands
     the protocols three layers at a time.
     """
-    return {slug: source.coverage for slug, source in _source_registry().items()}  # type: ignore[attr-defined]
+    return _source_registry().coverage_claims()
 
 
-def _resolve_bound_source(layer_slug: str, *, region: Region | None = None) -> object:
+def declared_layer_source_contracts() -> LayerSourceContracts:
+    """Return the per-layer protocols and every registered source instance, for the boot check.
+
+    Passed IN to `foundation/region/bindings.py` rather than imported by it, for the same reason
+    `declared_source_coverage_claims()` is: `foundation` may not import `pipeline`
+    (`tests/test_layer_import_contract.py`), and the protocol classes live beside their lanes.
+    """
+    return _source_registry().layer_contracts()
+
+
+def _resolve_bound_source[BoundSource](
+    layer_slug: str,
+    implementations: Mapping[str, BoundSource],
+    *,
+    region: Region | None = None,
+) -> BoundSource:
     """Return the concrete source instance the region's manifest binds `layer_slug` to.
+
+    Uses a PEP 695 type parameter -- the protocol each layer's own map is typed with, never widened
+    to `object` (S5, W3 review) -- rather than a module-level `TypeVar` (UP047, requires-python
+    already pins 3.12).
 
     Reads `load_region()` PER CALL when `region` is not supplied -- never at import or module
     scope -- so a different process-wide region selection (`PLANTGEO_REGION`) resolves a different
     implementation without restarting anything. `region` is a test seam: a fabricated `Region`
     bound to a fabricated source lets a test prove the lane calls whatever the binding names,
     without touching the real manifest or a real transport.
+
+    `implementations` is the LAYER'S own map, so the returned type is that layer's protocol and the
+    caller needs no cast; a source registered under a different layer is simply not found here, and
+    `assert_region_bindings_are_servable` has already refused that manifest at boot.
     """
     from agri_data_service.foundation.region.manifest import load_region  # noqa: PLC0415
 
@@ -71,8 +171,7 @@ def _resolve_bound_source(layer_slug: str, *, region: Region | None = None) -> o
     binding = next((b for b in resolved_region.enabled_layers if b.layer_slug == layer_slug), None)
     if binding is None:
         raise UnboundLayerError(f"region {resolved_region.slug!r} has no enabled binding for layer {layer_slug!r}")
-    registry = _source_registry()
-    source = registry.get(binding.source_slug)
+    source = implementations.get(binding.source_slug)
     if source is None:
         raise UnboundLayerError(
             f"region {resolved_region.slug!r} binds layer {layer_slug!r} to source "
@@ -83,16 +182,21 @@ def _resolve_bound_source(layer_slug: str, *, region: Region | None = None) -> o
 
 def resolve_drought_source(*, region: Region | None = None) -> DroughtSource:
     """The drought layer's source, resolved from the region's OWN binding rather than `usdm.py` by name."""
-    return _resolve_bound_source("drought", region=region)  # type: ignore[return-value]
+    return _resolve_bound_source(DROUGHT_LAYER_SLUG, _source_registry().drought, region=region)
 
 
 def resolve_burn_severity_source(*, region: Region | None = None) -> BurnSeveritySource:
     """The burn-severity layer's source, resolved from the region's OWN binding rather than `mtbs.py` by name."""
-    return _resolve_bound_source("burn-severity", region=region)  # type: ignore[return-value]
+    return _resolve_bound_source(BURN_SEVERITY_LAYER_SLUG, _source_registry().burn_severity, region=region)
 
 
 __all__ = [
+    "BURN_SEVERITY_LAYER_SLUG",
+    "DROUGHT_LAYER_SLUG",
+    "SOIL_SURVEY_LAYER_SLUG",
+    "SourceRegistry",
     "UnboundLayerError",
+    "declared_layer_source_contracts",
     "declared_source_coverage_claims",
     "resolve_burn_severity_source",
     "resolve_drought_source",

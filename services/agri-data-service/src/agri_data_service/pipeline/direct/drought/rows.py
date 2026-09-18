@@ -21,9 +21,9 @@ if TYPE_CHECKING:
 DIRECT_AREA_ID_PREFIX: Final = "direct"
 
 
-def direct_area_id(valid_date: str, drought_monitor_category: int) -> str:
+def direct_area_id(valid_date: str, drought_intensity_class: int) -> str:
     """Build the deterministic, `direct:`-namespaced id a direct row carries in place of a real one."""
-    return f"{DIRECT_AREA_ID_PREFIX}:{valid_date}:{drought_monitor_category}"
+    return f"{DIRECT_AREA_ID_PREFIX}:{valid_date}:{drought_intensity_class}"
 
 
 def drought_release_table(release: DroughtReleasePayload, *, ingested_at: datetime) -> pa.Table:
@@ -43,12 +43,12 @@ def drought_release_table(release: DroughtReleasePayload, *, ingested_at: dateti
     valid_date = release.release_day
     rows = [
         {
-            "area_id": direct_area_id(valid_date.isoformat(), area.drought_monitor_category),
+            "area_id": direct_area_id(valid_date.isoformat(), area.drought_intensity_class),
             "valid_date": valid_date,
-            "dm_category": area.drought_monitor_category,
+            "dm_category": area.drought_intensity_class,
             "source_url": release.source_url,
             "ingested_at": ingested_at,
-            "geom": repaired[area.drought_monitor_category],
+            "geom": repaired[area.drought_intensity_class],
         }
         for area in release.areas
     ]

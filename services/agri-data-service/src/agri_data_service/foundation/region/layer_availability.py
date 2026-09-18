@@ -30,6 +30,17 @@ UNBOUND_REASON_NO_SOURCE: Final = "no_source_bound_in_region"
 #: Hand-spelled, and deliberately not derived from the pilot's `enabled_layers`: a catalogue read
 #: off one manifest can never report a layer as unbound, which is the entire question this module
 #: exists to answer. `interventions` is absent on purpose -- see this directory's `AGENTS.md`.
+#:
+#: Every manifest restates this vocabulary in its own `platform_layers` field, and
+#: `tests/foundation/test_region_layer_availability.py` pins the two together; the manifest copy is
+#: what the web tree compiles in (`src/lib/region/pnw.ts`), so both trees answer
+#: "is this slug a federated layer at all" from the same enumeration rather than from one tree's
+#: bindings (STYLE-REVIEW-W5 B1).
+#:
+#: `land-context` is in the vocabulary and bound by NO region today: the pilot's land-context plane
+#: has no published lane, so the manifest states it `unbound` with a reason instead of leaving it
+#: unsayable. A slug no manifest can name reads to a caller exactly like a layer that is merely
+#: absent, and only one of those is a statement.
 PLATFORM_LAYER_SLUGS: Final[tuple[str, ...]] = (
     "botanical-occurrences",
     "burn-severity",
@@ -37,6 +48,7 @@ PLATFORM_LAYER_SLUGS: Final[tuple[str, ...]] = (
     "evacuation-zones",
     "fire-detections",
     "fire-perimeters",
+    "land-context",
     "sensors",
     "signal",
     "soil-survey",

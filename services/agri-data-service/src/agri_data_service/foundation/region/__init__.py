@@ -16,6 +16,7 @@ constant").
 """
 
 from agri_data_service.foundation.region.bindings import (
+    LayerSourceContracts,
     RegionBindingNotServableError,
     assert_region_bindings_are_servable,
     unverified_binding_slugs,
@@ -49,6 +50,7 @@ __all__ = [
     "LayerBinding",
     "LayerBindingState",
     "LayerBindingStatus",
+    "LayerSourceContracts",
     "Region",
     "RegionBindingNotServableError",
     "RegionEnvelope",

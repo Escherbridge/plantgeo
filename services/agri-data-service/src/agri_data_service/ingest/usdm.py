@@ -61,7 +61,7 @@ DAYS_PER_WEEK: Final = 7
 class DroughtArea:
     """One drought class of one release, with the MultiPolygon PostGIS repairs at write time."""
 
-    drought_monitor_category: int
+    drought_intensity_class: int
     geometry: Mapping[str, object]
 
 
@@ -120,7 +120,7 @@ def parse_drought_release(valid_date: str, payload: object) -> DroughtRelease:
         # release is rejected instead of silently picking one.
         if drought_class in areas:
             raise UpstreamPayloadError(f"USDM release {valid_date} repeats drought class D{drought_class}")
-        areas[drought_class] = DroughtArea(drought_monitor_category=drought_class, geometry=geometry)
+        areas[drought_class] = DroughtArea(drought_intensity_class=drought_class, geometry=geometry)
 
     if not areas:
         raise UpstreamPayloadError(f"USDM release {valid_date} contained no drought classes")

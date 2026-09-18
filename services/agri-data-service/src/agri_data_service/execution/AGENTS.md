@@ -51,14 +51,25 @@ The turn's per-day outcome is decided by the vegetation lane's AVAILABILITY INDE
 - index says `governed_absence` -> reported `status: "absent"` carrying the INDEX'S OWN
   `absence_reason`, no object read attempted, the remaining days still promote;
 - index has no row for the day -> `status: "not_yet_indexed"`, skipped, neutral for the exit code;
-- index says `published` but the store holds no part file -> `AvailabilityPartitionConflictError`
-  fails the turn, because that disagreement is corruption and not an absence;
+- index says `published` but the store holds no part file -> the pointer is RE-READ once. If the
+  winning generation now states the day (a prune or retention pass landed inside the turn's
+  window), the day is classified per that fresh row and carries `reclassified:
+  "availability_index_advanced_during_turn"`. Only a still-published pointer raises
+  `AvailabilityPartitionConflictError`, because THAT disagreement is corruption and not an absence
+  (STYLE-REVIEW-W5 S4);
 - a day that was written and is empty still fails, naming the lane and the day.
 
-A turn that neither promoted nor confirmed-unchanged any day reports
-`status: "no_days_promoted"` with a named `reason` (`all_days_absent` when every requested day was a
-governed absence, otherwise `no_indexed_day_promoted`) and **exits non-zero**, so a scheduled lane
-cannot succeed vacuously against days its forward writer has never reached.
+A turn ends on one of three statuses (STYLE-REVIEW-W5 S3):
+
+- `completed` -- at least one day promoted or confirmed unchanged. Exit 0.
+- `waiting_for_writer` -- EVERY evaluated day was `not_yet_indexed`. Exit 0, `reason:
+  "forward_writer_has_indexed_none_of_these_days"`, logged once per turn. This is the steady state
+  of the lane as configured (writer not started, `--max-days` 1), and exiting non-zero for it would
+  page every turn, indefinitely, for a lane behaving exactly as intended. It is deliberately not
+  `completed`: nothing was promoted, and the report says so.
+- `no_days_promoted` -- anything else with no progress: `reason: "all_days_absent"` when every
+  requested day was a governed absence, otherwise `no_indexed_day_promoted`. **Exits non-zero**, so
+  a scheduled lane cannot succeed vacuously against days that should have been there.
 
 ## Durable execution
 

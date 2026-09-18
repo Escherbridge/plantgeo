@@ -17,6 +17,18 @@ being an ordinary browser-safe module with no filesystem dependency — the same
 `coverage-region.ts`'s own literals already made. The parity test is what keeps the extra place
 from silently drifting.
 
+## `platformLayers` is the vocabulary; `enabledLayers` is this region's bindings
+
+Two different lists, and the web tree needs both to answer one question honestly. `platformLayers`
+mirrors the service's `PLATFORM_LAYER_SLUGS` — every layer ANY region may bind a source for — while
+`enabledLayers` is what THIS deployment binds. A slug in the first and absent from the second is a
+governed absence the manifest STATES (`land-context` today); a slug in neither is not a federated
+layer at all and binding is simply not a question that applies to it. Without the vocabulary
+compiled in, `layerBindingInRegion` (`src/lib/map/layer-region-binding.ts`) could not tell those
+apart offline and answered the second case from an omission (STYLE-REVIEW-W5 B1). `regionSchema`
+refuses a manifest whose `enabledLayers` names a slug its own `platformLayers` omits, and the parity
+test diffs the list against `pnw.json` order for order.
+
 ## Why `envelope`, `defaultCameraEnvelope` and `subEnvelopes` differ
 
 See `foundation/region/AGENTS.md`'s "`default_camera_envelope`" and "Why `envelope` and

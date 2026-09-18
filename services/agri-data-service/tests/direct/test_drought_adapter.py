@@ -59,7 +59,7 @@ def published_source(day: date = DAY) -> DroughtDaySource:
     release = DroughtRelease(
         valid_date=day.isoformat(),
         source_url=f"https://droughtmonitor.unl.edu/data/json/usdm_{day.isoformat().replace('-', '')}.json",
-        areas=(DroughtArea(drought_monitor_category=0, geometry=VALID_SQUARE),),
+        areas=(DroughtArea(drought_intensity_class=0, geometry=VALID_SQUARE),),
     )
     return DroughtDaySource(day=day, release=release, fetched_at=FETCHED_AT)
 

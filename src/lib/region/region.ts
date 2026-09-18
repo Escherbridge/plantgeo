@@ -60,9 +60,23 @@ export const regionSchema = z
     timezone: z.string(),
     isoCountryCodes: z.array(z.string()),
     adminCodes: z.array(z.string()),
+    /**
+     * The platform's whole layer vocabulary, mirroring `layer_availability.py`'s
+     * `PLATFORM_LAYER_SLUGS`; NOT this region's bindings. `layerBindingInRegion` reads it to tell a
+     * governed absence (in the vocabulary, not in `enabledLayers`) from a slug that is not a
+     * federated layer at all (STYLE-REVIEW-W5 B1).
+     */
+    platformLayers: z.array(z.string()),
     enabledLayers: z.array(layerBindingSchema),
   })
-  .strict();
+  .strict()
+  .refine(
+    (region) => region.enabledLayers.every((binding) => region.platformLayers.includes(binding.layerSlug)),
+    {
+      message: "every enabledLayers binding must name a slug this manifest also lists in platformLayers",
+      path: ["enabledLayers"],
+    }
+  );
 
 export type Region = z.infer<typeof regionSchema>;
 

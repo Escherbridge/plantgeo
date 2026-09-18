@@ -86,7 +86,24 @@ class Region(BaseModel):
     timezone: str
     iso_country_codes: tuple[str, ...]
     admin_codes: tuple[str, ...]
+    #: The platform's whole layer VOCABULARY, restated here so the web tree compiles in the same
+    #: enumeration the service walks (`layer_availability.PLATFORM_LAYER_SLUGS`, which
+    #: `tests/foundation/test_region_layer_availability.py` pins this field to). It is not the
+    #: region's bindings: a slug here and absent from `enabled_layers` is a GOVERNED ABSENCE, and a
+    #: slug absent from here is not a federated layer at all. Without it, a client could not tell
+    #: those two apart from the manifest alone (STYLE-REVIEW-W5 B1).
+    platform_layers: tuple[str, ...]
     enabled_layers: tuple[LayerBinding, ...]
+
+    @model_validator(mode="after")
+    def _every_binding_names_a_platform_layer(self) -> Region:
+        outside = sorted({b.layer_slug for b in self.enabled_layers} - set(self.platform_layers))
+        if outside:
+            raise ValueError(
+                f"enabled_layers binds {outside}, which are absent from this manifest's platform_layers; "
+                f"a bound layer that is not in the vocabulary cannot be reported as available or unbound"
+            )
+        return self
 
     @field_validator("sub_envelopes", mode="after")
     @classmethod

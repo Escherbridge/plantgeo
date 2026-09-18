@@ -118,6 +118,28 @@ describe("deriveLandContextNotices", () => {
     expect(notices[0].message).toContain(`Stated gap: ${GAP}.`);
   });
 
+  it("draws a failed lookup as a FAULT even though the query itself settled", () => {
+    // W4 S4 / W5 S6: `upstream_unavailable` rides inside a result that RETURNED, so the
+    // `queryStatus === "error"` arm never sees it. Amber beside "no source is bound here" would
+    // state the opposite claim about the record, in the identical pill.
+    const notices = deriveLandContextNotices(
+      input({
+        enabledGroups: { ...ALL_OFF, "blm-lands": true },
+        selection: POINT,
+        queryStatus: "settled",
+        resultMeta: {
+          totalCount: 0,
+          returnedCount: 0,
+          hasMore: false,
+          coverageNotices: [{ coverageState: "upstream_unavailable", gaps: [] }],
+        },
+      })
+    );
+    expect(notices).toHaveLength(1);
+    expect(notices[0].tone).toBe("fault");
+    expect(notices[0].message).toContain("This is a failed read, not an absence of data.");
+  });
+
   it("names only the families that came back empty, never one that matched", () => {
     const notices = deriveLandContextNotices(
       input({

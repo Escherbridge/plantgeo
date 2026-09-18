@@ -171,9 +171,10 @@ describe("the region-binding gate", () => {
     expect(result.current.fault?.layerId).toBe("land-context-unbound-in-region");
   });
 
-  it("treats manifest silence as unbound, because the manifest states the complete set", () => {
-    // No capabilities at all: the PNW manifest's `enabledLayers` has no `land-context` entry, and
-    // absence from a bundled manifest is a claim rather than a deploy-window gap.
+  it("reads the compiled manifest's own statement when the payload says nothing", () => {
+    // No capabilities at all. `land-context` IS in the manifest's `platformLayers` vocabulary and
+    // absent from its `enabledLayers`, which is a STATEMENT that nothing fills it here -- not the
+    // omission the gate used to answer from (STYLE-REVIEW-W5 B1).
     useTimeSliderStore.setState({ capabilities: null });
 
     const { result } = renderHook(() => useLandContextViewportBoundaries());
@@ -291,6 +292,23 @@ describe("every state reaches a reader as its own caption", () => {
     expect(result.current.fault?.tone).toBe("notice");
     expect(result.current.fault?.message).toContain("no admitted source is bound");
     expect(result.current.geoJSON).toBeNull();
+  });
+
+  it("draws a failed read as a FAULT, not as an amber governed absence", () => {
+    // W4 S4 / W5 S6: `upstream_unavailable` arrives INSIDE a result that returned, so the
+    // `isError` arm never sees it. Same pill as "no source is bound here" would state the opposite
+    // claim -- one says the record is complete, the other says nothing is known.
+    lane.query = {
+      data: { status: "ok", data: [coverageOnly("upstream_unavailable")] },
+      isError: false,
+      isPlaceholderData: false,
+    };
+
+    const { result } = renderHook(() => useLandContextViewportBoundaries());
+
+    expect(result.current.readPhase).toBe("empty");
+    expect(result.current.fault?.tone).toBe("fault");
+    expect(result.current.fault?.message).toContain("nothing is known about coverage");
   });
 
   it("distinguishes a different empty coverage state from an unbound source", () => {

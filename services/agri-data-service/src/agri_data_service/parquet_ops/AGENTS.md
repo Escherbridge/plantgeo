@@ -379,7 +379,30 @@ withheld rows, so an operator reads "expected through X, nothing proven" rather 
 nothing. `render_freshness_report` is the sibling payload (`freshness_schema_version: 1`), consumed
 today by `execution/gap_repair.py`'s plan output.
 
-**Putting these on `/api/v1/parquet/coverage` is a contract change, not an addition.** The Python
+### The version rule has two cases, and only one of them bumps
+
+*Amended 2026-09-18 (STYLE-REVIEW-W5 S2). The rule below used to say, without qualification, that a
+field added to the coverage payload is a contract change requiring a 3 -> 4 bump. `layer_bindings`
+shipped in wave 5 without one, deliberately, and a rule with a live counter-example teaches the
+retired design — `python.md` review item 8.*
+
+The question is never "is the field new", it is **what does a client conclude from its ABSENCE**.
+
+- **Additive, and silence is safe → no bump.** The field is optional on both sides, every already
+  deployed client tolerates it missing, and "absent" has exactly one honest reading which is also
+  true. `layer_bindings` is the worked example: `COVERAGE_SCHEMA_VERSION` stayed at **3**
+  (`wire.py:47`, `parquet-plane-client.ts:495`), because the TS client hard-rejects any version it
+  does not equal (`parquet-plane-client.ts:687-691`), so a bump would blank every slider served by
+  a not-yet-redeployed frontend, and an absent binding census reads as "this deployment states no
+  bindings", which is precisely what an older service IS saying. The decode path carries that
+  reading end to end (`?? []` → empty list → null → available).
+- **Changed, removed, required, or silence could be read as HEALTH → 3 -> 4, in one commit.** The
+  freshness fields below are the second case: absent `staleness_days` is indistinguishable from
+  zero staleness to a client that has learnt to read it, and a field whose silence is a false claim
+  of health is a contract change no matter how it was added.
+
+**Putting these on `/api/v1/parquet/coverage` is a contract change, not an addition** — this is the
+second case above. The Python
 contract is `extra="forbid"` and `tests/interface/test_parquet_routes.py` validates the live payload
 against it; both goldens are reproduced byte-for-byte by the builders. The exact change, in ONE
 commit: `COVERAGE_SCHEMA_VERSION` 3 -> 4 in `parquet_ops/wire.py`, `tests/contract/wire_contract.py`

@@ -32,7 +32,7 @@ DEGENERATE = {
 
 
 def test_a_valid_polygon_repairs_to_wkb_keyed_by_drought_class() -> None:
-    areas = (DroughtArea(drought_monitor_category=0, geometry=VALID_SQUARE),)
+    areas = (DroughtArea(drought_intensity_class=0, geometry=VALID_SQUARE),)
 
     with drought_geometry_session() as session:
         repaired = repair_drought_areas_to_wkb(session, areas)
@@ -43,7 +43,7 @@ def test_a_valid_polygon_repairs_to_wkb_keyed_by_drought_class() -> None:
 
 
 def test_a_self_intersecting_ring_is_repaired_not_rejected() -> None:
-    areas = (DroughtArea(drought_monitor_category=1, geometry=BOWTIE),)
+    areas = (DroughtArea(drought_intensity_class=1, geometry=BOWTIE),)
 
     with drought_geometry_session() as session:
         repaired = repair_drought_areas_to_wkb(session, areas)
@@ -54,8 +54,8 @@ def test_a_self_intersecting_ring_is_repaired_not_rejected() -> None:
 
 def test_multiple_classes_repair_in_one_round_trip_keyed_correctly() -> None:
     areas = (
-        DroughtArea(drought_monitor_category=0, geometry=VALID_SQUARE),
-        DroughtArea(drought_monitor_category=4, geometry=BOWTIE),
+        DroughtArea(drought_intensity_class=0, geometry=VALID_SQUARE),
+        DroughtArea(drought_intensity_class=4, geometry=BOWTIE),
     )
 
     with drought_geometry_session() as session:
@@ -70,8 +70,8 @@ def test_a_geometry_that_repairs_to_empty_refuses_the_whole_release() -> None:
     Matches `sql/ingest/store_drought_area.sql`'s own refusal of the identical case in PostGIS.
     """
     areas = (
-        DroughtArea(drought_monitor_category=0, geometry=VALID_SQUARE),
-        DroughtArea(drought_monitor_category=1, geometry=DEGENERATE),
+        DroughtArea(drought_intensity_class=0, geometry=VALID_SQUARE),
+        DroughtArea(drought_intensity_class=1, geometry=DEGENERATE),
     )
 
     with drought_geometry_session() as session, pytest.raises(DroughtGeometryError, match="D1"):

@@ -1443,15 +1443,17 @@ Three things changed together.
 them. The rule they encode -- a result whose `coverageState` is not `matched` never becomes a
 feature -- must not exist in two places, because the second copy is where it drifts.
 
-**The fetch is gated on the region binding.** `isRegionLayerBoundHere` (in
-`lib/map/layer-region-binding.ts`) answers for a bare manifest slug, and it fails CLOSED on
-manifest silence -- the opposite of the toggle-keyed `isLayerUnboundInRegion` beside it. The
-difference is the evidence source. That helper reads the coverage PAYLOAD, which arrives over
-the network and is silent for a whole deploy window, so silence there must not disable a working
-layer. This one reads `getRegion().enabledLayers`, which is compiled into the bundle and states
-the region's COMPLETE binding set, so absence from it is a claim rather than a gap. Under the PNW
-manifest, which binds no `land-context` layer, the automatic read therefore issues no request at
-all -- which is the whole budget half of B1.
+**The fetch is gated on the region binding.** `layerBindingInRegion` (in
+`lib/map/layer-region-binding.ts`) is the ONE rule both this lane and every layer toggle read:
+payload row when it states one, else the compiled manifest, answering `bound` / `unbound` /
+`not_federated`. Only `unbound` gates the fetch, so a build whose manifest has never heard of the
+slug still reads. `land-context` IS in the platform vocabulary (`platformLayers` in `pnw.ts`,
+`PLATFORM_LAYER_SLUGS` in the service) and no region binds a source for it, so the manifest STATES
+`unbound` and the automatic read issues no request at all -- which is the budget half of B1. This
+lane is therefore dark in the pilot by declaration, not by omission: the caption it renders quotes
+a governed absence the manifest actually makes, and the day a land-context lane publishes, adding
+the binding to `enabledLayers`/`pnw.json` lights the whole lane with no code change
+(STYLE-REVIEW-W5 B1).
 
 **A second source, never the click lane's.** `LandContextViewportLayer` holds
 `land-context-viewport`; `LandContextLayer` keeps `land-context-results`, and

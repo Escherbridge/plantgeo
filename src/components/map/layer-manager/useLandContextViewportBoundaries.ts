@@ -19,7 +19,7 @@ import {
   type LandContextViewportState,
 } from "@/hooks/useLandContextViewport";
 import {
-  isRegionLayerBoundHere,
+  layerBindingInRegion,
   LAND_CONTEXT_REGION_LAYER_SLUG,
 } from "@/lib/map/layer-region-binding";
 import {
@@ -68,6 +68,18 @@ const COVERAGE_STATE_SENTENCES: Readonly<Record<CoverageState, string>> = {
   unavailable_history: "history is unavailable; only the current reference can be shown",
 };
 
+/**
+ * A read that did not complete is drawn as a FAULT, not as an amber governed absence (W4 S4, W5 S6).
+ *
+ * `upstream_unavailable` is the plane's own word for "the lookup failed", and it arrives INSIDE a
+ * result that returned -- so the `query.isError` arm never sees it and every such view used to
+ * render in the identical amber pill as "no source is bound here". Those two are the opposite
+ * claim: one says the record is complete, the other says nothing is known.
+ */
+function toneForCoverage(states: CoverageState[]): ParquetLayerFault["tone"] {
+  return states.includes("upstream_unavailable") ? "fault" : "notice";
+}
+
 function describeCoverageStates(states: CoverageState[]): string {
   const stated = states.filter((state) => state !== "matched");
   if (stated.length === 0) return "";
@@ -99,9 +111,12 @@ function budgetRefusalReason(data: unknown): string | null {
 export function useLandContextViewportBoundaries(): LandContextViewportBoundaries {
   const enabledGroups = useLandContextStore((state) => state.enabledGroups);
   const capabilities = useTimeSliderStore((state) => state.capabilities);
-  // The gate that makes "an unbound region issues no pan-reads" true, read once per render from
-  // the same binding authority every layer toggle reads.
-  const isLayerBoundInRegion = isRegionLayerBoundHere(capabilities, LAND_CONTEXT_REGION_LAYER_SLUG);
+  // The gate that makes "an unbound region issues no pan-reads" true, read once per render through
+  // the SAME rule every layer toggle reads. `not_federated` is not an absence: a build whose
+  // manifest has never heard of this slug must not have its reference plane switched off by that
+  // silence, which is why the verdict is compared against `unbound` and not against `bound`.
+  const isLayerBoundInRegion =
+    layerBindingInRegion(capabilities, LAND_CONTEXT_REGION_LAYER_SLUG) !== "unbound";
 
   const lane = useLandContextViewport({ enabledGroups, isLayerBoundInRegion });
   const { state, query } = lane;
@@ -250,7 +265,7 @@ function readingCaption(input: CaptionInput): ParquetLayerFault | null {
     const isUnbound = input.coverageStates.includes(SOURCE_UNBOUND_FOR_REGION);
     return {
       layerId: isUnbound ? "land-context-source-unbound" : "land-context-empty",
-      tone: "notice",
+      tone: toneForCoverage(input.coverageStates),
       message: isUnbound
         ? `No land-context boundaries are drawn for this view: no admitted source is bound to this plane here, so none were read.${describeCoverageStates(input.coverageStates)}`
         : `The land-context read for this view returned no boundaries.${describeCoverageStates(input.coverageStates)}`,
@@ -259,7 +274,7 @@ function readingCaption(input: CaptionInput): ParquetLayerFault | null {
   if (input.phase === "partial") {
     return {
       layerId: "land-context-partial",
-      tone: "notice",
+      tone: toneForCoverage(input.coverageStates),
       message: `${input.featureCount} land-context boundaries are drawn for this view, and they are not the whole answer.${describeCoverageStates(input.coverageStates)}`,
     };
   }

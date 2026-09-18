@@ -10,7 +10,7 @@
 
 import { LAYER_REGISTRY, type LayerToggleId } from "@/lib/map/layer-registry";
 import { getRegion } from "@/lib/region/region";
-import type { SliderCapabilities, SliderLayerBinding } from "@/types/time-slider";
+import type { SliderCapabilities } from "@/types/time-slider";
 
 /**
  * Warehouse layer name to the region-manifest layer slug it binds through.
@@ -60,31 +60,50 @@ export function regionLayerSlugForToggle(layerId: LayerToggleId): string | null 
 }
 
 /**
- * True only when the payload EXPLICITLY states this toggle's layer is unbound in this region.
+ * What this deployment's region says about one manifest layer slug: the ONE binding rule.
  *
- * Fail-OPEN on every unknown, and deliberately so: a null payload, a serving side that states no
- * bindings, a toggle with no manifest layer and a layer the list simply does not mention all read
- * as available. The only claim strong enough to disable a control is the serving side naming the
- * layer `unbound`, because every other case is silence, and silence during a deploy window would
- * blank a layer that works.
+ * - `bound` -- a source fills this layer here; the toggle works and the lane may fetch.
+ * - `unbound` -- the layer IS in the platform vocabulary and this region binds no source for it.
+ *   A governed absence with a named reason (`federation.md` §2), never an outage.
+ * - `not_federated` -- the slug is not a platform layer at all, so binding is not a question that
+ *   applies to it. Treated as available: `interventions`, an uploaded layer and a future slug this
+ *   build has never heard of are all here, and none of them is "unavailable in this region".
+ *
+ * Two evidence sources, in this order, and the SAME verdict for the same evidence -- which is what
+ * the two helpers this replaced did not do (STYLE-REVIEW-W5 B1):
+ *
+ * 1. The coverage PAYLOAD, when it states a row for the slug. It is the serving side's live answer
+ *    and outranks a bundle that may be a deploy behind.
+ * 2. The compiled MANIFEST otherwise. `platformLayers` is the platform's whole vocabulary and
+ *    `enabledLayers` this region's bindings, so a slug in the first and absent from the second is a
+ *    STATEMENT that nothing fills it -- not the silence the old toggle helper failed open on. A
+ *    slug in neither is `not_federated`.
+ *
+ * Payload silence can therefore no longer disable a layer the manifest binds (the deploy-window
+ * cost the old fail-open rule was written for), and it no longer dresses a manifest-declared
+ * absence as a working toggle that draws an empty map.
  */
-export function isLayerUnboundInRegion(
+export type LayerRegionBinding = "bound" | "unbound" | "not_federated";
+
+export function layerBindingInRegion(
   capabilities: SliderCapabilities | null,
-  layerId: LayerToggleId
-): boolean {
-  return regionLayerBindingForToggle(capabilities, layerId)?.binding === "unbound";
+  layerSlug: string
+): LayerRegionBinding {
+  const stated = capabilities?.layerBindings?.find((binding) => binding.layerSlug === layerSlug);
+  if (stated !== undefined) return stated.binding === "unbound" ? "unbound" : "bound";
+  const region = getRegion();
+  if (!region.platformLayers.includes(layerSlug)) return "not_federated";
+  return region.enabledLayers.some((binding) => binding.layerSlug === layerSlug) ? "bound" : "unbound";
 }
 
-/** This toggle's binding entry from the payload, or null when nothing states one. */
-export function regionLayerBindingForToggle(
+/** The same verdict for a map toggle; a toggle with no manifest layer is `not_federated`. */
+export function toggleBindingInRegion(
   capabilities: SliderCapabilities | null,
   layerId: LayerToggleId
-): SliderLayerBinding | null {
-  const bindings = capabilities?.layerBindings;
-  if (bindings === undefined || bindings.length === 0) return null;
+): LayerRegionBinding {
   const layerSlug = regionLayerSlugForToggle(layerId);
-  if (layerSlug === null) return null;
-  return bindings.find((binding) => binding.layerSlug === layerSlug) ?? null;
+  if (layerSlug === null) return "not_federated";
+  return layerBindingInRegion(capabilities, layerSlug);
 }
 
 /**
@@ -98,37 +117,17 @@ export function unboundLayerCaption(
   capabilities: SliderCapabilities | null,
   layerId: LayerToggleId
 ): string | null {
-  if (!isLayerUnboundInRegion(capabilities, layerId)) return null;
+  if (toggleBindingInRegion(capabilities, layerId) !== "unbound") return null;
   return `${LAYER_REGISTRY[layerId].label} is not available in this region: no data source is bound for it here.`;
 }
 
 /**
- * The manifest layer slug the land-context reference plane would bind through.
+ * The manifest layer slug the land-context reference plane binds through.
  *
  * Land-context is not a `LayerToggleId` -- it has its own group store and its own dock section --
- * so the toggle-keyed helpers above cannot answer for it. It is named here rather than inside the
- * hook so the one place that answers "is this layer bound in this region" stays one place.
+ * so the toggle-keyed helper cannot answer for it. It is named here rather than inside the hook so
+ * the one place that answers "is this layer bound in this region" stays one place. It is a platform
+ * layer (`platformLayers`) that no region binds a source for yet, so `layerBindingInRegion` answers
+ * `unbound` from a manifest STATEMENT rather than from an omission.
  */
 export const LAND_CONTEXT_REGION_LAYER_SLUG = "land-context";
-
-/**
- * Whether a bare manifest layer slug is bound to a source in THIS deployment's region.
- *
- * Fails CLOSED on manifest silence, which is the opposite of `isLayerUnboundInRegion` above, and
- * the difference is the difference between the two evidence sources. That helper reads the
- * coverage PAYLOAD, which arrives over the network and is silent for a whole deploy window, so
- * silence there must not disable a working layer. This reads `getRegion().enabledLayers`, which is
- * compiled into the bundle and states the region's COMPLETE binding set (`federation.md` §2) --
- * absence from it is a claim, not a gap, and the claim is that no source fills this layer here.
- *
- * The payload still wins when it states something: a serving side that names the layer `unbound`
- * is reporting a binding the manifest has not caught up with yet.
- */
-export function isRegionLayerBoundHere(
-  capabilities: SliderCapabilities | null,
-  layerSlug: string
-): boolean {
-  const stated = capabilities?.layerBindings?.find((binding) => binding.layerSlug === layerSlug);
-  if (stated !== undefined) return stated.binding !== "unbound";
-  return getRegion().enabledLayers.some((binding) => binding.layerSlug === layerSlug);
-}

@@ -177,7 +177,11 @@ export function deriveLandContextNotices(input: LandContextNoticeInput): LandCon
   }
   return Array.from(gapsByState.entries()).map(([coverageState, gaps]) => ({
     layerId: `land-context-coverage-${coverageState}`,
-    tone: "notice" as const,
+    // A read that did not complete is a FAULT; every other coverage state is a governed absence and
+    // stays amber (W4 S4, W5 S6). `upstream_unavailable` arrives inside a result that RETURNED, so
+    // the `queryStatus === "error"` arm above never sees it, and until now it drew in the identical
+    // amber pill as "no admitted source is bound to them here" -- the opposite claim.
+    tone: coverageState === "upstream_unavailable" ? ("fault" as const) : ("notice" as const),
     message: coverageMessage(coverageState, families, where, gaps),
   }));
 }

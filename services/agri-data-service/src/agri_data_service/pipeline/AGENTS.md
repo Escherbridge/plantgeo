@@ -48,6 +48,16 @@ would be a cross-lane import three times over
 (`tests/test_layer_import_contract.py::test_lanes_do_not_import_each_other`). One level up, it is
 ordinary pipeline-layer wiring.
 
+**The registry is keyed by LAYER, not by source slug alone** (`SourceRegistry`: one
+`Mapping[str, <LayerProtocol>]` per layer). A flat `{slug: object}` cannot say which layer an
+implementation serves, so the two resolvers could only assert their return type — three coded
+`type: ignore`s, none of them a missing-stub case — and the boot check could not test conformance
+at all. With the per-layer maps, `resolve_drought_source` returns `DroughtSource` because that is
+the map it reads, and `declared_layer_source_contracts()` can hand `bindings.py` the protocol each
+layer expects so `drought -> ssurgo` fails `create_app()` instead of a scheduled turn
+(STYLE-REVIEW-W5 B2). `coverage_claims()` and `source_instances()` flatten the same registry for
+the two boot arguments.
+
 Its imports are inside the function, not at module scope: each source module pulls its layer's
 ingest transport and lane registry, and the sole caller is `app.py`'s boot check. Paying for all of
 `pipeline/direct/` merely to name the registry would put a heavy third edge into the application's

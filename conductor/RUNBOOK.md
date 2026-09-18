@@ -25,6 +25,7 @@ PostgreSQL remains for transactional application data, community interventions, 
 | Botanical profiles | [Species profile lookup](tracks/botanical_species_profile_lookup_20260911/plan.md) | Inspect the authorized Railway lookup, admit provenance-bound growth and plant-composition sources, publish immutable profiles, and validate agent/API/MCP use. |
 | Herbaria specimens | [PNW Herbaria admission](tracks/pnw_herbaria_source_admission_20260911/plan.md) | Owner risk decision 2026-09-13 cleared pre-acquisition gates; UBC v16.43 acquired, safety-inspected, and PUBLISHED to production Parquet (generation `956c0be7...`, superseding `0c0f3cb8...` after the name-join fix below); route and agent tools MOUNTED and live at `plantgeo-parquet-api`. See "Handoff — botanical occurrences" below for full state, what is verified vs. assumed, and the concrete next steps. WTU acquisition still deferred (one-transfer-at-a-time budget). Field-map reconciliation and the v16.42/v16.43 native-ID comparison remain open; `admitted_releases` (the governance JSON) still empty even though data is live in Parquet -- those are different ledgers, see below. |
 | Production release | [Production acceptance](tracks/parquet_production_acceptance_20260901/plan.md) | Cross-layer browser, freshness, schedule burn-in, conservation, rollback, and release verdict after upstream gates pass. |
+| ML and Monte Carlo runtime | [PlantGeo ML service](tracks/plantgeo_ml_service_20260918/plan.md) | Phase 1 push: `services/plantgeo-ml-service/` skeleton answers `/ready` on Railway and agri-data-service builds green with no `method/ml`, `method/monte_carlo`, or ML execution lane. ML work is owned by that track and its own `services/plantgeo-ml-service/RUNBOOK.md`; nothing ML-related is recorded here. |
 | Intervention drawing & draft/proposed overlay | [Intervention drawing visibility](tracks/intervention_drawing_visibility_20260912/plan.md) | Draft/proposed overlay only; "published interventions become visible" is a separate bug gated on the publish-path fix in [Community engagement completion](tracks/community_engagement_completion_20260805/), not on this track. |
 
 ## Operating sequence
@@ -594,6 +595,44 @@ false and should read `coverageNotices`; `servedZoomTier` is a constant with an 
 botanical lanes read at detail zoom with the UBC toggle on; drought/burn records behind the protocols
 are still `object`-typed; `mtbsSnapshot` contract-versioned rename; `OfflinePanel.tsx:52` box (a
 product decision); the two `source.py` shims next release.
+
+**Push `0320a745` (22:52Z, wave 5; receipt `be8d2228`/956) PASS on all four services:** `layer_bindings`
+present with 13 bound layers and `coverage_schema_version` 3; slider capabilities additive-only;
+drought/burn-severity byte-identical through the payload protocols; agent tools answer (one
+transient `tool_read_timeout` on `fire_history_near_point`, cleared on retry); the NDVI lane is
+evaluated in `shadow` on every tick and never executed.
+
+**Style review of wave 5 (`STYLE-REVIEW-W5.md`): CHANGES-REQUIRED, 2 BLOCKER.** (1) `land-context` was
+in neither `PLATFORM_LAYER_SLUGS` nor the manifest, so the fail-closed helper disabled the new
+viewport feature in every region by *omission*, while a sibling helper failed open on the same
+evidence — a live contradiction. (2) `pipeline/source_bindings.py` was `dict[str, object]` behind two
+`type: ignore`s and the boot check never verified that a bound source implements its layer's
+protocol: `drought → ssurgo` passed boot and would have been a runtime `AttributeError`. Also:
+`drought_monitor_category` (USDM's name and 0..4 scale) had leaked into the layer contract;
+`parquet_ops/AGENTS.md`'s version rule was left false by the additive `layer_bindings`; the NDVI
+promoter's index snapshot made a benign pre-read prune look like corruption and all-`not_yet_indexed`
+exited 1 forever; `upstream_unavailable` still drew in governed-absence amber. The LayerManager split
+was judged sound (pure fault builder, single-slice selectors).
+
+**Wave 6 (W6-A on main, one sweep before push).** `land-context` joins the vocabulary (14 slugs) and a
+required `platform_layers` manifest field (Pydantic + Zod, parity-tested; a binding outside it is
+refused); ONE `layerBindingInRegion(capabilities, slug) → bound | unbound | not_federated` (payload row
+wins; else compiled manifest membership), both old helpers deleted, `src/lib/map/AGENTS.md` rewritten —
+the two *silences* differ (payload = gap, manifest = claim), not the two callers. Typed
+`SourceRegistry` (one `Mapping[str, <LayerProtocol>]` per layer, all `type: ignore`s gone) and
+`LayerSourceContracts` so `assert_region_bindings_are_servable` `isinstance`-checks every bound source
+against its layer's `runtime_checkable` Protocol at boot; keyed per layer on purpose — a flat
+implementation map passed vacuously. `drought_intensity_class` declared as the layer's scale
+(USDM-shaped; a differently-scaled source maps in its implementation); storage column `dm_category`
+untouched. Version rule amended: additive optional keys both sides tolerate ship without a bump;
+changed/removed/required keys bump in one commit. Promoter re-reads the index once before raising a
+conflict; `waiting_for_writer` exits 0 and logs once; `all_days_absent` stays non-zero. Fault tone for
+failed reads. `BACKLOG.md` refreshed with the N1–N28 debt table from the three reviews.
+
+**Run-level lesson (six waves, five opus reviews, every one CHANGES-REQUIRED):** each review's
+blockers were the same shape — a rule satisfied in prose and broken by a mechanism a few files away.
+Authoring, verification and review as three separate lanes is what caught them; none surfaced in a
+green sweep. Keep the cadence: review every pushed range, fix in the next wave, never skip.
 
 ## Recovery
 
