@@ -9,6 +9,7 @@
  */
 
 import { LAYER_REGISTRY, type LayerToggleId } from "@/lib/map/layer-registry";
+import { getRegion } from "@/lib/region/region";
 import type { SliderCapabilities, SliderLayerBinding } from "@/types/time-slider";
 
 /**
@@ -99,4 +100,35 @@ export function unboundLayerCaption(
 ): string | null {
   if (!isLayerUnboundInRegion(capabilities, layerId)) return null;
   return `${LAYER_REGISTRY[layerId].label} is not available in this region: no data source is bound for it here.`;
+}
+
+/**
+ * The manifest layer slug the land-context reference plane would bind through.
+ *
+ * Land-context is not a `LayerToggleId` -- it has its own group store and its own dock section --
+ * so the toggle-keyed helpers above cannot answer for it. It is named here rather than inside the
+ * hook so the one place that answers "is this layer bound in this region" stays one place.
+ */
+export const LAND_CONTEXT_REGION_LAYER_SLUG = "land-context";
+
+/**
+ * Whether a bare manifest layer slug is bound to a source in THIS deployment's region.
+ *
+ * Fails CLOSED on manifest silence, which is the opposite of `isLayerUnboundInRegion` above, and
+ * the difference is the difference between the two evidence sources. That helper reads the
+ * coverage PAYLOAD, which arrives over the network and is silent for a whole deploy window, so
+ * silence there must not disable a working layer. This reads `getRegion().enabledLayers`, which is
+ * compiled into the bundle and states the region's COMPLETE binding set (`federation.md` §2) --
+ * absence from it is a claim, not a gap, and the claim is that no source fills this layer here.
+ *
+ * The payload still wins when it states something: a serving side that names the layer `unbound`
+ * is reporting a binding the manifest has not caught up with yet.
+ */
+export function isRegionLayerBoundHere(
+  capabilities: SliderCapabilities | null,
+  layerSlug: string
+): boolean {
+  const stated = capabilities?.layerBindings?.find((binding) => binding.layerSlug === layerSlug);
+  if (stated !== undefined) return stated.binding !== "unbound";
+  return getRegion().enabledLayers.some((binding) => binding.layerSlug === layerSlug);
 }

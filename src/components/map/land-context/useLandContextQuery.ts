@@ -8,7 +8,11 @@ import {
   type LandContextResultMeta,
   type LandContextSelectionInput,
 } from "@/stores/land-context-store";
-import type { LandContextResult } from "@/lib/environmental/land-context-contract";
+import {
+  toCoverageNotices,
+  toResults,
+  type BoundaryResult,
+} from "@/components/map/land-context/land-context-features";
 import { getRegion } from "@/lib/region/region";
 
 /**
@@ -22,7 +26,7 @@ import { getRegion } from "@/lib/region/region";
  * (point or bounded area); group-specific filtering happens client-side on
  * `sourceFeature.familyType` until the reference plane exposes a
  * group-scoped reader. `coverageState` values other than "matched" never
- * fabricate a feature -- see `toFeature` below -- but they are not dropped
+ * fabricate a feature -- see `toFeature` in `land-context-features.ts` -- but are not dropped
  * either: their typed state and verbatim gap strings travel out through
  * `meta.coverageNotices`, which is what lets the UI say "no source admitted
  * for reads yet" in the reader's own words instead of showing a blank map.
@@ -34,76 +38,6 @@ export interface UseLandContextQueryResult {
   isLoading: boolean;
   isError: boolean;
   error: Error | null;
-}
-
-/**
- * What the boundary procedures actually return: the frozen contract result
- * plus the boundary geometry the router decoded server-side
- * (`attachDecodedGeometry` in `src/lib/server/services/land-context/geometry/`).
- * Declared structurally here rather than imported, because this file is
- * browser code and may not import from `@/lib/server/**`
- * (`scripts/check-client-server-imports.mjs`); assigning the inferred tRPC
- * output to this type in `useLandContextQuery` is what keeps the two in step
- * at compile time.
- */
-type BoundaryResult = LandContextResult & { geometry: GeoJSON.Geometry | null };
-
-/**
- * The store's `geometry` is non-nullable, so a source that carried no
- * geometry is represented by an EMPTY GeometryCollection: MapLibre draws
- * nothing for it, the accessible list and the panel still list it, and no
- * shape the source did not provide is ever fabricated. A decoded geometry
- * from the router replaces this whenever `geometryWkb` was present.
- */
-const NO_GEOMETRY: GeoJSON.GeometryCollection = { type: "GeometryCollection", geometries: [] };
-
-const FAMILY_TO_GROUP: Record<string, LandContextGroupId> = {
-  parcel: "parcels-land-use",
-  land_use: "parcels-land-use",
-  electric_service_territory: "electric-utility-territories",
-  blm_surface_management: "blm-lands",
-  state_managed_land: "state-managed-lands",
-};
-
-function groupForResult(result: LandContextResult): LandContextGroupId | null {
-  const familyType = result.sourceFeature?.familyType;
-  if (!familyType) return null;
-  return FAMILY_TO_GROUP[familyType] ?? null;
-}
-
-function toFeature(result: BoundaryResult, index: number): LandContextFeature | null {
-  if (result.coverageState !== "matched" || !result.sourceFeature) return null;
-  const group = groupForResult(result);
-  if (!group) return null;
-
-  return {
-    id: `${result.sourceFeature.sourceNamespace}:${result.sourceFeature.nativeFeatureKey}:${index}`,
-    group,
-    title: result.organizationOffice?.officialPublicName ?? result.sourceFeature.nativeFeatureKey,
-    category: result.sourceFeature.interestType,
-    sourceVintage: result.sourceRelease?.sourceVersion,
-    contactRouteSummary: result.documentedHelp ?? undefined,
-    geometry: result.geometry ?? NO_GEOMETRY,
-    contactVerified: result.route?.status === "active",
-  };
-}
-
-function toResults(
-  results: BoundaryResult[],
-  enabledGroups: Record<LandContextGroupId, boolean>
-): LandContextFeature[] {
-  return results
-    .map((result, index) => toFeature(result, index))
-    .filter((feature): feature is LandContextFeature => feature !== null && enabledGroups[feature.group]);
-}
-
-/** Every non-matched result, kept as a typed coverage statement with its verbatim gap strings. */
-function toCoverageNotices(
-  results: BoundaryResult[]
-): NonNullable<LandContextResultMeta["coverageNotices"]> {
-  return results
-    .filter((result) => result.coverageState !== "matched")
-    .map((result) => ({ coverageState: result.coverageState, gaps: result.unresolvedGaps }));
 }
 
 export function useLandContextQuery(
