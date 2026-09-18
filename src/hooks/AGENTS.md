@@ -190,15 +190,23 @@ device `WATERSHED_LIST_MAX_SQUARE_DEGREES` uses in `useViewportProxiedLayers.ts`
   every pan. Raising it is a scoped, reviewed budget change and an owner decision, not a knob.
 - `LAND_CONTEXT_RUNG_MAX_BBOX_SQUARE_DEGREES` mirrors `RUNG_MAX_BBOX_SQUARE_DEGREES`
   (`land-context/parquet-reader.ts`).
-- The rung is **labelled** here and **selected** on the server from the bbox it receives. The
-  procedure takes no zoom on purpose: a zoom in the input would be part of the query key, and the
-  map and any panel reading the same viewport would split into two entries drawing two different
-  aggregations of it.
+- The rung is **selected on the server** from the bbox it receives. The procedure takes no zoom on
+  purpose: a zoom in the input would be part of the query key, and the map and any panel reading
+  the same viewport would split into two entries drawing two different aggregations of it.
 
 `landContextRungForViewport` picks from zoom AND bbox size -- the finest rung at or below the
 zoom's own tier that still admits the area. Zoom alone is the defect the 2026-09-14 handoff
 confirmed against the botanical plane: a normal regional viewport landed on a rung bounded at 100
 square degrees and was refused, while the rung below it would have answered at 16x the budget.
+
+**The client walk is a gate, never a caption.** `selectServingRung` (`parquet-reader.ts`) takes no
+zoom and walks finest-first, so for a small bbox at a low map zoom it can serve two rungs finer than
+`landContextRungForViewport` would name. The hook therefore uses its walk only to decide whether
+*any* rung admits the viewport (`no_rung_serves_this_viewport`), and reports `servedZoomTier`, which
+is the rung the SERVER states. `resolveBoundaryInArea` states none today, so that field is
+`"rung_unknown"` once a result is in hand -- a value a caption must render as "rung not reported",
+never as a tier (STYLE-REVIEW-W2 S3). Giving it a real tier means adding the served rung to the
+response, not re-deriving it on the client.
 
 Mount snippet for `LayerManager.tsx` (not applied here; `LayerManager.tsx` is another lane's file):
 

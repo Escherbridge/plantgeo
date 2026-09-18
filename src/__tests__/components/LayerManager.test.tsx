@@ -239,7 +239,7 @@ const landContextLane = vi.hoisted(() => ({ state: "no_group_enabled" as string 
 vi.mock("@/hooks/useLandContextViewport", () => ({
   useLandContextViewport: () => ({
     bbox: null,
-    expectedZoomTier: null,
+    servedZoomTier: null,
     state: landContextLane.state,
     query: { data: undefined, isError: false, isFetching: false },
   }),
