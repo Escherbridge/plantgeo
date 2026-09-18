@@ -17,8 +17,11 @@ from agri_data_service.pipeline.direct.botanical_occurrences.forward import (
     run_botanical_occurrences_forward,
 )
 from agri_data_service.pipeline.direct.botanical_occurrences.pointer import (
+    LATEST_POINTER_KIND,
+    LEGACY_POINTER_KIND,
     POINTER_SCHEMA_VERSION,
     BotanicalPointerMalformedError,
+    manifest_digest,
     parse_latest_pointer,
 )
 from agri_data_service.pipeline.direct.botanical_occurrences.publish import (
@@ -80,24 +83,81 @@ def test_a_lane_that_never_published_is_missing_not_empty(tmp_path: Path) -> Non
     assert answer["reason"] == "pointer_missing"
 
 
-def test_a_bucket_carrying_only_the_legacy_pointer_fails_closed(
+def test_a_bucket_carrying_only_the_legacy_pointer_is_bridged_and_says_so(
     published: tuple[LocalPublicationTarget, str],
 ) -> None:
-    """The reader must NOT fall back to `current.json` -- an unbound pointer proves nothing."""
-    target, _ = published
+    """Bridge-then-cut: a pre-4a bucket keeps serving, and the answer NAMES the weaker pointer.
+
+    The digest on a bridged answer is computed from the manifest bytes this read fetched, not read
+    off a pointer that never bound one -- so the provenance describes what was actually served.
+    """
+    target, release_set_id = published
     _pointer_file(target).unlink()
     assert (target.root / pointer_path()).is_file()
+
     answer = read_current_botanical_release(target=target)
-    assert answer["reason"] == "pointer_missing"
+
+    assert answer["state"] == "current"
+    assert answer["generation_id"] == release_set_id
+    assert answer["pointer_kind"] == LEGACY_POINTER_KIND
+    assert answer["pointer_written_at"] is None, "a legacy pointer records no write time; never invent one"
+    manifest_bytes = (target.root / generation_prefix(release_set_id) / "manifest.json").read_bytes()
+    assert answer["manifest_sha256"] == manifest_digest(manifest_bytes)
 
 
-def test_a_pointer_that_is_not_the_document_this_lane_writes_is_malformed(
+def test_the_checksum_bound_pointer_is_named_as_itself(published: tuple[LocalPublicationTarget, str]) -> None:
+    """The two kinds must be distinguishable, or the bridge silently becomes the permanent path."""
+    target, _ = published
+    assert read_current_botanical_release(target=target)["pointer_kind"] == LATEST_POINTER_KIND
+
+
+def test_a_legacy_pointer_naming_an_incomplete_generation_fails_closed(
+    published: tuple[LocalPublicationTarget, str],
+) -> None:
+    """The bridge re-reads the completion marker BECAUSE nothing else on this path proves it."""
+    target, release_set_id = published
+    _pointer_file(target).unlink()
+    (target.root / generation_prefix(release_set_id) / COMPLETION_MARKER).unlink()
+
+    answer = read_current_botanical_release(target=target)
+
+    assert answer["state"] == "unavailable"
+    assert answer["reason"] == "pointer_stale"
+
+
+def test_a_legacy_pointer_naming_a_vanished_manifest_fails_closed(
+    published: tuple[LocalPublicationTarget, str],
+) -> None:
+    target, release_set_id = published
+    _pointer_file(target).unlink()
+    (target.root / generation_prefix(release_set_id) / "manifest.json").unlink()
+
+    assert read_current_botanical_release(target=target)["reason"] == "pointer_stale"
+
+
+def test_an_unreadable_legacy_pointer_is_malformed_not_bridged(
     published: tuple[LocalPublicationTarget, str],
 ) -> None:
     target, _ = published
+    _pointer_file(target).unlink()
+    (target.root / pointer_path()).write_bytes(b"{")
+
+    assert read_current_botanical_release(target=target)["reason"] == "pointer_malformed"
+
+
+def test_a_broken_checksum_pointer_is_never_bridged_around(
+    published: tuple[LocalPublicationTarget, str],
+) -> None:
+    """A present-but-corrupt 4a pointer must not fall through to the legacy one.
+
+    Falling through would hide exactly the corruption the checksum exists to surface, and would do
+    it on a bucket where the operator believes the cut has already happened.
+    """
+    target, _ = published
     _pointer_file(target).write_bytes(b'{"release_set_id": "whatever"}')
-    answer = read_current_botanical_release(target=target)
-    assert answer["reason"] == "pointer_malformed"
+    assert (target.root / pointer_path()).is_file()
+
+    assert read_current_botanical_release(target=target)["reason"] == "pointer_malformed"
 
 
 def test_a_pointer_naming_a_vanished_manifest_is_stale(published: tuple[LocalPublicationTarget, str]) -> None:

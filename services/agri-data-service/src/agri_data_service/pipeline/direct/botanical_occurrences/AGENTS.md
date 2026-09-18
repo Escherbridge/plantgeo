@@ -177,6 +177,28 @@ unverifiable answer the binding exists to refuse.
 STALE means the binding broke, never that the pointer is old: a release set may legitimately be
 current for months, so a wall-clock ceiling would refuse correct data on a calendar.
 
+## The legacy bridge, and when to delete it
+
+The reader has a SECOND path, taken only when `_LATEST.json` is absent and `current.json` is
+present: it resolves through the legacy pointer, re-reads `_COMPLETE` (nothing else on that path
+proves the generation finished publishing), digests the manifest bytes it just fetched, and stamps
+`pointer_kind="legacy_current_json"` on the answer — `"latest_v1"` for the §4a path. It logs one
+`botanical_occurrences_legacy_pointer_bridge` warning per resolution.
+
+This is the owner's bridge-then-cut pattern (RUNBOOK, repoint decisions 2026-08-25), not a fallback
+policy. Without it, shipping the §4a reader takes a live, correct production lane dark against a
+bucket that only ever had `current.json`. With it, the lane keeps serving and every answer says
+which pointer it came from, so "still bridged" is a visible state rather than a silent one.
+
+**A present-but-broken `_LATEST.json` is NEVER bridged around.** Falling through would hide exactly
+the corruption the checksum exists to surface, on a bucket where the operator believes the cut
+already happened.
+
+**Deleting the bridge is a follow-up commit**, owed after the owner authorises `advance_latest_pointer`
+against production. The cut is: advance the pointer, confirm `pointer_kind` reads `latest_v1` in the
+logs, then delete `_resolve_legacy_current_pointer` and its call site. Leaving it indefinitely turns
+a migration aid into a second serving path with weaker guarantees.
+
 `advance_latest_pointer()` is the upgrade path for a bucket published before this document existed
 (production carries generation `956c0be7…` under a `current.json` with no `_LATEST.json`). It reads
 that generation's own manifest for the digest and refuses a directory with no completion marker, so

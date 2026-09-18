@@ -19,21 +19,27 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
 import polars as pl
+import structlog
 from botocore.exceptions import ConnectionError as ObjectStoreConnectionError  # type: ignore[import-untyped]
 from botocore.exceptions import HTTPClientError
 
 from agri_data_service.config import settings as default_settings
 from agri_data_service.pipeline.direct.botanical_occurrences.pointer import (
+    LATEST_POINTER_KIND,
+    LEGACY_POINTER_KIND,
+    POINTER_SCHEMA_VERSION,
     BotanicalPointerMalformedError,
     manifest_digest,
     parse_latest_pointer,
 )
 from agri_data_service.pipeline.direct.botanical_occurrences.publish import (
     COMPLETION_MARKER,
+    MANIFEST_NAME,
     PART_NAME,
     LocalPublicationTarget,
     generation_prefix,
     latest_pointer_path,
+    pointer_path,
     publication_target,
     read_manifest,
 )
@@ -45,6 +51,8 @@ if TYPE_CHECKING:
 
     from agri_data_service.config import Settings
     from agri_data_service.pipeline.direct.botanical_occurrences.publish import PublicationTarget
+
+logger = structlog.get_logger()
 
 PRODUCT: Final = "botanical-occurrences"
 _TRANSPORT_UNAVAILABLE_REASON: Final = "the botanical occurrence object store could not complete the bounded read"
@@ -533,23 +541,124 @@ def pointer_unavailable(reason: str, detail: str) -> dict[str, Any]:
     }
 
 
+def _current_answer(
+    *,
+    generation_id: str,
+    manifest_key: str,
+    manifest_sha256: str,
+    pointer_kind: str,
+    pointer_written_at: str | None,
+    manifest: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Shape one resolved `current` answer identically for both pointer kinds.
+
+    `pointer_schema_version` describes THIS ANSWER's field set, not the document behind it -- the
+    legacy pointer has no version of its own, and inventing one for it would be a claim about a file
+    that makes no such claim. `pointer_kind` is the field that says which document answered, and it
+    is the one a consumer branches on.
+    """
+    result: dict[str, Any] = {
+        "product": PRODUCT,
+        "state": "current",
+        "release_set_id": generation_id,
+        "generation_id": generation_id,
+        "manifest_sha256": manifest_sha256,
+        "manifest_key": manifest_key,
+        "pointer_kind": pointer_kind,
+        "pointer_schema_version": POINTER_SCHEMA_VERSION,
+        "pointer_written_at": pointer_written_at,
+        "taxonomy_recipe_version": manifest.get("taxonomy_recipe_version"),
+        "qc_policy_version": manifest.get("qc_policy_version"),
+    }
+    published_at = manifest.get("published_at")
+    if published_at is not None:
+        result["published_at"] = published_at
+    return result
+
+
+def _resolve_legacy_current_pointer(resolved_target: PublicationTarget) -> dict[str, Any] | None:
+    """Resolve through `current.json` when no `_LATEST.json` exists, or None when neither does.
+
+    THE BRIDGE HALF of the owner's bridge-then-cut pattern (RUNBOOK, repoint decisions 2026-08-25).
+    A bucket published before the 4a pointer existed carries only `current.json`, and refusing it
+    would take a live, correct lane dark for the duration of a migration nobody has authorized yet.
+
+    It is a bridge, not a second serving path, and it buys back what the checksum-bound pointer
+    gives for free rather than skipping it: the completion marker IS re-read here (there is no
+    pointer written after it to stand in for that proof), and the digest is computed from the
+    manifest bytes THIS read fetched, so the provenance reported is of what was actually read. The
+    answer is stamped `pointer_kind="legacy_current_json"` so no consumer can mistake the weaker
+    binding for the stronger one, and every resolution logs one line, so the bridge is visible in
+    the deployment's logs rather than being a silent fallback that outlives its migration.
+    """
+    payload = resolved_target.read_bytes(pointer_path())
+    if payload is None:
+        return None
+    try:
+        generation_id = json.loads(payload)["release_set_id"]
+    except (json.JSONDecodeError, KeyError, TypeError) as error:
+        return pointer_unavailable("pointer_malformed", f"the legacy current pointer is not readable: {error}")
+    if not isinstance(generation_id, str) or not generation_id:
+        return pointer_unavailable("pointer_malformed", "the legacy current pointer does not name a release_set_id")
+    prefix = generation_prefix(generation_id)
+    if not resolved_target.exists(f"{prefix}/{COMPLETION_MARKER}"):
+        # No marker means the generation was never finished publishing. The 4a path proves this by
+        # the pointer having been written after the marker; here there is nothing to infer it from,
+        # so it is checked directly and refused rather than assumed.
+        return pointer_unavailable(
+            "pointer_stale",
+            f"the legacy current pointer names {generation_id}, which carries no completion marker",
+        )
+    manifest_key = f"{prefix}/{MANIFEST_NAME}"
+    manifest_bytes = resolved_target.read_bytes(manifest_key)
+    if manifest_bytes is None:
+        return pointer_unavailable("pointer_stale", f"the legacy current pointer names {manifest_key}, which is absent")
+    try:
+        manifest: dict[str, Any] = json.loads(manifest_bytes)
+    except json.JSONDecodeError as error:
+        return pointer_unavailable("pointer_malformed", f"the legacy manifest is not readable JSON: {error}")
+    logger.warning(
+        "botanical_occurrences_legacy_pointer_bridge",
+        product=PRODUCT,
+        generation_id=generation_id,
+        detail="resolved through current.json; run advance_latest_pointer to cut over to _LATEST.json",
+    )
+    return _current_answer(
+        generation_id=generation_id,
+        manifest_key=manifest_key,
+        manifest_sha256=manifest_digest(manifest_bytes),
+        pointer_kind=LEGACY_POINTER_KIND,
+        # A legacy pointer records no write time. Reported as null rather than backfilled from the
+        # manifest: the manifest's timestamp is when the GENERATION was published, not when the
+        # pointer moved to it, and conflating the two would invent provenance.
+        pointer_written_at=None,
+        manifest=manifest,
+    )
+
+
 def read_current_botanical_release(
     *,
     root: str | Path | None = None,
     source: Settings | None = None,
     target: PublicationTarget | None = None,
 ) -> dict[str, Any]:
-    """Resolve the checksum-bound pointer to its generation, or fail closed saying exactly why.
+    """Resolve the current generation, or fail closed saying exactly why. Two pointer kinds, one shape.
 
-    ONE POINTER GET AND ONE DATA GET, never a listing (layer-lanes 4a). The manifest is fetched by
-    the key the pointer names and admitted only when its digest matches the one the pointer bound,
-    so a half-advanced pointer, a replaced manifest and a truncated write are all caught here rather
-    than surfacing later as an answer from a generation nobody reconciled. The completion marker is
-    deliberately NOT re-read: the pointer is written after it, and the digest binds the exact bytes.
+    THE 4a PATH IS THE ONLY ONE THAT PROVES ITSELF: one pointer GET and one data GET, never a
+    listing, with the manifest admitted only when its digest matches the one the pointer bound. A
+    half-advanced pointer, a replaced manifest and a truncated write are all caught here rather than
+    surfacing later as an answer from a generation nobody reconciled. The completion marker is
+    deliberately NOT re-read on this path: the pointer is written after it, and the digest binds the
+    exact bytes.
 
-    STALE means the binding is broken -- the manifest is gone, or names a different generation --
-    not that the pointer is old. A release set may legitimately be the current one for months, so a
-    wall-clock ceiling here would refuse correct data on a calendar.
+    THE LEGACY PATH IS A BRIDGE with an expiry, taken ONLY when `_LATEST.json` is absent and
+    `current.json` is present. It re-reads the completion marker because nothing else proves it, and
+    it stamps `pointer_kind` so an honest answer is never mistaken for a checksum-bound one -- see
+    `_resolve_legacy_current_pointer`. A present-but-BROKEN 4a pointer is never bridged.
+
+    STALE means the binding is broken -- the manifest is gone, names a different generation, or was
+    never completed -- not that the pointer is old. A release set may legitimately be the current one
+    for months, so a wall-clock ceiling here would refuse correct data on a calendar.
     """
     try:
         resolved_target = target or publication_target(root, source=source)
@@ -558,12 +667,17 @@ def read_current_botanical_release(
     try:
         payload = resolved_target.read_bytes(latest_pointer_path())
         if payload is None:
+            bridged = _resolve_legacy_current_pointer(resolved_target)
+            if bridged is not None:
+                return bridged
             return pointer_unavailable(
                 "pointer_missing", "no generation has ever been published for botanical-occurrences"
             )
         try:
             pointer = parse_latest_pointer(payload)
         except BotanicalPointerMalformedError as error:
+            # NOT bridged: a present-but-broken 4a pointer is a publication fault, and quietly
+            # answering from the legacy one would hide exactly the corruption it proves.
             return pointer_unavailable("pointer_malformed", str(error))
         if pointer.product != PRODUCT:
             return pointer_unavailable(
@@ -588,22 +702,14 @@ def read_current_botanical_release(
         return pointer_unavailable(
             "pointer_stale", f"the bound manifest names a generation other than {pointer.generation_id}"
         )
-    result: dict[str, Any] = {
-        "product": PRODUCT,
-        "state": "current",
-        "release_set_id": pointer.generation_id,
-        "generation_id": pointer.generation_id,
-        "manifest_sha256": pointer.manifest_sha256,
-        "manifest_key": pointer.manifest_key,
-        "pointer_schema_version": pointer.pointer_schema_version,
-        "pointer_written_at": pointer.pointer_written_at,
-        "taxonomy_recipe_version": manifest.get("taxonomy_recipe_version"),
-        "qc_policy_version": manifest.get("qc_policy_version"),
-    }
-    published_at = manifest.get("published_at")
-    if published_at is not None:
-        result["published_at"] = published_at
-    return result
+    return _current_answer(
+        generation_id=pointer.generation_id,
+        manifest_key=pointer.manifest_key,
+        manifest_sha256=pointer.manifest_sha256,
+        pointer_kind=LATEST_POINTER_KIND,
+        pointer_written_at=pointer.pointer_written_at,
+        manifest=manifest,
+    )
 
 
 def encode_botanical_occurrences(result: Mapping[str, Any]) -> bytes:
