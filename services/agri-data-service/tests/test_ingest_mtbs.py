@@ -286,7 +286,9 @@ def test_burn_severity_bounding_box_is_the_region_manifest_burn_severity_sub_env
 
 def test_the_deprecated_bbox_alias_still_resolves_and_warns() -> None:
     """`PACIFIC_NORTHWEST_BBOX` survives one more release as a lazily resolved, warning alias."""
-    from agri_data_service.ingest import mtbs as mtbs_module
+    from agri_data_service.ingest import (  # noqa: PLC0415 - the module object itself is the assertion target, not a name from it
+        mtbs as mtbs_module,
+    )
 
     with pytest.deprecated_call():
         alias_value = mtbs_module.PACIFIC_NORTHWEST_BBOX

@@ -278,7 +278,9 @@ def evaluate_support(  # noqa: PLR0913 - release set, support, records, associat
         )
 
     if include_evaluated_zero:
-        evaluations.extend(_evaluated_zero_cells(support, declared_envelope, set(cells), release_set_id, excluded_total))
+        evaluations.extend(
+            _evaluated_zero_cells(support, declared_envelope, set(cells), release_set_id, excluded_total)
+        )
     return tuple(evaluations)
 
 

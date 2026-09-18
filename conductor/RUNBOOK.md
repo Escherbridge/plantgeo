@@ -507,6 +507,43 @@ partition's content SHA (reusing `foundation/canonical.py`), receipts in the obj
 sweep (a `scrollIntoView` error in `RegionalIntelligencePanel.tsx:687`) on files no wave touched,
 after passing in the wave-1 sweep; treated as flaky until it fails twice.
 
+**Pushes `9f5f936a` (20:41Z, wave 2; receipt `f1f6410e`/934) and `2271e394` (21:06Z, wave 3;
+receipt `02216205`/950).** `9f5f936a` PASS on all four services: land-context tRPC answers the typed
+governed-absence string, burn-severity/drought byte-identical, `vegetation-ndvi-governed-plane-promotion`
+listed `active: false` and never ticks.
+
+**Wave 3 (merged `65029196`, verifier `VERIFIER-W3.md` APPROVE, 2762 vitest / 4824 pytest).**
+W3-B: per-layer source `Protocol`s — `pipeline/direct/{drought,burn_severity,soil_survey}/source_protocol.py`,
+sources re-homed to `drought/usdm.py` and `burn_severity/mtbs.py` (old `source.py` paths are deprecation
+shims), `pipeline/source_bindings.py` registry, and `assert_region_bindings_are_servable` as the first
+statement of `create_app` (ISO-code containment, not geometry). **`pipeline/direct/soil/` is the ERA5 soil
+*field* writer, not SSURGO; `soil-survey` has no producer at all** (`lane_registry.py:315` already refuses
+its watermark), so its binding declares coverage and raises from pull rather than returning an empty
+release. Records behind the protocols are still `object`-typed (`ingest.usdm.DroughtRelease`,
+`ingest.mtbs.MtbsBurnSeverityRecord`) — named debt. `ingest/mtbs.py::inline_bbox_value` is imported by
+five unrelated lanes; extraction owed before that module can move. Verifier: Protocol members became
+read-only properties (frozen-dataclass fields cannot satisfy settable Protocol attributes). W3-C: stray
+footprint-literal guards `tests/test_region_literal_contract.py` (zero Python offenders today) and
+`src/__tests__/region/footprint-literals.test.ts` (`KNOWN_OFFENDERS`: `OfflinePanel.tsx:52` — a
+*different* box, -125/45/-116/49, moving it would widen the default download area; the non-PNW rows
+of `NAMED_COVERAGE_REGIONS`); a fourth camera literal in `useLandContextQuery.ts:141` now reads the
+manifest. W3-A: `src/lib/map/rung-selection.ts::selectFinestAdmittingRung` (finest published rung no
+finer than the zoom's band whose ceiling admits the area; `null` is a stated refusal) shared by
+botanical and land-context; the RUNBOOK case `-130,40,-110,50` at z8 is now answered from `grid-0.25`
+with `servingRung` in the body (**required field — an old route answering a new bundle is
+`contract_mismatch`; deploy-ordering hazard**); `LayerManager.tsx` mounts `useBotanicalOccurrences`
+(detail band only) and `useLandContextViewport` (`area_over_budget` as an amber caption). Both botanical
+lanes (GBIF tRPC + UBC proxy) run at detail zoom with the toggle on — follow-up.
+
+**Style review of wave 2 (`STYLE-REVIEW-W2.md`, opus): CHANGES-REQUIRED, 3 BLOCKER.** The moved literals
+became import-time `load_region()` snapshots (hidden dependency restored, I/O at `foundation` import,
+`PLANTGEO_REGION` ignored); `useLandContextViewport.ts:117` introduced a new PNW literal claiming to
+mirror `WORLD_EXTENT_BBOX`; `source_unbound_for_region` is a prose substring while `CoverageState`
+resolves to `partial_area_coverage`. Fix branch `wave4-style-fixes` (functions + module `__getattr__`
+deprecation aliases, `WORLD_EXTENT_ENVELOPE`, a typed `source_unbound_for_region` state, admin codes
+`as const` from the manifest, server-reported rung, governed absence for an unwritten NDVI day).
+Lesson in memory `plantgeo-manifest-moves-must-be-lazy`.
+
 ## Recovery
 
 - Disable the affected current schedule and preserve the last valid immutable generation and pointer.

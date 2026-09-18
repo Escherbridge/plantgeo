@@ -82,7 +82,9 @@ def test_burn_severity_bbox_is_one_definition_read_from_the_region_manifest() ->
 
 def test_the_deprecated_current_snapshot_bbox_alias_still_resolves_and_warns() -> None:
     """`current_snapshot.BBOX` survives one more release as a lazily resolved, warning alias."""
-    from agri_data_service.pipeline.direct.burn_severity import current_snapshot
+    from agri_data_service.pipeline.direct.burn_severity import (  # noqa: PLC0415 - the module object itself is the assertion target, not a name from it
+        current_snapshot,
+    )
 
     with pytest.deprecated_call():
         alias_value = current_snapshot.BBOX

@@ -96,10 +96,10 @@ describe("landContext.resolveBoundaryAtPoint geometry", () => {
     const response = await caller.resolveBoundaryAtPoint({ lon: -116.2, lat: 43.6 });
     if (response.status !== "ok") throw new Error("expected ok");
     expect(response.data).toHaveLength(1);
-    expect(response.data[0].coverageState).toBe("unknown_coverage");
+    expect(response.data[0].coverageState).toBe("source_unbound_for_region");
     expect(response.data[0].geometry).toBeNull();
     expect(response.data[0].unresolvedGaps).toEqual([
-      'no Parquet lane named "land-context-boundaries" appears in the warehouse coverage census; source_unbound_for_region for the land-context reference plane',
+      'no Parquet lane named "land-context-boundaries" appears in the warehouse coverage census; the land-context reference plane binds no source for it in this region',
     ]);
   });
 
