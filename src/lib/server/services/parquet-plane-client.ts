@@ -840,3 +840,121 @@ export function resetParquetCoverageCacheForTests(): void {
   cachedCoverage = null;
   coverageRequest = null;
 }
+
+/* ---------------------------------------------------------------------------
+ * LANE CURRENT-POINTER RESOLUTION (layer-lanes §4a)
+ *
+ * Deliberately OUTSIDE the frozen `WIRE` block above, which stays byte-for-byte paired with
+ * `services/agri-data-service/tests/contract/wire_contract.py`. Nothing here renames a route or a
+ * field that block owns; this section adds the ONE shape every lane's current-pointer answer has,
+ * so a per-lane client (the botanical one is the first) validates and carries pointer provenance
+ * the same way rather than inventing a second vocabulary for the same object.
+ *
+ * §4a's rule is what this encodes: a request path does ONE pointer GET and ONE data GET, never a
+ * listing, and a missing, stale, malformed or checksum-invalid pointer FAILS CLOSED. The decode
+ * below therefore has no lenient branch and no fallback -- an answer this schema rejects becomes a
+ * thrown `LanePointerContractError`, never a best guess about which generation is current.
+ * ------------------------------------------------------------------------- */
+
+/** A 64-character lowercase hex sha256, as every §4a pointer binds its data object by. */
+const LANE_POINTER_CHECKSUM_PATTERN = /^[0-9a-f]{64}$/;
+
+/**
+ * Why a lane's current pointer did not resolve. A CLOSED vocabulary on purpose: a caller deciding
+ * between "retry", "alarm" and "nothing has ever been published here" cannot branch on prose.
+ * Mirrors the serving side's reasons in `planes/botanical_occurrences.py::pointer_unavailable`.
+ */
+export const LANE_POINTER_FAILURES = [
+  "pointer_missing",
+  "pointer_malformed",
+  "pointer_stale",
+  "pointer_checksum_invalid",
+  "transport_unavailable",
+] as const;
+
+export type LanePointerFailure = (typeof LANE_POINTER_FAILURES)[number];
+
+/** A pointer answer that broke its published shape. Permanent until a deploy fixes one side. */
+export class LanePointerContractError extends Error {}
+
+/** The resolved generation plus the provenance that proves which bytes answered. */
+export interface LaneCurrentPointer {
+  generationId: string;
+  /** The sha256 the pointer bound its generation's manifest by; carried into response provenance. */
+  manifestChecksum: string;
+  manifestKey: string;
+  pointerSchemaVersion: number;
+  pointerWrittenAt: string;
+  publishedAt: string | null;
+}
+
+/** A lane pointer that did not resolve, with the closed reason and the service's own detail. */
+export interface LanePointerUnavailable {
+  failure: LanePointerFailure;
+  detail: string;
+}
+
+export type LaneCurrentPointerResult =
+  | { state: "current"; pointer: LaneCurrentPointer }
+  | { state: "unavailable"; unavailable: LanePointerUnavailable };
+
+/**
+ * The wire shape of a lane's `/current` answer. `published_at` is OPTIONAL on the resolved member
+ * because the serving side only sets the key when the manifest carries one, and NULLABLE because a
+ * manifest may carry an explicit null -- decoding one as the other would turn "unknown" into a
+ * claim.
+ */
+const laneCurrentPointerWireSchema = z.discriminatedUnion("state", [
+  z.object({
+    state: z.literal("current"),
+    generation_id: z.string().min(1),
+    manifest_sha256: z.string().regex(LANE_POINTER_CHECKSUM_PATTERN),
+    manifest_key: z.string().min(1),
+    pointer_schema_version: z.number().int().positive(),
+    pointer_written_at: z.string().min(1),
+    published_at: z.string().nullish(),
+  }),
+  z.object({
+    state: z.literal("unavailable"),
+    reason: z.enum(LANE_POINTER_FAILURES),
+    detail: z.string().optional(),
+    note: z.string().optional(),
+  }),
+]);
+
+/**
+ * Validate one lane `/current` payload into either a checksum-carrying pointer or a closed failure.
+ *
+ * Throws rather than returning a third "could not tell" state: a pointer answer that does not parse
+ * is indistinguishable from one that was never written, and §4a requires the read to fail closed
+ * either way. A caller that wants a non-throwing surface catches this once at its boundary.
+ */
+export function decodeLaneCurrentPointer(payload: unknown): LaneCurrentPointerResult {
+  const parsed = laneCurrentPointerWireSchema.safeParse(payload);
+  if (!parsed.success) {
+    throw new LanePointerContractError(
+      "a lane current-pointer answer is neither a checksum-bound pointer nor a declared failure"
+    );
+  }
+  if (parsed.data.state === "unavailable") {
+    return {
+      state: "unavailable",
+      unavailable: {
+        failure: parsed.data.reason,
+        detail: parsed.data.detail ?? parsed.data.note ?? parsed.data.reason,
+      },
+    };
+  }
+  const wire = parsed.data;
+  return {
+    state: "current",
+    pointer: {
+      generationId: wire.generation_id,
+      manifestChecksum: wire.manifest_sha256,
+      manifestKey: wire.manifest_key,
+      pointerSchemaVersion: wire.pointer_schema_version,
+      pointerWrittenAt: wire.pointer_written_at,
+      publishedAt: wire.published_at ?? null,
+    },
+  };
+}

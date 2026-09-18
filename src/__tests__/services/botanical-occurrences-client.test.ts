@@ -37,6 +37,23 @@ beforeEach(() => {
 
 afterEach(() => vi.useRealTimers());
 
+/**
+ * One `/current` body in the shape the checksum-bound pointer answers with (layer-lanes 4a): a
+ * generation id plus the manifest digest that binds it. The old one-field `release_set_id` body is
+ * no longer a valid answer, and a test still asserting it would be asserting a contract nobody
+ * serves.
+ */
+const wireCurrentPointer = {
+  product: "botanical-occurrences",
+  state: "current",
+  release_set_id: "ubc-v16.43",
+  generation_id: "ubc-v16.43",
+  manifest_sha256: "a".repeat(64),
+  manifest_key: "botanical-occurrences/ubc-v16.43/manifest.json",
+  pointer_schema_version: 1,
+  pointer_written_at: "2026-09-10T00:00:00Z",
+};
+
 const wireFeature = {
   occurrence_id: "occ-1",
   collection_key: "ubc",
@@ -83,12 +100,7 @@ const wireCell = {
 
 describe("getCurrentBotanicalReleaseSetId", () => {
   it("resolves the pinned release_set_id on the happy path", async () => {
-    mockedFetch.mockResolvedValue({
-      product: "botanical-occurrences",
-      state: "current",
-      release_set_id: "ubc-v16.43",
-      published_at: "2026-09-10T00:00:00Z",
-    });
+    mockedFetch.mockResolvedValue({ ...wireCurrentPointer, published_at: "2026-09-10T00:00:00Z" });
 
     const releaseSetId = await getCurrentBotanicalReleaseSetId();
 
@@ -97,11 +109,7 @@ describe("getCurrentBotanicalReleaseSetId", () => {
   });
 
   it("resolves when published_at is omitted entirely", async () => {
-    mockedFetch.mockResolvedValue({
-      product: "botanical-occurrences",
-      state: "current",
-      release_set_id: "ubc-v16.43",
-    });
+    mockedFetch.mockResolvedValue(wireCurrentPointer);
 
     await expect(getCurrentBotanicalReleaseSetId()).resolves.toBe("ubc-v16.43");
   });
@@ -110,12 +118,41 @@ describe("getCurrentBotanicalReleaseSetId", () => {
     mockedFetch.mockResolvedValue({
       product: "botanical-occurrences",
       state: "unavailable",
-      reason: "no generation has ever been published for botanical-occurrences",
-      note: "The pinned generation could not be opened. This says nothing about what it contains.",
+      reason: "pointer_missing",
+      detail: "no generation has ever been published for botanical-occurrences",
+      note: "The current pointer did not resolve, so nothing follows about what is published.",
     });
 
     await expect(getCurrentBotanicalReleaseSetId()).rejects.toBeInstanceOf(
       BotanicalOccurrencesUnavailableError
+    );
+  });
+
+  /**
+   * The four fail-closed conditions 4a names must each arrive as themselves. A caller that cannot
+   * tell "nothing was ever published" from "the bytes under the pointer changed" will report an
+   * integrity failure as an empty lane, which is the one outcome the checksum exists to prevent.
+   */
+  it.each(["pointer_missing", "pointer_malformed", "pointer_stale", "pointer_checksum_invalid"])(
+    "carries the closed failure reason %s through to the caller",
+    async (reason) => {
+      mockedFetch.mockResolvedValue({
+        product: "botanical-occurrences",
+        state: "unavailable",
+        reason,
+        detail: "detail text",
+        note: "note text",
+      });
+
+      await expect(getCurrentBotanicalReleaseSetId()).rejects.toMatchObject({ failure: reason });
+    }
+  );
+
+  it("refuses a pointer whose checksum is not a sha256 rather than trusting it", async () => {
+    mockedFetch.mockResolvedValue({ ...wireCurrentPointer, manifest_sha256: "not-a-digest" });
+
+    await expect(getCurrentBotanicalReleaseSetId()).rejects.toBeInstanceOf(
+      BotanicalOccurrencesContractError
     );
   });
 
@@ -130,11 +167,7 @@ describe("getCurrentBotanicalReleaseSetId", () => {
 
 describe("getBotanicalOccurrences", () => {
   it("resolves the current pointer, then queries with it, for a detail answer", async () => {
-    mockedFetch.mockResolvedValueOnce({
-      product: "botanical-occurrences",
-      state: "current",
-      release_set_id: "ubc-v16.43",
-    });
+    mockedFetch.mockResolvedValueOnce(wireCurrentPointer);
     mockedFetch.mockResolvedValueOnce({
       product: "botanical-occurrences",
       state: "detail",
@@ -175,11 +208,7 @@ describe("getBotanicalOccurrences", () => {
   });
 
   it("returns an aggregate answer below the detail floor", async () => {
-    mockedFetch.mockResolvedValueOnce({
-      product: "botanical-occurrences",
-      state: "current",
-      release_set_id: "ubc-v16.43",
-    });
+    mockedFetch.mockResolvedValueOnce(wireCurrentPointer);
     mockedFetch.mockResolvedValueOnce({
       product: "botanical-occurrences",
       state: "aggregate",
@@ -204,11 +233,7 @@ describe("getBotanicalOccurrences", () => {
   });
 
   it("returns a refused answer as a union member, not a throw", async () => {
-    mockedFetch.mockResolvedValueOnce({
-      product: "botanical-occurrences",
-      state: "current",
-      release_set_id: "ubc-v16.43",
-    });
+    mockedFetch.mockResolvedValueOnce(wireCurrentPointer);
     mockedFetch.mockResolvedValueOnce({
       product: "botanical-occurrences",
       state: "refused",
@@ -228,15 +253,62 @@ describe("getBotanicalOccurrences", () => {
   });
 
   it("throws BotanicalOccurrencesContractError when /query breaks the four-state contract", async () => {
-    mockedFetch.mockResolvedValueOnce({
-      product: "botanical-occurrences",
-      state: "current",
-      release_set_id: "ubc-v16.43",
-    });
+    mockedFetch.mockResolvedValueOnce(wireCurrentPointer);
     mockedFetch.mockResolvedValueOnce({ state: "conflict", release_set_id: "ubc-v16.43" });
 
     await expect(
       getBotanicalOccurrences({ bbox: "-124,48,-122,50", zoom: 13 })
+    ).rejects.toBeInstanceOf(BotanicalOccurrencesContractError);
+  });
+
+  it("carries the pointer's generation and checksum into the answer's provenance", async () => {
+    mockedFetch.mockResolvedValueOnce(wireCurrentPointer);
+    mockedFetch.mockResolvedValueOnce({
+      product: "botanical-occurrences",
+      state: "detail",
+      release_set_id: "ubc-v16.43",
+      published_at: "2026-09-10T00:00:00Z",
+      taxonomy_recipe_version: "source-names-v1",
+      qc_policy_version: "qc-v1",
+      support_id: null,
+      features: [wireFeature],
+      truncated: false,
+      next_cursor: null,
+      counts: { returned: 1, matched: 1, withheld: 0, nonspatial: 0, excluded_by_qc: 0 },
+    });
+
+    const result = await getBotanicalOccurrences({ bbox: "-124,48,-122,50", zoom: 13 });
+
+    expect(result.state).toBe("detail");
+    if (result.state !== "detail") return;
+    expect(result.pointer).toMatchObject({
+      generationId: "ubc-v16.43",
+      manifestChecksum: wireCurrentPointer.manifest_sha256,
+    });
+  });
+
+  /**
+   * A pin that is not honoured is worse than an error: every provenance line shown beside the map
+   * would name a generation the rows did not come from.
+   */
+  it("refuses an answer from a generation other than the pinned one", async () => {
+    mockedFetch.mockResolvedValueOnce(wireCurrentPointer);
+    mockedFetch.mockResolvedValueOnce({
+      product: "botanical-occurrences",
+      state: "aggregate",
+      release_set_id: "ubc-v16.42",
+      published_at: null,
+      taxonomy_recipe_version: null,
+      qc_policy_version: null,
+      support_id: "grid-0.25",
+      cells: [wireCell],
+      truncated: false,
+      next_cursor: null,
+      counts: { returned: 1, matched: 1 },
+    });
+
+    await expect(
+      getBotanicalOccurrences({ bbox: "-124,48,-122,50", zoom: 6 })
     ).rejects.toBeInstanceOf(BotanicalOccurrencesContractError);
   });
 });
