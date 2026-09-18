@@ -43,10 +43,22 @@ New recurring work must be registered there instead of adding a Railway cron.
 `VEGETATION_NDVI_PROMOTION_LANE_ID` is registered and deliberately NOT in the deployed allow-list.
 Activating it is a production mutation an owner makes by adding the identifier to that variable on
 the job-executor service (the lane's own command carries no `--day`, so it promotes
-`settled_through(today)` backwards by `--max-days`). A day the vegetation forward writer never
-published is reported by that turn as a governed absence (`status: "absent"`,
-`reason: "no_day_partition_written"`, with the lane and the day) and does not fail the turn; a day
-that was written and is empty still fails, naming both.
+`settled_through(today)` backwards by `--max-days`).
+
+The turn's per-day outcome is decided by the vegetation lane's AVAILABILITY INDEX
+(`layer-lanes.md` §4a), which the promoter reads and never writes, before it opens any object:
+
+- index says `governed_absence` -> reported `status: "absent"` carrying the INDEX'S OWN
+  `absence_reason`, no object read attempted, the remaining days still promote;
+- index has no row for the day -> `status: "not_yet_indexed"`, skipped, neutral for the exit code;
+- index says `published` but the store holds no part file -> `AvailabilityPartitionConflictError`
+  fails the turn, because that disagreement is corruption and not an absence;
+- a day that was written and is empty still fails, naming the lane and the day.
+
+A turn that neither promoted nor confirmed-unchanged any day reports
+`status: "no_days_promoted"` with a named `reason` (`all_days_absent` when every requested day was a
+governed absence, otherwise `no_indexed_day_promoted`) and **exits non-zero**, so a scheduled lane
+cannot succeed vacuously against days its forward writer has never reached.
 
 ## Durable execution
 

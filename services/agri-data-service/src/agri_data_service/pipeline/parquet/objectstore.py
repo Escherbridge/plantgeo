@@ -211,6 +211,25 @@ class EmptyPartitionError(ParquetWriteError):
     """Raised on a zero-row write: an empty file reads as a present day and hides a real gap."""
 
 
+class PartitionNotWrittenError(ParquetWriteError):
+    """Raised when a rung-day holds no part files at all: the day was never written.
+
+    The ONLY absence-shaped member of this family. Every other subclass is a fault -- a malformed
+    write, an empty write, a conflicting governed absence, or a day emptied under a live read -- so a
+    caller that treats "the source has nothing here" as a governed absence catches THIS type and lets
+    the rest propagate (`layer-lanes.md` §4, STYLE-REVIEW-W4 B1).
+    """
+
+
+class ConcurrentPrunePartitionError(ParquetWriteError):
+    """Raised when every part file of a day vanished between the listing and the read.
+
+    The day WAS written; another process emptied it mid-derivation. Deliberately NOT a
+    `PartitionNotWrittenError`: rendering this race as "nothing was published" is the silent
+    degradation `engineering-principles.md` §2 forbids.
+    """
+
+
 class GovernedAbsenceConflictError(ParquetWriteError):
     """Raised when data and a governed absence would coexist on one stream-day.
 
@@ -861,7 +880,7 @@ class ObjectStore:
             if partition is not None and partition.day == day:
                 parsed.append((partition.part_index, relative_path))
         if not parsed:
-            raise ParquetWriteError(
+            raise PartitionNotWrittenError(
                 f"no part files to read for {layer!r} {kind} z{zoom} {day.isoformat()}; a tier cannot be derived "
                 f"from a day that holds nothing"
             )
@@ -886,7 +905,7 @@ class ObjectStore:
                 )
             )
         if not tables:
-            raise ParquetWriteError(
+            raise ConcurrentPrunePartitionError(
                 f"every part file of {layer!r} {kind} z{zoom} {day.isoformat()} disappeared between the listing and "
                 f"the read; a concurrent prune emptied the day mid-derivation"
             )

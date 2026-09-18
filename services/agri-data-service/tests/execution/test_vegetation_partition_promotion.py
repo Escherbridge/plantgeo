@@ -23,17 +23,28 @@ from agri_data_service.execution.vegetation_ndvi_plane import (
     SelectionMaterialisation,
 )
 from agri_data_service.execution.vegetation_partition_promotion import (
+    AvailabilityIndexDays,
+    AvailabilityPartitionConflictError,
     EmptyDayPartitionError,
     EvaluationArtifactNotPromotableError,
+    IndexedDay,
     VegetationDayPartitionKey,
     VegetationPromotionReceipt,
     day_partition_content_sha256,
+    exit_code_for,
     load_promotion_receipt,
     promote_vegetation_day_partition,
     run_vegetation_promotion,
     save_promotion_receipt,
 )
-from agri_data_service.pipeline.parquet.objectstore import ListedObject, ObjectStore
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
+from agri_data_service.pipeline.parquet.objectstore import (
+    ConcurrentPrunePartitionError,
+    ListedObject,
+    ObjectStore,
+    PartitionNotWrittenError,
+)
+from agri_data_service.warehouse.schemas.vegetation import VEGETATION_PLANE_STREAM
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -67,6 +78,32 @@ class InMemoryBackend:
     def size_of(self, key: str) -> int | None:
         payload = self.objects.get(key)
         return None if payload is None else len(payload)
+
+
+class RefusingBackend:
+    """An `ObjectStoreBackend` that fails any access, so a test can prove no object was touched."""
+
+    def _refuse(self, key: str) -> None:
+        raise AssertionError(f"the object store was read for {key!r}, which this turn must never do")
+
+    def put(self, key: str, payload: bytes, *, content_type: str) -> None:
+        del payload, content_type
+        self._refuse(key)
+
+    def get(self, key: str) -> bytes | None:
+        self._refuse(key)
+        return None
+
+    def delete(self, key: str) -> None:
+        self._refuse(key)
+
+    def list_objects(self, prefix: str) -> Iterator[ListedObject]:
+        self._refuse(prefix)
+        return iter(())
+
+    def size_of(self, key: str) -> int | None:
+        self._refuse(key)
+        return None
 
 
 @pytest.fixture
@@ -238,19 +275,94 @@ def test_evaluation_kind_receipt_cannot_be_constructed() -> None:
         VegetationDayPartitionKey(day=DAY, kind="evaluation")
 
 
-async def test_a_day_the_lane_never_wrote_is_a_governed_absence_not_a_failed_turn(store: ObjectStore) -> None:
-    """A missing partition names its lane and day and lets the rest of the turn run (S5)."""
+#: An index that has published nothing yet: every day it is asked about is `not_yet_indexed`.
+EMPTY_AVAILABILITY_INDEX = AvailabilityIndexDays(verdicts={})
+
+
+async def test_an_indexed_governed_absence_is_reported_with_the_index_reason() -> None:
+    """The index, not a failed object read, produces the absence -- and carries its OWN reason (B2)."""
     session = cast("AsyncSession", object())  # never touched: the absent path reaches no register call
+    availability = AvailabilityIndexDays(
+        verdicts={DAY: IndexedDay(state="governed_absence", absence_reason="upstream_scene_not_published")}
+    )
+    refusing_store = ObjectStore(backend=RefusingBackend())
 
-    report = await run_vegetation_promotion(session, store, days=[DAY])
+    report = await run_vegetation_promotion(session, refusing_store, days=[DAY], availability=availability)
 
-    assert report["status"] == "completed"
     assert report["absent_days"] == [DAY.isoformat()]
     (entry,) = cast("list[dict[str, object]]", report["days"])
     assert entry["status"] == "absent"
-    assert entry["reason"] == "no_day_partition_written"
+    assert entry["reason"] == "upstream_scene_not_published"
     assert entry["layer"] == "vegetation"
-    assert DAY.isoformat() in str(entry["detail"])
+    # `RefusingBackend` proves the claim: an indexed absence is answered from the index alone.
+
+
+async def test_a_day_the_index_calls_published_but_the_store_cannot_serve_is_a_conflict(store: ObjectStore) -> None:
+    """Index says published, no part file exists: corruption, raised, never rendered as an absence (B2)."""
+    session = cast("AsyncSession", object())
+    availability = AvailabilityIndexDays(verdicts={DAY: IndexedDay(state="published")})
+
+    with pytest.raises(AvailabilityPartitionConflictError) as raised:
+        await run_vegetation_promotion(session, store, days=[DAY], availability=availability)
+
+    assert DAY.isoformat() in str(raised.value)
+    assert raised.value.layer == VEGETATION_PLANE_STREAM
+
+
+async def test_a_day_the_index_has_no_row_for_is_skipped_as_not_yet_indexed(store: ObjectStore) -> None:
+    """Nobody has looked yet: not an absence, not a failure, and no object read (B2)."""
+    session = cast("AsyncSession", object())
+
+    report = await run_vegetation_promotion(session, store, days=[DAY], availability=EMPTY_AVAILABILITY_INDEX)
+
+    assert report["absent_days"] == []
+    assert report["not_yet_indexed_days"] == [DAY.isoformat()]
+    (entry,) = cast("list[dict[str, object]]", report["days"])
+    assert entry["status"] == "not_yet_indexed"
+
+
+async def test_a_turn_whose_every_day_is_absent_does_not_complete(store: ObjectStore) -> None:
+    """The vacuous-success guard: no promotion, no completion, a named reason and a non-zero exit (B1)."""
+    session = cast("AsyncSession", object())
+    other_day = date(2026, 9, 11)
+    availability = AvailabilityIndexDays(
+        verdicts={
+            DAY: IndexedDay(state="governed_absence", absence_reason="upstream_scene_not_published"),
+            other_day: IndexedDay(state="governed_absence", absence_reason="upstream_scene_not_published"),
+        }
+    )
+
+    report = await run_vegetation_promotion(session, store, days=[DAY, other_day], availability=availability)
+
+    assert report["status"] == "no_days_promoted"
+    assert report["reason"] == "all_days_absent"
+    assert exit_code_for(report) == 1
+
+
+async def test_a_turn_that_only_skipped_unindexed_days_does_not_complete(store: ObjectStore) -> None:
+    """A lane whose writer has never reached these days must not print success forever (B1)."""
+    session = cast("AsyncSession", object())
+
+    report = await run_vegetation_promotion(session, store, days=[DAY], availability=EMPTY_AVAILABILITY_INDEX)
+
+    assert report["status"] == "no_days_promoted"
+    assert report["reason"] == "no_indexed_day_promoted"
+    assert exit_code_for(report) == 1
+
+
+def test_a_completed_turn_exits_zero() -> None:
+    """The only shape that exits 0 is one that promoted or confirmed at least one day (B1)."""
+    assert exit_code_for({"status": "completed"}) == 0
+    assert exit_code_for({"status": "no_days_promoted", "reason": "all_days_absent"}) == 1
+
+
+def test_an_absent_day_and_a_race_are_different_exception_types(store: ObjectStore) -> None:
+    """`PartitionNotWrittenError` is the ONLY absence-shaped read refusal; the prune race is not (B1)."""
+    with pytest.raises(PartitionNotWrittenError):
+        store.read_partition(VEGETATION_PLANE_STREAM, "observed", LANE_BASE_ZOOM_TIER, DAY)
+
+    assert not issubclass(ConcurrentPrunePartitionError, PartitionNotWrittenError)
+    assert not issubclass(PartitionNotWrittenError, ConcurrentPrunePartitionError)
 
 
 def test_a_written_but_empty_partition_still_fails_naming_the_lane_and_the_day() -> None:
