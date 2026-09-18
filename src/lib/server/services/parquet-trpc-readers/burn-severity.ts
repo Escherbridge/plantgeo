@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { MtbsSnapshotMetadata } from "@/lib/environmental/mtbs-snapshot";
 import type { DayRange } from "@/types/time-slider";
 import { resolveZoomTier } from "@/lib/map/zoom-tiers";
+import { getRegion } from "@/lib/region/region";
 import { getParquetLatestRelease, getParquetWarehouseCoverage } from "@/lib/server/services/parquet-plane-client";
 import type { ParquetPlaneEnvelope } from "@/lib/server/services/parquet-envelope";
 import {
@@ -27,8 +28,9 @@ const BURN_SEVERITY_MAX_RELEASES = 12;
 /**
  * The one publication scope this reader accepts an MTBS snapshot for.
  *
- * A pilot-region footprint that still lives in the reader; federation.md §1 moves it to the region
- * manifest in its own push. Parameterised so a caller can state the scope it expects.
+ * `envelope` reads `getRegion().subEnvelopes.burn_severity` (federation.md §5 step 2); the covered
+ * years remain a reader-owned constant, not a manifest field. Parameterised so a caller can state
+ * the scope it expects.
  */
 export interface BurnSnapshotPublicationScope {
   /** [west, south, east, north], WGS84. */
@@ -36,8 +38,13 @@ export interface BurnSnapshotPublicationScope {
   coveredYears: { readonly from: number; readonly to: number };
 }
 
+function burnSeverityEnvelopeTuple(): readonly [number, number, number, number] {
+  const { west, south, east, north } = getRegion().subEnvelopes.burn_severity;
+  return [west, south, east, north];
+}
+
 const SUPPORTED_BURN_SNAPSHOT_SCOPE: BurnSnapshotPublicationScope = {
-  envelope: [-125, 42, -111, 49],
+  envelope: burnSeverityEnvelopeTuple(),
   coveredYears: { from: 2018, to: 2026 },
 };
 

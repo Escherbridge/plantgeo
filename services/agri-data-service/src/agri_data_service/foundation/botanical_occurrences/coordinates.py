@@ -7,6 +7,8 @@ import struct
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Literal
 
+from agri_data_service.foundation.region import load_region
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
@@ -19,7 +21,15 @@ EARTH_RADIUS_METERS: Final = 6_371_008.8
 #: A record outside the envelope is still published -- `within_envelope=False` -- because a specimen
 #: collected outside it is a real specimen; what the flag bounds is where `evaluated_zero` may be
 #: asserted, since "we looked here and found nothing" is only honest inside admitted coverage.
-SEED_ENVELOPE: Final[tuple[float, float, float, float]] = (-125.0, 41.0, -110.0, 50.0)
+# Deprecated alias for `foundation/region`'s `sub_envelopes["botanical_seed"]`; kept so existing
+# importers do not break (`federation.md` §5 step 2). Read the manifest directly in new code.
+_botanical_seed_envelope = load_region().sub_envelopes["botanical_seed"]
+SEED_ENVELOPE: Final[tuple[float, float, float, float]] = (
+    _botanical_seed_envelope.west,
+    _botanical_seed_envelope.south,
+    _botanical_seed_envelope.east,
+    _botanical_seed_envelope.north,
+)
 
 #: Pad added on each side of the measured extent. One quarter degree is exactly one `grid-0.25` cell
 #: -- the coarsest rung this lane publishes -- so the pad admits the ring of cells the collection's

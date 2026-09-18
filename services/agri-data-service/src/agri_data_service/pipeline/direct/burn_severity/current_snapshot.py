@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 import polars as pl
 import pyarrow.parquet as pq  # type: ignore[import-untyped]
 
+from agri_data_service.foundation.region import load_region
 from agri_data_service.ingest.mtbs import MTBS_FEATURE_SERVICE_QUERY_URL, build_mtbs_snapshot_record
 from agri_data_service.pipeline.direct.burn_severity.rows import burn_severity_release_day_table
 from agri_data_service.pipeline.parquet.objectstore import conform_to_stream_schema
@@ -29,6 +30,17 @@ MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 MAX_SOURCE_RESPONSES = 400
 SNAPSHOT_SCHEMA = "mtbs-current-snapshot/v1"
 FIRST_PARTIAL_YEAR = 2023
+
+#: The reviewed deployment footprint (`foundation/region`'s `sub_envelopes["burn_severity"]`), the
+#: one definition `capture.py` and `stage.py` import instead of restating the four numbers
+#: (`federation.md` §5 step 2).
+_burn_severity_envelope = load_region().sub_envelopes["burn_severity"]
+BBOX: tuple[float, float, float, float] = (
+    _burn_severity_envelope.west,
+    _burn_severity_envelope.south,
+    _burn_severity_envelope.east,
+    _burn_severity_envelope.north,
+)
 
 
 def canonical_bytes(value: object) -> bytes:
@@ -80,7 +92,7 @@ def make_source_manifest(  # noqa: PLR0913 - immutable source identity binds six
         character not in "0123456789abcdef" for character in source_content_sha256
     ):
         raise ValueError("snapshot source content identity is invalid")
-    if bbox != (-125.0, 42.0, -111.0, 49.0):
+    if bbox != BBOX:
         raise ValueError("snapshot footprint differs from the reviewed deployment footprint")
     return {
         "schema": SNAPSHOT_SCHEMA,
@@ -117,10 +129,10 @@ def validate_source_manifest(manifest: object) -> dict[str, Any]:
         raise ValueError("snapshot response graph is invalid or excessive")
     if manifest.get("covered_years") != {"from": 2018, "to": 2026}:
         raise ValueError("snapshot requires the exact covered year interval")
-    if manifest.get("bbox") != [-125, 42, -111, 49]:
+    if manifest.get("bbox") != list(BBOX):
         raise ValueError("snapshot footprint differs from the reviewed deployment footprint")
     expected = make_source_manifest(
-        bbox=(-125, 42, -111, 49),
+        bbox=BBOX,
         years=years,
         captured_from=datetime.fromisoformat(manifest["captured_from"]),
         captured_through=datetime.fromisoformat(manifest["captured_through"]),

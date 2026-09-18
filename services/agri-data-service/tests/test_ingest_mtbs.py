@@ -17,6 +17,7 @@ import pytest
 
 from agri_data_service.execution.contracts import MAX_SOURCE_GEOJSON_FEATURES
 from agri_data_service.execution.source_ingestion import SourceIngestionPlan
+from agri_data_service.foundation.region import load_region
 from agri_data_service.ingest.identity import MissingNativeKeyError, build_burn_severity_identity
 from agri_data_service.ingest.mtbs import (
     INLINE_PUBLICATION_BYTE_LIMIT,
@@ -274,6 +275,13 @@ class RecordedMtbsService:
 
 def _page_offsets(service: RecordedMtbsService) -> list[int]:
     return [int(parameters["resultOffset"]) for parameters in service.page_requests]
+
+
+def test_pacific_northwest_bbox_is_the_region_manifest_burn_severity_sub_envelope() -> None:
+    """`PACIFIC_NORTHWEST_BBOX` is a deprecated alias; pin it to the manifest it now reads."""
+    envelope = load_region().sub_envelopes["burn_severity"]
+    assert PACIFIC_NORTHWEST_BBOX == (envelope.west, envelope.south, envelope.east, envelope.north)
+    assert PACIFIC_NORTHWEST_BBOX == (-125.0, 42.0, -111.0, 49.0)
 
 
 def test_three_pages_reassemble_into_one_complete_cohort_at_the_right_offsets() -> None:

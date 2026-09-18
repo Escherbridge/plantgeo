@@ -30,6 +30,6 @@ shape) via `./geometry/attach-decoded-geometry.ts`; the map draws the result.
 
 ## Federation note
 
-`PNW_STATE_CODES` / `PnwStateCode` in `src/lib/server/db/schema/land-context/shared.ts` are a
-pilot-region footprint on the migration list in `conductor/code_styleguides/federation.md` section 5.
+`PNW_STATE_CODES` / `PnwStateCode` in `src/lib/server/db/schema/land-context/shared.ts` are now
+deprecated aliases reading `getRegion().adminCodes` (`federation.md` §5 step 2 landed this).
 Do not copy the pattern into new land-context code; take the region as a value.

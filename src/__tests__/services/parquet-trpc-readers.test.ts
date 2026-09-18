@@ -1,5 +1,6 @@
 import { snapshotMetadata } from "./mtbs-snapshot-fixture";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getRegion } from "@/lib/region/region";
 
 vi.mock("@/lib/server/services/parquet-plane-client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/server/services/parquet-plane-client")>();
@@ -2532,6 +2533,11 @@ describe("governed full MTBS current snapshots", () => {
     mockedRelease.mockResolvedValue({ ...published(snapshotDay, []), mtbsSnapshot: snapshotMetadata });
     expect(await getParquetBurnSeverity({ date: snapshotDay, mapZoom: 13, nowMs: snapshotNow, bbox: "-126,42,-111,49" }))
       .toMatchObject({ state: "ready", data: [], truncated: true });
+  });
+
+  it("pins the default snapshot scope's envelope to the region manifest's burn-severity sub-envelope", () => {
+    const { west, south, east, north } = getRegion().subEnvelopes.burn_severity;
+    expect([west, south, east, north]).toEqual([-125, 42, -111, 49]);
   });
 
   it("retains the older historical-gap and row-cap limitations on a current snapshot", async () => {

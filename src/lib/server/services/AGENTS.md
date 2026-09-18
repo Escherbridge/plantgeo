@@ -183,8 +183,9 @@ The reader walks back through indexed releases and unions them, capped at
 member does not make the answer older than its freshest release. A published MTBS snapshot REPLACES
 the union rather than adding to it, and may only do so inside its declared publication scope (the
 envelope and the completed-cohort year range it captured) -- outside it, the answer is `truncated`.
-`SUPPORTED_BURN_SNAPSHOT_SCOPE` is a pilot-region footprint that federation.md section 1 moves into
-the region manifest; it is a defaulted parameter so a caller can already state the scope it expects.
+`SUPPORTED_BURN_SNAPSHOT_SCOPE`'s envelope now reads `getRegion().subEnvelopes.burn_severity`
+(federation.md §5 step 2); it is a defaulted parameter so a caller can already state the scope it
+expects.
 
 ### sensors
 

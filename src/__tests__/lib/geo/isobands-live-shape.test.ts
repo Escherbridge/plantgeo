@@ -15,6 +15,11 @@ const SOIL_MOISTURE_BAND_BREAKS = soilFieldMeasureDefinition('moisture').bandBre
  *
  * The assertion that matters is the last one: the payload has to be smaller than the cells
  * it replaces, or the whole aggregation is pointless.
+ *
+ * Not a footprint literal per `federation.md` §1's permitted-literal-coordinates carve-out: this
+ * is a named test fixture (a real production reading, not a bounding box or region envelope), so
+ * wave 2's manifest migration (§5 step 2) leaves it in place rather than moving it into
+ * `foundation/region`.
  */
 const PNW_COARSE_NODES: FieldSample[] = (
   [

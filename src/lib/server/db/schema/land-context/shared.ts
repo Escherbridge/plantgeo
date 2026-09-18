@@ -13,6 +13,7 @@
  * glob) once the freeze is confirmed. Nothing here is queried by app code.
  */
 import { pgSchema, customType } from "drizzle-orm/pg-core";
+import { getRegion, type RegionAdminCode } from "@/lib/region/region";
 
 export const landContextSchema = pgSchema("land_context");
 
@@ -27,9 +28,18 @@ export const spatialPoint = customType<{ data: string; driverData: string }>({
   dataType: () => "geometry(POINT,4326)",
 });
 
-/** WA/OR/ID per the spec's geographic boundary; not a general US state enum. */
-export const PNW_STATE_CODES = ["WA", "OR", "ID"] as const;
+/**
+ * WA/OR/ID per the spec's geographic boundary; not a general US state enum.
+ *
+ * Deprecated aliases for `getRegion().adminCodes`'s two-letter suffixes
+ * (`federation.md` §5 step 2); new code should read `RegionAdminCode`
+ * directly rather than importing these.
+ */
+export const PNW_STATE_CODES = getRegion().adminCodes.map(
+  (adminCode) => adminCode.split("-")[1],
+) as unknown as readonly ["WA", "OR", "ID"];
 export type PnwStateCode = (typeof PNW_STATE_CODES)[number];
+export type { RegionAdminCode };
 
 /**
  * Source admission verdict, verbatim from spec §"Source/releases" and
