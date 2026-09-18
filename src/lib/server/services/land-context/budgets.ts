@@ -32,10 +32,12 @@ export const MAX_PAGE_SIZE = 50;
 /**
  * Pilot states this reader plane admits. Anything else is `outside_pilot`, not a silent miss.
  *
- * Read from the region manifest, not restated: this was the twin of `PNW_STATE_CODES` that step 2
- * left behind, and the Parquet reader's row schema binds to it (STYLE-REVIEW-W2 S2). One canonical
- * definition means a next region changing `admin_codes` cannot leave the manifest, the alias and
- * the reader disagreeing.
+ * Read from the region's declared admin-code tuple, not restated: this was the twin of
+ * `PNW_STATE_CODES` that step 2 left behind, and the Parquet reader's row schema binds to it
+ * (STYLE-REVIEW-W2 S2). One canonical definition means a next region changing `admin_codes` cannot
+ * leave the manifest, the alias and the reader disagreeing -- and because
+ * `REGION_SUBDIVISION_CODES` is derived from a compile-time tuple rather than from `getRegion()`,
+ * importing this module no longer reads a region manifest at import time (W4 S1).
  */
 export const PILOT_STATES = REGION_SUBDIVISION_CODES;
 

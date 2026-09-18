@@ -67,26 +67,42 @@ export const regionSchema = z
 export type Region = z.infer<typeof regionSchema>;
 
 /**
- * The literal admin-code union this deployment's manifest declares, INDEXED off the manifest rather
- * than restated: `pnw.ts` keeps `PNW_ADMIN_CODES` as a `const` tuple and spreads it into
- * `adminCodes`, so the literals survive and a code added or renamed there changes this union with
- * no second edit (STYLE-REVIEW-W2 S1). `regionSchema` still validates only `z.array(z.string())`,
- * because a future region may bind codes this one never does.
+ * The literal admin-code union this deployment declares, read off the ONE `const` tuple
+ * (`pnw.ts`'s `PNW_ADMIN_CODES`) that both this union and `REGION_SUBDIVISION_CODES` derive from.
+ *
+ * `PNW.adminCodes` is the same tuple spread into the manifest, and `pnw.ts` pins that with a
+ * `satisfies` clause, so the manifest's runtime array cannot be edited apart from the tuple the
+ * types promise -- the joint `as SubdivisionCodesOf<...>` used to assert rather than check
+ * (STYLE-REVIEW-W4 S2). `regionSchema` still validates only `z.array(z.string())`, because a future
+ * region may bind codes this one never does; `assertAdminCodesMatchDeclaredTuple` is what enforces
+ * the agreement for THIS deployment, at runtime, on the parsed manifest.
  */
-export type RegionAdminCode = (typeof PNW.adminCodes)[number];
+export type RegionAdminCode = (typeof PNW_ADMIN_CODES)[number];
 
 /** "US-WA" -> "WA": one admin code's subdivision suffix, at type level. */
 type SubdivisionCodeOf<Code extends string> = Code extends `${string}-${infer Subdivision}`
   ? Subdivision
   : never;
 
-/** The same map across a whole tuple, so the TUPLE shape (not just the union) survives. */
-type SubdivisionCodesOf<Codes extends readonly string[]> = {
-  -readonly [Index in keyof Codes]: SubdivisionCodeOf<Codes[Index]>;
-};
-
 /** The two-letter subdivision code every admin code in this region carries. */
 export type RegionSubdivisionCode = SubdivisionCodeOf<RegionAdminCode>;
+
+/**
+ * Strip the country prefix off a whole tuple of admin codes, keeping the TUPLE shape.
+ *
+ * The value and the type are computed from the SAME argument, so the one cast inside cannot join
+ * two independently editable sources the way the old module-level
+ * `getRegion().adminCodes.map(...) as SubdivisionCodesOf<typeof PNW_ADMIN_CODES>` did: that took
+ * its value from the manifest and its type from the tuple, and nothing checked they agreed
+ * (STYLE-REVIEW-W4 S1/S2). Callers get the literal tuple `z.enum` and Drizzle's enum builders need.
+ */
+function subdivisionCodesOf<Codes extends readonly string[]>(
+  adminCodes: Codes
+): { readonly [Index in keyof Codes]: SubdivisionCodeOf<Codes[Index]> } {
+  return adminCodes.map((adminCode) => adminCode.slice(adminCode.indexOf("-") + 1)) as {
+    readonly [Index in keyof Codes]: SubdivisionCodeOf<Codes[Index]>;
+  };
+}
 
 /**
  * Recursively `Object.freeze`s a parsed manifest so no caller can mutate a value reachable from
@@ -118,20 +134,46 @@ let cachedRegion: Region | undefined;
  */
 export function getRegion(): Region {
   if (cachedRegion === undefined) {
-    cachedRegion = deepFreeze(regionSchema.parse(PNW));
+    const parsed = regionSchema.parse(PNW);
+    assertAdminCodesMatchDeclaredTuple(parsed.adminCodes);
+    cachedRegion = deepFreeze(parsed);
   }
   return cachedRegion;
 }
 
 /**
- * The manifest's admin codes reduced to their subdivision suffixes, as the literal tuple Zod's
- * `z.enum` and Drizzle's enum builders require.
+ * Refuse a manifest whose `adminCodes` are not exactly `PNW_ADMIN_CODES`, in order.
  *
- * The values come from the VALIDATED, frozen manifest (`getRegion()` -- which is why this sits
- * below it); only the tuple SHAPE is asserted, and it is computed from `PNW_ADMIN_CODES`, so it cannot drift from the manifest the way
- * the old hand-written `as unknown as readonly ["WA","OR","ID"]` could (STYLE-REVIEW-W2 S1/S2).
+ * `REGION_SUBDIVISION_CODES`, `RegionAdminCode` and `RegionSubdivisionCode` are all derived from
+ * that tuple rather than from the parsed manifest, which is what keeps them off a module-level
+ * `getRegion()` read (STYLE-REVIEW-W4 S1). This is the check that makes the derivation honest: a
+ * manifest that binds a code the tuple does not carry fails closed on first read instead of leaving
+ * every `RegionSubdivisionCode`-typed surface promising codes the deployment no longer has.
  */
-export const REGION_SUBDIVISION_CODES: Readonly<SubdivisionCodesOf<typeof PNW_ADMIN_CODES>> =
-  getRegion().adminCodes.map((adminCode) =>
-    adminCode.slice(adminCode.indexOf("-") + 1)
-  ) as SubdivisionCodesOf<typeof PNW_ADMIN_CODES>;
+export function assertAdminCodesMatchDeclaredTuple(adminCodes: readonly string[]): void {
+  const declared: readonly string[] = PNW_ADMIN_CODES;
+  const agrees =
+    adminCodes.length === declared.length &&
+    adminCodes.every((adminCode, index) => adminCode === declared[index]);
+  if (!agrees) {
+    throw new Error(
+      `region manifest adminCodes [${adminCodes.join(", ")}] differ from the declared PNW_ADMIN_CODES tuple ` +
+        `[${declared.join(", ")}]; the literal types every land-context surface carries are derived from the ` +
+        `tuple, so the two may only be edited together`
+    );
+  }
+}
+
+/**
+ * The deployment's admin codes reduced to their subdivision suffixes, as the literal tuple Zod's
+ * `z.enum` and Drizzle's enum builders require AT MODULE SCOPE.
+ *
+ * Derived from `PNW_ADMIN_CODES` -- a compile-time tuple with no manifest read -- and NOT from
+ * `getRegion()`. A module-level `getRegion()` call is the import-time region read `federation.md`
+ * §1 forbids and W2 B1 removed from the Python tree: it freezes whichever region resolved first,
+ * which is exactly the trap waiting for the `NEXT_PUBLIC_PLANTGEO_REGION`-keyed registry
+ * `src/lib/region/AGENTS.md` promises inside `getRegion()` (STYLE-REVIEW-W4 S1). The manifest is
+ * still checked against this tuple -- by `assertAdminCodesMatchDeclaredTuple`, on first
+ * `getRegion()` call, where a read belongs.
+ */
+export const REGION_SUBDIVISION_CODES = subdivisionCodesOf(PNW_ADMIN_CODES);
