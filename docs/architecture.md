@@ -409,9 +409,9 @@ User clicks on map location
   │
   ├→ Service: ai-prompt.ts
   │   └→ Assemble all context data from services:
-  │       ├→ Recent fires (nasa-firms)
+  │       ├→ Recent fires (parquet-trpc-readers/fire-detections.ts)
   │       ├→ Water levels (usgs-water)
-  │       ├→ Vegetation health (vegetation.ts)
+  │       ├→ Vegetation health (parquet-trpc-readers/vegetation.ts)
   │       ├→ Soil data (soilgrids.ts)
   │       └→ Carbon potential (carbon-potential.ts)
   │

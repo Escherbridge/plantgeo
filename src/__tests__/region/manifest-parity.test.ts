@@ -11,7 +11,7 @@ import { PNW as pnwTypeScript } from "@/lib/region/pnw";
 /**
  * Parses the Python manifest's own data file so this test compares the two trees' VALUES, not a
  * second hand-copy of them. `pnw.json` is the single source of truth both
- * `foundation/region/manifest.py`'s `PNW` and this file read; see `src/lib/region/AGENTS.md`.
+ * `foundation/region/manifest.py`'s `load_region()` and this file read; see `src/lib/region/AGENTS.md`.
  */
 const PYTHON_MANIFEST_PATH = fileURLToPath(
   new URL(
@@ -50,7 +50,51 @@ interface PythonRegion {
 
 const pnwPython: PythonRegion = JSON.parse(readFileSync(PYTHON_MANIFEST_PATH, "utf-8"));
 
+/** `displayName` -> `display_name`; the one direction this repo's field names ever need to cross. */
+function camelToSnake(key: string): string {
+  return key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+}
+
+type Walkable = null | string | number | boolean | Walkable[] | { [key: string]: Walkable };
+
+/** Recursively re-keys every object in a TS value from camelCase to snake_case, arrays untouched. */
+function toSnakeKeyed(value: unknown): Walkable {
+  if (Array.isArray(value)) {
+    return value.map(toSnakeKeyed) as Walkable[];
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, entry]) => [camelToSnake(key), toSnakeKeyed(entry)])
+    );
+  }
+  return value as Walkable;
+}
+
+/**
+ * Every object's own key set, tagged by its path, recursively -- so a field added to one tree and
+ * forgotten in the other fails here regardless of depth, instead of only at whatever fields
+ * `STYLE-REVIEW-W1.md` S3's predecessor happened to enumerate by hand.
+ */
+function keySetPaths(value: unknown, path = "$"): string[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((entry, index) => keySetPaths(entry, `${path}[${index}]`));
+  }
+  if (value !== null && typeof value === "object") {
+    const keys = Object.keys(value as Record<string, unknown>).sort();
+    return [
+      `${path}:{${keys.join(",")}}`,
+      ...keys.flatMap((key) => keySetPaths((value as Record<string, unknown>)[key], `${path}.${key}`)),
+    ];
+  }
+  return [];
+}
+
 describe("PNW manifest parity between the service and web trees", () => {
+  it("agrees on the full recursive key set, camel/snake mapped", () => {
+    const tsSnakeKeyed = toSnakeKeyed(pnwTypeScript);
+    expect(keySetPaths(tsSnakeKeyed).sort()).toEqual(keySetPaths(pnwPython).sort());
+  });
+
   it("agrees on the scalar fields", () => {
     expect(pnwTypeScript.slug).toBe(pnwPython.slug);
     expect(pnwTypeScript.displayName).toBe(pnwPython.display_name);
@@ -69,13 +113,9 @@ describe("PNW manifest parity between the service and web trees", () => {
   });
 
   it("agrees on every sub-envelope", () => {
-    expect(Object.keys(pnwTypeScript.subEnvelopes).sort()).toEqual(
-      Object.keys(pnwPython.sub_envelopes).sort()
-    );
+    expect(Object.keys(pnwTypeScript.subEnvelopes).sort()).toEqual(Object.keys(pnwPython.sub_envelopes).sort());
     for (const [purpose, envelope] of Object.entries(pnwPython.sub_envelopes)) {
-      expect(pnwTypeScript.subEnvelopes[purpose as keyof typeof pnwTypeScript.subEnvelopes]).toEqual(
-        envelope
-      );
+      expect(pnwTypeScript.subEnvelopes[purpose as keyof typeof pnwTypeScript.subEnvelopes]).toEqual(envelope);
     }
   });
 
@@ -86,9 +126,7 @@ describe("PNW manifest parity between the service and web trees", () => {
 
   it("agrees on every enabled layer binding, slug for slug", () => {
     expect(pnwTypeScript.enabledLayers).toHaveLength(pnwPython.enabled_layers.length);
-    const pythonBindingsBySlug = new Map(
-      pnwPython.enabled_layers.map((binding) => [binding.layer_slug, binding])
-    );
+    const pythonBindingsBySlug = new Map(pnwPython.enabled_layers.map((binding) => [binding.layer_slug, binding]));
     for (const binding of pnwTypeScript.enabledLayers) {
       const pythonBinding = pythonBindingsBySlug.get(binding.layerSlug);
       expect(pythonBinding, `no Python binding for layer ${binding.layerSlug}`).toBeDefined();

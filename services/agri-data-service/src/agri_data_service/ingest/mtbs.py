@@ -28,6 +28,7 @@ from agri_data_service.execution.source_ingestion import (
     SourceIngestionPlan,
     SourceReleasePlan,
 )
+from agri_data_service.foundation.region import load_region
 from agri_data_service.ingest.http import UpstreamBounds, upstream_client
 from agri_data_service.ingest.identity import (
     MTBS_PRODUCER,
@@ -73,7 +74,15 @@ MTBS_FEATURE_SERVICE_HOST: Final = "apps.fs.usda.gov"
 MTBS_LAYER_NAME: Final = "Burned Area Boundaries (All Years)"
 
 # Matches `src/__tests__/services/ingestion-jobs.test.ts:3` (west, south, east, north).
-PACIFIC_NORTHWEST_BBOX: Final[BoundingBox] = (-125.0, 42.0, -111.0, 49.0)
+# Deprecated alias for `foundation/region`'s `sub_envelopes["burn_severity"]`; kept so existing
+# importers do not break (`federation.md` §5 step 2). Read the manifest directly in new code.
+_burn_severity_envelope = load_region().sub_envelopes["burn_severity"]
+PACIFIC_NORTHWEST_BBOX: Final[BoundingBox] = (
+    _burn_severity_envelope.west,
+    _burn_severity_envelope.south,
+    _burn_severity_envelope.east,
+    _burn_severity_envelope.north,
+)
 
 # Verbatim from the retired `src/lib/server/services/mtbs.ts:13-19`. Never renumbered, and never
 # consulted with a default: an absent or unrecognised code raises rather than becoming "unburned".

@@ -13,6 +13,7 @@ from agri_data_service.foundation.botanical_occurrences.coordinates import (
     derive_envelope,
 )
 from agri_data_service.foundation.botanical_occurrences.event_interval import EventInterval
+from agri_data_service.foundation.region import load_region
 from agri_data_service.pipeline.direct.botanical_occurrences.forward import (
     ArchiveRequest,
     BotanicalForwardConfig,
@@ -76,6 +77,13 @@ def _release(records: tuple[NormalizedOccurrence, ...]) -> ReadRelease:
         outcome="complete",
         reasons=(),
     )
+
+
+def test_seed_envelope_is_the_region_manifest_botanical_seed_sub_envelope() -> None:
+    """`SEED_ENVELOPE` is a deprecated alias; pin it to the manifest it now reads."""
+    envelope = load_region().sub_envelopes["botanical_seed"]
+    assert SEED_ENVELOPE == (envelope.west, envelope.south, envelope.east, envelope.north)
+    assert SEED_ENVELOPE == (-125.0, 41.0, -110.0, 50.0)
 
 
 def test_the_envelope_tracks_the_actual_extent_of_the_records() -> None:

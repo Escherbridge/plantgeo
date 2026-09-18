@@ -14,6 +14,7 @@ import httpx
 
 from agri_data_service.ingest.mtbs import MTBS_FEATURE_SERVICE_QUERY_URL
 from agri_data_service.pipeline.direct.burn_severity.current_snapshot import (
+    BBOX,
     MAX_CAPTURE_ROWS,
     canonical_bytes,
     digest,
@@ -31,7 +32,6 @@ SHA256_LENGTH = 64
 MAX_HEADER_LENGTH = 256
 COORDINATE_SERIALIZATION_TOLERANCE = 1e-12
 YEARS = tuple(range(2018, 2027))
-BBOX = (-125.0, 42.0, -111.0, 49.0)
 
 if TYPE_CHECKING:
     from pathlib import Path

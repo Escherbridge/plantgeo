@@ -45,6 +45,6 @@ Every BullMQ job registration (`jobs/*.ts`) parses `REDIS_URL` through the singl
 own copy with slightly different fallback shapes before this pass; `alert-dispatcher.ts` was
 always the correct example to copy.
 
-`db/schema/land-context/shared.ts`'s `PNW_STATE_CODES`/`PnwStateCode` are a known federation
-migration item (`conductor/code_styleguides/federation.md` §1) — do not move ad hoc; the
-migration order in that file's §5 owns it as its own reviewed push.
+`db/schema/land-context/shared.ts`'s `PNW_STATE_CODES`/`PnwStateCode` moved behind
+`getRegion().adminCodes` in the `federation.md` §5 step 2 push; both names stay as deprecated
+aliases, and new code should read `RegionAdminCode` (`src/lib/region/region.ts`) directly.
