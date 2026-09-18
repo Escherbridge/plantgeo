@@ -112,9 +112,9 @@ export function useBotanicalOccurrences(
   // The whole request as one string, so the effect re-runs on a real input change and not on a
   // parent re-render that rebuilt an equivalent options object.
   const requestUrl = useMemo(
+    // The listed fields ARE the dependency; depending on `options` itself would rebuild the URL
+    // on every parent render and re-fetch a viewport that did not move.
     () => (options.bbox === null ? null : buildRequestUrl(options, options.bbox)),
-     
-    // depending on `options` itself would re-fetch on every parent render.
     [
       options.bbox,
       options.zoom,
@@ -233,9 +233,9 @@ export function useBotanicalOccurrences(
       }
     })();
 
+    // `requestUrl` already encodes every request-shaping field, and `band` is derived from the zoom
+    // inside it, so those two are the whole dependency of this effect.
     return () => controller.abort();
-     
-    // request-shaping field; `band` is derived from the zoom inside it.
   }, [requestUrl, options.enabled]);
 
   return snapshot;
