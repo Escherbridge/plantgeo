@@ -52,6 +52,10 @@ ABSENCE_FILE_NAME: Final = "absent.json"
 # scanning a day prefix by eye reads it as metadata rather than as another record of the population.
 # It is JSON, never Parquet, which is what keeps every `*.parquet` scan glob in `planes/` blind to it.
 COMPLETION_FILE_NAME: Final = "_complete.json"
+# Zoom-INDEPENDENT on purpose: a governed-plane promotion receipt gates the source-of-truth register
+# verb, not one rendered rung, so its path never carries a `zoom=` segment the way `day_prefix` does.
+# See `execution/vegetation_partition_promotion.py`.
+PROMOTION_RECEIPT_FILE_NAME: Final = "promotion-receipt.json"
 # The SIBLING name a derived rung's emptiness is asserted under, so a partless ordinary marker stops
 # being ambiguous. See `AGENTS.md`, "Completion is asserted, and emptiness has its own name".
 DERIVED_EMPTY_COMPLETION_FILE_NAME: Final = "_complete.empty.json"
@@ -241,6 +245,20 @@ def month_prefix(layer: str, kind: PartitionKind, zoom: ZoomTier, year: int, mon
 def day_prefix(layer: str, kind: PartitionKind, zoom: ZoomTier, day: date) -> str:
     """Return the object prefix holding every part file written for one day of one stream at one tier."""
     return f"{month_prefix(layer, kind, zoom, day.year, day.month)}day={day.day:02d}/"
+
+
+def promotion_receipt_path(layer: str, kind: PartitionKind, day: date) -> str:
+    """Return the relative object key of one `layer=/kind=/year=/month=/day=` promotion receipt.
+
+    Owner decision 2026-09-18: governed-plane promotion is keyed by that partition's OWN content
+    SHA, matching the availability index's `generation=<content-sha>` convention
+    (`layer-lanes.md` §4a). This receipt lives beside the rungs it gates rather than inside one of
+    them, so it never collides with a `part-*.parquet` file or an `absent.json` marker.
+    """
+    return (
+        f"{stream_prefix(layer, kind)}year={_validated_year(day.year):04d}/month={_validated_month(day.month):02d}"
+        f"/day={day.day:02d}/{PROMOTION_RECEIPT_FILE_NAME}"
+    )
 
 
 def partition_path(layer: str, kind: PartitionKind, zoom: ZoomTier, day: date, part_index: int = 0) -> str:
