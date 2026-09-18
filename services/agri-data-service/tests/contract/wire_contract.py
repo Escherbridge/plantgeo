@@ -161,6 +161,22 @@ class WireCoverageLane(_Frozen):
     )
 
 
+class WireLayerBinding(_Frozen):
+    """One platform layer's source binding in the serving deployment's region.
+
+    `federation.md` §2's governed absence on the wire: `unbound` names a layer this region binds no
+    source for, so the slider catalogue, legends and agent tools can say "not available in this
+    region" instead of drawing an empty map that reads as an outage.
+    """
+
+    layer: str = Field(min_length=1)
+    binding: Literal["bound_global", "bound_regional", "unbound"]
+    #: The bound source's slug; null exactly when `binding` is `unbound`.
+    source: str | None
+    #: Why an unbound layer is absent; null exactly when the layer is bound.
+    reason: str | None
+
+
 class WireCoverage(_Frozen):
     """The whole-warehouse census the slider's capability rows are built from."""
 
@@ -168,3 +184,7 @@ class WireCoverage(_Frozen):
     generated_at: str = Field(min_length=1)
     evaluated_through_day: CalendarDay
     lanes: list[WireCoverageLane]
+    #: ADDITIVE, and deliberately not a `COVERAGE_SCHEMA_VERSION` bump -- see
+    #: `WarehouseCoverage.to_wire`'s docstring for why silence here is not a false claim. Defaulted
+    #: so a body recorded before this field existed still validates against the frozen contract.
+    layer_bindings: list[WireLayerBinding] = Field(default_factory=list)

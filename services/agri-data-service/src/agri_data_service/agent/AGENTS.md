@@ -486,6 +486,31 @@ The report is produced by **structured outputs** (`client.beta.messages.parse` w
 the TypeScript side does. Same guaranteed shape, one fewer moving part, and the failure mode
 is a validation error rather than a plausible-looking tool call with a missing field.
 
+## A layer this region binds no source for
+
+`federation.md` §2's last bullet, on the agent surface. A tool for an unbound layer **stays
+registered** and answers `not_available_in_region` (`tools.py::_region_absence`) naming the layer
+slugs and the region's slug and display name.
+
+Registered, not removed, because the vocabulary is the platform's and not the deployment's: dropping
+the tool would make the model answer "I do not know that surface" for a layer PlantGeo does have,
+and the model cannot tell that apart from a typo in the surface name. The refusal wording follows
+the three refusals above it — it opens "This is a REFUSAL, not an absence" and forbids the four
+readings the model reliably reaches for (absent, zero, unaffected, a gap in the record). What makes
+it different from `parquet_lane_never_written` is scope: a never-written lane might be written
+tomorrow, whereas an unbound layer has no day, location or filter that would ever answer here.
+
+Asked **before** the lane question at every call site, because a layer this region binds no source
+for has no lane question. The mapping from a catalogue surface to its manifest layer is
+`surfaces.py::SURFACE_REGION_LAYER_SLUGS`, hand-spelled for the same reason the two tables above it
+are: the two namespaces genuinely disagree (`drought-areas` is served by the lane `drought`, and all
+twelve climate/soil field surfaces are derived products of the one `signal` plane and bind no source
+of their own), so a derived mapping would be wrong in exactly the places that matter.
+
+The web half of the same fact rides `/api/v1/parquet/coverage` as `layer_bindings`
+(`parquet_ops/wire.py::LayerBindingCoverage`), so the slider catalogue and the legends say the same
+sentence the agent does.
+
 ## Caching
 
 Render order is `tools` → `system` → `messages`, so the breakpoint on the last (only) system

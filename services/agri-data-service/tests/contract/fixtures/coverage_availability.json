@@ -123,5 +123,11 @@
       "source_ceiling_day": null,
       "required_rungs": [], "withheld_reason": "availability_unpublished"
     }
+  ],
+  "layer_bindings": [
+    {"layer": "burn-severity", "binding": "bound_regional", "source": "mtbs", "reason": null},
+    {"layer": "drought", "binding": "bound_regional", "source": "usdm", "reason": null},
+    {"layer": "signal", "binding": "bound_global", "source": "era5_land_and_nasa_power", "reason": null},
+    {"layer": "soil-survey", "binding": "unbound", "source": null, "reason": "no_source_bound_in_region"}
   ]
 }

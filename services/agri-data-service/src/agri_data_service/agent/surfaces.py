@@ -136,6 +136,55 @@ FIRE_LANE_NAMES: Final = ("burn-severity", "fire-detections")
 AGENT_ZOOM_TIER: Final[ZoomTier] = 13
 
 
+# --- Which region-manifest LAYER each surface is bound through --------------------
+#
+# A third hand-spelled table, for the same reason the two above are hand-spelled: derived from the
+# lane names it would be wrong wherever the two namespaces disagree, and they disagree in exactly
+# the places that matter. `drought-areas` is served by the lane `drought`; all twelve climate and
+# soil field surfaces are DERIVED products of the one `signal` plane and bind no source of their
+# own, so they inherit `signal`'s binding. `interventions` is absent here as it is absent from
+# `SURFACE_PARQUET_LANES` and from the manifest -- see `foundation/region/AGENTS.md`.
+#
+# `federation.md` §2: a surface whose layer this region binds no source for answers
+# `not_available_in_region` rather than an empty success. See `agent/AGENTS.md`.
+SURFACE_REGION_LAYER_SLUGS: Final[dict[str, str]] = {
+    "burn-severity": "burn-severity",
+    "evacuation-zones": "evacuation-zones",
+    "fire-detections": "fire-detections",
+    "fire-perimeters": "fire-perimeters",
+    "sensors": "sensors",
+    "soil-survey": "soil-survey",
+    "vegetation": "vegetation",
+    "watersheds": "watersheds",
+    "water-gauges": "water-gauges",
+    "weather-observations": "weather-observations",
+    "drought-areas": "drought",
+    "climate-field-air-temperature": "signal",
+    "climate-field-dew-point": "signal",
+    "climate-field-precipitation": "signal",
+    "climate-field-relative-humidity": "signal",
+    "climate-field-shortwave-radiation": "signal",
+    "climate-field-wind-speed": "signal",
+    "climate-field-soil-wetness-surface": "signal",
+    "climate-field-soil-wetness-root-zone": "signal",
+    "climate-field-soil-wetness-profile": "signal",
+    "soil-field-moisture": "signal",
+    "soil-field-temperature": "signal",
+    "soil-field-vpd": "signal",
+}
+
+#: The manifest layer slug the `signal` plane's own four tools read, spelled once.
+SIGNAL_PLANE_REGION_LAYER: Final = "signal"
+
+#: The manifest layer slugs `fire_history_near_point` summarises, in `FIRE_LANE_NAMES` order.
+FIRE_REGION_LAYERS: Final = ("burn-severity", "fire-detections")
+
+
 def surface_lanes(surface_name: str) -> tuple[str, ...]:
     """Return the Parquet lanes serving one surface, or an empty tuple when none does."""
     return SURFACE_PARQUET_LANES.get(surface_name, ())
+
+
+def surface_region_layer(surface_name: str) -> str | None:
+    """Return the region-manifest layer one surface binds through, or `None` for an unknown surface."""
+    return SURFACE_REGION_LAYER_SLUGS.get(surface_name)

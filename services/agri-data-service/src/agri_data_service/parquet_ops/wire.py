@@ -302,12 +302,39 @@ class LaneCoverage:
 
 
 @dataclass(frozen=True, slots=True)
+class LayerBindingCoverage:
+    """One platform layer's source binding in the serving deployment's region.
+
+    A LAYER fact, not a lane fact, which is why it rides beside `lanes` rather than on a row: an
+    unbound layer has no lane at all, so there is no row for it to be a field of. See
+    `foundation/region/layer_availability.py` for where the three states come from.
+    """
+
+    layer: str
+    binding: str
+    source: str | None
+    reason: str | None
+
+    def to_wire(self) -> dict[str, object]:
+        """Render one binding; `source` and `reason` are each null in exactly one of the states."""
+        return {
+            "layer": self.layer,
+            "binding": self.binding,
+            "source": self.source,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class WarehouseCoverage:
     """The whole-warehouse census the slider's capability rows are built from."""
 
     generated_at: datetime
     evaluated_through_day: date
     lanes: tuple[LaneCoverage, ...]
+    #: `federation.md` §2's governed absence, per layer. Empty tuple renders as an empty list, which
+    #: a client reads as "this deployment stated no bindings" -- see `to_wire` below.
+    layer_bindings: tuple[LayerBindingCoverage, ...] = ()
 
     def to_wire(self) -> dict[str, object]:
         """Render the census.
@@ -315,12 +342,20 @@ class WarehouseCoverage:
         `evaluated_through_day` is when this answer was COMPUTED and is not a claim about any lane's
         freshness -- an availability lane states its own horizon as `source_ceiling_day`, so a lane
         whose source ends days ago no longer reads as current-but-empty.
+
+        `layer_bindings` is ADDITIVE and therefore does NOT bump `COVERAGE_SCHEMA_VERSION`, unlike
+        the freshness fields `AGENTS.md` describes. The version gate exists so a client cannot read
+        a field's SILENCE as health; here silence means "this serving side states no bindings", and
+        the only surface that reads the field renders that exactly as it renders today's payload --
+        every layer available. There is no reading of the absent field that is a false claim, so a
+        rejection during the deploy window would blank a slider for no gained safety.
         """
         return {
             "coverage_schema_version": COVERAGE_SCHEMA_VERSION,
             "generated_at": render_instant(self.generated_at),
             "evaluated_through_day": render_day(self.evaluated_through_day),
             "lanes": [lane.to_wire() for lane in self.lanes],
+            "layer_bindings": [binding.to_wire() for binding in self.layer_bindings],
         }
 
 

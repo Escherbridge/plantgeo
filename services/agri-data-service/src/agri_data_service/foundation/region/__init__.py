@@ -20,6 +20,14 @@ from agri_data_service.foundation.region.bindings import (
     assert_region_bindings_are_servable,
     unverified_binding_slugs,
 )
+from agri_data_service.foundation.region.layer_availability import (
+    PLATFORM_LAYER_SLUGS,
+    UNBOUND_REASON_NO_SOURCE,
+    LayerBindingState,
+    LayerBindingStatus,
+    is_layer_bound,
+    region_layer_availability,
+)
 from agri_data_service.foundation.region.manifest import (
     LatticeOriginRule,
     LayerBinding,
@@ -35,14 +43,20 @@ from agri_data_service.foundation.region.source_coverage import (
 
 __all__ = [
     "GLOBAL_SOURCE_COVERAGE",
+    "PLATFORM_LAYER_SLUGS",
+    "UNBOUND_REASON_NO_SOURCE",
     "LatticeOriginRule",
     "LayerBinding",
+    "LayerBindingState",
+    "LayerBindingStatus",
     "Region",
     "RegionBindingNotServableError",
     "RegionEnvelope",
     "SourceCoverage",
     "SourceCoverageClaim",
     "assert_region_bindings_are_servable",
+    "is_layer_bound",
     "load_region",
+    "region_layer_availability",
     "unverified_binding_slugs",
 ]

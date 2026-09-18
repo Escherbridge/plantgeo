@@ -18,6 +18,7 @@ import {
   type LayerToggleId,
 } from "@/lib/map/layer-registry";
 import { DEFAULT_LAYER_OPACITY } from "@/lib/map/layer-opacity";
+import { isLayerUnboundInRegion } from "@/lib/map/layer-region-binding";
 import { climateRenderForm, useClimateStore } from "@/stores/climate-store";
 import { useLayerStore } from "@/stores/layer-store";
 import { useMapStore } from "@/stores/map-store";
@@ -70,18 +71,30 @@ export function useLayerToggle(layerId: string): boolean {
 /**
  * Switch positions for every registry layer. A permanently withheld layer reads false even
  * if its id somehow reaches `activeLayers`, so governance cannot be bypassed by a stray write.
+ *
+ * A layer this deployment's region binds NO source for reads false for the same reason, and this
+ * is the single seam that makes `federation.md` §2's "no fetch issued" true: every layer component
+ * mounts off this record, so an unbound layer adds no source, issues no query and appears in no
+ * legend -- without each of the twenty-odd layer components having to learn about regions. The
+ * caption that explains the empty switch is `LayerRow`'s, next to the control it disabled.
+ *
+ * Fail-OPEN on silence: `isLayerUnboundInRegion` is true only when the payload names the layer
+ * `unbound`, so a null payload or a serving side that states no bindings leaves every toggle
+ * exactly where it is today.
  */
 export function useLayerVisibility(): LayerVisibility {
   const activeLayers = useActiveLayerToggles();
+  const capabilities = useTimeSliderStore((state) => state.capabilities);
   return useMemo(() => {
     const visibility = {} as LayerVisibility;
     for (const toggleId of LAYER_TOGGLE_IDS) {
       visibility[toggleId] =
         LAYER_REGISTRY[toggleId].permanentlyUnavailableReason === null &&
+        !isLayerUnboundInRegion(capabilities, toggleId) &&
         activeLayers.includes(toggleId);
     }
     return visibility;
-  }, [activeLayers]);
+  }, [activeLayers, capabilities]);
 }
 
 /**

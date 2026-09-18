@@ -13,6 +13,7 @@ import {
   type LegendContext,
 } from "@/lib/map/layer-legends";
 import { layerPublicationStandingCaption } from "@/lib/map/layer-publication-standing";
+import { unboundLayerCaption } from "@/lib/map/layer-region-binding";
 import { LAYER_REGISTRY, type LayerToggleId } from "@/lib/map/layer-registry";
 import { MARTIN_SOURCE_BY_LAYER_TOGGLE } from "@/lib/map/layers";
 import { useMap } from "@/lib/map/map-context";
@@ -376,8 +377,18 @@ export function LayerRow({ layerId, legendContext, isFetchingSelectedDay }: Laye
         hasSelectableDay(state.capabilities, layerId))
   );
 
+  // `federation.md` section 2's governed absence, read from the capabilities payload rather than
+  // the registry: which layers a deployment binds a source for is a property of the REGION, not of
+  // this build, so it cannot be a `permanentlyUnavailableReason` literal. Null in the pilot, where
+  // every platform layer is bound, and null on silence -- only an explicit `unbound` disables.
+  const regionAbsenceCaption = useTimeSliderStore((state) =>
+    unboundLayerCaption(state.capabilities, layerId)
+  );
   const withheldReason = entry.permanentlyUnavailableReason;
-  const isWithheld = withheldReason !== null;
+  // One disabled switch, two reasons, and the row keeps them apart in the CAPTION rather than
+  // merging them: "this build never publishes it" and "this region binds no source for it" are
+  // different facts, and only the second changes when the deployment moves.
+  const isWithheld = withheldReason !== null || regionAbsenceCaption !== null;
   // Stated whether the layer is on or off, unlike `unavailableReason` below: a reader who has to
   // switch a layer on to learn it draws nothing has already seen the empty map this caption
   // exists to replace. It does NOT disable the switch -- see the record's own doc for why a
@@ -401,11 +412,18 @@ export function LayerRow({ layerId, legendContext, isFetchingSelectedDay }: Laye
   // observations this far back", a claim about HISTORY for a layer whose blocker is a publish
   // step that never runs. Two captions, one of them false, is worse than the blank map.
   const captionId = useId();
-  const captions = [
-    isWithheld ? withheldReason : null,
-    publicationStanding,
-    isActive && publicationStanding === null ? unavailableReason : null,
-  ].filter((caption): caption is string => caption !== null);
+  //
+  // A region absence REPLACES every other caption, for the same reason a standing replaces
+  // `unavailableReason`: the other three are claims about this layer's publishing record, and a
+  // layer no source is bound for in this region has no publishing record here to describe.
+  const captions =
+    regionAbsenceCaption !== null
+      ? [regionAbsenceCaption]
+      : [
+          withheldReason !== null ? withheldReason : null,
+          publicationStanding,
+          isActive && publicationStanding === null ? unavailableReason : null,
+        ].filter((caption): caption is string => caption !== null);
 
   return (
     <li
@@ -518,7 +536,18 @@ export function LayerRow({ layerId, legendContext, isFetchingSelectedDay }: Laye
       {captions.length > 0 && (
         <p
           id={captionId}
-          className="pl-[3.5rem] pr-1 text-[10px] leading-relaxed text-[hsl(var(--muted-foreground))]"
+          data-testid={
+            regionAbsenceCaption !== null ? `layer-region-absence-${layerId}` : undefined
+          }
+          // Amber, matching `ParquetLayerFaultBanner`'s `notice` tone and `area_over_budget`'s
+          // wording there: a statement about what this deployment covers, not a fault. Every
+          // other caption keeps the muted tone it has always had.
+          className={cn(
+            "pl-[3.5rem] pr-1 text-[10px] leading-relaxed",
+            regionAbsenceCaption !== null
+              ? "text-amber-700 dark:text-amber-400"
+              : "text-[hsl(var(--muted-foreground))]"
+          )}
         >
           {captions.join(" ")}
         </p>

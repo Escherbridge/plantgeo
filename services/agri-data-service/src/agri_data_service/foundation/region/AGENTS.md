@@ -143,6 +143,39 @@ source has declared no claim yet is *not looked at*, and saying so is different 
 fine -- the same distinction `layer-lanes.md` §1a draws between "current" and "not looked at".
 Boot does not fail for those; it fails only for a claim that actively disagrees with its binding.
 
+## Layer availability, and why the catalogue is hand-spelled
+
+`layer_availability.py` answers `federation.md` §2's last bullet — "the platform must run with a
+layer unbound" — for every surface at once: `region_layer_availability(region)` returns one
+`LayerBindingStatus` per platform layer, `bound_global` / `bound_regional` / `unbound`, and the
+agent tool catalogue, the `/api/v1/parquet/coverage` payload and the web slider all read that one
+mapping rather than each deciding for itself what a missing binding means.
+
+**`PLATFORM_LAYER_SLUGS` is hand-spelled and is NOT `enabled_layers`.** A catalogue derived from the
+manifest can only ever contain layers the manifest binds, so every layer would be bound and the
+function could never return `unbound` — it would answer the question by construction. The platform's
+vocabulary is a property of this build (the layers it has planes, lanes, tools and legends for); a
+region's bindings are a property of the deployment. Keeping the two lists separate is the whole
+mechanism. Today the PNW manifest binds all thirteen, which is why landing this changes nothing
+visible in the pilot.
+
+**`interventions` stays out of the vocabulary**, as it stays out of `enabled_layers` above and out
+of `agent/surfaces.py`'s `SURFACE_PARQUET_LANES`. It is not a layer this region declined to bind a
+source for; it has no Parquet lane and no source-binding concept at all (RUNBOOK §0.26.1). Listing
+it would make every region report it as "not available in this region", which is a different and
+false claim — the honest one is that it is not a federated layer. If a region ever needs to say
+"wanted here, unbound" separately from "not a federated layer", that is a `LayerBindingState`
+schema change made deliberately, in its own commit.
+
+**A binding for a layer outside the vocabulary is carried, not dropped.** `region_layer_availability`
+unions the manifest's bindings over the platform list rather than intersecting: a region binding a
+layer this build has never heard of is a real deployment, and silently losing it here would hide it
+from every surface that reads the mapping, which is the opposite of a governed absence.
+
+`is_layer_bound` is the cheap single-layer form the agent tools call per request; it walks
+`enabled_layers` directly and builds no mapping, because a tool asks about one layer and the full
+catalogue is a per-request allocation it does not need.
+
 ## Timezone
 
 `America/Los_Angeles` is the manifest's one declared zone. The pilot's own `admin_codes`

@@ -34,10 +34,14 @@ from agri_data_service.agent.surfaces import (
     AGENT_SURFACE_NAMES,
     FEATURE_SURFACE_NAMES,
     FIRE_LANE_NAMES,
+    FIRE_REGION_LAYERS,
     SIGNAL_PLANE_LANE,
+    SIGNAL_PLANE_REGION_LAYER,
     STREAM_SURFACE_NAMES,
     surface_lanes,
+    surface_region_layer,
 )
+from agri_data_service.foundation.region import is_layer_bound, load_region
 from agri_data_service.db.engine import published_reader_session
 from agri_data_service.parquet_ops.coverage import registered_census_lanes
 from agri_data_service.parquet_ops.faults import ServingRefusalError
@@ -517,6 +521,48 @@ def _lane_never_written_refusal(tool_name: str, lanes: Sequence[str]) -> str:
     )
 
 
+def _region_absence(tool_name: str, layer_slugs: Sequence[str]) -> str | None:
+    """Refuse a layer this deployment's region binds no source for, or `None` when all are bound.
+
+    `federation.md` §2, "the platform must run with a layer unbound": the tool stays REGISTERED --
+    a vocabulary that changes per region would make the agent answer "I do not know that surface"
+    for a layer the platform does have -- and answers a governed absence naming the layer and the
+    region. Never a crash, never an empty success, and never a fall back to the pilot's source.
+
+    A tool naming SEVERAL layers refuses when ANY of them is unbound, the same intersection rule
+    `surfaces.py` already states for a surface backed by several lanes: the alternative is a lane
+    loop reporting the unbound half as "never written", which is an absence claim about a layer
+    this region was never going to hold. The refusal names exactly which layers were unbound.
+    """
+    region = load_region()
+    unbound = [layer_slug for layer_slug in layer_slugs if not is_layer_bound(region, layer_slug)]
+    if not unbound:
+        return None
+    _record(tool_name, 0, {"error": "not_available_in_region", "layers": unbound, "region": region.slug})
+    return _payload(
+        {
+            "error": "not_available_in_region",
+            "unbound_layers": unbound,
+            "region_slug": region.slug,
+            "region_display_name": region.display_name,
+            "note": (
+                "This is a REFUSAL, not an absence. This deployment covers "
+                f"{region.display_name} and its region manifest binds no data source for the "
+                "layer(s) named above, so the platform holds nothing for them ANYWHERE in this "
+                "region -- there is no day, location or filter that would answer. Say that the "
+                "layer is not available in this region; do NOT report the subject as absent, "
+                "zero, unaffected, or as a gap in the record."
+            ),
+        }
+    )
+
+
+def _surface_region_absence(tool_name: str, surface: str) -> str | None:
+    """`_region_absence` for one catalogue surface; `None` for a surface with no manifest layer."""
+    layer_slug = surface_region_layer(surface)
+    return None if layer_slug is None else _region_absence(tool_name, (layer_slug,))
+
+
 def _serving_refusal(tool_name: str, exc: ServingRefusalError) -> str:
     """Report a serving fault as a refusal; it is a statement about this process, never about content."""
     _record(tool_name, 0, {"error": "parquet_serving_refused", "code": exc.code})
@@ -641,6 +687,9 @@ async def query_signals_near_point(  # noqa: PLR0913 - the parameter list is the
     """Summarise governed signal observations near a point, from the Parquet signal plane."""
     if not _valid_coordinate(longitude, latitude):
         return _coordinate_error("signals_near_point")
+    region_absence = _region_absence("signals_near_point", (SIGNAL_PLANE_REGION_LAYER,))
+    if region_absence is not None:
+        return region_absence
     radius = _clamp(radius_meters, MIN_RADIUS_METERS, MAX_RADIUS_METERS)
     window_days = _clamp_int(days_back, 1, MAX_DAYS_BACK)
     names = _clean_names(signal_names)
@@ -708,6 +757,9 @@ async def query_drought_history_at_point(
     """Return the weekly U.S. Drought Monitor severity covering a point, from the Parquet release lane."""
     if not _valid_coordinate(longitude, latitude):
         return _coordinate_error("drought_history_at_point")
+    region_absence = _region_absence("drought_history_at_point", ("drought",))
+    if region_absence is not None:
+        return region_absence
     window_weeks = _clamp_int(weeks_back, 1, MAX_WEEKS_BACK)
     reference = (as_of or datetime.now(UTC)).date()
     valid_date_from = reference - timedelta(days=window_weeks * _DAYS_PER_WEEK)
@@ -815,6 +867,9 @@ async def query_fire_history_near_point(
     """Summarise served fire detections and burn perimeters near a point, lane by lane."""
     if not _valid_coordinate(longitude, latitude):
         return _coordinate_error("fire_history_near_point")
+    region_absence = _region_absence("fire_history_near_point", FIRE_REGION_LAYERS)
+    if region_absence is not None:
+        return region_absence
     radius = _clamp(radius_meters, MIN_RADIUS_METERS, MAX_RADIUS_METERS)
     window_years = _clamp_int(years_back, 1, MAX_FIRE_YEARS_BACK)
     reference = (as_of or datetime.now(UTC)).date()
@@ -1091,6 +1146,9 @@ async def query_signal_value_on_day(
     """Report what each governed signal measured on exactly the caller's day, and the audit for it."""
     if not _valid_coordinate(longitude, latitude):
         return _coordinate_error("signal_value_on_day")
+    region_absence = _region_absence("signal_value_on_day", (SIGNAL_PLANE_REGION_LAYER,))
+    if region_absence is not None:
+        return region_absence
     selected_day = _parse_day(day)
     if selected_day is None:
         return _day_error("signal_value_on_day", day)
@@ -1195,6 +1253,9 @@ async def query_signal_neighbors_in_time(  # noqa: PLR0913 - the parameter list 
     """Return the nearest accepted reading each side of the caller's day, carrying its real gap."""
     if not _valid_coordinate(longitude, latitude):
         return _coordinate_error("signal_neighbors_in_time")
+    region_absence = _region_absence("signal_neighbors_in_time", (SIGNAL_PLANE_REGION_LAYER,))
+    if region_absence is not None:
+        return region_absence
     selected_day = _parse_day(day)
     if selected_day is None:
         return _day_error("signal_neighbors_in_time", day)
@@ -1270,6 +1331,9 @@ async def query_nearest_signal_cells(  # noqa: PLR0913 - the parameter list is t
     """List the analysis cells nearest a point with their real distances and what they hold that day."""
     if not _valid_coordinate(longitude, latitude):
         return _coordinate_error("nearest_signal_cells")
+    region_absence = _region_absence("nearest_signal_cells", (SIGNAL_PLANE_REGION_LAYER,))
+    if region_absence is not None:
+        return region_absence
     selected_day = _parse_day(day)
     if selected_day is None:
         return _day_error("nearest_signal_cells", day)
@@ -1366,6 +1430,10 @@ async def query_observation_coverage_on_day(
     surface = surface_name.strip()[:MAX_NAME_LENGTH]
     if surface not in AGENT_SURFACE_NAMES:
         return _surface_error("observation_coverage_on_day", surface_name)
+    # Asked BEFORE the lane question: a layer this region binds no source for has no lane question.
+    region_absence = _surface_region_absence("observation_coverage_on_day", surface)
+    if region_absence is not None:
+        return region_absence
     lanes = surface_lanes(surface)
     if not lanes:
         return _surface_not_on_parquet("observation_coverage_on_day", surface)
@@ -1474,6 +1542,9 @@ async def query_observation_temporal_neighbors(
     surface = surface_name.strip()[:MAX_NAME_LENGTH]
     if surface not in AGENT_SURFACE_NAMES:
         return _surface_error("observation_temporal_neighbors", surface_name)
+    region_absence = _surface_region_absence("observation_temporal_neighbors", surface)
+    if region_absence is not None:
+        return region_absence
     lanes = surface_lanes(surface)
     if not lanes:
         return _surface_not_on_parquet("observation_temporal_neighbors", surface)
@@ -1569,6 +1640,9 @@ async def query_feature_value_near_point(  # noqa: PLR0913 - the parameter list 
     surface = surface_name.strip()[:MAX_NAME_LENGTH]
     if surface not in FEATURE_SURFACE_NAMES:
         return _feature_surface_error(surface_name)
+    region_absence = _surface_region_absence("feature_value_near_point", surface)
+    if region_absence is not None:
+        return region_absence
     radius = _clamp(radius_meters, MIN_RADIUS_METERS, MAX_RADIUS_METERS)
     returned_features = _clamp_int(feature_count, 1, MAX_SURFACE_FEATURE_ROWS)
     lanes = surface_lanes(surface)
@@ -1732,6 +1806,9 @@ async def query_surface_value_near_point(  # noqa: PLR0913 - published bounded t
     surface = surface_name.strip()[:MAX_NAME_LENGTH]
     if surface not in AGENT_SURFACE_NAMES:
         return _surface_error("surface_value_near_point", surface_name)
+    region_absence = _surface_region_absence("surface_value_near_point", surface)
+    if region_absence is not None:
+        return region_absence
     if surface == "drought-areas":
         return _payload({"error": "use_drought_history_at_point", "requested_day": selected_day})
     lanes = surface_lanes(surface)
