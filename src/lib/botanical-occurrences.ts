@@ -326,7 +326,9 @@ export function botanicalServingBandForViewport(
 }
 
 /**
- * The lowest zoom that still selects a given band, which is how a chosen rung is REQUESTED.
+ * A zoom inside a given band's range, which is how a chosen rung is REQUESTED (NIT 7, W3 review:
+ * this is not "the lowest zoom that still selects the band" -- `grid-0.25`'s entry is
+ * `BOTANICAL_FINE_SUPPORT_MIN_ZOOM - 1`, but zooms 0 through that value all select `grid-0.25` too).
  *
  * The plane takes no `support_id` parameter (`planes/botanical_occurrences.py`'s `_PARAMETERS`);
  * `BotanicalOccurrenceRequest.support_id` is derived from `zoom` alone. So forwarding a rung means

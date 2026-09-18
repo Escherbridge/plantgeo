@@ -46,3 +46,11 @@ silently widen the pre-existing default download area, which is a behaviour chan
 not authorised to make). A third candidate, `useLandContextQuery.ts`'s `resolveBoundaryInArea`
 fallback, matched `getRegion().defaultCameraEnvelope` exactly and was fixed in the same push rather
 than added to the debt list.
+
+**The exemption is every `__tests__` directory and every `*.test.ts(x)` file, not just a fixture
+named for its region** (NIT 10, W3 review). `federation.md` §1 only permits "test fixtures that
+state the region they model in their name"; this scan is deliberately wider than that, because a
+regex over an unnamed multi-line fixture string (this file's own self-tests, planting a Kenya box
+or a multi-line PNW literal to prove the guard finds it) would otherwise flag the guard's own test
+data as the offense it exists to catch. The tradeoff is a blind spot for a genuine offender that
+happens to live in a `*.test.ts` file; accepted, stated here rather than left implicit.

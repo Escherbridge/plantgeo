@@ -5,10 +5,9 @@ See `AGENTS.md` in this directory, section "The source protocol".
 
 Reuses `ingest.mtbs.fetch_release_features` / `build_mtbs_record` / `release_observation_window` /
 `validate_release_window` -- the exact paged-capture-and-parse step the Postgres ingestion path
-fetches and normalises through (`ingest/mtbs.py:761-822, 501-523, 840-845, 374-399`) -- because the
-fetch-and-parse step never wrote to PostgreSQL in the first place; only the shared
-`ingest.writer.FeatureWriter` did, through `run_mtbs_ingestion_job`. Importing the pure fetch/parse
-functions is not importing the write path.
+fetches and normalises through -- because the fetch-and-parse step never wrote to PostgreSQL in the
+first place; only the shared `ingest.writer.FeatureWriter` did, through `run_mtbs_ingestion_job`.
+Importing the pure fetch/parse functions is not importing the write path.
 """
 
 from __future__ import annotations

@@ -31,7 +31,8 @@ assigned to a footprint-hinting name (`_NAME_HINT_PATTERN`, underscore-normalise
 `SCREAMING_SNAKE_CASE` names still hit a boundary) OR its span is plausible for a region (0.5-60
 degrees each axis, narrower than a state, wider than a neighbourhood).
 
-**String matches are length-capped** (30 characters) so a long citation sentence that happens to
+**String matches are length-capped** (40 characters, aligned with the TS guard's cap -- NIT 3, W3
+review) so a long citation sentence that happens to
 mention "PNW" (`pipeline/parquet/lane_registry.py`'s `_climate_floor_basis` rationale, "...MEASURED
 against POWER's live solar edge on 2026-09-15 at five PNW points...") doesn't count as a declared
 region-name literal; a real offender (`GBIF_COLLECTION_KEY = "gbif:pnw:vascular"`,

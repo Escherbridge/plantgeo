@@ -180,9 +180,14 @@ export async function GET(request: NextRequest) {
     // decoded shape ever drifts from `botanicalProxyAnswerSchema`, this assignment stops compiling
     // instead of the hook receiving a field it cannot find.
     // Spread per branch rather than once over the union: a discriminated union assembled by one
-    // spread loses its discriminant to TypeScript, and this assignment exists to be checked.
+    // spread loses its discriminant to TypeScript, and this assignment exists to be checked. The
+    // `satisfies Extract<...>` target differs per arm ON PURPOSE (NIT 6, W3 review) -- textually
+    // identical arms invite a future reader to "simplify" this into the single-spread form that
+    // loses the discriminant; a visibly different target per branch is the reminder not to.
     const body: BotanicalProxyAnswer =
-      result.state === "detail" ? { ...result, servingRung } : { ...result, servingRung };
+      result.state === "detail"
+        ? ({ ...result, servingRung } satisfies Extract<BotanicalProxyAnswer, { state: "detail" }>)
+        : ({ ...result, servingRung } satisfies Extract<BotanicalProxyAnswer, { state: "aggregate" }>);
     return NextResponse.json(body, { headers: PRIVATE_EPHEMERAL_HEADERS });
   } catch (error) {
     if (error instanceof BotanicalOccurrencesUnavailableError) {

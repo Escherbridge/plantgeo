@@ -54,8 +54,11 @@ _MAX_PLAUSIBLE_ZOOM_LADDER_VALUE: Final = 24
 
 #: A string this long is prose (a citation, a docstring-adjacent rationale), not a declared
 #: identifier or region code; capping length keeps the region-word/admin-code check from matching
-#: sentences that merely mention the pilot region rather than restating its footprint.
-_MAX_DECLARED_STRING_LENGTH: Final = 30
+#: sentences that merely mention the pilot region rather than restating its footprint. Aligned with
+#: the TS guard's `MAX_DECLARED_STRING_LENGTH` at 40 (NIT 3, W3 review) -- the two guards had
+#: independently picked 30 and 40 for the identical rule, and there was no reason for either number
+#: to differ; re-scanned against the live tree at 40 and it introduces no new match.
+_MAX_DECLARED_STRING_LENGTH: Final = 40
 
 #: Files that ARE the manifest's own declaration -- never "a literal outside the manifest".
 _ALLOWED_RELATIVE_PATHS: Final[frozenset[str]] = frozenset(
@@ -182,11 +185,18 @@ def _find_offenders() -> list[tuple[str, int, str]]:  # noqa: PLR0912
                         offenders.append((relative_path, node.lineno, description))
 
             # A scalar (single lat/lon component) assigned to a name that says what it is, even
-            # without a 4-number sibling -- e.g. a lone `default_latitude = 46.5`.
+            # without a 4-number sibling -- e.g. a lone `default_latitude = 46.5`. Bounded by
+            # WHICH hint matched (NIT 12, W3 review): a `lat`/`latitude` name is bounded to
+            # latitude's [-90, 90], not longitude's wider [-180, 180] -- a name-hinted latitude of
+            # 100 is out of range and must not be waved through as though it were a longitude.
             for name in names:
-                if _name_is_footprint_hinted(name):
+                normalised_name = name.replace("_", " ")
+                is_latitude_hinted = bool(re.search(r"(?i)\b(lat|latitude)\b", normalised_name))
+                if is_latitude_hinted or _name_is_footprint_hinted(name):
                     scalar = _constant_number(value)
-                    is_in_range = scalar is not None and _MIN_LONGITUDE <= scalar <= _MAX_LONGITUDE
+                    min_bound = _MIN_LATITUDE if is_latitude_hinted else _MIN_LONGITUDE
+                    max_bound = _MAX_LATITUDE if is_latitude_hinted else _MAX_LONGITUDE
+                    is_in_range = scalar is not None and min_bound <= scalar <= max_bound
                     is_world_extent_component = scalar in (_MIN_LONGITUDE, _MAX_LONGITUDE, _MIN_LATITUDE, _MAX_LATITUDE)
                     if is_in_range and not is_world_extent_component:
                         description = f"name-hinted scalar {scalar} assigned to {name}"

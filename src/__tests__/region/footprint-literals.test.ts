@@ -7,9 +7,13 @@
 // for the false positives that scoping choice was built to avoid.
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const SRC_ROOT = "src";
+// Resolved from `import.meta.url` rather than the bare relative string "src" (NIT 5, W3 review):
+// the Python guard already anchors on `Path(__file__).resolve().parents[1]`, and a cwd-relative
+// path here depends on vitest's own working directory rather than this file's location.
+const SRC_ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
 
 const EXCLUDED_DIRECTORY_NAMES = new Set(["__tests__", "__benchmarks__", "node_modules"]);
 
