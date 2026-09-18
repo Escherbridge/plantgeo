@@ -32,10 +32,29 @@ class SoilSurveyRelease(Protocol):
     (`federation.md` §2).
     """
 
-    vintage_day: date
-    survey_area_symbols: tuple[str, ...]
-    records: tuple[object, ...]
-    fetched_at: datetime
+    #: Read-only properties, not plain attributes: a frozen dataclass implementation's fields are
+    #: themselves read-only, and mypy's Protocol structural check requires a plain attribute to be
+    #: settable, so a settable-attribute Protocol member can never be satisfied by a frozen
+    #: dataclass field even when the types match exactly.
+    @property
+    def vintage_day(self) -> date:
+        """The source's own version stamp this release was exported at."""
+        ...
+
+    @property
+    def survey_area_symbols(self) -> tuple[str, ...]:
+        """The source's own area partitioning this release covers."""
+        ...
+
+    @property
+    def records(self) -> tuple[object, ...]:
+        """Read-only so a concrete source may narrow this to its own record payload type."""
+        ...
+
+    @property
+    def fetched_at(self) -> datetime:
+        """When this release was read, UTC."""
+        ...
 
 
 @runtime_checkable
