@@ -310,6 +310,27 @@ export interface ParquetLaneCoverage {
   withheldReason: ParquetAvailabilityWithheldReason | null;
 }
 
+/**
+ * What one platform layer's source binding is in the serving deployment's region.
+ *
+ * The three states `foundation/region/layer_availability.py` declares, spelled the same way: the
+ * two `bound_*` members carry the manifest's own coverage word for the bound source, and `unbound`
+ * is `federation.md` §2's governed absence -- a layer this region names no source for at all.
+ */
+export const PARQUET_LAYER_BINDINGS = ["bound_global", "bound_regional", "unbound"] as const;
+
+export type ParquetLayerBinding = (typeof PARQUET_LAYER_BINDINGS)[number];
+
+export interface ParquetRegionLayerBinding {
+  /** Layer slug as the region manifest spells it (`drought`, `soil-survey`, `signal`). */
+  layer: string;
+  binding: ParquetLayerBinding;
+  /** The bound source's slug; null exactly when `binding` is `unbound`. */
+  source: string | null;
+  /** Why an unbound layer is absent; null exactly when the layer is bound. */
+  reason: string | null;
+}
+
 /** The whole warehouse's census: one entry per physical lane/rung, with no viewport. */
 export interface ParquetWarehouseCoverage {
   /**
@@ -328,6 +349,17 @@ export interface ParquetWarehouseCoverage {
   /** UTC day through which cadence, absence, and gap obligations were evaluated. */
   evaluatedThroughDay: string;
   lanes: ParquetLaneCoverage[];
+  /**
+   * This deployment's per-layer source bindings, or an empty array when it stated none.
+   *
+   * ADDITIVE, and deliberately not a `COVERAGE_SCHEMA_VERSION` bump. The version gate exists so a
+   * client cannot read a field's SILENCE as health; here silence means "this serving side states no
+   * bindings", and the only surface that reads it then renders exactly what it renders today --
+   * every layer available, which is the truth in the PNW pilot and the only safe default during a
+   * deploy window. There is no reading of the absent field that is a false claim, so rejecting the
+   * body would blank a working slider for no gained safety.
+   */
+  layerBindings: ParquetRegionLayerBinding[];
 }
 
 /* ---------------------------------------------------------------------------
@@ -491,6 +523,18 @@ const wireCoverageSchema = z.object({
       withheld_reason: z.enum(PARQUET_AVAILABILITY_WITHHELD_REASONS).nullable(),
     })
   ),
+  // Optional, so a serving side predating the field still decodes. See `ParquetWarehouseCoverage.
+  // layerBindings` for why an omitted binding list is not a fail-open.
+  layer_bindings: z
+    .array(
+      z.object({
+        layer: z.string(),
+        binding: z.enum(PARQUET_LAYER_BINDINGS),
+        source: z.string().nullable(),
+        reason: z.string().nullable(),
+      })
+    )
+    .optional(),
 });
 
 type WireEnvelope = z.infer<typeof wireEnvelopeSchema>;
@@ -668,6 +712,7 @@ function decodeCoverage(payload: unknown): ParquetWarehouseCoverage {
       requiredRungs: lane.required_rungs,
       withheldReason: lane.withheld_reason,
     })),
+    layerBindings: parsed.data.layer_bindings ?? [],
   };
 }
 

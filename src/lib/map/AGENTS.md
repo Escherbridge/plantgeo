@@ -572,3 +572,37 @@ at z7-z10 (~140 square degrees against a ceiling of 100).
 **Null is a refusal, not a fallback.** When no rung admits the area the walk returns null and the
 caller must say so. Returning the coarsest rung instead would answer a question about one area
 with evidence about another and give the reader no way to tell.
+
+## layer-region-binding.ts
+
+`federation.md` §2's last bullet on the web side: "the platform must run with a layer unbound". A
+region that binds no soil source gets a soil layer that says **not available in this region** —
+never a crash, never an empty map that reads as an outage, never a silent fallback to the pilot's
+source.
+
+**The binding status is DATA, not a registry literal.** Which layers a deployment binds a source
+for is a property of the region, so it cannot live beside `permanentlyUnavailableReason`: that field
+says "this build never publishes this layer", which stays true wherever the tree is deployed. The
+binding arrives per request on the slider capabilities payload (`layerBindings`), carried unchanged
+from `/api/v1/parquet/coverage`'s `layer_bindings`, whose authority is
+`foundation/region/layer_availability.py`.
+
+**One seam does the work.** `useLayerVisibility` (`layer-toggle-context.ts`) is the single place
+every layer component reads to decide whether to mount, so gating there is what makes "no fetch
+issued" true without teaching twenty-odd layer components about regions. `LayerRow` disables the
+switch and states the reason next to it; the legend needs no change at all, because it renders
+drawn layers and an unbound layer cannot be drawn.
+
+**Fail open on silence, always.** `isLayerUnboundInRegion` is true only when the payload explicitly
+names the layer `unbound`. A null payload, an empty binding list, a layer the list does not mention
+and a toggle with no manifest layer all read as available. The deploy window between the two trees
+therefore cannot blank a working layer, and that asymmetry is deliberate: the cost of a missing
+caption for one poll cycle is a sentence nobody saw; the cost of a false `unbound` is a layer that
+silently vanishes from the map.
+
+**The warehouse-name → manifest-layer table is hand-spelled**, mirroring `agent/surfaces.py`'s
+`SURFACE_REGION_LAYER_SLUGS` entry for entry, because the two namespaces disagree exactly where it
+matters: `drought-areas` is served by the manifest layer `drought`, and all twelve climate and soil
+field streams are derived products of the one `signal` plane — they bind no source of their own and
+go dark together with it. `interventions` and `strategy-recommendations` are absent from the table
+on purpose; neither is a federated layer, so neither can be "unavailable in this region".

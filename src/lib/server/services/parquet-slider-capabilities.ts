@@ -11,6 +11,7 @@ import {
   type ParquetCoverageAuthority,
   type ParquetLaneCoverage,
   type ParquetLaneNature,
+  type ParquetRegionLayerBinding,
 } from "@/lib/server/services/parquet-plane-client";
 import {
   UpstreamConfigurationError,
@@ -24,7 +25,12 @@ import {
   type ClimateFieldSignalId,
 } from "@/lib/environmental/climate-field";
 import type { ZoomTier } from "@/lib/map/zoom-tiers";
-import { SLIDER_STREAM_LAYER_NAMES, type DayRange, type TemporalKind } from "@/types/time-slider";
+import {
+  SLIDER_STREAM_LAYER_NAMES,
+  type DayRange,
+  type SliderLayerBinding,
+  type TemporalKind,
+} from "@/types/time-slider";
 
 const REQUIRED_ZOOM_TIERS = [0, 5, 9, 13] as const satisfies readonly ZoomTier[];
 
@@ -71,6 +77,28 @@ export interface ParquetSliderCapabilities extends ResolvedSliderCapabilities {
   parquetCoverageEvaluatedThroughDay: string | null;
   parquetCoverageUnavailable: boolean;
   withheldParquetCapabilities: WithheldParquetCapability[];
+  /**
+   * Every platform layer's source binding in this deployment's region, carried through from the
+   * coverage census unchanged.
+   *
+   * A LAYER fact and not a capability row, which is why it rides beside `layers` rather than on
+   * one: an unbound layer publishes no capability at all, so there is no row for it to be a field
+   * of, and the absence of a row is exactly what this list exists to explain. Empty when the
+   * serving side stated no bindings -- see `SliderCapabilities.layerBindings`.
+   */
+  layerBindings: SliderLayerBinding[];
+}
+
+/** The census's wire spelling to the client's, so no surface below reads a snake_case field. */
+function toSliderLayerBindings(
+  bindings: readonly ParquetRegionLayerBinding[]
+): SliderLayerBinding[] {
+  return bindings.map((binding) => ({
+    layerSlug: binding.layer,
+    binding: binding.binding,
+    sourceSlug: binding.source,
+    reason: binding.reason,
+  }));
 }
 
 interface ParquetCapabilityContract {
@@ -906,6 +934,10 @@ export async function getParquetSliderCapabilities(): Promise<ParquetSliderCapab
       parquetCoverageEvaluatedThroughDay: null,
       parquetCoverageUnavailable: true,
       withheldParquetCapabilities: unavailableCoverageProofs(),
+      // Empty, never a fabricated "everything is bound": the census is what states the bindings,
+      // and it is exactly what did not answer. An empty list reads as "no binding stated", which
+      // leaves every toggle enabled -- the same place this branch already leaves the slider.
+      layerBindings: [],
     };
   }
   const serverCurrentDate = new Date().toISOString().slice(0, 10);
@@ -930,6 +962,7 @@ export async function getParquetSliderCapabilities(): Promise<ParquetSliderCapab
     withheldParquetCapabilities: proofs.flatMap((proof) =>
       proof.withheld === null ? [] : [proof.withheld]
     ),
+    layerBindings: toSliderLayerBindings(coverage.layerBindings),
   };
 }
 

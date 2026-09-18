@@ -266,6 +266,28 @@ export interface SliderLayerCapability {
   requiredRungs?: readonly number[];
 }
 
+/**
+ * What one platform layer's source binding is in the deployment's region.
+ *
+ * Mirrors `foundation/region/layer_availability.py`'s three states word for word. `unbound` is
+ * `conductor/code_styleguides/federation.md` §2's governed absence: a layer the platform HAS, that
+ * this region binds no source for, so every surface says "not available in this region" rather than
+ * drawing an empty map that reads as an outage.
+ */
+export const LAYER_BINDING_STATES = ["bound_global", "bound_regional", "unbound"] as const;
+
+export type LayerBindingState = (typeof LAYER_BINDING_STATES)[number];
+
+export interface SliderLayerBinding {
+  /** Layer slug as the region manifest spells it (`drought`, `soil-survey`, `signal`). */
+  layerSlug: string;
+  binding: LayerBindingState;
+  /** The bound source's slug; null exactly when `binding` is `unbound`. */
+  sourceSlug: string | null;
+  /** Why an unbound layer is absent; null exactly when the layer is bound. */
+  reason: string | null;
+}
+
 /** The server's answer to "what can the slider offer, and what day is it?". */
 export interface SliderCapabilities {
   /** Server UTC today; the ONLY definition of "today". Never read the browser clock. */
@@ -300,6 +322,16 @@ export interface SliderCapabilities {
    * the way it reads a null payload: axis unknown, so keep the control and let it say so.
    */
   streamsUnavailable: boolean;
+  /**
+   * Every platform layer's source binding in this deployment's region, or absent when the serving
+   * side stated none.
+   *
+   * OPTIONAL on purpose, and an omission is NOT "everything is unbound": a payload that predates
+   * the field, or a serving side that states no bindings, must render exactly as it renders today
+   * -- every layer available. Only an explicit `unbound` entry disables a toggle, so the deploy
+   * window between the two trees can never blank a working layer.
+   */
+  layerBindings?: SliderLayerBinding[];
 }
 
 /** Metrics whose public day reader is explicitly owned by PostgreSQL fire-perimeter data. */
