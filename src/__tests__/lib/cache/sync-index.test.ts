@@ -411,13 +411,22 @@ describe("useSyncIndexStore", () => {
         date: "2026-08-01",
       })
     );
-    await setEntry(STORE_CONFIG, cacheKey, storedEntry(cacheKey, { expiresAt: Date.now() + 20 }));
-    await useSyncIndexStore.getState().hydrate();
-    expect(useSyncIndexStore.getState().byLayer.get("vegetation")?.days.size).toBe(1);
+    // Fake only Date: a real 20 ms TTL raced `setEntry` + `hydrate` on a slow CI container and the
+    // entry was already expired before it was indexed (frontend build failure 2026-09-18). Timers
+    // and promises stay real so the async store path is exercised unchanged.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const start = Date.now();
+      await setEntry(STORE_CONFIG, cacheKey, storedEntry(cacheKey, { expiresAt: start + 20 }));
+      await useSyncIndexStore.getState().hydrate();
+      expect(useSyncIndexStore.getState().byLayer.get("vegetation")?.days.size).toBe(1);
 
-    await new Promise((resolve) => setTimeout(resolve, 40));
-    useSyncIndexStore.getState().pruneExpired();
+      vi.setSystemTime(start + 40);
+      useSyncIndexStore.getState().pruneExpired();
 
-    expect(useSyncIndexStore.getState().byLayer.has("vegetation")).toBe(false);
+      expect(useSyncIndexStore.getState().byLayer.has("vegetation")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
