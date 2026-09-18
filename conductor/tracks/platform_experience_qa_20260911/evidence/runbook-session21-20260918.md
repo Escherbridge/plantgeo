@@ -272,3 +272,52 @@ durable per-part z5 ranges before gap repair re-derives the lane without `base_t
 via `size_of`; the conftest move; `TierDerivation.band_height_degrees` when `tiers.py` reopens; NaN
 as a documented exception to reconcile with the tiers fix; a `slow` marker if the suite budget
 tightens. The single Python sweep runs next over A2b + p1a + p1b.
+
+**Sweep and commit 2026-09-18T16:1xZ.** The single Python sweep over A2b + p1a + p1b: lint, mypy and
+the full pytest pass (186 s); the format gate asked for one whitespace-only reflow in
+`derivation.py`, applied and re-checked (410 files formatted, ruff clean). Committed as `46605492`
+(the six partition files) and `54f8df49` (this evidence, the track metadata with per-slice review
+verdicts, tripwires and follow-ups). The Linux receipt is being built from a clean detached
+checkout of `46605492` (service digest `4f495d99…` over 903 inputs); push and deployment follow it.
+
+**Linux receipt for `46605492`: FAILED — and it was right to.** In the QA image (the same polars as
+`uv.lock`, on the committed LF export) four tests failed that pass on Windows: the byte-identity
+oracle runs `git show` and the container holds a tarball, not a repository (exit 128); the
+split-cell merge test and one row-loss reproducer report "z5: banded 4 rows vs whole-day 5" and
+"10 vs 11"; and the strict xfail pinning the `tiers.py` one-row floor defect XPASSED. Read together:
+the whole-day oracle is not deterministic — on Linux the bulk frame floors an edge origin into the
+neighbouring z5 cell where Windows floors it on the one-row frame. The defect the slice pinned as a
+follow-up is platform-dependent as well as frame-length-dependent, so it cannot stay a follow-up:
+the receipt would never certify. The format gate also asked for one reflow in the new test file
+that the Windows sweep's earlier pass had not covered. Round 5 opens `warehouse/parquet/tiers.py`
+(p1a landed, so no longer closed) to make `floor_to_resolution` exact for lattice origins — snap a
+quotient within 1e-9 of an integer to it, floor everything else — with a one-row-versus-bulk origin
+test at three pitches, removes the xfail, vendors the oracle as a digest-pinned fixture, and measures
+p1a's golden digests for any lane whose edge cells move. Attempt evidence retained.
+
+**p1b round 5 authored** (159 tests across five files, ruff check and format clean on seven touched
+files, mypy strict clean on three sources). `warehouse/parquet/tiers.py` gained
+`FLOOR_SNAP_TOLERANCE = 1e-9` and `floor_to_resolution` now snaps a quotient within that tolerance
+of an integer to it before multiplying back, flooring everything else, with the platform rationale in
+its docstring; a tiers test evaluates every 0.2-multiple origin in 24–50 N at three pitches on a
+one-row and a bulk frame and asserts identical origins. p1a's golden digests did not move (6/6
+byte-identity tests; the fixtures hold no origin within 1e-9 of an edge). With both the membership
+rule and the platform floor exact, the author measured zero z9 or z5 split cells across the envelope
+for all four (height, base) pairs and the property test now asserts that; the merge remains as
+defence in depth with direct unit tests. The oracle is vendored as
+`tests/parquet/fixtures/derivation_oracle_d4bb3491.py.txt` (blob `4b8cddfc…`, sha256 pinned and
+asserted before exec) so the receipt container needs no repository. Review of the `tiers.py` delta
+launched; the Linux receipt is the sweep that follows it.
+
+**p1b round 5 verdict: APPROVE** (159 tests, no xfail or xpass; mypy strict, ruff check and format
+clean; the oracle fixture's blob id and sha256 equal `git show d4bb3491`'s bytes, LF on every host
+by `.gitattributes`, neither collected nor linted). The snap was probed on one-row versus bulk
+frames for the *origin value*, not only the cell, across 54 pitch/lattice combinations including
+negatives, the 0.0 edge, centroids and 1e-7 offsets: zero disagreements, and the snap altered only
+quotients within 1e-9 of an integer. Callers of `floor_to_resolution` are exactly three, all
+coordinates; the largest quotient the warehouse floors is 5·10⁴. **Production blast radius, stated:**
+the base rung is exporter-written and never floored, so it is untouched; a coarse rung derived on
+Linux before the snap may hold an edge-origin cell one cell south until that day is re-derived, and
+the rewrite is the ordinary re-derive path — it cannot raise the governed-absence conflict, which
+belongs to the absence ladder. Totals are conserved either way. Committed as `72a3568d`; the Linux
+receipt is building from a clean checkout of it.

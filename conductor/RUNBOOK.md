@@ -392,6 +392,33 @@ sensors breaker supersession (CLI, explicit), the fire-perimeters allow-list act
 repair-audit durability trade is recorded as an owner decision), and the desktop click-reach
 change. **No whole QA case or checklist item is promoted; the 220-case matrix is unchanged.**
 
+### Session 21 (frontier fall-through, vegetation-type p1a/p1b, NASA POWER solar regression) — three lanes on `fable`
+
+Evidence: `conductor/tracks/platform_experience_qa_20260911/evidence/runbook-session21-20260918.md`.
+A2b: when the selected climate day returns `source_unsettled`, the walk now steps to the next older
+pending day within the turn (`CLIMATE_UNSETTLED_FRONTIER_SKIPS = 1`, `unsettled_frontier_days` in the
+report); one skip covers an edge up to lag+1, deeper jitter is a recorded cross-turn follow-up.
+p1a: `GridAggregation.key_columns_by_tier` with construction-time refusals and a chain-safety rule;
+the LF2025 legend does not nest (47/193 groups, 4/20 physiognomies), so the spec carries a joint-key
+ladder. p1b: latitude-band folding — band membership is exact integer arithmetic on the lattice
+(`round(lat / base) // cells_per_z5`) because Polars evaluates `col / 0.2` differently on a one-row
+frame than in bulk (46 envelope edges flip); split z9 cells merge with associative aggregates; part
+z5 ranges travel explicitly and are digest-checked so an in-place re-export refuses rather than
+retracts; base rows must be lattice origins; a strict xfail pins the pre-existing `tiers.py`
+frame-length floor defect. Reviews: A2b APPROVE (one wording round), p1a APPROVE (one round), p1b
+APPROVE after four adversarial rounds — the first three each refuted the membership rule at a deeper
+level. Receipts are built from a clean detached checkout of the certified commit whenever an author
+lane shares the main tree (the working-tree digest otherwise disagrees with the committed export).
+Deployed `14d7f549` (A2b + p1a + receipt) at 14:38Z, all four services SUCCESS, readiness 200.
+**NASA POWER regressed provider-side between 14:03Z and 14:47Z:** `ALLSKY_SFC_SW_DWN` is `-999` on
+every day from 2026-07-01 onward at every probed cell and parameter bundle while meteorology stays
+real; the 14:40Z and 15:40Z climate turns saw 09-12 and 09-11 all-fill, refused both fail-closed,
+spent two fan-outs and the 429 pause series, wrote nothing. Shortwave stays withheld
+`availability_stale` until POWER republishes; the published 06-01→09-11 days stand; no lane change
+is owed for the outage (memory: `plantgeo-power-solar-regressed-2026-09-18`). p1b committed as
+`46605492`; receipt, push and deployment recorded in the evidence file when observed. **No whole QA
+case or checklist item is promoted; the 220-case matrix is unchanged.**
+
 ## Recovery
 
 - Disable the affected current schedule and preserve the last valid immutable generation and pointer.
