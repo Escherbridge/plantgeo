@@ -243,6 +243,36 @@ export async function fetchBotanicalOccurrences(
 /** Zoom threshold: aggregate below, detail at-or-above. Mutually exclusive, never both mounted. */
 export const BOTANICAL_DETAIL_MIN_ZOOM = 11;
 
+/** At or above this zoom an aggregate answer comes from the fine rung; below it, the coarse one. */
+export const BOTANICAL_FINE_SUPPORT_MIN_ZOOM = 7;
+
+/** Which published artifact answers a zoom: detail points, or one of the two support rungs. */
+export type BotanicalSupportBand = "detail" | "grid-0.05" | "grid-0.25";
+
+/**
+ * Square-degree ceiling per answer band, restated from the plane's own `MAX_BBOX_SQUARE_DEGREES`
+ * (`planes/botanical_occurrences.py`). These numbers are NOT re-tuned here: an ingress that bounded
+ * differently from the serving side would either refuse requests the plane would have answered, or
+ * forward ones it is about to refuse anyway. The 0.05 rung's 100 square degrees in particular is
+ * left exactly as published -- whether it should change is an owner decision, not an edit.
+ */
+export const BOTANICAL_BBOX_CEILING_SQUARE_DEGREES: Readonly<Record<BotanicalSupportBand, number>> = {
+  detail: 4,
+  "grid-0.05": 100,
+  "grid-0.25": 1600,
+};
+
+/** The band a zoom selects, mirroring `BotanicalOccurrenceRequest.support_id` server-side. */
+export function botanicalSupportBandForZoom(zoom: number): BotanicalSupportBand {
+  if (zoom >= BOTANICAL_DETAIL_MIN_ZOOM) return "detail";
+  return zoom >= BOTANICAL_FINE_SUPPORT_MIN_ZOOM ? "grid-0.05" : "grid-0.25";
+}
+
+/** The widest bbox, in square degrees, the plane will answer at this zoom. */
+export function botanicalBboxCeilingForZoom(zoom: number): number {
+  return BOTANICAL_BBOX_CEILING_SQUARE_DEGREES[botanicalSupportBandForZoom(zoom)];
+}
+
 /**
  * Pending registry entries in the shape `src/lib/map/layer-registry.ts` expects, for the
  * shared integrator to paste in (see

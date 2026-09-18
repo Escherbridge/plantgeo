@@ -1,9 +1,10 @@
 """Conditional publication of one immutable generation: every artifact durable, then one pointer.
 
-THE ORDER IS THE CONTRACT. Parts, then `manifest.json`, then `_COMPLETE`, then and only then does
-`current.json` move. A process killed anywhere before the marker leaves a generation directory that
-no reader will open and a pointer that still names the previous generation, which is what makes
-interrupted publication recoverable rather than corrupting.
+THE ORDER IS THE CONTRACT. Parts, then `manifest.json`, then `_COMPLETE`, then `current.json`, and
+last of all the checksum-bound `availability/_LATEST.json` a serving read resolves (layer-lanes
+§4a). A process killed anywhere before the marker leaves a generation directory that no reader
+will open and a pointer that still names the previous generation, which is what makes interrupted
+publication recoverable rather than corrupting.
 """
 
 from __future__ import annotations
@@ -19,6 +20,11 @@ import pyarrow as pa  # type: ignore[import-untyped]
 import pyarrow.parquet as pq  # type: ignore[import-untyped]
 
 from agri_data_service.config import settings as default_settings
+from agri_data_service.pipeline.direct.botanical_occurrences.pointer import (
+    LATEST_POINTER_NAME,
+    build_latest_pointer,
+    encode_latest_pointer,
+)
 from agri_data_service.pipeline.parquet.objectstore import conform_to_stream_schema
 from agri_data_service.warehouse.schemas.botanical_occurrences import (
     BOTANICAL_CELL_TAXON_SUMMARY_SCHEMA,
@@ -35,6 +41,7 @@ if TYPE_CHECKING:
 
     from agri_data_service.config import Settings
     from agri_data_service.foundation.botanical_occurrences.release_identity import ReleaseSetIdentity
+    from agri_data_service.pipeline.direct.botanical_occurrences.pointer import BotanicalLatestPointer
     from agri_data_service.pipeline.parquet.objectstore import ObjectStoreBackend
     from agri_data_service.warehouse.parquet.schema import ParquetStreamSchema
 
@@ -126,6 +133,53 @@ def generation_prefix(release_set_id: str) -> str:
 def pointer_path() -> str:
     """Return the one mutable object in this lane: which generation is currently served."""
     return f"{LANE_PREFIX}/{CURRENT_POINTER}"
+
+
+def latest_pointer_path() -> str:
+    """Return the checksum-bound pointer a serving read resolves (layer-lanes §4a)."""
+    return f"{LANE_PREFIX}/{LATEST_POINTER_NAME}"
+
+
+def write_latest_pointer(
+    target: PublicationTarget,
+    release_set_id: str,
+    *,
+    manifest_bytes: bytes,
+    published_at: str | None,
+) -> BotanicalLatestPointer:
+    """Write the checksum-bound pointer naming one already-durable generation as current."""
+    pointer = build_latest_pointer(
+        product=LANE_PREFIX,
+        generation_id=release_set_id,
+        manifest_key=f"{generation_prefix(release_set_id)}/{MANIFEST_NAME}",
+        manifest_bytes=manifest_bytes,
+        published_at=published_at,
+    )
+    target.write_bytes(latest_pointer_path(), encode_latest_pointer(pointer))
+    return pointer
+
+
+def advance_latest_pointer(target: PublicationTarget, release_set_id: str) -> BotanicalLatestPointer | None:
+    """Re-derive and write the checksum-bound pointer for an ALREADY published generation.
+
+    The upgrade path for a bucket published before §4a's pointer existed: it reads the generation's
+    own manifest for the digest rather than trusting a caller-supplied one, and refuses a generation
+    that is not complete, so an upgrade can never make an unfinished directory selectable.
+    """
+    prefix = generation_prefix(release_set_id)
+    if not target.exists(f"{prefix}/{COMPLETION_MARKER}"):
+        return None
+    manifest_bytes = target.read_bytes(f"{prefix}/{MANIFEST_NAME}")
+    if manifest_bytes is None:
+        return None
+    manifest: dict[str, Any] = json.loads(manifest_bytes)
+    published_at = manifest.get("published_at")
+    return write_latest_pointer(
+        target,
+        release_set_id,
+        manifest_bytes=manifest_bytes,
+        published_at=None if published_at is None else str(published_at),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,7 +306,8 @@ def publish_generation(
         "published_at": datetime.now(UTC).isoformat(),
         "artifacts": sorted(written),
     }
-    write(f"{prefix}/{MANIFEST_NAME}", json.dumps(manifest, sort_keys=True).encode("utf-8"))
+    manifest_bytes = json.dumps(manifest, sort_keys=True).encode("utf-8")
+    write(f"{prefix}/{MANIFEST_NAME}", manifest_bytes)
     # LAST. Everything above must be durable before anything is allowed to read this directory.
     write(f"{prefix}/{COMPLETION_MARKER}", b"")
 
@@ -263,6 +318,16 @@ def publish_generation(
             json.dumps({"release_set_id": identity.release_set_id}, sort_keys=True).encode("utf-8"),
         )
         written.append(pointer_path())
+        # The checksum-bound pointer advances AFTER the legacy one and last of everything, per
+        # layer-lanes §4a: it is the object a serving read trusts, so it must never name a
+        # generation whose manifest is not already durable.
+        write_latest_pointer(
+            target,
+            identity.release_set_id,
+            manifest_bytes=manifest_bytes,
+            published_at=str(manifest["published_at"]),
+        )
+        written.append(latest_pointer_path())
         pointer_advanced = True
     return PublishReceipt(identity.release_set_id, "published", tuple(written), pointer_advanced=pointer_advanced)
 
@@ -297,6 +362,7 @@ __all__ = [
     "COMPLETION_MARKER",
     "CURRENT_POINTER",
     "LANE_PREFIX",
+    "LATEST_POINTER_NAME",
     "MANIFEST_NAME",
     "PART_NAME",
     "GenerationContents",
@@ -304,10 +370,13 @@ __all__ = [
     "ObjectStorePublicationTarget",
     "PublicationTarget",
     "PublishReceipt",
+    "advance_latest_pointer",
     "generation_prefix",
+    "latest_pointer_path",
     "pointer_path",
     "publication_target",
     "publish_generation",
     "read_manifest",
     "read_pointer",
+    "write_latest_pointer",
 ]

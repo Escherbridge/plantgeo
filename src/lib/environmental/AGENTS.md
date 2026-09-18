@@ -149,3 +149,20 @@ were really aggregated at, which is a stronger claim than the latch and needs no
 It separates capture instants, calendar availability, covered fire years and still-partial mapping.
 The optional metadata on ready Parquet results also survives empty viewports. It does not establish
 authority by itself; the serving reader validates its immutable publication evidence.
+
+## `botanical-proxy-contract.ts` is a duplicate that the compiler checks
+
+It declares the response shape of `GET /api/botanical-occurrences` in zod, and it necessarily
+restates what `src/lib/server/services/botanical-occurrences-client.ts` already decodes. That
+duplication is deliberate and is the cheaper of two bad options: the hook may NOT import from
+`src/lib/server/**` (typescript.md, "Boundaries and validation"), and a type-only import of a module
+that reads server environment variables stops being type-only after one careless refactor.
+
+What makes the copy safe is that it is CHECKED. `route.ts` assigns its answer to
+`BotanicalProxyAnswer` before responding, so a drift between the server client's decoded shape and
+this schema fails the typecheck rather than reaching a hook as a field it cannot find. And the hook
+parses the body through the schema at its own boundary, so a version skew between a deployed route
+and a cached page surfaces as an error state rather than as a layer drawing `undefined`.
+
+Vocabulary: this contract is CAMELCASE — the decoded server vocabulary — while the layer components
+speak the plane's snake_case. `botanical-presentation.ts` remains the one seam between the two.

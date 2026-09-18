@@ -149,3 +149,27 @@ persistence never invents a saved ID. Session activity reflects received SSE eve
 and request outcomes. Every event still checks the active AbortController, so opening
 a saved conversation or starting another chat cannot receive an abandoned request's
 late response or activity update. Report payloads and source metadata remain unchanged.
+
+## Two botanical read hooks, and why that is not a duplicate
+
+`useBotanicalOccurrencesQuery` (in `useViewportProxiedLayers.ts`) and `useBotanicalOccurrences`
+(its own file) read the same plane through the same server client and are kept apart on purpose.
+
+The react-query one exists because a map layer and the panel describing it must issue the SAME
+cache entry — that is the whole subject of this directory's proxied-viewport section, and splitting
+it would let the drawing and the caption disagree about which generation they describe. The
+plain-fetch one is the standalone lane: one abortable request per viewport, nothing to key, and the
+semantic states (`idle` / `loading` / `success` / `empty` / `error`, plus `isStale` and `isPartial`)
+a layer needs to caption itself. Neither can reach the plane with inputs the other would refuse,
+because both bottom out in `botanical-occurrences-client.ts`.
+
+**Superseded answers are discarded twice** — the in-flight request is aborted AND every response is
+checked against a monotonic sequence before it becomes state. Abort alone is not enough: a response
+can already be queued as a microtask when the abort lands, and applying it draws a viewport the
+reader has already left. The react-query hook gets this structurally from its query key; a hand-
+rolled fetch does not, and the second check is what replaces it.
+
+**`empty` is a positive answer and `error` is the absence of one.** They are separate phases so a
+caption can say which happened; collapsing them is how "this release holds nothing here" starts
+reading as an outage. A stale answer is retained across a PENDING request and dropped on a FAILURE,
+matching the `keepPreviousData` rule stated for the proxied-viewport queries.

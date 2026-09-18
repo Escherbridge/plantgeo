@@ -1,5 +1,10 @@
 import { z } from "zod";
 import { fetchBoundedJson, providerUrl } from "@/lib/server/http/bounded-upstream";
+import {
+  decodeLaneCurrentPointer,
+  type LaneCurrentPointer,
+  type LanePointerFailure,
+} from "@/lib/server/services/parquet-plane-client";
 
 /**
  * Bounded client for the agri-data-service `botanical-occurrences` plane: the herbarium specimen
@@ -88,7 +93,15 @@ export class BotanicalOccurrencesContractError extends Error {}
  * discriminated union to unwrap before it can even ask `/query` a question.
  */
 export class BotanicalOccurrencesUnavailableError extends Error {
-  constructor(public readonly reason: string) {
+  constructor(
+    public readonly reason: string,
+    /**
+     * The §4a closed failure vocabulary when the plane named one. `null` only for an answer this
+     * client itself could not classify, so a caller can tell a declared fail-closed condition from
+     * an unrecognized one instead of pattern-matching prose.
+     */
+    public readonly failure: LanePointerFailure | null = null
+  ) {
     super(`botanical-occurrences current pointer is unavailable: ${reason}`);
   }
 }
@@ -145,21 +158,16 @@ const WIRE = {
   },
 } as const;
 
-/** `/current`'s two wire shapes: `published_at` OMITTED (never null) when the manifest has none. */
-const wireCurrentSchema = z.discriminatedUnion("state", [
-  z.object({
-    product: z.literal("botanical-occurrences"),
-    state: z.literal("current"),
-    release_set_id: z.string(),
-    published_at: z.string().optional(),
-  }),
-  z.object({
-    product: z.literal("botanical-occurrences"),
-    state: z.literal("unavailable"),
-    reason: z.string(),
-    note: z.string(),
-  }),
-]);
+/**
+ * `/current` is decoded by `decodeLaneCurrentPointer` (parquet-plane-client.ts, layer-lanes §4a)
+ * rather than by a schema of this module's own.
+ *
+ * The answer is no longer a bare `release_set_id`: the serving side resolves a checksum-bound
+ * `availability/_LATEST.json`, so the wire now carries `generation_id`, the `manifest_sha256` that
+ * pointer bound, and the manifest key it names. That shape is not botanical-specific -- it is what
+ * every §4a lane's pointer looks like -- so it is decoded once, in one place, and a second copy
+ * here would be a second thing to keep true.
+ */
 
 /** `_feature()`, `botanical_occurrences.py:333-357`. */
 const wireFeatureSchema = z.object({
@@ -303,6 +311,14 @@ interface BotanicalOccurrenceQueryBase {
   qcPolicyVersion: string | null;
   truncated: boolean;
   nextCursor: string | null;
+  /**
+   * The pointer this answer was pinned from: generation id plus the manifest checksum that bound
+   * it. OPTIONAL because `decodeQuery` builds these objects from the wire alone and the tests
+   * construct them directly; `getBotanicalOccurrences` always attaches it. A reader shown a
+   * specimen map can then be told WHICH immutable generation it is looking at, and an operator can
+   * match that against the bucket by digest rather than by a timestamp two writers could share.
+   */
+  pointer?: LaneCurrentPointer;
 }
 
 /** The plane's own four `/query` states, as a discriminated union a caller switches on. */
@@ -456,7 +472,7 @@ function decodeQuery(payload: unknown): BotanicalOccurrencesQueryResult {
  * Throws `BotanicalOccurrencesUnavailableError` when no generation has ever been published, or the
  * pointer is unreadable. Throws `BotanicalOccurrencesContractError` on a malformed 200.
  */
-export async function getCurrentBotanicalReleaseSetId(signal?: AbortSignal): Promise<string> {
+export async function getCurrentBotanicalRelease(signal?: AbortSignal): Promise<LaneCurrentPointer> {
   const url = endpoint(WIRE.routes.current);
   const payload = await fetchBoundedJson(
     url,
@@ -468,16 +484,31 @@ export async function getCurrentBotanicalReleaseSetId(signal?: AbortSignal): Pro
       ...(signal === undefined ? {} : { signal }),
     }
   );
-  const parsed = wireCurrentSchema.safeParse(payload);
-  if (!parsed.success) {
+  let decoded;
+  try {
+    decoded = decodeLaneCurrentPointer(payload);
+  } catch {
+    // Fails closed as a CONTRACT break rather than as an absence: a pointer body this client cannot
+    // parse is not evidence that nothing is published, and answering `unavailable` here would make
+    // a deploy mismatch look like an empty lane.
     throw new BotanicalOccurrencesContractError(
-      "botanical-occurrences /current answered a body that is not one of its two published states"
+      "botanical-occurrences /current answered a body that is not a checksum-bound pointer or a declared failure"
     );
   }
-  if (parsed.data.state === "unavailable") {
-    throw new BotanicalOccurrencesUnavailableError(parsed.data.reason);
+  if (decoded.state === "unavailable") {
+    throw new BotanicalOccurrencesUnavailableError(decoded.unavailable.detail, decoded.unavailable.failure);
   }
-  return parsed.data.release_set_id;
+  return decoded.pointer;
+}
+
+/**
+ * The generation id alone, for a caller that pins a query and does not report provenance.
+ *
+ * Kept as its own export because every existing caller wants exactly this; the provenance-carrying
+ * `getCurrentBotanicalRelease` is the one to reach for when the answer will be shown to a reader.
+ */
+export async function getCurrentBotanicalReleaseSetId(signal?: AbortSignal): Promise<string> {
+  return (await getCurrentBotanicalRelease(signal)).generationId;
 }
 
 /**
@@ -495,10 +526,10 @@ export async function getBotanicalOccurrences(
   if (request.bbox.trim() === "") {
     throw new BotanicalOccurrencesRequestError("bbox must be a non-empty \"west,south,east,north\" string");
   }
-  const releaseSetId = await getCurrentBotanicalReleaseSetId(request.signal);
+  const pointer = await getCurrentBotanicalRelease(request.signal);
 
   const url = endpoint(WIRE.routes.query);
-  url.searchParams.set(WIRE.params.releaseSetId, releaseSetId);
+  url.searchParams.set(WIRE.params.releaseSetId, pointer.generationId);
   url.searchParams.set(WIRE.params.bbox, request.bbox);
   url.searchParams.set(WIRE.params.zoom, String(Math.trunc(request.zoom)));
   if (request.taxonConceptId !== undefined) {
@@ -525,5 +556,15 @@ export async function getBotanicalOccurrences(
       ...(request.signal === undefined ? {} : { signal: request.signal }),
     }
   );
-  return decodeQuery(payload);
+  const result = decodeQuery(payload);
+  if (result.state === "refused" || result.state === "unavailable") return result;
+  if (result.releaseSetId !== pointer.generationId) {
+    // The plane answered from a generation other than the one this request pinned. Impossible by
+    // the route's own rules, which is exactly why it is worth refusing loudly rather than drawing:
+    // it would mean the pin is not being honoured and every provenance line shown is wrong.
+    throw new BotanicalOccurrencesContractError(
+      "botanical-occurrences /query answered from a generation other than the pinned one"
+    );
+  }
+  return { ...result, pointer };
 }

@@ -241,3 +241,45 @@ Days at or before 2026-08-02 are served from the frozen snapshot manifest; later
 source-direct lineage whose release id is derived from the row's own manifest checksum. Only the
 base rung carries the selected-release columns -- a coarse row aggregates several source rows and
 must report null there rather than one arbitrary member's provenance.
+
+## botanical-occurrences: the pointer is decoded once, and it fails closed
+
+`botanical-occurrences-client.ts` stays a deliberate sibling of `parquet-plane-client.ts` (its own
+module docstring says why: the `WIRE` block there is frozen and dual-tested, and this plane has no
+paired Python fixture). The ONE thing it does not keep to itself is current-pointer decoding.
+
+`decodeLaneCurrentPointer` lives at the BOTTOM of `parquet-plane-client.ts`, outside that frozen
+`WIRE` block, because a lane's `/current` answer is not lane-specific: layer-lanes §4a gives every
+lane the same checksum-bound pointer shape, so a second decoder per lane would be a second place
+for the same rule to rot. Adding it there renames nothing the freeze covers — the Python contract
+test parses only `const WIRE = { ... } as const;`.
+
+The decode has no lenient branch. A pointer body that does not parse throws
+`LanePointerContractError` (surfaced here as `BotanicalOccurrencesContractError`) instead of
+degrading to "unavailable": an unparseable pointer is a deploy mismatch, and reporting it as an
+absence would make a version skew look like a lane nobody has published to. The five declared
+failures — `pointer_missing`, `pointer_malformed`, `pointer_stale`, `pointer_checksum_invalid`,
+`transport_unavailable` — are a closed enum for the same reason: a caller choosing between retry,
+alarm and "nothing published yet" cannot branch on prose.
+
+`getBotanicalOccurrences` attaches the resolved pointer to every `detail`/`aggregate` answer and
+refuses one whose `release_set_id` is not the pinned generation. That check can only fire if the
+pin is being ignored, which is exactly why it throws rather than draws: the alternative is a map
+whose every provenance line names a generation the rows did not come from.
+
+### `pointerKind` is required, and it is the bridge made visible
+
+`LaneCurrentPointer` carries `pointerKind: "latest_v1" | "legacy_current_json"`, required with no
+default. The serving side may still be BRIDGED over a bucket published before the checksum-bound
+pointer existed (owner's bridge-then-cut pattern, repoint decisions 2026-08-25): that answer is
+honest — the marker is re-read and the manifest digested on the spot — but the binding is weaker,
+because nothing the publisher wrote attests to the pair.
+
+Defaulting the field would decide on the serving side's behalf which guarantee an answer carries,
+and would decide wrong exactly when a deploy skew makes the question matter. `pointerWrittenAt` is
+nullable for the same reason: the legacy document records no write time, and borrowing the
+generation's publication timestamp would invent provenance.
+
+A caption showing a generation id ought to say when it is looking at a bridged answer. Once the
+owner authorises the pointer advance and the Python bridge is deleted, `legacy_current_json` becomes
+unreachable and this enum can lose a member — in that same follow-up, not before.

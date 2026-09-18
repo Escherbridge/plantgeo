@@ -156,3 +156,50 @@ unified diff in the track's `evidence/shared-registration.patch`, including the 
 `tests/direct/test_direct_writer_contract.py::WRITER_MODULES` needs. Until they land, the two shared
 direct-package tests will fail on this package, and that failure is the registration reminder
 working as designed rather than a defect in this lane.
+
+## The current pointer: `current.json` writes, `availability/_LATEST.json` serves
+
+`pointer.py` holds the §4a pointer document (`conductor/code_styleguides/layer-lanes.md` §4a) and
+`publish.py` writes it LAST, after `_COMPLETE` and after the legacy `current.json`. Two pointers
+exist on purpose and they are not redundant: `current.json` is the writer's own bookkeeping
+(`read_pointer`, one field, no binding), while `_LATEST.json` is what a serving read resolves and
+carries the digest of the exact `manifest.json` bytes it names.
+
+The digest is the whole point. Without it a reader that fetched pointer-then-manifest could observe
+a pointer advanced by one writer and a manifest replaced by the next, and would have no way to know
+it had assembled an answer from two generations. With it, the serving read
+(`planes/botanical_occurrences.py::read_current_botanical_release`) does ONE pointer GET and ONE
+data GET, never a listing, and fails closed with a stable reason — `pointer_missing`,
+`pointer_malformed`, `pointer_stale`, `pointer_checksum_invalid`, `transport_unavailable` — rather
+than falling back to a listing or to `current.json`. A fallback would restore exactly the
+unverifiable answer the binding exists to refuse.
+
+STALE means the binding broke, never that the pointer is old: a release set may legitimately be
+current for months, so a wall-clock ceiling would refuse correct data on a calendar.
+
+## The legacy bridge, and when to delete it
+
+The reader has a SECOND path, taken only when `_LATEST.json` is absent and `current.json` is
+present: it resolves through the legacy pointer, re-reads `_COMPLETE` (nothing else on that path
+proves the generation finished publishing), digests the manifest bytes it just fetched, and stamps
+`pointer_kind="legacy_current_json"` on the answer — `"latest_v1"` for the §4a path. It logs one
+`botanical_occurrences_legacy_pointer_bridge` warning per resolution.
+
+This is the owner's bridge-then-cut pattern (RUNBOOK, repoint decisions 2026-08-25), not a fallback
+policy. Without it, shipping the §4a reader takes a live, correct production lane dark against a
+bucket that only ever had `current.json`. With it, the lane keeps serving and every answer says
+which pointer it came from, so "still bridged" is a visible state rather than a silent one.
+
+**A present-but-broken `_LATEST.json` is NEVER bridged around.** Falling through would hide exactly
+the corruption the checksum exists to surface, on a bucket where the operator believes the cut
+already happened.
+
+**Deleting the bridge is a follow-up commit**, owed after the owner authorises `advance_latest_pointer`
+against production. The cut is: advance the pointer, confirm `pointer_kind` reads `latest_v1` in the
+logs, then delete `_resolve_legacy_current_pointer` and its call site. Leaving it indefinitely turns
+a migration aid into a second serving path with weaker guarantees.
+
+`advance_latest_pointer()` is the upgrade path for a bucket published before this document existed
+(production carries generation `956c0be7…` under a `current.json` with no `_LATEST.json`). It reads
+that generation's own manifest for the digest and refuses a directory with no completion marker, so
+an upgrade can never make an unfinished generation selectable.
