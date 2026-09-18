@@ -415,7 +415,7 @@ every day from 2026-07-01 onward at every probed cell and parameter bundle while
 real; the 14:40Z and 15:40Z climate turns saw 09-12 and 09-11 all-fill, refused both fail-closed,
 spent two fan-outs and the 429 pause series, wrote nothing. Shortwave stays withheld
 `availability_stale` until POWER republishes; the published 06-01→09-11 days stand; no lane change
-is owed for the outage (memory: `plantgeo-power-solar-regressed-2026-09-18`). p1b committed as
+is owed for the outage (memory: `plantgeo-power-solar-regressed-2026-09-18`). Deployed `d98a2686` (p1b + tiers floor snap + receipt `6e97f145`) at 16:38Z, all four services SUCCESS, readiness 200. p1b committed as
 `46605492`; receipt, push and deployment recorded in the evidence file when observed. **No whole QA
 case or checklist item is promoted; the 220-case matrix is unchanged.**
 

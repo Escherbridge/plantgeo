@@ -321,3 +321,18 @@ Linux before the snap may hold an edge-origin cell one cell south until that day
 the rewrite is the ordinary re-derive path — it cannot raise the governed-absence conflict, which
 belongs to the absence ladder. Totals are conserved either way. Committed as `72a3568d`; the Linux
 receipt is building from a clean checkout of it.
+
+**Receipt and push 2026-09-18T16:30–16:45Z.** The clean-worktree receipt for `72a3568d` passed all four
+Linux gates (format, lint, mypy, pytest 277 s) with tree digest `sha256:7c994697…` over 904 inputs;
+the host verifier accepted it in the same clean checkout; evidence retained at
+`.omc/research/runbook-20260915-session20/receipt/attempt-cb6bc6dc…` beside the failed
+`attempt-7ce3e706…` for `46605492`. Committed as `6e97f145`; pushed with `0e65a2e6`, `46605492`,
+`54f8df49`, `72a3568d` and `d98a2686` (docs). Python changed, so parquet-api and job-executor
+rebuild; the deployment outcome is appended when observed.
+
+**Deployment 2026-09-18T16:38Z.** All four Railway deployments for `d98a2686` reached SUCCESS and
+`/api/ready` returned 200. The vegetation-type track's Phase 1A and 1B are live in the service (no lane
+declares banding yet, so every published lane keeps the whole-day path, byte-identical), the tier
+floor is exact on every host, and the climate walk carries the frontier fall-through. Shortwave stays
+withheld on the NASA POWER solar outage. Neither thread promotes a QA case; the 220-case matrix is
+unchanged.
