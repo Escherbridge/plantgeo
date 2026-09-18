@@ -19,12 +19,17 @@ while still catching every named constant federation.md §1 lists as an offender
 (the former `PACIFIC_NORTHWEST_BBOX` and `SEED_ENVELOPE`, now manifest-reading functions, plus
 `PNW_STATE_CODES` and `PNW_COARSE_NODES`).
 
-**Numeric 4-tuples are filtered by a western-hemisphere discriminator**, not just "four numbers in
-lon/lat range": `(0, 5, 9, 13)` (a zoom-tier ladder, appears in `foundation/parquet/zoom.py`,
-`parquet_ops/mtbs_snapshot_catalog.py` and elsewhere) technically satisfies "four numbers each
-within [-180,180]×[-90,90]", but every *real* footprint literal this codebase has ever declared
-sits entirely in the western hemisphere (west AND east both negative). Requiring that discriminator
-was the difference between six false positives and zero.
+**Numeric 4-tuples are hemisphere-neutral, filtered by shape and by name/span instead** (2026-09-18,
+S1 fix): a `west < 0 and east < 0` discriminator can only ever police the pilot's own hemisphere --
+a fabricated eastern-hemisphere region (a Kenya box, say) would be structurally undetectable, which
+defeats the guard's own portability purpose. `(0, 5, 9, 13)` (a zoom-tier ladder,
+`foundation/parquet/zoom.py`, `parquet_ops/mtbs_snapshot_catalog.py` and elsewhere) and any 4-item
+all-integer 0-255 tuple (a colour) are excluded by explicit shape predicates
+(`_is_plausible_zoom_ladder`, `_is_plausible_color_tuple`) instead. What remains -- in range,
+ordered west<east/south<north, not a ladder or colour -- is a footprint only when it is EITHER
+assigned to a footprint-hinting name (`_NAME_HINT_PATTERN`, underscore-normalised so
+`SCREAMING_SNAKE_CASE` names still hit a boundary) OR its span is plausible for a region (0.5-60
+degrees each axis, narrower than a state, wider than a neighbourhood).
 
 **String matches are length-capped** (30 characters) so a long citation sentence that happens to
 mention "PNW" (`pipeline/parquet/lane_registry.py`'s `_climate_floor_basis` rationale, "...MEASURED
@@ -36,4 +41,7 @@ exact-case match — `"gbif:pnw:vascular"`'s lowercase `pnw` is a GBIF collectio
 
 `KNOWN_OFFENDERS` is the debt list: empty as of the 2026-09-18 push (wave 2 already pointed every
 literal this walk can see at `load_region()`). A new offender fails the test; removing an entry
-once its value reads from the manifest is the only edit the set is allowed.
+once its value reads from the manifest is the only edit the set is allowed. Entries are keyed by
+`(path, description)`, never line number (S2 fix) -- the description already carries the offending
+value, and a line-keyed entry fails this test on any unrelated edit above it, in both directions at
+once.
