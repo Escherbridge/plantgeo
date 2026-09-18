@@ -5,21 +5,26 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import warnings
 from datetime import UTC, date, datetime, timedelta
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 import polars as pl
 import pyarrow.parquet as pq  # type: ignore[import-untyped]
 
-from agri_data_service.foundation.region import load_region
-from agri_data_service.ingest.mtbs import MTBS_FEATURE_SERVICE_QUERY_URL, build_mtbs_snapshot_record
+from agri_data_service.ingest.mtbs import (
+    MTBS_FEATURE_SERVICE_QUERY_URL,
+    build_mtbs_snapshot_record,
+    burn_severity_bounding_box,
+)
 from agri_data_service.pipeline.direct.burn_severity.rows import burn_severity_release_day_table
 from agri_data_service.pipeline.parquet.objectstore import conform_to_stream_schema
 from agri_data_service.warehouse.parquet.tiers import DERIVED_ZOOM_TIERS, derive_tier
 from agri_data_service.warehouse.schemas.burn_severity import BURN_SEVERITY_SCHEMA
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
     from pathlib import Path
 
     import pyarrow as pa
@@ -31,16 +36,31 @@ MAX_SOURCE_RESPONSES = 400
 SNAPSHOT_SCHEMA = "mtbs-current-snapshot/v1"
 FIRST_PARTIAL_YEAR = 2023
 
-#: The reviewed deployment footprint (`foundation/region`'s `sub_envelopes["burn_severity"]`), the
-#: one definition `capture.py` and `stage.py` import instead of restating the four numbers
-#: (`federation.md` §5 step 2).
-_burn_severity_envelope = load_region().sub_envelopes["burn_severity"]
-BBOX: tuple[float, float, float, float] = (
-    _burn_severity_envelope.west,
-    _burn_severity_envelope.south,
-    _burn_severity_envelope.east,
-    _burn_severity_envelope.north,
+#: Deprecated module attributes resolved lazily by `__getattr__`; see `DEPRECATED_ALIASES.md`. The
+#: reviewed deployment footprint is `ingest.mtbs.burn_severity_bounding_box()`, which reads
+#: `foundation/region`'s `sub_envelopes["burn_severity"]` per call (`federation.md` §1).
+_DEPRECATED_MODULE_ATTRIBUTES: Mapping[str, Callable[[], object]] = MappingProxyType(
+    {"BBOX": burn_severity_bounding_box},
 )
+
+
+def __getattr__(name: str) -> object:
+    """Resolve a deprecated module attribute at access time, never at import time.
+
+    Deprecated: `BBOX` is kept importable for one release so existing importers do not break
+    (`federation.md` §5 step 2); call `burn_severity_bounding_box()` instead. Removal condition is
+    recorded in `services/agri-data-service/DEPRECATED_ALIASES.md`.
+    """
+    resolve_deprecated_attribute = _DEPRECATED_MODULE_ATTRIBUTES.get(name)
+    if resolve_deprecated_attribute is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    warnings.warn(
+        f"{__name__}.{name} is deprecated; call burn_severity_bounding_box() so the region manifest "
+        "is read per call (see DEPRECATED_ALIASES.md)",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return resolve_deprecated_attribute()
 
 
 def canonical_bytes(value: object) -> bytes:
@@ -92,7 +112,7 @@ def make_source_manifest(  # noqa: PLR0913 - immutable source identity binds six
         character not in "0123456789abcdef" for character in source_content_sha256
     ):
         raise ValueError("snapshot source content identity is invalid")
-    if bbox != BBOX:
+    if bbox != burn_severity_bounding_box():
         raise ValueError("snapshot footprint differs from the reviewed deployment footprint")
     return {
         "schema": SNAPSHOT_SCHEMA,
@@ -129,10 +149,11 @@ def validate_source_manifest(manifest: object) -> dict[str, Any]:
         raise ValueError("snapshot response graph is invalid or excessive")
     if manifest.get("covered_years") != {"from": 2018, "to": 2026}:
         raise ValueError("snapshot requires the exact covered year interval")
-    if manifest.get("bbox") != list(BBOX):
+    reviewed_bounding_box = burn_severity_bounding_box()
+    if manifest.get("bbox") != list(reviewed_bounding_box):
         raise ValueError("snapshot footprint differs from the reviewed deployment footprint")
     expected = make_source_manifest(
-        bbox=BBOX,
+        bbox=reviewed_bounding_box,
         years=years,
         captured_from=datetime.fromisoformat(manifest["captured_from"]),
         captured_through=datetime.fromisoformat(manifest["captured_through"]),

@@ -4,32 +4,63 @@ from __future__ import annotations
 
 import math
 import struct
+import warnings
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal
 
 from agri_data_service.foundation.region import load_region
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable, Mapping
 
 SpatialClass = Literal["exact", "generalized", "withheld", "nonspatial"]
 
 #: Mean Earth radius, the value every great-circle distance in this lane is computed against.
 EARTH_RADIUS_METERS: Final = 6_371_008.8
 
-#: The SEED envelope: used only when a generation admits no exact coordinate to measure a box from.
-#: A record outside the envelope is still published -- `within_envelope=False` -- because a specimen
-#: collected outside it is a real specimen; what the flag bounds is where `evaluated_zero` may be
-#: asserted, since "we looked here and found nothing" is only honest inside admitted coverage.
-# Deprecated alias for `foundation/region`'s `sub_envelopes["botanical_seed"]`; kept so existing
-# importers do not break (`federation.md` §5 step 2). Read the manifest directly in new code.
-_botanical_seed_envelope = load_region().sub_envelopes["botanical_seed"]
-SEED_ENVELOPE: Final[tuple[float, float, float, float]] = (
-    _botanical_seed_envelope.west,
-    _botanical_seed_envelope.south,
-    _botanical_seed_envelope.east,
-    _botanical_seed_envelope.north,
+
+def botanical_seed_envelope() -> tuple[float, float, float, float]:
+    """Read the botanical seed envelope from the region manifest, once per call.
+
+    The seed envelope is used only when a generation admits no exact coordinate to measure a box
+    from. A record outside the envelope is still published -- `within_envelope=False` -- because a
+    specimen collected outside it is a real specimen; what the flag bounds is where `evaluated_zero`
+    may be asserted, since "we looked here and found nothing" is only honest inside admitted
+    coverage.
+
+    This is a function and not a module constant for two reasons (`federation.md` §1): the region
+    manifest must be read per call so `PLANTGEO_REGION` is honoured after import, and this is an L0
+    `foundation` module, where import-time filesystem I/O is forbidden.
+    """
+    envelope = load_region().sub_envelopes["botanical_seed"]
+    return (envelope.west, envelope.south, envelope.east, envelope.north)
+
+
+#: Deprecated module attributes resolved lazily by `__getattr__`; see `DEPRECATED_ALIASES.md`.
+_DEPRECATED_MODULE_ATTRIBUTES: Final[Mapping[str, Callable[[], object]]] = MappingProxyType(
+    {"SEED_ENVELOPE": botanical_seed_envelope},
 )
+
+
+def __getattr__(name: str) -> object:
+    """Resolve a deprecated module attribute at access time, never at import time.
+
+    Deprecated: `SEED_ENVELOPE` is kept importable for one release so existing importers do not break
+    (`federation.md` §5 step 2); call `botanical_seed_envelope()` instead. Removal condition is
+    recorded in `services/agri-data-service/DEPRECATED_ALIASES.md`.
+    """
+    resolve_deprecated_attribute = _DEPRECATED_MODULE_ATTRIBUTES.get(name)
+    if resolve_deprecated_attribute is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    warnings.warn(
+        f"{__name__}.{name} is deprecated; call botanical_seed_envelope() so the region manifest is "
+        "read per call (see DEPRECATED_ALIASES.md)",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return resolve_deprecated_attribute()
+
 
 #: Pad added on each side of the measured extent. One quarter degree is exactly one `grid-0.25` cell
 #: -- the coarsest rung this lane publishes -- so the pad admits the ring of cells the collection's
@@ -104,10 +135,15 @@ def _matches(text: str | None, markers: tuple[str, ...]) -> bool:
 def within_declared_envelope(
     longitude: float,
     latitude: float,
-    envelope: tuple[float, float, float, float] = SEED_ENVELOPE,
+    envelope: tuple[float, float, float, float] | None = None,
 ) -> bool:
-    """Report whether a point lies inside the lane's admitted-coverage envelope."""
-    min_longitude, min_latitude, max_longitude, max_latitude = envelope
+    """Report whether a point lies inside the lane's admitted-coverage envelope.
+
+    An omitted `envelope` resolves to `botanical_seed_envelope()` inside the call.
+    """
+    min_longitude, min_latitude, max_longitude, max_latitude = (
+        envelope if envelope is not None else botanical_seed_envelope()
+    )
     return min_longitude <= longitude <= max_longitude and min_latitude <= latitude <= max_latitude
 
 
@@ -115,16 +151,19 @@ def derive_envelope(
     points: Iterable[tuple[float, float]],
     *,
     pad_degrees: float = ENVELOPE_PAD_DEGREES,
-    seed: tuple[float, float, float, float] = SEED_ENVELOPE,
+    seed: tuple[float, float, float, float] | None = None,
 ) -> tuple[float, float, float, float]:
-    """Measure the admitted-coverage envelope from the points a generation actually admitted."""
+    """Measure the admitted-coverage envelope from the points a generation actually admitted.
+
+    An omitted `seed` resolves to `botanical_seed_envelope()` inside the call.
+    """
     longitudes: list[float] = []
     latitudes: list[float] = []
     for longitude, latitude in points:
         longitudes.append(longitude)
         latitudes.append(latitude)
     if not longitudes:
-        return seed
+        return seed if seed is not None else botanical_seed_envelope()
     return (
         max(-_MAX_LONGITUDE, min(longitudes) - pad_degrees),
         max(-_MAX_LATITUDE, min(latitudes) - pad_degrees),
@@ -141,7 +180,7 @@ def classify_coordinate(  # noqa: PLR0913 - one DwC term per argument, and none 
     coordinate_uncertainty: str | None = None,
     information_withheld: str | None = None,
     data_generalizations: str | None = None,
-    envelope: tuple[float, float, float, float] = SEED_ENVELOPE,
+    envelope: tuple[float, float, float, float] | None = None,
 ) -> ParsedCoordinate:
     """Decide what one record's coordinates may be used for, and record every reason for it.
 
@@ -150,6 +189,8 @@ def classify_coordinate(  # noqa: PLR0913 - one DwC term per argument, and none 
     county centroid must not become a specimen point. Only after that do missing, out-of-range and
     null-island coordinates make the record nonspatial, and a wide uncertainty or an unverified datum
     demote it to generalized.
+
+    An omitted `envelope` resolves to `botanical_seed_envelope()` inside `within_declared_envelope`.
     """
     reasons: list[str] = []
     longitude = parse_decimal(decimal_longitude)
@@ -236,10 +277,10 @@ __all__ = [
     "EARTH_RADIUS_METERS",
     "ENVELOPE_PAD_DEGREES",
     "GENERALIZED_UNCERTAINTY_METERS",
-    "SEED_ENVELOPE",
     "WGS84_DATUMS",
     "ParsedCoordinate",
     "SpatialClass",
+    "botanical_seed_envelope",
     "classify_coordinate",
     "derive_envelope",
     "haversine_meters",

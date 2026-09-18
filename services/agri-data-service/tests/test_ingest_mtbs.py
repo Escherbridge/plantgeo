@@ -27,7 +27,6 @@ from agri_data_service.ingest.mtbs import (
     MTBS_CITATION,
     MTBS_LICENSE_NAME,
     MTBS_LICENSE_URL,
-    PACIFIC_NORTHWEST_BBOX,
     SEVERITY_CLASS_BY_CODE,
     MtbsBurnSeverityRecord,
     MtbsDuplicateFeatureError,
@@ -43,6 +42,7 @@ from agri_data_service.ingest.mtbs import (
     build_release_identifier,
     build_release_payload,
     build_source_ingestion_plan,
+    burn_severity_bounding_box,
     capture_release,
     fetch_release_features,
     inline_bbox_value,
@@ -277,11 +277,20 @@ def _page_offsets(service: RecordedMtbsService) -> list[int]:
     return [int(parameters["resultOffset"]) for parameters in service.page_requests]
 
 
-def test_pacific_northwest_bbox_is_the_region_manifest_burn_severity_sub_envelope() -> None:
-    """`PACIFIC_NORTHWEST_BBOX` is a deprecated alias; pin it to the manifest it now reads."""
+def test_burn_severity_bounding_box_is_the_region_manifest_burn_severity_sub_envelope() -> None:
+    """The envelope is read from the manifest per call, never snapshot at import."""
     envelope = load_region().sub_envelopes["burn_severity"]
-    assert (envelope.west, envelope.south, envelope.east, envelope.north) == PACIFIC_NORTHWEST_BBOX
-    assert PACIFIC_NORTHWEST_BBOX == (-125.0, 42.0, -111.0, 49.0)
+    assert (envelope.west, envelope.south, envelope.east, envelope.north) == burn_severity_bounding_box()
+    assert burn_severity_bounding_box() == (-125.0, 42.0, -111.0, 49.0)
+
+
+def test_the_deprecated_bbox_alias_still_resolves_and_warns() -> None:
+    """`PACIFIC_NORTHWEST_BBOX` survives one more release as a lazily resolved, warning alias."""
+    from agri_data_service.ingest import mtbs as mtbs_module
+
+    with pytest.deprecated_call():
+        alias_value = mtbs_module.PACIFIC_NORTHWEST_BBOX
+    assert alias_value == burn_severity_bounding_box()
 
 
 def test_three_pages_reassemble_into_one_complete_cohort_at_the_right_offsets() -> None:
@@ -290,7 +299,7 @@ def test_three_pages_reassemble_into_one_complete_cohort_at_the_right_offsets() 
 
     async def run() -> tuple[list[dict[str, Any]], int]:
         async with service.client() as client:
-            return await fetch_release_features(2022, PACIFIC_NORTHWEST_BBOX, client=client, page_size=3)
+            return await fetch_release_features(2022, burn_severity_bounding_box(), client=client, page_size=3)
 
     captured, authoritative_count = asyncio.run(run())
 
@@ -312,7 +321,7 @@ def test_paging_that_falls_one_short_of_the_authoritative_count_raises() -> None
 
     async def run() -> None:
         async with service.client() as client:
-            await fetch_release_features(2022, PACIFIC_NORTHWEST_BBOX, client=client, page_size=3)
+            await fetch_release_features(2022, burn_severity_bounding_box(), client=client, page_size=3)
 
     with pytest.raises(MtbsTruncatedCaptureError, match="paged 7 features but the service counts 8"):
         asyncio.run(run())
@@ -325,7 +334,7 @@ def test_a_final_page_still_flagging_exceeded_transfer_limit_raises() -> None:
 
     async def run() -> None:
         async with service.client() as client:
-            await fetch_release_features(2022, PACIFIC_NORTHWEST_BBOX, client=client, page_size=3)
+            await fetch_release_features(2022, burn_severity_bounding_box(), client=client, page_size=3)
 
     with pytest.raises(MtbsTruncatedCaptureError, match="exceededTransferLimit"):
         asyncio.run(run())
@@ -338,7 +347,7 @@ def test_a_fire_id_repeated_across_pages_raises_because_the_order_was_unstable()
 
     async def run() -> None:
         async with service.client() as client:
-            await fetch_release_features(2022, PACIFIC_NORTHWEST_BBOX, client=client, page_size=3)
+            await fetch_release_features(2022, burn_severity_bounding_box(), client=client, page_size=3)
 
     with pytest.raises(MtbsDuplicateFeatureError, match="repeated across pages"):
         asyncio.run(run())
@@ -349,7 +358,7 @@ def test_a_cohort_above_the_payload_feature_contract_raises_before_paging() -> N
 
     async def run() -> None:
         async with service.client() as client:
-            await fetch_release_features(2022, PACIFIC_NORTHWEST_BBOX, client=client, page_size=3)
+            await fetch_release_features(2022, burn_severity_bounding_box(), client=client, page_size=3)
 
     with pytest.raises(MtbsReleaseTooLargeError):
         asyncio.run(run())
@@ -542,7 +551,7 @@ def test_the_sidecar_carries_the_release_date_and_the_ignition_window_separately
     review = SourceReview(reviewed_at=datetime(2026, 8, 3, tzinfo=UTC), reviewed_by="operator@example.test")
     plan = build_source_ingestion_plan(
         2022,
-        PACIFIC_NORTHWEST_BBOX,
+        burn_severity_bounding_box(),
         review=review,
         observation_window=(datetime(2022, 6, 29, tzinfo=UTC), datetime(2022, 9, 8, tzinfo=UTC)),
     )
@@ -567,7 +576,7 @@ def test_capture_writes_the_payload_and_only_writes_a_sidecar_the_operator_revie
         async with service.client() as client:
             return await capture_release(
                 2022,
-                bounding_box=PACIFIC_NORTHWEST_BBOX,
+                bounding_box=burn_severity_bounding_box(),
                 output_root=tmp_path,
                 client=client,
                 review=review,
@@ -609,19 +618,19 @@ def test_two_extents_of_one_release_do_not_overwrite_each_other(tmp_path: Path) 
                 client=client,
             )
 
-    narrow_capture = asyncio.run(run(PACIFIC_NORTHWEST_BBOX))
+    narrow_capture = asyncio.run(run(burn_severity_bounding_box()))
     wide_capture = asyncio.run(run(wider))
 
     assert narrow_capture.release_identifier == wide_capture.release_identifier
     assert narrow_capture.payload_path != wide_capture.payload_path
     assert narrow_capture.payload_path.exists()
     assert wide_capture.payload_path.exists()
-    assert bounding_box_token(PACIFIC_NORTHWEST_BBOX) != bounding_box_token(wider)
+    assert bounding_box_token(burn_severity_bounding_box()) != bounding_box_token(wider)
 
     review = SourceReview(reviewed_at=datetime(2026, 8, 3, tzinfo=UTC), reviewed_by="operator@example.test")
     narrow_plan = build_source_ingestion_plan(
         2022,
-        PACIFIC_NORTHWEST_BBOX,
+        burn_severity_bounding_box(),
         review=review,
         observation_window=(datetime(2022, 1, 3, tzinfo=UTC), datetime(2022, 10, 18, tzinfo=UTC)),
     )
@@ -643,7 +652,7 @@ def test_capturing_an_unreleased_fire_year_raises_before_any_network_call(tmp_pa
         async with service.client() as client:
             await capture_release(
                 2023,
-                bounding_box=PACIFIC_NORTHWEST_BBOX,
+                bounding_box=burn_severity_bounding_box(),
                 output_root=tmp_path,
                 client=client,
             )
@@ -660,7 +669,7 @@ def test_the_cli_reads_a_negative_bbox_as_a_value_rather_than_a_flag() -> None:
         "--release-year",
         "2022",
     ]
-    assert parse_bounding_box("-125,42,-111,49") == PACIFIC_NORTHWEST_BBOX
+    assert parse_bounding_box("-125,42,-111,49") == burn_severity_bounding_box()
     assert inline_bbox_value(["--all-releases"]) == ["--all-releases"]
 
 
@@ -677,7 +686,7 @@ def test_a_transient_server_error_is_retried_rather_than_failing_the_capture() -
         async with service.client() as client:
             return await fetch_release_features(
                 2022,
-                PACIFIC_NORTHWEST_BBOX,
+                burn_severity_bounding_box(),
                 client=client,
                 page_size=4,
                 sleep=record_sleep,
@@ -699,7 +708,7 @@ def test_a_server_error_that_never_clears_still_fails_loudly() -> None:
         async with service.client() as client:
             await fetch_release_features(
                 2022,
-                PACIFIC_NORTHWEST_BBOX,
+                burn_severity_bounding_box(),
                 client=client,
                 page_size=4,
                 sleep=no_sleep,

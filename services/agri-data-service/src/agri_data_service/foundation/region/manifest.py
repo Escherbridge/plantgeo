@@ -1,8 +1,9 @@
 """The typed `Region` manifest: one declared footprint, read from `pnw.json`, never re-literalled.
 
 `federation.md` section 1 names this the single declaration of a deployment's footprint and lists
-the migration list of literals a later push moves in or points at: `PACIFIC_NORTHWEST_BBOX`
-(`ingest/mtbs.py`), `SEED_ENVELOPE` (`foundation/botanical_occurrences/coordinates.py`),
+the migration list of literals a later push moves in or points at: `burn_severity_bounding_box()`
+(`ingest/mtbs.py`, formerly `PACIFIC_NORTHWEST_BBOX`), `botanical_seed_envelope()`
+(`foundation/botanical_occurrences/coordinates.py`, formerly `SEED_ENVELOPE`),
 `PNW_STATE_CODES`/`PnwStateCode` (`src/lib/server/db/schema/land-context/shared.ts`) and
 `PNW_COARSE_NODES`. This module and `pnw.json` are the destination those literals move into or
 behind; see `AGENTS.md` in this directory for why the values differ from each other today.
@@ -61,9 +62,9 @@ class Region(BaseModel):
     Fields match `federation.md` §1's minimum list. `sub_envelopes` is not in that list; it is a
     transitional field (see `AGENTS.md`) holding the PNW pilot's two envelopes narrower than
     `envelope` itself, keyed by the purpose that still owns a private literal today
-    (`ingest/mtbs.py`'s burn envelope, `foundation/botanical_occurrences/coordinates.py`'s
-    `SEED_ENVELOPE`), so the migration in `federation.md` §5 step 2 has somewhere to point instead
-    of restating the numbers.
+    (`ingest/mtbs.py`'s `burn_severity_bounding_box()`, `foundation/botanical_occurrences/
+    coordinates.py`'s `botanical_seed_envelope()`), so the migration in `federation.md` §5 step 2 has
+    somewhere to point instead of restating the numbers.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
