@@ -23,6 +23,7 @@ from agri_data_service.execution.lane_ids import (
     SENSORS_DIRECT_LANE_ID,
     SOIL_DIRECT_LANE_ID,
     VEGETATION_DIRECT_LANE_ID,
+    VEGETATION_NDVI_PROMOTION_LANE_ID,
     WATER_GAUGES_DIRECT_LANE_ID,
     WATERSHEDS_DIRECT_LANE_ID,
     WEATHER_OBSERVATIONS_DIRECT_LANE_ID,
@@ -393,6 +394,33 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
         # forward.py::history_floor() == max(registered floor, START_DAY + 1 day): the boundary day
         # itself belongs to backfill.py, not to this lane. See VEGETATION_PLANE_STREAM's writer_ceiling
         # in pipeline/parquet/lane_registry.py for the other side of the same boundary.
+        writer_floor=(VEGETATION_DIRECT_WRITER_START_DAY + timedelta(days=1)).isoformat(),
+    ),
+    _spec(
+        VEGETATION_NDVI_PROMOTION_LANE_ID,
+        # REGISTERED, NOT ACTIVE: absent from the deployed PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES
+        # allow-list on purpose (execution/AGENTS.md §Lane activation) -- the SAME shadow-by-default
+        # mechanism every other lane here already registers under, not a second one. Phase offset
+        # trails the vegetation direct writer's own `5 * * * *` so a promotion turn always reads a
+        # settled day the forward writer already had a chance to publish first.
+        command=("python", "-m", "agri_data_service.execution.vegetation_partition_promotion"),
+        disposition="source-specific",
+        phase_offset_seconds=1500,
+        schedule="25 * * * *",
+        publication_lag_days=_registration("vegetation")[0],
+        publication_cadence_days=_registration("vegetation")[1],
+        publication_lag_source="pipeline/parquet/lane_registry.py vegetation contract",
+        selection_policy="newest settled days first, one content-SHA-scoped partition promotion per day",
+        timeout_seconds=900,
+        description=(
+            "Governed-plane promotion for the vegetation NDVI direct-writer stream, keyed per "
+            "`layer=vegetation/kind=observed/year=/month=/day=` partition by that partition's own "
+            "content SHA (owner decision 2026-09-18), matching the availability index's "
+            "`generation=<content-sha>` convention. Wraps "
+            "`execution/vegetation_ndvi_plane.register_governed_forward_plane`, which has never had "
+            "a caller. An unchanged partition re-run is a no-op against its own promotion receipt; a "
+            "changed partition re-promotes only itself."
+        ),
         writer_floor=(VEGETATION_DIRECT_WRITER_START_DAY + timedelta(days=1)).isoformat(),
     ),
     _spec(

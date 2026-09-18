@@ -89,6 +89,7 @@ from agri_data_service.foundation.parquet.paths import (
     derived_empty_completion_marker_path,
     month_prefix,
     partition_path,
+    promotion_receipt_path,
     stream_prefix,
     try_parse_absence_marker_path,
     try_parse_completion_marker_path,
@@ -110,6 +111,10 @@ PARQUET_CONTENT_TYPE: Final = "application/vnd.apache.parquet"
 ABSENCE_CONTENT_TYPE: Final = "application/json"
 COMPLETION_CONTENT_TYPE: Final = "application/json"
 AVAILABILITY_RETRY_CONTENT_TYPE: Final = "application/json"
+PROMOTION_RECEIPT_CONTENT_TYPE: Final = "application/json"
+# A receipt names one partition, its content SHA and the governed-plane identifiers a promotion
+# bound to it -- a small fixed record, never a payload park. See `execution/vegetation_partition_promotion.py`.
+MAX_PROMOTION_RECEIPT_BYTES: Final = 8 * 1024
 MAX_LISTED_KEYS: Final = 500_000
 # One availability retry claim names every PHYSICAL receipt of one lane-day's whole ladder, because
 # that is what a later turn rebuilds the day's evidence from without re-exporting it. The ceiling is
@@ -750,6 +755,23 @@ class ObjectStore:
         self._backend.put(self.key_for(relative_path), payload, content_type=AVAILABILITY_RETRY_CONTENT_TYPE)
         self._backend.delete(self.key_for(availability_retry_path(layer, kind, day)))
         return relative_path
+
+    def write_promotion_receipt(self, payload: bytes, *, layer: str, kind: PartitionKind, day: date) -> str:
+        """Record one day partition's governed-plane promotion decision; returns the receipt path."""
+        if not payload or len(payload) > MAX_PROMOTION_RECEIPT_BYTES:
+            raise ValueError(
+                f"a promotion receipt must be 1..{MAX_PROMOTION_RECEIPT_BYTES} bytes, got {len(payload)}"
+            )
+        relative_path = promotion_receipt_path(layer, kind, day)
+        self._backend.put(self.key_for(relative_path), payload, content_type=PROMOTION_RECEIPT_CONTENT_TYPE)
+        return relative_path
+
+    def read_promotion_receipt(self, layer: str, kind: PartitionKind, day: date) -> bytes | None:
+        """Return one day partition's last recorded promotion receipt, or `None` when never promoted."""
+        payload = self._backend.get(self.key_for(promotion_receipt_path(layer, kind, day)))
+        if payload is not None and len(payload) > MAX_PROMOTION_RECEIPT_BYTES:
+            raise ValueError(f"promotion receipt for {layer!r} {kind} {day.isoformat()} exceeds its ceiling")
+        return payload
 
     def list_partition_objects(
         self,

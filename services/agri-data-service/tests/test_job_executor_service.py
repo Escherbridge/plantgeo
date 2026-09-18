@@ -24,6 +24,7 @@ EXPECTED_SCHEDULES = {
     "climate-nasa-power-direct-forward": "40 * * * *",
     "soil-era5-land-direct-forward": "50 * * * *",
     "vegetation-sentinel2-ndvi-direct-forward": "5 * * * *",
+    "vegetation-ndvi-governed-plane-promotion": "25 * * * *",
     "weather-observations-direct-forward": "30 * * * *",
     "drought-direct-forward": "45 * * * *",
     "fire-perimeters-direct-forward": "10 * * * *",
