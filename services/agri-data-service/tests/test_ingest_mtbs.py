@@ -17,6 +17,7 @@ import pytest
 
 from agri_data_service.execution.contracts import MAX_SOURCE_GEOJSON_FEATURES
 from agri_data_service.execution.source_ingestion import SourceIngestionPlan
+from agri_data_service.foundation.geography.bounding_box import format_bounding_box_inline, parse_bounding_box
 from agri_data_service.foundation.region import load_region
 from agri_data_service.ingest.identity import MissingNativeKeyError, build_burn_severity_identity
 from agri_data_service.ingest.mtbs import (
@@ -45,8 +46,6 @@ from agri_data_service.ingest.mtbs import (
     burn_severity_bounding_box,
     capture_release,
     fetch_release_features,
-    inline_bbox_value,
-    parse_bounding_box,
     parse_mtbs_ignition_date,
     requires_object_storage,
     resolve_burn_severity_class,
@@ -666,13 +665,30 @@ def test_capturing_an_unreleased_fire_year_raises_before_any_network_call(tmp_pa
 
 
 def test_the_cli_reads_a_negative_bbox_as_a_value_rather_than_a_flag() -> None:
-    assert inline_bbox_value(["--bbox", "-125,42,-111,49", "--release-year", "2022"]) == [
+    assert format_bounding_box_inline(["--bbox", "-125,42,-111,49", "--release-year", "2022"]) == [
         "--bbox=-125,42,-111,49",
         "--release-year",
         "2022",
     ]
     assert parse_bounding_box("-125,42,-111,49") == burn_severity_bounding_box()
-    assert inline_bbox_value(["--all-releases"]) == ["--all-releases"]
+    assert format_bounding_box_inline(["--all-releases"]) == ["--all-releases"]
+
+
+def test_the_deprecated_bbox_helper_aliases_still_resolve_and_warn() -> None:
+    """`inline_bbox_value` and `parse_bounding_box` survive one more release as lazily resolved,
+
+    warning aliases on `ingest.mtbs`, matching `PACIFIC_NORTHWEST_BBOX`'s pattern -- see
+    `foundation/geography/AGENTS.md` for the 2026-09-18 extraction this test guards.
+    """
+    from agri_data_service.ingest import mtbs as mtbs_module
+
+    with pytest.deprecated_call():
+        inline_alias = mtbs_module.inline_bbox_value
+    assert inline_alias(["--bbox", "-125,42,-111,49"]) == ["--bbox=-125,42,-111,49"]
+
+    with pytest.deprecated_call():
+        parse_alias = mtbs_module.parse_bounding_box
+    assert parse_alias("-125,42,-111,49") == parse_bounding_box("-125,42,-111,49")
 
 
 def test_a_transient_server_error_is_retried_rather_than_failing_the_capture() -> None:

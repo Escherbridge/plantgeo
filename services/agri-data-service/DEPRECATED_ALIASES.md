@@ -13,6 +13,8 @@ replacement. Nothing in `src/` reads these names; only the deprecation tests do.
 | `PACIFIC_NORTHWEST_BBOX` | `agri_data_service.ingest.mtbs` | `burn_severity_bounding_box()` | Delete after one release (earliest: the release following 2026-09-18), once no importer outside this repo is known to read it. |
 | `SEED_ENVELOPE` | `agri_data_service.foundation.botanical_occurrences.coordinates` | `botanical_seed_envelope()` | Same as above. |
 | `BBOX` | `agri_data_service.pipeline.direct.burn_severity.current_snapshot` | `agri_data_service.ingest.mtbs.burn_severity_bounding_box()` | Same as above. |
+| `inline_bbox_value` | `agri_data_service.ingest.mtbs` | `agri_data_service.foundation.geography.bounding_box.format_bounding_box_inline()` | Delete after one release (earliest: the release following 2026-09-18), once every direct importer outside this repo is known to read the new module. |
+| `parse_bounding_box` | `agri_data_service.ingest.mtbs` | `agri_data_service.foundation.geography.bounding_box.parse_bounding_box()` | Same as above. |
 
 Deleted in the 2026-09-18 wave-4 style pass, recorded so the removal is not re-litigated:
 
