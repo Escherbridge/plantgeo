@@ -21,7 +21,7 @@ export const regionEnvelopeSchema = z
 
 export type RegionEnvelope = z.infer<typeof regionEnvelopeSchema>;
 
-/** How `floor_to_resolution` (`warehouse/parquet/tiers.py:401`) maps a coordinate onto its cell. */
+/** How `floor_to_resolution` (`warehouse/parquet/tiers.py`) maps a coordinate onto its cell. */
 export const latticeOriginRuleSchema = z.literal("floor_to_cell_origin");
 export type LatticeOriginRule = z.infer<typeof latticeOriginRuleSchema>;
 
@@ -77,12 +77,36 @@ export type Region = z.infer<typeof regionSchema>;
 export type RegionAdminCode = "US-WA" | "US-OR" | "US-ID";
 
 /**
+ * Recursively `Object.freeze`s a parsed manifest so no caller can mutate a value reachable from
+ * `getRegion()` -- the trap `src/lib/map/coverage-region.ts` hit by aliasing
+ * `getRegion().defaultCameraEnvelope` into a mutable exported constant. Only walks plain objects and
+ * arrays; `Region`'s leaves are strings, numbers and arrays of those, so that is everything reachable.
+ */
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const key of Object.keys(value as Record<string, unknown>)) {
+      deepFreeze((value as Record<string, unknown>)[key]);
+    }
+  }
+  return value;
+}
+
+let cachedRegion: Region | undefined;
+
+/**
  * Returns the deployment's one region manifest.
  *
- * Only the PNW pilot exists today, so this is a constant lookup; a multi-region deployment adds a
- * `NEXT_PUBLIC_PLANTGEO_REGION`-keyed registry here rather than a caller picking a manifest itself.
- * See `src/lib/region/AGENTS.md`.
+ * Parses `PNW` through `regionSchema` and deep-freezes the result on first call, then returns the
+ * memoised value -- so the `.refine()` envelope-ordering checks actually run once in production
+ * rather than only inside `manifest-parity.test.ts`, and no caller can widen a frozen envelope in
+ * place. Only the PNW pilot exists today, so this is a constant lookup; a multi-region deployment
+ * adds a `NEXT_PUBLIC_PLANTGEO_REGION`-keyed registry here rather than a caller picking a manifest
+ * itself. See `src/lib/region/AGENTS.md`.
  */
 export function getRegion(): Region {
-  return PNW;
+  if (cachedRegion === undefined) {
+    cachedRegion = deepFreeze(regionSchema.parse(PNW));
+  }
+  return cachedRegion;
 }

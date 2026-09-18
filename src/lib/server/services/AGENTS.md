@@ -78,6 +78,12 @@ mapping, row parsing, support envelopes, polygon decoding) lives in `parquet-trp
 Importers keep using `@/lib/server/services/parquet-trpc-readers`; nothing imports a layer module
 directly, so a layer can be split again without touching a caller.
 
+`shared.ts`'s `mtbsSnapshot` field (consumed by `burn-severity.ts`) names MTBS in the one module
+every layer reader imports — a `layer-lanes.md` §1b violation predating this split, entrenched
+rather than introduced by it (STYLE-REVIEW-W1.md S8). NOT renamed here: `mtbsSnapshot` is a served
+response field, a client contract, and a rename is owed a contract version bump
+(`federation.md` §5 step 3), not a drive-by edit alongside a style pass.
+
 ### named-day-rule
 
 A published day is a `YYYY-MM-DD` string and is compared as one. Never turn it into an instant:

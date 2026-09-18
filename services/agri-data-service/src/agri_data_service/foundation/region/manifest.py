@@ -12,10 +12,12 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping
 from importlib import resources
+from types import MappingProxyType
 from typing import Final, Literal
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 #: `PLANTGEO_REGION` selects the manifest `load_region` returns; unset defaults to the pilot.
 REGION_ENV_VAR: Final = "PLANTGEO_REGION"
@@ -27,7 +29,7 @@ SourceCoverage = Literal["global", "regional"]
 class RegionEnvelope(BaseModel):
     """A WGS84 west/south/east/north bounding box; the manifest's own footprint claim."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     west: float
     south: float
@@ -46,7 +48,7 @@ class RegionEnvelope(BaseModel):
 class LayerBinding(BaseModel):
     """One `geo.layers` slug bound to the source that fills it in this region, per `federation.md` §2."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     layer_slug: str
     source_slug: str
@@ -64,7 +66,7 @@ class Region(BaseModel):
     of restating the numbers.
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     slug: str
     display_name: str
@@ -73,7 +75,10 @@ class Region(BaseModel):
     #: `coverage-region.ts`); kept distinct from `envelope` so migrating the manifest in never
     #: widened the client's default camera. See `AGENTS.md` §default_camera_envelope.
     default_camera_envelope: RegionEnvelope
-    sub_envelopes: dict[str, RegionEnvelope] = {}
+    #: A `Mapping`, not a `dict`: `_sub_envelopes_are_immutable` below wraps every value in
+    #: `MappingProxyType` so `region.sub_envelopes["x"] = ...` fails even though `frozen=True` only
+    #: blocks reassigning the `sub_envelopes` attribute itself, not mutating what it points at.
+    sub_envelopes: Mapping[str, RegionEnvelope] = Field(default_factory=lambda: MappingProxyType({}))
     crs: int | None
     lattice_pitch_degrees: float
     lattice_origin_rule: LatticeOriginRule
@@ -81,6 +86,11 @@ class Region(BaseModel):
     iso_country_codes: tuple[str, ...]
     admin_codes: tuple[str, ...]
     enabled_layers: tuple[LayerBinding, ...]
+
+    @field_validator("sub_envelopes", mode="after")
+    @classmethod
+    def _sub_envelopes_are_immutable(cls, value: Mapping[str, RegionEnvelope]) -> Mapping[str, RegionEnvelope]:
+        return MappingProxyType(dict(value))
 
     @model_validator(mode="after")
     def _lattice_pitch_is_positive(self) -> Region:
@@ -99,21 +109,33 @@ def _load_manifest_json(slug: str) -> Region:
     return Region.model_validate(raw)
 
 
-#: The pilot region, loaded once at import time; see the module docstring for why PNW is the base.
-PNW: Final[Region] = _load_manifest_json("pnw")
+#: The pilot slug; the only manifest this deployment registers today. Not the manifest itself --
+#: nothing reads `pnw.json` until `load_region()` is actually called, per `python.md` "the region is
+#: a value, not a constant": a module-level `Region` constant is the exact hidden dependency that
+#: rule forbids, and it would do filesystem I/O at import time whether or not `PLANTGEO_REGION`
+#: names something else.
+_PILOT_REGION_SLUG: Final = "pnw"
+_KNOWN_REGION_SLUGS: Final[tuple[str, ...]] = (_PILOT_REGION_SLUG,)
 
-_REGISTRY: Final[dict[str, Region]] = {"pnw": PNW}
+#: Populated lazily, one entry per slug `load_region()` has actually resolved; never read directly.
+_REGION_CACHE: Final[dict[str, Region]] = {}
 
 
 def load_region(slug: str | None = None) -> Region:
     """Return the named region manifest, defaulting to `PLANTGEO_REGION` and then the PNW pilot.
 
+    The only sanctioned door into this package's data: there is no module-level `Region` constant to
+    import instead, so every caller's dependency on a region is visible in its own call site. Reads
+    `PLANTGEO_REGION` fresh on every call rather than once at import, and caches by resolved slug so
+    repeat calls for the same slug do not re-parse `<slug>.json`.
+
     Raises `ValueError` for a slug this deployment has no manifest for, rather than falling back
     silently -- an unrecognised region is a configuration error, not a reason to serve the pilot's
     footprint under someone else's name.
     """
-    resolved_slug = slug or os.environ.get(REGION_ENV_VAR) or "pnw"
-    try:
-        return _REGISTRY[resolved_slug]
-    except KeyError as error:
-        raise ValueError(f"unknown region {resolved_slug!r}; registered manifests are {sorted(_REGISTRY)}") from error
+    resolved_slug = slug or os.environ.get(REGION_ENV_VAR) or _PILOT_REGION_SLUG
+    if resolved_slug not in _KNOWN_REGION_SLUGS:
+        raise ValueError(f"unknown region {resolved_slug!r}; registered manifests are {sorted(_KNOWN_REGION_SLUGS)}")
+    if resolved_slug not in _REGION_CACHE:
+        _REGION_CACHE[resolved_slug] = _load_manifest_json(resolved_slug)
+    return _REGION_CACHE[resolved_slug]

@@ -19,11 +19,13 @@
     { "layer_slug": "vegetation", "source_slug": "sentinel2_ndvi", "coverage": "global" },
     { "layer_slug": "burn-severity", "source_slug": "mtbs", "coverage": "regional" },
     { "layer_slug": "evacuation-zones", "source_slug": "oregon_oem_arcgis", "coverage": "regional" },
-    { "layer_slug": "interventions", "source_slug": "postgres_interventions", "coverage": "regional" },
     { "layer_slug": "fire-perimeters", "source_slug": "wfigs", "coverage": "regional" },
     { "layer_slug": "water-gauges", "source_slug": "usgs_nwis", "coverage": "regional" },
     { "layer_slug": "sensors", "source_slug": "noaa_nws", "coverage": "regional" },
     { "layer_slug": "weather-observations", "source_slug": "open_meteo", "coverage": "global" },
-    { "layer_slug": "watersheds", "source_slug": "hydrosheds", "coverage": "global" }
+    { "layer_slug": "watersheds", "source_slug": "hydrosheds", "coverage": "global" },
+    { "layer_slug": "drought", "source_slug": "usdm", "coverage": "regional" },
+    { "layer_slug": "signal", "source_slug": "era5_land_and_nasa_power", "coverage": "global" },
+    { "layer_slug": "botanical-occurrences", "source_slug": "gbif", "coverage": "global" }
   ]
 }
