@@ -46,10 +46,10 @@ export const useRoutingStore = create<RoutingState>()(
     setDestination: (destination) => set({ destination }),
     setWaypoints: (waypoints) => set({ waypoints }),
     addWaypoint: (waypoint) =>
-      set((s) => ({ waypoints: [...s.waypoints, waypoint] })),
+      set((state) => ({ waypoints: [...state.waypoints, waypoint] })),
     removeWaypoint: (index) =>
-      set((s) => ({
-        waypoints: s.waypoints.filter((_, i) => i !== index),
+      set((state) => ({
+        waypoints: state.waypoints.filter((_, waypointIndex) => waypointIndex !== index),
       })),
     setActiveRoute: (route) => set({ activeRoute: route }),
     setAlternatives: (alternatives) => set({ alternatives }),
@@ -57,7 +57,7 @@ export const useRoutingStore = create<RoutingState>()(
       const { activeRoute, alternatives } = get();
       if (index < 0 || index >= alternatives.length) return;
       const selected = alternatives[index];
-      const remaining = alternatives.filter((_, i) => i !== index);
+      const remaining = alternatives.filter((_, alternativeIndex) => alternativeIndex !== index);
       if (activeRoute) {
         set({ activeRoute: selected, alternatives: [activeRoute, ...remaining] });
       } else {

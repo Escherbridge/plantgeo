@@ -3,45 +3,50 @@ import { LngLat } from "maplibre-gl";
 
 type Coord = [number, number];
 
+// Ramer-Douglas-Peucker line simplification, on planar degrees.
+// https://en.wikipedia.org/wiki/Ramer%E2%80%93Douglas%E2%80%93Peucker_algorithm
 function douglasPeucker(points: Coord[], epsilon: number): Coord[] {
   if (points.length <= 2) return points;
-  let maxDist = 0;
-  let maxIdx = 0;
+  let maxDistance = 0;
+  let farthestIndex = 0;
   const start = points[0];
   const end = points[points.length - 1];
-  const dx = end[0] - start[0];
-  const dy = end[1] - start[1];
-  const lineLenSq = dx * dx + dy * dy;
+  const spanX = end[0] - start[0];
+  const spanY = end[1] - start[1];
+  const segmentLengthSquared = spanX * spanX + spanY * spanY;
 
-  for (let i = 1; i < points.length - 1; i++) {
-    let dist: number;
-    if (lineLenSq === 0) {
-      const ex = points[i][0] - start[0];
-      const ey = points[i][1] - start[1];
-      dist = Math.sqrt(ex * ex + ey * ey);
+  for (let index = 1; index < points.length - 1; index++) {
+    let distance: number;
+    if (segmentLengthSquared === 0) {
+      const offsetX = points[index][0] - start[0];
+      const offsetY = points[index][1] - start[1];
+      distance = Math.sqrt(offsetX * offsetX + offsetY * offsetY);
     } else {
-      const t = Math.max(
+      const projection = Math.max(
         0,
         Math.min(
           1,
-          ((points[i][0] - start[0]) * dx + (points[i][1] - start[1]) * dy) /
-            lineLenSq
+          ((points[index][0] - start[0]) * spanX +
+            (points[index][1] - start[1]) * spanY) /
+            segmentLengthSquared
         )
       );
-      const px = start[0] + t * dx - points[i][0];
-      const py = start[1] + t * dy - points[i][1];
-      dist = Math.sqrt(px * px + py * py);
+      const perpendicularX = start[0] + projection * spanX - points[index][0];
+      const perpendicularY = start[1] + projection * spanY - points[index][1];
+      distance = Math.sqrt(
+        perpendicularX * perpendicularX + perpendicularY * perpendicularY
+      );
     }
-    if (dist > maxDist) {
-      maxDist = dist;
-      maxIdx = i;
+    if (distance > maxDistance) {
+      maxDistance = distance;
+      farthestIndex = index;
     }
   }
 
-  if (maxDist > epsilon) {
-    const left = douglasPeucker(points.slice(0, maxIdx + 1), epsilon);
-    const right = douglasPeucker(points.slice(maxIdx), epsilon);
-    return [...left.slice(0, -1), ...right];
+  if (maxDistance > epsilon) {
+    const before = douglasPeucker(points.slice(0, farthestIndex + 1), epsilon);
+    const after = douglasPeucker(points.slice(farthestIndex), epsilon);
+    return [...before.slice(0, -1), ...after];
   }
   return [start, end];
 }

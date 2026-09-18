@@ -1,30 +1,10 @@
 /**
- * PLACEHOLDER Parquet reader for the land-context reference plane.
+ * PLACEHOLDER Parquet reader for the land-context reference plane: real pruning shape, always an
+ * empty-with-gap-stated result, because no admitted lane is wired in.
  *
- * No real data source is wired in yet. Every function below performs the
- * pruning structure the spec requires (bbox/row-group pruning conceptually
- * first, exact intersection second) but always resolves to an
- * empty-with-gap-stated result, because there is no admitted Parquet lane to
- * read from. Do not treat any "no_match" or "unknown_coverage" outcome here
- * as a real coverage finding — it reflects "nothing is wired in", not a
- * verified absence.
- *
- * TODO(lane owner): replace this module's bodies with real Parquet reads
- * against the boundary_versions / organizations_offices /
- * public_contact_routes / place_office_topic_relationships / source_releases
- * lanes. The schema this once waited on has landed
- * (`@/lib/server/db/schema/land-context`, `drizzle/0003_land_context.sql`);
- * what remains is the chartered ingest itself -- BLM is the only family
- * cleared to acquire (rights-gate verdicts, 2026-09-12) -- and the physical
- * lane layout. Keep the pruning-then-intersection call shape so callers in
- * this directory do not need to change. Everything downstream is wired as of
- * 2026-09-15: `reader.ts` passes `boundary` through as `sourceFeature`
- * unchanged, the router decodes `boundary.geometryWkb` (hex WKB/EWKB, or
- * `null` when the source has no geometry -- never an invented shape) via
- * `./geometry/attach-decoded-geometry.ts`, and the map draws the result.
- * `boundary.familyType` must use the keys `useLandContextQuery` maps to
- * toggle groups: `parcel` | `land_use` | `electric_service_territory` |
- * `blm_surface_management` | `state_managed_land`.
+ * A `no_match` or `unknown_coverage` from here is NOT a coverage finding.
+ * TODO(lane owner): replace these bodies with real Parquet reads, keeping the
+ * pruning-then-intersection call shape. See `src/lib/server/services/land-context/AGENTS.md`.
  */
 
 import type {

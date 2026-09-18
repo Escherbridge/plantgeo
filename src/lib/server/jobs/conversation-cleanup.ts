@@ -5,6 +5,7 @@
 import { db } from "@/lib/server/db";
 import { aiConversations } from "@/lib/server/db/schema";
 import { lt, sql } from "drizzle-orm";
+import { getRedisConnection } from "@/lib/server/redis";
 
 /**
  * Deletes ai_conversations rows where updated_at < NOW() - 30 days.
@@ -41,19 +42,9 @@ if (typeof window === "undefined") {
   }
 
   if (bullmq) {
-    const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379";
-    const connection = { host: "localhost", port: 6379 } as {
-      host: string;
-      port: number;
-    };
-
-    try {
-      const url = new URL(REDIS_URL);
-      connection.host = url.hostname;
-      connection.port = parseInt(url.port || "6379", 10);
-    } catch {
-      // keep defaults
-    }
+    // Canonical REDIS_URL parsing lives in `@/lib/server/redis`; see its
+    // rationale pointer in `src/lib/server/AGENTS.md` §trpc / db / auth.
+    const connection = getRedisConnection();
 
     const QUEUE_NAME = "conversation-cleanup";
     const queue = new bullmq.Queue(QUEUE_NAME, { connection });

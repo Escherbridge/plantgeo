@@ -138,11 +138,11 @@ export const useRegionalIntelligenceStore = create<RegionalIntelligenceState>()(
       },
 
       addMessage: (message) =>
-        set((s) => ({ messages: [...s.messages, message] })),
+        set((state) => ({ messages: [...state.messages, message] })),
 
       updateLastMessage: (partial) =>
-        set((s) => {
-          const messages = [...s.messages];
+        set((state) => {
+          const messages = [...state.messages];
           if (messages.length > 0) {
             messages[messages.length - 1] = {
               ...messages[messages.length - 1],

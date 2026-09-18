@@ -61,14 +61,14 @@ export const useLayerStore = create<LayerStoreState>()(
         // Clamped here rather than at the call site: this is the one writer, so nothing
         // downstream -- including a rehydrated blob replayed through it -- can reach 0.
         setLayerOpacity: (layerId, opacity) =>
-          set((s) => ({
-            layerOpacity: { ...s.layerOpacity, [layerId]: clampLayerOpacity(opacity) },
+          set((state) => ({
+            layerOpacity: { ...state.layerOpacity, [layerId]: clampLayerOpacity(opacity) },
           })),
 
         resetLayerOpacity: (layerId) =>
-          set((s) => {
-            if (s.layerOpacity[layerId] === undefined) return s;
-            const next = { ...s.layerOpacity };
+          set((state) => {
+            if (state.layerOpacity[layerId] === undefined) return state;
+            const next = { ...state.layerOpacity };
             delete next[layerId];
             return { layerOpacity: next };
           }),
@@ -82,7 +82,7 @@ export const useLayerStore = create<LayerStoreState>()(
         // never participates in a server render and no `skipHydration` is needed.
         name: "plantgeo-layer-opacity",
         version: 1,
-        partialize: (s) => ({ layerOpacity: s.layerOpacity }),
+        partialize: (state) => ({ layerOpacity: state.layerOpacity }),
         merge: (persisted, current) => ({
           ...current,
           layerOpacity: sanitizeLayerOpacity(

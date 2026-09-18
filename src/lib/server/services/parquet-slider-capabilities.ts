@@ -117,7 +117,7 @@ const DIRECT_PARQUET_CAPABILITIES = [
   // cannot catch. The gate withholds a Parquet AXIS over a PostgreSQL population; this row was a
   // PostgreSQL axis over a Parquet population, which no check here refuses -- it was simply exempt.
   // Its render path has been Parquet since the reader cutover (`trpc/routers/environmental.ts:419`
-  // -> `parquet-trpc-readers.ts:2122` `getParquetBurnSeverity` -> the `burn-severity-features`
+  // -> `parquet-trpc-readers/burn-severity.ts` `getParquetBurnSeverity` -> the `burn-severity-features`
   // GeoJSON source at `lib/map/layers.ts:314-317`, filled by `LayerManager.applyParquetFeatureData`)
   // and Martin publishes no burn-severity tile function (`infra/martin/martin.yaml:65-71`), so
   // nothing else was ever drawing it.
@@ -208,7 +208,7 @@ function isCoverageBoundaryFault(error: unknown): boolean {
 /**
  * MTBS is a sparse cumulative event reader, so every day after its first event is selectable.
  *
- * `getParquetBurnSeverity` (`parquet-trpc-readers.ts:2122`) walks BACK through releases and unions
+ * `getParquetBurnSeverity` (`parquet-trpc-readers/burn-severity.ts`) walks BACK through releases and unions
  * every one dated at or before the requested day, so a day between two releases draws the older
  * release in full. The evidence the census publishes says the opposite -- burn-severity has roughly
  * five real release days across 2015-2026 -- so an axis synthesized straight from it would mark

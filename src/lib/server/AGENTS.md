@@ -27,3 +27,24 @@ actions; any future override needs a separate explicit operation and contract.
 Router regressions compile the actual Drizzle UPDATE predicate and cover refused zero-row
 writes. They do not replace a database-backed stale-review check or prove simultaneous database
 scheduling. The queue refreshes on refusal and retains an explanation even when no rows remain.
+
+## trpc / db / auth
+
+`trpc/routers/teams.ts` composes five procedure groups from `trpc/routers/teams/*`
+(organizations, membership, invitations, join-links, directory); each group shares the
+DB/auth helpers in `teams/shared.ts` (`loadMembership`, `requireTeamAccess`, `loadOrganization`,
+`adoptActiveTeam`, `loadRedeemingIdentity`) rather than re-querying `teamMembers`/`teams`
+directly — every membership or role check reads from the database inside the acting
+transaction, never from the session/JWT, because the JWT's role claim is minted at sign-in and
+never refreshed. Split the file this way (not by CRUD verb) because the original router already
+grouped procedures with `// ─── … ───` banner comments along exactly this seam; splitting on it
+kept a one-file-to-one-file move with no re-grouping judgment calls.
+
+Every BullMQ job registration (`jobs/*.ts`) parses `REDIS_URL` through the single
+`getRedisConnection()` in `redis.ts`, not a local re-implementation — three jobs had grown their
+own copy with slightly different fallback shapes before this pass; `alert-dispatcher.ts` was
+always the correct example to copy.
+
+`db/schema/land-context/shared.ts`'s `PNW_STATE_CODES`/`PnwStateCode` are a known federation
+migration item (`conductor/code_styleguides/federation.md` §1) — do not move ad hoc; the
+migration order in that file's §5 owns it as its own reviewed push.

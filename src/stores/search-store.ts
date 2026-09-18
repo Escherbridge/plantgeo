@@ -35,8 +35,10 @@ export const useSearchStore = create<SearchState>()(
 
         setQuery: (query) => set({ query }),
         addRecentSearch: (result) =>
-          set((s) => {
-            const deduped = s.recentSearches.filter((r) => r.id !== result.id);
+          set((state) => {
+            const deduped = state.recentSearches.filter(
+              (recentSearch) => recentSearch.id !== result.id
+            );
             return { recentSearches: [result, ...deduped].slice(0, 10) };
           }),
         clearRecentSearches: () => set({ recentSearches: [] }),
@@ -44,7 +46,7 @@ export const useSearchStore = create<SearchState>()(
       }),
       {
         name: "plantgeo-search",
-        partialize: (s) => ({ recentSearches: s.recentSearches }),
+        partialize: (state) => ({ recentSearches: state.recentSearches }),
       }
     )
   )

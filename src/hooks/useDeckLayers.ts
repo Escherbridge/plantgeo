@@ -20,11 +20,11 @@ type LayerId = (typeof LAYER_IDS)[number];
 export function useDeckLayers(
   layerMap: Partial<Record<LayerId, Layer>>
 ): Layer[] {
-  const activeLayers = useMapStore((s) => s.activeLayers);
+  const activeLayers = useMapStore((state) => state.activeLayers);
 
   return useMemo(() => {
     return LAYER_IDS.filter((id) => activeLayers.includes(id))
       .map((id) => layerMap[id])
-      .filter((l): l is Layer => l !== undefined);
+      .filter((layer): layer is Layer => layer !== undefined);
   }, [activeLayers, layerMap]);
 }

@@ -11,9 +11,9 @@ const REQUEST_TIMEOUT_MS = 10_000;
  * Caches result in Redis for 6 hours.
  */
 export async function getDroughtClassification(): Promise<GeoJSON.FeatureCollection> {
-  const r = getRedis();
+  const redis = getRedis();
 
-  const cached = await r.get(DROUGHT_CACHE_KEY);
+  const cached = await redis.get(DROUGHT_CACHE_KEY);
   if (cached) {
     return JSON.parse(cached) as GeoJSON.FeatureCollection;
   }
@@ -26,7 +26,7 @@ export async function getDroughtClassification(): Promise<GeoJSON.FeatureCollect
     { maxBytes: MAX_RESPONSE_BYTES, timeoutMs: REQUEST_TIMEOUT_MS }
   )) as GeoJSON.FeatureCollection;
 
-  await r.setex(DROUGHT_CACHE_KEY, DROUGHT_CACHE_TTL, JSON.stringify(data));
+  await redis.setex(DROUGHT_CACHE_KEY, DROUGHT_CACHE_TTL, JSON.stringify(data));
 
   return data;
 }
@@ -39,9 +39,9 @@ export async function getDroughtByDate(
   date: string
 ): Promise<GeoJSON.FeatureCollection> {
   const cacheKey = `drought:date:${date}`;
-  const r = getRedis();
+  const redis = getRedis();
 
-  const cached = await r.get(cacheKey);
+  const cached = await redis.get(cacheKey);
   if (cached) {
     return JSON.parse(cached) as GeoJSON.FeatureCollection;
   }
@@ -56,7 +56,7 @@ export async function getDroughtByDate(
   )) as GeoJSON.FeatureCollection;
 
   // Historical data is immutable — cache for 24h
-  await r.setex(cacheKey, 86400, JSON.stringify(data));
+  await redis.setex(cacheKey, 86400, JSON.stringify(data));
 
   return data;
 }

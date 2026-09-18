@@ -4,23 +4,25 @@ function toRad(deg: number): number {
   return (deg * Math.PI) / 180;
 }
 
+// Haversine great-circle distance on a sphere of radius R.
 export function haversineDistance(a: [number, number], b: [number, number]): number {
   const dLat = toRad(b[1] - a[1]);
   const dLng = toRad(b[0] - a[0]);
   const sinDLat = Math.sin(dLat / 2);
   const sinDLng = Math.sin(dLng / 2);
-  const h =
+  const haversineTerm =
     sinDLat * sinDLat +
     Math.cos(toRad(a[1])) * Math.cos(toRad(b[1])) * sinDLng * sinDLng;
-  return 2 * R * Math.asin(Math.sqrt(h));
+  return 2 * R * Math.asin(Math.sqrt(haversineTerm));
 }
 
+// Spherical-excess polygon area (the shoelace formula's spherical analogue).
 export function polygonArea(coords: [number, number][]): number {
   if (coords.length < 3) return 0;
   let area = 0;
-  const n = coords.length;
-  for (let i = 0; i < n; i++) {
-    const j = (i + 1) % n;
+  const vertexCount = coords.length;
+  for (let i = 0; i < vertexCount; i++) {
+    const j = (i + 1) % vertexCount;
     const xi = toRad(coords[i][0]);
     const yi = toRad(coords[i][1]);
     const xj = toRad(coords[j][0]);

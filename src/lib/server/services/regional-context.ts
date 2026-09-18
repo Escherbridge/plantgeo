@@ -93,7 +93,7 @@ export interface NearbyFireDetection {
  *
  * NO INCIDENT NAME, AND NO ROW TIMESTAMP -- neither is invented here, because neither reaches
  * this assembler. `getParquetFirePerimeters` validates eighteen registered columns and projects
- * six of them (`parquet-trpc-readers.ts:495-517`); `incident_name`, `irwin_id` and `updated_at`
+ * six of them (`parquet-trpc-readers/fire-perimeters.ts`, `ParquetFirePerimeter`); `incident_name`, `irwin_id` and `updated_at`
  * are among the twelve it deliberately withholds, on the rule that a reader serves what the
  * presenter draws and widening that projection is a `hover-fields.ts` change with its own review.
  * The PostgreSQL read this replaced took `name`/`irwinId` off a JSONB blob and `updatedAt` off the
@@ -358,7 +358,7 @@ const EVIDENCE_SOURCE_BY_VIEWED_LAYER: Record<string, RegionalEvidenceSource> = 
  * time; the Parquet lane disproves that half -- `firePerimeterRowSchema` carries a nullable
  * `observed_day` and `getParquetFirePerimeters` takes a `date`, filtering the snapshot with the
  * very expression the map installs client-side (`firePerimetersInFrame`,
- * `parquet-trpc-readers.ts:1959-1987`). It still may not be read AT a viewed day, for three
+ * `parquet-trpc-readers/fire-perimeters.ts`). It still may not be read AT a viewed day, for three
  * reasons that are properties of a `static_lookup` lane rather than of WFIGS:
  *
  * 1. THE PARTITION DAY IS A VERSION STAMP. `resolve_release` answers a past day with the newest

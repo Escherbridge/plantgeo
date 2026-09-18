@@ -175,23 +175,23 @@ export const usePanelStore = create<PanelState>()(
       expandedDetails: [...INITIALLY_EXPANDED_SECTIONS],
       pendingScrollSection: null,
 
-      toggleLayerPanel: () => set((s) => ({ layerPanelOpen: !s.layerPanelOpen })),
+      toggleLayerPanel: () => set((state) => ({ layerPanelOpen: !state.layerPanelOpen })),
 
       closeLayerPanel: () => set({ layerPanelOpen: false }),
 
       toggleDetails: (id) =>
-        set((s) => ({
-          expandedDetails: s.expandedDetails.includes(id)
-            ? s.expandedDetails.filter((open) => open !== id)
-            : [...s.expandedDetails, id],
+        set((state) => ({
+          expandedDetails: state.expandedDetails.includes(id)
+            ? state.expandedDetails.filter((open) => open !== id)
+            : [...state.expandedDetails, id],
         })),
 
       focusDockSection: (id) =>
-        set((s) => ({
+        set((state) => ({
           layerPanelOpen: true,
-          expandedDetails: s.expandedDetails.includes(id)
-            ? s.expandedDetails
-            : [...s.expandedDetails, id],
+          expandedDetails: state.expandedDetails.includes(id)
+            ? state.expandedDetails
+            : [...state.expandedDetails, id],
           pendingScrollSection: id,
         })),
 
@@ -233,11 +233,11 @@ export function getAllManagedLayerIds(): string[] {
  * `src/__tests__/stores/panel-store.test.ts` uses it to guard the inversion from the registry.
  */
 export function usePanelHasActiveLayers(panelId: PanelId): boolean {
-  const activeLayers = useMapStore((s) => s.activeLayers);
+  const activeLayers = useMapStore((state) => state.activeLayers);
   return PANEL_LAYER_MAP[panelId].some((id) => activeLayers.includes(id));
 }
 
 /** Hook: is one section expanded -- and, for a report section, therefore mounted? */
 export function useDetailsExpanded(id: DockSectionId): boolean {
-  return usePanelStore((s) => s.expandedDetails.includes(id));
+  return usePanelStore((state) => state.expandedDetails.includes(id));
 }

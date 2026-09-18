@@ -74,6 +74,7 @@ import { GBIF_COLLECTION_KEY } from "@/lib/environmental/botanical-governance-st
 import { BOTANICAL_DETAIL_MIN_ZOOM } from "@/lib/botanical-occurrences";
 import { botanicalRichnessToGeoJSON } from "@/components/map/layers/BotanicalRichnessLayer";
 import { botanicalEffortToGeoJSON } from "@/components/map/layers/BotanicalCollectionEffortLayer";
+import { ParquetLayerFaultBanner } from "@/components/map/ParquetLayerFaultBanner";
 
 const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
   type: "FeatureCollection",
@@ -1606,27 +1607,7 @@ export default function LayerManager() {
         visible={weatherEnabled}
         opacityScale={layerOpacity.weather}
       />
-      {parquetLayerFaults.length > 0 && (
-        <div
-          className="pointer-events-none absolute left-1/2 top-12 z-20 flex -translate-x-1/2 flex-col gap-1.5"
-          aria-live="assertive"
-        >
-          {parquetLayerFaults.map((fault) => (
-            <p
-              key={fault.layerId}
-              role="alert"
-              className={
-                fault.tone === "fault"
-                  ? "rounded-md border border-red-500/40 bg-[hsl(var(--card))]/95 px-3 py-1.5 text-xs font-medium text-red-600 shadow-sm backdrop-blur dark:text-red-400"
-                  : "rounded-md border border-amber-500/40 bg-[hsl(var(--card))]/95 px-3 py-1.5 text-xs font-medium text-amber-700 shadow-sm backdrop-blur dark:text-amber-400"
-              }
-              data-testid={`parquet-layer-unavailable-${fault.layerId}`}
-            >
-              {fault.message}
-            </p>
-          ))}
-        </div>
-      )}
+      <ParquetLayerFaultBanner faults={parquetLayerFaults} />
       {/* Not a data layer and so not in the registry: it marks where the user clicked,
           and DockDetails' capture hook (SoilDetailsBody, DockDetails.tsx:100-101) is the
           only thing that ever sets it. */}

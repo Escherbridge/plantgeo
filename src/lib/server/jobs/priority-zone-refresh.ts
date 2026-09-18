@@ -3,26 +3,12 @@ import {
   PRIORITY_ZONE_RECOMPUTATION_STATE,
   recomputePriorityZones,
 } from "@/lib/server/services/priority-zones";
+// Canonical REDIS_URL parsing lives here; see `src/lib/server/AGENTS.md`
+// §trpc / db / auth for why every job shares one parser.
+import { getRedisConnection } from "@/lib/server/redis";
+import type { Queue as BullQueue, Worker as BullWorker } from "bullmq";
 
 const QUEUE_NAME = "priority-zone-refresh";
-const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379";
-
-// Parse Redis connection options from URL
-function getRedisConnection() {
-  try {
-    const url = new URL(REDIS_URL);
-    return {
-      host: url.hostname,
-      port: parseInt(url.port || "6379", 10),
-      password: url.password || undefined,
-      tls: url.protocol === "rediss:" ? {} : undefined,
-    };
-  } catch {
-    return { host: "localhost", port: 6379 };
-  }
-}
-
-import type { Queue as BullQueue, Worker as BullWorker } from "bullmq";
 
 let queue: BullQueue | null = null;
 let worker: BullWorker | null = null;

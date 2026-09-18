@@ -112,26 +112,26 @@ type Properties = Record<string, unknown>;
 
 /** Coerces a possibly-string numeric property to a finite number, else null. */
 function toFiniteNumber(value: unknown): number | null {
-  const num = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
-  return Number.isFinite(num) ? num : null;
+  const numeric = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  return Number.isFinite(numeric) ? numeric : null;
 }
 
 /** Formats a numeric property with fixed decimals + unit suffix. Null-safe. */
 function formatFixed(value: unknown, decimals: number, suffix: string): string | null {
-  const num = toFiniteNumber(value);
-  return num === null ? null : `${num.toFixed(decimals)}${suffix}`;
+  const numeric = toFiniteNumber(value);
+  return numeric === null ? null : `${numeric.toFixed(decimals)}${suffix}`;
 }
 
 /** Formats a numeric property rounded to an integer + unit suffix. Null-safe. */
 function formatInteger(value: unknown, suffix: string): string | null {
-  const num = toFiniteNumber(value);
-  return num === null ? null : `${Math.round(num)}${suffix}`;
+  const numeric = toFiniteNumber(value);
+  return numeric === null ? null : `${Math.round(numeric)}${suffix}`;
 }
 
 /** Formats a numeric property with locale grouping (e.g. "1,234") + unit suffix. */
 function formatLocaleNumber(value: unknown, suffix: string): string | null {
-  const num = toFiniteNumber(value);
-  return num === null ? null : `${num.toLocaleString()}${suffix}`;
+  const numeric = toFiniteNumber(value);
+  return numeric === null ? null : `${numeric.toLocaleString()}${suffix}`;
 }
 
 /** Trims a string property, rejecting empty/null-like sentinel strings. */

@@ -86,17 +86,17 @@ function buildAlertHtml(alert: AlertRecord, appUrl: string): string {
 
 function buildDigestHtml(alerts: AlertRecord[], appUrl: string): string {
   const rows = alerts
-    .map((a) => {
-      const color = SEVERITY_COLORS[a.severity] ?? "#6b7280";
-      const label = SEVERITY_LABELS[a.severity] ?? a.severity.toUpperCase();
-      const ts = a.createdAt
-        ? new Date(a.createdAt).toLocaleString("en-US", { timeZoneName: "short" })
+    .map((alert) => {
+      const color = SEVERITY_COLORS[alert.severity] ?? "#6b7280";
+      const label = SEVERITY_LABELS[alert.severity] ?? alert.severity.toUpperCase();
+      const createdAtLabel = alert.createdAt
+        ? new Date(alert.createdAt).toLocaleString("en-US", { timeZoneName: "short" })
         : "";
       return `<tr>
         <td style="padding:12px 16px;border-bottom:1px solid #e5e7eb;">
           <span style="display:inline-block;background:${color};color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;letter-spacing:0.5px;margin-right:8px;">${label}</span>
-          <strong style="color:#111827;font-size:13px;">${escapeHtml(a.title)}</strong>
-          ${ts ? `<br/><span style="color:#9ca3af;font-size:11px;">${ts}</span>` : ""}
+          <strong style="color:#111827;font-size:13px;">${escapeHtml(alert.title)}</strong>
+          ${createdAtLabel ? `<br/><span style="color:#9ca3af;font-size:11px;">${createdAtLabel}</span>` : ""}
         </td>
       </tr>`;
     })
@@ -155,7 +155,7 @@ async function sendViaResend(to: string, subject: string, html: string): Promise
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.EMAIL_FROM ?? "PlantGeo Alerts <alerts@plantgeo.io>";
 
-  const res = await fetchBounded(
+  const response = await fetchBounded(
     "https://api.resend.com/emails",
     {
       method: "POST",
@@ -168,8 +168,8 @@ async function sendViaResend(to: string, subject: string, html: string): Promise
     { maxBytes: MAX_RESPONSE_BYTES, timeoutMs: REQUEST_TIMEOUT_MS }
   );
 
-  if (!res.ok) {
-    throw new Error(`Resend API error ${res.status}: ${res.text}`);
+  if (!response.ok) {
+    throw new Error(`Resend API error ${response.status}: ${response.text}`);
   }
 }
 
@@ -177,7 +177,7 @@ async function sendViaSendGrid(to: string, subject: string, html: string): Promi
   const apiKey = process.env.SENDGRID_API_KEY;
   const from = process.env.EMAIL_FROM ?? "alerts@plantgeo.io";
 
-  const res = await fetchBounded(
+  const response = await fetchBounded(
     "https://api.sendgrid.com/v3/mail/send",
     {
       method: "POST",
@@ -195,8 +195,8 @@ async function sendViaSendGrid(to: string, subject: string, html: string): Promi
     { maxBytes: MAX_RESPONSE_BYTES, timeoutMs: REQUEST_TIMEOUT_MS }
   );
 
-  if (!res.ok) {
-    throw new Error(`SendGrid API error ${res.status}: ${res.text}`);
+  if (!response.ok) {
+    throw new Error(`SendGrid API error ${response.status}: ${response.text}`);
   }
 }
 

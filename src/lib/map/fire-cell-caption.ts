@@ -41,8 +41,8 @@ export function fireCellCaptionText(line: FireCellCaptionLine): string {
 }
 
 function toFiniteNumber(value: unknown): number | null {
-  const num = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
-  return Number.isFinite(num) ? num : null;
+  const numeric = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  return Number.isFinite(numeric) ? numeric : null;
 }
 
 function stringField(value: unknown): string | null {

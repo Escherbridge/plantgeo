@@ -659,22 +659,22 @@ export interface RegionalIntelligencePanelProps {
 export default function RegionalIntelligencePanel({
   embedded = false,
 }: RegionalIntelligencePanelProps = {}) {
-  const isOpen = useRegionalIntelligenceStore((s) => s.isOpen);
-  const isVisible = useRegionalIntelligenceStore((s) => s.isVisible);
-  const selectedLocation = useRegionalIntelligenceStore((s) => s.selectedLocation);
-  const messages = useRegionalIntelligenceStore((s) => s.messages);
-  const isLoading = useRegionalIntelligenceStore((s) => s.isLoading);
-  const activity = useRegionalIntelligenceStore((s) => s.activity);
-  const conversationId = useRegionalIntelligenceStore((s) => s.conversationId);
-  const error = useRegionalIntelligenceStore((s) => s.error);
-  const errorRetryable = useRegionalIntelligenceStore((s) => s.errorRetryable);
-  const analysisCancelled = useRegionalIntelligenceStore((s) => s.analysisCancelled);
-  const dataFreshness = useRegionalIntelligenceStore((s) => s.dataFreshness);
-  const analysisEvidence = useRegionalIntelligenceStore((s) => s.analysisEvidence);
-  const toolActivity = useRegionalIntelligenceStore((s) => s.toolActivity);
-  const closePanel = useRegionalIntelligenceStore((s) => s.closePanel);
-  const cancelAnalysis = useRegionalIntelligenceStore((s) => s.cancelAnalysis);
-  const setError = useRegionalIntelligenceStore((s) => s.setError);
+  const isOpen = useRegionalIntelligenceStore((state) => state.isOpen);
+  const isVisible = useRegionalIntelligenceStore((state) => state.isVisible);
+  const selectedLocation = useRegionalIntelligenceStore((state) => state.selectedLocation);
+  const messages = useRegionalIntelligenceStore((state) => state.messages);
+  const isLoading = useRegionalIntelligenceStore((state) => state.isLoading);
+  const activity = useRegionalIntelligenceStore((state) => state.activity);
+  const conversationId = useRegionalIntelligenceStore((state) => state.conversationId);
+  const error = useRegionalIntelligenceStore((state) => state.error);
+  const errorRetryable = useRegionalIntelligenceStore((state) => state.errorRetryable);
+  const analysisCancelled = useRegionalIntelligenceStore((state) => state.analysisCancelled);
+  const dataFreshness = useRegionalIntelligenceStore((state) => state.dataFreshness);
+  const analysisEvidence = useRegionalIntelligenceStore((state) => state.analysisEvidence);
+  const toolActivity = useRegionalIntelligenceStore((state) => state.toolActivity);
+  const closePanel = useRegionalIntelligenceStore((state) => state.closePanel);
+  const cancelAnalysis = useRegionalIntelligenceStore((state) => state.cancelAnalysis);
+  const setError = useRegionalIntelligenceStore((state) => state.setError);
   const { sendFollowUp, retryLastRequest } = useRegionalIntelligence();
 
   const [input, setInput] = useState('');

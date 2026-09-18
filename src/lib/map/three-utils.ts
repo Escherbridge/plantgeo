@@ -4,6 +4,7 @@ import type maplibregl from "maplibre-gl";
 const MERCATOR_A = 6378137.0;
 const MERCATOR_MAX = Math.PI * MERCATOR_A;
 
+// Spherical Web Mercator (EPSG:3857) forward projection into Three.js world axes.
 export function lngLatToMercator(
   lng: number,
   lat: number,
@@ -16,10 +17,11 @@ export function lngLatToMercator(
 }
 
 export function getMercatorMatrix(map: maplibregl.Map): THREE.Matrix4 {
-  const m = map as maplibregl.Map & {
+  // Narrow interop cast: MapLibre does not expose transform.mercatorMatrix in its public types.
+  const mapWithTransform = map as maplibregl.Map & {
     transform?: { mercatorMatrix?: number[] };
   };
-  const raw = m.transform?.mercatorMatrix;
+  const raw = mapWithTransform.transform?.mercatorMatrix;
   if (!raw) return new THREE.Matrix4();
   return new THREE.Matrix4().fromArray(raw);
 }

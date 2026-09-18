@@ -16,6 +16,7 @@ export function scalarFieldEnabled(layer: string, configured: string | undefined
   return configured?.split(",").some((name) => name.trim() === layer) ?? false;
 }
 
+// Spherical Web Mercator normalized y (0 at north pole, 1 at south).
 function mercatorY(latitude: number): number {
   return (1 - Math.log(Math.tan(Math.PI / 4 + latitude * Math.PI / 360)) / Math.PI) / 2;
 }
@@ -31,12 +32,12 @@ export function buildScalarFieldMesh(
   const seen = new Map<string, number>();
   let compatibility: string | undefined;
   for (const feature of collection.features) {
-    const p = feature.properties;
-    const value: unknown = p?.[valueProperty];
+    const properties = feature.properties;
+    const value: unknown = properties?.[valueProperty];
     if (typeof value !== "number" || !Number.isFinite(value) || value < range[0] || value > range[1]) return null;
     if (!feature.geometry || feature.geometry.type !== "Polygon" || feature.geometry.coordinates.length !== 1) return null;
     const ring = feature.geometry.coordinates[0];
-    if (ring.length !== 5 || ring.some((point) => point.length !== 2 || point.some((n) => !Number.isFinite(n)))) return null;
+    if (ring.length !== 5 || ring.some((point) => point.length !== 2 || point.some((component) => !Number.isFinite(component)))) return null;
     const west = Math.min(...ring.map((point) => point[0]));
     const east = Math.max(...ring.map((point) => point[0]));
     const south = Math.min(...ring.map((point) => point[1]));
@@ -46,13 +47,13 @@ export function buildScalarFieldMesh(
     const corners = new Set(ring.slice(0, 4).map(([x, y]) => `${x}:${y}`));
     if (corners.size !== 4 || ring.some(([x, y]) => (x !== west && x !== east) || (y !== south && y !== north))) return null;
     if (ring.slice(0, 4).some(([x, y], i) => x !== ring[i + 1][0] && y !== ring[i + 1][1])) return null;
-    const width: unknown = p?.cellWidthDegrees;
-    const height: unknown = p?.cellHeightDegrees;
+    const width: unknown = properties?.cellWidthDegrees;
+    const height: unknown = properties?.cellHeightDegrees;
     if (typeof width !== "number" || typeof height !== "number" || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0 || Math.abs(width - (east - west)) > 1e-8 || Math.abs(height - (north - south)) > 1e-8) return null;
-    const day: unknown = p?.observedDay;
+    const day: unknown = properties?.observedDay;
     if (typeof day !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isFinite(Date.parse(day)) || new Date(day).toISOString().slice(0, 10) !== day) return null;
-    if (p?.supportKind !== "tessellated_cell" || !p.gridName || !p.metricUnit || !p.supportId) return null;
-    const signature = JSON.stringify([p.gridName, p.metricUnit, p.observedDay, width, height]);
+    if (properties?.supportKind !== "tessellated_cell" || !properties.gridName || !properties.metricUnit || !properties.supportId) return null;
+    const signature = JSON.stringify([properties.gridName, properties.metricUnit, properties.observedDay, width, height]);
     if (compatibility !== undefined && signature !== compatibility) return null;
     compatibility = signature;
     const key = `${west}:${south}:${east}:${north}`;

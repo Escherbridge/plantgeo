@@ -98,13 +98,13 @@ export const useMapStore = create<MapState>()(
     currentStyle: "satellite",
     isTerrainEnabled: false,
 
-    setViewport: (v) =>
-      set((s) => ({ viewport: { ...s.viewport, ...v } })),
-    toggleLayer: (id) =>
-      set((s) => ({
-        activeLayers: s.activeLayers.includes(id)
-          ? s.activeLayers.filter((l) => l !== id)
-          : [...s.activeLayers, id],
+    setViewport: (viewportPatch) =>
+      set((state) => ({ viewport: { ...state.viewport, ...viewportPatch } })),
+    toggleLayer: (layerId) =>
+      set((state) => ({
+        activeLayers: state.activeLayers.includes(layerId)
+          ? state.activeLayers.filter((activeLayerId) => activeLayerId !== layerId)
+          : [...state.activeLayers, layerId],
       })),
     selectFeature: (id) => set({ selectedFeatureId: id }),
     setQueryPoint: (point) => set({ queryPoint: point }),
@@ -113,17 +113,17 @@ export const useMapStore = create<MapState>()(
     setCapturingQueryPoint: (capturing) =>
       set(capturing ? { isCapturingQueryPoint: true } : { isCapturingQueryPoint: false, queryPoint: null }),
     toggle3D: () =>
-      set((s) => ({
-        is3DEnabled: !s.is3DEnabled,
+      set((state) => ({
+        is3DEnabled: !state.is3DEnabled,
         viewport: {
-          ...s.viewport,
-          pitch: s.is3DEnabled ? 0 : 60,
+          ...state.viewport,
+          pitch: state.is3DEnabled ? 0 : 60,
         },
       })),
-    toggleGlobe: () => set((s) => ({ isGlobeView: !s.isGlobeView })),
+    toggleGlobe: () => set((state) => ({ isGlobeView: !state.isGlobeView })),
     setTerrainExaggeration: (value) => set({ terrainExaggeration: value }),
     setCurrentStyle: (style) => set({ currentStyle: style }),
-    toggleTerrain: () => set((s) => ({ isTerrainEnabled: !s.isTerrainEnabled })),
+    toggleTerrain: () => set((state) => ({ isTerrainEnabled: !state.isTerrainEnabled })),
     // is3DEnabled must agree with DEFAULT_VIEWPORT.pitch, or the 3D control
     // reports a tilt the camera does not have.
     resetView: () =>

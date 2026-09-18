@@ -7,6 +7,7 @@ import { db } from "@/lib/server/db";
 import { environmentalAlerts, users } from "@/lib/server/db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import { sendDigestEmail } from "@/lib/server/services/email";
+import { getRedisConnection } from "@/lib/server/redis";
 
 /**
  * Aggregate unread alerts per user and send digest emails.
@@ -88,16 +89,9 @@ if (typeof window === "undefined") {
   }
 
   if (bullmq) {
-    const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379";
-    const connection = { host: "localhost", port: 6379 } as { host: string; port: number };
-
-    try {
-      const url = new URL(REDIS_URL);
-      connection.host = url.hostname;
-      connection.port = parseInt(url.port || "6379", 10);
-    } catch {
-      // keep defaults
-    }
+    // Canonical REDIS_URL parsing lives in `@/lib/server/redis`; see its
+    // rationale pointer in `src/lib/server/AGENTS.md` §trpc / db / auth.
+    const connection = getRedisConnection();
 
     const QUEUE_NAME = "email-digest";
     const queue = new bullmq.Queue(QUEUE_NAME, { connection });
