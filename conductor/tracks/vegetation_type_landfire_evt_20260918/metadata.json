@@ -37,7 +37,17 @@
           }
         ],
         "model": "opus",
-        "depends_on": []
+        "depends_on": [],
+        "review": {
+          "verdict": "APPROVE",
+          "rounds": 1,
+          "reviewed_on": "2026-09-18",
+          "commits": [
+            "ae39b7b8",
+            "434f674e",
+            "d4bb3491"
+          ]
+        }
       },
       {
         "id": "p1b-banding",
@@ -56,7 +66,13 @@
         "model": "opus",
         "depends_on": [
           "p1a-grid-keys"
-        ]
+        ],
+        "review": {
+          "verdict": "APPROVE",
+          "rounds": 4,
+          "reviewed_on": "2026-09-18",
+          "notes": "strict xfail pinned on tiers.floor_to_resolution frame-length defect; derive-path origins guard added at landing"
+        }
       },
       {
         "id": "p1c-lane-package",
@@ -284,7 +300,7 @@
       }
     ],
     "tripwires": [
-      "band edges must be multiples of both 0.2 deg and the base rung, or flooring stops composing exactly",
+      "a band is an integer run of z5 (0.2 deg) cells: z5 cells are whole by construction, z9 cells may split across two adjacent bands and are merged with associative aggregates (first only under a per-group constancy contract); exactness does not depend on edge alignment, it depends on membership arithmetic being exact integers on the declared lattice (round(lat / base) // cells_per_z5), never IEEE division of the latitude -- Polars evaluates col / 0.2 differently on a 1-row frame than in bulk",
       "z0 is derived from the z5 rung in banded mode, never from the base",
       "key_columns_by_tier default None must leave every existing lane byte-identical (pin with a digest test)",
       "NoData is a class row (evt_code -9999), not a per-row count: a per-row count summed over class rows double-counts",
@@ -292,10 +308,25 @@
       "getPublishedSoilRasters returns [] today: there is no raster draw path to copy; phase 3 builds it",
       "never use the repo playwright.config.ts (it boots the app locally); use the standalone evidence config",
       "the LF2025 legend does NOT nest functionally (47/193 groups span physiognomies, 4/20 physiognomies span lifeforms): never aggregate evt_phys/evt_lifeform with first below the rung that keys them",
-      "one how per column across all rungs; a per-rung how is not a platform concept"
+      "one how per column across all rungs; a per-rung how is not a platform concept",
+      "part bounds handed to the derivation must come from the writer's receipts in the same call, never from a store-global memo: another process re-exporting the day leaves a stale memo that retracts every rung as derived-empty",
+      "tiers.floor_to_resolution is frame-length dependent (Polars floors 32.8/0.2 differently on a 1-row frame than in bulk), so derive_tier's whole-day output for a day whose band or part holds a single row is itself not deterministic; pinned as a strict xfail in tests/parquet/test_banded_derivation.py; the fix is owned by warehouse/parquet/tiers.py and must land before vegetation-type is armed if lone single-class edge cells occur in production",
+      "banded base tables must carry 4326 cell ORIGINS (k * base), never centroids: round(lat / base) is unambiguous only on the lattice, and a centroid in a one-row part records a z5 range the bulk filter excludes; write_banded_base_day refuses non-origin rows"
     ],
     "integration_slice": null,
     "amended_at": "2026-09-18T14:01:46.002004+00:00",
     "amendment": "FR-3/FR-4/1A/1C amended after p1a measured the legend; see plan.md Overview \"Amendment 2026-09-18\""
-  }
+  },
+  "follow_ups": [
+    "fix tiers.floor_to_resolution frame-length dependence with exact integer lattice arithmetic (owner: warehouse/parquet/tiers.py); then remove the strict xfail in test_banded_derivation.py",
+    "durable per-part z5 cell ranges (Parquet footer statistics or CompletedPart) so gap repair without base_table can band a day; until then a large day with unknown ranges refuses",
+    "byte bound for the unknown-ranges refusal via ObjectStoreBackend.size_of instead of the assumed 250,000 rows/part",
+    "move RecordingBackend and the base-table fixtures into tests/parquet/conftest.py",
+    "TierDerivation.band_height_degrees on tiers.py when it reopens; the resolver latitude_banding() is the one place to wire it",
+    "enforce first's per-group constancy contract platform-wide in _derive_grid_tier, not only for banded lanes",
+    "keep tests/parquet/test_banded_derivation.py under ~8 s: 1-row-vs-bulk loops restricted to z5-edge latitudes plus a stride sample",
+    "an all-None part range set must fall through to the digest-checked whole read, never enumerate zero bands (closed in p1b round 4; keep the regression test)",
+    "NaN latitude is a documented exception to banded == whole-day (whole-day derive_tier emits a NaN cell; the fold treats NaN as unlocated); reconcile in tiers.py with the frame-length fix",
+    "consider a slow marker for the envelope sweeps in test_banded_derivation.py (11-20 s) if the suite budget tightens"
+  ]
 }

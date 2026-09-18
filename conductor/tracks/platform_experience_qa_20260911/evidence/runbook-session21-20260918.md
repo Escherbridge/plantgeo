@@ -174,3 +174,101 @@ reports `fill_value_cells: 0` (forward.py:496) while the detail string carries t
 `behind_provider` horizon fields still cannot distinguish "provider revising" from "provider late".
 No code change is owed for the outage itself. Raw responses retained in the scratchpad
 (`power-full-0901-0913.json`, `power-0601-0819.json`, `power-two-params-0901-0913.json`).
+
+**p1b round 2 authored** (ruff 0, mypy strict clean on both sources, 90 tests on the slice's files).
+Band membership is one integer primitive: `z5_cell_index_expression` — `floor(fill_nan(lat) / 0.2)`
+as Int64, defined once in Polars — and `LatitudeBanding.z5_cells_per_band: int`, band = index //
+cells; `of_height(degrees, base)` converts and refuses non-multiples; receipts carry integer
+`z5_cell_min/max` (the float bounds are gone); filtering is an inclusive integer compare; no `math`
+import and no float comparison remain on the membership path. The author declined to refuse 0.4° or
+0.2°: the residual is not banding's — `floor(lat/0.01)` and `floor(lat/0.2)` inside the tier
+derivation are independent IEEE divisions that disagree at a handful of lattice edges (five z9 cells
+for (0.4°, 0.0025°), nine for (0.2°, 0.01°) across 24–50 N), so a z9 cell can be opened by two bands —
+and instead merges a grain row two bands both produced with aggregates mirroring the tier
+derivation's, refusing `first` across a split unless constant. `first` is admitted only under a
+constancy contract now enforced per band per rung, before the z0 chain and across splits
+(`NonConstantFirstError` names column and group). The byte-identity oracle is pinned to
+`d4bb3491` and asserts the oracle has no `latitude_banding`. Unknown bounds on a day whose parts ×
+250,000 exceed the cap refuse loudly before any GET. Re-review launched to adjudicate the
+merge-versus-refuse design and the associativity of every admitted aggregate.
+
+**p1b review round 2: CHANGES-REQUIRED** (47 new tests in 5.5 s, 90 total, ruff and mypy clean;
+noqa audit against `d4bb3491` clean). The merge design was upheld — verified exact for every
+band-safe aggregate including all-null sum → null, Kleene `all`/`any`, typed `null`, dtype and the
+z9-straddles-at-most-one-edge argument — but the membership primitive beneath it was refuted:
+Polars 1.43.2 evaluates `col / 0.2` by a different path on a one-row frame than on a bulk frame
+(32.8 / 0.2 → 163.99999999999997 alone, 164.0 in bulk), so 46 envelope lattice latitudes at 0.0025°
+change z5 cell with frame length, a one-row part records the wrong band, its band is never
+enumerated and the row vanishes with every rung marked complete (reproduced: banded z9 all-null,
+whole-day z9 populated). The same length-dependence sits in the platform's `floor_to_resolution`,
+a pre-existing defect that banding is the first consumer to turn into data loss. Second blocker:
+the store-global bounds memo is keyed by object key and never invalidated, so another process
+re-exporting a day leaves the first process enumerating the old bands, filtering every row out and
+retracting all three rungs as derived-empty. Round 3 sent: exact integer membership
+`round(lat / base) // cells_per_z5` used everywhere, with a one-row-versus-bulk identity test over the
+whole envelope and the one-row-part regression; drop the memo and hand bounds in explicitly from the
+writer's receipts; state the 250k rows/part estimate assumption and the NaN exception. Adjudicated:
+merge over refuse; conftest move deferred; the tripwire re-worded in the track metadata.
+
+**p1b round 3 authored** (ruff 0, mypy strict clean, 102 passed + 1 strict xfail). The `lat / 0.2`
+expression is gone: membership is `round(lat / base) // cells_per_z5` with `cells_per_z5 =
+round(0.2 / base)`, exact integers on the declared lattice; the author's test evaluates it on a
+one-row and on the bulk frame for every envelope latitude at three base pitches with zero
+disagreements, and the reviewer's one-row-part reproducer now records `(164, 164)` and loses no row.
+The store-global memo is removed outright — `objectstore.py` knows nothing about bands again and
+`ParquetWriteReceipt` is byte-identical to HEAD; `write_banded_base_day` returns explicit
+`PartCellRange(sha256, z5_cell_min, z5_cell_max)` records that the caller hands to
+`derive_and_write_day_tiers(part_cell_ranges=)`, the extent counts as known only when the ranges name
+every part the bucket lists today, and a fetched part whose digest differs from its record is refused
+by name ("another process re-exported this day in place"). One thing the slice cannot make exact,
+stated by the author and pinned as a strict xfail naming the `tiers.py` owner: in the single-row-band
+reproducer the z5 rung differs from whole-day because the platform's own `floor_to_resolution`
+floors 32.8 to 32.6 on a one-row frame and to 32.8 on a two-row frame — the whole-day derivation is
+itself frame-length dependent for such days. Third review launched to adjudicate the xfail, the
+centroid-versus-origin question for `round`, and the digest check's placement.
+
+**p1b review round 3: CHANGES-REQUIRED on one point** (59 + 43 tests pass with the strict xfail; mypy,
+ruff and the noqa audit against `d4bb3491` clean; `ParquetWriteReceipt` byte-identical to HEAD; the
+eight existing callers untouched; unbanded lanes byte-identical to the oracle). Independent probing
+upheld the integer membership: zero one-row-versus-bulk disagreements for lattice origins at all
+three pitches across 24–50 N, −50..−24 and the 0.0 edge, membership z5 equal to the tier derivation's
+z5 everywhere, negatives flooring correctly; same-key/different-bytes refused by name with the bucket
+byte-identical before and after; grown day → unknown extent → exact whole read. The surviving HIGH is
+the last member of the round-2 class: an all-`None` range set (an all-unlocated first export) enumerates
+zero bands, fetches nothing, so the digest check never runs and a located in-place re-export is
+retracted as derived-empty. MEDIUM: `round(lat / base)` is unambiguous only for lattice origins —
+centroids put 121 of 5,000 rows per pair in the next z5 cell and one true one-row disagreement
+survives — so the writer must refuse non-origin rows (the spec's FR-6 already says origins). LOW: the
+new test file grew to 20 s. Withdrawn by the reviewer: the `[float-order]` case (fixture error).
+Accepted: NaN as a documented exception; the strict xfail (p1c may arm the lane; the defect misplaces
+rather than loses one edge cell for a one-row frame and is confined to envelope fringes). Round 4 sent.
+
+**p1b round 4 authored** (ruff 0, mypy strict clean, 105 passed + 1 strict xfail, new file 7.9 s). The
+`return None, range(0)` early return is gone: the known-extent branch requires bounds, and every
+other case takes the whole read with the fetched parts digest-checked against the ranges in hand
+before banding by filter — the reviewer's all-unlocated-then-relocated scenario now refuses by name
+with no rung written and no rung retracted, and the grown-day case asserts the same path. Base rows
+must be lattice origins: `refuse_non_lattice_origins` (tolerance 1e-6 base-cell units, nulls exempt)
+runs in `write_banded_base_day` before the first put and the contract sits in the primitive's
+docstring. The one-row-versus-bulk loop runs at z5 edges, the origin below each edge and a stride
+sample, asserting more than a hundred edges per pitch. Closing re-review launched on the three deltas.
+
+**15:40Z climate turn:** identical to 14:40Z — shortwave selected 09-12 (all-fill, skipped as the
+unsettled frontier), fell through to 09-11 (all-fill), `requests_spent 807`, four 429 pauses, nothing
+written, backlog 104. This is the outage-duration cost named above: two fan-outs and the pause series
+every hour until POWER republishes solar. The cross-turn frontier skip follow-up would let a turn
+that has seen two consecutive unsettled days stand down for the hour.
+
+**p1b verdict: APPROVE** after four rounds (62 + 43 tests with one strict xfail, mypy strict and ruff
+clean, noqa audit against `d4bb3491` clean, unbanded lanes byte-identical to the oracle). The
+reviewer's round-4 probes: the relocated in-place rewrite refuses by name with the bucket and every
+completion marker byte-identical before and after; all-`None` ranges with matching bytes read whole
+and retract honestly; all-`None` ranges over the cap refuse with zero GETs; centroids are refused at
+write with nothing written and origins with 1e-12 noise pass; the sampled one-row loop still covers
+all 46 latitudes from the original disagreement set. One LOW carried into the landing as a
+reviewer-specified one-liner: the origins guard also runs on the derive path. Consolidated follow-ups
+(recorded in the track metadata): the `tiers.py` frame-length floor defect with its strict xfail;
+durable per-part z5 ranges before gap repair re-derives the lane without `base_table`; a byte bound
+via `size_of`; the conftest move; `TierDerivation.band_height_degrees` when `tiers.py` reopens; NaN
+as a documented exception to reconcile with the tiers fix; a `slow` marker if the suite budget
+tightens. The single Python sweep runs next over A2b + p1a + p1b.
