@@ -177,7 +177,11 @@ to be written and not only what was fetched.
 Consequences worth knowing:
 
 - The **newest** owed day can never satisfy the proof, by construction: nothing is published after it.
-  So the leading edge refuses rather than governs, which is correct.
+  So the leading edge refuses rather than governs, which is correct. What that refusal must NOT do
+  is stop the turn: the climate walk steps past one refused frontier to the next older owed day
+  (`forward.CLIMATE_UNSETTLED_FRONTIER_SKIPS`; `climate/AGENTS.md`, "An unsettled frontier is
+  stepped past, not retaken"), because a turn that retook the same refused day every hour left the
+  whole backlog beneath it standing.
 - The refusal is reported as `source_unsettled` on that day and does **not** fail the turn or consume
   the retry series. Refetching inside the same turn asks the same question of the same mirror; the
   next turn is the soonest the answer can change. `DirectSoilFieldAdapter.unsettled_refusal` /
@@ -589,11 +593,19 @@ whole 101-day backlog (`tests/direct/climate/test_forward_command.py` drives `_p
 that date and reads `backlog_days` 101 off the turn). Draining it is the slow part, and the
 arithmetic depends on the executor cadence:
 
-- **Hourly turns, as scheduled.** `CLIMATE_DEFAULT_MAX_DAYS` is 1, so a turn drains one owed day;
-  the ceiling adds a day every 24 turns. Roughly 101 + 101/23, about 105 turns or 4.4 days, plus one
-  turn a day lost to the 429 pause series if POWER keeps answering the second fan-out that way (the
-  pauses should absorb it; if they do not, the deferred day is re-selected by the next hourly turn
-  with its checkpointed cells restored). Expect `backlog_days` to fall by about 23 a day.
+- **Hourly turns, as scheduled.** `CLIMATE_DEFAULT_MAX_DAYS` is 1, so a turn drains one owed day
+  -- and one owed day EVEN WHEN THE FRONTIER IS UNSETTLED: an all-fill newest day is stepped past
+  (`CLIMATE_UNSETTLED_FRONTIER_SKIPS`, one per turn) and the day under it is fetched in the same
+  turn, named in `unsettled_frontier_days`. Before that, the 2026-09-18 13:40Z turn selected the
+  same refused frontier every hour with 100 owed days beneath it; see `climate/AGENTS.md`, "An
+  unsettled frontier is stepped past, not retaken". The ceiling adds a day every 24 turns.
+  Roughly 101 + 101/23, about 105 turns or 4.4 days, on two conditions that each cost one turn a
+  day when they fail: the 429 pause series absorbing the second fan-out (if it does not, the
+  deferred day is re-selected by the next hourly turn with its checkpointed cells restored), and
+  the frontier being settled on the ceiling-advance turn (if it is not, the siblings spend 397, the
+  frontier spends 397, and the step to the older day is refused `request_budget_exhausted` -- zero
+  drain that hour, about 4.6 days in all). Expect `backlog_days` to fall by 22-23 a day; a frontier
+  that stays >= 2 days behind the lag stalls the drain entirely, see `climate/AGENTS.md`.
 - **Once-a-day turns, as observed in production on 2026-09-15/16.** One owed day drained per day
   against a ceiling that advances one day per day: `backlog_days` does not fall, whatever the lag.
   Newest-first keeps the visible edge current and the June-September tail is never reached. Fix the

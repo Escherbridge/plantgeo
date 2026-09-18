@@ -118,6 +118,21 @@ CLIMATE_REQUEST_BUDGET_OUTCOME: Final = REQUEST_BUDGET_EXHAUSTED
 #: The two day outcomes that mean the writer settled the day: values written, or an absence governed
 #: with a proof. Every other word `_publish_locked_day` can return is a day left owed.
 CLIMATE_DAY_WROTE_OUTCOMES: Final[frozenset[str]] = frozenset({"written", "absent"})
+#: How many `source_unsettled` days a turn may step PAST, on to the next older owed day, before it
+#: stops. The newest owed day is the frontier: an all-fill answer there can never be governed as
+#: absent (nothing later is published to mirror against), so it is refused every turn until POWER
+#: publishes it. With `--max-days` 1 and a newest-first backlog, a turn that stopped at that refusal
+#: selected the SAME day every hour and the days beneath it never drained -- the 2026-09-18 13:40Z
+#: production turn (`shortwave-radiation`, `settled_through` 2026-09-12, `backlog_days` 101) is the
+#: measured shape. ONE skip covers an edge up to lag+1 (F unsettled, F-1 written, one day drained
+#: per turn as a settled frontier would). It does NOT cover deeper jitter: at edge >= lag+2 the turn
+#: asks F (skip) then F-1 (slot), both unsettled, writes nothing, and re-asks the same two days next
+#: hour at 794 requests instead of 397. A larger constant cannot cure that -- the 794 budget is
+#: exactly two 397-cell fan-outs, so `can_afford` refuses a third whatever this says. The cure for
+#: deeper jitter is a CROSS-TURN skip (persist the refused frontier so the next turn starts a day
+#: deeper); named as the follow-up in `climate/AGENTS.md`, not implemented here. A 429 deferral is
+#: NOT a frontier (`_steps_past_unsettled_frontier`), so no skip re-asks a provider that throttled us.
+CLIMATE_UNSETTLED_FRONTIER_SKIPS: Final = 1
 
 #: What this writer promises about its own failure policy, CLI surface and reported words; see
 #: `pipeline/direct/__init__.py` for the axes and `tests/direct/test_direct_writer_contract.py` for
@@ -267,6 +282,10 @@ async def _publish_product(  # noqa: PLR0913 - the store, product, support, cach
 ) -> dict[str, object]:
     """Take one product's turn: census its owed window, then publish at most `max_days` days.
 
+    A day the source refuses as unsettled does not count against `max_days`; the walk steps past it
+    to the next older owed day, at most `CLIMATE_UNSETTLED_FRONTIER_SKIPS` times per turn, and names
+    every such day in `unsettled_frontier_days`.
+
     THE OWED LEDGER IS DRAINED FIRST, once per product per run. Nothing else retries these claims:
     `retry_pending_availability` is otherwise called only from `run_gap_fill`, and activating
     `climate-nasa-power-direct-forward` deactivates the eight generic lanes through `conflicts_with`
@@ -289,9 +308,15 @@ async def _publish_product(  # noqa: PLR0913 - the store, product, support, cach
     partial_days = await asyncio.to_thread(_partial_days_in_recheck_window, store, product, statuses)
     rotation = config.recheck_rotation if config.recheck_rotation is not None else _clock_recheck_rotation()
     backlog = _pending_days(product, statuses, partial_days=partial_days, recheck_rotation=rotation)
-    selected = backlog[: config.max_days]
     published: list[dict[str, object]] = []
-    for day in selected:
+    # THE FRONTIER IS STEPPED PAST, NOT RETAKEN. `max_days` counts the days that took a slot; a day
+    # the source refused as unsettled is stepped past instead, at most CLIMATE_UNSETTLED_FRONTIER_SKIPS
+    # times per turn, so the next older owed day is fetched in the same turn -- under the same
+    # `can_afford` and deadline checks every day passes.
+    unsettled_frontier_days: list[date] = []
+    for day in backlog:
+        if len(published) - len(unsettled_frontier_days) >= config.max_days:
+            break
         if time.monotonic() >= deadline:
             published.append(_stopped_day(day, outcome=CLIMATE_TIME_BUDGET_OUTCOME, detail="before the day started"))
             break
@@ -308,29 +333,31 @@ async def _publish_product(  # noqa: PLR0913 - the store, product, support, cach
                 )
             )
             break
-        published.append(
-            await _publish_day_with_retries(
-                session,
-                store,
-                product,
-                day,
-                support=support,
-                cache=cache,
-                today=today,
-                run_id=run_id,
-                config=config,
-                deadline=deadline,
-                availability_storage=availability_storage,
-                availability=availability,
-                mirrored_past=_mirrored_past_day(statuses, day),
-                existing_row_count=partial_days.get(day),
-            )
+        result = await _publish_day_with_retries(
+            session,
+            store,
+            product,
+            day,
+            support=support,
+            cache=cache,
+            today=today,
+            run_id=run_id,
+            config=config,
+            deadline=deadline,
+            availability_storage=availability_storage,
+            availability=availability,
+            mirrored_past=_mirrored_past_day(statuses, day),
+            existing_row_count=partial_days.get(day),
         )
+        published.append(result)
+        if _steps_past_unsettled_frontier(result, cache=cache, skips_taken=len(unsettled_frontier_days)):
+            unsettled_frontier_days.append(day)
     return {
         "layer": product.stream,
         "product": product.product_id,
         "outcome": _product_outcome(backlog, published),
         "source_unsettled_days": sum(1 for day in published if day["outcome"] == CLIMATE_SOURCE_UNSETTLED_OUTCOME),
+        "unsettled_frontier_days": [day.isoformat() for day in unsettled_frontier_days],
         "history_floor": product.history_floor.isoformat(),
         "settled_through": ceiling.isoformat(),
         "publication_lag_days": product.publication_lag_days,
@@ -355,6 +382,12 @@ def _product_outcome(backlog: Sequence[date], published: Sequence[Mapping[str, o
     publishing, or a quota refusal on every turn is silent unless the turn says so. The word is the
     FIRST day's own outcome, so `source_unsettled`, `time_budget_exhausted` and
     `request_budget_exhausted` each reach the run report under their own name.
+
+    THE FIRST DAY MAY BE A STEPPED-PAST FRONTIER. When the walk skipped an unsettled frontier
+    (`CLIMATE_UNSETTLED_FRONTIER_SKIPS`) the day that decided the turn is the one AFTER it: a written
+    older day makes the turn `published`, a budget stop after the frontier is the turn's honest word
+    (the frontier is still counted in `source_unsettled_days` and named in `unsettled_frontier_days`),
+    and only a turn whose every day was unsettled reads `source_unsettled`.
     """
     # `max_days` is at least 1, so an empty `published` beside a non-empty backlog cannot arise; it is
     # still not a publication, and naming it a no-op keeps the word honest either way.
@@ -362,7 +395,30 @@ def _product_outcome(backlog: Sequence[date], published: Sequence[Mapping[str, o
         return IDEMPOTENT_NOOP
     if any(day["outcome"] in CLIMATE_DAY_WROTE_OUTCOMES for day in published):
         return PUBLISHED
-    return str(published[0]["outcome"])
+    return next(
+        (str(day["outcome"]) for day in published if day["outcome"] != CLIMATE_SOURCE_UNSETTLED_OUTCOME),
+        CLIMATE_SOURCE_UNSETTLED_OUTCOME,
+    )
+
+
+def _steps_past_unsettled_frontier(
+    result: Mapping[str, object], *, cache: ClimateSourceCache, skips_taken: int
+) -> bool:
+    """True when this day was refused as unsettled BY THE SOURCE and the turn may still step past one.
+
+    A 429 deferral reports the same word (`adapter.unsettled_refusal` holds a `ClimateProviderDeferredError`)
+    but is not a frontier: the provider throttled the turn and `cache.deferred_refusal` now stops every
+    queued request before it starts, so stepping to an older day would only re-ask a closed provider.
+    """
+    # RELIES ON `can_afford` RUNNING IMMEDIATELY BEFORE THE FETCH, over a cache no other product touches
+    # meanwhile: `source.fill_cell_day_cache` raises `ClimateProviderDeferredError` for a budget
+    # shortfall WITHOUT setting `deferred_refusal`, so if products ever fetch concurrently that raise
+    # becomes reachable and a budget shortfall would read here as a frontier.
+    return (
+        result["outcome"] == CLIMATE_SOURCE_UNSETTLED_OUTCOME
+        and cache.deferred_refusal is None
+        and skips_taken < CLIMATE_UNSETTLED_FRONTIER_SKIPS
+    )
 
 
 async def _retry_owed_availability(  # noqa: PLR0913 - one coordinate of the product's turn per arg
@@ -421,6 +477,7 @@ def _skipped(product: ClimateFieldProduct, *, today: date, outcome: str) -> dict
         "product": product.product_id,
         "outcome": outcome,
         "source_unsettled_days": 0,
+        "unsettled_frontier_days": [],
         "history_floor": product.history_floor.isoformat(),
         "settled_through": settled_through(product, today=today).isoformat(),
         "publication_lag_days": product.publication_lag_days,
@@ -963,6 +1020,7 @@ __all__ = [
     "CLIMATE_REQUEST_BUDGET_OUTCOME",
     "CLIMATE_SOURCE_UNSETTLED_OUTCOME",
     "CLIMATE_TIME_BUDGET_OUTCOME",
+    "CLIMATE_UNSETTLED_FRONTIER_SKIPS",
     "ClimateForwardConfig",
     "ClimateForwardConfigError",
     "main",

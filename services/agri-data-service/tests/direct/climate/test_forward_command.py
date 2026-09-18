@@ -1038,3 +1038,223 @@ def test_the_clock_rotation_advances_by_one_per_hourly_turn() -> None:
     rotations = [forward._clock_recheck_rotation(first + timedelta(hours=hour)) for hour in range(3)]
 
     assert rotations == [rotations[0], rotations[0] + 1, rotations[0] + 2]
+
+
+# --- An unsettled frontier is stepped past, so the days beneath it drain ------------------------------
+
+#: Shortwave radiation's settled edge on the measurement day (lag 6), and the owed day right under it.
+FRONTIER = date(2026, 9, 9)
+NEXT_OLDER = FRONTIER - timedelta(days=1)
+#: The whole turn budget at the defaults: two 397-cell fan-outs, as the ten lag-5 siblings' `idempotent_noop`
+#: turns leave it for shortwave alone.
+TWO_FAN_OUTS = NASA_POWER_SUPPORT_CELL_COUNT * EXPECTED_DISTINCT_CLOCKS
+EXPECTED_FRONTIER_SKIPS = 1
+
+
+def all_fill_day(support: NasaPowerSupport, day: date) -> ClimateSourceCache:
+    """Stage one day every support cell answers with POWER's fill: the frontier's ordinary unsettled shape."""
+    return filled_cache(support, day=day, fill_cell_keys=[cell.cell_key for cell in support.cells])
+
+
+@asynccontextmanager
+async def always_granted(*_args: object, **_kwargs: object) -> AsyncIterator[bool]:
+    """A lane-day lock that is always free, so the walk is the only subject."""
+    yield True
+
+
+async def frontier_turn(  # noqa: PLR0913 - the staged days, the budget and the deferral switch are separate dials
+    support: NasaPowerSupport,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    staged: dict[date, ClimateSourceCache],
+    cache: ClimateSourceCache,
+    store: ObjectStore | None = None,
+    provider_throttled: bool = False,
+) -> tuple[dict[str, object], list[date]]:
+    """Take shortwave's turn on the measurement day over an empty bucket, answering each fetch from `staged`.
+
+    Every fake fetch is charged a full 397-cell fan-out against the turn cache, so `can_afford` prices
+    the next day exactly as production would; the lock is always granted and the write is the REAL
+    `fill_one_lane_day` path into the recording backend.
+    """
+    fetched: list[date] = []
+
+    async def fetch(
+        product: Any, *, day: date, support: NasaPowerSupport, cache: ClimateSourceCache, **_kwargs: object
+    ) -> Any:
+        fetched.append(day)
+        cache.requests_spent += NASA_POWER_SUPPORT_CELL_COUNT
+        if provider_throttled:
+            cache.deferred_refusal = ClimateProviderDeferredError("NASA POWER answered 429; the pause series is spent")
+            raise cache.deferred_refusal
+        return climate_day_from_cache(product, day=day, support=support, cache=staged[day])
+
+    monkeypatch.setattr(forward, "fetch_climate_day", fetch)
+    monkeypatch.setattr(forward, "postgres_lane_day_lock", always_granted)
+    result = await forward._publish_product(
+        SessionDouble(),
+        store if store is not None else ObjectStore(RecordingBackend()),
+        product_for(SHORTWAVE_STREAM),
+        support=support,
+        cache=cache,
+        today=MEASUREMENT_DAY,
+        run_id="frontier-run",
+        config=bounded_config(product_id="shortwave-radiation"),
+        deadline=time.monotonic() + 60,
+        availability_storage=None,
+        availability=AvailabilityExtensionTally(),
+    )
+    return result, fetched
+
+
+@pytest.mark.asyncio
+async def test_an_unsettled_frontier_is_stepped_past_and_the_next_older_day_is_written_in_the_same_turn(
+    support: NasaPowerSupport,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DO NOT DELETE. The 2026-09-18 13:40Z production shape: frontier all-fill, 100 owed days under it, one selected.
+
+    Newest-first with `--max-days` 1 selected the same unsettled frontier every hour and nothing beneath
+    it ever drained. The refusal is correct -- an all-fill newest day has nothing to mirror against and
+    must never be governed absent -- so the fix is in the walk: the frontier does not spend the turn's
+    one slot, the next older owed day is fetched under the same budget, and the turn is `published`.
+    """
+    store = ObjectStore(RecordingBackend())
+    staged = {FRONTIER: all_fill_day(support, FRONTIER), NEXT_OLDER: filled_cache(support, day=NEXT_OLDER)}
+
+    result, fetched = await frontier_turn(
+        support, monkeypatch, staged=staged, cache=ClimateSourceCache(request_budget=TWO_FAN_OUTS), store=store
+    )
+
+    assert fetched == [FRONTIER, NEXT_OLDER], "the frontier was asked once, then the day under it, in one turn"
+    days = result["days"]
+    assert isinstance(days, list)
+    assert [(day["day"], day["outcome"]) for day in days] == [
+        (FRONTIER.isoformat(), forward.CLIMATE_SOURCE_UNSETTLED_OUTCOME),
+        (NEXT_OLDER.isoformat(), "written"),
+    ]
+    assert result["outcome"] == "published", "a turn that wrote the older day is a publication"
+    assert result["unsettled_frontier_days"] == [FRONTIER.isoformat()], "the skip is visible in the report"
+    assert result["source_unsettled_days"] == 1
+    assert result["backlog_days"] == EXPECTED_CATCH_UP_DAYS, "the census is the same 101 days; one of them drained"
+    rungs = forward._tier_status_day(store, product_for(SHORTWAVE_STREAM), NEXT_OLDER)
+    assert all(status == "data" for status in rungs.values()), "the older day stands at every rung"
+
+
+@pytest.mark.asyncio
+async def test_a_skip_the_request_budget_cannot_cover_stops_with_the_budget_word_and_fetches_nothing_more(
+    support: NasaPowerSupport,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The step past the frontier passes the SAME `can_afford` gate as any day; short of it, the turn says so.
+
+    This is the daily ceiling-advance turn, where the ten siblings spent their 397 and the frontier
+    fan-out spent the rest: no second fan-out is started, nothing is written, and the honest word is
+    the budget's rather than the frontier's.
+    """
+    staged = {FRONTIER: all_fill_day(support, FRONTIER), NEXT_OLDER: filled_cache(support, day=NEXT_OLDER)}
+
+    result, fetched = await frontier_turn(
+        support, monkeypatch, staged=staged, cache=ClimateSourceCache(request_budget=NASA_POWER_SUPPORT_CELL_COUNT)
+    )
+
+    assert fetched == [FRONTIER], "not one request of a fan-out that cannot finish"
+    days = result["days"]
+    assert isinstance(days, list)
+    assert [day["outcome"] for day in days] == [
+        forward.CLIMATE_SOURCE_UNSETTLED_OUTCOME,
+        forward.CLIMATE_REQUEST_BUDGET_OUTCOME,
+    ]
+    assert days[1]["source_receipt"] is None
+    assert result["outcome"] == forward.CLIMATE_REQUEST_BUDGET_OUTCOME, "the bound that stopped the turn names itself"
+    assert result["unsettled_frontier_days"] == [FRONTIER.isoformat()]
+
+
+@pytest.mark.asyncio
+async def test_two_unsettled_days_in_a_row_take_exactly_one_skip_then_stop(
+    support: NasaPowerSupport,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bounded: the second unsettled day spends the slot, not a second skip, and the turn is `source_unsettled`."""
+    staged = {FRONTIER: all_fill_day(support, FRONTIER), NEXT_OLDER: all_fill_day(support, NEXT_OLDER)}
+
+    result, fetched = await frontier_turn(
+        support, monkeypatch, staged=staged, cache=ClimateSourceCache(request_budget=TWO_FAN_OUTS * 2)
+    )
+
+    assert forward.CLIMATE_UNSETTLED_FRONTIER_SKIPS == EXPECTED_FRONTIER_SKIPS
+    assert fetched == [FRONTIER, NEXT_OLDER], "one skip, then the slot is spent; the third owed day is never asked"
+    days = result["days"]
+    assert isinstance(days, list)
+    assert [day["outcome"] for day in days] == [forward.CLIMATE_SOURCE_UNSETTLED_OUTCOME] * 2
+    assert result["outcome"] == forward.CLIMATE_SOURCE_UNSETTLED_OUTCOME, "nothing was written, and the turn says so"
+    assert result["unsettled_frontier_days"] == [FRONTIER.isoformat()], "only the stepped-past day is a skip"
+    assert result["source_unsettled_days"] == len(days)
+
+
+@pytest.mark.asyncio
+async def test_a_frontier_that_writes_still_takes_exactly_one_day_per_turn(
+    support: NasaPowerSupport,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unchanged behaviour: a settled frontier spends the one slot, and no skip is recorded or attempted."""
+    staged = {FRONTIER: filled_cache(support, day=FRONTIER), NEXT_OLDER: filled_cache(support, day=NEXT_OLDER)}
+
+    result, fetched = await frontier_turn(
+        support, monkeypatch, staged=staged, cache=ClimateSourceCache(request_budget=TWO_FAN_OUTS)
+    )
+
+    assert fetched == [FRONTIER]
+    days = result["days"]
+    assert isinstance(days, list)
+    assert [(day["day"], day["outcome"]) for day in days] == [(FRONTIER.isoformat(), "written")]
+    assert result["outcome"] == "published"
+    assert result["unsettled_frontier_days"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_quota_deferral_is_not_a_frontier_and_is_never_stepped_past(
+    support: NasaPowerSupport,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A spent 429 pause series reports the same `source_unsettled` word; stepping past it re-asks a closed provider.
+
+    `cache.deferred_refusal` is what stops every queued request once the pauses are spent, so the walk
+    reads it to tell the source's own refusal from the provider's: the deferred day spends the slot,
+    and the turn stops exactly as it did before.
+    """
+    staged = {FRONTIER: all_fill_day(support, FRONTIER), NEXT_OLDER: filled_cache(support, day=NEXT_OLDER)}
+
+    result, fetched = await frontier_turn(
+        support,
+        monkeypatch,
+        staged=staged,
+        cache=ClimateSourceCache(request_budget=TWO_FAN_OUTS),
+        provider_throttled=True,
+    )
+
+    assert fetched == [FRONTIER], "no older day is asked of a provider that just throttled the turn"
+    days = result["days"]
+    assert isinstance(days, list)
+    assert [day["outcome"] for day in days] == [forward.CLIMATE_SOURCE_UNSETTLED_OUTCOME]
+    assert result["outcome"] == forward.CLIMATE_SOURCE_UNSETTLED_OUTCOME
+    assert result["unsettled_frontier_days"] == []
+
+
+@pytest.mark.parametrize(
+    ("day_outcomes", "expected"),
+    [
+        (("source_unsettled", forward.CLIMATE_REQUEST_BUDGET_OUTCOME), forward.CLIMATE_REQUEST_BUDGET_OUTCOME),
+        (("source_unsettled", forward.CLIMATE_TIME_BUDGET_OUTCOME), forward.CLIMATE_TIME_BUDGET_OUTCOME),
+        (("source_unsettled", "source_unsettled"), forward.CLIMATE_SOURCE_UNSETTLED_OUTCOME),
+        (("source_unsettled", "idempotent_noop"), "idempotent_noop"),
+    ],
+)
+def test_the_product_word_is_the_first_day_after_a_stepped_past_frontier(
+    day_outcomes: tuple[str, ...], expected: str
+) -> None:
+    """A skipped frontier does not get to name the turn; the day that decided it does."""
+    backlog = [FRONTIER - timedelta(days=offset) for offset in range(len(day_outcomes))]
+    days = [{"outcome": outcome} for outcome in day_outcomes]
+
+    assert forward._product_outcome(backlog, days) == expected
