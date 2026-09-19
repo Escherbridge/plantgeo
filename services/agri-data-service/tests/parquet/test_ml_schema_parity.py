@@ -222,7 +222,7 @@ def ml_schemas() -> dict[str, Any]:
     Returns rather than yields, so no test body ever executes inside the `except ImportError` below:
     a test that happened to raise `ImportError` would otherwise be converted into a skip. The
     loader's own `finally` unhooks `sys.path` when the comprehension exhausts it
-    (`scripts/regenerate_ml_schema_fixtures.py:274-276`), so there is nothing left to tear down.
+    (`regenerate_ml_schema_fixtures.py::load_ml_contracts`), so there is nothing left to tear down.
     """
     absence = ML_SCHEMA_FIXTURES.sibling_tree_absence()
     if absence is not None:

@@ -52,7 +52,7 @@ once.
 Three Arrow schemas exist as byte-equal copies in two service trees — `fire-risk` and
 `weather-forecast` (written by `services/plantgeo-ml-service`, read here) and `expert-labels`
 (written here, read there). The copies are deliberate: the two services deploy independently and
-neither imports the other. `scripts/regenerate_ml_schema_fixtures.py:106-134` is the single place
+neither imports the other. `regenerate_ml_schema_fixtures.py::COPIED_CONTRACTS` is the single place
 that says which three they are and where each half lives.
 
 ### The hole the fixture closes, and the measured instance that proved it
@@ -72,7 +72,7 @@ The golden fixtures — `tests/parquet/fixtures/ml_schema_parity/{fire-risk,weat
    exclusion list is build artifacts by name only (`scripts/quality_receipt.py:44-47`), so JSON
    under `tests/` is digested.
 2. They are rendered from the **sibling's** modules, never from this service's copies
-   (`scripts/regenerate_ml_schema_fixtures.py:255-278`).
+   (`regenerate_ml_schema_fixtures.py::load_ml_contracts`).
 3. So when the ML service moves a field, `test_the_fixture_is_the_live_ml_module_so_a_stale_fixture_cannot_pass_as_current`
    (`tests/parquet/test_ml_schema_parity.py:238`) goes red in a monorepo checkout, and the only way
    to make it green is to regenerate a digested byte. That stales the tree digest, so
@@ -83,16 +83,16 @@ The golden fixtures — `tests/parquet/fixtures/ml_schema_parity/{fire-risk,weat
 
 ### Why the regeneration script refuses without the sibling tree
 
-`sibling_tree_absence` (`scripts/regenerate_ml_schema_fixtures.py:240`) is checked before anything
+`sibling_tree_absence` (`regenerate_ml_schema_fixtures.py::sibling_tree_absence`) is checked before anything
 is rendered, and `main` exits 2 rather than writing
-(`scripts/regenerate_ml_schema_fixtures.py:294-297`). A fixture rendered from this service's own
+(`regenerate_ml_schema_fixtures.py::main`). A fixture rendered from this service's own
 copy would agree with that copy by construction and would bless exactly the drift it exists to
 catch. `test_the_regeneration_refuses_without_the_sibling_tree_so_no_fixture_is_blessed_from_nothing`
 (`tests/parquet/test_ml_schema_parity.py:196`) holds that, including the exit code.
 
 **The fixture is never hand-edited.** The always-on assertion names the regeneration command in its
 own failure message (`tests/parquet/test_ml_schema_parity.py:121-137`), and every refusal in
-`read_fixture` does too (`scripts/regenerate_ml_schema_fixtures.py:186-212`), so the next person is
+`read_fixture` does too (`regenerate_ml_schema_fixtures.py::read_fixture`), so the next person is
 told how to update it deliberately instead of guessing.
 
 ### What these two guards do NOT catch
@@ -104,12 +104,12 @@ told how to update it deliberately instead of guessing.
   the tree is absent (`tests/parquet/test_ml_schema_parity.py:225-229`), which it is inside this
   service's image. The image only ever re-checks this tree against the fixture.
 - **Only three contracts are covered**, and the set is a hand-maintained list
-  (`scripts/regenerate_ml_schema_fixtures.py:106`). A fourth copied schema added without an entry
+  (`regenerate_ml_schema_fixtures.py::COPIED_CONTRACTS`). A fourth copied schema added without an entry
   is unguarded; `test_every_copied_contract_has_a_fixture_and_an_agri_object_with_nothing_orphaned`
   (`tests/parquet/test_ml_schema_parity.py:145`) only catches an entry with no fixture or a fixture
   with no entry, not a copy nobody declared.
 - **Schema-level metadata is out of scope.** `render_contract`
-  (`scripts/regenerate_ml_schema_fixtures.py:151`) keeps name, Arrow type, nullability and order,
+  (`regenerate_ml_schema_fixtures.py::render_contract`) keeps name, Arrow type, nullability and order,
   plus stream name, sort columns and codec where the object carries them. pyarrow's pandas metadata
   block carries a library version, so including it would make two identical exports differ.
 - **Nothing here checks the partition BYTES**, only the declared shape. A writer that declares this

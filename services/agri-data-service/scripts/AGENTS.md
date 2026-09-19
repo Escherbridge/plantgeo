@@ -535,7 +535,7 @@ digest inputs because they are under `tests/`. A sibling schema change therefore
 regeneration, the regeneration moves the tree digest, and the image build's
 `verify_quality_receipt.py` (`Dockerfile:48`) refuses until a green sweep rewrites the receipt. The
 script exits 2 without writing when the sibling tree is absent
-(`scripts/regenerate_ml_schema_fixtures.py:293-297`), because a fixture rendered from the reader
+(`regenerate_ml_schema_fixtures.py::main`), because a fixture rendered from the reader
 would agree with the reader by construction.
 
 Run it only in a monorepo checkout:
