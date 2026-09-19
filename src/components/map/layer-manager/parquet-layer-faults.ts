@@ -47,26 +47,39 @@ export interface FireLaneReport {
   isLaneNeverWritten: boolean;
 }
 
-/** Everything the occurrence plane's two lanes say, flattened. */
+/**
+ * Everything the occurrence plane's two lanes say, flattened.
+ *
+ * SINCE W8-D (2026-09-18) the two lanes are no longer symmetric at the detail band: the tRPC
+ * lane only ever runs there for backward-compatible fields (it is disabled, so `resultState`
+ * etc. are simply absent), and every field that is actually POPULATED at the detail band --
+ * `withheldCount`, `hasDetailAnswer`, `detailTruncated`, `gbifReadPhase`, `gbifFeatureCount` --
+ * is sourced from the proxy lane's answer instead. At the aggregate band the tRPC lane is still
+ * the only one that runs, so `resultState`/`resultNote`/`isError`/`truncated` still describe it.
+ */
 export interface BotanicalLaneReport {
-  /** Whether the tRPC read was issued at all -- the gate every tRPC-lane entry below shares. */
+  /** Whether the tRPC read was issued at all -- the gate the tRPC-only entries below share. Now
+   * true only at the aggregate band; see the interface doc above. */
   isQueryEnabled: boolean;
   band: string;
   /** False when the viewport could not be measured; `gbif-empty` may not speak without one. */
   hasViewportBbox: boolean;
-  /** The tRPC answer's own state: `detail`, `aggregate`, `refused` or `unavailable`. */
+  /** The tRPC answer's own state: `detail`, `aggregate`, `refused` or `unavailable`. Only ever
+   * populated at the aggregate band now. */
   resultState: string | undefined;
   /** The service-authored note, quoted verbatim by the refusal and unavailable entries. */
   resultNote: string | null;
   isError: boolean;
-  /** Either shape's cap, since one sentence covers both. */
+  /** The tRPC aggregate answer's own cap; the proxy lane's detail-band cap is `detailTruncated`. */
   truncated: boolean;
+  /** From the proxy lane's detail answer, independent of `isQueryEnabled`. */
   withheldCount: number;
   occurrencesVisible: boolean;
   gbifVisible: boolean;
+  /** The proxy lane's own read phase, since GBIF now shares its detail-band request. */
   gbifReadPhase: BotanicalOccurrencesPhase;
   gbifFeatureCount: number;
-  /** True when a `detail` answer is in hand; `gbif-empty` is a statement about one. */
+  /** True when the proxy lane's `detail` answer is in hand; `gbif-empty` is a statement about one. */
   hasDetailAnswer: boolean;
   /** That detail answer's own cap, which picks between the two `gbif-empty` sentences. */
   detailTruncated: boolean;
@@ -249,7 +262,12 @@ export function buildParquetLayerFaults(input: ParquetLayerFaultInput): ParquetL
     // Withheld records are a POSITIVE fact the plane reports and the map cannot show: a specimen
     // whose locality is protected has no dot, and without this line its absence is
     // indistinguishable from it never having been collected.
-    botanical.isQueryEnabled && botanical.withheldCount > 0
+    //
+    // NOT gated on `isQueryEnabled` (the tRPC-lane gate): withheld counts are sourced from the
+    // PROXY answer (W8-D, 2026-09-18), which runs at the detail band while the tRPC lane does
+    // not. `withheldCount` is already zero whenever neither lane has answered, so the count alone
+    // is the correct gate.
+    botanical.withheldCount > 0
       ? {
           layerId: "botanical-withheld",
           tone: "notice" as const,
@@ -276,10 +294,11 @@ export function buildParquetLayerFaults(input: ParquetLayerFaultInput): ParquetL
         }
       : null,
     // Only the settled returned slice supports an empty notice; see AGENTS.md §GBIF feedback.
-    // "Settled" is decided by `gbifReadPhase`, the SHARED read-state vocabulary, so this lane and
-    // the proxy lane below cannot disagree about when a read has landed. The message itself stays
-    // authored here: it is a statement about the GBIF SLICE of a shared answer, which the
-    // lane-wide vocabulary has no sentence for.
+    // "Settled" is decided by `gbifReadPhase`, which is now the PROXY lane's own phase verbatim
+    // (W8-D, 2026-09-18: GBIF reads the same detail-band request the UBC layer does), so this
+    // entry and `botanical-viewport-read` below can never disagree about when a read has landed.
+    // The message itself stays authored here: it is a statement about the GBIF SLICE of a shared
+    // answer, which the lane-wide vocabulary has no sentence for.
     botanical.gbifVisible &&
     botanical.band === "detail" &&
     botanical.hasViewportBbox &&
@@ -294,11 +313,16 @@ export function buildParquetLayerFaults(input: ParquetLayerFaultInput): ParquetL
             : "No GBIF occurrence points were returned for this viewport and current filters.",
         }
       : null,
-    // What the proxy lane reports about the UBC detail layer, in the one wording
-    // `describeBotanicalOccurrencesState` owns -- including "a coarser rung answered than this
-    // zoom asked for", which is the visible half of the 2026-09-18 rung-select decision. A
-    // `notice`: a rung substitution and a stale frame are both real answers, not outages.
-    botanical.occurrencesVisible &&
+    // What the proxy lane reports, in the one wording `describeBotanicalOccurrencesState` owns --
+    // including "a coarser rung answered than this zoom asked for", which is the visible half of
+    // the 2026-09-18 rung-select decision. A `notice`: a rung substitution and a stale frame are
+    // both real answers, not outages.
+    //
+    // Gated on EITHER toggle, not just `occurrencesVisible` (W8-D, 2026-09-18): GBIF now reads
+    // this same lane, so a GBIF-only viewer must also be told when it errors or substitutes a
+    // rung -- without this a reader with only GBIF on and a failed proxy read would see silence
+    // instead of a fault, since `gbif-empty` only speaks about a SETTLED (success/empty) read.
+    (botanical.occurrencesVisible || botanical.gbifVisible) &&
     botanical.band === "detail" &&
     botanical.viewportCaption !== null
       ? {

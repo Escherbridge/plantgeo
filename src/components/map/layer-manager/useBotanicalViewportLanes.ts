@@ -55,7 +55,7 @@ export interface BotanicalViewportLanes {
   occurrencesGeoJSON: GeoJSON.FeatureCollection | null;
   /** The proxy lane's read phase, handed to the layer so a failed read takes it down. */
   occurrencesReadPhase: BotanicalOccurrencesPhase;
-  /** GBIF points from the tRPC lane, filtered to GBIF's own collection key. */
+  /** GBIF points from the PROXY lane, filtered to GBIF's own collection key. */
   gbifGeoJSON: GeoJSON.FeatureCollection | null;
   richnessGeoJSON: GeoJSON.FeatureCollection | null;
   effortGeoJSON: GeoJSON.FeatureCollection | null;
@@ -98,10 +98,15 @@ export function useBotanicalViewportLanes({
   // Enabled when a toggle that could actually DRAW at this band is on. A lit occurrence switch
   // at zoom 4 fetches nothing, because the detail layer cannot draw there and the aggregate
   // layers are off -- the gate is about what is drawable, not about what is switched on.
-  // `gbifVisible` joins the detail-band condition alongside the UBC toggle, since GBIF's toggle
-  // only ever draws in the same detail band and shares the same one query.
-  const isQueryEnabled =
-    band === "detail" ? occurrencesVisible || gbifVisible : richnessVisible || effortVisible;
+  //
+  // NEVER at the detail band (single-upstream-read decision, 2026-09-18, W8-D). Both toggles that
+  // draw there -- the UBC layer and GBIF -- now read exclusively from the proxy lane below, which
+  // already carries everything this tRPC read used to add: filters are echoed in the request URL
+  // (`buildRequestUrl`) and the release-set pin comes back on the answer (`releaseSetId`). Reading
+  // both lanes at once was two upstream round trips for one screen; this query stays for the two
+  // aggregate layers only, which have no proxy-served rung yet. See
+  // `src/components/map/AGENTS.md` section "The botanical viewport lanes" for the full argument.
+  const isQueryEnabled = band === "detail" ? false : richnessVisible || effortVisible;
   // Empty filter strings are "unset" in the store, never sent as an empty query parameter --
   // the service would read `family=` as a filter matching nothing.
   const botanicalQuery = useBotanicalOccurrencesQuery(bbox, {
@@ -124,28 +129,34 @@ export function useBotanicalViewportLanes({
   const botanicalAggregate = botanicalResult?.state === "aggregate" ? botanicalResult : null;
   // Presented into the snake_case vocabulary the three layer components were built against;
   // see src/lib/environmental/botanical-presentation.ts for why the two vocabularies differ.
-  const botanicalFeatures = useMemo(
-    () => (botanicalDetail?.features ?? []).map(presentBotanicalOccurrence),
-    [botanicalDetail]
-  );
+  //
+  // NOTE: this tRPC lane no longer runs at the detail band (W8-D, 2026-09-18), so
+  // `botanicalDetail` -- and therefore this -- is only ever populated by a hand-rolled aggregate
+  // request that mistakenly returned `state: "detail"`; kept only because `botanicalDetail`
+  // itself stays as a defensive fallback for `servedBotanicalReleaseSetId` below.
   const botanicalCells = useMemo(
     () => (botanicalAggregate?.cells ?? []).map(presentBotanicalCell),
     [botanicalAggregate]
   );
 
-  // The detail lane, over the proxy route, beside the tRPC read above.
+  // The detail lane, over the proxy route -- now the ONLY read at the detail band (W8-D,
+  // 2026-09-18).
   //
-  // WHY BOTH. The proxy lane (`useBotanicalOccurrences` -> `/api/botanical-occurrences`) is the
-  // one that selects a serving rung from zoom AND bbox size, so a wide viewport is answered from
-  // a coarser rung instead of refused (owner decision 2026-09-18). The tRPC read above still
-  // serves the two aggregate layers, GBIF's own toggle, and the store the filters panel and the
-  // details panel read -- so it stays enabled exactly as before. At a detail zoom with the UBC
-  // toggle on, both lanes read the same generation with the same filters; that duplication is
-  // deliberate for now and is the one thing to collapse when the aggregate layers move over too.
+  // WHY THIS ONE IS AUTHORITATIVE. W3-A ran both lanes at once: the proxy
+  // (`useBotanicalOccurrences` -> `/api/botanical-occurrences`) selects a serving rung from zoom
+  // AND bbox size, so a wide viewport is answered from a coarser rung instead of refused (owner
+  // decision 2026-09-18); the tRPC read carried the release-set pin and the filters-panel state.
+  // The proxy answer is a strict superset of what the tRPC detail answer added: `buildRequestUrl`
+  // already echoes every filter the store holds, and the answer already carries `releaseSetId`
+  // and `servingRung`/the §4a pointer. So collapsing onto the proxy lane is additive, not a
+  // narrowing -- nothing the filters panel or the release-set caption reads had a source only the
+  // tRPC lane could provide. The tRPC read stays enabled for the two AGGREGATE layers only, which
+  // have no proxy-served rung yet (the follow-up W3-A flagged); GBIF's toggle now shares this same
+  // read too (`gbifVisible` joins the gate below) instead of running its own.
   const botanicalViewport = useBotanicalOccurrences({
     bbox,
     zoom,
-    enabled: occurrencesVisible && band === "detail",
+    enabled: (occurrencesVisible || gbifVisible) && band === "detail",
     taxonConceptId: botanicalFilters.taxon_concept_id || undefined,
     family: botanicalFilters.family || undefined,
     collectionKey: botanicalFilters.collection_key || undefined,
@@ -182,36 +193,31 @@ export function useBotanicalViewportLanes({
   // One sentence for whatever the proxy lane currently reports -- including which rung answered
   // when it is not the one this zoom asked for. Null when the layer is simply drawing.
   const viewportCaption = describeBotanicalOccurrencesState(botanicalViewport);
-  // The same read-state vocabulary applied to the tRPC lane GBIF still draws from, so "the read
-  // has landed" means one thing here rather than two. The mapping is the one W1-D recorded: a
-  // failed query is `error`, a fetching or retained one is `loading`, a landed detail answer with
-  // no rows is `empty`.
-  const gbifReadPhase: BotanicalOccurrencesPhase =
-    botanicalQuery.isError === true
-      ? "error"
-      : botanicalQuery.isFetching === true || botanicalQuery.isPlaceholderData === true
-        ? "loading"
-        : botanicalQuery.isSuccess !== true
-          ? "idle"
-          : botanicalDetail !== null && botanicalDetail.features.length === 0
-            ? "empty"
-            : "success";
+  // The proxy lane's OWN phase, unmapped -- GBIF now reads the same one request the UBC layer
+  // does (W8-D, 2026-09-18), so there is only one read-state vocabulary to consult, not two to
+  // reconcile. `useBotanicalOccurrences` already distinguishes a failed request (`error`), an
+  // in-flight or retained one (`loading`), and a landed answer with zero rows (`empty`) --
+  // exactly the mapping this hook used to build by hand from the tRPC query's flags.
+  const gbifReadPhase: BotanicalOccurrencesPhase = botanicalViewport.phase;
   // GBIF draws through its OWN component/toggle (`GbifOccurrencesLayer`), independently
-  // switchable from the UBC layer, even though both read the same `botanicalFeatures` response --
+  // switchable from the UBC layer, even though both now read the same proxy answer --
   // collection_key is the only thing that tells the two sources apart, so the split happens here,
   // once, on the shared feature list, rather than teaching either map component about the other's
   // source. See `GbifOccurrencesLayer.tsx`'s module doc for why this is a new component rather
   // than a parameterized mode of the UBC one.
   const gbifFeatures = useMemo(
-    () => botanicalFeatures.filter((feature) => feature.collection_key === GBIF_COLLECTION_KEY),
-    [botanicalFeatures]
+    () =>
+      botanicalViewportFeatures.filter(
+        (feature) => feature.collection_key === GBIF_COLLECTION_KEY
+      ),
+    [botanicalViewportFeatures]
   );
   const gbifGeoJSON = useMemo(
     () =>
-      botanicalDetail === null
+      botanicalViewportDetail === null
         ? null
-        : botanicalOccurrencesToGeoJSON(gbifFeatures, botanicalDetail.publishedAt),
-    [botanicalDetail, gbifFeatures]
+        : botanicalOccurrencesToGeoJSON(gbifFeatures, botanicalViewportDetail.publishedAt),
+    [botanicalViewportDetail, gbifFeatures]
   );
   const richnessGeoJSON = useMemo(
     () =>
@@ -239,14 +245,26 @@ export function useBotanicalViewportLanes({
   // the map is drawing rather than issuing a second read of their own. Written in an effect
   // rather than during render because it is a store write; the dependency is the query result
   // object, which react-query keeps referentially stable until a new answer lands.
+  //
+  // The tRPC answer is preferred when both are in hand (aggregate band), the proxy answer is the
+  // only one ever in hand at the detail band now that its tRPC lane is off -- so this is a
+  // fallback, not a merge: the two never answer the same band at once. See W8-D, 2026-09-18.
   useEffect(() => {
-    if (botanicalResult === undefined) return;
+    if (botanicalResult !== undefined) {
+      setBotanicalResponse({
+        state: botanicalResult.state,
+        releaseSetId: "releaseSetId" in botanicalResult ? botanicalResult.releaseSetId : null,
+        publishedAt: "publishedAt" in botanicalResult ? botanicalResult.publishedAt : null,
+      });
+      return;
+    }
+    if (botanicalViewportDetail === null) return;
     setBotanicalResponse({
-      state: botanicalResult.state,
-      releaseSetId: "releaseSetId" in botanicalResult ? botanicalResult.releaseSetId : null,
-      publishedAt: "publishedAt" in botanicalResult ? botanicalResult.publishedAt : null,
+      state: botanicalViewportDetail.state,
+      releaseSetId: botanicalViewportDetail.releaseSetId,
+      publishedAt: botanicalViewportDetail.publishedAt,
     });
-  }, [botanicalResult, setBotanicalResponse]);
+  }, [botanicalResult, botanicalViewportDetail, setBotanicalResponse]);
   // The generation the answer was actually served from, published back into the store.
   //
   // `BotanicalFilters` was built expecting a reader to TYPE a `release_set_id` and gates its
@@ -256,8 +274,13 @@ export function useBotanicalViewportLanes({
   // generation it came from, and the panel displays it. Written from the RESPONSE rather than
   // from a second `/current` read, so the id the panel shows is provably the one the cells on
   // the map were read from and not a pointer that has since moved.
+  // `botanicalViewportDetail` last: it is the detail-band answer now (W8-D), so it only ever
+  // matters when the other two are null, exactly the priority the fallback above uses.
   const servedBotanicalReleaseSetId =
-    botanicalDetail?.releaseSetId ?? botanicalAggregate?.releaseSetId ?? null;
+    botanicalDetail?.releaseSetId ??
+    botanicalAggregate?.releaseSetId ??
+    botanicalViewportDetail?.releaseSetId ??
+    null;
   const setBotanicalReleaseSetId = useBotanicalOccurrenceStore((state) => state.setReleaseSetId);
   useEffect(() => {
     if (servedBotanicalReleaseSetId === null) return;
@@ -269,17 +292,16 @@ export function useBotanicalViewportLanes({
   // here rather than in the layer because the layer only carries MapLibre feature properties --
   // four fields -- and the panel needs the whole record including rights and attribution.
   //
-  // Both lanes are searched because both draw: UBC points come from the proxy read, GBIF points
-  // from the tRPC read. Searching only one would make a click on the other lane's dot clear the
-  // panel instead of opening it.
+  // UBC points and GBIF points now come from the SAME proxy read (W8-D, 2026-09-18), so one
+  // search over `botanicalViewportFeatures` covers both lanes a click could have landed on.
   const onSelectOccurrence = useCallback(
     (occurrenceId: string) => {
-      const selected =
-        botanicalViewportFeatures.find((feature) => feature.occurrence_id === occurrenceId) ??
-        botanicalFeatures.find((feature) => feature.occurrence_id === occurrenceId);
+      const selected = botanicalViewportFeatures.find(
+        (feature) => feature.occurrence_id === occurrenceId
+      );
       setSelectedBotanicalFeature(selected ?? null);
     },
-    [botanicalViewportFeatures, botanicalFeatures, setSelectedBotanicalFeature]
+    [botanicalViewportFeatures, setSelectedBotanicalFeature]
   );
 
   const laneReport: BotanicalLaneReport = {
@@ -290,14 +312,18 @@ export function useBotanicalViewportLanes({
     resultNote:
       botanicalResult !== undefined && "note" in botanicalResult ? botanicalResult.note : null,
     isError: botanicalQuery.isError === true,
-    truncated: botanicalDetail?.truncated === true || botanicalAggregate?.truncated === true,
-    withheldCount: botanicalDetail?.counts.withheld ?? 0,
+    truncated: botanicalAggregate?.truncated === true,
+    // From the proxy answer: withheld-locality counts are a detail-band fact, and the detail
+    // band's tRPC lane no longer runs (W8-D, 2026-09-18).
+    withheldCount: botanicalViewportDetail?.counts.withheld ?? 0,
     occurrencesVisible,
     gbifVisible,
     gbifReadPhase,
     gbifFeatureCount: gbifFeatures.length,
-    hasDetailAnswer: botanicalDetail !== null,
-    detailTruncated: botanicalDetail?.truncated === true,
+    // From the proxy answer, not the tRPC one: `gbif-empty`'s "settled" gate now runs on the same
+    // detail-band read the UBC layer draws from (W8-D, 2026-09-18).
+    hasDetailAnswer: botanicalViewportDetail !== null,
+    detailTruncated: botanicalViewportDetail?.truncated === true,
     viewportCaption,
     viewportPhase: botanicalViewport.phase,
   };

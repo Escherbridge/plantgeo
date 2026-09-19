@@ -1423,10 +1423,41 @@ reordering the entries reorders the pills a reader sees.
 
 ### The botanical viewport lanes
 
-`useBotanicalViewportLanes.ts` holds both occurrence lanes (the tRPC read that serves the two
-aggregate layers and GBIF, and the proxy read that serves UBC detail), the band exclusivity, the
-two store writes and the click resolution that searches both lanes. `LayerManager` now reads six
-fields off it and passes them to four layer components.
+`useBotanicalViewportLanes.ts` holds both occurrence lanes, the band exclusivity, the two store
+writes and the click resolution. `LayerManager` now reads six fields off it and passes them to
+four layer components.
+
+**One upstream read at the detail band, not two (W8-D, 2026-09-18).** Through W3-A/W5-D both
+lanes ran together whenever the UBC toggle was on: the tRPC lane (`useBotanicalOccurrencesQuery`)
+for the release-set pin and the filters-panel state, the proxy lane (`useBotanicalOccurrences`)
+for the checksum-bound pointer and `servingRung`. That was two round trips for one screen. The
+proxy answer turned out to be a strict superset of what the tRPC detail answer added --
+`buildRequestUrl` already echoes every filter the store holds, and the answer already carries
+`releaseSetId` alongside `servingRung`/the §4a pointer -- so the fix collapses onto the proxy
+lane rather than the tRPC one: it is additive, not a narrowing. Concretely:
+
+- The tRPC query (`isQueryEnabled`) is now enabled ONLY at the aggregate band, for the richness
+  and collection-effort layers, which have no proxy-served rung yet (the follow-up W3-A flagged).
+- The proxy lane's `enabled` gate grew `gbifVisible`, so GBIF's own toggle now shares the UBC
+  layer's one detail-band request instead of running its own through tRPC. `gbifFeatures` /
+  `gbifGeoJSON` are filtered off the proxy's feature list by `collection_key`, the same seam that
+  used to split the tRPC list.
+- `gbifReadPhase` is the proxy lane's `phase` verbatim -- one read-state vocabulary to consult,
+  not a hand-built mapping off `botanicalQuery`'s flags.
+- The release-set-pin effect (`setBotanicalResponse`/`setBotanicalReleaseSetId`) prefers the tRPC
+  answer when one is in hand (aggregate band) and falls back to the proxy's detail answer
+  otherwise -- a fallback, not a merge, because the two lanes never answer the same band at once.
+- `withheldCount` moved off the tRPC answer onto the proxy's, and the `botanical-withheld` fault
+  entry in `parquet-layer-faults.ts` dropped its `isQueryEnabled` gate accordingly (that gate now
+  means "the tRPC lane is enabled", which is false at the detail band where withheld counts live).
+
+The `gbif-empty` and `botanical-viewport-read` fault entries changed WHICH lane's fields feed
+their conditions, never their message text -- `LayerManager.test.tsx`'s `toBe` pin on the GBIF
+message holds unchanged. `botanical-refused` / `botanical-unavailable` / `botanical-truncated`'s
+"detail" wording branch are now aggregate-band-only, since they are still sourced from the tRPC
+answer and it no longer runs at the detail band; the proxy lane's own caption
+(`describeBotanicalOccurrencesState`, surfaced as `botanical-viewport-read`) already covers a
+detail-band refusal or truncation, in different words.
 
 ### The land-context viewport lane
 
