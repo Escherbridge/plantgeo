@@ -46,6 +46,13 @@ export default defineConfig([
     // review W8 B3 / W9 S1 / W10 B1 found three waves running, each time at a consumer that had
     // re-derived half of a predicate it could not see. Every hook returns a `LiveViewportRead`
     // instead; `liveViewportRead` is the only admission point.
+    //
+    // THIS RULE IS THE SECOND SIGNAL, NOT THE GUARANTEE. It matches one syntactic shape and
+    // misses `const query = ...; return query;`, `return { ...query };` and `return query.data;`
+    // -- the first of which is the idiom that module now uses. What actually enforces the
+    // guarantee is the return annotation on each of the five hooks
+    // (`src/hooks/useViewportProxiedLayers.ts:144-154`), which rejects all four shapes at
+    // typecheck. Keep both: this one names the fix in its message and fails in seconds.
     files: ["src/hooks/useViewportProxiedLayers.ts"],
     rules: {
       "no-restricted-syntax": [
@@ -53,7 +60,7 @@ export default defineConfig([
         {
           selector: "ReturnStatement > CallExpression[callee.property.name='useQuery']",
           message:
-            "Do not return a react-query result from useViewportProxiedLayers.ts. Wrap it: `return liveViewportRead<typeof query.data>(isAnswerLive, query);` — the retained frame must not reach a consumer while the observer is disabled.",
+            "Do not return a react-query result from useViewportProxiedLayers.ts. Wrap it: `return liveViewportRead(isAnswerLive, query);`, under a `LiveViewportRead<...>` return annotation — the retained frame must not reach a consumer while the observer is disabled.",
         },
       ],
     },

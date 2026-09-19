@@ -10,11 +10,12 @@
  * they share is not their upstream but the sharing hazard, which is that a panel describing
  * a layer must never key its read differently from the map drawing it.
  *
- * NO HOOK HERE RETURNS A RAW REACT-QUERY RESULT. Every one returns a `LiveViewportRead`, whose
- * fields are gated on the enablement composed for that hook's own observer; returning the
- * observer's result from this file is banned in `eslint.config.mjs` (the
- * `no-restricted-syntax` entry scoped to this path), so the ban is a build gate rather than a
- * convention. See `src/hooks/AGENTS.md` section "Live viewport reads".
+ * NO HOOK HERE RETURNS A RAW REACT-QUERY RESULT, and the enforcing half is the TYPE: each of the
+ * five is annotated `LiveViewportRead<EnvironmentalAnswers[...]>` (`:144-154`), so returning the
+ * observer's result, a spread of it, or its `data` are all assignment errors. The
+ * `no-restricted-syntax` ban in `eslint.config.mjs` scoped to this path is a fast second signal
+ * and catches only the literal `return <...>.useQuery(...)` shape. See `src/hooks/AGENTS.md`
+ * section "Live viewport reads" for what each half does and does not cover.
  */
 
 import { useMemo } from "react";
@@ -32,6 +33,10 @@ import { trpc } from "@/lib/trpc/client";
 import { useMapStore } from "@/stores/map-store";
 // Type-only, so nothing of the drawn-day registry is pulled into this module at runtime.
 import type { QueryReadState } from "@/stores/useMetricAtDate";
+// Type-only, the same way `src/lib/trpc/client.ts:6` imports the router: erased at build, so no
+// server module is pulled into this client bundle.
+import type { inferRouterOutputs } from "@trpc/server";
+import type { AppRouter } from "@/lib/server/trpc/router";
 // The detail floor is the PLANE's own (`DETAIL_ZOOM_FLOOR = 11` server-side), not a rung on the
 // `ZOOM_TIERS` ladder; imported rather than restated so the two cannot drift.
 import { BOTANICAL_DETAIL_MIN_ZOOM } from "@/lib/botanical-occurrences";
@@ -84,7 +89,7 @@ export const PROXIED_RETRY_COUNT = 1;
  * keyed on it never fires again, and any count or day read off `data` describes the PREVIOUS
  * request. The map publishes the drawn day (`usePublishedDrawnLayerDays`); `SoilDetails` and
  * `ClimateDetails` gate their loading lines on `isFetching` and say so on
- * `isShowingRetainedAnswer` (`LiveViewportRead`, `:158-183`) — which is this flag, gated on the
+ * `isShowingRetainedAnswer` (`LiveViewportRead`, `:174-203`) — which is this flag, gated on the
  * read being live, since react-query leaves `isPlaceholderData` true on a DISABLED observer.
  *
  * Deliberately NOT applied to `useWatershedsQuery`. Its only consumer is `WaterDetails`, which
@@ -137,6 +142,17 @@ export function useViewportBounds(): ViewportBounds {
   }, [viewport]);
 }
 
+/**
+ * What each environmental procedure answers, so every read below can NAME what it hands back.
+ *
+ * This is what makes the no-raw-result guarantee a TYPE rather than a syntax match: with each
+ * hook annotated `LiveViewportRead<EnvironmentalAnswers[...]>`, returning the observer's result,
+ * a spread of it, or its `data` are all assignment errors, because none of the three has `answer`
+ * or `isAnswerLive`. The eslint ban is the fast second signal, not the guarantee -- see
+ * `src/hooks/AGENTS.md` section "Live viewport reads" for exactly what it does and does not catch.
+ */
+type EnvironmentalAnswers = inferRouterOutputs<AppRouter>["environmental"];
+
 /** Caller-side gate. Never part of the cache key, so it cannot split one entry into two. */
 export interface ProxiedQueryOptions {
   /** The map layer is mounted, or the panel reading it is open. */
@@ -176,8 +192,12 @@ export interface LiveViewportRead<TAnswer> {
    * `isPlaceholderData` TRUE on a DISABLED `keepPreviousData` observer, so an ungated read makes
    * a hidden layer report itself permanently mid-load. `usePublishedDrawnLayerDays` documents
    * that trap and works around it by skipping layers that are not drawn
-   * (`src/stores/useMetricAtDate.ts:480-482`); reading it through this field makes the
-   * work-around belt-and-braces rather than the only guard.
+   * (`src/stores/useMetricAtDate.ts:480-482`).
+   *
+   * That work-around is doubled for THESE FIVE READS ONLY. It is still the sole guard for every
+   * other publisher of that registry -- the fire read, the Parquet lanes in `LayerManager.tsx`,
+   * `useLandContextViewport` -- and `useMetricAtDate`'s own query keeps its separate guard at
+   * `src/stores/useMetricAtDate.ts:224-231`, which this change does not touch.
    */
   isShowingRetainedAnswer: boolean;
 }
@@ -239,7 +259,7 @@ export function drawnDayReadState(read: LiveViewportRead<unknown>): QueryReadSta
 export function useWatershedsQuery(
   bbox: string | null | undefined,
   { enabled }: ProxiedQueryOptions
-) {
+): LiveViewportRead<EnvironmentalAnswers["getWatersheds"]> {
   const requested = bbox ?? null;
   // The procedure's own ceiling, mirrored here so a viewport wider than USGS will answer for
   // is never asked. Sending it anyway failed zod validation and surfaced as a request error,
@@ -262,7 +282,7 @@ export function useWatershedsQuery(
   // "deliberately NOT applied" note), so it retains nothing across a key change -- but a
   // disabled observer still serves the CURRENT key's cached entry, and the same shape is worth
   // keeping across all five reads rather than making the reader check which one is which.
-  return liveViewportRead<typeof query.data>(isAnswerLive, query);
+  return liveViewportRead(isAnswerLive, query);
 }
 
 /**
@@ -280,7 +300,7 @@ export function useWatershedsQuery(
 export function useSoilSurveyQuery(
   bbox: string | null | undefined,
   { enabled, zoom }: ProxiedQueryOptions & { zoom?: number }
-) {
+): LiveViewportRead<EnvironmentalAnswers["getSoilSurvey"]> {
   const requested = bbox ?? null;
   // Composed once, spent twice: the observer's `enabled` and the gate on its answer.
   const isAnswerLive = enabled && requested !== null && !isWithheld("soil-survey");
@@ -293,7 +313,7 @@ export function useSoilSurveyQuery(
       placeholderData: KEEP_PREVIOUS_WHILE_PANNING,
     }
   );
-  return liveViewportRead<typeof query.data>(isAnswerLive, query);
+  return liveViewportRead(isAnswerLive, query);
 }
 
 /** Everything that keys a soil-moisture read; all of it must match across the two callers. */
@@ -331,7 +351,7 @@ export interface SoilFieldQueryOptions extends ProxiedQueryOptions {
 export function useSoilFieldQuery(
   bbox: string | null | undefined,
   { enabled, measure, date, depth, zoom }: SoilFieldQueryOptions
-) {
+): LiveViewportRead<EnvironmentalAnswers["getSoilField"]> {
   const requested = bbox ?? null;
   const { toggleId } = soilFieldMeasureDefinition(measure);
   // Composed once, spent twice: the observer's `enabled` and the gate on its answer.
@@ -345,7 +365,7 @@ export function useSoilFieldQuery(
       placeholderData: KEEP_PREVIOUS_WHILE_PANNING,
     }
   );
-  return liveViewportRead<typeof query.data>(isAnswerLive, query);
+  return liveViewportRead(isAnswerLive, query);
 }
 
 /**
@@ -421,7 +441,7 @@ export function useBotanicalOccurrencesQuery(
     eventEnd?: string;
     spatialQuality?: "confirmed" | "possible" | "all";
   }
-) {
+): LiveViewportRead<EnvironmentalAnswers["getBotanicalOccurrences"]> {
   const requested = bbox ?? null;
   // Composed ONCE, here, and used twice at the same call site: as the observer's `enabled` and as
   // the gate on the answer it hands back. Every conjunct that can disable this read lives in this
@@ -466,7 +486,7 @@ export function useBotanicalOccurrencesQuery(
   );
   // The answer type is stated rather than inferred: `query` is react-query's discriminated union
   // over its own states, and inference from a union argument is not worth depending on here.
-  return liveViewportRead<typeof query.data>(isAnswerLive, query);
+  return liveViewportRead(isAnswerLive, query);
 }
 
 /** Everything that keys a climate read; all of it must match across the two callers. */
@@ -512,7 +532,7 @@ export interface ClimateFieldQueryOptions extends ProxiedQueryOptions {
 export function useClimateFieldQuery(
   bbox: string | null | undefined,
   { enabled, signal, variant, date, renderForm, zoom }: ClimateFieldQueryOptions
-) {
+): LiveViewportRead<EnvironmentalAnswers["getClimateField"]> {
   const requested = bbox ?? null;
   // Composed once, spent twice: the observer's `enabled` and the gate on its answer.
   const isAnswerLive =
@@ -526,5 +546,5 @@ export function useClimateFieldQuery(
       placeholderData: KEEP_PREVIOUS_WHILE_PANNING,
     }
   );
-  return liveViewportRead<typeof query.data>(isAnswerLive, query);
+  return liveViewportRead(isAnswerLive, query);
 }

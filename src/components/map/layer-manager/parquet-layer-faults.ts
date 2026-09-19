@@ -64,7 +64,7 @@ export interface BotanicalLaneReport {
    * entries below share.
    *
    * Reported by the read itself (`LiveViewportRead.isAnswerLive`,
-   * `src/hooks/useViewportProxiedLayers.ts:158-183`) rather than re-derived here: `keepPreviousData`
+   * `src/hooks/useViewportProxiedLayers.ts:174-203`) rather than re-derived here: `keepPreviousData`
    * leaves a disabled observer holding its last answer, so "there is an answer" and "this answer
    * describes the current request" are different questions. False at the detail band, false while
    * both aggregate toggles are off, and false whenever the viewport cannot be measured.
@@ -78,7 +78,7 @@ export interface BotanicalLaneReport {
    *
    * Undefined whenever the read is not live, including at the detail band, because it is read off
    * an answer the read itself withholds in that case (`liveViewportRead`,
-   * `src/hooks/useViewportProxiedLayers.ts:196-216`) -- so a retained answer cannot speak for a
+   * `src/hooks/useViewportProxiedLayers.ts:216-236`) -- so a retained answer cannot speak for a
    * request it was not served for.
    */
   resultState: string | undefined;
@@ -278,7 +278,7 @@ export function buildParquetLayerFaults(input: ParquetLayerFaultInput): ParquetL
     // Cell wording unconditionally (style review W8, N2): `isAggregateReadLive` is false at the
     // detail band, because the caller passes `enabled: false` there
     // (`useBotanicalViewportLanes.ts:115`) and that is one conjunct of the read's enablement
-    // (`useViewportProxiedLayers.ts:432-442`), so the specimen-row sentence this used to pick
+    // (`useViewportProxiedLayers.ts:452-462`), so the specimen-row sentence this used to pick
     // between was unreachable. The proxy lane's own cap is said by `botanical-viewport-read`.
     botanical.isAggregateReadLive && botanical.truncated
       ? {
