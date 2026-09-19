@@ -1,0 +1,137 @@
+{
+  "agri_module": "services/agri-data-service/src/agri_data_service/warehouse/schemas/expert_labels.py",
+  "contract": "expert-labels",
+  "contract_section": "conductor/tracks/plantgeo_ml_service_20260918/spec.md FR-7 (the exported label plane)",
+  "fixture_version": 1,
+  "ml_module": "services/plantgeo-ml-service/src/plantgeo_ml_service/pipeline/expert_labels.py",
+  "ml_symbol": "plantgeo_ml_service.pipeline.expert_labels.EXPERT_LABEL_SCHEMA",
+  "regenerate_with": "uv run --no-sync python scripts/regenerate_ml_schema_fixtures.py",
+  "shape": {
+    "columns": [
+      {
+        "name": "label_key",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "release_key",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "source_key",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "label_kind",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "subject",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "subject_normalized",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "outcome",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "condition_envelope",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "envelope_checksum",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "rationale",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "supporting_quote",
+        "nullable": true,
+        "type": "string"
+      },
+      {
+        "name": "confidence",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "confidence_weight",
+        "nullable": false,
+        "type": "double"
+      },
+      {
+        "name": "harvest_slice",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "citation_check_refuted",
+        "nullable": false,
+        "type": "bool"
+      },
+      {
+        "name": "citation_check_doi_resolves",
+        "nullable": false,
+        "type": "bool"
+      },
+      {
+        "name": "citation_check_reason",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "review_state",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "review_note",
+        "nullable": true,
+        "type": "string"
+      },
+      {
+        "name": "reviewed_by",
+        "nullable": true,
+        "type": "string"
+      },
+      {
+        "name": "reviewed_at",
+        "nullable": true,
+        "type": "timestamp[us, tz=UTC]"
+      },
+      {
+        "name": "owner_signature_reference",
+        "nullable": true,
+        "type": "string"
+      },
+      {
+        "name": "label_checksum",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "created_at",
+        "nullable": false,
+        "type": "timestamp[us, tz=UTC]"
+      }
+    ],
+    "compression": null,
+    "sort_columns": null,
+    "stream_name": null
+  },
+  "written_by": "services/agri-data-service"
+}

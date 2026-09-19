@@ -1,0 +1,94 @@
+{
+  "agri_module": "services/agri-data-service/src/agri_data_service/warehouse/schemas/fire_risk.py",
+  "contract": "fire-risk",
+  "contract_section": "conductor/code_styleguides/layer-lanes.md section 3 (forecast provenance)",
+  "fixture_version": 1,
+  "ml_module": "services/plantgeo-ml-service/src/plantgeo_ml_service/warehouse/streams.py",
+  "ml_symbol": "plantgeo_ml_service.warehouse.streams.FIRE_RISK_SCHEMA",
+  "regenerate_with": "uv run --no-sync python scripts/regenerate_ml_schema_fixtures.py",
+  "shape": {
+    "columns": [
+      {
+        "name": "cell_longitude",
+        "nullable": false,
+        "type": "double"
+      },
+      {
+        "name": "cell_latitude",
+        "nullable": false,
+        "type": "double"
+      },
+      {
+        "name": "valid_day",
+        "nullable": false,
+        "type": "date32[day]"
+      },
+      {
+        "name": "probability",
+        "nullable": true,
+        "type": "double"
+      },
+      {
+        "name": "risk_score",
+        "nullable": true,
+        "type": "double"
+      },
+      {
+        "name": "stratum",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "refused_reason",
+        "nullable": true,
+        "type": "string"
+      },
+      {
+        "name": "model_artifact_sha256",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "forecast_run_id",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "random_seed",
+        "nullable": false,
+        "type": "int64"
+      },
+      {
+        "name": "ensemble_size",
+        "nullable": false,
+        "type": "int32"
+      },
+      {
+        "name": "horizon_days",
+        "nullable": false,
+        "type": "int16"
+      },
+      {
+        "name": "issued_on",
+        "nullable": false,
+        "type": "date32[day]"
+      },
+      {
+        "name": "quantile",
+        "nullable": false,
+        "type": "string"
+      }
+    ],
+    "compression": "zstd",
+    "sort_columns": [
+      "cell_longitude",
+      "cell_latitude",
+      "valid_day",
+      "issued_on",
+      "horizon_days",
+      "quantile"
+    ],
+    "stream_name": "fire-risk"
+  },
+  "written_by": "services/plantgeo-ml-service"
+}

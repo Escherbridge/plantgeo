@@ -520,6 +520,32 @@ digest from a Linux clone. The follow-up wave added what would have caught it be
 index comparison above refuses a receipt whose inputs git does not hold, and `digest_domain` turns a
 future algorithm change into its own message instead of a false "source changed".
 
+## `regenerate_ml_schema_fixtures.py` — making a FOREIGN change stale this receipt
+
+The receipt's blind spot is anything outside this tree, and it has been paid for once: on
+2026-09-19 `services/plantgeo-ml-service` changed an Arrow field, this service's copy of that schema
+did not follow, `pytest` went red on `origin/main`, and the committed receipt still verified over
+its own 863 files because the breaking commit touched no digested input
+(`scripts/quality_receipt.py:39`).
+
+`regenerate_ml_schema_fixtures.py` converts that into a digest event rather than widening the digest
+across a service boundary. It renders the sibling's three copied schemas — and ONLY the sibling's,
+never this service's copies — into `tests/parquet/fixtures/ml_schema_parity/*.json`, which are
+digest inputs because they are under `tests/`. A sibling schema change therefore forces a
+regeneration, the regeneration moves the tree digest, and the image build's
+`verify_quality_receipt.py` (`Dockerfile:48`) refuses until a green sweep rewrites the receipt. The
+script exits 2 without writing when the sibling tree is absent
+(`scripts/regenerate_ml_schema_fixtures.py:293-297`), because a fixture rendered from the reader
+would agree with the reader by construction.
+
+Run it only in a monorepo checkout:
+
+    uv run --no-sync python scripts/regenerate_ml_schema_fixtures.py
+
+Full rationale, the enforcing citations and an explicit list of what this does NOT catch — starting
+with the fact that neither guard knows whether anyone read the diff — live in `tests/AGENTS.md`,
+section "Copied ML schemas are pinned twice".
+
 **The TypeScript side has no equivalent yet.** There is no receipt over the root `src/**`,
 `package.json` or `package-lock.json`, and the root `Dockerfile` verifies nothing about whether its
 sources were linted or tested. A Python-only receipt is a real gate over a real half of the tree,
