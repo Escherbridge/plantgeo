@@ -16,12 +16,13 @@ from agri_data_service.pipeline.direct.drought.forward import (
     DROUGHT_DEFAULT_RETRY_ATTEMPTS,
     DroughtForwardConfig,
     DroughtForwardConfigError,
+    _selected_release_weeks,
     _validate_config,
     parse_args,
     parser,
     run_drought_forward,
 )
-from agri_data_service.pipeline.direct.drought.products import newest_settled_tuesday
+from agri_data_service.pipeline.direct.drought.products import drought_lane_registration, newest_settled_tuesday
 
 
 def _config(**overrides: object) -> DroughtForwardConfig:
@@ -92,3 +93,48 @@ async def test_a_turn_entirely_before_the_lane_floor_is_a_clean_noop() -> None:
     assert report["status"] == "completed"
     assert report["days_published"] == 0
     assert report["results"] == []
+
+
+def _weeks(**overrides: object) -> tuple[date, tuple[date, ...]]:
+    """Resolve the release slice one config selects, against the drought lane's own registration."""
+    lane = drought_lane_registration()
+    settled_through = newest_settled_tuesday(today=date(2026, 9, 17), publication_lag_days=lane.publication_lag_days)
+    return _selected_release_weeks(_config(**overrides), lane=lane, settled_through=settled_through)
+
+
+def test_no_target_day_still_walks_the_bounded_backlog() -> None:
+    first_day, weeks = _weeks()
+
+    assert len(weeks) > 1
+    assert weeks[0] == first_day
+    assert all(week.weekday() == 1 for week in weeks)
+
+
+def test_a_target_day_selects_exactly_that_one_settled_release() -> None:
+    # 2026-08-11 is a Tuesday inside the lane's floor..settled window.
+    first_day, weeks = _weeks(target_day=date(2026, 8, 11))
+
+    assert first_day == date(2026, 8, 11)
+    assert weeks == (date(2026, 8, 11),)
+
+
+@pytest.mark.parametrize(
+    ("target_day", "message"),
+    [
+        (date(2026, 8, 12), "is not a USDM release Tuesday"),
+        (date(2000, 1, 4), "is before the source-owned floor"),
+        (date(2030, 1, 1), "is after the settled source ceiling"),
+    ],
+)
+def test_an_out_of_contract_target_day_is_refused_rather_than_silently_skipped(
+    target_day: date, message: str
+) -> None:
+    with pytest.raises(DroughtForwardConfigError, match=message):
+        _weeks(target_day=target_day)
+
+
+def test_the_target_day_flag_parses_as_an_iso_date() -> None:
+    config = parse_args(["--target-day", "2026-08-11"])
+
+    assert config.target_day == date(2026, 8, 11)
+    assert parse_args([]).target_day is None

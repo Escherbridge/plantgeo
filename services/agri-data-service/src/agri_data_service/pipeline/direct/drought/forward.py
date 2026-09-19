@@ -44,6 +44,7 @@ from agri_data_service.pipeline.direct.drought.adapter import (
     DirectDroughtError,
 )
 from agri_data_service.pipeline.direct.drought.products import (
+    USDM_RELEASE_WEEKDAY,
     drought_lane_registration,
     newest_settled_tuesday,
     release_weeks,
@@ -147,6 +148,9 @@ class DroughtForwardConfig:
     contention_timeout_seconds: float
     run_id: str | None = None
     today: date | None = None
+    #: One already-settled USDM release Tuesday to repair INSTEAD of the bounded backlog scan, or
+    #: `None` for the ordinary newest-first walk. See `_selected_release_weeks`.
+    target_day: date | None = None
 
 
 def emit(payload: Mapping[str, object]) -> None:
@@ -161,8 +165,7 @@ async def run_drought_forward(config: DroughtForwardConfig) -> dict[str, object]
     today = config.today or datetime.now(UTC).date()
     lane = drought_lane_registration()
     settled_through = newest_settled_tuesday(today=today, publication_lag_days=lane.publication_lag_days)
-    first_day = max(lane.history_floor, settled_through - timedelta(weeks=DROUGHT_BACKLOG_SCAN_WEEKS - 1))
-    weeks = release_weeks(first_day, settled_through)
+    first_day, weeks = _selected_release_weeks(config, lane=lane, settled_through=settled_through)
     deadline = time.monotonic() + config.time_budget_seconds
     availability = AvailabilityExtensionTally()
 
@@ -624,6 +627,38 @@ def _retry_delay(attempt: int, *, base_seconds: float, max_seconds: float) -> fl
     return float(ceiling + random.uniform(0.0, min(1.0, ceiling / 4)))
 
 
+def _selected_release_weeks(
+    config: DroughtForwardConfig,
+    *,
+    lane: LaneRegistration,
+    settled_through: date,
+) -> tuple[date, tuple[date, ...]]:
+    """Choose the ordinary bounded backlog, or the ONE settled release `--target-day` names.
+
+    The backlog walk already reaches every gap inside `DROUGHT_BACKLOG_SCAN_WEEKS`, so this is not a
+    second way to fill a hole; it is how an operator repairs ONE known release without spending a
+    turn re-censusing sixty weeks of R2 to get there. Every bound the walk respects still applies:
+    the day must be a USDM release Tuesday, at or after the lane's source-owned floor, and at or
+    before the settled ceiling -- a target outside them is a config error, never a silent no-op.
+    """
+    if config.target_day is None:
+        first_day = max(lane.history_floor, settled_through - timedelta(weeks=DROUGHT_BACKLOG_SCAN_WEEKS - 1))
+        return first_day, release_weeks(first_day, settled_through)
+    target_day = config.target_day
+    if target_day.weekday() != USDM_RELEASE_WEEKDAY:
+        raise DroughtForwardConfigError(f"--target-day {target_day.isoformat()} is not a USDM release Tuesday")
+    if target_day < lane.history_floor:
+        raise DroughtForwardConfigError(
+            f"--target-day {target_day.isoformat()} is before the source-owned floor {lane.history_floor.isoformat()}"
+        )
+    if target_day > settled_through:
+        raise DroughtForwardConfigError(
+            f"--target-day {target_day.isoformat()} is after the settled source ceiling "
+            f"{settled_through.isoformat()}"
+        )
+    return target_day, (target_day,)
+
+
 def _validate_config(config: DroughtForwardConfig) -> None:
     """Fail closed on every process-bound knob before a socket or a session is opened."""
     if not 1 <= config.max_days <= DROUGHT_MAX_DAYS:
@@ -661,6 +696,7 @@ def parser() -> argparse.ArgumentParser:
     built.add_argument("--retry-base-seconds", type=float, default=DROUGHT_DEFAULT_RETRY_BASE_SECONDS)
     built.add_argument("--retry-max-seconds", type=float, default=DROUGHT_DEFAULT_RETRY_MAX_SECONDS)
     built.add_argument("--contention-timeout-seconds", type=float, default=DROUGHT_DEFAULT_CONTENTION_TIMEOUT_SECONDS)
+    built.add_argument("--target-day", type=date.fromisoformat, default=None)
     return built
 
 
@@ -676,6 +712,7 @@ def parse_args(argv: Sequence[str] | None = None) -> DroughtForwardConfig:
         retry_max_seconds=arguments.retry_max_seconds,
         contention_timeout_seconds=arguments.contention_timeout_seconds,
         run_id=arguments.run_id,
+        target_day=arguments.target_day,
     )
     try:
         _validate_config(config)
