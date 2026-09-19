@@ -86,6 +86,18 @@ function requestedOptions(callIndex = 0) {
   return mockedFetch.mock.calls[callIndex][2];
 }
 
+/**
+ * How many census reads the transport actually saw.
+ *
+ * Counted by route rather than by call index, because the region-guard tests interleave a census
+ * with row reads and an index would silently drift with the interleaving.
+ */
+function coverageReadCount(): number {
+  return mockedFetch.mock.calls.filter(
+    (call) => (call[0] as URL).pathname === "/api/v1/parquet/coverage"
+  ).length;
+}
+
 beforeEach(async () => {
   resetParquetCoverageCacheForTests();
   mockedProviderUrl.mockReset();
@@ -879,11 +891,126 @@ describe("region identity on row reads", () => {
     expect(servedRegionGuardStatus()).toMatchObject({
       armed: false,
       statedRegionSlug: undefined,
+      inertReason: "no_census_has_decoded",
       failedLearningAttempts: 1,
+      unguardedRowReads: 1,
     });
     expect(logged).toHaveBeenCalledTimes(1);
     expect(String(logged.mock.calls[0][0])).toContain("region guard inert");
     logged.mockRestore();
+  });
+
+  /**
+   * Style review W11, S4 -- the worst realistic case, asserted rather than argued.
+   *
+   * The pre-bootstrap census takes ~28s against an 8s timeout, and under the pre-fix code the
+   * back-off memo was stamped only once that await SETTLED. So every row read arriving inside the
+   * window passed the gate, awaited the same single-flighted census, wrote its own `console.error`,
+   * and computed `attempts` from the same stale memo -- hundreds of identical lines every ~88s for
+   * the life of the process, under a counter that could never read higher than 1. Under the pre-fix
+   * code this test sees 25 log lines where it asserts one, and has no `unguardedRowReads` to read.
+   */
+  it("logs one line, however many row reads arrive inside one back-off window", async () => {
+    resetParquetCoverageCacheForTests();
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    // The census hangs until this test fails it, which is what makes the window observable: every
+    // row read below reaches the guard while the one census attempt is still in flight.
+    let failCensus: (fault: Error) => void = () => undefined;
+    const hangingCensus = new Promise<never>((_resolve, reject) => {
+      failCensus = reject;
+    });
+    mockedFetch.mockImplementationOnce(() => hangingCensus);
+    mockedFetch.mockResolvedValue(wirePublished("2026-08-20"));
+
+    const concurrentRowReads = Array.from({ length: 25 }, () =>
+      getParquetLayerDay({ layer: "vegetation", day: "2026-08-20", zoomTier: 9 })
+    );
+    failCensus(new UpstreamTimeoutError("census timed out"));
+    const envelopes = await Promise.all(concurrentRowReads);
+
+    // Every one of them rendered: the guard stays open, which is the decision being paid for here.
+    expect(envelopes).toHaveLength(25);
+    expect(logged).toHaveBeenCalledTimes(1);
+    expect(String(logged.mock.calls[0][0])).toContain("region guard inert");
+    // The single line states the size of the flood it is standing in for.
+    expect(logged.mock.calls[0][1]).toMatchObject({
+      failedLearningAttempts: 1,
+      unguardedRowReads: 25,
+    });
+    expect(servedRegionGuardStatus()).toMatchObject({
+      armed: false,
+      inertReason: "no_census_has_decoded",
+      failedLearningAttempts: 1,
+      unguardedRowReads: 25,
+    });
+    // One census for 25 row reads: closing the gate on entry did not buy the log line with a
+    // second cold census, which is the whole reason the memo exists.
+    expect(coverageReadCount()).toBe(1);
+    logged.mockRestore();
+  });
+
+  it("counts one attempt per window, so a second window reads 2 rather than 1", async () => {
+    // The pre-fix counter was `(previous?.attempts ?? 0) + 1` computed from a memo the whole window
+    // shared, so it reported 1 after any number of failures. Attempts are now stamped at the
+    // attempt, one apiece.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-20T00:00:00Z"));
+    resetParquetCoverageCacheForTests();
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mockedFetch.mockRejectedValueOnce(new UpstreamTimeoutError("census timed out"));
+    mockedFetch.mockResolvedValue(wirePublished("2026-08-20"));
+
+    await getParquetLayerDay({ layer: "vegetation", day: "2026-08-20", zoomTier: 9 });
+    expect(servedRegionGuardStatus().failedLearningAttempts).toBe(1);
+
+    vi.setSystemTime(Date.now() + 61_000);
+    mockedFetch.mockRejectedValueOnce(new UpstreamTimeoutError("census timed out"));
+    await getParquetLayerDay({ layer: "vegetation", day: "2026-08-20", zoomTier: 9 });
+
+    expect(servedRegionGuardStatus()).toMatchObject({
+      armed: false,
+      failedLearningAttempts: 2,
+      unguardedRowReads: 2,
+    });
+    expect(logged).toHaveBeenCalledTimes(2);
+    expect(coverageReadCount()).toBe(2);
+    logged.mockRestore();
+  });
+
+  /**
+   * Style review W11, S3. `armed` used to be `lastStatedRegionSlug !== undefined`, which is `true`
+   * here -- a census decoded and stated nobody -- while `regionIdentityVerdict` calls that
+   * `unstated` forever and the guard can never reach `mismatch`. A readiness probe reading `armed`
+   * would have called this deployment guarded on exactly the deployment where it is permanently
+   * inert. Under the pre-fix code `armed` is `true` and `inertReason` does not exist.
+   */
+  it("is unarmed, with its own reason, when a census decodes and states no region", async () => {
+    resetParquetCoverageCacheForTests();
+    await primeServedRegion(mockedFetch, null);
+
+    expect(servedRegionGuardStatus()).toMatchObject({
+      armed: false,
+      // Learned, not unlearned: the distinction the reason names, and the one a health surface acts
+      // on, since only a serving-side deploy can change this one.
+      statedRegionSlug: null,
+      inertReason: "census_stated_no_region",
+      // No failed ATTEMPT happened: the census answered. The inertness is in what it said.
+      failedLearningAttempts: 0,
+      unguardedRowReads: 0,
+    });
+  });
+
+  it("is unarmed for a census stating an empty slug, which the manifest permits", async () => {
+    // `manifest.py` types `slug: str` with no non-empty constraint, and `regionIdentityVerdict`
+    // reads `""` as `unstated` -- so `""` must not arm the guard either.
+    resetParquetCoverageCacheForTests();
+    await primeServedRegion(mockedFetch, "");
+
+    expect(servedRegionGuardStatus()).toMatchObject({
+      armed: false,
+      statedRegionSlug: "",
+      inertReason: "census_stated_no_region",
+    });
   });
 
   it("arms itself the moment a census finally decodes, and refuses from then on", async () => {

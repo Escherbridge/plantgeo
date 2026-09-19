@@ -105,8 +105,8 @@ FIVE CHOICES WORTH THE WORDS:
    Every decoded census overwrites it, so the slider's own reads keep it current for free. Once an
    identity is learned a row read awaits nothing; while none is, the attempt is bounded to one per
    `REGION_LEARNING_RETRY_MS` (60s) for the whole process — enforced by the early return in
-   `learnServedRegion` (`parquet-plane-client.ts:947`), cleared only by
-   `resetParquetCoverageCacheForTests` (`parquet-plane-client.ts:1112`). Awaiting a census
+   `learnServedRegion` (`parquet-plane-client.ts:980`), cleared only by
+   `resetParquetCoverageCacheForTests` (`parquet-plane-client.ts:1208`). Awaiting a census
    on every read would have put the 8-second cold-census timeout in front of every layer on a
    pre-bootstrap deployment: a latency regression paid by correct deployments to catch a broken one.
    The residual hole is one coverage window wide: a serving side redeployed into another region is
@@ -122,13 +122,36 @@ FIVE CHOICES WORTH THE WORDS:
    deployment, not a hypothetical. Failing closed after N attempts was considered and rejected: it
    turns a rare, static, deploy-time misconfiguration (two environment variables naming one region)
    into a certain total outage on every cold start, which is a worse trade than the one it buys.
-   Staying open is therefore paid for in visibility: `learnServedRegion` logs
-   `Parquet region guard inert` on each failed attempt (`parquet-plane-client.ts:959`) — at most one
-   per back-off window, so the log cannot flood — and `servedRegionGuardStatus()`
-   (`parquet-plane-client.ts:987`) reports `armed: false` with the failed-attempt count for any
-   health surface that would rather state inertness than assume safety. Nothing consumes that status
-   yet; it is the seam a readiness probe should read, and its absence is a gap, not a claim. The
-   guard arms itself on the first census that decodes, including one the slider read.
+   Staying open is therefore paid for in visibility, and that payment is what wave 12 makes good.
+   `learnServedRegion` logs `Parquet region guard inert` once per census ATTEMPT
+   (`parquet-plane-client.ts:1008`), and the attempt is memoed on ENTRY rather than after the census
+   settles (`parquet-plane-client.ts:980`, `:992`), so one back-off window costs one attempt and one
+   line however many row reads arrive inside it — held by that early return and by
+   `src/__tests__/services/parquet-plane-client.test.ts` `logs one line, however many row reads
+   arrive inside one back-off window`, not by this sentence. Stamped after the await, as it was
+   through wave 11, the gate stood open for the whole ~28s census and every row read in the window
+   logged its own line (style review W11, S4): hundreds per window, repeating every ~88s for the
+   life of the process. The counter shared that defect and is fixed with it — all those waiters read
+   one stale memo, so `failedLearningAttempts` could never exceed 1 however many lines were written.
+   It now counts attempts, one apiece, and `unguardedRowReads` counts the row reads those attempts
+   let through, stated both in the line and in the status so the flood is a number rather than a
+   log volume.
+
+   `servedRegionGuardStatus()` (`parquet-plane-client.ts:1071`) reports that pair, plus `armed` and
+   `inertReason`, for any health surface that would rather state inertness than assume safety.
+   **`armed` means CAN REFUSE, not "a census decoded"** (style review W11, S3): it is
+   `regionIdentityVerdict(...).kind !== "unstated"` (`parquet-plane-client.ts:1075`), so a census
+   that decodes and states `null` or `""` leaves it `false` — `regionIdentityVerdict` calls both
+   `unstated` forever (`region.ts:294-295`), which means the guard can never reach `mismatch`, and
+   the empty slug is a producer the manifest type permits (see *Where `unstated` can come from*,
+   below). The older definition
+   was `lastStatedRegionSlug !== undefined`, which reported `armed: true` on exactly that
+   permanently inert deployment; that state is now `statedRegionSlug !== undefined` and
+   `inertReason: "census_stated_no_region"`, told apart from `"no_census_has_decoded"` because the
+   two have different owners — one may heal within a back-off window, the other only on a
+   serving-side deploy. Nothing consumes that status yet; it is the seam a readiness probe should
+   read, and its absence is a gap, not a claim. The guard arms itself on the first census that
+   decodes A REGION, including one the slider read.
 
 **Where `unstated` can come from.** On the live path, only a serving deployment older than the
 field: `interface/http/parquet_routes.py` is the sole `WarehouseCoverage` construction that reaches

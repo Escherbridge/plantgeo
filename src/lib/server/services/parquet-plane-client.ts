@@ -120,7 +120,7 @@ let coverageRequest: Promise<ParquetWarehouseCoverage> | null = null;
  * process rather than once per cache window, while still following a redeploy within the
  * coverage cache's own lag -- every decoded census overwrites this. While NO census has decoded
  * there is nothing to reuse, and the cost of trying again is bounded by `REGION_LEARNING_RETRY_MS`
- * below rather than by this value (`learnServedRegion`, `parquet-plane-client.ts:947`).
+ * below rather than by this value (`learnServedRegion`, `parquet-plane-client.ts:980`).
  *
  * `undefined` is "never learned" and `null` is "a census stated nothing", which are different facts:
  * the first says nothing has been asked yet, the second is `unstated` and renders.
@@ -139,14 +139,22 @@ let lastStatedRegionSlug: string | null | undefined = undefined;
 const REGION_LEARNING_RETRY_MS = 60_000;
 
 /**
- * The last census attempt made for the GUARD's sake that left no identity behind, and how many have.
+ * The last census attempt made for the GUARD's sake that left no identity behind, and what it cost.
  *
  * `null` means either "never needed" or "the last attempt succeeded"; the two are indistinguishable
  * here on purpose, because both mean the next row read may try. Style review W10, S4: without this
  * memo the "at most once per process" cost claim was false -- every sequential row read on a
  * census-less deployment started another cold census.
+ *
+ * THE MEMO IS TAKEN BEFORE THE CENSUS IS AWAITED, not after it settles (style review W11, S4). The
+ * pre-bootstrap census runs ~28s against the 8s `COVERAGE_TIMEOUT_MS`, and a memo stamped after the
+ * await left that whole window ungated: every row read arriving inside it passed, logged its own
+ * line, and computed `attempts` from the same stale memo, so the count could never exceed 1 however
+ * many lines were written. `attempts` now counts census attempts -- one per attempt, stamped at the
+ * attempt -- and `unguardedRowReads` counts the row reads those attempts let through, which is the
+ * number the log line would otherwise have flooded with.
  */
-let regionLearningFailure: { at: number; attempts: number } | null = null;
+let regionLearningFailure: { at: number; attempts: number; unguardedRowReads: number } | null = null;
 
 /** `YYYY-MM-DD`. A shape check only: nothing here turns a day into an instant. */
 const CALENDAR_DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -890,11 +898,11 @@ async function readJson(url: URL, bounds: ReadBounds): Promise<unknown> {
  * refreshed for free by every census the slider already reads (see `lastStatedRegionSlug`). Once an
  * identity has been learned a row read awaits nothing at all; while none has been, `learnServedRegion`
  * spends at most ONE census attempt per `REGION_LEARNING_RETRY_MS` for the whole process, not one
- * per row read -- the back-off is the early return at `parquet-plane-client.ts:947`, and
- * `resetParquetCoverageCacheForTests` (`:1112`) is the only thing that clears
- * it. Awaiting a census unconditionally would have put an 8-second cold-census timeout in
- * front of every layer on a pre-bootstrap deployment, which is a latency regression paid by correctly
- * configured deployments to catch a misconfigured one.
+ * per row read -- the back-off is the early return at `parquet-plane-client.ts:980`, and
+ * `resetParquetCoverageCacheForTests` (`:1208`) is the only thing that clears it short of a census
+ * that finally decodes (`:1000`). Awaiting a census unconditionally would have put an 8-second
+ * cold-census timeout in front of every layer on a pre-bootstrap deployment, which is a latency
+ * regression paid by correctly configured deployments to catch a misconfigured one.
  *
  * WHEN NO CENSUS EVER DECODES, THIS GUARD STAYS OPEN AND SAYS SO. Style review W10, S4: on the
  * documented pre-bootstrap deployment the census walks the whole store and loses to its own 8-second
@@ -903,10 +911,15 @@ async function readJson(url: URL, bounds: ReadBounds): Promise<unknown> {
  * (two environment variables naming one region) into a certain total outage on every cold start,
  * and the cold start is the state this platform ships from. Staying open is therefore deliberate,
  * and the cost of that choice is paid in visibility rather than in silence -- `learnServedRegion`
- * logs `Parquet region guard inert` on each failed attempt (`:959`), at most once per back-off
- * window, and `servedRegionGuardStatus()` (`:987`) reports `armed: false` with the attempt count for
- * any health surface that wants to state it. The guard arms itself the moment ANY census decodes,
- * including the slider's own.
+ * logs `Parquet region guard inert` ONCE PER CENSUS ATTEMPT (`:1008`), which the entry-stamped memo
+ * (`:980`, `:992`) holds to one per `REGION_LEARNING_RETRY_MS` however many row reads arrive inside
+ * the window, and the line states how many did (`unguardedRowReads`). `servedRegionGuardStatus()`
+ * (`:1071`) reports `armed: false` with that count, the attempt count and WHICH inert state this is,
+ * for any health surface that wants to state it.
+ *
+ * The guard arms itself the moment any census decodes A REGION, including the slider's own. A
+ * census that decodes and states nothing leaves it unarmed on purpose: `unstated` renders (above),
+ * so there is nothing such an identity could ever refuse (`region.ts:294-295`).
  *
  * EXPORTED for the one row-read path that does not go through this module:
  * `botanical-occurrences-client.ts` speaks its own wire contract to its own routes, and W9's S4
@@ -938,42 +951,105 @@ export async function assertServedRegionMatchesBundle(): Promise<void> {
  * reads cost nothing and the guard still re-arms on its own within a minute of the store getting
  * fast enough to answer.
  *
+ * THE MEMO IS TAKEN ON ENTRY, BEFORE THE AWAIT (style review W11, S4). Stamped after the census
+ * settled, the gate was open for the whole ~28s the pre-bootstrap census takes, so every row read
+ * arriving inside it made its own `console.error` -- hundreds per window on a cold-deployed
+ * viewport, repeating for the life of the process -- and every one of them read the same stale
+ * memo, so the counter that would have shown it was pinned at 1. Stamping first closes the gate on
+ * entry: exactly one attempt and exactly one log line per window, held by the early return below
+ * (`parquet-plane-client.ts:980`) rather than by this sentence, and asserted by
+ * `src/__tests__/services/parquet-plane-client.test.ts` `logs one line, however many row reads
+ * arrive inside one back-off window`.
+ *
+ * Stamping first cannot open a second census inside one window -- that is what the memo exists to
+ * prevent, and moving it earlier only closes the gate sooner. It also stops the waiters paying for
+ * the census they no longer make: under the old order N concurrent row reads all awaited the
+ * single-flighted census (`:1179`) and each blocked for its full duration; now only the first does.
+ *
+ * `at` is refreshed to the moment the attempt SETTLED, so the back-off measures a full window from
+ * the end of one attempt rather than from its start -- ~88s of real cycle on a ~28s census, which
+ * errs toward fewer attempts, not more.
+ *
  * A DECODED census that states no region sets `lastStatedRegionSlug` to `null`, which is learned,
  * not failed -- `unstated` is a fact about the serving side, and re-reading it would be a retry of
- * a successful read.
+ * a successful read. It is also NOT an armed guard; see `servedRegionGuardStatus` (`:1071`).
  */
 async function learnServedRegion(): Promise<void> {
   const previous = regionLearningFailure;
-  if (previous !== null && Date.now() - previous.at < REGION_LEARNING_RETRY_MS) return;
+  const startedAt = Date.now();
+  if (previous !== null && startedAt - previous.at < REGION_LEARNING_RETRY_MS) {
+    // Inside the window: the attempt this read would have made is already spent or in flight, so
+    // it costs no census and writes no line. It is still counted, and the line that attempt does
+    // write states how many arrived behind it.
+    regionLearningFailure = { ...previous, unguardedRowReads: previous.unguardedRowReads + 1 };
+    return;
+  }
+  const stamped = {
+    at: startedAt,
+    attempts: (previous?.attempts ?? 0) + 1,
+    unguardedRowReads: (previous?.unguardedRowReads ?? 0) + 1,
+  };
+  regionLearningFailure = stamped;
   try {
     await getParquetWarehouseCoverage();
   } catch {
     // A census that did not answer is silence, and the slider states coverage outages on its own
-    // axis; the attempt is still recorded below so the retry stays bounded.
+    // axis; the attempt was recorded on entry, so the retry stays bounded either way.
   }
   if (lastStatedRegionSlug !== undefined) {
     regionLearningFailure = null;
     return;
   }
-  regionLearningFailure = { at: Date.now(), attempts: (previous?.attempts ?? 0) + 1 };
+  // Re-read rather than reuse `stamped`: waiters incremented `unguardedRowReads` during the await,
+  // and this line is the only place that number is ever stated. `stamped` is the fallback for the
+  // one thing that can null the memo mid-flight, `resetParquetCoverageCacheForTests` (`:1208`).
+  const settled = regionLearningFailure ?? stamped;
+  regionLearningFailure = { ...settled, at: Date.now() };
   console.error(
     "Parquet region guard inert: no census has stated a region; row reads proceed unguarded",
     {
       failedLearningAttempts: regionLearningFailure.attempts,
+      unguardedRowReads: regionLearningFailure.unguardedRowReads,
       compiledRegionSlug: getRegion().slug,
       retryAfterMs: REGION_LEARNING_RETRY_MS,
     }
   );
 }
 
-/** Whether the row-read region guard can act, and what it has spent failing to arm itself. */
+/**
+ * Why a guard that cannot refuse cannot, or `null` when it can.
+ *
+ * TWO INERT STATES, NOT ONE, and a health surface must be able to tell them apart because they have
+ * different owners. `no_census_has_decoded` is a store or a deploy that is still cold and may heal
+ * itself within one back-off window. `census_stated_no_region` is a serving side that answered and
+ * named nobody -- a deployment older than the field, or a manifest whose `slug` is empty
+ * (`manifest.py` types it `slug: str` with no non-empty constraint) -- which no amount of retrying
+ * changes and which only a serving-side deploy can fix.
+ */
+export type ServedRegionGuardInertReason = "no_census_has_decoded" | "census_stated_no_region";
+
+/** Whether the row-read region guard can refuse, and what it has spent failing to arm itself. */
 export interface ServedRegionGuardStatus {
-  /** `true` once a census has decoded; while `false`, every row read passes unguarded. */
+  /**
+   * `true` when the guard could refuse a foreign region -- `regionIdentityVerdict` can reach
+   * `mismatch` on the identity held (`region.ts:294-295`). While `false`, every row read passes
+   * unguarded, whatever the reason.
+   */
   readonly armed: boolean;
   /** The region the newest decoded census stated; `null` is `unstated`, `undefined` unlearned. */
   readonly statedRegionSlug: string | null | undefined;
-  /** Census attempts made for the guard's sake that left no identity behind. */
+  /** Which inert state this is, or `null` while `armed`. */
+  readonly inertReason: ServedRegionGuardInertReason | null;
+  /** Census attempts made for the guard's sake that left no identity behind: one per attempt. */
   readonly failedLearningAttempts: number;
+  /**
+   * Row reads that found no learned identity and proceeded unguarded, across those attempts.
+   *
+   * The `census_stated_no_region` reads are NOT in here: that census decoded, so no row read after
+   * it calls `learnServedRegion` at all. `statedRegionSlug === null` is how that state is counted --
+   * by being reported at all, since it cannot change without a serving-side deploy.
+   */
+  readonly unguardedRowReads: number;
 }
 
 /**
@@ -981,15 +1057,35 @@ export interface ServedRegionGuardStatus {
  *
  * Exported because "the guard is open" is a fact about this deployment that nothing else can
  * report: a mismatch throws and is loud, but an UNARMED guard is by construction silent on the
- * row-read path (`assertServedRegionMatchesBundle` returns normally at `:920`). The `console.error`
- * in `learnServedRegion` (`:959`) is the log-shaped half of the same fact.
+ * row-read path (`assertServedRegionMatchesBundle` returns normally at `:933`). The `console.error`
+ * in `learnServedRegion` (`:1008`) is the log-shaped half of the same fact.
+ *
+ * `armed` IS THE VERDICT, not a proxy for it (style review W11, S3). It used to read
+ * `lastStatedRegionSlug !== undefined`, which is `true` for a census that decoded and stated `null`
+ * or `""` -- and `regionIdentityVerdict` calls both of those `unstated` forever
+ * (`region.ts:294-295`), so the field said "can act" of a guard that can never reach `mismatch`. It
+ * is now computed from that same function, so the two cannot drift: armed means a stated identity
+ * this guard is able to compare, and the state the old field described (a census has decoded) is
+ * `statedRegionSlug !== undefined`.
  */
 export function servedRegionGuardStatus(): ServedRegionGuardStatus {
+  // `unstated` is the one verdict that can never become a refusal (`region.ts:294-295`), so it is
+  // exactly the complement of "can act" -- `agrees` and `mismatch` both mean an identity was
+  // stated and compared.
+  const armed = regionIdentityVerdict(lastStatedRegionSlug).kind !== "unstated";
   return {
-    armed: lastStatedRegionSlug !== undefined,
+    armed,
     statedRegionSlug: lastStatedRegionSlug,
+    inertReason: servedRegionGuardInertReason(armed),
     failedLearningAttempts: regionLearningFailure?.attempts ?? 0,
+    unguardedRowReads: regionLearningFailure?.unguardedRowReads ?? 0,
   };
+}
+
+/** Which of the two inert states the guard is in, told apart by `undefined` versus a stated nobody. */
+function servedRegionGuardInertReason(armed: boolean): ServedRegionGuardInertReason | null {
+  if (armed) return null;
+  return lastStatedRegionSlug === undefined ? "no_census_has_decoded" : "census_stated_no_region";
 }
 
 /** The byte/time/cancellation bounds every ROW read shares. */
