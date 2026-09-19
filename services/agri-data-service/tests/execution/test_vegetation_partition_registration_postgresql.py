@@ -173,7 +173,7 @@ async def test_changed_partition_content_versions_its_own_release_set(agri_db_as
 
                 assert second.plane.payload_checksum != first.plane.payload_checksum
                 assert second_key != first_key
-                assert await _release_count(session) == 2
+                assert await _release_count(session) == 2  # noqa: PLR2004 - two releases IS the assertion
                 # The earlier release set is immutable: the amendment never rejoins it.
                 assert await _release_set_item_count(session, first_key) == 1
                 assert await _release_set_item_count(session, second_key) == 1

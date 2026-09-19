@@ -126,9 +126,7 @@ def test_a_target_day_selects_exactly_that_one_settled_release() -> None:
         (date(2030, 1, 1), "is after the settled source ceiling"),
     ],
 )
-def test_an_out_of_contract_target_day_is_refused_rather_than_silently_skipped(
-    target_day: date, message: str
-) -> None:
+def test_an_out_of_contract_target_day_is_refused_rather_than_silently_skipped(target_day: date, message: str) -> None:
     with pytest.raises(DroughtForwardConfigError, match=message):
         _weeks(target_day=target_day)
 

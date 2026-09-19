@@ -297,8 +297,7 @@ class NonFinitePartitionValueError(PartitionRegistrationError):
 
     def __init__(self, *, observed_day: date, cell_key: str, metric_value: float) -> None:
         super().__init__(
-            f"day partition {observed_day.isoformat()} carries non-finite NDVI {metric_value!r} for "
-            f"cell {cell_key!r}"
+            f"day partition {observed_day.isoformat()} carries non-finite NDVI {metric_value!r} for cell {cell_key!r}"
         )
         self.observed_day = observed_day
         self.cell_key = cell_key
@@ -476,9 +475,7 @@ def _partition_cells(
         if cell_key in seen:
             raise DuplicatePartitionCellError(observed_day=observed_day, cell_key=cell_key)
         if not math.isfinite(metric_value):
-            raise NonFinitePartitionValueError(
-                observed_day=observed_day, cell_key=cell_key, metric_value=metric_value
-            )
+            raise NonFinitePartitionValueError(observed_day=observed_day, cell_key=cell_key, metric_value=metric_value)
         seen[cell_key] = float(metric_value)
     return tuple(sorted(seen.items()))
 
@@ -523,9 +520,7 @@ async def _register_source_release(
                     "publisherDayCutoff": cutoff_day.isoformat(),
                     # Names WHERE the release came from, now that it is a Parquet day partition and
                     # never geo.features. See execution/AGENTS.md §Vegetation NDVI partition registration.
-                    "sourcePartition": (
-                        f"layer={SOURCE_LAYER_NAME}/kind=observed/day={cutoff_day.isoformat()}"
-                    ),
+                    "sourcePartition": (f"layer={SOURCE_LAYER_NAME}/kind=observed/day={cutoff_day.isoformat()}"),
                     "partitionContentSha256": corpus.payload_checksum,
                 }
             ),

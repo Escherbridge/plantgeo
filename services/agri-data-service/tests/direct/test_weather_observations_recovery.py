@@ -4,6 +4,8 @@ No network and no object store: the checkpoint store is the in-memory availabili
 `source_checkpoint` tests already use, and every body here is a literal provider response.
 """
 
+# ruff: noqa: PLR2004 - the small literal counts ARE the assertion; naming each one hides it.
+
 from __future__ import annotations
 
 import json

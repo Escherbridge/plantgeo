@@ -127,9 +127,7 @@ def test_an_interrupted_publication_leaves_the_pointer_where_it_was(valid_archiv
                 target=interrupting,
             )
         )
-    assert published_generation(completed) == first["release_set_id"], (
-        "an unfinished generation never becomes current"
-    )
+    assert published_generation(completed) == first["release_set_id"], "an unfinished generation never becomes current"
 
 
 def test_a_turn_with_no_archive_reports_no_window_rather_than_publishing_nothing(tmp_path: Path) -> None:

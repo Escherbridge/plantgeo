@@ -38,7 +38,7 @@ FROZEN_SOURCES = ("geo.features", "geo.layers", "agri.vegetation")
 class _ExplodingSession:
     """Fails loudly if validation ever lets a statement through; there is nothing to stub."""
 
-    async def execute(self, *args: object, **kwargs: object) -> object:
+    async def execute(self, *args: object, **kwargs: object) -> object:  # noqa: ARG002 - the stub absorbs any call shape precisely so it can refuse it
         raise AssertionError("a refused partition must never reach the database")
 
 

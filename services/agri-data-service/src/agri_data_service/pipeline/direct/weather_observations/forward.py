@@ -74,22 +74,22 @@ from agri_data_service.pipeline.direct.weather_observations.adapter import (
     WEATHER_OBSERVATIONS_DIRECT_KIND,
     DirectWeatherObservationsForwardAdapter,
 )
-from agri_data_service.pipeline.direct.weather_observations.rows import (
-    WEATHER_OBSERVATIONS_SOURCE_COLUMNS,
-    direct_weather_observation_tables,
-)
 from agri_data_service.pipeline.direct.weather_observations.recovery import (
     WeatherCheckpointReport,
     checkpoint_current_poll,
+)
+from agri_data_service.pipeline.direct.weather_observations.rows import (
+    WEATHER_OBSERVATIONS_SOURCE_COLUMNS,
+    direct_weather_observation_tables,
 )
 from agri_data_service.pipeline.direct.weather_observations.source import poll_current_conditions
 from agri_data_service.pipeline.direct.weather_observations.support import weather_sample_points
 from agri_data_service.pipeline.parquet.availability_extension import AvailabilityExtensionTally
 from agri_data_service.pipeline.parquet.availability_index import BotoAvailabilityStorage
-from agri_data_service.pipeline.parquet.source_checkpoint import SourceResponseCheckpoints
 from agri_data_service.pipeline.parquet.gap_fill import fill_one_lane_day, postgres_lane_day_lock
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 from agri_data_service.pipeline.parquet.objectstore import BotoObjectStoreBackend, ObjectStore, conform_to_stream_schema
+from agri_data_service.pipeline.parquet.source_checkpoint import SourceResponseCheckpoints
 from agri_data_service.warehouse.schemas.weather_observations import (
     WEATHER_OBSERVATIONS_GRAIN,
     WEATHER_OBSERVATIONS_SCHEMA,

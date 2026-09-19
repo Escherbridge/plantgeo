@@ -47,7 +47,6 @@ from agri_data_service.execution.vegetation_partition_promotion import (
     PromotionCeiling,
     VegetationDayPartitionKey,
     VegetationPromotionReceipt,
-    _promotion_report as promotion_report_of,
     availability_days_at_base_rung,
     ceiling_fields,
     day_partition_content_sha256,
@@ -60,6 +59,9 @@ from agri_data_service.execution.vegetation_partition_promotion import (
     save_promotion_receipt,
     stale_ceiling_report,
 )
+from agri_data_service.execution.vegetation_partition_promotion import (
+    _promotion_report as promotion_report_of,
+)
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.parquet_ops.coverage import CensusLane
 from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
@@ -71,6 +73,7 @@ from agri_data_service.pipeline.parquet.objectstore import (
     PartitionNotWrittenError,
 )
 from agri_data_service.warehouse.schemas.vegetation import VEGETATION_PLANE_STREAM
+
 # `index_of`/`terminal_row` are the only builders here that assemble a VALID `AvailabilityIndex` --
 # pointer digest, receipt shapes and rung ladder all conforming. Imported rather than copied: a
 # second set of index builders drifts from the contract the first encodes (engineering-principles §1).
@@ -542,7 +545,7 @@ def test_every_terminal_status_has_exactly_one_exit_code() -> None:
     `exit_code_for` fails closed on anything else, so this is the proof that "anything else" is
     empty rather than a silent third category.
     """
-    assert SUCCESSFUL_TURN_STATUSES & FAILING_TURN_STATUSES == frozenset()
+    assert SUCCESSFUL_TURN_STATUSES.isdisjoint(FAILING_TURN_STATUSES)
     assert TERMINAL_STATUSES == SUCCESSFUL_TURN_STATUSES | FAILING_TURN_STATUSES
     assert {COMPLETED_STATUS, WAITING_FOR_WRITER_STATUS} == SUCCESSFUL_TURN_STATUSES
     assert {NO_DAYS_PROMOTED_STATUS, REGISTRATION_REFUSED_STATUS, STALE_CEILING_STATUS} == FAILING_TURN_STATUSES

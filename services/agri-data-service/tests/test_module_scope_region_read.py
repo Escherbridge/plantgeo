@@ -36,11 +36,7 @@ def _module_scope_region_reads(tree: ast.Module) -> list[int]:
         for child in ast.iter_child_nodes(node):
             if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
                 continue
-            if (
-                isinstance(child, ast.Call)
-                and isinstance(child.func, ast.Name)
-                and child.func.id == _REGION_READER
-            ):
+            if isinstance(child, ast.Call) and isinstance(child.func, ast.Name) and child.func.id == _REGION_READER:
                 offending_lines.append(child.lineno)
             walk(child)
 
@@ -55,8 +51,10 @@ def test_no_module_scope_region_read() -> None:
         source = module_path.read_text(encoding="utf-8")
         if _REGION_READER not in source:
             continue
-        for line in _module_scope_region_reads(ast.parse(source)):
-            offenders.append(f"{module_path.relative_to(_SERVICE_ROOT).as_posix()}:{line}")
+        offenders.extend(
+            f"{module_path.relative_to(_SERVICE_ROOT).as_posix()}:{line}"
+            for line in _module_scope_region_reads(ast.parse(source))
+        )
     assert offenders == [], (
         "a module-scope load_region() snapshots the region the process started with and hides the "
         "dependency from the call site; move the read inside the function that needs it, or take a "

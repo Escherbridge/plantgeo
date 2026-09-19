@@ -653,8 +653,7 @@ def _selected_release_weeks(
         )
     if target_day > settled_through:
         raise DroughtForwardConfigError(
-            f"--target-day {target_day.isoformat()} is after the settled source ceiling "
-            f"{settled_through.isoformat()}"
+            f"--target-day {target_day.isoformat()} is after the settled source ceiling {settled_through.isoformat()}"
         )
     return target_day, (target_day,)
 
