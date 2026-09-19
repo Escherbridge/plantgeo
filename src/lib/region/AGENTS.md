@@ -56,10 +56,11 @@ this push.
 Everything that used to read `FALLBACK_COVERAGE_BBOX` or a named-region literal for the PNW row
 should call `getRegion()` and read `.envelope` for the named-region footprint,
 `.defaultCameraEnvelope` for the opening-camera fallback, or (for MTBS/botanical callers migrating
-later) `.subEnvelopes.<purpose>` — instead of importing a new constant. `getRegion()` is a plain lookup
-today because only one manifest exists; a later multi-region deployment adds a
-`NEXT_PUBLIC_PLANTGEO_REGION`-keyed registry inside this function, not a second exported constant
-callers have to know to switch to.
+later) `.subEnvelopes.<purpose>` — instead of importing a new constant. That registry now exists:
+`getRegion()` reads `NEXT_PUBLIC_PLANTGEO_REGION`, looks the slug up in
+`REGISTERED_MANIFEST_BY_SLUG` and caches the parsed manifest BY SLUG, so the selection is re-read on
+every call and no caller ever picks a manifest itself. An unset value is the pilot; an unrecognised
+one throws rather than serving the pilot's footprint under another region's name.
 
 ## Admin codes are declared once and derived twice
 
@@ -88,3 +89,31 @@ The manifest is still checked against the tuple, in the one place a read belongs
 separate hand-written `["WA","OR","ID"]`, and `PNW_STATE_CODES` joined its runtime value to its
 declared type with `as unknown as` -- so a changed `pnw.ts` would have left every typed surface
 promising three codes the value no longer had (STYLE-REVIEW-W2 S1/S2).
+
+## The second manifest is data, not a fixture
+
+`kenya_highlands.ts` is a second real manifest, mirroring
+`foundation/region/kenya_highlands.json`, registered in `region.ts` and selected with
+`NEXT_PUBLIC_PLANTGEO_REGION=kenya-highlands`. It could have been a fabricated object inside a test
+— `src/__tests__/region/layer-region-binding.test.tsx` already fabricates the coverage PAYLOAD a
+global-only region would emit — and it deliberately is not.
+
+A fixture proves the code paths. It cannot prove that a second manifest compiles under
+`satisfies Region`, that `crs: null` and an empty `subEnvelopes` survive `regionSchema`, that the
+admin-code check works against a tuple that is not the pilot's, or that the two trees' copies of a
+non-pilot manifest agree. It also is not the thing the next deployment copies. This file is: an
+engineer standing up region three edits a copy of it and a line of the registry, and the tests tell
+them what they got wrong.
+
+**What the second manifest changes about the pilot: nothing.** `PNW` stays the default,
+`REGION_SUBDIVISION_CODES` and `RegionAdminCode` stay derived from `PNW_ADMIN_CODES` (the only
+surfaces they serve are land-context's, and `land-context` is bound by no region), and every
+existing caller of `getRegion()` reads the pilot exactly as before unless the env var says otherwise.
+
+**What it deliberately does NOT carry.** No data, no tiles, no lanes. The manifest declares what a
+deployment over that footprint would serve and what it will honestly refuse; `layerBindingInRegion`
+answers `unbound` for burn-severity, drought, soil-survey, land-context, evacuation-zones,
+fire-perimeters, sensors and water-gauges, `LayerRow` disables those toggles with the
+"not available in this region" caption, and `useLayerVisibility` keeps them false so no layer
+component mounts and no fetch is issued for them. Proving that chain is the whole of the web-side
+second-region proof.

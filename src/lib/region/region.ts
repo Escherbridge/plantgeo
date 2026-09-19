@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { KENYA_HIGHLANDS, KENYA_HIGHLANDS_ADMIN_CODES } from "@/lib/region/kenya_highlands";
 import { PNW, PNW_ADMIN_CODES } from "@/lib/region/pnw";
 
 /** A WGS84 west/south/east/north bounding box; the manifest's own footprint claim. */
@@ -134,46 +135,100 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-let cachedRegion: Region | undefined;
+/** One manifest this deployment ships: the literal object, beside the admin-code tuple declared with it. */
+interface RegisteredManifest {
+  /** Parsed through `regionSchema` on first read; never trusted as a `Region` before that. */
+  readonly manifest: unknown;
+  /** The `const` tuple declared next to the manifest's values, which its `adminCodes` must equal. */
+  readonly declaredAdminCodes: readonly string[];
+}
+
+/** The manifest `getRegion()` resolves when nothing selects another; the pilot, and only by default. */
+export const PILOT_REGION_SLUG = "pnw";
 
 /**
- * Returns the deployment's one region manifest.
+ * Every region manifest compiled into this bundle, keyed by slug -- the registry
+ * `src/lib/region/AGENTS.md` promised and `federation.md` §1 describes.
  *
- * Parses `PNW` through `regionSchema` and deep-freezes the result on first call, then returns the
- * memoised value -- so the `.refine()` envelope-ordering checks actually run once in production
- * rather than only inside `manifest-parity.test.ts`, and no caller can widen a frozen envelope in
- * place. Only the PNW pilot exists today, so this is a constant lookup; a multi-region deployment
- * adds a `NEXT_PUBLIC_PLANTGEO_REGION`-keyed registry here rather than a caller picking a manifest
- * itself. See `src/lib/region/AGENTS.md`.
+ * Mirrors `foundation/region/manifest.py`'s `_MANIFEST_FILE_BY_SLUG`: same slugs, same defaulting,
+ * same refusal for an unregistered one. A region is DATA here, so adding the next deployment is a
+ * manifest module and one line in this table, not a branch in any caller.
+ */
+const REGISTERED_MANIFEST_BY_SLUG: Readonly<Record<string, RegisteredManifest>> = {
+  [PILOT_REGION_SLUG]: { manifest: PNW, declaredAdminCodes: PNW_ADMIN_CODES },
+  "kenya-highlands": { manifest: KENYA_HIGHLANDS, declaredAdminCodes: KENYA_HIGHLANDS_ADMIN_CODES },
+};
+
+/**
+ * The slug this deployment selects, read fresh on every call rather than captured at import.
+ *
+ * `process.env.NEXT_PUBLIC_PLANTGEO_REGION` is written as the full static member expression Next
+ * inlines at build time; an unset or empty value is the pilot, and an unrecognised one is refused
+ * by `getRegion()` rather than silently served as the pilot's footprint under another name.
+ */
+function selectedRegionSlug(): string {
+  const selected = process.env.NEXT_PUBLIC_PLANTGEO_REGION;
+  return selected === undefined || selected === "" ? PILOT_REGION_SLUG : selected;
+}
+
+/** Populated lazily, one entry per slug actually resolved; keyed by slug so two regions cannot share one. */
+const parsedRegionBySlug = new Map<string, Region>();
+
+/**
+ * Returns this deployment's one region manifest: the slug `NEXT_PUBLIC_PLANTGEO_REGION` selects.
+ *
+ * Parses the selected manifest through `regionSchema` and deep-freezes it on first read for that
+ * slug, then returns the memoised value -- so the `.refine()` envelope-ordering checks actually run
+ * once in production rather than only inside the parity tests, and no caller can widen a frozen
+ * envelope in place. The cache is keyed by RESOLVED SLUG rather than held in one slot, so the
+ * selection is re-read every call and a second region can never be served from the first one's
+ * parse. See `src/lib/region/AGENTS.md`.
  */
 export function getRegion(): Region {
-  if (cachedRegion === undefined) {
-    const parsed = regionSchema.parse(PNW);
-    assertAdminCodesMatchDeclaredTuple(parsed.adminCodes);
-    cachedRegion = deepFreeze(parsed);
+  const slug = selectedRegionSlug();
+  const alreadyParsed = parsedRegionBySlug.get(slug);
+  if (alreadyParsed !== undefined) return alreadyParsed;
+  const registered = REGISTERED_MANIFEST_BY_SLUG[slug];
+  if (registered === undefined) {
+    throw new Error(
+      `unknown region '${slug}'; this bundle compiles in [${Object.keys(REGISTERED_MANIFEST_BY_SLUG).join(", ")}]. ` +
+        `An unrecognised NEXT_PUBLIC_PLANTGEO_REGION is a configuration error, not a reason to serve the pilot's ` +
+        `footprint under another region's name`
+    );
   }
-  return cachedRegion;
+  const parsed = regionSchema.parse(registered.manifest);
+  assertAdminCodesMatchDeclaredTuple(parsed.adminCodes, registered.declaredAdminCodes);
+  const frozen = deepFreeze(parsed);
+  parsedRegionBySlug.set(slug, frozen);
+  return frozen;
 }
 
 /**
- * Refuse a manifest whose `adminCodes` are not exactly `PNW_ADMIN_CODES`, in order.
+ * Refuse a manifest whose `adminCodes` are not exactly the tuple declared beside its values.
  *
- * `REGION_SUBDIVISION_CODES`, `RegionAdminCode` and `RegionSubdivisionCode` are all derived from
- * that tuple rather than from the parsed manifest, which is what keeps them off a module-level
- * `getRegion()` read (STYLE-REVIEW-W4 S1). This is the check that makes the derivation honest: a
- * manifest that binds a code the tuple does not carry fails closed on first read instead of leaving
- * every `RegionSubdivisionCode`-typed surface promising codes the deployment no longer has.
+ * For the pilot, `REGION_SUBDIVISION_CODES`, `RegionAdminCode` and `RegionSubdivisionCode` are all
+ * derived from `PNW_ADMIN_CODES` rather than from the parsed manifest, which is what keeps them off
+ * a module-level `getRegion()` read (STYLE-REVIEW-W4 S1). This is the check that makes the
+ * derivation honest: a manifest that binds a code its own tuple does not carry fails closed on
+ * first read instead of leaving every `RegionSubdivisionCode`-typed surface promising codes the
+ * deployment no longer has.
+ *
+ * `declaredAdminCodes` is a PARAMETER rather than `PNW_ADMIN_CODES` read from inside, because the
+ * rule is per manifest: each region declares its own tuple next to its own values, and the pilot's
+ * would be the wrong thing to check a second region against.
  */
-export function assertAdminCodesMatchDeclaredTuple(adminCodes: readonly string[]): void {
-  const declared: readonly string[] = PNW_ADMIN_CODES;
+export function assertAdminCodesMatchDeclaredTuple(
+  adminCodes: readonly string[],
+  declaredAdminCodes: readonly string[]
+): void {
   const agrees =
-    adminCodes.length === declared.length &&
-    adminCodes.every((adminCode, index) => adminCode === declared[index]);
+    adminCodes.length === declaredAdminCodes.length &&
+    adminCodes.every((adminCode, index) => adminCode === declaredAdminCodes[index]);
   if (!agrees) {
     throw new Error(
-      `region manifest adminCodes [${adminCodes.join(", ")}] differ from the declared PNW_ADMIN_CODES tuple ` +
-        `[${declared.join(", ")}]; the literal types every land-context surface carries are derived from the ` +
-        `tuple, so the two may only be edited together`
+      `region manifest adminCodes [${adminCodes.join(", ")}] differ from the tuple declared beside them ` +
+        `[${declaredAdminCodes.join(", ")}]; the literal types every land-context surface carries are derived ` +
+        `from the tuple, so the two may only be edited together`
     );
   }
 }
@@ -189,5 +244,12 @@ export function assertAdminCodesMatchDeclaredTuple(adminCodes: readonly string[]
  * `src/lib/region/AGENTS.md` promises inside `getRegion()` (STYLE-REVIEW-W4 S1). The manifest is
  * still checked against this tuple -- by `assertAdminCodesMatchDeclaredTuple`, on first
  * `getRegion()` call, where a read belongs.
+ *
+ * Still the PILOT'S tuple now that a second manifest exists, and deliberately so: the only surfaces
+ * these literal types serve are land-context's (`PNW_STATE_CODES`, `PILOT_STATES`, the Drizzle
+ * enum), and `land-context` is a platform layer NO region binds a source for. A second region
+ * therefore never reaches them -- `layerBindingInRegion` answers `unbound` first. The day a region
+ * binds a land-context source, these move behind the selected manifest; until then, deriving them
+ * from the selected region would only mean an import-time region read with nothing reading it.
  */
 export const REGION_SUBDIVISION_CODES = subdivisionCodesOf(PNW_ADMIN_CODES);
