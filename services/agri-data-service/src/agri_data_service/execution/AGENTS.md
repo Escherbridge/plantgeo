@@ -64,8 +64,14 @@ New recurring work must be registered there instead of adding a Railway cron.
 
 `VEGETATION_NDVI_PROMOTION_LANE_ID` is registered and deliberately NOT in the deployed allow-list.
 Activating it is a production mutation an owner makes by adding the identifier to that variable on
-the job-executor service (the lane's own command carries no `--day`, so it promotes
-`settled_through(today)` backwards by `--max-days`).
+the job-executor service (the lane's own command carries no `--day`, so `default_promotion_days`
+picks the ceiling from the vegetation lane's own Parquet AVAILABILITY INDEX -- the newest day it
+states `published` at or before today -- and promotes `--max-days` backwards from there. It never
+reads Postgres `agri.vegetation`: that table is frozen since 2026-09-04, and the lane's first
+activated tick raised exactly because its ceiling then came from
+`pipeline/direct/vegetation/forward.py::settled_through`, which queries it. An index with no
+`published` day at all yields an empty day list, which the turn reports as `no_days_promoted`
+rather than raising).
 
 The turn's per-day outcome is decided by the vegetation lane's AVAILABILITY INDEX
 (`layer-lanes.md` §4a), which the promoter reads and never writes, before it opens any object:

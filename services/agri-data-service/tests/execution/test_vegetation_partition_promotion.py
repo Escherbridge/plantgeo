@@ -11,7 +11,7 @@ scoping decision (owner 2026-09-18) is correct.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -31,6 +31,7 @@ from agri_data_service.execution.vegetation_partition_promotion import (
     VegetationDayPartitionKey,
     VegetationPromotionReceipt,
     day_partition_content_sha256,
+    default_promotion_days,
     exit_code_for,
     load_promotion_receipt,
     promote_vegetation_day_partition,
@@ -499,3 +500,95 @@ def test_a_written_but_empty_partition_still_fails_naming_the_lane_and_the_day()
 
     assert "vegetation" in str(error)
     assert DAY.isoformat() in str(error)
+
+
+def test_default_promotion_days_uses_the_newest_published_day_as_the_ceiling() -> None:
+    """The ceiling is the AVAILABILITY INDEX's newest `published` day, not `settled_through`."""
+    newest_published = date(2026, 9, 15)
+    availability = AvailabilityIndexDays(
+        verdicts={
+            date(2026, 9, 12): IndexedDay(state="published"),
+            newest_published: IndexedDay(state="published"),
+            date(2026, 9, 18): IndexedDay(state="governed_absence", absence_reason="upstream_scene_not_published"),
+        }
+    )
+
+    days = default_promotion_days(availability=availability, today=date(2026, 9, 18), max_days=3)
+
+    assert days == (
+        newest_published - timedelta(days=2),
+        newest_published - timedelta(days=1),
+        newest_published,
+    )
+
+
+def test_default_promotion_days_ignores_a_published_day_after_today() -> None:
+    """A `published` day beyond `today` is never the ceiling, even if it is the newest in the index."""
+    availability = AvailabilityIndexDays(
+        verdicts={
+            date(2026, 9, 10): IndexedDay(state="published"),
+            date(2026, 9, 30): IndexedDay(state="published"),
+        }
+    )
+
+    days = default_promotion_days(availability=availability, today=date(2026, 9, 18), max_days=1)
+
+    assert days == (date(2026, 9, 10),)
+
+
+def test_default_promotion_days_returns_empty_when_the_index_has_no_published_day() -> None:
+    """An index with nothing `published` yields no days, never a `settled_through`-style raise.
+
+    Feeding the empty tuple through the real `run_vegetation_promotion` turn (rather than asserting
+    on `default_promotion_days` alone) proves the caller's existing `no_days_promoted` handling
+    absorbs it end to end -- the exact turn shape that raised in production before this fix.
+    """
+    availability = EMPTY_AVAILABILITY_INDEX
+
+    days = default_promotion_days(availability=availability, today=date(2026, 9, 18), max_days=1)
+    assert days == ()
+
+
+async def test_an_empty_default_promotion_days_result_reports_no_days_promoted(store: ObjectStore) -> None:
+    """Zero days evaluated ends the turn as `no_days_promoted`, never a raised `ValueError`."""
+    session = cast("AsyncSession", object())  # never touched: an empty `days` sequence opens no object
+    days = default_promotion_days(availability=EMPTY_AVAILABILITY_INDEX, today=date(2026, 9, 18), max_days=1)
+
+    report = await run_vegetation_promotion(session, store, days=days, availability=EMPTY_AVAILABILITY_INDEX)
+
+    assert report["status"] == "no_days_promoted"
+    assert report["days"] == []
+    assert exit_code_for(report) == 1
+
+
+def test_default_promotion_days_rejects_a_non_positive_max_days() -> None:
+    with pytest.raises(ValueError, match="--max-days"):
+        default_promotion_days(availability=EMPTY_AVAILABILITY_INDEX, today=date(2026, 9, 18), max_days=0)
+
+
+def test_vegetation_partition_promotion_never_imports_the_frozen_postgres_forward_module() -> None:
+    """Execution must not reach into `pipeline.direct.vegetation.forward` (Postgres `agri.vegetation`,
+    retired 2026-09-04). The source is walked directly, rather than asserting on `sys.modules`,
+    because an already-imported sibling module would make a `sys.modules` check pass even if this
+    module re-added the import (`tests/test_layer_import_contract.py` uses the same AST-walk idiom).
+    """
+    import ast
+    from pathlib import Path
+
+    module_path = (
+        Path(__file__).resolve().parents[2]
+        / "src"
+        / "agri_data_service"
+        / "execution"
+        / "vegetation_partition_promotion.py"
+    )
+    tree = ast.parse(module_path.read_text(encoding="utf-8"), filename=str(module_path))
+    imported_modules: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            imported_modules.append(node.module)
+        elif isinstance(node, ast.Import):
+            imported_modules.extend(alias.name for alias in node.names)
+
+    forbidden = "agri_data_service.pipeline.direct.vegetation.forward"
+    assert not any(module == forbidden or module.startswith(forbidden + ".") for module in imported_modules)
