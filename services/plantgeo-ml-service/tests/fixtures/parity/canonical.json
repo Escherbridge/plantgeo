@@ -1,0 +1,38 @@
+{
+  "canonical_json": [
+    "{\"a\":2,\"b\":1}",
+    "{\"alpha\":null,\"nested\":{\"a\":{\"deep\":true},\"z\":[3,2,1]}}",
+    "[1,2.5,\"three\",false,null]",
+    "{\"emoji_free\":\"plain\",\"unicode\":\"caf\u00e9 \u00e5\u00e4\u00f6\"}",
+    "{\"ascii_key\":\"ascii value\",\"pr\u00e9cipitation\":null,\"temp\u00e9rature_moyenne\":12.5}",
+    "{\"empty_list\":[],\"empty_object\":{},\"empty_string\":\"\"}",
+    "{\"float_edges\":[0.0,-0.0,1e-09,1e+20]}",
+    "\"a bare string\"",
+    "42"
+  ],
+  "sha256_digest_bytes": [
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+    "29a6a173e5511d494a74cddb35b9d04ad02ea5060e406779d5c10f35f4862249",
+    "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+  ],
+  "sha256_digest_text": [
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+    "850f7dc43910ff890f8879c0ed26fe697c93a067ad93a7d50f466a7028a9bf4e",
+    "43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777",
+    "2cbf6cecd89676f268fd25f3b7d4a59563161ab7a76941b669f43838388f93d1",
+    "44f8354494a5ba03ba1792a8d3e9c534c47a9181980fde7a3f44b06ef2ae7c7f"
+  ],
+  "validate_finite": [
+    "ok:0.0",
+    "ok:-1.5",
+    "ok:1e+308",
+    "ok:-0.0"
+  ],
+  "validate_finite_refusals": [
+    "raised:ValueError",
+    "raised:ValueError",
+    "raised:ValueError"
+  ]
+}

@@ -246,6 +246,8 @@ production Parquet lane was remeasured read-only on 2026-08-29 and now resolves 
 
 ## 7. Forecast recommendation
 
+> Since 2026-09-18 the forecaster lives in the ML service: `services/plantgeo-ml-service/src/plantgeo_ml_service/method/monte_carlo/water_gauges.py` (track `plantgeo_ml_service_20260918`, owner decision D2). agri-data-service is observed-only.
+
 **`horizon: 30d`**, per `conductor/RUNBOOK.md` §0.24.2's classification of `water-gauges` as a "yes"
 for the 30-day Monte Carlo, and this document does not find evidence to override that declaration —
 but the recommendation comes with a load-bearing caveat the classification table does not carry.

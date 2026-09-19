@@ -232,6 +232,20 @@ coverage.
 
 ## 5. ML stays where it already is, and the lattice does not yet separate it
 
+**Superseded 2026-09-18: the "eventually" below arrived.** `method/ml/` and
+`method/monte_carlo/` left agri-data-service in one hard cut and now live at
+`services/plantgeo-ml-service/src/plantgeo_ml_service/method/{ml,monte_carlo}/`
+(track `plantgeo_ml_service_20260918`, owner decisions D2 and D6). The
+sub-package rule below moved with them: the ML service's own
+`tests/test_layer_import_contract.py` carries the `method/ml` to
+`method/monte_carlo` forbid in both directions, and agri-data-service dropped
+`SUBPACKAGE_FORBIDDEN_IMPORTS`, its `method` layer entry and the
+`agri_data_service.method` forbids, because a rule about a package that no
+longer exists is noise rather than enforcement. agri-data-service is
+observed-only: the ML service is what writes `kind=forecast` partitions, and a
+lane registry `forecast_module` stem now names a module over there. The rest of
+this section is kept as the record of how the boundary was drawn before the cut.
+
 **ML is at `method/ml/` (10 modules) and does not move.** An earlier draft of
 RUNBOOK §0.24.5 said it moves to a new top-level `ml/`; that was wrong and is
 corrected. It is expected to leave for a separate **Mojo service** eventually —

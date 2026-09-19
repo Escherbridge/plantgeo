@@ -29,6 +29,28 @@ monkeypatch site (`test_gap_repair.py`, `test_lane_cadence.py`, `test_self_heali
 `test_job_run_supersession_agri_db.py`) targets functions that stayed in `job_executor_service.py`
 and are unaffected.
 
+### The ML lane left this directory (2026-09-18)
+
+Eighteen modules were deleted in the same push, not refactored: `analog_ensemble_cli.py`,
+`analog_ensemble_model.py`, `analog_ensemble_persist.py`, `conformal_recalibration.py`,
+`covariate_wind_lane.py`, `covariate_wind_model.py`, `covariate_wind_persist.py`,
+`forecast_receipt_writer.py`, `recommendation_commands.py`, `recommendation_lane.py`,
+`seasonal_benchmark.py`, `seasonal_command.py`, `seasonal_evaluation_export.py`,
+`seasonal_evidence_report.py`, `seasonal_lineage_persist.py`, `seasonal_row_types.py`,
+`strategy_selection.py` and `strategy_label_mapping.py`. None of them ran: no CLI verb registered
+the five lane entry points, and seven of the ten `agri.*` tables their SQL named are absent from
+`db/agri_baseline.sql`. Their pure halves are `plantgeo_ml_service.method.ml` and
+`plantgeo_ml_service.pipeline.strategy_*` in `services/plantgeo-ml-service/`; their Postgres halves
+are not ported anywhere and are re-expressed against Parquet in phase 2 of track
+`plantgeo_ml_service_20260918` (owner decisions D2, D5, D6). Git history is the archive; do not
+restore a module from it to re-add a database-backed training lane.
+
+The vegetation modules that remain are NOT part of that lane. `vegetation_ndvi_forecast.py` here is
+the retained observed-release copy imported by `vegetation_ndvi_plane.py` and
+`vegetation_partition_promotion.py`; the copy that moved was `method/monte_carlo/`'s. The four
+`sql/execution/insert_forecast_series|insert_forecast_iteration|insert_forecast_iteration_value|
+reconcile_forecast_iteration_actuals` files stayed with it for the same reason.
+
 ## Lane activation
 
 `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` is the only deployment activation control. An empty value keeps
@@ -51,12 +73,16 @@ The turn's per-day outcome is decided by the vegetation lane's AVAILABILITY INDE
 - index says `governed_absence` -> reported `status: "absent"` carrying the INDEX'S OWN
   `absence_reason`, no object read attempted, the remaining days still promote;
 - index has no row for the day -> `status: "not_yet_indexed"`, skipped, neutral for the exit code;
-- index says `published` but the store holds no part file -> the pointer is RE-READ once. If the
-  winning generation now states the day (a prune or retention pass landed inside the turn's
-  window), the day is classified per that fresh row and carries `reclassified:
-  "availability_index_advanced_during_turn"`. Only a still-published pointer raises
-  `AvailabilityPartitionConflictError`, because THAT disagreement is corruption and not an absence
-  (STYLE-REVIEW-W5 S4);
+- index says `published` but the store holds no part file -> the pointer is RE-READ once. ONLY a
+  fresh `governed_absence` reclassifies: a prune or retention pass landed inside the turn's window
+  and the winning generation records it with a reason, so the day is reported absent carrying
+  `reclassified: "availability_index_advanced_during_turn"` (STYLE-REVIEW-W5 S4). Every other fresh
+  verdict raises `AvailabilityPartitionConflictError` -- a still-`published` pointer because that
+  disagreement is corruption, and a fresh `not_yet_indexed` because the index LOST a row it had,
+  which reclassified would have exited 0 as `waiting_for_writer` and made an availability regression
+  silently green (STYLE-REVIEW-W6 S2). The refusal names the day, the fresh verdict, BOTH generation
+  SHAs and the `_LATEST.json` pointer key, because after a re-read two generations are in play and
+  a stale snapshot and a real divergence otherwise read the same (STYLE-REVIEW-W6 S3);
 - a day that was written and is empty still fails, naming the lane and the day.
 
 A turn ends on one of three statuses (STYLE-REVIEW-W5 S3):

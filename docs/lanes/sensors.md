@@ -276,6 +276,8 @@ Nothing source-reconciling exists for this lane yet (see §5). What layer-lanes.
 
 ## 7. Forecast recommendation
 
+> Since 2026-09-18 the forecaster lives in the ML service: `services/plantgeo-ml-service/src/plantgeo_ml_service/method/monte_carlo/sensors.py` (track `plantgeo_ml_service_20260918`, owner decision D2). agri-data-service is observed-only.
+
 **`horizon: 30d`** — per `conductor/RUNBOOK.md:3339` (§0.24.2's eleven-lane table: `sensors | station
 network | **yes**`). Ground-station point measurements (temperature, humidity, wind, pressure,
 precipitation) are the same physical category `weather-observations` already forecasts, and the

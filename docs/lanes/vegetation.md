@@ -157,6 +157,11 @@ for the governed forecast plane, not the production Parquet scheduler.
 
 ### 5.2 Two near-duplicate copies of the Monte Carlo method module exist — only one is wired in
 
+> **Update 2026-09-18:** the `method/monte_carlo/` copy left agri-data-service for
+> `services/plantgeo-ml-service/src/plantgeo_ml_service/method/monte_carlo/vegetation_ndvi_forecast.py`
+> (track `plantgeo_ml_service_20260918`). The `execution/` copy below is the only one left here and is
+> still the one `vegetation_ndvi_plane.py` and the promotion lane run. The paths below are historical.
+
 `services/agri-data-service/src/agri_data_service/execution/vegetation_ndvi_forecast.py` (369 lines)
 and `services/agri-data-service/src/agri_data_service/method/monte_carlo/vegetation_ndvi_forecast.py`
 (370 lines) were diffed directly this session: **functionally identical**, differing only by a
@@ -253,6 +258,8 @@ question than the contract requires:
    interpolate a missing day into existence.
 
 ## 7. Forecast recommendation
+
+> Since 2026-09-18 the forecaster lives in the ML service: `services/plantgeo-ml-service/src/plantgeo_ml_service/method/monte_carlo/vegetation_ndvi_forecast.py` (track `plantgeo_ml_service_20260918`, owner decision D2). The `execution/vegetation_ndvi_forecast.py` copy inside agri-data-service is a separate, retained module on the observed release path.
 
 **`horizon: 30d`.** `conductor/RUNBOOK.md` §0.24.2 classifies `vegetation` as **"yes — 4 years of
 history, the deepest record"**, and it is the one lane that already has a Monte Carlo module on disk

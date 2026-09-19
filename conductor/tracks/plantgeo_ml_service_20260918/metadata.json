@@ -1,0 +1,396 @@
+{
+  "id": "plantgeo_ml_service_20260918",
+  "slug": "plantgeo_ml_service_20260918",
+  "title": "PlantGeo ML service \u2014 extract ML and Monte Carlo into a dedicated Parquet-fed service",
+  "description": "Move method/ml and method/monte_carlo out of agri-data-service into services/plantgeo-ml-service: zero-Postgres, Parquet in and out, own API lane, Mojo kernels behind parity harnesses, fire-risk and spatial-KNN daily lanes. Code and plans only; training runs are owner-triggered later.",
+  "type": "feature",
+  "status": "active",
+  "created_on": "2026-09-18",
+  "created_at": "2026-09-18T17:45:00+00:00",
+  "supersedes": [
+    "ml_mojo_conversion_20260823"
+  ],
+  "depends_on": [],
+  "related": [
+    "fire_risk_zone_forecast_20260823",
+    "regional_fire_risk_surface_20260824",
+    "fire_feature_plane_validation_20260824",
+    "environmental_parquet_serving_20260912"
+  ],
+  "design_documents": [
+    ".omc/research/mojo-ml-service-20260918/FINDINGS.md",
+    "conductor/tracks/plantgeo_ml_service_20260918/evidence/extraction-inventory-20260918.md"
+  ],
+  "owner_decisions": {
+    "placement": "monorepo sibling services/plantgeo-ml-service, Railway service plantgeo-ml in Aevani",
+    "forecast_partitions": "the ML service writes kind=forecast; agri-data-service becomes observed-only",
+    "mojo_shape": "Python host, Mojo kernels imported from Python, each behind a golden-output parity harness",
+    "first_slice": "fire-risk occurrence AND spatial KNN (Analog Ensemble), both written daily to Parquet",
+    "postgres": "zero; expert label plane exported to Parquet once",
+    "cutover": "hard cut in one push; git history is the archive",
+    "dev_env": "WSL2 + pixi locally; Mojo also compiled in the Railway Docker build; Python reference for every kernel",
+    "bookkeeping": "supersedes ml_mojo_conversion_20260823; service owns its own RUNBOOK.md; one row in the main RUNBOOK",
+    "training": "OUT OF SCOPE \u2014 owner finalises data in a separate session"
+  },
+  "partitions": {
+    "computed_at": "2026-09-18T17:45:00+00:00",
+    "computed_at_commit": "8451ebcf",
+    "confidence": "planned",
+    "slices": [
+      {
+        "id": "p1a-service-skeleton",
+        "task": "New services/plantgeo-ml-service: pyproject, config that refuses DATABASE_URL, Sanic app with /health and /ready, lattice import test, Dockerfile + railway.json, AGENTS.md, RUNBOOK.md, CLI root; COPY (cp, not git mv) every inventory \u00a7A module and test into the new package and rewrite imports; merge the two covariate_wind_model modules",
+        "owns": [
+          {
+            "path": "services/plantgeo-ml-service/**",
+            "status": "future"
+          }
+        ],
+        "reads_only": [
+          "services/agri-data-service/src/agri_data_service/method/**",
+          "services/agri-data-service/src/agri_data_service/execution/strategy_selection.py",
+          "services/agri-data-service/src/agri_data_service/execution/strategy_label_mapping.py",
+          "services/agri-data-service/src/agri_data_service/execution/covariate_wind_model.py",
+          "services/agri-data-service/src/agri_data_service/execution/contracts.py",
+          "services/agri-data-service/src/agri_data_service/foundation/canonical.py",
+          "services/agri-data-service/src/agri_data_service/interface/cli/commands.py",
+          "services/agri-data-service/src/agri_data_service/interface/cli/ml.py",
+          "services/agri-data-service/tests/test_layer_import_contract.py",
+          "services/agri-data-service/Dockerfile",
+          "services/agri-data-service/scripts/*.py"
+        ],
+        "model": "opus",
+        "depends_on": []
+      },
+      {
+        "id": "p1b-agri-cut",
+        "task": "Delete inventory \u00a7B from agri-data-service (execution ML lane, unmounted route, SQL, Postgres tests, cli/ml.py, the two verbs); edit \u00a7C (__init__ re-exports, import-contract rules, lane_registry comment, pyproject scikit-learn, AGENTS/docs pointers); delete method/ml and method/monte_carlo ONLY after p1a reports the copies landed; split the forecaster sections of the two Parquet serving tests into two new ML-service test files; regenerate CLI_ADAPTER_VIOLATIONS; delete the 40 mechanically derived orphan SQL files",
+        "owns": [
+          "services/agri-data-service/src/agri_data_service/__init__.py",
+          "services/agri-data-service/src/agri_data_service/method/**",
+          "services/agri-data-service/src/agri_data_service/execution/analog_ensemble_cli.py",
+          "services/agri-data-service/src/agri_data_service/execution/analog_ensemble_model.py",
+          "services/agri-data-service/src/agri_data_service/execution/analog_ensemble_persist.py",
+          "services/agri-data-service/src/agri_data_service/execution/conformal_recalibration.py",
+          "services/agri-data-service/src/agri_data_service/execution/covariate_wind_lane.py",
+          "services/agri-data-service/src/agri_data_service/execution/covariate_wind_model.py",
+          "services/agri-data-service/src/agri_data_service/execution/covariate_wind_persist.py",
+          "services/agri-data-service/src/agri_data_service/execution/forecast_receipt_writer.py",
+          "services/agri-data-service/src/agri_data_service/execution/recommendation_commands.py",
+          "services/agri-data-service/src/agri_data_service/execution/recommendation_lane.py",
+          "services/agri-data-service/src/agri_data_service/execution/seasonal_benchmark.py",
+          "services/agri-data-service/src/agri_data_service/execution/seasonal_command.py",
+          "services/agri-data-service/src/agri_data_service/execution/seasonal_evaluation_export.py",
+          "services/agri-data-service/src/agri_data_service/execution/seasonal_evidence_report.py",
+          "services/agri-data-service/src/agri_data_service/execution/seasonal_lineage_persist.py",
+          "services/agri-data-service/src/agri_data_service/execution/seasonal_row_types.py",
+          "services/agri-data-service/src/agri_data_service/execution/strategy_selection.py",
+          "services/agri-data-service/src/agri_data_service/execution/strategy_label_mapping.py",
+          "services/agri-data-service/src/agri_data_service/execution/AGENTS.md",
+          "services/agri-data-service/src/agri_data_service/routes/recommendations.py",
+          "services/agri-data-service/src/agri_data_service/interface/cli/ml.py",
+          "services/agri-data-service/src/agri_data_service/interface/cli/commands.py",
+          "services/agri-data-service/src/agri_data_service/interface/cli/__init__.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
+          "services/agri-data-service/src/agri_data_service/AGENTS.md",
+          "services/agri-data-service/pyproject.toml",
+          "services/agri-data-service/uv.lock",
+          "services/agri-data-service/tests/test_layer_import_contract.py",
+          "services/agri-data-service/tests/test_analog_ensemble*.py",
+          "services/agri-data-service/tests/test_conformal_*.py",
+          "services/agri-data-service/tests/test_covariate_*.py",
+          "services/agri-data-service/tests/test_covariates_v2_schema.py",
+          "services/agri-data-service/tests/test_expert_label_plane*.py",
+          "services/agri-data-service/tests/test_recommendation*.py",
+          "services/agri-data-service/tests/test_seasonal_*.py",
+          "services/agri-data-service/tests/test_strategy_selection*.py",
+          "services/agri-data-service/tests/test_strategy_label_mapping.py",
+          "services/agri-data-service/tests/test_signal_lineage_postgresql.py",
+          "conductor/code_styleguides/layer-lanes.md",
+          "docs/lanes/fire-detections.md",
+          "docs/lanes/sensors.md",
+          "docs/lanes/weather-observations.md",
+          "docs/lanes/vegetation.md",
+          "docs/lanes/water-gauges.md",
+          "services/agri-data-service/src/agri_data_service/sql/execution/<the 40 files in evidence/extraction-inventory \u00a7B, derived mechanically>",
+          "services/agri-data-service/src/agri_data_service/sql/routes/recommendation_*.sql",
+          "services/agri-data-service/tests/parquet/test_signal_serving.py",
+          "services/agri-data-service/tests/parquet/test_vegetation_serving.py",
+          "services/agri-data-service/tests/test_sql_tree_conventions.py",
+          {
+            "path": "services/plantgeo-ml-service/tests/test_signal_forecast.py",
+            "status": "future"
+          },
+          {
+            "path": "services/plantgeo-ml-service/tests/test_vegetation_forecast.py",
+            "status": "future"
+          }
+        ],
+        "model": "opus",
+        "depends_on": [
+          "p1a-service-skeleton"
+        ],
+        "ordering_note": "p1b starts once p1a reports every \u00a7A copy landed; the two never touch the same path"
+      },
+      {
+        "id": "p2a-parquet-io",
+        "task": "foundation/parquet_paths.py + cross-service parity test; warehouse/streams.py pinned schemas; pipeline/object_store.py writer with receipts; pipeline/observed_reader.py; pipeline/expert_labels.py; agri-side ops export-expert-labels verb; pipeline/availability_publisher.py (FR-4a: generation + CAS pointer + retry + receipt); forecast_schema_for parity fixture",
+        "owns": [
+          {
+            "path": "services/plantgeo-ml-service/src/plantgeo_ml_service/foundation/parquet_paths.py",
+            "status": "future"
+          },
+          {
+            "path": "services/plantgeo-ml-service/src/plantgeo_ml_service/warehouse/**",
+            "status": "future"
+          },
+          {
+            "path": "services/plantgeo-ml-service/src/plantgeo_ml_service/pipeline/object_store.py",
+            "status": "future"
+          },
+          {
+            "path": "services/plantgeo-ml-service/src/plantgeo_ml_service/pipeline/availability_publisher.py",
+            "status": "future"
+          },
+          {
+            "path": "services/plantgeo-ml-service/src/plantgeo_ml_service/pipeline/observed_reader.py",
+            "status": "future"
+          },
+          {
+            "path": "services/plantgeo-ml-service/src/plantgeo_ml_service/pipeline/expert_labels.py",
+            "status": "future"
+          },
+          {
+            "path": "services/plantgeo-ml-service/tests/test_parquet_*.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/execution/expert_label_export.py",
+            "status": "future"
+          },
+          "services/agri-data-service/src/agri_data_service/interface/cli/ops.py"
+        ],
+        "model": "opus",
+        "depends_on": [
+          "p1b-agri-cut"
+        ]
+      },
+      {
+        "id": "p2b-fire-risk",
+        "task": "leakage-gated feature builder ported from analysis/fire_risk_index.py; method/ml/fire_risk_model.py; pipeline/fire_risk_daily.py; fire-risk lane schema use; pipeline/fire_risk_backtest.py and the FR-5 publication gate in the daily writer",
+        "owns": [
+          {
+            "path": "services/plantgeo-ml-service/src/plantgeo_ml_service/pipeline/fire_risk_*.py",
+            "status": "future"
+          },
+          {
+            "path": "services/plantgeo-ml-service/src/plantgeo_ml_service/method/ml/fire_risk_model.py",
+            "status": "future"
+          },
+          {
+            "path": "services/plantgeo-ml-service/tests/test_fire_risk_*.py",
+            "status": "future"
+          }
+        ],
+        "model": "opus",
+        "depends_on": [
+          "p2a-parquet-io"
+        ]
+      },
+      {
+        "id": "p2b-knn",
+        "task": "pipeline/analog_ensemble_daily.py over signal observed partitions; pipeline/monte_carlo_daily.py dispatch for the five registry stems; kind=forecast writes with six provenance columns",
+        "owns": [
+          {
+            "path": "services/plantgeo-ml-service/src/plantgeo_ml_service/pipeline/analog_ensemble_daily.py",
+            "status": "future"
+          },
+          {
+            "path": "services/plantgeo-ml-service/src/plantgeo_ml_service/pipeline/monte_carlo_daily.py",
+            "status": "future"
+          },
+          {
+            "path": "services/plantgeo-ml-service/tests/test_analog_ensemble_daily.py",
+            "status": "future"
+          },
+          {
+            "path": "services/plantgeo-ml-service/tests/test_monte_carlo_daily.py",
+            "status": "future"
+          }
+        ],
+        "model": "opus",
+        "depends_on": [
+          "p2a-parquet-io"
+        ]
+      },
+      {
+        "id": "p2d-fire-risk-registration",
+        "task": "agri side: LaneRegistration for fire-risk (daily_series, floor basis, lag, cadence, ladder, forecast_module None), warehouse/schemas/fire_risk.py, docs/lanes/fire-risk.md, lane contract test expectations; sequenced AFTER the concurrent session's vegetation_type p1d-registration slice lands on lane_registry.py",
+        "owns": [
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
+          {
+            "path": "services/agri-data-service/src/agri_data_service/warehouse/schemas/fire_risk.py",
+            "status": "future"
+          },
+          {
+            "path": "docs/lanes/fire-risk.md",
+            "status": "future"
+          },
+          "services/agri-data-service/tests/parquet/test_lane_contract.py"
+        ],
+        "model": "opus",
+        "depends_on": [
+          "p2a-parquet-io"
+        ],
+        "note": "lane_registry.py is owned by vegetation_type_landfire_evt_20260918 p1d until that slice lands; re-verify before launching"
+      },
+      {
+        "id": "p2c-api",
+        "task": "serving/ readers, the four /api/v1/ml routes, predict-daily CLI, cron Dockerfile + railway.cron.json",
+        "owns": [
+          {
+            "path": "services/plantgeo-ml-service/src/plantgeo_ml_service/serving/**",
+            "status": "future"
+          },
+          "services/plantgeo-ml-service/src/plantgeo_ml_service/interface/cli.py",
+          "services/plantgeo-ml-service/src/plantgeo_ml_service/app.py",
+          {
+            "path": "services/plantgeo-ml-service/infra/cron/**",
+            "status": "future"
+          },
+          {
+            "path": "services/plantgeo-ml-service/railway.cron.json",
+            "status": "future"
+          },
+          {
+            "path": "services/plantgeo-ml-service/tests/test_routes_*.py",
+            "status": "future"
+          }
+        ],
+        "model": "opus",
+        "depends_on": [
+          "p2b-fire-risk",
+          "p2b-knn",
+          "p2d-fire-risk-registration"
+        ]
+      },
+      {
+        "id": "p3-mojo-kernels",
+        "task": "pixi.toml, kernels/*.mojo (knn_search, pcg64 + seasonal_bootstrap, seasonal_features), method/kernels dispatch, parity harnesses, Dockerfile Mojo stage, benchmark receipt",
+        "owns": [
+          {
+            "path": "services/plantgeo-ml-service/kernels/**",
+            "status": "future"
+          },
+          {
+            "path": "services/plantgeo-ml-service/pixi.toml",
+            "status": "future"
+          },
+          "services/plantgeo-ml-service/src/plantgeo_ml_service/method/kernels/**",
+          {
+            "path": "services/plantgeo-ml-service/tests/kernels/**",
+            "status": "future"
+          },
+          "services/plantgeo-ml-service/Dockerfile"
+        ],
+        "model": "opus",
+        "depends_on": [
+          "p2c-api"
+        ]
+      },
+      {
+        "id": "p4-platform-wiring",
+        "task": "agent forecast tool reads kind=forecast; slider forecastable; PLANTGEO_ML_SERVICE_URL client; fire-risk tRPC read; track statuses",
+        "owns": [
+          "services/agri-data-service/src/agri_data_service/agent/tools.py",
+          "src/lib/server/services/parquet-slider-capabilities.ts",
+          {
+            "path": "src/lib/server/services/ml-service-client.ts",
+            "status": "future"
+          },
+          "docs/env-vars.md",
+          "conductor/tracks/fire_risk_zone_forecast_20260823/metadata.json"
+        ],
+        "model": "opus",
+        "depends_on": [
+          "p2c-api"
+        ],
+        "note": "src/** and agent/tools.py are owned by the ultrapilot session until it ends; re-verify before launching; Mojo (p3) is an optimisation and never gates p4"
+      }
+    ],
+    "shared_writes": [
+      {
+        "path": "conductor/RUNBOOK.md",
+        "owner": "coordinator",
+        "reason": "concurrent sessions share it; this track edits only its own Outstanding-work row"
+      },
+      {
+        "path": "services/agri-data-service/QUALITY_RECEIPT.json",
+        "owner": "monitor",
+        "reason": "refreshed by the single end sweep, never by an author"
+      },
+      {
+        "path": "services/agri-data-service/tests/test_layer_import_contract.py",
+        "owner": "p1b-agri-cut",
+        "reason": "p1a ports a copy; only p1b edits the original"
+      }
+    ],
+    "tripwires": [
+      "never edit execution/vegetation_*, execution/lane_specs.py, pipeline/**, planes/**, parquet_ops/**, warehouse/** or src/** in phases 1-3",
+      "cp + rm, never git mv, from any agent; the coordinator stages and commits",
+      "the receipt is refreshed by the sweep; a hand edit or a CRLF tree fails the Docker build",
+      "Bash heredocs containing backticks write nothing; use Write/Edit",
+      "Python-imported Mojo functions take at most six arguments",
+      "random_seed on every forecast row; unseeded ensembles do not ship",
+      "cell_id is required non-null at the signal base rung; ML-written forecast rows propagate cell_id and every observed key column verbatim; the schema is forecast_schema_for(observed), never re-specified",
+      "integer lattice binning round(lat / pitch), never IEEE division of the latitude",
+      "execution/covariate_wind_model.py (814 lines) is the superset of the 130-line L1 module but is not pure: extract, do not merge",
+      "keep insert_forecast_series/iteration/iteration_value and reconcile_forecast_iteration_actuals SQL: vegetation_ndvi_plane.py loads them",
+      "read each *_postgresql test before deleting; keep any that only exercises a table still in db/agri_baseline.sql",
+      "writing a partition does not publish it: availability generation + _LATEST.json pointer per FR-4a, verified through parquet_ops/availability_coverage.py",
+      "execution/covariate_wind_model.py imports sqlalchemy and loads target_signal_series.sql at module scope: extract the numeric core, never merge the file",
+      "tests/test_covariates_v2_schema.py is live-Postgres (psycopg2, AGRI_TEST_DATABASE_URL, fails not skips): delete, never move",
+      "tests/test_sql_tree_conventions.py::test_loaded_exactly_once fails on every orphaned .sql: derive the delete list from load_query_sql call sites",
+      "tests/test_layer_import_contract.py:480-482 pins commands.py:146; regenerate CLI_ADAPTER_VIOLATIONS from the assertion message after deleting the verbs",
+      "no fire-risk partition to a real prefix without a walk-forward backtest receipt clearing the declared lift (FR-5 gate)"
+    ],
+    "integration_slice": "p1c-sweep-review-push (coordinator + monitor): one agri sweep with --write-receipt, one ML sweep, /code-review high, push, five-service build check",
+    "amended_at": "2026-09-18T18:30:00+00:00",
+    "amendment": "critic review phase 0 (CHANGES-REQUIRED, 12 findings) folded in: covariate_wind extraction, covariates_v2 test deleted, parquet serving tests split, 40 orphan SQL, CLI pin, availability publisher FR-4a, fire-risk registration slice p2d + backtest gate, cell_id tripwire inverted, planes/ layer name, PCG64 not ported, p4 depends on p2c"
+  },
+  "reviews": {
+    "phase0": {
+      "reviewer": "oh-my-claudecode:critic (opus)",
+      "reviewed_on": "2026-09-18",
+      "verdict": "CHANGES-REQUIRED",
+      "findings": 12,
+      "disposition": "all 12 folded into spec/plan/metadata/inventory on 2026-09-18; see partitions.amendment"
+    },
+    "phase1": {
+      "cut_review": {
+        "reviewer": "oh-my-claudecode:code-reviewer (opus)",
+        "reviewed_on": "2026-09-18",
+        "verdict": "APPROVE-WITH-CHANGES",
+        "notes": "cut complete and inert (no dangling importer, CLI pin correct at commands.py:93, no sklearn importer left); MAJOR = do not stage the service directory wholesale because the federation session's W6 files share it (resolved by coordinated commits A/B); MINORs deferred to next push: lane_registry.py forecaster path strings at :608,680,699,738,760,823 and six comments under pipeline/planes/warehouse, unbacked 'a test compares' sentence at lane_registry.py:152, missing tombstone in test_vegetation_serving.py, stale __pycache__"
+      },
+      "skeleton_review": {
+        "reviewer": "quality-reviewer (opus)",
+        "reviewed_on": "2026-09-18",
+        "verdict": "CHANGES-REQUIRED",
+        "notes": "MAJOR divergent canonical_json in method/ml/covariate_wind_model.py:80 (ensure_ascii) vs foundation; MAJOR package-root modules ungoverned by the lattice test and DB marker too narrow; MAJOR covariates_v2 untested; MINORs exit-code collision, timeout branch untested, comment, em-dashes; all folded into the p1 fix batch (evidence/phase1-sweep-20260918.md 'p1-fix-batch')"
+      },
+      "sweep": {
+        "monitor": "oh-my-claudecode:executor (sonnet)",
+        "on": "2026-09-18",
+        "ml_service": "format/lint/mypy/pytest PASS, 176 passed",
+        "agri_data_service": "check.py all PASS; pytest 4475 passed, 88 skipped (no AGRI_TEST_DATABASE_URL), 1 strict xfail",
+        "evidence": "evidence/phase1-sweep-20260918.md"
+      }
+    }
+  },
+  "follow_ups": [
+    "models/forecasting.py and models/strategy_selection.py declare SQLAlchemy models for tables absent from the baseline; a separate cleanup once test_metadata_contract's expectations are known",
+    "Mojmelo GBDT as a second fire-risk model family once the logistic baseline has a backtest receipt",
+    "shared parquet-contract package if a third service ever needs the path grammar (two copies + parity test is the ceiling)"
+  ]
+}

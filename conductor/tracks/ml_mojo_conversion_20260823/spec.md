@@ -1,8 +1,11 @@
 ---
 type: track-spec
 slug: ml_mojo_conversion_20260823
-status: blocked
+status: superseded
+superseded_by: plantgeo_ml_service_20260918
 ---
+
+> **SUPERSEDED 2026-09-18** by [`plantgeo_ml_service_20260918`](../plantgeo_ml_service_20260918/spec.md). Body kept for provenance.
 
 # ML → Mojo conversion
 

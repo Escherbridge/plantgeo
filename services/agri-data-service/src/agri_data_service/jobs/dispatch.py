@@ -7,8 +7,9 @@ same rows. See `jobs/AGENTS.md` for the runtime this sits on top of.
 Why a lane must REGISTER itself here rather than being discovered from `JOB_HANDLERS`.
 `JOB_HANDLERS` maps a stored `job_definition.handler` token to a coroutine, and that coroutine is
 not callable on its own: every lane in this service resolves its side effects from a lane-bound
-`ContextVar` -- `strategy_mv_refresh`'s session, `archive_walk`'s feature writer and HTTP client,
-`covariate_wind_lane`'s training session -- which the ledger knows nothing about and cannot supply.
+`ContextVar` -- `strategy_mv_refresh`'s session, `archive_walk`'s feature writer and HTTP client
+(and, until it left for `services/plantgeo-ml-service` on 2026-09-18, `covariate_wind_lane`'s training
+session) -- which the ledger knows nothing about and cannot supply.
 A dispatcher that walked the handler registry and called `run_job_slice` for every token in it would
 therefore "support" lanes it can only crash inside, one `ContextVar` lookup deep. What a lane
 publishes here instead is a `trigger`: the small entry point that binds its own context, upserts its

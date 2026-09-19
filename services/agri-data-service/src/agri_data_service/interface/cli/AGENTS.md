@@ -2,8 +2,10 @@
 
 ## Responsibility
 
-Thin Click adapters for the `agri-service` console script. The root exposes exactly four verb groups:
-`forecast`, `ml`, `data`, and `ops`.
+Thin Click adapters for the `agri-service` console script. The root exposes exactly three verb groups:
+`data`, `ops`, and `agent`. The `ml` group left with the ML extraction on 2026-09-18 (track
+`plantgeo_ml_service_20260918`); its verbs are now `plantgeo-ml strategy-train` and
+`plantgeo-ml strategy-label-map-preflight` in `services/plantgeo-ml-service`.
 
 ## Dependency rules
 

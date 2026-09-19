@@ -146,10 +146,13 @@ class LaneRegistration:
     # honest-yet-pointless absence markers for the six days a week it was never going to publish --
     # measured at ~2,000 for `burn-severity` before its five real releases are reached.
     cadence_days: int = 1
-    # The `method/monte_carlo/` module stem that forecasts this lane, or None for `horizon: none`.
-    # Naming the MODULE rather than carrying a bare boolean is what lets a test compare the claim
-    # against the filesystem: `layer-lanes.md` §2 makes shipping-a-forecaster and claiming-a-horizon
-    # the same fact, so a lane that disagrees with its own directory is a defect, not a nuance.
+    # The module stem that forecasts this lane, or None for `horizon: none`. Since 2026-09-18 the
+    # stem names a `plantgeo_ml_service.method.monte_carlo` module in `services/plantgeo-ml-service`,
+    # which is the service that writes `kind=forecast` partitions (owner decision D2, track
+    # `plantgeo_ml_service_20260918`). Naming the MODULE rather than carrying a bare boolean is what
+    # lets a test compare the claim against that service's filesystem: `layer-lanes.md` §2 makes
+    # shipping-a-forecaster and claiming-a-horizon the same fact, so a lane that disagrees with its
+    # own directory is a defect, not a nuance.
     forecast_module: str | None = None
     # A `static_lookup` lane's clock. Mandatory for that nature and forbidden for the others.
     watermark: LaneWatermarkResolver | None = None

@@ -1,0 +1,38 @@
+# Version control and local configuration
+.git
+.gitignore
+.env
+.env.*
+
+# Python environments, caches, builds, and test output
+.venv
+venv
+__pycache__
+**/__pycache__
+*.py[cod]
+*.egg-info
+.eggs
+build
+dist
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage*
+htmlcov
+
+# Development-only files and runtime output
+# tests/ and scripts/ ARE needed in the build context: they are inputs to the
+# QUALITY_RECEIPT.json tree digest, which the "quality-receipt" Dockerfile stage
+# recomputes. That stage is the only place they land; neither reaches the runtime
+# image, which copies just the verified receipt out of it.
+#
+# NEVER exclude a digest input. The full set is src/, tests/, scripts/,
+# pyproject.toml, uv.lock, mypy.ini and ruff.toml (see scripts/quality_receipt.py).
+# Excluding one here does not fail loudly: the gate stage recomputes a digest over
+# fewer files and reports "the tree does not match its receipt", which reads like a
+# stale receipt and is not one.
+*.log
+logs
+*.pid
+.cache
+tmp

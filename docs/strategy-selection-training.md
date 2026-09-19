@@ -48,7 +48,8 @@ Before importing any newly identified external source, describe its direct
 field mapping in `strategy_label_source_mapping_v1` and run:
 
 ```powershell
-uv run agri-service ml strategy-label-map-preflight `
+# from services/plantgeo-ml-service (the verb moved there on 2026-09-18, track plantgeo_ml_service_20260918)
+uv run plantgeo-ml strategy-label-map-preflight `
   --mapping-manifest examples/strategy-label-source-mapping.incomplete.json
 ```
 

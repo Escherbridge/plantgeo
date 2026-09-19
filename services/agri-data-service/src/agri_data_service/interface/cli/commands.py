@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -18,8 +17,6 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from agri_data_service.db.engine import async_session, combined_local_engine
 from agri_data_service.db.maintenance import MaintenanceBusyError, maintain_job_event_partitions
-from agri_data_service.execution.strategy_label_mapping import preflight_strategy_label_source_mapping
-from agri_data_service.execution.strategy_selection import load_strategy_label_bundle, train_strategy_models
 from agri_data_service.models.strategy import Strategy
 from agri_data_service.seed.strategies import STRATEGY_SEEDS
 from alembic import command
@@ -53,56 +50,6 @@ def _strategy_seed_statement(data: dict[str, Any]) -> Any:
             where=changed,
         )
     )
-
-
-@click.command("strategy-label-map-preflight")
-@click.option("--mapping-manifest", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
-@click.pass_context
-def strategy_label_map_preflight(context: click.Context, mapping_manifest: Path) -> None:
-    """Validate an intervention-label source mapping."""
-    try:
-        result = preflight_strategy_label_source_mapping(mapping_manifest)
-    except (OSError, ValueError) as exc:
-        raise click.ClickException(str(exc)) from exc
-    click.echo(result.to_json())
-    if not result.ready:
-        context.exit(2)
-
-
-@click.command("strategy-train")
-@click.option("--label-bundle", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
-@click.option("--output-artifact", type=click.Path(path_type=Path, dir_okay=False), required=True)
-def strategy_train(label_bundle: Path, output_artifact: Path) -> None:
-    """Train the local evaluation-only strategy benchmark."""
-    try:
-        artifact = train_strategy_models(load_strategy_label_bundle(label_bundle))
-        _write_atomic(output_artifact, artifact.to_json())
-    except (OSError, ValueError) as exc:
-        raise click.ClickException(str(exc)) from exc
-    payload = {"artifact_checksum": artifact.checksum, "output_artifact": str(output_artifact)}
-    click.echo(json.dumps(payload, sort_keys=True))
-
-
-def _write_atomic(path: Path, payload: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            "w",
-            delete=False,
-            dir=path.parent,
-            encoding="utf-8",
-            newline="\n",
-        ) as temporary:
-            temporary_path = Path(temporary.name)
-            temporary.write(payload)
-            temporary.flush()
-            os.fsync(temporary.fileno())
-        os.replace(temporary_path, path)
-    except Exception:
-        if temporary_path is not None:
-            temporary_path.unlink(missing_ok=True)
-        raise
 
 
 def _alembic_config() -> Config:

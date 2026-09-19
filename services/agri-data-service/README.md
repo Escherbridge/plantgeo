@@ -660,7 +660,7 @@ receiver.
 | `ops local init\|status\|checkpoint\|interrupt\|resume\|register-output\|finalize\|publish` | The local-execution-run lifecycle for phase-one ETL/model runs |
 | `forecast refresh-ml-daily`, `forecast run-iteration`, `forecast reconcile-actuals` | Forecasting/ML evaluation loop — evaluation-only, no publication path |
 | `forecast vegetation-register\|vegetation-simulate\|vegetation-evaluate` | NDVI forecast evaluation harness |
-| `ml strategy-label-map-preflight --mapping-manifest` / `ml strategy-train --label-bundle --output-artifact` | Strategy-selection ML training |
+| *(removed 2026-09-18)* `ml strategy-label-map-preflight` / `ml strategy-train` | Moved to `services/plantgeo-ml-service` as `plantgeo-ml strategy-label-map-preflight` / `plantgeo-ml strategy-train` (track `plantgeo_ml_service_20260918`) |
 
 ---
 

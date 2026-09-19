@@ -379,6 +379,8 @@ this pipeline's own intermediate state.
 
 ## 7. Forecast recommendation
 
+> Since 2026-09-18 the forecaster lives in the ML service: `services/plantgeo-ml-service/src/plantgeo_ml_service/method/monte_carlo/fire_detections.py` (track `plantgeo_ml_service_20260918`, owner decision D2). agri-data-service is observed-only.
+
 **`horizon: 30d`** — but only if the forecast targets an aggregate quantity,
 not raw detection points. Reasoning through the "is this even meaningful"
 question this brief asked for, rather than defaulting to the classification

@@ -21,22 +21,12 @@ LAYER_FORBIDDEN_IMPORTS: dict[str, set[str]] = {
         "asyncpg",
         "click",
     },
-    "method": {
-        "agri_data_service.warehouse",
-        "agri_data_service.pipeline",
-        "agri_data_service.planes",
-        "agri_data_service.interface",
-        "sqlalchemy",
-        "httpx",
-    },
     "warehouse": {
-        "agri_data_service.method",
         "agri_data_service.pipeline",
         "agri_data_service.planes",
         "agri_data_service.interface",
     },
     "pipeline": {
-        "agri_data_service.method",
         "agri_data_service.planes",
         "agri_data_service.interface",
     },
@@ -47,19 +37,6 @@ LAYER_FORBIDDEN_IMPORTS: dict[str, set[str]] = {
         "agri_data_service.interface",
     },
     "interface": set(),
-}
-
-# Sub-package rules INSIDE a single layer. The lattice above is keyed by layer directory, so it
-# cannot separate two packages that share a layer -- `method.monte_carlo` and `method.ml` are both
-# under `method` and the lattice happily lets them import each other.
-#
-# They must not. Monte Carlo forecasting is per-lane statistical projection that ships with the data
-# rebuild; `ml` is frozen and expected to leave for a separate Mojo service. Coupling them would tie
-# the rebuild to that runtime migration. See conductor/code_styleguides/layer-lanes.md section 5 and
-# conductor/RUNBOOK.md section 0.24.8, which records this rule as a wave-2 prerequisite.
-SUBPACKAGE_FORBIDDEN_IMPORTS: dict[str, set[str]] = {
-    "method/monte_carlo": {"agri_data_service.method.ml"},
-    "method/ml": {"agri_data_service.method.monte_carlo"},
 }
 
 # Domain isolation inside `ingest/` and `execution/`, which the six-layer lattice above does not
@@ -81,7 +58,6 @@ DOMAIN_PARENTS: tuple[str, ...] = ("ingest", "execution")
 SIBLING_MODULE_DIRECTORIES: tuple[str, ...] = (
     "pipeline/lanes",
     "warehouse/schemas",
-    "method/monte_carlo",
     "pipeline/validation",
     "pipeline/direct",
 )
@@ -192,27 +168,6 @@ def test_layer_packages_actually_import() -> None:
                 failures.append(f"{module_name}: {type(exc).__name__}: {exc}")
 
     assert not failures, "Layer modules that failed to import:\n" + "\n".join(failures)
-
-
-def test_subpackage_import_contract() -> None:
-    """Enforce the boundaries the layer lattice cannot express, because both sides share a layer."""
-    pkg_root = Path(__file__).resolve().parents[1] / "src" / "agri_data_service"
-    violations: list[str] = []
-
-    for subpackage, forbidden in SUBPACKAGE_FORBIDDEN_IMPORTS.items():
-        sub_dir = pkg_root / subpackage
-        if not sub_dir.is_dir():
-            continue
-        for py_file in sub_dir.glob("**/*.py"):
-            for line_no, imp in _get_imports(py_file):
-                violations.extend(
-                    f"{py_file.relative_to(pkg_root)}:{line_no} imports '{imp}' (forbidden inside '{subpackage}')"
-                    for forb in forbidden
-                    if imp == forb or imp.startswith(forb + ".")
-                )
-
-    joined = "\n".join(violations)
-    assert not violations, "Sub-package import contract violations found:" + "\n" + joined
 
 
 def _domain_packages(pkg_root: Path, parent: str) -> list[str]:
@@ -420,7 +375,7 @@ def test_the_source_protocol_layers_are_lanes_the_lattice_actually_sees() -> Non
 
 
 def test_the_source_protocol_layers_obey_the_pipeline_layer_lattice() -> None:
-    """Nothing in the three packages reaches forward into `method`, `planes` or `interface`.
+    """Nothing in the three packages reaches forward into `planes` or `interface`.
 
     `test_layer_import_contract` walks all of `pipeline` and would already catch this; asserting it
     per package names WHICH new code is being held to the rule, so a future split of these packages
@@ -478,7 +433,7 @@ CLI_TRANSACTION_METHOD = "begin"
 #: flips to an enforced rule. The line numbers move whenever `commands.py` does: regenerate this
 #: list from the assertion message below, never by editing entries until the test passes again.
 CLI_ADAPTER_VIOLATIONS: tuple[str, ...] = (
-    "interface/cli/commands.py:146 owns a transaction boundary 'combined_local_engine().begin()'",
+    "interface/cli/commands.py:93 owns a transaction boundary 'combined_local_engine().begin()'",
 )
 
 #: Quoted by the xfail reason below; `CLI_ADAPTER_VIOLATIONS` is the source of truth.

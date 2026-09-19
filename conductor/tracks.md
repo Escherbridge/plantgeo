@@ -27,7 +27,7 @@ This registry contains planned, active, and blocked work only. Completed impleme
 | [Traditional forecast experience](tracks/weather_forecast_experience_20260911/plan.md) | planned | Render continuous weather fields, wind, and useful hourly and daily forecast cards beyond the observation horizon. |
 | [Fire feature plane validation](tracks/fire_feature_plane_validation_20260824/spec.md) | planned | Validate fire features across seasons and resolutions. |
 | [Regional fire-risk surface](tracks/regional_fire_risk_surface_20260824/spec.md) | planned | Build the cross-state prioritization surface after its source and validation gates are ready. |
-| [Fire-risk zone forecast](tracks/fire_risk_zone_forecast_20260823/spec.md) | planned | Develop and validate the one-to-two-week fire-risk forecast. |
+| [Fire-risk zone forecast](tracks/fire_risk_zone_forecast_20260823/spec.md) | planned | Develop and validate the one-to-two-week fire-risk forecast; runtime now provided by the PlantGeo ML service track (phase 2 daily lane). |
 
 ## Botanical and land context
 
@@ -55,7 +55,7 @@ This registry contains planned, active, and blocked work only. Completed impleme
 | [Rangeland partnership outreach](tracks/rangeland_partnership_outreach_20260824/spec.md) | planned |
 | [SWR IndexedDB/DW reconciliation](tracks/swr_indexeddb_dw_reconciliation_20260814/plan.md) | planned |
 | [Upstream dataset expansion](tracks/upstream_dataset_expansion_20260806/plan.md) | planned |
-| [ML to Mojo conversion](tracks/ml_mojo_conversion_20260823/spec.md) | blocked |
+| [PlantGeo ML service](tracks/plantgeo_ml_service_20260918/plan.md) | active | Phase 1: service skeleton + hard cut of method/ml and method/monte_carlo out of agri-data-service; then Parquet in/out, fire-risk + spatial-KNN daily lanes, Mojo kernels, platform wiring. Supersedes ML to Mojo conversion. |
 | [Mycelium cloud-seeding spike](tracks/mycelium_cloud_seeding_spike_20260802/plan.md) | blocked |
 | [Observability log capture](tracks/observability_log_capture_20260903/plan.md) | blocked |
 

@@ -337,6 +337,8 @@ system holds — reuse its shape rather than inventing a new one:
 
 ## 7. Forecast recommendation
 
+> Since 2026-09-18 every Monte Carlo forecaster lives in the ML service under `services/plantgeo-ml-service/src/plantgeo_ml_service/method/monte_carlo/`; this lane's still-absent module belongs there, not in agri-data-service (track `plantgeo_ml_service_20260918`, owner decision D2).
+
 **`horizon: 30d`.** The RUNBOOK explicitly classifies `weather-observations` as **"yes — the core
 forecast lane"**, calling it out ahead of every other of the eleven lanes
 (`conductor/RUNBOOK.md` §0.24.2). Per the lane contract, this means a `method/monte_carlo/

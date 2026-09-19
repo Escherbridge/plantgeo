@@ -4,16 +4,14 @@ import click
 
 from agri_data_service.interface.cli.agent import agent
 from agri_data_service.interface.cli.data import data
-from agri_data_service.interface.cli.ml import ml
 from agri_data_service.interface.cli.ops import ops
 
 
 @click.group()
 def cli() -> None:
-    """PlantGeo agriculture data, forecasting, ML, and operations."""
+    """PlantGeo agriculture data, forecasting, and operations."""
 
 
-cli.add_command(ml)
 cli.add_command(data)
 cli.add_command(ops)
 cli.add_command(agent)
