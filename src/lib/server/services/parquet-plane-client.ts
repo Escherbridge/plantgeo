@@ -2,7 +2,7 @@ import { mtbsSnapshotWireSchema, normalizeMtbsSnapshot } from "@/lib/server/serv
 import { z } from "zod";
 import { isReusableSliderCoverage } from "@/lib/environmental/slider-policy";
 import { fetchBoundedJson, providerUrl } from "@/lib/server/http/bounded-upstream";
-import { regionIdentityVerdict } from "@/lib/region/region";
+import { getRegion, regionIdentityVerdict } from "@/lib/region/region";
 import type { ZoomTier } from "@/lib/map/zoom-tiers";
 import type { DayRange } from "@/types/time-slider";
 import {
@@ -116,14 +116,37 @@ let coverageRequest: Promise<ParquetWarehouseCoverage> | null = null;
  * Separate from `cachedCoverage` on purpose, and the distinction is the whole design of the row-read
  * region guard. `cachedCoverage` answers "may I reuse this census's LANES", which expires in
  * minutes; this answers "what has the serving side ever told me about WHOSE region it serves", which
- * only a redeploy changes. Keeping them apart means a row read pays a census round trip at most once
- * per process rather than once per cache window, while still following a redeploy within the
- * coverage cache's own lag -- every decoded census overwrites this.
+ * only a redeploy changes. Keeping them apart means a row read pays a census round trip once for the
+ * process rather than once per cache window, while still following a redeploy within the
+ * coverage cache's own lag -- every decoded census overwrites this. While NO census has decoded
+ * there is nothing to reuse, and the cost of trying again is bounded by `REGION_LEARNING_RETRY_MS`
+ * below rather than by this value (`learnServedRegion`, `parquet-plane-client.ts:947`).
  *
  * `undefined` is "never learned" and `null` is "a census stated nothing", which are different facts:
  * the first says nothing has been asked yet, the second is `unstated` and renders.
  */
 let lastStatedRegionSlug: string | null | undefined = undefined;
+
+/**
+ * How long a row read stops trying to learn the served region after an attempt left nothing behind.
+ *
+ * One minute, chosen against the two costs it sits between: a deployment whose census is slow
+ * because the store is cold (the ~28s pre-bootstrap census against the 8s timeout at
+ * `COVERAGE_TIMEOUT_MS`) must not pay that timeout on every row read, and a deployment that becomes
+ * able to answer must arm the guard without waiting for a redeploy. A minute bounds the first to
+ * one attempt per minute per process and the second to a minute of unguarded reads.
+ */
+const REGION_LEARNING_RETRY_MS = 60_000;
+
+/**
+ * The last census attempt made for the GUARD's sake that left no identity behind, and how many have.
+ *
+ * `null` means either "never needed" or "the last attempt succeeded"; the two are indistinguishable
+ * here on purpose, because both mean the next row read may try. Style review W10, S4: without this
+ * memo the "at most once per process" cost claim was false -- every sequential row read on a
+ * census-less deployment started another cold census.
+ */
+let regionLearningFailure: { at: number; attempts: number } | null = null;
 
 /** `YYYY-MM-DD`. A shape check only: nothing here turns a day into an instant. */
 const CALENDAR_DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -864,11 +887,26 @@ async function readJson(url: URL, bounds: ReadBounds): Promise<unknown> {
  *
  * COST, and why this reads `lastStatedRegionSlug` rather than awaiting the census every time. Whose
  * region the serving side serves changes only when it is REDEPLOYED, so it is learned once and then
- * refreshed for free by every census the slider already reads (see `lastStatedRegionSlug`). A row
- * read therefore awaits a census at most ONCE per process -- and only when it beats the slider's own
- * read to it -- instead of once per coverage-cache window. Awaiting it unconditionally would have
- * put an 8-second cold-census timeout in front of every layer on a pre-bootstrap deployment, which
- * is a latency regression paid by correctly configured deployments to catch a misconfigured one.
+ * refreshed for free by every census the slider already reads (see `lastStatedRegionSlug`). Once an
+ * identity has been learned a row read awaits nothing at all; while none has been, `learnServedRegion`
+ * spends at most ONE census attempt per `REGION_LEARNING_RETRY_MS` for the whole process, not one
+ * per row read -- the back-off is the early return at `parquet-plane-client.ts:947`, and
+ * `resetParquetCoverageCacheForTests` (`:1112`) is the only thing that clears
+ * it. Awaiting a census unconditionally would have put an 8-second cold-census timeout in
+ * front of every layer on a pre-bootstrap deployment, which is a latency regression paid by correctly
+ * configured deployments to catch a misconfigured one.
+ *
+ * WHEN NO CENSUS EVER DECODES, THIS GUARD STAYS OPEN AND SAYS SO. Style review W10, S4: on the
+ * documented pre-bootstrap deployment the census walks the whole store and loses to its own 8-second
+ * timeout, so the identity is never learned and every row read passes unguarded. Failing closed
+ * instead was considered and rejected: it converts a rare, static, deploy-time misconfiguration
+ * (two environment variables naming one region) into a certain total outage on every cold start,
+ * and the cold start is the state this platform ships from. Staying open is therefore deliberate,
+ * and the cost of that choice is paid in visibility rather than in silence -- `learnServedRegion`
+ * logs `Parquet region guard inert` on each failed attempt (`:959`), at most once per back-off
+ * window, and `servedRegionGuardStatus()` (`:987`) reports `armed: false` with the attempt count for
+ * any health surface that wants to state it. The guard arms itself the moment ANY census decodes,
+ * including the slider's own.
  *
  * EXPORTED for the one row-read path that does not go through this module:
  * `botanical-occurrences-client.ts` speaks its own wire contract to its own routes, and W9's S4
@@ -876,13 +914,9 @@ async function readJson(url: URL, bounds: ReadBounds): Promise<unknown> {
  */
 export async function assertServedRegionMatchesBundle(): Promise<void> {
   if (lastStatedRegionSlug === undefined) {
-    try {
-      await getParquetWarehouseCoverage();
-    } catch {
-      return;
-    }
-    // Still unlearned means the census answered and decoding left nothing to compare; read as
-    // silence rather than retried, so a row read never loops on a census it cannot use.
+    await learnServedRegion();
+    // Still unlearned: the census did not answer, or answered something that did not decode. Both
+    // are silence rather than a claim, so the read proceeds -- reported, not retried here.
     if (lastStatedRegionSlug === undefined) return;
   }
   const verdict = regionIdentityVerdict(lastStatedRegionSlug);
@@ -892,6 +926,70 @@ export async function assertServedRegionMatchesBundle(): Promise<void> {
     { servedRegionSlug: verdict.servedSlug, compiledRegionSlug: verdict.compiledSlug }
   );
   throw new ParquetRegionIdentityError(verdict.servedSlug, verdict.compiledSlug);
+}
+
+/**
+ * Reads one census for the guard's sake, at most once per back-off window while none has decoded.
+ *
+ * The window is what makes the docstring above's cost claim true. Without it, a deployment whose
+ * census never decodes re-entered the census read on EVERY row read (style review W10, S4): the
+ * unconditional-await latency the guard was shaped to avoid, paid by exactly the deployment least
+ * able to afford it. A failed attempt is remembered, so the next `REGION_LEARNING_RETRY_MS` of row
+ * reads cost nothing and the guard still re-arms on its own within a minute of the store getting
+ * fast enough to answer.
+ *
+ * A DECODED census that states no region sets `lastStatedRegionSlug` to `null`, which is learned,
+ * not failed -- `unstated` is a fact about the serving side, and re-reading it would be a retry of
+ * a successful read.
+ */
+async function learnServedRegion(): Promise<void> {
+  const previous = regionLearningFailure;
+  if (previous !== null && Date.now() - previous.at < REGION_LEARNING_RETRY_MS) return;
+  try {
+    await getParquetWarehouseCoverage();
+  } catch {
+    // A census that did not answer is silence, and the slider states coverage outages on its own
+    // axis; the attempt is still recorded below so the retry stays bounded.
+  }
+  if (lastStatedRegionSlug !== undefined) {
+    regionLearningFailure = null;
+    return;
+  }
+  regionLearningFailure = { at: Date.now(), attempts: (previous?.attempts ?? 0) + 1 };
+  console.error(
+    "Parquet region guard inert: no census has stated a region; row reads proceed unguarded",
+    {
+      failedLearningAttempts: regionLearningFailure.attempts,
+      compiledRegionSlug: getRegion().slug,
+      retryAfterMs: REGION_LEARNING_RETRY_MS,
+    }
+  );
+}
+
+/** Whether the row-read region guard can act, and what it has spent failing to arm itself. */
+export interface ServedRegionGuardStatus {
+  /** `true` once a census has decoded; while `false`, every row read passes unguarded. */
+  readonly armed: boolean;
+  /** The region the newest decoded census stated; `null` is `unstated`, `undefined` unlearned. */
+  readonly statedRegionSlug: string | null | undefined;
+  /** Census attempts made for the guard's sake that left no identity behind. */
+  readonly failedLearningAttempts: number;
+}
+
+/**
+ * The guard's own state, for a health surface that would rather state inertness than assume safety.
+ *
+ * Exported because "the guard is open" is a fact about this deployment that nothing else can
+ * report: a mismatch throws and is loud, but an UNARMED guard is by construction silent on the
+ * row-read path (`assertServedRegionMatchesBundle` returns normally at `:920`). The `console.error`
+ * in `learnServedRegion` (`:959`) is the log-shaped half of the same fact.
+ */
+export function servedRegionGuardStatus(): ServedRegionGuardStatus {
+  return {
+    armed: lastStatedRegionSlug !== undefined,
+    statedRegionSlug: lastStatedRegionSlug,
+    failedLearningAttempts: regionLearningFailure?.attempts ?? 0,
+  };
 }
 
 /** The byte/time/cancellation bounds every ROW read shares. */
@@ -1015,6 +1113,9 @@ export function resetParquetCoverageCacheForTests(): void {
   cachedCoverage = null;
   coverageRequest = null;
   lastStatedRegionSlug = undefined;
+  // The guard's back-off is process state too: leaving it set would make the next test's first row
+  // read skip the census this one's fixture queued for it.
+  regionLearningFailure = null;
 }
 
 /* ---------------------------------------------------------------------------

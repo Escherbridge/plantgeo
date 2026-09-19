@@ -24,6 +24,10 @@ from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct.weather_observations import forward
 from agri_data_service.pipeline.direct.weather_observations.adapter import OverturnedAbsence, RetractedAbsenceMarker
+from agri_data_service.pipeline.direct.weather_observations.recovery import (
+    WeatherRecoveryReport,
+    WeatherSupportWitness,
+)
 from agri_data_service.pipeline.direct.weather_observations.source import WeatherPointObservation
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from agri_data_service.warehouse.schemas.weather_observations import WEATHER_OBSERVATIONS_SCHEMA
@@ -485,6 +489,138 @@ class TestTheProbeCannotCostThePollItsRetention:
         assert event["error_type"] == "OSError"
 
 
+class TestTheProbeOutputCannotCostThePollEither:
+    """Verifier hotfix W10, residual 1: the merge sat BETWEEN the two guarded regions, unwrapped.
+
+    `_repair_owed_days` made the probe's I/O non-fatal and `_retain_current_poll` did the same for
+    the retention, but the re-bucketing of what the probe returned was outside both, so the probe's
+    OUTPUT could still take a poll of an archive-less feed down before it was ever retained.
+    """
+
+    @staticmethod
+    def _phase_with_one_reading() -> forward.RecoveryPhase:
+        report = WeatherRecoveryReport(
+            day=DAY_THREE,
+            state="partial_capture",
+            support_points=1,
+            recovered_points=1,
+            missing_or_rejected_points=0,
+            observations=(_observation(45.5, -122.6, "2026-09-03T17:00:00.000Z"),),
+        )
+        return forward.RecoveryPhase(state="probed", reports=(report,), days_owed=(DAY_THREE,))
+
+    def test_a_merge_fault_publishes_the_poll_without_the_recovered_readings(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        def explode(*_args: object, **_kwargs: object) -> object:
+            raise RuntimeError("a recovered reading the row builder refuses")
+
+        monkeypatch.setattr(forward, "direct_weather_observation_tables", explode)
+        table = WEATHER_OBSERVATIONS_SCHEMA.arrow_schema.empty_table()
+        poll = cast("Any", _PollDouble((_observation(45.5, -122.6, "2026-09-03T18:00:00.000Z"),)))
+
+        tables, phase = forward._tables_after_recovery(
+            poll,
+            {DAY_THREE: table},
+            self._phase_with_one_reading(),
+            ingested_at=datetime(2026, 9, 3, 18, tzinfo=UTC),
+            run_id="run",
+        )
+
+        assert tables == {DAY_THREE: table}, "the poll publishes without the repair, never instead of it"
+        assert phase.merge_error_type == "RuntimeError"
+        assert phase.degraded is True, "a repair that could not be merged is a repair that did not happen"
+        events = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
+        assert events[-1]["event"] == "weather_observations_source_recovery_merge_failed"
+
+    def test_a_merge_that_drops_one_of_this_polls_days_refuses_instead_of_narrowing_silently(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """STYLE-REVIEW-W10 S6: the sibling recovery turn raises on exactly this condition."""
+        monkeypatch.setattr(forward, "direct_weather_observation_tables", lambda *_a, **_k: {})
+        table = WEATHER_OBSERVATIONS_SCHEMA.arrow_schema.empty_table()
+        poll = cast("Any", _PollDouble((_observation(45.5, -122.6, "2026-09-03T18:00:00.000Z"),)))
+
+        tables, phase = forward._tables_after_recovery(
+            poll,
+            {DAY_THREE: table},
+            self._phase_with_one_reading(),
+            ingested_at=datetime(2026, 9, 3, 18, tzinfo=UTC),
+            run_id="run",
+        )
+
+        assert tables == {DAY_THREE: table}
+        assert phase.merge_error_type == "RuntimeError"
+        assert "2026-09-03" in str(phase.merge_detail)
+
+    def test_a_probe_that_recovered_nothing_leaves_the_buckets_exactly_as_it_found_them(self) -> None:
+        table = WEATHER_OBSERVATIONS_SCHEMA.arrow_schema.empty_table()
+        poll = cast("Any", _PollDouble((_observation(45.5, -122.6, "2026-09-03T18:00:00.000Z"),)))
+
+        tables, phase = forward._tables_after_recovery(
+            poll,
+            {DAY_THREE: table},
+            forward.RecoveryPhase(state="probed"),
+            ingested_at=datetime(2026, 9, 3, 18, tzinfo=UTC),
+            run_id="run",
+        )
+
+        assert tables == {DAY_THREE: table}
+        assert phase.merge_error_type is None
+        assert phase.degraded is False
+
+
+class TestTheRefusalNamesWhichEmptyAnswerThisIs:
+    """STYLE-REVIEW-W10 S5: one wording claimed permanent loss for three very different states."""
+
+    @staticmethod
+    def _report(state: str, witness: WeatherSupportWitness | None) -> WeatherRecoveryReport:
+        return WeatherRecoveryReport(
+            day=DAY_THREE,
+            state=cast("Any", state),
+            support_points=2,
+            recovered_points=0,
+            missing_or_rejected_points=0,
+            observations=(),
+            support_sha256="now",
+            witness=witness,
+        )
+
+    def test_a_changed_support_grid_is_owed_rather_than_lost(self) -> None:
+        witness = WeatherSupportWitness(
+            day=DAY_THREE,
+            searched_sha256="now",
+            witnessed_sha256=("before",),
+            recorded=True,
+        )
+
+        detail = forward._recovery_refusal_detail(self._report("foreign_support_grid", witness))
+
+        assert "OWED, not" in detail
+        assert "lost, not owed" not in detail, "the bodies are on disk under the previous digest"
+        assert "before" in detail and "now" in detail, "both digests, so the operator can act on it"
+
+    def test_a_day_with_no_witness_is_unknown_rather_than_lost(self) -> None:
+        witness = WeatherSupportWitness(day=DAY_THREE, searched_sha256="now")
+
+        detail = forward._recovery_refusal_detail(self._report("no_retained_capture", witness))
+
+        assert "UNKNOWN, not" in detail
+        assert "lost, not owed" not in detail
+
+    def test_a_searched_matching_grid_with_nothing_readable_is_still_a_loss(self) -> None:
+        witness = WeatherSupportWitness(
+            day=DAY_THREE,
+            searched_sha256="now",
+            witnessed_sha256=("now",),
+            recorded=True,
+        )
+
+        detail = forward._recovery_refusal_detail(self._report("no_retained_capture", witness))
+
+        assert "lost, not owed" in detail, "the one case where the claim is true must still be made"
+
+
 class TestRecoverDayArgument:
     """`--help` is the only contract an operator reads before running the repair."""
 
@@ -499,6 +635,13 @@ class TestRecoverDayArgument:
 
         assert "--recover-day" in help_text
         assert "RETAINED PROVIDER RESPONSES" in help_text
+
+    def test_the_help_text_names_the_support_grid_bound_beside_the_date_one(self) -> None:
+        """STYLE-REVIEW-W10 S6: the flag was bounded against the clock and silent about the grid."""
+        help_text = " ".join(forward.parser().format_help().split())
+
+        assert "UNDER THE CURRENT SUPPORT GRID" in help_text
+        assert "INGEST_BBOX" in help_text
 
     def test_a_future_day_is_refused_because_this_feed_has_no_forecast(self) -> None:
         with pytest.raises(forward.WeatherObservationsForwardConfigError, match="in the future"):

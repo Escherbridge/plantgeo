@@ -89,7 +89,7 @@ withholds under. `botanical-occurrences-client.ts` speaks its own wire contract 
 so it calls the shared guard explicitly rather than inheriting it, before the pointer read: a
 generation resolved from another region's warehouse is not a pin this deployment may hold.
 
-FOUR CHOICES WORTH THE WORDS:
+FIVE CHOICES WORTH THE WORDS:
 
 1. **`unstated` renders, exactly as today.** A census that names no region makes no claim. The
    version rule (`parquet_ops/AGENTS.md`, additive-and-silence-is-safe) is why `region_slug` did not
@@ -102,8 +102,11 @@ FOUR CHOICES WORTH THE WORDS:
 3. **The identity is LEARNED, not re-read.** `lastStatedRegionSlug` is module state beside
    `cachedCoverage` and deliberately not part of it: the lane cache answers "may I reuse these
    lanes" and expires in five minutes, while whose region is served changes only on a redeploy.
-   Every decoded census overwrites it, so the slider's own reads keep it current for free, and a row
-   read awaits a census at most ONCE per process — only when it beats the slider to it. Awaiting one
+   Every decoded census overwrites it, so the slider's own reads keep it current for free. Once an
+   identity is learned a row read awaits nothing; while none is, the attempt is bounded to one per
+   `REGION_LEARNING_RETRY_MS` (60s) for the whole process — enforced by the early return in
+   `learnServedRegion` (`parquet-plane-client.ts:947`), cleared only by
+   `resetParquetCoverageCacheForTests` (`parquet-plane-client.ts:1112`). Awaiting a census
    on every read would have put the 8-second cold-census timeout in front of every layer on a
    pre-bootstrap deployment: a latency regression paid by correct deployments to catch a broken one.
    The residual hole is one coverage window wide: a serving side redeployed into another region is
@@ -112,6 +115,20 @@ FOUR CHOICES WORTH THE WORDS:
    Nothing upstream failed — the plane answered honestly about ITS region — so classifying it as
    `upstream_unavailable` would name the wrong party and invite a retry only a deploy can fix. It
    propagates out of `boundedResult` as itself.
+5. **A deployment that never decodes a census is guarded by NOTHING, deliberately, and says so.**
+   Style review W10, S4: choices 2 and 3 compose into a guard that is inert for the life of a
+   process whose census never answers — and memory `plantgeo-deploy-observation-2026-09-03` records
+   the pre-bootstrap census at ~28s against the 8s timeout BY DESIGN, so that process is a cold
+   deployment, not a hypothetical. Failing closed after N attempts was considered and rejected: it
+   turns a rare, static, deploy-time misconfiguration (two environment variables naming one region)
+   into a certain total outage on every cold start, which is a worse trade than the one it buys.
+   Staying open is therefore paid for in visibility: `learnServedRegion` logs
+   `Parquet region guard inert` on each failed attempt (`parquet-plane-client.ts:959`) — at most one
+   per back-off window, so the log cannot flood — and `servedRegionGuardStatus()`
+   (`parquet-plane-client.ts:987`) reports `armed: false` with the failed-attempt count for any
+   health surface that would rather state inertness than assume safety. Nothing consumes that status
+   yet; it is the seam a readiness probe should read, and its absence is a gap, not a claim. The
+   guard arms itself on the first census that decodes, including one the slider read.
 
 **Where `unstated` can come from.** On the live path, only a serving deployment older than the
 field: `interface/http/parquet_routes.py` is the sole `WarehouseCoverage` construction that reaches

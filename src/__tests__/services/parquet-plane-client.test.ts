@@ -33,6 +33,7 @@ import {
   getParquetLayerDayWindow,
   getParquetWarehouseCoverage,
   resetParquetCoverageCacheForTests,
+  servedRegionGuardStatus,
   ParquetPlaneContractError,
   ParquetPlaneRequestError,
   ParquetRegionIdentityError,
@@ -841,6 +842,75 @@ describe("region identity on row reads", () => {
     expect(requestedUrl(0).pathname).toBe("/api/v1/parquet/coverage");
     expect(requestedUrl(1).pathname).toBe("/api/v1/parquet/day");
     expect(requestedUrl(2).pathname).toBe("/api/v1/parquet/day");
+  });
+
+  /**
+   * Style review W10, S4. The pre-bootstrap deployment is the one that cannot serve a census (~28s
+   * against an 8s timeout, by design), so it is also the one that never learns an identity. Under
+   * the pre-fix code that deployment re-entered the cold census on EVERY row read forever, and the
+   * "at most ONCE per process" cost the module claimed was false for exactly it.
+   */
+  it("pays one census attempt per back-off window while no census decodes", async () => {
+    resetParquetCoverageCacheForTests();
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mockedFetch.mockRejectedValueOnce(new UpstreamTimeoutError("census timed out"));
+    mockedFetch.mockResolvedValue(wirePublished("2026-08-20"));
+
+    await getParquetLayerDay({ layer: "vegetation", day: "2026-08-20", zoomTier: 9 });
+    await getParquetLayerDay({ layer: "vegetation", day: "2026-08-20", zoomTier: 9 });
+
+    // One failed census and two day reads: the second row read never re-entered the census.
+    expect(mockedFetch).toHaveBeenCalledTimes(3);
+    expect(requestedUrl(0).pathname).toBe("/api/v1/parquet/coverage");
+    expect(requestedUrl(1).pathname).toBe("/api/v1/parquet/day");
+    expect(requestedUrl(2).pathname).toBe("/api/v1/parquet/day");
+    logged.mockRestore();
+  });
+
+  it("states that it is inert rather than letting an unguarded read look guarded", async () => {
+    resetParquetCoverageCacheForTests();
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mockedFetch.mockRejectedValueOnce(new UpstreamTimeoutError("census timed out"));
+    mockedFetch.mockResolvedValue(wirePublished("2026-08-20"));
+
+    await getParquetLayerDay({ layer: "vegetation", day: "2026-08-20", zoomTier: 9 });
+
+    // Staying open is the decision; being quiet about it is not.
+    expect(servedRegionGuardStatus()).toMatchObject({
+      armed: false,
+      statedRegionSlug: undefined,
+      failedLearningAttempts: 1,
+    });
+    expect(logged).toHaveBeenCalledTimes(1);
+    expect(String(logged.mock.calls[0][0])).toContain("region guard inert");
+    logged.mockRestore();
+  });
+
+  it("arms itself the moment a census finally decodes, and refuses from then on", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-20T00:00:00Z"));
+    resetParquetCoverageCacheForTests();
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mockedFetch.mockRejectedValueOnce(new UpstreamTimeoutError("census timed out"));
+    mockedFetch.mockResolvedValue(wirePublished("2026-08-20"));
+
+    await getParquetLayerDay({ layer: "vegetation", day: "2026-08-20", zoomTier: 9 });
+    expect(servedRegionGuardStatus().armed).toBe(false);
+
+    // Past the back-off, with a store finally fast enough to answer: no redeploy is needed for the
+    // guard to start acting, which is the whole reason staying open is survivable.
+    vi.setSystemTime(Date.now() + 61_000);
+    mockedFetch.mockResolvedValueOnce(censusStatingRegion(foreignRegionSlug()));
+
+    await expect(
+      getParquetLayerDay({ layer: "vegetation", day: "2026-08-20", zoomTier: 9 })
+    ).rejects.toBeInstanceOf(ParquetRegionIdentityError);
+    expect(servedRegionGuardStatus()).toMatchObject({
+      armed: true,
+      statedRegionSlug: foreignRegionSlug(),
+      failedLearningAttempts: 0,
+    });
+    logged.mockRestore();
   });
 });
 

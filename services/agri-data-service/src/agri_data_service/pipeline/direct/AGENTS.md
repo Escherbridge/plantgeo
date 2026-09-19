@@ -1162,9 +1162,10 @@ are one defect: the net was hung, never pulled on.
    debt alone reaches the report and the log stream but does not by itself start a lane's
    `consecutive_incomplete_buckets` streak. Whether it should is `execution/`'s decision about every
    lane, not this writer's about one.
-3. **Four verdicts, not two.** `complete_capture`, `partial_capture`, `no_retained_capture`, and
+3. **Five verdicts, not two.** `complete_capture`, `partial_capture`, `no_retained_capture`,
    `probe_budget_exhausted` (added 2026-09-19 with the bound below, since a search that stopped
-   early is not evidence of an empty bucket). The
+   early is not evidence of an empty bucket) and `foreign_support_grid` (see the support witness
+   below, since a search of the wrong key space is not evidence of anything). The
    original collapsed `partial_capture` into `no_retained_capture`, so an ordinary first poll of a
    new UTC day -- and BOTH halves of
    a legitimate midnight-straddle poll -- reported the word that means unpublishable. A partial
@@ -1189,11 +1190,11 @@ instants the checkpoint machinery exists to make recoverable were gone, where th
 would have retained them. Two properties now hold, both enforced in the function that OWNS the
 phase rather than at the call site:
 
-- **Non-fatal.** `forward.py::_repair_owed_days` (`weather_observations/forward.py:792-842`) is the
+- **Non-fatal.** `forward.py::_repair_owed_days` (`weather_observations/forward.py:817-867`) is the
   only caller of `_days_owed_a_recovery` and `_recover_owed_days`, and it returns a `RecoveryPhase`
   on every path -- `state="failed"` carries `error_type` and `detail`. `run()` then reaches
   `_retain_current_poll` and the publish loop exactly as it would for a turn that owed no day.
-  `_retain_current_poll` (`weather_observations/forward.py:863-890`) gives the retention call the
+  `_retain_current_poll` (`weather_observations/forward.py:948-975`) gives the retention call the
   same treatment for the same reason: losing rows held in memory to a fault in their BACKUP is the
   inversion the retention exists to prevent. A retention fault there is reported as every accepted
   point failing, which is what `retained_whole_day` then answers per day.
@@ -1220,6 +1221,59 @@ answer while the bodies are still inside `CHECKPOINT_MAX_AGE`.
 One case the writer deliberately cannot see: a day already `data` at every tier whose EARLIER
 instants are missing. Nothing this writer can read distinguishes that from a healthy day, so it does
 not guess, and `--recover-day` is the answer when an operator knows otherwise.
+
+A case it DOES see, and re-sees forever: a day whose every tier is `absent`. `absent` is not `data`,
+so a standing governed absence is owed a recovery on every poll, costing one checkpoint read per
+support point per poll inside the probe's 25% share. That is kept on purpose rather than
+short-circuited -- a retained body for an absent day is the evidence that OVERTURNS the absence
+(`adapter.py::OverturnedAbsence`) -- and it is priced here rather than left as a silent cost
+(STYLE-REVIEW-W10 N4). It is not claimed to be cheap or usually fruitful.
+
+#### The support witness: a moved grid is not a lost bucket (2026-09-19, STYLE-REVIEW-W10 S5/S6)
+
+Every checkpoint identity is keyed on `weather_support_sha256(points)`, and both inputs to that
+digest -- `INGEST_BBOX` and `resolve_weather_sample_spacing_degrees()` -- are environment facts read
+at CALL TIME (`weather_observations/support.py:27-38`), so an operator may move the grid without a
+deploy. Every retained body then sits under keys this lane will never construct again, and until
+2026-09-19 `--recover-day` answered that with **"the bucket is lost, not owed"** and exit 1: a false
+claim of permanent data loss, made in the exact moment an operator is deciding whether to panic.
+
+Nothing could discover the truth after the fact. A checkpoint key hashes the whole identity, and
+`AvailabilityStorage` (`pipeline/parquet/availability_storage.py:61-75`) offers `read`,
+`put_immutable` and `compare_and_swap` and NO listing, so "every body retained for this day under
+any grid" is not a question the store can answer. The evidence therefore has to be written forward:
+`recovery.py::record_support_witness` writes one grid-independent object per day beside the bodies
+(identity `weather_support_witness_identity`, whose grid slot is the constant
+`WEATHER_SUPPORT_WITNESS_GRID`), holding the digests that day has been polled under. It is rewritten
+on every poll so it expires with the bodies rather than before them, and a witness that fails to
+write costs a future recovery its discriminator, never this turn its retention
+(`SourceResponseCheckpoints.write`, `pipeline/parquet/source_checkpoint.py:80-122`, reports its own
+faults and returns).
+
+`recover_weather_day` reads the witness FIRST, in one object read, and this is also the GRID BOUND
+the date bounds had no counterpart for: a day witnessed only under other digests returns
+`foreign_support_grid` **without walking a single point**, because the walk would issue one GET per
+support point against keys that cannot exist and then report the emptiness it manufactured as a
+loss. `_recovery_refusal_detail` (`weather_observations/forward.py:978-1010`) then speaks all three
+answers apart: OWED (grid changed, restore the bbox and spacing and re-run, naming both digests),
+UNKNOWN (no witness survives, so whether a body exists elsewhere cannot be told from here), and LOST
+(searched the grid the day was polled with, and nothing is readable). Only the third is a loss claim,
+and every report now carries `support_sha256` so the identity searched is on the record either way.
+
+#### The probe's OUTPUT is guarded too, not just its I/O
+
+The phase emit and the re-bucketing of recovered readings sat BETWEEN the two guarded regions
+(verifier hotfix W10, residual 1), so a recovered reading the row builder refuses could still raise
+out of `direct_weather_observation_tables` into `main()`'s catch-all and drop an unretained poll.
+`_tables_after_recovery` (`weather_observations/forward.py:891-945`) now owns that strip: a fault
+there publishes the poll WITHOUT the recovered readings, emits
+`weather_observations_source_recovery_merge_failed`, and costs the turn its `complete` through
+`RecoveryPhase.merge_error_type` -> `degraded` -> `_bucket_verdict(..., recovery_degraded=...)`.
+Inside that guard the poll path also stopped disagreeing with its sibling about a missing day
+(STYLE-REVIEW-W10 S6): `_run_recovery_turn` raises when its reparse names an unexpected day
+(`weather_observations/forward.py:1060-1061`) while this path used to filter the same condition away
+with `if day in repaired`. It refuses now too -- and because the refusal happens inside the guard,
+refusing costs the recovery and not the poll.
 
 ### The name collision, again, and which producer this actually is
 
