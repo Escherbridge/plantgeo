@@ -41,6 +41,15 @@ import { COVERAGE_STATES } from "@/lib/server/services/land-context/types";
 // Derived, never restated: a new member must be admitted here by the contract, not by this list.
 const VALID_COVERAGE_STATES: readonly string[] = COVERAGE_STATES;
 
+// Every reader now refuses outright where the deployment's region binds no land-context source
+// (STYLE-REVIEW-W8 B1), and no shipped manifest binds one yet, so these read-path assertions are
+// about the region that DOES: the gate is pinned open here and proved shut in
+// `src/__tests__/region/land-context-second-region.test.ts`.
+vi.mock("@/lib/server/services/land-context/region-binding", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/server/services/land-context/region-binding")>()),
+  isLandContextBoundInRegion: () => true,
+}));
+
 describe("coverage state typing against the stub parquet-reader", () => {
   it("readPointContainment returns a typed coverageState, never null/undefined, for an unresolved point", async () => {
     const result = await readPointContainment(-122.33, 47.6);

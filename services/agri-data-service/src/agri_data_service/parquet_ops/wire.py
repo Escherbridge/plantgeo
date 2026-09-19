@@ -335,6 +335,9 @@ class WarehouseCoverage:
     #: `federation.md` §2's governed absence, per layer. Empty tuple renders as an empty list, which
     #: a client reads as "this deployment stated no bindings" -- see `to_wire` below.
     layer_bindings: tuple[LayerBindingCoverage, ...] = ()
+    #: WHOSE footprint the bindings and lanes above describe: the serving side's region manifest.
+    region_slug: str | None = None
+    region_display_name: str | None = None
 
     def to_wire(self) -> dict[str, object]:
         """Render the census.
@@ -349,6 +352,15 @@ class WarehouseCoverage:
         the only surface that reads the field renders that exactly as it renders today's payload --
         every layer available. There is no reading of the absent field that is a false claim, so a
         rejection during the deploy window would blank a slider for no gained safety.
+
+        `region_slug`/`region_display_name` are ADDITIVE and optional for the same reason, and they
+        are what makes `layer_bindings` checkable: the bindings state WHAT is bound, and until this
+        wave nothing on the wire stated WHOSE region they were bound in. `PLANTGEO_REGION` here and
+        `NEXT_PUBLIC_PLANTGEO_REGION` in the web tree are two independently settable variables, so a
+        deployment that sets one and not the other served one region's footprint over the other
+        region's data with nothing able to detect it (STYLE-REVIEW-W8 S1). A client that reads the
+        field compares it with its own compiled slug and refuses the payload on a disagreement; a
+        client that predates it is exactly as informed as it was yesterday.
         """
         return {
             "coverage_schema_version": COVERAGE_SCHEMA_VERSION,
@@ -356,6 +368,8 @@ class WarehouseCoverage:
             "evaluated_through_day": render_day(self.evaluated_through_day),
             "lanes": [lane.to_wire() for lane in self.lanes],
             "layer_bindings": [binding.to_wire() for binding in self.layer_bindings],
+            "region_slug": self.region_slug,
+            "region_display_name": self.region_display_name,
         }
 
 

@@ -9,6 +9,13 @@
  * frozen defaults and `./parquet-reader.ts` for the (placeholder) storage
  * layer this module reads through.
  *
+ * EVERY reader here asks the region before it asks anything else: where this deployment's manifest
+ * binds no `land-context` source, the answer is the typed governed absence
+ * `source_unbound_for_region` and no read is attempted (`./region-binding.ts`, `federation.md` §2).
+ * That gate used to exist only on the map-toggle path, so a second region was told its area was
+ * over budget — `outside_pilot_states` — for a layer the platform simply does not hold there
+ * (STYLE-REVIEW-W8 B1).
+ *
  * Two-phase spatial read, per the spec: bbox/row-group pruning first, exact
  * intersection second. Intersection finds candidate reported features, not
  * legal proof — never reduce a selected area to its centroid or the nearest
@@ -20,12 +27,17 @@ import {
   MAX_AOI_GEOMETRY_VERTICES,
   MAX_FEATURES_RETURNED,
   MAX_RESPONSE_BYTES,
-  PILOT_STATES,
   estimateResponseBytes,
   isWithinAoiAreaBudget,
   isWithinFeatureCountBudget,
   isWithinVertexBudget,
 } from "./budgets";
+import {
+  admittedSubdivisionCodes,
+  isAdmittedSubdivisionCode,
+  isLandContextBoundInRegion,
+  landContextUnboundDetail,
+} from "./region-binding";
 import {
   exactIntersectCandidates,
   findBoundaryByParcelKey,
@@ -43,8 +55,27 @@ import type {
   PilotState,
 } from "./types";
 
-function isPilotState(state: string): state is PilotState {
-  return (PILOT_STATES as readonly string[]).includes(state);
+/**
+ * Whether this deployment's region admits the subdivision code, read from the SELECTED manifest.
+ *
+ * The `PilotState` narrowing is honest only because every caller passes the unbound gate first and
+ * the pilot's plane is the only physical land-context plane this build has storage for: a region
+ * that reaches a state check at all is one whose manifest binds the layer, and today no manifest
+ * does. `src/__tests__/region/land-context-second-region.test.ts` fails the day one binds it, which
+ * is the day the storage vocabulary must move behind the manifest with it (STYLE-REVIEW-W8 B1).
+ */
+function isAdmittedState(state: string): state is PilotState {
+  return isAdmittedSubdivisionCode(state);
+}
+
+/**
+ * The governed absence every reader answers where the region binds no land-context source.
+ *
+ * `source_unbound_for_region`, never `outside_pilot_states`: a budget refusal tells a reader to ask
+ * something smaller, and there is nothing smaller to ask. `federation.md` §2 (STYLE-REVIEW-W8 B1).
+ */
+function regionUnboundResult(): LandContextResult {
+  return emptyResult("source_unbound_for_region", landContextUnboundDetail());
 }
 
 function budgetExceeded(
@@ -91,6 +122,7 @@ export async function readPointContainment(
   lat: number,
   options: { maxFeatures?: number } = {}
 ): Promise<BoundedResponse<LandContextResult[]>> {
+  if (!isLandContextBoundInRegion()) return { status: "ok", data: [regionUnboundResult()] };
   const maxFeatures = options.maxFeatures ?? MAX_FEATURES_RETURNED;
   if (!isWithinFeatureCountBudget(maxFeatures)) {
     return budgetExceeded("feature_count_would_exceed_limit", MAX_FEATURES_RETURNED, maxFeatures);
@@ -151,6 +183,7 @@ export async function readBoundedAoiIntersection(
   bbox: BboxDegrees,
   options: { maxFeatures?: number; maxVertices?: number } = {}
 ): Promise<BoundedResponse<LandContextResult[]>> {
+  if (!isLandContextBoundInRegion()) return { status: "ok", data: [regionUnboundResult()] };
   const maxFeatures = options.maxFeatures ?? MAX_FEATURES_RETURNED;
   const maxVertices = options.maxVertices ?? MAX_AOI_GEOMETRY_VERTICES;
 
@@ -223,8 +256,9 @@ export async function readBoundedAoiIntersection(
 export async function readBoundaryByParcelKey(
   key: ParcelKey
 ): Promise<BoundedResponse<LandContextResult>> {
-  if (!isPilotState(key.state)) {
-    return budgetExceeded("outside_pilot_states", PILOT_STATES.length, null);
+  if (!isLandContextBoundInRegion()) return { status: "ok", data: regionUnboundResult() };
+  if (!isAdmittedState(key.state)) {
+    return budgetExceeded("outside_pilot_states", admittedSubdivisionCodes().length, null);
   }
   const { feature, gap, refusal } = await findBoundaryByParcelKey(key);
   if (!feature) {
@@ -269,6 +303,7 @@ export async function readContactsForSubject(
   topic: string | null,
   options: { maxFeatures?: number } = {}
 ): Promise<BoundedResponse<LandContextResult[]>> {
+  if (!isLandContextBoundInRegion()) return { status: "ok", data: [regionUnboundResult()] };
   const maxFeatures = options.maxFeatures ?? MAX_FEATURES_RETURNED;
   if (!subjectId || subjectId.length === 0) {
     return budgetExceeded("feature_count_would_exceed_limit", maxFeatures, 0);
@@ -343,8 +378,19 @@ export async function readCoverageForRegion(
   state: string,
   county: string | null
 ): Promise<BoundedResponse<{ state: string; county: string | null; coverageState: LandContextResult["coverageState"]; gap: string }>> {
-  if (!isPilotState(state)) {
-    return budgetExceeded("outside_pilot_states", PILOT_STATES.length, null);
+  if (!isLandContextBoundInRegion()) {
+    return {
+      status: "ok",
+      data: {
+        state,
+        county,
+        coverageState: "source_unbound_for_region",
+        gap: landContextUnboundDetail(),
+      },
+    };
+  }
+  if (!isAdmittedState(state)) {
+    return budgetExceeded("outside_pilot_states", admittedSubdivisionCodes().length, null);
   }
   const { covered, gap, refusal } = await readCoverageStatus(state, county);
   // A pointer refusal names itself: no lane bound for this region, or a census that did not

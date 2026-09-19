@@ -188,3 +188,7 @@ class WireCoverage(_Frozen):
     #: `WarehouseCoverage.to_wire`'s docstring for why silence here is not a false claim. Defaulted
     #: so a body recorded before this field existed still validates against the frozen contract.
     layer_bindings: list[WireLayerBinding] = Field(default_factory=list)
+    #: WHOSE region the lanes and bindings above describe. Additive and optional on the same terms:
+    #: a body recorded before the field existed states no region, which is what it knew.
+    region_slug: str | None = None
+    region_display_name: str | None = None

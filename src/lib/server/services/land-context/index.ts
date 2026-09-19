@@ -14,6 +14,15 @@ export {
   readContactsForSubject,
   readCoverageForRegion,
 } from "./reader";
+export {
+  admittedSubdivisionCodeSchema,
+  admittedSubdivisionCodes,
+  isAdmittedSubdivisionCode,
+  isLandContextBoundInRegion,
+  landContextUnboundDetail,
+  regionDisplayName,
+  regionSlug,
+} from "./region-binding";
 export { draftInquiry } from "./inquiry-draft";
 export type { DraftInquiryInput, DraftInquiryResult } from "./inquiry-draft";
 export type { BboxDegrees } from "./parquet-reader";

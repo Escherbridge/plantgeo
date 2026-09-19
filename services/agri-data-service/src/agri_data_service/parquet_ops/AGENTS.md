@@ -403,6 +403,15 @@ The question is never "is the field new", it is **what does a client conclude fr
   2026-09-18, STYLE-REVIEW-W6 S5: the same commit that added this rule deleted the
   `?? []` → empty list → null → **available** tail it cited. The conclusion — hold at 3 — was and
   is right; the argument printed under it described a decode path that no longer exists.)*
+- **`region_slug`/`region_display_name` shipped on the same terms (2026-09-18, STYLE-REVIEW-W8
+  S1), also at version 3.** They answer the question `layer_bindings` could not: the bindings say
+  WHAT this deployment binds, and nothing on the wire said WHOSE region bound it, so a deployment
+  that set `PLANTGEO_REGION` without `NEXT_PUBLIC_PLANTGEO_REGION` (or the reverse) served one
+  region's footprint over the other region's data and neither tree could tell. Silence is safe by
+  the same test: an older service states no region, a client that reads the field treats "unstated"
+  as "no claim" and falls through to its compiled manifest, and only a STATED disagreement refuses
+  the census (`parquet-slider-capabilities.ts`, reason `region_identity_mismatch`). **The two
+  environment variables are one setting and must be set together in deploy config.**
 - **Changed, removed, required, or silence could be read as HEALTH → 3 -> 4, in one commit.** The
   freshness fields below are the second case: absent `staleness_days` is indistinguishable from
   zero staleness to a client that has learnt to read it, and a field whose silence is a false claim

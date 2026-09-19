@@ -117,6 +117,38 @@ Since 2026-09-18 the map also reads this plane automatically on pan and zoom thr
 land-context-viewport). `MAX_AOI_AREA_SQUARE_DEGREES` = 1 is what bounds it, so the automatic read
 only fires from roughly z10 in; widening it is an owner decision about server load, not a knob.
 
+## §region-binding
+
+`region-binding.ts` answers one question for every server surface here: **does THIS deployment's
+region bind a land-context source?** It asks the one binding rule (`layerBindingInRegion` with a
+`null` payload, so the compiled manifest answers) rather than re-deciding, because two helpers
+answering the same question differently is the defect W5 B1 consolidated away.
+
+**Why it exists (STYLE-REVIEW-W8 B1).** `region.ts` justified keeping `REGION_SUBDIVISION_CODES`
+PNW-derived by claiming a second region never reaches those literals, because
+`layerBindingInRegion` answers `unbound` first. That helper gated exactly ONE caller, the map hook
+`useLandContextViewportBoundaries`. The tRPC router, the bounded readers and the agent tools were
+all region-independent, so a `kenya-highlands` deployment would have offered
+`resolve_land_boundary_by_parcel_key(state: "WA")`, described its own scope as "WA/OR/ID", and
+answered a Nairobi AOI `budget_exceeded: outside_pilot_states` — a BUDGET refusal, which tells a
+reader to ask something smaller, where the truth is that the platform holds nothing for this layer
+anywhere in the region. `federation.md` §2 requires that absence to reach the slider catalogue,
+the legends AND the agent tools.
+
+**The shape of the fix.** Every reader answers the typed `source_unbound_for_region` before it
+reads anything; `callLandContextTool` refuses with `not_available_in_region` before it parses
+arguments, mirroring the Python tree's `agent/tools.py::_region_absence` (the tool stays
+REGISTERED — a vocabulary that changed per region would make the agent claim not to know a surface
+the platform has); and every caller-supplied state is validated by
+`admittedSubdivisionCodeSchema`, which reads the SELECTED manifest at parse time.
+
+**What stays the pilot's compile-time tuple, and why that reason is checkable.** `PILOT_STATES`
+still backs Drizzle's `pgEnum` and `parquet-reader.ts`'s stored-row schema. Both need a literal
+tuple at module scope, and both describe the pilot's own PHYSICAL plane, which a second region
+could only gain through a migration and a lane of its own.
+`src/__tests__/region/land-context-second-region.test.ts` fails the moment any registered manifest
+binds a `land-context` source — the exact day that reason stops being true.
+
 ## Federation note
 
 `PNW_STATE_CODES` / `PnwStateCode` in `src/lib/server/db/schema/land-context/shared.ts` are now

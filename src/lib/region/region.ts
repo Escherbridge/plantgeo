@@ -245,11 +245,56 @@ export function assertAdminCodesMatchDeclaredTuple(
  * still checked against this tuple -- by `assertAdminCodesMatchDeclaredTuple`, on first
  * `getRegion()` call, where a read belongs.
  *
- * Still the PILOT'S tuple now that a second manifest exists, and deliberately so: the only surfaces
- * these literal types serve are land-context's (`PNW_STATE_CODES`, `PILOT_STATES`, the Drizzle
- * enum), and `land-context` is a platform layer NO region binds a source for. A second region
- * therefore never reaches them -- `layerBindingInRegion` answers `unbound` first. The day a region
- * binds a land-context source, these move behind the selected manifest; until then, deriving them
- * from the selected region would only mean an import-time region read with nothing reading it.
+ * Still the PILOT'S tuple now that a second manifest exists, and the reason has been REPLACED
+ * (STYLE-REVIEW-W8 B1). The old one -- "a second region never reaches them, `layerBindingInRegion`
+ * answers `unbound` first" -- was false: that helper gated one map hook, while the land-context
+ * tRPC router, bounded readers and agent tools all reached these literals region-independently and
+ * would have offered a Kenya deployment WA/OR/ID. Those surfaces now read
+ * `admittedSubdivisionCodes()` (`land-context/budgets.ts`) from the SELECTED manifest at call time
+ * and refuse the layer outright where the region binds no land-context source
+ * (`land-context/region-binding.ts`).
+ *
+ * What genuinely must stay a compile-time tuple is the STORAGE vocabulary: Drizzle's `pgEnum`
+ * (`db/schema/land-context/shared.ts`) and the Parquet row schema (`parquet-reader.ts`) need a
+ * literal tuple at module scope, and both describe the pilot's own physical land-context plane,
+ * whose columns a second region could only gain through a migration of its own. That reason is
+ * checked rather than asserted: `src/__tests__/region/land-context-second-region.test.ts` fails the
+ * moment any registered manifest binds a `land-context` source, which is exactly when the storage
+ * vocabulary stops being the pilot's alone.
  */
 export const REGION_SUBDIVISION_CODES = subdivisionCodesOf(PNW_ADMIN_CODES);
+
+/**
+ * One region's admin codes reduced to their subdivision suffixes, as runtime strings.
+ *
+ * Takes the `Region` rather than reading one, so a caller's dependency stays visible and no module
+ * scope can snapshot it. The literal-typed twin above is the pilot's compile-time tuple; this is
+ * the answer for a surface that must be right in WHATEVER region this deployment selected.
+ */
+export function subdivisionCodesForRegion(region: Region): readonly string[] {
+  return region.adminCodes.map((adminCode) => adminCode.slice(adminCode.indexOf("-") + 1));
+}
+
+/**
+ * Whether a coverage census describes the region this bundle was compiled for.
+ *
+ * `PLANTGEO_REGION` (service) and `NEXT_PUBLIC_PLANTGEO_REGION` (bundle) are two independently
+ * settable variables naming one fact, and nothing bound them: a deployment setting one and not the
+ * other served one region's footprint over the other region's data undetectably (STYLE-REVIEW-W8
+ * S1). `unstated` is a census that predates the field or states no region -- no claim, and never a
+ * reason to refuse -- while `mismatch` is a STATED disagreement, which no reader may draw.
+ */
+export type RegionIdentityVerdict =
+  | { kind: "agrees"; slug: string }
+  | { kind: "unstated"; compiledSlug: string }
+  | { kind: "mismatch"; compiledSlug: string; servedSlug: string };
+
+export function regionIdentityVerdict(servedRegionSlug: string | null | undefined): RegionIdentityVerdict {
+  const compiledSlug = getRegion().slug;
+  if (servedRegionSlug === null || servedRegionSlug === undefined || servedRegionSlug === "") {
+    return { kind: "unstated", compiledSlug };
+  }
+  return servedRegionSlug === compiledSlug
+    ? { kind: "agrees", slug: compiledSlug }
+    : { kind: "mismatch", compiledSlug, servedSlug: servedRegionSlug };
+}

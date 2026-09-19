@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   describeCoverageRegion,
-  FALLBACK_COVERAGE_BBOX,
+  fallbackCoverageBbox,
   formatCoverageBounds,
 } from "@/lib/map/coverage-region";
 
@@ -32,13 +32,13 @@ describe("describeCoverageRegion", () => {
   });
 });
 
-describe("FALLBACK_COVERAGE_BBOX", () => {
+describe("fallbackCoverageBbox", () => {
   it("stays pinned to the pre-manifest MTBS burn envelope, not the wider named-region one", () => {
     // The region-manifest migration (federation.md §5 step 1) must be behaviour-neutral: the
     // opening camera and ServiceAreaLayer's fallback bounds keep this exact box even though
     // `getRegion().envelope` is wider (-126,41,-110,50). See coverage-region.ts's own comment
     // and src/lib/region/AGENTS.md §default_camera_envelope.
-    expect(FALLBACK_COVERAGE_BBOX).toEqual({ west: -125, south: 42, east: -111, north: 49 });
+    expect(fallbackCoverageBbox()).toEqual({ west: -125, south: 42, east: -111, north: 49 });
   });
 });
 

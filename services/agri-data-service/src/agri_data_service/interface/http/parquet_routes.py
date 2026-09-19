@@ -57,6 +57,7 @@ from agri_data_service.pipeline.parquet.objectstore import BotoObjectStoreBacken
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+    from agri_data_service.foundation.region import Region
     from agri_data_service.parquet_ops.availability_coverage import AvailabilityCoverageReader
     from agri_data_service.parquet_ops.request_params import ReadScope
     from agri_data_service.parquet_ops.warehouse_reader import PartitionRowReader, WarehouseListing
@@ -279,14 +280,18 @@ async def _run_coverage_read() -> dict[str, object]:
     )
 
 
-def region_layer_bindings() -> tuple[LayerBindingCoverage, ...]:
+def region_layer_bindings(region: Region | None = None) -> tuple[LayerBindingCoverage, ...]:
     """This deployment's per-layer binding status, for the slider's "not available here" path.
 
     Read through `load_region()` on every census build rather than captured at import: the census is
     already rebuilt on a 120 s cache clock, and a module-level snapshot is the hidden region
     dependency `federation.md` §1 forbids. See `foundation/region/AGENTS.md`.
+
+    Takes the already-resolved `region` when the caller has one, so the census reads the manifest
+    ONCE and states its bindings and its identity from the same read -- two reads could in principle
+    straddle an environment change and ship bindings labelled with the other region's slug.
     """
-    availability = region_layer_availability(load_region())
+    availability = region_layer_availability(region if region is not None else load_region())
     return tuple(
         LayerBindingCoverage(
             layer=status.layer_slug,
@@ -328,11 +333,17 @@ async def _build_coverage_payload(generated_at: datetime) -> dict[str, object]:
             census_rows = direct.lanes
             evaluated_through_day = direct.evaluated_through_day
         direct_rows = merge_direct_lane_rows(lanes=lanes, resolution=resolution, census_rows=census_rows)
+        # One manifest read for both halves of the region answer: WHAT is bound, and WHOSE region
+        # bound it. A client whose own compiled region disagrees refuses this census rather than
+        # drawing another region's coverage under its own footprint (STYLE-REVIEW-W8 S1).
+        region = load_region()
         return WarehouseCoverage(
             generated_at=generated_at,
             evaluated_through_day=evaluated_through_day,
             lanes=direct_rows,
-            layer_bindings=region_layer_bindings(),
+            layer_bindings=region_layer_bindings(region),
+            region_slug=region.slug,
+            region_display_name=region.display_name,
         ).to_wire()
 
     return await asyncio.to_thread(work)

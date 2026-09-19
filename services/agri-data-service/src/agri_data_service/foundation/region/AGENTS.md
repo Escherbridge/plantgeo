@@ -227,6 +227,21 @@ is Mountain — and this field picks the dominant one rather than modelling a pe
 table; a region whose footprint straddles zones more evenly will need that modelling; this pilot
 does not motivate it yet.
 
+## `PLANTGEO_REGION` and `NEXT_PUBLIC_PLANTGEO_REGION` are ONE setting
+
+This package reads `PLANTGEO_REGION`; the web tree reads `NEXT_PUBLIC_PLANTGEO_REGION`
+(`src/lib/region/region.ts`), inlined into the bundle at build time. They are two independently
+settable variables naming the same fact, so **deploy config must set both, to the same slug, in the
+same change** — setting one alone serves one region's footprint over the other region's data.
+
+Until 2026-09-18 nothing could detect that split. The coverage census now states its own
+`region_slug`/`region_display_name` (`parquet_routes.py::_build_coverage_payload`,
+`parquet_ops/wire.py::WarehouseCoverage.to_wire`), additively and without a schema bump, and the web
+side refuses a census whose slug is not its own rather than drawing it
+(`parquet-slider-capabilities.ts`, withholding reason `region_identity_mismatch`). An UNSTATED
+region is still no claim and falls through to the compiled manifest, so an older service is exactly
+as trusted as it was before. STYLE-REVIEW-W8 S1.
+
 ## Why a second manifest is data rather than a fixture
 
 `kenya_highlands.json` is a shipped deployment artefact, registered in `manifest.py`'s

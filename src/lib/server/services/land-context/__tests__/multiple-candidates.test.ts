@@ -163,6 +163,15 @@ vi.mock("@/lib/server/services/land-context/parquet-reader", async () => {
   };
 });
 
+// Every reader now refuses outright where the deployment's region binds no land-context source
+// (STYLE-REVIEW-W8 B1), and no shipped manifest binds one yet, so these read-path assertions are
+// about the region that DOES: the gate is pinned open here and proved shut in
+// `src/__tests__/region/land-context-second-region.test.ts`.
+vi.mock("@/lib/server/services/land-context/region-binding", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/server/services/land-context/region-binding")>()),
+  isLandContextBoundInRegion: () => true,
+}));
+
 describe("readers return every candidate, never a single best guess", () => {
   it("readPointContainment returns both overlapping features for a point, not just one", async () => {
     const { readPointContainment } = await import("@/lib/server/services/land-context/reader");

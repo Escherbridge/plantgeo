@@ -62,6 +62,32 @@ later) `.subEnvelopes.<purpose>` — instead of importing a new constant. That r
 every call and no caller ever picks a manifest itself. An unset value is the pilot; an unrecognised
 one throws rather than serving the pilot's footprint under another region's name.
 
+## `NEXT_PUBLIC_PLANTGEO_REGION` and `PLANTGEO_REGION` are ONE setting
+
+This tree reads `NEXT_PUBLIC_PLANTGEO_REGION` (inlined by Next at build time); the data service
+reads `PLANTGEO_REGION` (`foundation/region/manifest.py`). Two independently settable variables name
+one fact, so **deploy config must set both, to the same slug, in the same change** — one alone puts
+one region's footprint over the other region's data.
+
+Since 2026-09-18 that split is detectable rather than silent (STYLE-REVIEW-W8 S1). The coverage
+census states its own `region_slug`/`region_display_name`; `regionIdentityVerdict()` (this module)
+compares it with the compiled slug; a `mismatch` makes `getParquetSliderCapabilities` withhold every
+Parquet row with reason `region_identity_mismatch` and makes `layerBindingInRegion` ignore the
+payload's bindings in favour of the compiled manifest. `unstated` is unchanged behaviour: a census
+that names no region makes no claim.
+
+## Every manifest read is per call — there are no module-scope ones
+
+`getRegion()` may only be called from inside a function. A module-scope call snapshots whichever
+region resolved first and, since `getRegion()` began refusing an unregistered slug, throws during
+module evaluation and takes every importer down with it.
+`src/__tests__/region/no-module-scope-region-read.test.ts` scans all of `src/` for the shape and
+fails naming `file:line`; `services/agri-data-service/tests/test_module_scope_region_read.py` is the
+`load_region()` twin. `coverage-region.ts` carried two of them (`NAMED_COVERAGE_REGIONS`,
+`FALLBACK_COVERAGE_BBOX`) for two waves after `region.ts` documented the shape as fixed, which is
+why the rule is now a test (STYLE-REVIEW-W8 S2). Both are functions now:
+`namedCoverageRegions()` and `fallbackCoverageBbox()`.
+
 ## Admin codes are declared once and derived twice
 
 `pnw.ts` keeps `PNW_ADMIN_CODES` as a `const` tuple and spreads it into `adminCodes` under a
@@ -82,6 +108,19 @@ whichever region resolved first.
 The manifest is still checked against the tuple, in the one place a read belongs:
 `assertAdminCodesMatchDeclaredTuple` runs inside `getRegion()` on first call, and a manifest whose
 `adminCodes` are not exactly `PNW_ADMIN_CODES` fails closed there.
+
+**What the pilot tuple may and may not serve, since 2026-09-18 (STYLE-REVIEW-W8 B1).** It is the
+STORAGE vocabulary: Drizzle's `pgEnum` and the Parquet row schema need a literal tuple at module
+scope, and both describe the pilot's own physical land-context plane, which a second region could
+only gain through a migration of its own. It is NOT the request vocabulary: the land-context tRPC
+router, the bounded readers and the agent tools admit `admittedSubdivisionCodes()`, derived from the
+SELECTED manifest at call time, and refuse the layer entirely where the region binds no
+land-context source (`services/land-context/region-binding.ts`). The old justification — "a second
+region never reaches these literals, `layerBindingInRegion` answers `unbound` first" — was false:
+that helper gated one map hook while four server surfaces reached them region-independently.
+`src/__tests__/region/land-context-second-region.test.ts` fails the moment any registered manifest
+binds a `land-context` source, which is exactly when the storage vocabulary stops being the
+pilot's alone.
 
 `PNW_STATE_CODES` (`db/schema/land-context/shared.ts`), `PILOT_STATES`
 (`services/land-context/budgets.ts`) and `PilotState`

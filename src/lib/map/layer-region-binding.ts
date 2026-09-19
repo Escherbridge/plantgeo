@@ -9,7 +9,7 @@
  */
 
 import { LAYER_REGISTRY, type LayerToggleId } from "@/lib/map/layer-registry";
-import { getRegion } from "@/lib/region/region";
+import { getRegion, regionIdentityVerdict } from "@/lib/region/region";
 import type { SliderCapabilities } from "@/types/time-slider";
 
 /**
@@ -100,8 +100,11 @@ export function regionLayerSlugForToggle(layerId: LayerToggleId): string | null 
  * Two evidence sources, in this order, and the SAME verdict for the same evidence -- which is what
  * the two helpers this replaced did not do (STYLE-REVIEW-W5 B1):
  *
- * 1. The coverage PAYLOAD, when it states a row for the slug. It is the serving side's live answer
- *    and outranks a bundle that may be a deploy behind.
+ * 1. The coverage PAYLOAD, when it states a row for the slug AND names this bundle's own region.
+ *    A payload naming a different region describes another deployment's footprint, so its bindings
+ *    are not evidence about this one and the manifest answers alone (STYLE-REVIEW-W8 S1); a payload
+ *    naming NO region is unchanged -- silence is no claim, not a disagreement. An agreeing payload
+ *    is the serving side's live answer and outranks a bundle that may be a deploy behind.
  * 2. The compiled MANIFEST otherwise. `platformLayers` is the platform's whole vocabulary and
  *    `enabledLayers` this region's bindings, so a slug in the first and absent from the second is a
  *    STATEMENT that nothing fills it -- not the silence the old toggle helper failed open on. A
@@ -117,7 +120,11 @@ export function layerBindingInRegion(
   capabilities: SliderCapabilities | null,
   layerSlug: string
 ): LayerRegionBinding {
-  const stated = capabilities?.layerBindings?.find((binding) => binding.layerSlug === layerSlug);
+  const payloadDescribesThisRegion =
+    regionIdentityVerdict(capabilities?.servedRegionSlug).kind !== "mismatch";
+  const stated = payloadDescribesThisRegion
+    ? capabilities?.layerBindings?.find((binding) => binding.layerSlug === layerSlug)
+    : undefined;
   if (stated !== undefined) return stated.binding === "unbound" ? "unbound" : "bound";
   const region = getRegion();
   if (!region.platformLayers.includes(layerSlug)) {

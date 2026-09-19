@@ -30,7 +30,7 @@ export const MAX_RESPONSE_BYTES = 2_000_000;
 export const MAX_PAGE_SIZE = 50;
 
 /**
- * Pilot states this reader plane admits. Anything else is `outside_pilot`, not a silent miss.
+ * The PILOT's subdivision codes, as the compile-time literal tuple storage schemas need.
  *
  * Read from the region's declared admin-code tuple, not restated: this was the twin of
  * `PNW_STATE_CODES` that step 2 left behind, and the Parquet reader's row schema binds to it
@@ -38,6 +38,14 @@ export const MAX_PAGE_SIZE = 50;
  * leave the manifest, the alias and the reader disagreeing -- and because
  * `REGION_SUBDIVISION_CODES` is derived from a compile-time tuple rather than from `getRegion()`,
  * importing this module no longer reads a region manifest at import time (W4 S1).
+ *
+ * NOT the request vocabulary any more (STYLE-REVIEW-W8 B1). Every surface that validates a
+ * caller-supplied state — the tRPC router, the bounded readers, the agent tools — admits
+ * `admittedSubdivisionCodes()` from the SELECTED manifest at call time, because this tuple is the
+ * pilot's and would have offered WA/OR/ID to a deployment covering somewhere else. What remains
+ * here is the pilot's PHYSICAL land-context plane: `parquet-reader.ts`'s row schema and Drizzle's
+ * `pgEnum` both need a literal tuple at module scope, and a second region could only gain those
+ * columns through a migration of its own.
  */
 export const PILOT_STATES = REGION_SUBDIVISION_CODES;
 

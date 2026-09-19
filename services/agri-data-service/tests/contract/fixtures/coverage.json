@@ -76,5 +76,7 @@
       "required_rungs": [], "withheld_reason": null
     }
   ],
-  "layer_bindings": []
+  "layer_bindings": [],
+  "region_slug": null,
+  "region_display_name": null
 }

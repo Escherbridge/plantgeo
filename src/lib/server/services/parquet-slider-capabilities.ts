@@ -24,6 +24,7 @@ import {
   climateFieldStreamName,
   type ClimateFieldSignalId,
 } from "@/lib/environmental/climate-field";
+import { regionIdentityVerdict } from "@/lib/region/region";
 import type { ZoomTier } from "@/lib/map/zoom-tiers";
 import {
   SLIDER_STREAM_LAYER_NAMES,
@@ -57,7 +58,16 @@ export type WithheldParquetCapabilityReason =
   | "availability_malformed"
   | "availability_checksum_invalid"
   /** A rung holds a day past its own source's ceiling; see `ParquetLaneCoverage.sourceCeilingDay`. */
-  | "ceiling_violation";
+  | "ceiling_violation"
+  /**
+   * The census named a region this bundle was not compiled for, so none of it may be drawn.
+   *
+   * Client-side, like `no_common_readable_history`: the serving side is answering honestly about
+   * ITS region, and the fault is the deployment that set `PLANTGEO_REGION` and
+   * `NEXT_PUBLIC_PLANTGEO_REGION` to different slugs (STYLE-REVIEW-W8 S1). Every Parquet-owned row
+   * is withheld rather than a few, because the disagreement is about the whole footprint.
+   */
+  | "region_identity_mismatch";
 
 export interface MissingParquetCapabilityEvidence {
   parquetLane: string;
@@ -87,6 +97,23 @@ export interface ParquetSliderCapabilities extends ResolvedSliderCapabilities {
    * serving side stated no bindings -- see `SliderCapabilities.layerBindings`.
    */
   layerBindings: SliderLayerBinding[];
+  /**
+   * The region slug the SERVING side named, or null when it named none.
+   *
+   * Carried to the client so `layerBindingInRegion` can refuse a stated disagreement instead of
+   * reading another region's bindings as its own; null is "no claim", never "the pilot".
+   */
+  servedRegionSlug: string | null;
+}
+
+/** Every Parquet-owned row withheld for one whole-payload reason, with no evidence to name. */
+function withholdEveryCapability(reason: WithheldParquetCapabilityReason): WithheldParquetCapability[] {
+  return PARQUET_CAPABILITY_CONTRACTS.map((contract) => ({
+    layerName: contract.layerName,
+    parquetLanes: [...contract.parquetLanes],
+    reason,
+    missingEvidence: [],
+  }));
 }
 
 /** The census's wire spelling to the client's, so no surface below reads a snake_case field. */
@@ -280,12 +307,7 @@ function restoreCumulativeBurnHistory(
 }
 
 function unavailableCoverageProofs(): WithheldParquetCapability[] {
-  return PARQUET_CAPABILITY_CONTRACTS.map((contract) => ({
-    layerName: contract.layerName,
-    parquetLanes: [...contract.parquetLanes],
-    reason: "coverage_unavailable",
-    missingEvidence: [],
-  }));
+  return withholdEveryCapability("coverage_unavailable");
 }
 
 interface CapabilityProof {
@@ -938,9 +960,36 @@ export async function getParquetSliderCapabilities(): Promise<ParquetSliderCapab
       // and it is exactly what did not answer. An empty list reads as "no binding stated", which
       // leaves every toggle enabled -- the same place this branch already leaves the slider.
       layerBindings: [],
+      servedRegionSlug: null,
     };
   }
   const serverCurrentDate = new Date().toISOString().slice(0, 10);
+  const regionIdentity = regionIdentityVerdict(coverage.regionSlug);
+  if (regionIdentity.kind === "mismatch") {
+    // Fail closed on a STATED disagreement: every lane in this census describes another region's
+    // footprint, so drawing any of it would render the wrong region silently. The bindings are
+    // dropped with it -- they are that region's bindings -- and `layerBindingInRegion` falls back
+    // to this bundle's compiled manifest (STYLE-REVIEW-W8 S1). `unstated` is NOT this branch: a
+    // census that names no region makes no claim and is trusted exactly as it was before the field
+    // existed.
+    console.error(
+      "Parquet coverage names a region this bundle was not compiled for; withholding every " +
+        "Parquet-owned row. PLANTGEO_REGION and NEXT_PUBLIC_PLANTGEO_REGION are one setting",
+      { servedRegionSlug: regionIdentity.servedSlug, compiledRegionSlug: regionIdentity.compiledSlug }
+    );
+    return {
+      serverCurrentDate,
+      futureAxisDays: FUTURE_AXIS_DAYS,
+      layers: [],
+      streamsUnavailable: false,
+      parquetCoverageGeneratedAt: coverage.generatedAt,
+      parquetCoverageEvaluatedThroughDay: coverage.evaluatedThroughDay,
+      parquetCoverageUnavailable: false,
+      withheldParquetCapabilities: withholdEveryCapability("region_identity_mismatch"),
+      layerBindings: [],
+      servedRegionSlug: regionIdentity.servedSlug,
+    };
+  }
   const evidence = buildEvidenceIndex(coverage.lanes);
   const withheldLanes = availabilityWithheldLanes(coverage.lanes);
   const proofs = PARQUET_CAPABILITY_CONTRACTS.map((contract) => {
@@ -963,6 +1012,7 @@ export async function getParquetSliderCapabilities(): Promise<ParquetSliderCapab
       proof.withheld === null ? [] : [proof.withheld]
     ),
     layerBindings: toSliderLayerBindings(coverage.layerBindings),
+    servedRegionSlug: coverage.regionSlug ?? null,
   };
 }
 

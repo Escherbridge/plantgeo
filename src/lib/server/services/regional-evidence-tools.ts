@@ -4,7 +4,7 @@ import {
   providerUrl,
   UpstreamPayloadError,
 } from "@/lib/server/http/bounded-upstream";
-import { LAND_CONTEXT_TOOLS, callLandContextTool, isLandContextTool } from "@/lib/server/services/land-context-tools";
+import { callLandContextTool, isLandContextTool, landContextTools } from "@/lib/server/services/land-context-tools";
 
 export interface RegionalEvidenceTool {
   name: string;
@@ -66,7 +66,11 @@ export async function loadRegionalEvidenceTools(
   // this same catalogue so `ai-prompt.ts` dispatches both uniformly. Guard
   // against a name collision with the remote registry rather than silently
   // shadowing one tool with the other.
-  const landContextTools = LAND_CONTEXT_TOOLS.map(({ name, description, input_schema }) => ({
+  //
+  // Built HERE, per catalogue load, so the descriptions and `state` enums the model is shown are
+  // the selected region's; they stay registered in every region and refuse where the layer is
+  // unbound (STYLE-REVIEW-W8 B1).
+  const inProcessLandContextTools = landContextTools().map(({ name, description, input_schema }) => ({
     name,
     description,
     input_schema,
@@ -75,7 +79,7 @@ export async function loadRegionalEvidenceTools(
     throw new UpstreamPayloadError("Environmental tool registry collides with a land-context tool name");
   }
   return {
-    tools: [...remoteTools, ...landContextTools],
+    tools: [...remoteTools, ...inProcessLandContextTools],
     surfaces: parsed.data.surfaces,
     featureSurfaces: parsed.data.feature_surfaces,
     valueSurfaces: parsed.data.value_surfaces,

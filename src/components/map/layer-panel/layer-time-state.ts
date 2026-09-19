@@ -39,6 +39,7 @@ export const LAYER_WITHHOLDING_REASONS = [
   "availability_malformed",
   "availability_checksum_invalid",
   "ceiling_violation",
+  "region_identity_mismatch",
 ] as const;
 
 /** One reason the server named for holding a layer's axis back. */
@@ -264,6 +265,12 @@ const WITHHOLDING_WORDING: Record<LayerWithholdingReason, ReasonWording> = {
     badge: "Past its source",
     detail:
       "Reported dates are newer than the source's latest release.",
+  },
+  region_identity_mismatch: {
+    badge: "Wrong region",
+    // Names the misconfiguration without blaming the data: the service answered honestly about a
+    // region this app was not built for, and showing any of it would be showing the wrong place.
+    detail: "This app and its data service are configured for different regions, so no dates are shown.",
   },
 };
 

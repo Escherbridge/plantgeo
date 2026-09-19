@@ -269,6 +269,15 @@ async function resolveServingPartition(
  * Data phase: the row schemas each product must publish
  * ---------------------------------------------------------------------- */
 
+/**
+ * The STORED state column of the pilot's own land-context lane, not a request vocabulary.
+ *
+ * Stays `PILOT_STATES` (the compile-time tuple) deliberately: this validates rows the pilot's
+ * physical plane published, which a second region could only gain through a lane of its own, and
+ * every caller reaching a row read has already passed the region gate
+ * (`region-binding.ts::isLandContextBoundInRegion`). Caller-supplied states are checked against the
+ * SELECTED manifest instead -- see `admittedSubdivisionCodeSchema` (STYLE-REVIEW-W8 B1).
+ */
 const pilotStateSchema = z.enum(PILOT_STATES);
 const nullableText = z.string().nullable();
 

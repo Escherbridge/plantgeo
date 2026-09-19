@@ -8,12 +8,17 @@ import {
   readPointContainment,
   COVERAGE_STATES,
   MAX_FEATURES_RETURNED,
-  PILOT_STATES,
+  admittedSubdivisionCodeSchema,
+  admittedSubdivisionCodes,
+  isLandContextBoundInRegion,
+  landContextUnboundDetail,
+  regionDisplayName,
+  regionSlug,
   type LandContextResult,
 } from "@/lib/server/services/land-context";
 
 /**
- * AI-assistant tool registration for the PNW land-context reference plane.
+ * AI-assistant tool registration for the land-context reference plane.
  *
  * Paired with `regional-evidence-tools.ts`, whose `loadRegionalEvidenceTools`/
  * `callRegionalEvidenceTool` merge this module's tools into the catalogue
@@ -23,19 +28,43 @@ import {
  * service, so these tools call `@/lib/server/services/land-context` directly
  * — no network hop, no separate provider contract.
  *
- * `src/lib/server/trpc/routers/land-context.ts` and
- * `src/lib/server/services/land-context/**` are frozen for this change: this
- * file only consumes their public exports, matching the same six procedures
+ * This file only consumes `src/lib/server/trpc/routers/land-context.ts` and
+ * `src/lib/server/services/land-context/**` through their public exports,
+ * matching the same six procedures
  * (`resolveBoundaryAtPoint`, `resolveBoundaryInArea`, `resolveBoundaryByParcelKey`,
  * `lookupContactsForSubject`, `coverageStatus`, `draftInquiry`) with the same
  * validation the tRPC router applies, so the agent surface and the map/panel
- * UI stay pinned to identical readers and identical evidence.
+ * UI stay pinned to identical readers and identical evidence -- the region gate
+ * included: `callLandContextTool` refuses in a region that binds no land-context
+ * source, and every description and `state` enum below is built from the SELECTED
+ * manifest per catalogue load (see `land-context/AGENTS.md` §region-binding).
  */
 
-const SCOPE_NOTE =
-  "Pilot scope: Washington, Oregon and Idaho (WA/OR/ID) only. Results never include private owner names or personal contact fields — only public office/organization contacts and documented public routes appear.";
+/**
+ * The scope sentence every tool description carries, spoken in the SELECTED region's own terms.
+ *
+ * Was a frozen "Pilot scope: Washington, Oregon and Idaho (WA/OR/ID) only" that a Kenya deployment
+ * would have read out verbatim (STYLE-REVIEW-W8 B1). Built per catalogue load, so the names and
+ * codes a model is told about are always this deployment's.
+ */
+function scopeNote(): string {
+  const codes = admittedSubdivisionCodes();
+  return (
+    `Scope: ${regionDisplayName()} only (${codes.join("/")}). Results never include private owner ` +
+    `names or personal contact fields — only public office/organization contacts and documented ` +
+    `public routes appear.`
+  );
+}
 
-const pilotStateSchema = z.enum(PILOT_STATES);
+/** "Pacific Northwest (WA/OR/ID)": how a tool description names the ground it covers, per call. */
+function admittedAreaPhrase(): string {
+  return `${regionDisplayName()} (${admittedSubdivisionCodes().join("/")})`;
+}
+
+/** The admitted subdivision codes as a JSON-schema enum; read per catalogue load, never frozen. */
+function admittedStateProperty(): Record<string, unknown> {
+  return { type: "string", enum: [...admittedSubdivisionCodes()] };
+}
 
 const bboxSchema = z
   .object({
@@ -51,7 +80,7 @@ const bboxSchema = z
 const parcelKeySchema = z.object({
   sourceNamespace: z.string().trim().min(1).max(200),
   originalId: z.string().trim().min(1).max(200),
-  state: pilotStateSchema,
+  state: admittedSubdivisionCodeSchema,
 });
 
 /**
@@ -117,208 +146,263 @@ function maxFeaturesProperty() {
   };
 }
 
-const RESOLVE_BOUNDARY_AT_POINT_TOOL: LandContextTool = {
-  name: "resolve_land_boundary_at_point",
-  description:
-    `Resolve every land/administrative boundary containing a WA/OR/ID point (parcel, jurisdiction, or other tracked boundary family) using the same reader as the map's boundary detail panel. Returns ALL containing features with their overlap basis and source release, not just the nearest one. ${SCOPE_NOTE} Read-only.`,
-  input_schema: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
-      lon: { type: "number", minimum: -180, maximum: 180, description: "Longitude, WGS84." },
-      lat: { type: "number", minimum: -90, maximum: 90, description: "Latitude, WGS84." },
-      maxFeatures: maxFeaturesProperty(),
+function resolveBoundaryAtPointTool(): LandContextTool {
+  return {
+    name: "resolve_land_boundary_at_point",
+    description:
+      `Resolve every land/administrative boundary containing a point in ${admittedAreaPhrase()} (parcel, jurisdiction, or other tracked boundary family) using the same reader as the map's boundary detail panel. Returns ALL containing features with their overlap basis and source release, not just the nearest one. ${scopeNote()} Read-only.`,
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        lon: { type: "number", minimum: -180, maximum: 180, description: "Longitude, WGS84." },
+        lat: { type: "number", minimum: -90, maximum: 90, description: "Latitude, WGS84." },
+        maxFeatures: maxFeaturesProperty(),
+      },
+      required: ["lon", "lat"],
     },
-    required: ["lon", "lat"],
-  },
-  readOnly: true,
-  handler: (args) => {
-    const input = z
-      .object({
-        lon: z.number().min(-180).max(180),
-        lat: z.number().min(-90).max(90),
-        maxFeatures: z.number().int().min(1).max(MAX_FEATURES_RETURNED).optional(),
-      })
-      .parse(args);
-    return readPointContainment(input.lon, input.lat, { maxFeatures: input.maxFeatures });
-  },
-};
+    readOnly: true,
+    handler: (args) => {
+      const input = z
+        .object({
+          lon: z.number().min(-180).max(180),
+          lat: z.number().min(-90).max(90),
+          maxFeatures: z.number().int().min(1).max(MAX_FEATURES_RETURNED).optional(),
+        })
+        .parse(args);
+      return readPointContainment(input.lon, input.lat, { maxFeatures: input.maxFeatures });
+    },
+  };
+}
 
-const RESOLVE_BOUNDARY_IN_AREA_TOOL: LandContextTool = {
-  name: "resolve_land_boundary_in_area",
-  description:
-    `Resolve land/administrative boundaries intersecting a bounded WA/OR/ID area of interest (bbox), using the same reader and area cap as the map/panel UI. An over-budget area returns a typed budget_exceeded response rather than a silent truncation. ${SCOPE_NOTE} Read-only.`,
-  input_schema: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
-      bbox: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          west: { type: "number", minimum: -180, maximum: 180 },
-          south: { type: "number", minimum: -90, maximum: 90 },
-          east: { type: "number", minimum: -180, maximum: 180 },
-          north: { type: "number", minimum: -90, maximum: 90 },
+function resolveBoundaryInAreaTool(): LandContextTool {
+  return {
+    name: "resolve_land_boundary_in_area",
+    description:
+      `Resolve land/administrative boundaries intersecting a bounded area of interest in ${admittedAreaPhrase()} (bbox), using the same reader and area cap as the map/panel UI. An over-budget area returns a typed budget_exceeded response rather than a silent truncation. ${scopeNote()} Read-only.`,
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        bbox: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            west: { type: "number", minimum: -180, maximum: 180 },
+            south: { type: "number", minimum: -90, maximum: 90 },
+            east: { type: "number", minimum: -180, maximum: 180 },
+            north: { type: "number", minimum: -90, maximum: 90 },
+          },
+          required: ["west", "south", "east", "north"],
+          description: "Bounding box in WGS84 degrees, ordered west < east and south < north.",
         },
-        required: ["west", "south", "east", "north"],
-        description: "Bounding box in WGS84 degrees, ordered west < east and south < north.",
+        maxFeatures: maxFeaturesProperty(),
       },
-      maxFeatures: maxFeaturesProperty(),
+      required: ["bbox"],
     },
-    required: ["bbox"],
-  },
-  readOnly: true,
-  handler: (args) => {
-    const input = z
-      .object({ bbox: bboxSchema, maxFeatures: z.number().int().min(1).max(MAX_FEATURES_RETURNED).optional() })
-      .parse(args);
-    return readBoundedAoiIntersection(input.bbox, { maxFeatures: input.maxFeatures });
-  },
-};
-
-const RESOLVE_BOUNDARY_BY_PARCEL_KEY_TOOL: LandContextTool = {
-  name: "resolve_land_boundary_by_parcel_key",
-  description:
-    `Resolve a land boundary by its validated parcel/tract identity (county/source namespace plus original upstream ID, leading zeros preserved) in WA/OR/ID. Use this when the user has cited a specific parcel rather than a coordinate. ${SCOPE_NOTE} Read-only.`,
-  input_schema: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
-      sourceNamespace: { type: "string", minLength: 1, maxLength: 200, description: "County/source namespace, e.g. \"wa-king-county-assessor\"." },
-      originalId: { type: "string", minLength: 1, maxLength: 200, description: "Original upstream string ID, leading zeros intact." },
-      state: { type: "string", enum: PILOT_STATES },
+    readOnly: true,
+    handler: (args) => {
+      const input = z
+        .object({ bbox: bboxSchema, maxFeatures: z.number().int().min(1).max(MAX_FEATURES_RETURNED).optional() })
+        .parse(args);
+      return readBoundedAoiIntersection(input.bbox, { maxFeatures: input.maxFeatures });
     },
-    required: ["sourceNamespace", "originalId", "state"],
-  },
-  readOnly: true,
-  handler: (args) => readBoundaryByParcelKey(parcelKeySchema.parse(args)),
-};
+  };
+}
 
-const LOOKUP_CONTACTS_FOR_SUBJECT_TOOL: LandContextTool = {
-  name: "lookup_land_contacts_for_subject",
-  description:
-    `Look up every applicable public office, program adviser, or documented contact route for a resolved land-context subject (parcel or boundary feature ID), optionally scoped by topic. Returns every applicable office/route with its route meaning, assignment evidence and review status — never a single "best guess" contact. ${SCOPE_NOTE} Read-only.`,
-  input_schema: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
-      subjectId: { type: "string", minLength: 1, maxLength: 200, description: "The subject ID from a prior boundary resolution result." },
-      topic: { type: "string", minLength: 1, maxLength: 200, nullable: true, description: "Optional topic to scope contact routes to (e.g. a land-use or program topic)." },
-      maxFeatures: maxFeaturesProperty(),
+function resolveBoundaryByParcelKeyTool(): LandContextTool {
+  return {
+    name: "resolve_land_boundary_by_parcel_key",
+    description:
+      `Resolve a land boundary by its validated parcel/tract identity (county/source namespace plus original upstream ID, leading zeros preserved) in ${admittedAreaPhrase()}. Use this when the user has cited a specific parcel rather than a coordinate. ${scopeNote()} Read-only.`,
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        sourceNamespace: { type: "string", minLength: 1, maxLength: 200, description: "County/source namespace, e.g. \"wa-king-county-assessor\"." },
+        originalId: { type: "string", minLength: 1, maxLength: 200, description: "Original upstream string ID, leading zeros intact." },
+        state: admittedStateProperty(),
+      },
+      required: ["sourceNamespace", "originalId", "state"],
     },
-    required: ["subjectId"],
-  },
-  readOnly: true,
-  handler: (args) => {
-    const input = z
-      .object({
-        subjectId: z.string().trim().min(1).max(200),
-        topic: z.string().trim().min(1).max(200).nullable().default(null),
-        maxFeatures: z.number().int().min(1).max(MAX_FEATURES_RETURNED).optional(),
-      })
-      .parse(args);
-    return readContactsForSubject(input.subjectId, input.topic, { maxFeatures: input.maxFeatures });
-  },
-};
+    readOnly: true,
+    handler: (args) => readBoundaryByParcelKey(parcelKeySchema.parse(args)),
+  };
+}
 
-const COVERAGE_STATUS_TOOL: LandContextTool = {
-  name: "land_context_coverage_status",
-  description:
-    `Report land-context coverage status for a WA/OR/ID state and optional county, independent of any specific feature lookup — use this to tell the user whether a region is covered before or instead of a point/area lookup. ${SCOPE_NOTE} Read-only.`,
-  input_schema: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
-      state: { type: "string", enum: PILOT_STATES },
-      county: { type: "string", minLength: 1, maxLength: 200, nullable: true },
+function lookupContactsForSubjectTool(): LandContextTool {
+  return {
+    name: "lookup_land_contacts_for_subject",
+    description:
+      `Look up every applicable public office, program adviser, or documented contact route for a resolved land-context subject (parcel or boundary feature ID), optionally scoped by topic. Returns every applicable office/route with its route meaning, assignment evidence and review status — never a single "best guess" contact. ${scopeNote()} Read-only.`,
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        subjectId: { type: "string", minLength: 1, maxLength: 200, description: "The subject ID from a prior boundary resolution result." },
+        topic: { type: "string", minLength: 1, maxLength: 200, nullable: true, description: "Optional topic to scope contact routes to (e.g. a land-use or program topic)." },
+        maxFeatures: maxFeaturesProperty(),
+      },
+      required: ["subjectId"],
     },
-    required: ["state"],
-  },
-  readOnly: true,
-  handler: (args) => {
-    const input = z
-      .object({ state: pilotStateSchema, county: z.string().trim().min(1).max(200).nullable().default(null) })
-      .parse(args);
-    return readCoverageForRegion(input.state, input.county);
-  },
-};
+    readOnly: true,
+    handler: (args) => {
+      const input = z
+        .object({
+          subjectId: z.string().trim().min(1).max(200),
+          topic: z.string().trim().min(1).max(200).nullable().default(null),
+          maxFeatures: z.number().int().min(1).max(MAX_FEATURES_RETURNED).optional(),
+        })
+        .parse(args);
+      return readContactsForSubject(input.subjectId, input.topic, { maxFeatures: input.maxFeatures });
+    },
+  };
+}
 
-const DRAFT_LAND_INQUIRY_TEXT_TOOL: LandContextTool = {
-  name: "draft_land_inquiry_text",
-  description:
-    "Assemble EDITABLE DRAFT TEXT for a land-context inquiry, for the user to review and send themselves. " +
-    "This tool NEVER sends an email, submits a form, or contacts anyone — it has no side effects and performs " +
-    "no outbound communication of any kind; it only returns text. Always present the result to the user as a " +
-    "draft they must review and send on their own, and never say or imply that an inquiry has already been sent, " +
-    "submitted, or forwarded on their behalf. Requires a contact result already obtained from " +
-    `lookup_land_contacts_for_subject in the same conversation, so the draft stays pinned to the same evidence shown in the UI. ${SCOPE_NOTE}`,
-  input_schema: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
-      parcelKey: {
-        type: "object",
-        nullable: true,
-        additionalProperties: false,
-        properties: {
-          sourceNamespace: { type: "string", minLength: 1, maxLength: 200 },
-          originalId: { type: "string", minLength: 1, maxLength: 200 },
-          state: { type: "string", enum: PILOT_STATES },
+function coverageStatusTool(): LandContextTool {
+  return {
+    name: "land_context_coverage_status",
+    description:
+      `Report land-context coverage status for a subdivision of ${admittedAreaPhrase()} and an optional county, independent of any specific feature lookup — use this to tell the user whether a region is covered before or instead of a point/area lookup. ${scopeNote()} Read-only.`,
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        state: admittedStateProperty(),
+        county: { type: "string", minLength: 1, maxLength: 200, nullable: true },
+      },
+      required: ["state"],
+    },
+    readOnly: true,
+    handler: (args) => {
+      const input = z
+        .object({ state: admittedSubdivisionCodeSchema, county: z.string().trim().min(1).max(200).nullable().default(null) })
+        .parse(args);
+      return readCoverageForRegion(input.state, input.county);
+    },
+  };
+}
+
+function draftLandInquiryTextTool(): LandContextTool {
+  return {
+    name: "draft_land_inquiry_text",
+    description:
+      "Assemble EDITABLE DRAFT TEXT for a land-context inquiry, for the user to review and send themselves. " +
+      "This tool NEVER sends an email, submits a form, or contacts anyone — it has no side effects and performs " +
+      "no outbound communication of any kind; it only returns text. Always present the result to the user as a " +
+      "draft they must review and send on their own, and never say or imply that an inquiry has already been sent, " +
+      "submitted, or forwarded on their behalf. Requires a contact result already obtained from " +
+      `lookup_land_contacts_for_subject in the same conversation, so the draft stays pinned to the same evidence shown in the UI. ${scopeNote()}`,
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        parcelKey: {
+          type: "object",
+          nullable: true,
+          additionalProperties: false,
+          properties: {
+            sourceNamespace: { type: "string", minLength: 1, maxLength: 200 },
+            originalId: { type: "string", minLength: 1, maxLength: 200 },
+            state: admittedStateProperty(),
+          },
+          required: ["sourceNamespace", "originalId", "state"],
         },
-        required: ["sourceNamespace", "originalId", "state"],
+        county: { type: "string", minLength: 1, maxLength: 200, nullable: true },
+        state: admittedStateProperty(),
+        userProvidedIdea: {
+          type: "string",
+          maxLength: 4000,
+          description: "The user's own stated question or idea for the inquiry — never fabricated on their behalf.",
+        },
+        contact: {
+          type: "object",
+          description:
+            "The exact contact result object previously returned by lookup_land_contacts_for_subject for this subject — this tool does not re-resolve contacts, so the draft and the displayed evidence stay pinned to the same lookup.",
+        },
       },
-      county: { type: "string", minLength: 1, maxLength: 200, nullable: true },
-      state: { type: "string", enum: PILOT_STATES },
-      userProvidedIdea: {
-        type: "string",
-        maxLength: 4000,
-        description: "The user's own stated question or idea for the inquiry — never fabricated on their behalf.",
-      },
-      contact: {
-        type: "object",
-        description:
-          "The exact contact result object previously returned by lookup_land_contacts_for_subject for this subject — this tool does not re-resolve contacts, so the draft and the displayed evidence stay pinned to the same lookup.",
-      },
+      required: ["state", "userProvidedIdea", "contact"],
     },
-    required: ["state", "userProvidedIdea", "contact"],
-  },
-  readOnly: true,
-  handler: (args) => {
-    const input = z
-      .object({
-        parcelKey: parcelKeySchema.nullable().default(null),
-        county: z.string().trim().min(1).max(200).nullable().default(null),
-        state: pilotStateSchema,
-        userProvidedIdea: z.string().trim().max(4_000),
-        contact: contactInputSchema,
-      })
-      .parse(args);
-    return draftInquiry({
-      parcelKey: input.parcelKey,
-      county: input.county,
-      state: input.state,
-      userProvidedIdea: input.userProvidedIdea,
-      // Same cast rationale as the tRPC router: the tool input only validates
-      // the fields `draftInquiry` reads, not the full `LandContextResult`.
-      contact: input.contact as LandContextResult,
-    });
-  },
-};
+    readOnly: true,
+    handler: (args) => {
+      const input = z
+        .object({
+          parcelKey: parcelKeySchema.nullable().default(null),
+          county: z.string().trim().min(1).max(200).nullable().default(null),
+          state: admittedSubdivisionCodeSchema,
+          userProvidedIdea: z.string().trim().max(4_000),
+          contact: contactInputSchema,
+        })
+        .parse(args);
+      return draftInquiry({
+        parcelKey: input.parcelKey,
+        county: input.county,
+        state: input.state,
+        userProvidedIdea: input.userProvidedIdea,
+        // Same cast rationale as the tRPC router: the tool input only validates
+        // the fields `draftInquiry` reads, not the full `LandContextResult`.
+        contact: input.contact as LandContextResult,
+      });
+    },
+  };
+}
 
-export const LAND_CONTEXT_TOOLS: LandContextTool[] = [
-  RESOLVE_BOUNDARY_AT_POINT_TOOL,
-  RESOLVE_BOUNDARY_IN_AREA_TOOL,
-  RESOLVE_BOUNDARY_BY_PARCEL_KEY_TOOL,
-  LOOKUP_CONTACTS_FOR_SUBJECT_TOOL,
-  COVERAGE_STATUS_TOOL,
-  DRAFT_LAND_INQUIRY_TEXT_TOOL,
-];
+/** The six builders, in catalogue order; functions, so no description is frozen at import. */
+const LAND_CONTEXT_TOOL_BUILDERS = [
+  resolveBoundaryAtPointTool,
+  resolveBoundaryInAreaTool,
+  resolveBoundaryByParcelKeyTool,
+  lookupContactsForSubjectTool,
+  coverageStatusTool,
+  draftLandInquiryTextTool,
+] as const;
 
-const LAND_CONTEXT_TOOL_NAMES = new Set(LAND_CONTEXT_TOOLS.map((tool) => tool.name));
+/**
+ * The land-context tools as this deployment's region describes them, built per catalogue load.
+ *
+ * Was a module-level array whose descriptions and `state` enums were frozen at import from the
+ * pilot's literals, so a deployment covering anywhere else advertised
+ * `resolve_land_boundary_by_parcel_key(state: "WA")` and prose reading "… in WA/OR/ID"
+ * (STYLE-REVIEW-W8 B1). The six stay REGISTERED in every region -- a vocabulary that changed per
+ * region would make the agent answer "I do not know that surface" for a layer the platform does
+ * have -- and a region that binds no land-context source refuses them in `callLandContextTool`,
+ * the same shape as the Python tree's `_region_absence` (`agent/tools.py`).
+ */
+export function landContextTools(): LandContextTool[] {
+  return LAND_CONTEXT_TOOL_BUILDERS.map((build) => build());
+}
+
+/**
+ * The six tool names, memoised on first use.
+ *
+ * Built lazily rather than at import because building a tool reads the region for its description,
+ * and a module-scope manifest read is the import-time dependency `federation.md` §1 forbids. The
+ * NAMES themselves are region-independent -- the vocabulary never changes with the manifest -- so
+ * one cache serves every region this process ever resolves.
+ */
+let landContextToolNames: ReadonlySet<string> | null = null;
 
 export function isLandContextTool(name: string): boolean {
-  return LAND_CONTEXT_TOOL_NAMES.has(name);
+  landContextToolNames ??= new Set(landContextTools().map((tool) => tool.name));
+  return landContextToolNames.has(name);
+}
+
+/**
+ * The governed absence every land-context tool answers where the region binds no source for it.
+ *
+ * Mirrors `agent/tools.py::_region_absence` field for field, `note` included: a REFUSAL and not an
+ * absence, naming the layer and the region, so a model relaying it cannot restate it as "nothing
+ * was found there" -- which is a claim about the ground rather than about the deployment
+ * (`federation.md` §2).
+ */
+function landContextRegionAbsence(): Record<string, unknown> {
+  return {
+    error: "not_available_in_region",
+    unbound_layers: ["land-context"],
+    region_slug: regionSlug(),
+    region_display_name: regionDisplayName(),
+    note: landContextUnboundDetail(),
+  };
 }
 
 /**
@@ -327,8 +411,12 @@ export function isLandContextTool(name: string): boolean {
  * shape so callers treat both sources identically.
  */
 export async function callLandContextTool(name: string, args: Record<string, unknown>): Promise<string> {
-  const tool = LAND_CONTEXT_TOOLS.find((candidate) => candidate.name === name);
+  const tool = landContextTools().find((candidate) => candidate.name === name);
   if (!tool) throw new Error(`Unknown land-context tool: ${name}`);
+  // The region is asked BEFORE the arguments are parsed: in a region that binds no land-context
+  // source there is no argument that would answer, and a validation error would blame the caller
+  // for the deployment's footprint.
+  if (!isLandContextBoundInRegion()) return JSON.stringify(landContextRegionAbsence());
   const result = await tool.handler(args);
   return JSON.stringify(result);
 }

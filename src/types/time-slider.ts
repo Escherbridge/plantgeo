@@ -337,6 +337,17 @@ export interface SliderCapabilities {
    * true when the one binding rule landed (STYLE-REVIEW-W6 S5).
    */
   layerBindings?: SliderLayerBinding[];
+  /**
+   * The region slug the SERVING side named for the census above, or absent when it named none.
+   *
+   * OPTIONAL on the same terms as `layerBindings`, and read the same way: absent is NO CLAIM, so a
+   * payload predating the field is trusted exactly as it was. A slug that DISAGREES with this
+   * bundle's compiled `getRegion().slug` is a deployment that set `PLANTGEO_REGION` and
+   * `NEXT_PUBLIC_PLANTGEO_REGION` to different slugs, and every field beside it describes the other
+   * region's footprint -- `layerBindingInRegion` refuses the payload's bindings and the server
+   * withholds every Parquet row with `region_identity_mismatch` (STYLE-REVIEW-W8 S1).
+   */
+  servedRegionSlug?: string | null;
 }
 
 /** Metrics whose public day reader is explicitly owned by PostgreSQL fire-perimeter data. */

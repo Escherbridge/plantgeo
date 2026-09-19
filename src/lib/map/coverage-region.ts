@@ -13,19 +13,26 @@ interface NamedRegion {
 }
 
 /**
- * Named regions the ingestion bbox may target, widest match wins ties.
+ * Named regions the ingestion bbox may target, widest match wins ties; read per call.
  *
- * The "Pacific Northwest" row reads its bbox from the region manifest (`getRegion().envelope`)
- * rather than restating it; the other three rows describe footprints this deployment does not
- * serve and stay literal until a multi-region manifest registry exists to read them from — see
- * `src/lib/map/AGENTS.md` §coverage-region and `src/lib/region/AGENTS.md`.
+ * The first row reads its name and bbox from the SELECTED region manifest rather than restating
+ * them; the other three describe footprints this deployment does not serve and stay literal until
+ * a multi-region manifest registry exists to read them from — see `src/lib/map/AGENTS.md`
+ * §coverage-region and `src/lib/region/AGENTS.md`.
+ *
+ * A FUNCTION, not a module-level array: a `getRegion()` call at module scope snapshots whichever
+ * region resolved first and throws during module evaluation for an unregistered slug, taking every
+ * importer down rather than one render (`federation.md` §1; STYLE-REVIEW-W8 S2).
  */
-const NAMED_COVERAGE_REGIONS: NamedRegion[] = [
-  { name: getRegion().displayName, bbox: getRegion().envelope },
-  { name: "California", bbox: { west: -125, south: 32, east: -114, north: 42.5 } },
-  { name: "Western United States", bbox: { west: -126, south: 31, east: -102, north: 50 } },
-  { name: "North America", bbox: { west: -170, south: 14, east: -52, north: 72 } },
-];
+function namedCoverageRegions(): NamedRegion[] {
+  const region = getRegion();
+  return [
+    { name: region.displayName, bbox: region.envelope },
+    { name: "California", bbox: { west: -125, south: 32, east: -114, north: 42.5 } },
+    { name: "Western United States", bbox: { west: -126, south: 31, east: -102, north: 50 } },
+    { name: "North America", bbox: { west: -170, south: 14, east: -52, north: 72 } },
+  ];
+}
 
 /** Area in square degrees; a negative span clamps to zero rather than inverting the comparison. */
 function bboxAreaSquareDegrees(bbox: CoverageBbox): number {
@@ -65,7 +72,7 @@ const REGION_MATCH_MIN_CONTAINED_FRACTION = 0.9;
  * "North America" box that also contains it.
  */
 export function describeCoverageRegion(bbox: CoverageBbox): string {
-  const containingRegions = NAMED_COVERAGE_REGIONS.filter(
+  const containingRegions = namedCoverageRegions().filter(
     (region) => containedFraction(bbox, region.bbox) >= REGION_MATCH_MIN_CONTAINED_FRACTION
   );
   if (containingRegions.length === 0) return formatCoverageBounds(bbox);
@@ -87,8 +94,14 @@ export function describeCoverageRegion(bbox: CoverageBbox): string {
  * manifest migration stays behaviour-neutral: the opening camera and `ServiceAreaLayer`'s fallback
  * bounds keep the pre-manifest `(-125, 42, -111, 49)` value. See `src/lib/map/AGENTS.md`
  * §coverage-region and `src/lib/region/AGENTS.md` §default_camera_envelope.
+ *
+ * A FUNCTION for the same reason `namedCoverageRegions` is: the constant this replaced was the
+ * exact alias `region.ts`'s `deepFreeze` doc cites as the trap it fixed, and it read the manifest
+ * at import (STYLE-REVIEW-W8 S2).
  */
-export const FALLBACK_COVERAGE_BBOX: CoverageBbox = getRegion().defaultCameraEnvelope;
+export function fallbackCoverageBbox(): CoverageBbox {
+  return getRegion().defaultCameraEnvelope;
+}
 
 /** Parses the "west,south,east,north" format shared with the server-side INGEST_BBOX parsing in layers.ts. */
 export function parseCoverageBbox(raw: string | undefined | null): CoverageBbox | null {
@@ -105,7 +118,7 @@ export function parseCoverageBbox(raw: string | undefined | null): CoverageBbox 
  * See `src/lib/map/AGENTS.md` §coverage-region.
  */
 export function getClientCoverageBbox(): CoverageBbox {
-  return parseCoverageBbox(process.env.NEXT_PUBLIC_INGEST_BBOX) ?? FALLBACK_COVERAGE_BBOX;
+  return parseCoverageBbox(process.env.NEXT_PUBLIC_INGEST_BBOX) ?? fallbackCoverageBbox();
 }
 
 /**

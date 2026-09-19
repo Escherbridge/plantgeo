@@ -129,5 +129,7 @@
     {"layer": "drought", "binding": "bound_regional", "source": "usdm", "reason": null},
     {"layer": "signal", "binding": "bound_global", "source": "era5_land_and_nasa_power", "reason": null},
     {"layer": "soil-survey", "binding": "unbound", "source": null, "reason": "no_source_bound_in_region"}
-  ]
+  ],
+  "region_slug": null,
+  "region_display_name": null
 }

@@ -17,6 +17,8 @@ import pytest
 from sanic import Sanic
 
 from agri_data_service import app as app_module
+from agri_data_service.foundation.region import load_region
+from agri_data_service.foundation.region.manifest import REGION_ENV_VAR
 from agri_data_service.interface.http import parquet_routes
 from agri_data_service.parquet_ops import faults
 from agri_data_service.parquet_ops.coverage import CensusLane
@@ -314,6 +316,34 @@ async def test_availability_authority_answers_coverage_without_listing_one_objec
     assert {lane.source_ceiling_day for lane in census.lanes} == {"2026-08-07"}
     assert all(lane.required_rungs == [0, 5, 9, 13] for lane in census.lanes)
     assert reader.reads == ["signal"]
+
+
+@pytest.mark.asyncio
+async def test_the_census_names_the_region_whose_footprint_it_describes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`layer_bindings` states WHAT is bound; these two state WHOSE region bound it.
+
+    `PLANTGEO_REGION` and the web tree's `NEXT_PUBLIC_PLANTGEO_REGION` are two independently
+    settable variables, so without this pair a deployment that sets one and not the other serves one
+    region's footprint over the other region's data undetectably (STYLE-REVIEW-W8 S1). Selecting the
+    second region here proves the fields follow the SELECTION rather than restating the pilot.
+    """
+    reader = ScriptedReader({"signal": whole_ladder(SIGNAL_LANE, published=[date(2026, 8, 1)])})
+    _direct_lane_coverage(
+        monkeypatch,
+        authority="availability",
+        reader=reader,
+        lanes=(SIGNAL_LANE,),
+        listing=ExplodingListing(),
+    )
+    monkeypatch.setenv(REGION_ENV_VAR, "kenya-highlands")
+
+    payload = await parquet_routes._build_coverage_payload(datetime(2026, 8, 25, 4, tzinfo=UTC))
+    census = WireCoverage.model_validate(payload)
+
+    assert census.region_slug == "kenya-highlands"
+    assert census.region_display_name == load_region("kenya-highlands").display_name
 
 
 @pytest.mark.asyncio

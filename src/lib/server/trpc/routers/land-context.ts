@@ -11,11 +11,11 @@ import {
   readPointContainment,
   COVERAGE_STATES,
   MAX_FEATURES_RETURNED,
-  PILOT_STATES,
+  admittedSubdivisionCodeSchema,
 } from "@/lib/server/services/land-context";
 
 /**
- * Read-only tRPC surface for the PNW land-context reference plane.
+ * Read-only tRPC surface for the land-context reference plane.
  *
  * Implements the reference-plane spec's "Bounded readers and agent contract"
  * plus the contact-experience spec's "Agent parity" section: the agent must
@@ -27,7 +27,14 @@ import {
  * only — it has no side effects and sends nothing.
  */
 
-const pilotStateSchema = z.enum(PILOT_STATES);
+/*
+ * Every `state` below is `admittedSubdivisionCodeSchema` (`services/land-context/region-binding.ts`),
+ * which checks the caller's code against the SELECTED region manifest at parse time. It was
+ * `z.enum(PILOT_STATES)` -- the pilot's compile-time tuple -- on a procedure nothing made
+ * region-dependent, so a deployment covering anywhere else advertised and accepted WA/OR/ID
+ * (STYLE-REVIEW-W8 B1). The readers behind these procedures refuse the layer outright where the
+ * region binds no land-context source, answering `source_unbound_for_region` rather than a budget.
+ */
 
 const bboxSchema = z
   .object({
@@ -43,7 +50,7 @@ const bboxSchema = z
 const parcelKeySchema = z.object({
   sourceNamespace: z.string().trim().min(1).max(200),
   originalId: z.string().trim().min(1).max(200),
-  state: pilotStateSchema,
+  state: admittedSubdivisionCodeSchema,
 });
 
 export const landContextRouter = router({
@@ -118,7 +125,7 @@ export const landContextRouter = router({
   coverageStatus: publicProcedure
     .input(
       z.object({
-        state: pilotStateSchema,
+        state: admittedSubdivisionCodeSchema,
         county: z.string().trim().min(1).max(200).nullable().default(null),
       })
     )
@@ -138,7 +145,7 @@ export const landContextRouter = router({
       z.object({
         parcelKey: parcelKeySchema.nullable().default(null),
         county: z.string().trim().min(1).max(200).nullable().default(null),
-        state: pilotStateSchema,
+        state: admittedSubdivisionCodeSchema,
         userProvidedIdea: z.string().trim().max(4_000),
         // The resolved contact result the caller already fetched via
         // `lookupContactsForSubject` — this procedure does not re-resolve

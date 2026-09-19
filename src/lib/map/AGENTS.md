@@ -508,14 +508,23 @@ acceptance or refusal contract.
 `coverage-region.ts` turns an ingestion bbox into something a person can read, and gives the map a
 camera it can paint before any network call resolves.
 
-**`federation.md` §5 step 1 landed: the `"Pacific Northwest"` row and `FALLBACK_COVERAGE_BBOX` now
+**`federation.md` §5 step 1 landed: the first named row and the opening-camera fallback now
 read `getRegion()` (`src/lib/region/region.ts`) instead of restating a literal.** `"California"`,
 `"Western United States"` and `"North America"` are still footprint literals on the migration
 list — they describe footprints outside this deployment's one manifest, so there is nothing yet
 to read them from; see `src/lib/region/AGENTS.md` for where a future multi-region registry would
 put them.
 
-**`FALLBACK_COVERAGE_BBOX` kept its pre-manifest value, on purpose.** It now reads
+**Both manifest reads are PER CALL, never at module scope.** `namedCoverageRegions()` and
+`fallbackCoverageBbox()` are functions; the `NAMED_COVERAGE_REGIONS` array and the
+`FALLBACK_COVERAGE_BBOX` constant they replaced called `getRegion()` during module evaluation,
+which snapshots whichever region resolved first and -- once `getRegion()` started refusing an
+unregistered slug -- threw at import time, taking down every importer instead of one render
+(STYLE-REVIEW-W8 S2; `federation.md` §1; the standing manifest-moves-must-be-lazy rule).
+`src/__tests__/region/no-module-scope-region-read.test.ts` is the guard that fails on the next one
+anywhere under `src/`, and `tests/test_module_scope_region_read.py` is its Python twin.
+
+**The fallback camera kept its pre-manifest value, on purpose.** `fallbackCoverageBbox()` reads
 `getRegion().defaultCameraEnvelope`, NOT `getRegion().envelope` — the manifest step deliberately
 did not fold the fallback into the wider named-region box. `defaultCameraEnvelope` is
 `foundation/region`'s own field for exactly this literal (`-125,42,-111,49`, the MTBS burn

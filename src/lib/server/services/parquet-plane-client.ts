@@ -364,6 +364,23 @@ export interface ParquetWarehouseCoverage {
    * safety.
    */
   layerBindings: ParquetRegionLayerBinding[];
+  /**
+   * The slug of the region manifest the SERVING side loaded, or null when it stated none.
+   *
+   * ADDITIVE on the same terms as `layerBindings`, and the field that makes them checkable: the
+   * bindings say what this deployment binds, and until this field existed nothing on the wire said
+   * whose region bound it. `PLANTGEO_REGION` (service) and `NEXT_PUBLIC_PLANTGEO_REGION` (bundle)
+   * are two independently settable variables, so a deployment that set one and not the other served
+   * one region's footprint over the other region's data with nothing able to detect it
+   * (STYLE-REVIEW-W8 S1). Null is "no claim" and never "the pilot".
+   *
+   * OPTIONAL in the type as well as on the wire, so a fixture or a caller that predates the field
+   * is a census that states no region rather than a compile error -- the same tolerance the decode
+   * path gives a serving side that predates it.
+   */
+  regionSlug?: string | null;
+  /** The serving region's display name, for the sentence a mismatch has to be explained in. */
+  regionDisplayName?: string | null;
 }
 
 /* ---------------------------------------------------------------------------
@@ -539,6 +556,10 @@ const wireCoverageSchema = z.object({
       })
     )
     .optional(),
+  // Optional for the same reason, and read as "no claim" rather than "the pilot" when absent; see
+  // `ParquetWarehouseCoverage.regionSlug`.
+  region_slug: z.string().nullable().optional(),
+  region_display_name: z.string().nullable().optional(),
 });
 
 type WireEnvelope = z.infer<typeof wireEnvelopeSchema>;
@@ -717,6 +738,8 @@ function decodeCoverage(payload: unknown): ParquetWarehouseCoverage {
       withheldReason: lane.withheld_reason,
     })),
     layerBindings: parsed.data.layer_bindings ?? [],
+    regionSlug: parsed.data.region_slug ?? null,
+    regionDisplayName: parsed.data.region_display_name ?? null,
   };
 }
 

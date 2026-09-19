@@ -121,6 +121,15 @@ beforeEach(() => {
   getParquetLatestRelease.mockReset();
 });
 
+// Every reader now refuses outright where the deployment's region binds no land-context source
+// (STYLE-REVIEW-W8 B1), and no shipped manifest binds one yet, so these read-path assertions are
+// about the region that DOES: the gate is pinned open here and proved shut in
+// `src/__tests__/region/land-context-second-region.test.ts`.
+vi.mock("@/lib/server/services/land-context/region-binding", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/server/services/land-context/region-binding")>()),
+  isLandContextBoundInRegion: () => true,
+}));
+
 describe("selectServingRung", () => {
   it("takes the finest published rung whose own ceiling admits the area", () => {
     expect(selectServingRung([13, 9, 5, 0], 0.25)).toEqual({ kind: "selected", rung: 13 });
