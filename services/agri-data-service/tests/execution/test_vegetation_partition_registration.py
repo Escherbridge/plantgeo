@@ -7,6 +7,7 @@ proves the positive against a real planner.
 
 from __future__ import annotations
 
+import importlib
 import math
 from datetime import date
 from pathlib import Path
@@ -18,9 +19,7 @@ from agri_data_service.execution.vegetation_ndvi_plane import (
     EmptyPartitionRegistrationError,
     NonFinitePartitionValueError,
     PartitionRegistrationError,
-    PartitionSourceNotSuppliedError,
     partition_payload_checksum,
-    register_governed_forward_plane,
     register_governed_partition_plane,
 )
 from agri_data_service.execution.vegetation_partition_promotion import day_partition_content_sha256
@@ -80,15 +79,17 @@ async def test_a_non_finite_value_is_refused_before_any_statement_runs() -> None
         await _register((("43.1250:-116.1250", math.nan),))
 
 
-@pytest.mark.asyncio
-async def test_the_retired_cell_days_verb_names_its_replacement_instead_of_reviving_postgres() -> None:
-    with pytest.raises(PartitionSourceNotSuppliedError) as caught:
-        await register_governed_forward_plane(
-            None,  # type: ignore[arg-type] - refused before the session is ever touched
-            cutoff_day=DAY,
-            cell_days=((CELL_VALUES[0][0], DAY),),
-        )
-    assert "register_governed_partition_plane" in str(caught.value)
+def test_the_retired_cell_days_verb_is_gone_rather_than_refusing_forever() -> None:
+    """The shim existed only to keep the promoter's import green for one commit; the promoter has moved.
+
+    `register_governed_partition_plane` is now the only registration verb this module offers, so a
+    caller cannot reach a cell-days-only signature that has no source to read.
+    """
+    module = importlib.import_module("agri_data_service.execution.vegetation_ndvi_plane")
+
+    assert not hasattr(module, "register_governed_forward_plane")
+    assert not hasattr(module, "register_governed_plane")
+    assert not hasattr(module, "PartitionSourceNotSuppliedError")
 
 
 def test_no_statement_this_module_loads_names_a_frozen_source() -> None:

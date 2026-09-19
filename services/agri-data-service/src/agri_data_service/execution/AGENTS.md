@@ -114,24 +114,49 @@ The turn's per-day outcome is decided by the vegetation lane's AVAILABILITY INDE
   silently green (STYLE-REVIEW-W6 S2). The refusal names the day, the fresh verdict, BOTH generation
   SHAs and the `_LATEST.json` pointer key, because after a re-read two generations are in play and
   a stale snapshot and a real divergence otherwise read the same (STYLE-REVIEW-W6 S3);
-- a day that was written and is empty still fails, naming the lane and the day.
+- a day that was written and is empty still fails, naming the lane and the day;
+- the register verb refuses the day by name (any `PartitionRegistrationError`) -> `status:
+  "registration_refused"` carrying the refusal's `error_class` and message, its transaction rolled
+  back so the next day opens a clean one, and the remaining days still run. Every other exception
+  still propagates: a turn cannot honestly report a failure nobody has named.
 
-A turn ends on one of four statuses (STYLE-REVIEW-W5 S3, W8 S3):
+### One outcome, one status: reconciling the ceiling and the refusal vocabularies (2026-09-19)
 
-- `stale_ceiling` -- the newest servable day is more than two publication windows behind today, so
-  no day was evaluated at all. **Exits non-zero.** Decided before the turn runs, because "this
-  window is too old to be progress" is a statement about the window rather than about what its days
-  held.
+The staleness bound (W9-C) and the registration-refusal vocabulary (W9-F) were written in separate
+worktrees and met here. They do NOT overlap, and the precedence below is what makes that true —
+`vegetation_partition_promotion.SUCCESSFUL_TURN_STATUSES` and `FAILING_TURN_STATUSES` are kept as
+two sets precisely so a test can prove they PARTITION `TERMINAL_STATUSES`, rather than leaving
+`exit_code_for`'s fail-closed default to absorb a status nobody defined.
 
-- `completed` -- at least one day promoted or confirmed unchanged. Exit 0.
-- `waiting_for_writer` -- EVERY evaluated day was `not_yet_indexed`. Exit 0, `reason:
-  "forward_writer_has_indexed_none_of_these_days"`, logged once per turn. This is the steady state
-  of the lane as configured (writer not started, `--max-days` 1), and exiting non-zero for it would
-  page every turn, indefinitely, for a lane behaving exactly as intended. It is deliberately not
-  `completed`: nothing was promoted, and the report says so.
-- `no_days_promoted` -- anything else with no progress: `reason: "all_days_absent"` when every
-  requested day was a governed absence, otherwise `no_indexed_day_promoted`. **Exits non-zero**, so
-  a scheduled lane cannot succeed vacuously against days that should have been there.
+A turn ends on exactly one of five statuses, decided in this order:
+
+1. `stale_ceiling` -- decided BEFORE any day is evaluated, in `main()`. The newest servable day is
+   more than two publication windows behind today, so the window itself is not progress. **Exit 1.**
+2. `registration_refused` -- at least one evaluated day reached the register verb and was refused.
+   **Exit 1**, and it DOMINATES every other in-turn outcome: a refusal is a defect in the day it
+   names (an unregistered lattice cell, an empty or duplicated partition, a non-finite value), not a
+   governed outcome the way an absence is. A mixed turn that promoted one day and was refused on
+   another therefore may not report `completed` and exit 0 — nor may it be folded into
+   `no_days_promoted`, whose name would then be false for exactly that turn. `registration_refused_days`
+   names every refused day at the top level, beside `absent_days` and `not_yet_indexed_days`.
+3. `completed` -- at least one day promoted or confirmed unchanged, and none was refused. Exit 0.
+4. `waiting_for_writer` -- EVERY evaluated day was `not_yet_indexed`. Exit 0, `reason:
+   "forward_writer_has_indexed_none_of_these_days"`, logged once per turn. This is the steady state
+   of the lane as configured (writer not started, `--max-days` 1), and exiting non-zero for it would
+   page every turn, indefinitely, for a lane behaving exactly as intended. It is deliberately not
+   `completed`: nothing was promoted, and the report says so.
+5. `no_days_promoted` -- anything else with no progress and no refusal: `reason: "all_days_absent"`
+   when every requested day was a governed absence, otherwise `no_indexed_day_promoted` — which is
+   also the EMPTY-WINDOW outcome, since an index with no servable day yields no days to evaluate.
+   **Exit 1**, so a scheduled lane cannot succeed vacuously against days that should have been there.
+
+**One day, one transaction.** Nothing in this path used to commit, and `local_source_loader_session`
+closes without committing — so an uncommitted turn rolled every governed release back at session
+close while the object store kept a promotion receipt the NEXT turn reads as `unchanged`: green
+forever against a plane holding nothing. The turn now commits after each promoted day and BEFORE its
+receipt is written, and rolls back on a refusal. Both are required together: `advisory_lock` is
+`pg_advisory_xact_lock`, so a refusal that left its transaction open would carry both the poisoned
+transaction and the publication barrier into every remaining day of the turn.
 
 ## Durable execution
 
@@ -269,8 +294,9 @@ not the scheduler.
 ## Vegetation NDVI partition registration (2026-09-19): the corpus digest is gone
 
 `vegetation_ndvi_plane.register_governed_partition_plane` registers ONE Parquet day partition and
-reads no source table. It replaces `register_governed_plane` / `register_governed_forward_plane`,
-which fingerprinted and materialised the whole `geo.features` NDVI corpus. That corpus was frozen
+reads no source table. It replaced, and is now the only survivor of, `register_governed_plane` /
+`register_governed_forward_plane`, which fingerprinted and materialised the whole `geo.features`
+NDVI corpus. That corpus was frozen
 when the `postgres-vegetation` lane was retired (owner call 2026-09-04), so `_corpus_digest` found a
 NULL checksum and raised `ValueError: no vegetation observations exist at or before <day>` on every
 scheduled turn — the raise that rolled the promotion lane back twice on 2026-09-19 (evidence:
@@ -313,9 +339,16 @@ did not find forward registrations before this change either.
 **What it refuses, in its own vocabulary.** Every refusal is a `PartitionRegistrationError`
 subclass, never a bare `ValueError`, because the scheduled lane must be able to render a failure as
 a turn report: `EmptyPartitionRegistrationError`, `DuplicatePartitionCellError`,
-`NonFinitePartitionValueError`, `UnregisteredPartitionCellsError`, `PartitionSourceNotSuppliedError`,
-plus the pre-existing `EmptyGovernedReleaseError` and `ReleaseSetManifestConflictError`, now rooted
-in the same base.
+`NonFinitePartitionValueError`, `UnregisteredPartitionCellsError`, plus the pre-existing
+`EmptyGovernedReleaseError` and `ReleaseSetManifestConflictError`, now rooted in the same base. The
+base class is the ONE exception type `run_vegetation_promotion` catches, and it renders as the
+`registration_refused` day entry and terminal status above.
+
+`register_governed_forward_plane` and its `PartitionSourceNotSuppliedError` were a one-commit
+refusal shim, kept only so the promoter's import stayed green while the two halves of this change
+lived on separate branches. The promoter now calls `register_governed_partition_plane` with the
+`cell_values` it already held, so both are DELETED rather than left as a permanently-raising
+signature a future caller could rediscover.
 
 **What this verb will not do: mint a lattice cell.** `agri.spatial_cell` needs a polygon and a
 resolution; a `(cell_id, metric_value)` partition row carries neither. The observation insert joins

@@ -1,20 +1,25 @@
 """Per-day-partition content-SHA scoped promotion for the governed vegetation NDVI plane.
 
-BACKLOG P4, ARMED BUT SHADOW. `execution/vegetation_ndvi_plane.py::register_governed_forward_plane`
-has had no caller anywhere in this service (grepped clean 2026-09-18) since it was written: the
-Monte Carlo NDVI forecaster it exists to feed has never had a decided checksum scope, which is the
-gap `.omc` memory `agri-vegetation-promotion-unarmed` and `execution/AGENTS.md` name. Owner decision
-2026-09-18 closes that gap: promotion of one `layer=vegetation/kind=observed/year=/month=/day=`
-partition is keyed by THAT PARTITION'S OWN content SHA, matching the availability index's
-`generation=<content-sha>` convention (`conductor/code_styleguides/layer-lanes.md` §4a;
-`pipeline/parquet/availability_index.py`), not the whole-corpus digest
-`execution/vegetation_ndvi_plane._corpus_digest` computes for its own, unrelated Postgres purpose.
+BACKLOG P4, ARMED BUT SHADOW. Owner decision 2026-09-18 closed the gap `.omc` memory
+`agri-vegetation-promotion-unarmed` and `execution/AGENTS.md` name -- the Monte Carlo NDVI
+forecaster the governed plane exists to feed had never had a decided checksum scope: promotion of
+one `layer=vegetation/kind=observed/year=/month=/day=` partition is keyed by THAT PARTITION'S OWN
+content SHA, matching the availability index's `generation=<content-sha>` convention
+(`conductor/code_styleguides/layer-lanes.md` §4a; `pipeline/parquet/availability_index.py`), never
+a whole-corpus Postgres digest.
 
-This module NEVER widens `register_governed_forward_plane`'s existing per-day-touched-cells
-scoping (`execution/vegetation_ndvi_plane.py::register_governed_forward_plane`, its `cell_days`
-argument); it only decides, per partition, whether that
-call is owed at all. Reuses `foundation.canonical.sha256_digest`/`canonical_json` -- the same digest
-routine the availability index binds into every generation key -- rather than a second one.
+The register verb this module calls is
+`execution/vegetation_ndvi_plane.py::register_governed_partition_plane`: it takes ONE day's
+`(cell_key, metric_value)` rows, touches `agri.*` only, and reads no source table. This module hands
+it exactly the cells it read off that day's Parquet partition and never widens that scope; it only
+decides, per partition, whether the call is owed at all. Reuses
+`foundation.canonical.sha256_digest`/`canonical_json` -- the same digest routine the availability
+index binds into every generation key -- rather than a second one.
+
+Every refusal that verb raises is a `PartitionRegistrationError`, and this module renders it as a
+named day entry in the turn report rather than letting it escape: a bare exception out of a
+scheduled turn prints one `failed` line with no per-day breakdown, which is the shape that rolled
+this lane back twice on 2026-09-19.
 
 The AVAILABILITY INDEX is this turn's authority on what a day's outcome is, not a failed object read
 (`layer-lanes.md` §4a). The promoter READS the index and never writes it: it consults
@@ -48,8 +53,9 @@ from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Final, Literal, Protocol, cast
 
 from agri_data_service.execution.vegetation_ndvi_plane import (
+    PartitionRegistrationError,
     RegistrationSummary,
-    register_governed_forward_plane,
+    register_governed_partition_plane,
 )
 from agri_data_service.foundation.canonical import canonical_json, sha256_digest
 from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
@@ -71,7 +77,9 @@ _RECEIPT_SCHEMA_VERSION: Final = 1
 #: default `pipeline/direct/vegetation/forward.py::VEGETATION_DEFAULT_MAX_DAYS` uses for its own turn.
 DEFAULT_MAX_DAYS: Final = 1
 
-RegisterForwardPlane = Callable[..., Awaitable[RegistrationSummary]]
+#: The register seam: one day's cells in, one governed registration out. Named for what it now is --
+#: the retired `cell_days`-only forward verb it used to point at no longer exists.
+RegisterPartitionPlane = Callable[..., Awaitable[RegistrationSummary]]
 
 
 class EmptyDayPartitionError(ValueError):
@@ -344,19 +352,22 @@ async def promote_vegetation_day_partition(  # noqa: PLR0913 - one argument per 
     cell_values: Sequence[tuple[str, float]],
     previous_receipt: VegetationPromotionReceipt | None,
     now: datetime | None = None,
-    register: RegisterForwardPlane = register_governed_forward_plane,
+    register: RegisterPartitionPlane = register_governed_partition_plane,
 ) -> VegetationPromotionOutcome:
     """Promote exactly one day partition, keyed by its own content SHA, or report it unchanged.
 
     An unchanged partition (content SHA equal to `previous_receipt.content_sha256`) never calls the
     governed-plane register verb again -- a re-run of an already-promoted, byte-identical partition
     is idempotent by construction, never a second registration attempt against the same day. A
-    changed partition re-promotes only itself: `register_governed_forward_plane` is already scoped
-    to the touched cell-days it is given, so this verb hands it exactly this day's cells, never the
-    whole corpus.
+    changed partition re-promotes only itself: the register verb takes ONE observed day and the
+    cell VALUES read off that day's partition, so the values this verb already holds are handed
+    straight through. They are the register verb's only source; the frozen `agri.vegetation` corpus
+    it used to digest is unreachable from either module.
 
     Raises `EvaluationArtifactNotPromotableError` for any `kind` other than `observed`, before any
-    checksum is computed or any register call is attempted.
+    checksum is computed or any register call is attempted, and propagates every
+    `PartitionRegistrationError` the register verb raises for `run_vegetation_promotion` to render
+    as a named day entry.
     """
     partition = VegetationDayPartitionKey(day=day, kind=kind)  # raises for a non-`observed` kind
     content_sha256 = day_partition_content_sha256(cell_values)
@@ -369,8 +380,7 @@ async def promote_vegetation_day_partition(  # noqa: PLR0913 - one argument per 
             receipt=previous_receipt,
             registration=None,
         )
-    cell_days = tuple((cell_key, day) for cell_key, _value in cell_values)
-    registration = await register(session, cutoff_day=day, cell_days=cell_days)
+    registration = await register(session, observed_day=day, cell_values=tuple(cell_values))
     receipt = VegetationPromotionReceipt(
         partition=partition,
         content_sha256=content_sha256,
@@ -570,6 +580,13 @@ async def run_vegetation_promotion(  # noqa: PLR0913 - one coordinate of the tur
 
     A partition that exists and is empty still raises, because that is the writer misbehaving rather
     than the source having nothing.
+
+    A `PartitionRegistrationError` from the register verb is the ONE exception class this loop
+    catches, because it is the one whose every member names a specific, reportable defect in the day
+    it was handed. It becomes a `registration_refused` day entry naming the refusal's class and
+    message, its transaction is rolled back, the remaining days still run, and the turn ends
+    non-zero on the terminal `registration_refused` status. Everything else still propagates: an
+    exception nobody has given a name to is not something this turn can honestly report.
     """
     # Imported here, like `main()`'s own store import: the object-store module carries the heavy
     # client dependencies this module otherwise only needs at CLI time.
@@ -614,14 +631,38 @@ async def run_vegetation_promotion(  # noqa: PLR0913 - one coordinate of the tur
         if not cell_values:
             raise EmptyDayPartitionError(layer=VEGETATION_PLANE_STREAM, day=day)
         previous_receipt = load_promotion_receipt(store, day=day)
-        outcome = await promote_vegetation_day_partition(
-            session,
-            day=day,
-            kind=PROMOTABLE_KIND,
-            cell_values=cell_values,
-            previous_receipt=previous_receipt,
-            now=now,
-        )
+        try:
+            outcome = await promote_vegetation_day_partition(
+                session,
+                day=day,
+                kind=PROMOTABLE_KIND,
+                cell_values=cell_values,
+                previous_receipt=previous_receipt,
+                now=now,
+            )
+        except PartitionRegistrationError as refusal:
+            # The refused registration's partial transaction dies HERE, before the next day opens
+            # one. `advisory_lock` is `pg_advisory_xact_lock`, so leaving it open would carry both
+            # the poisoned transaction and the publication barrier into every remaining day.
+            await session.rollback()
+            results.append(
+                {
+                    "day": day.isoformat(),
+                    "layer": VEGETATION_PLANE_STREAM,
+                    "status": REGISTRATION_REFUSED_STATUS,
+                    "error_class": type(refusal).__name__,
+                    "reason": str(refusal),
+                }
+            )
+            emit({"event": "vegetation_promotion_day", **results[-1]})
+            continue
+        if outcome.status == "promoted":
+            # One day, one transaction, committed before its receipt is written. The register verb
+            # documents a caller-owned commit and nothing else in this path performs one, so an
+            # uncommitted turn would roll every governed release back at session close while the
+            # object store kept a receipt the NEXT turn reads as `unchanged` -- green forever
+            # against a plane holding nothing.
+            await session.commit()
         save_promotion_receipt(store, outcome.receipt)
         results.append(
             {
@@ -634,7 +675,7 @@ async def run_vegetation_promotion(  # noqa: PLR0913 - one coordinate of the tur
         )
         emit({"event": "vegetation_promotion_day", **results[-1]})
     report = _promotion_report(results)
-    if report["status"] == "waiting_for_writer":
+    if report["status"] == WAITING_FOR_WRITER_STATUS:
         # Once per turn, not once per day: the whole point of this status is that it must be
         # readable in a log without being an alarm.
         emit(
@@ -648,13 +689,31 @@ async def run_vegetation_promotion(  # noqa: PLR0913 - one coordinate of the tur
     return report
 
 
-#: The terminal statuses a turn may exit ZERO on. `waiting_for_writer` is deliberately NOT
-#: `completed`: it exits 0, but a reader must be able to tell a turn that promoted from one that had
-#: nothing to promote yet. `stale_ceiling` is deliberately absent -- see `stale_ceiling_report`.
-SUCCESSFUL_TURN_STATUSES: Final[frozenset[str]] = frozenset({"completed", "waiting_for_writer"})
-
+#: At least one day promoted or was confirmed unchanged, and no day was refused.
+COMPLETED_STATUS: Final = "completed"
+#: Every evaluated day was `not_yet_indexed`: the forward writer has published none of them yet.
+WAITING_FOR_WRITER_STATUS: Final = "waiting_for_writer"
+#: No day made progress for a reason that is not a refusal: an all-absent or empty window.
+NO_DAYS_PROMOTED_STATUS: Final = "no_days_promoted"
+#: At least one day reached the register verb and was refused by name; see `_promotion_report`.
+REGISTRATION_REFUSED_STATUS: Final = "registration_refused"
 #: The status a default-window turn ends on when its ceiling is older than the lane can explain.
 STALE_CEILING_STATUS: Final = "stale_ceiling"
+
+#: The terminal statuses a turn may exit ZERO on. `waiting_for_writer` is deliberately NOT
+#: `completed`: it exits 0, but a reader must be able to tell a turn that promoted from one that had
+#: nothing to promote yet.
+SUCCESSFUL_TURN_STATUSES: Final[frozenset[str]] = frozenset({COMPLETED_STATUS, WAITING_FOR_WRITER_STATUS})
+
+#: The terminal statuses that exit NON-ZERO. Kept as a set beside the successful one so the two
+#: provably PARTITION the vocabulary: a status in neither, or in both, is a bug a test can name
+#: rather than an exit code an operator has to infer.
+FAILING_TURN_STATUSES: Final[frozenset[str]] = frozenset(
+    {NO_DAYS_PROMOTED_STATUS, REGISTRATION_REFUSED_STATUS, STALE_CEILING_STATUS}
+)
+
+#: Every status this module can put on a terminal report. Nothing else may reach `exit_code_for`.
+TERMINAL_STATUSES: Final[frozenset[str]] = SUCCESSFUL_TURN_STATUSES | FAILING_TURN_STATUSES
 
 
 def ceiling_fields(ceiling: PromotionCeiling, *, stale_after_days: int) -> dict[str, object]:
@@ -685,6 +744,7 @@ def stale_ceiling_report(ceiling: PromotionCeiling, *, stale_after_days: int) ->
         "days": [],
         "absent_days": [],
         "not_yet_indexed_days": [],
+        "registration_refused_days": [],
         "reason": "newest_servable_day_is_older_than_this_lane_can_explain",
         **ceiling_fields(ceiling, stale_after_days=stale_after_days),
     }
@@ -693,9 +753,18 @@ def stale_ceiling_report(ceiling: PromotionCeiling, *, stale_after_days: int) ->
 def _promotion_report(results: list[dict[str, object]]) -> dict[str, object]:
     """Render the terminal report, naming WHY a turn that promoted nothing ended as it did.
 
-    Three terminal statuses, because the turn has three genuinely different outcomes:
+    Four terminal statuses are decided here, in this precedence, because the turn has four
+    genuinely different outcomes:
 
-    - `completed` -- at least one day was promoted or confirmed unchanged. Exit 0.
+    - `registration_refused` -- at least one day reached the register verb and was refused by name.
+      Exit non-zero, and it DOMINATES: a refusal is a defect in the day it names (an unregistered
+      lattice cell, an empty or duplicated partition, a non-finite value), never a governed outcome
+      the way an absence is, so a turn that promoted one day and was refused on another may not
+      report `completed` and exit 0. It is also not folded into `no_days_promoted`, whose name would
+      then be false for exactly that mixed turn. `registration_refused_days` names every refused day
+      and each day entry carries the refusal's `error_class` and message.
+    - `completed` -- at least one day was promoted or confirmed unchanged, and none was refused.
+      Exit 0.
     - `waiting_for_writer` -- EVERY day evaluated is `not_yet_indexed`. Exit 0, named, logged once.
       This is the steady state of the intended configuration, not a failure: the lane's forward
       writer has not started (module docstring), `--max-days` defaults to 1, so a scheduled turn
@@ -703,38 +772,44 @@ def _promotion_report(results: list[dict[str, object]]) -> dict[str, object]:
       lane that is behaving exactly as configured -- and a status nobody can act on is noise, not
       the loudness `engineering-principles.md` §2 asks for (STYLE-REVIEW-W5 S3; the recorded owner
       ruling that bounded catch-up turns exit 0, `.omc` memory `plantgeo-owner-decisions-2026-09-04`).
-    - `no_days_promoted` -- everything else: every day a governed absence, or a mixed turn that
-      promoted nothing. Exit non-zero, which is what stops a lane reporting success forever against
-      days that do not exist (STYLE-REVIEW-W4 B1).
+    - `no_days_promoted` -- everything else with no progress and no refusal: every day a governed
+      absence, an empty window, or a mixed turn that promoted nothing. Exit non-zero, which is what
+      stops a lane reporting success forever against days that do not exist (STYLE-REVIEW-W4 B1).
 
     A `not_yet_indexed` day is still neutral WITHIN a turn: it counts as neither progress nor
     absence, so it cannot turn a turn that DID promote into a failure.
 
-    A fourth status, `stale_ceiling`, exists and is NOT decided here: it is decided before any day
+    A fifth status, `stale_ceiling`, exists and is NOT decided here: it is decided before any day
     is evaluated (`main` -> `stale_ceiling_report`), because "these days are too old to be progress"
     is a statement about the window, not about what the days in it turned out to hold.
     """
     absent_days = [str(entry["day"]) for entry in results if entry["status"] == "absent"]
     not_yet_indexed_days = [str(entry["day"]) for entry in results if entry["status"] == "not_yet_indexed"]
+    refused_days = [str(entry["day"]) for entry in results if entry["status"] == REGISTRATION_REFUSED_STATUS]
     progressed = [entry for entry in results if entry["status"] in ("promoted", "unchanged")]
     waiting_for_writer = bool(results) and len(not_yet_indexed_days) == len(results)
-    if progressed:
-        status = "completed"
+    if refused_days:
+        status = REGISTRATION_REFUSED_STATUS
+    elif progressed:
+        status = COMPLETED_STATUS
     elif waiting_for_writer:
-        status = "waiting_for_writer"
+        status = WAITING_FOR_WRITER_STATUS
     else:
-        status = "no_days_promoted"
+        status = NO_DAYS_PROMOTED_STATUS
     report: dict[str, object] = {
         "status": status,
         "days": results,
-        # Surfaced at the top level so a scheduled turn's report states its absences without the
-        # reader walking every day entry.
+        # Surfaced at the top level so a scheduled turn's report states its absences and refusals
+        # without the reader walking every day entry.
         "absent_days": absent_days,
         "not_yet_indexed_days": not_yet_indexed_days,
+        "registration_refused_days": refused_days,
     }
-    if status == "waiting_for_writer":
+    if status == REGISTRATION_REFUSED_STATUS:
+        report["reason"] = "the_registration_verb_refused_at_least_one_day_partition"
+    elif status == WAITING_FOR_WRITER_STATUS:
         report["reason"] = "forward_writer_has_indexed_none_of_these_days"
-    elif status == "no_days_promoted":
+    elif status == NO_DAYS_PROMOTED_STATUS:
         report["reason"] = (
             "all_days_absent" if results and len(absent_days) == len(results) else "no_indexed_day_promoted"
         )
@@ -742,12 +817,17 @@ def _promotion_report(results: list[dict[str, object]]) -> dict[str, object]:
 
 
 def exit_code_for(report: Mapping[str, object]) -> int:
-    """Map one terminal report onto the process exit code.
+    """Map one terminal report onto the process exit code; `TERMINAL_STATUSES` is the whole domain.
 
     Zero for a turn that promoted (`completed`) and for one that had nothing to promote yet
-    (`waiting_for_writer`, named in the report and distinguishable from the first). Non-zero for a
-    turn that made no progress for any OTHER reason -- an all-absent window, or a mixed turn that
-    promoted nothing -- with that reason already in the report.
+    (`waiting_for_writer`, named in the report and distinguishable from the first). Non-zero for
+    every other terminal status: a refused registration, an all-absent or empty window, and a
+    ceiling too old to be progress -- each with its own reason already in the report.
+
+    Fails CLOSED on a status this module does not define, rather than raising: an unknown status is
+    a defect in the caller, and the last thing a scheduled lane should do on encountering one is
+    turn it into an uncaught exception outside `main()`'s own report. The partition is proved by
+    `FAILING_TURN_STATUSES`/`SUCCESSFUL_TURN_STATUSES` and asserted in the lane's tests instead.
     """
     status = report.get("status")
     return 0 if isinstance(status, str) and status in SUCCESSFUL_TURN_STATUSES else 1
@@ -831,10 +911,16 @@ async def main(argv: Sequence[str] | None = None) -> int:
 
 
 __all__ = [
+    "COMPLETED_STATUS",
     "DEFAULT_MAX_DAYS",
+    "FAILING_TURN_STATUSES",
+    "NO_DAYS_PROMOTED_STATUS",
     "PROMOTABLE_KIND",
+    "REGISTRATION_REFUSED_STATUS",
     "STALE_CEILING_STATUS",
     "SUCCESSFUL_TURN_STATUSES",
+    "TERMINAL_STATUSES",
+    "WAITING_FOR_WRITER_STATUS",
     "AvailabilityIndexDays",
     "AvailabilityPartitionConflictError",
     "EmptyDayPartitionError",

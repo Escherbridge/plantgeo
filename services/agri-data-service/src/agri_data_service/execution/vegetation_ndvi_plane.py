@@ -305,23 +305,6 @@ class NonFinitePartitionValueError(PartitionRegistrationError):
         self.metric_value = metric_value
 
 
-class PartitionSourceNotSuppliedError(PartitionRegistrationError):
-    """Raised when a caller asks for registration with cell DAYS but no cell VALUES.
-
-    The values are the source now: nothing in this module may read `geo.features`/`agri.vegetation`
-    to recover them. Temporary, and it names its own fix -- see `register_governed_forward_plane`.
-    """
-
-    def __init__(self, *, observed_day: date, cell_day_count: int) -> None:
-        super().__init__(
-            f"governed NDVI registration for {observed_day.isoformat()} was handed {cell_day_count} "
-            f"cell-day(s) with no values; call register_governed_partition_plane("
-            f"observed_day=..., cell_values=...) with the partition rows instead"
-        )
-        self.observed_day = observed_day
-        self.cell_day_count = cell_day_count
-
-
 class UnregisteredPartitionCellsError(PartitionRegistrationError):
     """Raised when the lattice dimension holds no cell for keys a partition publishes.
 
@@ -865,23 +848,6 @@ async def register_governed_partition_plane(
         materialisation=materialisation,
         selection=selection,
     )
-
-
-async def register_governed_forward_plane(
-    session: AsyncSession,  # noqa: ARG001 - kept so the refusal has the retired verb's exact signature
-    *,
-    cutoff_day: date,
-    cell_days: tuple[tuple[str, date], ...],
-) -> RegistrationSummary:
-    """Refuse the retired cell-days-only registration and name its replacement.
-
-    TEMPORARY SEAM, delete once `execution/vegetation_partition_promotion.py` calls
-    `register_governed_partition_plane(session, observed_day=day, cell_values=cell_values)` -- it
-    already holds `cell_values` and currently discards the values at that call site. The name is
-    kept ONLY so that module's import stays green across the two commits; the verb behind it read
-    the frozen `geo.features` corpus and cannot be revived.
-    """
-    raise PartitionSourceNotSuppliedError(observed_day=cutoff_day, cell_day_count=len(cell_days))
 
 
 async def load_governed_plane(session: AsyncSession, *, cutoff_day: date) -> GovernedPlane:

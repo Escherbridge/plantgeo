@@ -438,10 +438,10 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
             "Governed-plane promotion for the vegetation NDVI direct-writer stream, keyed per "
             "`layer=vegetation/kind=observed/year=/month=/day=` partition by that partition's own "
             "content SHA (owner decision 2026-09-18), matching the availability index's "
-            "`generation=<content-sha>` convention. Wraps "
-            "`execution/vegetation_ndvi_plane.register_governed_forward_plane`, which has never had "
-            "a caller. An unchanged partition re-run is a no-op against its own promotion receipt; a "
-            "changed partition re-promotes only itself."
+            "`generation=<content-sha>` convention. Hands that partition's own cell values to "
+            "`execution/vegetation_ndvi_plane.register_governed_partition_plane`, which touches "
+            "`agri.*` only and reads no source table. An unchanged partition re-run is a no-op "
+            "against its own promotion receipt; a changed partition re-promotes only itself."
         ),
         writer_floor=(VEGETATION_DIRECT_WRITER_START_DAY + timedelta(days=1)).isoformat(),
     ),

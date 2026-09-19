@@ -24,13 +24,21 @@ from agri_data_service.execution.lane_specs import (
 )
 from agri_data_service.execution.vegetation_ndvi_plane import (
     GovernedPlane,
+    PartitionRegistrationError,
     RegistrationSummary,
     ReleaseMaterialisation,
     SelectionMaterialisation,
+    UnregisteredPartitionCellsError,
 )
 from agri_data_service.execution.vegetation_partition_promotion import (
+    COMPLETED_STATUS,
+    FAILING_TURN_STATUSES,
+    NO_DAYS_PROMOTED_STATUS,
+    REGISTRATION_REFUSED_STATUS,
     STALE_CEILING_STATUS,
     SUCCESSFUL_TURN_STATUSES,
+    TERMINAL_STATUSES,
+    WAITING_FOR_WRITER_STATUS,
     AvailabilityIndexDays,
     AvailabilityPartitionConflictError,
     EmptyDayPartitionError,
@@ -39,6 +47,7 @@ from agri_data_service.execution.vegetation_partition_promotion import (
     PromotionCeiling,
     VegetationDayPartitionKey,
     VegetationPromotionReceipt,
+    _promotion_report as promotion_report_of,
     availability_days_at_base_rung,
     ceiling_fields,
     day_partition_content_sha256,
@@ -161,17 +170,34 @@ def _registration_summary() -> RegistrationSummary:
 
 
 class RecordingRegister:
-    """A stub `register_governed_forward_plane` that counts calls without touching Postgres."""
+    """A stub `register_governed_partition_plane` that counts calls without touching Postgres.
+
+    Its signature is the real verb's, keyword for keyword: a stub that accepted `**kwargs` would
+    have kept passing through the 2026-09-19 rename that broke the two halves apart.
+    """
 
     def __init__(self) -> None:
-        self.calls: list[tuple[date, tuple[tuple[str, date], ...]]] = []
+        self.calls: list[tuple[date, tuple[tuple[str, float], ...]]] = []
 
     async def __call__(
-        self, session: object, *, cutoff_day: date, cell_days: tuple[tuple[str, date], ...]
+        self, session: object, *, observed_day: date, cell_values: tuple[tuple[str, float], ...]
     ) -> RegistrationSummary:
         del session
-        self.calls.append((cutoff_day, cell_days))
+        self.calls.append((observed_day, cell_values))
         return _registration_summary()
+
+
+class RefusingRegister:
+    """A stub register verb that refuses by name, the way every real refusal does."""
+
+    def __init__(self, refusal: PartitionRegistrationError) -> None:
+        self.refusal = refusal
+        self.calls = 0
+
+    async def __call__(self, session: object, *, observed_day: date, cell_values: object) -> RegistrationSummary:
+        del session, observed_day, cell_values
+        self.calls += 1
+        raise self.refusal
 
 
 def test_day_partition_content_sha256_is_order_independent() -> None:
@@ -218,9 +244,11 @@ async def test_first_promotion_calls_register_and_records_a_receipt() -> None:
     )
     assert outcome.status == "promoted"
     assert len(register.calls) == 1
-    promoted_day, cell_days = register.calls[0]
+    promoted_day, cell_values = register.calls[0]
     assert promoted_day == DAY
-    assert set(cell_days) == {("cell-a", DAY), ("cell-b", DAY)}
+    # The VALUES, not just the keys: they are the register verb's only source now that the frozen
+    # `agri.vegetation` corpus it used to re-read them from is gone.
+    assert set(cell_values) == {("cell-a", 0.2), ("cell-b", 0.4)}
     assert outcome.receipt.content_sha256 == outcome.content_sha256
 
 
@@ -264,8 +292,9 @@ async def test_changed_partition_re_promotes_only_itself() -> None:
     assert second.status == "promoted"
     assert len(register.calls) == 2
     assert second.content_sha256 != first.content_sha256
-    # Re-promotion is still scoped to this one day's cells, never widened to a corpus-wide call.
-    assert register.calls[1] == (DAY, (("cell-a", DAY),))
+    # Re-promotion is still scoped to this one day's cells, never widened to a corpus-wide call,
+    # and carries the CHANGED value rather than the one the first promotion registered.
+    assert register.calls[1] == (DAY, (("cell-a", 0.35),))
 
 
 def test_promotion_receipt_round_trips_through_the_object_store(store: ObjectStore) -> None:
@@ -498,12 +527,91 @@ async def test_a_mixed_turn_that_promoted_nothing_still_fails(store: ObjectStore
 
 
 def test_only_a_promoting_or_waiting_turn_exits_zero() -> None:
-    """Four terminal statuses, two exit codes, and `waiting_for_writer` is not `completed` (W5 S3)."""
+    """Five terminal statuses, two exit codes, and `waiting_for_writer` is not `completed` (W5 S3)."""
     assert exit_code_for({"status": "completed"}) == 0
     assert exit_code_for({"status": "waiting_for_writer"}) == 0
     assert exit_code_for({"status": "no_days_promoted", "reason": "all_days_absent"}) == 1
     assert exit_code_for({"status": "no_days_promoted", "reason": "no_indexed_day_promoted"}) == 1
     assert exit_code_for({"status": STALE_CEILING_STATUS}) == 1
+    assert exit_code_for({"status": REGISTRATION_REFUSED_STATUS}) == 1
+
+
+def test_every_terminal_status_has_exactly_one_exit_code() -> None:
+    """The two vocabularies W9-C and W9-F grew must PARTITION, not overlap: one outcome, one status.
+
+    `exit_code_for` fails closed on anything else, so this is the proof that "anything else" is
+    empty rather than a silent third category.
+    """
+    assert SUCCESSFUL_TURN_STATUSES & FAILING_TURN_STATUSES == frozenset()
+    assert TERMINAL_STATUSES == SUCCESSFUL_TURN_STATUSES | FAILING_TURN_STATUSES
+    assert {COMPLETED_STATUS, WAITING_FOR_WRITER_STATUS} == SUCCESSFUL_TURN_STATUSES
+    assert {NO_DAYS_PROMOTED_STATUS, REGISTRATION_REFUSED_STATUS, STALE_CEILING_STATUS} == FAILING_TURN_STATUSES
+    for status in TERMINAL_STATUSES:
+        assert exit_code_for({"status": status}) == (0 if status in SUCCESSFUL_TURN_STATUSES else 1)
+
+
+def _refused_entry(day: date) -> dict[str, object]:
+    """One day entry shaped exactly as `run_vegetation_promotion` renders a refusal."""
+    return {
+        "day": day.isoformat(),
+        "layer": VEGETATION_PLANE_STREAM,
+        "status": REGISTRATION_REFUSED_STATUS,
+        "error_class": "UnregisteredPartitionCellsError",
+        "reason": "agri.spatial_cell does not hold these cells",
+    }
+
+
+def _promoted_entry(day: date) -> dict[str, object]:
+    """One day entry shaped exactly as `run_vegetation_promotion` renders a promotion."""
+    return {
+        "day": day.isoformat(),
+        "layer": VEGETATION_PLANE_STREAM,
+        "status": "promoted",
+        "content_sha256": "0" * 64,
+        "cell_count": 2,
+    }
+
+
+def test_a_refused_registration_is_a_named_terminal_status_not_a_bare_exception() -> None:
+    """The refusal reaches the report, which is what the 2026-09-19 rollbacks did not get."""
+    report = promotion_report_of([_refused_entry(DAY)])
+
+    assert report["status"] == REGISTRATION_REFUSED_STATUS
+    assert report["registration_refused_days"] == [DAY.isoformat()]
+    assert report["reason"] == "the_registration_verb_refused_at_least_one_day_partition"
+    assert exit_code_for(report) == 1
+
+
+def test_a_refusal_dominates_a_turn_that_also_promoted() -> None:
+    """A refusal is a defect in the day it names, so a mixed turn may not report `completed`.
+
+    It is equally not `no_days_promoted`: one day DID promote, and that status's name would be
+    false. The two lanes' vocabularies are resolved by precedence, not by sharing a name.
+    """
+    report = promotion_report_of([_promoted_entry(date(2026, 9, 11)), _refused_entry(DAY)])
+
+    assert report["status"] == REGISTRATION_REFUSED_STATUS
+    assert report["registration_refused_days"] == [DAY.isoformat()]
+    assert exit_code_for(report) == 1
+
+
+async def test_the_day_verb_lets_a_registration_refusal_through_for_the_turn_to_name() -> None:
+    """`promote_vegetation_day_partition` never swallows a refusal; the turn loop renders it."""
+    refusal = UnregisteredPartitionCellsError(observed_day=DAY, cell_keys=("43.1250:-116.1250",))
+    register = RefusingRegister(refusal)
+
+    with pytest.raises(PartitionRegistrationError) as caught:
+        await promote_vegetation_day_partition(
+            None,
+            day=DAY,
+            kind="observed",
+            cell_values=[("43.1250:-116.1250", 0.4)],
+            previous_receipt=None,
+            register=register,
+        )
+
+    assert caught.value is refusal
+    assert register.calls == 1
 
 
 def test_an_absent_day_and_a_race_are_different_exception_types(store: ObjectStore) -> None:
