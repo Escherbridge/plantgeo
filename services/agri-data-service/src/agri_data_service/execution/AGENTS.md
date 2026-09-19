@@ -64,14 +64,39 @@ New recurring work must be registered there instead of adding a Railway cron.
 
 `VEGETATION_NDVI_PROMOTION_LANE_ID` is registered and deliberately NOT in the deployed allow-list.
 Activating it is a production mutation an owner makes by adding the identifier to that variable on
-the job-executor service (the lane's own command carries no `--day`, so `default_promotion_days`
-picks the ceiling from the vegetation lane's own Parquet AVAILABILITY INDEX -- the newest day it
-states `published` at or before today -- and promotes `--max-days` backwards from there. It never
-reads Postgres `agri.vegetation`: that table is frozen since 2026-09-04, and the lane's first
-activated tick raised exactly because its ceiling then came from
+the job-executor service (the lane's own command carries no `--day`, so `promotion_ceiling` picks
+the ceiling from the vegetation lane's own Parquet AVAILABILITY INDEX -- the newest day it states
+SERVABLE at or before today -- and `default_promotion_days` promotes `--max-days` backwards from
+there. It never reads Postgres `agri.vegetation`: that table is frozen since 2026-09-04, and the
+lane's first activated tick raised exactly because its ceiling then came from
 `pipeline/direct/vegetation/forward.py::settled_through`, which queries it. An index with no
-`published` day at all yields an empty day list, which the turn reports as `no_days_promoted`
+servable day at all yields an empty day list, which the turn reports as `no_days_promoted`
 rather than raising).
+
+**Servable, not base-rung-published.** `layer-lanes.md` §4a: "a selectable day is their
+intersection, not the observed union." The promoter READS the base rung -- that is where the bytes
+it content-addresses live -- but `VegetationDayPartitionKey` is zoom-independent, so promoting a day
+registers it on the governed plane as a whole day. A ceiling chosen off the base rung alone would
+therefore register days serving cannot answer at the rungs above them, which is why
+`availability_days_at_base_rung` now also carries `servable_days`: the days published at EVERY
+`required_rungs` row of the generation it read.
+
+**A ceiling has a maximum age, because a ceiling compared against itself is always current.** Under
+the old rule a lane whose forward writer died re-confirmed the same ancient day every turn, reported
+it as `unchanged` -- which counts as progress -- and exited 0 forever. A default-window turn now
+refuses BEFORE it promotes anything when `today - ceiling_day` exceeds
+`lane_specs.vegetation_promotion_stale_ceiling_days()`, with its own status `stale_ceiling`, its own
+reason `newest_servable_day_is_older_than_this_lane_can_explain`, and a NON-ZERO exit. Every
+default-window report carries `ceiling_day`, `ceiling_age_days` and `ceiling_stale_after_days`,
+including the green ones, so "which day did it promote" is answerable from the report alone.
+
+The threshold is TWO publication windows off the lane's registered `publication_lag_days` (7 -> 14
+days), never a literal: `lane_registry.py`'s vegetation `floor_basis` records that 7 is a MEASURED
+MEDIAN gap between usable Sentinel-2 days, widened past the nominal 5-day revisit by cloud
+screening. Half a healthy lane's gaps are therefore wider than one window, so a one-window bound
+would refuse at a provider edge the source cannot beat; two consecutive empty windows is the writer,
+the ingest or the index having stopped. An operator naming `--day` explicitly is a bounded repair
+and is never gated on freshness.
 
 The turn's per-day outcome is decided by the vegetation lane's AVAILABILITY INDEX
 (`layer-lanes.md` §4a), which the promoter reads and never writes, before it opens any object:
@@ -91,7 +116,12 @@ The turn's per-day outcome is decided by the vegetation lane's AVAILABILITY INDE
   a stale snapshot and a real divergence otherwise read the same (STYLE-REVIEW-W6 S3);
 - a day that was written and is empty still fails, naming the lane and the day.
 
-A turn ends on one of three statuses (STYLE-REVIEW-W5 S3):
+A turn ends on one of four statuses (STYLE-REVIEW-W5 S3, W8 S3):
+
+- `stale_ceiling` -- the newest servable day is more than two publication windows behind today, so
+  no day was evaluated at all. **Exits non-zero.** Decided before the turn runs, because "this
+  window is too old to be progress" is a statement about the window rather than about what its days
+  held.
 
 - `completed` -- at least one day promoted or confirmed unchanged. Exit 0.
 - `waiting_for_writer` -- EVERY evaluated day was `not_yet_indexed`. Exit 0, `reason:

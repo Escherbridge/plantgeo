@@ -12,13 +12,12 @@ from agri_data_service.pipeline.direct.botanical_occurrences.forward import (
     BotanicalForwardConfig,
     run_botanical_occurrences_forward,
 )
+from agri_data_service.pipeline.direct.botanical_occurrences.pointer import parse_latest_pointer
 from agri_data_service.pipeline.direct.botanical_occurrences.publish import (
     COMPLETION_MARKER,
     LocalPublicationTarget,
     generation_prefix,
     latest_pointer_path,
-    pointer_path,
-    read_pointer,
 )
 
 if TYPE_CHECKING:
@@ -44,6 +43,16 @@ class RecordingTarget:
 
     def exists(self, relative_path: str) -> bool:
         return self.inner.exists(relative_path)
+
+
+def published_generation(target: Any) -> str | None:
+    """The generation this lane's ONE pointer names, resolved the way the serving path resolves it.
+
+    `parse_latest_pointer` is the reader `planes/botanical_occurrences.py` uses, so a pointer this
+    assertion accepts is one a serving read accepts. The retired `current.json` had no such reader.
+    """
+    payload = target.read_bytes(latest_pointer_path())
+    return None if payload is None else parse_latest_pointer(payload).generation_id
 
 
 def _turn(archive: Path, target: Any, tmp_path: Path) -> dict[str, Any]:
@@ -77,7 +86,7 @@ def test_a_turn_publishes_every_artifact_and_advances_the_pointer(valid_archive:
         COMPLETION_MARKER,
     ):
         assert target.exists(f"{prefix}/{artifact}"), artifact
-    assert read_pointer(target) == report["release_set_id"]
+    assert published_generation(target) == report["release_set_id"]
 
 
 def test_the_completion_marker_is_written_after_every_other_artifact(valid_archive: Path, tmp_path: Path) -> None:
@@ -87,9 +96,9 @@ def test_the_completion_marker_is_written_after_every_other_artifact(valid_archi
     marker_index = target.writes.index(f"{prefix}/{COMPLETION_MARKER}")
     generation_writes = [index for index, path in enumerate(target.writes) if path.startswith(prefix)]
     assert marker_index == max(generation_writes)
-    # BOTH pointers move only after the marker, and the checksum-bound one moves LAST of all: a
-    # serving read resolves it, so it must never name a generation whose manifest is not durable.
-    assert target.writes[-2:] == [pointer_path(), latest_pointer_path()]
+    # The one pointer moves only after the marker, and LAST of everything: a serving read resolves
+    # it, so it must never name a generation whose manifest is not already durable.
+    assert target.writes[-1] == latest_pointer_path()
 
 
 def test_replaying_the_same_release_set_is_a_no_op(valid_archive: Path, tmp_path: Path) -> None:
@@ -118,7 +127,9 @@ def test_an_interrupted_publication_leaves_the_pointer_where_it_was(valid_archiv
                 target=interrupting,
             )
         )
-    assert read_pointer(completed) == first["release_set_id"], "an unfinished generation never becomes current"
+    assert published_generation(completed) == first["release_set_id"], (
+        "an unfinished generation never becomes current"
+    )
 
 
 def test_a_turn_with_no_archive_reports_no_window_rather_than_publishing_nothing(tmp_path: Path) -> None:
@@ -132,4 +143,4 @@ def test_a_turn_whose_only_archive_is_quarantined_publishes_nothing(traversal_ar
     report = _turn(traversal_archive, target, tmp_path)
     assert report["outcome"] == "blocked"
     assert report["release_set_id"] is None
-    assert read_pointer(target) is None
+    assert published_generation(target) is None

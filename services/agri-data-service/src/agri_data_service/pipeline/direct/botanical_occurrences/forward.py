@@ -580,7 +580,7 @@ def parser() -> argparse.ArgumentParser:
     built.add_argument(
         "--hold-pointer",
         action="store_true",
-        help="Write the generation durably but leave `current.json` naming the previous one.",
+        help="Write the generation durably but leave `availability/_LATEST.json` naming the previous one.",
     )
     return built
 

@@ -18,6 +18,10 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from agri_data_service.execution.lane_specs import (
+    VEGETATION_PROMOTION_STALE_CEILING_WINDOWS,
+    vegetation_promotion_stale_ceiling_days,
+)
 from agri_data_service.execution.vegetation_ndvi_plane import (
     GovernedPlane,
     RegistrationSummary,
@@ -25,22 +29,32 @@ from agri_data_service.execution.vegetation_ndvi_plane import (
     SelectionMaterialisation,
 )
 from agri_data_service.execution.vegetation_partition_promotion import (
+    STALE_CEILING_STATUS,
+    SUCCESSFUL_TURN_STATUSES,
     AvailabilityIndexDays,
     AvailabilityPartitionConflictError,
     EmptyDayPartitionError,
     EvaluationArtifactNotPromotableError,
     IndexedDay,
+    PromotionCeiling,
     VegetationDayPartitionKey,
     VegetationPromotionReceipt,
+    availability_days_at_base_rung,
+    ceiling_fields,
     day_partition_content_sha256,
     default_promotion_days,
     exit_code_for,
     load_promotion_receipt,
     promote_vegetation_day_partition,
+    promotion_ceiling,
     run_vegetation_promotion,
     save_promotion_receipt,
+    stale_ceiling_report,
 )
+from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
+from agri_data_service.parquet_ops.coverage import CensusLane
 from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
+from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 from agri_data_service.pipeline.parquet.objectstore import (
     ConcurrentPrunePartitionError,
     ListedObject,
@@ -48,6 +62,10 @@ from agri_data_service.pipeline.parquet.objectstore import (
     PartitionNotWrittenError,
 )
 from agri_data_service.warehouse.schemas.vegetation import VEGETATION_PLANE_STREAM
+# `index_of`/`terminal_row` are the only builders here that assemble a VALID `AvailabilityIndex` --
+# pointer digest, receipt shapes and rung ladder all conforming. Imported rather than copied: a
+# second set of index builders drifts from the contract the first encodes (engineering-principles §1).
+from tests.parquet_ops.test_availability_coverage import index_of, terminal_row
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -480,11 +498,12 @@ async def test_a_mixed_turn_that_promoted_nothing_still_fails(store: ObjectStore
 
 
 def test_only_a_promoting_or_waiting_turn_exits_zero() -> None:
-    """Three terminal statuses, two exit codes, and `waiting_for_writer` is not `completed` (W5 S3)."""
+    """Four terminal statuses, two exit codes, and `waiting_for_writer` is not `completed` (W5 S3)."""
     assert exit_code_for({"status": "completed"}) == 0
     assert exit_code_for({"status": "waiting_for_writer"}) == 0
     assert exit_code_for({"status": "no_days_promoted", "reason": "all_days_absent"}) == 1
     assert exit_code_for({"status": "no_days_promoted", "reason": "no_indexed_day_promoted"}) == 1
+    assert exit_code_for({"status": STALE_CEILING_STATUS}) == 1
 
 
 def test_an_absent_day_and_a_race_are_different_exception_types(store: ObjectStore) -> None:
@@ -591,3 +610,112 @@ def test_vegetation_partition_promotion_never_imports_the_frozen_postgres_forwar
 
     forbidden = "agri_data_service.pipeline.direct.vegetation.forward"
     assert not any(module == forbidden or module.startswith(forbidden + ".") for module in imported_modules)
+
+
+# The coverage helpers' own pointer ceiling is 2026-08-07, so these days sit under it.
+FULL_LADDER_DAY = date(2026, 8, 5)
+BASE_ONLY_DAY = date(2026, 8, 6)
+LADDER_TODAY = date(2026, 8, 7)
+VEGETATION_CENSUS_LANE = CensusLane(layer=VEGETATION_PLANE_STREAM, nature="daily_series", kind="observed")
+
+
+def mixed_ladder_availability() -> AvailabilityIndexDays:
+    """One real index: an older day published at every rung, a newer one published at the base only."""
+    rows = [terminal_row(VEGETATION_CENSUS_LANE, day=FULL_LADDER_DAY, rung=rung) for rung in ZOOM_TIERS]
+    rows += [
+        terminal_row(
+            VEGETATION_CENSUS_LANE,
+            day=BASE_ONLY_DAY,
+            rung=rung,
+            terminal_state="published" if rung == LANE_BASE_ZOOM_TIER else "governed_absence",
+        )
+        for rung in ZOOM_TIERS
+    ]
+    return availability_days_at_base_rung(index_of(VEGETATION_CENSUS_LANE, rows))
+
+
+def test_a_day_published_only_at_the_base_rung_is_not_servable() -> None:
+    """§4a: a selectable day is the rung ladder's INTERSECTION, not the base rung's own verdict."""
+    availability = mixed_ladder_availability()
+
+    assert availability.indexed_day(BASE_ONLY_DAY).state == "published", "the base rung does state it"
+    assert not availability.is_servable(BASE_ONLY_DAY), "but the ladder above it does not"
+    assert availability.is_servable(FULL_LADDER_DAY)
+
+
+def test_the_ceiling_skips_a_day_the_rung_ladder_does_not_agree_on() -> None:
+    """The promoted day registers a WHOLE zoom-independent governed day, so it must be servable."""
+    ceiling = promotion_ceiling(availability=mixed_ladder_availability(), today=LADDER_TODAY)
+
+    assert ceiling.day == FULL_LADDER_DAY
+    assert ceiling.age_days == (LADDER_TODAY - FULL_LADDER_DAY).days
+
+
+def test_a_fabricated_availability_with_no_rung_ladder_falls_back_to_its_base_verdicts() -> None:
+    """A test double states verdicts and no ladder; the base verdict is then all that is known."""
+    availability = AvailabilityIndexDays(verdicts={DAY: IndexedDay(state="published")})
+
+    assert availability.servable_days is None
+    assert availability.is_servable(DAY)
+    assert not availability.is_servable(DAY + timedelta(days=1))
+
+
+def test_a_ceiling_inside_the_lanes_own_window_is_progress_and_names_its_age() -> None:
+    today = date(2026, 9, 18)
+    stale_after_days = vegetation_promotion_stale_ceiling_days()
+    fresh_day = today - timedelta(days=stale_after_days - 1)
+    availability = AvailabilityIndexDays(verdicts={fresh_day: IndexedDay(state="published")})
+
+    ceiling = promotion_ceiling(availability=availability, today=today)
+
+    assert not ceiling.is_stale(stale_after_days=stale_after_days)
+    assert ceiling_fields(ceiling, stale_after_days=stale_after_days) == {
+        "ceiling_day": fresh_day.isoformat(),
+        "ceiling_age_days": stale_after_days - 1,
+        "ceiling_stale_after_days": stale_after_days,
+    }
+
+
+def test_a_ceiling_older_than_the_lanes_window_is_stale_and_exits_non_zero() -> None:
+    """The dead-lane trap: the window still NAMES the ancient day, and the turn now refuses it.
+
+    Before this bound the same day was promoted, came back `unchanged` -- which `_promotion_report`
+    counts as progress -- and exited 0 every turn forever.
+    """
+    today = date(2026, 9, 18)
+    stale_after_days = vegetation_promotion_stale_ceiling_days()
+    dead_day = today - timedelta(days=stale_after_days + 1)
+    availability = AvailabilityIndexDays(verdicts={dead_day: IndexedDay(state="published")})
+
+    assert default_promotion_days(availability=availability, today=today, max_days=1) == (dead_day,)
+    ceiling = promotion_ceiling(availability=availability, today=today)
+    assert ceiling.is_stale(stale_after_days=stale_after_days)
+
+    report = stale_ceiling_report(ceiling, stale_after_days=stale_after_days)
+
+    assert report["status"] == STALE_CEILING_STATUS
+    assert report["status"] not in SUCCESSFUL_TURN_STATUSES
+    assert report["ceiling_day"] == dead_day.isoformat()
+    assert report["ceiling_age_days"] == stale_after_days + 1
+    assert report["days"] == [], "no day is evaluated at all: the turn refuses before it promotes"
+    assert exit_code_for(report) == 1
+
+
+def test_an_index_with_no_servable_day_is_never_called_stale() -> None:
+    """`no_indexed_day_promoted` is the honest answer there, and it already exits 1 on its own."""
+    ceiling = promotion_ceiling(availability=EMPTY_AVAILABILITY_INDEX, today=date(2026, 9, 18))
+
+    assert ceiling == PromotionCeiling(day=None, age_days=None)
+    assert not ceiling.is_stale(stale_after_days=vegetation_promotion_stale_ceiling_days())
+
+
+def test_the_stale_threshold_is_two_of_the_lanes_registered_publication_windows() -> None:
+    """The number is derived from the lane's registered lag, never a literal beside it."""
+    registered_lag_days = LANE_REGISTRY[VEGETATION_PLANE_STREAM].publication_lag_days
+
+    assert vegetation_promotion_stale_ceiling_days() == (
+        registered_lag_days * VEGETATION_PROMOTION_STALE_CEILING_WINDOWS
+    )
+    assert vegetation_promotion_stale_ceiling_days() > registered_lag_days, (
+        "a one-window bound would refuse at the provider edge the 7-day MEDIAN gap already sits on"
+    )

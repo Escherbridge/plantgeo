@@ -127,7 +127,7 @@ seed the archives are first read against, and the fallback when a generation adm
 
 ## Publication order IS the recovery story
 
-Parts → `manifest.json` → `_COMPLETE` → `current.json`. A process killed anywhere before the marker
+Parts → `manifest.json` → `_COMPLETE` → `availability/_LATEST.json`. A process killed anywhere before the marker
 leaves a directory no reader will open and a pointer still naming the previous generation. Replay is
 idempotent BY IDENTITY, not by timestamp: the same releases under the same three recipes address the
 same directory, and a directory that already carries `_COMPLETE` is a no-op. That is what makes a
@@ -157,13 +157,11 @@ unified diff in the track's `evidence/shared-registration.patch`, including the 
 direct-package tests will fail on this package, and that failure is the registration reminder
 working as designed rather than a defect in this lane.
 
-## The current pointer: `current.json` writes, `availability/_LATEST.json` serves
+## The current pointer: `availability/_LATEST.json`, and it is the only one
 
 `pointer.py` holds the §4a pointer document (`conductor/code_styleguides/layer-lanes.md` §4a) and
-`publish.py` writes it LAST, after `_COMPLETE` and after the legacy `current.json`. Two pointers
-exist on purpose and they are not redundant: `current.json` is the writer's own bookkeeping
-(`read_pointer`, one field, no binding), while `_LATEST.json` is what a serving read resolves and
-carries the digest of the exact `manifest.json` bytes it names.
+`publish.py` writes it LAST, after `_COMPLETE`. It carries the digest of the exact `manifest.json`
+bytes it names.
 
 The digest is the whole point. Without it a reader that fetched pointer-then-manifest could observe
 a pointer advanced by one writer and a manifest replaced by the next, and would have no way to know
@@ -177,8 +175,23 @@ unverifiable answer the binding exists to refuse.
 STALE means the binding broke, never that the pointer is old: a release set may legitimately be
 current for months, so a wall-clock ceiling would refuse correct data on a calendar.
 
-## The legacy bridge is retired (cut: 2026-09-18)
+## The legacy `current.json` is gone, write and all (cut: 2026-09-18)
 
-`read_current_botanical_release` resolves ONLY `availability/_LATEST.json`; a missing pointer is
-`pointer_missing` regardless of whether `current.json` exists, and `current.json` is never read by
-the serving path — it is still WRITTEN, as the publisher's own bookkeeping (`publish.py::read_pointer`).
+`read_current_botanical_release` resolves ONLY `availability/_LATEST.json`, and a missing pointer is
+`pointer_missing`. The read side was cut first, in the same wave, leaving the WRITE behind with the
+reason "the publisher's own bookkeeping (`publish.py::read_pointer`)" — which was not true:
+`read_pointer` had no caller anywhere but the tests written to exercise it, so the lane was
+maintaining a second mutable pointer that nothing in production read, and two docstrings still
+called `current.json` "which generation is currently served" (STYLE-REVIEW-W8 S5). Production has
+been on `pointer_kind=latest_v1` since 2026-09-19, so `CURRENT_POINTER`, `pointer_path`,
+`read_pointer`, the write itself and the tests that existed only for them are deleted —
+`engineering-principles.md` §2 "delete rather than disable", §1 "one canonical definition".
+
+There is no rollback affordance in this deletion and none is owed: a rollback republishes a
+generation by identity (the directory is immutable and replay is a no-op) and re-points
+`_LATEST.json` through `advance_latest_pointer`, which re-derives the digest from the generation's
+own manifest rather than trusting a bare release-set id.
+
+Old buckets may still hold a `current.json` object. It is inert: nothing writes it, nothing reads
+it, and it is deliberately NOT cleaned up from here — this lane's source does not delete objects it
+no longer understands.

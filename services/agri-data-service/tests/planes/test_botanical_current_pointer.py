@@ -25,11 +25,11 @@ from agri_data_service.pipeline.direct.botanical_occurrences.pointer import (
 )
 from agri_data_service.pipeline.direct.botanical_occurrences.publish import (
     COMPLETION_MARKER,
+    LANE_PREFIX,
     LocalPublicationTarget,
     advance_latest_pointer,
     generation_prefix,
     latest_pointer_path,
-    pointer_path,
 )
 from agri_data_service.planes.botanical_occurrences import read_current_botanical_release
 from tests.direct.botanical_occurrences.conftest import default_members, write_archive
@@ -82,17 +82,17 @@ def test_a_lane_that_never_published_is_missing_not_empty(tmp_path: Path) -> Non
     assert answer["reason"] == "pointer_missing"
 
 
-def test_a_missing_latest_pointer_is_unavailable_even_with_a_current_json_present(
+def test_a_missing_latest_pointer_is_unavailable_and_no_legacy_pointer_was_written(
     published: tuple[LocalPublicationTarget, str],
 ) -> None:
-    """The legacy `current.json` bridge is retired: a missing `_LATEST.json` never falls back to it.
+    """The legacy `current.json` is retired write and all: nothing writes it, nothing falls back to it.
 
-    `current.json` is still written by the publisher as its own bookkeeping (see
-    `publish.py::read_pointer` and its tests), but this reader must not open it.
+    A published lane holds exactly ONE pointer. Asserting the legacy object's ABSENCE is what keeps
+    the deletion from being re-added by a writer change nobody re-read this reader for.
     """
     target, _ = published
+    assert not (target.root / LANE_PREFIX / "current.json").exists(), "the retired legacy pointer is not written"
     _pointer_file(target).unlink()
-    assert (target.root / pointer_path()).is_file(), "current.json is still written; this test proves it is unread"
 
     answer = read_current_botanical_release(target=target)
 

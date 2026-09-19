@@ -211,6 +211,28 @@ def _registration(slug: str) -> tuple[int, int, str | None]:
     return lane.publication_lag_days, lane.cadence_days, ceiling
 
 
+#: How many whole publication windows the NDVI promotion ceiling may fall behind `today` before the
+#: turn calls the lane stale instead of reporting progress.
+#:
+#: TWO, not one. `vegetation`'s registered `publication_lag_days=7` is a MEASURED MEDIAN gap between
+#: usable Sentinel-2 observation days -- wider than the nominal 5-day revisit because cloud screening
+#: removes scenes (`pipeline/parquet/lane_registry.py`, the vegetation `floor_basis`). Half of a
+#: healthy lane's gaps are therefore wider than one window, so a one-window bound would refuse at a
+#: provider edge the source cannot beat. Two consecutive windows with nothing servable is not an
+#: edge: it is the writer, the ingest, or the index having stopped.
+VEGETATION_PROMOTION_STALE_CEILING_WINDOWS: Final = 2
+
+
+def vegetation_promotion_stale_ceiling_days() -> int:
+    """Return the ceiling age the NDVI promotion lane calls stale, off the registered lag.
+
+    Read at call time from `LANE_REGISTRY`, never copied: the same rule
+    `pipeline/direct/vegetation/products.py` states for the floor and the lag it deliberately does
+    not duplicate.
+    """
+    return _registration("vegetation")[0] * VEGETATION_PROMOTION_STALE_CEILING_WINDOWS
+
+
 def _spec(  # noqa: PLR0913 - this is the declarative constructor for the code-owned lane table
     lane_id: str,
     *,
