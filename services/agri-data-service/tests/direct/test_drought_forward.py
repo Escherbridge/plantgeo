@@ -7,13 +7,14 @@ which `run_drought_forward` returns from before it ever calls `ObjectStore.from_
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from typing import TYPE_CHECKING, cast
 
 import pytest
 
 from agri_data_service.pipeline.direct.drought.adapter import DirectDroughtError
 from agri_data_service.pipeline.direct.drought.forward import (
+    DROUGHT_BACKLOG_SCAN_WEEKS,
     DROUGHT_DEFAULT_MAX_DAYS,
     DROUGHT_DEFAULT_RETRY_ATTEMPTS,
     DROUGHT_DIRECT_ALL_TIERS,
@@ -137,6 +138,36 @@ def test_a_target_day_selects_exactly_that_one_settled_release() -> None:
 def test_an_out_of_contract_target_day_is_refused_rather_than_silently_skipped(target_day: date, message: str) -> None:
     with pytest.raises(DroughtForwardConfigError, match=message):
         _weeks(target_day=target_day)
+
+
+def test_a_target_older_than_the_census_horizon_is_refused_so_a_failed_rewrite_cannot_strand_it() -> None:
+    """STYLE-REVIEW-W10 B3: a rewrite retracts the marker first, and only this window self-heals."""
+    lane = drought_lane_registration()
+    settled_through = newest_settled_tuesday(today=date(2026, 9, 17), publication_lag_days=lane.publication_lag_days)
+    horizon_first_day = settled_through - timedelta(weeks=DROUGHT_BACKLOG_SCAN_WEEKS - 1)
+    too_old = horizon_first_day - timedelta(weeks=1)
+    assert too_old > lane.history_floor, "the fixture must exercise the horizon bound, not the floor bound"
+
+    with pytest.raises(DroughtForwardConfigError, match="census horizon"):
+        _weeks(target_day=too_old)
+
+
+def test_the_oldest_self_healing_release_is_still_forcible() -> None:
+    """The bound is the census window itself, not a margin inside it: no reachable release is refused."""
+    lane = drought_lane_registration()
+    settled_through = newest_settled_tuesday(today=date(2026, 9, 17), publication_lag_days=lane.publication_lag_days)
+    oldest = settled_through - timedelta(weeks=DROUGHT_BACKLOG_SCAN_WEEKS - 1)
+
+    first_day, weeks = _weeks(target_day=oldest)
+
+    assert (first_day, weeks) == (oldest, (oldest,))
+
+
+def test_the_target_day_help_text_names_the_horizon_refusal() -> None:
+    """An operator reads `--help` before the repair; the refusal must be in it, not only in the traceback."""
+    help_text = " ".join(parser().format_help().split())
+
+    assert f"{DROUGHT_BACKLOG_SCAN_WEEKS}-week census horizon" in help_text
 
 
 def test_the_target_day_flag_parses_as_an_iso_date() -> None:

@@ -594,10 +594,17 @@ def _weeks_this_turn(
     The census still runs, because `_pending_weeks` is also where a data/absence conflict and an
     absent-with-derived-parts ladder are refused, and a forced republication must not skip those.
 
-    Forcing is safe because a republication is idempotent and source-direct: the adapter refetches
-    the settled release under the lane-day lock and `write_partition` retracts the day's completion
-    marker as it uploads `part-0`, so an attempt that fails before writing leaves the published day
-    exactly as it found it (`gap_fill_day.py::_export_one_day`).
+    WHAT FORCING COSTS, STATED WHOLE. A republication is idempotent and source-direct -- the adapter
+    refetches the settled release under the lane-day lock -- and an attempt that fails BEFORE the
+    first byte leaves the published day exactly as it found it, because `write_partition` retracts
+    the completion marker only as it uploads `part-0`. AFTER that first byte the day is unfinished
+    until the new marker lands last (`pipeline/parquet/gap_fill_day.py:338-351`), so a fault in
+    between leaves a previously published release `incomplete`, and readers see that window: the
+    lane-day lock serializes writers, not readers. That is not stranding, only because
+    `_selected_release_weeks` refuses a target older than `DROUGHT_BACKLOG_SCAN_WEEKS`, which is the
+    same window the next scheduled turn re-censuses and `_pending_weeks` (`forward.py:577-578`)
+    re-selects any non-`data` day from. An operator forcing a release therefore risks one turn of
+    incompleteness on that day, never a permanent one.
     """
     pending = _pending_weeks(statuses, weeks)
     if config.target_day is None:
@@ -684,16 +691,36 @@ def _selected_release_weeks(
     turn re-censusing sixty weeks of R2 to get there. Every bound the walk respects still applies:
     the day must be a USDM release Tuesday, at or after the lane's source-owned floor, and at or
     before the settled ceiling -- a target outside them is a config error, never a silent no-op.
+
+    A FORCED TARGET IS ALSO BOUNDED BY THE CENSUS HORIZON, which the ordinary walk bounds itself by
+    anyway, and that fourth bound is the one that keeps a republication from stranding a release. A
+    forced write RETRACTS the day's completion marker as it uploads `part-0` and writes the new one
+    last (`pipeline/parquet/gap_fill_day.py::_export_one_day`, the `write_completion_marker` call at
+    `gap_fill_day.py:338-351`), so a fault in between leaves a day that WAS published sitting
+    `incomplete`. Inside `scan_first_day` that state is self-healing: the next scheduled turn
+    censuses this same window and `_pending_weeks` re-selects any day not `data` at every rung
+    (`forward.py:577-578`), at the lane's `45 * * * *` cadence (`execution/lane_specs.py:484`). Outside
+    it, nothing scheduled ever looks at that day again, so the same fault would have been permanent
+    and invisible -- which is why an older target is refused here and pointed at `backfill.py`, the
+    oldest-first walker that does cover the full floor-to-settled window.
     """
+    scan_first_day = max(lane.history_floor, settled_through - timedelta(weeks=DROUGHT_BACKLOG_SCAN_WEEKS - 1))
     if config.target_day is None:
-        first_day = max(lane.history_floor, settled_through - timedelta(weeks=DROUGHT_BACKLOG_SCAN_WEEKS - 1))
-        return first_day, release_weeks(first_day, settled_through)
+        return scan_first_day, release_weeks(scan_first_day, settled_through)
     target_day = config.target_day
     if target_day.weekday() != USDM_RELEASE_WEEKDAY:
         raise DroughtForwardConfigError(f"--target-day {target_day.isoformat()} is not a USDM release Tuesday")
     if target_day < lane.history_floor:
         raise DroughtForwardConfigError(
             f"--target-day {target_day.isoformat()} is before the source-owned floor {lane.history_floor.isoformat()}"
+        )
+    if target_day < scan_first_day:
+        raise DroughtForwardConfigError(
+            f"--target-day {target_day.isoformat()} is older than the {DROUGHT_BACKLOG_SCAN_WEEKS}-week census "
+            f"horizon this turn can re-examine (which starts {scan_first_day.isoformat()}). A republication "
+            "retracts the day's completion marker before it writes the new one, so a fault mid-write would "
+            "leave a published release incomplete with no scheduled turn that ever censuses it again; run "
+            "`python -m agri_data_service.pipeline.direct.drought.backfill` for a release this old"
         )
     if target_day > settled_through:
         raise DroughtForwardConfigError(
@@ -748,7 +775,11 @@ def parser() -> argparse.ArgumentParser:
             "walking the bounded backlog. The release is refetched and rewritten even when it is "
             "already published at every rung; --max-days is ignored, since exactly one release is "
             "selected. A day that is not a release Tuesday, is before the lane's source-owned "
-            "floor, or is after the settled ceiling is refused, never silently skipped."
+            "floor, or is after the settled ceiling is refused, never silently skipped. So is a day "
+            f"older than the {DROUGHT_BACKLOG_SCAN_WEEKS}-week census horizon: rewriting a day "
+            "retracts its completion marker before the new one lands, so a fault mid-write leaves "
+            "that release incomplete until a later turn re-censuses it -- which only happens inside "
+            "the horizon. Use the backfill walker for a release older than that."
         ),
     )
     return built

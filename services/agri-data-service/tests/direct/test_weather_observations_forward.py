@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import replace
+import time
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from typing import Any, cast
 
@@ -93,6 +94,14 @@ def _observation(latitude: float, longitude: float, observed_at: str) -> Weather
         longitude=longitude,
         observation={"observedAt": observed_at, "temperature": 19.5},
     )
+
+
+@dataclass(frozen=True)
+class _PollDouble:
+    """Only the two members `_retain_current_poll` reads; the real poll needs a live HTTP client."""
+
+    observations: tuple[WeatherPointObservation, ...]
+    fetched_at: datetime = datetime(2026, 9, 3, 18, tzinfo=UTC)
 
 
 def _overturned(day: date) -> OverturnedAbsence:
@@ -358,9 +367,10 @@ class TestRecoveryWiring:
         statuses = {DAY_THREE: {13: "data", 12: "data"}, DAY_TWO: {13: "data", 12: "missing"}}
         monkeypatch.setattr(forward, "_tier_statuses", lambda _store, day: statuses[day])
 
-        owed = forward._days_owed_a_recovery(cast("Any", None), (DAY_THREE, DAY_TWO))
+        owed, deferred = forward._days_owed_a_recovery(cast("Any", None), (DAY_THREE, DAY_TWO))
 
         assert owed == (DAY_TWO,), "a day already data at every tier is not re-merged from checkpoints"
+        assert deferred == (), "an unbounded probe defers nothing"
 
     def test_a_recovered_reading_the_poll_already_carries_is_not_offered_twice(self) -> None:
         """`merge_weather_observations_day` refuses one poll offering a grain twice."""
@@ -377,6 +387,102 @@ class TestRecoveryWiring:
         other_point = _observation(47.6, -122.3, "2026-09-03T18:00:00.000Z")
 
         assert forward._with_recovered_observations((live,), (other_point,)) == (live, other_point)
+
+
+class TestTheProbeCannotCostThePollItsRetention:
+    """STYLE-REVIEW-W10 B2: the repair ran ahead of the retention UNWRAPPED and OUTSIDE the deadline.
+
+    A rolling feed keeps no archive, so a turn that dies in the probe loses the instants it was
+    holding for good. Every case here is about the poll surviving the probe, not about the repair
+    succeeding.
+    """
+
+    def test_a_store_fault_in_the_probe_is_a_report_rather_than_an_exception(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def explode(_store: object, _day: date) -> dict[int, str]:
+            raise OSError("R2 returned 503 for list_partition_keys")
+
+        monkeypatch.setattr(forward, "_tier_statuses", explode)
+
+        phase = asyncio.run(
+            forward._repair_owed_days(
+                cast("Any", None),
+                cast("Any", None),
+                (DAY_THREE, DAY_TWO),
+                ((45.5, -122.6),),
+                now=datetime(2026, 9, 3, 18, tzinfo=UTC),
+                deadline=time.monotonic() + 60.0,
+            )
+        )
+
+        assert phase.state == "failed", "a probe fault must not unwind into main()'s catch-all"
+        assert phase.error_type == "OSError"
+        assert phase.observations == ()
+        assert phase.days_deferred == (DAY_THREE, DAY_TWO), "the days it never repaired are named, not dropped"
+        assert phase.degraded is True
+
+    def test_a_spent_budget_skips_the_probe_entirely_rather_than_spending_the_turn(self) -> None:
+        phase = asyncio.run(
+            forward._repair_owed_days(
+                cast("Any", None),
+                cast("Any", None),
+                (DAY_THREE,),
+                ((45.5, -122.6),),
+                now=datetime(2026, 9, 3, 18, tzinfo=UTC),
+                deadline=time.monotonic() - 1.0,
+            )
+        )
+
+        assert phase.state == "skipped_no_budget"
+        assert phase.days_deferred == (DAY_THREE,)
+
+    def test_the_probe_defers_a_day_it_cannot_afford_to_list(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Checked BEFORE each day's listing, so a slow bucket stops costing the turn at the first overrun."""
+        monkeypatch.setattr(forward, "_tier_statuses", lambda _store, _day: {13: "missing"})
+
+        owed, deferred = forward._days_owed_a_recovery(
+            cast("Any", None), (DAY_THREE, DAY_TWO), probe_deadline=time.monotonic() - 1.0
+        )
+
+        assert owed == ()
+        assert deferred == (DAY_THREE, DAY_TWO), "unreached is not not-owed"
+
+    def test_a_degraded_probe_costs_the_turn_its_complete_but_not_its_exit_code(self) -> None:
+        verdict = forward._bucket_verdict([_result(DAY_THREE, "written")], recovery_degraded=True)
+
+        assert verdict.outcome == "incomplete", "this turn's retention overwrote what the probe would have read"
+        assert verdict.exit_code == 0, "a repair that did not happen is not a lane that cannot write"
+        assert verdict.recovery_degraded is True
+
+    def test_a_degraded_probe_alone_still_reaches_stderr(self, capsys: pytest.CaptureFixture[str]) -> None:
+        verdict = forward._bucket_verdict([_result(DAY_THREE, "written")], recovery_degraded=True)
+
+        forward._report_bucket_incomplete("run", verdict)
+
+        event = json.loads(capsys.readouterr().err.strip())
+        assert event["recovery_degraded"] is True
+        assert event["unwritten"] == []
+
+    def test_a_retention_fault_leaves_the_poll_publishable_and_says_every_point_is_unretained(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Retention is the BACKUP; dropping the rows it backs up is the inversion it exists to prevent."""
+
+        def explode(*_args: object, **_kwargs: object) -> object:
+            raise OSError("R2 returned 503 for the checkpoint write")
+
+        monkeypatch.setattr(forward, "checkpoint_current_poll", explode)
+        poll = cast("Any", _PollDouble((_observation(45.5, -122.6, "2026-09-03T18:00:00.000Z"),)))
+
+        report = asyncio.run(forward._retain_current_poll(poll, ((45.5, -122.6),), cast("Any", None), run_id="run"))
+
+        assert report.failed == 1, "an unretained point is reported as unretained, never as retained"
+        assert report.retained == 0
+        assert report.retained_whole_day(DAY_THREE) is False
+        event = json.loads(capsys.readouterr().out.strip())
+        assert event["event"] == "weather_observations_source_retention_failed"
+        assert event["error_type"] == "OSError"
 
 
 class TestRecoverDayArgument:

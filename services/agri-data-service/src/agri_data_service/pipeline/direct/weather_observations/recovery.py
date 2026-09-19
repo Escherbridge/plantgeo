@@ -16,6 +16,7 @@ than no net: it reads as covered.
 from __future__ import annotations
 
 import json
+import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final, Literal
@@ -51,7 +52,14 @@ WEATHER_CURRENT_CHECKPOINT_PROVIDER: Final = "open-meteo-current-conditions-v1"
 #: boundary poll, which legitimately splits ONE grid across two day namespaces (`forward.py:108-110`),
 #: report it for both halves. A partial capture is worth merging; only `no_retained_capture` means
 #: there is nothing here to repair with.
-WeatherRecoveryState = Literal["complete_capture", "partial_capture", "no_retained_capture"]
+#:
+#: FOUR since 2026-09-19. `probe_budget_exhausted` is the fourth, and it is the difference between
+#: "this grid was searched and nothing was retained" and "the turn ran out of the budget
+#: `forward.py::RECOVERY_PROBE_BUDGET_SHARE` allows a probe before the searching finished". Only the
+#: first is evidence of loss; reporting the second as `no_retained_capture` would be the manufactured
+#: gap `layer-lanes.md` section 4 forbids. It can only arise when a `deadline` is passed --
+#: `forward.py::_run_recovery_turn` passes none, because reading the retained grid IS that turn.
+WeatherRecoveryState = Literal["complete_capture", "partial_capture", "no_retained_capture", "probe_budget_exhausted"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +105,9 @@ class WeatherRecoveryReport:
     recovered_points: int
     missing_or_rejected_points: int
     observations: tuple[WeatherPointObservation, ...]
+    #: Support points the probe budget never reached. Kept apart from `missing_or_rejected_points`
+    #: because that count is evidence about the bucket and this one is evidence about the turn.
+    unprobed_points: int = 0
 
     def to_event(self) -> dict[str, object]:
         """Render the verdict for the forward writer's progress stream; the observations stay out of it."""
@@ -106,6 +117,7 @@ class WeatherRecoveryReport:
             "support_points": self.support_points,
             "recovered_points": self.recovered_points,
             "missing_or_rejected_points": self.missing_or_rejected_points,
+            "unprobed_points": self.unprobed_points,
         }
 
 
@@ -204,8 +216,9 @@ def recover_weather_day(
     checkpoints: SourceResponseCheckpoints,
     *,
     now: datetime,
+    deadline: float | None = None,
 ) -> WeatherRecoveryReport:
-    """Reparse one day from whatever of its support grid was retained, and SAY which of the three it is.
+    """Reparse one day from whatever of its support grid was retained, and SAY which of the four it is.
 
     A PARTIAL CAPTURE IS STILL WORTH MERGING, which is why this no longer refuses one. The writer
     this feeds publishes by MERGING at the `(latitude, longitude, observed_at)` grain
@@ -217,11 +230,21 @@ def recover_weather_day(
 
     This returns observations; it does not publish them. Republication stays with the forward
     writer's own lane-day lock and finalizer, so a recovery can never take a shortcut past them.
+
+    `deadline` is an optional `time.monotonic()` stamp, checked BEFORE each point's read, that
+    stops the probe from spending a whole turn on one GET-per-point walk of the grid; the points it
+    never reached are reported as `unprobed_points` and, when nothing was recovered, as
+    `probe_budget_exhausted` rather than as an absence. A caller that passes `None` -- the operator's
+    `--recover-day` turn -- walks the whole grid, because reading it is the entire turn.
     """
     support_sha256 = weather_support_sha256(points)
     recovered: list[WeatherPointObservation] = []
     missing_or_rejected = 0
+    unprobed = 0
     for point in points:
+        if deadline is not None and time.monotonic() >= deadline:
+            unprobed += 1
+            continue
         latitude, longitude = point
         identity = weather_checkpoint_identity(point, day=day, support_sha256=support_sha256)
         checkpoint = checkpoints.read(identity, now=now)
@@ -245,8 +268,10 @@ def recover_weather_day(
             )
         )
     if not recovered:
-        state: WeatherRecoveryState = "no_retained_capture"
-    elif missing_or_rejected:
+        # An unfinished search is not an empty bucket: `no_retained_capture` is the word the forward
+        # writer prints as "lost, not owed", and it is only true of a grid that was actually walked.
+        state: WeatherRecoveryState = "probe_budget_exhausted" if unprobed else "no_retained_capture"
+    elif missing_or_rejected or unprobed:
         state = "partial_capture"
     else:
         state = "complete_capture"
@@ -257,6 +282,7 @@ def recover_weather_day(
         recovered_points=len(recovered),
         missing_or_rejected_points=missing_or_rejected,
         observations=tuple(recovered),
+        unprobed_points=unprobed,
     )
 
 

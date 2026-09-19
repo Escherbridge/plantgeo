@@ -44,6 +44,18 @@ complete publication, BEFORE its own checkpoints overwrite them, and merges thos
 same bucket (`_days_owed_a_recovery`, `_recover_owed_days`). The merge is by grain, so recovering a
 day the current poll also answered is an append of what is missing, never a second claim about it.
 `--recover-day` is the operator's version for a day this turn's poll does not name at all.
+
+THE REPAIR MAY NOT COST THE POLL ITS RETENTION. Running ahead of `checkpoint_current_poll` is
+necessary (the retention overwrites the keys the repair reads) and it put two network phases in
+front of the turn's only durable step, where from 2026-09-18 to 2026-09-19 one transient store fault
+unwound to `main()`'s catch-all and a poll of a feed with no archive was neither published nor
+retained. Both phases now run inside `_repair_owed_days`, which returns a `RecoveryPhase` on every
+path including the failing one and spends at most `RECOVERY_PROBE_BUDGET_SHARE` of what is left of
+the turn's window; the degradation is reported (`weather_observations_source_recovery_phase`, the
+terminal report's `recovery_phase`, and `incomplete` via `_bucket_verdict(..., recovery_degraded=)`)
+and never fatal. `_retain_current_poll` gives the retention call itself the same treatment for the
+same reason. Neither is a silent swallow: the probe cannot lose a reading, and losing readings to
+protect their backup is what the guards forbid.
 """
 
 from __future__ import annotations
@@ -113,7 +125,10 @@ if TYPE_CHECKING:
 
     from agri_data_service.pipeline.direct.weather_observations.adapter import OverturnedAbsence
     from agri_data_service.pipeline.direct.weather_observations.recovery import WeatherRecoveryReport
-    from agri_data_service.pipeline.direct.weather_observations.source import WeatherPointObservation
+    from agri_data_service.pipeline.direct.weather_observations.source import (
+        WeatherPointObservation,
+        WeatherPollResult,
+    )
     from agri_data_service.pipeline.parquet.availability_index import AvailabilityStorage
     from agri_data_service.pipeline.parquet.lane_registry import LaneAdapter
 
@@ -167,6 +182,16 @@ DEFAULT_CONTENTION_TIMEOUT_SECONDS: Final = 900.0
 MAX_CONTENTION_TIMEOUT_SECONDS: Final = 3_600.0
 CONTENTION_POLL_SECONDS: Final = 15.0
 VERIFICATION_MISMATCH_SAMPLE: Final = 5
+#: The share of what is LEFT of the turn's time budget that the repair probe may spend before the
+#: poll's own retention and publication take the rest. The probe costs one `list_partition_keys` per
+#: zoom tier per selected day plus one checkpoint GET per sample point per owed day -- roughly 150
+#: object reads on this lane's grid -- so an unbounded probe against a slow bucket would leave every
+#: day `time_budget_exhausted`, and `_bucket_verdict` then returns exit 1, which this module's
+#: docstring defines as this lane's breaker. A quarter covers the probe's ordinary cost and leaves
+#: three quarters to the writes, which are the half of the turn that has no second chance.
+#: Enforced in `_repair_owed_days` (`forward.py:792-842`), which is the only caller of either probe phase
+#: (`forward.py:823` and `forward.py:826` are the only two call sites in `src/`).
+RECOVERY_PROBE_BUDGET_SHARE: Final = 0.25
 
 
 class WeatherObservationsForwardConfigError(ValueError):
@@ -221,6 +246,10 @@ class ForwardBucketVerdict:
     #: Accepted points whose parser input could not be proven retained. NOT folded into the day
     #: counts: a retention failure is a failure of the lane's ONLY retry, not of a publication.
     retention_failed: int = 0
+    #: Whether this turn's repair probe failed or ran out of budget. Also not a day count: no day was
+    #: lost to it, but a bucket an earlier poll failed to write went unrepaired while THIS poll's
+    #: retention overwrote the checkpoints it would have been repaired from, so the window closed.
+    recovery_degraded: bool = False
 
     @property
     def days_unwritten(self) -> int:
@@ -228,7 +257,9 @@ class ForwardBucketVerdict:
         return len(self.unwritten)
 
 
-def _bucket_verdict(results: Sequence[ForwardDayResult], *, retention_failed: int = 0) -> ForwardBucketVerdict:
+def _bucket_verdict(
+    results: Sequence[ForwardDayResult], *, retention_failed: int = 0, recovery_degraded: bool = False
+) -> ForwardBucketVerdict:
     """Exit 1 only when NO day wrote; some written and some not is `incomplete` at exit 0 -- see module docstring.
 
     A RETENTION FAILURE ALSO COSTS THE TURN ITS `complete`. Until 2026-09-19 the retention counters
@@ -237,16 +268,25 @@ def _bucket_verdict(results: Sequence[ForwardDayResult], *, retention_failed: in
     an exit-1 refusal, because refusing to publish rows already held in memory over a failed BACKUP
     of them destroys the very data the backup exists to protect -- and because exit 1 is this lane's
     breaker (module docstring). It is `incomplete`, on stderr, and named per unwritten day.
+
+    A DEGRADED REPAIR PROBE COSTS THE TURN ITS `complete` FOR THE SAME REASON AND NO MORE. It does
+    not touch the exit code either (`_repair_owed_days`, `forward.py:792-842`, returns a
+    `RecoveryPhase` on every path including `except Exception` at `forward.py:828`, so a probe fault
+    can no longer reach `main()`'s catch-all), but it is not nothing: the probe is the
+    only reader of checkpoints that this same turn's retention is about to overwrite, so a turn that
+    could not probe has closed a repair window rather than postponed it.
     """
     unwritten = tuple(result for result in results if result.outcome != "written")
     days_written = len(results) - len(unwritten)
+    clean = bool(results) and not unwritten and not retention_failed and not recovery_degraded
     return ForwardBucketVerdict(
-        outcome=COMPLETE if results and not unwritten and not retention_failed else INCOMPLETE,
+        outcome=COMPLETE if clean else INCOMPLETE,
         exit_code=0 if days_written else 1,
         days_written=days_written,
         unwritten=unwritten,
         absences_overturned=tuple(result.day for result in results if result.absence_overturned is not None),
         retention_failed=retention_failed,
+        recovery_degraded=recovery_degraded,
     )
 
 
@@ -270,7 +310,7 @@ def _unwritten_event(result: ForwardDayResult) -> dict[str, object]:
 
 def _report_bucket_incomplete(run_id: str, verdict: ForwardBucketVerdict) -> None:
     """Announce every unwritten day on stderr, where an exit-0 partial bucket is otherwise silent (module docstring)."""
-    if not verdict.unwritten and not verdict.retention_failed:
+    if not verdict.unwritten and not verdict.retention_failed and not verdict.recovery_degraded:
         return
     print(
         json.dumps(
@@ -284,6 +324,7 @@ def _report_bucket_incomplete(run_id: str, verdict: ForwardBucketVerdict) -> Non
                 "days_unwritten": verdict.days_unwritten,
                 "unwritten": [_unwritten_event(result) for result in verdict.unwritten],
                 "source_checkpoints_failed": verdict.retention_failed,
+                "recovery_degraded": verdict.recovery_degraded,
             },
             sort_keys=True,
         ),
@@ -643,15 +684,30 @@ async def _publish_day(  # noqa: PLR0913 - one bounded lane-day state machine
         )
 
 
-def _days_owed_a_recovery(store: ObjectStore, days: Sequence[date]) -> tuple[date, ...]:
-    """Of the days this poll named, the ones no complete publication exists for -- the only repairable ones.
+def _days_owed_a_recovery(
+    store: ObjectStore, days: Sequence[date], *, probe_deadline: float | None = None
+) -> tuple[tuple[date, ...], tuple[date, ...]]:
+    """Of the days this poll named, the ones no complete publication exists for, and the ones the budget did not reach.
 
     A day already `data` at every tier is NOT probed. Its earlier instants could in principle still
     be missing, but nothing this writer can read proves that, and guessing would spend 150 object
     reads per poll to re-merge readings that are already published. `--recover-day` is the operator
     path for the case the writer cannot see; this is the case it can.
+
+    `probe_deadline` is a `time.monotonic()` stamp, checked BEFORE each day's listing rather than
+    after it, so a bucket slow enough to eat the turn's window stops costing it at the first day
+    that would overrun. Days past the stamp come back as DEFERRED, not as not-owed: the caller
+    reports them (`_repair_owed_days`) instead of silently narrowing the repair.
     """
-    return tuple(day for day in days if any(status != "data" for status in _tier_statuses(store, day).values()))
+    owed: list[date] = []
+    deferred: list[date] = []
+    for day in days:
+        if probe_deadline is not None and time.monotonic() >= probe_deadline:
+            deferred.append(day)
+            continue
+        if any(status != "data" for status in _tier_statuses(store, day).values()):
+            owed.append(day)
+    return tuple(owed), tuple(deferred)
 
 
 def _recover_owed_days(
@@ -660,7 +716,8 @@ def _recover_owed_days(
     points: Sequence[tuple[float, float]],
     *,
     now: datetime,
-) -> tuple[WeatherRecoveryReport, ...]:
+    probe_deadline: float | None = None,
+) -> tuple[tuple[WeatherRecoveryReport, ...], tuple[date, ...]]:
     """Reparse the retained inputs of every owed day, BEFORE this poll's own checkpoints overwrite them.
 
     THE ORDER IS THE WHOLE POINT. A checkpoint key is (provider, support, day, request URL) with no
@@ -668,8 +725,121 @@ def _recover_owed_days(
     retained body (`source_checkpoint.py::write` refreshes on a newer `retrieved_at`). Checkpointing
     this poll first would therefore destroy the only copy of the bucket the LAST poll failed to
     write -- the safety net erasing exactly what it was stretched under.
+
+    The same `probe_deadline` bounds this phase, twice: between days here, and between sample points
+    inside `recovery.py::recover_weather_day`, which reports what it did not reach as
+    `unprobed_points`. Returns the reports and the days the budget never started.
     """
-    return tuple(recover_weather_day(day, points, checkpoints, now=now) for day in days)
+    reports: list[WeatherRecoveryReport] = []
+    deferred: list[date] = []
+    for day in days:
+        if probe_deadline is not None and time.monotonic() >= probe_deadline:
+            deferred.append(day)
+            continue
+        reports.append(recover_weather_day(day, points, checkpoints, now=now, deadline=probe_deadline))
+    return tuple(reports), tuple(deferred)
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveryPhase:
+    """What this turn's repair probe managed -- and, on every failure path, an EMPTY repair rather than a dead turn.
+
+    THIS TYPE EXISTS TO MAKE THE PROBE UNABLE TO COST THE POLL ITS RETENTION. The probe runs ahead of
+    `checkpoint_current_poll` because retention overwrites the very keys it reads (see
+    `_recover_owed_days`), and until 2026-09-19 it ran there unwrapped: one transient 5xx from the
+    object store unwound through `run()` to `main()`'s catch-all, so a poll of a feed with NO ARCHIVE
+    was neither published nor retained and the instants it held were gone for good. Every
+    construction below is therefore a REPORT, never an exception: `_repair_owed_days`
+    (`forward.py:792-842`) is the only producer -- `run()` binds this type only at
+    `forward.py:1054` and the no-day report at `forward.py:1030` -- and it converts a fault into
+    `state="failed"` at `forward.py:831-836`.
+    """
+
+    state: str
+    reports: tuple[WeatherRecoveryReport, ...] = ()
+    days_owed: tuple[date, ...] = ()
+    #: Owed or candidate days the probe budget did not reach. Named, not counted, because the
+    #: operator's next move is `--recover-day <that day>`.
+    days_deferred: tuple[date, ...] = ()
+    error_type: str | None = None
+    detail: str | None = None
+
+    @property
+    def observations(self) -> tuple[WeatherPointObservation, ...]:
+        """Every reading recovered this turn, across all owed days."""
+        return tuple(reading for report in self.reports for reading in report.observations)
+
+    @property
+    def degraded(self) -> bool:
+        """Did the probe fail or run out of budget? Either way a repairable bucket may go unrepaired this turn."""
+        return self.state == "failed" or bool(self.days_deferred)
+
+    def to_event(self) -> dict[str, object]:
+        """Render the phase for the progress stream AND the terminal report; the readings stay out of it."""
+        event: dict[str, object] = {
+            "state": self.state,
+            "days_owed": [day.isoformat() for day in self.days_owed],
+            "days_deferred": [day.isoformat() for day in self.days_deferred],
+            "days_recovered": [report.to_event() for report in self.reports],
+        }
+        if self.error_type is not None:
+            event["error_type"] = self.error_type
+        if self.detail is not None:
+            event["detail"] = self.detail
+        return event
+
+
+async def _repair_owed_days(
+    store: ObjectStore,
+    checkpoints: SourceResponseCheckpoints,
+    days: Sequence[date],
+    points: Sequence[tuple[float, float]],
+    *,
+    now: datetime,
+    deadline: float,
+) -> RecoveryPhase:
+    """Run the repair probe as a bounded, non-fatal phase: it may return nothing, it may not raise.
+
+    Two properties, both enforced here rather than at the call site, because three waves of this
+    lane's history are patches applied where the review pointed instead of where the behaviour is
+    defined:
+
+    1. BOUNDED -- the probe gets `RECOVERY_PROBE_BUDGET_SHARE` of what is left of the turn's window
+       and no more; the rest belongs to the writes, which have no second chance.
+    2. NON-FATAL -- every exception from either phase becomes `state="failed"` with the type and
+       message on the report. The caller in `run()` then proceeds to `_retain_current_poll` and the
+       publish loop exactly as it would for a turn that owed no day at all.
+
+    Not swallowed, either: the phase is emitted as `weather_observations_source_recovery_phase` and
+    carried on the terminal `weather_observations_forward_complete` report, and a degraded phase
+    costs the turn its `complete` through `_bucket_verdict(..., recovery_degraded=...)`.
+    """
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return RecoveryPhase(state="skipped_no_budget", days_deferred=tuple(days))
+    probe_deadline = time.monotonic() + remaining * RECOVERY_PROBE_BUDGET_SHARE
+    try:
+        owed, unlisted = await asyncio.to_thread(
+            _days_owed_a_recovery, store, tuple(days), probe_deadline=probe_deadline
+        )
+        reports, unread = await asyncio.to_thread(
+            _recover_owed_days, checkpoints, owed, points, now=now, probe_deadline=probe_deadline
+        )
+    except Exception as error:
+        # A repair that cannot read is a repair that does not happen; it is NOT a reason to drop
+        # readings this turn is holding. `main()`'s catch-all would have made it one.
+        return RecoveryPhase(
+            state="failed",
+            days_deferred=tuple(days),
+            error_type=type(error).__name__,
+            detail=str(error),
+        )
+    return RecoveryPhase(
+        state="probed",
+        reports=reports,
+        days_owed=owed,
+        days_deferred=(*unlisted, *unread),
+    )
 
 
 def _with_recovered_observations(
@@ -688,6 +858,36 @@ def _with_recovered_observations(
         if (reading.latitude, reading.longitude, reading.observation.get("observedAt")) not in seen
     ]
     return (*polled, *extra)
+
+
+async def _retain_current_poll(
+    poll: WeatherPollResult,
+    points: Sequence[tuple[float, float]],
+    checkpoints: SourceResponseCheckpoints,
+    *,
+    run_id: str,
+) -> WeatherCheckpointReport:
+    """Retain this poll's parser inputs, degrading a store fault to "nothing retained" rather than losing the poll.
+
+    Same argument as `_repair_owed_days`, one step later and older: retention is a BACKUP of rows
+    this turn is already holding, so letting its transport fault unwind into `main()`'s catch-all
+    would drop the rows to protect the copy of them. A wholesale failure is reported as every
+    accepted point failing, which is what `WeatherCheckpointReport.retained_whole_day` then answers
+    with for each day, and `_bucket_verdict(..., retention_failed=...)` turns into an `incomplete`
+    bucket on stdout and on stderr. Per-point failures are already counted inside
+    `recovery.py::checkpoint_current_poll`; this only covers the fault that takes the whole call.
+    """
+    try:
+        return await asyncio.to_thread(checkpoint_current_poll, poll, points, checkpoints)
+    except Exception as error:
+        emit(
+            "weather_observations_source_retention_failed",
+            run_id=run_id,
+            error_type=type(error).__name__,
+            detail=str(error),
+            attempted=len(poll.observations),
+        )
+        return WeatherCheckpointReport(attempted=len(poll.observations), retained=0, failed=len(poll.observations))
 
 
 async def _run_recovery_turn(args: argparse.Namespace, *, run_id: str, now: datetime) -> int:
@@ -823,7 +1023,11 @@ async def run(args: argparse.Namespace) -> int:
             "weather_observations_forward_complete",
             run_id=run_id,
             outcome="no_writable_observations",
-            recovered_days=[],
+            # The same single key every other poll report carries -- `recovery_phase` replaced a
+            # separate `recovered_days` list of the same per-day events on 2026-09-19, because two
+            # spellings of one fact drift. A turn that named no day probed nothing and deferred
+            # nothing, and says so rather than omitting the key.
+            recovery_phase=RecoveryPhase(state="no_day_to_repair").to_event(),
             days=0,
             rows_added=0,
             rows_updated=0,
@@ -843,12 +1047,17 @@ async def run(args: argparse.Namespace) -> int:
     availability_storage = BotoAvailabilityStorage.from_settings()
     checkpoints = SourceResponseCheckpoints(availability_storage)
     # RECOVER BEFORE RETAINING. Both steps touch the same keys and this poll's retention overwrites
-    # them, so the repair of a bucket an earlier poll failed to write has to read them first.
-    owed = await asyncio.to_thread(_days_owed_a_recovery, store, tuple(tables))
-    recoveries = await asyncio.to_thread(_recover_owed_days, checkpoints, owed, points, now=fetched_at)
-    for recovery in recoveries:
+    # them, so the repair of a bucket an earlier poll failed to write has to read them first. The
+    # phase is bounded and cannot raise -- both properties are enforced in `_repair_owed_days`
+    # (`forward.py:792-842`, whose every return is a `RecoveryPhase`), not here -- so the two
+    # statements after it run for a failed probe exactly as for an idle one.
+    recovery_phase = await _repair_owed_days(
+        store, checkpoints, tuple(tables), points, now=fetched_at, deadline=deadline
+    )
+    emit("weather_observations_source_recovery_phase", run_id=run_id, **recovery_phase.to_event())
+    for recovery in recovery_phase.reports:
         emit("weather_observations_source_recovery", run_id=run_id, **recovery.to_event())
-    recovered = tuple(reading for recovery in recoveries for reading in recovery.observations)
+    recovered = recovery_phase.observations
     if recovered:
         repaired = direct_weather_observation_tables(
             _with_recovered_observations(poll.observations, recovered), ingested_at=fetched_at
@@ -856,7 +1065,7 @@ async def run(args: argparse.Namespace) -> int:
         tables = {day: repaired[day] for day in tables if day in repaired}
     # Retain the parser inputs BEFORE the first Parquet write: this feed keeps no archive, so a
     # checkpoint taken after a failed write would be a checkpoint that never existed when needed.
-    checkpoint_report = await asyncio.to_thread(checkpoint_current_poll, poll, points, checkpoints)
+    checkpoint_report = await _retain_current_poll(poll, points, checkpoints, run_id=run_id)
     emit("weather_observations_source_retention", run_id=run_id, **checkpoint_report.to_summary())
     database_url = settings.require_local_source_loader_database_url()
     results: list[ForwardDayResult] = []
@@ -928,13 +1137,15 @@ async def run(args: argparse.Namespace) -> int:
             )
 
     outcomes = Counter(result.outcome for result in results)
-    verdict = _bucket_verdict(results, retention_failed=checkpoint_report.failed)
+    verdict = _bucket_verdict(
+        results, retention_failed=checkpoint_report.failed, recovery_degraded=recovery_phase.degraded
+    )
     emit(
         "weather_observations_forward_complete",
         run_id=run_id,
         outcome=verdict.outcome,
         days=len(results),
-        recovered_days=[recovery.to_event() for recovery in recoveries],
+        recovery_phase=recovery_phase.to_event(),
         outcomes=dict(sorted(outcomes.items())),
         incoming_rows=sum(result.incoming_rows for result in results),
         rows_added=sum(result.added_rows for result in results),

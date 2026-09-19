@@ -9,6 +9,7 @@ No network and no object store: the checkpoint store is the in-memory availabili
 from __future__ import annotations
 
 import json
+import time
 from datetime import UTC, date, datetime
 
 import pytest
@@ -226,4 +227,31 @@ def test_the_recovery_event_names_the_verdict_without_carrying_the_readings() ->
         "support_points": 2,
         "recovered_points": 2,
         "missing_or_rejected_points": 0,
+        "unprobed_points": 0,
     }
+
+
+def test_a_probe_that_runs_out_of_budget_reports_an_unfinished_search_not_an_empty_bucket() -> None:
+    """STYLE-REVIEW-W10 B2: `no_retained_capture` is the word the writer prints as "lost, not owed"."""
+    checkpoints = _checkpoints()
+    checkpoint_current_poll(_poll((POINTS[0], _body(19.5)), (POINTS[1], _body(17.25))), POINTS, checkpoints)
+
+    recovered = recover_weather_day(
+        date(2026, 9, 13), POINTS, checkpoints, now=FETCHED_AT, deadline=time.monotonic() - 1.0
+    )
+
+    assert recovered.state == "probe_budget_exhausted"
+    assert recovered.unprobed_points == 2, "every point is unreached, and none of them is evidence of a loss"
+    assert recovered.missing_or_rejected_points == 0
+    assert recovered.observations == ()
+
+
+def test_an_absent_deadline_walks_the_whole_grid_because_that_is_the_operator_turn() -> None:
+    """`forward.py::_run_recovery_turn` passes no deadline; reading the retained grid IS that turn."""
+    checkpoints = _checkpoints()
+    checkpoint_current_poll(_poll((POINTS[0], _body(19.5)), (POINTS[1], _body(17.25))), POINTS, checkpoints)
+
+    recovered = recover_weather_day(date(2026, 9, 13), POINTS, checkpoints, now=FETCHED_AT, deadline=None)
+
+    assert recovered.state == "complete_capture"
+    assert recovered.unprobed_points == 0

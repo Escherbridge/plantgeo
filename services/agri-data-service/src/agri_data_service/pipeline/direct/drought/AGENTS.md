@@ -113,18 +113,31 @@ the operator can see which of the two happened.
 The earlier shape passed the target through `_pending_weeks` and could therefore only ever NARROW
 the scan. Pointed at an already-published day -- its main use -- it selected nothing, emitted an
 empty `selected_weeks` and reported an ordinary completed turn. A flag that silently does nothing
-when pointed at the case it was written for is worse than no flag, which is why the bounds
+when pointed at the case it was written for is worse than no flag, which is why the FOUR bounds
 (`_selected_release_weeks`: a release Tuesday, at or after the lane's source-owned floor, at or
-before the settled ceiling) are all hard `DroughtForwardConfigError`s and the force is unconditional
-in between.
+after the 60-week census horizon, at or before the settled ceiling) are all hard
+`DroughtForwardConfigError`s and the force is unconditional in between.
 
-Forcing is safe rather than destructive because the republication is idempotent and source-direct.
+A failure BEFORE the first byte is free; a failure after it leaves the day unfinished and owed.
 `DirectDroughtAdapter` refetches the settled release under the lane-day lock, and `write_partition`
-retracts the day's completion marker only as it uploads `part-0`
-(`pipeline/parquet/gap_fill_day.py::_export_one_day`), so an attempt that fails before writing
-anything leaves the published day exactly as it found it. The census still runs before the force:
-`_pending_weeks` is also where a data/absence conflict and an absent-at-base-with-derived-parts
-ladder are refused, and a forced republication must not skip those refusals.
+retracts the day's completion marker only as it uploads `part-0`, which is what makes an attempt
+that never writes leave the published day exactly as it found it. The new marker is written LAST
+(`pipeline/parquet/gap_fill_day.py:338-351`), so between the first part and that marker a
+previously published release is `incomplete` -- unservable, and visibly so, because the lane-day
+lock serializes writers and not readers. The earlier wording here called forcing "safe rather than
+destructive" without the conditional and was false for every failure after `part-0`.
+
+That window is bounded rather than removed, and the bound is the census horizon.
+`_selected_release_weeks` (`drought/forward.py:678-729`) refuses a target older than
+`DROUGHT_BACKLOG_SCAN_WEEKS` (60) with a `DroughtForwardConfigError` naming `backfill.py`, because
+the next scheduled turn censuses exactly that window and `_pending_weeks`
+(`drought/forward.py:577-578`) re-selects any day not `data` at every rung. Inside the horizon an
+interrupted republication is repaired by the following turn (`45 * * * *`); outside it nothing
+scheduled would ever look again, and that -- not the transient window -- was the destructive half.
+
+The census still runs before the force: `_pending_weeks` is also where a data/absence conflict and
+an absent-at-base-with-derived-parts ladder are refused, and a forced republication must not skip
+those refusals.
 
 **A governed absence is settled, not debt.** `_pending_weeks` re-lists a recent absence on purpose,
 as a day to re-examine. The end-of-turn "the window still has unfilled releases" invariant therefore

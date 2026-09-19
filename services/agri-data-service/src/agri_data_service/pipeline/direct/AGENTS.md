@@ -1162,8 +1162,11 @@ are one defect: the net was hung, never pulled on.
    debt alone reaches the report and the log stream but does not by itself start a lane's
    `consecutive_incomplete_buckets` streak. Whether it should is `execution/`'s decision about every
    lane, not this writer's about one.
-3. **Three verdicts, not two.** `complete_capture`, `partial_capture`, `no_retained_capture`. The
-   original collapsed the last two, so an ordinary first poll of a new UTC day -- and BOTH halves of
+3. **Four verdicts, not two.** `complete_capture`, `partial_capture`, `no_retained_capture`, and
+   `probe_budget_exhausted` (added 2026-09-19 with the bound below, since a search that stopped
+   early is not evidence of an empty bucket). The
+   original collapsed `partial_capture` into `no_retained_capture`, so an ordinary first poll of a
+   new UTC day -- and BOTH halves of
    a legitimate midnight-straddle poll -- reported the word that means unpublishable. A partial
    capture is merged, because the alternative to a partial republication is not a whole one, it is
    none. Retention is counted per day as well as in total, since a straddling poll retains into two
@@ -1175,6 +1178,44 @@ nothing is. It is bounded by `source_checkpoint.CHECKPOINT_MAX_AGE` (7 days) at 
 because an older checkpoint cannot be read back anyway. A poll that returned no observations at all
 does not recover: it has no day to name, and probing the whole rolling window on every provider
 outage would cost one object read per point per candidate day to usually find nothing.
+
+#### The repair probe cannot cost the poll its retention (2026-09-19, STYLE-REVIEW-W10 B2)
+
+Putting the repair ahead of the retention is right and stays (point 1 above), but for one day it also
+put two unguarded network phases in front of the turn's only durable step. A single transient 5xx
+from the object store during the probe unwound to `weather_observations/forward.py::main`'s
+catch-all, and a poll of a feed with no archive was then neither published NOR retained: the
+instants the checkpoint machinery exists to make recoverable were gone, where the pre-wave-10 code
+would have retained them. Two properties now hold, both enforced in the function that OWNS the
+phase rather than at the call site:
+
+- **Non-fatal.** `forward.py::_repair_owed_days` (`weather_observations/forward.py:792-842`) is the
+  only caller of `_days_owed_a_recovery` and `_recover_owed_days`, and it returns a `RecoveryPhase`
+  on every path -- `state="failed"` carries `error_type` and `detail`. `run()` then reaches
+  `_retain_current_poll` and the publish loop exactly as it would for a turn that owed no day.
+  `_retain_current_poll` (`weather_observations/forward.py:863-890`) gives the retention call the
+  same treatment for the same reason: losing rows held in memory to a fault in their BACKUP is the
+  inversion the retention exists to prevent. A retention fault there is reported as every accepted
+  point failing, which is what `retained_whole_day` then answers per day.
+- **Bounded.** The probe may spend at most `RECOVERY_PROBE_BUDGET_SHARE` (0.25) of what is left of
+  the turn's `--time-budget-seconds`, checked before each day in both phases and before each sample
+  point inside `recovery.py::recover_weather_day`. Unbounded, the probe's ~150 object reads against
+  a slow bucket could leave every day `time_budget_exhausted` and `_bucket_verdict` returning exit
+  1 -- this lane's breaker -- from the repair path.
+
+Neither is a silent swallow. The phase is emitted as `weather_observations_source_recovery_phase`,
+carried on the terminal report as `recovery_phase` (days owed, days DEFERRED by name, per-day
+verdicts), and a failed or deferred phase costs the turn its `complete` through
+`_bucket_verdict(..., recovery_degraded=...)` and appears on the stderr
+`weather_observations_forward_bucket_incomplete`. Its REACH is retention debt's, no further
+(point 2): `execution/job_executor_service.py:186-187` computes `TurnReport.incomplete` from
+`days_unwritten` alone, so a degraded probe on a turn that wrote every day reaches the report and
+the log stream without starting a `consecutive_incomplete_buckets` streak (`:250`). That is
+deliberate -- the probe not running is not the lane being unable to write. It is not decoration
+either: the probe is the only
+reader of checkpoints THIS turn's retention then overwrites, so a turn that could not probe has
+closed a repair window rather than postponed it, and `--recover-day <deferred day>` is the operator's
+answer while the bodies are still inside `CHECKPOINT_MAX_AGE`.
 
 One case the writer deliberately cannot see: a day already `data` at every tier whose EARLIER
 instants are missing. Nothing this writer can read distinguishes that from a healthy day, so it does
