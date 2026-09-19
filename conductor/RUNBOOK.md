@@ -25,9 +25,9 @@ PostgreSQL remains for transactional application data, community interventions, 
 | Slider, API, and agent reads | [Environmental Parquet serving](tracks/environmental_parquet_serving_20260912/spec.md) | Cold and warm traces for selected day, viewport, supported zoom, spatial neighbours, temporal neighbours, missingness, and source ceilings. |
 | Multiscale rendering | [Multiscale surfaces](tracks/multiscale_polygon_surface_20260901/plan.md) | Live conservation, continuity, readability, hover, performance, and mobile evidence at every required rung. |
 | Weather observations | [Platform QA](tracks/platform_experience_qa_20260911/plan.md) | Reconcile the incomplete selected day against availability, then capture populated desktop and mobile behavior. |
-| Weather forecast | [Forecast lane](tracks/weather_forecast_parquet_lane_20260911/plan.md) and [forecast experience](tracks/weather_forecast_experience_20260911/plan.md) | Admit Open-Meteo run-time/valid-time data to Parquet, serve fields and location forecasts, and render continuous weather, wind, hourly, and daily information beyond the observation horizon. Plan W8-E (2026-09-18): distinct slug `weather-forecast`, `kind=observed`, nature `release_series`, issue date as the partition day; `kind=forecast` stays reserved for the ML service. |
+| Weather forecast | **Moved to the ML service 2026-09-19** ([PlantGeo ML service](tracks/plantgeo_ml_service_20260918/plan.md)) | Owner decision: projections leave agri. The `weather-forecast` slug, the partition-kind question and the NWP product are the ML service's; agri lanes stay observed-only and admit no provider projection. Design survives at `.omc/ultrapilot-20260918/W8-E-PLAN.md` and the probe captures at `.omc/research/forecast-s3-probe-20260919/`; the deleted code is in the tree at `c922509d` (landed as `e66dbc36`, `c9c5256c`). The two forecast tracks here are stale and belong to that session to retire or re-point. |
 | Botanical profiles | [Species profile lookup](tracks/botanical_species_profile_lookup_20260911/plan.md) | Inspect the authorized Railway lookup, admit provenance-bound growth and plant-composition sources, publish immutable profiles, and validate agent/API/MCP use. |
-| Herbaria specimens | [PNW Herbaria admission](tracks/pnw_herbaria_source_admission_20260911/plan.md) | UBC v16.43 is live (generation `956c0be7…`); see "Botanical occurrences — open items" below. WTU deferred (one transfer at a time). |
+| Herbaria specimens | [PNW Herbaria admission](tracks/pnw_herbaria_source_admission_20260911/plan.md) | UBC v16.43 live as generation `956c0be7…` and **admitted** by owner decision 2026-09-19. Remaining: field-map reconciliation against the raw `occurrence.txt` row count, and the v16.42/v16.43 native-ID comparison. WTU deferred (one transfer at a time). |
 | Production release | [Production acceptance](tracks/parquet_production_acceptance_20260901/plan.md) | Cross-layer browser, freshness, schedule burn-in, conservation, rollback, and release verdict after upstream gates pass. |
 | ML and Monte Carlo runtime | [PlantGeo ML service](tracks/plantgeo_ml_service_20260918/plan.md) | Phase 1 push: `services/plantgeo-ml-service/` skeleton answers `/ready` on Railway and agri-data-service builds green with no `method/ml`, `method/monte_carlo`, or ML execution lane. ML work is owned by that track and its own `services/plantgeo-ml-service/RUNBOOK.md`; nothing ML-related is recorded here. |
 | Intervention drawing & draft/proposed overlay | [Intervention drawing visibility](tracks/intervention_drawing_visibility_20260912/plan.md) | Draft/proposed overlay only; "published interventions become visible" is a separate bug gated on the publish-path fix in [Community engagement completion](tracks/community_engagement_completion_20260805/), not on this track. The contribution queue already calls `publishContribution` (sets `status: published`), so revalidate end to end before treating it as unimplemented. |
@@ -47,8 +47,11 @@ Incremental pushes and live-site QA are authorized; there are no active users. V
 follow `main` → Railway build → migration readiness → traffic. Each checkpoint records its
 commit/deployment identity, build result and live QA evidence in
 `tracks/platform_experience_qa_20260911/evidence/release-checkpoint-<date>-<sha>.md`. A push is not
-green until **all four services** (plantgeo-main, plantgeo-parquet-api, plantgeo-job-executor,
-plantgeo-martin) report the same commit; the Python `QUALITY_RECEIPT.json` is digested from the
+green until **all four platform services** (plantgeo-main, plantgeo-parquet-api,
+plantgeo-job-executor, plantgeo-martin) report the same commit. A fifth service,
+**plantgeo-ml-service**, exists in the same Railway project as of 2026-09-19; it builds only
+`services/plantgeo-ml-service/`, is owned by the ML session, and a push from here triggers its build
+but cannot break it — its result is not this runbook's gate. the Python `QUALITY_RECEIPT.json` is digested from the
 git index and refused by the image build when stale (archive-verify before every push). Every web
 sweep runs `check:data-boundary`; it rejects any bare URL in `src/**`, comments included. Source
 admission, governed publication and real-human acceptance are not waived. Production mutations
@@ -178,17 +181,7 @@ agent surface refusing — no data, tiles, lanes or schedules for that footprint
 the only detail-band botanical read; GBIF shares it; `botanical-viewport-read` is the one surviving
 fault caption at that band and is now gated for GBIF-only viewers. W8-F: `default_promotion_days`
 takes the vegetation availability index and returns `()` when nothing is published (turn reports
-`no_days_promoted`); the `pipeline.direct.vegetation.forward` import is gone. Forecast lane W8-E:
-ownership agreed with the ML session (distinct slug `weather-forecast`, `kind=observed`,
-`release_series`, `PartitionKind` stays two-valued, one rung ladder, `forecast_module=None`); S1
-froze the 19-column schema (grain `cell_id, valid_time, variable`; `missing_reason` enum); S2 added
-`ingest/weather_forecast/` (single-run endpoint, 64 MiB / 120 s bounds, 429 raises with no retry,
-`u=-speed*sin(dir), v=-speed*cos(dir)`, precipitation `valid_time` shifted one hour earlier to name the
-accumulation window). **Two S2 assumptions are unverified against a live probe:** the multi-location
-response shape and the precipitation window direction — S3 must probe before building on them. S3–S5
-(direct lane + registry entry, plane + agent tool, web reader + slider variant) are next; `lane_registry.py`
-is also on the ML session's touch list, so rebase before S3. **Re-activation of the NDVI lane waits for
-this push and a fresh owner go.**
+`no_days_promoted`); the `pipeline.direct.vegetation.forward` import is gone. Forecast lane W8-E: superseded — see wave 9; agri no longer carries projections. 
 
 **Still owed after wave 7:** `LandContextPanel.partialCoverage` permanently false (should read
 `coverageNotices`); `servedZoomTier` constant with an unreachable arm; drought/burn records behind the
@@ -208,14 +201,108 @@ a species); route, proxy, four agent tools and the map mount are live and indepe
 `plantgeo-parquet-api-production.up.railway.app` is the public data-API domain (originally
 generated for verification, now relied on).
 
-Open, owner: `admission-decisions.json` `admitted_releases` is still `[]` while data is live — a
-different ledger from Parquet; the `admission_reconciliation_note` needs an explicit owner decision
-(`owner-risk-decision-20260913.md` authorized acquisition, not admission). Open, engineering:
-field-map reconciliation against the raw `occurrence.txt` row count; v16.42 vs v16.43 native-ID
-comparison (plan A2); unwired `limit`/`cursor` pagination; publish-time rights-URI guard. Local
+Admitted by owner decision 2026-09-19 (`evidence/owner-admission-decision-20260919.md`; the ledger
+cites that decision, not the 2026-09-13 acquisition one, and names what is still unchecked). The map
+keeps its provisional caveat because that text is still true of the data — removing a user-facing
+consent notice is a separate owner call. Open, engineering: field-map reconciliation against the raw
+`occurrence.txt` row count; v16.42 vs v16.43 native-ID comparison (plan A2); unwired `limit`/`cursor`
+pagination; publish-time rights-URI guard. Local
 quarantine of the raw archive: `C:/Users/atooz/plantgeo-quarantine/botanical_occurrences/ubc-vascular-v16.43.zip`.
 `railway run --service <name> -- <cmd>` executes locally with env injected, so `*.railway.internal`
 never resolves through it.
+
+## Session 22 wave 9 — review fixes, region leak closed, NDVI blocker found (2026-09-19)
+
+Wave 8's adversarial review (`.omc/ultrapilot-20260918/STYLE-REVIEW-W8.md`) returned CHANGES-REQUIRED
+with 3 BLOCKER / 7 SHOULD-FIX; this wave fixes them and carries three owner decisions.
+
+**Owner decisions 2026-09-19** (memory `plantgeo-owner-decisions-2026-09-18`, addendum): projections
+leave agri entirely — the `weather-forecast` slug, the partition-kind question and the whole NWP
+product belong to the ML service, agri lanes stay observed-only, and the two packages agri had
+pushed are deleted at the ML session's own request (they lift from the tree at `c922509d`; the code
+itself landed in `e66dbc36` and `c9c5256c`). UBC v16.43 is **admitted** on the owner's 2026-09-19
+authority, cited as that decision and not inferred from the 2026-09-13 acquisition one, with the
+field-map reconciliation and the v16.42/v16.43 native-ID comparison named as still open inside the
+entry; the map keeps its provisional caveat because that text is still true of the data, and
+removing it is a separate owner call. Stale `.tmp` worktrees are assessed and salvaged, not deleted.
+
+**B1 — land-context served pilot-state semantics in every region.** `layerBindingInRegion` gated one
+map hook; four server surfaces walked past it, and a non-PNW area of interest came back
+`budgetExceeded("outside_pilot_states")` — a refusal that tells the caller to ask smaller. One server
+seam (`src/lib/server/services/land-context/region-binding.ts`) now asks the single binding rule, all
+five readers gate on it and answer `source_unbound_for_region`, the tRPC enum became a per-parse
+refine against the selected manifest, and the agent tools build their descriptions and enums per
+catalogue load and refuse before parsing arguments. Tools stay **registered** in every region on
+purpose: a vocabulary that changed per region would make the agent deny a surface the platform has.
+Where a PNW-derived type remains the reason is storage, not reachability, and a test fails the moment
+any manifest binds a land-context source.
+
+**B3 — the botanical release-set pin came from the disabled lane.** A disabled react-query observer
+still serves the previous key's answer (`placeholderData: KEEP_PREVIOUS_WHILE_PANNING`), so at the
+detail band the pin could name the aggregate answer a wide viewport had landed. The zoom band is the
+discriminator now, not an undefined check; when the band's own lane has no answer the pin is written
+`null` rather than left stale.
+
+**B2 dissolved** rather than being fixed: it objected to agri writing projections under
+`kind=observed`, and agri no longer writes projections.
+
+**The NDVI promotion lane: two production rollbacks, and the first diagnosis was wrong.** Armed
+02:40Z and 03:48Z on 2026-09-19, rolled back both times; nothing was written either time. The failure
+was never in day selection — `default_promotion_days` correctly chose 2026-09-12 from an index of
+1,219 published days — it was `_corpus_digest` in `execution/vegetation_ndvi_plane.py` reading the
+frozen Postgres `agri.vegetation` table, one layer below the code wave 8 had patched. The tell was in
+the original log: it named 2026-09-12, never today. Evidence corrected in place at
+`tracks/gapless_parquet_publication_20260901/evidence/ndvi-promotion-activation-20260919.md`.
+
+Fixed here: the whole-corpus digest is **deleted** with five SQL files (its sibling verb had no caller
+at all), registration works from the partition's own cells, and its checksum is byte-identical to the
+promoter's per-day SHA so the release, the receipt and the availability generation key are one value.
+The promoter's ceiling now comes from `selectable_days()` — the §4a rung intersection, not the base
+rung — with a staleness bound of two publication windows read from the registry, because "latest
+equals latest" is not a freshness proof. Five terminal statuses with a stated precedence; a
+registration refusal dominates and exits non-zero rather than letting a mixed turn report success.
+
+**Found while joining those two halves: nothing on that path ever committed.** The session context
+rolls back on exit and no caller committed, so a turn would have registered the release, written a
+durable object-store receipt, rolled Postgres back, and reported `unchanged` forever against an empty
+plane. Now commits per promoted day before that day's receipt — per day, not per turn, because the
+advisory lock is transaction-scoped.
+
+**Re-activation preconditions (do not arm the lane until both hold):** `agri.spatial_cell` must hold
+the `sentinel2-ndvi-0p25deg` cells — production Postgres was rebuilt from empty on 2026-09-09 and
+this is unverified; if empty the turn now refuses by name. And the stale work item for shard
+`2026-09-19T02:25:00+00:00` sits in `retry_wait` at attempt 2 of 5 and replays the instant the lane is
+armed, so its failure would be misread as a fresh one — settle it first. A 2026-09-12 ceiling goes
+stale on 2026-09-27, after which only an operator `--day` turn can promote it.
+
+**Salvage from the 2026-09-13 freshness fan-out.** Every branch in it sat on a commit already in
+`main`; the work was uncommitted working-tree state, and `freshness-integrated-20260914` was the union
+of the other nine. Nine trees are now preserved as WIP commits on their own branches so a stray
+`git checkout .` cannot erase them. Ported: drought `--target-day` (the config field existed and the
+flag was never wired) and weather-observations source checkpoints written **before** the first write,
+since that lane has no archive to re-read. Held back for review: a turn report that counts publication
+debt rather than only refused days — it can make a lane with a standing quarantine permanently
+incomplete, which is a platform-wide health-signal change. Inventory and disposal list in
+`.omc/ultrapilot-20260918/WORKTREE-SALVAGE-20260919.md`; nothing was deleted.
+
+**Also landed:** region identity (`region_slug`, `region_display_name`) on the coverage payload as
+additive keys, with a typed `region_identity_mismatch` that withholds Parquet rows when the two trees
+disagree — the Python and web region env vars are independent and a split was previously undetectable;
+module-scope region reads are now blocked by a guard in each tree, each with a self-test, closing the
+trap the previous wave's own comment claimed to have fixed.
+
+## Open owner items
+
+- **Object-store credential rotation (2026-09-19).** An operations agent printed
+  `OBJECT_STORE_ACCESS_KEY_ID` and `OBJECT_STORE_SECRET_ACCESS_KEY` into its own transcript during
+  the botanical pointer advance before switching to an environment-only driver. Nothing left the
+  machine. The owner chose to rotate later and asked to be reminded; rotate when no lane is
+  mid-publish, then delete this bullet.
+- **`OfflinePanel.tsx:52` download box** — a product decision, tracked as a known offender in
+  `src/__tests__/region/footprint-literals.test.ts`.
+- **Stale worktrees under `.tmp`** — eleven from earlier sessions hold uncommitted work. Owner asked
+  for assessment and salvage, not deletion; inventory in
+  `.omc/ultrapilot-20260918/WORKTREE-SALVAGE-20260919.md`.
 
 ## Recovery
 
