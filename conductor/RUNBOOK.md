@@ -49,9 +49,10 @@ commit/deployment identity, build result and live QA evidence in
 `tracks/platform_experience_qa_20260911/evidence/release-checkpoint-<date>-<sha>.md`. A push is not
 green until **all four platform services** (plantgeo-main, plantgeo-parquet-api,
 plantgeo-job-executor, plantgeo-martin) report the same commit. A fifth service,
-**plantgeo-ml-service**, exists in the same Railway project as of 2026-09-19; it builds only
-`services/plantgeo-ml-service/`, is owned by the ML session, and a push from here triggers its build
-but cannot break it — its result is not this runbook's gate. the Python `QUALITY_RECEIPT.json` is digested from the
+**plantgeo-ml** (the Railway service name; the directory is `services/plantgeo-ml-service/`), exists
+in the same project as of 2026-09-19. It is owned by the ML session, its watch pattern covers only
+its own directory — the wave-9 push SKIPPED it rather than rebuilding it — and its result is not
+this runbook's gate. the Python `QUALITY_RECEIPT.json` is digested from the
 git index and refused by the image build when stale (archive-verify before every push). Every web
 sweep runs `check:data-boundary`; it rejects any bare URL in `src/**`, comments included. Source
 admission, governed publication and real-human acceptance are not waived. Production mutations
