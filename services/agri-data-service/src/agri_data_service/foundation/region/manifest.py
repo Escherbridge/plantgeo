@@ -118,22 +118,45 @@ class Region(BaseModel):
 
 
 def _load_manifest_json(slug: str) -> Region:
-    """Parse `<slug>.json` from this package into a validated `Region`; raises on a missing file."""
+    """Parse the registered JSON data file for `slug` into a validated `Region`.
+
+    Raises when the slug is registered but its file is missing from the installed package, which is
+    a packaging fault rather than a configuration one -- `load_region()` has already refused an
+    unregistered slug before this is reached.
+    """
     package_files = resources.files(__package__)
-    manifest_path = package_files / f"{slug}.json"
+    manifest_path = package_files / _MANIFEST_FILE_BY_SLUG[slug]
     if not manifest_path.is_file():
         raise ValueError(f"no region manifest named {slug!r} in {__package__}")
     raw = json.loads(manifest_path.read_text(encoding="utf-8"))
     return Region.model_validate(raw)
 
 
-#: The pilot slug; the only manifest this deployment registers today. Not the manifest itself --
-#: nothing reads `pnw.json` until `load_region()` is actually called, per `python.md` "the region is
-#: a value, not a constant": a module-level `Region` constant is the exact hidden dependency that
-#: rule forbids, and it would do filesystem I/O at import time whether or not `PLANTGEO_REGION`
-#: names something else.
+#: The pilot slug; the manifest `load_region()` falls back to when nothing selects another.
 _PILOT_REGION_SLUG: Final = "pnw"
-_KNOWN_REGION_SLUGS: Final[tuple[str, ...]] = (_PILOT_REGION_SLUG,)
+
+#: The second deployment's slug: a real manifest this tree ships, not a test fixture. See
+#: `AGENTS.md` in this directory, section "Why a second manifest is data rather than a fixture".
+_SECOND_REGION_SLUG: Final = "kenya-highlands"
+
+#: Every manifest this deployment ships, slug to its JSON data file beside this module. Not the
+#: manifests themselves -- nothing reads a JSON file until `load_region()` is actually called, per
+#: `python.md` "the region is a value, not a constant": a module-level `Region` constant is the
+#: exact hidden dependency that rule forbids, and it would do filesystem I/O at import time whether
+#: or not `PLANTGEO_REGION` names something else.
+#:
+#: The file name is the slug with its hyphen written as an underscore, spelled here rather than
+#: computed, so a registered slug always names a file that exists in the package data and a reader
+#: can see which file backs which slug without running the transformation in their head.
+_MANIFEST_FILE_BY_SLUG: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        _PILOT_REGION_SLUG: "pnw.json",
+        _SECOND_REGION_SLUG: "kenya_highlands.json",
+    }
+)
+
+#: The slugs `load_region()` will resolve; derived from the file registry so the two cannot drift.
+_KNOWN_REGION_SLUGS: Final[tuple[str, ...]] = tuple(_MANIFEST_FILE_BY_SLUG)
 
 #: Populated lazily, one entry per slug `load_region()` has actually resolved; never read directly.
 _REGION_CACHE: Final[dict[str, Region]] = {}

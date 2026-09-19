@@ -63,6 +63,11 @@ _MAX_PLAUSIBLE_ZOOM_LADDER_VALUE: Final = 24
 _MAX_DECLARED_STRING_LENGTH: Final = 40
 
 #: Files that ARE the manifest's own declaration -- never "a literal outside the manifest".
+#:
+#: The manifests' own coordinates (`foundation/region/pnw.json`,
+#: `foundation/region/kenya_highlands.json`) need no entry: this walk is `rglob("*.py")`, so a JSON
+#: data file is invisible to it by construction. They are listed in the web guard's allow-list
+#: instead, because that tree carries its manifests as TypeScript modules inside `src/`.
 _ALLOWED_RELATIVE_PATHS: Final[frozenset[str]] = frozenset(
     {
         "foundation/region/manifest.py",
