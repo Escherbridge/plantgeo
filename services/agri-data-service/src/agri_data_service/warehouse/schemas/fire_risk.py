@@ -25,6 +25,15 @@ writes and there is no observed row for `forecast_stream_schema()` to append pro
 makes it the one registered stream whose schema already carries those six names, which is why
 `warehouse/parquet/schema.py` lists it in `FORECAST_ORIGINATED_STREAMS`.
 
+AND WHY `quantile` IS A STRING HERE WHILE THE SHARED FORECAST SET KEEPS IT A DOUBLE: this is a
+DETERMINISTIC product, and `conductor/code_styleguides/layer-lanes.md:208-213` (section 3, amended
+2026-09-19) says a model emitting one calibrated value per cell-day writes the literal
+`quantile = "point"` with `ensemble_size = 1`. The drawn lanes are unaffected and keep the numeric
+fraction of `FORECAST_PROVENANCE_FIELDS` (`warehouse/parquet/schema.py:97`) -- two streams, two
+provenance sets, no union type. The writing service made the same substitution the same way
+(`services/plantgeo-ml-service/src/plantgeo_ml_service/warehouse/streams.py:85-88`), so the two
+copies still compare equal field for field.
+
 WHY `probability` AND `risk_score` ARE NULLABLE AND `refused_reason` CARRIES THE WHY: an
 out-of-stratum cell is refused, never scored. A fabricated zero reads as "no risk here", which is
 the exact claim FR-5's publication gate exists to prevent. Every row still names the artifact it
@@ -69,6 +78,25 @@ FIRE_RISK_GRAIN: Final[tuple[str, ...]] = (
     "valid_day",
 )
 
+# What this deterministic lane writes in `quantile`: the label, never an ensemble fraction.
+# `conductor/code_styleguides/layer-lanes.md:208-213`; the writing side pins the same literal at
+# `services/plantgeo-ml-service/src/plantgeo_ml_service/warehouse/streams.py:80`.
+FIRE_RISK_POINT_QUANTILE: Final = "point"
+
+# The deterministic provenance block: the shared six columns with `quantile` carried as that label.
+# DERIVED from `FORECAST_PROVENANCE_FIELDS` rather than retyped, so the shared set stays the single
+# declaration of the other five and a future change to it lands here too. It is defined in this
+# module, not in `warehouse/parquet/schema.py`, because `fire-risk` is the only deterministic stream
+# there is -- `FORECAST_ORIGINATED_STREAMS` holds exactly this one slug
+# (`warehouse/parquet/schema.py:120`) -- and a shared name would advertise a deterministic mode that
+# `forecast_stream_schema()` does not offer (`warehouse/parquet/schema.py:123-136` appends the
+# numeric set unconditionally). `quantile` stays non-null and stays in the sort key, so the grain is
+# unchanged; the ML copy substitutes the field the same way and the two schemas remain equal.
+DETERMINISTIC_PROVENANCE_FIELDS: Final[tuple[pa.Field, ...]] = tuple(
+    pa.field("quantile", pa.string(), nullable=False) if provenance_field.name == "quantile" else provenance_field
+    for provenance_field in FORECAST_PROVENANCE_FIELDS
+)
+
 FIRE_RISK_SCHEMA: Final = register_stream_schema(
     ParquetStreamSchema(
         name=FIRE_RISK_STREAM,
@@ -83,7 +111,7 @@ FIRE_RISK_SCHEMA: Final = register_stream_schema(
                 pa.field("stratum", pa.string(), nullable=False),
                 pa.field("refused_reason", pa.string(), nullable=True),
                 pa.field("model_artifact_sha256", pa.string(), nullable=False),
-                *FORECAST_PROVENANCE_FIELDS,
+                *DETERMINISTIC_PROVENANCE_FIELDS,
             ]
         ),
         sort_columns=FIRE_RISK_GRAIN + FORECAST_PROVENANCE_GRAIN,
@@ -104,6 +132,12 @@ FIRE_RISK_SCHEMA: Final = register_stream_schema(
 #
 # `refused_reason` is nulled: a coarse cell mixing refused and scored base cells can honestly name
 # no single reason, and the field is nullable for exactly that.
+#
+# THE TIER KEY IS UNCHANGED BY THE DETERMINISTIC `quantile`: it keys on the provenance NAMES
+# (`FORECAST_PROVENANCE_GRAIN`, `warehouse/parquet/schema.py:105`), and grouping by the constant
+# label `"point"` partitions a deterministic partition exactly as one numeric level did -- into one
+# group. `validate_derivation_against_schema` checks membership and nullability, never column type
+# (`warehouse/parquet/tiers.py:862-887`), so nothing here needed to move.
 FIRE_RISK_DERIVATION: Final = register_tier_derivation(
     TierDerivation(
         stream=FIRE_RISK_STREAM,

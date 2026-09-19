@@ -12,6 +12,12 @@ encodes Parquet against ITS copy and the reader decodes against THIS one, so a s
 nullability or position moved produces files that are rejected at read time in the other service,
 with an error that names a column rather than the commit that moved it.
 
+A FAILURE HERE NAMES THE DECISION, NOT JUST THE DIFF: the check is bidirectional and cannot know
+which copy is right, so `_divergence_message` prints both file paths, the section that owns the
+field (`_CONTRACT_SECTION`) and every column position that moved. The 2026-09-19 `fire-risk` break
+was a correct amendment landing on one side only; reading the section answered it, diffing the two
+modules would not have.
+
 The sibling tree is not installed -- it is a path on disk in a monorepo checkout and is absent from
 the agri Docker image -- so the modules are loaded from their FILE PATHS and the whole module skips
 with a named reason when that tree is not there. This mirrors `test_lane_contract.py`'s
@@ -26,6 +32,7 @@ from __future__ import annotations
 import importlib
 import sys
 from dataclasses import dataclass
+from itertools import zip_longest
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -63,6 +70,48 @@ class MlServiceSchemas:
     fire_risk: Any
     weather_forecast: Any
     expert_labels: Any
+
+
+#: The section that OWNS every field these copies share, so a failure points at the decision rather
+#: than at two files. Section 3's 2026-09-19 amendment is what makes `fire-risk` carry
+#: `quantile = "point"` as a string while the drawn lanes keep the numeric level.
+_CONTRACT_SECTION = "conductor/code_styleguides/layer-lanes.md section 3 (forecast provenance)"
+
+#: Both halves of each copied contract, by path, so the message names the two files to open.
+_AGRI_FIRE_RISK_MODULE = "services/agri-data-service/src/agri_data_service/warehouse/schemas/fire_risk.py"
+_ML_FIRE_RISK_MODULE = "services/plantgeo-ml-service/src/plantgeo_ml_service/warehouse/streams.py"
+
+
+def _column_shapes(arrow_schema: Any) -> list[tuple[str, str, bool]]:
+    """Render a schema as the (name, type, nullable) triples parity actually compares."""
+    return [(field.name, str(field.type), field.nullable) for field in arrow_schema]
+
+
+def _divergence_message(
+    stream: str,
+    *,
+    agri_module: str,
+    ml_module: str,
+    agri_columns: list[tuple[str, str, bool]],
+    ml_columns: list[tuple[str, str, bool]],
+) -> str:
+    """Name the stream, both copies, the owning contract section, and every column position that moved."""
+    moved = [
+        f"  position {index}: agri {agri_column!r} vs ml {ml_column!r}"
+        for index, (agri_column, ml_column) in enumerate(zip_longest(agri_columns, ml_columns))
+        if agri_column != ml_column
+    ]
+    return "\n".join(
+        [
+            f"the two {stream!r} schema copies diverged. The ML service WRITES these partitions and agri",
+            "READS them, so the copy to change is whichever one disagrees with the contract -- not simply",
+            "the older one. Read the section before editing either file:",
+            f"  contract: {_CONTRACT_SECTION}",
+            f"  agri (reader): {agri_module}",
+            f"  ml   (writer): {ml_module}",
+            *(moved or ["  (the columns agree; the divergence is in sort order, codec or name)"]),
+        ]
+    )
 
 
 def _module_path(dotted: str) -> Path:
@@ -107,20 +156,33 @@ def ml_schemas() -> Iterator[MlServiceSchemas]:
 
 def test_the_fire_risk_schema_is_the_ml_services_own_object_field_for_field(ml_schemas: MlServiceSchemas) -> None:
     """`fire-risk` is written THERE and read HERE, so a moved field breaks the read, not the write."""
-    assert FIRE_RISK_SCHEMA.arrow_schema.equals(ml_schemas.fire_risk.arrow_schema)
-    assert FIRE_RISK_SCHEMA.sort_columns == ml_schemas.fire_risk.sort_columns
-    assert FIRE_RISK_SCHEMA.compression == ml_schemas.fire_risk.compression
-    assert FIRE_RISK_SCHEMA.name == ml_schemas.fire_risk.name
+    message = _divergence_message(
+        "fire-risk",
+        agri_module=_AGRI_FIRE_RISK_MODULE,
+        ml_module=_ML_FIRE_RISK_MODULE,
+        agri_columns=_column_shapes(FIRE_RISK_SCHEMA.arrow_schema),
+        ml_columns=_column_shapes(ml_schemas.fire_risk.arrow_schema),
+    )
+    assert FIRE_RISK_SCHEMA.arrow_schema.equals(ml_schemas.fire_risk.arrow_schema), message
+    assert FIRE_RISK_SCHEMA.sort_columns == ml_schemas.fire_risk.sort_columns, message
+    assert FIRE_RISK_SCHEMA.compression == ml_schemas.fire_risk.compression, message
+    assert FIRE_RISK_SCHEMA.name == ml_schemas.fire_risk.name, message
 
 
 def test_the_fire_risk_copies_agree_column_by_column_so_a_failure_names_the_field(
     ml_schemas: MlServiceSchemas,
 ) -> None:
     """`Schema.equals` answers one bool; this answers WHICH column moved, which is the actionable fact."""
-    here = [(field.name, str(field.type), field.nullable) for field in FIRE_RISK_SCHEMA.arrow_schema]
-    there = [(field.name, str(field.type), field.nullable) for field in ml_schemas.fire_risk.arrow_schema]
+    here = _column_shapes(FIRE_RISK_SCHEMA.arrow_schema)
+    there = _column_shapes(ml_schemas.fire_risk.arrow_schema)
 
-    assert here == there
+    assert here == there, _divergence_message(
+        "fire-risk",
+        agri_module=_AGRI_FIRE_RISK_MODULE,
+        ml_module=_ML_FIRE_RISK_MODULE,
+        agri_columns=here,
+        ml_columns=there,
+    )
 
 
 def test_the_weather_forecast_schema_is_the_ml_services_own_nineteen_columns(ml_schemas: MlServiceSchemas) -> None:

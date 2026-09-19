@@ -48,6 +48,34 @@ provenance columns, because it has no observed side at all -- see `FORECAST_ORIG
 `warehouse/parquet/schema.py`, which is what keeps `get_stream_schema(name, "forecast")` from
 appending those names a second time.
 
+### `fire-risk` carries a DETERMINISTIC provenance set, and it is the only lane that does
+
+`conductor/code_styleguides/layer-lanes.md:208-213` (section 3, amended 2026-09-19) says a product
+emitting one calibrated value per cell-day writes the literal `quantile = "point"` with
+`ensemble_size = 1`, a recorded `random_seed` and a `model_artifact_sha256`. `fire_risk.py` therefore
+declares `DETERMINISTIC_PROVENANCE_FIELDS` locally, derived from the shared tuple by substituting
+that one field, and the shared `FORECAST_PROVENANCE_FIELDS` keeps `quantile` a `float64`
+(`warehouse/parquet/schema.py:97`) for the drawn lanes that really do report 0.1/0.5/0.9. Two
+streams, two provenance sets, no union type and no nullable second column.
+
+**The deterministic set is NOT shared.** It lives in the lane module because `fire-risk` is the only
+slug in `FORECAST_ORIGINATED_STREAMS` (`warehouse/parquet/schema.py:120`) and the shared derivation
+`forecast_stream_schema()` appends the numeric set unconditionally
+(`warehouse/parquet/schema.py:123-136`) -- a shared `DETERMINISTIC_*` name would advertise a mode
+that function cannot be asked for. If a second deterministic lane ever lands, lift the tuple then.
+
+**Nothing else moved, and that is checkable.** The sort grain is still
+`FIRE_RISK_GRAIN + FORECAST_PROVENANCE_GRAIN` and the tier key still names the same provenance
+columns, because both are lists of NAMES (`warehouse/parquet/schema.py:105`) and the ML copy builds
+its sort key from the same three
+(`services/plantgeo-ml-service/src/plantgeo_ml_service/warehouse/streams.py:281-286`);
+`validate_derivation_against_schema` constrains membership and nullability, never type
+(`warehouse/parquet/tiers.py:862-887`). The registry check that pins the provenance block to the end
+of this schema compares names too (`tests/parquet/test_stream_schema_registry.py:274`), so it holds
+across the type change. Byte-for-byte equality with the writer is enforced by
+`tests/parquet/test_ml_schema_parity.py`, which reads the sibling's module off disk rather than
+trusting either module header.
+
 ## `calendar.py` is a dimension, not a layer
 The conformed date dimension is registered here like any other stream, but it is not a
 `geo.layers` slug and has no source system: every column is a function of `calendar_day` alone, and
