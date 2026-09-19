@@ -99,3 +99,35 @@ production caller at all and are dead code, not rename debt.)
   importer — now reads `usdm.py` directly (it constructs `DroughtDaySource` fixtures, never through
   the manifest binding, so reading `usdm.py` names no more of the source than the shim already did).
   See `DEPRECATED_ALIASES.md` for the removal record.
+
+## `--target-day` republishes; it does not merely narrow the scan
+
+`forward.py`'s ordinary turn censuses the backlog window and publishes what is OWED. `--target-day`
+is the operator's repair verb for one named release, and the thing an operator most often doubts is
+a release that already landed -- "I am not sure that Tuesday published correctly". So the flag
+selects its release and then survives the owed-work filter (`_weeks_this_turn`): the day is
+refetched from source and rewritten whether or not every rung already records it as `data`, and
+both `drought_forward_started` and the terminal report carry `target_day` and `target_forced` so
+the operator can see which of the two happened.
+
+The earlier shape passed the target through `_pending_weeks` and could therefore only ever NARROW
+the scan. Pointed at an already-published day -- its main use -- it selected nothing, emitted an
+empty `selected_weeks` and reported an ordinary completed turn. A flag that silently does nothing
+when pointed at the case it was written for is worse than no flag, which is why the bounds
+(`_selected_release_weeks`: a release Tuesday, at or after the lane's source-owned floor, at or
+before the settled ceiling) are all hard `DroughtForwardConfigError`s and the force is unconditional
+in between.
+
+Forcing is safe rather than destructive because the republication is idempotent and source-direct.
+`DirectDroughtAdapter` refetches the settled release under the lane-day lock, and `write_partition`
+retracts the day's completion marker only as it uploads `part-0`
+(`pipeline/parquet/gap_fill_day.py::_export_one_day`), so an attempt that fails before writing
+anything leaves the published day exactly as it found it. The census still runs before the force:
+`_pending_weeks` is also where a data/absence conflict and an absent-at-base-with-derived-parts
+ladder are refused, and a forced republication must not skip those refusals.
+
+**A governed absence is settled, not debt.** `_pending_weeks` re-lists a recent absence on purpose,
+as a day to re-examine. The end-of-turn "the window still has unfilled releases" invariant therefore
+excludes `absent` alongside the time-budget and source-unsettled refusals; without that exclusion a
+turn that governed a day absent exactly as the contract asks would fail on the re-listing it
+guaranteed itself.

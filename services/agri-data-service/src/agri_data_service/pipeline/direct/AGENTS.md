@@ -1134,10 +1134,51 @@ only after reading it back (`source_checkpoints_retained`), because a write that
 is a claim, not evidence. Retention is reported beside -- never folded into -- the availability
 counters: a retained body proves a future retry is POSSIBLE, and proves nothing about publication.
 
-`weather_support_sha256` binds every checkpoint to the complete ordered support grid, and
-`recover_weather_day` reports `source_retention_loss` for a day missing any point of that grid
-rather than returning a partial one. Recovery returns observations; it does not publish them, so a
-republication still goes through the forward writer's own lane-day lock and finalizer.
+`weather_support_sha256` binds every checkpoint to the complete ordered support grid. Recovery
+returns observations; it does not publish them, so a republication still goes through the forward
+writer's own lane-day lock, merge and finalizer.
+
+#### The retry is actually taken, in this order
+
+Three things were wrong while `recover_weather_day` had no caller (STYLE-REVIEW-W9 S5), and they
+are one defect: the net was hung, never pulled on.
+
+1. **Every turn recovers before it retains.** `_days_owed_a_recovery` picks the selected days with
+   no complete publication, `_recover_owed_days` reparses their retained bodies, and only then does
+   `checkpoint_current_poll` run. The order is load-bearing: a checkpoint key is
+   `(provider, support, day, request URL)` with no instant in it, so this poll's retention
+   OVERWRITES the previous poll's body for the same point and day. Checkpointing first would have
+   destroyed the only copy of the bucket the last poll failed to write. The module docstring's
+   "an unwritten day is re-selected automatically" is true of the DAY and false of its READINGS --
+   the next poll re-buckets the current instant, not the lost one -- and this is what closes that
+   gap. Recovered readings are merged into the poll's own table, deduplicated on the published
+   grain, because `merge_weather_observations_day` refuses one poll offering a grain twice.
+2. **Retention costs the turn its `complete`.** `failed > 0` makes `_bucket_verdict` return
+   `incomplete` and `_report_bucket_incomplete` speak on stderr even when every day wrote, and each
+   unwritten day carries `source_retained` so a permanently lost bucket says so by name. It is not
+   an exit-1 refusal: publishing rows already in memory must not be abandoned because their BACKUP
+   failed, and exit 1 is this lane's breaker. Its reach is stated rather than overclaimed:
+   `execution/job_executor_service.py::TurnReport.incomplete` reads `days_unwritten`, so retention
+   debt alone reaches the report and the log stream but does not by itself start a lane's
+   `consecutive_incomplete_buckets` streak. Whether it should is `execution/`'s decision about every
+   lane, not this writer's about one.
+3. **Three verdicts, not two.** `complete_capture`, `partial_capture`, `no_retained_capture`. The
+   original collapsed the last two, so an ordinary first poll of a new UTC day -- and BOTH halves of
+   a legitimate midnight-straddle poll -- reported the word that means unpublishable. A partial
+   capture is merged, because the alternative to a partial republication is not a whole one, it is
+   none. Retention is counted per day as well as in total, since a straddling poll retains into two
+   day namespaces and only a per-day count answers "is THIS bucket recoverable".
+
+`--recover-day <ISO>` is the operator path for a day this turn's poll does not name: it makes NO
+source request, republishes whatever of that day's grid is retained, and exits 1 naming the day when
+nothing is. It is bounded by `source_checkpoint.CHECKPOINT_MAX_AGE` (7 days) at the CLI boundary,
+because an older checkpoint cannot be read back anyway. A poll that returned no observations at all
+does not recover: it has no day to name, and probing the whole rolling window on every provider
+outage would cost one object read per point per candidate day to usually find nothing.
+
+One case the writer deliberately cannot see: a day already `data` at every tier whose EARLIER
+instants are missing. Nothing this writer can read distinguishes that from a healthy day, so it does
+not guess, and `--recover-day` is the answer when an operator knows otherwise.
 
 ### The name collision, again, and which producer this actually is
 

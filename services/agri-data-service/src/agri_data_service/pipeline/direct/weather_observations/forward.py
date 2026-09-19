@@ -35,6 +35,15 @@ yesterday, and every poll re-buckets the same rolling instant, so an unwritten d
 automatically. The rule must not be lifted into a lane whose unwritten day is NOT re-offered by its next
 turn. The breaker exists for a lane that cannot write; a lane writing some of its days is degraded,
 visibly, not broken.
+
+THE RE-OFFER IS WHAT `recovery.py` REPAIRS WHEN IT DOES NOT HOLD. The rule above rests on the next
+poll re-bucketing the same rolling instant -- but it re-buckets the CURRENT instant, not the one the
+failed write held, so the readings a failed bucket carried are gone even though the day comes back.
+Every turn therefore reparses the retained provider responses of the days it selected that carry no
+complete publication, BEFORE its own checkpoints overwrite them, and merges those readings into the
+same bucket (`_days_owed_a_recovery`, `_recover_owed_days`). The merge is by grain, so recovering a
+day the current poll also answered is an append of what is missing, never a second claim about it.
+`--recover-day` is the operator's version for a day this turn's poll does not name at all.
 """
 
 from __future__ import annotations
@@ -77,6 +86,7 @@ from agri_data_service.pipeline.direct.weather_observations.adapter import (
 from agri_data_service.pipeline.direct.weather_observations.recovery import (
     WeatherCheckpointReport,
     checkpoint_current_poll,
+    recover_weather_day,
 )
 from agri_data_service.pipeline.direct.weather_observations.rows import (
     WEATHER_OBSERVATIONS_SOURCE_COLUMNS,
@@ -89,7 +99,7 @@ from agri_data_service.pipeline.parquet.availability_index import BotoAvailabili
 from agri_data_service.pipeline.parquet.gap_fill import fill_one_lane_day, postgres_lane_day_lock
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 from agri_data_service.pipeline.parquet.objectstore import BotoObjectStoreBackend, ObjectStore, conform_to_stream_schema
-from agri_data_service.pipeline.parquet.source_checkpoint import SourceResponseCheckpoints
+from agri_data_service.pipeline.parquet.source_checkpoint import CHECKPOINT_MAX_AGE, SourceResponseCheckpoints
 from agri_data_service.warehouse.schemas.weather_observations import (
     WEATHER_OBSERVATIONS_GRAIN,
     WEATHER_OBSERVATIONS_SCHEMA,
@@ -102,6 +112,8 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from agri_data_service.pipeline.direct.weather_observations.adapter import OverturnedAbsence
+    from agri_data_service.pipeline.direct.weather_observations.recovery import WeatherRecoveryReport
+    from agri_data_service.pipeline.direct.weather_observations.source import WeatherPointObservation
     from agri_data_service.pipeline.parquet.availability_index import AvailabilityStorage
     from agri_data_service.pipeline.parquet.lane_registry import LaneAdapter
 
@@ -190,6 +202,11 @@ class ForwardDayResult:
     #: The governed absence this day's poll overturned, when it did; carried on failures too, since the
     #: marker is already gone by the time a later write can fail (`adapter.py`).
     absence_overturned: OverturnedAbsence | None = None
+    #: Whether every row this day's bucket was built from has its parser input retained and read
+    #: back. `None` means the question was not asked (no retention step ran for this day). On an
+    #: UNWRITTEN day this is the difference between a bucket the next turn can still recover and one
+    #: the rolling feed has lost for good, so it travels out on `_unwritten_event`.
+    source_retained: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,6 +218,9 @@ class ForwardBucketVerdict:
     days_written: int
     unwritten: tuple[ForwardDayResult, ...]
     absences_overturned: tuple[date, ...]
+    #: Accepted points whose parser input could not be proven retained. NOT folded into the day
+    #: counts: a retention failure is a failure of the lane's ONLY retry, not of a publication.
+    retention_failed: int = 0
 
     @property
     def days_unwritten(self) -> int:
@@ -208,33 +228,51 @@ class ForwardBucketVerdict:
         return len(self.unwritten)
 
 
-def _bucket_verdict(results: Sequence[ForwardDayResult]) -> ForwardBucketVerdict:
-    """Exit 1 only when NO day wrote; some written and some not is `incomplete` at exit 0 -- see module docstring."""
+def _bucket_verdict(
+    results: Sequence[ForwardDayResult], *, retention_failed: int = 0
+) -> ForwardBucketVerdict:
+    """Exit 1 only when NO day wrote; some written and some not is `incomplete` at exit 0 -- see module docstring.
+
+    A RETENTION FAILURE ALSO COSTS THE TURN ITS `complete`. Until 2026-09-19 the retention counters
+    were advisory: a poll whose every checkpoint failed published exactly as before and reported a
+    clean success, which made writing the checkpoint before the first write buy nothing. It is not
+    an exit-1 refusal, because refusing to publish rows already held in memory over a failed BACKUP
+    of them destroys the very data the backup exists to protect -- and because exit 1 is this lane's
+    breaker (module docstring). It is `incomplete`, on stderr, and named per unwritten day.
+    """
     unwritten = tuple(result for result in results if result.outcome != "written")
     days_written = len(results) - len(unwritten)
     return ForwardBucketVerdict(
-        outcome=COMPLETE if results and not unwritten else INCOMPLETE,
+        outcome=COMPLETE if results and not unwritten and not retention_failed else INCOMPLETE,
         exit_code=0 if days_written else 1,
         days_written=days_written,
         unwritten=unwritten,
         absences_overturned=tuple(result.day for result in results if result.absence_overturned is not None),
+        retention_failed=retention_failed,
     )
 
 
 def _unwritten_event(result: ForwardDayResult) -> dict[str, object]:
-    """Name one unpublished day by what stopped it, so the terminal report needs no per-day log walk."""
-    return {
+    """Name one unpublished day by what stopped it, so the terminal report needs no per-day log walk.
+
+    `source_retained` appears only when retention was measured for this day -- absent means the
+    question was not asked, which is honestly different from asked and answered no.
+    """
+    event: dict[str, object] = {
         "day": result.day.isoformat(),
         "outcome": result.outcome,
         "attempts": result.attempts,
         "incoming_rows": result.incoming_rows,
         "detail": result.detail,
     }
+    if result.source_retained is not None:
+        event["source_retained"] = result.source_retained
+    return event
 
 
 def _report_bucket_incomplete(run_id: str, verdict: ForwardBucketVerdict) -> None:
     """Announce every unwritten day on stderr, where an exit-0 partial bucket is otherwise silent (module docstring)."""
-    if not verdict.unwritten:
+    if not verdict.unwritten and not verdict.retention_failed:
         return
     print(
         json.dumps(
@@ -247,6 +285,7 @@ def _report_bucket_incomplete(run_id: str, verdict: ForwardBucketVerdict) -> Non
                 "days_written": verdict.days_written,
                 "days_unwritten": verdict.days_unwritten,
                 "unwritten": [_unwritten_event(result) for result in verdict.unwritten],
+                "source_checkpoints_failed": verdict.retention_failed,
             },
             sort_keys=True,
         ),
@@ -277,6 +316,19 @@ def parser() -> argparse.ArgumentParser:
     built.add_argument("--retry-base-seconds", type=float, default=DEFAULT_RETRY_BASE_SECONDS)
     built.add_argument("--retry-max-seconds", type=float, default=MAX_RETRY_DELAY_SECONDS)
     built.add_argument("--contention-timeout-seconds", type=float, default=DEFAULT_CONTENTION_TIMEOUT_SECONDS)
+    built.add_argument(
+        "--recover-day",
+        type=date.fromisoformat,
+        default=None,
+        help=(
+            "ISO date of ONE past day to republish from RETAINED PROVIDER RESPONSES instead of "
+            f"polling. This feed keeps no archive, so recovery is only possible within the "
+            f"{CHECKPOINT_MAX_AGE.days}-day checkpoint retention window, and only for readings a "
+            "previous turn accepted and retained. The turn makes no source request at all, publishes "
+            "whatever part of the grid was retained through the ordinary lane-day lock and merge, "
+            "and exits 1 naming the day when nothing is retained for it."
+        ),
+    )
     return built
 
 
@@ -299,8 +351,20 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser().parse_args(inline_bbox_value(raw))
 
 
-def _validate_args(args: argparse.Namespace) -> None:
+def _validate_args(args: argparse.Namespace, *, today: date | None = None) -> None:
     """Keep every day count, budget, retry and contention wait bounded."""
+    recover_day = getattr(args, "recover_day", None)
+    if recover_day is not None:
+        named_today = today if today is not None else datetime.now(UTC).date()
+        if recover_day > named_today:
+            raise WeatherObservationsForwardConfigError(
+                f"--recover-day {recover_day.isoformat()} is in the future; this feed has no forecast to recover"
+            )
+        if recover_day < named_today - CHECKPOINT_MAX_AGE:
+            raise WeatherObservationsForwardConfigError(
+                f"--recover-day {recover_day.isoformat()} is older than the {CHECKPOINT_MAX_AGE.days}-day "
+                "source-checkpoint retention window, so no retained response for it can still be read"
+            )
     if not 1 <= args.max_days <= WEATHER_OBSERVATIONS_MAX_DAYS:
         raise WeatherObservationsForwardConfigError(f"--max-days must be between 1 and {WEATHER_OBSERVATIONS_MAX_DAYS}")
     if not 0 < args.time_budget_seconds <= WEATHER_OBSERVATIONS_MAX_TIME_BUDGET_SECONDS:
@@ -581,14 +645,161 @@ async def _publish_day(  # noqa: PLR0913 - one bounded lane-day state machine
         )
 
 
+def _days_owed_a_recovery(store: ObjectStore, days: Sequence[date]) -> tuple[date, ...]:
+    """Of the days this poll named, the ones no complete publication exists for -- the only repairable ones.
+
+    A day already `data` at every tier is NOT probed. Its earlier instants could in principle still
+    be missing, but nothing this writer can read proves that, and guessing would spend 150 object
+    reads per poll to re-merge readings that are already published. `--recover-day` is the operator
+    path for the case the writer cannot see; this is the case it can.
+    """
+    return tuple(day for day in days if any(status != "data" for status in _tier_statuses(store, day).values()))
+
+
+def _recover_owed_days(
+    checkpoints: SourceResponseCheckpoints,
+    days: Sequence[date],
+    points: Sequence[tuple[float, float]],
+    *,
+    now: datetime,
+) -> tuple[WeatherRecoveryReport, ...]:
+    """Reparse the retained inputs of every owed day, BEFORE this poll's own checkpoints overwrite them.
+
+    THE ORDER IS THE WHOLE POINT. A checkpoint key is (provider, support, day, request URL) with no
+    instant in it, so the next poll of the same point on the same day OVERWRITES the previous poll's
+    retained body (`source_checkpoint.py::write` refreshes on a newer `retrieved_at`). Checkpointing
+    this poll first would therefore destroy the only copy of the bucket the LAST poll failed to
+    write -- the safety net erasing exactly what it was stretched under.
+    """
+    return tuple(recover_weather_day(day, points, checkpoints, now=now) for day in days)
+
+
+def _with_recovered_observations(
+    polled: Sequence[WeatherPointObservation], recovered: Sequence[WeatherPointObservation]
+) -> tuple[WeatherPointObservation, ...]:
+    """Add retained readings this poll does not already carry; a repeated grain keeps the LIVE one.
+
+    Deduplicated on the published grain `(latitude, longitude, observedAt)` because
+    `merge_weather_observations_day` refuses a poll that offers one grain twice -- and a rolling feed
+    re-serving the same instant to two consecutive polls is ordinary, not exceptional.
+    """
+    seen = {(reading.latitude, reading.longitude, reading.observation.get("observedAt")) for reading in polled}
+    extra = [
+        reading
+        for reading in recovered
+        if (reading.latitude, reading.longitude, reading.observation.get("observedAt")) not in seen
+    ]
+    return (*polled, *extra)
+
+
+async def _run_recovery_turn(args: argparse.Namespace, *, run_id: str, now: datetime) -> int:
+    """Republish ONE named day from retained provider responses, making no source request at all."""
+    day: date = args.recover_day
+    deadline = time.monotonic() + args.time_budget_seconds
+    points = weather_sample_points(args.bbox)
+    credentials = settings.require_object_store()
+    store = ObjectStore(BotoObjectStoreBackend.from_credentials(credentials), prefix=settings.object_store_prefix)
+    availability_storage = BotoAvailabilityStorage.from_settings()
+    availability = AvailabilityExtensionTally()
+    recovery = await asyncio.to_thread(
+        recover_weather_day, day, points, SourceResponseCheckpoints(availability_storage), now=now
+    )
+    emit("weather_observations_source_recovery", run_id=run_id, **recovery.to_event())
+    if not recovery.observations:
+        emit(
+            "weather_observations_forward_complete",
+            run_id=run_id,
+            outcome=INCOMPLETE,
+            recovered_day=day.isoformat(),
+            recovery_state=recovery.state,
+            days=0,
+            rows_added=0,
+            rows_updated=0,
+            bytes=0,
+            exit_code=1,
+            days_written=0,
+            days_unwritten=1,
+            unwritten=[
+                {
+                    "day": day.isoformat(),
+                    # The lane's existing word, not a new one: a recovery turn with nothing retained
+                    # has exactly the same thing to report as a poll that returned nothing writable.
+                    # `recovery_state` above says which of the two this was.
+                    "outcome": NO_WRITABLE_OBSERVATIONS,
+                    "attempts": 0,
+                    "incoming_rows": 0,
+                    "detail": (
+                        f"no retained provider response for {day.isoformat()} can still be read, so this day "
+                        "cannot be republished from checkpoints. Open-Meteo's current-conditions endpoint has "
+                        "no archive to re-fetch it from either: the bucket is lost, not owed"
+                    ),
+                    "source_retained": False,
+                }
+            ],
+            absences_overturned=[],
+            **WeatherCheckpointReport().to_summary(),
+            **availability.to_summary(),
+        )
+        return 1
+
+    tables = direct_weather_observation_tables(recovery.observations, ingested_at=now)
+    if set(tables) != {day}:
+        raise RuntimeError(f"recovery for {day.isoformat()} reparsed rows for {sorted(tables)}")
+    database_url = settings.require_local_source_loader_database_url()
+    async with local_source_loader_session(database_url) as session:
+        result = await _publish_day(
+            session,
+            store,
+            day=day,
+            table=tables[day],
+            run_id=run_id,
+            max_day_attempts=args.retry_attempts,
+            retry_base_seconds=args.retry_base_seconds,
+            retry_max_seconds=args.retry_max_seconds,
+            contention_timeout_seconds=min(args.contention_timeout_seconds, max(deadline - time.monotonic(), 0.0)),
+            availability_storage=availability_storage,
+            availability=availability,
+        )
+    verdict = _bucket_verdict([result])
+    emit(
+        "weather_observations_forward_complete",
+        run_id=run_id,
+        outcome=verdict.outcome,
+        recovered_day=day.isoformat(),
+        recovery_state=recovery.state,
+        days=1,
+        outcomes={result.outcome: 1},
+        incoming_rows=result.incoming_rows,
+        rows_added=result.added_rows,
+        rows_updated=result.updated_rows,
+        merged_rows=result.merged_rows,
+        actual_z13_rows=result.actual_z13_rows,
+        incoming_rows_verified=result.incoming_rows_verified,
+        parts=result.parts,
+        rows=result.rows,
+        bytes=result.written_bytes,
+        exit_code=verdict.exit_code,
+        days_written=verdict.days_written,
+        days_unwritten=verdict.days_unwritten,
+        unwritten=[_unwritten_event(unwritten) for unwritten in verdict.unwritten],
+        absences_overturned=[overturned.isoformat() for overturned in verdict.absences_overturned],
+        **WeatherCheckpointReport().to_summary(),
+        **availability.to_summary(),
+    )
+    _report_bucket_incomplete(run_id, verdict)
+    return verdict.exit_code
+
+
 async def run(args: argparse.Namespace) -> int:
     """Fetch one current-conditions poll and durably merge every day it touched, bounded by the time budget."""
     _validate_args(args)
+    fetched_at = datetime.now(UTC)
+    run_id = args.run_id or f"weather-observations-direct-forward-{fetched_at.strftime('%Y%m%dT%H%M%SZ')}"
+    if getattr(args, "recover_day", None) is not None:
+        return await _run_recovery_turn(args, run_id=run_id, now=fetched_at)
     deadline = time.monotonic() + args.time_budget_seconds
     points = weather_sample_points(args.bbox)
 
-    fetched_at = datetime.now(UTC)
-    run_id = args.run_id or f"weather-observations-direct-forward-{fetched_at.strftime('%Y%m%dT%H%M%SZ')}"
     availability = AvailabilityExtensionTally()
     async with upstream_client(OPEN_METEO_BOUNDS) as client:
         poll = await poll_current_conditions(client, points, now=fetched_at)
@@ -606,10 +817,15 @@ async def run(args: argparse.Namespace) -> int:
         days_selected=[day.isoformat() for day in tables],
     )
     if not tables:
+        # No recovery here, deliberately: a poll that named no day gives this turn no day to repair,
+        # and probing the whole rolling window on every provider outage would spend one object read
+        # per point per candidate day to usually find nothing. `--recover-day` is that path, and it
+        # is the operator's because only the operator knows which day is in doubt.
         emit(
             "weather_observations_forward_complete",
             run_id=run_id,
             outcome="no_writable_observations",
+            recovered_days=[],
             days=0,
             rows_added=0,
             rows_updated=0,
@@ -627,11 +843,22 @@ async def run(args: argparse.Namespace) -> int:
     credentials = settings.require_object_store()
     store = ObjectStore(BotoObjectStoreBackend.from_credentials(credentials), prefix=settings.object_store_prefix)
     availability_storage = BotoAvailabilityStorage.from_settings()
+    checkpoints = SourceResponseCheckpoints(availability_storage)
+    # RECOVER BEFORE RETAINING. Both steps touch the same keys and this poll's retention overwrites
+    # them, so the repair of a bucket an earlier poll failed to write has to read them first.
+    owed = await asyncio.to_thread(_days_owed_a_recovery, store, tuple(tables))
+    recoveries = await asyncio.to_thread(_recover_owed_days, checkpoints, owed, points, now=fetched_at)
+    for recovery in recoveries:
+        emit("weather_observations_source_recovery", run_id=run_id, **recovery.to_event())
+    recovered = tuple(reading for recovery in recoveries for reading in recovery.observations)
+    if recovered:
+        repaired = direct_weather_observation_tables(
+            _with_recovered_observations(poll.observations, recovered), ingested_at=fetched_at
+        )
+        tables = {day: repaired[day] for day in tables if day in repaired}
     # Retain the parser inputs BEFORE the first Parquet write: this feed keeps no archive, so a
     # checkpoint taken after a failed write would be a checkpoint that never existed when needed.
-    checkpoint_report = await asyncio.to_thread(
-        checkpoint_current_poll, poll, points, SourceResponseCheckpoints(availability_storage)
-    )
+    checkpoint_report = await asyncio.to_thread(checkpoint_current_poll, poll, points, checkpoints)
     emit("weather_observations_source_retention", run_id=run_id, **checkpoint_report.to_summary())
     database_url = settings.require_local_source_loader_database_url()
     results: list[ForwardDayResult] = []
@@ -662,6 +889,7 @@ async def run(args: argparse.Namespace) -> int:
                         rows=0,
                         written_bytes=0,
                         detail="time budget exhausted before this day was attempted",
+                        source_retained=checkpoint_report.retained_whole_day(day),
                     )
                 )
                 continue
@@ -678,6 +906,7 @@ async def run(args: argparse.Namespace) -> int:
                 availability_storage=availability_storage,
                 availability=availability,
             )
+            result = replace(result, source_retained=checkpoint_report.retained_whole_day(day))
             results.append(result)
             emit(
                 "weather_observations_forward_checkpoint",
@@ -701,12 +930,13 @@ async def run(args: argparse.Namespace) -> int:
             )
 
     outcomes = Counter(result.outcome for result in results)
-    verdict = _bucket_verdict(results)
+    verdict = _bucket_verdict(results, retention_failed=checkpoint_report.failed)
     emit(
         "weather_observations_forward_complete",
         run_id=run_id,
         outcome=verdict.outcome,
         days=len(results),
+        recovered_days=[recovery.to_event() for recovery in recoveries],
         outcomes=dict(sorted(outcomes.items())),
         incoming_rows=sum(result.incoming_rows for result in results),
         rows_added=sum(result.added_rows for result in results),

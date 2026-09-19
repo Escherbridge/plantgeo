@@ -81,12 +81,13 @@ def test_a_full_poll_is_retained_and_reparses_into_the_same_observations() -> No
         "source_checkpoints_retained": 2,
         "source_checkpoints_failed": 0,
     }
-    assert recovered.state == "recoverable_capture"
+    assert recovered.state == "complete_capture"
     assert recovered.recovered_points == 2
     assert [observation.observation["temperature"] for observation in recovered.observations] == [19.5, 17.25]
 
 
-def test_an_unavailable_point_leaves_no_evidence_and_the_day_reads_as_a_retention_loss() -> None:
+def test_an_unavailable_point_leaves_no_evidence_and_the_day_reads_as_a_partial_capture() -> None:
+    """Half a grid of readings is worth republishing; the alternative to a partial one is none."""
     checkpoints = _checkpoints()
 
     report = checkpoint_current_poll(_poll((POINTS[0], _body(19.5))), POINTS, checkpoints)
@@ -94,8 +95,9 @@ def test_an_unavailable_point_leaves_no_evidence_and_the_day_reads_as_a_retentio
 
     assert report.retained == 1
     assert report.attempted == 1
-    assert recovered.state == "source_retention_loss"
+    assert recovered.state == "partial_capture"
     assert recovered.missing_or_rejected_points == 1
+    assert recovered.recovered_points == 1
 
 
 def test_a_capture_free_poll_retains_nothing_rather_than_inventing_a_body() -> None:
@@ -111,7 +113,7 @@ def test_a_checkpoint_cannot_be_read_back_under_a_different_support_grid() -> No
 
     recovered = recover_weather_day(date(2026, 9, 13), (POINTS[0],), checkpoints, now=FETCHED_AT)
 
-    assert recovered.state == "source_retention_loss"
+    assert recovered.state == "no_retained_capture"
     assert recovered.recovered_points == 0
 
 
@@ -122,7 +124,7 @@ def test_a_corrupt_retained_body_is_a_rejection_rather_than_a_fabricated_reading
 
     recovered = recover_weather_day(date(2026, 9, 13), (POINTS[0],), checkpoints, now=FETCHED_AT)
 
-    assert recovered.state == "source_retention_loss"
+    assert recovered.state == "no_retained_capture"
     assert recovered.observations == ()
 
 
@@ -141,3 +143,87 @@ def test_each_point_and_day_gets_its_own_operational_checkpoint_key() -> None:
 
     assert len({first.key, second.key, next_day.key}) == 3
     assert first.key.startswith("source-response-checkpoints/v1/")
+
+
+def _straddling_poll() -> WeatherPollResult:
+    """One poll whose two points name days on either side of UTC midnight -- `forward.py:108-110`'s case."""
+    return WeatherPollResult(
+        fetched_at=FETCHED_AT,
+        points_sampled=2,
+        observations=(
+            WeatherPointObservation(
+                latitude=POINTS[0][0],
+                longitude=POINTS[0][1],
+                observation={"observedAt": "2026-09-13T23:50:00.000Z"},
+                response_body=_body(19.5),
+            ),
+            WeatherPointObservation(
+                latitude=POINTS[1][0],
+                longitude=POINTS[1][1],
+                observation={"observedAt": "2026-09-14T00:10:00.000Z"},
+                response_body=_body(17.25),
+            ),
+        ),
+        unavailable_points=0,
+    )
+
+
+def test_a_midnight_straddling_poll_is_counted_under_each_day_it_retained_into() -> None:
+    """Each half is whole for ITS day; the old whole-grid verdict called both halves unpublishable."""
+    report = checkpoint_current_poll(_straddling_poll(), POINTS, _checkpoints())
+
+    assert report.retained == 2
+    assert report.days[date(2026, 9, 13)].retained == 1
+    assert report.days[date(2026, 9, 14)].retained == 1
+    assert report.retained_whole_day(date(2026, 9, 13)) is True
+    assert report.retained_whole_day(date(2026, 9, 14)) is True
+
+
+def test_a_point_whose_body_never_arrived_is_charged_to_its_own_day() -> None:
+    """Hiding it in the total alone would let `retained_whole_day` call that day whole."""
+    report = checkpoint_current_poll(_poll((POINTS[0], _body(19.5)), (POINTS[1], None)), POINTS, _checkpoints())
+
+    assert report.failed == 1
+    assert report.days[date(2026, 9, 13)].failed == 1
+    assert report.retained_whole_day(date(2026, 9, 13)) is False
+
+
+def test_a_day_nobody_retained_anything_for_is_not_called_retained() -> None:
+    """The ordinary first poll of a new UTC day: nothing to repair with, and nothing lost either."""
+    report = checkpoint_current_poll(_poll((POINTS[0], _body(19.5))), POINTS, _checkpoints())
+
+    assert report.retained_whole_day(date(2026, 9, 14)) is False
+
+
+def test_a_retained_body_naming_another_day_is_rejected_rather_than_moved_onto_the_requested_one() -> None:
+    """The body is the evidence. A checkpoint keyed under day D whose bytes parse to D-1 is not day D.
+
+    `_straddling_poll`'s second point is keyed under 2026-09-14 by its `observedAt` while its literal
+    provider bytes name the 18:00 instant of the 13th -- exactly the disagreement the day-derivation
+    guard exists for, and the one that would otherwise publish a reading onto a day it never named.
+    """
+    checkpoints = _checkpoints()
+    checkpoint_current_poll(_straddling_poll(), POINTS, checkpoints)
+
+    thirteenth = recover_weather_day(date(2026, 9, 13), POINTS, checkpoints, now=FETCHED_AT)
+    fourteenth = recover_weather_day(date(2026, 9, 14), POINTS, checkpoints, now=FETCHED_AT)
+
+    assert thirteenth.recovered_points == 1
+    assert [str(reading.observation["observedAt"])[:10] for reading in thirteenth.observations] == ["2026-09-13"]
+    assert fourteenth.state == "no_retained_capture"
+    assert fourteenth.missing_or_rejected_points == 2
+
+
+def test_the_recovery_event_names_the_verdict_without_carrying_the_readings() -> None:
+    checkpoints = _checkpoints()
+    checkpoint_current_poll(_poll((POINTS[0], _body(19.5)), (POINTS[1], _body(17.25))), POINTS, checkpoints)
+
+    event = recover_weather_day(date(2026, 9, 13), POINTS, checkpoints, now=FETCHED_AT).to_event()
+
+    assert event == {
+        "day": "2026-09-13",
+        "state": "complete_capture",
+        "support_points": 2,
+        "recovered_points": 2,
+        "missing_or_rejected_points": 0,
+    }

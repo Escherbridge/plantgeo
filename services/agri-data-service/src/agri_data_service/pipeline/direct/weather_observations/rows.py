@@ -7,7 +7,7 @@ and the SAME reason `drizzle/0018_fire_discovery_observation_day.sql:46-48` give
 the day AFTER the one they name." `geo.feature_observation_day` takes `substring(properties->>
 'observedAt', 1, 10)` of the FIRST populated key in its COALESCE chain, and for this layer that key is
 always `observedAt` -- every write validates it before it reaches `geo.features`
-(`ingest/open_meteo.py::_bounded_value`), so the chain never falls through. `_observation_day` below
+(`ingest/open_meteo.py::_bounded_value`), so the chain never falls through. `observation_day` below
 reproduces that exact substring, not a `.date()` call on the parsed instant.
 
 IT HAPPENS TO AGREE WITH A UTC DATE HERE, and that is provable rather than assumed: `observedAt` is
@@ -64,8 +64,13 @@ class DirectWeatherObservationsRowError(ValueError):
     """Raised when one polled observation cannot become a registered-schema row."""
 
 
-def _observation_day(observed_at_text: str) -> date:
-    """Return `geo.feature_observation_day`'s day for one `observedAt` string: its first ten characters."""
+def observation_day(observed_at_text: str) -> date:
+    """Return `geo.feature_observation_day`'s day for one `observedAt` string: its first ten characters.
+
+    PUBLIC because `recovery.py` keys every retained response by the day the row it parses into will
+    land on. Keying a checkpoint any other way would namespace a retained body under a day the writer
+    would never look for it on, so both sides must call THIS function, not each reproduce the rule.
+    """
     if len(observed_at_text) < _OBSERVED_DAY_PREFIX_LENGTH:
         raise DirectWeatherObservationsRowError(f"observedAt {observed_at_text!r} is too short to name a day")
     named = observed_at_text[:_OBSERVED_DAY_PREFIX_LENGTH]
@@ -124,7 +129,7 @@ def direct_weather_observation_tables(
         observed_at_text = point.observation.get("observedAt")
         if not isinstance(observed_at_text, str):
             raise DirectWeatherObservationsRowError(f"point ({point.latitude}, {point.longitude}) has no observedAt")
-        day = _observation_day(observed_at_text)
+        day = observation_day(observed_at_text)
         external_id = identity.producer_local_id
         rows_by_day[day].append(
             {
@@ -154,4 +159,5 @@ __all__ = [
     "WEATHER_OBSERVATIONS_SOURCE_COLUMNS",
     "DirectWeatherObservationsRowError",
     "direct_weather_observation_tables",
+    "observation_day",
 ]

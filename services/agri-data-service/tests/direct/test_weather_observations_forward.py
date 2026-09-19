@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from typing import Any, cast
 
@@ -22,6 +23,7 @@ from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct.weather_observations import forward
 from agri_data_service.pipeline.direct.weather_observations.adapter import OverturnedAbsence, RetractedAbsenceMarker
+from agri_data_service.pipeline.direct.weather_observations.source import WeatherPointObservation
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from agri_data_service.warehouse.schemas.weather_observations import WEATHER_OBSERVATIONS_SCHEMA
 from tests.parquet.test_objectstore_writer import RecordingBackend
@@ -81,6 +83,15 @@ def _result(
         written_bytes=0,
         detail=detail,
         absence_overturned=absence_overturned,
+    )
+
+
+def _observation(latitude: float, longitude: float, observed_at: str) -> WeatherPointObservation:
+    """One accepted reading, identified by exactly the published grain a merge deduplicates on."""
+    return WeatherPointObservation(
+        latitude=latitude,
+        longitude=longitude,
+        observation={"observedAt": observed_at, "temperature": 19.5},
     )
 
 
@@ -307,3 +318,87 @@ def test_a_retraction_followed_by_a_failed_write_is_still_reported_on_the_attemp
     assert attempt["absence_overturned"]["markers"][0]["run_id"] == RETIRED_PRODUCER_RUN_ID, (
         "the retired producer's provenance must reach the parsed report, not only stderr"
     )
+
+
+class TestRetentionIsNotAdvisory:
+    """A safety net whose failure changes no outcome reads as cover the lane does not have."""
+
+    def test_a_fully_written_bucket_whose_retention_failed_is_not_complete(self) -> None:
+        verdict = forward._bucket_verdict([_result(DAY_THREE, "written")], retention_failed=2)
+
+        assert verdict.outcome == "incomplete", "a poll that retained nothing may not pass for a clean success"
+        assert verdict.exit_code == 0, "publishing rows already in hand must not be abandoned over a failed backup"
+        assert verdict.days_written == 1
+        assert verdict.retention_failed == 2
+
+    def test_a_retention_failure_alone_still_reaches_stderr(self, capsys: pytest.CaptureFixture[str]) -> None:
+        verdict = forward._bucket_verdict([_result(DAY_THREE, "written")], retention_failed=1)
+
+        forward._report_bucket_incomplete("run", verdict)
+
+        event = json.loads(capsys.readouterr().err.strip())
+        assert event["event"] == "weather_observations_forward_bucket_incomplete"
+        assert event["source_checkpoints_failed"] == 1
+        assert event["unwritten"] == []
+
+    def test_an_unwritten_day_names_whether_its_source_survived(self) -> None:
+        """The difference between a bucket the next turn can repair and one the rolling feed has lost."""
+        lost = replace(_result(DAY_TWO, "raised", detail=REFUSAL), source_retained=False)
+
+        assert forward._unwritten_event(lost)["source_retained"] is False
+
+    def test_an_unmeasured_day_says_nothing_rather_than_guessing(self) -> None:
+        assert "source_retained" not in forward._unwritten_event(_result(DAY_TWO, "raised", detail=REFUSAL))
+
+
+class TestRecoveryWiring:
+    """`recover_weather_day` had no caller until wave 10; these pin the paths that now call it."""
+
+    def test_only_days_without_a_complete_publication_are_probed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        statuses = {DAY_THREE: {13: "data", 12: "data"}, DAY_TWO: {13: "data", 12: "missing"}}
+        monkeypatch.setattr(forward, "_tier_statuses", lambda _store, day: statuses[day])
+
+        owed = forward._days_owed_a_recovery(cast("Any", None), (DAY_THREE, DAY_TWO))
+
+        assert owed == (DAY_TWO,), "a day already data at every tier is not re-merged from checkpoints"
+
+    def test_a_recovered_reading_the_poll_already_carries_is_not_offered_twice(self) -> None:
+        """`merge_weather_observations_day` refuses one poll offering a grain twice."""
+        live = _observation(45.5, -122.6, "2026-09-03T18:00:00.000Z")
+        same = _observation(45.5, -122.6, "2026-09-03T18:00:00.000Z")
+        earlier = _observation(45.5, -122.6, "2026-09-03T17:00:00.000Z")
+
+        combined = forward._with_recovered_observations((live,), (same, earlier))
+
+        assert combined == (live, earlier)
+
+    def test_recovery_adds_a_point_the_current_poll_never_answered(self) -> None:
+        live = _observation(45.5, -122.6, "2026-09-03T18:00:00.000Z")
+        other_point = _observation(47.6, -122.3, "2026-09-03T18:00:00.000Z")
+
+        assert forward._with_recovered_observations((live,), (other_point,)) == (live, other_point)
+
+
+class TestRecoverDayArgument:
+    """`--help` is the only contract an operator reads before running the repair."""
+
+    def test_the_flag_parses_as_an_iso_date_and_defaults_to_none(self) -> None:
+        assert forward.parse_args(["--recover-day", "2026-09-03"]).recover_day == DAY_THREE
+        assert forward.parse_args([]).recover_day is None
+
+    def test_the_help_text_says_it_republishes_from_retained_responses(self) -> None:
+        help_text = forward.parser().format_help()
+
+        assert "--recover-day" in help_text
+        assert "RETAINED PROVIDER RESPONSES" in help_text
+
+    def test_a_future_day_is_refused_because_this_feed_has_no_forecast(self) -> None:
+        with pytest.raises(forward.WeatherObservationsForwardConfigError, match="in the future"):
+            forward._validate_args(_args(recover_day=date(2026, 9, 4)), today=DAY_THREE)
+
+    def test_a_day_past_the_checkpoint_retention_window_is_refused_by_name(self) -> None:
+        with pytest.raises(forward.WeatherObservationsForwardConfigError, match="retention window"):
+            forward._validate_args(_args(recover_day=date(2026, 8, 1)), today=DAY_THREE)
+
+    def test_a_day_inside_the_window_is_accepted(self) -> None:
+        forward._validate_args(_args(recover_day=DAY_ONE), today=DAY_THREE)
