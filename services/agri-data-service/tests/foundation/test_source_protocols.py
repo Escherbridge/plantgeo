@@ -256,22 +256,9 @@ def test_a_claim_must_name_the_countries_its_coverage_word_implies() -> None:
         SourceCoverageClaim(coverage="global", iso_country_codes=("US",))
 
 
-def test_the_drought_shim_re_exports_what_it_always_did() -> None:
-    """`source.py` must stay a lossless door onto `usdm.py` until wave 4 repoints its importers."""
-    from agri_data_service.pipeline.direct.drought import source, usdm  # noqa: PLC0415
-
-    assert source.DroughtDaySource is usdm.DroughtDaySource
-    assert source.DroughtSourceError is usdm.DroughtSourceError
-    assert source.fetch_drought_day is usdm.fetch_drought_day
-
-
-def test_the_burn_severity_shim_re_exports_what_it_always_did() -> None:
-    """`source.py` must stay a lossless door onto `mtbs.py` until wave 4 repoints its importers."""
-    from agri_data_service.pipeline.direct.burn_severity import mtbs, source  # noqa: PLC0415
-
-    assert source.BurnSeverityDaySource is mtbs.BurnSeverityDaySource
-    assert source.BurnSeverityFetchError is mtbs.BurnSeverityFetchError
-    assert source.fetch_burn_severity_release_day is mtbs.fetch_burn_severity_release_day
+# The drought/burn-severity `source.py` re-export shims and their lossless-door tests were deleted
+# 2026-09-18 (N8/DEPRECATED_ALIASES.md): every importer, CLI verb, lane spec and test path now reads
+# `usdm.py`/`mtbs.py` directly, which was the shims' own removal condition.
 
 
 def _region_bound_to_fake_source(source_slug: str) -> Region:

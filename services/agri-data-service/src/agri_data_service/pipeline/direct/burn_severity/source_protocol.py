@@ -16,12 +16,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from datetime import date, datetime
 
+    from agri_data_service.foundation.geography.bounding_box import BoundingBox
     from agri_data_service.foundation.region.source_coverage import SourceCoverageClaim
-
-#: A WGS84 west/south/east/north tuple. Declared here rather than imported from `ingest/mtbs.py`
-#: (which also defines it) so the layer's contract does not name one source's module; the two
-#: aliases collapse when the shared alias moves down into `foundation`.
-BoundingBox = tuple[float, float, float, float]
 
 
 @runtime_checkable

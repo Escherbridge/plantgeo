@@ -104,6 +104,20 @@ export interface LayerRegistryEntry {
    */
   warehouseLayerName: string | null;
   /**
+   * The region-manifest layer slug this toggle binds through, when it differs from what
+   * `warehouseLayerName` would derive via `REGION_LAYER_SLUG_BY_WAREHOUSE_NAME`
+   * (`@/lib/map/layer-region-binding`). Optional and undefined for every ordinary row: binding
+   * normally rides on the warehouse name, and giving every entry an explicit copy of the same
+   * fact would be the same drift risk `REGION_LAYER_SLUG_BY_WAREHOUSE_NAME`'s own header warns
+   * against. It exists for a toggle whose federation binding and slider day-axis are genuinely
+   * two different questions -- `botanical-occurrences`/`botanical-richness`/
+   * `botanical-collection-effort` (N40): the layer has no daily grain to scrub, so
+   * `warehouseLayerName` stays null on purpose, but the layer IS in `platformLayers` and needs a
+   * manifest slug for `layerBindingInRegion` to answer "not available in this region" rather than
+   * the `not_federated` a null `warehouseLayerName` would otherwise force.
+   */
+  regionLayerSlug?: string;
+  /**
    * The category that owns this switch. Total, not nullable: `building-footprints` was the one
    * uncategorised layer, and it went with the 3D-footprints removal, so every layer is now
    * reachable from exactly one category's group in the dock.
@@ -329,6 +343,9 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     renderKind: "component",
     styleLayerIds: [],
     warehouseLayerName: null,
+    // N40: gives `layerBindingInRegion` a manifest slug to answer against, without wiring this
+    // no-daily-grain row into the slider (`regionLayerSlug` doc comment above).
+    regionLayerSlug: "botanical-occurrences",
     panelId: "vegetation",
     permanentlyUnavailableReason: null,
   },
@@ -341,6 +358,8 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     renderKind: "component",
     styleLayerIds: [],
     warehouseLayerName: null,
+    // Same underlying query/binding as `botanical-occurrences` above (N40).
+    regionLayerSlug: "botanical-occurrences",
     panelId: "vegetation",
     permanentlyUnavailableReason: null,
   },
@@ -353,6 +372,8 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     renderKind: "component",
     styleLayerIds: [],
     warehouseLayerName: null,
+    // Same underlying query/binding as `botanical-occurrences` above (N40).
+    regionLayerSlug: "botanical-occurrences",
     panelId: "vegetation",
     permanentlyUnavailableReason: null,
   },
