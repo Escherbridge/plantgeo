@@ -13,11 +13,8 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import date, datetime
 
+    from agri_data_service.foundation.geography.bounding_box import BoundingBox
     from agri_data_service.foundation.region.source_coverage import SourceCoverageClaim
-
-#: A WGS84 west/south/east/north tuple, declared per layer for the same reason the burn-severity
-#: protocol declares its own: a layer contract may not name one source's module.
-BoundingBox = tuple[float, float, float, float]
 
 
 @runtime_checkable

@@ -4,17 +4,21 @@ Every name kept importable only so an existing importer does not break, with the
 which it is deleted. `engineering-principles.md` §2 forbids a disabled-but-kept name with no owner
 and no tracking; this file is that tracking. A shim not listed here is a defect.
 
-The two `source.py` re-export MODULES are the only live shims. No attribute alias survives: the
-three module-level `__getattr__` shims were deleted on 2026-09-18 and are recorded below so the
-removal is not re-litigated.
+No shim is currently live. The two `source.py` re-export modules (below) were the last ones and are
+now deleted; the three module-level `__getattr__` shims were deleted on 2026-09-18 and are recorded
+further down so the removal is not re-litigated.
 
-| Shim | Moved to | Removal condition |
-|---|---|---|
-| `agri_data_service.pipeline.direct.burn_severity.source` | `burn_severity/mtbs.py` | Delete once every importer, CLI verb, lane spec and test path reads `mtbs.py`; owned by the burn-severity wave-4 deletion work in `pipeline/direct/burn_severity/AGENTS.md`. |
-| `agri_data_service.pipeline.direct.drought.source` | `drought/usdm.py` | Same, against `drought/usdm.py` and `pipeline/direct/drought/AGENTS.md`. |
+## Deleted 2026-09-18 (N8 — wave-4 deletion list closed)
 
-Both are plain re-export modules, not `__getattr__` shims: they enumerate their names in `__all__`,
-so mypy still checks every attribute of them and nothing is resolved to `object`.
+Both were plain re-export modules, not `__getattr__` shims: they enumerated their names in
+`__all__`, so mypy checked every attribute and nothing resolved to `object`. Their removal
+condition — every importer, CLI verb, lane spec and test path reads the real module — was met once
+the last remaining importer, the adapter test file in each directory, was repointed.
+
+| Shim | Moved to |
+|---|---|
+| `agri_data_service.pipeline.direct.burn_severity.source` | `burn_severity/mtbs.py` |
+| `agri_data_service.pipeline.direct.drought.source` | `drought/usdm.py` |
 
 ## Deleted 2026-09-18 (wave-5 fix-up of STYLE-REVIEW-W4 S3)
 

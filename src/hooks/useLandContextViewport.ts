@@ -144,12 +144,15 @@ export interface UseLandContextViewportOptions {
 /**
  * The rung a result was actually served from, as the SERVER reports it.
  *
- * `"rung_unknown"` is not a tier and must never be rendered as one: it is the honest answer while
- * `resolveBoundaryInArea` returns `LandContextResult[]` carrying no served rung. The client walk
- * below cannot stand in for it -- `selectServingRung` takes no zoom and walks finest-first, so for
- * a small bbox at a low map zoom the two disagree by up to two rungs.
+ * `"rung_unknown"` is the ONLY value this ever holds today (N10): `resolveBoundaryInArea` returns
+ * `LandContextResult[]` carrying no served rung at all, so a `ZoomTier` member of this union would
+ * be dead -- unreachable in every production response, only ever reachable from a test fixture that
+ * fabricates one. The client walk in `landContextRungForViewport` above cannot stand in for it
+ * either -- `selectFinestAdmittingRung` takes no zoom and walks finest-first, so for a small bbox at
+ * a low map zoom the two would disagree by up to two rungs. Widen this back to `ZoomTier |
+ * "rung_unknown"` the day the server states a real served rung on the response.
  */
-export type LandContextServedRung = ZoomTier | "rung_unknown";
+export type LandContextServedRung = "rung_unknown";
 
 export interface UseLandContextViewportResult {
   /** The bbox actually asked for, or null when nothing was asked. */

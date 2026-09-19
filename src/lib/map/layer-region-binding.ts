@@ -65,13 +65,20 @@ export const REGION_LAYER_SLUG_BY_WAREHOUSE_NAME: Readonly<Record<string, string
  * `layerBindingInRegion` below refuses to call any member of it `not_federated` even if the test
  * is ever deleted.
  */
-export const TOGGLE_REACHABLE_REGION_LAYER_SLUGS: ReadonlySet<string> = new Set(
-  Object.values(REGION_LAYER_SLUG_BY_WAREHOUSE_NAME)
-);
+export const TOGGLE_REACHABLE_REGION_LAYER_SLUGS: ReadonlySet<string> = new Set([
+  ...Object.values(REGION_LAYER_SLUG_BY_WAREHOUSE_NAME),
+  // Toggles whose binding rides on `LayerRegistryEntry.regionLayerSlug` instead of the
+  // warehouse-name table above (N40) -- see that field's doc comment in `layer-registry.ts`.
+  ...Object.values(LAYER_REGISTRY)
+    .map((entry) => entry.regionLayerSlug)
+    .filter((slug): slug is string => slug !== undefined),
+]);
 
 /** The manifest layer one toggle binds through, or null when the toggle is not a federated layer. */
 export function regionLayerSlugForToggle(layerId: LayerToggleId): string | null {
-  const warehouseLayerName = LAYER_REGISTRY[layerId].warehouseLayerName;
+  const definition = LAYER_REGISTRY[layerId];
+  if (definition.regionLayerSlug !== undefined) return definition.regionLayerSlug;
+  const warehouseLayerName = definition.warehouseLayerName;
   if (warehouseLayerName === null) return null;
   return REGION_LAYER_SLUG_BY_WAREHOUSE_NAME[warehouseLayerName] ?? null;
 }

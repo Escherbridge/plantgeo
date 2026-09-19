@@ -208,21 +208,15 @@ is the rung the SERVER states. `resolveBoundaryInArea` states none today, so tha
 never as a tier (STYLE-REVIEW-W2 S3). Giving it a real tier means adding the served rung to the
 response, not re-deriving it on the client.
 
-Mount snippet for `LayerManager.tsx` (not applied here; `LayerManager.tsx` is another lane's file):
+### land-context-viewport: mounted, and moved (N12)
 
-```tsx
-const enabledGroups = useLandContextStore((state) => state.enabledGroups);
-const landContextViewport = useLandContextViewport({ enabledGroups });
-// `state` is a caption, not a failure: "area_over_budget" means zoom in, not that anything broke.
-```
-
-### land-context-viewport: mounted
-
-The snippet above is **applied** as of the 2026-09-18 wave-3 mount: `LayerManager.tsx` holds the
-hook beside its other viewport reads, and `area_over_budget` renders through
-`ParquetLayerFaultBanner` with `tone: "notice"` -- the caption tone, never the fault tone. An
-automatic read that silently does not fire is indistinguishable from one that failed, which is the
-whole reason the state is surfaced at all.
+Mounted as of the 2026-09-18 wave-3 mount, and moved again the same day: this hook is now called
+from `useLandContextViewportBoundaries`
+(`src/components/map/layer-manager/useLandContextViewportBoundaries.ts`), not from `LayerManager.tsx`
+directly -- see that module's own header for why the decode moved into one shared lane. `area_over_
+budget` still renders through `ParquetLayerFaultBanner` with `tone: "notice"` -- the caption tone,
+never the fault tone. An automatic read that silently does not fire is indistinguishable from one
+that failed, which is the whole reason the state is surfaced at all.
 
 `landContextRungForViewport` now delegates its walk to `selectFinestAdmittingRung`
 (`src/lib/map/rung-selection.ts`); the ladder, the ceilings and the zoom gate stay here. See

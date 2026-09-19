@@ -74,16 +74,11 @@ plus a fabricated non-MTBS record that also satisfies it.
   `ignition_years_by_release_day()` are still read from `products.py`, which imports `ingest.mtbs`
   directly; only `fetch_release_day` resolves through the region binding (W5-C's own residual note).
 
-## Wave-4 deletion list
+## Wave-4 deletion list — closed 2026-09-18 (N8)
 
-- `source.py` — a deprecation shim re-exporting `BurnSeverityDaySource`, `BurnSeverityFetchError`
-  and `fetch_burn_severity_release_day` from `mtbs.py`. `forward.py` no longer imports it
-  (2026-09-18, S5 fix): it resolves the fetch through
-  `pipeline/source_bindings.py::resolve_burn_severity_source()`, which reads the region's OWN
-  binding per call rather than naming `mtbs.py`, so a second region binding a different
-  burn-severity source changes this lane by editing a manifest, not this file. The shim's terminal
-  step is therefore NOT "repoint every importer at `mtbs.py` directly" — that would be the
-  opposite of resolving through the binding — it is deleting the shim once
-  `tests/direct/test_burn_severity_direct_adapter.py` is the last importer left, which it does not
-  have to be bound-resolved (it constructs `BurnSeverityDaySource` fixtures directly, never
-  through the manifest).
+- `source.py` — the deprecation shim re-exporting `BurnSeverityDaySource`, `BurnSeverityFetchError`
+  and `fetch_burn_severity_release_day` from `mtbs.py`, is DELETED.
+  `tests/direct/test_burn_severity_direct_adapter.py` — its last importer — now reads `mtbs.py`
+  directly (it constructs `BurnSeverityDaySource` fixtures, never through the manifest binding, so
+  reading `mtbs.py` names no more of the source than the shim already did). See
+  `DEPRECATED_ALIASES.md` for the removal record.

@@ -72,7 +72,13 @@ export function LandContextPanel({
   onFocusNextCandidate,
 }: LandContextPanelProps) {
   const budgetExceeded = useLandContextStore((state) => state.resultMeta?.budgetExceeded ?? null);
-  const partialCoverage = useLandContextStore((state) => state.resultMeta?.partialCoverage ?? false);
+  // `resultMeta.partialCoverage` never co-occurs with a matched feature: `readBoundedAoiIntersection`
+  // (`src/lib/server/services/land-context/reader.ts`) only ever reports `partial_area_coverage`
+  // in the branch where `features.length === 0`, so the old `data`-gated caveat below never rendered
+  // in production (N11). `coverageNotices` carries the same state and is populated on exactly the
+  // no-match responses the caveat exists for, so read it directly instead of the derived boolean.
+  const coverageNotices = useLandContextStore((state) => state.resultMeta?.coverageNotices ?? []);
+  const partialCoverage = coverageNotices.some((notice) => notice.coverageState === "partial_area_coverage");
   const selection = useLandContextStore((state) => state.selection);
   const queryStatus = useLandContextStore((state) => state.queryStatus);
 
@@ -81,6 +87,13 @@ export function LandContextPanel({
       return (
         <div className="p-4 text-xs text-amber-400" role="status">
           {budgetExceededMessage(budgetExceeded)}
+        </div>
+      );
+    }
+    if (partialCoverage) {
+      return (
+        <div className="p-4 text-xs text-zinc-400" role="status">
+          This area only has partial source coverage -- some results may be missing.
         </div>
       );
     }

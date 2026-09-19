@@ -92,14 +92,10 @@ intensity class D{n}", the layer's own words. `ingest/identity.py`'s surviving
 `drought_monitor_category` and its `MIN_`/`MAX_DROUGHT_MONITOR_CATEGORY` constants have no
 production caller at all and are dead code, not rename debt.)
 
-## Wave-4 deletion list
+## Wave-4 deletion list — closed 2026-09-18 (N8)
 
-- `source.py` — a deprecation shim re-exporting `DroughtDaySource`, `DroughtSourceError` and
-  `fetch_drought_day` from `usdm.py`. `forward.py` no longer imports it (2026-09-18, S5 fix): it
-  resolves the fetch through `pipeline/source_bindings.py::resolve_drought_source()`, which reads
-  the region's OWN binding per call rather than naming `usdm.py`, so a second region binding a
-  different drought source changes this lane by editing a manifest, not this file. The shim's
-  terminal step is therefore NOT "repoint every importer at `usdm.py` directly" — that would be
-  the opposite of resolving through the binding — it is deleting the shim once
-  `tests/direct/test_drought_adapter.py` is the last importer left, which it does not have to be
-  bound-resolved (it constructs `DroughtDaySource` fixtures directly, never through the manifest).
+- `source.py` — the deprecation shim re-exporting `DroughtDaySource`, `DroughtSourceError` and
+  `fetch_drought_day` from `usdm.py`, is DELETED. `tests/direct/test_drought_adapter.py` — its last
+  importer — now reads `usdm.py` directly (it constructs `DroughtDaySource` fixtures, never through
+  the manifest binding, so reading `usdm.py` names no more of the source than the shim already did).
+  See `DEPRECATED_ALIASES.md` for the removal record.

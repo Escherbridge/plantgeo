@@ -25,7 +25,7 @@ from agri_data_service.pipeline.direct.drought.adapter import (
     DroughtSourceUnsettledError,
     no_mirrored_past_proof,
 )
-from agri_data_service.pipeline.direct.drought.source import DroughtDaySource
+from agri_data_service.pipeline.direct.drought.usdm import DroughtDaySource
 from agri_data_service.pipeline.parquet.gap_fill import fill_one_lane_day, unlocked_lane_day
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
