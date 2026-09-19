@@ -19,8 +19,11 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from agri_data_service.execution.lane_specs import (
-    VEGETATION_PROMOTION_STALE_CEILING_LAG_ALLOWANCES,
+    VEGETATION_PROMOTION_STALE_CEILING_DAYS,
+    VEGETATION_PROMOTION_STALE_CEILING_MINIMUM_SLACK_LAGS,
+    stale_ceiling_days_clearing_declared_lag,
     vegetation_promotion_declared_lag_days,
+    vegetation_promotion_stale_ceiling_days,
 )
 from agri_data_service.execution.vegetation_ndvi_plane import (
     GovernedPlane,
@@ -945,9 +948,13 @@ async def test_a_day_that_is_both_an_indexed_absence_and_unservable_keeps_the_in
     assert entry["reason"] == "upstream_scene_not_published", "the INDEX's reason, not the ladder's"
 
 
-#: The bound this lane declares, aliased only so the assertions below fit one line.
-STALE_AFTER_ALLOWANCES = VEGETATION_PROMOTION_STALE_CEILING_LAG_ALLOWANCES
-#: The turn measures against the lane's REGISTERED lag, so every case below reads it too.
+#: The bound this lane declares, in DAYS BEHIND TODAY, aliased only so assertions fit one line.
+#: Read from the constant and NOT re-derived here: the one place a literal day count is stated twice
+#: on purpose is `test_the_stale_ceiling_bound_is_a_day_count_this_lane_owns`, which is what makes a
+#: silent move of the bound fail loudly instead of re-scaling the whole suite (STYLE-REVIEW-W11 S1).
+STALE_AFTER_AGE_DAYS = VEGETATION_PROMOTION_STALE_CEILING_DAYS
+#: The turn REPORTS the lane's registered lag beside the verdict, so the cases below read it too --
+#: never to compute the expected verdict, only to check the context fields.
 DECLARED_LAG_DAYS = vegetation_promotion_declared_lag_days()
 STALE_TODAY = date(2026, 11, 18)
 
@@ -961,14 +968,80 @@ def ceiling_behind_today(*, days_behind: int, today: date = STALE_TODAY) -> Prom
     return promotion_ceiling(availability=availability, today=today, declared_lag_days=DECLARED_LAG_DAYS)
 
 
-def test_a_ceiling_at_the_declared_lag_day_has_used_no_allowance() -> None:
+def test_the_stale_ceiling_bound_is_a_day_count_this_lane_owns() -> None:
+    """The ONE literal in this suite, and the reason a re-measured lag can no longer move the bound.
+
+    STYLE-REVIEW-W11 S1. The bound used to be `allowances(2) * declared_lag_days`, so re-measuring
+    `publication_lag_days` from 7 to 10 moved the staleness threshold from 21 days to 30 with a GREEN
+    suite -- the boundary tests were written in terms of the lag too, and tracked the move instead of
+    catching it. Both numbers below are stated, not derived, so a change to either fails HERE, in the
+    one test whose whole job is to be re-read when it fails.
+    """
+    assert VEGETATION_PROMOTION_STALE_CEILING_DAYS == 21, (
+        "the bound is 21 DAYS behind today; moving it is a decision, and this line is where it is made"
+    )
+    assert vegetation_promotion_stale_ceiling_days() == 21, (
+        "and the accessor the turn calls returns that literal unchanged -- the registry only refuses it"
+    )
+    assert ceiling_behind_today(days_behind=20).is_stale(stale_after_age_days=STALE_AFTER_AGE_DAYS) is False
+    assert ceiling_behind_today(days_behind=21).is_stale(stale_after_age_days=STALE_AFTER_AGE_DAYS) is True
+
+
+def test_re_measuring_the_declared_lag_cannot_move_the_staleness_verdict() -> None:
+    """The coupling the fix removed, asserted directly rather than trusted.
+
+    The same ceiling, reported against three different registered lags, gets the SAME verdict: the
+    lag is context in the report, never a factor of the bound. If someone reintroduces a lag term in
+    `is_stale`, this fails whatever the lag happens to be that day.
+    """
+    ceiling_day = STALE_TODAY - timedelta(days=21)
+    availability = AvailabilityIndexDays(
+        verdicts={ceiling_day: IndexedDay(state="published")}, servable_days=frozenset({ceiling_day})
+    )
+    verdicts = {
+        lag: promotion_ceiling(availability=availability, today=STALE_TODAY, declared_lag_days=lag).is_stale(
+            stale_after_age_days=STALE_AFTER_AGE_DAYS
+        )
+        for lag in (1, DECLARED_LAG_DAYS, 10)
+    }
+
+    assert verdicts == {1: True, DECLARED_LAG_DAYS: True, 10: True}
+
+
+def test_a_re_measured_lag_that_swallows_the_bound_is_refused_rather_than_absorbed() -> None:
+    """The only surviving link between the two numbers, and it runs one way: refuse, never compute.
+
+    A lag re-measured DOWNWARD always passes -- a relatively more generous bound detects a dead writer
+    later, which is the safe direction. A lag re-measured far enough UPWARD that 21 days would start
+    refusing lanes that are merely slow raises, because at that point the bound and the lag genuinely
+    disagree and a person has to decide which is wrong.
+    """
+    slack_lags = VEGETATION_PROMOTION_STALE_CEILING_MINIMUM_SLACK_LAGS
+    tightest_passing_lag = VEGETATION_PROMOTION_STALE_CEILING_DAYS // (1 + slack_lags)
+
+    assert stale_ceiling_days_clearing_declared_lag(stale_ceiling_days=21, declared_lag_days=3) == 21, (
+        "a shorter measured lag never moves the bound, it only widens the slack past the declared-lag day"
+    )
+    assert (
+        stale_ceiling_days_clearing_declared_lag(
+            stale_ceiling_days=VEGETATION_PROMOTION_STALE_CEILING_DAYS, declared_lag_days=tightest_passing_lag
+        )
+        == VEGETATION_PROMOTION_STALE_CEILING_DAYS
+    )
+    with pytest.raises(ValueError, match="stale-ceiling bound"):
+        stale_ceiling_days_clearing_declared_lag(
+            stale_ceiling_days=VEGETATION_PROMOTION_STALE_CEILING_DAYS, declared_lag_days=tightest_passing_lag + 1
+        )
+
+
+def test_a_ceiling_at_the_declared_lag_day_is_reported_as_owing_nothing() -> None:
     """A healthy lane already sits a whole declared lag behind today; that is not lateness."""
     ceiling = ceiling_behind_today(days_behind=DECLARED_LAG_DAYS)
 
     assert ceiling.declared_lag_day == STALE_TODAY - timedelta(days=DECLARED_LAG_DAYS)
     assert ceiling.age_days == DECLARED_LAG_DAYS, "behind TODAY by the whole registered lag"
     assert ceiling.age_beyond_declared_lag_days == 0, "and behind the DECLARED-LAG DAY by nothing"
-    assert ceiling.elapsed_lag_allowances == 0
+    assert not ceiling.is_stale(stale_after_age_days=STALE_AFTER_AGE_DAYS)
 
 
 def test_a_ceiling_ahead_of_the_declared_lag_day_is_floored_at_zero_rather_than_running_negative() -> None:
@@ -977,39 +1050,34 @@ def test_a_ceiling_ahead_of_the_declared_lag_day_is_floored_at_zero_rather_than_
 
     assert ceiling.age_days == 1
     assert ceiling.age_beyond_declared_lag_days == 0
-    assert ceiling.elapsed_lag_allowances == 0
 
 
-def test_a_cloudy_fortnight_inside_the_declared_allowance_is_not_called_stale() -> None:
+def test_a_cloudy_fortnight_is_not_called_stale() -> None:
     """STYLE-REVIEW-W9 B1: the bound may not refuse a healthy lane in a routine PNW overcast stretch.
 
     Sixteen days between usable Sentinel-2 scenes is an ordinary Oct-Mar gap on a lane whose
-    registered lag is a MEASURED MEDIAN of 7 with a heavy tail. Counted from `today` it exceeded two
-    lags and the turn refused -- and because `--max-days` is 1, the day it skipped was never
-    revisited, so the gate manufactured the hole it exists to detect. Counted past the DECLARED-LAG
-    DAY it is one elapsed allowance, which the declared lag already anticipates.
+    registered lag is a MEASURED MEDIAN of 7 with a heavy tail. The first bound refused it at 14 days
+    behind today -- and because `--max-days` is 1, the day it skipped was never revisited, so the gate
+    manufactured the hole it exists to detect. Sixteen is inside 21, which is the whole reason 21 is
+    the number: it clears the worst gap this lane calls routine, with the declared lag shown beside it
+    as the justification rather than used as a multiplier.
     """
     cloudy_edge = ceiling_behind_today(days_behind=16)
 
-    assert cloudy_edge.age_days > DECLARED_LAG_DAYS * STALE_AFTER_ALLOWANCES, (
-        "the OLD bound, counted from today, called this lane dead"
-    )
+    assert cloudy_edge.age_days == 16
     assert cloudy_edge.age_beyond_declared_lag_days == 16 - DECLARED_LAG_DAYS
-    assert cloudy_edge.elapsed_lag_allowances == 1
-    assert not cloudy_edge.is_stale(stale_after_elapsed_lag_allowances=STALE_AFTER_ALLOWANCES)
+    assert not cloudy_edge.is_stale(stale_after_age_days=STALE_AFTER_AGE_DAYS)
 
 
-def test_a_writer_that_stopped_for_two_whole_allowances_is_still_called_stale() -> None:
+def test_a_writer_that_stopped_past_the_bound_is_still_called_stale() -> None:
     """The other half of the bound: it must still catch the lane the freshness yardstick cannot."""
-    last_healthy = ceiling_behind_today(days_behind=DECLARED_LAG_DAYS * STALE_AFTER_ALLOWANCES + 6)
-    stopped = ceiling_behind_today(days_behind=DECLARED_LAG_DAYS * (STALE_AFTER_ALLOWANCES + 1))
+    last_healthy = ceiling_behind_today(days_behind=STALE_AFTER_AGE_DAYS - 1)
+    stopped = ceiling_behind_today(days_behind=STALE_AFTER_AGE_DAYS)
 
-    assert last_healthy.elapsed_lag_allowances == STALE_AFTER_ALLOWANCES - 1
-    assert not last_healthy.is_stale(stale_after_elapsed_lag_allowances=STALE_AFTER_ALLOWANCES), (
-        "one day short of the second elapsed allowance is still inside the declared slack"
+    assert not last_healthy.is_stale(stale_after_age_days=STALE_AFTER_AGE_DAYS), (
+        "one day short of the bound is still inside the declared slack"
     )
-    assert stopped.elapsed_lag_allowances == STALE_AFTER_ALLOWANCES
-    assert stopped.is_stale(stale_after_elapsed_lag_allowances=STALE_AFTER_ALLOWANCES)
+    assert stopped.is_stale(stale_after_age_days=STALE_AFTER_AGE_DAYS), "at the bound, not past it"
 
 
 def test_a_stale_turn_reports_the_day_it_promoted_rather_than_consuming_it() -> None:
@@ -1039,7 +1107,7 @@ def test_a_stale_turn_keeps_the_reason_the_turn_itself_failed_for() -> None:
     way to tell `all_days_absent` (the source had nothing) from `no_indexed_day_promoted` (a mixed
     turn that promoted nothing) -- two different next actions.
     """
-    expected_reason = "more_declared_lag_allowances_have_elapsed_past_the_newest_servable_day_than_this_lane_permits"
+    expected_reason = "the_newest_servable_day_is_more_days_behind_today_than_this_lanes_stale_ceiling_bound_allows"
     absent = promotion_report_of([_governed_absence_day_entry(DAY)])
     assert absent["reason"] == "all_days_absent"
 
@@ -1060,14 +1128,14 @@ def test_the_ceiling_fields_name_the_declared_lag_the_bound_is_actually_applied_
     """
     ceiling = ceiling_behind_today(days_behind=16)
 
-    assert ceiling_fields(ceiling, stale_after_elapsed_lag_allowances=STALE_AFTER_ALLOWANCES) == {
+    assert ceiling_fields(ceiling, stale_after_age_days=STALE_AFTER_AGE_DAYS) == {
         "ceiling_day": (STALE_TODAY - timedelta(days=16)).isoformat(),
         "ceiling_age_days": 16,
         "ceiling_declared_lag_day": (STALE_TODAY - timedelta(days=DECLARED_LAG_DAYS)).isoformat(),
         "ceiling_age_beyond_declared_lag_days": 16 - DECLARED_LAG_DAYS,
         "ceiling_declared_lag_days": DECLARED_LAG_DAYS,
-        "ceiling_elapsed_lag_allowances": 1,
-        "ceiling_stale_after_elapsed_lag_allowances": STALE_AFTER_ALLOWANCES,
+        "ceiling_declared_lag_slack_days": STALE_AFTER_AGE_DAYS - DECLARED_LAG_DAYS,
+        "ceiling_stale_after_age_days": STALE_AFTER_AGE_DAYS,
         "ceiling_is_stale": False,
     }
 
@@ -1079,13 +1147,13 @@ def test_the_ceiling_fields_are_total_on_a_turn_that_never_read_an_index() -> No
     `read_lane_availability` leaves no ceiling to describe. Every key is still stated, `None` where
     unknown -- except the declared bound, which is a constant and is known regardless.
     """
-    rendered = ceiling_fields(None, stale_after_elapsed_lag_allowances=STALE_AFTER_ALLOWANCES)
+    rendered = ceiling_fields(None, stale_after_age_days=STALE_AFTER_AGE_DAYS)
 
     assert set(rendered) == set(
-        ceiling_fields(ceiling_behind_today(days_behind=1), stale_after_elapsed_lag_allowances=STALE_AFTER_ALLOWANCES)
+        ceiling_fields(ceiling_behind_today(days_behind=1), stale_after_age_days=STALE_AFTER_AGE_DAYS)
     )
-    assert rendered["ceiling_stale_after_elapsed_lag_allowances"] == STALE_AFTER_ALLOWANCES
-    assert all(value is None for key, value in rendered.items() if key != "ceiling_stale_after_elapsed_lag_allowances")
+    assert rendered["ceiling_stale_after_age_days"] == STALE_AFTER_AGE_DAYS
+    assert all(value is None for key, value in rendered.items() if key != "ceiling_stale_after_age_days")
 
 
 def test_an_index_with_no_servable_day_is_never_called_stale() -> None:
@@ -1097,8 +1165,7 @@ def test_an_index_with_no_servable_day_is_never_called_stale() -> None:
     assert ceiling.day is None
     assert ceiling.age_days is None
     assert ceiling.age_beyond_declared_lag_days is None
-    assert ceiling.elapsed_lag_allowances is None
-    assert not ceiling.is_stale(stale_after_elapsed_lag_allowances=STALE_AFTER_ALLOWANCES)
+    assert not ceiling.is_stale(stale_after_age_days=STALE_AFTER_AGE_DAYS)
 
 
 def test_the_declared_lag_is_the_lanes_registered_lag_and_never_a_literal() -> None:
@@ -1116,13 +1183,13 @@ def test_the_declared_lag_is_the_lanes_registered_lag_and_never_a_literal() -> N
     assert vegetation_promotion_declared_lag_days() != registration.cadence_days, (
         "so the lag and the cadence are not interchangeable, and the name must say which is read"
     )
-    assert STALE_AFTER_ALLOWANCES >= 2, (
-        "one elapsed allowance is a single provider edge the 7-day MEDIAN gap already straddles"
+    assert STALE_AFTER_AGE_DAYS > registration.publication_lag_days, (
+        "and the bound must leave room past the lag it reports, or a healthy lane is stale on arrival"
     )
 
 
-def test_a_non_positive_declared_lag_is_refused_rather_than_divided_by() -> None:
-    """`elapsed_lag_allowances` is undefined for a zero lag, so the ceiling refuses to exist."""
+def test_a_non_positive_declared_lag_is_refused_rather_than_reported() -> None:
+    """A lag below one day is not a lag, and the ceiling reports its distance past the lag day."""
     with pytest.raises(ValueError, match="declared publication lag"):
         promotion_ceiling(availability=EMPTY_AVAILABILITY_INDEX, today=STALE_TODAY, declared_lag_days=0)
 

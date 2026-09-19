@@ -116,24 +116,58 @@ lane's newest servable day already sits about seven days behind today, and a 14-
 from today bought one median gap of slack against a distribution the same registry calls
 heavy-tailed. A routine Oct-Mar PNW overcast fortnight tripped it.
 
-So the turn computes `declared_lag_day = today - declared_lag_days` and counts
-`age_beyond_declared_lag_days // declared_lag_days`, the whole declared-lag allowances that have
-elapsed past it. `stale_ceiling` is `VEGETATION_PROMOTION_STALE_CEILING_LAG_ALLOWANCES` (2) elapsed
-allowances, which on the registered lag is a ceiling 21 or more days behind today. A cloudy 16-day
-gap is one elapsed allowance and reports normally; a stopped writer keeps accumulating them and
-cannot escape. The lag is read from `LANE_REGISTRY` at call time through
-`lane_specs.vegetation_promotion_declared_lag_days()`, never a literal beside the bound, and that
-function refuses a non-positive lag rather than dividing by it. It reads `publication_lag_days` and
-NOT `cadence_days`: vegetation is `daily_series`, whose cadence `layer-lanes.md` (96831d8b) §1a pins
-at 1 -- "only a `release_series` may declare a cadence above one day" -- so the helper is named for
-the lag it reads and no longer spends the word "window" on a cadence the registry does not hold.
+**The bound is a LITERAL DAY COUNT and the declared lag is reported beside it, never multiplied by
+it** (corrected 2026-09-19, STYLE-REVIEW-W11 S1). `stale_ceiling` is a newest servable day
+`VEGETATION_PROMOTION_STALE_CEILING_DAYS` (21) or more days behind today, one comparison in one
+unit: `PromotionCeiling.is_stale(stale_after_age_days=...)` is `age_days >= stale_after_age_days` and
+touches nothing else (`vegetation_partition_promotion.py`, `PromotionCeiling.is_stale`).
+
+It was `..._LAG_ALLOWANCES = 2` multiplied back by the registered lag, and that shape had two
+defects. The constant a reader met said `2` while the bound the code enforced was `3 x lag`, because
+counting past the declared-lag day spends one whole lag before the counter starts. And
+`publication_lag_days` is documented in `lane_registry.py`'s vegetation `floor_basis` as a MEASURED
+MEDIAN -- a number this repo expects to re-measure -- so re-measuring it to 10 would have moved this
+SAFETY bound from 21 days to 30 with a green suite, the boundary tests being written as
+`lag * (allowances + 1)` themselves. The test compared the code to itself, which is the freshness
+yardstick again (`.omc` memory `plantgeo-freshness-yardstick-is-tautological`).
+
+**A safety bound is not a cadence fact.** The standing rule that a cadence fact comes from the
+registry and never from a literal in the lane still holds and is still enforced here -- the lag is
+read at call time through `lane_specs.vegetation_promotion_declared_lag_days()`. But "how far behind
+is DEAD" is not a property of the provider at all: it is this lane's own tolerance, and sourcing it
+from a re-measurable median is what let an unrelated measurement move it. So the two questions are
+separate constants with separate owners. "How far behind is NORMAL" is `publication_lag_days`, owned
+by the registry. "How far behind is DEAD" is `VEGETATION_PROMOTION_STALE_CEILING_DAYS`, owned by this
+lane, moved only by editing that line, and PINNED against the literal `21` in
+`tests/execution/test_vegetation_partition_promotion.py::test_the_stale_ceiling_bound_is_a_day_count_this_lane_owns`
+together with the 20-not-stale / 21-stale boundary. That test, and
+`test_re_measuring_the_declared_lag_cannot_move_the_staleness_verdict` (same ceiling, three different
+registered lags, one verdict), are the half that ENFORCES this paragraph.
+
+The one surviving link between the two numbers runs one way and can only refuse:
+`lane_specs.stale_ceiling_days_clearing_declared_lag` returns its `stale_ceiling_days` argument
+unchanged or raises, so no re-measurement can ever compute a bound. Its floor is
+`(1 + VEGETATION_PROMOTION_STALE_CEILING_MINIMUM_SLACK_LAGS) * declared_lag_days` -- the `1 +` is the
+lag a healthy lane already sits behind today, written out rather than folded into the multiplier,
+since folding it in is exactly how `= 2` came to mean `3 x lag`. At the registered lag of 7 the floor
+is 21 and the bound is 21, so this lane currently sits exactly ON its floor: re-measuring the lag
+DOWN always passes and merely widens the reported `ceiling_declared_lag_slack_days`, while
+re-measuring it UP to 8 or more raises, surfacing as this lane's own `failed` report naming the
+conflict. A cloudy 16-day gap is inside 21 and reports normally; a stopped writer keeps aging and
+cannot escape.
+
+The lag itself is still read from `LANE_REGISTRY` at call time, never copied, and that helper refuses
+a non-positive lag. It reads `publication_lag_days` and NOT `cadence_days`: vegetation is
+`daily_series`, whose cadence `layer-lanes.md` (96831d8b) §1a pins at 1 -- "only a `release_series`
+may declare a cadence above one day" -- so the helper is named for the lag it reads and no longer
+spends the word "window" on a cadence the registry does not hold.
 
 **What the bound does NOT know, stated plainly.** Nothing in this turn consults the source. No
 availability query is issued (§1b lists "the availability query" among what a layer's source
 `Protocol` owns; vegetation's `pipeline/direct/vegetation/source.py` exposes only
 `fetch_vegetation_day`, a per-day scene fetch), no source watermark is read, and the whole change
-from the 14-day bound amounts to moving the refusal from `today - 14` to `today - 21` with six extra
-report fields. The word "frontier" is already spent in this directory on the measured thing:
+from the first 14-day bound amounts to moving the refusal from `today - 14` to `today - 21` and
+reporting the eight `ceiling_*` fields listed below. The word "frontier" is already spent in this directory on the measured thing:
 `plan_continuation.py:288 probe_provider_frontier` HTTP-probes the provider per cell, and
 `ProviderFrontier` carries `mode: "declared" | "measured"` plus a `measured_at`
 (`plan_continuation.py:147-160, 277-286`). Promotion's constant had neither a mode nor a
@@ -153,8 +187,8 @@ provider frontier would call a healthy lane stale whenever screening rejected wh
 published, restoring W9 B1's false positive from the other side. The honest construction is §1b's:
 the vegetation source `Protocol` gains an availability query, the forward writer records its verdict
 in the availability index, and this promoter keeps reading only the index. **Owed, not taken here**
--- `pipeline/` is outside this lane's files, and until it lands the bound is a declared allowance
-and is named as one.
+-- `pipeline/` is outside this lane's files, and until it lands the bound is this lane's own declared
+tolerance and is named as one.
 
 **A stale turn still promotes its ceiling day.** The verdict is applied AFTER the window runs, not
 before it. `DEFAULT_MAX_DAYS` is 1 and no scheduled turn ever revisits a day below its ceiling, so a
@@ -164,14 +198,14 @@ exists to detect. The report therefore carries the promoted days, BOTH halves of
 verdict (`promotion_status` and `promotion_reason` -- keeping only the status lost the difference
 between `all_days_absent` and `no_indexed_day_promoted`, STYLE-REVIEW-W10 S3), status
 `stale_ceiling`, reason
-`more_declared_lag_allowances_have_elapsed_past_the_newest_servable_day_than_this_lane_permits`, and
+`the_newest_servable_day_is_more_days_behind_today_than_this_lanes_stale_ceiling_bound_allows`, and
 a NON-ZERO exit. The stderr `vegetation_promotion_stale_ceiling` event carries the ceiling fields and
 the verdict only, never the day payload it would otherwise duplicate from stdout (W10 N1).
 
 Every default-window report `main()` prints -- green, refused, stale and `failed` alike -- carries
 `ceiling_day`, `ceiling_age_days`, `ceiling_declared_lag_day`,
 `ceiling_age_beyond_declared_lag_days`, `ceiling_declared_lag_days`,
-`ceiling_elapsed_lag_allowances`, `ceiling_stale_after_elapsed_lag_allowances` and
+`ceiling_declared_lag_slack_days`, `ceiling_stale_after_age_days` and
 `ceiling_is_stale`, so the verdict is re-derivable from the report alone and is still readable when
 another status wins. The half that ENFORCES it: `main()` merges `ceiling_fields(...)` once, after
 the `try/except`, for every default-window turn
@@ -242,9 +276,8 @@ vocabulary it had always been printed beside):
    `not_servable_days`. It also dominates `stale_ceiling`: a refusal names a specific defect in a
    specific day an operator must fix, while staleness is a property of the lane that
    `ceiling_is_stale` reports on the same line whichever status won.
-3. `stale_ceiling` -- decided in `main()` AFTER the window ran, on a default-window turn only. Two or
-   more whole declared-lag allowances have elapsed past the declared-lag day without the newest
-   servable day advancing, so the window is not progress even though its days were promoted.
+3. `stale_ceiling` -- decided in `main()` AFTER the window ran, on a default-window turn only. The
+   newest servable day is `VEGETATION_PROMOTION_STALE_CEILING_DAYS` (21) or more days behind today, so the window is not progress even though its days were promoted.
    **Exit 1**, with the turn's own outcome preserved as BOTH `promotion_status` and
    `promotion_reason`. It does not re-state a `failed` turn: that would bury the `error` behind a
    freshness verdict measured from a ceiling the turn may never have read.

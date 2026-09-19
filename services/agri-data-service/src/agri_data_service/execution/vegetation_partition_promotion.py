@@ -452,8 +452,8 @@ def parser() -> argparse.ArgumentParser:
     Without `--day`, promotes the newest `--max-days` days trailing the vegetation LANE'S OWN
     Parquet availability index (`default_promotion_days`), so this lane is schedulable exactly like
     its sibling direct writers, and ends on `stale_ceiling` -- having promoted those days anyway --
-    when `lane_specs.VEGETATION_PROMOTION_STALE_CEILING_LAG_ALLOWANCES` whole declared-lag
-    allowances have elapsed past the lane's declared-lag day. Every day it touches is still
+    when that ceiling sits `lane_specs.VEGETATION_PROMOTION_STALE_CEILING_DAYS` or more days behind
+    today. Every day it touches is still
     idempotent against its own promotion receipt, so a wider `--max-days` never re-registers an
     unchanged partition, and every day is held to §4a's rung intersection, not just the ceiling.
     """
@@ -483,12 +483,19 @@ class PromotionCeiling:
     allowance, stated once in `lane_registry.py`'s vegetation `floor_basis` as a measured median gap
     between usable, cloud-free Sentinel-2 days and frozen there.
 
-    The question a staleness bound has to answer is "has the WRITER stopped", and `age_days` -- the
-    ceiling's distance from `today` -- cannot answer it on its own, because that declared lag is the
-    distance a perfectly healthy ceiling ALREADY sits behind today. So the bound is carried on
-    `age_beyond_declared_lag_days`, the distance behind `declared_lag_day`, expressed in whole
-    elapsed allowances. `age_days` is still reported, because a reader still needs to know how old
-    the promoted day is (`.omc` memory `plantgeo-freshness-yardstick-is-tautological`).
+    The question a staleness bound has to answer is "has the WRITER stopped". `age_days` -- the
+    ceiling's distance from `today` -- is the unit that question is asked and answered in, and
+    `is_stale` compares it against a bound stated in the same unit
+    (`lane_specs.VEGETATION_PROMOTION_STALE_CEILING_DAYS`, a literal day count this lane owns).
+
+    THE DECLARED LAG IS REPORTED AND NEVER MULTIPLIED. `declared_lag_day` and
+    `age_beyond_declared_lag_days` exist so a reader can see how much of the ceiling's age a healthy
+    lane already explains -- the context that makes 21 days a defensible bound rather than an
+    arbitrary one. They are not factors of the verdict. The earlier shape made the bound
+    `N * declared_lag_days`, so re-measuring a median silently re-scaled a safety bound and every
+    boundary test moved with it (STYLE-REVIEW-W11 S1); the only surviving link runs the other way,
+    through `lane_specs.stale_ceiling_days_clearing_declared_lag`, which can refuse the bound but
+    cannot compute one.
 
     `day`, `age_days` and `age_beyond_declared_lag_days` are `None` together when the index states no
     servable day at all: that is the already-honest `no_indexed_day_promoted` path, never this one.
@@ -500,22 +507,14 @@ class PromotionCeiling:
     age_beyond_declared_lag_days: int | None
     declared_lag_days: int
 
-    @property
-    def elapsed_lag_allowances(self) -> int | None:
-        """How many whole declared-lag allowances have elapsed past `declared_lag_day`.
+    def is_stale(self, *, stale_after_age_days: int) -> bool:
+        """Whether the ceiling sits at least that many days behind today.
 
-        Floor division by the same lag the threshold multiplies back, so `elapsed >= N` is exactly
-        `age_beyond_declared_lag_days >= N * declared_lag_days` -- one number, reported in the unit
-        the bound is stated in rather than as a second fact.
+        One comparison, in one unit, against one number: `stale_after_age_days` is the bound as
+        stated, so a reader of this line needs nothing else to know what it enforces. Nothing on
+        `self` scales it -- see the class docstring for why that is load-bearing rather than tidy.
         """
-        if self.age_beyond_declared_lag_days is None:
-            return None
-        return self.age_beyond_declared_lag_days // self.declared_lag_days
-
-    def is_stale(self, *, stale_after_elapsed_lag_allowances: int) -> bool:
-        """Whether that many whole declared-lag allowances have elapsed past the declared-lag day."""
-        elapsed = self.elapsed_lag_allowances
-        return elapsed is not None and elapsed >= stale_after_elapsed_lag_allowances
+        return self.age_days is not None and self.age_days >= stale_after_age_days
 
 
 def newest_servable_day(*, availability: AvailabilityIndexDays, today: date) -> date | None:
@@ -542,8 +541,9 @@ def promotion_ceiling(*, availability: AvailabilityIndexDays, today: date, decla
     `declared_lag_days` is the lane's registered `publication_lag_days`, read from `LANE_REGISTRY`
     through `lane_specs.vegetation_promotion_declared_lag_days()` and passed in rather than imported
     here, so this module keeps its `execution -> execution` CLI-only import and never carries a lag
-    literal of its own. It is a declared constant: see `PromotionCeiling` for what that does and does
-    not entitle a reader to conclude.
+    literal of its own. It is a declared constant, and it is CONTEXT the ceiling reports rather than
+    a factor of the staleness verdict: see `PromotionCeiling` for what that does and does not entitle
+    a reader to conclude, and `lane_specs.VEGETATION_PROMOTION_STALE_CEILING_DAYS` for the bound.
     """
     if declared_lag_days < 1:
         raise ValueError("a declared publication lag must be at least one day for a ceiling to be measured against it")
@@ -561,8 +561,8 @@ def promotion_ceiling(*, availability: AvailabilityIndexDays, today: date, decla
         day=ceiling,
         age_days=(today - ceiling).days,
         declared_lag_day=declared_lag_day,
-        # Floored at zero: a ceiling AT or AHEAD of the declared-lag day is inside the allowance, and
-        # a negative distance would make `elapsed_lag_allowances` round away from zero on a fresh lane.
+        # Floored at zero: a ceiling AT or AHEAD of the declared-lag day is as fresh as this lane
+        # gets, and a negative distance would read as credit banked against a future outage.
         age_beyond_declared_lag_days=max(0, (declared_lag_day - ceiling).days),
         declared_lag_days=declared_lag_days,
     )
@@ -814,7 +814,8 @@ WAITING_FOR_WRITER_STATUS: Final = "waiting_for_writer"
 NO_DAYS_PROMOTED_STATUS: Final = "no_days_promoted"
 #: At least one day reached the register verb and was refused by name; see `_promotion_report`.
 REGISTRATION_REFUSED_STATUS: Final = "registration_refused"
-#: The status a default-window turn ends on when its ceiling has missed too many publication windows.
+#: The status a default-window turn ends on when its newest servable day is more days behind today
+#: than this lane's declared stale-ceiling bound allows (`lane_specs.vegetation_promotion_stale_ceiling_days()`).
 STALE_CEILING_STATUS: Final = "stale_ceiling"
 #: The status `main()` ends on when an exception nobody named escaped the turn; see `failed_report`.
 FAILED_STATUS: Final = "failed"
@@ -858,8 +859,8 @@ TERMINAL_REPORT_CORE_KEYS: Final[frozenset[str]] = frozenset(
 )
 
 
-def ceiling_fields(ceiling: PromotionCeiling | None, *, stale_after_elapsed_lag_allowances: int) -> dict[str, object]:
-    """Render the ceiling an automatic turn chose, the declared lag it was measured against, and the bound.
+def ceiling_fields(ceiling: PromotionCeiling | None, *, stale_after_age_days: int) -> dict[str, object]:
+    """Render the ceiling an automatic turn chose, the declared lag that CONTEXTUALISES it, and the bound.
 
     Carried on EVERY default-window report `main()` prints, `failed` included: a reader who can see
     only `status: completed` cannot tell whether the day it promoted is yesterday's or last year's,
@@ -871,14 +872,18 @@ def ceiling_fields(ceiling: PromotionCeiling | None, *, stale_after_elapsed_lag_
     TOTAL on `ceiling is None`, which is what makes the promise keepable: an exception before the
     availability index is read leaves no ceiling to describe, and the same eight keys are then
     rendered `None` rather than omitted, so the report's SHAPE never depends on how far the turn got
-    (STYLE-REVIEW-W10 S2). `ceiling_stale_after_elapsed_lag_allowances` is the declared bound and is
-    known regardless, so it is stated even then.
+    (STYLE-REVIEW-W10 S2). `ceiling_stale_after_age_days` is the declared bound and is known
+    regardless, so it is stated even then.
 
-    `ceiling_age_days` is the distance from today and is REPORTED, never the bound --
-    `ceiling_age_beyond_declared_lag_days` is what the bound is applied to, and `ceiling_is_stale` is
-    carried even on a report whose status is something else, so a refusal that dominates the status
-    never hides the freshness verdict. None of these fields is a provider observation; see
-    `PromotionCeiling`.
+    `ceiling_age_days` and `ceiling_stale_after_age_days` are the two numbers the verdict is made of,
+    in the same unit, so `ceiling_is_stale` is re-derivable from the line that reports it -- one
+    comparison, no multiplication (STYLE-REVIEW-W11 S1). `ceiling_declared_lag_days`,
+    `ceiling_declared_lag_day` and `ceiling_age_beyond_declared_lag_days` say how much of that age a
+    healthy lane already explains, and `ceiling_declared_lag_slack_days` is the room the bound leaves
+    past the declared-lag day -- the number a RE-MEASURED lag moves, visibly, while the bound stays
+    put. `ceiling_is_stale` is carried even on a report whose status is something else, so a refusal
+    that dominates the status never hides the freshness verdict. None of these fields is a provider
+    observation; see `PromotionCeiling`.
     """
     return {
         "ceiling_day": None if ceiling is None or ceiling.day is None else ceiling.day.isoformat(),
@@ -886,13 +891,11 @@ def ceiling_fields(ceiling: PromotionCeiling | None, *, stale_after_elapsed_lag_
         "ceiling_declared_lag_day": None if ceiling is None else ceiling.declared_lag_day.isoformat(),
         "ceiling_age_beyond_declared_lag_days": None if ceiling is None else ceiling.age_beyond_declared_lag_days,
         "ceiling_declared_lag_days": None if ceiling is None else ceiling.declared_lag_days,
-        "ceiling_elapsed_lag_allowances": None if ceiling is None else ceiling.elapsed_lag_allowances,
-        "ceiling_stale_after_elapsed_lag_allowances": stale_after_elapsed_lag_allowances,
-        "ceiling_is_stale": (
-            None
-            if ceiling is None
-            else ceiling.is_stale(stale_after_elapsed_lag_allowances=stale_after_elapsed_lag_allowances)
+        "ceiling_declared_lag_slack_days": (
+            None if ceiling is None else stale_after_age_days - ceiling.declared_lag_days
         ),
+        "ceiling_stale_after_age_days": stale_after_age_days,
+        "ceiling_is_stale": (None if ceiling is None else ceiling.is_stale(stale_after_age_days=stale_after_age_days)),
     }
 
 
@@ -922,7 +925,7 @@ def stale_ceiling_report(report: Mapping[str, object]) -> dict[str, object]:
         "status": STALE_CEILING_STATUS,
         "promotion_status": report["status"],
         "promotion_reason": report["reason"],
-        "reason": "more_declared_lag_allowances_have_elapsed_past_the_newest_servable_day_than_this_lane_permits",
+        "reason": "the_newest_servable_day_is_more_days_behind_today_than_this_lanes_stale_ceiling_bound_allows",
     }
 
 
@@ -1050,9 +1053,10 @@ def exit_code_for(report: Mapping[str, object]) -> int:
     Zero for a turn that promoted (`completed`) and for one whose every day the writer has not
     finished (`waiting_for_writer`, named in the report and distinguishable from the first).
     Non-zero for every other terminal status: a refused registration, an all-absent or empty window,
-    a ceiling that has missed too many publication windows, and an exception that escaped the turn
-    -- each with its own reason already in the report. All six are `TERMINAL_STATUSES`, and every
-    one of them is printed by `main()` through this function rather than beside it.
+    a ceiling further behind today than the stale-ceiling bound allows, and an exception that
+    escaped the turn -- each with its own reason already in the report. All six are
+    `TERMINAL_STATUSES`, and every one of them is printed by `main()` through this function rather
+    than beside it.
 
     Fails CLOSED on a status this module does not define, rather than raising: an unknown status is
     a defect in the caller, and the last thing a scheduled lane should do on encountering one is
@@ -1096,10 +1100,10 @@ async def main(argv: Sequence[str] | None = None) -> int:
     `waiting_for_writer` and exits 0: see `_promotion_report`.
 
     A DEFAULT-window turn (no `--day`, which is how the scheduled lane always runs) additionally
-    measures its ceiling against the lane's DECLARED publication lag -- a registry constant, not a
-    provider observation (`PromotionCeiling`) -- and ends on `stale_ceiling` when
-    `lane_specs.VEGETATION_PROMOTION_STALE_CEILING_LAG_ALLOWANCES` whole allowances have elapsed past
-    the declared-lag day. That verdict is applied AFTER the window runs, so the days are still
+    measures how many days behind today its ceiling sits and ends on `stale_ceiling` at
+    `lane_specs.vegetation_promotion_stale_ceiling_days()` or more -- a day count this lane owns,
+    not a provider observation and not a multiple of anything re-measurable (`PromotionCeiling`,
+    STYLE-REVIEW-W11 S1). That verdict is applied AFTER the window runs, so the days are still
     promoted and the refusal cannot consume the day it refuses for. An operator naming `--day`
     explicitly is doing a bounded repair and is never gated on freshness: the days are the
     operator's, not this function's, to choose.
@@ -1119,8 +1123,9 @@ async def main(argv: Sequence[str] | None = None) -> int:
     from agri_data_service.config import settings  # noqa: PLC0415 - CLI-only
     from agri_data_service.db.engine import local_source_loader_session  # noqa: PLC0415 - CLI-only
     from agri_data_service.execution.lane_specs import (  # noqa: PLC0415 - CLI-only, and the heavy lane table
-        VEGETATION_PROMOTION_STALE_CEILING_LAG_ALLOWANCES,
+        VEGETATION_PROMOTION_STALE_CEILING_DAYS,
         vegetation_promotion_declared_lag_days,
+        vegetation_promotion_stale_ceiling_days,
     )
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore  # noqa: PLC0415 - CLI-only
 
@@ -1130,10 +1135,17 @@ async def main(argv: Sequence[str] | None = None) -> int:
     is_default_window_turn = not arguments.days
     #: Stays `None` when an exception beat the availability read; `ceiling_fields` renders that.
     ceiling: PromotionCeiling | None = None
+    #: The bound as DECLARED, bound here because `ceiling_fields` states it even on a turn that died
+    #: before reading anything. `vegetation_promotion_stale_ceiling_days()` below returns this same
+    #: literal or REFUSES it against a re-measured registry lag, so the reassignment is a no-op on
+    #: every turn that gets that far and a refusal lands as this lane's own `failed` report rather
+    #: than as an uncaught exception outside it.
+    stale_after_age_days: int = VEGETATION_PROMOTION_STALE_CEILING_DAYS
     try:
         store = ObjectStore.from_settings()
         loader_database_url = settings.require_local_source_loader_database_url()
         declared_lag_days = vegetation_promotion_declared_lag_days()
+        stale_after_age_days = vegetation_promotion_stale_ceiling_days()
         availability = read_lane_availability()
         if is_default_window_turn:
             ceiling = promotion_ceiling(availability=availability, today=today, declared_lag_days=declared_lag_days)
@@ -1149,13 +1161,11 @@ async def main(argv: Sequence[str] | None = None) -> int:
     except Exception as error:
         report = failed_report(error)
     if is_default_window_turn:
-        rendered_ceiling = ceiling_fields(
-            ceiling, stale_after_elapsed_lag_allowances=VEGETATION_PROMOTION_STALE_CEILING_LAG_ALLOWANCES
-        )
+        rendered_ceiling = ceiling_fields(ceiling, stale_after_age_days=stale_after_age_days)
         report = {**report, **rendered_ceiling}
         if (
             ceiling is not None
-            and ceiling.is_stale(stale_after_elapsed_lag_allowances=VEGETATION_PROMOTION_STALE_CEILING_LAG_ALLOWANCES)
+            and ceiling.is_stale(stale_after_age_days=stale_after_age_days)
             and report["status"] not in (REGISTRATION_REFUSED_STATUS, FAILED_STATUS)
         ):
             report = stale_ceiling_report(report)
