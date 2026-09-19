@@ -10,8 +10,10 @@ scoping decision (owner 2026-09-18) is correct.
 
 from __future__ import annotations
 
+import ast
 import uuid
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -572,9 +574,6 @@ def test_vegetation_partition_promotion_never_imports_the_frozen_postgres_forwar
     because an already-imported sibling module would make a `sys.modules` check pass even if this
     module re-added the import (`tests/test_layer_import_contract.py` uses the same AST-walk idiom).
     """
-    import ast
-    from pathlib import Path
-
     module_path = (
         Path(__file__).resolve().parents[2]
         / "src"

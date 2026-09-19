@@ -383,9 +383,11 @@ def _location_samples(
     }
     samples: list[WeatherForecastSample] = []
     for index, hour in enumerate(hours):
-        for field_name in ("temperature_2m", "relative_humidity_2m", "cloud_cover"):
-            if field_name in series:
-                samples.append(_instantaneous_sample(hour, field_name, series[field_name][index]))
+        samples.extend(
+            _instantaneous_sample(hour, field_name, series[field_name][index])
+            for field_name in ("temperature_2m", "relative_humidity_2m", "cloud_cover")
+            if field_name in series
+        )
         if "precipitation" in series:
             samples.append(_precipitation_sample(hour, series["precipitation"][index]))
         if "wind_speed_10m" in series and "wind_direction_10m" in series:
@@ -440,7 +442,7 @@ def _wind_samples(hour: datetime, speed: float | None, direction: float | None) 
     )
 
 
-def parse_forecast_run_payload(
+def parse_forecast_run_payload(  # noqa: PLR0913 - one argument per fact the caller's bounded fetch already resolved
     raw_text: str,
     *,
     coordinates: Sequence[tuple[float, float]],

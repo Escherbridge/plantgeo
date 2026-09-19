@@ -21,7 +21,6 @@ from agri_data_service.pipeline.direct.botanical_occurrences.pointer import (
     POINTER_SCHEMA_VERSION,
     SHA256_HEX_LENGTH,
     BotanicalPointerMalformedError,
-    manifest_digest,
     parse_latest_pointer,
 )
 from agri_data_service.pipeline.direct.botanical_occurrences.publish import (

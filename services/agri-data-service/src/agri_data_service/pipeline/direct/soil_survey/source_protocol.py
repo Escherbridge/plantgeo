@@ -9,11 +9,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from agri_data_service.foundation.geography.bounding_box import BoundingBox
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import date, datetime
 
-    from agri_data_service.foundation.geography.bounding_box import BoundingBox
     from agri_data_service.foundation.region.source_coverage import SourceCoverageClaim
 
 

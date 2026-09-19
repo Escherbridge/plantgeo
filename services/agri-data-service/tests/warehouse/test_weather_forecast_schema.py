@@ -115,11 +115,11 @@ def test_timestamps_are_microsecond_utc() -> None:
 
 
 def test_missing_reasons_are_the_exact_four_the_plan_names() -> None:
-    assert MISSING_REASONS == frozenset({"outside_domain", "not_generated", "upstream_failed", "stale_run"})
+    assert frozenset({"outside_domain", "not_generated", "upstream_failed", "stale_run"}) == MISSING_REASONS
 
 
 def test_support_kinds_are_the_exact_three_the_plan_names() -> None:
-    assert SUPPORT_KINDS == frozenset({"native_grid", "sampled_point", "derived_field"})
+    assert frozenset({"native_grid", "sampled_point", "derived_field"}) == SUPPORT_KINDS
 
 
 def test_wind_keeps_the_component_split_and_the_two_derived_variables() -> None:

@@ -250,15 +250,17 @@ describe("REGION_LAYER_SLUG_BY_WAREHOUSE_NAME is pinned to the region vocabulary
     }
   });
 
-  it("covers every platform layer a toggle can reach, and names its two exceptions", () => {
-    // Both directions at once. The two platform layers with no toggle-path value are stated here
-    // rather than skipped, so adding a toggle for either one fails this test instead of drifting:
+  it("covers every platform layer a toggle can reach, and names its one exception", () => {
+    // Both directions at once. The one platform layer with no toggle-path value is stated here
+    // rather than skipped, so adding a toggle for it fails this test instead of drifting:
     //   land-context           -- not a `LayerToggleId` at all; it has its own group store and
     //                             reaches `layerBindingInRegion` through LAND_CONTEXT_REGION_LAYER_SLUG.
-    //   botanical-occurrences  -- its three toggles all carry `warehouseLayerName: null`, so no
-    //                             toggle of it can ever report "not available in this region"
-    //                             (BACKLOG N40, open; GBIF is global so the pilot is unaffected).
-    const PLATFORM_LAYERS_WITH_NO_TOGGLE_PATH = new Set(["land-context", "botanical-occurrences"]);
+    // `botanical-occurrences` used to be a second exception (BACKLOG N40): its three toggles all
+    // carried `warehouseLayerName: null`, so no toggle of it could ever report "not available in
+    // this region". N40 closed that gap with a dedicated `regionLayerSlug` field, decoupled from
+    // the slider's `warehouseLayerName` key (`layer-registry.ts`, `layer-region-binding.ts`), so
+    // its toggles now reach the vocabulary too.
+    const PLATFORM_LAYERS_WITH_NO_TOGGLE_PATH = new Set(["land-context"]);
     const expected = new Set(
       getRegion().platformLayers.filter((slug) => !PLATFORM_LAYERS_WITH_NO_TOGGLE_PATH.has(slug))
     );

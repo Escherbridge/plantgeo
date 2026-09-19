@@ -38,9 +38,7 @@ WEATHER_FORECAST_GRAIN: Final[tuple[str, ...]] = ("cell_id", "valid_time", "vari
 
 # Governed-absence reasons a null `value` may carry. Exhaustive; a fifth reason needs a plan
 # amendment, not a silent string.
-MISSING_REASONS: Final[frozenset[str]] = frozenset(
-    {"outside_domain", "not_generated", "upstream_failed", "stale_run"}
-)
+MISSING_REASONS: Final[frozenset[str]] = frozenset({"outside_domain", "not_generated", "upstream_failed", "stale_run"})
 
 # What a row's `value` measures, per `layer-lanes.md` section 1b: the platform normalizes provider
 # output to one of these support kinds before admission.

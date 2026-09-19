@@ -24,6 +24,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from sanic import Sanic
 
 from agri_data_service.agent import tools as agent_tools
 from agri_data_service.foundation.region import (
@@ -36,7 +37,6 @@ from agri_data_service.foundation.region import (
 )
 from agri_data_service.foundation.region.manifest import REGION_ENV_VAR
 from agri_data_service.interface.http.parquet_routes import region_layer_bindings
-
 from tests.agent_fakes import FakeAgentWarehouse
 
 # The surface-name map is imported rather than hand-spelled a second time: the sibling module
@@ -191,7 +191,15 @@ def test_the_app_boots_under_the_second_manifest(second_region: Region) -> None:
     from agri_data_service import app as app_module  # noqa: PLC0415
 
     assert load_region().slug == second_region.slug
-    assert app_module.create_app() is not None
+    # Sanic refuses a second app of the same name unless test_mode is set -- another suite's own
+    # bare `create_app()` boot proof may already have registered "agri-data-service" this session
+    # (same pattern as `test_service_profiles.py`/`test_parquet_routes.py`).
+    previous_test_mode = Sanic.test_mode
+    Sanic.test_mode = True
+    try:
+        assert app_module.create_app() is not None
+    finally:
+        Sanic.test_mode = previous_test_mode
 
 
 def test_the_regionally_sourced_layers_are_unbound_with_a_reason(second_region: Region) -> None:

@@ -33,6 +33,7 @@ from agri_data_service.pipeline.direct.botanical_occurrences.pointer import (
 )
 from agri_data_service.pipeline.direct.botanical_occurrences.publish import (
     COMPLETION_MARKER,
+    PART_NAME,
     LocalPublicationTarget,
     generation_prefix,
     latest_pointer_path,
