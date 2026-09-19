@@ -19,8 +19,8 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from agri_data_service.execution.lane_specs import (
-    VEGETATION_PROMOTION_STALE_CEILING_WINDOWS,
-    vegetation_promotion_publication_window_days,
+    VEGETATION_PROMOTION_STALE_CEILING_LAG_ALLOWANCES,
+    vegetation_promotion_declared_lag_days,
 )
 from agri_data_service.execution.vegetation_ndvi_plane import (
     GovernedPlane,
@@ -39,6 +39,7 @@ from agri_data_service.execution.vegetation_partition_promotion import (
     REGISTRATION_REFUSED_STATUS,
     STALE_CEILING_STATUS,
     SUCCESSFUL_TURN_STATUSES,
+    TERMINAL_REPORT_CORE_KEYS,
     TERMINAL_STATUSES,
     WAITING_FOR_WRITER_STATUS,
     AvailabilityIndexDays,
@@ -333,14 +334,15 @@ def test_evaluation_kind_receipt_cannot_be_constructed() -> None:
 
 
 #: An index that has published nothing yet: every day it is asked about is `not_yet_indexed`.
-EMPTY_AVAILABILITY_INDEX = AvailabilityIndexDays(verdicts={})
+EMPTY_AVAILABILITY_INDEX = AvailabilityIndexDays(verdicts={}, servable_days=frozenset())
 
 
 async def test_an_indexed_governed_absence_is_reported_with_the_index_reason() -> None:
     """The index, not a failed object read, produces the absence -- and carries its OWN reason (B2)."""
     session = cast("AsyncSession", object())  # never touched: the absent path reaches no register call
     availability = AvailabilityIndexDays(
-        verdicts={DAY: IndexedDay(state="governed_absence", absence_reason="upstream_scene_not_published")}
+        verdicts={DAY: IndexedDay(state="governed_absence", absence_reason="upstream_scene_not_published")},
+        servable_days=frozenset(),
     )
     refusing_store = ObjectStore(backend=RefusingBackend())
 
@@ -357,7 +359,7 @@ async def test_an_indexed_governed_absence_is_reported_with_the_index_reason() -
 async def test_a_day_the_index_still_calls_published_after_a_re_read_is_a_conflict(store: ObjectStore) -> None:
     """Index says published, no part file, and the re-read agrees: corruption, raised (B2, W5 S4)."""
     session = cast("AsyncSession", object())
-    availability = AvailabilityIndexDays(verdicts={DAY: IndexedDay(state="published")})
+    availability = AvailabilityIndexDays(verdicts={DAY: IndexedDay(state="published")}, servable_days=frozenset({DAY}))
     re_reads = 0
 
     def winning_generation() -> AvailabilityIndexDays:
@@ -383,9 +385,10 @@ async def test_a_prune_inside_the_turn_window_is_reclassified_not_paged(store: O
     mid-read path already names `ConcurrentPrunePartitionError` (STYLE-REVIEW-W5 S4).
     """
     session = cast("AsyncSession", object())
-    snapshot = AvailabilityIndexDays(verdicts={DAY: IndexedDay(state="published")})
+    snapshot = AvailabilityIndexDays(verdicts={DAY: IndexedDay(state="published")}, servable_days=frozenset({DAY}))
     after_prune = AvailabilityIndexDays(
-        verdicts={DAY: IndexedDay(state="governed_absence", absence_reason="pruned_by_retention")}
+        verdicts={DAY: IndexedDay(state="governed_absence", absence_reason="pruned_by_retention")},
+        servable_days=frozenset(),
     )
 
     report = await run_vegetation_promotion(
@@ -419,11 +422,13 @@ async def test_a_winning_generation_that_lost_the_row_is_a_conflict_not_a_benign
     session = cast("AsyncSession", object())
     snapshot = AvailabilityIndexDays(
         verdicts={DAY: IndexedDay(state="published")},
+        servable_days=frozenset({DAY}),
         generation_sha256=SNAPSHOT_GENERATION,
         pointer_key=AVAILABILITY_POINTER_KEY,
     )
     after_regression = AvailabilityIndexDays(
         verdicts={},
+        servable_days=frozenset(),
         generation_sha256=WINNING_GENERATION,
         pointer_key=AVAILABILITY_POINTER_KEY,
     )
@@ -449,11 +454,13 @@ async def test_the_conflict_message_names_both_generations_and_the_pointer_key(s
     session = cast("AsyncSession", object())
     snapshot = AvailabilityIndexDays(
         verdicts={DAY: IndexedDay(state="published")},
+        servable_days=frozenset({DAY}),
         generation_sha256=SNAPSHOT_GENERATION,
         pointer_key=AVAILABILITY_POINTER_KEY,
     )
     still_published = AvailabilityIndexDays(
         verdicts={DAY: IndexedDay(state="published")},
+        servable_days=frozenset({DAY}),
         generation_sha256=WINNING_GENERATION,
         pointer_key=AVAILABILITY_POINTER_KEY,
     )
@@ -490,7 +497,8 @@ async def test_a_turn_whose_every_day_is_absent_does_not_complete(store: ObjectS
         verdicts={
             DAY: IndexedDay(state="governed_absence", absence_reason="upstream_scene_not_published"),
             other_day: IndexedDay(state="governed_absence", absence_reason="upstream_scene_not_published"),
-        }
+        },
+        servable_days=frozenset(),
     )
 
     report = await run_vegetation_promotion(session, store, days=[DAY, other_day], availability=availability)
@@ -523,7 +531,8 @@ async def test_a_mixed_turn_that_promoted_nothing_still_fails(store: ObjectStore
     session = cast("AsyncSession", object())
     other_day = date(2026, 9, 11)
     availability = AvailabilityIndexDays(
-        verdicts={DAY: IndexedDay(state="governed_absence", absence_reason="upstream_scene_not_published")}
+        verdicts={DAY: IndexedDay(state="governed_absence", absence_reason="upstream_scene_not_published")},
+        servable_days=frozenset(),
     )
 
     report = await run_vegetation_promotion(session, store, days=[DAY, other_day], availability=availability)
@@ -618,6 +627,16 @@ def _not_servable_day_entry(day: date) -> dict[str, object]:
     }
 
 
+def _governed_absence_day_entry(day: date) -> dict[str, object]:
+    """One day entry shaped exactly as `run_vegetation_promotion` renders an indexed absence."""
+    return {
+        "day": day.isoformat(),
+        "layer": VEGETATION_PLANE_STREAM,
+        "status": "absent",
+        "reason": "upstream_scene_not_published",
+    }
+
+
 def _promoted_entry(day: date) -> dict[str, object]:
     """One day entry shaped exactly as `run_vegetation_promotion` renders a promotion."""
     return {
@@ -696,7 +715,8 @@ def test_default_promotion_days_uses_the_newest_published_day_as_the_ceiling() -
             date(2026, 9, 12): IndexedDay(state="published"),
             newest_published: IndexedDay(state="published"),
             date(2026, 9, 18): IndexedDay(state="governed_absence", absence_reason="upstream_scene_not_published"),
-        }
+        },
+        servable_days=frozenset({date(2026, 9, 12), newest_published}),
     )
 
     days = default_promotion_days(availability=availability, today=date(2026, 9, 18), max_days=3)
@@ -714,7 +734,8 @@ def test_default_promotion_days_ignores_a_published_day_after_today() -> None:
         verdicts={
             date(2026, 9, 10): IndexedDay(state="published"),
             date(2026, 9, 30): IndexedDay(state="published"),
-        }
+        },
+        servable_days=frozenset({date(2026, 9, 10), date(2026, 9, 30)}),
     )
 
     days = default_promotion_days(availability=availability, today=date(2026, 9, 18), max_days=1)
@@ -813,7 +834,7 @@ def test_the_ceiling_skips_a_day_the_rung_ladder_does_not_agree_on() -> None:
     ceiling = promotion_ceiling(
         availability=mixed_ladder_availability(),
         today=LADDER_TODAY,
-        publication_window_days=vegetation_promotion_publication_window_days(),
+        declared_lag_days=vegetation_promotion_declared_lag_days(),
     )
 
     assert ceiling.day == FULL_LADDER_DAY
@@ -876,76 +897,119 @@ async def test_a_wider_window_never_promotes_a_day_only_the_base_rung_publishes(
     assert exit_code_for(report) == 0
 
 
-def test_a_fabricated_availability_with_no_rung_ladder_falls_back_to_its_base_verdicts() -> None:
-    """A test double states verdicts and no ladder; the base verdict is then all that is known."""
-    availability = AvailabilityIndexDays(verdicts={DAY: IndexedDay(state="published")})
+def test_an_availability_must_state_its_own_servable_days() -> None:
+    """STYLE-REVIEW-W10 S7: there is ONE servability predicate, and a test double runs the same one.
 
-    assert availability.servable_days is None
-    assert availability.is_servable(DAY)
-    assert not availability.is_servable(DAY + timedelta(days=1))
+    While `servable_days` defaulted to `None`, `is_servable` fell back to the base-rung verdict --
+    an arm `availability_days_at_base_rung`, the only production constructor, can never reach,
+    because it always supplies a frozenset. Every governed-absence test above ran against that
+    unreachable arm. The field now has no default, so a double states the intersection it wants and
+    the turn evaluates the shipped predicate either way.
+    """
+    with pytest.raises(TypeError):
+        AvailabilityIndexDays(verdicts={DAY: IndexedDay(state="published")})  # type: ignore[call-arg]
+
+    stated = AvailabilityIndexDays(verdicts={DAY: IndexedDay(state="published")}, servable_days=frozenset({DAY}))
+    assert stated.is_servable(DAY)
+    assert not stated.is_servable(DAY + timedelta(days=1))
+
+    #: The case the fallback used to hide: the base rung publishes the day and the ladder does not.
+    base_rung_only = AvailabilityIndexDays(verdicts={DAY: IndexedDay(state="published")}, servable_days=frozenset())
+    assert base_rung_only.indexed_day(DAY).state == "published"
+    assert not base_rung_only.is_servable(DAY)
 
 
-#: The turn measures against the lane's REGISTERED window, so every case below reads it too.
-WINDOW_DAYS = vegetation_promotion_publication_window_days()
+async def test_a_day_that_is_both_an_indexed_absence_and_unservable_keeps_the_index_reason() -> None:
+    """The `_non_promotable_entry` ordering, proved rather than read (STYLE-REVIEW-W10 S7).
+
+    An indexed absence is ALSO unservable -- an absent day is in no rung's published set -- so the
+    two predicates overlap on every governed absence the index records. Servability is checked LAST
+    for exactly that reason: reporting this day as `not_servable` would replace the index's own
+    `absence_reason` with a rung-ladder verdict, and send an operator looking at the writer's rung
+    publication for a day the source never had. `RefusingBackend` carries the other half: neither
+    predicate opens an object.
+    """
+    session = cast("AsyncSession", object())
+    availability = AvailabilityIndexDays(
+        verdicts={DAY: IndexedDay(state="governed_absence", absence_reason="upstream_scene_not_published")},
+        servable_days=frozenset(),
+    )
+    refusing_store = ObjectStore(backend=RefusingBackend())
+
+    report = await run_vegetation_promotion(session, refusing_store, days=[DAY], availability=availability)
+
+    assert report["absent_days"] == [DAY.isoformat()]
+    assert report["not_servable_days"] == [], "the absence wins, and it is not double-counted"
+    (entry,) = cast("list[dict[str, object]]", report["days"])
+    assert entry["status"] == "absent"
+    assert entry["reason"] == "upstream_scene_not_published", "the INDEX's reason, not the ladder's"
+
+
+#: The bound this lane declares, aliased only so the assertions below fit one line.
+STALE_AFTER_ALLOWANCES = VEGETATION_PROMOTION_STALE_CEILING_LAG_ALLOWANCES
+#: The turn measures against the lane's REGISTERED lag, so every case below reads it too.
+DECLARED_LAG_DAYS = vegetation_promotion_declared_lag_days()
 STALE_TODAY = date(2026, 11, 18)
 
 
 def ceiling_behind_today(*, days_behind: int, today: date = STALE_TODAY) -> PromotionCeiling:
     """Measure a lane whose newest servable day sits `days_behind` days behind `today`."""
     ceiling_day = today - timedelta(days=days_behind)
-    availability = AvailabilityIndexDays(verdicts={ceiling_day: IndexedDay(state="published")})
-    return promotion_ceiling(availability=availability, today=today, publication_window_days=WINDOW_DAYS)
+    availability = AvailabilityIndexDays(
+        verdicts={ceiling_day: IndexedDay(state="published")}, servable_days=frozenset({ceiling_day})
+    )
+    return promotion_ceiling(availability=availability, today=today, declared_lag_days=DECLARED_LAG_DAYS)
 
 
-def test_a_ceiling_at_the_provider_frontier_has_missed_nothing() -> None:
-    """A healthy lane already sits a whole registered window behind today; that is not lateness."""
-    ceiling = ceiling_behind_today(days_behind=WINDOW_DAYS)
+def test_a_ceiling_at_the_declared_lag_day_has_used_no_allowance() -> None:
+    """A healthy lane already sits a whole declared lag behind today; that is not lateness."""
+    ceiling = ceiling_behind_today(days_behind=DECLARED_LAG_DAYS)
 
-    assert ceiling.frontier_day == STALE_TODAY - timedelta(days=WINDOW_DAYS)
-    assert ceiling.age_days == WINDOW_DAYS, "behind TODAY by the whole registered lag"
-    assert ceiling.frontier_age_days == 0, "and behind the FRONTIER by nothing at all"
-    assert ceiling.missed_publication_windows == 0
+    assert ceiling.declared_lag_day == STALE_TODAY - timedelta(days=DECLARED_LAG_DAYS)
+    assert ceiling.age_days == DECLARED_LAG_DAYS, "behind TODAY by the whole registered lag"
+    assert ceiling.age_beyond_declared_lag_days == 0, "and behind the DECLARED-LAG DAY by nothing"
+    assert ceiling.elapsed_lag_allowances == 0
 
 
-def test_a_ceiling_ahead_of_the_frontier_is_floored_at_zero_rather_than_running_negative() -> None:
-    """A lane that beat its own median gap must not bank credit against a future outage."""
+def test_a_ceiling_ahead_of_the_declared_lag_day_is_floored_at_zero_rather_than_running_negative() -> None:
+    """A lane that beat its own declared lag must not bank credit against a future outage."""
     ceiling = ceiling_behind_today(days_behind=1)
 
     assert ceiling.age_days == 1
-    assert ceiling.frontier_age_days == 0
-    assert ceiling.missed_publication_windows == 0
+    assert ceiling.age_beyond_declared_lag_days == 0
+    assert ceiling.elapsed_lag_allowances == 0
 
 
-def test_a_cloudy_fortnight_at_the_provider_edge_is_not_called_stale() -> None:
+def test_a_cloudy_fortnight_inside_the_declared_allowance_is_not_called_stale() -> None:
     """STYLE-REVIEW-W9 B1: the bound may not refuse a healthy lane in a routine PNW overcast stretch.
 
     Sixteen days between usable Sentinel-2 scenes is an ordinary Oct-Mar gap on a lane whose
-    registered lag is a MEASURED MEDIAN of 7 with a heavy tail. Measured from `today` it exceeded
-    two windows and the turn refused -- and because `--max-days` is 1, the day it skipped was never
-    revisited, so the gate manufactured the hole it exists to detect. Measured from the FRONTIER it
-    is one missed opportunity, which is an edge, not a stopped writer.
+    registered lag is a MEASURED MEDIAN of 7 with a heavy tail. Counted from `today` it exceeded two
+    lags and the turn refused -- and because `--max-days` is 1, the day it skipped was never
+    revisited, so the gate manufactured the hole it exists to detect. Counted past the DECLARED-LAG
+    DAY it is one elapsed allowance, which the declared lag already anticipates.
     """
     cloudy_edge = ceiling_behind_today(days_behind=16)
 
-    assert cloudy_edge.age_days > WINDOW_DAYS * VEGETATION_PROMOTION_STALE_CEILING_WINDOWS, (
-        "the OLD bound, measured from today, called this lane dead"
+    assert cloudy_edge.age_days > DECLARED_LAG_DAYS * STALE_AFTER_ALLOWANCES, (
+        "the OLD bound, counted from today, called this lane dead"
     )
-    assert cloudy_edge.frontier_age_days == 16 - WINDOW_DAYS
-    assert cloudy_edge.missed_publication_windows == 1
-    assert not cloudy_edge.is_stale(stale_after_missed_windows=VEGETATION_PROMOTION_STALE_CEILING_WINDOWS)
+    assert cloudy_edge.age_beyond_declared_lag_days == 16 - DECLARED_LAG_DAYS
+    assert cloudy_edge.elapsed_lag_allowances == 1
+    assert not cloudy_edge.is_stale(stale_after_elapsed_lag_allowances=STALE_AFTER_ALLOWANCES)
 
 
-def test_a_writer_that_stopped_for_two_whole_windows_is_still_called_stale() -> None:
+def test_a_writer_that_stopped_for_two_whole_allowances_is_still_called_stale() -> None:
     """The other half of the bound: it must still catch the lane the freshness yardstick cannot."""
-    last_healthy = ceiling_behind_today(days_behind=WINDOW_DAYS * VEGETATION_PROMOTION_STALE_CEILING_WINDOWS + 6)
-    stopped = ceiling_behind_today(days_behind=WINDOW_DAYS * (VEGETATION_PROMOTION_STALE_CEILING_WINDOWS + 1))
+    last_healthy = ceiling_behind_today(days_behind=DECLARED_LAG_DAYS * STALE_AFTER_ALLOWANCES + 6)
+    stopped = ceiling_behind_today(days_behind=DECLARED_LAG_DAYS * (STALE_AFTER_ALLOWANCES + 1))
 
-    assert last_healthy.missed_publication_windows == VEGETATION_PROMOTION_STALE_CEILING_WINDOWS - 1
-    assert not last_healthy.is_stale(stale_after_missed_windows=VEGETATION_PROMOTION_STALE_CEILING_WINDOWS), (
-        "one day short of the second missed window is still an edge"
+    assert last_healthy.elapsed_lag_allowances == STALE_AFTER_ALLOWANCES - 1
+    assert not last_healthy.is_stale(stale_after_elapsed_lag_allowances=STALE_AFTER_ALLOWANCES), (
+        "one day short of the second elapsed allowance is still inside the declared slack"
     )
-    assert stopped.missed_publication_windows == VEGETATION_PROMOTION_STALE_CEILING_WINDOWS
-    assert stopped.is_stale(stale_after_missed_windows=VEGETATION_PROMOTION_STALE_CEILING_WINDOWS)
+    assert stopped.elapsed_lag_allowances == STALE_AFTER_ALLOWANCES
+    assert stopped.is_stale(stale_after_elapsed_lag_allowances=STALE_AFTER_ALLOWANCES)
 
 
 def test_a_stale_turn_reports_the_day_it_promoted_rather_than_consuming_it() -> None:
@@ -967,46 +1031,143 @@ def test_a_stale_turn_reports_the_day_it_promoted_rather_than_consuming_it() -> 
     assert exit_code_for(report) == 1
 
 
-def test_the_ceiling_fields_name_the_frontier_the_bound_is_actually_applied_to() -> None:
-    """A reader must be able to re-derive the verdict from the report; `age_days` is not the bound."""
+def test_a_stale_turn_keeps_the_reason_the_turn_itself_failed_for() -> None:
+    """STYLE-REVIEW-W10 S3: the staleness verdict may not overwrite the turn's own reason.
+
+    A stale turn whose ceiling day was pruned mid-turn ends `no_days_promoted`/`all_days_absent`.
+    Preserving only the STATUS left the operator with `stale_ceiling` + `no_days_promoted` and no
+    way to tell `all_days_absent` (the source had nothing) from `no_indexed_day_promoted` (a mixed
+    turn that promoted nothing) -- two different next actions.
+    """
+    expected_reason = "more_declared_lag_allowances_have_elapsed_past_the_newest_servable_day_than_this_lane_permits"
+    absent = promotion_report_of([_governed_absence_day_entry(DAY)])
+    assert absent["reason"] == "all_days_absent"
+
+    report = stale_ceiling_report(absent)
+
+    assert report["promotion_status"] == NO_DAYS_PROMOTED_STATUS
+    assert report["promotion_reason"] == "all_days_absent"
+    assert report["reason"] == expected_reason
+
+
+def test_the_ceiling_fields_name_the_declared_lag_the_bound_is_actually_applied_to() -> None:
+    """A reader must re-derive the verdict from the report, and the names must not claim a probe.
+
+    `ceiling_declared_lag_day` is `today - publication_lag_days`, a LANE_REGISTRY constant. Nothing
+    in this turn queries the provider, so nothing here may be called a frontier: this directory
+    already spends that word on `plan_continuation.probe_provider_frontier`, which really does probe
+    (STYLE-REVIEW-W10 S1).
+    """
     ceiling = ceiling_behind_today(days_behind=16)
 
-    assert ceiling_fields(ceiling, stale_after_missed_windows=VEGETATION_PROMOTION_STALE_CEILING_WINDOWS) == {
+    assert ceiling_fields(ceiling, stale_after_elapsed_lag_allowances=STALE_AFTER_ALLOWANCES) == {
         "ceiling_day": (STALE_TODAY - timedelta(days=16)).isoformat(),
         "ceiling_age_days": 16,
-        "ceiling_frontier_day": (STALE_TODAY - timedelta(days=WINDOW_DAYS)).isoformat(),
-        "ceiling_frontier_age_days": 16 - WINDOW_DAYS,
-        "ceiling_publication_window_days": WINDOW_DAYS,
-        "ceiling_missed_publication_windows": 1,
-        "ceiling_stale_after_missed_windows": VEGETATION_PROMOTION_STALE_CEILING_WINDOWS,
+        "ceiling_declared_lag_day": (STALE_TODAY - timedelta(days=DECLARED_LAG_DAYS)).isoformat(),
+        "ceiling_age_beyond_declared_lag_days": 16 - DECLARED_LAG_DAYS,
+        "ceiling_declared_lag_days": DECLARED_LAG_DAYS,
+        "ceiling_elapsed_lag_allowances": 1,
+        "ceiling_stale_after_elapsed_lag_allowances": STALE_AFTER_ALLOWANCES,
         "ceiling_is_stale": False,
     }
+
+
+def test_the_ceiling_fields_are_total_on_a_turn_that_never_read_an_index() -> None:
+    """STYLE-REVIEW-W10 S2: the report's SHAPE may not depend on how far the turn got.
+
+    `main()` merges these fields onto the `failed` report too, and an exception before
+    `read_lane_availability` leaves no ceiling to describe. Every key is still stated, `None` where
+    unknown -- except the declared bound, which is a constant and is known regardless.
+    """
+    rendered = ceiling_fields(None, stale_after_elapsed_lag_allowances=STALE_AFTER_ALLOWANCES)
+
+    assert set(rendered) == set(
+        ceiling_fields(ceiling_behind_today(days_behind=1), stale_after_elapsed_lag_allowances=STALE_AFTER_ALLOWANCES)
+    )
+    assert rendered["ceiling_stale_after_elapsed_lag_allowances"] == STALE_AFTER_ALLOWANCES
+    assert all(value is None for key, value in rendered.items() if key != "ceiling_stale_after_elapsed_lag_allowances")
 
 
 def test_an_index_with_no_servable_day_is_never_called_stale() -> None:
     """`no_indexed_day_promoted` is the honest answer there, and it already exits 1 on its own."""
     ceiling = promotion_ceiling(
-        availability=EMPTY_AVAILABILITY_INDEX, today=STALE_TODAY, publication_window_days=WINDOW_DAYS
+        availability=EMPTY_AVAILABILITY_INDEX, today=STALE_TODAY, declared_lag_days=DECLARED_LAG_DAYS
     )
 
     assert ceiling.day is None
     assert ceiling.age_days is None
-    assert ceiling.frontier_age_days is None
-    assert ceiling.missed_publication_windows is None
-    assert not ceiling.is_stale(stale_after_missed_windows=VEGETATION_PROMOTION_STALE_CEILING_WINDOWS)
+    assert ceiling.age_beyond_declared_lag_days is None
+    assert ceiling.elapsed_lag_allowances is None
+    assert not ceiling.is_stale(stale_after_elapsed_lag_allowances=STALE_AFTER_ALLOWANCES)
 
 
-def test_the_publication_window_is_the_lanes_registered_lag_and_never_a_literal() -> None:
-    """The cadence fact is read from `LANE_REGISTRY` at call time, never copied beside the bound."""
-    registered_lag_days = LANE_REGISTRY[VEGETATION_PLANE_STREAM].publication_lag_days
+def test_the_declared_lag_is_the_lanes_registered_lag_and_never_a_literal() -> None:
+    """The helper reads `publication_lag_days` at call time, and is named for that field only.
 
-    assert vegetation_promotion_publication_window_days() == registered_lag_days
-    assert VEGETATION_PROMOTION_STALE_CEILING_WINDOWS >= 2, (
-        "one missed window is a single provider edge the 7-day MEDIAN gap already straddles"
+    It must NOT read `cadence_days`: vegetation is `daily_series`, whose cadence `layer-lanes.md`
+    (96831d8b) §1a pins at 1, so a helper named for a "publication window" asserted a 7-day cadence
+    the registry does not hold (STYLE-REVIEW-W10 S1).
+    """
+    registration = LANE_REGISTRY[VEGETATION_PLANE_STREAM]
+
+    assert vegetation_promotion_declared_lag_days() == registration.publication_lag_days
+    assert registration.nature == "daily_series"
+    assert registration.cadence_days == 1, "the field the old name claimed, and the value it holds"
+    assert vegetation_promotion_declared_lag_days() != registration.cadence_days, (
+        "so the lag and the cadence are not interchangeable, and the name must say which is read"
+    )
+    assert STALE_AFTER_ALLOWANCES >= 2, (
+        "one elapsed allowance is a single provider edge the 7-day MEDIAN gap already straddles"
     )
 
 
-def test_a_non_positive_publication_window_is_refused_rather_than_divided_by() -> None:
-    """`missed_publication_windows` is undefined for a zero window, so the ceiling refuses to exist."""
-    with pytest.raises(ValueError, match="publication window"):
-        promotion_ceiling(availability=EMPTY_AVAILABILITY_INDEX, today=STALE_TODAY, publication_window_days=0)
+def test_a_non_positive_declared_lag_is_refused_rather_than_divided_by() -> None:
+    """`elapsed_lag_allowances` is undefined for a zero lag, so the ceiling refuses to exist."""
+    with pytest.raises(ValueError, match="declared publication lag"):
+        promotion_ceiling(availability=EMPTY_AVAILABILITY_INDEX, today=STALE_TODAY, declared_lag_days=0)
+
+
+def test_every_terminal_status_reports_the_same_core_keys() -> None:
+    """STYLE-REVIEW-W10 S2/N3: one shape for a log consumer, across all six statuses.
+
+    `failed` was the only terminal report with no `reason`, and `completed` the only one among the
+    in-turn statuses; both are stated now. Additions are allowed and named -- `error` on `failed`,
+    `promotion_status`/`promotion_reason` on `stale_ceiling` -- because a consumer keying on the
+    core set never sees a key DISAPPEAR.
+    """
+    completed = promotion_report_of([_promoted_entry(DAY)])
+    refused = promotion_report_of([_refused_entry(DAY)])
+    waiting = promotion_report_of([_not_servable_day_entry(DAY)])
+    absent = promotion_report_of([_governed_absence_day_entry(DAY)])
+    failed = failed_report(RuntimeError("the object store refused"))
+    stale = stale_ceiling_report(completed)
+    by_status = {
+        cast("str", report["status"]): report for report in (completed, refused, waiting, absent, failed, stale)
+    }
+
+    assert set(by_status) == TERMINAL_STATUSES, "one example report per terminal status, and no status missed"
+    for status, report in by_status.items():
+        assert TERMINAL_REPORT_CORE_KEYS <= set(report), f"{status} drops a core key"
+        assert isinstance(report["reason"], str), f"{status} states no reason"
+    assert set(failed) - TERMINAL_REPORT_CORE_KEYS == {"error"}
+    assert set(stale) - TERMINAL_REPORT_CORE_KEYS == {"promotion_status", "promotion_reason"}
+
+
+def test_a_completed_turn_states_its_reason_like_every_other_status() -> None:
+    """The green report is not a different shape from the red ones (STYLE-REVIEW-W10 S2/N3)."""
+    report = promotion_report_of([_promoted_entry(DAY)])
+
+    assert report["status"] == COMPLETED_STATUS
+    assert report["reason"] == "at_least_one_day_was_promoted_or_confirmed_unchanged"
+
+
+def test_a_failed_report_states_a_reason_naming_the_gap_it_leaves() -> None:
+    """`failed` carries a `reason` like every failing status, and it does not overclaim.
+
+    STYLE-REVIEW-W9 S2 is still open -- days committed before the exception are not rendered -- so
+    the reason says the per-day outcomes were not rendered rather than that there were none.
+    """
+    report = failed_report(RuntimeError("the object store refused"))
+
+    assert report["reason"] == "an_exception_escaped_the_turn_and_its_per_day_outcomes_were_not_rendered"
+    assert report["error"] == "RuntimeError: the object store refused"
