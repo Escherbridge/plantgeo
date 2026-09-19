@@ -1,0 +1,116 @@
+{
+  "agri_module": "services/agri-data-service/src/agri_data_service/warehouse/schemas/weather_forecast.py",
+  "contract": "weather-forecast",
+  "contract_section": "conductor/tracks/plantgeo_ml_service_20260918/spec.md FR-12 (the provider NWP lane)",
+  "fixture_version": 1,
+  "ml_module": "services/plantgeo-ml-service/src/plantgeo_ml_service/warehouse/weather_forecast.py",
+  "ml_symbol": "plantgeo_ml_service.warehouse.weather_forecast.WEATHER_FORECAST_SCHEMA",
+  "regenerate_with": "uv run --no-sync python scripts/regenerate_ml_schema_fixtures.py",
+  "shape": {
+    "columns": [
+      {
+        "name": "run_id",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "model_init_time",
+        "nullable": false,
+        "type": "timestamp[us, tz=UTC]"
+      },
+      {
+        "name": "provider_issue_time",
+        "nullable": true,
+        "type": "timestamp[us, tz=UTC]"
+      },
+      {
+        "name": "fetched_at",
+        "nullable": false,
+        "type": "timestamp[us, tz=UTC]"
+      },
+      {
+        "name": "admitted_at",
+        "nullable": false,
+        "type": "timestamp[us, tz=UTC]"
+      },
+      {
+        "name": "published_at",
+        "nullable": false,
+        "type": "timestamp[us, tz=UTC]"
+      },
+      {
+        "name": "valid_time",
+        "nullable": false,
+        "type": "timestamp[us, tz=UTC]"
+      },
+      {
+        "name": "interval_start",
+        "nullable": true,
+        "type": "timestamp[us, tz=UTC]"
+      },
+      {
+        "name": "interval_end",
+        "nullable": true,
+        "type": "timestamp[us, tz=UTC]"
+      },
+      {
+        "name": "lead_hours",
+        "nullable": false,
+        "type": "int16"
+      },
+      {
+        "name": "cell_id",
+        "nullable": true,
+        "type": "string"
+      },
+      {
+        "name": "latitude",
+        "nullable": false,
+        "type": "double"
+      },
+      {
+        "name": "longitude",
+        "nullable": false,
+        "type": "double"
+      },
+      {
+        "name": "variable",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "value",
+        "nullable": true,
+        "type": "double"
+      },
+      {
+        "name": "unit",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "statistic",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "support",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "missing_reason",
+        "nullable": true,
+        "type": "string"
+      }
+    ],
+    "compression": "zstd",
+    "sort_columns": [
+      "cell_id",
+      "valid_time",
+      "variable"
+    ],
+    "stream_name": "weather-forecast"
+  },
+  "written_by": "services/plantgeo-ml-service"
+}
