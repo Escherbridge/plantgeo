@@ -100,3 +100,21 @@ what proves the two services write comparable files. It reaches the sibling's pr
 `_serialize_parquet` on purpose, because the bytes that function writes ARE the contract and
 anything more public would compare something else. A pyarrow upgrade that changes the emitted bytes
 will fail it, and that is the correct signal: our files changed.
+
+## The kernel parity harness (`tests/kernels/`)
+
+A second, unrelated kind of parity: not "does this service agree with agri-data-service", but "does
+the Mojo translation of a kernel agree with its Python reference". `tests/fixtures/kernels/*.json`
+hold golden outputs written by the REFERENCE only (`scripts/regenerate_kernel_fixtures.py`), never
+by a Mojo build, because a fixture regenerated from the thing under test proves nothing. Floats are
+stored as `float.hex()` strings so the round trip loses no bit.
+
+`kernel_cases.py` defines the inputs and `kernel_harness.py` the two backends. The Mojo parameter
+is SKIPPED with a named reason when the extension is absent or was built for another platform, so
+a green Windows run and a green WSL2 run are told apart by reading the report. The skip is gated on
+an attempted LOAD, not on the file existing: a linux-64 `.so` built in WSL2 sits in the same
+worktree a Windows interpreter reads.
+
+Why the neighbour search and the bootstrap are bit-identical while the seasonal features carry a
+tolerance, and the three floating-point traps that cost a session, are in
+`src/plantgeo_ml_service/method/kernels/AGENTS.md`.

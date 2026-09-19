@@ -17,3 +17,10 @@ htmlcov/
 .env
 .venv/
 venv/
+
+# Mojo toolchain and build output. The compiled kernels are produced by `pixi run build-kernels`
+# in WSL2 or in the Docker `mojo-kernels-enabled` stage, and are never committed: they are
+# linux-64 binaries that would be stale the moment a kernel source changed.
+.pixi/
+__mojocache__/
+src/plantgeo_ml_service/method/kernels/_native/

@@ -41,8 +41,16 @@ DIGEST_FILES: Final[tuple[str, ...]] = ("pyproject.toml", "uv.lock", "mypy.ini",
 
 #: Build artifacts that differ between a developer tree and a Docker build context. Including them
 #: would make the receipt unverifiable rather than more honest.
+#: `_native` holds the compiled Mojo kernels and `__mojocache__` the compiler's scratch. They sit
+#: under `src/` so the interpreter finds them beside the dispatch that loads them, but they are
+#: build output: present in a WSL2 tree, present in the Docker runtime stage, absent on Windows,
+#: and never the same bytes twice. Hashing them would make the receipt unverifiable rather than
+#: more honest.
+#: The exclusion is by DIRECTORY only. `.so` is deliberately NOT an excluded suffix: a tree-wide
+#: suffix rule would let any future `.so` anywhere under `src/`, `tests/` or `scripts/` drop out
+#: of the digest silently, which is a hole in the gate rather than a build-artifact carve-out.
 EXCLUDED_DIRECTORY_NAMES: Final[frozenset[str]] = frozenset(
-    {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".ipynb_checkpoints"}
+    {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".ipynb_checkpoints", "_native", "__mojocache__"}
 )
 EXCLUDED_SUFFIXES: Final[frozenset[str]] = frozenset({".pyc", ".pyo", ".pyd"})
 

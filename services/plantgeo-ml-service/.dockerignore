@@ -36,3 +36,9 @@ logs
 *.pid
 .cache
 tmp
+
+# The pixi environment is ~2 GB of toolchain that the `mojo-kernels-enabled` stage installs for
+# itself; shipping it through the build context would be slower than rebuilding it.
+.pixi
+**/__mojocache__
+src/plantgeo_ml_service/method/kernels/_native

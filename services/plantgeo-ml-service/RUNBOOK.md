@@ -24,7 +24,12 @@ The service is complete without Mojo. `PLANTGEO_ML_KERNELS=python` is the defaul
 | 2A | Parquet path grammar, stream schemas, lane clocks, object store, DuckDB session, observed reader, availability publisher, expert label reader | written, sweep owed | monitor sweep, then `/code-review high` and one push |
 | 2B | fire-risk and spatial-KNN daily lanes, Monte Carlo dispatch | landed `bc08eca9` | sweep, review, push |
 | 2C | the four FR-8 routes, `predict-daily`, the cron image | written, sweep owed | monitor sweep, then `/code-review high` + `/security-review` on the query parsing |
-| 3 | Mojo kernels behind parity harnesses, pixi project, Docker Mojo stage | not started | phase 2; WSL2 + pixi on the dev box |
+| 3 | Mojo kernels behind parity harnesses, pixi project, Docker Mojo stage | written, built and parity-proven in WSL2 2026-09-19; sweep and receipt owed | monitor sweep, `/code-review high`, then one push; the Railway build of the Mojo stage is unproven |
+
+Phase 3 speed: `evidence/phase3-benchmark.md`. The kernel is 9.25x the per-query scikit-learn call
+pattern `find_analogs` used to have, but **batched scikit-learn (fitted once, all queries in one
+BLAS call) is still 7x faster than the kernel**, and the kernel has no batch entry point; if the
+AnEn lane ever batches, that headroom is a Python-side change, not a Mojo one.
 | 4 | platform wiring: agent forecast tool, slider forecast days, web env, fire-risk track activation | not started | phase 2 only; Mojo (phase 3) is an optimisation and never gates it (critic finding 11, 2026-09-18) |
 
 Immediately owed, in order:
@@ -82,10 +87,65 @@ Authors do not run the suite (owner rule 2026-08-25): an implementation pass pre
 fail and a monitor sweeps the combined tree. In a multi-fix pass, apply every fix first and sweep
 once.
 
-**From phase 3:** WSL2 plus `pixi` for the Mojo 1.0 toolchain, and a Mojo build stage in the
-Dockerfile. Windows has no native Mojo, so Python tests on Windows run against the pure-Python
-reference of every kernel and the parity harness runs in WSL2 and inside the Docker build. A skipped
-parity test names its reason; it never passes silently.
+**From phase 3, for the Mojo kernels only:** WSL2 (Ubuntu) plus `pixi`. Windows has no native
+Mojo build, so the kernels compile in WSL2 or in the Docker `mojo-kernels-enabled` stage, and
+Python tests on Windows run the pure-Python reference. A parity test with no Mojo build SKIPS with
+a named reason; it never passes silently. Under `PLANTGEO_ML_KERNELS=mojo` the same missing build
+is a FAILURE, not a skip: the operator said the native kernels are what runs, so a skip there
+would report green for a suite in which the kernels under test never executed.
+
+Exact versions proven on 2026-09-19 (`evidence/phase3-parity.json`):
+
+| piece | version |
+|---|---|
+| Mojo | **1.0.0 (ed45d567)**, pinned `mojo = "==1.0.0"` in `pixi.toml` |
+| channel | `https://conda.modular.com/max`, plus conda-forge |
+| pixi | 0.81.0 |
+| platform | `linux-64` only |
+| pixi environments on disk | 2.1 GB (`default` plus `bench`) |
+
+From the service root, inside WSL2:
+
+```
+curl -fsSL https://pixi.sh/install.sh | bash              # once; then use ~/.pixi/bin/pixi
+pixi run --locked build-kernels     # compile kernels/*.mojo into method/kernels/_native/
+pixi run --locked test-kernels      # the Mojo-side unit tests (Mojo 1.0 removed `mojo test`)
+pixi run --locked probe-kernels     # build, then fail unless parity with the reference holds
+pixi run --locked parity-receipt    # the same probe, writing evidence/phase3-parity.json
+pixi run bench-kernels              # Mojo KNN against scikit-learn brute force
+```
+
+**`pixi.lock` pins the toolchain, and `--locked` is what makes the pin real.** The lock is
+COMMITTED beside `pixi.toml`; only `.pixi/` (the ~2 GB solved environment) is gitignored.
+`--locked` refuses to run when the lock does not satisfy the manifest, so editing `pixi.toml`
+without re-locking fails loudly instead of silently re-solving to a different Mojo compiler than
+the one `evidence/phase3-parity.json` names the parity proof against. The `mojo-kernels-enabled`
+Docker stage copies `pixi.toml` AND `pixi.lock` and runs `pixi run --locked`, so a drifted lock
+fails the BUILD. After deliberately changing a dependency: `pixi lock` in WSL2, re-run
+`pixi run --locked probe-kernels`, and commit the new lock in the same change.
+
+**Never invoke a bare `mojo`.** On a Windows box with Strawberry Perl installed, `mojo` on the WSL
+PATH is Perl's Mojolicious. Always go through `pixi run`.
+
+**Never run a bare `uv` from WSL2 inside this worktree.** It rebuilds the Windows `.venv` in place
+for linux-64 and leaves a `lib64 -> lib` symlink that Windows `uv` then cannot remove (`Access is
+denied. (os error 5)`). Point it outside the tree instead, and recover with `rm -rf .venv` from
+WSL2 followed by `uv sync` on Windows:
+
+```
+UV_PROJECT_ENVIRONMENT=$HOME/plantgeo-ml-venv uv sync --locked --all-extras
+PLANTGEO_ML_KERNELS=python ~/plantgeo-ml-venv/bin/python -m pytest -q
+PLANTGEO_ML_KERNELS=mojo   ~/plantgeo-ml-venv/bin/python -m pytest -q
+```
+
+Selecting the implementation:
+
+- `PLANTGEO_ML_KERNELS=python` is the default everywhere, including inside the image, and is the
+  rollback. The service is complete without Mojo.
+- `PLANTGEO_ML_KERNELS=mojo` loads `method/kernels/_native/*.so` and REFUSES to start when they
+  are absent or were built for another platform. It never falls back quietly.
+- The Docker Mojo stage is OFF by default: build with `--build-arg MOJO_KERNELS=enabled` to turn
+  it on. It has been proven in WSL2 and NOT yet inside a Railway build.
 
 ## Health and readiness
 

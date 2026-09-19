@@ -1,0 +1,74 @@
+{
+  "failures": [],
+  "generated_at": "2026-09-19T16:27:58.080241+00:00",
+  "kernels": {
+    "knn_search": {
+      "distances": {
+        "bit_identical": true,
+        "max_absolute_deviation": 0.0,
+        "max_relative_deviation": 0.0
+      },
+      "indices_identical": true,
+      "requirement": "bit_identical",
+      "selected_count": 8
+    },
+    "knn_search_exact_ties": {
+      "distances": {
+        "bit_identical": true,
+        "max_absolute_deviation": 0.0,
+        "max_relative_deviation": 0.0
+      },
+      "indices_identical": true,
+      "requirement": "bit_identical",
+      "selected_count": 5,
+      "selected_count_identical": true
+    },
+    "knn_search_oversubscribed": {
+      "distances": {
+        "bit_identical": true,
+        "max_absolute_deviation": 0.0,
+        "max_relative_deviation": 0.0
+      },
+      "indices_identical": true,
+      "requirement": "bit_identical",
+      "selected_count": 5,
+      "selected_count_identical": true
+    },
+    "seasonal_bootstrap": {
+      "empirical_resample": {
+        "bit_identical": true,
+        "max_absolute_deviation": 0.0,
+        "max_relative_deviation": 0.0
+      },
+      "requirement": "bit_identical",
+      "scaled_and_clipped": {
+        "bit_identical": true,
+        "max_absolute_deviation": 0.0,
+        "max_relative_deviation": 0.0
+      }
+    },
+    "seasonal_features": {
+      "day_of_year_cosine": {
+        "bit_identical": true,
+        "max_absolute_deviation": 0.0,
+        "max_relative_deviation": 0.0
+      },
+      "day_of_year_sine": {
+        "bit_identical": true,
+        "max_absolute_deviation": 0.0,
+        "max_relative_deviation": 0.0
+      },
+      "photoperiod_seconds": {
+        "bit_identical": false,
+        "max_absolute_deviation": 1.4551915228366852e-11,
+        "max_relative_deviation": 2.5230231018439254e-16
+      },
+      "requirement": "day_of_year_sine and day_of_year_cosine within 1e-12 absolute; photoperiod_seconds within 1e-12 relative"
+    }
+  },
+  "mojo_version": "Mojo 1.0.0 (ed45d567)",
+  "numpy_version": "2.5.3",
+  "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+  "python_version": "3.12.14",
+  "verdict": "PASS"
+}

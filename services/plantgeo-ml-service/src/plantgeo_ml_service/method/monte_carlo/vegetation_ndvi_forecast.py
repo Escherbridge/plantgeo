@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Final
 import numpy
 from numpy.random import PCG64
 
+from plantgeo_ml_service.method.kernels import SeasonalBootstrapRequest, kernels
+
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
@@ -35,6 +37,14 @@ LOW_QUANTILE: Final = 0.1
 MEDIAN_QUANTILE: Final = 0.5
 HIGH_QUANTILE: Final = 0.9
 FLOAT_FINGERPRINT_FORMAT: Final = ".17g"
+
+#: The three published quantiles as the probabilities `numpy.percentile` would have derived from
+#: them. The round trip through percent is NOT redundant: `0.1 * 100.0 / 100.0` is
+#: 0.10000000000000002, and the kernel's linear interpolation is sensitive to that last bit.
+QUANTILE_PROBABILITIES: Final[NDArray[numpy.float64]] = numpy.true_divide(
+    numpy.asarray([LOW_QUANTILE * 100.0, MEDIAN_QUANTILE * 100.0, HIGH_QUANTILE * 100.0], dtype=numpy.float64),
+    100.0,
+)
 
 
 class InsufficientNdviHistoryError(ValueError):
@@ -407,17 +417,21 @@ def simulate_horizon_quantiles(
     horizon_offsets = numpy.arange(1, request.horizon_days + 1, dtype=numpy.float64)
     decay = numpy.power(history.daily_persistence, anchor_gap_days + horizon_offsets)
     innovation_scale = numpy.sqrt(numpy.maximum(1.0 - numpy.square(decay), 0.0))
+    # The RNG stays here and is never ported: the kernel consumes the index stream this seeded
+    # PCG64 produced, so a Mojo run and a numpy run resample the same members (spec FR-9).
     raw_draws = PCG64(int(checksum, 16)).random_raw(request.simulation_count * request.horizon_days)
     draw_matrix = numpy.asarray(raw_draws, dtype=numpy.uint64).reshape(request.simulation_count, request.horizon_days)
-    pool_indices = numpy.mod(draw_matrix, pool_sizes.astype(numpy.uint64)).astype(numpy.intp)
-    innovations = numpy.take_along_axis(padded_pools, pool_indices.T, axis=1).T
-    paths = seasonal_levels + decay * history.anchor_anomaly + innovation_scale * innovations
-    bounded = numpy.clip(paths, NDVI_LOWER_BOUND, NDVI_UPPER_BOUND)
-    low, median, high = numpy.percentile(
-        bounded,
-        [LOW_QUANTILE * 100.0, MEDIAN_QUANTILE * 100.0, HIGH_QUANTILE * 100.0],
-        axis=0,
-        method="linear",
+    pool_indices = numpy.mod(draw_matrix, pool_sizes.astype(numpy.uint64)).astype(numpy.int64)
+    low, median, high = kernels().seasonal_bootstrap(
+        SeasonalBootstrapRequest(
+            draw_indices=pool_indices,
+            innovation_pools=padded_pools,
+            path_offsets=seasonal_levels + decay * history.anchor_anomaly,
+            innovation_scales=innovation_scale,
+            lower_bound=NDVI_LOWER_BOUND,
+            upper_bound=NDVI_UPPER_BOUND,
+            quantile_probabilities=QUANTILE_PROBABILITIES,
+        )
     )
     return tuple(
         HorizonQuantiles(

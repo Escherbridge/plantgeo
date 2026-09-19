@@ -16,9 +16,9 @@ from datetime import date, timedelta
 from typing import TYPE_CHECKING, Final
 
 import numpy as np
-from sklearn.neighbors import NearestNeighbors
 
 from plantgeo_ml_service.foundation.canonical import canonical_json, sha256_digest, validate_finite
+from plantgeo_ml_service.method.kernels import NeighborSearchRequest, kernels
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -91,32 +91,29 @@ def find_analogs(  # noqa: PLR0913, PLR0917 - one parameter per search knob is t
         raise ValueError("horizon_days must not be negative")
 
     horizon_boundary = query_date - timedelta(days=horizon_days)
-    horizon_safe_mask = np.array([day < horizon_boundary for day in history_dates], dtype=bool)
-    exclusion_mask = np.array([abs((day - query_date).days) > exclusion_days for day in history_dates], dtype=bool)
-    valid_mask = horizon_safe_mask & exclusion_mask
-
-    if not np.any(valid_mask):
+    search = NeighborSearchRequest(
+        query_vector=query_vector,
+        candidate_matrix=history_matrix,
+        candidate_time_index=np.array([day.toordinal() for day in history_dates], dtype=np.int64),
+        feature_weights=feature_weights if feature_weights is not None else np.ones(history_matrix.shape[1]),
+        query_time_index=query_date.toordinal(),
+        horizon_boundary_index=horizon_boundary.toordinal(),
+        exclusion_days=exclusion_days,
+        neighbor_count=k,
+    )
+    if not bool(search.eligible_mask.any()):
         raise ValueError(
             f"No historical dates remain after applying the {horizon_days}-day horizon leakage "
             f"guard and the {exclusion_days}-day temporal exclusion window"
         )
 
-    valid_indices = np.flatnonzero(valid_mask)
-    valid_history = history_matrix[valid_mask]
-    valid_dates = [history_dates[int(index)] for index in valid_indices]
+    # Dispatched, so the same search runs in Mojo under `PLANTGEO_ML_KERNELS=mojo` and in numpy
+    # otherwise, with the two asserted bit-identical (spec FR-9). This replaced a brute-force
+    # scikit-learn `NearestNeighbors`; see `method/kernels/AGENTS.md` for what moved and why.
+    found = kernels().neighbor_search(search)
+    selected_dates = tuple(history_dates[int(index)] for index in found.candidate_indices)
 
-    weights = feature_weights if feature_weights is not None else np.ones(history_matrix.shape[1])
-    weighted_query = (query_vector * weights).reshape(1, -1)
-    weighted_history = valid_history * weights
-
-    neighbor_count = min(k, len(valid_dates))
-    neighbors = NearestNeighbors(n_neighbors=neighbor_count, algorithm="brute", metric="euclidean")
-    neighbors.fit(weighted_history)
-
-    distances, indices = neighbors.kneighbors(weighted_query)
-    selected_dates = tuple(valid_dates[index] for index in indices[0])
-
-    return distances[0], selected_dates
+    return found.distances, selected_dates
 
 
 def generate_anen_forecast(  # noqa: PLR0913, PLR0917 - one parameter per forecast input is the contract

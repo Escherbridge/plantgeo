@@ -1,0 +1,37 @@
+# Mojo toolchain for the numeric kernels (spec FR-9, decision D7).
+#
+# Linux-only on purpose: Mojo has no Windows build, so this project is driven from WSL2 locally and
+# from the `mojo-build` Docker stage on Railway. Nothing in the Python package needs it; see
+# `src/plantgeo_ml_service/method/kernels/AGENTS.md` for why the kernels stay optional.
+
+[workspace]
+name = "plantgeo-ml-kernels"
+version = "0.1.0"
+description = "Mojo numeric kernels for plantgeo-ml-service"
+channels = ["https://conda.modular.com/max", "conda-forge"]
+platforms = ["linux-64"]
+
+[dependencies]
+# Pinned to the exact 1.0.x the track chartered against. 1.1.0 exists (released 2026-09-10) and is
+# deliberately NOT taken here: the parity receipt in evidence/ names the compiler that produced it.
+mojo = "==1.0.0"
+python = "3.12.*"
+# The kernels themselves need nothing, but the parity probe the Docker build runs does, and a
+# probe that cannot run is not a gate.
+numpy = ">=2.0"
+
+[tasks]
+build-kernels = { cmd = "bash scripts/build_kernels.sh", description = "Compile every kernel to a Python extension module in method/kernels/_native/" }
+test-kernels = { cmd = "mojo run -I kernels kernels/tests/run_tests.mojo", description = "Run the Mojo-side unit tests" }
+probe-kernels = { cmd = "python scripts/kernel_parity_receipt.py --probe-only", depends-on = ["build-kernels"], description = "Fail unless the built kernels reproduce the Python reference" }
+parity-receipt = { cmd = "python scripts/kernel_parity_receipt.py", depends-on = ["build-kernels"], description = "Write evidence/phase3-parity.json" }
+
+[feature.bench.dependencies]
+scikit-learn = ">=1.5"
+
+[feature.bench.tasks]
+bench-kernels = { cmd = "python kernels/bench/bench_knn_search.py", description = "Mojo KNN against scikit-learn brute force on the 1,568 x 20 pilot" }
+
+[environments]
+default = { features = [], solve-group = "kernels" }
+bench = { features = ["bench"], solve-group = "kernels" }

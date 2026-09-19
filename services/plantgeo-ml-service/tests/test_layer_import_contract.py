@@ -88,7 +88,11 @@ ROOT_FORBIDDEN_IMPORTS: Final[frozenset[str]] = frozenset(
 #: share a layer directory. `method/ml` and `method/monte_carlo` are siblings that never import each
 #: other; `method/kernels` is stricter than either.
 SUBPACKAGE_FORBIDDEN_IMPORTS: Final[dict[str, frozenset[str]]] = {
-    "method/monte_carlo": frozenset({"plantgeo_ml_service.method.ml", "plantgeo_ml_service.method.kernels"}),
+    # `method/kernels` is BELOW both siblings, not beside them: it is the one place the Mojo
+    # dispatch lives, and both estimator families call it (phase 3, spec FR-9). The rule that
+    # matters is the reverse edge, which `method/kernels` below still forbids, so the lattice
+    # stays a lattice and `kernels` can never reach back into a lane.
+    "method/monte_carlo": frozenset({"plantgeo_ml_service.method.ml"}),
     "method/ml": frozenset({"plantgeo_ml_service.method.monte_carlo"}),
     "method/kernels": frozenset(
         {

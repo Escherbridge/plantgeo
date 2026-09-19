@@ -43,6 +43,8 @@ from typing import TYPE_CHECKING, Final
 import numpy
 from numpy.random import PCG64, Generator
 
+from plantgeo_ml_service.method.kernels import SeasonalBootstrapRequest, kernels
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -81,6 +83,14 @@ LOW_QUANTILE: Final = 0.1
 MEDIAN_QUANTILE: Final = 0.5
 HIGH_QUANTILE: Final = 0.9
 PUBLISHED_QUANTILES: Final[tuple[float, ...]] = (LOW_QUANTILE, MEDIAN_QUANTILE, HIGH_QUANTILE)
+
+#: The same three quantiles as the probabilities `numpy.percentile` would have derived from them.
+#: The round trip through percent is NOT redundant: `0.1 * 100.0 / 100.0` is 0.10000000000000002,
+#: and the kernel's linear interpolation is sensitive to that last bit, so this reproduces the
+#: published values rather than the mathematically tidier ones.
+QUANTILE_PROBABILITIES: Final[NDArray[numpy.float64]] = numpy.true_divide(
+    numpy.asarray([quantile * 100.0 for quantile in PUBLISHED_QUANTILES], dtype=numpy.float64), 100.0
+)
 FLOAT_FINGERPRINT_FORMAT: Final = ".17g"
 
 # Measured against production 2026-08-11 (docs/lanes/weather-observations.md section 2):
@@ -570,10 +580,24 @@ def _value_pools(
     return padded, pool_sizes
 
 
-def _quantile_rows(draws: NDArray[numpy.float64], valid_days: tuple[date, ...]) -> tuple[ForecastQuantileRow, ...]:
-    quantile_matrix = numpy.percentile(
-        draws, [quantile * 100.0 for quantile in PUBLISHED_QUANTILES], axis=0, method="linear"
-    )
+def _draw_indices(request: SimulationRequest, pool_sizes: NDArray[numpy.int64]) -> NDArray[numpy.int64]:
+    """Return the seeded resampling stream, one index per simulation per horizon day.
+
+    The RNG stays HERE and is never ported: the kernel consumes this array, so a Mojo run and a
+    numpy run resample the same members and the recorded `random_seed` remains the one handle that
+    reproduces the ensemble (spec FR-9). The per-step draw order is what the seed means, so this
+    loop's shape is a contract, not an implementation detail.
+    """
+    rng = Generator(PCG64(request.seed))
+    indices = numpy.empty((request.simulation_count, request.horizon_days), dtype=numpy.int64)
+    for step in range(request.horizon_days):
+        indices[:, step] = rng.integers(0, int(pool_sizes[step]), size=request.simulation_count)
+    return indices
+
+
+def _quantile_rows(
+    quantile_matrix: NDArray[numpy.float64], valid_days: tuple[date, ...]
+) -> tuple[ForecastQuantileRow, ...]:
     rows: list[ForecastQuantileRow] = []
     for step, valid_day in enumerate(valid_days):
         rows.extend(
@@ -604,16 +628,18 @@ def simulate_additive_anomaly_quantiles(
     horizon_offsets = numpy.arange(1, request.horizon_days + 1, dtype=numpy.float64)
     decay = numpy.power(history.daily_persistence, anchor_gap_days + horizon_offsets)
     innovation_scale = numpy.sqrt(numpy.maximum(1.0 - numpy.square(decay), 0.0))
-    rng = Generator(PCG64(request.seed))
-    draws = numpy.empty((request.simulation_count, request.horizon_days), dtype=numpy.float64)
-    for step in range(request.horizon_days):
-        indices = rng.integers(0, int(pool_sizes[step]), size=request.simulation_count)
-        draws[:, step] = padded_pools[step, indices]
-    paths = seasonal_levels + decay * history.anchor_anomaly + innovation_scale * draws
-    lower = spec.lower_bound if spec.lower_bound is not None else -numpy.inf
-    upper = spec.upper_bound if spec.upper_bound is not None else numpy.inf
-    bounded = numpy.clip(paths, lower, upper)
-    return _quantile_rows(bounded, valid_days)
+    quantile_matrix = kernels().seasonal_bootstrap(
+        SeasonalBootstrapRequest(
+            draw_indices=_draw_indices(request, pool_sizes),
+            innovation_pools=padded_pools,
+            path_offsets=seasonal_levels + decay * history.anchor_anomaly,
+            innovation_scales=innovation_scale,
+            lower_bound=spec.lower_bound if spec.lower_bound is not None else -numpy.inf,
+            upper_bound=spec.upper_bound if spec.upper_bound is not None else numpy.inf,
+            quantile_probabilities=QUANTILE_PROBABILITIES,
+        )
+    )
+    return _quantile_rows(quantile_matrix, valid_days)
 
 
 def simulate_empirical_resample_quantiles(
@@ -627,12 +653,20 @@ def simulate_empirical_resample_quantiles(
     """
     valid_days = tuple(pool.cutoff_day + timedelta(days=step) for step in range(1, request.horizon_days + 1))
     padded_pools, pool_sizes = _value_pools(pool, valid_days)
-    rng = Generator(PCG64(request.seed))
-    draws = numpy.empty((request.simulation_count, request.horizon_days), dtype=numpy.float64)
-    for step in range(request.horizon_days):
-        indices = rng.integers(0, int(pool_sizes[step]), size=request.simulation_count)
-        draws[:, step] = padded_pools[step, indices]
-    return _quantile_rows(draws, valid_days)
+    # An empirical resample is the same kernel with nothing added, nothing scaled and nothing
+    # clipped: every draw is already a value the record produced at that time of year.
+    quantile_matrix = kernels().seasonal_bootstrap(
+        SeasonalBootstrapRequest(
+            draw_indices=_draw_indices(request, pool_sizes),
+            innovation_pools=padded_pools,
+            path_offsets=numpy.zeros(request.horizon_days, dtype=numpy.float64),
+            innovation_scales=numpy.ones(request.horizon_days, dtype=numpy.float64),
+            lower_bound=-numpy.inf,
+            upper_bound=numpy.inf,
+            quantile_probabilities=QUANTILE_PROBABILITIES,
+        )
+    )
+    return _quantile_rows(quantile_matrix, valid_days)
 
 
 def simulate_signal_forecast(

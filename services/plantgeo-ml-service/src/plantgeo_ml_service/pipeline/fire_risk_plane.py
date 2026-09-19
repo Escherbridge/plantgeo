@@ -11,9 +11,11 @@ import math
 from datetime import timedelta
 from typing import TYPE_CHECKING, Final
 
+import numpy
 import polars as pl
 
 from plantgeo_ml_service.foundation.canonical import canonical_json, sha256_digest
+from plantgeo_ml_service.method.kernels import SeasonalFeatureRequest, kernels
 
 if TYPE_CHECKING:
     from datetime import date
@@ -89,19 +91,32 @@ def crossed_with_horizons(cells: pl.DataFrame, *, issued_on: date, horizons: tup
 
 
 def with_seasonality(frame: pl.DataFrame) -> pl.DataFrame:
-    """Add the mandatory cyclical day-of-year pair and the computed photoperiod."""
-    year = pl.col("valid_day").dt.year()
-    is_leap = ((year % 4 == 0) & ((year % 100 != 0) | (year % 400 == 0))).cast(pl.Float64)
-    year_length = is_leap * float(DAYS_PER_LEAP_YEAR) + (1.0 - is_leap) * float(DAYS_PER_COMMON_YEAR)
-    ordinal_day = pl.col("valid_day").dt.ordinal_day().cast(pl.Float64)
-    angle = (ordinal_day - 1.0) * (2.0 * math.pi) / year_length
-    declination = (ordinal_day * (2.0 * math.pi / DAYS_PER_COMMON_YEAR) - 1.39).sin() * 0.409
-    cosine = -(pl.col("cell_latitude") * (math.pi / 180.0)).tan() * declination.tan()
-    sunset_hour_angle = cosine.clip(-1.0, 1.0).arccos()
+    """Add the mandatory cyclical day-of-year pair and the computed photoperiod.
+
+    Computed by `method/kernels`, not by a Polars expression chain: the kernel is the one published
+    definition of this arithmetic and is asserted against the two scalar helpers above, so a
+    Mojo run, a numpy run and `photoperiod_seconds(latitude, day)` can no longer drift apart.
+    """
+    if frame.height == 0:
+        return frame.with_columns(
+            pl.lit(None, dtype=pl.Float64).alias("day_of_year_sine"),
+            pl.lit(None, dtype=pl.Float64).alias("day_of_year_cosine"),
+            pl.lit(None, dtype=pl.Float64).alias("photoperiod_seconds"),
+        )
+    valid_days = frame.get_column("valid_day")
+    years = valid_days.dt.year().to_numpy()
+    leap = (years % 4 == 0) & ((years % 100 != 0) | (years % 400 == 0))
+    features = kernels().seasonal_features(
+        SeasonalFeatureRequest(
+            ordinal_days=valid_days.dt.ordinal_day().to_numpy().astype(numpy.int64),
+            year_lengths=numpy.where(leap, float(DAYS_PER_LEAP_YEAR), float(DAYS_PER_COMMON_YEAR)),
+            latitudes=frame.get_column("cell_latitude").to_numpy().astype(numpy.float64),
+        )
+    )
     return frame.with_columns(
-        angle.sin().alias("day_of_year_sine"),
-        angle.cos().alias("day_of_year_cosine"),
-        (sunset_hour_angle * (HOURS_PER_DAY / math.pi * SECONDS_PER_HOUR)).alias("photoperiod_seconds"),
+        pl.Series("day_of_year_sine", features.day_of_year_sine, dtype=pl.Float64),
+        pl.Series("day_of_year_cosine", features.day_of_year_cosine, dtype=pl.Float64),
+        pl.Series("photoperiod_seconds", features.photoperiod_seconds, dtype=pl.Float64),
     )
 
 

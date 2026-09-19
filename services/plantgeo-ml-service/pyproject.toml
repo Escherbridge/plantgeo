@@ -43,6 +43,10 @@ plantgeo-ml = "plantgeo_ml_service.interface.cli:cli"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/plantgeo_ml_service"]
+# The compiled Mojo kernels are gitignored build output, and hatchling honours VCS ignore rules,
+# so without this line the wheel the Docker runtime stage installs would silently omit them and
+# `PLANTGEO_ML_KERNELS=mojo` would refuse to start inside an image that did build them.
+artifacts = ["src/plantgeo_ml_service/method/kernels/_native/*.so"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
