@@ -313,11 +313,16 @@ export function buildParquetLayerFaults(input: ParquetLayerFaultInput): ParquetL
             : "No GBIF occurrence points were returned for this viewport and current filters.",
         }
       : null,
-    // What the proxy lane reports about the UBC detail layer, in the one wording
-    // `describeBotanicalOccurrencesState` owns -- including "a coarser rung answered than this
-    // zoom asked for", which is the visible half of the 2026-09-18 rung-select decision. A
-    // `notice`: a rung substitution and a stale frame are both real answers, not outages.
-    botanical.occurrencesVisible &&
+    // What the proxy lane reports, in the one wording `describeBotanicalOccurrencesState` owns --
+    // including "a coarser rung answered than this zoom asked for", which is the visible half of
+    // the 2026-09-18 rung-select decision. A `notice`: a rung substitution and a stale frame are
+    // both real answers, not outages.
+    //
+    // Gated on EITHER toggle, not just `occurrencesVisible` (W8-D, 2026-09-18): GBIF now reads
+    // this same lane, so a GBIF-only viewer must also be told when it errors or substitutes a
+    // rung -- without this a reader with only GBIF on and a failed proxy read would see silence
+    // instead of a fault, since `gbif-empty` only speaks about a SETTLED (success/empty) read.
+    (botanical.occurrencesVisible || botanical.gbifVisible) &&
     botanical.band === "detail" &&
     botanical.viewportCaption !== null
       ? {
