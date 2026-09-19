@@ -257,8 +257,10 @@ to both the observer and `liveViewportRead`, and the raw result is not exported.
 retained frame at all — `answer` is withheld (`:216-236`), and there is no other binding to reach
 it through, so a conjunct added to the enablement propagates without any consumer changing.
 
-A NEW hook here cannot quietly hand one back either, and the half that enforces that is the TYPE,
-not the lint rule. Each of the five is annotated `LiveViewportRead<EnvironmentalAnswers[...]>`
+A NEW hook here cannot quietly hand one back **once it carries the return annotation**, and the half
+that enforces that is the TYPE, not the lint rule. An unannotated new hook in the house idiom escapes
+both halves — `tsc` clean, lint silent — so **write the annotation first**; nothing in the build
+checks that you did. Each of the five is annotated `LiveViewportRead<EnvironmentalAnswers[...]>`
 (`useViewportProxiedLayers.ts:144-154` for the answer types; the annotations at `:262`, `:303`,
 `:354`, `:444`, `:535`), and a react-query result has neither `answer` nor `isAnswerLive`, so all
 four ways of leaking one — `return trpc….useQuery(…)`, `const query = …; return query;`,
