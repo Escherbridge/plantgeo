@@ -12,6 +12,11 @@ from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Final, Literal
 
 from plantgeo_ml_service.method.ml.recommendation_models import EVALUATION_DISCLAIMER, EVALUATION_LABEL
+from plantgeo_ml_service.warehouse.lanes import (
+    SERVING_PATH_FORECAST_KIND,
+    SERVING_PATH_RELEASE_SERIES,
+    ServingPath,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -35,18 +40,23 @@ PARAM_LAYER: Final = "layer"
 PARAM_CELL_ID: Final = "cell_id"
 PARAM_ORIGIN: Final = "origin"
 
-#: WHERE a lane's future days live, stated on the wire so the web picks its day-axis path without
-#: inferring one from a lane slug it would then have to keep in sync.
-#:
-#: - `forecast_kind`: the future is `layer=<slug>/kind=forecast`, one partition per VALID day.
-#: - `release_series`: the future is inside the `kind=observed` ISSUE-day file, as `valid_time`
-#:   rows. `weather-forecast` alone, by the `layer-lanes.md` section 2 carve-out amended
-#:   2026-09-19: a provider run is deterministic, so a `kind=forecast` partition would have to
-#:   invent the ensemble provenance that stream requires.
-SERVING_PATH_FORECAST_KIND: Final = "forecast_kind"
-SERVING_PATH_RELEASE_SERIES: Final = "release_series"
+# `SERVING_PATH_FORECAST_KIND`, `SERVING_PATH_RELEASE_SERIES` and `ServingPath` are imported above
+# and re-exported here: the wire STATES where a lane's future days live so the web picks its
+# day-axis without inferring one from a slug, but `warehouse/lanes.py` DECIDES it. One rule, one
+# place -- a second spelling here is how a release-series lane came to be read off the reserved
+# `kind=forecast` root (`layer-lanes.md` section 2 carve-out, amended 2026-09-19).
 
-type ServingPath = Literal["forecast_kind", "release_series"]
+#: WHAT A BODY IS, stated positively, because a content absence is a 200 and a status code alone
+#: cannot tell one from an answer. Additive: nothing that already rides on a body moved or changed.
+#:
+#: - `content`: the payload carries rows or a value, and `error` is null.
+#: - `absent`: the warehouse holds nothing for this question. A 200 carrying `error`.
+#: - `refused`: serving or the request was at fault, at a 4xx/5xx status.
+type Outcome = Literal["content", "absent", "refused"]
+
+OUTCOME_CONTENT: Final[Outcome] = "content"
+OUTCOME_ABSENT: Final[Outcome] = "absent"
+OUTCOME_REFUSED: Final[Outcome] = "refused"
 
 #: Why a response names no artifact digest. A REASON rather than a bare null, because "we have no
 #: artifact" and "this answer was produced without one" are different claims about the same field.
@@ -132,8 +142,15 @@ def unresolved_claim(reason: str = ARTIFACT_ABSENT_READ_REFUSED) -> ClaimProvena
 
 
 def answer(payload: Mapping[str, object], *, claim: ClaimProvenance) -> dict[str, object]:
-    """Return one answered body: the payload plus the claim block, with `error` explicitly null."""
-    return {**dict(payload), **claim.to_wire(), "error": None}
+    """Return one answered body: the payload, the claim block, `outcome: content`, `error` null."""
+    return {**dict(payload), **claim.to_wire(), "outcome": OUTCOME_CONTENT, "error": None}
+
+
+def refusal(error: Mapping[str, object], *, outcome: Outcome, claim: ClaimProvenance) -> dict[str, object]:
+    """Return one refused body: the claim block is never dropped and `outcome` names which refusal it is."""
+    if outcome == OUTCOME_CONTENT:
+        raise ValueError("a refusal body may not claim the `content` outcome; that is what `answer` renders")
+    return {**claim.to_wire(), "outcome": outcome, **dict(error)}
 
 
 __all__ = [
@@ -144,6 +161,9 @@ __all__ = [
     "BASE_PATH",
     "CLAIM_TIER",
     "EVALUATION_DISCLAIMER",
+    "OUTCOME_ABSENT",
+    "OUTCOME_CONTENT",
+    "OUTCOME_REFUSED",
     "PARAM_CELL_ID",
     "PARAM_DAY",
     "PARAM_LATITUDE",
@@ -157,8 +177,10 @@ __all__ = [
     "SERVING_PATH_FORECAST_KIND",
     "SERVING_PATH_RELEASE_SERIES",
     "ClaimProvenance",
+    "Outcome",
     "ServingPath",
     "answer",
+    "refusal",
     "render_day",
     "render_instant",
     "render_row",

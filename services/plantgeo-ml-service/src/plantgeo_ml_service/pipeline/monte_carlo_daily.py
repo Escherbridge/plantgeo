@@ -78,7 +78,7 @@ STEM_LAYERS: Final[Mapping[str, str]] = {
 
 #: Where FR-7 keeps this service's Analog Ensemble artifacts. Its presence is what decides whether
 #: the `signal` lane is forecast by AnEn or by the Monte Carlo forecaster.
-ANALOG_ENSEMBLE_ARTIFACT_PREFIX: Final = "ml/artifacts/analog_ensemble/"
+ANALOG_ENSEMBLE_ARTIFACT_PREFIX: Final = "ml/artifacts/analog-ensemble/"
 
 ANALOG_ENSEMBLE_FORECASTER: Final = "analog_ensemble"
 MONTE_CARLO_FORECASTER: Final = "monte_carlo"

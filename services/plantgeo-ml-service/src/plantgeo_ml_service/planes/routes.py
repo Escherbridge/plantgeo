@@ -38,12 +38,15 @@ from plantgeo_ml_service.planes.query_models import (
 )
 from plantgeo_ml_service.planes.wire import (
     BASE_PATH,
+    OUTCOME_ABSENT,
+    OUTCOME_REFUSED,
     ROUTE_ANALOGS,
     ROUTE_ARTIFACTS,
     ROUTE_FIRE_RISK,
     ROUTE_FORECAST_SUMMARY,
     ClaimProvenance,
     answer,
+    refusal,
     unresolved_claim,
 )
 
@@ -309,7 +312,7 @@ async def read_forecast(request: Request) -> HTTPResponse:
 
 @machine_learning_bp.get(f"/{ROUTE_ARTIFACTS}/<kind:str>")
 async def read_artifacts(_request: Request, kind: str) -> HTTPResponse:
-    """Every artifact one model kind has published, bounded, with digests and training windows."""
+    """Every artifact one model kind has published: `kind` is `analog-ensemble` or `fire-risk`, verbatim."""
     try:
         path = ArtifactKindPath.model_validate({"kind": kind})
     except ValidationError as error:
@@ -415,14 +418,17 @@ def _rejected(error: ValidationError | refusals.MachineLearningRefusalError, rou
 
 def _invalid(error: ValidationError) -> HTTPResponse:
     """Render a rejected request: the caller, not the warehouse, was wrong."""
-    body = {
-        **unresolved_claim().to_wire(),
-        "error": {
-            "code": refusals.INVALID_REQUEST,
-            "message": "one or more query parameters were rejected",
-            "fields": field_errors(error),
+    body = refusal(
+        {
+            "error": {
+                "code": refusals.INVALID_REQUEST,
+                "message": "one or more query parameters were rejected",
+                "fields": field_errors(error),
+            }
         },
-    }
+        outcome=OUTCOME_REFUSED,
+        claim=unresolved_claim(),
+    )
     return json(body, status=HTTP_BAD_REQUEST)
 
 
@@ -435,7 +441,9 @@ def _refused(error: refusals.MachineLearningRefusalError, route: str) -> HTTPRes
         if error.code not in REFUSAL_HTTP_STATUS:
             logger.error("machine_learning_refusal_status_unmapped", route=route, code=error.code)
     logger.warning("machine_learning_read_refused", route=route, code=error.code, status=status)
-    return json({**unresolved_claim().to_wire(), **error.to_wire()}, status=status)
+    # `absent` is a statement about the WAREHOUSE at a 200; `refused` is a transport-status fault.
+    outcome = OUTCOME_ABSENT if status == HTTP_OK else OUTCOME_REFUSED
+    return json(refusal(error.to_wire(), outcome=outcome, claim=unresolved_claim()), status=status)
 
 
 __all__ = [

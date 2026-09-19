@@ -41,7 +41,6 @@ from plantgeo_ml_service.pipeline.forecast_lane_documents import (
     read_lane_bootstrap_receipt,
 )
 from plantgeo_ml_service.pipeline.forecast_lane_rungs import (
-    FORECAST_KIND,
     FORECAST_TIER_DERIVATIONS,
     TIER_PITCH_MICRO_DEGREES,
     ColumnAggregation,
@@ -60,7 +59,7 @@ from plantgeo_ml_service.warehouse.availability import (
     EvidenceReceipt,
     lane_identity_for,
 )
-from plantgeo_ml_service.warehouse.lanes import settled_through
+from plantgeo_ml_service.warehouse.lanes import forecast_root_kind, settled_through
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -149,7 +148,7 @@ def write_forecast_day(  # noqa: PLR0913 - one keyword per partition identity fi
         part = store.write_partition(
             rung_frame.to_arrow(),
             layer=layer,
-            kind=FORECAST_KIND,
+            kind=forecast_root_kind(layer),
             zoom=zoom,
             day=day,
         )
@@ -162,7 +161,7 @@ def write_forecast_day(  # noqa: PLR0913 - one keyword per partition identity fi
                 parts=completed_parts_from((part,)),
             ),
             layer=layer,
-            kind=FORECAST_KIND,
+            kind=forecast_root_kind(layer),
             zoom=zoom,
             day=day,
         )
@@ -191,7 +190,9 @@ def write_run_receipt(
     """
     body = canonical_json(dict(payload)).encode("utf-8")
     digest = sha256_digest(body)
-    relative_path = f"{availability_lane_root(layer, FORECAST_KIND)}/availability/runs/run={forecast_run_id}.json"
+    relative_path = (
+        f"{availability_lane_root(layer, forecast_root_kind(layer))}/availability/runs/run={forecast_run_id}.json"
+    )
     store.put_immutable(relative_path, body, content_type=JSON_CONTENT_TYPE)
     return EvidenceReceipt(key=relative_path, sha256=digest)
 
@@ -210,7 +211,7 @@ def terminal_rows_for_day(
     across its rungs is refused by the publisher, because it would be selectable at one resolution
     and absent at another.
     """
-    identity = lane_identity_for(layer, FORECAST_KIND, verified_source_inventory_root=source_receipt.sha256)
+    identity = lane_identity_for(layer, forecast_root_kind(layer), verified_source_inventory_root=source_receipt.sha256)
     return terminal_rows_for_identity(
         written,
         identity=identity,
@@ -402,7 +403,9 @@ def bootstrap_forecast_lane(  # noqa: PLR0913 - one keyword per bootstrap bounda
     return bootstrap_lane(
         store,
         rows,
-        identity=lane_identity_for(layer, FORECAST_KIND, verified_source_inventory_root=source_receipt.sha256),
+        identity=lane_identity_for(
+            layer, forecast_root_kind(layer), verified_source_inventory_root=source_receipt.sha256
+        ),
         source_receipt=source_receipt,
         source_ceiling=source_ceiling,
         created_at=created_at,
@@ -411,7 +414,7 @@ def bootstrap_forecast_lane(  # noqa: PLR0913 - one keyword per bootstrap bounda
 
 def read_bootstrap_receipt(store: ObjectStore, *, layer: str) -> EvidenceReceipt | None:
     """Return the `kind=forecast` bootstrap receipt of one layer, or `None` when it has none."""
-    return read_lane_bootstrap_receipt(store, lane_root=availability_lane_root(layer, FORECAST_KIND))
+    return read_lane_bootstrap_receipt(store, lane_root=availability_lane_root(layer, forecast_root_kind(layer)))
 
 
 def publish_forecast_day(  # noqa: PLR0913 - one keyword per publication boundary is the contract
@@ -425,7 +428,7 @@ def publish_forecast_day(  # noqa: PLR0913 - one keyword per publication boundar
 ) -> PublicationReceipt:
     """Build this issue's generation from its terminal rows and advance the lane pointer onto it."""
     generation = build_generation(config, rows, created_at=created_at)
-    return publish_generation(store, pointers, generation, layer=layer, kind=FORECAST_KIND)
+    return publish_generation(store, pointers, generation, layer=layer, kind=forecast_root_kind(layer))
 
 
 def availability_config_for(
@@ -437,7 +440,9 @@ def availability_config_for(
 ) -> AvailabilityConfig:
     """Bind one lane's identity, its current ceiling and its immutable bootstrap into one config."""
     return AvailabilityConfig(
-        identity=lane_identity_for(layer, FORECAST_KIND, verified_source_inventory_root=source_receipt.sha256),
+        identity=lane_identity_for(
+            layer, forecast_root_kind(layer), verified_source_inventory_root=source_receipt.sha256
+        ),
         source_ceiling=source_ceiling,
         bootstrap_receipt=bootstrap_receipt,
     )
@@ -445,7 +450,6 @@ def availability_config_for(
 
 __all__ = [
     "BOOTSTRAP_MARKER_SCHEMA_VERSION",
-    "FORECAST_KIND",
     "FORECAST_TIER_DERIVATIONS",
     "SYSTEM_BOOTSTRAP_SCHEMA_VERSION",
     "TIER_PITCH_MICRO_DEGREES",

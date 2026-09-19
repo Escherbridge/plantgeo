@@ -13,7 +13,7 @@ from serving_harness import MOMENT, body_of, build_serving, mount, publish_lane,
 from plantgeo_ml_service.pipeline.forecast_lane_bootstrap import write_forecast_day
 from plantgeo_ml_service.planes import refusals
 from plantgeo_ml_service.planes.routes import read_fire_risk
-from plantgeo_ml_service.planes.wire import CLAIM_TIER, EVALUATION_DISCLAIMER
+from plantgeo_ml_service.planes.wire import CLAIM_TIER, EVALUATION_DISCLAIMER, OUTCOME_ABSENT, OUTCOME_CONTENT
 from plantgeo_ml_service.warehouse.streams import FIRE_RISK_STREAM, POINT_QUANTILE, stream_schema
 
 if TYPE_CHECKING:
@@ -96,6 +96,7 @@ async def test_a_scored_cell_answers_with_its_probability_and_its_artifact(harne
 
     assert response.status == HTTP_OK
     assert body["error"] is None
+    assert body["outcome"] == OUTCOME_CONTENT
     assert body["probability"] == pytest.approx(0.25)
     assert body["stratum"] == "shrubland"
     assert body["refused_reason"] is None
@@ -143,6 +144,7 @@ async def test_a_day_outside_the_published_generation_is_a_typed_refusal_rather_
     body = body_of(response)
 
     assert response.status == HTTP_OK
+    assert body["outcome"] == OUTCOME_ABSENT
     assert body["error"]["code"] == refusals.AVAILABILITY_DAY_NOT_COVERED
     assert body["claim_tier"] == CLAIM_TIER
 

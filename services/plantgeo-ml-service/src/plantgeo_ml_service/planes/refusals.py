@@ -114,16 +114,21 @@ def cell_series_absent(*, layer: str, cell_id: str, origin: str) -> MachineLearn
     )
 
 
-def availability_unpublished(*, layer: str) -> MachineLearningRefusalError:
-    """The lane has no availability pointer, so no day of it is selectable (FR-4a)."""
+def availability_unpublished(*, layer: str, kind: str) -> MachineLearningRefusalError:
+    """The lane has no availability pointer, so no day of it is selectable (FR-4a).
+
+    `kind` is the root this read ACTUALLY consulted, never the literal `forecast`: a release-series
+    lane publishes under `kind=observed`, and a message naming the reserved root sent an operator
+    looking for a pointer nothing writes.
+    """
     return MachineLearningRefusalError(
         AVAILABILITY_UNPUBLISHED,
-        f"{layer} kind=forecast has no availability pointer; writing a partition does not publish it, so no day "
+        f"{layer} kind={kind} has no availability pointer; writing a partition does not publish it, so no day "
         "of this lane is selectable yet",
     )
 
 
-def availability_malformed(*, layer: str, detail: str) -> MachineLearningRefusalError:
+def availability_malformed(*, layer: str, kind: str, detail: str) -> MachineLearningRefusalError:
     """The pointer exists and is not a pointer this reader can trust.
 
     `detail` names the SHAPE that failed, never the object key that held it: a key in a public body
@@ -131,26 +136,26 @@ def availability_malformed(*, layer: str, detail: str) -> MachineLearningRefusal
     """
     return MachineLearningRefusalError(
         AVAILABILITY_MALFORMED,
-        f"{layer} kind=forecast carries an availability pointer this reader cannot decode ({detail}); a pointer "
+        f"{layer} kind={kind} carries an availability pointer this reader cannot decode ({detail}); a pointer "
         "that does not parse proves nothing about the days it names",
     )
 
 
-def availability_day_not_covered(*, layer: str, day: str, detail: str) -> MachineLearningRefusalError:
+def availability_day_not_covered(*, layer: str, kind: str, day: str, detail: str) -> MachineLearningRefusalError:
     """The pointer is healthy and the day asked for sits outside the generation it names."""
     return MachineLearningRefusalError(
         AVAILABILITY_DAY_NOT_COVERED,
-        f"{layer} kind=forecast publishes {detail}, which does not cover {day}; a day outside the published "
+        f"{layer} kind={kind} publishes {detail}, which does not cover {day}; a day outside the published "
         "generation is not selectable even when part files exist under its prefix",
     )
 
 
-def availability_no_published_day(*, layer: str) -> MachineLearningRefusalError:
+def availability_no_published_day(*, layer: str, kind: str) -> MachineLearningRefusalError:
     """The generation parses and every day in it is owed or absented, so it publishes nothing."""
     return MachineLearningRefusalError(
         AVAILABILITY_NO_PUBLISHED_DAY,
-        f"{layer}'s current generation carries no day in the published terminal state; a lane whose every day "
-        "is a governed absence has published a decision, not a forecast",
+        f"{layer}'s current kind={kind} generation carries no day in the published terminal state; a lane whose "
+        "every day is a governed absence has published a decision, not a forecast",
     )
 
 

@@ -26,8 +26,6 @@ if TYPE_CHECKING:
     from plantgeo_ml_service.foundation.parquet_paths import PartitionKind
     from plantgeo_ml_service.pipeline.object_store import ReadOnlyObjectStore
 
-FORECAST_KIND: Final[PartitionKind] = "forecast"
-
 #: The terminal state a day must carry to count toward the published horizon. A governed absence is
 #: a published DECISION and not a published day: counting it would make a run that forecast three of
 #: its thirty horizons read as a thirty-day run.
@@ -98,38 +96,43 @@ def read_lane_availability(
     store: ReadOnlyObjectStore,
     *,
     layer: str,
-    kind: PartitionKind = FORECAST_KIND,
+    kind: PartitionKind,
     generation_days: GenerationDays = "forecast_days",
 ) -> LaneAvailability:
-    """Read one lane's pointer and the generation it names, or refuse with a typed reason."""
+    """Read one lane's pointer and the generation it names, or refuse with a typed reason.
+
+    `kind` is REQUIRED: the root a lane publishes under is a property of the lane
+    (`warehouse/lanes.forecast_root_kind`), and a default here is how a release-series lane came to
+    be judged against a `kind=forecast` root nothing writes.
+    """
     pointer_key = availability_pointer_path(layer, kind)
     payload = store.read_object(pointer_key)
     if payload is None:
-        raise refusals.availability_unpublished(layer=layer)
-    document = _decoded_pointer(payload, layer=layer)
-    generation_key = _text(document, "generation_key", layer=layer)
-    earliest = _day(document, "earliest_terminal_day", layer=layer)
-    newest_published = _newest_published_day(store, generation_key, layer=layer)
+        raise refusals.availability_unpublished(layer=layer, kind=kind)
+    document = _decoded_pointer(payload, layer=layer, kind=kind)
+    generation_key = _text(document, "generation_key", layer=layer, kind=kind)
+    earliest = _day(document, "earliest_terminal_day", layer=layer, kind=kind)
+    newest_published = _newest_published_day(store, generation_key, layer=layer, kind=kind)
     issue_day = earliest - timedelta(days=1) if generation_days == "forecast_days" else newest_published
     return LaneAvailability(
         layer=layer,
         kind=kind,
         pointer_key=pointer_key,
         generation_key=generation_key,
-        generation_sha256=_text(document, "generation_sha256", layer=layer),
+        generation_sha256=_text(document, "generation_sha256", layer=layer, kind=kind),
         issue_day=issue_day,
         earliest_terminal_day=earliest,
-        latest_terminal_day=_day(document, "latest_terminal_day", layer=layer),
-        source_ceiling=_day(document, "source_ceiling", layer=layer),
+        latest_terminal_day=_day(document, "latest_terminal_day", layer=layer, kind=kind),
+        source_ceiling=_day(document, "source_ceiling", layer=layer, kind=kind),
         newest_published_day=newest_published,
         # On the `issue_days` path the horizon lives inside the issue file, so nothing the
         # generation holds can measure it and a number here would be a guess.
         published_horizon_days=(newest_published - issue_day).days if generation_days == "forecast_days" else None,
-        required_rungs=_rungs(document, layer=layer),
+        required_rungs=_rungs(document, layer=layer, kind=kind),
     )
 
 
-def _newest_published_day(store: ReadOnlyObjectStore, generation_key: str, *, layer: str) -> date:
+def _newest_published_day(store: ReadOnlyObjectStore, generation_key: str, *, layer: str, kind: PartitionKind) -> date:
     """Return the newest day the current generation genuinely PUBLISHED, refusing when it published none.
 
     Read from the generation's own rows, and `published` only: a governed absence is a published
@@ -144,7 +147,7 @@ def _newest_published_day(store: ReadOnlyObjectStore, generation_key: str, *, la
     measured_bytes = store.object_size(generation_key)
     if measured_bytes is None:
         raise refusals.availability_malformed(
-            layer=layer, detail="the pointer names a generation this store does not hold"
+            layer=layer, kind=kind, detail="the pointer names a generation this store does not hold"
         )
     if measured_bytes > MAX_SERVED_GENERATION_BYTES:
         raise refusals.read_over_budget(
@@ -154,13 +157,13 @@ def _newest_published_day(store: ReadOnlyObjectStore, generation_key: str, *, la
     payload = store.read_object(generation_key, max_bytes=MAX_SERVED_GENERATION_BYTES)
     if payload is None:
         raise refusals.availability_malformed(
-            layer=layer, detail="the pointer names a generation this store does not hold"
+            layer=layer, kind=kind, detail="the pointer names a generation this store does not hold"
         )
     try:
         table = pq.read_table(io.BytesIO(payload), columns=["day", "terminal_state"])
     except Exception as error:  # pyarrow raises a family of read errors; the reason is what matters
         raise refusals.availability_malformed(
-            layer=layer, detail=f"the generation is not a readable index ({type(error).__name__})"
+            layer=layer, kind=kind, detail=f"the generation is not a readable index ({type(error).__name__})"
         ) from error
     published: list[date] = []
     for row in table.to_pylist():
@@ -168,47 +171,51 @@ def _newest_published_day(store: ReadOnlyObjectStore, generation_key: str, *, la
         if row.get("terminal_state") == PUBLISHED_TERMINAL_STATE and isinstance(day, date):
             published.append(day)
     if not published:
-        raise refusals.availability_no_published_day(layer=layer)
+        raise refusals.availability_no_published_day(layer=layer, kind=kind)
     return max(published)
 
 
-def _decoded_pointer(payload: bytes, *, layer: str) -> Mapping[str, Any]:
+def _decoded_pointer(payload: bytes, *, layer: str, kind: PartitionKind) -> Mapping[str, Any]:
     """Decode one pointer document, refusing anything that is not a JSON object."""
     try:
         document = json.loads(payload.decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as error:
-        raise refusals.availability_malformed(layer=layer, detail="the pointer is not decodable JSON") from error
+        raise refusals.availability_malformed(
+            layer=layer, kind=kind, detail="the pointer is not decodable JSON"
+        ) from error
     if not isinstance(document, dict):
-        raise refusals.availability_malformed(layer=layer, detail="the pointer is not a JSON object")
+        raise refusals.availability_malformed(layer=layer, kind=kind, detail="the pointer is not a JSON object")
     return document
 
 
-def _text(document: Mapping[str, Any], field: str, *, layer: str) -> str:
+def _text(document: Mapping[str, Any], field: str, *, layer: str, kind: PartitionKind) -> str:
     """Read one required string field out of a pointer document."""
     value = document.get(field)
     if not isinstance(value, str) or not value:
-        raise refusals.availability_malformed(layer=layer, detail=f"the pointer carries no {field}")
+        raise refusals.availability_malformed(layer=layer, kind=kind, detail=f"the pointer carries no {field}")
     return value
 
 
-def _day(document: Mapping[str, Any], field: str, *, layer: str) -> date:
+def _day(document: Mapping[str, Any], field: str, *, layer: str, kind: PartitionKind) -> date:
     """Read one required `YYYY-MM-DD` field out of a pointer document."""
     value = document.get(field)
     if not isinstance(value, str):
-        raise refusals.availability_malformed(layer=layer, detail=f"the pointer carries no {field}")
+        raise refusals.availability_malformed(layer=layer, kind=kind, detail=f"the pointer carries no {field}")
     try:
         return date.fromisoformat(value)
     except ValueError as error:
         raise refusals.availability_malformed(
-            layer=layer, detail=f"the pointer's {field} {value!r} is not a calendar day"
+            layer=layer, kind=kind, detail=f"the pointer's {field} {value!r} is not a calendar day"
         ) from error
 
 
-def _rungs(document: Mapping[str, Any], *, layer: str) -> tuple[int, ...]:
+def _rungs(document: Mapping[str, Any], *, layer: str, kind: PartitionKind) -> tuple[int, ...]:
     """Read the authoritative rung ladder the pointer binds its days to."""
     value = document.get("required_rungs")
     if not isinstance(value, list) or not value or not all(isinstance(rung, int) for rung in value):
-        raise refusals.availability_malformed(layer=layer, detail="the pointer carries no required_rungs ladder")
+        raise refusals.availability_malformed(
+            layer=layer, kind=kind, detail="the pointer carries no required_rungs ladder"
+        )
     return tuple(int(rung) for rung in value)
 
 

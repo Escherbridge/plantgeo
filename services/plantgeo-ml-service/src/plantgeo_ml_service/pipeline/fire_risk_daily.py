@@ -36,7 +36,6 @@ from plantgeo_ml_service.pipeline.fire_risk_gate import (
     verified_cleared_strata,
 )
 from plantgeo_ml_service.pipeline.forecast_lane_bootstrap import (
-    FORECAST_KIND,
     ensure_lane_bootstrap,
     expected_forecast_days,
     terminal_rows_for_identity,
@@ -44,6 +43,7 @@ from plantgeo_ml_service.pipeline.forecast_lane_bootstrap import (
     write_run_receipt,
 )
 from plantgeo_ml_service.pipeline.object_store import JSON_CONTENT_TYPE
+from plantgeo_ml_service.warehouse.lanes import forecast_root_kind
 from plantgeo_ml_service.warehouse.streams import FIRE_RISK_STREAM, POINT_QUANTILE
 
 if TYPE_CHECKING:
@@ -518,7 +518,9 @@ def _publish(
     # generation every later pointer binds, and two bootstraps are two histories.
     config = replace(availability, bootstrap_receipt=bootstrap)
     generation = build_generation(config, written.rows, created_at=created_at)
-    return publish_generation(store, pointers, generation, layer=FIRE_RISK_STREAM, kind=FORECAST_KIND)
+    return publish_generation(
+        store, pointers, generation, layer=FIRE_RISK_STREAM, kind=forecast_root_kind(FIRE_RISK_STREAM)
+    )
 
 
 __all__ = [

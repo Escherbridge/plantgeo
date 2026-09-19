@@ -29,6 +29,33 @@ a refusal is as quotable as a screenshot of a number. `artifact_sha256` is null 
 `artifact_absent_reason`, because a null with no reason reads as an oversight rather than a fact:
 `no_artifact_published` and `lane_is_not_model_backed` are different claims about the same field.
 
+## Branch on `outcome`, NEVER on the HTTP status alone
+
+**This is the strongest rule on this plane, and a client that breaks it will report absences as
+successes.** Every body -- answered, absent or refused -- carries a top-level `outcome`:
+
+| `outcome` | what it means | status | `error` |
+|---|---|---|---|
+| `content` | the payload carries rows or a value | 200 | `null` |
+| `absent` | the warehouse holds nothing for this question | **200** | set |
+| `refused` | serving, or the request, was at fault | 4xx/5xx | set |
+
+A content absence is a 200 CARRYING an `error` object, by the sibling convention that a statement
+about the warehouse is not a transport failure. So `response.ok` is true for `absent`, and a client
+that checks only the status reads "nothing was ever written for this day" as a successful answer
+and draws it as data. Branch on `outcome` (or, equivalently, on the presence of the `error` key);
+never on the status by itself. `outcome` is ADDITIVE: nothing that already rode on a body moved.
+
+The claim block (`artifact_sha256`, `artifact_absent_reason`, `issued_on`, `claim_tier`,
+`disclaimer`) is present on EVERY body without exception, and `wire.answer`/`wire.refusal` are the
+only two renderers, so a new route cannot forget either field.
+
+## The `artifacts` kind vocabulary, verbatim
+
+`GET /api/v1/ml/artifacts/<kind>` accepts exactly `analog-ensemble` and `fire-risk`, spelled here
+so a client never guesses `fire_risk` or `analog_ensemble`. Hyphenated like every platform slug
+since 2026-09-19; the old underscore spelling answers `artifact_kind_unknown` and names these two.
+
 ## Which refusals are a 200
 
 A code in `CONTENT_REFUSAL_CODES` is a statement about the WAREHOUSE (`partition_day_not_written`,
@@ -50,6 +77,17 @@ slug it would then have to keep in sync with this service.
   provider run is deterministic, so a `kind=forecast` partition would have to invent the
   `random_seed` and `ensemble_size` that stream requires. The ABSENCE of a `kind=forecast` partition
   is this lane's normal state and never a refusal.
+
+**One rule answers "which root holds this lane's future": `warehouse/lanes.forecast_root_kind`.**
+The path is decided from the LANE and the availability root follows from the path, in that order.
+Production `96831d8b` answered `availability_unpublished` for a healthy `weather-forecast` because
+the pointer was looked up first, under the reserved `kind=forecast` root the carve-out says is
+never written. Every reader (`forecast_reads`, `fire_risk_reads`, `analog_reads`) and every writer
+(`forecast_lane_bootstrap`, `fire_risk_daily`, `predict_daily`, `forecast_lane_rungs`,
+`warehouse/weather_forecast`) asks that helper; no module spells `"forecast"` as a kind any more.
+`read_lane_availability` takes `kind` as a REQUIRED keyword for the same reason, and every
+availability refusal names the kind it ACTUALLY consulted, so a message can never send an operator
+looking for a pointer nothing publishes.
 
 ## `published_horizon_days` is measured, never declared
 

@@ -23,9 +23,13 @@ from plantgeo_ml_service.planes.wire import (
     ARTIFACT_ABSENT_NOT_MODEL_BACKED,
     ARTIFACT_ABSENT_PROVENANCE_CONFLICTED,
     CLAIM_TIER,
+    OUTCOME_ABSENT,
+    OUTCOME_CONTENT,
+    OUTCOME_REFUSED,
     SERVING_PATH_FORECAST_KIND,
     SERVING_PATH_RELEASE_SERIES,
 )
+from plantgeo_ml_service.warehouse.lanes import forecast_root_kind
 from plantgeo_ml_service.warehouse.streams import SIGNAL_STREAM
 from plantgeo_ml_service.warehouse.weather_forecast import WEATHER_FORECAST_STREAM
 
@@ -54,6 +58,10 @@ WEATHER_VALID_DAY: Final = ISSUE_DATE + timedelta(days=1)
 
 HTTP_OK: Final = 200
 HTTP_BAD_REQUEST: Final = 400
+
+#: The root a release-series lane publishes under, and the one it leaves reserved.
+OBSERVED_KIND: Final = "observed"
+RESERVED_FORECAST_ROOT: Final = f"layer={WEATHER_FORECAST_STREAM}/kind=forecast/"
 
 
 @pytest.fixture
@@ -119,6 +127,7 @@ async def test_a_forecast_kind_lane_answers_its_rows_and_names_its_path(signal_l
     assert body["serving_path"] == SERVING_PATH_FORECAST_KIND
     assert len(body["rows"]) == QUANTILE_COUNT
     assert body["claim_tier"] == CLAIM_TIER
+    assert body["outcome"] == OUTCOME_CONTENT
 
 
 async def test_a_partly_published_run_reports_the_horizon_it_reached_not_the_one_it_declared(
@@ -161,6 +170,7 @@ async def test_a_day_past_the_published_generation_is_a_typed_refusal(signal_lan
     )
 
     assert body["error"]["code"] == refusals.AVAILABILITY_DAY_NOT_COVERED
+    assert body["outcome"] == OUTCOME_ABSENT
 
 
 async def test_a_release_series_lane_answers_from_its_issue_file_and_names_its_generation(
@@ -184,6 +194,7 @@ async def test_a_release_series_lane_answers_from_its_issue_file_and_names_its_g
     assert body["serving_path"] == SERVING_PATH_RELEASE_SERIES
     assert body["generation_key"].startswith(f"layer={WEATHER_FORECAST_STREAM}/kind=observed/availability/")
     assert body["rows"]
+    assert body["outcome"] == OUTCOME_CONTENT
 
 
 async def test_a_release_series_answer_states_its_issue_day_horizon_and_ceiling(
@@ -255,3 +266,56 @@ async def test_a_lane_this_service_pins_no_schema_for_is_rejected(signal_lane: S
 
     assert response.status == HTTP_BAD_REQUEST
     assert body_of(response)["error"]["code"] == refusals.LANE_UNKNOWN
+    assert body_of(response)["outcome"] == OUTCOME_REFUSED
+
+
+async def test_the_release_path_is_answered_from_the_kind_observed_generation_it_selected(
+    weather_lane: ServingHarness,
+) -> None:
+    """The path decides the root, not the other way round: this lane's `kind=forecast` root is
+    RESERVED and unwritten, so a pointer looked up before the path is chosen finds nothing."""
+    assert weather_lane.objects
+    assert forecast_root_kind(WEATHER_FORECAST_STREAM) == OBSERVED_KIND
+    assert not [key for key in weather_lane.objects if key.startswith(RESERVED_FORECAST_ROOT)]
+
+    body = body_of(
+        await read_forecast(
+            request_with(
+                layer=WEATHER_FORECAST_STREAM,
+                lon=str(WEATHER_LONGITUDE),
+                lat=str(WEATHER_LATITUDE),
+                day=WEATHER_VALID_DAY.isoformat(),
+            )
+        )
+    )
+
+    assert body["outcome"] == OUTCOME_CONTENT
+    assert body["serving_path"] == SERVING_PATH_RELEASE_SERIES
+    assert body["rows"]
+    assert body["availability"]["pointer_key"].startswith(f"layer={WEATHER_FORECAST_STREAM}/kind={OBSERVED_KIND}/")
+
+
+async def test_a_cold_release_series_lane_refuses_by_naming_the_kind_it_consulted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The regression the production probe found: the refusal named `kind=forecast`, which is the
+    one root this lane never writes, and sent an operator looking for a pointer nothing publishes."""
+    cold = build_serving(tmp_path)
+    mount(cold, monkeypatch)
+    assert not cold.objects
+
+    response = await read_forecast(
+        request_with(
+            layer=WEATHER_FORECAST_STREAM,
+            lon=str(WEATHER_LONGITUDE),
+            lat=str(WEATHER_LATITUDE),
+            day=WEATHER_VALID_DAY.isoformat(),
+        )
+    )
+    body = body_of(response)
+
+    assert response.status == HTTP_OK
+    assert body["outcome"] == OUTCOME_ABSENT
+    assert body["error"]["code"] == refusals.AVAILABILITY_UNPUBLISHED
+    assert f"kind={OBSERVED_KIND}" in body["error"]["message"]
+    assert "kind=forecast" not in body["error"]["message"]

@@ -282,3 +282,95 @@ not cover the originated `fire-risk` schema.
 - `python scripts/verify_quality_receipt.py` -> **exit 0** ("quality receipt verified")
 
 Nothing was committed.
+
+
+## p2c.1-fix-batch
+
+Targeted fix batch on top of `e8b9c409`, edits confined to `services/plantgeo-ml-service/**`.
+Nothing committed.
+
+### D1 - `weather-forecast` answered `availability_unpublished` on a healthy lane
+
+Probed on production `96831d8b`. The serving-path decision and the availability lookup were two
+independent facts, and the refusal message asserted a third one that was simply hardcoded. Fixed by
+moving the kind axis onto the lane contract and making the path decide the root:
+
+- `warehouse/lanes.py` - new `serving_path(slug)` / `forecast_root_kind(slug)` plus
+  `RELEASE_SERIES_FORECAST_LANES` and the `ServingPath` vocabulary (moved down from `planes/wire.py`,
+  which now re-exports it). `forecast_root_kind` answers `observed` for a release-series lane,
+  `forecast` for every other. Deliberately NOT derived from `LaneContract.nature`: `drought` and
+  `burn-severity` are `release_series` too, and they forecast nothing, so a future-day question
+  about them must stay `lane_not_forecast`.
+- `planes/forecast_reads.py` - `read_forecast_summary` picks the path FIRST and both
+  `_read_forecast_kind` / `_read_release_series` derive `kind = forecast_root_kind(layer)`; the
+  local `RELEASE_SERIES_LANES` frozenset is gone (the contract owns it).
+- `planes/availability_reads.py` - `kind` is now a REQUIRED keyword (its `= FORECAST_KIND` default
+  was the silent half of the bug) and is threaded into every refusal and every pointer-field helper.
+- `planes/refusals.py` - `availability_unpublished`, `availability_malformed`,
+  `availability_day_not_covered` and `availability_no_published_day` take `kind` and name the root
+  ACTUALLY consulted instead of the literal `kind=forecast`.
+
+### D1 call sites: every `kind == forecast` decision now routed through the helper
+
+| file | was | now |
+|---|---|---|
+| `planes/forecast_reads.py` | `kind="forecast"`, `kind="observed"`, `stream_schema(layer, "forecast")` | `forecast_root_kind(layer)` (3 sites + the schema probe) |
+| `planes/fire_risk_reads.py:40` | `FORECAST_KIND = "forecast"` | `forecast_root_kind(FIRE_RISK_STREAM)` |
+| `planes/analog_reads.py:41` | `FORECAST_KIND = "forecast"` | `forecast_root_kind(SIGNAL_STREAM)` |
+| `planes/availability_reads.py:29` | `FORECAST_KIND` default | constant deleted, keyword required |
+| `warehouse/weather_forecast.py:30` | `WEATHER_FORECAST_KIND = "observed"` | `forecast_root_kind(WEATHER_FORECAST_STREAM)` |
+| `pipeline/forecast_lane_bootstrap.py` | `FORECAST_KIND` x7 (lane-GENERIC writer) | `forecast_root_kind(layer)` |
+| `pipeline/forecast_lane_rungs.py:37,195` | constant + `stream_schema(layer, FORECAST_KIND)` | constant deleted; `forecast_root_kind(layer)` |
+| `pipeline/fire_risk_daily.py:521` | `kind=FORECAST_KIND` | `forecast_root_kind(FIRE_RISK_STREAM)` |
+| `pipeline/predict_daily.py:207,209` | `FORECAST_KIND` (imported from bootstrap) | `forecast_root_kind(FIRE_RISK_STREAM)` |
+
+No module spells `"forecast"` as a partition kind any more; `foundation/parquet_paths.py` still owns
+the `PartitionKind` literal itself and its `kind == "observed"` path grammar, which is parsing, not a
+lane decision.
+
+### D2 - `outcome` on every planes body
+
+`planes/wire.py` gains `OUTCOME_CONTENT` / `OUTCOME_ABSENT` / `OUTCOME_REFUSED` and a `refusal()`
+renderer beside `answer()`; `planes/routes.py::_refused` maps status 200 -> `absent` and everything
+else -> `refused`, `_invalid` -> `refused`. Status codes are UNCHANGED (the sibling convention that a
+content absence is a 200 carrying `error` stands) and the claim block is now rendered by exactly two
+functions, so no body can drop it. Documented in `planes/AGENTS.md` under "Branch on `outcome`,
+NEVER on the HTTP status alone" - `response.ok` is true for `absent`, which is the client trap.
+
+### Artifact kind vocabulary unified on hyphens
+
+`KNOWN_ARTIFACT_KINDS = ("analog-ensemble", "fire-risk")` (`planes/artifact_reads.py:32`),
+`ANALOG_ENSEMBLE_ARTIFACT_PREFIX = "ml/artifacts/analog-ensemble/"`
+(`pipeline/monte_carlo_daily.py:81`), the `read_artifacts` docstring and
+`pipeline/AGENTS-forecast-lanes.md:103`. Nothing is published to the real prefix, so no migration.
+The `<kind>` path pattern stays permissive so the retired `analog_ensemble` spelling earns
+`artifact_kind_unknown` NAMING the two accepted kinds rather than a shape rejection.
+
+### Tests (no assertion weakened; 664 passed, was 660)
+
+- `test_routes_forecast.py::test_the_release_path_is_answered_from_the_kind_observed_generation_it_selected`
+  - rows + `serving_path == release_series` + a `kind=observed` `pointer_key`, and asserts the bucket
+  holds NOTHING under the reserved `layer=weather-forecast/kind=forecast/` root.
+- `test_routes_forecast.py::test_a_cold_release_series_lane_refuses_by_naming_the_kind_it_consulted`
+  - cold bucket, `availability_unpublished` at 200/`absent`, message contains `kind=observed` and
+  must NOT contain `kind=forecast`. This is the assertion that fails on `e8b9c409`.
+- `test_routes_artifacts.py` - the retired underscore spelling earns `artifact_kind_unknown` naming
+  `analog-ensemble`, and the route docstring is bound to `KNOWN_ARTIFACT_KINDS` verbatim.
+- `outcome` asserted in every route test file (forecast x4, analogs x3, fire-risk x2, artifacts x5),
+  on the content, absent and refused paths.
+- The 12-of-30 measured-horizon forecast-path tests are untouched and still pass.
+
+### Gates (one pass, then one mechanical fallout pass)
+
+`uv sync --locked --all-extras`; `ruff format src tests scripts` (4 files reformatted, then clean);
+`ruff format --check` PASS; `ruff check` PASS (2 autofixed import-sort findings in the two files this
+batch touched); `mypy src scripts` PASS (one real finding: the `outcome` ternary widened to `str`,
+fixed by typing the constants `Final[Outcome]` rather than by casting); `pytest -q` **664 passed**.
+
+Receipt: `git add services/plantgeo-ml-service` -> `python scripts/check.py --write-receipt`
+(format/lint/mypy/pytest all PASS) -> `QUALITY_RECEIPT.json`
+`sha256:18ae4ee7ce1a7e25d8db5b20e08db490d45bfae9d00c952b1a9bdc836c93e520` over 162 files, generated
+`2026-09-19T15:30:59.956782Z` -> `git add services/plantgeo-ml-service` ->
+`python scripts/verify_quality_receipt.py` -> **exit 0**.
+
+Nothing was committed.

@@ -23,11 +23,11 @@ from plantgeo_ml_service.pipeline.fire_risk_daily import (
     run_fire_risk_daily,
 )
 from plantgeo_ml_service.pipeline.fire_risk_features import DEFAULT_HORIZON_DAYS, binding_frontier
-from plantgeo_ml_service.pipeline.forecast_lane_bootstrap import FORECAST_KIND
 from plantgeo_ml_service.pipeline.monte_carlo_daily import dispatchable_lanes, run_monte_carlo_lane
 from plantgeo_ml_service.pipeline.object_store import JSON_CONTENT_TYPE, ObjectStoreError, scratch_rooted_store
 from plantgeo_ml_service.pipeline.weather_forecast_daily import read_forecast_cells, run_weather_forecast_daily
 from plantgeo_ml_service.warehouse.availability import AvailabilityConfig, EvidenceReceipt, lane_identity_for
+from plantgeo_ml_service.warehouse.lanes import forecast_root_kind
 from plantgeo_ml_service.warehouse.streams import FIRE_RISK_STREAM, SIGNAL_STREAM
 from plantgeo_ml_service.warehouse.weather_forecast import WEATHER_FORECAST_STREAM
 
@@ -205,9 +205,11 @@ def fire_risk_availability(*, issued_on: date, run_identity: str) -> Availabilit
     "source inventory" IS the run that produced it: there is no upstream inventory to verify, and a
     fabricated digest would bind the generation to nothing.
     """
-    lane_root = availability_lane_root(FIRE_RISK_STREAM, FORECAST_KIND)
+    lane_root = availability_lane_root(FIRE_RISK_STREAM, forecast_root_kind(FIRE_RISK_STREAM))
     return AvailabilityConfig(
-        identity=lane_identity_for(FIRE_RISK_STREAM, FORECAST_KIND, verified_source_inventory_root=run_identity),
+        identity=lane_identity_for(
+            FIRE_RISK_STREAM, forecast_root_kind(FIRE_RISK_STREAM), verified_source_inventory_root=run_identity
+        ),
         source_ceiling=binding_frontier(issued_on) + timedelta(days=max(DEFAULT_HORIZON_DAYS)),
         # A PLACEHOLDER by construction: `run_fire_risk_daily` replaces it with the marker actually
         # on the lane, because two bootstraps would be two histories.

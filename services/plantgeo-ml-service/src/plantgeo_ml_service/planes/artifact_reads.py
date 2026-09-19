@@ -25,9 +25,11 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
-#: The artifact families this service writes, spelled as they appear in the object key. `fire-risk`
-#: is hyphenated because it is also a lane slug; `analog_ensemble` is a module stem and is not.
-KNOWN_ARTIFACT_KINDS: Final[tuple[str, ...]] = ("analog_ensemble", "fire-risk")
+#: The artifact families this service writes, spelled as they appear in the object key and in the
+#: `<kind>` path segment. HYPHENATED like every platform slug, amended 2026-09-19: the vocabulary
+#: previously mixed separators (`analog_ensemble` beside `fire-risk`), which is a shape a client
+#: has to guess at. Nothing is published to the real prefix, so no object was migrated.
+KNOWN_ARTIFACT_KINDS: Final[tuple[str, ...]] = ("analog-ensemble", "fire-risk")
 
 ARTIFACT_SEGMENT: Final = "artifacts"
 ARTIFACT_SUFFIX: Final = ".json"

@@ -24,6 +24,7 @@ from plantgeo_ml_service.planes.wire import (
     ClaimProvenance,
     render_row,
 )
+from plantgeo_ml_service.warehouse.lanes import forecast_root_kind
 from plantgeo_ml_service.warehouse.streams import FIRE_RISK_STREAM, POINT_QUANTILE
 
 if TYPE_CHECKING:
@@ -33,7 +34,10 @@ if TYPE_CHECKING:
     from plantgeo_ml_service.pipeline.duckdb_session import DuckDbSession
     from plantgeo_ml_service.pipeline.object_store import ReadOnlyObjectStore
 
-FORECAST_KIND: Final[PartitionKind] = "forecast"
+#: Asked of the lane contract, never spelled: the root a lane's future lives under is a property
+#: of the lane (`layer-lanes.md` section 2), and a literal here is the bug production hit on
+#: `96831d8b` -- a release-series lane judged against a root nothing writes.
+FORECAST_KIND: Final[PartitionKind] = forecast_root_kind(FIRE_RISK_STREAM)
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +113,7 @@ def read_fire_risk_point(
     if not availability.covers(day):
         raise refusals.availability_day_not_covered(
             layer=FIRE_RISK_STREAM,
+            kind=FORECAST_KIND,
             day=day.isoformat(),
             detail=f"{availability.earliest_terminal_day.isoformat()}..{availability.latest_terminal_day.isoformat()}",
         )

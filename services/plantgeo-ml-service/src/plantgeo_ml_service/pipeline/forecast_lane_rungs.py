@@ -20,6 +20,7 @@ from plantgeo_ml_service.foundation.lattice import (
     axis_origin_micro,
     tier_pitch_micro,
 )
+from plantgeo_ml_service.warehouse.lanes import forecast_root_kind
 from plantgeo_ml_service.warehouse.streams import (
     FIRE_DETECTIONS_STREAM,
     FIRE_RISK_STREAM,
@@ -32,9 +33,7 @@ from plantgeo_ml_service.warehouse.streams import (
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from plantgeo_ml_service.foundation.parquet_paths import PartitionKind, ZoomTier
-
-FORECAST_KIND: Final[PartitionKind] = "forecast"
+    from plantgeo_ml_service.foundation.parquet_paths import ZoomTier
 
 
 TIER_PITCH_MICRO_DEGREES: Final[Mapping[ZoomTier, int]] = TIER_PITCH_MICRO
@@ -192,7 +191,7 @@ def derive_coarse_rung(frame: pl.DataFrame, *, layer: str, zoom: ZoomTier) -> pl
         if derivation.row_select is not None
         else _merged_rows(binned, derivation, keys=keys, dtypes=frame.schema)
     )
-    return coarse.select(list(stream_schema(layer, FORECAST_KIND).column_names))
+    return coarse.select(list(stream_schema(layer, forecast_root_kind(layer)).column_names))
 
 
 def _derivation_for(layer: str) -> GridAggregation:
@@ -248,7 +247,6 @@ def _merge_expression(aggregation: ColumnAggregation) -> pl.Expr:
 
 
 __all__ = [
-    "FORECAST_KIND",
     "FORECAST_TIER_DERIVATIONS",
     "TIER_PITCH_MICRO_DEGREES",
     "ColumnAggregation",

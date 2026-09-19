@@ -10,15 +10,19 @@ probe-settled conventions live in `pipeline/sources/AGENTS.md`.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 import pyarrow as pa  # type: ignore[import-untyped]  # pyarrow ships no stubs
 
+from plantgeo_ml_service.warehouse.lanes import forecast_root_kind
 from plantgeo_ml_service.warehouse.streams import (
     OBSERVED_STREAM_SCHEMAS,
     ParquetStreamSchema,
     StreamSchemaConflictError,
 )
+
+if TYPE_CHECKING:
+    from plantgeo_ml_service.foundation.parquet_paths import PartitionKind
 
 WEATHER_FORECAST_STREAM: Final = "weather-forecast"
 
@@ -27,7 +31,9 @@ WEATHER_FORECAST_STREAM: Final = "weather-forecast"
 #: lane writes `kind=observed` and leaves `kind=forecast` reserved for an ML-corrected product.
 WEATHER_FORECAST_NATURE: Final = "release_series"
 
-WEATHER_FORECAST_KIND: Final = "observed"
+#: Asked of the lane contract rather than spelled here, so this lane and the readers that serve it
+#: resolve the same root from one rule (`lanes.forecast_root_kind`).
+WEATHER_FORECAST_KIND: Final[PartitionKind] = forecast_root_kind(WEATHER_FORECAST_STREAM)
 
 #: The lane's grain: one variable reading at one lattice cell for one valid instant. `run_id` is
 #: constant within a partition, so it is provenance rather than part of the sort key.

@@ -100,7 +100,7 @@ method, never a published column.
 one `ForecastRefusal` naming the cell, the series and the module's own message; the lane then writes
 no row for it. A run that refuses everything publishes nothing and returns a receipt saying so.
 
-**The signal lane has two forecasters.** When `ml/artifacts/analog_ensemble/<sha>.json` exists the
+**The signal lane has two forecasters.** When `ml/artifacts/analog-ensemble/<sha>.json` exists the
 lane runs AnEn; otherwise it runs `method/monte_carlo/signal.py`. The receipt's `forecaster` field
 states which, so a row's method is never inferred from its shape.
 

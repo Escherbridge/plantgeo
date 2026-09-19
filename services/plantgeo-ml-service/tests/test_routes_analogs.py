@@ -13,7 +13,12 @@ from plantgeo_ml_service.pipeline.monte_carlo_daily import ANALOG_ENSEMBLE_ARTIF
 from plantgeo_ml_service.pipeline.object_store import JSON_CONTENT_TYPE
 from plantgeo_ml_service.planes import refusals
 from plantgeo_ml_service.planes.routes import read_analog_ensemble
-from plantgeo_ml_service.planes.wire import ARTIFACT_ABSENT_NO_ARTIFACT, CLAIM_TIER
+from plantgeo_ml_service.planes.wire import (
+    ARTIFACT_ABSENT_NO_ARTIFACT,
+    CLAIM_TIER,
+    OUTCOME_ABSENT,
+    OUTCOME_CONTENT,
+)
 from plantgeo_ml_service.warehouse.streams import SIGNAL_STREAM
 
 if TYPE_CHECKING:
@@ -64,6 +69,7 @@ async def test_one_cell_answers_one_series_with_three_quantiles_per_horizon(anal
 
     assert response.status == HTTP_OK
     assert body["error"] is None
+    assert body["outcome"] == OUTCOME_CONTENT
     assert len(body["series"]) == 1
     steps = body["series"][0]["steps"]
     assert [step["horizon_days"] for step in steps] == list(range(1, PUBLISHED_HORIZON_DAYS + 1))
@@ -111,6 +117,7 @@ async def test_a_cell_the_run_never_reached_is_a_typed_refusal(analog_lane: Serv
     body = body_of(response)
 
     assert response.status == HTTP_OK
+    assert body["outcome"] == OUTCOME_ABSENT
     assert body["error"]["code"] == refusals.CELL_SERIES_ABSENT
 
 
@@ -121,4 +128,5 @@ async def test_an_origin_nothing_was_issued_from_refuses_for_the_whole_window(
 
     body = body_of(await read_analog_ensemble(request_with(cell_id=CELL_ID, origin="2026-08-01")))
 
+    assert body["outcome"] == OUTCOME_ABSENT
     assert body["error"]["code"] == refusals.FORECAST_WINDOW_UNWRITTEN

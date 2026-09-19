@@ -174,7 +174,7 @@ scratch prefix first.
       Brier against VPD-only and climatology; the daily writer refuses a real prefix unless the
       artifact carries a backtest receipt clearing the declared lift (FR-5 gate). Training itself
       is not run in this track.
-- [ ] Task (`p2d-fire-risk-registration`, agri side, sequenced after the other session's
+- [x] Task (`p2d-fire-risk-registration`, agri side, sequenced after the other session's
       `p1d-registration` lands on `lane_registry.py`): `LaneRegistration` for `fire-risk`
       (`daily_series`, floor basis, lag, cadence, ladder, `forecast_module=None` because the ML
       service writes it directly), `warehouse/schemas/fire_risk.py`, `docs/lanes/fire-risk.md`,
@@ -188,15 +188,15 @@ scratch prefix first.
       forecast stem to its `method/monte_carlo` module and writes `kind=forecast` for
       `fire-detections`, `sensors`, `signal` (where AnEn has no artifact), `vegetation`,
       `water-gauges`; each refuses on insufficient history exactly as the module already does.
-- [ ] Task (`p2c-api`): `serving/` readers (bounded, typed refusals) and the four routes in FR-8;
+- [x] Task (`p2c-api`): `serving/` readers (bounded, typed refusals) and the four routes in FR-8;
       every response carries `artifact_sha256`, `issued_on`, `claim_tier: evaluation_only`.
       `/security-review` on the query parsing.
-- [ ] Task (`p2c-api`): `interface/cli.py predict-daily [--issued-on] [--prefix-override] [--dry-run]`
+- [x] Task (`p2c-api`): `interface/cli.py predict-daily [--issued-on] [--prefix-override] [--dry-run]`
       — runs fire-risk then Monte Carlo then AnEn, exits 0 on a bounded turn, writes one receipt.
       `railway.cron.json` + `infra/cron/Dockerfile` for `plantgeo-ml-cron` (owner creates the
       service; no schedule armed without a go).
-- [ ] Task: sweep, `/code-review high`, `/security-review`, push; dry-run against the production
-      bucket to `ml/scratch/<date>/` and record the listing in `evidence/phase2-dry-run.json`.
+- [~] Task: sweep, `/code-review high`, `/security-review`, push DONE (e8b9c409, 31acd231, 96831d8b); dry-run against the production
+      bucket to `ml/scratch/<date>/` and record the listing in `evidence/phase2-dry-run.json` STILL OWED (owner go for the scratch write).
 
 ## Phase 3: Mojo kernels — one push
 

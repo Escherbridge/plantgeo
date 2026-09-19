@@ -27,6 +27,7 @@ from plantgeo_ml_service.planes.partition_reads import (
     rows_for_cell_identifier,
 )
 from plantgeo_ml_service.planes.wire import ARTIFACT_ABSENT_NO_ARTIFACT, ClaimProvenance, render_day
+from plantgeo_ml_service.warehouse.lanes import forecast_root_kind
 from plantgeo_ml_service.warehouse.streams import SIGNAL_STREAM
 
 if TYPE_CHECKING:
@@ -36,7 +37,8 @@ if TYPE_CHECKING:
     from plantgeo_ml_service.pipeline.duckdb_session import DuckDbSession
     from plantgeo_ml_service.pipeline.object_store import ReadOnlyObjectStore
 
-FORECAST_KIND: Final[PartitionKind] = "forecast"
+#: Asked of the lane contract, never spelled: see `fire_risk_reads` for what a literal cost.
+FORECAST_KIND: Final[PartitionKind] = forecast_root_kind(SIGNAL_STREAM)
 
 #: How many object keys one analog read may name across its whole window. Thirty days of one lane,
 #: each written by one run, sit far under this; a window this wide is a fault, not a busy lane.

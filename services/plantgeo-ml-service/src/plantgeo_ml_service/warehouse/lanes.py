@@ -9,11 +9,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Final, Literal
+from typing import TYPE_CHECKING, Final, Literal
 
 from plantgeo_ml_service.foundation.parquet_paths import validate_layer_slug
 
+if TYPE_CHECKING:
+    from plantgeo_ml_service.foundation.parquet_paths import PartitionKind
+
 LaneNature = Literal["daily_series", "release_series", "static_lookup"]
+
+#: WHERE one lane publishes its future values, decided by the lane and never by a `kind` axis.
+ServingPath = Literal["forecast_kind", "release_series"]
+
+SERVING_PATH_FORECAST_KIND: Final[ServingPath] = "forecast_kind"
+SERVING_PATH_RELEASE_SERIES: Final[ServingPath] = "release_series"
 
 
 class LaneContractError(ValueError):
@@ -128,3 +137,26 @@ def lane_contract(slug: str) -> LaneContract:
 def settled_through(slug: str, as_of: date) -> date:
     """Return the newest day of `slug` a feature issued on `as_of` may read."""
     return lane_contract(slug).settled_through(as_of)
+
+
+#: The lanes carrying their future INSIDE a `kind=observed` issue file as `valid_time` rows.
+#:
+#: Not every `release_series` lane: `drought` and `burn-severity` are releases of SETTLED
+#: observations and forecast nothing, so a future-day question about them is `lane_not_forecast`
+#: rather than a release read. Membership here is the `layer-lanes.md` section 2 carve-out only.
+RELEASE_SERIES_FORECAST_LANES: Final[frozenset[str]] = frozenset({"weather-forecast"})
+
+
+def serving_path(slug: str) -> ServingPath:
+    """Return which path one lane publishes its future on."""
+    return SERVING_PATH_RELEASE_SERIES if slug in RELEASE_SERIES_FORECAST_LANES else SERVING_PATH_FORECAST_KIND
+
+
+def forecast_root_kind(slug: str) -> PartitionKind:
+    """Return the partition kind whose root holds one lane's FUTURE values and its availability pointer.
+
+    The one place the `kind` axis is decided. A release-series lane's future lives under
+    `kind=observed`; its `kind=forecast` root is RESERVED and never written, so a reader that
+    assumed the axis would look for a pointer nothing publishes.
+    """
+    return "observed" if serving_path(slug) == SERVING_PATH_RELEASE_SERIES else "forecast"
