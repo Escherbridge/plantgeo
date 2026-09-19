@@ -70,6 +70,59 @@ Missing management prerequisites should produce conditional advice or a request 
 assessment, not invented livestock, feedstock, vegetation, land tenure, or soil measurements.
 See `docs/regional-agent-evidence.md` for the scientific screening references and limits.
 
+## Region identity on row reads
+
+Style review W9, S4. W9-A put `region_slug`/`region_display_name` on the coverage payload and a
+three-way verdict behind `regionIdentityVerdict()` (`src/lib/region/region.ts`), then enforced it on
+ONE axis: `parquet-slider-capabilities.ts` withholds every Parquet-owned capability under
+`region_identity_mismatch`, and `layer-region-binding.ts` drops the payload's bindings. The row
+reads never asked. A deployment with `PLANTGEO_REGION` and `NEXT_PUBLIC_PLANTGEO_REGION` set to
+different slugs therefore drew a WITHHELD SLIDER OVER RENDERED FOREIGN ROWS — the exact failure the
+verdict was added to prevent, half-closed.
+
+Both axes now consult the one verdict. `assertServedRegionMatchesBundle()`
+(`parquet-plane-client.ts`) runs first in `getParquetLayerDay`, `getParquetLayerDayWindow` and
+`getParquetLatestRelease` — which is every Parquet row read in the tree, since each tRPC reader and
+`land-context/parquet-reader.ts` goes through one of those three — and throws
+`ParquetRegionIdentityError`, carrying the SAME typed `region_identity_mismatch` reason the slider
+withholds under. `botanical-occurrences-client.ts` speaks its own wire contract to its own routes,
+so it calls the shared guard explicitly rather than inheriting it, before the pointer read: a
+generation resolved from another region's warehouse is not a pin this deployment may hold.
+
+FOUR CHOICES WORTH THE WORDS:
+
+1. **`unstated` renders, exactly as today.** A census that names no region makes no claim. The
+   version rule (`parquet_ops/AGENTS.md`, additive-and-silence-is-safe) is why `region_slug` did not
+   bump `COVERAGE_SCHEMA_VERSION`, and refusing on silence would blank a correctly configured map
+   during any deploy window. Only a STATED disagreement refuses.
+2. **A census that did not ANSWER is silence too, not a claim.** The guard swallows a coverage fault
+   and lets the read proceed. The slider states coverage outages on its own axis
+   (`parquetCoverageUnavailable`); restating one as a region refusal would name the wrong fault and
+   would make every layer in the tree fail closed on a transient census timeout.
+3. **The identity is LEARNED, not re-read.** `lastStatedRegionSlug` is module state beside
+   `cachedCoverage` and deliberately not part of it: the lane cache answers "may I reuse these
+   lanes" and expires in five minutes, while whose region is served changes only on a redeploy.
+   Every decoded census overwrites it, so the slider's own reads keep it current for free, and a row
+   read awaits a census at most ONCE per process — only when it beats the slider to it. Awaiting one
+   on every read would have put the 8-second cold-census timeout in front of every layer on a
+   pre-bootstrap deployment: a latency regression paid by correct deployments to catch a broken one.
+   The residual hole is one coverage window wide: a serving side redeployed into another region is
+   not detected until the next census decode.
+4. **`ParquetRegionIdentityError` is deliberately NOT in `parquetUpstreamFailure`'s taxonomy.**
+   Nothing upstream failed — the plane answered honestly about ITS region — so classifying it as
+   `upstream_unavailable` would name the wrong party and invite a retry only a deploy can fix. It
+   propagates out of `boundedResult` as itself.
+
+**Where `unstated` can come from.** On the live path, only a serving deployment older than the
+field: `interface/http/parquet_routes.py` is the sole `WarehouseCoverage` construction that reaches
+`to_wire`, and it always passes `region.slug` from `load_region()`. `to_wire` always EMITS both
+keys, so a current deployment cannot send them absent, and `coverage.py`/`gap_repair.py` build the
+dataclass but never serialize it. Two residual producers, both stated rather than assumed: a web-tree
+construction of `ParquetWarehouseCoverage` that omits the optional field (test fixtures today), and a
+region manifest declaring an empty `slug` — `manifest.py` types it `slug: str` with no non-empty
+constraint, and `regionIdentityVerdict` reads `""` as unstated. Neither is reachable from a shipped
+manifest; if `slug` ever gains a computed or defaulted value, this paragraph is the thing to re-check.
+
 ## Parquet tRPC readers
 
 `parquet-trpc-readers.ts` is a public-surface barrel only; one module per layer lives in

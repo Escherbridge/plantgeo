@@ -23,6 +23,13 @@ import { fetchBoundedJson, providerUrl, UpstreamHttpError, UpstreamTimeoutError 
 import { GET } from "@/app/api/botanical-occurrences/route";
 import { botanicalProxyAnswerSchema } from "@/lib/environmental/botanical-proxy-contract";
 
+import { resetParquetCoverageCacheForTests } from "@/lib/server/services/parquet-plane-client";
+import {
+  compiledRegionSlug,
+  foreignRegionSlug,
+  primeServedRegion,
+} from "../services/served-region-fixture";
+
 const mockedProviderUrl = vi.mocked(providerUrl);
 const mockedFetch = vi.mocked(fetchBoundedJson);
 
@@ -68,10 +75,16 @@ function requestFor(query: string): NextRequest {
   return new NextRequest(`http://plantgeo.test/api/botanical-occurrences?${query}`);
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  resetParquetCoverageCacheForTests();
   mockedProviderUrl.mockReset();
   mockedFetch.mockReset();
   mockedProviderUrl.mockImplementation(() => new URL("http://agri.internal:8000"));
+  // `getBotanicalOccurrences` consults the served region before its pointer read (style review W9,
+  // S4). Priming the identity keeps that guard from consuming the pointer/query answers each case
+  // queues below; see `served-region-fixture.ts` for why it primes through the real decode path.
+  await primeServedRegion(mockedFetch, compiledRegionSlug());
+  mockedProviderUrl.mockClear();
 });
 
 afterEach(() => vi.restoreAllMocks());
@@ -182,6 +195,44 @@ describe("serving-rung selection", () => {
 
     expect(body.servingRung).toBe("grid-0.25");
     expect(forwardedZoom()).toBe("3");
+  });
+});
+
+/**
+ * The row reads consult the region verdict too, not only the slider axis (style review W9, S4).
+ *
+ * This route is the non-day-scoped read W9 named: it speaks its own wire contract, so it asks the
+ * shared guard rather than inheriting it. Under the pre-fix code the case below answers 200 with
+ * another region's specimen records under this bundle's footprint.
+ */
+describe("region identity", () => {
+  it("refuses with the slider's own reason when the census states another region", async () => {
+    await primeServedRegion(mockedFetch, foreignRegionSlug());
+    mockedFetch.mockResolvedValueOnce(wirePointer);
+    mockedFetch.mockResolvedValueOnce(wireDetail);
+
+    const response = await GET(requestFor("bbox=-124,48,-122,50&zoom=13"));
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body.reason).toBe("region_identity_mismatch");
+    // A governed refusal, not a transport fault: nothing failed to load. The caption layer prints
+    // the plane's own sentence for the former and "could not be loaded" for the latter.
+    expect(body.kind).toBe("governed_refusal");
+    expect(body).not.toHaveProperty("features");
+    // Refused ahead of the POINTER read: a generation resolved from another region's warehouse is
+    // not a pin this deployment may hold, so neither queued answer was ever asked for.
+    expect(mockedFetch).not.toHaveBeenCalled();
+  });
+
+  it("serves normally when the census states no region", async () => {
+    await primeServedRegion(mockedFetch, null);
+    mockedFetch.mockResolvedValueOnce(wirePointer);
+    mockedFetch.mockResolvedValueOnce(wireDetail);
+
+    const response = await GET(requestFor("bbox=-124,48,-122,50&zoom=13"));
+
+    expect(response.status).toBe(200);
   });
 });
 

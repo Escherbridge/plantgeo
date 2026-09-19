@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { fetchBoundedJson, providerUrl } from "@/lib/server/http/bounded-upstream";
+import { assertServedRegionMatchesBundle } from "@/lib/server/services/parquet-plane-client";
 import {
   decodeLaneCurrentPointer,
   type LaneCurrentPointer,
@@ -526,6 +527,10 @@ export async function getBotanicalOccurrences(
   if (request.bbox.trim() === "") {
     throw new BotanicalOccurrencesRequestError("bbox must be a non-empty \"west,south,east,north\" string");
   }
+  // This plane speaks its own wire contract, so it does not inherit the Parquet client's row-read
+  // region guard and must ask for it (style review W9, S4). Before the POINTER read, not after: a
+  // generation resolved from another region's warehouse is not a pin this deployment may hold.
+  await assertServedRegionMatchesBundle();
   const pointer = await getCurrentBotanicalRelease(request.signal);
 
   const url = endpoint(WIRE.routes.query);

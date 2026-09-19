@@ -1473,13 +1473,26 @@ answer cached and then zooming to 11 left `botanicalQuery.data` defined at the d
 had advanced between the two reads the pin was simply wrong, silently, which is the opposite of
 what its own comment promised.
 
-Three rules now hold, all keyed on `band`:
+**The band alone was not enough** (style review W9, S1). The first fix scoped the retained answer by
+band, which closed the detail case and left the identical one at the AGGREGATE band: `isQueryEnabled`
+is `band === "detail" ? false : richnessVisible || effortVisible`, so a reader at zoom 6 with only
+the UBC occurrences toggle on has a DISABLED observer there too, still holding its retained frame —
+and nothing botanical is drawn at all, because the occurrences layer is band-gated off below the
+detail floor. The pin named a generation for a map showing no botanical cells. The tell was in the
+same file: `isError` was already guarded with `isQueryEnabled` and nothing else was. **Enablement is
+the discriminator; it subsumes the band**, since `isQueryEnabled` is false at the detail band by
+construction, and one predicate cannot be applied to one consumer and forgotten at another.
 
-1. `aggregateBandAnswer` is `band === "detail" ? undefined : botanicalQuery.data`. Every
-   tRPC-sourced value below it — `botanicalAggregate`, the cells, `aggregateReleaseSetId`, and the
-   lane report's `resultState` / `resultNote` / `isError` / `truncated` — reads that, so a retained
-   answer cannot speak for a band it was never read in. `isError` is additionally `&&
-   isQueryEnabled`, since a disabled observer keeps reporting the last key's error too.
+Three rules now hold:
+
+1. `aggregateBandAnswer` is `isQueryEnabled ? botanicalQuery.data : undefined`. Every tRPC-sourced
+   value below it — `botanicalAggregate`, the cells, the two choropleth GeoJSONs,
+   `aggregateReleaseSetId`, the store publication, the pin, and the lane report's `resultState` /
+   `resultNote` / `truncated` — reads that one binding, so a retained answer cannot speak for a
+   read nobody issued. Nothing else in the hook touches `botanicalQuery.data`. `isError` reads the
+   same predicate off the query itself, because an error has no answer to carry it. The answer's
+   own `state === "aggregate"` discriminant is still checked separately: enablement says a read was
+   issued, the discriminant says the answer in hand is this band's.
 2. The store publication and `servedBotanicalReleaseSetId` both branch on `band` first: proxy at
    `detail`, tRPC above it. This is a partition, not a preference order.
 3. While the band's own lane has no answer, the pin is CLEARED (`setReleaseSetId(null)`,

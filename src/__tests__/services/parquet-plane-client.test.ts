@@ -35,10 +35,18 @@ import {
   resetParquetCoverageCacheForTests,
   ParquetPlaneContractError,
   ParquetPlaneRequestError,
+  ParquetRegionIdentityError,
 } from "@/lib/server/services/parquet-plane-client";
+import {
+  censusStatingRegion,
+  compiledRegionSlug,
+  foreignRegionSlug,
+  primeServedRegion,
+} from "./served-region-fixture";
 
 const mockedProviderUrl = vi.mocked(providerUrl);
 const mockedFetch = vi.mocked(fetchBoundedJson);
+
 
 /** A wire envelope exactly as the service is contracted to serialize it (snake_case). */
 function wirePublished(requestedDay: string, servedDay = requestedDay) {
@@ -77,13 +85,18 @@ function requestedOptions(callIndex = 0) {
   return mockedFetch.mock.calls[callIndex][2];
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   resetParquetCoverageCacheForTests();
   mockedProviderUrl.mockReset();
   mockedFetch.mockReset();
   // A fresh URL per call: `endpoint()` mutates `pathname`, so one shared instance would let the
   // second read of a test append its route onto the first one's.
   mockedProviderUrl.mockImplementation(() => new URL("http://agri.internal:8000"));
+  // The region this bundle compiled for, so every row read below sees `agrees` and the guard costs
+  // it no census read. The lane cache this leaves behind is NOT reusable (its
+  // `evaluated_through_day` is not today), so the coverage suite still fetches exactly as before.
+  await primeServedRegion(mockedFetch, compiledRegionSlug());
+  mockedProviderUrl.mockClear();
 });
 
 afterEach(() => vi.useRealTimers());
@@ -726,6 +739,108 @@ describe("request cancellation", () => {
     await getParquetLayerDay({ layer: "vegetation", day: "2026-08-20", zoomTier: 9 });
 
     expect(requestedOptions()?.signal).toBeUndefined();
+  });
+});
+
+/**
+ * Region identity is enforced on the ROW reads, not only on the slider axis (style review W9, S4).
+ *
+ * W9-A put `region_slug` on the census and withheld every slider capability on a stated mismatch,
+ * but the row reads never consulted the verdict -- so a deployment whose `PLANTGEO_REGION` and
+ * `NEXT_PUBLIC_PLANTGEO_REGION` disagree drew a withheld slider over rendered FOREIGN ROWS. Under
+ * the pre-fix code every refusal case below returns an envelope instead of throwing.
+ */
+describe("region identity on row reads", () => {
+  it("refuses a day read when the census states another region", async () => {
+    await primeServedRegion(mockedFetch, foreignRegionSlug());
+    mockedFetch.mockResolvedValue(wirePublished("2026-08-20"));
+
+    await expect(
+      getParquetLayerDay({ layer: "vegetation", day: "2026-08-20", zoomTier: 9 })
+    ).rejects.toBeInstanceOf(ParquetRegionIdentityError);
+    // Refused BEFORE the read, so not one foreign row was ever fetched, let alone decoded.
+    expect(mockedFetch).not.toHaveBeenCalled();
+  });
+
+  it("refuses a window read and a release read on the same verdict", async () => {
+    await primeServedRegion(mockedFetch, foreignRegionSlug());
+    mockedFetch.mockResolvedValue(wirePublished("2026-08-20"));
+
+    await expect(
+      getParquetLayerDayWindow({
+        layer: "vegetation",
+        firstDay: "2026-08-18",
+        lastDay: "2026-08-20",
+        zoomTier: 9,
+      })
+    ).rejects.toBeInstanceOf(ParquetRegionIdentityError);
+    await expect(
+      getParquetLatestRelease({ layer: "drought-areas", asOfDay: "2026-08-20", zoomTier: 9 })
+    ).rejects.toBeInstanceOf(ParquetRegionIdentityError);
+    expect(mockedFetch).not.toHaveBeenCalled();
+  });
+
+  it("carries the same typed reason the slider withholds under", async () => {
+    await primeServedRegion(mockedFetch, foreignRegionSlug());
+
+    const refusal = await getParquetLayerDay({
+      layer: "vegetation",
+      day: "2026-08-20",
+      zoomTier: 9,
+    }).catch((error: unknown) => error);
+
+    expect(refusal).toBeInstanceOf(ParquetRegionIdentityError);
+    const identity = refusal as ParquetRegionIdentityError;
+    // One misconfiguration, one vocabulary: `WithheldParquetCapabilityReason` spells it this way.
+    expect(identity.reason).toBe("region_identity_mismatch");
+    expect(identity.servedRegionSlug).toBe(foreignRegionSlug());
+    expect(identity.compiledRegionSlug).toBe(compiledRegionSlug());
+  });
+
+  it("renders when the census states no region at all", async () => {
+    // `unstated` is what a serving side older than the field produces. It makes no claim, so it
+    // must read exactly as it did before the field existed -- silence is never a refusal.
+    await primeServedRegion(mockedFetch, null);
+    mockedFetch.mockResolvedValue(wirePublished("2026-08-20"));
+
+    const envelope = await getParquetLayerDay({
+      layer: "vegetation",
+      day: "2026-08-20",
+      zoomTier: 9,
+    });
+
+    expect(envelope).toMatchObject({ state: "published" });
+  });
+
+  it("renders when the census itself could not be read", async () => {
+    // A census that did not ANSWER is silence, not a claim about a region. The slider states a
+    // coverage outage on its own axis; restating it here would blank every layer on a timeout.
+    resetParquetCoverageCacheForTests();
+    mockedFetch.mockRejectedValueOnce(new UpstreamTimeoutError("census timed out"));
+    mockedFetch.mockResolvedValue(wirePublished("2026-08-20"));
+
+    const envelope = await getParquetLayerDay({
+      layer: "vegetation",
+      day: "2026-08-20",
+      zoomTier: 9,
+    });
+
+    expect(envelope).toMatchObject({ state: "published" });
+  });
+
+  it("learns the identity once, so a second row read costs no census", async () => {
+    resetParquetCoverageCacheForTests();
+    mockedFetch.mockResolvedValueOnce(censusStatingRegion(compiledRegionSlug()));
+    mockedFetch.mockResolvedValue(wirePublished("2026-08-20"));
+
+    await getParquetLayerDay({ layer: "vegetation", day: "2026-08-20", zoomTier: 9 });
+    await getParquetLayerDay({ layer: "vegetation", day: "2026-08-20", zoomTier: 9 });
+
+    // One census plus two day reads: the identity survives the lane cache it was learned beside.
+    expect(mockedFetch).toHaveBeenCalledTimes(3);
+    expect(requestedUrl(0).pathname).toBe("/api/v1/parquet/coverage");
+    expect(requestedUrl(1).pathname).toBe("/api/v1/parquet/day");
+    expect(requestedUrl(2).pathname).toBe("/api/v1/parquet/day");
   });
 });
 

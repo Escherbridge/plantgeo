@@ -205,8 +205,12 @@ function pinnedReleaseSetId(): string | null {
  * observer keeps serving the previous key's answer -- so at the detail band `botanicalQuery.data`
  * still holds the aggregate answer a coarse viewport landed. The pre-fix code chose the lane by
  * `botanicalResult !== undefined`, which that retained answer satisfies, so a zoom from 6 to 11
- * pinned and displayed a generation the points on screen were never read from. The band is the
- * discriminator now, and these three cases are the ones that were wrong.
+ * pinned and displayed a generation the points on screen were never read from.
+ *
+ * The band alone was not enough (style review W9, S1). `isQueryEnabled` is false at the detail band
+ * AND at the aggregate band whenever both aggregate toggles are off, so scoping by band closed one
+ * case of a two-case defect. ENABLEMENT is the discriminator now -- it subsumes the band -- and the
+ * aggregate-band case below is the one the band-only guard still got wrong.
  */
 describe("useBotanicalViewportLanes: the pin follows the lane that drew the cells", () => {
   beforeEach(() => {
@@ -277,6 +281,42 @@ describe("useBotanicalViewportLanes: the pin follows the lane that drew the cell
       state: "detail",
       releaseSetId: "release-detail",
     });
+  });
+
+  it("withholds the pin at the AGGREGATE band while both aggregate toggles are off", () => {
+    // W8's B3 was fixed by scoping the retained answer to the band, which closed the detail case
+    // and left this one (style review W9, S1). At zoom 6 with only the UBC occurrences toggle on,
+    // `isQueryEnabled` is false -- the tRPC observer is DISABLED -- yet `keepPreviousData` still
+    // hands back the aggregate answer an earlier viewport landed. Nothing botanical is drawn at
+    // all here: the occurrences layer is band-gated off below the detail floor, and the two
+    // aggregate layers are switched off. A pin under those conditions names a generation for a map
+    // showing no botanical cells. Under the band-only guard every assertion below reads
+    // "release-aggregate"/"aggregate" instead.
+    lane.band = "aggregate";
+    lane.trpcQuery = {
+      // `truncated` and `note` carry values the fix must drop too, so every assertion below is one
+      // the band-only guard fails rather than one that reads false for a second reason.
+      data: { ...aggregateAnswer("release-aggregate"), truncated: true, note: "capped at 5000 cells" },
+      isError: false,
+      isFetching: false,
+      isPlaceholderData: true,
+      isSuccess: true,
+    };
+    const { result } = renderHook(() =>
+      useBotanicalViewportLanes({ ...BASE_OPTIONS, zoom: 6, occurrencesVisible: true })
+    );
+
+    expect(lastEnabled(lane.trpcCalls)).toBe(false);
+    expect(pinnedReleaseSetId()).toBeNull();
+    expect(useBotanicalOccurrenceStore.getState().lastResponse).toBeNull();
+    // The other consumers of the same retained frame, asserted together: one of them left behind
+    // is the defect over again, one consumer along.
+    expect(result.current.aggregateReleaseSetId).toBeNull();
+    expect(result.current.richnessGeoJSON).toBeNull();
+    expect(result.current.effortGeoJSON).toBeNull();
+    expect(result.current.laneReport.resultState).toBeUndefined();
+    expect(result.current.laneReport.resultNote).toBeNull();
+    expect(result.current.laneReport.truncated).toBe(false);
   });
 
   it("reports no aggregate-lane state at the detail band, retained answer or not", () => {

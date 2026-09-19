@@ -6,6 +6,7 @@ import {
   BotanicalOccurrencesRequestError,
   BotanicalOccurrencesUnavailableError,
 } from "@/lib/server/services/botanical-occurrences-client";
+import { ParquetRegionIdentityError } from "@/lib/server/services/parquet-plane-client";
 import {
   BOTANICAL_MAX_BBOX_SQUARE_DEGREES,
   BOTANICAL_OCCURRENCE_MAX_LIMIT,
@@ -231,6 +232,18 @@ export async function GET(request: NextRequest) {
         : ({ ...result, servingRung } satisfies Extract<BotanicalProxyAnswer, { state: "aggregate" }>);
     return NextResponse.json(body, { headers: PRIVATE_EPHEMERAL_HEADERS });
   } catch (error) {
+    if (error instanceof ParquetRegionIdentityError) {
+      // 503 with the SAME typed reason the slider withholds under, so one misconfiguration reads
+      // as one fault on both axes. A governed refusal rather than a transport fault: nothing
+      // failed to load -- this deployment is not permitted to draw the region it was handed.
+      return failure(
+        503,
+        "This app and its data service are configured for different regions",
+        error.reason,
+        "governed_refusal",
+        error.message
+      );
+    }
     if (error instanceof BotanicalOccurrencesUnavailableError) {
       // A §4a fail-closed pointer. 503 with the CLOSED reason, never an empty collection: "nothing
       // is published" and "the bytes under the pointer changed" must not arrive as the same answer.

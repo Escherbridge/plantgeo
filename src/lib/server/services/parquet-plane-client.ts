@@ -2,6 +2,7 @@ import { mtbsSnapshotWireSchema, normalizeMtbsSnapshot } from "@/lib/server/serv
 import { z } from "zod";
 import { isReusableSliderCoverage } from "@/lib/environmental/slider-policy";
 import { fetchBoundedJson, providerUrl } from "@/lib/server/http/bounded-upstream";
+import { regionIdentityVerdict } from "@/lib/region/region";
 import type { ZoomTier } from "@/lib/map/zoom-tiers";
 import type { DayRange } from "@/types/time-slider";
 import {
@@ -50,6 +51,11 @@ import {
  * exactly the confusion `MetricAtDateAvailability`'s `request_failed` member exists to prevent. An
  * unset base URL is likewise a thrown `UpstreamConfigurationError` (in production; development
  * falls back to the local default) rather than a quiet empty answer.
+ *
+ * ONE REGION. Every ROW read first consults `assertServedRegionMatchesBundle`, so a census that
+ * STATES a region this bundle was not compiled for refuses the rows instead of drawing another
+ * region's features under this bundle's footprint. Silence stays silence: a census that names no
+ * region, or one that did not answer at all, renders exactly as it did before the field existed.
  *
  * ONE ZOOM LADDER. `zoomTier` is typed as `ZoomTier` from `src/lib/map/zoom-tiers.ts` -- imported,
  * never re-derived here -- so a caller must resolve a map zoom through `resolveZoomTier` and this
@@ -104,6 +110,21 @@ let cachedCoverage: { value: ParquetWarehouseCoverage; receivedAt: number } | nu
 /** One refresh shared by cold waiters and same-day background revalidation. */
 let coverageRequest: Promise<ParquetWarehouseCoverage> | null = null;
 
+/**
+ * The region the NEWEST census this process decoded stated, or `undefined` while none has been.
+ *
+ * Separate from `cachedCoverage` on purpose, and the distinction is the whole design of the row-read
+ * region guard. `cachedCoverage` answers "may I reuse this census's LANES", which expires in
+ * minutes; this answers "what has the serving side ever told me about WHOSE region it serves", which
+ * only a redeploy changes. Keeping them apart means a row read pays a census round trip at most once
+ * per process rather than once per cache window, while still following a redeploy within the
+ * coverage cache's own lag -- every decoded census overwrites this.
+ *
+ * `undefined` is "never learned" and `null` is "a census stated nothing", which are different facts:
+ * the first says nothing has been asked yet, the second is `unstated` and renders.
+ */
+let lastStatedRegionSlug: string | null | undefined = undefined;
+
 /** `YYYY-MM-DD`. A shape check only: nothing here turns a day into an instant. */
 const CALENDAR_DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -116,6 +137,33 @@ export class ParquetPlaneRequestError extends Error {}
  * treats that one as transient and would tell the client to retry a mismatch that cannot heal.
  */
 export class ParquetPlaneContractError extends Error {}
+
+/**
+ * The serving side states a region this bundle was not compiled for, so no row of it may be drawn.
+ *
+ * Carries the SAME typed reason the slider withholds its rows under
+ * (`WithheldParquetCapabilityReason`/`LayerWithholdingReason` -> `"region_identity_mismatch"`), so
+ * the two axes cannot describe one misconfiguration in two vocabularies. Deliberately NOT a member
+ * of the `bounded-upstream` taxonomy and deliberately NOT recognised by `parquetUpstreamFailure`:
+ * nothing upstream failed -- it answered honestly about ITS region -- so classifying this as
+ * `upstream_unavailable` would name the wrong party and invite a retry that can only be fixed by a
+ * deploy. Rationale: `src/lib/server/services/AGENTS.md` section "Region identity on row reads".
+ */
+export class ParquetRegionIdentityError extends Error {
+  readonly reason = "region_identity_mismatch";
+  readonly servedRegionSlug: string;
+  readonly compiledRegionSlug: string;
+
+  constructor(servedRegionSlug: string, compiledRegionSlug: string) {
+    super(
+      `The Parquet plane serves region "${servedRegionSlug}" and this bundle was compiled for ` +
+        `"${compiledRegionSlug}"; no row may be drawn. PLANTGEO_REGION and ` +
+        `NEXT_PUBLIC_PLANTGEO_REGION are one setting.`
+    );
+    this.servedRegionSlug = servedRegionSlug;
+    this.compiledRegionSlug = compiledRegionSlug;
+  }
+}
 
 /** Which half of a stream a read addresses; `paths.py`'s `PartitionKind`. */
 export const PARQUET_PARTITION_KINDS = ["observed", "forecast"] as const;
@@ -797,6 +845,55 @@ async function readJson(url: URL, bounds: ReadBounds): Promise<unknown> {
   );
 }
 
+/**
+ * Refuses every row read while the census states a region this bundle was not compiled for.
+ *
+ * ONE VERDICT, BOTH AXES (style review W9, S4). `getParquetSliderCapabilities` has withheld every
+ * Parquet-owned capability on a `mismatch` since W9-A, but the row reads never asked -- so a
+ * deployment with `PLANTGEO_REGION` and `NEXT_PUBLIC_PLANTGEO_REGION` set to different slugs drew a
+ * withheld slider OVER rendered foreign rows. Both axes now consult `regionIdentityVerdict`, the
+ * one function that owns the comparison.
+ *
+ * `unstated` RENDERS, exactly as today: a census that names no region makes no claim, which is what
+ * a serving side older than the field produces, and refusing on silence would blank a working map
+ * for a deployment that is correctly configured.
+ *
+ * A census that did not ANSWER is also silence, not a claim -- so a coverage fault is swallowed
+ * here and the read proceeds. The slider states coverage outages on its own axis
+ * (`parquetCoverageUnavailable`); restating one as a region refusal would name the wrong fault.
+ *
+ * COST, and why this reads `lastStatedRegionSlug` rather than awaiting the census every time. Whose
+ * region the serving side serves changes only when it is REDEPLOYED, so it is learned once and then
+ * refreshed for free by every census the slider already reads (see `lastStatedRegionSlug`). A row
+ * read therefore awaits a census at most ONCE per process -- and only when it beats the slider's own
+ * read to it -- instead of once per coverage-cache window. Awaiting it unconditionally would have
+ * put an 8-second cold-census timeout in front of every layer on a pre-bootstrap deployment, which
+ * is a latency regression paid by correctly configured deployments to catch a misconfigured one.
+ *
+ * EXPORTED for the one row-read path that does not go through this module:
+ * `botanical-occurrences-client.ts` speaks its own wire contract to its own routes, and W9's S4
+ * named it. Shared rather than duplicated so exactly one place decides what a mismatch means.
+ */
+export async function assertServedRegionMatchesBundle(): Promise<void> {
+  if (lastStatedRegionSlug === undefined) {
+    try {
+      await getParquetWarehouseCoverage();
+    } catch {
+      return;
+    }
+    // Still unlearned means the census answered and decoding left nothing to compare; read as
+    // silence rather than retried, so a row read never loops on a census it cannot use.
+    if (lastStatedRegionSlug === undefined) return;
+  }
+  const verdict = regionIdentityVerdict(lastStatedRegionSlug);
+  if (verdict.kind !== "mismatch") return;
+  console.error(
+    "Parquet row read refused: the plane names a region this bundle was not compiled for",
+    { servedRegionSlug: verdict.servedSlug, compiledRegionSlug: verdict.compiledSlug }
+  );
+  throw new ParquetRegionIdentityError(verdict.servedSlug, verdict.compiledSlug);
+}
+
 /** The byte/time/cancellation bounds every ROW read shares. */
 function rowReadBounds(request: ParquetReadBase): ReadBounds {
   return {
@@ -815,6 +912,7 @@ function rowReadBounds(request: ParquetReadBase): ReadBounds {
 export async function getParquetLayerDay(
   request: ParquetLayerDayRequest
 ): Promise<ParquetPlaneEnvelope> {
+  await assertServedRegionMatchesBundle();
   const url = endpoint(WIRE.routes.day);
   applyReadBase(url, request);
   url.searchParams.set(WIRE.params.day, requireCalendarDay(request.day, "day"));
@@ -831,6 +929,7 @@ export async function getParquetLayerDay(
 export async function getParquetLayerDayWindow(
   request: ParquetLayerDayWindowRequest
 ): Promise<ParquetPlaneEnvelope[]> {
+  await assertServedRegionMatchesBundle();
   const firstDay = requireCalendarDay(request.firstDay, "firstDay");
   const lastDay = requireCalendarDay(request.lastDay, "lastDay");
   // String comparison, not date arithmetic: fixed-width ISO days sort chronologically.
@@ -856,6 +955,7 @@ export async function getParquetLayerDayWindow(
 export async function getParquetLatestRelease(
   request: ParquetLatestReleaseRequest
 ): Promise<ParquetPlaneEnvelope> {
+  await assertServedRegionMatchesBundle();
   const url = endpoint(WIRE.routes.release);
   applyReadBase(url, request);
   url.searchParams.set(WIRE.params.asOfDay, requireCalendarDay(request.asOfDay, "asOfDay"));
@@ -891,6 +991,9 @@ export async function getParquetWarehouseCoverage(): Promise<ParquetWarehouseCov
     });
     const value = decodeCoverage(payload);
     cachedCoverage = { value, receivedAt: Date.now() };
+    // Every decoded census restates whose region it describes, so the row-read guard follows a
+    // serving-side redeploy without a read of its own.
+    lastStatedRegionSlug = value.regionSlug ?? null;
     return value;
   })();
   const request = coverageRequest;
@@ -911,6 +1014,7 @@ export async function getParquetWarehouseCoverage(): Promise<ParquetWarehouseCov
 export function resetParquetCoverageCacheForTests(): void {
   cachedCoverage = null;
   coverageRequest = null;
+  lastStatedRegionSlug = undefined;
 }
 
 /* ---------------------------------------------------------------------------

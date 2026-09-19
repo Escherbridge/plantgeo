@@ -23,6 +23,9 @@ import {
   BotanicalOccurrencesUnavailableError,
 } from "@/lib/server/services/botanical-occurrences-client";
 
+import { resetParquetCoverageCacheForTests } from "@/lib/server/services/parquet-plane-client";
+import { compiledRegionSlug, primeServedRegion } from "./served-region-fixture";
+
 const mockedProviderUrl = vi.mocked(providerUrl);
 const mockedFetch = vi.mocked(fetchBoundedJson);
 
@@ -30,10 +33,16 @@ function requestedUrl(callIndex = 0): URL {
   return mockedFetch.mock.calls[callIndex][0] as URL;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  resetParquetCoverageCacheForTests();
   mockedProviderUrl.mockReset();
   mockedFetch.mockReset();
   mockedProviderUrl.mockImplementation(() => new URL("http://agri.internal:8000"));
+  // `getBotanicalOccurrences` consults the served region before its pointer read (style review W9,
+  // S4). Priming the identity keeps that guard from consuming the pointer/query answers each case
+  // queues below; see `served-region-fixture.ts` for why it primes through the real decode path.
+  await primeServedRegion(mockedFetch, compiledRegionSlug());
+  mockedProviderUrl.mockClear();
 });
 
 afterEach(() => vi.useRealTimers());
