@@ -25,6 +25,7 @@ from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct.weather_observations import forward
 from agri_data_service.pipeline.direct.weather_observations.adapter import OverturnedAbsence, RetractedAbsenceMarker
 from agri_data_service.pipeline.direct.weather_observations.recovery import (
+    WEATHER_SUPPORT_WITNESS_LIMIT,
     WeatherRecoveryReport,
     WeatherSupportWitness,
 )
@@ -620,6 +621,48 @@ class TestTheRefusalNamesWhichEmptyAnswerThisIs:
         detail = forward._recovery_refusal_detail(self._report("no_retained_capture", witness))
 
         assert "lost, not owed" in detail, "the one case where the claim is true must still be made"
+
+    def test_a_report_that_never_asked_the_grid_question_claims_neither_a_loss_nor_a_move(self) -> None:
+        """STYLE-REVIEW-W11 B1: the default branch is the one that claims least, not the loss."""
+        detail = forward._recovery_refusal_detail(self._report("no_retained_capture", None))
+
+        assert "UNKNOWN, not" in detail
+        assert "lost, not owed" not in detail, "no witness is on the record, so no loss is provable"
+        assert "restore" not in detail, "telling an operator to restore a bbox on no evidence moves the data away"
+
+    def test_only_the_walked_state_may_claim_a_move_even_when_another_grid_is_witnessed(self) -> None:
+        """The move claim is keyed to the state that required an exhausted walk, never to the witness.
+
+        `recovery.py::recover_weather_day` cannot produce this pair -- an empty walk plus another
+        witnessed grid IS `foreign_support_grid` -- and this asserts which half the text trusts if
+        a later caller ever constructs one: the walked state, not the best-effort record.
+        """
+        witness = WeatherSupportWitness(
+            day=DAY_THREE,
+            searched_sha256="now",
+            witnessed_sha256=("before",),
+            recorded=True,
+        )
+
+        detail = forward._recovery_refusal_detail(self._report("probe_budget_exhausted", witness))
+
+        assert "OWED, not" not in detail, "an unfinished search is not evidence the grid moved"
+        assert "lost, not owed" not in detail
+        assert "UNKNOWN, not" in detail
+
+    def test_a_witness_at_its_eviction_bound_says_the_named_grids_may_not_be_all_of_them(self) -> None:
+        """STYLE-REVIEW-W11 N3: the ninth grid destroys the first, and the operator reads this text."""
+        witness = WeatherSupportWitness(
+            day=DAY_THREE,
+            searched_sha256="now",
+            witnessed_sha256=tuple(f"grid-{index}" for index in range(WEATHER_SUPPORT_WITNESS_LIMIT)),
+            recorded=True,
+        )
+
+        detail = forward._recovery_refusal_detail(self._report("foreign_support_grid", witness))
+
+        assert witness.truncated
+        assert "older ones may be missing" in detail
 
 
 class TestRecoverDayArgument:

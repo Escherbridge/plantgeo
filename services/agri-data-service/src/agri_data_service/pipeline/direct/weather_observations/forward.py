@@ -96,6 +96,7 @@ from agri_data_service.pipeline.direct.weather_observations.adapter import (
     DirectWeatherObservationsForwardAdapter,
 )
 from agri_data_service.pipeline.direct.weather_observations.recovery import (
+    WEATHER_SUPPORT_WITNESS_LIMIT,
     WeatherCheckpointReport,
     checkpoint_current_poll,
     recover_weather_day,
@@ -984,29 +985,45 @@ def _recovery_refusal_detail(recovery: WeatherRecoveryReport) -> str:
     on disk under the old digest; the claim of permanent loss is false, and it is made at the exact
     moment an operator is deciding whether to panic. `recovery.py::WeatherSupportWitness` is what
     makes the three cases distinguishable; this only has to speak them.
+
+    EVERY BRANCH IS SELECTED BY POSITIVE EVIDENCE, AND THE DEFAULT IS THE ONE THAT CLAIMS LEAST
+    (style review W11, B1). The move claim needs a witnessed other grid AND the exhausted walk that
+    `recovery.py::recover_weather_day` requires before it will say `foreign_support_grid`; the loss
+    claim needs the searched grid to be on the record for the day (`grid_matches`). Anything else --
+    no witness, an unreadable one, a report that never asked -- falls to UNKNOWN, which is what the
+    evidence supports, and says what to TRY rather than what to restore: telling an operator to
+    restore a bbox on evidence this thin is how a readable day gets moved out of reach.
     """
     day = recovery.day.isoformat()
     witness = recovery.witness
     if recovery.state == "foreign_support_grid" and witness is not None:
         witnessed = ", ".join(witness.witnessed_sha256)
-        return (
-            f"no retained provider response for {day} is addressable under the support grid this turn "
-            f"is configured for ({recovery.support_sha256}): the day was polled under {witnessed}. "
-            "INGEST_BBOX or the weather sample spacing has changed since, so the bucket is OWED, not "
-            "lost -- restore the bbox and spacing that produced the witnessed grid and re-run"
+        capped = (
+            f" (the witness holds at most {WEATHER_SUPPORT_WITNESS_LIMIT} grids, so older ones may be missing)"
+            if witness.truncated
+            else ""
         )
-    if witness is not None and witness.verdict == "no_witness":
         return (
-            f"no retained provider response for {day} can be read under support grid "
-            f"{recovery.support_sha256}, and no support witness survives for the day, so whether one "
-            "exists under a different grid cannot be told from here. The bucket is UNKNOWN, not "
-            "provably lost: check INGEST_BBOX and the weather sample spacing before concluding"
+            f"every support point for {day} was read under the grid this turn is configured for "
+            f"({recovery.support_sha256}) and none is retained, while the day IS on record as polled "
+            f"under {witnessed}{capped}. INGEST_BBOX or the weather sample spacing has changed since, "
+            "so the bucket is OWED, not lost -- restore the bbox and spacing that produced the "
+            "witnessed grid and re-run within the 7-day checkpoint window"
+        )
+    if witness is not None and witness.verdict == "grid_matches":
+        return (
+            f"no retained provider response for {day} can still be read under the support grid it was "
+            f"polled with ({recovery.support_sha256}), so this day cannot be republished from checkpoints. "
+            "Open-Meteo's current-conditions endpoint has no archive to re-fetch it from either: the "
+            "bucket is lost, not owed"
         )
     return (
-        f"no retained provider response for {day} can still be read under the support grid it was "
-        f"polled with ({recovery.support_sha256}), so this day cannot be republished from checkpoints. "
-        "Open-Meteo's current-conditions endpoint has no archive to re-fetch it from either: the "
-        "bucket is lost, not owed"
+        f"no retained provider response for {day} can be read under support grid "
+        f"{recovery.support_sha256}, and no support witness names the day, so whether a body exists "
+        "under a different grid cannot be told from here -- a witness expires with the bodies and its "
+        "write is best-effort, so its silence is not an answer. The bucket is UNKNOWN, not provably "
+        "lost: re-run --recover-day with the INGEST_BBOX and weather sample spacing that were in "
+        "effect when the day was polled, and treat it as lost only if that turn is empty too"
     )
 
 

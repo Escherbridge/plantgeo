@@ -1165,7 +1165,7 @@ are one defect: the net was hung, never pulled on.
 3. **Five verdicts, not two.** `complete_capture`, `partial_capture`, `no_retained_capture`,
    `probe_budget_exhausted` (added 2026-09-19 with the bound below, since a search that stopped
    early is not evidence of an empty bucket) and `foreign_support_grid` (see the support witness
-   below, since a search of the wrong key space is not evidence of anything). The
+   below: an exhausted search of THIS grid plus a witnessed other grid, never the witness alone). The
    original collapsed `partial_capture` into `no_retained_capture`, so an ordinary first poll of a
    new UTC day -- and BOTH halves of
    a legitimate midnight-straddle poll -- reported the word that means unpublishable. A partial
@@ -1245,20 +1245,40 @@ any grid" is not a question the store can answer. The evidence therefore has to 
 `recovery.py::record_support_witness` writes one grid-independent object per day beside the bodies
 (identity `weather_support_witness_identity`, whose grid slot is the constant
 `WEATHER_SUPPORT_WITNESS_GRID`), holding the digests that day has been polled under. It is rewritten
-on every poll so it expires with the bodies rather than before them, and a witness that fails to
-write costs a future recovery its discriminator, never this turn its retention
-(`SourceResponseCheckpoints.write`, `pipeline/parquet/source_checkpoint.py:80-122`, reports its own
-faults and returns).
+on every poll so it expires with the bodies rather than before them.
 
-`recover_weather_day` reads the witness FIRST, in one object read, and this is also the GRID BOUND
-the date bounds had no counterpart for: a day witnessed only under other digests returns
-`foreign_support_grid` **without walking a single point**, because the walk would issue one GET per
-support point against keys that cannot exist and then report the emptiness it manufactured as a
-loss. `_recovery_refusal_detail` (`weather_observations/forward.py:978-1010`) then speaks all three
-answers apart: OWED (grid changed, restore the bbox and spacing and re-run, naming both digests),
-UNKNOWN (no witness survives, so whether a body exists elsewhere cannot be told from here), and LOST
-(searched the grid the day was polled with, and nothing is readable). Only the third is a loss claim,
-and every report now carries `support_sha256` so the identity searched is on the record either way.
+**A witness that fails to write is WRONG, not absent** (2026-09-19, STYLE-REVIEW-W11 B1 -- this
+section previously said a failed write "costs a future recovery its discriminator, never this turn
+its retention", and the first half was false). `SourceResponseCheckpoints.write`
+(`pipeline/parquet/source_checkpoint.py:80-122`) reports its own faults and returns, and a lost
+compare-and-swap writes nothing at all and says so only to the log (`source_checkpoint.py:118`). So
+one swallowed write after a grid change leaves the PREVIOUS grid's digests standing while the
+bodies land under the new one -- no concurrency required. Eviction at
+`WEATHER_SUPPORT_WITNESS_LIMIT` is a second route to the same wrongness and a lost CAS a third.
+The witness set is therefore a **lower bound** on the grids a day was polled under and never an
+upper one: a digest that is present is evidence, a digest that is absent is evidence of nothing.
+
+**So the witness is evidence, never a gate.** `recover_weather_day`
+(`weather_observations/recovery.py::recover_weather_day`) reads it first, in one object read, and
+then **walks the configured grid in every case**; the verdict only names which empty answer an
+exhausted walk earned. `foreign_support_grid` requires BOTH halves -- a completed walk of this grid
+that recovered nothing (the negative, which only a walk can supply) and a witness naming a
+different grid (the positive) -- and `WeatherSupportWitness.verdict`'s third case is named
+`other_grids_witnessed` for what is on the record rather than `grid_changed` for what used to be
+inferred from its absence. Between 2026-09-19 and W12 the verdict WAS a gate, and one swallowed
+witness write was enough to refuse a day whose bodies lay under the searched key with zero probes.
+The cost of the change is one checkpoint read per support point on a genuinely moved grid, once per
+refused day, bounded by `RECOVERY_PROBE_BUDGET_SHARE` on the in-poll caller and unbounded only on
+the operator turn, for which reading the grid IS the turn.
+
+`_recovery_refusal_detail` (`weather_observations/forward.py::_recovery_refusal_detail`) then speaks
+the three answers apart, each selected by positive evidence, with the least-claiming one as the
+default: OWED (walked empty AND another grid witnessed -- restore the bbox and spacing that produced
+the witnessed grid and re-run inside the 7-day window, naming both digests), LOST (`grid_matches`,
+so the day is on record as polled under the grid just walked empty), and otherwise UNKNOWN, which
+says what to TRY rather than what to restore. Only LOST claims a loss, OWED is the only claim that
+the grid moved, and every report carries `support_sha256` plus `witness_truncated` so the identity
+searched and the completeness of the record are on the stream either way.
 
 #### The probe's OUTPUT is guarded too, not just its I/O
 

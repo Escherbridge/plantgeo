@@ -116,8 +116,11 @@ def test_a_checkpoint_cannot_be_read_back_under_a_different_support_grid() -> No
 
     Until 2026-09-19 this returned `no_retained_capture`, which `--recover-day` prints as "the bucket
     is lost, not owed" -- about bodies sitting on disk under the previous digest. The witness the
-    poll wrote is what tells the two apart, and the walk is skipped entirely: every key it would ask
-    for is one this grid cannot construct.
+    poll wrote is what tells the two apart.
+
+    The walk still happens (STYLE-REVIEW-W11 B1): the move claim is earned by an EXHAUSTED empty
+    walk of this grid plus a witnessed other one, so `missing_or_rejected_points` counts the point
+    that really was asked for and did not answer.
     """
     checkpoints = _checkpoints()
     checkpoint_current_poll(_poll((POINTS[0], _body(19.5)), (POINTS[1], _body(17.25))), POINTS, checkpoints)
@@ -126,9 +129,10 @@ def test_a_checkpoint_cannot_be_read_back_under_a_different_support_grid() -> No
 
     assert recovered.state == "foreign_support_grid"
     assert recovered.recovered_points == 0
-    assert recovered.missing_or_rejected_points == 0, "nothing was searched, so nothing is missing"
+    assert recovered.missing_or_rejected_points == 1, "the grid WAS walked; that is what earns the claim"
+    assert recovered.unprobed_points == 0, "an unfinished walk could not have earned it"
     assert recovered.witness is not None
-    assert recovered.witness.verdict == "grid_changed"
+    assert recovered.witness.verdict == "other_grids_witnessed"
     assert recovered.witness.witnessed_sha256 == (weather_support_sha256(POINTS),)
     assert recovered.support_sha256 == weather_support_sha256((POINTS[0],))
 
@@ -138,8 +142,8 @@ def test_a_corrupt_retained_body_is_a_rejection_rather_than_a_fabricated_reading
     checkpoints = SourceResponseCheckpoints(storage)
     checkpoint_current_poll(_poll((POINTS[0], b"{not json")), POINTS, checkpoints)
 
-    # The SAME grid the poll used: a narrower one would now be refused as foreign before any read,
-    # and this test is about a body that cannot be parsed, not about a grid that moved.
+    # The SAME grid the poll used: a narrower one would walk keys that cannot exist and land on
+    # `foreign_support_grid`, and this is about a body that cannot be parsed, not a grid that moved.
     recovered = recover_weather_day(date(2026, 9, 13), POINTS, checkpoints, now=FETCHED_AT)
 
     assert recovered.state == "no_retained_capture"
@@ -251,6 +255,9 @@ def test_the_recovery_event_names_the_verdict_without_carrying_the_readings() ->
         "support_grid_verdict": "grid_matches",
         "searched_support_sha256": weather_support_sha256(POINTS),
         "witnessed_support_sha256": [weather_support_sha256(POINTS)],
+        # Whether the witnessed list could be all of them: one grid is nowhere near the eviction
+        # bound, and a reader must not have to know the bound to tell a full record from a capped one.
+        "witness_truncated": False,
     }
 
 
@@ -329,6 +336,76 @@ def test_a_day_with_no_witness_is_walked_rather_than_refused() -> None:
     assert recovered.recovered_points == 2
     assert recovered.witness is not None
     assert recovered.witness.verdict == "no_witness"
+
+
+class _WitnessWritesLoseTheirSwap(MemoryAvailabilityStorage):
+    """A store where every witness write loses its compare-and-swap and every body write lands.
+
+    Not a hypothetical: `SourceResponseCheckpoints.write` logs `source_checkpoint_contended`
+    (`pipeline/parquet/source_checkpoint.py:118`) and returns when the swap is refused, so the
+    caller cannot tell. A transient store fault reaches the same swallow five lines below it.
+    """
+
+    def __init__(self, refused_key: str) -> None:
+        super().__init__()
+        self.refused_key = refused_key
+        #: Off while the fixture seeds the PREVIOUS grid's witness, on for the poll under test.
+        self.refusing = False
+
+    def compare_and_swap(self, key: str, payload: bytes, *, expected_etag: str | None, content_type: str) -> bool:
+        if self.refusing and key == self.refused_key:
+            return False
+        return super().compare_and_swap(key, payload, expected_etag=expected_etag, content_type=content_type)
+
+
+def test_a_day_whose_witness_write_failed_is_walked_and_recovered_rather_than_called_foreign() -> None:
+    """STYLE-REVIEW-W11 B1: the previous grid's witness stands, and the bodies are under the new one.
+
+    No concurrency is needed for this. Monday the day is polled under the wide grid and witnessed.
+    Tuesday the operator narrows `INGEST_BBOX`, the bodies are retained under the narrow grid, and
+    that day's witness write loses its swap -- so the witness still reads (wide,) while every body
+    this recovery wants is sitting under the key it is about to construct.
+
+    Before this change the verdict alone refused the day: zero probes, `foreign_support_grid`, exit
+    1, and an operator told to restore the bbox that would move the configured grid AWAY from the
+    readable bodies, for the whole seven days the checkpoints survive. The walk is what settles it.
+    """
+    day = date(2026, 9, 13)
+    narrow: tuple[tuple[float, float], ...] = (POINTS[0],)
+    storage = _WitnessWritesLoseTheirSwap(weather_support_witness_identity(day).key)
+    checkpoints = SourceResponseCheckpoints(storage)
+    # Monday's witness is seeded through the same writer with the refusal lifted, so the object
+    # under test is a real witness body and not a fixture's idea of one.
+    record_support_witness(day, weather_support_sha256(POINTS), checkpoints, now=FETCHED_AT)
+    storage.refusing = True
+
+    later = FETCHED_AT + timedelta(hours=1)
+    checkpoint_current_poll(
+        WeatherPollResult(
+            fetched_at=later,
+            points_sampled=1,
+            observations=(
+                WeatherPointObservation(
+                    latitude=POINTS[0][0],
+                    longitude=POINTS[0][1],
+                    observation={"observedAt": "2026-09-13T18:00:00.000Z"},
+                    response_body=_body(19.5),
+                ),
+            ),
+            unavailable_points=0,
+        ),
+        narrow,
+        checkpoints,
+    )
+
+    recovered = recover_weather_day(day, narrow, checkpoints, now=later)
+
+    assert recovered.witness is not None
+    assert recovered.witness.verdict == "other_grids_witnessed", "the witness is WRONG, not absent"
+    assert recovered.witness.witnessed_sha256 == (weather_support_sha256(POINTS),), "Tuesday's write never landed"
+    assert recovered.state == "complete_capture", "walked, not refused: no verdict may outrank a readable body"
+    assert recovered.recovered_points == 1
+    assert recovered.observations, "so the day publishes and no refusal text is rendered for it at all"
 
 
 def test_the_witness_identity_carries_no_grid_because_nothing_could_find_it_otherwise() -> None:
