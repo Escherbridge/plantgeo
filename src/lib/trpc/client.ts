@@ -15,6 +15,17 @@ export const trpc = createTRPCReact<AppRouter>({ abortOnUnmount: true });
 export const api = trpc;
 
 /**
+ * The router type, re-exported so a browser module can NAME a procedure's answer without a second
+ * edge into `src/lib/server/`.
+ *
+ * `scripts/check-client-server-imports.mjs` holds a deliberate one-entry `TYPE_ONLY_ALLOWLIST`
+ * (`:8-10`) -- this file, this specifier. Every other client surface that needs the type takes it
+ * from here, so the allowlist stays one entry rather than growing one per consumer. Type-only, so
+ * it is erased at build and pulls no server module into the bundle.
+ */
+export type { AppRouter };
+
+/**
  * The single link chain both clients use, so the two can never drift apart. Routes every
  * tRPC-issued request through the shared client-side request budget -- see
  * src/lib/net/AGENTS.md "Both transports". This one edit is what makes the budget uniform

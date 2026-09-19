@@ -33,10 +33,10 @@ import { trpc } from "@/lib/trpc/client";
 import { useMapStore } from "@/stores/map-store";
 // Type-only, so nothing of the drawn-day registry is pulled into this module at runtime.
 import type { QueryReadState } from "@/stores/useMetricAtDate";
-// Type-only, the same way `src/lib/trpc/client.ts:6` imports the router: erased at build, so no
-// server module is pulled into this client bundle.
+// Type-only, and the router comes from the CLIENT re-export: `check-client-server-imports.mjs:8-10`
+// allows exactly one browser module to name `@/lib/server/trpc/router`, and it is `trpc/client.ts`.
 import type { inferRouterOutputs } from "@trpc/server";
-import type { AppRouter } from "@/lib/server/trpc/router";
+import type { AppRouter } from "@/lib/trpc/client";
 // The detail floor is the PLANE's own (`DETAIL_ZOOM_FLOOR = 11` server-side), not a rung on the
 // `ZOOM_TIERS` ladder; imported rather than restated so the two cannot drift.
 import { BOTANICAL_DETAIL_MIN_ZOOM } from "@/lib/botanical-occurrences";
