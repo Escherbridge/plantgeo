@@ -337,6 +337,9 @@ def test_the_witness_identity_carries_no_grid_because_nothing_could_find_it_othe
 
     assert identity.support_sha256 == "any-support-grid"
     assert identity.provider == "open-meteo-current-conditions-support-witness-v1"
-    assert identity.key != weather_checkpoint_identity(
-        POINTS[0], day=date(2026, 9, 13), support_sha256=weather_support_sha256(POINTS)
-    ).key
+    assert (
+        identity.key
+        != weather_checkpoint_identity(
+            POINTS[0], day=date(2026, 9, 13), support_sha256=weather_support_sha256(POINTS)
+        ).key
+    )

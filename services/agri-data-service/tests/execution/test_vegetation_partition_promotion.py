@@ -1147,7 +1147,7 @@ def test_every_terminal_status_reports_the_same_core_keys() -> None:
 
     assert set(by_status) == TERMINAL_STATUSES, "one example report per terminal status, and no status missed"
     for status, report in by_status.items():
-        assert TERMINAL_REPORT_CORE_KEYS <= set(report), f"{status} drops a core key"
+        assert set(report) >= TERMINAL_REPORT_CORE_KEYS, f"{status} drops a core key"
         assert isinstance(report["reason"], str), f"{status} states no reason"
     assert set(failed) - TERMINAL_REPORT_CORE_KEYS == {"error"}
     assert set(stale) - TERMINAL_REPORT_CORE_KEYS == {"promotion_status", "promotion_reason"}

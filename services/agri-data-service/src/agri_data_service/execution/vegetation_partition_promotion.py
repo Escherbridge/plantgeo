@@ -937,7 +937,7 @@ def failed_report(error: BaseException) -> dict[str, object]:
     rather than absent, AND a `reason` is stated, because `failed` was the one terminal status with
     no `reason` key and a log consumer keying on it saw shape drift (STYLE-REVIEW-W10 S2/N3). The
     equality of the key sets is held by
-    `tests/execution/test_vegetation_partition_promotion.py::test_every_terminal_status_reports_the_same_keys`,
+    `tests/execution/test_vegetation_partition_promotion.py::test_every_terminal_status_reports_the_same_core_keys`,
     not by this sentence. `error` is the one key only this status carries, and it is additive.
 
     The reason names the gap it leaves rather than claiming there was none: STYLE-REVIEW-W9 S2 is

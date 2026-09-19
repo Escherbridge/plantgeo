@@ -598,7 +598,8 @@ class TestTheRefusalNamesWhichEmptyAnswerThisIs:
 
         assert "OWED, not" in detail
         assert "lost, not owed" not in detail, "the bodies are on disk under the previous digest"
-        assert "before" in detail and "now" in detail, "both digests, so the operator can act on it"
+        assert "before" in detail, "the witnessed digest, so the operator knows what to restore"
+        assert "now" in detail, "the searched digest, so the operator knows what was looked under"
 
     def test_a_day_with_no_witness_is_unknown_rather_than_lost(self) -> None:
         witness = WeatherSupportWitness(day=DAY_THREE, searched_sha256="now")
