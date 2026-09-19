@@ -233,11 +233,13 @@ filters and details panels read all come off its one answer. `useBotanicalOccurr
 serves the two aggregate layers and nothing else. The earlier note here -- that both lanes run at a
 detail zoom -- described the state this replaced.
 
-Which lane speaks is decided by the BAND, never by which answer is in hand: this query keeps
-`placeholderData: KEEP_PREVIOUS_WHILE_PANNING`, and a DISABLED observer still serves the previous
-key's answer, so `botanicalQuery.data` stays populated at the detail band after a zoom out of the
-aggregate one. See `src/components/map/AGENTS.md` section "The pin names the lane that drew the
-cells" (style review W8, B3) for the pin this used to corrupt.
+Which lane speaks is decided by the BAND, and whether it spoke at all by its ENABLEMENT -- never by
+which answer is in hand. This query keeps `placeholderData: KEEP_PREVIOUS_WHILE_PANNING`, and a
+DISABLED observer still serves the previous key's answer, so `botanicalQuery.data` stays populated
+after a zoom out of the aggregate band AND after both aggregate toggles go off WITHIN it. The band
+test alone caught only the first of those two (style review W9, S1); `isQueryEnabled` catches both,
+because it is false at the detail band by construction. See `src/components/map/AGENTS.md` section
+"The pin names the lane that drew the cells" (style review W8 B3, W9 S1) for the pin this corrupted.
 
 **A refusal is not a failure.** The route answers governed 400/503 refusals with
 `kind: "governed_refusal"` and their own `detail`; everything else is `transport_fault`.
