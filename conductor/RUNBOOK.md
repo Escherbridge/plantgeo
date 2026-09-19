@@ -292,6 +292,73 @@ disagree — the Python and web region env vars are independent and a split was 
 module-scope region reads are now blocked by a guard in each tree, each with a self-test, closing the
 trap the previous wave's own comment claimed to have fixed.
 
+## Session 22 wave 10 — review fixes, and a checkpoint that erased what it protected (2026-09-19)
+
+Deployed `3a548034`, all four platform services SUCCESS, gate closed 13:19:10Z; checkpoint
+`tracks/platform_experience_qa_20260911/evidence/release-checkpoint-20260919-3a548034.md`. Wave 9's
+review (`.omc/ultrapilot-20260918/STYLE-REVIEW-W9.md`) returned CHANGES-REQUIRED with both blockers
+inside wave 9's own fixes.
+
+**The promotion staleness bound was measuring the wrong distance.** It compared the ceiling against
+*today*, but the registered `publication_lag_days=7` is a MEASURED MEDIAN gap between usable
+observation days (cloud screening removes scenes), so a healthy lane already sits a full window behind
+before anything is wrong — the two-window bound left one median gap of slack, and a cloudy fortnight
+would have refused the turn before evaluating any day. With a one-day default window that day was then
+never revisited: the gate manufactured the hole it detects. It now counts **missed publication
+opportunities against the lane's provider frontier**: stale means the ceiling is at least three
+windows behind the frontier, so a 16-day gap is healthy and 21 days is dead. The verdict is applied
+*after* the window, so a stale turn still promotes its ceiling day and re-states a finished report —
+a refusal can never consume a day.
+
+**A window wider than one day was still promoting base-rung-only days.** The §4a servable intersection
+gated only the ceiling while every other day was classified by its base-rung verdict. It now binds
+every day, checked last so an indexed `governed_absence` keeps its own reason instead of being
+relabelled. Also found: `failed` was outside the status vocabulary — a hand-written `return 1` that
+the status-partition test excluded, so that test proved a property of a set missing the one status
+that mattered. Six statuses now, unknown still fails closed.
+
+**Wave 8's pin blocker was relocated, not closed.** Wave 9 scoped the retained tRPC frame by zoom band,
+but a disabled observer still serves its previous answer at the *aggregate* band with both toggles off.
+The predicate is now enablement, which subsumes the band, and all nine downstream consumers funnel
+through one binding rather than two half-predicates.
+
+**The weather checkpoint was erasing what it protected.** The source checkpoint key is
+`(provider, support_sha, day, request_url)` with no instant, and a write refreshes a stable key on a
+newer `retrieved_at`. Wiring the archive-less weather-observations lane into it (wave 9 salvage) meant
+**every hourly poll overwrote the retained bodies of the bucket the previous poll had failed to
+write**. Recovery now runs before retention on every turn and folds recovered readings into the poll's
+own tables on the published grain; `--recover-day` repairs a named day with no source request.
+Retention failure deliberately does NOT exit 1 — exit 1 is this lane's breaker, and discarding rows
+already in memory because their backup failed destroys what the backup protects; the debt reaches the
+turn report instead. **Standing trap for any lane that cannot re-fetch its source: put the instant in
+the retained-body key, or read before you refresh.** Climate and soil escape it only because they can
+re-request an archive.
+
+Drought `--target-day` now forces the republication it is named for (safe: a failed attempt retracts
+the completion marker only at `part-0`, so the published day is untouched), and a governed-absent day
+no longer makes the turn raise — `_pending_weeks` re-lists a recent absence by design, and the code
+read that guaranteed re-listing as an unfilled release. That one was reachable on the ordinary backlog
+walk, not just behind the new flag.
+
+**Region identity is now enforced on row reads**, not only on the slider axis: the three Parquet row
+readers and the botanical client assert the served region before reading and throw a typed
+`region_identity_mismatch` (503). Production shows zero of them, which is the correct outcome for a
+correctly configured deployment.
+
+**Residuals, reported not patched:** the served-region identity is *learned* from a census decode
+rather than re-read per row (awaiting one would put a ~28 s cold census behind an 8 s timeout), so a
+serving side redeployed into another region goes undetected until the next census; a manifest with an
+empty `slug` would read as "unstated" rather than as a mismatch; `regional-evidence-tools.ts` reads the
+warehouse through `/agent-tools/` with no region guard (not a row read, but the surface is named);
+the weather dedup keys on the wire string while the merge refuses on the parsed instant — unreachable
+today, reachable if the rendering changes inside the 7-day checkpoint window; and **a stale lane now
+exits 1 hourly until its work item dead-letters**, which becomes a new dead-letter source the moment
+the NDVI allow-list gate is opened.
+
+**Unproven rather than passed** (both need something a read-only pass may not do): the land-context
+agent-tool refusal envelope, whose only dispatch surface is session-gated and returned 401; and the
+region-mismatch refusal path itself, which requires the two region environment variables to disagree.
+
 ## Open owner items
 
 - **Object-store credential rotation (2026-09-19).** An operations agent printed
