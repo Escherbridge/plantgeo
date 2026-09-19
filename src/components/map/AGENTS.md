@@ -1444,9 +1444,9 @@ lane rather than the tRPC one: it is additive, not a narrowing. Concretely:
   used to split the tRPC list.
 - `gbifReadPhase` is the proxy lane's `phase` verbatim -- one read-state vocabulary to consult,
   not a hand-built mapping off `botanicalQuery`'s flags.
-- The release-set-pin effect (`setBotanicalResponse`/`setBotanicalReleaseSetId`) prefers the tRPC
-  answer when one is in hand (aggregate band) and falls back to the proxy's detail answer
-  otherwise -- a fallback, not a merge, because the two lanes never answer the same band at once.
+- The release-set-pin effect (`setBotanicalResponse`/`setBotanicalReleaseSetId`) is keyed on the
+  BAND, not on which answer happens to be in hand. See "The pin names the lane that drew the
+  cells" below -- the original fallback ordering was wrong and was fixed on 2026-09-18.
 - `withheldCount` moved off the tRPC answer onto the proxy's, and the `botanical-withheld` fault
   entry in `parquet-layer-faults.ts` dropped its `isQueryEnabled` gate accordingly (that gate now
   means "the tRPC lane is enabled", which is false at the detail band where withheld counts live).
@@ -1458,6 +1458,68 @@ message holds unchanged. `botanical-refused` / `botanical-unavailable` / `botani
 answer and it no longer runs at the detail band; the proxy lane's own caption
 (`describeBotanicalOccurrencesState`, surfaced as `botanical-viewport-read`) already covers a
 detail-band refusal or truncation, in different words.
+
+#### The pin names the lane that drew the cells
+
+Style review W8, B3. The bullet above originally read "prefers the tRPC answer when one is in hand,
+falls back to the proxy's detail answer", justified by "the two lanes never answer the same band at
+once". That justification was false, and the mechanism that made it false lives one file away:
+`useBotanicalOccurrencesQuery` is configured `placeholderData: KEEP_PREVIOUS_WHILE_PANNING`
+(`useViewportProxiedLayers.ts`, `keepPreviousData`), and a react-query observer that has been
+DISABLED still serves the previous key's answer. So a reader sitting at zoom 6 with an aggregate
+answer cached and then zooming to 11 left `botanicalQuery.data` defined at the detail band, the
+"prefer tRPC" arm won, and the filters panel pinned and displayed the AGGREGATE read's
+`releaseSetId` — a generation the specimen points on screen were never read from. If the pointer
+had advanced between the two reads the pin was simply wrong, silently, which is the opposite of
+what its own comment promised.
+
+Three rules now hold, all keyed on `band`:
+
+1. `aggregateBandAnswer` is `band === "detail" ? undefined : botanicalQuery.data`. Every
+   tRPC-sourced value below it — `botanicalAggregate`, the cells, `aggregateReleaseSetId`, and the
+   lane report's `resultState` / `resultNote` / `isError` / `truncated` — reads that, so a retained
+   answer cannot speak for a band it was never read in. `isError` is additionally `&&
+   isQueryEnabled`, since a disabled observer keeps reporting the last key's error too.
+2. The store publication and `servedBotanicalReleaseSetId` both branch on `band` first: proxy at
+   `detail`, tRPC above it. This is a partition, not a preference order.
+3. While the band's own lane has no answer, the pin is CLEARED (`setReleaseSetId(null)`,
+   `setLastResponse(null)`) rather than left holding the other band's. An absent provenance claim
+   is honest; a stale one is not (`engineering-principles.md` §4). `release_set_id` shapes no
+   request on either lane, so clearing it cannot feed back into a refetch, and `setReleaseSetId`
+   returns the state object unchanged when nothing moved so the repeated write costs no renders.
+
+The fault entries follow: `botanical-truncated` lost its `band === "detail"` message arm (that arm
+required `isQueryEnabled`, which is false at the detail band — it was unreachable), and
+`botanical-request-failed` stopped naming GBIF, which reads the proxy lane now. The remaining
+tRPC-gated entries (`botanical-refused`, `botanical-unavailable`, `botanical-request-failed`,
+`botanical-truncated`) are NOT dead: they are the aggregate band's own vocabulary, reachable
+whenever the richness or collection-effort toggle is on below the detail floor.
+
+#### Governed refusals read as refusals
+
+Style review W8, S4. Collapsing the detail band onto the proxy lane changed how a governed refusal
+arrives. On the tRPC lane it was a landed answer with `state: "refused" | "unavailable"` and a
+service-authored `note` that `parquet-layer-faults.ts` quoted verbatim as a `notice`. On the proxy
+lane the route maps those to HTTP 400/503, so they reach the hook as `phase: "error"` — the same
+phase a dead socket produces — and the caption said "Specimen records could not be loaded
+(<reason>)" and dropped `error.detail`, which is exactly where the plane's own explanation now
+lives. A reader was told the read broke when the plane had answered and explained itself.
+
+The discriminator is a WIRE FIELD, `kind: "governed_refusal" | "transport_fault"`
+(`botanical-proxy-contract.ts`), stamped by every `failure()` in
+`app/api/botanical-occurrences/route.ts` and by the hook's own client-side errors. It is not a
+status-code or reason-string inference, because the plane's refusal reasons are passed through
+unchanged and no client-side enumeration of them could stay complete — and because status alone
+cannot separate a §4a pointer failure from `upstream_not_configured`, which are both 503 and are
+opposite claims. It defaults to `transport_fault` when absent, so a body from an older deployment
+degrades to the wording that claims less.
+
+Two consequences: `describeReadFailure` renders a governed refusal as `"<the route's sentence>:
+<detail>"` and keeps "could not be loaded" for transport faults only; and
+`botanical-viewport-read`'s tone is now `fault` only when the error is a transport fault, so a
+governed refusal is a `notice` again, matching the tone `botanical-refused` / `botanical-unavailable`
+still carry on the aggregate band. `invalid_request` is deliberately a `transport_fault`: its detail
+is zod issue text about a malformed query, not a statement the plane made about its coverage.
 
 ### The land-context viewport lane
 

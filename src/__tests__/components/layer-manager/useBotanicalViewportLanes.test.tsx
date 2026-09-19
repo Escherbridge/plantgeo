@@ -85,6 +85,24 @@ describe("useBotanicalViewportLanes: single upstream read", () => {
     lane.trpcCalls = [];
     lane.proxyCalls = [];
     lane.band = "detail";
+    // Both canned lanes reset too: the release-set-pin cases below drive them across renders, and
+    // a leaked answer would let a later case pass on the previous one's data.
+    lane.trpcQuery = {
+      data: undefined,
+      isError: false,
+      isFetching: false,
+      isPlaceholderData: false,
+      isSuccess: false,
+    };
+    lane.proxySnapshot = {
+      phase: "idle",
+      answer: null,
+      error: null,
+      isStale: false,
+      isPartial: false,
+      band: "detail",
+      servingBand: "detail",
+    };
     useBotanicalOccurrenceStore.getState().resetFilters();
     useBotanicalOccurrenceStore.getState().setLastResponse(null);
   });
@@ -139,5 +157,146 @@ describe("useBotanicalViewportLanes: single upstream read", () => {
     rerender({ bbox: "-123.4,49.0,-123.1,49.4" });
     expect(lane.proxyCalls.length).toBeGreaterThan(proxyCallsBeforePan);
     expect(lane.trpcCalls.every((options) => options.enabled !== true)).toBe(true);
+  });
+});
+
+/** An aggregate-band tRPC answer, trimmed to the fields this hook reads off one. */
+function aggregateAnswer(releaseSetId: string) {
+  return {
+    state: "aggregate",
+    releaseSetId,
+    publishedAt: "2026-09-01T00:00:00Z",
+    supportId: "grid-0.25",
+    cells: [],
+    counts: { returned: 0, matched: 0 },
+    truncated: false,
+  };
+}
+
+/** A detail-band PROXY answer, likewise trimmed to what the hook reads. */
+function proxyDetailSnapshot(releaseSetId: string): BotanicalOccurrencesSnapshot {
+  return {
+    phase: "success",
+    answer: {
+      state: "detail",
+      releaseSetId,
+      publishedAt: "2026-09-17T00:00:00Z",
+      servingRung: "detail",
+      truncated: false,
+      features: [],
+      counts: { returned: 0, matched: 0, withheld: 0 },
+    },
+    error: null,
+    isStale: false,
+    isPartial: false,
+    band: "detail",
+    servingBand: "detail",
+  } as unknown as BotanicalOccurrencesSnapshot;
+}
+
+function pinnedReleaseSetId(): string | null {
+  return useBotanicalOccurrenceStore.getState().filters.release_set_id;
+}
+
+/**
+ * The release-set pin names the generation the DRAWN cells came from (style review W8, B3).
+ *
+ * The tRPC lane is configured `placeholderData: keepPreviousData`, and a disabled react-query
+ * observer keeps serving the previous key's answer -- so at the detail band `botanicalQuery.data`
+ * still holds the aggregate answer a coarse viewport landed. The pre-fix code chose the lane by
+ * `botanicalResult !== undefined`, which that retained answer satisfies, so a zoom from 6 to 11
+ * pinned and displayed a generation the points on screen were never read from. The band is the
+ * discriminator now, and these three cases are the ones that were wrong.
+ */
+describe("useBotanicalViewportLanes: the pin follows the lane that drew the cells", () => {
+  beforeEach(() => {
+    lane.trpcCalls = [];
+    lane.proxyCalls = [];
+    useBotanicalOccurrenceStore.getState().resetFilters();
+    useBotanicalOccurrenceStore.getState().setLastResponse(null);
+  });
+
+  it("pins the aggregate answer's generation at the aggregate band", () => {
+    lane.band = "aggregate";
+    lane.trpcQuery = {
+      data: aggregateAnswer("release-aggregate"),
+      isError: false,
+      isFetching: false,
+      isPlaceholderData: false,
+      isSuccess: true,
+    };
+    renderHook(() => useBotanicalViewportLanes({ ...BASE_OPTIONS, zoom: 6, richnessVisible: true }));
+
+    expect(pinnedReleaseSetId()).toBe("release-aggregate");
+    expect(useBotanicalOccurrenceStore.getState().lastResponse?.state).toBe("aggregate");
+  });
+
+  it("withholds the pin across a zoom to the detail band while the proxy read is in flight", () => {
+    lane.band = "aggregate";
+    lane.trpcQuery = {
+      data: aggregateAnswer("release-aggregate"),
+      isError: false,
+      isFetching: false,
+      isPlaceholderData: false,
+      isSuccess: true,
+    };
+    const { rerender } = renderHook(() =>
+      useBotanicalViewportLanes({ ...BASE_OPTIONS, occurrencesVisible: true, richnessVisible: true })
+    );
+    expect(pinnedReleaseSetId()).toBe("release-aggregate");
+
+    // The zoom crosses the detail floor. The tRPC observer is now disabled but STILL holds its
+    // retained answer, exactly as `keepPreviousData` leaves it; the proxy lane has not answered yet.
+    lane.band = "detail";
+    lane.proxySnapshot = { ...lane.proxySnapshot, phase: "loading", answer: null, isStale: false };
+    rerender();
+
+    expect(pinnedReleaseSetId()).toBeNull();
+    expect(useBotanicalOccurrenceStore.getState().lastResponse).toBeNull();
+  });
+
+  it("pins the proxy answer's generation once the detail read lands", () => {
+    lane.band = "aggregate";
+    lane.trpcQuery = {
+      data: aggregateAnswer("release-aggregate"),
+      isError: false,
+      isFetching: false,
+      isPlaceholderData: false,
+      isSuccess: true,
+    };
+    const { rerender } = renderHook(() =>
+      useBotanicalViewportLanes({ ...BASE_OPTIONS, occurrencesVisible: true, richnessVisible: true })
+    );
+
+    lane.band = "detail";
+    lane.proxySnapshot = proxyDetailSnapshot("release-detail");
+    rerender();
+
+    expect(pinnedReleaseSetId()).toBe("release-detail");
+    expect(useBotanicalOccurrenceStore.getState().lastResponse).toMatchObject({
+      state: "detail",
+      releaseSetId: "release-detail",
+    });
+  });
+
+  it("reports no aggregate-lane state at the detail band, retained answer or not", () => {
+    lane.band = "detail";
+    lane.trpcQuery = {
+      data: aggregateAnswer("release-aggregate"),
+      isError: true,
+      isFetching: false,
+      isPlaceholderData: true,
+      isSuccess: false,
+    };
+    const { result } = renderHook(() =>
+      useBotanicalViewportLanes({ ...BASE_OPTIONS, occurrencesVisible: true })
+    );
+
+    // Every tRPC-sourced field on the lane report is band-scoped, so none of the aggregate-band
+    // fault entries can fire off an answer this band never read.
+    expect(result.current.laneReport.resultState).toBeUndefined();
+    expect(result.current.laneReport.isError).toBe(false);
+    expect(result.current.laneReport.truncated).toBe(false);
+    expect(result.current.aggregateReleaseSetId).toBeNull();
   });
 });

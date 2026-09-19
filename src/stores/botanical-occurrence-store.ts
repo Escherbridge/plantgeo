@@ -57,7 +57,12 @@ interface BotanicalOccurrenceState {
   /** The specimen the details panel shows; null clears the panel. */
   selectedFeature: BotanicalOccurrenceFeature | null;
   setFilters: (patch: Partial<BotanicalOccurrenceFilters>) => void;
-  setReleaseSetId: (releaseSetId: string) => void;
+  /**
+   * Pins the generation the drawn answer came from. `null` CLEARS the pin, which is what an
+   * in-flight read publishes -- see `useBotanicalViewportLanes` (style review W8, B3): a pin held
+   * over from the previous band names a release the map is not showing.
+   */
+  setReleaseSetId: (releaseSetId: string | null) => void;
   setLastResponse: (response: BotanicalLastResponse | null) => void;
   setSelectedFeature: (feature: BotanicalOccurrenceFeature | null) => void;
   resetFilters: () => void;
@@ -70,9 +75,14 @@ export const useBotanicalOccurrenceStore = create<BotanicalOccurrenceState>()(
     selectedFeature: null,
     setFilters: (patch) => set((state) => ({ filters: { ...state.filters, ...patch } })),
     setReleaseSetId: (releaseSetId) =>
-      set((state) => ({
-        filters: { ...state.filters, release_set_id: releaseSetId.length > 0 ? releaseSetId : null },
-      })),
+      set((state) => {
+        const pinned = releaseSetId !== null && releaseSetId.length > 0 ? releaseSetId : null;
+        // Identity-preserving when nothing moved: the lanes hook writes this on every settled
+        // render, and a fresh `filters` object each time would re-render every filter subscriber.
+        return state.filters.release_set_id === pinned
+          ? state
+          : { filters: { ...state.filters, release_set_id: pinned } };
+      }),
     setLastResponse: (response) => set({ lastResponse: response }),
     setSelectedFeature: (feature) => set({ selectedFeature: feature }),
     resetFilters: () => set({ filters: DEFAULT_FILTERS, selectedFeature: null }),

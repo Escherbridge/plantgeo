@@ -29,6 +29,7 @@ const QUIET_BOTANICAL: BotanicalLaneReport = {
   detailTruncated: false,
   viewportCaption: null,
   viewportPhase: "idle",
+  viewportErrorKind: null,
 };
 
 /** Every lane quiet: the stack must be empty unless a case below turns something on. */
@@ -155,12 +156,33 @@ describe("botanical-viewport-read", () => {
       withBotanical({
         occurrencesVisible: true,
         band: "detail",
-        viewportCaption: "The read failed: request_failed.",
+        viewportCaption: "Specimen records could not be loaded (request_failed).",
         viewportPhase: "error",
+        viewportErrorKind: "transport_fault",
       })
     );
 
     expect(faults.find((fault) => fault.layerId === "botanical-viewport-read")?.tone).toBe("fault");
+  });
+
+  // Style review W8, S4: a governed 400/503 arrives in the same `error` phase a dead socket does,
+  // and before this the tone was read off the phase alone -- so the plane declining a question it
+  // understood was dressed as an outage. The KIND is the discriminator, not the phase.
+  it("keeps a notice tone for a governed refusal, which arrives in the same error phase", () => {
+    const faults = buildParquetLayerFaults(
+      withBotanical({
+        occurrencesVisible: true,
+        band: "detail",
+        viewportCaption:
+          "The botanical-occurrences plane is unavailable: no generation is published for this region.",
+        viewportPhase: "error",
+        viewportErrorKind: "governed_refusal",
+      })
+    );
+
+    const entry = faults.find((fault) => fault.layerId === "botanical-viewport-read");
+    expect(entry?.tone).toBe("notice");
+    expect(entry?.message).toContain("no generation is published for this region");
   });
 
   it("stays silent when the lane reports nothing worth saying", () => {

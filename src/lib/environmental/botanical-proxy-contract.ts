@@ -124,14 +124,27 @@ export const botanicalProxyAnswerSchema = z.discriminatedUnion("state", [
 ]);
 
 /**
+ * Whether a non-200 is the plane DECLINING to serve a question it understood, or a read that
+ * failed. See `src/components/map/AGENTS.md` section "Governed refusals read as refusals".
+ */
+export const botanicalProxyErrorKindSchema = z.enum(["governed_refusal", "transport_fault"]);
+
+/**
  * The route's ONE error shape. `reason` is the machine-readable half and carries the plane's own
  * refusal reasons and the five §4a pointer failures unchanged, so a caller never has to infer
  * "nothing was ever published" from a status code shared with "the bytes under the pointer changed".
+ *
+ * `kind` is the SEVERITY half, and it is a wire field rather than a status-code or reason-string
+ * inference on the client: the refusal reasons are passed through from the plane unchanged, so no
+ * client-side enumeration of them can stay complete. It defaults to `transport_fault` so a body
+ * written by an older deployment degrades to the wording that claims less, never to quoting a
+ * sentence that may not be a refusal explanation.
  */
 export const botanicalProxyErrorSchema = z.object({
   error: z.string(),
   reason: z.string(),
   detail: z.string().optional(),
+  kind: botanicalProxyErrorKindSchema.default("transport_fault"),
 });
 
 export type BotanicalProxyFeature = z.infer<typeof botanicalProxyFeatureSchema>;
@@ -140,6 +153,7 @@ export type BotanicalProxyPointer = z.infer<typeof botanicalProxyPointerSchema>;
 export type BotanicalServingRung = z.infer<typeof botanicalServingRungSchema>;
 export type BotanicalProxyAnswer = z.infer<typeof botanicalProxyAnswerSchema>;
 export type BotanicalProxyError = z.infer<typeof botanicalProxyErrorSchema>;
+export type BotanicalProxyErrorKind = z.infer<typeof botanicalProxyErrorKindSchema>;
 
 /** The route's path, spelled once so the hook and its tests cannot disagree with the handler. */
 export const BOTANICAL_OCCURRENCES_PROXY_PATH = "/api/botanical-occurrences";

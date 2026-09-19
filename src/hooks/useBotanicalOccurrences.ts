@@ -51,7 +51,10 @@ export interface BotanicalOccurrencesSnapshot {
   phase: BotanicalOccurrencesPhase;
   /** The plane's decoded answer, or null when there is none to show. */
   answer: BotanicalProxyAnswer | null;
-  /** The route's stable error shape; `reason` carries the plane's own refusal or pointer failure. */
+  /**
+   * The route's stable error shape; `reason` carries the plane's own refusal or pointer failure,
+   * and `kind` says whether that refusal was governed (quote `detail`) or a transport fault.
+   */
   error: BotanicalProxyError | null;
   /** A previous viewport's answer is on screen while the current one loads. */
   isStale: boolean;
@@ -174,6 +177,9 @@ export function useBotanicalOccurrences(
           error: "The viewport is wider than every published rung",
           reason: "bbox_too_large_for_zoom",
           detail,
+          // The same refusal the route answers with, decided a round trip earlier -- so it carries
+          // the same kind, and a caption quotes `detail` rather than calling the read failed.
+          kind: "governed_refusal",
         },
         isStale: false,
         isPartial: false,
@@ -212,7 +218,11 @@ export function useBotanicalOccurrences(
             answer: null,
             error: parsedError.success
               ? parsedError.data
-              : { error: "The botanical-occurrences plane answered unexpectedly", reason: "unrecognized_error" },
+              : {
+                  error: "The botanical-occurrences plane answered unexpectedly",
+                  reason: "unrecognized_error",
+                  kind: "transport_fault",
+                },
             isStale: false,
             isPartial: false,
             band,
@@ -229,6 +239,7 @@ export function useBotanicalOccurrences(
             error: {
               error: "The botanical-occurrences answer did not match its published shape",
               reason: "contract_mismatch",
+              kind: "transport_fault",
             },
             isStale: false,
             isPartial: false,
@@ -262,6 +273,9 @@ export function useBotanicalOccurrences(
             error: "The botanical-occurrences plane could not be reached",
             reason: "request_failed",
             detail: error instanceof Error ? error.message : undefined,
+            // The fetch itself never returned: nothing about the plane was established, so the
+            // detail is a JS message and the caption must stay generic.
+            kind: "transport_fault",
           },
           isStale: false,
           isPartial: false,

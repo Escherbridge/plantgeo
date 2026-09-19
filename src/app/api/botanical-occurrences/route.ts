@@ -13,7 +13,10 @@ import {
   botanicalServingZoomForBand,
 } from "@/lib/botanical-occurrences";
 import { PRIVATE_EPHEMERAL_HEADERS } from "@/lib/server/http/provider-response";
-import type { BotanicalProxyAnswer } from "@/lib/environmental/botanical-proxy-contract";
+import type {
+  BotanicalProxyAnswer,
+  BotanicalProxyErrorKind,
+} from "@/lib/environmental/botanical-proxy-contract";
 import {
   UpstreamAbortedError,
   UpstreamConfigurationError,
@@ -48,10 +51,17 @@ import {
  * evidence the reader is looking at; above the coarse rung's ceiling the existing
  * `bbox_too_large_for_zoom` refusal is unchanged, because there is nothing coarser to fall back to.
  *
- * ONE ERROR SHAPE. Every non-200 answers `{ error, reason, detail? }` so a client branches on
+ * ONE ERROR SHAPE. Every non-200 answers `{ error, reason, kind, detail? }` so a client branches on
  * `reason` and never on a status code alone: `invalid_request` and `bbox_too_large_for_zoom` are
  * both 400 but mean different things to a reader, and the five §4a pointer failures are all 503 and
  * are not interchangeable at all.
+ *
+ * `kind` SAYS WHETHER A REFUSAL IS GOVERNED. A `governed_refusal` is the plane declining a question
+ * it understood, and `detail` then holds its own explanation, which a caption quotes verbatim. A
+ * `transport_fault` is the absence of an answer, and its `detail` is diagnostic text no reader can
+ * act on. Status alone cannot carry this: `upstream_not_configured` and a §4a pointer failure are
+ * both 503 and are opposite claims. See `src/components/map/AGENTS.md` section "Governed refusals
+ * read as refusals".
  */
 
 export const dynamic = "force-dynamic";
@@ -114,10 +124,22 @@ function bboxSquareDegrees(bbox: string): number {
   return (east - west) * (north - south);
 }
 
-/** The one error shape this route answers with. `detail` is present whenever there is more to say. */
-function failure(status: number, error: string, reason: string, detail?: string): NextResponse {
+/**
+ * The one error shape this route answers with. `detail` is present whenever there is more to say.
+ *
+ * `kind` is mandatory rather than defaulted HERE so every non-200 below has to state which of the
+ * two it is at the moment it is written; the schema's default exists only for bodies produced by a
+ * deployment older than this field.
+ */
+function failure(
+  status: number,
+  error: string,
+  reason: string,
+  kind: BotanicalProxyErrorKind,
+  detail?: string
+): NextResponse {
   return NextResponse.json(
-    detail === undefined ? { error, reason } : { error, reason, detail },
+    detail === undefined ? { error, reason, kind } : { error, reason, detail, kind },
     { status, headers: PRIVATE_EPHEMERAL_HEADERS }
   );
 }
@@ -129,6 +151,9 @@ export async function GET(request: NextRequest) {
       400,
       "Invalid botanical-occurrences query",
       "invalid_request",
+      // A malformed query is a defect in the caller, not a statement the plane made about its
+      // coverage: the detail is zod issue text, so the generic wording is the honest one.
+      "transport_fault",
       parsed.error.issues.map((issue) => `${issue.path.join(".") || "query"}: ${issue.message}`).join("; ")
     );
   }
@@ -144,6 +169,7 @@ export async function GET(request: NextRequest) {
       400,
       "Invalid botanical-occurrences query",
       "bbox_too_large_for_zoom",
+      "governed_refusal",
       `no published rung answers a bbox wider than ${BOTANICAL_MAX_BBOX_SQUARE_DEGREES} square degrees`
     );
   }
@@ -154,6 +180,7 @@ export async function GET(request: NextRequest) {
       400,
       "Invalid botanical-occurrences query",
       "bbox_too_large_for_zoom",
+      "governed_refusal",
       `zoom ${zoom} selects band "${rungSelection.rung}", which is not on the published ladder`
     );
   }
@@ -171,10 +198,24 @@ export async function GET(request: NextRequest) {
   try {
     const result = await getBotanicalOccurrences({ ...parsed.data, zoom: servingZoom, signal });
     if (result.state === "refused") {
-      return failure(400, "The botanical-occurrences plane refused this query", result.reason, result.detail);
+      // The plane's own refusal, in the plane's own words: `governed_refusal` is what licenses a
+      // caption to quote `detail` instead of saying the read failed.
+      return failure(
+        400,
+        "The botanical-occurrences plane refused this query",
+        result.reason,
+        "governed_refusal",
+        result.detail
+      );
     }
     if (result.state === "unavailable") {
-      return failure(503, "The botanical-occurrences plane is unavailable", result.reason, result.note);
+      return failure(
+        503,
+        "The botanical-occurrences plane is unavailable",
+        result.reason,
+        "governed_refusal",
+        result.note
+      );
     }
     // The published contract, checked by the compiler rather than by hope: if the server client's
     // decoded shape ever drifts from `botanicalProxyAnswerSchema`, this assignment stops compiling
@@ -197,24 +238,49 @@ export async function GET(request: NextRequest) {
         503,
         "The botanical-occurrences plane is unavailable",
         error.failure ?? "pointer_unresolved",
+        // A §4a fail-closed pointer is a governed statement about what is published, not a read
+        // that failed -- `error.message` is the plane's own account of it.
+        "governed_refusal",
         error.message
       );
     }
     if (error instanceof BotanicalOccurrencesRequestError) {
-      return failure(400, "Invalid botanical-occurrences query", "invalid_request", error.message);
+      return failure(
+        400,
+        "Invalid botanical-occurrences query",
+        "invalid_request",
+        "transport_fault",
+        error.message
+      );
     }
     if (error instanceof BotanicalOccurrencesContractError) {
       // 502, not 503: one side of a published contract is wrong and no retry will fix it until a
       // deploy does. A retryable status would have every client hammer a permanent mismatch.
-      return failure(502, "The botanical-occurrences plane broke its contract", "contract_mismatch", error.message);
+      return failure(
+        502,
+        "The botanical-occurrences plane broke its contract",
+        "contract_mismatch",
+        "transport_fault",
+        error.message
+      );
     }
     if (error instanceof UpstreamAbortedError) {
       // The CALLER walked away (a superseded viewport is the common case). 499 rather than a 5xx:
       // nothing upstream failed, and counting these as outages would misreport a panning user.
-      return failure(499, "The botanical-occurrences request was cancelled", "request_cancelled");
+      return failure(
+        499,
+        "The botanical-occurrences request was cancelled",
+        "request_cancelled",
+        "transport_fault"
+      );
     }
     if (error instanceof UpstreamTimeoutError) {
-      return failure(504, "The botanical-occurrences plane did not answer in time", "upstream_timeout");
+      return failure(
+        504,
+        "The botanical-occurrences plane did not answer in time",
+        "upstream_timeout",
+        "transport_fault"
+      );
     }
     if (error instanceof UpstreamHttpError) {
       // The plane's own refused/unavailable answers arrive here, not in the branches above:
@@ -222,14 +288,37 @@ export async function GET(request: NextRequest) {
       // reach the decoder. The status is passed through for 4xx (a caller mistake stays a caller
       // mistake) and collapsed to 502 for anything else.
       const status = error.status >= 400 && error.status < 500 ? error.status : 502;
-      return failure(status, "The botanical-occurrences plane refused this query", "plane_rejected", error.message);
+      // A 4xx body IS the plane's refusal text; a 5xx one is an outage wearing the same wrapper,
+      // so the kind follows the same split the status does.
+      return failure(
+        status,
+        "The botanical-occurrences plane refused this query",
+        "plane_rejected",
+        status < 500 ? "governed_refusal" : "transport_fault",
+        error.message
+      );
     }
     if (error instanceof UpstreamPayloadError) {
-      return failure(502, "The botanical-occurrences plane returned an invalid response", "upstream_payload");
+      return failure(
+        502,
+        "The botanical-occurrences plane returned an invalid response",
+        "upstream_payload",
+        "transport_fault"
+      );
     }
     if (error instanceof UpstreamConfigurationError) {
-      return failure(503, "The botanical-occurrences plane is not configured", "upstream_not_configured");
+      return failure(
+        503,
+        "The botanical-occurrences plane is not configured",
+        "upstream_not_configured",
+        "transport_fault"
+      );
     }
-    return failure(502, "The botanical-occurrences plane could not be reached", "upstream_unreachable");
+    return failure(
+      502,
+      "The botanical-occurrences plane could not be reached",
+      "upstream_unreachable",
+      "transport_fault"
+    );
   }
 }

@@ -2652,7 +2652,7 @@ describe("GBIF occurrence feedback", () => {
       setProxySnapshot({
         phase: "error",
         answer: proxyDetailAnswer([]),
-        error: { error: "unreachable", reason: "request_failed" },
+        error: { error: "unreachable", reason: "request_failed", kind: "transport_fault" },
       });
     } else {
       // A landed AGGREGATE answer: `botanicalViewportDetail` is null because the discriminant is
@@ -2675,13 +2675,25 @@ describe("GBIF occurrence feedback", () => {
     // reader, through `botanical-viewport-read` -- its gate grew `gbifVisible` in this same pass
     // precisely so a GBIF-only viewer is not left silent about an errored shared read. The test
     // name is kept from the tRPC-era version; the mechanism it proves is now this one.
+    //
+    // Style review W8, S4: a governed refusal carries `kind: "governed_refusal"` and the plane's
+    // own `detail`, and BOTH have to survive to the reader -- the wording quotes the explanation
+    // instead of saying the read failed, and the tone stays a notice, which is the tone
+    // `botanical-refused`/`botanical-unavailable` carried before this lane moved.
     setProxySnapshot({
       phase: "error",
       answer: null,
-      error: { error: "The specimen occurrence plane declined this request", reason: state },
+      error: {
+        error: "The specimen occurrence plane declined this request",
+        reason: state,
+        detail: `the plane answered ${state} for this viewport`,
+        kind: "governed_refusal",
+      },
     });
     const rendered = renderLayerManager(createFakeMap());
-    expect(rendered.getByTestId(readNotice).textContent).toContain(state);
+    const notice = rendered.getByTestId(readNotice);
+    expect(notice.textContent).toContain(`the plane answered ${state} for this viewport`);
+    expect(notice.textContent).not.toContain("could not be loaded");
     expect(rendered.queryByTestId(emptyNotice)).toBeNull();
   });
 
@@ -2689,7 +2701,7 @@ describe("GBIF occurrence feedback", () => {
     setProxySnapshot({
       phase: "error",
       answer: null,
-      error: { error: "unreachable", reason: "request_failed" },
+      error: { error: "unreachable", reason: "request_failed", kind: "transport_fault" },
     });
     const rendered = renderLayerManager(createFakeMap());
     // `botanical-request-failed` (the tRPC-lane fault) is unreachable here for the same reason as
@@ -2805,7 +2817,7 @@ describe("botanical proxy lane and land-context viewport mounts", () => {
   it("reports a failed proxy read as a fault, not as an empty view", () => {
     setProxySnapshot({
       phase: "error",
-      error: { error: "unreachable", reason: "request_failed" },
+      error: { error: "unreachable", reason: "request_failed", kind: "transport_fault" },
     });
 
     const rendered = renderLayerManager(createFakeMap());

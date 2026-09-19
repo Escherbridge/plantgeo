@@ -227,13 +227,22 @@ that failed, which is the whole reason the state is surfaced at all.
 Mounted in `LayerManager.tsx` as of 2026-09-18, feeding `BotanicalOccurrencesLayer`'s geojson and
 its `readPhase`, with `describeBotanicalOccurrencesState` as the one caption wording.
 
-**Two botanical lanes run at a detail zoom, deliberately.** This hook (the proxy route) draws the
-UBC detail points; `useBotanicalOccurrencesQuery` (tRPC) still serves the two aggregate layers,
-GBIF's own toggle, and the store the filters and details panels read. They are the same generation
-under the same filters, so they cannot disagree about what is published -- but with the UBC toggle
-on at a detail zoom, one viewport does cost two upstream reads. Collapsing them is the follow-up
-owed when the aggregate layers move to the proxy too; narrowing the tRPC gate first would take the
-release-set pin and the filters panel's state down with it.
+**One botanical lane per band since 2026-09-18 (W8-D).** This hook (the proxy route) is the ONLY
+read at the detail band: the UBC points, GBIF's toggle, the release-set pin and the store the
+filters and details panels read all come off its one answer. `useBotanicalOccurrencesQuery` (tRPC)
+serves the two aggregate layers and nothing else. The earlier note here -- that both lanes run at a
+detail zoom -- described the state this replaced.
+
+Which lane speaks is decided by the BAND, never by which answer is in hand: this query keeps
+`placeholderData: KEEP_PREVIOUS_WHILE_PANNING`, and a DISABLED observer still serves the previous
+key's answer, so `botanicalQuery.data` stays populated at the detail band after a zoom out of the
+aggregate one. See `src/components/map/AGENTS.md` section "The pin names the lane that drew the
+cells" (style review W8, B3) for the pin this used to corrupt.
+
+**A refusal is not a failure.** The route answers governed 400/503 refusals with
+`kind: "governed_refusal"` and their own `detail`; everything else is `transport_fault`.
+`describeBotanicalOccurrencesState` quotes the former verbatim and keeps "could not be loaded" for
+the latter -- see `src/components/map/AGENTS.md` section "Governed refusals read as refusals".
 
 **The rung is selected, not assumed.** `servingBand` is the rung that actually answered -- the
 route's `servingRung` once an answer lands, the hook's own selection before that, and null only

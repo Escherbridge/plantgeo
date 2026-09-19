@@ -9,6 +9,7 @@ import {
   type BotanicalSupportBand,
 } from "@/lib/botanical-occurrences";
 import { isProvisionalBotanicalCollection } from "@/lib/environmental/botanical-governance-status";
+import type { BotanicalProxyErrorKind } from "@/lib/environmental/botanical-proxy-contract";
 
 const SOURCE_ID = "botanical-occurrences";
 const LAYER_ID_EXACT = "botanical-occurrences-exact";
@@ -98,7 +99,7 @@ export function describeBotanicalOccurrencesState(snapshot: {
   phase: "idle" | "loading" | "success" | "empty" | "error";
   isStale: boolean;
   isPartial: boolean;
-  error: { reason: string; detail?: string } | null;
+  error: BotanicalReadFailure | null;
   // Required, not optional (style review W3, NIT 8): the only caller is a
   // `BotanicalOccurrencesSnapshot`, which always carries both, and optionality only created a
   // path where the rung-substitution sentence silently disappeared.
@@ -111,16 +112,48 @@ export function describeBotanicalOccurrencesState(snapshot: {
   return sentences.length === 0 ? null : sentences.join(" ");
 }
 
+/**
+ * The failure half of a read, structurally rather than as `BotanicalProxyError` itself: `kind` and
+ * `error` are optional HERE so a caller holding only `{ reason }` still type-checks, and an error
+ * that does not declare its kind falls through to the transport wording, which claims less.
+ */
+interface BotanicalReadFailure {
+  reason: string;
+  detail?: string;
+  kind?: BotanicalProxyErrorKind;
+  /** The route's reader-facing sentence for this refusal, e.g. "The plane refused this query". */
+  error?: string;
+}
+
+/**
+ * A governed refusal is quoted, never paraphrased into a failure.
+ *
+ * The plane's 400 and 503 refusals carry their own explanation in `detail` -- "this generation
+ * publishes nothing for this collection", "no rung answers a viewport this wide". Reporting those
+ * as "Specimen records could not be loaded" told a reader the read broke when in fact the plane
+ * answered and said why, which is the same distinction the fire lane's `absent` notice keeps. Only
+ * a `transport_fault`, where nothing about the lane was established, gets the failure wording.
+ */
+function describeReadFailure(failure: BotanicalReadFailure): string {
+  if (failure.kind !== "governed_refusal") {
+    return `Specimen records could not be loaded (${failure.reason}).`;
+  }
+  const headline = failure.error ?? "The specimen occurrence plane declined this request";
+  return failure.detail === undefined || failure.detail.length === 0
+    ? `${headline} (${failure.reason}).`
+    : `${headline}: ${failure.detail}`;
+}
+
 function describeReadState(snapshot: {
   phase: "idle" | "loading" | "success" | "empty" | "error";
   isStale: boolean;
   isPartial: boolean;
-  error: { reason: string; detail?: string } | null;
+  error: BotanicalReadFailure | null;
 }): string | null {
   if (snapshot.phase === "error") {
     return snapshot.error === null
       ? "Specimen records could not be loaded."
-      : `Specimen records could not be loaded (${snapshot.error.reason}).`;
+      : describeReadFailure(snapshot.error);
   }
   if (snapshot.phase === "loading") {
     return snapshot.isStale ? "Loading specimen records for this view; showing the previous one." : "Loading specimen records…";

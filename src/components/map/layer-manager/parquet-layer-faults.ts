@@ -15,6 +15,7 @@
 
 import type { ParquetLayerFault } from "@/components/map/ParquetLayerFaultBanner";
 import type { BotanicalOccurrencesPhase } from "@/hooks/useBotanicalOccurrences";
+import type { BotanicalProxyErrorKind } from "@/lib/environmental/botanical-proxy-contract";
 
 /** One wave-C Parquet lane's drawn state, reduced to what the stack asks about it. */
 export interface ParquetLaneReport {
@@ -64,11 +65,12 @@ export interface BotanicalLaneReport {
   band: string;
   /** False when the viewport could not be measured; `gbif-empty` may not speak without one. */
   hasViewportBbox: boolean;
-  /** The tRPC answer's own state: `detail`, `aggregate`, `refused` or `unavailable`. Only ever
-   * populated at the aggregate band now. */
+  /** The tRPC answer's own state: `detail`, `aggregate`, `refused` or `unavailable`. Undefined at
+   * the detail band by construction, so a retained answer cannot speak for a band it never read. */
   resultState: string | undefined;
   /** The service-authored note, quoted verbatim by the refusal and unavailable entries. */
   resultNote: string | null;
+  /** The tRPC lane's transport failure, already scoped to the band that lane runs in. */
   isError: boolean;
   /** The tRPC aggregate answer's own cap; the proxy lane's detail-band cap is `detailTruncated`. */
   truncated: boolean;
@@ -86,6 +88,11 @@ export interface BotanicalLaneReport {
   /** `describeBotanicalOccurrencesState`'s sentence for the proxy lane, or null when quiet. */
   viewportCaption: string | null;
   viewportPhase: BotanicalOccurrencesPhase;
+  /**
+   * Why the proxy lane's `error` phase happened, or null when it is not in one. A governed refusal
+   * is a `notice`, a transport fault is a `fault` -- see the tone rule at `botanical-viewport-read`.
+   */
+  viewportErrorKind: BotanicalProxyErrorKind | null;
 }
 
 export interface ParquetLayerFaultInput {
@@ -238,25 +245,31 @@ export function buildParquetLayerFaults(input: ParquetLayerFaultInput): ParquetL
           message: `Specimen occurrences are not published: ${botanical.resultNote}`,
         }
       : null,
+    // The AGGREGATE lane's transport failure, and only that one: GBIF and the UBC specimen layer
+    // both read the proxy lane now (W8-D), whose own failure is `botanical-viewport-read` below.
+    // Naming GBIF here would credit this sentence to a read it no longer covers.
     botanical.isQueryEnabled && botanical.isError
       ? {
           layerId: "botanical-request-failed",
           tone: "fault" as const,
-          message: "The botanical and GBIF occurrence request failed. Current viewport results could not be verified.",
+          message:
+            "The specimen richness and collection-effort request failed. Current viewport results could not be verified.",
         }
       : null,
     // A `notice` for the same reason every other lane's is: the records drawn are real, they
     // just stop short of the viewport. Saying so is what keeps a capped read from looking like
     // a collecting gap -- which, for this plane specifically, is a claim about where botanists
     // have and have not been.
+    //
+    // Cell wording unconditionally (style review W8, N2): `isQueryEnabled` is false at the detail
+    // band, so the specimen-row sentence this used to pick between was unreachable. The proxy
+    // lane's own cap is said by `botanical-viewport-read` instead.
     botanical.isQueryEnabled && botanical.truncated
       ? {
           layerId: "botanical-truncated",
           tone: "notice" as const,
           message:
-            botanical.band === "detail"
-              ? "The specimen row budget was reached. The occurrences drawn are a subset of this viewport."
-              : "The cell budget was reached. The support cells drawn are a subset of this viewport.",
+            "The cell budget was reached. The support cells drawn are a subset of this viewport.",
         }
       : null,
     // Withheld records are a POSITIVE fact the plane reports and the map cannot show: a specimen
@@ -323,11 +336,19 @@ export function buildParquetLayerFaults(input: ParquetLayerFaultInput): ParquetL
     // rung -- without this a reader with only GBIF on and a failed proxy read would see silence
     // instead of a fault, since `gbif-empty` only speaks about a SETTLED (success/empty) read.
     (botanical.occurrencesVisible || botanical.gbifVisible) &&
+    // TONE FOLLOWS THE REFUSAL KIND, not the phase (style review W8, S4). The proxy lane reports a
+    // governed 400/503 refusal in the same `error` phase a dead socket produces, and dressing the
+    // former as a `fault` told a reader the read broke when the plane had answered and explained
+    // itself -- the very split `botanical-refused`/`botanical-unavailable` kept on the tRPC lane.
     botanical.band === "detail" &&
     botanical.viewportCaption !== null
       ? {
           layerId: "botanical-viewport-read",
-          tone: botanical.viewportPhase === "error" ? ("fault" as const) : ("notice" as const),
+          tone:
+            botanical.viewportPhase === "error" &&
+            botanical.viewportErrorKind !== "governed_refusal"
+              ? ("fault" as const)
+              : ("notice" as const),
           message: botanical.viewportCaption,
         }
       : null,

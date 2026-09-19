@@ -119,21 +119,23 @@ export function useBotanicalViewportLanes({
     eventEnd: botanicalFilters.event_end || undefined,
     spatialQuality: botanicalFilters.spatial_quality,
   });
+  // THE BAND SCOPES THIS ANSWER, NOT ITS PRESENCE (style review W8, B3).
+  //
+  // `useBotanicalOccurrencesQuery` is configured `placeholderData: keepPreviousData`, and a
+  // react-query observer that has been DISABLED still serves the previous key's answer -- so at
+  // the detail band `botanicalQuery.data` keeps holding whatever the aggregate band last landed.
+  // Every consumer below therefore reads `aggregateBandAnswer`, which is undefined at the detail
+  // band by construction: the tRPC lane speaks for the aggregate band or it does not speak.
+  // Testing `botanicalQuery.data !== undefined` instead let a retained zoom-6 answer supply the
+  // release-set pin for a zoom-11 screen it was never read for.
+  const aggregateBandAnswer = band === "detail" ? undefined : botanicalQuery.data;
   // The RETURNED state, never the requested band. A retained frame outlives the zoom it was
-  // fetched for (`placeholderData` holds the previous answer across a pan or a zoom), so during
-  // a zoom across the floor the band says "detail" while the cells in hand are still aggregate.
-  // Reading the answer's own state is what keeps aggregate cells out of the detail layer and
+  // fetched for, so even within the aggregate band the answer's own discriminant is what keeps
   // specimen points out of the two choropleths.
-  const botanicalResult = botanicalQuery.data;
-  const botanicalDetail = botanicalResult?.state === "detail" ? botanicalResult : null;
-  const botanicalAggregate = botanicalResult?.state === "aggregate" ? botanicalResult : null;
+  const botanicalAggregate =
+    aggregateBandAnswer?.state === "aggregate" ? aggregateBandAnswer : null;
   // Presented into the snake_case vocabulary the three layer components were built against;
   // see src/lib/environmental/botanical-presentation.ts for why the two vocabularies differ.
-  //
-  // NOTE: this tRPC lane no longer runs at the detail band (W8-D, 2026-09-18), so
-  // `botanicalDetail` -- and therefore this -- is only ever populated by a hand-rolled aggregate
-  // request that mistakenly returned `state: "detail"`; kept only because `botanicalDetail`
-  // itself stays as a defensive fallback for `servedBotanicalReleaseSetId` below.
   const botanicalCells = useMemo(
     () => (botanicalAggregate?.cells ?? []).map(presentBotanicalCell),
     [botanicalAggregate]
@@ -164,7 +166,7 @@ export function useBotanicalViewportLanes({
     eventEnd: botanicalFilters.event_end || undefined,
     spatialQuality: botanicalFilters.spatial_quality,
   });
-  // The answer's OWN state, never the requested band -- same rule as `botanicalDetail` above.
+  // The answer's OWN state, never the requested band -- same rule as `botanicalAggregate` above.
   const botanicalViewportDetail =
     botanicalViewport.answer?.state === "detail" ? botanicalViewport.answer : null;
   // `presentBotanicalOccurrence` is the only sanctioned seam between the proxy's camelCase and
@@ -246,25 +248,40 @@ export function useBotanicalViewportLanes({
   // rather than during render because it is a store write; the dependency is the query result
   // object, which react-query keeps referentially stable until a new answer lands.
   //
-  // The tRPC answer is preferred when both are in hand (aggregate band), the proxy answer is the
-  // only one ever in hand at the detail band now that its tRPC lane is off -- so this is a
-  // fallback, not a merge: the two never answer the same band at once. See W8-D, 2026-09-18.
+  // THE BAND CHOOSES THE LANE, and nothing else does (style review W8, B3). Each band has exactly
+  // one lane that reads it -- proxy at `detail`, tRPC above it -- and the answer published here is
+  // that lane's or it is nothing. It is NOT a preference order over both: a fallback ordering let
+  // a retained aggregate answer describe a detail screen.
+  //
+  // WITHHELD, NEVER STALE. While the band's own lane has no answer in hand the store is cleared
+  // rather than left holding the other band's. A panel captioned with a generation the points on
+  // screen were not read from is a false provenance claim; an empty caption is merely an absent
+  // one. See `engineering-principles.md` section 4, "provenance travels with data".
   useEffect(() => {
-    if (botanicalResult !== undefined) {
-      setBotanicalResponse({
-        state: botanicalResult.state,
-        releaseSetId: "releaseSetId" in botanicalResult ? botanicalResult.releaseSetId : null,
-        publishedAt: "publishedAt" in botanicalResult ? botanicalResult.publishedAt : null,
-      });
+    if (band === "detail") {
+      setBotanicalResponse(
+        botanicalViewportDetail === null
+          ? null
+          : {
+              state: botanicalViewportDetail.state,
+              releaseSetId: botanicalViewportDetail.releaseSetId,
+              publishedAt: botanicalViewportDetail.publishedAt,
+            }
+      );
       return;
     }
-    if (botanicalViewportDetail === null) return;
-    setBotanicalResponse({
-      state: botanicalViewportDetail.state,
-      releaseSetId: botanicalViewportDetail.releaseSetId,
-      publishedAt: botanicalViewportDetail.publishedAt,
-    });
-  }, [botanicalResult, botanicalViewportDetail, setBotanicalResponse]);
+    setBotanicalResponse(
+      aggregateBandAnswer === undefined
+        ? null
+        : {
+            state: aggregateBandAnswer.state,
+            releaseSetId:
+              "releaseSetId" in aggregateBandAnswer ? aggregateBandAnswer.releaseSetId : null,
+            publishedAt:
+              "publishedAt" in aggregateBandAnswer ? aggregateBandAnswer.publishedAt : null,
+          }
+    );
+  }, [band, aggregateBandAnswer, botanicalViewportDetail, setBotanicalResponse]);
   // The generation the answer was actually served from, published back into the store.
   //
   // `BotanicalFilters` was built expecting a reader to TYPE a `release_set_id` and gates its
@@ -274,16 +291,19 @@ export function useBotanicalViewportLanes({
   // generation it came from, and the panel displays it. Written from the RESPONSE rather than
   // from a second `/current` read, so the id the panel shows is provably the one the cells on
   // the map were read from and not a pointer that has since moved.
-  // `botanicalViewportDetail` last: it is the detail-band answer now (W8-D), so it only ever
-  // matters when the other two are null, exactly the priority the fallback above uses.
+  // Keyed on the BAND, the same discriminator the store publication above uses: the pin names the
+  // generation the drawn cells came from, so it may only ever come from the lane that drew them.
   const servedBotanicalReleaseSetId =
-    botanicalDetail?.releaseSetId ??
-    botanicalAggregate?.releaseSetId ??
-    botanicalViewportDetail?.releaseSetId ??
-    null;
+    band === "detail"
+      ? botanicalViewportDetail?.releaseSetId ?? null
+      : botanicalAggregate?.releaseSetId ?? null;
   const setBotanicalReleaseSetId = useBotanicalOccurrenceStore((state) => state.setReleaseSetId);
+  // Null is WRITTEN, not skipped: while the band's lane is still reading there is no generation to
+  // name, and holding the previous band's would pin a release the map is not showing. The filters
+  // panel gates on `release_set_id` being set, so an in-flight read correctly reads as "not yet
+  // known" rather than as a stale certainty. `release_set_id` shapes no request on either lane, so
+  // clearing it cannot feed back into a refetch.
   useEffect(() => {
-    if (servedBotanicalReleaseSetId === null) return;
     setBotanicalReleaseSetId(servedBotanicalReleaseSetId);
   }, [servedBotanicalReleaseSetId, setBotanicalReleaseSetId]);
   // Clicking a specimen opens the details panel, the same way every other layer with a detail
@@ -308,10 +328,14 @@ export function useBotanicalViewportLanes({
     isQueryEnabled,
     band,
     hasViewportBbox: bbox !== null,
-    resultState: botanicalResult?.state,
+    resultState: aggregateBandAnswer?.state,
     resultNote:
-      botanicalResult !== undefined && "note" in botanicalResult ? botanicalResult.note : null,
-    isError: botanicalQuery.isError === true,
+      aggregateBandAnswer !== undefined && "note" in aggregateBandAnswer
+        ? aggregateBandAnswer.note
+        : null,
+    // Scoped to the band the query actually runs in: a disabled observer keeps reporting the last
+    // key's `isError`, which at the detail band would raise a fault for a read nobody issued.
+    isError: isQueryEnabled && botanicalQuery.isError === true,
     truncated: botanicalAggregate?.truncated === true,
     // From the proxy answer: withheld-locality counts are a detail-band fact, and the detail
     // band's tRPC lane no longer runs (W8-D, 2026-09-18).
@@ -326,6 +350,7 @@ export function useBotanicalViewportLanes({
     detailTruncated: botanicalViewportDetail?.truncated === true,
     viewportCaption,
     viewportPhase: botanicalViewport.phase,
+    viewportErrorKind: botanicalViewport.error?.kind ?? null,
   };
 
   return {
