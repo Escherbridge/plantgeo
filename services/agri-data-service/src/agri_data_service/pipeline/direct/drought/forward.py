@@ -148,8 +148,10 @@ class DroughtForwardConfig:
     contention_timeout_seconds: float
     run_id: str | None = None
     today: date | None = None
-    #: One already-settled USDM release Tuesday to repair INSTEAD of the bounded backlog scan, or
-    #: `None` for the ordinary newest-first walk. See `_selected_release_weeks`.
+    #: One already-settled USDM release Tuesday to REPUBLISH FROM SOURCE instead of the bounded
+    #: backlog scan, owed or not, or `None` for the ordinary newest-first walk. Which release it
+    #: selects is `_selected_release_weeks`; that the selection survives the owed-work filter is
+    #: `_weeks_this_turn`.
     target_day: date | None = None
 
 
@@ -185,7 +187,7 @@ async def run_drought_forward(config: DroughtForwardConfig) -> dict[str, object]
         base_seconds=config.retry_base_seconds,
         max_seconds=config.retry_max_seconds,
     )
-    pending = _pending_weeks(statuses, weeks)[: config.max_days]
+    pending, forced_target = _weeks_this_turn(statuses, weeks, config=config)
     emit(
         {
             "event": "drought_forward_started",
@@ -196,6 +198,8 @@ async def run_drought_forward(config: DroughtForwardConfig) -> dict[str, object]
             "settled_through": settled_through.isoformat(),
             "history_floor": lane.history_floor.isoformat(),
             "selected_weeks": [week.isoformat() for week in pending],
+            "target_day": None if config.target_day is None else config.target_day.isoformat(),
+            "target_forced": forced_target,
         }
     )
 
@@ -230,10 +234,15 @@ async def run_drought_forward(config: DroughtForwardConfig) -> dict[str, object]
         max_seconds=config.retry_max_seconds,
     )
     window_backlog = _pending_weeks(final_statuses, weeks)
+    # `absent` belongs beside the two refusals, not with the published days. `_pending_weeks` RE-LISTS
+    # a recent governed absence deliberately, as work to re-examine next turn, so a day this turn
+    # governed absent is guaranteed to come back in `window_backlog` -- and without this exclusion
+    # that guaranteed re-listing reads as an unfilled release and fails a turn that did exactly what
+    # the absence contract asks. A governed absence is a settled verdict about the source, not debt.
     selected_and_settled = {
         day
         for day, result in zip(pending, results, strict=True)
-        if result["outcome"] not in {DROUGHT_TIME_BUDGET_OUTCOME, DROUGHT_SOURCE_UNSETTLED_OUTCOME}
+        if result["outcome"] not in {DROUGHT_TIME_BUDGET_OUTCOME, DROUGHT_SOURCE_UNSETTLED_OUTCOME, "absent"}
     }
     remaining = tuple(day for day in window_backlog if day in selected_and_settled)
     if remaining:
@@ -249,6 +258,8 @@ async def run_drought_forward(config: DroughtForwardConfig) -> dict[str, object]
         "first_day": first_day.isoformat(),
         "settled_through": settled_through.isoformat(),
         "history_floor": lane.history_floor.isoformat(),
+        "target_day": None if config.target_day is None else config.target_day.isoformat(),
+        "target_forced": forced_target,
         "days_published": len(results),
         **availability.to_summary(),
         "results": results,
@@ -273,6 +284,10 @@ def _noop_report(
         "first_day": first_day.isoformat(),
         "settled_through": settled_through.isoformat(),
         "history_floor": lane.history_floor.isoformat(),
+        # Unreachable with a target: `_selected_release_weeks` returns a one-week tuple for one, so a
+        # turn with `--target-day` never has an empty window to report a no-op over.
+        "target_day": None,
+        "target_forced": False,
         "days_published": 0,
         **availability.to_summary(),
         "results": [],
@@ -564,6 +579,32 @@ def _pending_weeks(
     return (*pending, *rechecks)
 
 
+def _weeks_this_turn(
+    statuses: Mapping[ZoomTier, Mapping[date, PartitionDayStatus]],
+    weeks: Sequence[date],
+    *,
+    config: DroughtForwardConfig,
+) -> tuple[tuple[date, ...], bool]:
+    """Publish the owed backlog, or FORCE the one `--target-day` names whether or not it is owed.
+
+    `--target-day` exists to repair ONE named release an operator does not trust. Passing it through
+    the owed-work filter made it a narrower CENSUS and nothing else: a target already recorded as
+    `data` at every rung -- the overwhelmingly common case, because the doubt is usually about a
+    release that DID land -- yielded an empty selection and a report that read like a normal turn.
+    The census still runs, because `_pending_weeks` is also where a data/absence conflict and an
+    absent-with-derived-parts ladder are refused, and a forced republication must not skip those.
+
+    Forcing is safe because a republication is idempotent and source-direct: the adapter refetches
+    the settled release under the lane-day lock and `write_partition` retracts the day's completion
+    marker as it uploads `part-0`, so an attempt that fails before writing leaves the published day
+    exactly as it found it (`gap_fill_day.py::_export_one_day`).
+    """
+    pending = _pending_weeks(statuses, weeks)
+    if config.target_day is None:
+        return pending[: config.max_days], False
+    return (config.target_day,), config.target_day not in pending
+
+
 def _mirrored_past_proof(statuses: Mapping[ZoomTier, Mapping[date, PartitionDayStatus]], *, day: date) -> str | None:
     """Render the sentence a governed absence carries, or `None` when no later week is published yet.
 
@@ -633,7 +674,10 @@ def _selected_release_weeks(
     lane: LaneRegistration,
     settled_through: date,
 ) -> tuple[date, tuple[date, ...]]:
-    """Choose the ordinary bounded backlog, or the ONE settled release `--target-day` names.
+    """Choose the ordinary bounded backlog window, or the ONE settled release `--target-day` names.
+
+    This picks the WINDOW only; `_weeks_this_turn` decides which of it this turn publishes, and it
+    is there that a target survives the owed-work filter.
 
     The backlog walk already reaches every gap inside `DROUGHT_BACKLOG_SCAN_WEEKS`, so this is not a
     second way to fill a hole; it is how an operator repairs ONE known release without spending a
@@ -695,7 +739,18 @@ def parser() -> argparse.ArgumentParser:
     built.add_argument("--retry-base-seconds", type=float, default=DROUGHT_DEFAULT_RETRY_BASE_SECONDS)
     built.add_argument("--retry-max-seconds", type=float, default=DROUGHT_DEFAULT_RETRY_MAX_SECONDS)
     built.add_argument("--contention-timeout-seconds", type=float, default=DROUGHT_DEFAULT_CONTENTION_TIMEOUT_SECONDS)
-    built.add_argument("--target-day", type=date.fromisoformat, default=None)
+    built.add_argument(
+        "--target-day",
+        type=date.fromisoformat,
+        default=None,
+        help=(
+            "ISO date of ONE settled USDM release Tuesday to republish from source, instead of "
+            "walking the bounded backlog. The release is refetched and rewritten even when it is "
+            "already published at every rung; --max-days is ignored, since exactly one release is "
+            "selected. A day that is not a release Tuesday, is before the lane's source-owned "
+            "floor, or is after the settled ceiling is refused, never silently skipped."
+        ),
+    )
     return built
 
 

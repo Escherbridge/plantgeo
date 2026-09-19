@@ -1,28 +1,36 @@
 """Config validation, CLI defaults and the weekly settled-Tuesday arithmetic the forward writer bounds on.
 
-No network, no object store and no DuckDB: every test here either validates a config in isolation or
-exercises the before-the-floor no-op path, which `run_drought_forward` returns from before it ever
-calls `ObjectStore.from_settings()`.
+No network, no object store and no DuckDB: every test here either validates a config in isolation,
+resolves a week selection against a literal census, or exercises the before-the-floor no-op path,
+which `run_drought_forward` returns from before it ever calls `ObjectStore.from_settings()`.
 """
 
 from __future__ import annotations
 
 from datetime import date
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from agri_data_service.pipeline.direct.drought.adapter import DirectDroughtError
 from agri_data_service.pipeline.direct.drought.forward import (
     DROUGHT_DEFAULT_MAX_DAYS,
     DROUGHT_DEFAULT_RETRY_ATTEMPTS,
+    DROUGHT_DIRECT_ALL_TIERS,
     DroughtForwardConfig,
     DroughtForwardConfigError,
     _selected_release_weeks,
     _validate_config,
+    _weeks_this_turn,
     parse_args,
     parser,
     run_drought_forward,
 )
 from agri_data_service.pipeline.direct.drought.products import drought_lane_registration, newest_settled_tuesday
+
+if TYPE_CHECKING:
+    from agri_data_service.foundation.parquet.paths import PartitionDayStatus
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
 
 
 def _config(**overrides: object) -> DroughtForwardConfig:
@@ -136,3 +144,59 @@ def test_the_target_day_flag_parses_as_an_iso_date() -> None:
 
     assert config.target_day == date(2026, 8, 11)
     assert parse_args([]).target_day is None
+
+
+def _statuses(by_day: dict[str, str]) -> dict[ZoomTier, dict[date, PartitionDayStatus]]:
+    """Render one census the way `_tier_status_for_weeks` does: the same status at every rung."""
+    return {
+        tier: {date.fromisoformat(day): cast("PartitionDayStatus", status) for day, status in by_day.items()}
+        for tier in DROUGHT_DIRECT_ALL_TIERS
+    }
+
+
+def test_without_a_target_the_turn_publishes_only_owed_weeks_up_to_max_days() -> None:
+    weeks = (date(2026, 8, 11), date(2026, 8, 18), date(2026, 8, 25))
+    statuses = _statuses({"2026-08-11": "missing", "2026-08-18": "data", "2026-08-25": "missing"})
+
+    selected, forced = _weeks_this_turn(statuses, weeks, config=_config(max_days=1))
+
+    assert selected == (date(2026, 8, 25),), "newest owed week first, sliced by --max-days"
+    assert forced is False
+
+
+def test_a_target_already_published_at_every_rung_is_still_republished() -> None:
+    """The flag's main use: an operator who does not trust a release that DID land."""
+    weeks = (date(2026, 8, 18),)
+    statuses = _statuses({"2026-08-18": "data"})
+
+    selected, forced = _weeks_this_turn(statuses, weeks, config=_config(target_day=date(2026, 8, 18)))
+
+    assert selected == (date(2026, 8, 18),), "a published target must not vanish into an empty selection"
+    assert forced is True
+
+
+def test_a_target_that_is_genuinely_owed_is_selected_without_being_called_forced() -> None:
+    weeks = (date(2026, 8, 18),)
+    statuses = _statuses({"2026-08-18": "missing"})
+
+    selected, forced = _weeks_this_turn(statuses, weeks, config=_config(target_day=date(2026, 8, 18)))
+
+    assert selected == (date(2026, 8, 18),)
+    assert forced is False
+
+
+def test_forcing_a_target_does_not_skip_the_census_refusals() -> None:
+    """`_pending_weeks` is where a data/absence conflict is refused; a forced turn still runs it."""
+    weeks = (date(2026, 8, 18),)
+    statuses = _statuses({"2026-08-18": "conflict"})
+
+    with pytest.raises(DirectDroughtError, match="data/absence conflict"):
+        _weeks_this_turn(statuses, weeks, config=_config(target_day=date(2026, 8, 18)))
+
+
+def test_the_target_day_help_text_says_it_republishes() -> None:
+    """`--help` is the only contract an operator reads before running the repair."""
+    help_text = parser().format_help()
+
+    assert "--target-day" in help_text
+    assert "republish" in help_text
