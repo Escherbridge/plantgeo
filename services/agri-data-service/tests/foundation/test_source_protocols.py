@@ -40,6 +40,7 @@ from agri_data_service.pipeline.direct.drought.usdm import USDM_DROUGHT_SOURCE
 from agri_data_service.pipeline.direct.soil_survey.source_protocol import SoilSurveySource
 from agri_data_service.pipeline.direct.soil_survey.ssurgo import SSURGO_SOIL_SURVEY_SOURCE
 from agri_data_service.pipeline.source_bindings import (
+    DuplicateSourceSlugError,
     SourceRegistry,
     UnboundLayerError,
     declared_layer_source_contracts,
@@ -103,7 +104,7 @@ def test_a_source_bound_to_the_wrong_layer_is_refused_at_boot() -> None:
     """STYLE-REVIEW-W5 B2: `drought -> ssurgo` passes every coverage gate and implements nothing.
 
     SSURGO is `regional`/`US`, exactly like USDM, so the coverage word agrees and the ISO codes
-    cover; before the conformance guard the only thing that noticed was `forward.py` calling
+    cover; before the boot check the only thing that noticed was `forward.py` calling
     `fetch_release_day` on a soil-survey source, on a scheduled turn, in the next region.
     """
     region = _region_bound_to_fake_source("ssurgo")
@@ -116,14 +117,82 @@ def test_a_source_bound_to_the_wrong_layer_is_refused_at_boot() -> None:
     message = str(refusal.value)
     assert "drought" in message
     assert "ssurgo" in message
-    assert "DroughtSource" in message
+    assert "soil-survey" in message, "the refusal must name the layer the source IS registered under"
+
+
+def test_a_source_bound_to_a_sibling_layer_whose_protocol_it_satisfies_is_refused_at_boot() -> None:
+    """STYLE-REVIEW-W6 B1: `drought -> mtbs` is the mis-binding a structural check cannot see.
+
+    `BurnSeveritySource` declares every member `DroughtSource` requires plus one more, and
+    `typing.runtime_checkable` compares member NAMES only, so
+    `isinstance(MTBS_BURN_SEVERITY_SOURCE, DroughtSource)` is `True`. Coverage agrees (`regional`/
+    `US` on both), the ISO codes cover, the slug has a claim -- every gate passes and the binding
+    then raises a `TypeError` on `release_days(first_day, last_day)` inside `drought/forward.py`.
+    Only the REGISTRY knows `mtbs` belongs to `burn-severity`, which is why the check asks it.
+    """
+    assert isinstance(MTBS_BURN_SEVERITY_SOURCE, DroughtSource), (
+        "if this ever fails the structural guard would have caught the binding below, and this "
+        "test no longer proves that registration is what refuses it"
+    )
+    region = _region_bound_to_fake_source("mtbs")
+
+    with pytest.raises(RegionBindingNotServableError) as refusal:
+        assert_region_bindings_are_servable(
+            region, declared_source_coverage_claims(), declared_layer_source_contracts()
+        )
+
+    message = str(refusal.value)
+    assert "drought" in message
+    assert "mtbs" in message
+    assert "burn-severity" in message, "the refusal must name the layer the source IS registered under"
+
+
+def test_a_source_registered_under_no_layer_at_all_is_a_distinct_refusal() -> None:
+    """Found-nowhere is not found-elsewhere: the message must not accuse another layer.
+
+    The drought registry HAS landed, so a slug it does not hold is a binding this build cannot
+    serve -- distinct from a layer whose registry is still absent, which `unverified_binding_slugs`
+    reports as honest debt rather than as a failure.
+    """
+    region = _region_bound_to_fake_source("a-source-nobody-registered")
+
+    with pytest.raises(RegionBindingNotServableError) as refusal:
+        assert_region_bindings_are_servable(
+            region, declared_source_coverage_claims(), declared_layer_source_contracts()
+        )
+
+    message = str(refusal.value)
+    assert "registers under no layer at all" in message
+    assert "burn-severity" not in message
+
+
+def test_the_drought_layer_bound_to_its_own_registered_source_is_accepted() -> None:
+    """The other direction, and what keeps the refusals above from passing for a trivial reason."""
+    assert_region_bindings_are_servable(
+        _region_bound_to_fake_source("usdm"), declared_source_coverage_claims(), declared_layer_source_contracts()
+    )
 
 
 def test_the_pilots_own_bindings_pass_the_conformance_guard() -> None:
-    """The other direction, and what keeps the test above from passing for a trivial reason."""
+    """Every binding the deployed manifest actually carries, through the real registry."""
     assert_region_bindings_are_servable(
         load_region(), declared_source_coverage_claims(), declared_layer_source_contracts()
     )
+
+
+def test_one_source_slug_registered_under_two_layers_is_refused_at_construction() -> None:
+    """STYLE-REVIEW-W6 S6: a slug names exactly one implementation, so a collision cannot be built.
+
+    Flattening the three maps for `coverage_claims()` used to keep whichever layer iterated last,
+    which would let the boot check validate the wrong instance. The guard moves that to the one
+    moment where the registry is fully known and nothing has read it yet.
+    """
+    with pytest.raises(DuplicateSourceSlugError, match="'usdm' is registered under both"):
+        SourceRegistry(
+            drought={"usdm": USDM_DROUGHT_SOURCE},
+            burn_severity={},
+            soil_survey={"usdm": cast("SoilSurveySource", USDM_DROUGHT_SOURCE)},
+        )
 
 
 def _region_outside_the_united_states() -> Region:

@@ -127,7 +127,7 @@ def repair_drought_areas_to_wkb(
     for dm_category, wkb, is_empty in rows:
         if is_empty:
             raise DroughtGeometryError(
-                f"USDM drought class D{dm_category} repaired to an empty geometry; refusing the whole "
+                f"drought intensity class D{dm_category} repaired to an empty geometry; refusing the whole "
                 "release rather than storing a fabricated MULTIPOLYGON EMPTY coverage claim"
             )
         # Keying into a dict deliberately COLLAPSES a duplicate `dm_category` within one release --

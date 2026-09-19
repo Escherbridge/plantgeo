@@ -16,8 +16,10 @@ The registry is typed PER LAYER (`SourceRegistry`), so a resolver returns its la
 without a cast and the three `# type: ignore[return-value]`/`[attr-defined]` comments this module
 used to carry are gone. That erasure to `object` was what let a manifest bind `drought` to `ssurgo`
 and fail as an `AttributeError` inside a scheduled lane instead of at boot (STYLE-REVIEW-W5 B2);
-`declared_layer_source_contracts()` below hands `assert_region_bindings_are_servable` the
-runtime-checkable protocol each layer expects, which is where that binding is now refused.
+`declared_layer_source_contracts()` below hands `assert_region_bindings_are_servable` the sources
+registered under each layer, which is where that binding is now refused -- by REGISTRATION ("bound
+to `drought`, registered under `burn-severity`"), with the runtime-checkable protocol kept only as
+a second, weaker assertion that cannot see two protocols sharing member names (STYLE-REVIEW-W6 B1).
 """
 
 from __future__ import annotations
@@ -48,40 +50,75 @@ class UnboundLayerError(RuntimeError):
     binding names a source slug with no registered implementation."""
 
 
+class DuplicateSourceSlugError(RuntimeError):
+    """Raised when one `source_slug` is registered under more than one layer.
+
+    A slug is the manifest's whole name for an implementation, so two layers claiming one slug make
+    `coverage_claims()` ambiguous and every binding that names it unresolvable. Raised at
+    CONSTRUCTION rather than at the first lookup, because a registry that has been built at all is
+    one the boot check is about to trust (STYLE-REVIEW-W6 S6).
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class SourceRegistry:
     """Every registered source implementation, grouped by the LAYER whose protocol it satisfies.
 
     One map per layer rather than one flat `{slug: object}`: a flat registry cannot say which layer
     an implementation is for, so the resolvers could only assert conformance (three coded
-    `type: ignore`s) and the boot check could not test it at all.
+    `type: ignore`s) and the boot check could not test it at all. The layer key is carried all the
+    way into `LayerSourceContracts.sources_by_layer` -- registration under the bound layer IS the
+    servability question the boot check asks (STYLE-REVIEW-W6 B1).
     """
 
     drought: Mapping[str, DroughtSource]
     burn_severity: Mapping[str, BurnSeveritySource]
     soil_survey: Mapping[str, SoilSurveySource]
 
+    def __post_init__(self) -> None:
+        """Refuse a registry where one slug is registered under two layers, before anything reads it."""
+        seen: dict[str, str] = {}
+        collisions: list[str] = []
+        for layer_slug, layer_sources in self.sources_by_layer().items():
+            for slug in layer_sources:
+                first = seen.setdefault(slug, layer_slug)
+                if first != layer_slug:
+                    collisions.append(f"{slug!r} is registered under both {first!r} and {layer_slug!r}")
+        if collisions:
+            raise DuplicateSourceSlugError(
+                "a source slug names exactly one implementation: " + "; ".join(sorted(collisions))
+            )
+
+    def sources_by_layer(self) -> dict[str, Mapping[str, object]]:
+        """`{layer_slug: {source_slug: instance}}` -- the un-flattened map the boot check reads.
+
+        Spelled here once so the layer keys the boot check refuses against are the same literals the
+        resolvers and `layer_contracts()` use.
+        """
+        return {
+            DROUGHT_LAYER_SLUG: self.drought,
+            BURN_SEVERITY_LAYER_SLUG: self.burn_severity,
+            SOIL_SURVEY_LAYER_SLUG: self.soil_survey,
+        }
+
     def coverage_claims(self) -> dict[str, SourceCoverageClaim]:
-        """`{source_slug: coverage claim}` across every layer; each protocol declares `coverage`."""
+        """`{source_slug: coverage claim}` across every layer; each protocol declares `coverage`.
+
+        Flat on purpose and losslessly so: coverage is a property of the SOURCE, not of the layer
+        it serves, and `__post_init__` has already refused a registry whose slugs collide, so no
+        entry here can shadow another (STYLE-REVIEW-W6 S6).
+        """
         return {
             slug: source.coverage
             for layer_sources in (self.drought, self.burn_severity, self.soil_survey)
             for slug, source in layer_sources.items()
         }
 
-    def source_instances(self) -> dict[str, object]:
-        """`{source_slug: instance}` across every layer -- the map the boot check looks a binding up in."""
-        return {
-            slug: source
-            for layer_sources in (self.drought, self.burn_severity, self.soil_survey)
-            for slug, source in layer_sources.items()
-        }
-
     def layer_contracts(self) -> LayerSourceContracts:
-        """The protocol each layer expects, beside every registered source instance.
+        """The protocol each layer expects, beside the sources registered UNDER that layer.
 
         The boot check's argument. The protocol classes are imported INSIDE so they exist at
-        runtime for the `isinstance` guard, not merely as `TYPE_CHECKING` names.
+        runtime for the `isinstance` second assertion, not merely as `TYPE_CHECKING` names.
         """
         from agri_data_service.pipeline.direct.burn_severity.source_protocol import (  # noqa: PLC0415
             BurnSeveritySource as BurnSeveritySourceProtocol,
@@ -99,7 +136,7 @@ class SourceRegistry:
                 BURN_SEVERITY_LAYER_SLUG: BurnSeveritySourceProtocol,
                 SOIL_SURVEY_LAYER_SLUG: SoilSurveySourceProtocol,
             },
-            source_by_slug=self.source_instances(),
+            sources_by_layer=self.sources_by_layer(),
         )
 
 
@@ -134,7 +171,7 @@ def declared_source_coverage_claims() -> dict[str, SourceCoverageClaim]:
 
 
 def declared_layer_source_contracts() -> LayerSourceContracts:
-    """Return the per-layer protocols and every registered source instance, for the boot check.
+    """Return the per-layer protocols and the sources registered under each layer, for the boot check.
 
     Passed IN to `foundation/region/bindings.py` rather than imported by it, for the same reason
     `declared_source_coverage_claims()` is: `foundation` may not import `pipeline`
@@ -194,6 +231,7 @@ __all__ = [
     "BURN_SEVERITY_LAYER_SLUG",
     "DROUGHT_LAYER_SLUG",
     "SOIL_SURVEY_LAYER_SLUG",
+    "DuplicateSourceSlugError",
     "SourceRegistry",
     "UnboundLayerError",
     "declared_layer_source_contracts",

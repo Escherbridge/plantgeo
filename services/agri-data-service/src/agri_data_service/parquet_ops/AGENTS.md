@@ -395,7 +395,14 @@ The question is never "is the field new", it is **what does a client conclude fr
   does not equal (`parquet-plane-client.ts:687-691`), so a bump would blank every slider served by
   a not-yet-redeployed frontend, and an absent binding census reads as "this deployment states no
   bindings", which is precisely what an older service IS saying. The decode path carries that
-  reading end to end (`?? []` → empty list → null → available).
+  reading end to end: `?? []` → empty list → no stated row for any slug →
+  `layerBindingInRegion` falls through to the client's COMPILED region manifest, which answers
+  `bound` / `unbound` / `not_federated` from `platformLayers` and `enabledLayers`
+  (`src/lib/map/layer-region-binding.ts`). An older service therefore causes no verdict change it
+  did not itself state, which is the property that makes silence safe. *(Corrected
+  2026-09-18, STYLE-REVIEW-W6 S5: the same commit that added this rule deleted the
+  `?? []` → empty list → null → **available** tail it cited. The conclusion — hold at 3 — was and
+  is right; the argument printed under it described a decode path that no longer exists.)*
 - **Changed, removed, required, or silence could be read as HEALTH → 3 -> 4, in one commit.** The
   freshness fields below are the second case: absent `staleness_days` is indistinguishable from
   zero staleness to a client that has learnt to read it, and a field whose silence is a false claim

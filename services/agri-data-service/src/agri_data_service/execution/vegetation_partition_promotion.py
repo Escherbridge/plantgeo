@@ -22,7 +22,8 @@ The AVAILABILITY INDEX is this turn's authority on what a day's outcome is, not 
 states `governed_absence` with the index's own `absence_reason`. It therefore does not mint a
 governed absence of its own -- an absence the index has not recorded is `not_yet_indexed`, and an
 index that STILL claims a day the store cannot serve, after one re-read of the pointer, is a
-conflict that fails the turn.
+conflict that fails the turn. So is an index that has LOST the row: only a fresh `governed_absence`
+reclassifies a day at the re-read (STYLE-REVIEW-W6 S2).
 
 Evaluation-only artifacts (`kind != "observed"`) are never promotable: `VegetationDayPartitionKey`
 refuses construction for anything else, so an evaluation-only day can never reach the register verb
@@ -99,20 +100,47 @@ class AvailabilityPartitionConflictError(RuntimeError):
     the turn loudly rather than degrading into "the source had nothing" (`engineering-principles.md`
     §2, STYLE-REVIEW-W4 B2).
 
-    Raised only AFTER the turn re-reads the pointer once: a prune landing between the turn's
-    availability snapshot and the object open is a race whose winning generation states the day
-    itself, and paging an operator for it would make the benign case indistinguishable from the
+    Raised only AFTER the turn re-reads the pointer once, and only when the WINNING generation does
+    not state a governed absence for the day. A prune landing between the turn's availability
+    snapshot and the object open is a race whose winning generation records that absence with a
+    reason, and paging an operator for it would make the benign case indistinguishable from the
     corrupt one (STYLE-REVIEW-W5 S4). The mid-read form of the same event already has its own name,
     `ConcurrentPrunePartitionError` (`pipeline/parquet/objectstore.py`).
+
+    A winning generation with NO ROW for a day the snapshot stated `published` is the other half of
+    the same corruption -- the index lost a row it had -- and is raised here rather than reclassified
+    as `not_yet_indexed`, which would have made an availability-index regression exit 0 as
+    `waiting_for_writer` (STYLE-REVIEW-W6 S2). The `fresh_state` in the message is what tells the two
+    apart.
+
+    The message names BOTH generations and the pointer key, because after the re-read there are two
+    generations in play and an operator otherwise cannot tell a stale snapshot from a real
+    divergence (STYLE-REVIEW-W6 S3, W5 S4's second half).
     """
 
-    def __init__(self, *, layer: str, day: date) -> None:
+    def __init__(  # noqa: PLR0913 - the reconciliation's coordinates: one layer, one day, two generations, one pointer
+        self,
+        *,
+        layer: str,
+        day: date,
+        fresh_state: IndexedDayState,
+        snapshot_generation: str | None,
+        winning_generation: str | None,
+        pointer_key: str | None,
+    ) -> None:
         super().__init__(
             f"{layer} availability index states {day.isoformat()} published, but the object store holds no part "
-            f"file for it; one of the index and the partition is corrupt and an operator owes the reconciliation"
+            f"file for it; the winning generation states {fresh_state!r} for that day, so one of the index and "
+            f"the partition is corrupt and an operator owes the reconciliation "
+            f"(snapshot generation {snapshot_generation or 'unknown'}, re-read generation "
+            f"{winning_generation or 'unknown'}, pointer {pointer_key or 'unknown'})"
         )
         self.layer = layer
         self.day = day
+        self.fresh_state = fresh_state
+        self.snapshot_generation = snapshot_generation
+        self.winning_generation = winning_generation
+        self.pointer_key = pointer_key
 
 
 #: What the lane's availability index says about one day, in the index's OWN vocabulary
@@ -130,7 +158,24 @@ class IndexedDay:
 
 
 class LaneAvailability(Protocol):
-    """The one question the promoter asks the availability index before it opens any object."""
+    """What the promoter asks the availability index: one day's verdict, and which generation said so.
+
+    The generation identity is part of the protocol rather than read at the raise site because a
+    turn holds TWO of these once it re-reads the pointer, and a conflict an operator can act on has
+    to name which is which (STYLE-REVIEW-W6 S3). Both are optional: a fabricated availability in a
+    test states verdicts without a generation behind them, and `None` prints as `unknown` rather
+    than inventing a SHA.
+    """
+
+    @property
+    def generation_sha256(self) -> str | None:
+        """The `generation=<sha256>` this verdict set was read from, or `None` when it has none."""
+        ...
+
+    @property
+    def pointer_key(self) -> str | None:
+        """The mutable `_LATEST.json` key that resolved to it, or `None` when it was fabricated."""
+        ...
 
     def indexed_day(self, day: date) -> IndexedDay: ...
 
@@ -140,6 +185,8 @@ class AvailabilityIndexDays:
     """A `LaneAvailability` backed by one already-verified availability generation."""
 
     verdicts: Mapping[date, IndexedDay]
+    generation_sha256: str | None = None
+    pointer_key: str | None = None
 
     def indexed_day(self, day: date) -> IndexedDay:
         """Return the index's verdict, or `not_yet_indexed` for a day it carries no row for."""
@@ -153,12 +200,20 @@ def availability_days_at_base_rung(index: AvailabilityIndex) -> AvailabilityInde
     whose terminal state can be checked against what the store holds. A day the index carries only
     at coarser rungs is deliberately `not_yet_indexed` here: no row states the base rung's outcome.
     """
+    from agri_data_service.pipeline.parquet.availability_documents import (  # noqa: PLC0415 - CLI-only, like `main()`
+        availability_pointer_key,
+    )
+
     verdicts = {
         row.day: IndexedDay(state=row.terminal_state, absence_reason=row.absence_reason)
         for row in index.rows
         if row.rung == LANE_BASE_ZOOM_TIER
     }
-    return AvailabilityIndexDays(verdicts=verdicts)
+    return AvailabilityIndexDays(
+        verdicts=verdicts,
+        generation_sha256=index.pointer.generation_sha256,
+        pointer_key=availability_pointer_key(index.pointer.identity.lane_root),
+    )
 
 
 class EvaluationArtifactNotPromotableError(ValueError):
@@ -370,15 +425,26 @@ def default_promotion_days(*, today: date, max_days: int) -> tuple[date, ...]:
     return tuple(sorted(ceiling - timedelta(days=offset) for offset in range(max_days)))
 
 
+def _governed_absence_entry(day: date, indexed: IndexedDay) -> dict[str, object]:
+    """The turn's result entry for a day the index states absent, carrying the index's own reason.
+
+    Spelled separately from `_non_promotable_entry` because the pointer re-read may reclassify ONLY
+    a governed absence (STYLE-REVIEW-W6 S2), and calling a function that can also answer `None` for
+    a state already narrowed to `governed_absence` would leave an unreachable branch at the call
+    site (`engineering-principles.md` §2).
+    """
+    return {
+        "day": day.isoformat(),
+        "layer": VEGETATION_PLANE_STREAM,
+        "status": "absent",
+        "reason": indexed.absence_reason or "governed_absence_without_recorded_reason",
+    }
+
+
 def _non_promotable_entry(day: date, indexed: IndexedDay) -> dict[str, object] | None:
     """The turn's result entry for a day the index does not state `published`, or `None` if it does."""
     if indexed.state == "governed_absence":
-        return {
-            "day": day.isoformat(),
-            "layer": VEGETATION_PLANE_STREAM,
-            "status": "absent",
-            "reason": indexed.absence_reason or "governed_absence_without_recorded_reason",
-        }
+        return _governed_absence_entry(day, indexed)
     if indexed.state == "not_yet_indexed":
         return {
             "day": day.isoformat(),
@@ -411,10 +477,11 @@ async def run_vegetation_promotion(  # noqa: PLR0913 - one coordinate of the tur
       a failure, and a turn whose EVERY day is one exits 0 as `waiting_for_writer` (see
       `_promotion_report`).
     - `published` -- read and promoted. If the store then holds no part file, the index snapshot this
-      turn opened with is RE-READ once before anything is raised: a pointer that advanced in between
-      means a prune or retention pass landed inside the turn's window, which is a race retried from
-      the winning generation (§4a), not corruption. Only a still-current pointer claiming a day the
-      store cannot serve raises `AvailabilityPartitionConflictError` (STYLE-REVIEW-W4 B1/B2, W5 S4).
+      turn opened with is RE-READ once before anything is raised, and ONLY a fresh `governed_absence`
+      reclassifies: that is a prune or retention pass landing inside the turn's window, recorded with
+      a reason by the winning generation, which §4a retries from rather than pages for. A fresh
+      `not_yet_indexed` is the index having LOST a row it had, and raises with the rest
+      (STYLE-REVIEW-W4 B1/B2, W5 S4, W6 S2).
 
     `refresh_availability` is that re-read, injected so a test can state the winning generation
     without an object store; it defaults to this module's own `read_lane_availability`. It is called
@@ -428,9 +495,9 @@ async def run_vegetation_promotion(  # noqa: PLR0913 - one coordinate of the tur
     from agri_data_service.pipeline.parquet.objectstore import PartitionNotWrittenError  # noqa: PLC0415
 
     results: list[dict[str, object]] = []
-    #: The winning generation, read lazily and at most once, for the whole turn.
+    #: The winning generation, read lazily and at most once per turn -- `None` means "not yet read",
+    #: which is also what narrows it for the raise below, so no separate flag and no dead arm.
     winning_availability: LaneAvailability | None = None
-    has_reread_availability = False
     for day in days:
         skipped = _non_promotable_entry(day, availability.indexed_day(day))
         if skipped is not None:
@@ -440,19 +507,27 @@ async def run_vegetation_promotion(  # noqa: PLR0913 - one coordinate of the tur
         try:
             cell_values = read_day_partition_cell_values(store, day)
         except PartitionNotWrittenError as conflict:
-            if not has_reread_availability:
-                has_reread_availability = True
+            if winning_availability is None:
                 winning_availability = (refresh_availability or read_lane_availability)()
-            reclassified = (
-                None
-                if winning_availability is None
-                else _non_promotable_entry(day, winning_availability.indexed_day(day))
-            )
-            if reclassified is None:
-                raise AvailabilityPartitionConflictError(layer=VEGETATION_PLANE_STREAM, day=day) from conflict
+            fresh = winning_availability.indexed_day(day)
+            if fresh.state != "governed_absence":
+                # Only a governed ABSENCE is a benign race: the winning generation states the day
+                # itself, with a reason. A fresh `not_yet_indexed` means the index LOST a row it had
+                # -- half the corruption this error exists for -- and reclassifying it made an
+                # availability regression exit 0 as `waiting_for_writer` (STYLE-REVIEW-W6 S2).
+                raise AvailabilityPartitionConflictError(
+                    layer=VEGETATION_PLANE_STREAM,
+                    day=day,
+                    fresh_state=fresh.state,
+                    snapshot_generation=availability.generation_sha256,
+                    winning_generation=winning_availability.generation_sha256,
+                    pointer_key=winning_availability.pointer_key or availability.pointer_key,
+                ) from conflict
             # The index moved under the turn: classify per the FRESH row, which is the winning
             # generation's own statement about this day, and never the snapshot's stale one.
-            results.append({**reclassified, "reclassified": "availability_index_advanced_during_turn"})
+            results.append(
+                {**_governed_absence_entry(day, fresh), "reclassified": "availability_index_advanced_during_turn"}
+            )
             emit({"event": "vegetation_promotion_day", **results[-1]})
             continue
         if not cell_values:

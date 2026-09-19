@@ -342,6 +342,77 @@ async def test_a_prune_inside_the_turn_window_is_reclassified_not_paged(store: O
     assert entry["reclassified"] == "availability_index_advanced_during_turn"
 
 
+#: Two fabricated generations, so a conflict message can be checked for naming BOTH of them.
+SNAPSHOT_GENERATION = "a" * 64
+WINNING_GENERATION = "b" * 64
+AVAILABILITY_POINTER_KEY = "parquet/layer=vegetation/kind=observed/availability/_LATEST.json"
+
+
+async def test_a_winning_generation_that_lost_the_row_is_a_conflict_not_a_benign_reclassification(
+    store: ObjectStore,
+) -> None:
+    """STYLE-REVIEW-W6 S2: only a governed ABSENCE reclassifies; a vanished row is index corruption.
+
+    The snapshot stated `published`, the store holds no part file, and the winning generation has no
+    row for the day AT ALL. That is not a retention pass recording a reason -- it is the index
+    losing a row it had, one half of exactly what this error exists for. Reclassifying it made the
+    day `not_yet_indexed`, which `_promotion_report` turns into `waiting_for_writer` and
+    `exit_code_for` returns 0 for: an availability regression exiting silently green.
+    """
+    session = cast("AsyncSession", object())
+    snapshot = AvailabilityIndexDays(
+        verdicts={DAY: IndexedDay(state="published")},
+        generation_sha256=SNAPSHOT_GENERATION,
+        pointer_key=AVAILABILITY_POINTER_KEY,
+    )
+    after_regression = AvailabilityIndexDays(
+        verdicts={},
+        generation_sha256=WINNING_GENERATION,
+        pointer_key=AVAILABILITY_POINTER_KEY,
+    )
+
+    with pytest.raises(AvailabilityPartitionConflictError) as raised:
+        await run_vegetation_promotion(
+            session, store, days=[DAY], availability=snapshot, refresh_availability=lambda: after_regression
+        )
+
+    assert raised.value.fresh_state == "not_yet_indexed"
+    assert raised.value.snapshot_generation == SNAPSHOT_GENERATION
+    assert raised.value.winning_generation == WINNING_GENERATION
+    assert raised.value.pointer_key == AVAILABILITY_POINTER_KEY
+
+
+async def test_the_conflict_message_names_both_generations_and_the_pointer_key(store: ObjectStore) -> None:
+    """STYLE-REVIEW-W6 S3 / W5 S4's second half: two generations are in play, so the page names both.
+
+    `layer-lanes.md` §4 -- "Failures name the day, the lane, and the source response". After the
+    re-read the operator is reconciling between two generations and cannot tell a stale snapshot
+    from a real divergence unless the message says which two.
+    """
+    session = cast("AsyncSession", object())
+    snapshot = AvailabilityIndexDays(
+        verdicts={DAY: IndexedDay(state="published")},
+        generation_sha256=SNAPSHOT_GENERATION,
+        pointer_key=AVAILABILITY_POINTER_KEY,
+    )
+    still_published = AvailabilityIndexDays(
+        verdicts={DAY: IndexedDay(state="published")},
+        generation_sha256=WINNING_GENERATION,
+        pointer_key=AVAILABILITY_POINTER_KEY,
+    )
+
+    with pytest.raises(AvailabilityPartitionConflictError) as raised:
+        await run_vegetation_promotion(
+            session, store, days=[DAY], availability=snapshot, refresh_availability=lambda: still_published
+        )
+
+    message = str(raised.value)
+    assert SNAPSHOT_GENERATION in message
+    assert WINNING_GENERATION in message
+    assert AVAILABILITY_POINTER_KEY in message
+    assert "published" in message
+
+
 async def test_a_day_the_index_has_no_row_for_is_skipped_as_not_yet_indexed(store: ObjectStore) -> None:
     """Nobody has looked yet: not an absence, not a failure, and no object read (B2)."""
     session = cast("AsyncSession", object())

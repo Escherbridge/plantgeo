@@ -45,6 +45,12 @@ def drought_release_table(release: DroughtReleasePayload, *, ingested_at: dateti
         {
             "area_id": direct_area_id(valid_date.isoformat(), area.drought_intensity_class),
             "valid_date": valid_date,
+            # The one line where the layer's name meets the source's. `dm_category` is the PERSISTED
+            # spelling -- the US Drought Monitor's, abbreviated -- and it is pinned by the Parquet
+            # schema and by `DROUGHT_GRAIN`, so renaming it is a schema migration over every written
+            # partition, unlike the in-memory member which was free to rename. The layer contract is
+            # `drought_intensity_class` and it is authoritative; see this lane's `AGENTS.md`
+            # ("Still not normalized") for the deletion condition (STYLE-REVIEW-W6 S4).
             "dm_category": area.drought_intensity_class,
             "source_url": release.source_url,
             "ingested_at": ingested_at,

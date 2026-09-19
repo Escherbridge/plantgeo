@@ -55,8 +55,21 @@ implementation serves, so the two resolvers could only assert their return type 
 at all. With the per-layer maps, `resolve_drought_source` returns `DroughtSource` because that is
 the map it reads, and `declared_layer_source_contracts()` can hand `bindings.py` the protocol each
 layer expects so `drought -> ssurgo` fails `create_app()` instead of a scheduled turn
-(STYLE-REVIEW-W5 B2). `coverage_claims()` and `source_instances()` flatten the same registry for
-the two boot arguments.
+(STYLE-REVIEW-W5 B2).
+
+**The layer key survives all the way to the boot check.** `sources_by_layer()` hands
+`bindings.py` `{layer_slug: {source_slug: instance}}` un-flattened, because registration under the
+bound layer is the servability question itself — the earlier flattened `source_instances()` left
+the check nothing to test but an `isinstance`, which compares member names only and therefore
+accepted `drought -> mtbs` (STYLE-REVIEW-W6 B1). `coverage_claims()` stays flat because coverage
+is a property of the source rather than of the layer it serves, and `SourceRegistry.__post_init__`
+refuses a registry whose slugs collide across layers (`DuplicateSourceSlugError`), so that flatten
+can no longer drop an entry last-wins (STYLE-REVIEW-W6 S6).
+
+`SOIL_SURVEY_LAYER_SLUG` is boot-checked with no `resolve_soil_survey_source` to match: the
+soil-survey lane still reaches `ssurgo.py` by name, so its binding is validated at boot and
+consumed nowhere. That asymmetry with drought and burn severity is a stated state — the check
+landed ahead of the wiring — not an oversight (BACKLOG N38).
 
 Its imports are inside the function, not at module scope: each source module pulls its layer's
 ingest transport and lane registry, and the sole caller is `app.py`'s boot check. Paying for all of

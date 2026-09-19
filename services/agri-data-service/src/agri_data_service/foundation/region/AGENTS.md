@@ -148,10 +148,21 @@ Boot does not fail for those; it fails only for a claim that actively disagrees 
 passes every coverage gate above — SSURGO is `regional`/`US` exactly as USDM is — and then fails as
 an `AttributeError` for a missing `fetch_release_day`, inside a scheduled lane, in whichever region
 deployed it (STYLE-REVIEW-W5 B2). `assert_region_bindings_are_servable` therefore takes a third
-argument, `LayerSourceContracts`: the `runtime_checkable` Protocol each layer expects, beside every
-registered source instance keyed by slug. The two maps are keyed differently on purpose — a
-cross-layer mis-binding is precisely the case where the bound source is registered under some other
-layer, so a per-layer implementation map would fail to find it and report nothing. The contracts
+argument, `LayerSourceContracts`: the `runtime_checkable` Protocol each layer expects, beside the
+source instances registered UNDER each layer (`sources_by_layer`).
+
+**What is checked is registration, not structural conformance.** A binding `layer -> source` is
+servable exactly when this build registered `source` under `layer`'s own map, and the two ways it
+can fail are reported separately: the source is registered under some OTHER layer (the message
+names that layer), or it is registered under no layer at all while the bound layer's registry HAS
+landed. An earlier reading had the map flattened to `{slug: instance}` on the argument that a
+per-layer map "would fail to find it and report nothing"; that inverted the signal — not found
+here while found there IS the refusal, and it is exact and signature-independent. The
+`isinstance` against the layer's protocol is kept as a second, weaker assertion: `runtime_checkable`
+compares member NAMES only, so `isinstance(MTBS_BURN_SEVERITY_SOURCE, DroughtSource)` is `True` and
+`drought -> mtbs` passed the structural gate and still died as a `TypeError` on a scheduled turn
+(STYLE-REVIEW-W6 B1). It still catches a registered object that has lost a member its layer
+requires. The contracts
 are passed IN from `pipeline/source_bindings.py::declared_layer_source_contracts()` because
 `foundation` may not import `pipeline`, the same seam `declared_source_coverage_claims()` already
 uses. A layer with no protocol yet is absent from the map and unchecked, exactly as an unclaimed

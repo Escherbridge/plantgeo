@@ -64,6 +64,18 @@ release payload is un-normalised was wrong, and STYLE-REVIEW-W5 S1 is the correc
   ladder or a continuous intensity with a class derived from it; until then the mapping is written
   in the source, never in the lane.
 
+- **`dm_category`, the persisted spelling, is the same institution's name abbreviated.** The rename
+  stopped at the in-memory member: `dm_category` is still the Parquet column
+  (`warehouse/schemas/drought.py:62`), half the lane's grain tuple (`DROUGHT_GRAIN`, `:29`), the
+  plane's answer field (`planes/drought.py`), a column in the agent tool's list (`agent/tools.py`)
+  and the tRPC reader's zod key (`src/lib/server/services/parquet-trpc-readers/drought.ts`), and
+  `rows.py:48` is the one line where it meets `drought_intensity_class`. It has not moved because a
+  column rename is a Parquet schema change over every written partition plus a wire-contract change,
+  where the in-memory member was free; `rows.py:48` now carries that reason inline. It clears under
+  the same condition `acres` does -- the next schema version that rewrites this lane's partitions --
+  and the layer contract, not the column, is authoritative meanwhile (STYLE-REVIEW-W6 S4,
+  BACKLOG N34).
+
 Two source names also survive elsewhere in this lane:
 
 - `adapter.py` imports `ingest.usdm.usdm_source_url` to build the governed-absence marker's
@@ -73,6 +85,12 @@ Two source names also survive elsewhere in this lane:
 - `products.py` and `pipeline/validation/drought.py` import `ingest.usdm_history.usdm_release_weeks`
   directly, so the *calendar* half of the protocol (`release_days`) is bound-resolved only for the
   pull, not for the walk (W5-C's own residual note).
+
+(`support.py:130`'s refusal used to say "USDM drought class D{n}" -- a source's name inside lane
+logic, in the same file whose lane "no longer imports `ingest.usdm` at all". It now says "drought
+intensity class D{n}", the layer's own words. `ingest/identity.py`'s surviving
+`drought_monitor_category` and its `MIN_`/`MAX_DROUGHT_MONITOR_CATEGORY` constants have no
+production caller at all and are dead code, not rename debt.)
 
 ## Wave-4 deletion list
 
