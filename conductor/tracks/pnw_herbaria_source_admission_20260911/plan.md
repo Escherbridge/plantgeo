@@ -156,3 +156,26 @@ These are two separate ledgers for a reason:
   deferred gates close.
 
 See RUNBOOK lines 574-670 (botanical handoff) and the evidence folder for the full context.
+
+## Ledger note — September 19 update: the owner signed, gates still open
+
+The section above is kept as written because its reasoning held on September 13. One thing in it
+has since changed, and one has not.
+
+**Changed.** The owner signed. On 2026-09-19 the project owner decided "Record as admitted now"
+([evidence/owner-admission-decision-20260919.md](evidence/owner-admission-decision-20260919.md)),
+taking option (a) of the reconciliation note verbatim: extend authorization to serve over the open
+post-capture gates, record it as new evidence, re-point `owner_decision` at it.
+`admitted_releases` now holds UBC v16.43 / generation
+`956c0be71910469005fb494d92aac035223be49d1f5c895c0b1206a716b16ac4` and
+`serving_but_not_admitted` is empty. The two ledgers — governance admission, and the production
+`availability/_LATEST.json` pointer advanced on the same day
+([evidence/pointer-advance-20260919.md](evidence/pointer-advance-20260919.md)) — now name the same
+generation.
+
+**Unchanged.** The flip was still "an owner signature, not an engineering change": no gate result
+changed and no verification was run to produce it. Field-map reconciliation over the real
+`occurrence.txt` and the v16.42-vs-v16.43 native-ID comparison are **still open**, and are carried
+explicitly on the admitted entry under `open_verification_at_admission` so that "admitted" can
+never be misread as "fully verified". The one sentence above that is now superseded is "once the
+deferred gates close" — the owner admitted ahead of them, deliberately, and recorded why.

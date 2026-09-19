@@ -9,11 +9,13 @@
     "commit": "35624ddbaf93670b839333ae51d7ef15e1f5a85e",
     "path": "conductor/research/pnw-herbaria-source-viability-20260910.md"
   },
-  "next_gate": "Owner risk decision 2026-09-13 (evidence/owner-risk-decision-20260913.md) accepted per-record informationWithheld/dataGeneralizations fields as sufficient coordinate-policy evidence (no institutional reply required) and adopted the custody proposal as-is, naming the owner, the existing R2 bucket, indefinite retention, and CC-BY/CC0 EML terms as the permission authority. Both collections' pre-acquisition gates are cleared on that basis. UBC v16.43 is acquired into quarantine and passed archive-safety inspection (evidence/ubc-inspection-receipt-20260913.json, outcome release_accepted). WTU acquisition is deferred behind UBC per the one-transfer-at-a-time budget. Remaining gates before any occurrence release is admitted: field-map reconciliation over the real occurrence.txt, and a two-release native-ID stability comparison (UBC v16.42 vs v16.43). admitted_releases remains empty.",
-  "updated_on": "2026-09-13",
+  "next_gate": "UBC vascular v16.43 was ADMITTED 2026-09-19 by explicit owner decision (evidence/owner-admission-decision-20260919.md, 'Record as admitted now'), which took option (a) of the ledger's own 2026-09-13 reconciliation note: authorization extended over the two still-open post-capture gates, recorded as new evidence, with owner_decision re-pointed at it. The governance ledger and the production _LATEST.json pointer now agree on generation 956c0be71910469005fb494d92aac035223be49d1f5c895c0b1206a716b16ac4 (evidence/pointer-advance-20260919.md). Next gates, now running BEHIND admission rather than before it: field-map reconciliation over the real occurrence.txt, and the v16.42-vs-v16.43 native-ID stability comparison (v16.42 still not acquired). WTU remains pre-acquisition-cleared and deferred behind UBC per the one-transfer-at-a-time budget.",
+  "updated_on": "2026-09-19",
   "admission_packet": "evidence/admission-packet.md",
   "independent_review": "evidence/independent-review.md",
-  "admitted_releases": [],
+  "admitted_releases": [
+    "pnw:UBC:vascular v16.43 (generation 956c0be71910469005fb494d92aac035223be49d1f5c895c0b1206a716b16ac4, admitted 2026-09-19; field-map reconciliation and v16.42/v16.43 native-ID comparison still open -- see evidence/admission-decisions.json admitted_releases[0].open_verification_at_admission)"
+  ],
   "execution_scope": "Metadata and source-governance evidence only so far; owner conditionally authorizes a bounded data-only pilot after source gates. No images, publication, scheduling, API/UI, production or runtime changes.",
   "handoff": "evidence/requests-and-handoff.md",
   "partitions": {
@@ -69,7 +71,7 @@
     "botanical_occurrence_experience_20260911",
     "botanical_species_recommendation_validation_20260911"
   ],
-  "admission_status": "one-archive-quarantined-post-capture-gates-open",
+  "admission_status": "one-release-admitted-two-verification-gates-open",
   "planning_baseline": "b9b7bf4fcc0c58556d10fc58522edced8962b869",
   "synchronization_evidence": "evidence/baseline-synchronization.md"
 }

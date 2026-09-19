@@ -4,11 +4,18 @@
  *
  * `conductor/tracks/pnw_herbaria_source_admission_20260911/evidence/admission-decisions.json` is
  * the authority: `admitted_releases` is the admitted set and `serving_but_not_admitted` is
- * everything else that is nonetheless live in production. As of 2026-09-13 that second array
- * holds exactly UBC v16.43 (`pnw:UBC:vascular`) -- served because its archive-safety gate passed,
- * but not admitted because field-map reconciliation and the v16.42-vs-v16.43 native-ID stability
- * comparison are still open, and because an independent review found the ledger had briefly (and
- * wrongly) claimed admission before that correction. See that file's `admission_reconciliation_note`.
+ * everything else that is nonetheless live in production.
+ *
+ * UPDATED 2026-09-19: UBC v16.43 (`pnw:UBC:vascular`) moved OUT of `serving_but_not_admitted`
+ * (now empty) and INTO `admitted_releases`, by explicit owner decision -- see that track's
+ * `evidence/owner-admission-decision-20260919.md`. It is nonetheless deliberately KEPT in the
+ * provisional set below. The owner admitted it *over* two still-open verifications rather than
+ * after them: field-map reconciliation against the raw `occurrence.txt`, and the
+ * v16.42-vs-v16.43 native-ID stability comparison. Those two are exactly what
+ * `PROVISIONAL_BOTANICAL_NOTICE` names, so the notice is still true of this data even though the
+ * governance verdict changed. Dropping a user-facing consent/quality caveat is its own owner call;
+ * removing `pnw:UBC:vascular` from this set is an open follow-up, not an automatic consequence of
+ * admission. Keeping a stale-but-stricter label is the safe direction of error here.
  *
  * `gbif:pnw:vascular` was added 2026-09-14 for the same reason at admission time zero: a brand
  * new source starts provisional by construction and only leaves this set once a human evidence

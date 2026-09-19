@@ -1,24 +1,84 @@
 {
   "schema_version": 1,
   "assessed_on": "2026-09-11",
-  "updated_on": "2026-09-13",
-  "status": "one-release-serving-ahead-of-admission",
-  "scope": "metadata-plus-one-quarantined-archive-plus-one-published-but-not-yet-admitted-release",
-  "owner_decision": "evidence/owner-risk-decision-20260913.md",
-  "admission_reconciliation_note": "CORRECTED 2026-09-13 (independent review finding C1): a prior edit this same day populated `admitted_releases` and marked UBC v16.43 admitted. That directly contradicted `owner_decision`'s own 'Scope of this decision' section (lines 61-68), which unblocks only the two PRE-ACQUISITION gates and states explicitly that post-capture gates (field-map reconciliation, two-release native-ID comparison) 'are unchanged and still required before any occurrence release is admitted for serving' and that 'admitted_releases stays empty until those pass.' That edit has been reverted. The true, honest state: UBC v16.43 generation 956c0be7 IS live and being served in production Parquet (verified via curl) and the post-capture archive/member-safety gate has passed, but field-map reconciliation and the v16.42-vs-v16.43 native-ID stability comparison remain open, so this release is NOT admitted per the owner decision's own criteria. Serving preceded admission. This needs an explicit owner decision to either (a) extend authorization to serve ahead of post-capture gate closure, recorded as new evidence with `owner_decision` re-pointed at it, or (b) require those two gates to close before continuing to serve. Left open for the owner rather than an agent deciding which.",
-  "admitted_releases": [],
-  "serving_but_not_admitted": [
+  "updated_on": "2026-09-19",
+  "status": "one-release-admitted-two-verification-gates-open",
+  "scope": "metadata-plus-one-admitted-published-release-plus-one-deferred-collection",
+  "owner_decision": "evidence/owner-admission-decision-20260919.md",
+  "prior_owner_decision": "evidence/owner-risk-decision-20260913.md (pre-acquisition gates, custody, permission authority, one-transfer-at-a-time budget; still binding except where owner-admission-decision-20260919.md supersedes its 'Scope of this decision' section for UBC v16.43)",
+  "admission_reconciliation_note": "RESOLVED 2026-09-19 by explicit owner decision (evidence/owner-admission-decision-20260919.md, 'Record as admitted now'). The two ledgers now agree: this governance ledger's `admitted_releases` and the published-data ledger (the production `availability/_LATEST.json` pointer) both name UBC v16.43 generation 956c0be71910469005fb494d92aac035223be49d1f5c895c0b1206a716b16ac4. Serving no longer precedes admission. Admission rests on: the CC0 1.0 permission manifest (evidence/ubc-permission-manifest.json, verdict granted); the pre-acquisition gates cleared by evidence/owner-risk-decision-20260913.md; the archive terms gate (in-archive eml.xml sha256 matches the standalone EML); the archive/member-safety gate (evidence/ubc-inspection-receipt-20260913.json, outcome release_accepted, zero reasons); and proof that the admitted bytes are the served bytes (evidence/pointer-advance-20260919.md, pointer_kind latest_v1, manifest sha256 6fecc4a911d4ee5b357cc17fd56d29e4898d13e6a553773e23275e14ae704110, verified on the wire). Admission means CLEARED TO SERVE BY OWNER DECISION, not fully verified: field-map reconciliation against the raw occurrence.txt and the v16.42-vs-v16.43 native-ID stability comparison are still open and are carried on the admitted entry's `open_verification_at_admission`. The superseded 2026-09-13 text of this field is preserved verbatim in `decision_history`.",
+  "decision_history": [
+    {
+      "on": "2026-09-13",
+      "event": "admission-reconciliation-note-opened",
+      "status": "superseded",
+      "superseded_by": "evidence/owner-admission-decision-20260919.md",
+      "note": "CORRECTED 2026-09-13 (independent review finding C1): a prior edit this same day populated `admitted_releases` and marked UBC v16.43 admitted. That directly contradicted `owner_decision`'s own 'Scope of this decision' section (lines 61-68), which unblocks only the two PRE-ACQUISITION gates and states explicitly that post-capture gates (field-map reconciliation, two-release native-ID comparison) 'are unchanged and still required before any occurrence release is admitted for serving' and that 'admitted_releases stays empty until those pass.' That edit has been reverted. The true, honest state: UBC v16.43 generation 956c0be7 IS live and being served in production Parquet (verified via curl) and the post-capture archive/member-safety gate has passed, but field-map reconciliation and the v16.42-vs-v16.43 native-ID stability comparison remain open, so this release is NOT admitted per the owner decision's own criteria. Serving preceded admission. This needs an explicit owner decision to either (a) extend authorization to serve ahead of post-capture gate closure, recorded as new evidence with `owner_decision` re-pointed at it, or (b) require those two gates to close before continuing to serve. Left open for the owner rather than an agent deciding which."
+    },
+    {
+      "on": "2026-09-19",
+      "event": "admission-reconciliation-note-resolved",
+      "status": "current",
+      "authority": "evidence/owner-admission-decision-20260919.md",
+      "note": "The owner took option (a) of the 2026-09-13 note verbatim: authorization was extended over the open post-capture gates, recorded as new evidence, and `owner_decision` re-pointed at it. UBC v16.43 moved from `serving_but_not_admitted` into `admitted_releases`; `serving_but_not_admitted` is now empty. No gate result changed and no verification was run to reach this state -- what changed is the owner's decision about serving under the two still-open gates, which remain listed on the admitted entry. WTU was not touched: it stays pre-acquisition-cleared and deferred behind UBC under the one-transfer-at-a-time budget."
+    }
+  ],
+  "admitted_releases": [
     {
       "collection_key": "pnw:UBC:vascular",
+      "provider_code": "UBC",
+      "publisher": "University of British Columbia Herbarium (UBC); dataset DOI 10.5886/rtt57cc9 (evidence/admission-packet.md:97)",
+      "distribution": "Canadensys institutional IPT (data.canadensys.net), NOT the pnwherbaria.org consortium portal",
+      "archive_url": "https://data.canadensys.net/ipt/archive.do?r=ubc-vascular-specimens&v=16.43",
+      "dataset_uuid": "07fd0d79-4883-435f-bba1-58fef110cd13",
       "source_version": "16.43",
+      "rights_label": "CC0 1.0 in standalone versioned EML, including commercial redistribution",
+      "permission_manifest": "evidence/ubc-permission-manifest.json (permission_verdict: granted)",
+      "eml_package_id": "07fd0d79-4883-435f-bba1-58fef110cd13/v16.43",
+      "eml_sha256": "e73735e4eafcb1a233514948f72631ceced3dd22e30445d45f34e593f7293654",
       "archive_sha256": "277a46aea3c25c0a9315cc6e7e5801a84a2892aac33cff8286317b69527ce847",
-      "published_generation": "956c0be7",
+      "archive_bytes": 31110199,
+      "member_receipts": "evidence/ubc-inspection-receipt-20260913.json",
+      "inspection_outcome": "release_accepted; reasons []; captured 2026-09-13",
+      "published_generation": "956c0be71910469005fb494d92aac035223be49d1f5c895c0b1206a716b16ac4",
+      "published_generation_short": "956c0be7",
       "superseded_generation": "0c0f3cb8",
       "published_at": "2026-09-13",
       "publish_target": "s3://plantgeo-parquet-9ymvp7gv (production)",
-      "note": "Live and served over HTTP; NOT admitted under owner-risk-decision-20260913.md's stated criteria. See admission_reconciliation_note above."
+      "serving_pointer": {
+        "evidence": "evidence/pointer-advance-20260919.md",
+        "pointer_kind": "latest_v1",
+        "pointer_written_at": "2026-09-19T02:45:17.011994+00:00",
+        "manifest_key": "botanical-occurrences/956c0be71910469005fb494d92aac035223be49d1f5c895c0b1206a716b16ac4/manifest.json",
+        "manifest_sha256": "6fecc4a911d4ee5b357cc17fd56d29e4898d13e6a553773e23275e14ae704110",
+        "note": "The checksum-bound pointer names this exact generation, so the admitted bytes are demonstrably the served bytes."
+      },
+      "admitted_on": "2026-09-19",
+      "admission_authority": "Explicit owner decision of 2026-09-19 ('Record as admitted now'), recorded at evidence/owner-admission-decision-20260919.md. This is the owner's own decision, NOT an inference from evidence/owner-risk-decision-20260913.md -- that earlier decision authorized ACQUISITION only and said admitted_releases stays empty; the 2026-09-19 decision supersedes that scope statement for this release.",
+      "admission_meaning": "Cleared to serve by owner decision. NOT a statement that every post-capture verification has passed -- see open_verification_at_admission.",
+      "admission_rests_on": [
+        "permission: CC0 1.0 in the release-bound EML (evidence/ubc-permission-manifest.json)",
+        "pre-acquisition gates cleared (evidence/owner-risk-decision-20260913.md)",
+        "archive EML/record terms agree with the standalone EML -- eml.xml sha256 matches (evidence/ubc-inspection-receipt-20260913.json, eml_sha256_matches_prior_research: true)",
+        "archive/member safety and hashes -- outcome release_accepted, zero reasons (evidence/ubc-inspection-receipt-20260913.json)",
+        "admitted bytes are the served bytes -- checksum-bound _LATEST.json pointer verified on the wire (evidence/pointer-advance-20260919.md)"
+      ],
+      "open_verification_at_admission": [
+        {
+          "gate": "field map and reconciled complete population",
+          "status": "open",
+          "detail": "No normalize.py field-map reconciliation has been run against the raw occurrence.txt (161,947,067 uncompressed bytes per evidence/ubc-inspection-receipt-20260913.json). The publisher advertises 192,948 records and the published manifest reports raw_occurrences: 192948 (evidence/pointer-advance-20260919.md), but a manifest count is not a reconciliation against the raw member."
+        },
+        {
+          "gate": "two complete equivalent release native-ID comparison",
+          "status": "open",
+          "detail": "v16.42 (advertised 192,783 records, published 2026-07-29) has acquired: false, so identity_stability is unmeasured and no v16.42-vs-v16.43 native-identifier stability comparison exists."
+        }
+      ],
+      "closing_open_gates": "Closing either gate updates this entry in place; it does not require a further admission decision."
     }
   ],
+  "serving_but_not_admitted": [],
   "corpus_downloaded": false,
   "images_downloaded": false,
   "collections": [
@@ -93,7 +153,7 @@
         "published_on": "2026-07-29",
         "acquired": false
       },
-      "decision": "acquired-and-published-to-production-but-not-admitted; post-capture gates open (see admission_reconciliation_note, serving_but_not_admitted[0])",
+      "decision": "admitted 2026-09-19 by explicit owner decision (evidence/owner-admission-decision-20260919.md); see admitted_releases[0]. Two post-capture verification gates remain open and are carried there, not silently closed.",
       "pre_acquisition_gates_status": "cleared by owner risk decision 2026-09-13; see evidence/owner-risk-decision-20260913.md",
       "pre_acquisition_gates": [
         "institutional public-coordinate/withholding policy applicability",
@@ -102,8 +162,8 @@
       "post_capture_gates": [
         "archive EML/record terms agree with standalone EML -- CONFIRMED 2026-09-13, eml.xml sha256 matches",
         "archive/member safety and hashes -- CONFIRMED 2026-09-13, outcome release_accepted, zero reasons",
-        "field map and reconciled complete population",
-        "two complete equivalent release native-ID comparison"
+        "field map and reconciled complete population -- STILL OPEN at admission (2026-09-19); admission was granted over it by owner decision",
+        "two complete equivalent release native-ID comparison -- STILL OPEN at admission (2026-09-19); admission was granted over it by owner decision"
       ]
     }
   ],
