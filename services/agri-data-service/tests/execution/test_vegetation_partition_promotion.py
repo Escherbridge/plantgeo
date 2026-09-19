@@ -20,7 +20,7 @@ import pytest
 
 from agri_data_service.execution.lane_specs import (
     VEGETATION_PROMOTION_STALE_CEILING_WINDOWS,
-    vegetation_promotion_stale_ceiling_days,
+    vegetation_promotion_publication_window_days,
 )
 from agri_data_service.execution.vegetation_ndvi_plane import (
     GovernedPlane,
@@ -32,7 +32,9 @@ from agri_data_service.execution.vegetation_ndvi_plane import (
 )
 from agri_data_service.execution.vegetation_partition_promotion import (
     COMPLETED_STATUS,
+    FAILED_STATUS,
     FAILING_TURN_STATUSES,
+    NOT_SERVABLE_DAY_STATUS,
     NO_DAYS_PROMOTED_STATUS,
     REGISTRATION_REFUSED_STATUS,
     STALE_CEILING_STATUS,
@@ -52,7 +54,9 @@ from agri_data_service.execution.vegetation_partition_promotion import (
     day_partition_content_sha256,
     default_promotion_days,
     exit_code_for,
+    failed_report,
     load_promotion_receipt,
+    newest_servable_day,
     promote_vegetation_day_partition,
     promotion_ceiling,
     run_vegetation_promotion,
@@ -530,27 +534,67 @@ async def test_a_mixed_turn_that_promoted_nothing_still_fails(store: ObjectStore
 
 
 def test_only_a_promoting_or_waiting_turn_exits_zero() -> None:
-    """Five terminal statuses, two exit codes, and `waiting_for_writer` is not `completed` (W5 S3)."""
+    """Six terminal statuses, two exit codes, and `waiting_for_writer` is not `completed` (W5 S3)."""
     assert exit_code_for({"status": "completed"}) == 0
     assert exit_code_for({"status": "waiting_for_writer"}) == 0
     assert exit_code_for({"status": "no_days_promoted", "reason": "all_days_absent"}) == 1
     assert exit_code_for({"status": "no_days_promoted", "reason": "no_indexed_day_promoted"}) == 1
     assert exit_code_for({"status": STALE_CEILING_STATUS}) == 1
     assert exit_code_for({"status": REGISTRATION_REFUSED_STATUS}) == 1
+    assert exit_code_for({"status": FAILED_STATUS}) == 1
 
 
 def test_every_terminal_status_has_exactly_one_exit_code() -> None:
-    """The two vocabularies W9-C and W9-F grew must PARTITION, not overlap: one outcome, one status.
+    """The vocabularies W9-C, W9-F and `main()`'s own handler grew must PARTITION: one outcome, one status.
 
     `exit_code_for` fails closed on anything else, so this is the proof that "anything else" is
-    empty rather than a silent third category.
+    empty rather than a silent third category. `failed` is in the set because `main()` REALLY prints
+    it; while it sat outside, this test proved a property of a vocabulary that excluded a reachable
+    report status (STYLE-REVIEW-W9 S3).
     """
     assert SUCCESSFUL_TURN_STATUSES.isdisjoint(FAILING_TURN_STATUSES)
     assert TERMINAL_STATUSES == SUCCESSFUL_TURN_STATUSES | FAILING_TURN_STATUSES
     assert {COMPLETED_STATUS, WAITING_FOR_WRITER_STATUS} == SUCCESSFUL_TURN_STATUSES
-    assert {NO_DAYS_PROMOTED_STATUS, REGISTRATION_REFUSED_STATUS, STALE_CEILING_STATUS} == FAILING_TURN_STATUSES
+    assert {
+        NO_DAYS_PROMOTED_STATUS,
+        REGISTRATION_REFUSED_STATUS,
+        STALE_CEILING_STATUS,
+        FAILED_STATUS,
+    } == FAILING_TURN_STATUSES
     for status in TERMINAL_STATUSES:
         assert exit_code_for({"status": status}) == (0 if status in SUCCESSFUL_TURN_STATUSES else 1)
+
+
+def test_an_unknown_status_still_fails_closed() -> None:
+    """Outside the vocabulary is a defect in the caller, and the lane may not exit 0 on one."""
+    assert exit_code_for({"status": "green"}) == 1
+    assert exit_code_for({}) == 1
+    assert exit_code_for({"status": None}) == 1
+
+
+def test_an_escaped_exception_is_reported_in_the_turns_own_vocabulary() -> None:
+    """`main()`'s handler goes THROUGH `exit_code_for`, rather than writing its exit code by hand."""
+    report = failed_report(RuntimeError("the object store refused"))
+
+    assert report["status"] == FAILED_STATUS
+    assert report["status"] in TERMINAL_STATUSES
+    assert report["error"] == "RuntimeError: the object store refused"
+    assert report["days"] == []
+    assert exit_code_for(report) == 1
+
+
+def test_a_day_refused_for_non_servability_is_distinguishable_from_a_registration_refusal() -> None:
+    """Two different refusals, two different day statuses and two different top-level lists.
+
+    Nothing about a `not_servable` day is defective -- the register verb was never offered it -- so
+    folding it into `registration_refused_days` would send an operator looking for a lattice cell or
+    a non-finite value that does not exist.
+    """
+    report = promotion_report_of([_not_servable_day_entry(DAY), _refused_entry(date(2026, 9, 11))])
+
+    assert report["not_servable_days"] == [DAY.isoformat()]
+    assert report["registration_refused_days"] == [date(2026, 9, 11).isoformat()]
+    assert report["status"] == REGISTRATION_REFUSED_STATUS, "a real defect still dominates"
 
 
 def _refused_entry(day: date) -> dict[str, object]:
@@ -561,6 +605,16 @@ def _refused_entry(day: date) -> dict[str, object]:
         "status": REGISTRATION_REFUSED_STATUS,
         "error_class": "UnregisteredPartitionCellsError",
         "reason": "agri.spatial_cell does not hold these cells",
+    }
+
+
+def _not_servable_day_entry(day: date) -> dict[str, object]:
+    """One day entry shaped exactly as `run_vegetation_promotion` renders a non-servable day."""
+    return {
+        "day": day.isoformat(),
+        "layer": VEGETATION_PLANE_STREAM,
+        "status": NOT_SERVABLE_DAY_STATUS,
+        "reason": "availability_index_does_not_publish_this_day_at_every_required_rung",
     }
 
 
@@ -756,10 +810,70 @@ def test_a_day_published_only_at_the_base_rung_is_not_servable() -> None:
 
 def test_the_ceiling_skips_a_day_the_rung_ladder_does_not_agree_on() -> None:
     """The promoted day registers a WHOLE zoom-independent governed day, so it must be servable."""
-    ceiling = promotion_ceiling(availability=mixed_ladder_availability(), today=LADDER_TODAY)
+    ceiling = promotion_ceiling(
+        availability=mixed_ladder_availability(),
+        today=LADDER_TODAY,
+        publication_window_days=vegetation_promotion_publication_window_days(),
+    )
 
     assert ceiling.day == FULL_LADDER_DAY
     assert ceiling.age_days == (LADDER_TODAY - FULL_LADDER_DAY).days
+    assert newest_servable_day(availability=mixed_ladder_availability(), today=LADDER_TODAY) == ceiling.day, (
+        "one predicate decides the ceiling for the window and for the measurement"
+    )
+
+
+# The catch-up shape is the MIRROR of `mixed_ladder_availability`: here the ladder agrees on the
+# NEWER day, so the base-rung-only day sits below the ceiling and inside a `--max-days > 1` window.
+CATCH_UP_CEILING_DAY = date(2026, 8, 6)
+CATCH_UP_BASE_ONLY_DAY = date(2026, 8, 5)
+
+
+def catch_up_ladder_availability() -> AvailabilityIndexDays:
+    """The `--max-days` catch-up shape: a servable ceiling with a base-rung-only day BELOW it."""
+    rows = [terminal_row(VEGETATION_CENSUS_LANE, day=CATCH_UP_CEILING_DAY, rung=rung) for rung in ZOOM_TIERS]
+    rows += [
+        terminal_row(
+            VEGETATION_CENSUS_LANE,
+            day=CATCH_UP_BASE_ONLY_DAY,
+            rung=rung,
+            terminal_state="published" if rung == LANE_BASE_ZOOM_TIER else "governed_absence",
+        )
+        for rung in ZOOM_TIERS
+    ]
+    return availability_days_at_base_rung(index_of(VEGETATION_CENSUS_LANE, rows))
+
+
+async def test_a_wider_window_never_promotes_a_day_only_the_base_rung_publishes() -> None:
+    """STYLE-REVIEW-W9 B2: §4a's intersection binds EVERY day in the window, not only the ceiling.
+
+    The ceiling gate alone left the defect one operator flag away: a `--max-days 7` catch-up after
+    an outage registered every sub-ceiling day off `indexed_day`, the BASE-rung verdict, so a day
+    the finer rungs do not publish became a whole zoom-independent governed day serving cannot
+    answer above the base rung (STYLE-REVIEW-W8 S3).
+
+    `RefusingBackend` carries the other half of the claim: such a day is settled from the index
+    alone, and no object is opened for it.
+    """
+    availability = catch_up_ladder_availability()
+    session = cast("AsyncSession", object())
+    refusing_store = ObjectStore(backend=RefusingBackend())
+
+    window = default_promotion_days(availability=availability, today=LADDER_TODAY, max_days=2)
+    report = await run_vegetation_promotion(
+        session, refusing_store, days=[CATCH_UP_BASE_ONLY_DAY], availability=availability
+    )
+
+    assert window == (CATCH_UP_BASE_ONLY_DAY, CATCH_UP_CEILING_DAY), "the window still NAMES the day"
+    assert availability.indexed_day(CATCH_UP_BASE_ONLY_DAY).state == "published", "the base rung does state it"
+    assert report["not_servable_days"] == [CATCH_UP_BASE_ONLY_DAY.isoformat()]
+    assert report["registration_refused_days"] == [], "nothing was offered to the register verb"
+    (entry,) = cast("list[dict[str, object]]", report["days"])
+    assert entry["status"] == NOT_SERVABLE_DAY_STATUS
+    assert entry["reason"] == "availability_index_does_not_publish_this_day_at_every_required_rung"
+    assert report["status"] == WAITING_FOR_WRITER_STATUS
+    assert report["reason"] == "forward_writer_has_published_none_of_these_days_at_every_required_rung"
+    assert exit_code_for(report) == 0
 
 
 def test_a_fabricated_availability_with_no_rung_ladder_falls_back_to_its_base_verdicts() -> None:
@@ -771,62 +885,128 @@ def test_a_fabricated_availability_with_no_rung_ladder_falls_back_to_its_base_ve
     assert not availability.is_servable(DAY + timedelta(days=1))
 
 
-def test_a_ceiling_inside_the_lanes_own_window_is_progress_and_names_its_age() -> None:
-    today = date(2026, 9, 18)
-    stale_after_days = vegetation_promotion_stale_ceiling_days()
-    fresh_day = today - timedelta(days=stale_after_days - 1)
-    availability = AvailabilityIndexDays(verdicts={fresh_day: IndexedDay(state="published")})
-
-    ceiling = promotion_ceiling(availability=availability, today=today)
-
-    assert not ceiling.is_stale(stale_after_days=stale_after_days)
-    assert ceiling_fields(ceiling, stale_after_days=stale_after_days) == {
-        "ceiling_day": fresh_day.isoformat(),
-        "ceiling_age_days": stale_after_days - 1,
-        "ceiling_stale_after_days": stale_after_days,
-    }
+#: The turn measures against the lane's REGISTERED window, so every case below reads it too.
+WINDOW_DAYS = vegetation_promotion_publication_window_days()
+STALE_TODAY = date(2026, 11, 18)
 
 
-def test_a_ceiling_older_than_the_lanes_window_is_stale_and_exits_non_zero() -> None:
-    """The dead-lane trap: the window still NAMES the ancient day, and the turn now refuses it.
+def ceiling_behind_today(*, days_behind: int, today: date = STALE_TODAY) -> PromotionCeiling:
+    """Measure a lane whose newest servable day sits `days_behind` days behind `today`."""
+    ceiling_day = today - timedelta(days=days_behind)
+    availability = AvailabilityIndexDays(verdicts={ceiling_day: IndexedDay(state="published")})
+    return promotion_ceiling(availability=availability, today=today, publication_window_days=WINDOW_DAYS)
 
-    Before this bound the same day was promoted, came back `unchanged` -- which `_promotion_report`
-    counts as progress -- and exited 0 every turn forever.
+
+def test_a_ceiling_at_the_provider_frontier_has_missed_nothing() -> None:
+    """A healthy lane already sits a whole registered window behind today; that is not lateness."""
+    ceiling = ceiling_behind_today(days_behind=WINDOW_DAYS)
+
+    assert ceiling.frontier_day == STALE_TODAY - timedelta(days=WINDOW_DAYS)
+    assert ceiling.age_days == WINDOW_DAYS, "behind TODAY by the whole registered lag"
+    assert ceiling.frontier_age_days == 0, "and behind the FRONTIER by nothing at all"
+    assert ceiling.missed_publication_windows == 0
+
+
+def test_a_ceiling_ahead_of_the_frontier_is_floored_at_zero_rather_than_running_negative() -> None:
+    """A lane that beat its own median gap must not bank credit against a future outage."""
+    ceiling = ceiling_behind_today(days_behind=1)
+
+    assert ceiling.age_days == 1
+    assert ceiling.frontier_age_days == 0
+    assert ceiling.missed_publication_windows == 0
+
+
+def test_a_cloudy_fortnight_at_the_provider_edge_is_not_called_stale() -> None:
+    """STYLE-REVIEW-W9 B1: the bound may not refuse a healthy lane in a routine PNW overcast stretch.
+
+    Sixteen days between usable Sentinel-2 scenes is an ordinary Oct-Mar gap on a lane whose
+    registered lag is a MEASURED MEDIAN of 7 with a heavy tail. Measured from `today` it exceeded
+    two windows and the turn refused -- and because `--max-days` is 1, the day it skipped was never
+    revisited, so the gate manufactured the hole it exists to detect. Measured from the FRONTIER it
+    is one missed opportunity, which is an edge, not a stopped writer.
     """
-    today = date(2026, 9, 18)
-    stale_after_days = vegetation_promotion_stale_ceiling_days()
-    dead_day = today - timedelta(days=stale_after_days + 1)
-    availability = AvailabilityIndexDays(verdicts={dead_day: IndexedDay(state="published")})
+    cloudy_edge = ceiling_behind_today(days_behind=16)
 
-    assert default_promotion_days(availability=availability, today=today, max_days=1) == (dead_day,)
-    ceiling = promotion_ceiling(availability=availability, today=today)
-    assert ceiling.is_stale(stale_after_days=stale_after_days)
+    assert cloudy_edge.age_days > WINDOW_DAYS * VEGETATION_PROMOTION_STALE_CEILING_WINDOWS, (
+        "the OLD bound, measured from today, called this lane dead"
+    )
+    assert cloudy_edge.frontier_age_days == 16 - WINDOW_DAYS
+    assert cloudy_edge.missed_publication_windows == 1
+    assert not cloudy_edge.is_stale(stale_after_missed_windows=VEGETATION_PROMOTION_STALE_CEILING_WINDOWS)
 
-    report = stale_ceiling_report(ceiling, stale_after_days=stale_after_days)
+
+def test_a_writer_that_stopped_for_two_whole_windows_is_still_called_stale() -> None:
+    """The other half of the bound: it must still catch the lane the freshness yardstick cannot."""
+    last_healthy = ceiling_behind_today(days_behind=WINDOW_DAYS * VEGETATION_PROMOTION_STALE_CEILING_WINDOWS + 6)
+    stopped = ceiling_behind_today(days_behind=WINDOW_DAYS * (VEGETATION_PROMOTION_STALE_CEILING_WINDOWS + 1))
+
+    assert last_healthy.missed_publication_windows == VEGETATION_PROMOTION_STALE_CEILING_WINDOWS - 1
+    assert not last_healthy.is_stale(stale_after_missed_windows=VEGETATION_PROMOTION_STALE_CEILING_WINDOWS), (
+        "one day short of the second missed window is still an edge"
+    )
+    assert stopped.missed_publication_windows == VEGETATION_PROMOTION_STALE_CEILING_WINDOWS
+    assert stopped.is_stale(stale_after_missed_windows=VEGETATION_PROMOTION_STALE_CEILING_WINDOWS)
+
+
+def test_a_stale_turn_reports_the_day_it_promoted_rather_than_consuming_it() -> None:
+    """STYLE-REVIEW-W9 B1, the third requirement: a refusal may not eat the day it refuses for.
+
+    `DEFAULT_MAX_DAYS` is 1 and nothing revisits a day below a later ceiling, so a refusal taken
+    BEFORE the window ran left its ceiling day unpromoted forever. The verdict is now applied to a
+    turn that already ran, and the turn's own outcome survives as `promotion_status`.
+    """
+    promoted = promotion_report_of([_promoted_entry(DAY)])
+    assert promoted["status"] == COMPLETED_STATUS
+
+    report = stale_ceiling_report(promoted)
 
     assert report["status"] == STALE_CEILING_STATUS
     assert report["status"] not in SUCCESSFUL_TURN_STATUSES
-    assert report["ceiling_day"] == dead_day.isoformat()
-    assert report["ceiling_age_days"] == stale_after_days + 1
-    assert report["days"] == [], "no day is evaluated at all: the turn refuses before it promotes"
+    assert report["promotion_status"] == COMPLETED_STATUS
+    assert report["days"] == [_promoted_entry(DAY)], "the day was promoted, and the report says so"
     assert exit_code_for(report) == 1
+
+
+def test_the_ceiling_fields_name_the_frontier_the_bound_is_actually_applied_to() -> None:
+    """A reader must be able to re-derive the verdict from the report; `age_days` is not the bound."""
+    ceiling = ceiling_behind_today(days_behind=16)
+
+    assert ceiling_fields(ceiling, stale_after_missed_windows=VEGETATION_PROMOTION_STALE_CEILING_WINDOWS) == {
+        "ceiling_day": (STALE_TODAY - timedelta(days=16)).isoformat(),
+        "ceiling_age_days": 16,
+        "ceiling_frontier_day": (STALE_TODAY - timedelta(days=WINDOW_DAYS)).isoformat(),
+        "ceiling_frontier_age_days": 16 - WINDOW_DAYS,
+        "ceiling_publication_window_days": WINDOW_DAYS,
+        "ceiling_missed_publication_windows": 1,
+        "ceiling_stale_after_missed_windows": VEGETATION_PROMOTION_STALE_CEILING_WINDOWS,
+        "ceiling_is_stale": False,
+    }
 
 
 def test_an_index_with_no_servable_day_is_never_called_stale() -> None:
     """`no_indexed_day_promoted` is the honest answer there, and it already exits 1 on its own."""
-    ceiling = promotion_ceiling(availability=EMPTY_AVAILABILITY_INDEX, today=date(2026, 9, 18))
+    ceiling = promotion_ceiling(
+        availability=EMPTY_AVAILABILITY_INDEX, today=STALE_TODAY, publication_window_days=WINDOW_DAYS
+    )
 
-    assert ceiling == PromotionCeiling(day=None, age_days=None)
-    assert not ceiling.is_stale(stale_after_days=vegetation_promotion_stale_ceiling_days())
+    assert ceiling.day is None
+    assert ceiling.age_days is None
+    assert ceiling.frontier_age_days is None
+    assert ceiling.missed_publication_windows is None
+    assert not ceiling.is_stale(stale_after_missed_windows=VEGETATION_PROMOTION_STALE_CEILING_WINDOWS)
 
 
-def test_the_stale_threshold_is_two_of_the_lanes_registered_publication_windows() -> None:
-    """The number is derived from the lane's registered lag, never a literal beside it."""
+def test_the_publication_window_is_the_lanes_registered_lag_and_never_a_literal() -> None:
+    """The cadence fact is read from `LANE_REGISTRY` at call time, never copied beside the bound."""
     registered_lag_days = LANE_REGISTRY[VEGETATION_PLANE_STREAM].publication_lag_days
 
-    assert vegetation_promotion_stale_ceiling_days() == (
-        registered_lag_days * VEGETATION_PROMOTION_STALE_CEILING_WINDOWS
+    assert vegetation_promotion_publication_window_days() == registered_lag_days
+    assert VEGETATION_PROMOTION_STALE_CEILING_WINDOWS >= 2, (
+        "one missed window is a single provider edge the 7-day MEDIAN gap already straddles"
     )
-    assert vegetation_promotion_stale_ceiling_days() > registered_lag_days, (
-        "a one-window bound would refuse at the provider edge the 7-day MEDIAN gap already sits on"
-    )
+
+
+def test_a_non_positive_publication_window_is_refused_rather_than_divided_by() -> None:
+    """`missed_publication_windows` is undefined for a zero window, so the ceiling refuses to exist."""
+    with pytest.raises(ValueError, match="publication window"):
+        promotion_ceiling(availability=EMPTY_AVAILABILITY_INDEX, today=STALE_TODAY, publication_window_days=0)
