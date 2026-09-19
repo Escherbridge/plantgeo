@@ -83,6 +83,15 @@ plane as a whole day, at every rung. `availability_days_at_base_rung` therefore 
 `is_servable` is on the `LaneAvailability` PROTOCOL rather than on the concrete index alone, because
 `run_vegetation_promotion` asks it of every day it evaluates.
 
+`AvailabilityIndexDays.servable_days` is REQUIRED and has no default (corrected 2026-09-19,
+STYLE-REVIEW-W10 S7). While it defaulted to `None`, `is_servable` fell back to the base-rung verdict
+-- a SECOND definition of servability that the only production constructor could never reach, and
+the one every fabricated-availability test exercised. A test double now states its own intersection,
+so the predicate the tests prove is the predicate the lane runs. The ordering in
+`_non_promotable_entry` (absence first, servability last, so an indexed absence keeps the index's own
+`absence_reason` instead of being relabelled `not_servable`) is proved by
+`test_a_day_that_is_both_an_indexed_absence_and_unservable_keeps_the_index_reason`, not by reading.
+
 Gating only the ceiling was not enough and was corrected on 2026-09-19 (STYLE-REVIEW-W9 B2, which is
 STYLE-REVIEW-W8 S3 still open): `default_promotion_days` returns `max_days` trailing CALENDAR days
 below its ceiling, and every one of those used to be classified by `indexed_day`, the base-rung
@@ -94,40 +103,83 @@ purpose: dropping it from the window would make it invisible to the report, whic
 §1a forbids. It is neutral for the exit code for the same reason `not_yet_indexed` is -- the writer
 is mid-publication, nothing about the day is defective, and the register verb was never offered it.
 
-**The staleness bound measures against the lane's PROVIDER FRONTIER, not against today.** A ceiling
-compared against itself is always current, so a lane whose forward writer died re-confirms the same
-ancient day every turn, reports it `unchanged` -- which counts as progress -- and exits 0 forever.
-But `today - ceiling_day` cannot answer "has the writer stopped" either, and the first version of
-this bound did exactly that (STYLE-REVIEW-W9 B1). `lane_registry.py`'s vegetation `floor_basis`
-records `publication_lag_days=7` as a MEASURED MEDIAN gap between usable Sentinel-2 days, widened
-past the nominal 5-day revisit by cloud screening -- so a PERFECTLY HEALTHY lane's newest servable
-day already sits about seven days behind today, and a 14-day bound measured from today bought one
-median gap of slack against a distribution the same registry calls heavy-tailed. A routine Oct-Mar
-PNW overcast fortnight tripped it.
+**The staleness bound measures against the lane's DECLARED publication lag. That is a registry
+constant, not a fact about the provider** (corrected 2026-09-19, STYLE-REVIEW-W10 S1; the field was
+called `frontier_day` and the prose called it "the provider frontier", and neither was true of the
+code). A ceiling compared against itself is always current, so a lane whose forward writer died
+re-confirms the same ancient day every turn, reports it `unchanged` -- which counts as progress --
+and exits 0 forever. But `today - ceiling_day` cannot answer "has the writer stopped" either, and
+the first version of this bound did exactly that (STYLE-REVIEW-W9 B1). `lane_registry.py`'s
+vegetation `floor_basis` records `publication_lag_days=7` as a MEASURED MEDIAN gap between usable
+Sentinel-2 days, widened past the nominal 5-day revisit by cloud screening -- so a PERFECTLY HEALTHY
+lane's newest servable day already sits about seven days behind today, and a 14-day bound measured
+from today bought one median gap of slack against a distribution the same registry calls
+heavy-tailed. A routine Oct-Mar PNW overcast fortnight tripped it.
 
-So the turn measures `frontier_day = today - publication_lag_days` -- the newest day this lane could
-plausibly have published by now -- and counts `frontier_age_days // publication_lag_days`, the whole
-publication windows the source had and did not use. `stale_ceiling` is
-`VEGETATION_PROMOTION_STALE_CEILING_WINDOWS` (2) consecutive MISSED OPPORTUNITIES, which on the
-registered lag is a ceiling 21 or more days behind today. A cloudy 16-day gap is one missed window
-and reports normally; a stopped writer keeps accumulating them and cannot escape. The window itself
-is read from `LANE_REGISTRY` at call time through
-`lane_specs.vegetation_promotion_publication_window_days()`, never a literal beside the bound, and
-that function refuses a non-positive lag rather than dividing by it.
+So the turn computes `declared_lag_day = today - declared_lag_days` and counts
+`age_beyond_declared_lag_days // declared_lag_days`, the whole declared-lag allowances that have
+elapsed past it. `stale_ceiling` is `VEGETATION_PROMOTION_STALE_CEILING_LAG_ALLOWANCES` (2) elapsed
+allowances, which on the registered lag is a ceiling 21 or more days behind today. A cloudy 16-day
+gap is one elapsed allowance and reports normally; a stopped writer keeps accumulating them and
+cannot escape. The lag is read from `LANE_REGISTRY` at call time through
+`lane_specs.vegetation_promotion_declared_lag_days()`, never a literal beside the bound, and that
+function refuses a non-positive lag rather than dividing by it. It reads `publication_lag_days` and
+NOT `cadence_days`: vegetation is `daily_series`, whose cadence `layer-lanes.md` (96831d8b) §1a pins
+at 1 -- "only a `release_series` may declare a cadence above one day" -- so the helper is named for
+the lag it reads and no longer spends the word "window" on a cadence the registry does not hold.
+
+**What the bound does NOT know, stated plainly.** Nothing in this turn consults the source. No
+availability query is issued (§1b lists "the availability query" among what a layer's source
+`Protocol` owns; vegetation's `pipeline/direct/vegetation/source.py` exposes only
+`fetch_vegetation_day`, a per-day scene fetch), no source watermark is read, and the whole change
+from the 14-day bound amounts to moving the refusal from `today - 14` to `today - 21` with six extra
+report fields. The word "frontier" is already spent in this directory on the measured thing:
+`plan_continuation.py:288 probe_provider_frontier` HTTP-probes the provider per cell, and
+`ProviderFrontier` carries `mode: "declared" | "measured"` plus a `measured_at`
+(`plan_continuation.py:147-160, 277-286`). Promotion's constant had neither a mode nor a
+measurement, so it may not carry that name (`engineering-principles.md` §1, one canonical definition
+per concept).
+
+**Is a genuine provider-derived frontier available cheaply here? No -- and it is owed to the source
+module, not to this one.** Sentinel-2 would answer it with an Earth Search item search
+(`ingest/vegetation.py:562 scene_search_url(bbox, start, end)`) over a trailing window, taking the
+newest scene datetime. That costs a network round trip (paged) in a verb whose entire design is
+"the availability index is the authority and no socket is opened" (module docstring,
+`vegetation_partition_promotion.py`), an `httpx` client and bounds this module does not carry, and a
+bbox that under §1b must come from the region manifest rather than a module constant. It would also
+answer a DIFFERENT question: a scene existing at the provider is not a day our ingest could keep --
+cloud screening removes scenes, which is the very reason the declared lag is 7 and not 5 -- so a
+provider frontier would call a healthy lane stale whenever screening rejected what the provider
+published, restoring W9 B1's false positive from the other side. The honest construction is §1b's:
+the vegetation source `Protocol` gains an availability query, the forward writer records its verdict
+in the availability index, and this promoter keeps reading only the index. **Owed, not taken here**
+-- `pipeline/` is outside this lane's files, and until it lands the bound is a declared allowance
+and is named as one.
 
 **A stale turn still promotes its ceiling day.** The verdict is applied AFTER the window runs, not
 before it. `DEFAULT_MAX_DAYS` is 1 and no scheduled turn ever revisits a day below its ceiling, so a
 refusal taken before evaluation consumed the very day it refused for: when the clouds cleared the
 ceiling jumped past it and nothing promoted it again -- the gate manufacturing the permanent hole it
-exists to detect. The report therefore carries the promoted days, the turn's own outcome as
-`promotion_status`, status `stale_ceiling`, reason
-`newest_servable_day_has_missed_more_publication_windows_than_this_lane_can_explain`, and a NON-ZERO
-exit. Every default-window report -- green ones included -- carries `ceiling_day`,
-`ceiling_age_days`, `ceiling_frontier_day`, `ceiling_frontier_age_days`,
-`ceiling_publication_window_days`, `ceiling_missed_publication_windows`,
-`ceiling_stale_after_missed_windows` and `ceiling_is_stale`, so the verdict is re-derivable from the
-report alone and is still readable when another status wins. An operator naming `--day` explicitly
-is a bounded repair and is never gated on freshness.
+exists to detect. The report therefore carries the promoted days, BOTH halves of the turn's own
+verdict (`promotion_status` and `promotion_reason` -- keeping only the status lost the difference
+between `all_days_absent` and `no_indexed_day_promoted`, STYLE-REVIEW-W10 S3), status
+`stale_ceiling`, reason
+`more_declared_lag_allowances_have_elapsed_past_the_newest_servable_day_than_this_lane_permits`, and
+a NON-ZERO exit. The stderr `vegetation_promotion_stale_ceiling` event carries the ceiling fields and
+the verdict only, never the day payload it would otherwise duplicate from stdout (W10 N1).
+
+Every default-window report `main()` prints -- green, refused, stale and `failed` alike -- carries
+`ceiling_day`, `ceiling_age_days`, `ceiling_declared_lag_day`,
+`ceiling_age_beyond_declared_lag_days`, `ceiling_declared_lag_days`,
+`ceiling_elapsed_lag_allowances`, `ceiling_stale_after_elapsed_lag_allowances` and
+`ceiling_is_stale`, so the verdict is re-derivable from the report alone and is still readable when
+another status wins. The half that ENFORCES it: `main()` merges `ceiling_fields(...)` once, after
+the `try/except`, for every default-window turn
+(`vegetation_partition_promotion.py`, the `if is_default_window_turn:` block), and `ceiling_fields`
+is TOTAL on a `None` ceiling, so a turn that died before reading the availability index renders the
+same eight keys as `None` rather than dropping them (STYLE-REVIEW-W10 S2). An operator naming `--day`
+explicitly is a bounded repair, is never gated on freshness, carries no `ceiling_*` keys -- and a day
+named twice is evaluated once (W10 N2).
 
 Operationally this means a genuinely dead lane exits 1 every hour, burns the work item's five
 attempts and dead-letters, while still re-promoting its (unchanged, therefore no-op) ceiling day.
@@ -171,10 +223,15 @@ STYLE-REVIEW-W9 B1 and S3; `stale_ceiling` moved from first to third and `failed
 vocabulary it had always been printed beside):
 
 1. `failed` -- an exception nobody named escaped the turn, rendered by `failed_report` in the turn's
-   own shape (empty day lists, `error: "<Class>: <message>"`). **Exit 1**, through `exit_code_for`
-   like every other status rather than a hand-written `return 1`. Still the shape that rolled this
-   lane back twice; STYLE-REVIEW-W9 S2 (render the days already committed before the exception on
-   this path) remains OPEN.
+   own shape: empty day lists, a `reason`
+   (`an_exception_escaped_the_turn_and_its_per_day_outcomes_were_not_rendered`), `error: "<Class>:
+   <message>"`, and -- on a default-window turn -- the same eight `ceiling_*` keys every other
+   status carries. **Exit 1**, through `exit_code_for` like every other status rather than a
+   hand-written `return 1`. It was the only terminal status with no `reason` and no ceiling fields,
+   which is shape drift for any log consumer keying on either (STYLE-REVIEW-W10 S2/N3, fixed
+   2026-09-19). Still the shape that rolled this lane back twice; STYLE-REVIEW-W9 S2 (render the days
+   already committed before the exception on this path) remains OPEN, and the reason string says so
+   rather than implying the turn had no days.
 2. `registration_refused` -- at least one evaluated day reached the register verb and was refused.
    **Exit 1**, and it DOMINATES every other in-turn outcome: a refusal is a defect in the day it
    names (an unregistered lattice cell, an empty or duplicated partition, a non-finite value), not a
@@ -185,11 +242,15 @@ vocabulary it had always been printed beside):
    `not_servable_days`. It also dominates `stale_ceiling`: a refusal names a specific defect in a
    specific day an operator must fix, while staleness is a property of the lane that
    `ceiling_is_stale` reports on the same line whichever status won.
-3. `stale_ceiling` -- decided in `main()` AFTER the window ran, on a default-window turn only. The
-   newest servable day has missed two or more consecutive publication windows measured from the
-   lane's provider frontier, so the window is not progress even though its days were promoted.
-   **Exit 1**, with the turn's own outcome preserved as `promotion_status`.
-4. `completed` -- at least one day promoted or confirmed unchanged, and none was refused. Exit 0.
+3. `stale_ceiling` -- decided in `main()` AFTER the window ran, on a default-window turn only. Two or
+   more whole declared-lag allowances have elapsed past the declared-lag day without the newest
+   servable day advancing, so the window is not progress even though its days were promoted.
+   **Exit 1**, with the turn's own outcome preserved as BOTH `promotion_status` and
+   `promotion_reason`. It does not re-state a `failed` turn: that would bury the `error` behind a
+   freshness verdict measured from a ceiling the turn may never have read.
+4. `completed` -- at least one day promoted or confirmed unchanged, and none was refused. Exit 0,
+   with `reason: "at_least_one_day_was_promoted_or_confirmed_unchanged"` -- stated rather than
+   omitted so `reason` is a key of every terminal report and not only of the red ones.
 5. `waiting_for_writer` -- EVERY evaluated day is one the writer has not finished: `not_yet_indexed`
    (`reason: "forward_writer_has_indexed_none_of_these_days"`) or `not_servable` (`reason:
    "forward_writer_has_published_none_of_these_days_at_every_required_rung"`). Exit 0, logged once
@@ -200,6 +261,17 @@ vocabulary it had always been printed beside):
    when every requested day was a governed absence, otherwise `no_indexed_day_promoted` — which is
    also the EMPTY-WINDOW outcome, since an index with no servable day yields no days to evaluate.
    **Exit 1**, so a scheduled lane cannot succeed vacuously against days that should have been there.
+
+**One shape across all six.** Every terminal report carries the same core keys --
+`vegetation_partition_promotion.TERMINAL_REPORT_CORE_KEYS`: `status`, `reason`, `days`,
+`absent_days`, `not_yet_indexed_days`, `not_servable_days`, `registration_refused_days`. Three
+statuses ADD to that set and none omits from it: `failed` adds `error`, `stale_ceiling` adds
+`promotion_status`/`promotion_reason`, and any default-window turn adds the eight `ceiling_*` keys.
+The half that ENFORCES this is
+`tests/execution/test_vegetation_partition_promotion.py::test_every_terminal_status_reports_the_same_core_keys`,
+which builds one report per status and compares key sets; the sentence above is a summary of that
+test, not a claim standing on its own (STYLE-REVIEW-W10's process rule, and W10 S2/N3 is what it
+closes).
 
 **One day, one transaction.** Nothing in this path used to commit, and `local_source_loader_session`
 closes without committing — so an uncommitted turn rolled every governed release back at session

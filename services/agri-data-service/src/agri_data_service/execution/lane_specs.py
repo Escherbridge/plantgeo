@@ -211,36 +211,44 @@ def _registration(slug: str) -> tuple[int, int, str | None]:
     return lane.publication_lag_days, lane.cadence_days, ceiling
 
 
-#: How many CONSECUTIVE publication windows the NDVI promotion ceiling may miss, counted from the
-#: lane's own expected provider frontier, before the turn calls the lane stale.
+#: How many whole DECLARED-LAG ALLOWANCES may elapse past the vegetation lane's declared-lag day
+#: before the NDVI promotion turn calls its ceiling stale.
 #:
-#: Missed OPPORTUNITIES, not calendar days behind `today`, because `vegetation`'s registered
-#: `publication_lag_days=7` is the distance a HEALTHY lane already sits behind today:
+#: A declared allowance, not a provider measurement taken this turn: `vegetation`'s registered
+#: `publication_lag_days=7` is the distance a HEALTHY lane already sits behind today, because
 #: `pipeline/parquet/lane_registry.py`'s vegetation `floor_basis` records 7 as a MEASURED MEDIAN gap
 #: between usable Sentinel-2 observation days, worse than the nominal 5-day revisit because cloud
-#: screening removes scenes. A bound measured from `today` therefore spends its first whole window on
-#: that lag, so an overcast PNW fortnight -- routine Oct-Mar, on a lane where nothing is wrong --
-#: trips it (STYLE-REVIEW-W9 B1). Measured from the frontier instead, TWO windows are two consecutive
-#: chances the source had and did not take: the writer, the ingest or the index having stopped, not
-#: an edge the source cannot beat. See `execution/AGENTS.md` section Lane activation.
-VEGETATION_PROMOTION_STALE_CEILING_WINDOWS: Final = 2
+#: screening removes scenes. A bound measured from `today` therefore spends its first whole allowance
+#: on that declared lag, so an overcast PNW fortnight -- routine Oct-Mar, on a lane where nothing is
+#: wrong -- trips it (STYLE-REVIEW-W9 B1). Counted past the declared-lag day instead, TWO allowances
+#: are a ceiling 21 or more days behind today, which is beyond what the declared median plus one
+#: heavy-tail gap explains. See `execution/AGENTS.md` section Lane activation, which also records why
+#: this allowance is NOT a provider fact (STYLE-REVIEW-W10 S1).
+VEGETATION_PROMOTION_STALE_CEILING_LAG_ALLOWANCES: Final = 2
 
 
-def vegetation_promotion_publication_window_days() -> int:
-    """Return one vegetation publication window: the lane's registered median gap between usable days.
+def vegetation_promotion_declared_lag_days() -> int:
+    """Return the vegetation lane's REGISTERED `publication_lag_days`, read at call time.
 
-    Read at call time from `LANE_REGISTRY`, never copied: the same rule
+    Named for the registry field it reads and nothing more. It is not the lane's cadence: `vegetation`
+    is `daily_series` and `layer-lanes.md` (96831d8b) section 1a allows a cadence above one day only
+    to a `release_series`, so `LANE_REGISTRY["vegetation"].cadence_days` is 1 and is deliberately not
+    consulted here. It is also not a provider observation: nothing in this call opens a socket -- see
+    `execution/AGENTS.md` section Lane activation for what a genuine provider-derived frontier would
+    cost and why it is owed to `pipeline/direct/vegetation/source.py` rather than taken here.
+
+    Read from `LANE_REGISTRY`, never copied: the same rule
     `pipeline/direct/vegetation/products.py` states for the floor and the lag it deliberately does
-    not duplicate. Refuses a non-positive window, which would make "windows behind the frontier"
-    undefined rather than merely wrong.
+    not duplicate. Refuses a non-positive lag, which would make "whole allowances elapsed" undefined
+    rather than merely wrong.
     """
-    window_days = _registration("vegetation")[0]
-    if window_days < 1:
+    lag_days = _registration("vegetation")[0]
+    if lag_days < 1:
         raise ValueError(
-            f"lane 'vegetation' registers publication_lag_days={window_days}; the NDVI promotion staleness "
-            f"bound counts whole publication windows and cannot be measured against a non-positive one"
+            f"lane 'vegetation' registers publication_lag_days={lag_days}; the NDVI promotion staleness "
+            f"bound counts whole declared-lag allowances and cannot be measured against a non-positive one"
         )
-    return window_days
+    return lag_days
 
 
 def _spec(  # noqa: PLR0913 - this is the declarative constructor for the code-owned lane table
