@@ -66,7 +66,7 @@ WEATHER_CURRENT_CHECKPOINT_PROVIDER: Final = "open-meteo-current-conditions-v1"
 #: the grid was retained" into one `source_retention_loss` verdict, which made the ordinary first
 #: poll of a new UTC day report the same unpublishable word as a genuine half-loss -- and made a
 #: boundary poll, which legitimately splits ONE grid across two day namespaces
-#: (`_newest_day_buckets`, `forward.py:342`), report it for both halves. A partial capture is worth
+#: (`forward.py::_newest_day_buckets`), report it for both halves. A partial capture is worth
 #: merging; only `no_retained_capture` means there is nothing here to repair with.
 #:
 #: FOUR since 2026-09-19. `probe_budget_exhausted` is the fourth, and it is the difference between

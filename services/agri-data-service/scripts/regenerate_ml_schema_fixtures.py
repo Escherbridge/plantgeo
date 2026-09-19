@@ -70,6 +70,9 @@ REGENERATION_COMMAND: Final = "uv run --no-sync python scripts/regenerate_ml_sch
 #: refused outright rather than compared field by field against a shape it never described.
 FIXTURE_VERSION: Final = 1
 
+#: The exit code `main` returns when it refuses to run because the sibling ML tree is absent.
+SIBLING_ABSENT_EXIT_CODE: Final = 2
+
 
 class SiblingTreeAbsentError(RuntimeError):
     """There is no plantgeo-ml-service tree to render a fixture from, so there is nothing to render."""
@@ -294,7 +297,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except SiblingTreeAbsentError as error:
         print(f"Refusing to regenerate the ML schema fixtures: {error}.")
         print("A fixture regenerated from nothing would bless whatever drift it was meant to catch.")
-        return 2
+        return SIBLING_ABSENT_EXIT_CODE
     for contract in COPIED_CONTRACTS:
         state = "rewritten" if contract.slug in rewritten else "unchanged"
         print(f"{contract.slug:<18} {state:<10} {fixture_path(contract.slug).relative_to(SERVICE_ROOT).as_posix()}")
