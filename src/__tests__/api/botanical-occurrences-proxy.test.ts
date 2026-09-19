@@ -229,19 +229,18 @@ describe("pointer resolution", () => {
     }
   );
 
-  it("passes a bridged answer's legacy pointer kind through to the browser", async () => {
+  it("reports a retired legacy pointer kind as a contract mismatch, not a weaker answer", async () => {
     mockedFetch.mockResolvedValueOnce({
       ...wirePointer,
       pointer_kind: "legacy_current_json",
       pointer_written_at: null,
     });
-    mockedFetch.mockResolvedValueOnce(wireDetail);
 
     const response = await GET(requestFor("bbox=-124,48,-122,50&zoom=13"));
     const body = await response.json();
 
-    expect(response.status).toBe(200);
-    expect(body.pointer).toMatchObject({ pointerKind: "legacy_current_json", pointerWrittenAt: null });
+    expect(response.status).toBe(502);
+    expect(body.reason).toBe("contract_mismatch");
   });
 
   it("reports a pointer body it cannot parse as a contract mismatch, not an absence", async () => {

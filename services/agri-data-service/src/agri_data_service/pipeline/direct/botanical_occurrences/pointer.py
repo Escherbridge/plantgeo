@@ -15,14 +15,12 @@ from agri_data_service.foundation.canonical import sha256_digest
 #: Bumped only when the document's field set changes; a reader refuses a version it does not know.
 POINTER_SCHEMA_VERSION: Final = 1
 
-#: Which pointer a `current` answer was resolved through. Reported on every answer, because the two
-#: are not equally strong: `latest_v1` is checksum-bound and proves its own manifest, while
-#: `legacy_current_json` is the bridge over a bucket published before that document existed and can
-#: only verify what it re-reads. A consumer that cannot tell them apart cannot tell how much the
-#: provenance it is showing is worth.
+#: Which pointer a `current` answer was resolved through. `latest_v1` is the only kind: it is
+#: checksum-bound and proves its own manifest. The `legacy_current_json` bridge kind that predated it
+#: was retired once production was confirmed on `_LATEST.json` (RUNBOOK, repoint decisions
+#: 2026-08-25) -- see `planes/botanical_occurrences.py::read_current_botanical_release`.
 LATEST_POINTER_KIND: Final = "latest_v1"
-LEGACY_POINTER_KIND: Final = "legacy_current_json"
-POINTER_KINDS: Final[tuple[str, ...]] = (LATEST_POINTER_KIND, LEGACY_POINTER_KIND)
+POINTER_KINDS: Final[tuple[str, ...]] = (LATEST_POINTER_KIND,)
 
 #: §4a names the pointer `availability/_LATEST.json` under the lane root, and this lane keeps that
 #: name even though its unit is a release set rather than a day: the read path is the same one
@@ -95,7 +93,6 @@ def parse_latest_pointer(payload: bytes) -> BotanicalLatestPointer:
 __all__ = [
     "LATEST_POINTER_KIND",
     "LATEST_POINTER_NAME",
-    "LEGACY_POINTER_KIND",
     "POINTER_KINDS",
     "POINTER_MAX_BYTES",
     "POINTER_SCHEMA_VERSION",

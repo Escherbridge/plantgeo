@@ -924,19 +924,14 @@ export const LANE_POINTER_FAILURES = [
 export type LanePointerFailure = (typeof LANE_POINTER_FAILURES)[number];
 
 /**
- * WHICH pointer document answered, and they are not equally strong.
+ * WHICH pointer document answered. `latest_v1` is the only kind: the §4a checksum-bound pointer,
+ * which names the digest of the manifest it points at so the reader proves the two belong together.
  *
- * `latest_v1` is the §4a checksum-bound pointer: it names the digest of the manifest it points at,
- * so the reader proves the two belong together. `legacy_current_json` is the bridge over a bucket
- * published before that document existed (owner's bridge-then-cut pattern) — the serving side
- * re-reads the completion marker and digests the manifest itself, which is honest but is a weaker
- * binding, because nothing written by the publisher attests to the pair.
- *
- * Carried into provenance rather than smoothed away: a consumer that cannot tell them apart cannot
- * tell how much the provenance it is showing is worth, and a bridge nobody can see is a bridge that
- * quietly becomes permanent.
+ * The `legacy_current_json` bridge kind (owner's bridge-then-cut pattern) is retired now that
+ * production resolves `_LATEST.json` directly; a legacy value reaching this decoder is a contract
+ * mismatch, not a weaker-but-valid answer.
  */
-export const LANE_POINTER_KINDS = ["latest_v1", "legacy_current_json"] as const;
+export const LANE_POINTER_KINDS = ["latest_v1"] as const;
 
 export type LanePointerKind = (typeof LANE_POINTER_KINDS)[number];
 
@@ -949,10 +944,9 @@ export interface LaneCurrentPointer {
   /** The sha256 binding the generation's manifest; carried into response provenance. */
   manifestChecksum: string;
   manifestKey: string;
-  /** Which pointer document answered. See `LANE_POINTER_KINDS` -- the two are not equally strong. */
+  /** Which pointer document answered. See `LANE_POINTER_KINDS`. */
   pointerKind: LanePointerKind;
   pointerSchemaVersion: number;
-  /** Null on a `legacy_current_json` answer: that document records no write time, and none is invented. */
   pointerWrittenAt: string | null;
   publishedAt: string | null;
 }

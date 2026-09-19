@@ -72,14 +72,9 @@ export const botanicalProxyPointerSchema = z.object({
   generationId: z.string(),
   manifestChecksum: z.string(),
   manifestKey: z.string(),
-  /**
-   * Which pointer answered. `legacy_current_json` means the serving side is still BRIDGED over a
-   * bucket published before the checksum-bound pointer existed — a weaker binding, surfaced here so
-   * a provenance caption can say so rather than implying a guarantee that is not in force yet.
-   */
-  pointerKind: z.enum(["latest_v1", "legacy_current_json"]),
+  /** Which pointer answered. `latest_v1` is the only kind; the legacy `current.json` bridge is retired. */
+  pointerKind: z.enum(["latest_v1"]),
   pointerSchemaVersion: z.number(),
-  /** Null on a legacy answer: that document records no write time, and none is invented for it. */
   pointerWrittenAt: z.string().nullable(),
   publishedAt: z.string().nullable(),
 });

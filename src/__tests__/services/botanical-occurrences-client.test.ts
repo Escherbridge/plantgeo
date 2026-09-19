@@ -151,20 +151,17 @@ describe("getCurrentBotanicalReleaseSetId", () => {
   );
 
   /**
-   * The bridge must be VISIBLE to the browser, not just to the serving side's logs: a caption that
-   * cannot tell a checksum-bound answer from a bridged one implies a guarantee not yet in force.
+   * The legacy `current.json` bridge is retired: a serving side still reporting its pointer kind is
+   * a contract mismatch, not a weaker-but-valid answer to pass through.
    */
-  it("carries the legacy pointer kind through when the serving side is still bridged", async () => {
+  it("refuses a retired legacy pointer kind rather than passing it through", async () => {
     mockedFetch.mockResolvedValue({
       ...wireCurrentPointer,
       pointer_kind: "legacy_current_json",
       pointer_written_at: null,
     });
 
-    await expect(getCurrentBotanicalRelease()).resolves.toMatchObject({
-      pointerKind: "legacy_current_json",
-      pointerWrittenAt: null,
-    });
+    await expect(getCurrentBotanicalRelease()).rejects.toBeInstanceOf(BotanicalOccurrencesContractError);
   });
 
   it("refuses a pointer that does not say which kind it is", async () => {
