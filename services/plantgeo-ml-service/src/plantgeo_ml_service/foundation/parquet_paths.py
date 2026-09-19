@@ -24,7 +24,7 @@ ZOOM_TIERS: Final[tuple[ZoomTier, ...]] = (0, 5, 9, 13)
 
 #: The rung nothing generalises: the most detailed tier, and the only one whose emptiness is a
 #: governed absence rather than a derived-empty receipt.
-BASE_PARTITION_ZOOM: Final[int] = ZOOM_TIERS[-1]
+BASE_PARTITION_ZOOM: Final[ZoomTier] = ZOOM_TIERS[-1]
 
 MIN_REQUEST_ZOOM: Final = 0
 MAX_REQUEST_ZOOM: Final = 22

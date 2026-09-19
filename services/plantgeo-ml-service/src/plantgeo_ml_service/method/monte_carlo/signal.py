@@ -48,8 +48,23 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
+#: THE TWO METHOD NAMES ARE BOTH REAL, and both are recorded verbatim on the rows they produced:
+#: this lane picks between two genuinely different estimators per signal (see the module docstring),
+#: so collapsing them into one string would make a precipitation resample indistinguishable from an
+#: additive-anomaly draw in the published `method_name` column. Neither value changes.
 METHOD_NAME_ADDITIVE_ANOMALY: Final = "signal_seasonal_anomaly_bootstrap_v1"
 METHOD_NAME_EMPIRICAL_RESAMPLE: Final = "signal_seasonal_empirical_resample_v1"
+
+#: What the DISPATCH contract asks every `method/monte_carlo/<slug>.py` for: the name of the method
+#: the module implements by default. Every other forecaster in this directory has exactly one, so
+#: the dispatch asks for `METHOD_NAME` and gets it. Here the default is the additive-anomaly
+#: estimator — the one every signal but precipitation uses — and `METHOD_NAME_EMPIRICAL_RESAMPLE`
+#: above is the second, selected per-series by `SignalSeriesSpec.bootstrap_kind`. A row's own
+#: `method_name` is always the one its `SignalForecastRun` recorded, never this constant.
+METHOD_NAME: Final = METHOD_NAME_ADDITIVE_ANOMALY
+
+#: Every method name a row of this lane may carry, so a reader can check one against a closed set.
+METHOD_NAMES: Final[tuple[str, ...]] = (METHOD_NAME_ADDITIVE_ANOMALY, METHOD_NAME_EMPIRICAL_RESAMPLE)
 RNG_FINGERPRINT: Final = "pcg64_generator_integers"
 
 DAYS_PER_SEASONAL_CYCLE: Final = 366

@@ -1,0 +1,1 @@
+https://single-runs-api.open-meteo.com/v1/forecast?latitude=5.4,22.4,-3.1,9.0&longitude=100.3,90.4,-60.0,-79.0&models=gfs_global&run=2026-09-18T00:00&hourly=precipitation&daily=precipitation_sum&forecast_days=3&timezone=GMT

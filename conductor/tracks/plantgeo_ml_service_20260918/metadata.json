@@ -353,7 +353,10 @@
       "tests/test_covariates_v2_schema.py is live-Postgres (psycopg2, AGRI_TEST_DATABASE_URL, fails not skips): delete, never move",
       "tests/test_sql_tree_conventions.py::test_loaded_exactly_once fails on every orphaned .sql: derive the delete list from load_query_sql call sites",
       "tests/test_layer_import_contract.py:480-482 pins commands.py:146; regenerate CLI_ADAPTER_VIOLATIONS from the assertion message after deleting the verbs",
-      "no fire-risk partition to a real prefix without a walk-forward backtest receipt clearing the declared lift (FR-5 gate)"
+      "no fire-risk partition to a real prefix without a walk-forward backtest receipt clearing the declared lift (FR-5 gate)",
+      "staleness must be measured from the lane's provider frontier, never from today: a registered publication lag can be a measured MEDIAN gap, so a healthy lane normally sits a full lag behind (wave-9 review finding relayed 2026-09-19)",
+      "never gate a window's ceiling by the required-rung intersection while classifying the other days by their base rung alone: a wider window then publishes days whose finer rungs are absent; classify every day by the full ladder (wave-9 review finding relayed 2026-09-19)",
+      "a source checkpoint/retained-body key without the retrieval instant is overwritten by the next poll and erases what it protects (sibling source_checkpoint.py finding relayed 2026-09-19); an Open-Meteo run cannot be re-fetched once superseded, so retained bodies are keyed by (provider, support sha, issue date, request url, retrieved_at) or written read-before-refresh"
     ],
     "integration_slice": "p1c-sweep-review-push (coordinator + monitor): one agri sweep with --write-receipt, one ML sweep, /code-review high, push, five-service build check",
     "amended_at": "2026-09-18T18:30:00+00:00",
@@ -430,7 +433,33 @@
         "M12 metadata-value parity weakening accepted"
       ],
       "clean": "D5, lattice, six-positional rule, FR-5 schema, lane clocks, module ceilings",
-      "disposition": "fix batch after the 2A monitor sweep; re-sweep once; receipt; push"
+      "disposition": "fix batch applied (B1-B3, M4-M11, tzdata); re-sweep 365 passed; receipt 5d37cf5e verified; pushed as 0290a1e6; deployed SUCCESS 095ed2a3"
+    },
+    "phase2b": {
+      "reviewer": "oh-my-claudecode:code-reviewer (opus)",
+      "reviewed_on": "2026-09-19",
+      "verdict": "CHANGES-REQUIRED",
+      "blockers": [
+        "B1 weather_forecast_daily writes a bootstrap marker without schema_version/receipt that this repo's own reader and the sibling's coverage reader refuse; put_immutable makes it permanent",
+        "B2 fire_risk_daily gate is open when artifact is None: real-prefix partitions + an availability row with an empty-sha source receipt"
+      ],
+      "majors": [
+        "M2 holes published as silence not governed absence (fire-risk, forecast_lane_bootstrap.write_forecast_day raises on empty day, AnEn analog_count filter)",
+        "M3 backtest receipt named but never fetched/verified; cleared_strata trusted from the artifact",
+        "M4 issued_on means three things; fire-risk uses the calendar run date not the binding frontier",
+        "M5 weather-forecast dry_run_prefix unvalidated",
+        "M6 fire-risk writes no bootstrap marker",
+        "M7 three lattice implementations"
+      ],
+      "minors": [
+        "wind catalogue inversion undeclared",
+        "paired_entry_indexes docstring false",
+        "aggregated support from rows[0]",
+        "AnEn propagates newest_observed_at onto forecast rows",
+        "four modules over the 600-line ceiling"
+      ],
+      "coordinator_decision": "merge rule is a property of the field: add a RowSelect(order_by, descending) GridAggregation strategy to the shared vocabulary for probability fields (fire-risk worst-cell select); quantile fields keep the per-(quantile,horizon,run) mean; provider variables take the mean with vector recomposition; one foundation/lattice.py in integer form imported by all three lanes",
+      "sound_do_not_relitigate": "leakage discipline, refusal-not-fabrication, weather-forecast schema fidelity, precipitation start-of-hour, 429 never retried, bounds mid-read"
     }
   },
   "follow_ups": [
@@ -450,7 +479,8 @@
     "domain": "plantgeo-ml-production.up.railway.app",
     "deployments": {
       "c125e2c2 (c922509d)": "FAILED at HEALTHCHECK: every sanic-ext worker died with NameError 'Request' is not defined (TYPE_CHECKING-only import of Sanic annotation names in app.py)",
-      "21dde6c5 (b1f02f95)": "SUCCESS 2026-09-19T11:55:58Z after the runtime-import hotfix; /ready green means the four OBJECT_STORE_* references resolved and head_bucket answered"
+      "21dde6c5 (b1f02f95)": "SUCCESS 2026-09-19T11:55:58Z after the runtime-import hotfix; /ready green means the four OBJECT_STORE_* references resolved and head_bucket answered",
+      "095ed2a3 (0290a1e6)": "SUCCESS 2026-09-19T12:44:49Z, phase 2A image"
     },
     "live_proof_2026_09_19T12_01Z": {
       "/health": 200,

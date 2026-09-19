@@ -1,0 +1,1 @@
+https://single-runs-api.open-meteo.com/v1/forecast?latitude=46.25,47.25&longitude=-120.25,-119.25&models=gfs_global&run=2026-09-18T00:00&hourly=cloud_cover,precipitation,relative_humidity_2m,temperature_2m,wind_direction_10m,wind_speed_10m&forecast_days=2&timezone=UTC&wind_speed_unit=ms&cell_selection=nearest

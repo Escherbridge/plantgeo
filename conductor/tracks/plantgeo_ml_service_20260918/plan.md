@@ -130,31 +130,31 @@ Goal: the service reads governed observed partitions, writes governed forecast p
 fire-risk lane, and serves them. Real bucket writes wait for an owner go; everything is proven on a
 scratch prefix first.
 
-### 2A — Readers, writer, contract parity (slice `p2a-parquet-io`)
+### 2A — Readers, writer, contract parity (slice `p2a-parquet-io`) — LANDED 0290a1e6, deployed 095ed2a3
 
-- [ ] Task: `foundation/parquet_paths.py` — the object-key grammar (`layer=`, `kind=`, `zoom=`,
+- [x] Task: `foundation/parquet_paths.py` — the object-key grammar (`layer=`, `kind=`, `zoom=`,
       `year=/month=/day=`, `part-NNNN.parquet`, `_complete.json`, `absent.json`), `PartitionKind`,
       `ZoomTier`, `validate_layer_slug`. Cross-service parity test: import agri-data-service's
       `foundation/parquet/paths.py` by file path from the monorepo and assert identical strings for
       a fixed grid of (layer, kind, zoom, day, part).
-- [ ] Task: `warehouse/streams.py` — the observed schemas the service consumes (`signal`,
+- [x] Task: `warehouse/streams.py` — the observed schemas the service consumes (`signal`,
       `fire-detections`, `vegetation`, `drought`, `burn-severity`, `weather-observations`) as pinned
       Arrow schemas with a parity test against the sibling's `warehouse/schemas/*.py` exports; plus
       `FORECAST_PROVENANCE_COLUMNS` (six) and the `fire-risk` schema (FR-5).
-- [ ] Task: `pipeline/object_store.py` — boto3 backend, bounded listing, `read_day`, `write_partition`
+- [x] Task: `pipeline/object_store.py` — boto3 backend, bounded listing, `read_day`, `write_partition`
       (atomic part write + completion marker with sha256 receipt), `write_absence`. DuckDB session
       with `max_temp_directory_size='0GiB'` and pre-installed httpfs/spatial like the sibling.
-- [ ] Task: `pipeline/availability_publisher.py` (FR-4a) — after every rung of a forecast day is
+- [x] Task: `pipeline/availability_publisher.py` (FR-4a) — after every rung of a forecast day is
       complete, build the availability generation (`AVAILABILITY_REQUIRED_RUNGS` = all rungs, rows
       and provenance shaped exactly as `pipeline/parquet/availability_documents.py` admits), write
       `availability/generation=<sha>/availability.parquet`, compare-and-set `_LATEST.json`, retry
       once on a lost race, refuse with a receipt otherwise. Parity fixtures for the generation and
       pointer documents; a test that `availability_lane_root("vegetation","forecast")` differs from
       the observed root the other session's promotion lane writes.
-- [ ] Task: `pipeline/observed_reader.py` — `read_lane_window(layer, zoom, first_day, last_day)`
+- [x] Task: `pipeline/observed_reader.py` — `read_lane_window(layer, zoom, first_day, last_day)`
       via DuckDB `read_parquet` over listed keys; respects publication lag per lane
       (`PUBLICATION_LAG_DAYS` copied from the sibling's registry with a parity test).
-- [ ] Task: `pipeline/expert_labels.py` — reads `ml/labels/expert/<release>/part-0000.parquet`.
+- [~] Task (reader done 2026-09-19, agri export verb still owed): `pipeline/expert_labels.py` — reads `ml/labels/expert/<release>/part-0000.parquet`.
       The one-time export from Postgres is a **sibling-service CLI verb** `agri-service ops
       export-expert-labels --release <id> --prefix ml/labels/expert` (owner go before running on
       prod; the write is a production mutation). Owned by `p2a` on the agri side, file list in
@@ -247,3 +247,8 @@ scratch prefix first.
 - Never edit `tests/parquet/test_signal_serving.py` or `test_vegetation_serving.py` beyond removing
   the forecaster sections p1b moves; the observed-side sections are the other session's coverage.
 - Windows `round(lat / pitch)` integer binning, never IEEE division of the latitude.
+- Staleness is measured from the lane's provider frontier (`settled_through`), never from today:
+  a registered publication lag can be a measured median gap, so a healthy lane sits a full lag
+  behind before anything is wrong; a forecast lane's source ceiling is frontier + horizon.
+- Classify every day in a window by the full rung ladder; never gate the ceiling by the
+  required-rung intersection while classifying other days by the base rung alone.

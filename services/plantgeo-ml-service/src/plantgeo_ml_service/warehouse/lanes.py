@@ -95,6 +95,17 @@ LANE_CONTRACTS: Final[dict[str, LaneContract]] = {
             publication_lag_days=2,
             nature="daily_series",
         ),
+        # `weather-forecast` (FR-12) is ORIGINATED here, not copied: the sibling has deleted its own
+        # weather-forecast lane, so this slug has no counterpart to hold parity against and is
+        # deliberately excluded from `tests/parity_parquet_cases.py::PARITY_LANES`.
+        LaneContract(
+            slug="weather-forecast",
+            history_floor=date(2026, 9, 18),
+            publication_lag_days=0,
+            nature="release_series",
+            cadence_days=1,
+            forecast_module=None,
+        ),
     )
 }
 

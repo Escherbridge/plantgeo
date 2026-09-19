@@ -19,6 +19,9 @@ dependencies = [
     "pyarrow>=17,<22",
     "duckdb>=1.1,<2",
     "boto3>=1.35,<2",
+    # The ONE HTTP client, for `pipeline/sources/` (spec FR-12). `method/` may not import it and the
+    # layer import contract enforces that.
+    "httpx>=0.27",
     "scikit-learn>=1.5,<2",
     # The IANA time-zone database as a package. `pa.timestamp(tz="UTC")` decodes through
     # `zoneinfo`, which on Windows has no OS database to fall back to and on Linux inherits

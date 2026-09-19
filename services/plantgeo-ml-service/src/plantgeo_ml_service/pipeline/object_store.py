@@ -7,6 +7,7 @@ another store live in `AGENTS.md` in this directory.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import io
 from dataclasses import dataclass, field
@@ -63,11 +64,20 @@ PARQUET_FORMAT_VERSION: Final = "2.6"
 #: never a payload park, so it is bounded at the same ceiling the sibling's sweep enforces.
 MAX_AVAILABILITY_RETRY_BYTES: Final = 8 * 1024 * 1024
 
+#: The ONLY prefix a dry run may re-root itself onto. Every lane that offers a `dry_run_prefix`
+#: resolves it through `scratch_rooted_store` below, so "a dry run that writes anywhere else is a
+#: production write wearing a flag" is one rule with one implementation rather than a per-lane habit.
+SCRATCH_PREFIX_ROOT: Final = "ml/scratch/"
+
 _ABSENT_OBJECT_CODES: Final = frozenset({"404", "NoSuchKey", "NotFound"})
 
 
 class ObjectStoreError(RuntimeError):
     """Raised when a bucket operation cannot be honoured; never a signal to try another store."""
+
+
+class ScratchPrefixError(ObjectStoreError):
+    """Raised when a dry-run prefix is not a scratch root, so the run would write to the real lane."""
 
 
 class ParquetWriteError(ObjectStoreError):
@@ -598,6 +608,23 @@ def completed_parts_from(receipts: tuple[ParquetWriteReceipt, ...]) -> tuple[Com
 def sha256_of(payload: bytes) -> str:
     """Return the lowercase hex SHA-256 of exactly these bytes."""
     return hashlib.sha256(payload).hexdigest()
+
+
+def scratch_rooted_store(store: ObjectStore, dry_run_prefix: str | None) -> ObjectStore:
+    """Return the store a run writes through, refusing a dry-run prefix that is not a scratch root.
+
+    `None` means the published lane, which is the caller's own gate to defend. Anything else must
+    sit under `SCRATCH_PREFIX_ROOT` and end in `/`, or the "dry run" would land in the warehouse
+    under a slightly different key and look exactly like a real publication.
+    """
+    if dry_run_prefix is None:
+        return store
+    if not dry_run_prefix.startswith(SCRATCH_PREFIX_ROOT) or not dry_run_prefix.endswith("/"):
+        raise ScratchPrefixError(
+            f"dry-run prefix {dry_run_prefix!r} is not a scratch root under {SCRATCH_PREFIX_ROOT!r}; a dry run "
+            "that writes anywhere else is a production write wearing a flag"
+        )
+    return dataclasses.replace(store, prefix=dry_run_prefix)
 
 
 def _listed_entries(response: Mapping[str, object]) -> Iterator[ListedObject]:

@@ -104,6 +104,7 @@ def test_every_pinned_stream_is_named_once() -> None:
         "fire-risk",
         "signal",
         "vegetation",
+        "weather-forecast",
         "weather-observations",
     )
 

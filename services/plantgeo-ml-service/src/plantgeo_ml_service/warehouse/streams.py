@@ -320,3 +320,8 @@ def stream_schema(name: str, kind: PartitionKind = "observed") -> ParquetStreamS
 def registered_stream_names() -> tuple[str, ...]:
     """Return every stream this service pins a schema for, sorted."""
     return tuple(sorted({*OBSERVED_STREAM_SCHEMAS, *ORIGINATED_STREAM_SCHEMAS}))
+
+
+# The `weather-forecast` lane (FR-12) keeps its schema in its own module and registers itself on
+# import; this line is what makes importing THIS module enough to see it.
+from plantgeo_ml_service.warehouse import weather_forecast  # noqa: E402, F401
