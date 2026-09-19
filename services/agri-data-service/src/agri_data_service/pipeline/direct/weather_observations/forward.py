@@ -789,7 +789,7 @@ class RecoveryPhase:
         return event
 
 
-async def _repair_owed_days(
+async def _repair_owed_days(  # noqa: PLR0913 - the two probe phases' inputs plus the bound they share
     store: ObjectStore,
     checkpoints: SourceResponseCheckpoints,
     days: Sequence[date],
