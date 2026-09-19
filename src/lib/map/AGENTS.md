@@ -613,6 +613,18 @@ so a slug listed there and missing from `enabledLayers` is the manifest STATING 
 it here, and drawing that toggle as available produces exactly the outage-shaped empty map
 `federation.md` §2 forbids. A slug outside the vocabulary remains a genuine unknown and fails open.
 
+**Fail-open on an unknown slug is for slugs from OUTSIDE this build only.** That third answer is
+sound for a newer manifest's layer and unsound for a typo, and the slugs reaching it come from
+`REGION_LAYER_SLUG_BY_WAREHOUSE_NAME` — hand-spelled, and until STYLE-REVIEW-W6 S1 pinned to no
+vocabulary at all, so one character would have routed a federated layer to `not_federated` =
+available with its caption suppressed, permanently and silently. Two things close it:
+`layer-region-binding.test.tsx` diffs that table's VALUES against `platformLayers` in both
+directions (its two documented exceptions are `land-context`, which has no toggle, and
+`botanical-occurrences`, whose three toggles carry `warehouseLayerName: null` — BACKLOG N40), and
+`layerBindingInRegion` answers `unbound` with a logged contract error, never `not_federated`, for
+any slug a compiled-in caller names (`TOGGLE_REACHABLE_REGION_LAYER_SLUGS` or
+`LAND_CONTEXT_REGION_LAYER_SLUG`). Only a slug this build never mentions can fail open.
+
 **`platformLayers` is the manifest field that makes the third answer possible.** It mirrors
 `foundation/region/layer_availability.py`'s `PLATFORM_LAYER_SLUGS`, is diffed by
 `src/__tests__/region/manifest-parity.test.ts`, and is the reason `land-context` — a platform layer

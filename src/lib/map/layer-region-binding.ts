@@ -26,7 +26,7 @@ import type { SliderCapabilities } from "@/types/time-slider";
  * derived surface, not an ingested layer) are the two, and the eight toggles with a null
  * `warehouseLayerName` never reach here at all.
  */
-const REGION_LAYER_SLUG_BY_WAREHOUSE_NAME: Readonly<Record<string, string>> = {
+export const REGION_LAYER_SLUG_BY_WAREHOUSE_NAME: Readonly<Record<string, string>> = {
   "burn-severity": "burn-severity",
   "evacuation-zones": "evacuation-zones",
   "fire-detections": "fire-detections",
@@ -52,6 +52,23 @@ const REGION_LAYER_SLUG_BY_WAREHOUSE_NAME: Readonly<Record<string, string>> = {
   "soil-field-vpd": "signal",
 };
 
+/**
+ * Every manifest layer slug some toggle path can produce -- the third enumeration the binding rule
+ * depends on.
+ *
+ * `PLATFORM_LAYER_SLUGS` and the two manifests are pinned to each other in both trees; this table's
+ * VALUES were pinned to nothing (STYLE-REVIEW-W6 S1). A one-character drift here used to be
+ * harmless, because the old helper only consulted the payload; under the one binding rule it takes
+ * the manifest arm, misses `platformLayers` and returns `not_federated`, which is treated as
+ * available -- a federated layer drawn as a working toggle over an empty map, caption suppressed,
+ * silently and forever. `region/layer-region-binding.test.tsx` pins the set, and
+ * `layerBindingInRegion` below refuses to call any member of it `not_federated` even if the test
+ * is ever deleted.
+ */
+export const TOGGLE_REACHABLE_REGION_LAYER_SLUGS: ReadonlySet<string> = new Set(
+  Object.values(REGION_LAYER_SLUG_BY_WAREHOUSE_NAME)
+);
+
 /** The manifest layer one toggle binds through, or null when the toggle is not a federated layer. */
 export function regionLayerSlugForToggle(layerId: LayerToggleId): string | null {
   const warehouseLayerName = LAYER_REGISTRY[layerId].warehouseLayerName;
@@ -68,6 +85,10 @@ export function regionLayerSlugForToggle(layerId: LayerToggleId): string | null 
  * - `not_federated` -- the slug is not a platform layer at all, so binding is not a question that
  *   applies to it. Treated as available: `interventions`, an uploaded layer and a future slug this
  *   build has never heard of are all here, and none of them is "unavailable in this region".
+ *   Reserved for slugs that arrive from OUTSIDE this build: a slug some compiled-in caller names
+ *   (`TOGGLE_REACHABLE_REGION_LAYER_SLUGS`, `LAND_CONTEXT_REGION_LAYER_SLUG`) can never be answered
+ *   `not_federated`, because for those "outside the vocabulary" means a typo rather than a newer
+ *   deployment, and fail-open on a typo is the empty-map outage (STYLE-REVIEW-W6 S1).
  *
  * Two evidence sources, in this order, and the SAME verdict for the same evidence -- which is what
  * the two helpers this replaced did not do (STYLE-REVIEW-W5 B1):
@@ -92,8 +113,25 @@ export function layerBindingInRegion(
   const stated = capabilities?.layerBindings?.find((binding) => binding.layerSlug === layerSlug);
   if (stated !== undefined) return stated.binding === "unbound" ? "unbound" : "bound";
   const region = getRegion();
-  if (!region.platformLayers.includes(layerSlug)) return "not_federated";
+  if (!region.platformLayers.includes(layerSlug)) {
+    if (isCompiledInRegionLayerSlug(layerSlug)) {
+      // A slug this build ASKS about is not a slug this build has never heard of. Reaching here
+      // means the compiled table and the compiled manifest disagree, which is a contract error and
+      // never a licence to draw an empty map as a working layer (STYLE-REVIEW-W6 S1).
+      console.error(
+        `[layer-region-binding] ${layerSlug} is a compiled-in region layer slug but is absent from ` +
+          `region ${region.slug}'s platformLayers; reporting it unbound rather than not_federated`
+      );
+      return "unbound";
+    }
+    return "not_federated";
+  }
   return region.enabledLayers.some((binding) => binding.layerSlug === layerSlug) ? "bound" : "unbound";
+}
+
+/** Whether some compiled-in caller names this slug: the toggle table's values, plus land-context. */
+function isCompiledInRegionLayerSlug(layerSlug: string): boolean {
+  return TOGGLE_REACHABLE_REGION_LAYER_SLUGS.has(layerSlug) || layerSlug === LAND_CONTEXT_REGION_LAYER_SLUG;
 }
 
 /** The same verdict for a map toggle; a toggle with no manifest layer is `not_federated`. */

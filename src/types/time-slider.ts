@@ -326,10 +326,15 @@ export interface SliderCapabilities {
    * Every platform layer's source binding in this deployment's region, or absent when the serving
    * side stated none.
    *
-   * OPTIONAL on purpose, and an omission is NOT "everything is unbound": a payload that predates
-   * the field, or a serving side that states no bindings, must render exactly as it renders today
-   * -- every layer available. Only an explicit `unbound` entry disables a toggle, so the deploy
-   * window between the two trees can never blank a working layer.
+   * OPTIONAL on purpose, and an omission is NOT "this payload says everything is unbound": a
+   * payload that predates the field, or a serving side that states no bindings, falls through to
+   * the COMPILED manifest rather than blanking anything. What it falls through to is the manifest's
+   * own statement, so a layer this build's `platformLayers` lists and this region's `enabledLayers`
+   * does not is `unbound` from that statement, not from this silence
+   * (`src/lib/map/layer-region-binding.ts`). The deploy window is still safe in the direction that
+   * matters -- a payload a version behind can never disable a layer the manifest binds -- but the
+   * older rule stated here, "only an explicit `unbound` entry disables a toggle", stopped being
+   * true when the one binding rule landed (STYLE-REVIEW-W6 S5).
    */
   layerBindings?: SliderLayerBinding[];
 }

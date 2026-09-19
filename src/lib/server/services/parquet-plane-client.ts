@@ -354,10 +354,14 @@ export interface ParquetWarehouseCoverage {
    *
    * ADDITIVE, and deliberately not a `COVERAGE_SCHEMA_VERSION` bump. The version gate exists so a
    * client cannot read a field's SILENCE as health; here silence means "this serving side states no
-   * bindings", and the only surface that reads it then renders exactly what it renders today --
-   * every layer available, which is the truth in the PNW pilot and the only safe default during a
-   * deploy window. There is no reading of the absent field that is a false claim, so rejecting the
-   * body would blank a working slider for no gained safety.
+   * bindings", and the surface that reads it then falls through to the client's own compiled region
+   * manifest (`layerBindingInRegion`) rather than to "every layer available". That fallback answers
+   * from a STATEMENT -- the pilot itself now declares one governed absence, `land-context` -- so the
+   * old justification printed here, that silence renders every layer available "which is the truth
+   * in the PNW pilot", is retired (STYLE-REVIEW-W6 S5). The conclusion is unchanged and for a
+   * sharper reason: the absent field makes no claim at all, and the compiled manifest is a safe,
+   * deploy-window-stable answer, so rejecting the body would blank a working slider for no gained
+   * safety.
    */
   layerBindings: ParquetRegionLayerBinding[];
 }

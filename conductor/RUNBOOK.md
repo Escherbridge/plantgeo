@@ -634,6 +634,27 @@ blockers were the same shape — a rule satisfied in prose and broken by a mecha
 Authoring, verification and review as three separate lanes is what caught them; none surfaced in a
 green sweep. Keep the cadence: review every pushed range, fix in the next wave, never skip.
 
+**Push `bf25cd16` (23:50Z, wave 6; receipt `00867d06`/956) PASS on all four services:** 14 binding rows,
+the new one `{"layer":"land-context","binding":"unbound","source":null,"reason":"no_source_bound_in_region"}`;
+drought served JSON byte-identical (the payload rename stayed internal; stored `dm_category` unchanged);
+the stricter boot check did not crash-loop; the NDVI lane still shadow.
+
+**Style review of wave 6 (`STYLE-REVIEW-W6.md`): CHANGES-REQUIRED, 1 BLOCKER.** `runtime_checkable`
+`isinstance` checks member *names* only, so `drought -> mtbs` passed boot (MTBS declares a superset of
+the drought members) and would have died on a scheduled turn; the per-layer registry already knew the
+answer and `source_instances()` had flattened it away. Should-fixes: nothing pins the 23 hand-spelled
+values of `REGION_LAYER_SLUG_BY_WAREHOUSE_NAME` to `platform_layers`, so a typo now returns
+`not_federated` (available) instead of the unbound caption; the promoter's index re-read reclassified
+on *any* non-published verdict, laundering index loss into exit 0; the conflict error still lacked
+generation SHA and pointer key; `dm_category` meets `drought_intensity_class` in `rows.py:48` with no
+note; three rule sentences went false; a slug registered under two layers collapsed last-wins. Ten of
+wave 5's twelve items closed, B2/S4 partial. New residual rows N29–N40 (N40: `botanical-occurrences`
+has no warehouse name in any toggle, so it can never report unbound in either tree). **Wave 7 (W7-A on
+main): registry-keyed refusal ("found under another layer" is the error), no flatten, duplicate-slug
+refusal at construction; a test pinning the web slug map to `platform_layers`; reclassify only on a
+fresh `governed_absence`; conflict error carries generation SHAs + pointer key; the `dm_category` note;
+the three sentences corrected.**
+
 ## Recovery
 
 - Disable the affected current schedule and preserve the last valid immutable generation and pointer.

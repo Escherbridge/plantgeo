@@ -20,12 +20,15 @@ import { renderWithProviders } from "@/test/utils";
 import { LayerRow } from "@/components/map/layer-panel/LayerRow";
 import { DEFAULT_LEGEND_CONTEXT } from "@/lib/map/layer-legends";
 import {
+  REGION_LAYER_SLUG_BY_WAREHOUSE_NAME,
+  TOGGLE_REACHABLE_REGION_LAYER_SLUGS,
   layerBindingInRegion,
   regionLayerSlugForToggle,
   toggleBindingInRegion,
   unboundLayerCaption,
 } from "@/lib/map/layer-region-binding";
-import { LAYER_TOGGLE_IDS, type LayerToggleId } from "@/lib/map/layer-registry";
+import { LAYER_REGISTRY, LAYER_TOGGLE_IDS, type LayerToggleId } from "@/lib/map/layer-registry";
+import { getRegion } from "@/lib/region/region";
 import { useMapStore } from "@/stores/map-store";
 import { useTimeSliderStore } from "@/stores/time-slider-store";
 import type { SliderCapabilities, SliderLayerBinding } from "@/types/time-slider";
@@ -225,5 +228,53 @@ describe("layerBindingInRegion across the deploy window", () => {
     expect(
       layerBindingInRegion(capabilities(statedUnboundUnknownSlug), "a-layer-this-build-never-heard-of")
     ).toBe("unbound");
+  });
+});
+
+/**
+ * The third enumeration the binding rule depends on, pinned to the vocabulary at last.
+ *
+ * `PLATFORM_LAYER_SLUGS` and the two manifests are diffed against each other in both trees; the
+ * slugs the TOGGLE path actually produces were pinned to nothing, so one character in a 23-entry
+ * hand-spelled table would route a federated layer to `not_federated` -- treated as available,
+ * caption suppressed, empty map (STYLE-REVIEW-W6 S1, BACKLOG N9/N30).
+ */
+describe("REGION_LAYER_SLUG_BY_WAREHOUSE_NAME is pinned to the region vocabulary", () => {
+  it("names only slugs the region manifest lists as platform layers", () => {
+    const platformLayers = new Set(getRegion().platformLayers);
+    for (const [warehouseLayerName, regionLayerSlug] of Object.entries(REGION_LAYER_SLUG_BY_WAREHOUSE_NAME)) {
+      expect(
+        platformLayers.has(regionLayerSlug),
+        `${warehouseLayerName} binds through ${regionLayerSlug}, which is not a platform layer`
+      ).toBe(true);
+    }
+  });
+
+  it("covers every platform layer a toggle can reach, and names its two exceptions", () => {
+    // Both directions at once. The two platform layers with no toggle-path value are stated here
+    // rather than skipped, so adding a toggle for either one fails this test instead of drifting:
+    //   land-context           -- not a `LayerToggleId` at all; it has its own group store and
+    //                             reaches `layerBindingInRegion` through LAND_CONTEXT_REGION_LAYER_SLUG.
+    //   botanical-occurrences  -- its three toggles all carry `warehouseLayerName: null`, so no
+    //                             toggle of it can ever report "not available in this region"
+    //                             (BACKLOG N40, open; GBIF is global so the pilot is unaffected).
+    const PLATFORM_LAYERS_WITH_NO_TOGGLE_PATH = new Set(["land-context", "botanical-occurrences"]);
+    const expected = new Set(
+      getRegion().platformLayers.filter((slug) => !PLATFORM_LAYERS_WITH_NO_TOGGLE_PATH.has(slug))
+    );
+
+    expect(TOGGLE_REACHABLE_REGION_LAYER_SLUGS).toEqual(expected);
+  });
+
+  it("gives every toggle with a warehouse layer name a slug in the vocabulary", () => {
+    // The warehouse namespace and the manifest namespace genuinely disagree (`drought-areas` ->
+    // `drought`, twelve field streams -> `signal`), so the mapping cannot be identity -- but a
+    // toggle that names a warehouse layer and resolves to nothing is a hole in the rule.
+    for (const layerId of LAYER_TOGGLE_IDS) {
+      if (LAYER_REGISTRY[layerId].warehouseLayerName === null) continue;
+      const slug = regionLayerSlugForToggle(layerId);
+      if (slug === null) continue; // `interventions` / `strategy-recommendations`: documented non-layers.
+      expect(getRegion().platformLayers, `${layerId} binds through ${slug}`).toContain(slug);
+    }
   });
 });
