@@ -368,6 +368,24 @@ line can interleave INSIDE a child's long JSON line in the Railway stream (the l
 and `parse_terminal_report` takes the last `{`-line, which assumes nothing but the writer's own report
 is JSON on stdout -- JSON-rendered structlog on stdout (not the case today) would be mis-parsed.
 
+### Publication debt is the second, quieter half of an incomplete turn
+
+`days_unwritten` only ever sees a day the writer REFUSED. A day whose four rungs landed in R2 but
+whose availability pointer never extended is a different failure with the same exit status: the
+objects exist, the turn reports `outcome=completed`, and nothing serves them. `summarize_turn_report`
+therefore also sums the owed-work counters every direct writer already prints from
+`AvailabilityExtensionTally.to_summary()` -- named in `PUBLICATION_DEBT_COUNTERS`, folded over nested
+per-product `results[]` exactly as `unwritten` is -- into `TurnReport.publication_debt`, with the
+non-zero counters kept beside it so an operator reads WHICH duty is owed.
+
+`TurnReport.incomplete` is true for either kind, so debt reaches `incomplete_lanes`, the
+`plantgeo_job_executor_lane_incomplete` WARNING, the lane blocker line and
+`consecutive_incomplete_buckets` without a second surface. The counter list is spelled out rather
+than derived by subtracting the two settled counters (`availability_extended`,
+`availability_skipped_unchanged`), so a NEW settled counter cannot silently read as debt. This is a
+report reader: it does not open the object store, and a lane that prints no availability summary
+simply carries zero debt rather than an assumed one.
+
 ## Operator action surface
 
 A lane held behind a recorded-supersession requirement is still reported on every tick, but now in

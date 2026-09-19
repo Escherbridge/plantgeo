@@ -332,3 +332,73 @@ async def test_an_unknown_work_item_kind_is_still_refused() -> None:
 
 def test_the_tail_budget_leaves_room_for_the_headline_inside_the_ledger_clamp() -> None:
     assert 0 < COMMAND_STDERR_SUMMARY_CHARS < FAILURE_SUMMARY_MAX_LENGTH
+
+
+def test_a_turn_that_wrote_every_day_but_owes_availability_is_still_incomplete() -> None:
+    """The quiet failure: four rungs in R2, `outcome=completed`, exit 0, and nothing serving them."""
+    report = {
+        "outcome": "completed",
+        "days_unwritten": 0,
+        "availability_extended": 3,
+        "availability_skipped_unchanged": 1,
+        "availability_retry_owed": 2,
+        "availability_quarantined_standing": 1,
+    }
+
+    kept = summarize_turn_report(report, previous=None)
+
+    assert kept is not None
+    assert kept.days_unwritten == 0
+    assert kept.publication_debt == 3
+    assert kept.publication_debt_counts == {
+        "availability_retry_owed": 2,
+        "availability_quarantined_standing": 1,
+    }
+    assert kept.incomplete
+    assert kept.consecutive_incomplete_buckets == 1
+
+
+def test_a_settled_availability_summary_is_never_read_as_debt() -> None:
+    report = {"outcome": "completed", "availability_extended": 12, "availability_skipped_unchanged": 40}
+
+    kept = summarize_turn_report(report, previous=None)
+
+    assert kept is not None
+    assert (kept.publication_debt, kept.publication_debt_counts, kept.incomplete) == (0, {}, False)
+
+
+def test_publication_debt_is_folded_out_of_nested_per_product_results() -> None:
+    report = {
+        "outcome": "completed",
+        "results": [
+            {"layer": "climate-a", "availability_ladder_incomplete": 1},
+            {"layer": "climate-b", "availability_ladder_incomplete": 2, "availability_not_bootstrapped": 1},
+        ],
+    }
+
+    kept = summarize_turn_report(report, previous=None)
+
+    assert kept is not None
+    assert kept.publication_debt == 4
+    assert kept.publication_debt_counts["availability_ladder_incomplete"] == 3
+
+
+def test_owed_publication_continues_the_incomplete_streak_and_a_clean_turn_clears_it() -> None:
+    first = summarize_turn_report({"availability_retry_owed": 1}, previous=None)
+    assert first is not None
+    second = summarize_turn_report({"availability_retry_owed": 1}, previous=first)
+    assert second is not None
+    cleared = summarize_turn_report({"availability_extended": 1}, previous=second)
+
+    assert (first.consecutive_incomplete_buckets, second.consecutive_incomplete_buckets) == (1, 2)
+    assert cleared is not None
+    assert cleared.consecutive_incomplete_buckets == 0
+
+
+def test_a_malformed_debt_counter_is_ignored_rather_than_guessed_at() -> None:
+    report = {"availability_retry_owed": "two", "availability_reindex_owed": True, "availability_ladder_incomplete": -1}
+
+    kept = summarize_turn_report(report, previous=None)
+
+    assert kept is not None
+    assert (kept.publication_debt, kept.publication_debt_counts) == (0, {})

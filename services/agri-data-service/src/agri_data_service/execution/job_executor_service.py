@@ -167,7 +167,12 @@ _SELECT_LATEST_RUN: Final = text(load_query_sql("execution/select_latest_run.sql
 
 @dataclass(frozen=True, slots=True)
 class TurnReport:
-    """The bounded facts kept from a writer's terminal stdout report: did the turn leave days unwritten?
+    """The bounded facts kept from a writer's terminal stdout report: what did the turn leave owed?
+
+    TWO independent kinds of owed work, because an object write and a serving publication are
+    different facts: a day that never wrote (`days_unwritten`), and a day whose objects landed while
+    its availability never extended (`publication_debt`). The second is the quieter one -- the lane
+    writes everything it selected, exits 0, and is not serving what it wrote.
 
     A direct lane exits 0 when at least one day wrote and reports `outcome=incomplete` with an `unwritten`
     list; before this nothing consumed that list, so a day stuck refusing re-refused every bucket silently.
@@ -181,10 +186,17 @@ class TurnReport:
     unwritten: tuple[Mapping[str, object], ...]
     unwritten_truncated: bool
     consecutive_incomplete_buckets: int = 0
+    #: Owed availability-publication work this turn reported, summed over `PUBLICATION_DEBT_COUNTERS`.
+    #: A day whose objects landed but whose availability never extended is NOT serving, so a turn can
+    #: write every day it selected, exit 0, and still owe publication. See AGENTS.md, "Turn reports".
+    publication_debt: int = 0
+    #: Which debt counters were non-zero, so an operator reads WHICH duty is owed, not just that one is.
+    publication_debt_counts: Mapping[str, int] = field(default_factory=dict)
 
     @property
     def incomplete(self) -> bool:
-        return self.days_unwritten > 0
+        """An unwritten day OR standing publication debt: an object write is not a serving publication."""
+        return self.days_unwritten > 0 or self.publication_debt > 0
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -193,7 +205,43 @@ class TurnReport:
             "unwritten": [dict(entry) for entry in self.unwritten],
             "unwritten_truncated": self.unwritten_truncated,
             "consecutive_incomplete_buckets": self.consecutive_incomplete_buckets,
+            "publication_debt": self.publication_debt,
+            "publication_debt_counts": dict(self.publication_debt_counts),
         }
+
+
+#: The `AvailabilityExtensionTally.to_summary()` keys that name OWED work, as opposed to the two that
+#: name settled work (`availability_extended`, `availability_skipped_unchanged`). Spelled out rather
+#: than derived by subtraction so a new settled counter cannot silently read as debt here; the field
+#: names are `pipeline/parquet/availability_extension.py::_TALLY_FIELDS`.
+PUBLICATION_DEBT_COUNTERS: Final = (
+    "availability_not_bootstrapped",
+    "availability_ladder_incomplete",
+    "availability_retry_owed",
+    "availability_retry_claim_failed",
+    "availability_quarantined_standing",
+    "availability_reindex_owed",
+)
+
+
+def _publication_debt_counts(report: Mapping[str, object]) -> dict[str, int]:
+    """Read the non-zero owed-work counters off one terminal report, ignoring anything malformed.
+
+    Folded over nested per-product `results[]` the same way `_unwritten_entries` is: a multi-product
+    writer reports its tally per product, and debt owed by ONE product is debt owed by the turn.
+    """
+    counts: dict[str, int] = {}
+    for name in PUBLICATION_DEBT_COUNTERS:
+        value = report.get(name)
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            counts[name] = value
+    results = report.get("results")
+    if isinstance(results, list):
+        for product in results:
+            if isinstance(product, dict):
+                for name, value in _publication_debt_counts(product).items():
+                    counts[name] = counts.get(name, 0) + value
+    return counts
 
 
 #: Per owning lane, the newest turn report this process ran and its incomplete-bucket streak.
@@ -247,13 +295,18 @@ def summarize_turn_report(report: Mapping[str, object] | None, *, previous: Turn
         for entry in entries[:TURN_REPORT_UNWRITTEN_MAX]
     )
     outcome = report.get("outcome", report.get("status"))
-    streak = (previous.consecutive_incomplete_buckets if previous is not None else 0) + 1 if days_unwritten else 0
+    debt_counts = _publication_debt_counts(report)
+    debt = sum(debt_counts.values())
+    previous_streak = previous.consecutive_incomplete_buckets if previous is not None else 0
+    streak = previous_streak + 1 if days_unwritten or debt else 0
     return TurnReport(
         outcome=str(outcome) if outcome is not None else None,
         days_unwritten=days_unwritten,
         unwritten=kept,
         unwritten_truncated=len(entries) > len(kept),
         consecutive_incomplete_buckets=streak,
+        publication_debt=debt,
+        publication_debt_counts=debt_counts,
     )
 
 
@@ -506,10 +559,13 @@ async def _execute_due_lane(
         detail = f"supersedes run {candidate.superseded_run_id} by {candidate.supersession}; {detail}"
     turn_report = _LANE_TURN_REPORTS.get(candidate.spec.lane_id) if summary.claimed else None
     if turn_report is not None and turn_report.incomplete:
+        owed = ", ".join(f"{name}={count}" for name, count in sorted(turn_report.publication_debt_counts.items()))
         detail = (
             f"{detail}; left {turn_report.days_unwritten} day(s) unwritten for "
             f"{turn_report.consecutive_incomplete_buckets} consecutive bucket(s) in this process"
         )
+        if owed:
+            detail = f"{detail}; owes availability publication ({owed})"
     return LaneTickResult(
         lane_id=candidate.spec.lane_id,
         state="failed" if failed else "ran",
@@ -1457,6 +1513,7 @@ async def run_scheduled_command(  # noqa: PLR0911, PLR0912 - each terminal state
         "elapsed_seconds": elapsed,
         **tail.metrics(),
         "days_unwritten": None if turn_report is None else turn_report.days_unwritten,
+        "publication_debt": None if turn_report is None else turn_report.publication_debt,
     }
     if monitor_state == "shutdown":
         return JobHandlerOutcome.yielded(
@@ -1589,6 +1646,8 @@ async def _service_loop(
                             lane_id=lane.lane_id,
                             days_unwritten=lane.turn_report.days_unwritten,
                             consecutive_incomplete_buckets=lane.turn_report.consecutive_incomplete_buckets,
+                            publication_debt=lane.turn_report.publication_debt,
+                            publication_debt_counts=dict(lane.turn_report.publication_debt_counts),
                             unwritten=[dict(entry) for entry in lane.turn_report.unwritten],
                         )
                 if summary.failed:
