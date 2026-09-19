@@ -12,6 +12,7 @@ from sanic.config import Config
 from sanic.response import HTTPResponse  # noqa: TC002 - sanic-ext evaluates handler annotations at runtime.
 
 from plantgeo_ml_service.config import get_settings
+from plantgeo_ml_service.planes.routes import machine_learning_bp
 
 if TYPE_CHECKING:
     from plantgeo_ml_service.config import ObjectStoreCredentials
@@ -23,16 +24,7 @@ type MachineLearningApp = Sanic[Config, SimpleNamespace]
 #: How long a readiness probe may spend proving the bucket answers, before it reports not-ready.
 BUCKET_PROBE_TIMEOUT_SECONDS: Final = 5.0
 
-API_PREFIX: Final = "/api/v1/ml"
-
-#: The phase-2 surface is not built yet, and a route that returned an empty result would read as
-#: "no artifacts" rather than "not implemented". See plan.md, Phase 2.
-NOT_IMPLEMENTED_PAYLOAD: Final[dict[str, str]] = {"error": "not_implemented_until_phase_2"}
-NOT_IMPLEMENTED_STATUS: Final = 501
-
 health_bp = Blueprint("health", url_prefix="/")
-artifacts_bp = Blueprint("artifacts", url_prefix="/artifacts")
-machine_learning_bp = Blueprint.group(artifacts_bp, url_prefix=API_PREFIX)
 
 
 @health_bp.get("/health")
@@ -48,12 +40,6 @@ async def readiness(_request: Request) -> HTTPResponse:
     if reason is not None:
         return json({"status": "not_ready", "reason": reason}, status=503)
     return json({"status": "ok"})
-
-
-@artifacts_bp.get("/")
-async def list_artifacts(_request: Request) -> HTTPResponse:
-    """Refuse with a named reason until the phase-2 artifact reader exists."""
-    return json(NOT_IMPLEMENTED_PAYLOAD, status=NOT_IMPLEMENTED_STATUS)
 
 
 async def bucket_readiness_reason() -> str | None:

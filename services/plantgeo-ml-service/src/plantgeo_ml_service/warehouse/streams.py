@@ -74,6 +74,19 @@ FORECAST_PROVENANCE_FIELDS: Final[tuple[pa.Field, ...]] = (
 
 FORECAST_PROVENANCE_COLUMNS: Final[tuple[str, ...]] = tuple(field_.name for field_ in FORECAST_PROVENANCE_FIELDS)
 
+#: What a DETERMINISTIC product writes in `quantile` (`layer-lanes.md` section 3, amended
+#: 2026-09-19). A model that emits one calibrated value per cell-day has no ensemble to take a
+#: fraction of, and encoding a median of one as 0.5 reads as an ensemble that does not exist.
+POINT_QUANTILE: Final = "point"
+
+#: The provenance block of a deterministic lane: the same six columns, with `quantile` carried as
+#: the LABEL a point product writes instead of the ensemble fraction a drawn lane reports. The
+#: column stays non-null and stays part of the sort key, so the grain is unchanged.
+DETERMINISTIC_PROVENANCE_FIELDS: Final[tuple[pa.Field, ...]] = tuple(
+    pa.field("quantile", pa.string(), nullable=False) if field_.name == "quantile" else field_
+    for field_ in FORECAST_PROVENANCE_FIELDS
+)
+
 #: The observed grain is a cell-day; a forecast partition holds many rows per cell-day, one per
 #: reported quantile and issue day. These three finish the key so the sort before every write is
 #: total, because an ordering that leaves ties is not reproducible evidence.
@@ -262,7 +275,7 @@ FIRE_RISK_SCHEMA: Final = ParquetStreamSchema(
             pa.field("stratum", pa.string(), nullable=False),
             pa.field("refused_reason", pa.string(), nullable=True),
             pa.field("model_artifact_sha256", pa.string(), nullable=False),
-            *FORECAST_PROVENANCE_FIELDS,
+            *DETERMINISTIC_PROVENANCE_FIELDS,
         ]
     ),
     sort_columns=(

@@ -160,13 +160,13 @@ scratch prefix first.
       prod; the write is a production mutation). Owned by `p2a` on the agri side, file list in
       `metadata.json`.
 
-### 2B — Daily lanes, artifacts, API, cron (slices `p2b-fire-risk`, `p2b-knn`, `p2c-api`)
+### 2B — Daily lanes, artifacts, API, cron (slices `p2b-fire-risk`, `p2b-knn`, `p2c-api`) — lanes LANDED bc08eca9 (incl. FR-12 weather-forecast slice `p2e`); API/CLI/cron (`p2c`) in progress; agri registration (`p2d`) awaiting a window
 
-- [ ] Task (`p2b-fire-risk`): `pipeline/fire_risk_features.py` — port `analysis/fire_risk_index.py`'s
+- [x] Task (`p2b-fire-risk`): `pipeline/fire_risk_features.py` — port `analysis/fire_risk_index.py`'s
       feature plane to a leakage-gated builder: for `issued_on`, every feature comes from days
       ≤ `issued_on − lag(producer)`; cyclical day-of-year, photoperiod (computed, not read),
       stratum from vegetation NDVI class; `refused_reason` for out-of-stratum cells.
-- [ ] Task (`p2b-fire-risk`): `method/ml/fire_risk_model.py` — logistic + calibrated probability over
+- [x] Task (`p2b-fire-risk`): `method/ml/fire_risk_model.py` — logistic + calibrated probability over
       the feature vector, artifact = canonical JSON (coefficients, moments, stratum table, feature
       names, `trained_on` window, checksum). `pipeline/fire_risk_daily.py` writes the `fire-risk`
       lane for horizons 1–14 with a prediction receipt. An untrained artifact is a typed refusal,
@@ -179,12 +179,12 @@ scratch prefix first.
       (`daily_series`, floor basis, lag, cadence, ladder, `forecast_module=None` because the ML
       service writes it directly), `warehouse/schemas/fire_risk.py`, `docs/lanes/fire-risk.md`,
       `tests/parquet/test_lane_contract.py` expectations.
-- [ ] Task (`p2b-knn`): `pipeline/analog_ensemble_daily.py` — covariate vectors from the `signal`
+- [x] Task (`p2b-knn`): `pipeline/analog_ensemble_daily.py` — covariate vectors from the `signal`
       lane's observed partitions (the sibling's `select_covariate_vectors.sql` semantics re-expressed
       in DuckDB), temporal exclusion window, `method/ml/analog_ensemble.py` unchanged, p10/p50/p90 for
       horizons 1–30, written as `layer=signal/kind=forecast` with the six provenance columns and a
       `forecast_run_id` derived from (artifact sha, issued_on, seed).
-- [ ] Task (`p2b-knn`): Monte Carlo dispatch — `pipeline/monte_carlo_daily.py` maps each registry
+- [x] Task (`p2b-knn`): Monte Carlo dispatch — `pipeline/monte_carlo_daily.py` maps each registry
       forecast stem to its `method/monte_carlo` module and writes `kind=forecast` for
       `fire-detections`, `sensors`, `signal` (where AnEn has no artifact), `vegetation`,
       `water-gauges`; each refuses on insufficient history exactly as the module already does.

@@ -9,6 +9,7 @@ generated. Rationale lives in `sources/AGENTS.md`; the coarse-rung arithmetic is
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, time
 from typing import TYPE_CHECKING, Final
@@ -31,6 +32,8 @@ from plantgeo_ml_service.pipeline.forecast_lane_bootstrap import (
 )
 from plantgeo_ml_service.pipeline.object_store import (
     JSON_CONTENT_TYPE,
+    ObjectStoreError,
+    ReadOnlyObjectStore,
     ScratchPrefixError,
     completed_parts_from,
     scratch_rooted_store,
@@ -90,6 +93,10 @@ MODEL_INIT_HOUR: Final = 0
 #: than silently fetching for an hour.
 MAX_FORECAST_CELLS: Final = 2_000
 
+#: How large the cell-inventory object may be. `MAX_FORECAST_CELLS` three-field records of a few
+#: dozen bytes each sit two orders of magnitude under this; anything near it is not an inventory.
+MAX_FORECAST_CELL_INVENTORY_BYTES: Final = 1024 * 1024
+
 #: The reason the issue day carries when the provider answered with no hourly readings at all. A
 #: day with no rows is indexed as a governed absence, never omitted (FR-4a).
 NO_READINGS_REASON: Final = "provider_returned_no_readings"
@@ -97,6 +104,14 @@ NO_READINGS_REASON: Final = "provider_returned_no_readings"
 
 class WeatherForecastRunError(RuntimeError):
     """Raised when a daily run cannot be admitted, written, or published as asked."""
+
+
+class ForecastCellInventoryError(WeatherForecastRunError):
+    """Raised when the configured cell inventory is absent, oversize, or not a list of cells.
+
+    Its own type, because "this deployment names no inventory" and "the inventory it names is
+    broken" are different operator actions and must not arrive under one word.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,6 +219,44 @@ def run_weather_forecast_daily(  # noqa: PLR0913 - one keyword per run-shaping d
         rungs=rungs,
         publication=publication,
     )
+
+
+def read_forecast_cells(store: ReadOnlyObjectStore, *, key: str) -> tuple[ForecastCell, ...]:
+    """Read the configured cell inventory out of the bucket, refusing anything that is not one.
+
+    The inventory is warehouse data with its own lifecycle, so it is READ rather than declared in
+    the environment: a deployment variable holding hundreds of coordinates is a configuration
+    nobody reviews and a lane nobody can correct without a redeploy.
+    """
+    try:
+        payload = store.read_object(key, max_bytes=MAX_FORECAST_CELL_INVENTORY_BYTES)
+    except ObjectStoreError as error:
+        raise ForecastCellInventoryError(f"the configured cell inventory could not be read: {error}") from error
+    if payload is None:
+        raise ForecastCellInventoryError("the configured cell inventory key names no object in this bucket")
+    try:
+        document = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as error:
+        raise ForecastCellInventoryError("the configured cell inventory is not decodable JSON") from error
+    if not isinstance(document, list):
+        raise ForecastCellInventoryError("the configured cell inventory is not a JSON array of cells")
+    return tuple(_inventory_cell(entry, position) for position, entry in enumerate(document))
+
+
+def _inventory_cell(entry: object, position: int) -> ForecastCell:
+    """Narrow one inventory record into a cell, refusing a record that is missing a field."""
+    if not isinstance(entry, dict):
+        raise ForecastCellInventoryError(f"cell inventory record {position} is not a JSON object")
+    cell_id = entry.get("cell_id")
+    longitude = entry.get("longitude")
+    latitude = entry.get("latitude")
+    if not isinstance(cell_id, str) or not cell_id:
+        raise ForecastCellInventoryError(f"cell inventory record {position} carries no cell_id")
+    if not isinstance(longitude, (int, float)) or isinstance(longitude, bool):
+        raise ForecastCellInventoryError(f"cell inventory record {position} carries no longitude")
+    if not isinstance(latitude, (int, float)) or isinstance(latitude, bool):
+        raise ForecastCellInventoryError(f"cell inventory record {position} carries no latitude")
+    return ForecastCell(cell_id=cell_id, longitude=float(longitude), latitude=float(latitude))
 
 
 def _validated_cells(cells: Sequence[ForecastCell], source: WeatherForecastSource) -> tuple[ForecastCell, ...]:
@@ -483,13 +536,16 @@ def _inventory_root(cells: Sequence[ForecastCell]) -> str:
 
 __all__ = [
     "MAX_FORECAST_CELLS",
+    "MAX_FORECAST_CELL_INVENTORY_BYTES",
     "MERGED_SUPPORT",
     "MODEL_INIT_HOUR",
     "NO_READINGS_REASON",
     "BatchAnswer",
     "ForecastCell",
+    "ForecastCellInventoryError",
     "RungWrite",
     "WeatherForecastDailyReceipt",
     "WeatherForecastRunError",
+    "read_forecast_cells",
     "run_weather_forecast_daily",
 ]

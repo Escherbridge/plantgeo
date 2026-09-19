@@ -1,0 +1,51 @@
+{
+  "$comment": [
+    "DOCUMENTATION, NOT CONFIGURATION. Railway rejects a railway.json config-as-code path as",
+    "deprecated (RUNBOOK, immediately-owed item 2), so nothing reads this file: it records the",
+    "settings the coordinator applies by hand when creating the `plantgeo-ml-cron` service, so the",
+    "intended shape is reviewable in the tree instead of living only in a dashboard.",
+    "The service is created by the coordinator and its schedule is NEVER armed without an owner go",
+    "(spec FR-10). An unarmed service that exists is harmless; an armed one writes to the lanes."
+  ],
+  "service": {
+    "name": "plantgeo-ml-cron",
+    "project": "Aevani",
+    "rootDirectory": "/services/plantgeo-ml-service",
+    "watchPatterns": ["services/plantgeo-ml-service/**"]
+  },
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "infra/cron/Dockerfile"
+  },
+  "deploy": {
+    "$comment": [
+      "06:30 UTC: after every upstream lane's own daily publication window and before the web's",
+      "morning traffic. No healthcheck and no domain: a cron service has no port to probe, and a",
+      "generated domain would make a one-shot turn look like a service that is down between runs.",
+      "ON_FAILURE, not ALWAYS: a bounded turn exits 0 and must not be restarted, and a turn that",
+      "exited 4 could not reach the bucket, which is worth one retry."
+    ],
+    "cronSchedule": "30 6 * * *",
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 1,
+    "numReplicas": 1,
+    "healthcheckPath": null,
+    "domain": null,
+    "startCommand": "plantgeo-ml predict-daily"
+  },
+  "variables": {
+    "$comment": [
+      "Reference variables from `plantgeo-parquet-api`, exactly as `plantgeo-ml` carries them, so",
+      "the two services read one bucket with one set of credentials. NO variable whose name",
+      "contains DATABASE_URL, DATABASE_DSN, POSTGRES_DSN, PGHOST or PGDATABASE may be set here:",
+      "`config.Settings` refuses to construct while one is present (decision D5)."
+    ],
+    "OBJECT_STORE_ENDPOINT_URL": "${{plantgeo-parquet-api.OBJECT_STORE_ENDPOINT_URL}}",
+    "OBJECT_STORE_BUCKET": "${{plantgeo-parquet-api.OBJECT_STORE_BUCKET}}",
+    "OBJECT_STORE_ACCESS_KEY_ID": "${{plantgeo-parquet-api.OBJECT_STORE_ACCESS_KEY_ID}}",
+    "OBJECT_STORE_SECRET_ACCESS_KEY": "${{plantgeo-parquet-api.OBJECT_STORE_SECRET_ACCESS_KEY}}",
+    "OBJECT_STORE_REGION": "${{plantgeo-parquet-api.OBJECT_STORE_REGION}}",
+    "PLANTGEO_ML_KERNELS": "python",
+    "PLANTGEO_ML_DUCKDB_EXTENSION_DIRECTORY": "/opt/duckdb-extensions"
+  }
+}

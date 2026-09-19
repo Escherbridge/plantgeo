@@ -33,8 +33,8 @@ from plantgeo_ml_service.method.ml.fire_risk_model import (
 from plantgeo_ml_service.pipeline.availability_publisher import InMemoryPointerStore
 from plantgeo_ml_service.pipeline.fire_risk_daily import (
     ENSEMBLE_SIZE,
-    MEDIAN_QUANTILE,
     NO_ARTIFACT_SENTINEL,
+    POINT_QUANTILE,
     FireRiskDailyError,
     FireRiskDailyReceipt,
     FireRiskPublicationGateError,
@@ -207,7 +207,7 @@ def test_every_written_row_carries_the_six_provenance_columns() -> None:
         assert table.column(column).null_count == 0
     assert table.column("forecast_run_id").to_pylist() == [receipt.forecast_run_id] * table.num_rows
     assert table.column("ensemble_size").to_pylist() == [ENSEMBLE_SIZE] * table.num_rows
-    assert table.column("quantile").to_pylist() == [MEDIAN_QUANTILE] * table.num_rows
+    assert table.column("quantile").to_pylist() == [POINT_QUANTILE] * table.num_rows
     assert table.column("issued_on").to_pylist() == [FRONTIER] * table.num_rows
     assert table.column("stratum").null_count == 0
     assert table.column("model_artifact_sha256").null_count == 0

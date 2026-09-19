@@ -32,7 +32,12 @@ from plantgeo_ml_service.pipeline.forecast_lane_bootstrap import (
     bootstrap_marker_payload,
     read_lane_bootstrap_receipt,
 )
-from plantgeo_ml_service.pipeline.object_store import InMemoryObjectStoreBackend, ObjectStore, sha256_of
+from plantgeo_ml_service.pipeline.object_store import (
+    JSON_CONTENT_TYPE,
+    InMemoryObjectStoreBackend,
+    ObjectStore,
+    sha256_of,
+)
 from plantgeo_ml_service.pipeline.sources.open_meteo import (
     OPEN_METEO_FORECAST_RUN_MODEL,
     WEATHER_FORECAST_SOURCE_SLUG,
@@ -45,8 +50,10 @@ from plantgeo_ml_service.pipeline.weather_forecast_daily import (
     MERGED_SUPPORT,
     NO_READINGS_REASON,
     ForecastCell,
+    ForecastCellInventoryError,
     WeatherForecastDailyReceipt,
     WeatherForecastRunError,
+    read_forecast_cells,
     run_weather_forecast_daily,
 )
 from plantgeo_ml_service.pipeline.weather_forecast_rows import _merged_support
@@ -67,6 +74,9 @@ ISSUE_DATE: Final = date(2026, 9, 18)
 RUN_INIT: Final = datetime(2026, 9, 18, tzinfo=UTC)
 FETCHED_AT: Final = datetime(2026, 9, 18, 4, 0, tzinfo=UTC)
 PUBLISHED_AT: Final = datetime(2026, 9, 18, 5, 0, tzinfo=UTC)
+
+#: Where a deployment keeps the list of cells its weather-forecast lane is fetched for.
+INVENTORY_KEY: Final = "ml/config/forecast-cells.json"
 
 #: The two cells the captured response answers for, at the coordinates it was requested with.
 NEIGHBOURING_CELLS: Final = (
@@ -472,3 +482,40 @@ def _generation_rows(store: ObjectStore, receipt: WeatherForecastDailyReceipt) -
     payload = store.read_object(receipt.publication.generation_key)
     assert payload is not None
     return pq.read_table(io.BytesIO(payload)).to_pylist()
+
+
+# --- The configured cell inventory (M6) -----------------------------------------------------------
+
+
+def test_the_cell_inventory_is_read_out_of_the_bucket_rather_than_declared_in_the_environment() -> None:
+    """A deployment variable holding hundreds of coordinates is a configuration nobody reviews."""
+    store = ObjectStore(backend=InMemoryObjectStoreBackend())
+    store.backend.put(
+        INVENTORY_KEY,
+        json.dumps([{"cell_id": "c-1", "longitude": -120.125, "latitude": 46.375}]).encode("utf-8"),
+        content_type=JSON_CONTENT_TYPE,
+    )
+
+    cells = read_forecast_cells(store.read_only(), key=INVENTORY_KEY)
+
+    assert cells == (ForecastCell(cell_id="c-1", longitude=-120.125, latitude=46.375),)
+
+
+def test_an_inventory_key_naming_no_object_refuses_by_its_own_type() -> None:
+    """An unnamed inventory and a broken one are different operator actions, under different types."""
+    store = ObjectStore(backend=InMemoryObjectStoreBackend())
+
+    with pytest.raises(ForecastCellInventoryError):
+        read_forecast_cells(store.read_only(), key=INVENTORY_KEY)
+
+
+def test_an_inventory_record_missing_a_coordinate_is_refused_rather_than_defaulted() -> None:
+    store = ObjectStore(backend=InMemoryObjectStoreBackend())
+    store.backend.put(
+        INVENTORY_KEY,
+        json.dumps([{"cell_id": "c-1", "longitude": -120.125}]).encode("utf-8"),
+        content_type=JSON_CONTENT_TYPE,
+    )
+
+    with pytest.raises(ForecastCellInventoryError):
+        read_forecast_cells(store.read_only(), key=INVENTORY_KEY)

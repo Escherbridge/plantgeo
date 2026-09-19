@@ -22,7 +22,8 @@ The service is complete without Mojo. `PLANTGEO_ML_KERNELS=python` is the defaul
 |---|---|---|---|
 | 1 | service skeleton, hard cut of ML and Monte Carlo out of agri-data-service | skeleton written, sweep owed | monitor sweep (1C), then `/code-review high` and one push |
 | 2A | Parquet path grammar, stream schemas, lane clocks, object store, DuckDB session, observed reader, availability publisher, expert label reader | written, sweep owed | monitor sweep, then `/code-review high` and one push |
-| 2B | fire-risk and spatial-KNN daily lanes, Monte Carlo dispatch, artifacts, API, cron service | not started | 2A push; owner go before any real bucket write |
+| 2B | fire-risk and spatial-KNN daily lanes, Monte Carlo dispatch | landed `bc08eca9` | sweep, review, push |
+| 2C | the four FR-8 routes, `predict-daily`, the cron image | written, sweep owed | monitor sweep, then `/code-review high` + `/security-review` on the query parsing |
 | 3 | Mojo kernels behind parity harnesses, pixi project, Docker Mojo stage | not started | phase 2; WSL2 + pixi on the dev box |
 | 4 | platform wiring: agent forecast tool, slider forecast days, web env, fire-risk track activation | not started | phase 2 only; Mojo (phase 3) is an optimisation and never gates it (critic finding 11, 2026-09-18) |
 
@@ -46,6 +47,25 @@ Immediately owed, in order:
    `c125e2c2` died with a sanic-ext `NameError` (TYPE_CHECKING-only `Request` import); fixed in
    `b1f02f95` with `tests/test_route_annotations.py`.
 4. Do NOT set any `*DATABASE_URL*` variable on it. The process refuses to boot with one present.
+5. ~~Install the DuckDB extensions into the SERVICE image.~~ **Done 2026-09-19 (phase 2C fix
+   batch).** Both `Dockerfile` and `infra/cron/Dockerfile` now call
+   `pipeline.duckdb_session.install_extensions` into `/opt/duckdb-extensions`, `chown` it to the
+   `plantgeo` service user, and then run a build-time `open_guarded_connection()` probe AS that
+   user. The probe is the part that matters on a redeploy: a missing or unreadable extension
+   directory now fails the build rather than turning every `/api/v1/ml` partition read into a
+   `serving_fault` on the deployed service. Next deploy of `plantgeo-ml` picks this up; verify with
+   one real `/api/v1/ml/fire-risk` read after it lands.
+6. **Create `plantgeo-ml-cron`, and do not arm it.** `railway.cron.json` documents the settings the
+   coordinator applies by hand (Railway rejects a config-as-code path as deprecated): root directory
+   `/services/plantgeo-ml-service`, Dockerfile `infra/cron/Dockerfile`, cron `30 6 * * *` UTC,
+   restart `ON_FAILURE`, no domain and no healthcheck, the same `OBJECT_STORE_*` reference variables
+   as `plantgeo-ml`, and `PLANTGEO_ML_KERNELS=python`. The service is created by the coordinator and
+   the schedule is NEVER armed without an explicit owner go (spec FR-10): the first armed turn
+   writes to the published lanes.
+7. **Prove FR-4a before arming anything.** `plantgeo-ml predict-daily --dry-run-prefix
+   ml/scratch/<date>/` writes a whole turn under the scratch root, and the acceptance is reading
+   that day back through agri-data-service's `parquet_ops/availability_coverage.py`, never a raw
+   listing. Record the listing in `evidence/phase2-dry-run.json`.
 
 ## Environment
 

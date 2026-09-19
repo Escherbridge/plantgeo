@@ -51,10 +51,25 @@ RUN groupadd --system --gid 10001 plantgeo \
     && useradd --system --uid 10001 --gid plantgeo --home-dir /nonexistent \
       --shell /usr/sbin/nologin plantgeo
 
+# Both DuckDB extensions are LOADED and never INSTALLED on a run path, so the image installs them
+# here -- the same step `infra/cron/Dockerfile` already carries. Without it EVERY `/api/v1/ml`
+# partition read refuses with `DuckDbExtensionError` rendered as `serving_fault`: the correct
+# failure, and also every read (see `pipeline/duckdb_session.py`). The directory is the one
+# `config.Settings.duckdb_extension_directory` names, and it is owned by the service user because
+# a serving session opens read-only and must not be the thing that first creates it.
+ENV PLANTGEO_ML_DUCKDB_EXTENSION_DIRECTORY=/opt/duckdb-extensions
+RUN python -c "from plantgeo_ml_service.pipeline.duckdb_session import install_extensions; install_extensions(directory='/opt/duckdb-extensions')" \
+    && chown -R plantgeo:plantgeo /opt/duckdb-extensions \
+    && chmod -R a+rX /opt/duckdb-extensions
+
 USER plantgeo
 
 # Fails the BUILD, not the first request, if the wheel did not land where the interpreter looks.
 RUN python -c "import plantgeo_ml_service; print(plantgeo_ml_service.__version__)"
+
+# Fails the BUILD, not the first read, if the extensions did not land where the SESSION looks. The
+# probe runs as the service user and opens the same guarded connection a request would.
+RUN python -c "from plantgeo_ml_service.pipeline.duckdb_session import open_guarded_connection; open_guarded_connection().close()"
 
 EXPOSE 8000
 

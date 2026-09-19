@@ -64,6 +64,11 @@ PARQUET_FORMAT_VERSION: Final = "2.6"
 #: never a payload park, so it is bounded at the same ceiling the sibling's sweep enforces.
 MAX_AVAILABILITY_RETRY_BYTES: Final = 8 * 1024 * 1024
 
+#: The ceiling `read_object` applies when a caller names none. Every object of this layout that is
+#: not a Parquet part is a marker, a pointer, a receipt or an artifact, and each of those is
+#: kilobytes; a caller that genuinely needs more passes its own bound.
+MAX_READ_OBJECT_BYTES: Final = 16 * 1024 * 1024
+
 #: The ONLY prefix a dry run may re-root itself onto. Every lane that offers a `dry_run_prefix`
 #: resolves it through `scratch_rooted_store` below, so "a dry run that writes anywhere else is a
 #: production write wearing a flag" is one rule with one implementation rather than a per-lane habit.
@@ -107,6 +112,14 @@ class PartitionNotWrittenError(ObjectStoreError):
 
 class ObjectKeyError(ObjectStoreError):
     """Raised when a key would land outside the configured prefix."""
+
+
+class ObjectTooLargeError(ObjectStoreError):
+    """Raised when an object is larger than the ceiling the caller read it under.
+
+    The size is settled by a `head` BEFORE any body is fetched: checking after a whole `Body.read()`
+    bounds the answer and not the download, which is the resource the ceiling exists to protect.
+    """
 
 
 class GovernedAbsenceConflictError(ObjectStoreError):
@@ -328,6 +341,50 @@ class InMemoryObjectStoreBackend:
             yield ListedObject(key=key, last_modified=None)
 
 
+class ReadOnlyObjectStore(Protocol):
+    """The read half of the warehouse: list, size, fetch. No `put`, no `delete`, by construction.
+
+    A serving plane is handed one of these rather than an `ObjectStore`, so "a read cannot write"
+    is a property of the object it holds instead of a rule every reader has to keep.
+    """
+
+    def read_object(self, relative_path: str, *, max_bytes: int = MAX_READ_OBJECT_BYTES) -> bytes | None: ...
+
+    def object_size(self, relative_path: str) -> int | None: ...
+
+    def list_relative_paths(self, prefix: str, *, max_keys: int = MAX_LISTED_KEYS) -> tuple[str, ...]: ...
+
+    def list_recent_objects(self, prefix: str, *, max_keys: int = MAX_LISTED_KEYS) -> tuple[ListedObject, ...]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class ReadOnlyObjectStoreView:
+    """The read-only facade a serving plane receives, built from a backend and a prefix.
+
+    Deliberately NOT a subclass of `ObjectStore` and deliberately not holding one: inheritance or
+    delegation would keep `put` and `delete` reachable through the object a route handed out.
+    """
+
+    backend: ObjectStoreBackend
+    prefix: str = ""
+
+    def read_object(self, relative_path: str, *, max_bytes: int = MAX_READ_OBJECT_BYTES) -> bytes | None:
+        """Read one object under its byte ceiling, settling the size with a `head` first."""
+        return _read_bounded(self.backend, _absolute_key(self.prefix, relative_path), max_bytes=max_bytes)
+
+    def object_size(self, relative_path: str) -> int | None:
+        """Return one object's byte count without fetching it, or `None` when the key is absent."""
+        return self.backend.head(_absolute_key(self.prefix, relative_path))
+
+    def list_relative_paths(self, prefix: str, *, max_keys: int = MAX_LISTED_KEYS) -> tuple[str, ...]:
+        """Return every key under one RELATIVE prefix, with the store prefix stripped back off."""
+        return tuple(entry.key for entry in self.list_recent_objects(prefix, max_keys=max_keys))
+
+    def list_recent_objects(self, prefix: str, *, max_keys: int = MAX_LISTED_KEYS) -> tuple[ListedObject, ...]:
+        """Return every listed object under one RELATIVE prefix, keys relative and times intact."""
+        return _relative_listing(self.backend, self.prefix, prefix, max_keys=max_keys)
+
+
 @dataclass(frozen=True, slots=True)
 class ObjectStore:
     """The receipted warehouse writer and reader, bound to one backend and one prefix."""
@@ -339,11 +396,11 @@ class ObjectStore:
 
     def absolute_key(self, relative_path: str) -> str:
         """Return the bucket key for one relative path, refusing anything that escapes the prefix."""
-        if not relative_path or relative_path.startswith("/"):
-            raise ObjectKeyError(f"{relative_path!r} is not a relative object path")
-        if "\\" in relative_path or ".." in relative_path.split("/"):
-            raise ObjectKeyError(f"{relative_path!r} would traverse outside the configured prefix")
-        return f"{self.prefix}{relative_path}"
+        return _absolute_key(self.prefix, relative_path)
+
+    def read_only(self) -> ReadOnlyObjectStoreView:
+        """Return the read-only facade over this store's backend and prefix."""
+        return ReadOnlyObjectStoreView(backend=self.backend, prefix=self.prefix)
 
     def write_partition(  # noqa: PLR0913 - one keyword per partition identity field is the contract
         self,
@@ -547,15 +604,63 @@ class ObjectStore:
             sha256=sha256_of(payload),
         )
 
-    def read_object(self, relative_path: str) -> bytes | None:
-        """Read one arbitrary object of the layout, or `None` when the key is absent."""
-        return self.backend.get(self.absolute_key(relative_path))
+    def read_object(self, relative_path: str, *, max_bytes: int = MAX_READ_OBJECT_BYTES) -> bytes | None:
+        """Read one arbitrary object under its byte ceiling, or `None` when the key is absent."""
+        return _read_bounded(self.backend, self.absolute_key(relative_path), max_bytes=max_bytes)
+
+    def object_size(self, relative_path: str) -> int | None:
+        """Return one object's byte count without fetching it, or `None` when the key is absent."""
+        return self.backend.head(self.absolute_key(relative_path))
 
     def list_relative_paths(self, prefix: str, *, max_keys: int = MAX_LISTED_KEYS) -> tuple[str, ...]:
         """Return every key under one RELATIVE prefix, with the store prefix stripped back off."""
-        absolute_prefix = f"{self.prefix}{prefix}"
-        listed = self.backend.list_objects(absolute_prefix, max_keys=max_keys)
-        return tuple(entry.key[len(self.prefix) :] for entry in listed)
+        return tuple(entry.key for entry in self.list_recent_objects(prefix, max_keys=max_keys))
+
+    def list_recent_objects(self, prefix: str, *, max_keys: int = MAX_LISTED_KEYS) -> tuple[ListedObject, ...]:
+        """Return every listed object under one RELATIVE prefix, keys relative and times intact."""
+        return _relative_listing(self.backend, self.prefix, prefix, max_keys=max_keys)
+
+
+def _absolute_key(prefix: str, relative_path: str) -> str:
+    """Return the bucket key for one relative path, refusing anything that escapes the prefix."""
+    if not relative_path or relative_path.startswith("/"):
+        raise ObjectKeyError(f"{relative_path!r} is not a relative object path")
+    if "\\" in relative_path or ".." in relative_path.split("/"):
+        raise ObjectKeyError(f"{relative_path!r} would traverse outside the configured prefix")
+    return f"{prefix}{relative_path}"
+
+
+def _read_bounded(backend: ObjectStoreBackend, key: str, *, max_bytes: int) -> bytes | None:
+    """Fetch one object only after a `head` proves it fits, refusing an oversize one by type.
+
+    The pre-check is the bound: a ceiling applied to bytes already in memory has paid the whole
+    download before it says no, and the download is what an unbounded object costs.
+    """
+    if max_bytes < 1:
+        raise ObjectStoreError(f"a read ceiling is at least one byte, got {max_bytes}")
+    size = backend.head(key)
+    if size is None:
+        return None
+    if size > max_bytes:
+        raise ObjectTooLargeError(f"the object is {size} bytes, over this read's {max_bytes}-byte ceiling")
+    payload = backend.get(key)
+    if payload is not None and len(payload) > max_bytes:
+        # The `head` and the `get` disagreed, which means the object was replaced mid-read. The
+        # bytes in hand are the ones that matter, so they are refused rather than trusted.
+        raise ObjectTooLargeError(
+            f"the object grew to {len(payload)} bytes between its head and its read, over the {max_bytes}-byte ceiling"
+        )
+    return payload
+
+
+def _relative_listing(
+    backend: ObjectStoreBackend, store_prefix: str, prefix: str, *, max_keys: int
+) -> tuple[ListedObject, ...]:
+    """List one RELATIVE prefix, returning entries whose keys have the store prefix stripped off."""
+    listed = backend.list_objects(f"{store_prefix}{prefix}", max_keys=max_keys)
+    return tuple(
+        ListedObject(key=entry.key[len(store_prefix) :], last_modified=entry.last_modified) for entry in listed
+    )
 
 
 def conform_to_stream_schema(table: pa.Table, stream: ParquetStreamSchema) -> pa.Table:

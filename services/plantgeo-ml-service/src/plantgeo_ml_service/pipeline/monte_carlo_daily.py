@@ -54,7 +54,7 @@ if TYPE_CHECKING:
     from types import ModuleType
 
     from plantgeo_ml_service.pipeline.availability_publisher import PointerStore, PublicationReceipt
-    from plantgeo_ml_service.pipeline.object_store import ObjectStore
+    from plantgeo_ml_service.pipeline.object_store import ObjectStore, ReadOnlyObjectStore
     from plantgeo_ml_service.pipeline.observed_reader import ObservedReader
 
 #: THE dispatch map, spelled out. A lane's `forecast_module` stem is looked up here and nowhere
@@ -217,7 +217,7 @@ def run_monte_carlo_lane(  # noqa: PLR0913 - one keyword per run boundary is the
     return _publish_lane_rows(store, pointers, rows, inputs=request, refusals=refusals)
 
 
-def analog_ensemble_artifact_sha256(store: ObjectStore) -> str | None:
+def analog_ensemble_artifact_sha256(store: ReadOnlyObjectStore) -> str | None:
     """Return the newest Analog Ensemble artifact digest the bucket holds, or `None` when it holds none."""
     digests = sorted(
         key.removeprefix(ANALOG_ENSEMBLE_ARTIFACT_PREFIX).removesuffix(".json")

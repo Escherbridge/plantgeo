@@ -158,3 +158,23 @@ unexported release are different facts and a trainer must not confuse them.
 `condition_envelope` is carried as canonical JSON TEXT rather than an Arrow struct: the envelope's
 key set is an open vocabulary (`ENVELOPE_TERM_SUPPORT`), and a struct would freeze today's seven
 terms into the file's own schema.
+
+
+## The weather-forecast cell inventory is warehouse data, not configuration
+
+`PLANTGEO_ML_FORECAST_CELLS_KEY` names a bucket object holding the cells the lane is fetched for;
+`read_forecast_cells` reads it under `MAX_FORECAST_CELL_INVENTORY_BYTES`. A deployment variable
+holding hundreds of coordinates is a configuration nobody reviews and a lane nobody can correct
+without a redeploy. A turn with no key configured reports the lane `refused` with
+`forecast_cells_unconfigured` and NEVER `skipped`: a lane that will never run must not arrive under
+a word that reads like somebody decided it. A key naming a broken object refuses under
+`ForecastCellInventoryError`, which is a different operator action and so a different type.
+
+## One lane's fault stays in one lane
+
+`_fire_risk_outcome` catches `ObjectStoreError` as this lane's refusal rather than raising the
+turn's `PredictDailyInfrastructureError`. Every lane after it reaches the same bucket through its
+own calls and is perfectly able to say so itself; raising made one lane's bad read end the turn.
+Receipt details carry the stable code `error_code_for` derives from the exception TYPE, never the
+message: a receipt is compared against other receipts, and a detail carrying a key or a wrapped
+provider string is a field no two turns agree on even when they failed the same way.

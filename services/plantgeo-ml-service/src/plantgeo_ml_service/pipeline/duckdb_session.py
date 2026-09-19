@@ -39,6 +39,11 @@ SESSION_TIME_ZONE: Final = "UTC"
 #: asked to expand a prefix. This caps how long that list may be.
 MAX_READ_KEYS: Final = 5_000
 
+#: The filesystems a serving session may NOT reach. httpfs is the whole point of the session; the
+#: local disk is not, and a `read_csv('/etc/passwd')` reachable from a serving query is a file read
+#: the API never meant to offer. Named exactly as DuckDB names the filesystem it disables.
+DISABLED_SERVING_FILESYSTEMS: Final = "LocalFileSystem"
+
 
 class DuckDbSessionError(RuntimeError):
     """Raised when a session cannot be opened, or a read is asked for more keys than it may hold."""
@@ -59,6 +64,14 @@ class DuckDbSession:
         """Return the `s3://` URI for one object key expressed in the frozen partition layout."""
         return f"{self.bucket_uri}/{relative_key}"
 
+    def interrupt(self) -> None:
+        """Stop whatever query this session is running, so a read that timed out actually ends.
+
+        A timeout that only abandons the waiter leaves the query running and its slot held; the
+        ceiling then bounds how many callers are waiting rather than how much work is in flight.
+        """
+        self.connection.interrupt()
+
     def close(self) -> None:
         """Release the connection and the memory it holds."""
         self.connection.close()
@@ -77,11 +90,18 @@ def open_session(
     *,
     settings: Settings | None = None,
     prefix: str = "",
+    serving: bool = False,
 ) -> DuckDbSession:
-    """Open a guarded connection wired to the bucket, with spilling off and both extensions loaded."""
+    """Open a guarded connection wired to the bucket, with spilling off and both extensions loaded.
+
+    `serving=True` additionally seals the session: the local filesystem is disabled and the
+    configuration is locked, so nothing a request reaches can re-enable either one.
+    """
     connection = open_guarded_connection(settings=settings)
     try:
         apply_object_store(connection, credentials)
+        if serving:
+            seal_serving_configuration(connection)
     except Exception:
         connection.close()
         raise
@@ -107,6 +127,21 @@ def open_guarded_connection(*, settings: Settings | None = None) -> duckdb.DuckD
         connection.close()
         raise
     return connection
+
+
+def seal_serving_configuration(connection: duckdb.DuckDBPyConnection) -> None:
+    """Disable the local filesystem and LOCK the configuration, in that order.
+
+    The order is the whole guarantee: `lock_configuration` is one-way, so every `SET` a serving
+    session is allowed must already have happened, and nothing a query reaches can undo the
+    filesystem ban afterwards.
+    """
+    try:
+        connection.execute(
+            f"SET disabled_filesystems={sql_literal(DISABLED_SERVING_FILESYSTEMS)}; SET lock_configuration=true;"
+        )
+    except duckdb.Error as error:
+        raise DuckDbSessionError(f"the serving session could not be sealed: {type(error).__name__}") from None
 
 
 def load_extensions(connection: duckdb.DuckDBPyConnection, *, directory: str) -> None:

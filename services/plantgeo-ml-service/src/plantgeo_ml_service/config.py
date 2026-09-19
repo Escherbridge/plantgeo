@@ -8,7 +8,7 @@ from functools import lru_cache
 from typing import Final, Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, SecretStr, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _BUCKET_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9]$")
@@ -72,6 +72,15 @@ class Settings(BaseSettings):
 
     # Where this service's artifacts, receipts and exported labels live inside the bucket.
     ml_prefix: str = "ml"
+
+    # Which bucket object lists the cells the weather-forecast lane is fetched for. A KEY rather
+    # than the list itself: the inventory is warehouse data with its own lifecycle, and an
+    # environment variable holding a few hundred coordinates is a deployment nobody can review.
+    # Unset is not "run with none" -- the turn reports `forecast_cells_unconfigured` and says so.
+    forecast_cells_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("PLANTGEO_ML_FORECAST_CELLS_KEY", "FORECAST_CELLS_KEY"),
+    )
 
     # Which numeric kernel implementation to dispatch to. `python` is the default and the rollback;
     # `mojo` refuses to start when the built extension is absent. See method/kernels/AGENTS.md.

@@ -44,7 +44,7 @@ from plantgeo_ml_service.pipeline.forecast_lane_bootstrap import (
     write_run_receipt,
 )
 from plantgeo_ml_service.pipeline.object_store import JSON_CONTENT_TYPE
-from plantgeo_ml_service.warehouse.streams import FIRE_RISK_STREAM
+from plantgeo_ml_service.warehouse.streams import FIRE_RISK_STREAM, POINT_QUANTILE
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -56,13 +56,11 @@ if TYPE_CHECKING:
     from plantgeo_ml_service.pipeline.observed_reader import ObservedReader
     from plantgeo_ml_service.warehouse.availability import AvailabilityConfig, AvailabilityRow, EvidenceReceipt
 
-#: One reported quantile. The schema carries `quantile` as a number, so the median is 0.5 and not the
-#: string "p50"; a reader that wants the label renders it from the number.
-MEDIAN_QUANTILE: Final = 0.5
-
-#: The model is a closed-form logistic evaluation, so nothing here draws. The seed is still recorded
-#: on every row, because a lane whose provenance columns are conditional is a lane a reader must
-#: branch on, and the day this model gains an ensemble the column must already be there.
+#: The model is a closed-form logistic evaluation, so nothing here draws: one calibrated value per
+#: cell-day, which is why every row wears `POINT_QUANTILE` rather than an ensemble fraction
+#: (`layer-lanes.md` section 3, amended 2026-09-19). The seed is still recorded on every row,
+#: because a lane whose provenance columns are conditional is a lane a reader must branch on, and
+#: the day this model gains an ensemble the column must already be there.
 DEFAULT_RANDOM_SEED: Final = 0
 ENSEMBLE_SIZE: Final = 1
 
@@ -318,7 +316,7 @@ def _scored_frame(
             pl.lit(run_id, dtype=pl.String).alias("forecast_run_id"),
             pl.lit(random_seed, dtype=pl.Int64).alias("random_seed"),
             pl.lit(ENSEMBLE_SIZE, dtype=pl.Int32).alias("ensemble_size"),
-            pl.lit(MEDIAN_QUANTILE, dtype=pl.Float64).alias("quantile"),
+            pl.lit(POINT_QUANTILE, dtype=pl.String).alias("quantile"),
         )
         .select(_PARTITION_COLUMNS)
     )
@@ -477,7 +475,7 @@ def _empty_partition_frame() -> pl.DataFrame:
             "ensemble_size": pl.Int32,
             "horizon_days": pl.Int64,
             "issued_on": pl.Date,
-            "quantile": pl.Float64,
+            "quantile": pl.String,
         }
     )
 
@@ -527,8 +525,8 @@ __all__ = [
     "ARTIFACT_PREFIX",
     "DEFAULT_RANDOM_SEED",
     "ENSEMBLE_SIZE",
-    "MEDIAN_QUANTILE",
     "NO_ARTIFACT_SENTINEL",
+    "POINT_QUANTILE",
     "PREDICTION_RECEIPT_PREFIX",
     "SCRATCH_PREFIX_ROOT",
     "FireRiskDailyError",

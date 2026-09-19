@@ -5,23 +5,30 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 
 from plantgeo_ml_service.pipeline.strategy_label_mapping import preflight_strategy_label_source_mapping
 from plantgeo_ml_service.pipeline.strategy_selection import load_strategy_label_bundle, train_strategy_models
 
-#: Exit code for a verb that is wired but not yet implemented. 3, not 2: click spends 2 on its own
-#: usage errors and the preflight already mirrors the sibling's 2, so a caller could not tell the
-#: three apart. A wrapper branches on this to distinguish "not built yet" from "you called it wrong".
-NOT_IMPLEMENTED_EXIT_CODE = 3
-
-#: The one payload every unimplemented verb prints, so a caller can branch on it.
-NOT_IMPLEMENTED_PAYLOAD = {"error": "not_implemented_until_phase_2"}
+if TYPE_CHECKING:
+    from plantgeo_ml_service.pipeline.availability_publisher import PointerStore
+    from plantgeo_ml_service.pipeline.duckdb_session import DuckDbSession
+    from plantgeo_ml_service.pipeline.object_store import ObjectStore
+    from plantgeo_ml_service.pipeline.observed_reader import ObservedReader
 
 #: Exit code for a preflight that ran to completion and found the mapping not ready to use.
 PREFLIGHT_NOT_READY_EXIT_CODE = 2
+
+#: Exit code for a turn that could not reach the bucket at all. 4, not 1: click spends 1 on an
+#: unhandled exception and 2 on its own usage errors, so a scheduler that pages on "the store is
+#: gone" must be able to tell that apart from "you called it wrong". A turn where every lane
+#: refused is NOT this: it exits 0, because a bounded turn is a completed turn (owner 2026-09-04).
+INFRASTRUCTURE_EXIT_CODE = 4
 
 
 @click.group()
@@ -59,11 +66,53 @@ def strategy_train(label_bundle: Path, output_artifact: Path) -> None:
 
 
 @cli.command("predict-daily")
+@click.option("--issued-on", type=click.DateTime(formats=["%Y-%m-%d"]), default=None, help="Issue day, default today.")
+@click.option("--dry-run-prefix", default=None, help="Write under ml/scratch/<x>/ instead of the published lanes.")
+@click.option("--lane", "lane_slugs", multiple=True, help="Run only these lanes; repeatable, default all of them.")
 @click.pass_context
-def predict_daily(context: click.Context) -> None:
-    """Run the daily fire-risk, Monte Carlo and analog-ensemble lanes (phase 2)."""
-    click.echo(json.dumps(NOT_IMPLEMENTED_PAYLOAD, sort_keys=True))
-    context.exit(NOT_IMPLEMENTED_EXIT_CODE)
+def predict_daily(
+    context: click.Context,
+    issued_on: datetime | None,
+    dry_run_prefix: str | None,
+    lane_slugs: tuple[str, ...],
+) -> None:
+    """Run the daily fire-risk, Monte Carlo, analog-ensemble and weather-forecast lanes.
+
+    Exit codes: 0 for a bounded turn, INCLUDING one where every lane refused; 2 for a usage error
+    such as an unknown lane slug; 4 when the bucket itself could not be reached, which is the only
+    failure a scheduler should page on.
+    """
+    from plantgeo_ml_service.config import get_settings  # noqa: PLC0415 - keeps `--help` free of DuckDB
+    from plantgeo_ml_service.pipeline.predict_daily import (  # noqa: PLC0415 - see the import above
+        PredictDailyInfrastructureError,
+        run_predict_daily,
+    )
+
+    day = issued_on.date() if issued_on is not None else datetime.now(tz=UTC).date()
+    forecast_cells_key = get_settings().forecast_cells_key
+    try:
+        runtime = open_runtime()
+    except ValueError as error:
+        click.echo(json.dumps({"error": "object_store_unconfigured", "detail": str(error)}, sort_keys=True), err=True)
+        context.exit(INFRASTRUCTURE_EXIT_CODE)
+    try:
+        receipt = run_predict_daily(
+            runtime.store,
+            issued_on=day,
+            dry_run_prefix=dry_run_prefix,
+            reader=runtime.reader,
+            pointers=runtime.pointers,
+            lanes=list(lane_slugs) or None,
+            forecast_cells_key=forecast_cells_key,
+        )
+    except ValueError as error:
+        raise click.BadParameter(str(error)) from error
+    except PredictDailyInfrastructureError as error:
+        click.echo(json.dumps({"error": "object_store_unreachable", "detail": str(error)}, sort_keys=True), err=True)
+        context.exit(INFRASTRUCTURE_EXIT_CODE)
+    finally:
+        runtime.close()
+    click.echo(receipt.to_canonical_json())
 
 
 @cli.command("serve")
@@ -80,6 +129,41 @@ def serve(host: str | None, port: int | None) -> None:
         port=port or settings.sanic_port,
         debug=settings.sanic_debug,
         single_process=True,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class PredictRuntime:
+    """The handles one turn runs through, built once from settings and closed together."""
+
+    store: ObjectStore
+    pointers: PointerStore
+    reader: ObservedReader
+    session: DuckDbSession
+
+    def close(self) -> None:
+        """Release the DuckDB session the reader borrowed, whatever the turn did."""
+        self.session.close()
+
+
+def open_runtime() -> PredictRuntime:
+    """Build the bucket, the pointer store and the leakage-gated reader one turn runs through."""
+    from plantgeo_ml_service.config import get_settings  # noqa: PLC0415 - see `predict_daily`
+    from plantgeo_ml_service.pipeline.availability_publisher import BotoPointerStore  # noqa: PLC0415 - see above
+    from plantgeo_ml_service.pipeline.duckdb_session import open_session  # noqa: PLC0415 - see above
+    from plantgeo_ml_service.pipeline.object_store import BotoObjectStoreBackend, ObjectStore  # noqa: PLC0415 - above
+    from plantgeo_ml_service.pipeline.observed_reader import ObservedReader  # noqa: PLC0415 - see above
+
+    settings = get_settings()
+    credentials = settings.require_object_store()
+    backend = BotoObjectStoreBackend.from_credentials(credentials)
+    store = ObjectStore(backend=backend, prefix=settings.object_store_prefix)
+    session = open_session(credentials, settings=settings, prefix=settings.object_store_prefix)
+    return PredictRuntime(
+        store=store,
+        pointers=BotoPointerStore(bucket=credentials.bucket, client=backend.client),
+        reader=ObservedReader(store=store, session=session),
+        session=session,
     )
 
 

@@ -459,14 +459,63 @@
         "four modules over the 600-line ceiling"
       ],
       "coordinator_decision": "merge rule is a property of the field: add a RowSelect(order_by, descending) GridAggregation strategy to the shared vocabulary for probability fields (fire-risk worst-cell select); quantile fields keep the per-(quantile,horizon,run) mean; provider variables take the mean with vector recomposition; one foundation/lattice.py in integer form imported by all three lanes",
-      "sound_do_not_relitigate": "leakage discipline, refusal-not-fabrication, weather-forecast schema fidelity, precipitation start-of-hour, 429 never retried, bounds mid-read"
+      "sound_do_not_relitigate": "leakage discipline, refusal-not-fabrication, weather-forecast schema fidelity, precipitation start-of-hour, 429 never retried, bounds mid-read",
+      "disposition": "fix batch applied (B1-B2, M2-M7, minors, signal METHOD_NAME); re-sweep 604 passed; receipt 5f962b48 verified; committed bc08eca9 after splitting the concurrent session's mixed docs commit e78c6948 into a6abc0fa (their two files, byte-identical) + bc08eca9 (mine); pushed; deployed SUCCESS a6d15ad3"
+    },
+    "phase2d": {
+      "reviewer": "oh-my-claudecode:code-reviewer (opus)",
+      "reviewed_on": "2026-09-19",
+      "verdict": "CHANGES-REQUIRED",
+      "blockers": [
+        "B1 both new lanes enter registered_census_lanes and test_gap_repair requires them in REPAIR_EXCLUSIONS (agri has no writer)",
+        "B2 EXPECTED_REGISTERED_CENSUS_LANES pinned at 32",
+        "B3 the census walks kind=observed for fire-risk, a forecast-only lane: permanent red gap; get_stream_schema('fire-risk','observed') returns a schema where the ML service refuses",
+        "B4 schema equality between the three copied modules is prose, not a sibling-reading test"
+      ],
+      "majors": [
+        "weather_forecast.py header overclaims base_non_null housing"
+      ],
+      "minors": [
+        "docs/lanes/fire-risk.md horizon 14d vs layer-lanes 30d uncited",
+        "layer-region-binding test comment names land-context as the one exception",
+        "export --prefix outside ml/ raises a bare ValueError; apply defaults to write"
+      ],
+      "sound": "region vocabulary in five places, unbound not not_federated, no URLs under src, skip-not-error path resolution, export idempotence, SQL conventions",
+      "decision": "fire-risk and weather-forecast stay OUT of the slider census (NON_SLIDER_REGISTERED_LAYERS) and in REPAIR_EXCLUSIONS until a kind=forecast census exists and the ML publisher is warm; get_stream_schema for a forecast-only stream's observed side refuses like the ML service; the 14-day fire-risk horizon is cited as a declared deviation in docs/lanes/fire-risk.md and layer-lanes section 2"
+    },
+    "phase2c": {
+      "reviewer": "oh-my-claudecode:security-reviewer (opus), adversarial + security",
+      "reviewed_on": "2026-09-19",
+      "verdict": "CHANGES-REQUIRED",
+      "blockers": [
+        "B1 asyncio.timeout around to_thread cannot cancel the DuckDB read and releases the semaphore while the thread runs; MAX_CONCURRENT_READS bounds nothing under load; need pool-as-ceiling plus connection.interrupt()"
+      ],
+      "majors": [
+        "M2 size ceilings checked after full Body.read(); need head() pre-check or Range-bounded read",
+        "M3 artifacts listing GETs up to 200 objects serially per request",
+        "M4 planes hold a write-capable ObjectStore and DuckDB has unrestricted local filesystem access; need read-only facade + disabled_filesystems=LocalFileSystem + lock_configuration",
+        "M5 fire-risk and analogs read from listings, not the availability pointer",
+        "M6 cron turn never runs weather-forecast (no forecast_cells source)",
+        "M7 conflicting artifact digests reported as not-model-backed instead of artifact_provenance_conflicted"
+      ],
+      "minors": [
+        "object keys, env var names and raw exception text in public bodies",
+        "nearest-cell via SQL box not foundation/lattice",
+        "published_horizon docstring overstates interior gaps",
+        "dead code",
+        "_fire_risk_outcome breaks lane isolation on ObjectStoreError",
+        "receipt carries raw exception text"
+      ],
+      "security_posture": "input boundary strong (extra=forbid, closed vocabularies, bound params, no request text reaches a key/SQL/path); D5 fail-closed; CORS config-only; exposure is resource bounding, not injection"
     }
   },
   "follow_ups": [
     "models/forecasting.py and models/strategy_selection.py declare SQLAlchemy models for tables absent from the baseline; a separate cleanup once test_metadata_contract's expectations are known",
     "Mojmelo GBDT as a second fire-risk model family once the logistic baseline has a backtest receipt",
     "shared parquet-contract package if a third service ever needs the path grammar (two copies + parity test is the ceiling)",
-    "Weather-forecast (Open-Meteo NWP) lane is NOW THIS TRACK'S (owner 2026-09-19). Agri deletes its inert packages; lift from the tree at c922509d (code commits: e66dbc36 schema, c9c5256c ingest domain, a1b3a497 verifier fixes; c922509d itself is docs-only, so diff those three, not it): warehouse/schemas/weather_forecast.py (19-column frozen schema, grain cell_id/valid_time/variable, missing_reason enum, wind as u/v) and ingest/weather_forecast/ (bounded Open-Meteo single-run fetch: 64 MiB / 120 s, 429 -> OpenMeteoRateLimitError no retry, u = -speed*sin(dir), precipitation valid_time shifted one hour earlier). Plan: .omc/ultrapilot-20260918/W8-E-PLAN.md (column contract, four-rung ladder, availability keying, five slices; the codex branch is synthetic-fixture-only). Live probe 2026-09-19 (.omc/research/forecast-s3-probe-20260919/, gfs_global run 2026-09-18T00:00) SETTLED both conventions: multi-location requests return a JSON array in request order with each object's snapped coordinates (verify pairing, do not trust order); the hourly precipitation timestamp labels the START of its accumulation hour (00:00..23:00 sums reproduce the provider's daily precipitation_sum exactly at four locations over three days), so the one-hour-earlier shift in ingest/weather_forecast/open_meteo.py is WRONG and must be deleted when lifting, which also removes the S7 negative lead_hours row. Wind u/v, calm handling, bounded fetch and 429 handling were judged sound. Open style findings S6 (duplicated variable catalogue, no equality test) and S7 (negative lead_hours row before model_init_time) in .omc/ultrapilot-20260918/STYLE-REVIEW-W8.md. Needs a spec amendment: which kind= provider-issued projections use (D2 says the ML service writes kind=forecast; layer-lanes.md \u00a73 provenance columns assume an ensemble) and an httpx-capable pipeline layer in the ML service. Open-Meteo's own docs say the hourly precipitation value sums the PRECEDING hour; the provider's daily precipitation_sum proves it is the FOLLOWING hour, so do not trust that doc line either. Also to retire or re-point when taking the lane: conductor/tracks/weather_forecast_parquet_lane_20260911/ (lists the deleted schema as a future artifact) and the weather-forecast row in conductor/RUNBOOK.md."
+    "Weather-forecast (Open-Meteo NWP) lane is NOW THIS TRACK'S (owner 2026-09-19). Agri deletes its inert packages; lift from the tree at c922509d (code commits: e66dbc36 schema, c9c5256c ingest domain, a1b3a497 verifier fixes; c922509d itself is docs-only, so diff those three, not it): warehouse/schemas/weather_forecast.py (19-column frozen schema, grain cell_id/valid_time/variable, missing_reason enum, wind as u/v) and ingest/weather_forecast/ (bounded Open-Meteo single-run fetch: 64 MiB / 120 s, 429 -> OpenMeteoRateLimitError no retry, u = -speed*sin(dir), precipitation valid_time shifted one hour earlier). Plan: .omc/ultrapilot-20260918/W8-E-PLAN.md (column contract, four-rung ladder, availability keying, five slices; the codex branch is synthetic-fixture-only). Live probe 2026-09-19 (.omc/research/forecast-s3-probe-20260919/, gfs_global run 2026-09-18T00:00) SETTLED both conventions: multi-location requests return a JSON array in request order with each object's snapped coordinates (verify pairing, do not trust order); the hourly precipitation timestamp labels the START of its accumulation hour (00:00..23:00 sums reproduce the provider's daily precipitation_sum exactly at four locations over three days), so the one-hour-earlier shift in ingest/weather_forecast/open_meteo.py is WRONG and must be deleted when lifting, which also removes the S7 negative lead_hours row. Wind u/v, calm handling, bounded fetch and 429 handling were judged sound. Open style findings S6 (duplicated variable catalogue, no equality test) and S7 (negative lead_hours row before model_init_time) in .omc/ultrapilot-20260918/STYLE-REVIEW-W8.md. Needs a spec amendment: which kind= provider-issued projections use (D2 says the ML service writes kind=forecast; layer-lanes.md \u00a73 provenance columns assume an ensemble) and an httpx-capable pipeline layer in the ML service. Open-Meteo's own docs say the hourly precipitation value sums the PRECEDING hour; the provider's daily precipitation_sum proves it is the FOLLOWING hour, so do not trust that doc line either. Also to retire or re-point when taking the lane: conductor/tracks/weather_forecast_parquet_lane_20260911/ (lists the deleted schema as a future artifact) and the weather-forecast row in conductor/RUNBOOK.md.",
+    "fire-risk rows write quantile='point' (not 'p50') per the layer-lanes.md section 3 amendment of 2026-09-19; fire_risk_daily.py and its tests still write p50 as of bc08eca9; change in the next ML-service sweep and note the wire change to the web session before phase 4",
+    "layer-lanes.md section 2 release_series carve-out and section 3 deterministic-product rule were amended 2026-09-19 (this track); the weather-forecast lane's justification now lives in the contract, not only in the schema header"
   ],
   "railway": {
     "service": "plantgeo-ml",
@@ -480,7 +529,8 @@
     "deployments": {
       "c125e2c2 (c922509d)": "FAILED at HEALTHCHECK: every sanic-ext worker died with NameError 'Request' is not defined (TYPE_CHECKING-only import of Sanic annotation names in app.py)",
       "21dde6c5 (b1f02f95)": "SUCCESS 2026-09-19T11:55:58Z after the runtime-import hotfix; /ready green means the four OBJECT_STORE_* references resolved and head_bucket answered",
-      "095ed2a3 (0290a1e6)": "SUCCESS 2026-09-19T12:44:49Z, phase 2A image"
+      "095ed2a3 (0290a1e6)": "SUCCESS 2026-09-19T12:44:49Z, phase 2A image",
+      "a6d15ad3 (bc08eca9)": "SUCCESS 2026-09-19T14:07:59Z, phase 2B image"
     },
     "live_proof_2026_09_19T12_01Z": {
       "/health": 200,
@@ -488,5 +538,16 @@
       "/api/v1/ml/artifacts": "501 not_implemented_until_phase_2 (placeholder by design)",
       "note": "PORT pinned to 8000 because the generated domain targets 8000 while Railway injects PORT=8080; without the pin the healthcheck passed but the domain returned 502"
     }
+  },
+  "phase4_web_notes_2026_09_19": {
+    "owner_of_web_work": "concurrent session, wave 12 (or a/b pulled into wave 11); starts only after 2C lands and response shapes are sent",
+    "d_client": "PLANTGEO_ML_SERVICE_URL from config only, never a literal URL under src/** even in comments (check:data-boundary is Docker build step 6; broke the frontend for 16 min on 2026-09-18); route through src/lib/server/http/bounded-upstream (byte cap + timeout); a cold or down ML service is a governed absence with an ml-service reason string, never a throw",
+    "a_freshness": "forecastHorizonDays must be a MEASUREMENT of the published release, never declared-horizon arithmetic (ceiling - frontier = declared horizon is a constant, the latest==latest tautology): derive it as max(valid_time or valid_day) present in the CURRENT availability generation minus its issue day, so a truncated or partially published run reads short. The ML API forecast-summary exposes it as published_horizon_days computed from the generation.",
+    "c_provenance_per_variant": {
+      "monte_carlo_and_anen": "all six columns meaningful (forecast_run_id, random_seed, ensemble_size, horizon_days, issued_on, quantile)",
+      "fire_risk": "forecast_run_id, horizon_days, issued_on, quantile=p50 and model_artifact_sha256 are meaningful; random_seed and ensemble_size=1 are recorded for schema uniformity and must render as not-applicable, not empty",
+      "nwp_weather_forecast": "kind=observed; none of the six apply; render model_init_time, lead_hours, valid_time and the source receipt sha instead"
+    },
+    "b_variant_union": "payload additive; ForecastVariant members fire-risk and nwp opt-in from the web side so an older frontend degrades to variant_unavailable (time-slider-store.ts:182) rather than crashing"
   }
 }

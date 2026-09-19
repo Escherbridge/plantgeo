@@ -18,7 +18,6 @@ from plantgeo_ml_service import app as app_module
 from plantgeo_ml_service.app import (
     bucket_readiness_reason,
     create_app,
-    list_artifacts,
     liveness,
     readiness,
 )
@@ -30,7 +29,6 @@ if TYPE_CHECKING:
 
 HTTP_OK = 200
 HTTP_SERVICE_UNAVAILABLE = 503
-HTTP_NOT_IMPLEMENTED = 501
 
 #: The handlers ignore their request argument; this names that rather than hiding it behind a mock.
 NO_REQUEST = cast("Request", None)
@@ -117,17 +115,14 @@ async def test_a_bucket_that_never_answers_reads_as_a_timeout_not_as_unreachable
     assert _payload(response) == {"status": "not_ready", "reason": "object_store_timeout"}
 
 
-async def test_the_artifacts_route_refuses_until_phase_two() -> None:
-    response = await list_artifacts(NO_REQUEST)
-
-    assert response.status == HTTP_NOT_IMPLEMENTED
-    assert _payload(response) == {"error": "not_implemented_until_phase_2"}
-
-
-def test_the_factory_mounts_health_readiness_and_the_versioned_group() -> None:
+def test_the_factory_mounts_health_readiness_and_the_four_versioned_reads() -> None:
+    """Phase 2C replaced the 501 artifacts placeholder; `tests/test_routes_*.py` cover behaviour."""
     application = create_app()
     paths = {route.uri for route in application.router.routes}
 
     assert "/health" in paths
     assert "/ready" in paths
-    assert any(path.startswith("/api/v1/ml") for path in paths)
+    assert "/api/v1/ml/fire-risk" in paths
+    assert "/api/v1/ml/analogs" in paths
+    assert "/api/v1/ml/forecast-summary" in paths
+    assert any(path.startswith("/api/v1/ml/artifacts") for path in paths)

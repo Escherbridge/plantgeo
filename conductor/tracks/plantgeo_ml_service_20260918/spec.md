@@ -141,7 +141,13 @@ are small community projects that may lag the 1.0 API.
   `day=` the provider issue date and future-ness in a `valid_time` column (the drought pattern).
   Provider runs are deterministic, so `kind=forecast`'s ensemble provenance (`random_seed`,
   `ensemble_size`) would be invented; `kind=forecast` under this slug stays reserved for an
-  ML-corrected product. Two probe-settled conventions (`.omc/research/forecast-s3-probe-20260919/`):
+  ML-corrected product. **This shape was wave-8 review blocker B2 while it lived in agri** (an
+  issue-day file holding hour-0 and hour-384 rows under `kind=observed` against `layer-lanes.md`
+  §2's "never blend"); the owner's move changed ownership, not the rule, so the rule itself is
+  amended: `layer-lanes.md` §2 now carries an explicit `release_series` carve-out (issue-date day
+  axis, `valid_time` inside the file, §3's ensemble provenance not required, release provenance
+  instead), and §3 gains the deterministic-product rule (`quantile = "point"`), both dated
+  2026-09-19. Two probe-settled conventions (`.omc/research/forecast-s3-probe-20260919/`):
   multi-location responses are a JSON array in request order whose pairing must be verified by the
   snapped coordinates, and the hourly precipitation timestamp labels the START of its accumulation
   hour (the provider's own daily sums prove it; Open-Meteo's docs say otherwise and are wrong), so
