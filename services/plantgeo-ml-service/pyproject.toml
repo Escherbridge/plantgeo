@@ -20,6 +20,10 @@ dependencies = [
     "duckdb>=1.1,<2",
     "boto3>=1.35,<2",
     "scikit-learn>=1.5,<2",
+    # The IANA time-zone database as a package. `pa.timestamp(tz="UTC")` decodes through
+    # `zoneinfo`, which on Windows has no OS database to fall back to and on Linux inherits
+    # whatever the base image ships. Declaring it pins ONE tz database for every host.
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]

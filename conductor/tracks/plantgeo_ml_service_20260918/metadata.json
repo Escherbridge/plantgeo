@@ -30,7 +30,8 @@
     "cutover": "hard cut in one push; git history is the archive",
     "dev_env": "WSL2 + pixi locally; Mojo also compiled in the Railway Docker build; Python reference for every kernel",
     "bookkeeping": "supersedes ml_mojo_conversion_20260823; service owns its own RUNBOOK.md; one row in the main RUNBOOK",
-    "training": "OUT OF SCOPE \u2014 owner finalises data in a separate session"
+    "training": "OUT OF SCOPE \u2014 owner finalises data in a separate session",
+    "projections_2026_09_19": "Owner via the concurrent session, 2026-09-19: 'let ml take over any projections, they don't need to be in the lanes.' The weather-forecast (Open-Meteo NWP) product moves to the ML service; agri-data-service carries no projection lanes. Supersedes the agreed weather-forecast slug split of earlier the same day."
   },
   "partitions": {
     "computed_at": "2026-09-18T17:45:00+00:00",
@@ -242,7 +243,7 @@
         "depends_on": [
           "p2a-parquet-io"
         ],
-        "note": "lane_registry.py is owned by vegetation_type_landfire_evt_20260918 p1d until that slice lands; re-verify before launching"
+        "note": "2026-09-19: the concurrent session reports no vegetation_type p1d-registration in flight; lane_registry.py is free as far as it knows. Still re-verify with git status and ListAgents before launching."
       },
       {
         "id": "p2c-api",
@@ -385,12 +386,77 @@
         "ml_service": "format/lint/mypy/pytest PASS, 176 passed",
         "agri_data_service": "check.py all PASS; pytest 4475 passed, 88 skipped (no AGRI_TEST_DATABASE_URL), 1 strict xfail",
         "evidence": "evidence/phase1-sweep-20260918.md"
+      },
+      "deploy": {
+        "pushed_as": "5c8c34c4 (commits 1986300a, b79101c6, 5c8c34c4)",
+        "pushed_at": "2026-09-19T00:49Z",
+        "verdict": "PASS on all four existing services",
+        "deployments": {
+          "plantgeo-martin": "d75608e3",
+          "plantgeo-parquet-api": "3e266966",
+          "plantgeo-job-executor": "d93918c5",
+          "plantgeo-main": "632fea65"
+        },
+        "evidence": "conductor/tracks/platform_experience_qa_20260911/evidence/release-checkpoint-20260919-5c8c34c4.md",
+        "notes": "no ImportError for agri_data_service.method in parquet-api or job-executor startup; no lane logged a missing forecast module; plantgeo-ml Railway service not yet created (owner action)"
+      },
+      "hotfix": {
+        "commit": "b1f02f95",
+        "pushed_on": "2026-09-19",
+        "what": "app.py imports Request/HTTPResponse at runtime (# noqa: TC002, the sibling's convention); tests/test_route_annotations.py evaluates every route handler's annotations the way sanic-ext does and fails on the previous app.py",
+        "lesson": "a TC003/TC002 lint auto-fix that moves Sanic annotation names under TYPE_CHECKING passes ruff, mypy and pytest and kills the worker in production"
       }
+    },
+    "phase2a": {
+      "reviewer": "oh-my-claudecode:code-reviewer (opus)",
+      "reviewed_on": "2026-09-19",
+      "verdict": "CHANGES-REQUIRED",
+      "blockers": [
+        "B1 conform_to_stream_schema never sort_by(sort_columns): bytes depend on caller row order",
+        "B2 write_partition skips GovernedAbsenceConflict and part-0 clear_completion_marker retraction guards; write_absence_marker skips the mirror checks",
+        "B3 pointer store prefix independent of ObjectStore prefix: a scratch dry-run can advance the production _LATEST.json"
+      ],
+      "majors": [
+        "M4 lost-race retry re-puts the same payload with a stale prior_generation_key (lost update)",
+        "M5 IfMatch honoured is assumed; 200-on-ignored-IfMatch reported as advanced; add read-back or capability probe",
+        "M6 _require_rows_published_by and nature check not reproduced; no bootstrap marker written for a kind=forecast root so acceptance 5.2 needs more than p2a",
+        "M7 write_partition takes the schema as a parameter instead of deriving it from (layer, kind)",
+        "M8 pending/quarantine retry keys and bootstrap marker key not in any fixture; lost race writes no pending marker"
+      ],
+      "minors": [
+        "M9 unbounded pointer Body.read()",
+        "M10 plain put instead of put_immutable adopt-exact-replay",
+        "M11 explicit parquet version 2.6 untested",
+        "M12 metadata-value parity weakening accepted"
+      ],
+      "clean": "D5, lattice, six-positional rule, FR-5 schema, lane clocks, module ceilings",
+      "disposition": "fix batch after the 2A monitor sweep; re-sweep once; receipt; push"
     }
   },
   "follow_ups": [
     "models/forecasting.py and models/strategy_selection.py declare SQLAlchemy models for tables absent from the baseline; a separate cleanup once test_metadata_contract's expectations are known",
     "Mojmelo GBDT as a second fire-risk model family once the logistic baseline has a backtest receipt",
-    "shared parquet-contract package if a third service ever needs the path grammar (two copies + parity test is the ceiling)"
-  ]
+    "shared parquet-contract package if a third service ever needs the path grammar (two copies + parity test is the ceiling)",
+    "Weather-forecast (Open-Meteo NWP) lane is NOW THIS TRACK'S (owner 2026-09-19). Agri deletes its inert packages; lift from the tree at c922509d (code commits: e66dbc36 schema, c9c5256c ingest domain, a1b3a497 verifier fixes; c922509d itself is docs-only, so diff those three, not it): warehouse/schemas/weather_forecast.py (19-column frozen schema, grain cell_id/valid_time/variable, missing_reason enum, wind as u/v) and ingest/weather_forecast/ (bounded Open-Meteo single-run fetch: 64 MiB / 120 s, 429 -> OpenMeteoRateLimitError no retry, u = -speed*sin(dir), precipitation valid_time shifted one hour earlier). Plan: .omc/ultrapilot-20260918/W8-E-PLAN.md (column contract, four-rung ladder, availability keying, five slices; the codex branch is synthetic-fixture-only). Live probe 2026-09-19 (.omc/research/forecast-s3-probe-20260919/, gfs_global run 2026-09-18T00:00) SETTLED both conventions: multi-location requests return a JSON array in request order with each object's snapped coordinates (verify pairing, do not trust order); the hourly precipitation timestamp labels the START of its accumulation hour (00:00..23:00 sums reproduce the provider's daily precipitation_sum exactly at four locations over three days), so the one-hour-earlier shift in ingest/weather_forecast/open_meteo.py is WRONG and must be deleted when lifting, which also removes the S7 negative lead_hours row. Wind u/v, calm handling, bounded fetch and 429 handling were judged sound. Open style findings S6 (duplicated variable catalogue, no equality test) and S7 (negative lead_hours row before model_init_time) in .omc/ultrapilot-20260918/STYLE-REVIEW-W8.md. Needs a spec amendment: which kind= provider-issued projections use (D2 says the ML service writes kind=forecast; layer-lanes.md \u00a73 provenance columns assume an ensemble) and an httpx-capable pipeline layer in the ML service. Open-Meteo's own docs say the hourly precipitation value sums the PRECEDING hour; the provider's daily precipitation_sum proves it is the FOLLOWING hour, so do not trust that doc line either. Also to retire or re-point when taking the lane: conductor/tracks/weather_forecast_parquet_lane_20260911/ (lists the deleted schema as a future artifact) and the weather-forecast row in conductor/RUNBOOK.md."
+  ],
+  "railway": {
+    "service": "plantgeo-ml",
+    "service_id": "c66ce1ba-7654-4d5a-b7a8-84823765944a",
+    "project": "Aevani 6faaf3ea-ac46-4c8b-bbfe-1351dbb9d990",
+    "environment": "production b7cfa813-8a5c-4fcd-80f2-cab736d840a7",
+    "created_on": "2026-09-19",
+    "root_directory": "/services/plantgeo-ml-service",
+    "variables": "OBJECT_STORE_* and CORS_ORIGINS referenced from plantgeo-parquet-api; PLANTGEO_ML_KERNELS=python; no DATABASE variable by design; PORT=8000",
+    "domain": "plantgeo-ml-production.up.railway.app",
+    "deployments": {
+      "c125e2c2 (c922509d)": "FAILED at HEALTHCHECK: every sanic-ext worker died with NameError 'Request' is not defined (TYPE_CHECKING-only import of Sanic annotation names in app.py)",
+      "21dde6c5 (b1f02f95)": "SUCCESS 2026-09-19T11:55:58Z after the runtime-import hotfix; /ready green means the four OBJECT_STORE_* references resolved and head_bucket answered"
+    },
+    "live_proof_2026_09_19T12_01Z": {
+      "/health": 200,
+      "/ready": "200 {status: ok} (bucket head answered through the referenced credentials)",
+      "/api/v1/ml/artifacts": "501 not_implemented_until_phase_2 (placeholder by design)",
+      "note": "PORT pinned to 8000 because the generated domain targets 8000 while Railway injects PORT=8080; without the pin the healthcheck passed but the domain returned 502"
+    }
+  }
 }

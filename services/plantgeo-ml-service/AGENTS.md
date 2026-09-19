@@ -17,8 +17,13 @@ foundation -> method -> warehouse -> pipeline -> planes -> interface
   (estimators), `monte_carlo/` (seeded ensemble forecasters) and `kernels/` (numeric cores with a
   Python reference and, from phase 3, a Mojo implementation). `ml` and `monte_carlo` are siblings
   that never import each other; `kernels` may import `foundation` only.
-- **`warehouse/` (L2)** pinned Arrow schemas for the streams read and written.
-- **`pipeline/` (L3)** object-store I/O, leakage-gated feature building, daily lane orchestration.
+- **`warehouse/` (L2)** pinned Arrow schemas for the streams read and written (`streams.py`), each
+  lane's publication clock (`lanes.py`), and the availability generation and pointer documents
+  (`availability.py`).
+- **`pipeline/` (L3)** object-store I/O (`object_store.py`), the bounded DuckDB session
+  (`duckdb_session.py`), the leakage-gated observed reader (`observed_reader.py`), the availability
+  publisher (`availability_publisher.py`), the expert label reader (`expert_labels.py`), and from
+  phase 2B feature building and daily lane orchestration.
 - **`planes/` (L4)** bounded readers and the Sanic blueprints.
 - **`interface/` (L5)** the `plantgeo-ml` click adapter. Outermost; nothing imports it.
 
@@ -37,11 +42,22 @@ artifacts (canonical JSON, never pickle), receipts and predictions all live in t
 `ml/` prefix or a lane's `kind=forecast` stream.
 
 **Parity, not import (spec section 4).** This service never imports `agri_data_service`. Knowledge
-the two must agree on -- the canonical serializer, the custody guards, and from phase 2 the
-object-key grammar and the stream schemas -- is COPIED, and each copy is pinned by a parity test that
-reads the sibling's module from the monorepo and asserts identical output. That is what lets the two
-deploy independently while making drift fail a sweep instead of corrupting a checksum. See
-`tests/AGENTS.md` for why each parity test asserts twice.
+the two must agree on -- the canonical serializer, the custody guards, and since phase 2A the
+object-key grammar, the marker payloads, the stream schemas, the lane clocks and the availability
+documents -- is COPIED, and each copy is pinned by a parity test that reads the sibling's module from
+the monorepo and asserts identical output. That is what lets the two deploy independently while
+making drift fail a sweep instead of corrupting a checksum. See `tests/AGENTS.md` for why each
+parity test asserts twice, and for the one value set that cannot cross.
+
+**Writing a partition does not publish it (spec FR-4a).** No forecast day is selectable until its
+availability generation and pointer exist at every rung of the ladder. `pipeline/object_store.py`
+writes objects; `pipeline/availability_publisher.py` is what makes a day readable, and acceptance
+reads back through agri-data-service's `parquet_ops/availability_coverage.py`, never a raw listing.
+
+**A feature never reads past its producer's clock.** `warehouse/lanes.py` carries each lane's
+publication lag; `pipeline/observed_reader.py` refuses, by name, any window that reaches past
+`as_of - lag`. It refuses rather than narrowing the window, because a quietly shorter window scores
+better than the live lane ever can.
 
 ## Where rationale lives
 

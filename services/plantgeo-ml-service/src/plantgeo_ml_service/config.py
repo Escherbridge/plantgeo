@@ -12,6 +12,11 @@ from pydantic import BaseModel, ConfigDict, SecretStr, field_validator, model_va
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _BUCKET_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9]$")
+_DUCKDB_MEMORY_LIMIT_PATTERN = re.compile(r"^\d+(?:\.\d+)?(?:B|KB|MB|GB|TB|KiB|MiB|GiB|TiB)$")
+
+#: A daily run is one bounded pass, not a serving pool. More threads buy nothing and multiply the
+#: per-thread buffers against the same 2 GB ceiling.
+MAX_DUCKDB_THREAD_COUNT: Final = 8
 
 #: Substrings that mark an environment variable as naming a database connection. `DATABASE_URL`
 #: alone missed libpq's own names (`PGHOST`, `PGDATABASE`) and the DSN spellings the sibling's
@@ -72,6 +77,15 @@ class Settings(BaseSettings):
     # `mojo` refuses to start when the built extension is absent. See method/kernels/AGENTS.md.
     kernels: KernelImplementation = "python"
 
+    # DuckDB reads Parquet through httpfs. The ceiling is the whole non-functional budget from the
+    # spec (a daily run fits in 2 GB) and the spill directory is pinned to zero in code, never here:
+    # with spilling on, an over-budget query eats the disk instead of raising in a second.
+    duckdb_memory_limit: str = "2GB"
+    duckdb_thread_count: int = 2
+    # Where the image pre-installs httpfs and spatial. Both are LOADED, never INSTALLED, so a
+    # missing extension says so on the first read instead of fetching from the network mid-run.
+    duckdb_extension_directory: str = "/opt/duckdb-extensions"
+
     # A container binds every interface; Railway's proxy is the only thing in front of it.
     sanic_host: str = "0.0.0.0"
     sanic_port: int = 8000
@@ -99,6 +113,23 @@ class Settings(BaseSettings):
         if not _BUCKET_NAME_PATTERN.match(normalized):
             raise ValueError("OBJECT_STORE_BUCKET must be a 3-63 character lowercase S3 bucket name")
         return normalized
+
+    @field_validator("duckdb_memory_limit")
+    @classmethod
+    def require_duckdb_memory_limit(cls, value: str) -> str:
+        """Refuse a memory ceiling DuckDB cannot parse; an unparsed SET leaves the session unbounded."""
+        normalized = value.strip()
+        if not _DUCKDB_MEMORY_LIMIT_PATTERN.match(normalized):
+            raise ValueError("PLANTGEO_ML_DUCKDB_MEMORY_LIMIT must look like '2GB', '512MB' or '1GiB'")
+        return normalized
+
+    @field_validator("duckdb_thread_count")
+    @classmethod
+    def require_duckdb_thread_count(cls, value: int) -> int:
+        """Refuse a thread count outside the bounded serving budget."""
+        if value < 1 or value > MAX_DUCKDB_THREAD_COUNT:
+            raise ValueError(f"PLANTGEO_ML_DUCKDB_THREAD_COUNT must be between 1 and {MAX_DUCKDB_THREAD_COUNT}")
+        return value
 
     @field_validator("object_store_region")
     @classmethod

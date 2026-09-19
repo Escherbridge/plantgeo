@@ -1,0 +1,14 @@
+{
+  "completion_derived_empty": [
+    "{\"completed_at\": \"2026-09-19T12:34:56.789012+00:00\", \"derived_empty\": true, \"part_count\": 0, \"row_count\": 0, \"run_id\": \"parity-run-0001\", \"schema_version\": 1}"
+  ],
+  "completion_v1": [
+    "{\"completed_at\": \"2026-09-19T12:34:56.789012+00:00\", \"part_count\": 3, \"row_count\": 900, \"run_id\": \"parity-run-0001\", \"schema_version\": 1}"
+  ],
+  "completion_v2": [
+    "{\"completed_at\": \"2026-09-19T12:34:56.789012+00:00\", \"part_count\": 1, \"parts\": [{\"byte_count\": 56789, \"relative_path\": \"layer=signal/kind=forecast/zoom=13/year=2026/month=09/day=19/part-0.parquet\", \"row_count\": 1234, \"sha256\": \"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\"}], \"row_count\": 1234, \"run_id\": \"parity-run-0001\", \"schema_version\": 2}"
+  ],
+  "governed_absence": [
+    "{\"reason\": \"source_empty\", \"recorded_at\": \"2026-09-19T12:34:56.789012+00:00\", \"run_id\": \"parity-run-0001\", \"schema_version\": 1, \"upstream_response\": \"HTTP 200, zero features\"}"
+  ]
+}

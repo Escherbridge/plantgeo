@@ -35,33 +35,33 @@ Decision source: `spec.md` §1 (D1–D8). Nothing below reopens them. File owner
 - [x] Task: Mark `ml_mojo_conversion_20260823` superseded; re-point `fire_risk_zone_forecast_20260823.depends_on`.
 - [x] Task: `conductor/tracks.md` rows; one Outstanding-work row in `conductor/RUNBOOK.md`.
 - [x] Task: Persist `.omc/research/mojo-ml-service-20260918/FINDINGS.md`; memory file for the eight decisions.
-- [ ] Task: `oh-my-claudecode:critic` review of spec + plan; verdict recorded in `metadata.json.reviews.phase0`.
+- [x] Task: `oh-my-claudecode:critic` review of spec + plan; verdict recorded in `metadata.json.reviews.phase0` (CHANGES-REQUIRED, 12 findings, all folded in 2026-09-18).
 
-## Phase 1: Skeleton and hard cut — one push
+## Phase 1: Skeleton and hard cut — one push (LANDED b79101c6, pushed 5c8c34c4, deployed PASS 2026-09-19; hotfix b1f02f95 for the sanic-ext annotation NameError; plantgeo-ml live)
 
 Goal: `services/plantgeo-ml-service/` exists, holds every pure module, builds on Railway, answers
 `/ready`; agri-data-service no longer contains ML or Monte Carlo and its receipt is refreshed.
 
 ### 1A — New service skeleton (slice `p1a-service-skeleton`)
 
-- [ ] Task: `pyproject.toml` (hatchling, `plantgeo-ml-service` 0.1.0, python >=3.12, deps: sanic,
+- [x] Task: `pyproject.toml` (hatchling, `plantgeo-ml-service` 0.1.0, python >=3.12, deps: sanic,
       sanic-ext, pydantic, pydantic-settings, structlog, click, numpy, polars, pyarrow, duckdb, boto3,
       scikit-learn; dev: pytest, pytest-asyncio, pytest-sanic, ruff, mypy), `uv.lock`, `ruff.toml`,
       `mypy.ini` copied from the sibling and trimmed; console script `plantgeo-ml`.
-- [ ] Task: package layout `src/plantgeo_ml_service/{foundation,method/{ml,monte_carlo,kernels},warehouse,pipeline,serving,interface}` each with `__init__.py` and a one-line `AGENTS.md` stub naming its layer.
-- [ ] Task: `config.py` — pydantic-settings `Settings` with `object_store_*` (same names as the
+- [x] Task: package layout `src/plantgeo_ml_service/{foundation,method/{ml,monte_carlo,kernels},warehouse,pipeline,serving,interface}` each with `__init__.py` and a one-line `AGENTS.md` stub naming its layer.
+- [x] Task: `config.py` — pydantic-settings `Settings` with `object_store_*` (same names as the
       sibling), `object_store_prefix`, `ml_prefix = "ml"`, `kernels: Literal["python","mojo"] = "python"`,
       `sanic_*`, `cors_origins`. A validator **refuses** any env var matching `*DATABASE_URL*`
       with a message naming D5. Test pins the refusal.
-- [ ] Task: `app.py` — Sanic factory `create_app`, blueprint group `/api/v1/ml` (empty in phase 1),
+- [x] Task: `app.py` — Sanic factory `create_app`, blueprint group `/api/v1/ml` (empty in phase 1),
       `/health` (200 always) and `/ready` (200 when bucket credentials resolve and a bounded
       `HEAD` on the bucket succeeds; 503 with a typed reason otherwise).
-- [ ] Task: `tests/test_layer_import_contract.py` — port the AST walker; rules:
+- [x] Task: `tests/test_layer_import_contract.py` — port the AST walker; rules:
       `foundation` imports nothing internal; `method` may not import `warehouse|pipeline|serving|interface|polars|pyarrow|duckdb|boto3|sanic`;
       `method/ml` ↔ `method/monte_carlo` forbidden both ways; `method/kernels` may import only `foundation`;
       `warehouse` may not import `pipeline|serving|interface`; `serving` may not import `interface`.
       Plus `test_layer_packages_actually_import`.
-- [ ] Task: Move inventory §A (`method/ml`, `method/monte_carlo`, `method/AGENTS.md`, the three
+- [x] Task: Move inventory §A (`method/ml`, `method/monte_carlo`, `method/AGENTS.md`, the three
       canonical helpers, `strategy_selection`, `strategy_label_mapping`, the CLI verbs, the ten
       pure tests). Rewrite imports. `execution/covariate_wind_model.py` is NOT pure (it imports
       sqlalchemy and loads `target_signal_series.sql` at module scope): **extract** its numeric core
@@ -69,57 +69,57 @@ Goal: `services/plantgeo-ml-service/` exists, holds every pure module, builds on
       query surface to be deleted with §B; list every function left behind in the predictions file.
       Use `cp` + `rm`, never `git mv` (two agents share the index); rename detection at commit
       time keeps history.
-- [ ] Task: Parity fixtures (FR-3 pattern): `tests/fixtures/parity/<name>.json` golden outputs,
+- [x] Task: Parity fixtures (FR-3 pattern): `tests/fixtures/parity/<name>.json` golden outputs,
       tests assert against the fixture always and against the sibling's source only when it is on
       disk; `scripts/regenerate_parity_fixtures.py`.
-- [ ] Task: `interface/cli.py` — click root `plantgeo-ml` with `strategy-train`,
+- [x] Task: `interface/cli.py` — click root `plantgeo-ml` with `strategy-train`,
       `strategy-label-map-preflight`, `serve` (runs the Sanic factory), and a `predict-daily` stub
       that exits 2 with "not implemented until phase 2" (a bounded turn must still exit cleanly).
-- [ ] Task: `Dockerfile` — same shape as the sibling: `python:3.12.12-slim-bookworm` pinned digest,
+- [x] Task: `Dockerfile` — same shape as the sibling: `python:3.12.12-slim-bookworm` pinned digest,
       uv 0.11.29, quality-receipt stage (`scripts/quality_receipt.py`, `scripts/verify_quality_receipt.py`,
       `scripts/check.py` copied and re-rooted), runtime stage, non-root user, `EXPOSE 8000`, sanic CMD.
       No Mojo stage yet (phase 3). `railway.json` with `/ready` healthcheck.
-- [ ] Task: `AGENTS.md` (service root) — layers, the zero-Postgres rule, the parity-not-import rule,
+- [x] Task: `AGENTS.md` (service root) — layers, the zero-Postgres rule, the parity-not-import rule,
       where rationale lives. `RUNBOOK.md` — Directive, Outstanding work table, Environment (WSL2 +
       pixi not yet required), Continuation plan.
-- [ ] Task: predict-and-record: list the tests the author expects to fail in the sweep and why, in
+- [x] Task: predict-and-record: list the tests the author expects to fail in the sweep and why, in
       `conductor/tracks/plantgeo_ml_service_20260918/evidence/phase1-predictions.md`.
 
 ### 1B — Hard cut in agri-data-service (slice `p1b-agri-cut`)
 
-- [ ] Task: Delete inventory §B (execution lane, route, the 40 mechanically derived SQL files,
+- [x] Task: Delete inventory §B (execution lane, route, the 40 mechanically derived SQL files,
       tests, `cli/ml.py`, the two verbs and `_write_atomic`, the `ml` group registration). Before
       deleting each `*_postgresql` test, read it: keep any that only exercises a table still present
       in `db/agri_baseline.sql`. `tests/test_sql_tree_conventions.py::test_loaded_exactly_once` fails
       on any orphaned `.sql`; re-derive the list from `load_query_sql(...)` call sites after deleting.
-- [ ] Task: Split the forecaster sections out of `tests/parquet/test_signal_serving.py` (imports
+- [x] Task: Split the forecaster sections out of `tests/parquet/test_signal_serving.py` (imports
       at :24-38, section from :290) and `tests/parquet/test_vegetation_serving.py` (imports :27-37,
       section from :475) into `services/plantgeo-ml-service/tests/test_signal_forecast.py` and
       `tests/test_vegetation_forecast.py` with rewritten imports; the observed-side sections stay
       untouched. (p1a has finished by the time p1b runs, so creating these two files is safe.)
-- [ ] Task: `tests/test_layer_import_contract.py:480-482` pins `interface/cli/commands.py:146`;
+- [x] Task: `tests/test_layer_import_contract.py:480-482` pins `interface/cli/commands.py:146`;
       deleting the verbs above it moves the line. Regenerate `CLI_ADAPTER_VIOLATIONS` from the
       sweep's assertion message (the docstring at :479 says so); record it as a predicted failure.
-- [ ] Task: Delete `method/ml/**` and `method/monte_carlo/**` **after** `p1a` confirms the copies
+- [x] Task: Delete `method/ml/**` and `method/monte_carlo/**` **after** `p1a` confirms the copies
       landed (wave order in `metadata.json`). If `method/` is then empty, delete it, its layer
       entry in `LAYER_FORBIDDEN_IMPORTS`, and `warehouse`/`pipeline`'s `agri_data_service.method`
       forbids (a rule about a package that no longer exists is noise).
-- [ ] Task: `__init__.py` re-exports; `test_layer_import_contract.py` rules
+- [x] Task: `__init__.py` re-exports; `test_layer_import_contract.py` rules
       (`SUBPACKAGE_FORBIDDEN_IMPORTS`, `SIBLING_MODULE_DIRECTORIES`); `lane_registry.py:149-153`
       comment; `pyproject.toml` `scikit-learn` (grep `src/` first; `analysis/` is outside).
-- [ ] Task: Doc pointers — `execution/AGENTS.md`, `src/agri_data_service/AGENTS.md`,
+- [x] Task: Doc pointers — `execution/AGENTS.md`, `src/agri_data_service/AGENTS.md`,
       `conductor/code_styleguides/layer-lanes.md` §5 (one paragraph: ML and Monte Carlo now live in
       `services/plantgeo-ml-service`; the forecast_module stem names a module there), each
       `docs/lanes/<slug>.md` §7 for the five forecastable lanes (one line each).
-- [ ] Task: predict-and-record in `evidence/phase1-predictions.md` (append).
+- [x] Task: predict-and-record in `evidence/phase1-predictions.md` (append).
 
 ### 1C — Sweep, review, push (coordinator + monitor)
 
-- [ ] Task: Monitor runs agri-data-service `python scripts/check.py --write-receipt` and the ML
+- [x] Task: Monitor runs agri-data-service `python scripts/check.py --write-receipt` and the ML
       service's `uv run pytest && ruff && mypy` once; reports every failure, not the first.
-- [ ] Task: `/code-review high` on the cut; `quality-reviewer` on the skeleton; verdicts to
+- [x] Task: `/code-review high` on the cut; `quality-reviewer` on the skeleton; verdicts to
       `metadata.json.reviews.phase1`. Fixes batch; one more sweep.
-- [ ] Task: Push. Confirm all four existing services and `plantgeo-ml` build the same commit
+- [x] Task: Push. Confirm all four existing services and `plantgeo-ml` build the same commit
       (`plantgeo-main` image runs `check:data-boundary`; a bare URL in a `src/**` comment fails it).
       Creating the `plantgeo-ml` Railway service and its config-as-code root is an owner action;
       the push is not blocked on it, the `/ready` proof is.

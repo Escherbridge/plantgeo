@@ -1,0 +1,10 @@
+{
+  "lane_contracts": [
+    "signal|2022-04-30|9|1|daily_series|signal",
+    "fire-detections|2000-11-01|2|1|daily_series|fire_detections",
+    "vegetation|2022-08-05|7|1|daily_series|vegetation_ndvi_forecast",
+    "drought|2022-08-09|4|7|release_series|None",
+    "burn-severity|2020-11-24|7|1|release_series|None",
+    "weather-observations|2026-08-01|2|1|daily_series|None"
+  ]
+}

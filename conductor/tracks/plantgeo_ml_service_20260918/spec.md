@@ -131,6 +131,27 @@ are small community projects that may lag the 1.0 API.
   bit-identical on its outputs (the seed stays authoritative; no RNG is ported), and the
   cyclical/photoperiod feature kernel. `PLANTGEO_ML_KERNELS=python|mojo` selects; `mojo` refuses to
   start if the extension is missing. Mojo is an optimisation: no later phase depends on it.
+- **FR-12 Weather-forecast (provider NWP) lane — added 2026-09-19.** Owner, relayed by the
+  concurrent session: *"let ml take over any projections, they don't need to be in the lanes."*
+  The Open-Meteo NWP product is this service's; agri-data-service deleted its inert schema and
+  ingest packages (lift from the tree at `c922509d`: commits `e66dbc36` schema, `c9c5256c` ingest,
+  `a1b3a497` fixes; plan `.omc/ultrapilot-20260918/W8-E-PLAN.md`). Shape, stated as an assumption
+  with low reversal cost because the path grammar is unchanged: a distinct layer slug
+  `weather-forecast`, nature `release_series`, written by this service under `kind=observed` with
+  `day=` the provider issue date and future-ness in a `valid_time` column (the drought pattern).
+  Provider runs are deterministic, so `kind=forecast`'s ensemble provenance (`random_seed`,
+  `ensemble_size`) would be invented; `kind=forecast` under this slug stays reserved for an
+  ML-corrected product. Two probe-settled conventions (`.omc/research/forecast-s3-probe-20260919/`):
+  multi-location responses are a JSON array in request order whose pairing must be verified by the
+  snapped coordinates, and the hourly precipitation timestamp labels the START of its accumulation
+  hour (the provider's own daily sums prove it; Open-Meteo's docs say otherwise and are wrong), so
+  the deleted code's one-hour shift is not ported. Style findings S6 and S7 in
+  `.omc/ultrapilot-20260918/STYLE-REVIEW-W8.md` are fixed on lift. The service gains an
+  httpx-capable `pipeline/sources/` layer for this; `method/` stays HTTP-free. Registration of the
+  slug in agri-data-service's lane registry (`forecast_module=None`) is an agri-side task sequenced
+  with the fire-risk registration (FR-5a). Retire or re-point
+  `conductor/tracks/weather_forecast_parquet_lane_20260911/` and the RUNBOOK weather-forecast row
+  when the lane lands.
 - **FR-10 Daily schedule.** A Railway cron service `plantgeo-ml-cron` runs `plantgeo-ml predict-daily`
   once per day; a bounded turn exits 0 (owner rule 2026-09-04). No pulse without an explicit owner go.
 - **FR-11 agri-data-service after the cut.** `method/ml`, `method/monte_carlo`, the eighteen
