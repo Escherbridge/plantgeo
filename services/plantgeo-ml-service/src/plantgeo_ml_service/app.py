@@ -7,15 +7,13 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Final
 
 import structlog
-from sanic import Blueprint, Sanic, json
+from sanic import Blueprint, Request, Sanic, json
 from sanic.config import Config
+from sanic.response import HTTPResponse  # noqa: TC002 - sanic-ext evaluates handler annotations at runtime.
 
 from plantgeo_ml_service.config import get_settings
 
 if TYPE_CHECKING:
-    from sanic import Request
-    from sanic.response import HTTPResponse
-
     from plantgeo_ml_service.config import ObjectStoreCredentials
 
 logger = structlog.get_logger()
