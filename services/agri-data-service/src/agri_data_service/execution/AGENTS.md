@@ -266,6 +266,72 @@ reports long enough to be chunked as raw text (the 00:43Z turns). `tests/executi
 pins the hourly behaviour. Daily lanes advancing exactly one settled day per day is the provider lag,
 not the scheduler.
 
+## Vegetation NDVI partition registration (2026-09-19): the corpus digest is gone
+
+`vegetation_ndvi_plane.register_governed_partition_plane` registers ONE Parquet day partition and
+reads no source table. It replaces `register_governed_plane` / `register_governed_forward_plane`,
+which fingerprinted and materialised the whole `geo.features` NDVI corpus. That corpus was frozen
+when the `postgres-vegetation` lane was retired (owner call 2026-09-04), so `_corpus_digest` found a
+NULL checksum and raised `ValueError: no vegetation observations exist at or before <day>` on every
+scheduled turn — the raise that rolled the promotion lane back twice on 2026-09-19 (evidence:
+`conductor/tracks/gapless_parquet_publication_20260901/evidence/ndvi-promotion-activation-20260919.md`,
+§"Re-activation after c922509d"). W8-F had already re-pointed DAY SELECTION at the availability
+index; the register verb underneath it was the layer still holding Postgres.
+
+**Why the digest was deleted rather than re-sourced.** Its six fields had exactly two consumers:
+`_register_source_release` (release identity + observed window + `quality_summary` shape counts) and
+the `GovernedPlane` the summary carries. Both are satisfied by the partition itself, and the owner's
+settled design (memory `plantgeo-owner-decisions-2026-09-18`, backlog P4) already keys promotion by
+per-day-partition content SHA. Re-sourcing a WHOLE-CORPUS digest from Parquet would have meant
+reading every day partition on every single-day turn to answer a question no consumer asks. The two
+`_corpus_digest` call sites were the only ones in the service (`register_governed_plane` itself had
+had no caller since it was written), so the helper and `sql/execution/corpus_digest.sql` went with
+them, together with the other statements that could only ever read the frozen tables:
+`load_observations.sql`, `load_observations_for_days.sql`, `insert_spatial_cells.sql`,
+`select_candidate_cell_keys.sql`. No live statement in this module binds a `layer_name` any more,
+which is what makes the frozen tables UNREACHABLE rather than merely unused.
+
+**What the confirmation re-read protected, and why there is no replacement.** The second
+`_corpus_digest` call compared the corpus before and after materialisation: against a live,
+concurrently written Postgres source it caught "the rows I registered a checksum for are not the
+rows I loaded". On the partition path the digest and the INSERT are computed from ONE immutable
+in-memory tuple, so that divergence is not expressible. The Parquet-side analogue — the partition's
+generation advancing mid-turn — is detected upstream, where the authority lives: the promoter's
+single pointer re-read and `AvailabilityPartitionConflictError` (`layer-lanes.md` §4a).
+`CorpusChangedDuringRegistrationError` was deleted with the read it belonged to.
+
+**Identity.** The registered `payload_checksum` IS the partition's content SHA:
+`partition_payload_checksum` is byte-identical to
+`vegetation_partition_promotion.day_partition_content_sha256` (same `foundation.canonical` routine,
+same sorted `[[cell_key, value], …]` document), pinned by
+`tests/execution/test_vegetation_partition_registration.py`. The promoter imports this module, so
+the equality is held by a test rather than by a shared import. One consequence worth knowing: the
+release-set logical key is always the payload-versioned form, so `load_governed_plane(cutoff_day)`,
+which looks up the UNVERSIONED `release_set_logical_key`, does not find partition registrations. It
+did not find forward registrations before this change either.
+
+**What it refuses, in its own vocabulary.** Every refusal is a `PartitionRegistrationError`
+subclass, never a bare `ValueError`, because the scheduled lane must be able to render a failure as
+a turn report: `EmptyPartitionRegistrationError`, `DuplicatePartitionCellError`,
+`NonFinitePartitionValueError`, `UnregisteredPartitionCellsError`, `PartitionSourceNotSuppliedError`,
+plus the pre-existing `EmptyGovernedReleaseError` and `ReleaseSetManifestConflictError`, now rooted
+in the same base.
+
+**What this verb will not do: mint a lattice cell.** `agri.spatial_cell` needs a polygon and a
+resolution; a `(cell_id, metric_value)` partition row carries neither. The observation insert joins
+that dimension, so an unregistered cell would silently not land and the turn would report a smaller
+promotion than it performed. `select_unregistered_spatial_cells.sql` therefore asks FIRST and
+`UnregisteredPartitionCellsError` names the missing keys. If a partition ever publishes a genuinely
+new cell, widen `vegetation_partition_promotion.read_day_partition_cell_values` to carry the base
+rung's `cell_longitude`/`cell_latitude` (both NOT NULL there) and register the cell from its own
+position — do not resurrect a geometry read against `geo.features`.
+
+**Known gap, deliberately left.** `data_available_at` on each governed row is the registration
+instant, not the partition's own `data_available_at` column, because the promoter's reader does not
+carry it yet. This is conservative for leakage (never earlier than the truth) and is fixed by the
+same widening. `OBSERVATION_CHECKSUM_PREFIX` is deliberately a NEW prefix: the retired loader hashed
+scene ids, cloud cover and sample counts that a day partition does not carry.
+
 ## Quality receipt
 
 Changes in this directory affect the Python quality fingerprint. Regenerate

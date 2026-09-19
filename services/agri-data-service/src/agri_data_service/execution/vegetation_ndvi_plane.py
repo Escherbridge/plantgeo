@@ -1,4 +1,8 @@
-"""Governed NDVI observation plane plus Monte Carlo iteration writer; see execution/AGENTS.md."""
+"""Governed NDVI plane registered from Parquet day partitions, plus the Monte Carlo iteration writer.
+
+Registration reads no source table: see execution/AGENTS.md §Vegetation NDVI partition registration
+for why the whole-corpus Postgres digest was deleted rather than re-sourced.
+"""
 
 from __future__ import annotations
 
@@ -36,8 +40,11 @@ from agri_data_service.execution.vegetation_ndvi_forecast import (
     persistence_baseline,
     simulate_horizon_quantiles,
 )
+from agri_data_service.foundation.canonical import canonical_json, sha256_digest
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
 SOURCE_LAYER_NAME: Final = "vegetation"
@@ -57,7 +64,12 @@ METRIC_UNIT: Final = "ndvi_index"
 ENTITY_TYPE: Final = "grid_cell"
 SERIES_KEY_PREFIX: Final = "ndvi-daily"
 DAY_BUCKET_RULE: Final = "iso_date_prefix"
-MIN_CANDIDATE_OBSERVED_DAYS: Final = 24
+#: Prefix of the per-observation fingerprint minted from a Parquet partition's own content. It is
+#: deliberately NOT the retired Postgres loader's `sentinel2_ndvi_daily_cell_mean_v1`: that hashed
+#: scene ids, cloud cover and sample counts a day partition does not carry, so an identical prefix
+#: over a different input set would make two unequal fingerprints look like one definition.
+#: See execution/AGENTS.md §Vegetation NDVI partition registration.
+OBSERVATION_CHECKSUM_PREFIX: Final = "sentinel2_ndvi_daily_cell_mean_partition_v1"
 EMPTY_SELECTION_REASON: Final = "selected_cells_hold_no_observation"
 EMPTY_RELEASE_REASON: Final = "release_holds_no_observation"
 CELL_BATCH_SIZE: Final = 200
@@ -70,18 +82,15 @@ DETERMINISM_GUCS: Final = (
     f"SET LOCAL statement_timeout = '{STATEMENT_TIMEOUT}'",
 )
 
-_SELECT_CANDIDATE_CELL_KEYS = text(load_query_sql("execution/select_candidate_cell_keys.sql"))
 _INSERT_DATA_SOURCE = text(load_query_sql("execution/insert_data_source.sql"))
-_CORPUS_DIGEST = text(load_query_sql("execution/corpus_digest.sql"))
 _INSERT_SOURCE_RELEASE = text(load_query_sql("execution/insert_source_release.sql"))
 _SELECT_SOURCE_RELEASE = text(load_query_sql("execution/select_source_release.sql"))
 _RELEASE_SET_MANIFEST_CHECKSUM = text(load_query_sql("execution/release_set_manifest_checksum.sql"))
 _INSERT_RELEASE_SET = text(load_query_sql("execution/insert_release_set.sql"))
 _INSERT_RELEASE_SET_ITEM = text(load_query_sql("execution/insert_release_set_item.sql"))
-_INSERT_SPATIAL_CELLS = text(load_query_sql("execution/insert_spatial_cells.sql"))
+_SELECT_UNREGISTERED_SPATIAL_CELLS = text(load_query_sql("execution/select_unregistered_spatial_cells.sql"))
 _INSERT_FORECAST_SERIES = text(load_query_sql("execution/insert_forecast_series.sql"))
-_LOAD_OBSERVATIONS = text(load_query_sql("execution/load_observations.sql"))
-_LOAD_OBSERVATIONS_FOR_DAYS = text(load_query_sql("execution/load_observations_for_days.sql"))
+_INSERT_PARTITION_OBSERVATIONS = text(load_query_sql("execution/insert_partition_observations.sql"))
 _RELEASE_MATERIALISATION = text(load_query_sql("execution/release_materialisation.sql"))
 _SELECTION_MATERIALISATION = text(load_query_sql("execution/selection_materialisation.sql"))
 _LOAD_GOVERNED_PLANE = text(load_query_sql("execution/load_governed_plane.sql"))
@@ -215,7 +224,17 @@ class IterationEvidenceConflictError(ValueError):
         self.iteration_key = iteration_key
 
 
-class EmptyGovernedReleaseError(ValueError):
+class PartitionRegistrationError(ValueError):
+    """Base of every refusal the partition register verb raises; see execution/AGENTS.md.
+
+    One catchable class, because the scheduled promotion lane must be able to name a registration
+    refusal in its own vocabulary rather than reporting a bare `ValueError` with no turn report
+    (the 2026-09-19 rollbacks, `conductor/tracks/gapless_parquet_publication_20260901/evidence/
+    ndvi-promotion-activation-20260919.md`).
+    """
+
+
+class EmptyGovernedReleaseError(PartitionRegistrationError):
     """Raised when a registration pass's own cell selection landed no observation at all."""
 
     def __init__(
@@ -237,7 +256,7 @@ class EmptyGovernedReleaseError(ValueError):
         self.release_observation_count = release_observation_count
 
 
-class ReleaseSetManifestConflictError(ValueError):
+class ReleaseSetManifestConflictError(PartitionRegistrationError):
     """Raised when one publisher-day key already names a different immutable corpus."""
 
     def __init__(self, *, logical_key: str, stored_manifest: str, offered_manifest: str) -> None:
@@ -250,16 +269,79 @@ class ReleaseSetManifestConflictError(ValueError):
         self.offered_manifest = offered_manifest
 
 
-class CorpusChangedDuringRegistrationError(RuntimeError):
-    """Raised when raw vegetation changes between its release digest and materialisation read."""
+class EmptyPartitionRegistrationError(PartitionRegistrationError):
+    """Raised when a day partition reaches registration holding no cell value at all."""
 
-    def __init__(self, *, before_checksum: str, after_checksum: str) -> None:
+    def __init__(self, *, observed_day: date) -> None:
         super().__init__(
-            "raw vegetation changed while its governed release was being registered: "
-            f"{before_checksum} became {after_checksum}"
+            f"governed NDVI registration for {observed_day.isoformat()} was handed no cell value; "
+            f"an empty partition is the forward writer's defect, never a governed absence"
         )
-        self.before_checksum = before_checksum
-        self.after_checksum = after_checksum
+        self.observed_day = observed_day
+
+
+class DuplicatePartitionCellError(PartitionRegistrationError):
+    """Raised when one day partition names the same cell twice, so it has no single value."""
+
+    def __init__(self, *, observed_day: date, cell_key: str) -> None:
+        super().__init__(
+            f"day partition {observed_day.isoformat()} names cell {cell_key!r} more than once, so it "
+            f"cannot be content-addressed at the (cell_id, observed_day) grain this lane publishes"
+        )
+        self.observed_day = observed_day
+        self.cell_key = cell_key
+
+
+class NonFinitePartitionValueError(PartitionRegistrationError):
+    """Raised when a partition carries a value no checksum or governed row can honestly hold."""
+
+    def __init__(self, *, observed_day: date, cell_key: str, metric_value: float) -> None:
+        super().__init__(
+            f"day partition {observed_day.isoformat()} carries non-finite NDVI {metric_value!r} for "
+            f"cell {cell_key!r}"
+        )
+        self.observed_day = observed_day
+        self.cell_key = cell_key
+        self.metric_value = metric_value
+
+
+class PartitionSourceNotSuppliedError(PartitionRegistrationError):
+    """Raised when a caller asks for registration with cell DAYS but no cell VALUES.
+
+    The values are the source now: nothing in this module may read `geo.features`/`agri.vegetation`
+    to recover them. Temporary, and it names its own fix -- see `register_governed_forward_plane`.
+    """
+
+    def __init__(self, *, observed_day: date, cell_day_count: int) -> None:
+        super().__init__(
+            f"governed NDVI registration for {observed_day.isoformat()} was handed {cell_day_count} "
+            f"cell-day(s) with no values; call register_governed_partition_plane("
+            f"observed_day=..., cell_values=...) with the partition rows instead"
+        )
+        self.observed_day = observed_day
+        self.cell_day_count = cell_day_count
+
+
+class UnregisteredPartitionCellsError(PartitionRegistrationError):
+    """Raised when the lattice dimension holds no cell for keys a partition publishes.
+
+    Loud rather than silent: the observation insert joins `agri.spatial_cell`, so an unregistered
+    cell would simply not land and the turn would report a smaller promotion than it performed. This
+    verb cannot mint the missing cell -- a cell needs a polygon and a resolution a `(cell_id, value)`
+    partition row does not carry -- so it names the gap and stops. See execution/AGENTS.md.
+    """
+
+    NAMED_LIMIT: Final = 10
+
+    def __init__(self, *, observed_day: date, cell_keys: tuple[str, ...]) -> None:
+        named = ", ".join(cell_keys[: self.NAMED_LIMIT])
+        suffix = "" if len(cell_keys) <= self.NAMED_LIMIT else f" (+{len(cell_keys) - self.NAMED_LIMIT} more)"
+        super().__init__(
+            f"day partition {observed_day.isoformat()} publishes {len(cell_keys)} cell(s) that "
+            f"agri.spatial_cell does not hold for grid {GRID_NAME}: {named}{suffix}"
+        )
+        self.observed_day = observed_day
+        self.cell_keys = cell_keys
 
 
 def empty_materialisation_reason(
@@ -280,12 +362,12 @@ def empty_materialisation_reason(
 
 
 def release_holds_claimed_corpus(*, materialisation: ReleaseMaterialisation, plane: GovernedPlane) -> bool:
-    """Whether the release holds every cell-day its own corpus digest fingerprinted.
+    """Whether the release holds every cell-day its own payload digest fingerprinted.
 
-    Reads false, correctly, as soon as any vegetation cell sits below MIN_CANDIDATE_OBSERVED_DAYS:
-    the digest counts every cell while only candidate cells can ever be materialised. It answers
-    "is this release the whole fingerprinted corpus", never "did this run go well" -- ask
-    all_requested_cells_materialised for that. See execution/AGENTS.md §Vegetation NDVI.
+    Since the source became one Parquet day partition, the digest counts exactly the cells that were
+    offered, so this reads true for a healthy partition registration and false the moment a row did
+    not land. It answers "is this release the whole fingerprinted partition", never "did this run go
+    well" -- ask all_requested_cells_materialised for that. See execution/AGENTS.md §Vegetation NDVI.
     """
     return (
         materialisation.observation_count == plane.corpus_cell_day_count
@@ -328,20 +410,6 @@ def _midnight(day: date) -> datetime:
     return datetime.combine(day, datetime.min.time(), tzinfo=UTC)
 
 
-async def select_candidate_cell_keys(session: AsyncSession, *, cutoff_day: date, cell_limit: int) -> tuple[str, ...]:
-    """Return a deterministic, spatially spread sample of vegetation cell keys with usable depth."""
-    result = await session.execute(
-        _SELECT_CANDIDATE_CELL_KEYS,
-        {
-            "layer_name": SOURCE_LAYER_NAME,
-            "cutoff_day": cutoff_day,
-            "min_observed_days": MIN_CANDIDATE_OBSERVED_DAYS,
-            "cell_limit": cell_limit,
-        },
-    )
-    return tuple(str(row[0]) for row in result.all())
-
-
 async def _register_data_source(session: AsyncSession, *, reviewed_at: datetime) -> uuid.UUID:
     await session.execute(
         _INSERT_DATA_SOURCE,
@@ -379,7 +447,9 @@ async def _register_data_source(session: AsyncSession, *, reviewed_at: datetime)
 
 
 @dataclass(frozen=True, slots=True)
-class _CorpusDigest:
+class PartitionDigest:
+    """What one Parquet day partition IS: its content fingerprint and its shape."""
+
     payload_checksum: str
     cell_count: int
     cell_day_count: int
@@ -388,21 +458,57 @@ class _CorpusDigest:
     last_observed_day: date
 
 
-async def _corpus_digest(session: AsyncSession, *, cutoff_day: date) -> _CorpusDigest:
-    result = await session.execute(
-        _CORPUS_DIGEST,
-        {"layer_name": SOURCE_LAYER_NAME, "cutoff_day": cutoff_day},
+def partition_payload_checksum(cell_values: Sequence[tuple[str, float]]) -> str:
+    """Digest one day partition's exact cell-value content, ordered by cell key.
+
+    Byte-identical by construction to `vegetation_partition_promotion.day_partition_content_sha256`
+    -- same `foundation.canonical` routine, same sorted `[[cell_key, value], ...]` document -- so the
+    release this verb registers carries the SAME identity as the promotion receipt and the
+    availability index's `generation=<content-sha>` key for that day. The promoter imports this
+    module, so this copy cannot import back from it; `tests/execution/
+    test_vegetation_partition_registration.py` pins the two to equality instead. Callers hand it the
+    validated, duplicate-free tuple `_partition_cells` returns.
+    """
+    ordered = [[cell_key, value] for cell_key, value in sorted(cell_values, key=lambda pair: pair[0])]
+    return sha256_digest(canonical_json(ordered))
+
+
+def _observation_checksum(*, cell_key: str, observed_day: date, metric_value: float) -> str:
+    """Fingerprint one governed cell-day row from the partition fields that define it."""
+    return sha256_digest(
+        canonical_json([OBSERVATION_CHECKSUM_PREFIX, cell_key, observed_day.isoformat(), metric_value])
     )
-    row = result.mappings().one()
-    if row["payload_checksum"] is None:
-        raise ValueError(f"no vegetation observations exist at or before {cutoff_day.isoformat()}")
-    return _CorpusDigest(
-        payload_checksum=str(row["payload_checksum"]),
-        cell_count=int(row["cell_count"]),
-        cell_day_count=int(row["cell_day_count"]),
-        row_count=int(row["row_count"]),
-        first_observed_day=row["first_observed_day"],
-        last_observed_day=row["last_observed_day"],
+
+
+def _partition_cells(
+    cell_values: Sequence[tuple[str, float]],
+    *,
+    observed_day: date,
+) -> tuple[tuple[str, float], ...]:
+    """Validate and canonically order one partition's cell values before anything is registered."""
+    if not cell_values:
+        raise EmptyPartitionRegistrationError(observed_day=observed_day)
+    seen: dict[str, float] = {}
+    for cell_key, metric_value in cell_values:
+        if cell_key in seen:
+            raise DuplicatePartitionCellError(observed_day=observed_day, cell_key=cell_key)
+        if not math.isfinite(metric_value):
+            raise NonFinitePartitionValueError(
+                observed_day=observed_day, cell_key=cell_key, metric_value=metric_value
+            )
+        seen[cell_key] = float(metric_value)
+    return tuple(sorted(seen.items()))
+
+
+def _partition_digest(cells: tuple[tuple[str, float], ...], *, observed_day: date) -> PartitionDigest:
+    """Describe one day partition as the release-registration statements expect it."""
+    return PartitionDigest(
+        payload_checksum=partition_payload_checksum(cells),
+        cell_count=len(cells),
+        cell_day_count=len(cells),
+        row_count=len(cells),
+        first_observed_day=observed_day,
+        last_observed_day=observed_day,
     )
 
 
@@ -410,7 +516,7 @@ async def _register_source_release(
     session: AsyncSession,
     *,
     data_source_id: uuid.UUID,
-    corpus: _CorpusDigest,
+    corpus: PartitionDigest,
     cutoff_day: date,
     recorded_at: datetime,
 ) -> uuid.UUID:
@@ -432,6 +538,12 @@ async def _register_source_release(
                     "gridName": GRID_NAME,
                     "dayBucketRule": DAY_BUCKET_RULE,
                     "publisherDayCutoff": cutoff_day.isoformat(),
+                    # Names WHERE the release came from, now that it is a Parquet day partition and
+                    # never geo.features. See execution/AGENTS.md §Vegetation NDVI partition registration.
+                    "sourcePartition": (
+                        f"layer={SOURCE_LAYER_NAME}/kind=observed/day={cutoff_day.isoformat()}"
+                    ),
+                    "partitionContentSha256": corpus.payload_checksum,
                 }
             ),
             "quality_summary": json.dumps(
@@ -519,15 +631,16 @@ async def _register_release_set(  # noqa: PLR0913 - immutable release-set identi
     return release_set_id, stored_manifest
 
 
-async def _register_spatial_cells(session: AsyncSession, *, cell_keys: tuple[str, ...]) -> int:
-    inserted = 0
+async def _unregistered_cell_keys(session: AsyncSession, *, cell_keys: tuple[str, ...]) -> tuple[str, ...]:
+    """Return the partition cell keys the lattice dimension holds no `agri.spatial_cell` row for."""
+    missing: list[str] = []
     for batch in _batched(cell_keys, CELL_BATCH_SIZE):
         result = await session.execute(
-            _INSERT_SPATIAL_CELLS,
-            {"layer_name": SOURCE_LAYER_NAME, "cell_keys": list(batch), "grid_name": GRID_NAME},
+            _SELECT_UNREGISTERED_SPATIAL_CELLS,
+            {"entity_keys": list(batch), "grid_name": GRID_NAME},
         )
-        inserted += len(result.all())
-    return inserted
+        missing.extend(str(row[0]) for row in result.all())
+    return tuple(missing)
 
 
 async def _register_series(session: AsyncSession, *, data_source_id: uuid.UUID, cell_keys: tuple[str, ...]) -> int:
@@ -559,46 +672,41 @@ async def _register_series(session: AsyncSession, *, data_source_id: uuid.UUID, 
     return inserted
 
 
-async def _load_observations(
+async def _register_partition_observations(
     session: AsyncSession,
     *,
     source_release_id: uuid.UUID,
-    cell_keys: tuple[str, ...],
-    cutoff_day: date,
-    cell_days: tuple[tuple[str, date], ...] | None = None,
+    observed_day: date,
+    cells: tuple[tuple[str, float], ...],
+    data_available_at: datetime,
 ) -> int:
+    """Insert one day partition's cell values as governed observations, from memory alone."""
+    metadata_json = json.dumps(
+        {
+            "dayBucketRule": DAY_BUCKET_RULE,
+            "sourcePartition": f"layer={SOURCE_LAYER_NAME}/kind=observed/day={observed_day.isoformat()}",
+            "observationChecksumPrefix": OBSERVATION_CHECKSUM_PREFIX,
+        }
+    )
     inserted = 0
-    if cell_days is not None:
-        for start in range(0, len(cell_days), CELL_BATCH_SIZE):
-            pair_batch = cell_days[start : start + CELL_BATCH_SIZE]
-            result = await session.execute(
-                _LOAD_OBSERVATIONS_FOR_DAYS,
-                {
-                    "layer_name": SOURCE_LAYER_NAME,
-                    "cell_keys": [cell_key for cell_key, _day in pair_batch],
-                    "observed_days": [observed_day for _cell_key, observed_day in pair_batch],
-                    "cutoff_day": cutoff_day,
-                    "source_release_id": source_release_id,
-                    "day_bucket_rule": DAY_BUCKET_RULE,
-                    "grid_name": GRID_NAME,
-                    "metric_name": METRIC_NAME,
-                    "transform_version": TRANSFORM_VERSION,
-                },
-            )
-            inserted += len(result.all())
-        return inserted
-    for batch in _batched(cell_keys, CELL_BATCH_SIZE):
+    for start in range(0, len(cells), CELL_BATCH_SIZE):
+        batch = cells[start : start + CELL_BATCH_SIZE]
         result = await session.execute(
-            _LOAD_OBSERVATIONS,
+            _INSERT_PARTITION_OBSERVATIONS,
             {
-                "layer_name": SOURCE_LAYER_NAME,
-                "cell_keys": list(batch),
-                "cutoff_day": cutoff_day,
+                "entity_keys": [cell_key for cell_key, _value in batch],
+                "metric_values": [value for _cell_key, value in batch],
+                "observation_checksums": [
+                    _observation_checksum(cell_key=cell_key, observed_day=observed_day, metric_value=value)
+                    for cell_key, value in batch
+                ],
+                "observed_day": observed_day,
+                "data_available_at": data_available_at,
                 "source_release_id": source_release_id,
-                "day_bucket_rule": DAY_BUCKET_RULE,
                 "grid_name": GRID_NAME,
                 "metric_name": METRIC_NAME,
                 "transform_version": TRANSFORM_VERSION,
+                "metadata_json": metadata_json,
             },
         )
         inserted += len(result.all())
@@ -651,63 +759,69 @@ async def measure_selection_materialisation(
     return SelectionMaterialisation(observation_count=observation_count, series_count=series_count)
 
 
-async def _register_governed_plane(
+async def register_governed_partition_plane(
     session: AsyncSession,
     *,
-    cutoff_day: date,
-    cell_keys: tuple[str, ...],
-    cell_days: tuple[tuple[str, date], ...] | None,
-    payload_versioned_release_set: bool,
+    observed_day: date,
+    cell_values: Sequence[tuple[str, float]],
 ) -> RegistrationSummary:
-    if not cell_keys:
-        raise ValueError("registration requires at least one vegetation cell key")
+    """Register ONE Parquet day partition as a governed release; see execution/AGENTS.md.
+
+    Reads no source table: the partition's `(cell_key, metric_value)` rows arrive in memory from the
+    promoter's own availability-index-authorised read, and every statement below touches `agri.*`
+    only. The retired `agri.vegetation`/`geo.features` corpus is unreachable from here, which is the
+    point -- the whole-corpus Postgres digest this verb replaced raised
+    `no vegetation observations exist at or before <day>` on every scheduled turn after the
+    postgres-vegetation lane was frozen (2026-09-04), rolling the lane back twice on 2026-09-19.
+
+    The registered `payload_checksum` IS the partition's content SHA, so the governed release, the
+    promotion receipt and the availability index's `generation=` key all name the same identity, and
+    a re-registration of byte-identical content re-derives the same release-set logical key.
+
+    There is no before/after confirmation re-read. The digest and the inserted rows are computed
+    from ONE immutable in-memory tuple, so "the source changed between its digest and its
+    materialisation" -- the invariant the old second `_corpus_digest` call protected against a live,
+    concurrently-written Postgres corpus -- cannot happen here. The Parquet-side analogue, the
+    partition's generation advancing mid-turn, is already detected upstream by the promoter's single
+    pointer re-read (`vegetation_partition_promotion.AvailabilityPartitionConflictError`).
+    """
+    cells = _partition_cells(cell_values, observed_day=observed_day)
     # The transaction lock conflicts with the session barrier held by publication and exact audit.
     # It remains held through the caller-owned commit, covering every governed source mutation.
     await advisory_lock(session, VEGETATION_PUBLICATION_BARRIER_KEY)
-    # Deduped at the one choke point every caller passes through: --cell-key is `multiple=True`
-    # with no dedup of its own. dict.fromkeys, never set(), because the order decides the batches.
-    # See execution/AGENTS.md §Vegetation NDVI for what a duplicate would otherwise misreport.
-    cell_keys = tuple(dict.fromkeys(cell_keys))
     await pin_determinism(session)
+    cell_keys = tuple(cell_key for cell_key, _value in cells)
     recorded_at = datetime.now(tz=UTC)
+    corpus = _partition_digest(cells, observed_day=observed_day)
+    unregistered = await _unregistered_cell_keys(session, cell_keys=cell_keys)
+    if unregistered:
+        raise UnregisteredPartitionCellsError(observed_day=observed_day, cell_keys=unregistered)
     data_source_id = await _register_data_source(session, reviewed_at=recorded_at)
-    corpus = await _corpus_digest(session, cutoff_day=cutoff_day)
     source_release_id = await _register_source_release(
         session,
         data_source_id=data_source_id,
         corpus=corpus,
-        cutoff_day=cutoff_day,
+        cutoff_day=observed_day,
         recorded_at=recorded_at,
     )
     release_set_id, manifest_checksum = await _register_release_set(
         session,
         source_release_id=source_release_id,
         payload_checksum=corpus.payload_checksum,
-        cutoff_day=cutoff_day,
+        cutoff_day=observed_day,
         recorded_at=recorded_at,
-        logical_key=(
-            forward_release_set_logical_key(cutoff_day, corpus.payload_checksum)
-            if payload_versioned_release_set
-            else None
-        ),
+        logical_key=forward_release_set_logical_key(observed_day, corpus.payload_checksum),
     )
-    spatial_cell_count = await _register_spatial_cells(session, cell_keys=cell_keys)
     series_count = await _register_series(session, data_source_id=data_source_id, cell_keys=cell_keys)
-    observation_count = await _load_observations(
+    observation_count = await _register_partition_observations(
         session,
         source_release_id=source_release_id,
-        cell_keys=cell_keys,
-        cutoff_day=cutoff_day,
-        cell_days=cell_days,
+        observed_day=observed_day,
+        cells=cells,
+        data_available_at=recorded_at,
     )
-    confirmed_corpus = await _corpus_digest(session, cutoff_day=cutoff_day)
-    if confirmed_corpus != corpus:
-        raise CorpusChangedDuringRegistrationError(
-            before_checksum=corpus.payload_checksum,
-            after_checksum=confirmed_corpus.payload_checksum,
-        )
     # Measured, not assumed, and measured twice for two different questions: the release-wide count
-    # is reporting, the selection-scoped count is the gate. Neither is _load_observations' return,
+    # is reporting, the selection-scoped count is the gate. Neither is the insert's own return,
     # which is 0 for a healthy repeat. See execution/AGENTS.md §Vegetation NDVI.
     materialisation = await measure_release_materialisation(session, source_release_id=source_release_id)
     selection = await measure_selection_materialisation(
@@ -719,16 +833,14 @@ async def _register_governed_plane(
     if reason_code is not None:
         raise EmptyGovernedReleaseError(
             reason_code=reason_code,
-            cutoff_day=cutoff_day,
+            cutoff_day=observed_day,
             requested_cell_count=len(cell_keys),
             release_observation_count=materialisation.observation_count,
         )
-    publication_first_day = min(day for _cell_key, day in cell_days) if cell_days else corpus.first_observed_day
-    publication_last_day = max(day for _cell_key, day in cell_days) if cell_days else corpus.last_observed_day
     publication_targets = await vegetation_day_fingerprints(
         session,
-        first_day=publication_first_day,
-        last_day=publication_last_day,
+        first_day=observed_day,
+        last_day=observed_day,
     )
     await enqueue_vegetation_publication(session, publication_targets)
     return RegistrationSummary(
@@ -745,7 +857,9 @@ async def _register_governed_plane(
             last_observed_day=corpus.last_observed_day,
         ),
         requested_cell_count=len(cell_keys),
-        spatial_cell_count=spatial_cell_count,
+        # Every cell was proved registered above, so the partition path reports what it USED rather
+        # than what it created: this verb never mints a lattice cell.
+        spatial_cell_count=len(cell_keys),
         series_count=series_count,
         observation_count=observation_count,
         materialisation=materialisation,
@@ -753,42 +867,21 @@ async def _register_governed_plane(
     )
 
 
-async def register_governed_plane(
-    session: AsyncSession,
-    *,
-    cutoff_day: date,
-    cell_keys: tuple[str, ...],
-) -> RegistrationSummary:
-    """Register full selected-cell history through one publisher-day cutoff."""
-    return await _register_governed_plane(
-        session,
-        cutoff_day=cutoff_day,
-        cell_keys=cell_keys,
-        cell_days=None,
-        payload_versioned_release_set=False,
-    )
-
-
 async def register_governed_forward_plane(
-    session: AsyncSession,
+    session: AsyncSession,  # noqa: ARG001 - kept so the refusal has the retired verb's exact signature
     *,
     cutoff_day: date,
     cell_days: tuple[tuple[str, date], ...],
 ) -> RegistrationSummary:
-    """Register only the touched selected-cell days from one successful forward ingestion."""
-    selected_cell_days = tuple(sorted(set(cell_days)))
-    if not selected_cell_days:
-        raise ValueError("forward registration requires at least one touched cell-day")
-    if any(day > cutoff_day for _cell_key, day in selected_cell_days):
-        raise ValueError("forward registration cannot include an observation day beyond its cutoff")
-    cell_keys = tuple(dict.fromkeys(cell_key for cell_key, _day in selected_cell_days))
-    return await _register_governed_plane(
-        session,
-        cutoff_day=cutoff_day,
-        cell_keys=cell_keys,
-        cell_days=selected_cell_days,
-        payload_versioned_release_set=True,
-    )
+    """Refuse the retired cell-days-only registration and name its replacement.
+
+    TEMPORARY SEAM, delete once `execution/vegetation_partition_promotion.py` calls
+    `register_governed_partition_plane(session, observed_day=day, cell_values=cell_values)` -- it
+    already holds `cell_values` and currently discards the values at that call site. The name is
+    kept ONLY so that module's import stays green across the two commits; the verb behind it read
+    the frozen `geo.features` corpus and cannot be revived.
+    """
+    raise PartitionSourceNotSuppliedError(observed_day=cutoff_day, cell_day_count=len(cell_days))
 
 
 async def load_governed_plane(session: AsyncSession, *, cutoff_day: date) -> GovernedPlane:
