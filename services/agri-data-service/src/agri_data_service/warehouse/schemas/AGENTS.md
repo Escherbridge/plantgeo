@@ -66,6 +66,26 @@ Their coarse cells sum physical-candidate counts, null selected-row identity, an
 `lineage_sha256` from sorted child digests with one newline per value. The helper registers these
 storage and zoom contracts only; it does not rerun or rewrite the immutable snapshot builders.
 
+## `weather_forecast.py` is a release series, never `kind=forecast`
+
+`weather-forecast` admits Open-Meteo NWP model runs. Its nature is `release_series`
+(`conductor/code_styleguides/layer-lanes.md` §1a), the same nature `drought` already registers
+(`pipeline/parquet/lane_registry.py:538-539`), so its `day=` partition is the **model run's issue
+date**, not the day any individual value verifies. That resolves the apparent conflict with
+`layer-lanes.md` §2 ("future dates are served from `kind=forecast`"): the future-ness of one row
+lives in its `valid_time` COLUMN, which may sit hours or days past the partition day, while the
+partition day itself -- an admitted run's issue date -- is never in the future. This stream
+therefore writes **`kind=observed` only**; `layer=weather-forecast/kind=forecast/**` is reserved to
+the ML service for a downscaled or bias-corrected product and must never be written from here
+(`.omc/ultrapilot-20260918/W8-E-PLAN.md` §1.5).
+
+Grain is `(cell_id, valid_time, variable)` -- a tall layout, one row per admitted variable per
+lattice cell per valid hour, `run_id` constant within a partition. Wind keeps its earth-relative
+component split as two `variable` rows (`wind_u_10m`/`wind_v_10m`) plus two derived rows
+(`wind_speed_10m`/`wind_direction_10m`); direction is never averaged as a scalar, because a mean of
+two bearings is not a bearing. A null `value` always carries a populated `missing_reason`
+(`outside_domain`/`not_generated`/`upstream_failed`/`stale_run`) -- null is never used to mean zero.
+
 ## `availability_index.py` is publication state, not a lane data schema
 
 The availability index is one canonical standalone Arrow schema shared by every time-bearing lane;
