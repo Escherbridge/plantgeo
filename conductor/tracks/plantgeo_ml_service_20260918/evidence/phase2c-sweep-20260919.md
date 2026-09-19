@@ -374,3 +374,27 @@ Receipt: `git add services/plantgeo-ml-service` -> `python scripts/check.py --wr
 `python scripts/verify_quality_receipt.py` -> **exit 0**.
 
 Nothing was committed.
+
+## p2c.2-sibling-guard
+
+Added `services/plantgeo-ml-service/tests/test_sibling_expectations.py`: runs agri's
+`tests/parquet/test_ml_schema_parity.py` + `tests/parquet/test_lane_contract.py` forecast_module
+tests (10 exact node ids) as a subprocess (`uv run --no-sync pytest -q ...`, cwd=agri, 600s timeout)
+against the current ML tree. Fails loudly (not skips) when the sibling tree/.venv is absent, unless
+`PLANTGEO_ML_SIBLING_TESTS=absent-ok` is set (prints/warns that parity was NOT verified in that
+case). Added a one-line note beside the two `== "observed"` comparisons in
+`warehouse/streams.py::stream_schema()` pointing to `warehouse/lanes.py` for the actual
+serving-path/forecast-root question. Documented the guard in `tests/AGENTS.md`.
+
+Gates: `uv sync --locked --all-extras` clean; `ruff format --check` 147 files formatted; `ruff check`
+all passed; `mypy src scripts` success (78 files); `pytest -q` = **1 failed, 664 passed**. The one
+failure is the new guard test itself, which correctly caught the KNOWN incident state: agri's
+`tests/parquet/test_ml_schema_parity.py::test_the_fire_risk_schema_is_the_ml_services_own_object_field_for_field`
+and `..._copies_agree_column_by_column...` still fail against this tree (fire-risk `quantile`:
+`double` here in agri's copy vs `string` in this service's `FIRE_RISK_SCHEMA`), matching
+`metadata.json` `"incidents"`[0] exactly (fix owned by the concurrent session, not landed yet).
+
+Per instructions: sweep is RED for this known reason, so `scripts/check.py --write-receipt` was
+**not run** and no receipt was written. `git add services/plantgeo-ml-service` was **not run**
+(no commit either, per the guard rules for this task). This is the expected state to report, not a
+bug to weaken the test around.

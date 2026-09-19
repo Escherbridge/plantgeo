@@ -1,5 +1,27 @@
 # tests
 
+## The sibling-expectations guard, and why the receipt alone cannot catch this
+
+`test_sibling_expectations.py` runs agri-data-service's cross-service tests --
+`tests/parquet/test_ml_schema_parity.py` and the `forecast_module`-binding tests in
+`tests/parquet/test_lane_contract.py`, ten node ids named exactly, not filtered by `-k` -- as a
+subprocess against the CURRENT tree of this service, with agri as the working directory. It exists
+because each service's `QUALITY_RECEIPT.json` digests only its own tree (`scripts/check.py`), so a
+purely ML-side change (2026-09-19: `fire-risk`'s provenance `quantile` column moved from numeric to
+string) can go green here while it turns agri's suite red -- the receipt domain is narrower than the
+suite agri actually needs to pass. See
+`conductor/tracks/plantgeo_ml_service_20260918/metadata.json` -> `"incidents"`[0] for the full story.
+
+This test FAILS, not skips, when the sibling tree or its `.venv` is missing -- a skip reads like a
+pass in a summary line, and this guard exists precisely so a break is never read as green by
+silence. The one exception is `PLANTGEO_ML_SIBLING_TESTS=absent-ok`, for a CI lane that deliberately
+checks out this service alone; even then it prints and warns a line naming that sibling parity was
+NOT verified, so a green run's log still says so out loud. **Never set that variable in a checkout
+that has the sibling tree** -- doing so silences the exact class of break it exists to catch. The
+Docker image needs neither the fail nor the variable: its build runs a digest gate, not pytest, and
+never imports this file at all.
+
+
 No test in this service touches a database, a network or a live bucket. That is not a convention
 here, it is the service's premise: decision D5 makes `plantgeo-ml-service` zero-Postgres, and
 `config.Settings` refuses to construct while any `*DATABASE_URL*` variable is in the environment.

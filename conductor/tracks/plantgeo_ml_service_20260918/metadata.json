@@ -508,7 +508,7 @@
         "receipt carries raw exception text"
       ],
       "security_posture": "input boundary strong (extra=forbid, closed vocabularies, bound params, no request text reaches a key/SQL/path); D5 fail-closed; CORS config-only; exposure is resource bounding, not injection",
-      "disposition": "fix batch applied (B1, M2-M7, minors, Dockerfile extension install, quantile=point); re-sweep 660 passed; receipt 3593115e verified; pushed e8b9c409 (rebased from 9da1f0c9); deployed SUCCESS 8abe3c98; 2C.1 fix (release_series root, outcome marker, hyphenated artifact kinds, kind-inspection helper) in progress",
+      "disposition": "fix batch applied (B1, M2-M7, minors, Dockerfile extension install, quantile=point); re-sweep 660 passed; receipt 3593115e verified; pushed e8b9c409 (rebased from 9da1f0c9); deployed SUCCESS 8abe3c98; 2C.1 landed 769451b3, deployed 82f0495d, both serving paths proven by live probe",
       "production_probe_2026_09_19T15_15Z": {
         "health": 200,
         "ready": 200,
@@ -518,7 +518,38 @@
         "invalid lon": "400 invalid_request with field detail (correct)",
         "artifacts kind vocabulary": "('analog_ensemble','fire-risk'); fire_risk is not a kind",
         "client_trap": "content absences are 200 with an error body; adding an additive top-level outcome marker (content|absent|refused) in 2C.1 per the web session's request"
+      },
+      "production_probe_2026_09_19T15_37Z_after_2C1": {
+        "weather-forecast summary": "outcome absent, availability_unpublished naming kind=observed (release_series root) - defect closed",
+        "signal summary": "outcome absent, availability_unpublished naming kind=forecast",
+        "fire-risk point": "outcome absent, kind=forecast",
+        "artifacts/fire-risk": "outcome content, 200 empty listing",
+        "artifacts/fire_risk": "outcome refused, 400 artifact_kind_unknown naming the hyphenated vocabulary"
       }
+    },
+    "phase3": {
+      "reviewer": "oh-my-claudecode:code-reviewer (opus)",
+      "reviewed_on": "2026-09-19",
+      "verdict": "CHANGES-REQUIRED (no blockers)",
+      "majors": [
+        "M1 Dockerfile copies pixi.toml but not pixi.lock; build re-solves the toolchain",
+        "M2 parity harness skips mojo when native load fails even under PLANTGEO_ML_KERNELS=mojo (self-skipping gate)",
+        "M3 tie order and k > eligible-count paths untested (fixtures from continuous normals)",
+        "M4 non-finite inputs not rejected at the FFI boundary; reference and kernel diverge on NaN/inf"
+      ],
+      "minors": [
+        "m1 tree-wide .so digest exclusion redundant with the _native directory rule (revert)",
+        "m2 HEADER_SLOTS duplicated in native.py and knn_search.mojo",
+        "m3 photoperiod tolerance rtol 1e-12 vs plan's atol 1e-12; plan boxes unticked",
+        "m4 RUNBOOK lacks a pointer to the benchmark caveat"
+      ],
+      "relaxed_rules": {
+        "method/monte_carlo -> method/kernels": "KEEP (reverse edge intact; kernels import only numpy)",
+        "_native/__mojocache__ digest exclusion": "KEEP",
+        ".so suffix exclusion": "REVERT"
+      },
+      "sound": "spec-compliant; honest evidence; safe FFI bounds (draws >= pool_width check); fair benchmark with the caveat stated where a reader lands",
+      "disposition": "fix batch running in the worktree"
     }
   },
   "follow_ups": [
@@ -528,7 +559,9 @@
     "Weather-forecast (Open-Meteo NWP) lane is NOW THIS TRACK'S (owner 2026-09-19). Agri deletes its inert packages; lift from the tree at c922509d (code commits: e66dbc36 schema, c9c5256c ingest domain, a1b3a497 verifier fixes; c922509d itself is docs-only, so diff those three, not it): warehouse/schemas/weather_forecast.py (19-column frozen schema, grain cell_id/valid_time/variable, missing_reason enum, wind as u/v) and ingest/weather_forecast/ (bounded Open-Meteo single-run fetch: 64 MiB / 120 s, 429 -> OpenMeteoRateLimitError no retry, u = -speed*sin(dir), precipitation valid_time shifted one hour earlier). Plan: .omc/ultrapilot-20260918/W8-E-PLAN.md (column contract, four-rung ladder, availability keying, five slices; the codex branch is synthetic-fixture-only). Live probe 2026-09-19 (.omc/research/forecast-s3-probe-20260919/, gfs_global run 2026-09-18T00:00) SETTLED both conventions: multi-location requests return a JSON array in request order with each object's snapped coordinates (verify pairing, do not trust order); the hourly precipitation timestamp labels the START of its accumulation hour (00:00..23:00 sums reproduce the provider's daily precipitation_sum exactly at four locations over three days), so the one-hour-earlier shift in ingest/weather_forecast/open_meteo.py is WRONG and must be deleted when lifting, which also removes the S7 negative lead_hours row. Wind u/v, calm handling, bounded fetch and 429 handling were judged sound. Open style findings S6 (duplicated variable catalogue, no equality test) and S7 (negative lead_hours row before model_init_time) in .omc/ultrapilot-20260918/STYLE-REVIEW-W8.md. Needs a spec amendment: which kind= provider-issued projections use (D2 says the ML service writes kind=forecast; layer-lanes.md \u00a73 provenance columns assume an ensemble) and an httpx-capable pipeline layer in the ML service. Open-Meteo's own docs say the hourly precipitation value sums the PRECEDING hour; the provider's daily precipitation_sum proves it is the FOLLOWING hour, so do not trust that doc line either. Also to retire or re-point when taking the lane: conductor/tracks/weather_forecast_parquet_lane_20260911/ (lists the deleted schema as a future artifact) and the weather-forecast row in conductor/RUNBOOK.md.",
     "fire-risk rows write quantile='point' (not 'p50') per the layer-lanes.md section 3 amendment of 2026-09-19; fire_risk_daily.py and its tests still write p50 as of bc08eca9; change in the next ML-service sweep and note the wire change to the web session before phase 4",
     "layer-lanes.md section 2 release_series carve-out and section 3 deterministic-product rule were amended 2026-09-19 (this track); the weather-forecast lane's justification now lives in the contract, not only in the schema header",
-    "ML-written lanes (fire-risk, weather-forecast) are registered, in platform_layers, excluded from census and repair, and unbound until the publisher is warm: the only visible signal is the coverage payload's unbound row; add a freshness/monitor row for ML-published lanes (pointer age vs cadence) so a cold publisher cannot read healthy by silence (relayed check 2026-09-19)"
+    "ML-written lanes (fire-risk, weather-forecast) are registered, in platform_layers, excluded from census and repair, and unbound until the publisher is warm: the only visible signal is the coverage payload's unbound row; add a freshness/monitor row for ML-published lanes (pointer age vs cadence) so a cold publisher cannot read healthy by silence (relayed check 2026-09-19)",
+    "warehouse/streams.py stream_schema(): add a one-line note beside the two `== \"observed\"` comparisons saying schema selection is the one place the partition kind IS the question (not a proxy for 'where do future values live'), so a later grep finds a reason, not an omission; fold into the next ML sweep (receipt digest)",
+    "ML sweep cross-service guard: scripts/check.py (ML) runs services/agri-data-service/tests/parquet/test_ml_schema_parity.py and the forecast_module binding tests against the current ML tree when the sibling exists on disk (skip in the image); mirror fire-risk/weather-forecast/expert-labels schema parity in the ML tests too (today the ML parity covers five lanes only)"
   ],
   "railway": {
     "service": "plantgeo-ml",
@@ -544,7 +577,8 @@
       "21dde6c5 (b1f02f95)": "SUCCESS 2026-09-19T11:55:58Z after the runtime-import hotfix; /ready green means the four OBJECT_STORE_* references resolved and head_bucket answered",
       "095ed2a3 (0290a1e6)": "SUCCESS 2026-09-19T12:44:49Z, phase 2A image",
       "a6d15ad3 (bc08eca9)": "SUCCESS 2026-09-19T14:07:59Z, phase 2B image",
-      "8abe3c98 (96831d8b, incl. e8b9c409 phase 2C)": "SUCCESS 2026-09-19T15:14:18Z"
+      "8abe3c98 (96831d8b, incl. e8b9c409 phase 2C)": "SUCCESS 2026-09-19T15:14:18Z",
+      "82f0495d (769451b3, phase 2C.1)": "SUCCESS 2026-09-19T15:34:14Z"
     },
     "live_proof_2026_09_19T12_01Z": {
       "/health": 200,
@@ -571,5 +605,25 @@
       "nwp_weather_forecast": "kind=observed; none of the six apply; render model_init_time, lead_hours, valid_time and the source receipt sha instead"
     },
     "b_variant_union": "payload additive; ForecastVariant members fire-risk and nwp opt-in from the web side so an older frontend degrades to variant_unavailable (time-slider-store.ts:182) rather than crashing"
+  },
+  "incidents": [
+    {
+      "on": "2026-09-19T15:45Z",
+      "what": "origin/main agri suite RED: tests/parquet/test_ml_schema_parity.py fire-risk quantile double != string after e8b9c409 made the deterministic provenance quantile a string in the ML FIRE_RISK_SCHEMA while agri's reader copy (from p2d on bc08eca9) still used the shared float64 provenance",
+      "why_invisible": "each service's QUALITY_RECEIPT digests only its own tree; a cross-service expectation can go red without a digested byte changing; both receipts verified while agri's suite failed",
+      "decision": "quantile is a string only in the deterministic stream's own provenance set (fire-risk); AnEn/Monte Carlo keep numeric quantile in the shared FORECAST_PROVENANCE_FIELDS; no union type; fix is local to agri warehouse/schemas/fire_risk.py, taken by the concurrent session in its wave 11",
+      "guard": "follow-up: the ML sweep runs agri's tests/parquet/test_ml_schema_parity.py (and the lane-contract forecast_module binding test) when the sibling tree is present, so cross-service breaks go red in the ML sweep before landing",
+      "class_fix_decision_2026_09_19": "agri checks in a DIGESTED golden fixture of each copied ML schema (serialized Arrow fields + sort columns) under tests/fixtures; its parity test asserts fixture-always and live-sibling-when-present (the ML tree's own pattern). A cross-service schema change then requires regenerating a digested agri byte, so agri's receipt goes stale and the image build refuses. The concurrent session does the agri half; the ML sweep's sibling guard stays as the early warning. Rejected: digesting the ML module into agri's receipt (couples a build to unreviewable foreign bytes)."
+    }
+  ],
+  "phase3_status_2026_09_19": {
+    "worktree": "$TEMP/plantgeo-p3 branch ml/p3-mojo-kernels on 96831d8b",
+    "toolchain": "Mojo 1.0.0 (ed45d567) via pixi 0.81.0 from conda.modular.com/max in WSL2 Ubuntu; .pixi 2.1 GB gitignored; 1.1.0 exists, deliberately not taken",
+    "kernels": "knn_search.mojo, seasonal_bootstrap.mojo, seasonal_features.mojo; <=6 args via one int64 bundle; dispatch in method/kernels/{__init__,bundles,reference,native}.py",
+    "parity": "PASS: KNN and bootstrap bit-identical, photoperiod 2.5e-16 relative; two kernel-side traps: mojo defaults to fp-contract=fast (build with --fp-mode contract=off) and numpy linear quantile uses (n-1)*q",
+    "gates": "Windows 683 passed/12 named skips, check.py all PASS; WSL2 695 passed under python AND under mojo dispatch",
+    "benchmark": "Mojo 9.25x the per-query sklearn find_analogs, 3.3x the numpy reference; batched sklearn 7x faster than the kernel (reported)",
+    "open": "receipt stale (needs git add); Docker mojo stage opt-in via --build-arg MOJO_KERNELS=enabled and unproven on Railway; two relaxed rules under review: method/monte_carlo may import method/kernels, quality_receipt excludes _native/.so",
+    "review": "adversarial review running"
   }
 }

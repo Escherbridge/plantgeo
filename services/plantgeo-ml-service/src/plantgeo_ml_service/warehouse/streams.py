@@ -319,6 +319,9 @@ def observed_stream_schema(name: str) -> ParquetStreamSchema:
 
 def stream_schema(name: str, kind: PartitionKind = "observed") -> ParquetStreamSchema:
     """Return one stream-kind's contract: the observed schema, or observed plus provenance for `forecast`."""
+    # Both `== "observed"` checks below ask only which COLUMN SET to hand back (bare vs. plus the
+    # six provenance columns); the question of where a lane's future values actually live is
+    # answered upstream, once, by `warehouse/lanes.py`'s `serving_path` / `forecast_root_kind`.
     originated = ORIGINATED_STREAM_SCHEMAS.get(name)
     if originated is not None:
         if validate_partition_kind(kind) == "observed":
