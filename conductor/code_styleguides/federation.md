@@ -83,6 +83,14 @@ pilot binds US sources; another region binds its own.
   the slider capability catalogue, legends and agent tools. A missing binding
   is a governed absence with a named reason, never a crash, never an empty map
   that looks like an outage, and never a silent fallback to the pilot's source.
+- **A provider projection is a source like any other (added 2026-09-19).** A
+  `release_series` lane (Open-Meteo NWP runs, written by `plantgeo-ml-service`
+  as the `weather-forecast` layer) binds through the same per-layer protocol
+  and declares `coverage` the same way; what differs is its partition kind and
+  day axis, which `layer-lanes.md` §2's `release_series` carve-out governs, and
+  its provenance fields (`model_init_time`, `lead_hours`, source receipt), not
+  the ensemble columns of `layer-lanes.md` §3. A region that binds no NWP source
+  gets `weather-forecast` as a governed absence like any other unbound layer.
 - **Units, datums and calendars normalize at the source boundary.** The
   protocol's record is SI, WGS84 and UTC with a declared local timezone; a
   source that reports inches, NAD83 or local civil time converts inside its

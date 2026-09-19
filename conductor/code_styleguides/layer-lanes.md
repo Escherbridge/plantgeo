@@ -156,13 +156,33 @@ layer=<slug>/kind=forecast/year=YYYY/month=MM/day=DD/part-0.parquet
   file**, and never let a reader silently fall through from one to the other — a
   blended answer that cannot be traced to its kind is exactly the
   wrong-but-plausible output the engineering principles forbid.
-- **The horizon is 30 days forward and is declared in the lane's `AGENTS.md`.** A
+- **The horizon is 30 days forward by default and is declared in the lane's `AGENTS.md`**
+  (or `docs/lanes/<slug>.md`); a lane may declare a shorter one when its evidence supports no
+  more — `fire-risk` declares 14 days (track `plantgeo_ml_service_20260918` FR-5, amended
+  2026-09-19) — and the declaration, not this default, is what its readers and census use. A
   lane that genuinely cannot forecast declares `horizon: none` and ships **no**
   `method/monte_carlo/<slug>.py`. An empty forecast module is worse than an
   absent one: it reads as unfinished work rather than a settled property.
 - **When an observed day lands for a day previously forecast, delete that
   forecast partition — do not leave both.** Two answers for one day is how a
   contradiction starts circulating.
+- **Carve-out for `release_series` lanes (amended 2026-09-19, track
+  `plantgeo_ml_service_20260918` FR-12, closing wave-8 review blocker B2).** A
+  provider-issued projection (an NWP run such as Open-Meteo's) is a *release*,
+  not a measurement and not an ensemble this repo generated. For a lane whose
+  nature is `release_series`: the partition day axis carries the **issue date**
+  of the release; future-ness lives in a `valid_time` (or `valid_day`) column
+  inside the file; the stream is written under `kind=observed` because what was
+  observed is the provider's release on that day; and the six provenance columns
+  of §3 are **not required**, because they describe ensembles this repo
+  generates (`random_seed`, `ensemble_size`) and a deterministic provider run has
+  none. The release carries its own provenance instead: `model_init_time`,
+  `lead_hours`, and the source receipt digest. The "never blend" rule above is
+  satisfied because nothing in such a file is a settled measurement of a future
+  day; a reader that wants "what is expected on day D" filters `valid_time`, and
+  a reader that wants "what happened on day D" never reads this lane. The
+  reserved `layer=<slug>/kind=forecast/**` root stays unwritten until an
+  ML-corrected product exists, at which point §3 applies to it in full.
 
 ## 3. Monte Carlo forecasts carry their own provenance or they do not ship
 
@@ -185,6 +205,11 @@ Every row in a `kind=forecast` partition carries, without exception:
 - **Quantiles come from the ensemble**, never from a distribution fitted after
   the fact. If the ensemble is too small to support the quantiles being
   published, publish fewer.
+- **A deterministic product does not wear quantile labels (amended 2026-09-19).**
+  A model that emits one calibrated value per cell-day (the `fire-risk` lane)
+  writes `quantile = "point"` and `ensemble_size = 1`, records its
+  `random_seed` for schema uniformity, and names its `model_artifact_sha256`.
+  Encoding a median of one as `p50` reads as an ensemble that does not exist.
 - `method/monte_carlo/vegetation_ndvi_forecast.py` already exists and predates
   this contract. **Bring it into conformance rather than writing a second
   vegetation forecaster beside it.**
