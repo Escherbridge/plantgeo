@@ -549,7 +549,7 @@
         ".so suffix exclusion": "REVERT"
       },
       "sound": "spec-compliant; honest evidence; safe FFI bounds (draws >= pool_width check); fair benchmark with the caveat stated where a reader lands",
-      "disposition": "fix batch running in the worktree"
+      "disposition": "fix batch applied (M1 pixi.lock --locked in Docker, M2 fail-not-skip under mojo, M3 tie + oversubscribed cases matched bit-for-bit with no kernel change, M4 non-finite refused, .so exclusion reverted, HEADER_SLOTS round-trip, RUNBOOK benchmark pointer); Windows 700 passed, WSL2 716 under python and mojo; receipt cd617706 rewritten over the rebased tree with the sibling guard running; pushed cc6c6868; deploy pending (MOJO_KERNELS=disabled, python dispatch)"
     }
   },
   "follow_ups": [
@@ -578,7 +578,10 @@
       "095ed2a3 (0290a1e6)": "SUCCESS 2026-09-19T12:44:49Z, phase 2A image",
       "a6d15ad3 (bc08eca9)": "SUCCESS 2026-09-19T14:07:59Z, phase 2B image",
       "8abe3c98 (96831d8b, incl. e8b9c409 phase 2C)": "SUCCESS 2026-09-19T15:14:18Z",
-      "82f0495d (769451b3, phase 2C.1)": "SUCCESS 2026-09-19T15:34:14Z"
+      "82f0495d (769451b3, phase 2C.1)": "SUCCESS 2026-09-19T15:34:14Z",
+      "(0e0e26c2 sibling guard)": "pushed 2026-09-19T16:37Z",
+      "4a4dac5f (cc6c6868, phase 3)": "FAILED at BUILD_IMAGE in 8 s, empty build log: ARG MOJO_KERNELS declared after a FROM (stage-scoped) so FROM mojo-kernels-${MOJO_KERNELS} did not parse; previous image df7641d5 (0e0e26c2) kept serving; fix 1d3ed402 declares the ARG globally",
+      "df7641d5 (0e0e26c2, sibling guard)": "SUCCESS 2026-09-19T16:37:29Z"
     },
     "live_proof_2026_09_19T12_01Z": {
       "/health": 200,
@@ -612,7 +615,7 @@
       "what": "origin/main agri suite RED: tests/parquet/test_ml_schema_parity.py fire-risk quantile double != string after e8b9c409 made the deterministic provenance quantile a string in the ML FIRE_RISK_SCHEMA while agri's reader copy (from p2d on bc08eca9) still used the shared float64 provenance",
       "why_invisible": "each service's QUALITY_RECEIPT digests only its own tree; a cross-service expectation can go red without a digested byte changing; both receipts verified while agri's suite failed",
       "decision": "quantile is a string only in the deterministic stream's own provenance set (fire-risk); AnEn/Monte Carlo keep numeric quantile in the shared FORECAST_PROVENANCE_FIELDS; no union type; fix is local to agri warehouse/schemas/fire_risk.py, taken by the concurrent session in its wave 11",
-      "guard": "follow-up: the ML sweep runs agri's tests/parquet/test_ml_schema_parity.py (and the lane-contract forecast_module binding test) when the sibling tree is present, so cross-service breaks go red in the ML sweep before landing",
+      "guard": "LANDED: tests/test_sibling_expectations.py in the ML sweep (fails on absent sibling unless PLANTGEO_ML_SIBLING_TESTS=absent-ok, which announces itself). Honest limit, agreed with the concurrent session: neither guard proves a diff was read; both make a cross-service schema change impossible to land silently. Agri's digested golden fixture is the other half (their wave 12).",
       "class_fix_decision_2026_09_19": "agri checks in a DIGESTED golden fixture of each copied ML schema (serialized Arrow fields + sort columns) under tests/fixtures; its parity test asserts fixture-always and live-sibling-when-present (the ML tree's own pattern). A cross-service schema change then requires regenerating a digested agri byte, so agri's receipt goes stale and the image build refuses. The concurrent session does the agri half; the ML sweep's sibling guard stays as the early warning. Rejected: digesting the ML module into agri's receipt (couples a build to unreviewable foreign bytes)."
     }
   ],
@@ -624,6 +627,7 @@
     "gates": "Windows 683 passed/12 named skips, check.py all PASS; WSL2 695 passed under python AND under mojo dispatch",
     "benchmark": "Mojo 9.25x the per-query sklearn find_analogs, 3.3x the numpy reference; batched sklearn 7x faster than the kernel (reported)",
     "open": "receipt stale (needs git add); Docker mojo stage opt-in via --build-arg MOJO_KERNELS=enabled and unproven on Railway; two relaxed rules under review: method/monte_carlo may import method/kernels, quality_receipt excludes _native/.so",
-    "review": "adversarial review running"
+    "review": "adversarial review running",
+    "landed": "cc6c6868; parity claim narrowed to 'bit-identical on the fixture suite' for KNN and bootstrap, photoperiod within one ulp; WSL trap recorded: a bare uv run from WSL2 destroys the Windows .venv (use UV_PROJECT_ENVIRONMENT, see service RUNBOOK)"
   }
 }

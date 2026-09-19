@@ -1,3 +1,8 @@
+# Declared BEFORE the first FROM so it is global: an ARG declared after a FROM belongs to that
+# stage only and `FROM mojo-kernels-${MOJO_KERNELS}` below would expand to an invalid name
+# (deployment 4a4dac5f failed to parse for exactly that reason on 2026-09-19).
+ARG MOJO_KERNELS=disabled
+
 FROM python:3.12.12-slim-bookworm@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c AS base
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.29 /uv /uvx /bin/
@@ -46,7 +51,9 @@ RUN python scripts/verify_quality_receipt.py
 # Even with the kernels present the runtime still defaults `PLANTGEO_ML_KERNELS=python`. Turning
 # them on is a separate, reversible Railway variable change, taken only once a parity receipt from
 # the image itself is in evidence.
-ARG MOJO_KERNELS=disabled
+# Re-declared without a value so the stage-selecting FROM below sees the global default or the
+# build-arg override; the global declaration at the top of this file is the one that matters.
+ARG MOJO_KERNELS
 
 FROM base AS mojo-kernels-disabled
 
