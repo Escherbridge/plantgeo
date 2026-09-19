@@ -190,6 +190,16 @@ class LaneAvailability(Protocol):
 
     def indexed_day(self, day: date) -> IndexedDay: ...
 
+    def is_servable(self, day: date) -> bool:
+        """Whether §4a's rung intersection holds for this day, which is what may be promoted.
+
+        Part of the protocol rather than of the concrete index alone because the TURN asks it of
+        every day it evaluates, not only of the ceiling: `VegetationDayPartitionKey` is
+        zoom-independent, so promoting a day the ladder does not agree on registers a whole governed
+        day serving cannot answer above the base rung (STYLE-REVIEW-W9 B2).
+        """
+        ...
+
 
 @dataclass(frozen=True, slots=True)
 class AvailabilityIndexDays:
@@ -439,10 +449,11 @@ def parser() -> argparse.ArgumentParser:
 
     Without `--day`, promotes the newest `--max-days` days trailing the vegetation LANE'S OWN
     Parquet availability index (`default_promotion_days`), so this lane is schedulable exactly like
-    its sibling direct writers, and refuses as `stale_ceiling` when that ceiling has fallen further
-    behind today than `lane_specs.vegetation_promotion_stale_ceiling_days()` allows. Every day it
-    touches is still idempotent against its own promotion receipt, so a wider `--max-days` never
-    re-registers an unchanged partition.
+    its sibling direct writers, and ends on `stale_ceiling` -- having promoted those days anyway --
+    when that ceiling has missed `lane_specs.VEGETATION_PROMOTION_STALE_CEILING_WINDOWS` consecutive
+    publication windows measured from the lane's provider frontier. Every day it touches is still
+    idempotent against its own promotion receipt, so a wider `--max-days` never re-registers an
+    unchanged partition, and every day is held to §4a's rung intersection, not just the ceiling.
     """
     built = argparse.ArgumentParser(description=__doc__)
     built.add_argument("--day", action="append", dest="days", default=None, help="one ISO date; repeatable")
@@ -453,24 +464,41 @@ def parser() -> argparse.ArgumentParser:
 
 @dataclass(frozen=True, slots=True)
 class PromotionCeiling:
-    """The newest SERVABLE day the index states at or before `today`, and how far behind it sits.
+    """The newest SERVABLE day the index states at or before `today`, measured against the FRONTIER.
 
-    `age_days` is the distance from that day to `today`, and it is the only thing in this turn that
-    can tell a live lane from a dead one: the ceiling compared against itself is always current, so
-    a lane whose forward writer died re-confirms the same ancient day forever (`.omc` memory
-    `plantgeo-freshness-yardstick-is-tautological`). Both fields are `None` when the index states no
-    servable day at all, which is the already-honest `no_indexed_day_promoted` path and not this one.
+    The question a staleness bound has to answer is "has the WRITER stopped", and `age_days` --
+    the ceiling's distance from `today` -- cannot answer it on its own: this lane's registered
+    `publication_lag_days` is the distance a perfectly healthy ceiling ALREADY sits behind today,
+    because it is a measured median gap between usable, cloud-free Sentinel-2 days. So the bound is
+    carried on `frontier_age_days`, the distance behind `frontier_day` (the newest day this lane
+    could plausibly have published by now), expressed in whole missed publication windows.
+    `age_days` is still reported, because a reader still needs to know how old the promoted day is
+    (`.omc` memory `plantgeo-freshness-yardstick-is-tautological`).
+
+    `day`, `age_days` and `frontier_age_days` are `None` together when the index states no servable
+    day at all: that is the already-honest `no_indexed_day_promoted` path, never this one.
     """
 
     day: date | None
     age_days: int | None
+    frontier_day: date
+    frontier_age_days: int | None
+    publication_window_days: int
 
-    def is_stale(self, *, stale_after_days: int) -> bool:
-        """Whether the ceiling has fallen further behind `today` than the lane's own window allows."""
-        return self.age_days is not None and self.age_days > stale_after_days
+    @property
+    def missed_publication_windows(self) -> int | None:
+        """How many whole publication windows the source could have used since the ceiling, and did not."""
+        if self.frontier_age_days is None:
+            return None
+        return self.frontier_age_days // self.publication_window_days
+
+    def is_stale(self, *, stale_after_missed_windows: int) -> bool:
+        """Whether the source has missed that many consecutive publication opportunities."""
+        missed = self.missed_publication_windows
+        return missed is not None and missed >= stale_after_missed_windows
 
 
-def promotion_ceiling(*, availability: AvailabilityIndexDays, today: date) -> PromotionCeiling:
+def newest_servable_day(*, availability: AvailabilityIndexDays, today: date) -> date | None:
     """Return the newest day at or before `today` the index states servable at every required rung.
 
     SERVABLE, not base-rung-published: `layer-lanes.md` §4a makes a selectable day the intersection
@@ -479,19 +507,59 @@ def promotion_ceiling(*, availability: AvailabilityIndexDays, today: date) -> Pr
     at the rungs above it (STYLE-REVIEW-W8 S3). `AvailabilityIndexDays.is_servable` carries that
     intersection; the promoter still READS and content-addresses the base rung, which is the rung
     whose bytes exist.
+
+    The ONE definition of the window's ceiling, called by both `default_promotion_days` and
+    `promotion_ceiling` so the day the turn promotes and the day the turn measures can never be two
+    different days (`engineering-principles.md` §1).
     """
     servable_days = sorted(day for day in availability.verdicts if day <= today and availability.is_servable(day))
-    if not servable_days:
-        return PromotionCeiling(day=None, age_days=None)
-    ceiling = servable_days[-1]
-    return PromotionCeiling(day=ceiling, age_days=(today - ceiling).days)
+    return servable_days[-1] if servable_days else None
+
+
+def promotion_ceiling(
+    *, availability: AvailabilityIndexDays, today: date, publication_window_days: int
+) -> PromotionCeiling:
+    """Measure the newest servable day against the frontier this lane could plausibly have reached.
+
+    `publication_window_days` is the lane's registered publication lag, read from `LANE_REGISTRY`
+    through `lane_specs.vegetation_promotion_publication_window_days()` and passed in rather than
+    imported here, so this module keeps its `execution -> execution` CLI-only import and never
+    carries a cadence literal of its own.
+    """
+    if publication_window_days < 1:
+        raise ValueError("a publication window must be at least one day for a ceiling to be measured against it")
+    frontier_day = today - timedelta(days=publication_window_days)
+    ceiling = newest_servable_day(availability=availability, today=today)
+    if ceiling is None:
+        return PromotionCeiling(
+            day=None,
+            age_days=None,
+            frontier_day=frontier_day,
+            frontier_age_days=None,
+            publication_window_days=publication_window_days,
+        )
+    return PromotionCeiling(
+        day=ceiling,
+        age_days=(today - ceiling).days,
+        frontier_day=frontier_day,
+        # Floored at zero: a ceiling AT or AHEAD of the frontier has missed nothing, and a negative
+        # distance would make `missed_publication_windows` round away from zero on a fresh lane.
+        frontier_age_days=max(0, (frontier_day - ceiling).days),
+        publication_window_days=publication_window_days,
+    )
 
 
 def default_promotion_days(*, availability: AvailabilityIndexDays, today: date, max_days: int) -> tuple[date, ...]:
     """Return the trailing `max_days` calendar days ending at the newest SERVABLE indexed day.
 
+    The WINDOW is calendar days, and deliberately so: every day in it is still classified one by one
+    by `run_vegetation_promotion`, which applies the SAME `is_servable` predicate this ceiling was
+    chosen with and records a day the rung ladder does not agree on as `not_servable` rather than
+    dropping it from the window. Filtering here instead would make a non-servable day invisible to
+    the report -- the silent skip `layer-lanes.md` §1a forbids (STYLE-REVIEW-W9 B2).
+
     The ceiling is the vegetation lane's own Parquet availability index (`read_lane_availability` ->
-    `availability_days_at_base_rung` -> `promotion_ceiling`), never Postgres:
+    `availability_days_at_base_rung` -> `newest_servable_day`), never Postgres:
     `pipeline/direct/vegetation/forward.py`'s
     `settled_through` queries `agri.vegetation`, which was retired 2026-09-04 and holds no rows for
     any day this lane could promote (`.omc` memory `agri-vegetation-promotion-unarmed`; incident
@@ -499,9 +567,11 @@ def default_promotion_days(*, availability: AvailabilityIndexDays, today: date, 
     Calling that boundary here is what made the lane's first activated tick raise `ValueError: no
     vegetation observations exist at or before <today>` instead of promoting.
 
-    This window is NOT bounded by staleness, and must not be: how OLD the ceiling is decides whether
-    the turn runs at all, which is `main()`'s call through `PromotionCeiling.is_stale`, not a silent
-    narrowing of which days an operator's turn would touch.
+    This window is NOT bounded by staleness, and must not be: how OLD the ceiling is decides how
+    `main()` LABELS the finished turn through `PromotionCeiling.is_stale`, not which days it
+    touches. A stale lane still promotes its ceiling day -- a refusal that consumed the day would
+    manufacture the permanent hole the bound exists to detect, since `DEFAULT_MAX_DAYS` is 1 and
+    nothing revisits a skipped day (STYLE-REVIEW-W9 B1).
 
     Returns an empty tuple when the index carries no servable day at or before `today` at all --
     the lane's forward writer having indexed nothing yet is exactly the `not_yet_indexed`/
@@ -510,7 +580,7 @@ def default_promotion_days(*, availability: AvailabilityIndexDays, today: date, 
     """
     if max_days < 1:
         raise ValueError("--max-days must be at least one")
-    ceiling = promotion_ceiling(availability=availability, today=today).day
+    ceiling = newest_servable_day(availability=availability, today=today)
     if ceiling is None:
         return ()
     return tuple(sorted(ceiling - timedelta(days=offset) for offset in range(max_days)))
@@ -532,8 +602,28 @@ def _governed_absence_entry(day: date, indexed: IndexedDay) -> dict[str, object]
     }
 
 
-def _non_promotable_entry(day: date, indexed: IndexedDay) -> dict[str, object] | None:
-    """The turn's result entry for a day the index does not state `published`, or `None` if it does."""
+def _not_servable_entry(day: date) -> dict[str, object]:
+    """The turn's result entry for a base-rung-published day the rung ladder does not agree on.
+
+    Its own day status, distinct from `registration_refused`: nothing was offered to the register
+    verb and nothing about the day is defective -- the index simply does not publish it at every
+    `required_rungs` row yet (`layer-lanes.md` §4a).
+    """
+    return {
+        "day": day.isoformat(),
+        "layer": VEGETATION_PLANE_STREAM,
+        "status": NOT_SERVABLE_DAY_STATUS,
+        "reason": "availability_index_does_not_publish_this_day_at_every_required_rung",
+    }
+
+
+def _non_promotable_entry(day: date, indexed: IndexedDay, *, is_servable: bool) -> dict[str, object] | None:
+    """The turn's result entry for a day that may not be promoted, or `None` when it may.
+
+    Servability is checked LAST because it only narrows a day the base rung already states
+    `published`: an indexed absence is also unservable, and reporting it as `not_servable` would
+    lose the index's own `absence_reason`.
+    """
     if indexed.state == "governed_absence":
         return _governed_absence_entry(day, indexed)
     if indexed.state == "not_yet_indexed":
@@ -543,7 +633,7 @@ def _non_promotable_entry(day: date, indexed: IndexedDay) -> dict[str, object] |
             "status": "not_yet_indexed",
             "reason": "availability_index_has_no_row_for_this_day",
         }
-    return None
+    return None if is_servable else _not_servable_entry(day)
 
 
 async def run_vegetation_promotion(  # noqa: PLR0913 - one coordinate of the turn per argument, plus the re-read seam
@@ -567,7 +657,14 @@ async def run_vegetation_promotion(  # noqa: PLR0913 - one coordinate of the tur
       promote and nothing to report as missing. Skipped; it cannot turn a turn that DID promote into
       a failure, and a turn whose EVERY day is one exits 0 as `waiting_for_writer` (see
       `_promotion_report`).
-    - `published` -- read and promoted. If the store then holds no part file, the index snapshot this
+    - `not_servable` -- the base rung states `published` and the rest of the `required_rungs` ladder
+      does not, so §4a does not make the day selectable. EVERY day in the window is held to this,
+      not only the ceiling `default_promotion_days` chose: `VegetationDayPartitionKey` is
+      zoom-independent, so promoting one of these would register a whole governed day serving cannot
+      answer above the base rung -- the defect a `--max-days > 1` catch-up made reachable
+      (STYLE-REVIEW-W8 S3, STYLE-REVIEW-W9 B2). Skipped, named in `not_servable_days`, and neutral
+      for the exit code for the same reason `not_yet_indexed` is: the writer is mid-publication.
+    - `published` and servable -- read and promoted. If the store then holds no part file, the index snapshot this
       turn opened with is RE-READ once before anything is raised, and ONLY a fresh `governed_absence`
       reclassifies: that is a prune or retention pass landing inside the turn's window, recorded with
       a reason by the winning generation, which §4a retries from rather than pages for. A fresh
@@ -597,7 +694,7 @@ async def run_vegetation_promotion(  # noqa: PLR0913 - one coordinate of the tur
     #: which is also what narrows it for the raise below, so no separate flag and no dead arm.
     winning_availability: LaneAvailability | None = None
     for day in days:
-        skipped = _non_promotable_entry(day, availability.indexed_day(day))
+        skipped = _non_promotable_entry(day, availability.indexed_day(day), is_servable=availability.is_servable(day))
         if skipped is not None:
             results.append(skipped)
             emit({"event": "vegetation_promotion_day", **results[-1]})
@@ -683,6 +780,7 @@ async def run_vegetation_promotion(  # noqa: PLR0913 - one coordinate of the tur
                 "event": "vegetation_promotion_waiting_for_writer",
                 "layer": VEGETATION_PLANE_STREAM,
                 "days": report["not_yet_indexed_days"],
+                "not_servable_days": report["not_servable_days"],
                 "reason": report["reason"],
             }
         )
@@ -697,8 +795,14 @@ WAITING_FOR_WRITER_STATUS: Final = "waiting_for_writer"
 NO_DAYS_PROMOTED_STATUS: Final = "no_days_promoted"
 #: At least one day reached the register verb and was refused by name; see `_promotion_report`.
 REGISTRATION_REFUSED_STATUS: Final = "registration_refused"
-#: The status a default-window turn ends on when its ceiling is older than the lane can explain.
+#: The status a default-window turn ends on when its ceiling has missed too many publication windows.
 STALE_CEILING_STATUS: Final = "stale_ceiling"
+#: The status `main()` ends on when an exception nobody named escaped the turn; see `failed_report`.
+FAILED_STATUS: Final = "failed"
+
+#: A DAY status, not a terminal one: the base rung publishes this day and the ladder above it does
+#: not, so §4a does not make it selectable and this turn may not register it as a whole governed day.
+NOT_SERVABLE_DAY_STATUS: Final = "not_servable"
 
 #: The terminal statuses a turn may exit ZERO on. `waiting_for_writer` is deliberately NOT
 #: `completed`: it exits 0, but a reader must be able to tell a turn that promoted from one that had
@@ -707,46 +811,77 @@ SUCCESSFUL_TURN_STATUSES: Final[frozenset[str]] = frozenset({COMPLETED_STATUS, W
 
 #: The terminal statuses that exit NON-ZERO. Kept as a set beside the successful one so the two
 #: provably PARTITION the vocabulary: a status in neither, or in both, is a bug a test can name
-#: rather than an exit code an operator has to infer.
+#: rather than an exit code an operator has to infer. `failed` is a member because `main()` really
+#: does print it: leaving it out made the partition a property of a set that excluded a REACHABLE
+#: report status, proved by a test that never saw it (STYLE-REVIEW-W9 S3).
 FAILING_TURN_STATUSES: Final[frozenset[str]] = frozenset(
-    {NO_DAYS_PROMOTED_STATUS, REGISTRATION_REFUSED_STATUS, STALE_CEILING_STATUS}
+    {NO_DAYS_PROMOTED_STATUS, REGISTRATION_REFUSED_STATUS, STALE_CEILING_STATUS, FAILED_STATUS}
 )
 
 #: Every status this module can put on a terminal report. Nothing else may reach `exit_code_for`.
 TERMINAL_STATUSES: Final[frozenset[str]] = SUCCESSFUL_TURN_STATUSES | FAILING_TURN_STATUSES
 
 
-def ceiling_fields(ceiling: PromotionCeiling, *, stale_after_days: int) -> dict[str, object]:
-    """Render the ceiling an automatic turn chose, its age, and the age it would be called stale at.
+def ceiling_fields(ceiling: PromotionCeiling, *, stale_after_missed_windows: int) -> dict[str, object]:
+    """Render the ceiling an automatic turn chose, the frontier it was measured against, and the bound.
 
     Carried on EVERY default-window report, not only the stale one: a reader who can see only
     `status: completed` cannot tell whether the day it promoted is yesterday's or last year's, which
-    is the whole of the freshness-yardstick trap.
+    is the whole of the freshness-yardstick trap. `ceiling_age_days` is the distance from today and
+    is REPORTED, never the bound -- `ceiling_frontier_age_days` is what the bound is applied to, and
+    `ceiling_is_stale` is carried even on a report whose status is something else, so a refusal that
+    dominates the status never hides the freshness verdict.
     """
     return {
         "ceiling_day": None if ceiling.day is None else ceiling.day.isoformat(),
         "ceiling_age_days": ceiling.age_days,
-        "ceiling_stale_after_days": stale_after_days,
+        "ceiling_frontier_day": ceiling.frontier_day.isoformat(),
+        "ceiling_frontier_age_days": ceiling.frontier_age_days,
+        "ceiling_publication_window_days": ceiling.publication_window_days,
+        "ceiling_missed_publication_windows": ceiling.missed_publication_windows,
+        "ceiling_stale_after_missed_windows": stale_after_missed_windows,
+        "ceiling_is_stale": ceiling.is_stale(stale_after_missed_windows=stale_after_missed_windows),
     }
 
 
-def stale_ceiling_report(ceiling: PromotionCeiling, *, stale_after_days: int) -> dict[str, object]:
-    """Render the terminal report for a turn whose newest servable day is too old to be progress.
+def stale_ceiling_report(report: Mapping[str, object]) -> dict[str, object]:
+    """Re-state a finished turn under `stale_ceiling`, KEEPING every day it already promoted.
 
-    Its own status and its own vocabulary, exiting NON-ZERO: re-confirming an ancient day is exactly
-    what `promoted`/`unchanged` would have reported as progress, so a lane whose forward writer died
-    would otherwise stay green forever (`engineering-principles.md` §2 "fail closed and loud";
-    `layer-lanes.md` §1a "report current distinctly from not looked at"). No day is evaluated at all
-    on this path -- the turn refuses before it promotes, rather than promoting and then complaining.
+    Exits NON-ZERO, because re-confirming an ancient day is exactly what `promoted`/`unchanged`
+    would otherwise report as progress and a lane whose forward writer died would stay green forever
+    (`engineering-principles.md` §2 "fail closed and loud"; `layer-lanes.md` §1a "report current
+    distinctly from not looked at").
+
+    It is applied AFTER the window runs, never before it: a refusal that skipped the window would
+    consume the day it refused for. `DEFAULT_MAX_DAYS` is 1 and no scheduled turn revisits a day
+    below its ceiling, so once the source resumes the ceiling jumps past the skipped day and nothing
+    ever promotes it -- the gate manufacturing the permanent hole it exists to detect
+    (STYLE-REVIEW-W9 B1). The turn's own verdict on those days survives as `promotion_status`.
     """
     return {
+        **report,
         "status": STALE_CEILING_STATUS,
+        "promotion_status": report["status"],
+        "reason": "newest_servable_day_has_missed_more_publication_windows_than_this_lane_can_explain",
+    }
+
+
+def failed_report(error: BaseException) -> dict[str, object]:
+    """Render the terminal report for an exception that escaped the turn, in the turn's OWN vocabulary.
+
+    `failed` is a member of `FAILING_TURN_STATUSES` and goes through `exit_code_for` like every
+    other terminal status, rather than being a sixth status printed beside the vocabulary with its
+    exit code written out by hand (STYLE-REVIEW-W9 S3). The day lists are empty rather than absent
+    so a log consumer can read any report of this lane's with one shape.
+    """
+    return {
+        "status": FAILED_STATUS,
+        "error": f"{type(error).__name__}: {error}",
         "days": [],
         "absent_days": [],
         "not_yet_indexed_days": [],
+        "not_servable_days": [],
         "registration_refused_days": [],
-        "reason": "newest_servable_day_is_older_than_this_lane_can_explain",
-        **ceiling_fields(ceiling, stale_after_days=stale_after_days),
     }
 
 
@@ -765,7 +900,9 @@ def _promotion_report(results: list[dict[str, object]]) -> dict[str, object]:
       and each day entry carries the refusal's `error_class` and message.
     - `completed` -- at least one day was promoted or confirmed unchanged, and none was refused.
       Exit 0.
-    - `waiting_for_writer` -- EVERY day evaluated is `not_yet_indexed`. Exit 0, named, logged once.
+    - `waiting_for_writer` -- EVERY day evaluated is one the writer has not finished: `not_yet_indexed`
+      (no row at all) or `not_servable` (a row at the base rung and not at every required rung).
+      Exit 0, named, logged once.
       This is the steady state of the intended configuration, not a failure: the lane's forward
       writer has not started (module docstring), `--max-days` defaults to 1, so a scheduled turn
       evaluates exactly one unpublished day. Failing it would page every turn, indefinitely, for a
@@ -776,18 +913,20 @@ def _promotion_report(results: list[dict[str, object]]) -> dict[str, object]:
       absence, an empty window, or a mixed turn that promoted nothing. Exit non-zero, which is what
       stops a lane reporting success forever against days that do not exist (STYLE-REVIEW-W4 B1).
 
-    A `not_yet_indexed` day is still neutral WITHIN a turn: it counts as neither progress nor
-    absence, so it cannot turn a turn that DID promote into a failure.
+    A `not_yet_indexed` or `not_servable` day is still neutral WITHIN a turn: it counts as neither
+    progress nor absence, so it cannot turn a turn that DID promote into a failure.
 
-    A fifth status, `stale_ceiling`, exists and is NOT decided here: it is decided before any day
-    is evaluated (`main` -> `stale_ceiling_report`), because "these days are too old to be progress"
-    is a statement about the window, not about what the days in it turned out to hold.
+    Two statuses exist and are NOT decided here. `stale_ceiling` is decided by `main()` AFTER this
+    report, because "the window's newest day is too old to be progress" is a statement about the
+    window and not about what the days in it turned out to hold -- and the days in it are promoted
+    either way. `failed` is `main()`'s own rendering of an exception that escaped the turn.
     """
     absent_days = [str(entry["day"]) for entry in results if entry["status"] == "absent"]
     not_yet_indexed_days = [str(entry["day"]) for entry in results if entry["status"] == "not_yet_indexed"]
+    not_servable_days = [str(entry["day"]) for entry in results if entry["status"] == NOT_SERVABLE_DAY_STATUS]
     refused_days = [str(entry["day"]) for entry in results if entry["status"] == REGISTRATION_REFUSED_STATUS]
     progressed = [entry for entry in results if entry["status"] in ("promoted", "unchanged")]
-    waiting_for_writer = bool(results) and len(not_yet_indexed_days) == len(results)
+    waiting_for_writer = bool(results) and len(not_yet_indexed_days) + len(not_servable_days) == len(results)
     if refused_days:
         status = REGISTRATION_REFUSED_STATUS
     elif progressed:
@@ -803,12 +942,19 @@ def _promotion_report(results: list[dict[str, object]]) -> dict[str, object]:
         # without the reader walking every day entry.
         "absent_days": absent_days,
         "not_yet_indexed_days": not_yet_indexed_days,
+        "not_servable_days": not_servable_days,
         "registration_refused_days": refused_days,
     }
     if status == REGISTRATION_REFUSED_STATUS:
         report["reason"] = "the_registration_verb_refused_at_least_one_day_partition"
     elif status == WAITING_FOR_WRITER_STATUS:
-        report["reason"] = "forward_writer_has_indexed_none_of_these_days"
+        # Named apart because they are different states of the writer: no row at all, versus a row
+        # the rung ladder has not finished agreeing on. An operator acts on them differently.
+        report["reason"] = (
+            "forward_writer_has_indexed_none_of_these_days"
+            if not not_servable_days
+            else "forward_writer_has_published_none_of_these_days_at_every_required_rung"
+        )
     elif status == NO_DAYS_PROMOTED_STATUS:
         report["reason"] = (
             "all_days_absent" if results and len(absent_days) == len(results) else "no_indexed_day_promoted"
@@ -819,10 +965,12 @@ def _promotion_report(results: list[dict[str, object]]) -> dict[str, object]:
 def exit_code_for(report: Mapping[str, object]) -> int:
     """Map one terminal report onto the process exit code; `TERMINAL_STATUSES` is the whole domain.
 
-    Zero for a turn that promoted (`completed`) and for one that had nothing to promote yet
-    (`waiting_for_writer`, named in the report and distinguishable from the first). Non-zero for
-    every other terminal status: a refused registration, an all-absent or empty window, and a
-    ceiling too old to be progress -- each with its own reason already in the report.
+    Zero for a turn that promoted (`completed`) and for one whose every day the writer has not
+    finished (`waiting_for_writer`, named in the report and distinguishable from the first).
+    Non-zero for every other terminal status: a refused registration, an all-absent or empty window,
+    a ceiling that has missed too many publication windows, and an exception that escaped the turn
+    -- each with its own reason already in the report. All six are `TERMINAL_STATUSES`, and every
+    one of them is printed by `main()` through this function rather than beside it.
 
     Fails CLOSED on a status this module does not define, rather than raising: an unknown status is
     a defect in the caller, and the last thing a scheduled lane should do on encountering one is
@@ -840,8 +988,8 @@ def read_lane_availability() -> AvailabilityIndexDays:
     (`parquet_ops/availability_coverage.py` -> `availability_index.read_latest_availability`), so a
     missing, stale, malformed or checksum-invalid index fails closed here exactly as it does there
     (`layer-lanes.md` §4a). Returned as the concrete `AvailabilityIndexDays`, not the narrower
-    `LaneAvailability` protocol, because `default_promotion_days` needs to enumerate every day's
-    verdict to find the newest `published` one -- something a single `indexed_day(day)` lookup
+    `LaneAvailability` protocol, because `newest_servable_day` needs to enumerate every day's
+    verdict to find the newest servable one -- something a single `indexed_day(day)` lookup
     cannot do.
     """
     from agri_data_service.pipeline.parquet.availability_index import (  # noqa: PLC0415 - CLI-only
@@ -866,34 +1014,38 @@ async def main(argv: Sequence[str] | None = None) -> int:
     `waiting_for_writer` and exits 0: see `_promotion_report`.
 
     A DEFAULT-window turn (no `--day`, which is how the scheduled lane always runs) additionally
-    refuses before it promotes anything when its ceiling is older than
-    `lane_specs.vegetation_promotion_stale_ceiling_days()`, and reports the ceiling day and age
-    either way. An operator naming `--day` explicitly is doing a bounded repair and is never gated
-    on freshness: the days are the operator's, not this function's, to choose.
+    measures its ceiling against the lane's own provider frontier and ends on `stale_ceiling` when
+    the source has missed `lane_specs.VEGETATION_PROMOTION_STALE_CEILING_WINDOWS` consecutive
+    publication windows. That verdict is applied AFTER the window runs, so the days are still
+    promoted and the refusal cannot consume the day it refuses for; the ceiling fields are on the
+    report either way. An operator naming `--day` explicitly is doing a bounded repair and is never
+    gated on freshness: the days are the operator's, not this function's, to choose.
+
+    `registration_refused` still dominates `stale_ceiling`: the refusal names a specific defect in a
+    specific day that an operator must act on, while staleness is a property of the lane that
+    `ceiling_is_stale` reports on the same line regardless of which status won.
     """
     from agri_data_service.config import settings  # noqa: PLC0415 - CLI-only
     from agri_data_service.db.engine import local_source_loader_session  # noqa: PLC0415 - CLI-only
     from agri_data_service.execution.lane_specs import (  # noqa: PLC0415 - CLI-only, and the heavy lane table
-        vegetation_promotion_stale_ceiling_days,
+        VEGETATION_PROMOTION_STALE_CEILING_WINDOWS,
+        vegetation_promotion_publication_window_days,
     )
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore  # noqa: PLC0415 - CLI-only
 
     arguments = parser().parse_args(argv)
-    store = ObjectStore.from_settings()
-    loader_database_url = settings.require_local_source_loader_database_url()
-    stale_after_days = vegetation_promotion_stale_ceiling_days()
     today = datetime.now(UTC).date()
     #: `None` for an operator-named `--day` turn, which has no ceiling of this function's choosing.
     ceiling: PromotionCeiling | None = None
     try:
+        store = ObjectStore.from_settings()
+        loader_database_url = settings.require_local_source_loader_database_url()
+        publication_window_days = vegetation_promotion_publication_window_days()
         availability = read_lane_availability()
         if not arguments.days:
-            ceiling = promotion_ceiling(availability=availability, today=today)
-        if ceiling is not None and ceiling.is_stale(stale_after_days=stale_after_days):
-            stale = stale_ceiling_report(ceiling, stale_after_days=stale_after_days)
-            emit({"event": "vegetation_promotion_stale_ceiling", "layer": VEGETATION_PLANE_STREAM, **stale})
-            print(json.dumps(stale, sort_keys=True))
-            return exit_code_for(stale)
+            ceiling = promotion_ceiling(
+                availability=availability, today=today, publication_window_days=publication_window_days
+            )
         days = (
             tuple(sorted(date.fromisoformat(value) for value in arguments.days))
             if arguments.days
@@ -902,10 +1054,20 @@ async def main(argv: Sequence[str] | None = None) -> int:
         async with local_source_loader_session(loader_database_url) as session:
             report = await run_vegetation_promotion(session, store, days=days, availability=availability)
     except Exception as error:
-        print(json.dumps({"status": "failed", "error": f"{type(error).__name__}: {error}"}, sort_keys=True))
-        return 1
+        failure = failed_report(error)
+        print(json.dumps(failure, sort_keys=True))
+        return exit_code_for(failure)
     if ceiling is not None:
-        report = {**report, **ceiling_fields(ceiling, stale_after_days=stale_after_days)}
+        report = {
+            **report,
+            **ceiling_fields(ceiling, stale_after_missed_windows=VEGETATION_PROMOTION_STALE_CEILING_WINDOWS),
+        }
+        if (
+            ceiling.is_stale(stale_after_missed_windows=VEGETATION_PROMOTION_STALE_CEILING_WINDOWS)
+            and report["status"] != REGISTRATION_REFUSED_STATUS
+        ):
+            report = stale_ceiling_report(report)
+            emit({"event": "vegetation_promotion_stale_ceiling", "layer": VEGETATION_PLANE_STREAM, **report})
     print(json.dumps(report, sort_keys=True))
     return exit_code_for(report)
 
@@ -913,7 +1075,9 @@ async def main(argv: Sequence[str] | None = None) -> int:
 __all__ = [
     "COMPLETED_STATUS",
     "DEFAULT_MAX_DAYS",
+    "FAILED_STATUS",
     "FAILING_TURN_STATUSES",
+    "NOT_SERVABLE_DAY_STATUS",
     "NO_DAYS_PROMOTED_STATUS",
     "PROMOTABLE_KIND",
     "REGISTRATION_REFUSED_STATUS",
@@ -937,8 +1101,10 @@ __all__ = [
     "day_partition_content_sha256",
     "default_promotion_days",
     "exit_code_for",
+    "failed_report",
     "load_promotion_receipt",
     "main",
+    "newest_servable_day",
     "promote_vegetation_day_partition",
     "promotion_ceiling",
     "read_day_partition_cell_values",
