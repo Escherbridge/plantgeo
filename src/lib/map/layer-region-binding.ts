@@ -15,8 +15,11 @@ import type { SliderCapabilities } from "@/types/time-slider";
 /**
  * Warehouse layer name to the region-manifest layer slug it binds through.
  *
- * Mirrors `agent/surfaces.py`'s `SURFACE_REGION_LAYER_SLUGS` entry for entry, and is hand-spelled
- * for the same reason that table is: the two namespaces genuinely disagree where it matters.
+ * Mirrors `agent/surfaces.py`'s `SURFACE_REGION_LAYER_SLUGS` for every layer that has an agent
+ * surface, and is hand-spelled for the same reason that table is: the two namespaces genuinely
+ * disagree where it matters. `fire-risk` and `weather-forecast` are here and NOT there, because the
+ * agent has no surface for either yet -- that table maps agent surfaces, this one maps warehouse
+ * layer names, and only the second is what a map toggle resolves through.
  * `drought-areas` is served by the manifest layer `drought`, and all twelve climate and soil field
  * streams are DERIVED products of the one `signal` plane -- they bind no source of their own, so
  * they inherit `signal`'s binding and go dark together when it is unbound.
@@ -37,6 +40,13 @@ export const REGION_LAYER_SLUG_BY_WAREHOUSE_NAME: Readonly<Record<string, string
   watersheds: "watersheds",
   "water-gauges": "water-gauges",
   "weather-observations": "weather-observations",
+  // Written by `services/plantgeo-ml-service`, not by agri-data-service (track
+  // `plantgeo_ml_service_20260918`, FR-5a and FR-12). No region binds a source for either yet, so
+  // both answer `unbound` from a manifest STATEMENT -- which is the point of naming them here: a
+  // slug absent from this table would answer `not_federated`, and `not_federated` is treated as
+  // available, which draws an empty map as a working layer.
+  "fire-risk": "fire-risk",
+  "weather-forecast": "weather-forecast",
   "drought-areas": "drought",
   "climate-field-air-temperature": "signal",
   "climate-field-dew-point": "signal",

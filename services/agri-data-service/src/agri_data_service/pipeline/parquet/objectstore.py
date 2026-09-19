@@ -116,6 +116,16 @@ PROMOTION_RECEIPT_CONTENT_TYPE: Final = "application/json"
 # bound to it -- a small fixed record, never a payload park. See `execution/vegetation_partition_promotion.py`.
 MAX_PROMOTION_RECEIPT_BYTES: Final = 8 * 1024
 MAX_LISTED_KEYS: Final = 500_000
+# The bucket prefix `services/plantgeo-ml-service` owns (spec FR-7, track
+# `plantgeo_ml_service_20260918`): model artifacts, training and prediction receipts, and the
+# exported expert label plane. agri-data-service writes exactly one thing under it -- the one-time
+# label export -- and reads nothing else, so the two writers below are scoped to this prefix rather
+# than being a general "put any key" hole in the store.
+ML_PREFIX: Final = "ml/"
+# One exported release is 28 rows today and is a literature harvest, not a data lane. The ceiling is
+# generous enough for a harvest an order of magnitude larger and small enough that a caller trying to
+# park a partition here is refused rather than discovered later.
+MAX_ML_OBJECT_BYTES: Final = 16 * 1024 * 1024
 # One availability retry claim names every PHYSICAL receipt of one lane-day's whole ladder, because
 # that is what a later turn rebuilds the day's evidence from without re-exporting it. The ceiling is
 # therefore sized to the same population `availability_index.TYPED_RECEIPT_MAX_BYTES` allows per rung
@@ -252,6 +262,23 @@ class ListedPartition:
 
     relative_path: str
     last_modified: datetime | None
+
+
+def validate_ml_relative_path(relative_path: str) -> str:
+    """Return `relative_path` if it is a safe key under the `ml/` prefix, else raise.
+
+    Three refusals, and each one is a way a caller could otherwise write outside the prefix it was
+    handed: a path that does not start with `ml/`, a path with a `..` segment, and an absolute or
+    backslash-bearing path that a POSIX-only join would silently mangle.
+    """
+    if not relative_path.startswith(ML_PREFIX):
+        raise ValueError(f"{relative_path!r} is not under the {ML_PREFIX!r} prefix")
+    if "\\" in relative_path or relative_path.startswith("/"):
+        raise ValueError(f"{relative_path!r} is not a relative POSIX object key")
+    segments = relative_path.split("/")
+    if any(segment in {"", ".", ".."} for segment in segments):
+        raise ValueError(f"{relative_path!r} holds an empty or traversing path segment")
+    return relative_path
 
 
 class ObjectStoreBackend(Protocol):
@@ -788,6 +815,27 @@ class ObjectStore:
         payload = self._backend.get(self.key_for(promotion_receipt_path(layer, kind, day)))
         if payload is not None and len(payload) > MAX_PROMOTION_RECEIPT_BYTES:
             raise ValueError(f"promotion receipt for {layer!r} {kind} {day.isoformat()} exceeds its ceiling")
+        return payload
+
+    def write_ml_object(self, payload: bytes, *, relative_path: str, content_type: str) -> str:
+        """Write one bounded object under the ML service's `ml/` prefix; returns the relative path.
+
+        Scoped to that prefix on purpose. A general put-any-key method on this store would let any
+        caller write beside a lane's partitions under a name no path parser recognises, and the
+        listing walks that decide coverage would then answer from objects nobody registered.
+        """
+        validated = validate_ml_relative_path(relative_path)
+        if not payload or len(payload) > MAX_ML_OBJECT_BYTES:
+            raise ValueError(f"an ml/ object must be 1..{MAX_ML_OBJECT_BYTES} bytes, got {len(payload)}")
+        self._backend.put(self.key_for(validated), payload, content_type=content_type)
+        return validated
+
+    def read_ml_object(self, relative_path: str) -> bytes | None:
+        """Return one object under the `ml/` prefix, or `None` when nothing was written there."""
+        validated = validate_ml_relative_path(relative_path)
+        payload = self._backend.get(self.key_for(validated))
+        if payload is not None and len(payload) > MAX_ML_OBJECT_BYTES:
+            raise ValueError(f"ml/ object {validated!r} exceeds its ceiling")
         return payload
 
     def list_partition_objects(

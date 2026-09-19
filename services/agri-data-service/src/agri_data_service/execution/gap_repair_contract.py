@@ -171,6 +171,10 @@ REPAIR_EXCLUSIONS: Final[Mapping[str, str]] = MappingProxyType(
         "evacuation-zones": "static_lookup: a version stamp has no owed day to repair",
         "watersheds": "static_lookup: a version stamp has no owed day to repair",
         "soil-survey": "static_lookup with no admitted publisher yet (R4)",
+        "fire-risk": "forecast-originated: services/plantgeo-ml-service writes this lane, not an agri direct writer",
+        "weather-forecast": (
+            "forecast-originated: services/plantgeo-ml-service writes this lane, not an agri direct writer"
+        ),
     }
 )
 

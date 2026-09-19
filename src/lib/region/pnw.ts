@@ -50,6 +50,7 @@ export const PNW = {
     "evacuation-zones",
     "fire-detections",
     "fire-perimeters",
+    "fire-risk",
     "land-context",
     "sensors",
     "signal",
@@ -57,6 +58,7 @@ export const PNW = {
     "vegetation",
     "water-gauges",
     "watersheds",
+    "weather-forecast",
     "weather-observations",
   ],
   enabledLayers: [

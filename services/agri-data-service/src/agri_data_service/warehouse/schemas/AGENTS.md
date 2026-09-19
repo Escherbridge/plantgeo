@@ -28,6 +28,26 @@ SENSORS_SCHEMA = register_stream_schema(
   `quantile` or `draw_index`) belong in the same schema, nullable on the observed side.
 - **No cross-lane imports.** A shared column set moves down into `foundation`, in its own commit.
 
+## Two lanes here are READ-ONLY: another service writes them
+
+`fire_risk.py` and `weather_forecast.py` register schemas for streams this service never produces.
+`services/plantgeo-ml-service` writes both (owner decision D2, 2026-09-18, and FR-12 of track
+`plantgeo_ml_service_20260918`); agri-data-service reads them for serving and registers them here so
+the lane registry, the Parquet readers and the slider catalogue can resolve the slugs.
+
+**`weather_forecast.py` is not a reversal of the owner's 2026-09-19 deletion.** That decision was
+about ADMISSION -- agri admits no provider projection, and this service still ingests none: the
+deleted ingest packages stay deleted and nothing here fetches Open-Meteo forecast hours. The ML
+service writes this stream and agri only reads it for serving. See
+`conductor/tracks/plantgeo_ml_service_20260918/spec.md` FR-12.
+
+Both modules are EXACT copies of the ML service's own pinned schemas, held apart rather than
+imported because the two services deploy independently. A change on either side is a change on both.
+`fire-risk` is also the one registered stream whose schema already carries the six forecast
+provenance columns, because it has no observed side at all -- see `FORECAST_ORIGINATED_STREAMS` in
+`warehouse/parquet/schema.py`, which is what keeps `get_stream_schema(name, "forecast")` from
+appending those names a second time.
+
 ## `calendar.py` is a dimension, not a layer
 The conformed date dimension is registered here like any other stream, but it is not a
 `geo.layers` slug and has no source system: every column is a function of `calendar_day` alone, and

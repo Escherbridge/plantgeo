@@ -38,7 +38,7 @@ from agri_data_service.parquet_ops.warehouse_reader import ObjectStoreListing
 from agri_data_service.parquet_ops.wire import DayRange, LaneCoverage, WarehouseCoverage
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 from agri_data_service.pipeline.parquet.objectstore import ListedObject
-from agri_data_service.warehouse.parquet.schema import get_stream_schema
+from agri_data_service.warehouse.parquet.schema import FORECAST_ORIGINATED_STREAMS, get_stream_schema
 from tests.contract.wire_contract import WireCoverage
 from tests.parquet_ops.fakes import FakeListing, FakeRowReader, instant
 
@@ -71,6 +71,9 @@ EXPECTED_CENSUS_LIST_WORKERS: Final = 3
 
 #: Direct and dedicated physical lanes included in one production census. 16 until 2026-09-07, when
 #: All slider registrations after completed snapshot graduation; history is in parquet_ops/AGENTS.md.
+#: Unchanged by the 2026-09-19 `fire-risk`/`weather-forecast` registrations: both are written by
+#: services/plantgeo-ml-service and are excluded in `NON_SLIDER_REGISTERED_LAYERS` until a
+#: `kind=forecast` census exists and that publisher is warm.
 EXPECTED_REGISTERED_CENSUS_LANES: Final = 30
 
 #: Every registered physical lane must report all four serving rungs.
@@ -492,9 +495,32 @@ def test_the_census_covers_all_direct_lanes_and_every_schema_backed_slider_produ
     for layer in DEDICATED_SLIDER_PRODUCT_LAYERS:
         assert get_stream_schema(layer, "observed").name == layer
     assert len(lanes) == EXPECTED_REGISTERED_CENSUS_LANES, (
-        "every lane registration except calendar/signal; the five DEDICATED_SLIDER_PRODUCT_LAYERS "
+        "every lane registration except NON_SLIDER_REGISTERED_LAYERS (calendar, signal, and the two "
+        "ML-written lanes fire-risk and weather-forecast); the five DEDICATED_SLIDER_PRODUCT_LAYERS "
         "are registrations themselves today, so the derived fallback adds no further row"
     )
+
+
+def test_no_census_lane_asks_a_forecast_only_stream_for_a_contract_it_does_not_have() -> None:
+    """The census is observed-only, so a forecast-originated lane in it would walk a prefix that never exists.
+
+    `fire-risk` is scored, never measured: `services/plantgeo-ml-service` writes it under
+    `kind=forecast` alone. Listing `layer=fire-risk/kind=observed/` would find nothing every single
+    day and publish that as a red gap for a lane behaving exactly as designed. The registry refuses
+    the ask outright (`ForecastOnlyStreamError`); this test proves the census never makes it, which
+    is what keeps the refusal from being reachable in production rather than merely correct.
+
+    Every census lane resolving its OWN kind here is the same check from the other side: it is the
+    one call the census, the slider catalogue, the coverage payload and the serving readers all make.
+    """
+    lanes = registered_census_lanes()
+
+    assert not {lane.layer for lane in lanes} & FORECAST_ORIGINATED_STREAMS
+    assert FORECAST_ORIGINATED_STREAMS <= NON_SLIDER_REGISTERED_LAYERS, (
+        "a forecast-only stream that is not excluded would be walked for an observed prefix"
+    )
+    for lane in lanes:
+        assert get_stream_schema(lane.layer, lane.kind).name == lane.layer
 
 
 def test_the_census_is_memoized_so_a_burst_of_page_loads_pays_one_listing_walk() -> None:

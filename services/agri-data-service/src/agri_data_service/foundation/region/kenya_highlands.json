@@ -17,6 +17,7 @@
     "evacuation-zones",
     "fire-detections",
     "fire-perimeters",
+    "fire-risk",
     "land-context",
     "sensors",
     "signal",
@@ -24,6 +25,7 @@
     "vegetation",
     "water-gauges",
     "watersheds",
+    "weather-forecast",
     "weather-observations"
   ],
   "enabled_layers": [

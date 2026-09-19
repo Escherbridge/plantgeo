@@ -41,6 +41,13 @@ UNBOUND_REASON_NO_SOURCE: Final = "no_source_bound_in_region"
 #: has no published lane, so the manifest states it `unbound` with a reason instead of leaving it
 #: unsayable. A slug no manifest can name reads to a caller exactly like a layer that is merely
 #: absent, and only one of those is a statement.
+#:
+#: `fire-risk` and `weather-forecast` joined on 2026-09-19 (track `plantgeo_ml_service_20260918`,
+#: FR-5a and FR-12) and are bound by NO region, for the land-context reason exactly: they are
+#: platform layers whose writer, `services/plantgeo-ml-service`, has published nothing yet. Naming
+#: them unbound is the honest state -- a surface that asks gets a governed absence with a reason
+#: instead of a slug this build has never heard of. They gain an `enabled_layers` binding in the
+#: push that admits the first published partition, never before it.
 PLATFORM_LAYER_SLUGS: Final[tuple[str, ...]] = (
     "botanical-occurrences",
     "burn-severity",
@@ -48,6 +55,7 @@ PLATFORM_LAYER_SLUGS: Final[tuple[str, ...]] = (
     "evacuation-zones",
     "fire-detections",
     "fire-perimeters",
+    "fire-risk",
     "land-context",
     "sensors",
     "signal",
@@ -55,6 +63,7 @@ PLATFORM_LAYER_SLUGS: Final[tuple[str, ...]] = (
     "vegetation",
     "water-gauges",
     "watersheds",
+    "weather-forecast",
     "weather-observations",
 )
 

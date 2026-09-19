@@ -4,9 +4,11 @@ Layer L2: may import `foundation`, `warehouse` and `db`; may NOT import method, 
 interface. It lives in `pipeline/parquet/` and deliberately NOT in `pipeline/lanes/` -- a module
 inside that directory importing its siblings would (correctly) fail
 `tests/test_layer_import_contract.py::test_lanes_do_not_import_each_other`. The registry is not a
-lane; it is the one module allowed to know all thirty-two of them -- thirty-one source-direct
-environmental lanes and the calendar dimension. No environmental registration has a PostgreSQL
-adapter or fallback; the direct source packages own writes and this registry refuses generic exports.
+lane; it is the one module allowed to know all thirty-four of them -- thirty-one source-direct
+environmental lanes, the two lanes `services/plantgeo-ml-service` writes and this service only reads
+(`fire-risk`, `weather-forecast`), and the calendar dimension. No environmental registration has a
+PostgreSQL adapter or fallback; the direct source packages own writes and this registry refuses
+generic exports, and the two foreign lanes refuse with a message naming the service that writes them.
 
 IT IMPORTS EXACTLY FIVE MODULES FROM `pipeline/direct/`, AND NOTHING ELSE FROM ANY OF THOSE PACKAGES:
 `climate/products.py`, `soil/products.py` and `vegetation/products.py` for floors and lags, and
@@ -75,11 +77,13 @@ from agri_data_service.warehouse.schemas.drought import DROUGHT_STREAM
 from agri_data_service.warehouse.schemas.evacuation_zones import EVACUATION_ZONES_STREAM
 from agri_data_service.warehouse.schemas.fire_detections import FIRE_DETECTIONS_STREAM
 from agri_data_service.warehouse.schemas.fire_perimeters import FIRE_PERIMETERS_STREAM
+from agri_data_service.warehouse.schemas.fire_risk import FIRE_RISK_STREAM
 from agri_data_service.warehouse.schemas.sensors import SENSORS_STREAM
 from agri_data_service.warehouse.schemas.soil_survey import SOIL_SURVEY_STREAM
 from agri_data_service.warehouse.schemas.vegetation import VEGETATION_PLANE_STREAM
 from agri_data_service.warehouse.schemas.water_gauges import WATER_GAUGES_STREAM
 from agri_data_service.warehouse.schemas.watersheds import WATERSHEDS_STREAM
+from agri_data_service.warehouse.schemas.weather_forecast import WEATHER_FORECAST_STREAM
 from agri_data_service.warehouse.schemas.weather_observations import WEATHER_OBSERVATIONS_STREAM
 
 if TYPE_CHECKING:
@@ -147,10 +151,21 @@ class LaneRegistration:
     # measured at ~2,000 for `burn-severity` before its five real releases are reached.
     cadence_days: int = 1
     # The module stem that forecasts this lane, or None for `horizon: none`. Since 2026-09-18 the
-    # stem names a `plantgeo_ml_service.method.monte_carlo` module in `services/plantgeo-ml-service`,
-    # which is the service that writes `kind=forecast` partitions (owner decision D2, track
-    # `plantgeo_ml_service_20260918`). Naming the MODULE rather than carrying a bare boolean is what
-    # lets a test compare the claim against that service's filesystem: `layer-lanes.md` §2 makes
+    # stem names a module under `services/plantgeo-ml-service`, which is the service that writes
+    # `kind=forecast` partitions (owner decision D2, track `plantgeo_ml_service_20260918`). TWO
+    # DIRECTORIES SATISFY IT: `plantgeo_ml_service/method/monte_carlo/<stem>.py` for an ensemble
+    # forecaster, and `plantgeo_ml_service/pipeline/<stem>.py` for a lane the service writes end to
+    # end rather than projects (`fire-risk` is the second shape: `pipeline/fire_risk_daily.py`).
+    #
+    # `forecastable` below is DERIVED from this field and the nature; nothing sets it directly, so a
+    # lane claims a horizon exactly when it names a module.
+    #
+    # NAMING THE MODULE RATHER THAN CARRYING A BARE BOOLEAN is what lets a test compare the claim
+    # against that service's filesystem, and since 2026-09-19 one does:
+    # `tests/parquet/test_lane_contract.py::test_every_forecast_module_claim_names_a_real_ml_module`
+    # walks the monorepo tree when it is present and asserts both directions -- a named stem has a
+    # file, and a lane naming no stem has no file lying in wait under its own slug. Before that test
+    # this field was unenforced prose: nothing in agri reads it. `layer-lanes.md` §2 makes
     # shipping-a-forecaster and claiming-a-horizon the same fact, so a lane that disagrees with its
     # own directory is a defect, not a nuance.
     forecast_module: str | None = None
@@ -177,6 +192,12 @@ class LaneRegistration:
                 f"lane {self.slug!r} must cite where its history floor came from; an uncited floor is a guess "
                 "that reads as a measurement"
             )
+        # WHO WRITES A LANE IS NOT VALIDATED HERE, DELIBERATELY. Since 2026-09-18 two registrations
+        # (`fire-risk`, `weather-forecast`) are written entirely by `services/plantgeo-ml-service`
+        # and have no writer in this tree at all; their adapters refuse and name that service. The
+        # only nature rule below is the one that was always true -- a static lookup has no time axis
+        # to project along -- and a daily series whose producer lives in another repository is a
+        # deployment fact, not a contract violation, so nothing new refuses it.
         if self.forecast_module is not None and not nature_permits_forecast(self.nature):
             raise LaneRegistryError(
                 f"lane {self.slug!r} is a static_lookup and names the forecaster {self.forecast_module!r}; "
@@ -411,6 +432,42 @@ def _source_direct_refusal(writer_module: str) -> LaneAdapter:
     return refuse
 
 
+def _foreign_service_refusal(service: str, writer_module: str) -> LaneAdapter:
+    """Build the refusing adapter for a lane written by ANOTHER service, naming the service and module.
+
+    Distinct from `_source_direct_refusal` because the operator's next move is different. That one
+    says "run this module in this repository"; this one says "there is nothing to run here at all" --
+    the lane's writer is a separately deployed service, so an agri operator who reads the other
+    message would go looking for a package that is not in this tree.
+    """
+
+    async def refuse(
+        session: AsyncSession,  # noqa: ARG001 - uniform adapter shape; this lane has no query to run
+        store: ObjectStore,  # noqa: ARG001 - uniform adapter shape; the other service owns the write
+        *,
+        day: date,
+        run_id: str,  # noqa: ARG001 - uniform adapter shape; the refusal is not a run outcome
+    ) -> LaneRunResult:
+        """Refuse an export of a lane this service only reads, naming the service that writes it."""
+        raise LaneRegistryError(
+            f"this lane has no writer in agri-data-service, so no export may run for "
+            f"{day.isoformat()}. It is written by {service} (`{writer_module}`), which deploys "
+            "separately; this registration exists so readers, the census and the slider catalogue "
+            "can resolve the slug."
+        )
+
+    return refuse
+
+
+#: The two lanes `services/plantgeo-ml-service` writes and this service only reads (owner decision
+#: D2 and FR-12, track `plantgeo_ml_service_20260918`).
+_refuse_fire_risk_foreign_export: Final[LaneAdapter] = _foreign_service_refusal(
+    "services/plantgeo-ml-service", "plantgeo_ml_service.pipeline.fire_risk_daily"
+)
+_refuse_weather_forecast_foreign_export: Final[LaneAdapter] = _foreign_service_refusal(
+    "services/plantgeo-ml-service", "plantgeo_ml_service.pipeline.sources.open_meteo"
+)
+
 _refuse_climate_direct_export: Final[LaneAdapter] = _source_direct_refusal("agri_data_service.pipeline.direct.climate")
 _refuse_soil_direct_export: Final[LaneAdapter] = _source_direct_refusal("agri_data_service.pipeline.direct.soil")
 #: Static source-direct lanes use a source-owned watermark and refuse generic exports.
@@ -448,7 +505,7 @@ _refuse_water_gauges_direct_export: Final[LaneAdapter] = _source_direct_refusal(
 )
 
 
-# --- The twelve hand-written registrations, all source-direct except the calendar dimension ----
+# --- The hand-written registrations: source-direct, plus two written by another service --------
 #
 # Every floor and lag below is either quoted from that lane's `docs/lanes/<slug>.md` contract or
 # marked provisional. A floor that is wrong in the early direction invents thousands of phantom
@@ -456,8 +513,9 @@ _refuse_water_gauges_direct_export: Final[LaneAdapter] = _source_direct_refusal(
 # the late direction silently omits real days. Both are recorded honestly rather than smoothed over.
 #
 # Every registration also declares its NATURE, which says what its partition day means:
-#   daily_series   -- the day IS the observation day (7 lanes)
-#   release_series -- the day IS the publication's own valid/issue date (burn-severity, drought)
+#   daily_series   -- the day IS the observation day, or for `fire-risk` the day scored (8 lanes)
+#   release_series -- the day IS the publication's own valid/issue date (burn-severity, drought,
+#                     weather-forecast)
 #   static_lookup  -- the day is a VERSION STAMP and the lane keys to a source watermark
 #                     (evacuation-zones, soil-survey, watersheds, and `calendar` below)
 #
@@ -610,6 +668,73 @@ _HAND_WRITTEN_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
             "day. Lag 2 from docs/lanes/fire-detections.md section 2's FIRMS_DAY_RANGE "
             "rolling NRT lookback (default 2, clamped 1-5). This is the deepest window of any lane -- roughly "
             "9,400 days -- and is exactly what the newest-first ordering exists to keep tolerable."
+        ),
+    ),
+    LaneRegistration(
+        # WRITTEN BY ANOTHER SERVICE. `services/plantgeo-ml-service` scores this lane and writes
+        # `layer=fire-risk/kind=forecast`; agri has no writer for it and the adapter says so.
+        #
+        # `forecast_module="fire_risk_daily"` is not decoration. `layer-lanes.md` §2 makes shipping a
+        # forecaster and claiming a horizon the SAME fact, so the registry claim and the filesystem
+        # must agree: the stem names `plantgeo_ml_service/pipeline/fire_risk_daily.py`, and
+        # `tests/parquet/test_lane_contract.py` walks the monorepo to prove it when the sibling tree
+        # is on disk. Without the stem this lane would report `forecastable=False` while being a
+        # forecast product end to end, which is precisely the disagreement that rule forbids.
+        slug=FIRE_RISK_STREAM,
+        adapter=_refuse_fire_risk_foreign_export,
+        history_floor=date(2026, 9, 19),
+        publication_lag_days=0,
+        nature="daily_series",
+        cadence_days=1,
+        forecast_module="fire_risk_daily",
+        floor_basis=(
+            "NATURE daily_series, forecastable (plantgeo_ml_service/pipeline/fire_risk_daily.py). "
+            "FLOOR 2026-09-19 is the FIRST POSSIBLE ML PUBLICATION, not a measurement of published "
+            "history: the lane was chartered on 2026-09-18 (track plantgeo_ml_service_20260918, FR-5 "
+            "and FR-5a) and no fire-risk partition existed at the day this registration landed, so "
+            "the earliest day any writer could honestly carry is the day after the charter. An "
+            "earlier floor would invent gap-days for a lane that did not exist, which is the failure "
+            "mode this field's citation rule exists to prevent; the floor moves only when a "
+            "backfilled publication is measured, never on a guess. LAG 0 because the scorer publishes "
+            "the day it runs -- its own feature reads already respect each producer's publication "
+            "lag, so waiting a second time would double-count that delay. CADENCE 1: every day is a "
+            "candidate, which is what daily scoring means. "
+            "PUBLICATION IS GATED, and the gate is not in this registry: FR-5 forbids a partition at "
+            "a real prefix until a walk-forward backtest receipt reports per-stratum PR-AUC and Brier "
+            "against the VPD-only and climatology baselines. Until then the expected state of this "
+            "lane is empty, and an empty census here is correct rather than a gap to fill."
+        ),
+    ),
+    LaneRegistration(
+        # WRITTEN BY ANOTHER SERVICE, AND NOT A REVERSAL OF THE 2026-09-19 DELETION. The owner's
+        # decision was about ADMISSION -- agri admits no provider projection -- and this service
+        # still ingests none. `services/plantgeo-ml-service` fetches and writes the Open-Meteo NWP
+        # product (FR-12, owner: "let ml take over any projections, they don't need to be in the
+        # lanes"); this registration exists so agri's readers, census and slider can resolve the slug
+        # it publishes under. The adapter refuses and names that service.
+        slug=WEATHER_FORECAST_STREAM,
+        adapter=_refuse_weather_forecast_foreign_export,
+        history_floor=date(2026, 9, 18),
+        publication_lag_days=0,
+        nature="release_series",
+        cadence_days=1,
+        forecast_module=None,
+        floor_basis=(
+            "NATURE release_series, NOT forecastable: `forecast_module=None` because this service "
+            "projects nothing -- a provider run is a dated PUBLICATION, and its future-ness lives in "
+            "the row's own valid_time column rather than in the partition day. That is the drought "
+            "pattern, and it is why the lane writes kind=observed with day = the provider's ISSUE "
+            "date. kind=forecast under this slug stays RESERVED for an ML-corrected product: provider "
+            "runs are deterministic, so a forecast partition's ensemble provenance (random_seed, "
+            "ensemble_size) would have to be invented. "
+            "FLOOR 2026-09-18 is the FIRST ML-SERVICE PUBLICATION -- the day the service's own lane "
+            "contract declares (plantgeo_ml_service/warehouse/lanes.py, `weather-forecast`), matching "
+            "the day the lane was chartered. It is not a measurement of archive depth and must not be "
+            "read as one: Open-Meteo serves no forecast archive, so a run older than the writer's "
+            "first tick is unrecoverable and an earlier floor would invent unfillable gap-days. "
+            "LAG 0: a run is settled the moment the provider issues it; nothing about waiting makes "
+            "an issue date more final. CADENCE 1 because the provider issues at least daily, so every "
+            "day is a real candidate rather than a step over a rhythm."
         ),
     ),
     LaneRegistration(
@@ -955,7 +1080,7 @@ CALENDAR_REGISTRATION: Final = LaneRegistration(
     watermark=_calendar_watermark,
     floor_basis=(
         "NATURE static_lookup, WATERMARK-DRIVEN, and the ONE lane with no source system. The floor is DERIVED "
-        f"as min(history_floor) across the thirty-one source-bearing lanes -- {CALENDAR_HISTORY_FLOOR.isoformat()}, "
+        f"as min(history_floor) across the thirty-three source-bearing lanes -- {CALENDAR_HISTORY_FLOOR.isoformat()}, "
         "which is fire-detections' -- so every day any lane can key to the dimension is in it. Each version "
         f"covers its own day plus {CALENDAR_VERSION_FORWARD_DAYS} days, and must reach today plus "
         f"{CALENDAR_REQUIRED_FORWARD_DAYS}, so a 30-day horizon from any as-of date always resolves and the "

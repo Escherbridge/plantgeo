@@ -57,7 +57,14 @@ DEDICATED_SLIDER_PRODUCT_LAYERS: Final[tuple[str, ...]] = (
     "soil-field-moisture-7-28cm",
 )
 
-NON_SLIDER_REGISTERED_LAYERS: Final = frozenset({"calendar", "signal"})
+# Registered lanes the slider census does NOT walk. `calendar` and `signal` are not slider layers at
+# all. `fire-risk` and `weather-forecast` are written by `services/plantgeo-ml-service`, not by any
+# agri writer, and this census is OBSERVED-only: `fire-risk` is forecast-only and has no
+# `kind=observed` prefix to list, so walking it would report a permanent red gap for a lane that is
+# behaving correctly. Both enter the census only when a `kind=forecast` census exists AND the ML
+# publisher is warm (track `plantgeo_ml_service_20260918`, phase 2D review decision, 2026-09-19);
+# until then they are also in `execution/gap_repair_contract.REPAIR_EXCLUSIONS` with the same reason.
+NON_SLIDER_REGISTERED_LAYERS: Final = frozenset({"calendar", "fire-risk", "signal", "weather-forecast"})
 
 # Drought is the only direct Parquet release reader; PostgreSQL-backed event releases keep their
 # recorded-day coverage until they receive their own bounded carry contract.

@@ -416,6 +416,24 @@ carry it yet. This is conservative for leakage (never earlier than the truth) an
 same widening. `OBSERVATION_CHECKSUM_PREFIX` is deliberately a NEW prefix: the retired loader hashed
 scene ids, cloud cover and sample counts that a day partition does not carry.
 
+## Expert label export (`expert_label_export.py`): dry run by default, immutable once written
+
+`agri-service ops export-expert-labels --release <id>` lifts one reviewed release out of the
+Postgres expert-label plane into `ml/labels/expert/<release>/part-0000.parquet`, beside a
+`receipt.json`, for `services/plantgeo-ml-service` to read. It is the ONE direction data flows from
+agri to that service, and it runs once per release, under an owner go.
+
+**It is a DRY RUN unless `--apply` is passed.** The default is the reversible one because the write
+is not: re-exporting a release whose object holds different bytes is refused outright, since an ML
+artifact may already pin its training set by that object's digest, and silently replacing it would
+move the ground under a model that cited it. A dry run does everything but the two puts and prints
+the sha256 and byte count the apply run would write, so digests can be compared before any bytes
+are committed. Re-exporting IDENTICAL bytes is a no-op reported as `already_present`, not an error.
+
+**`--prefix` is validated here, not only at write time.** A prefix outside `ml/` raises
+`ExpertLabelExportRefusal` naming the flag, rather than the store's bare `ValueError` two layers
+down — and it refuses in a dry run too, which would otherwise never reach the store at all.
+
 ## Quality receipt
 
 Changes in this directory affect the Python quality fingerprint. Regenerate

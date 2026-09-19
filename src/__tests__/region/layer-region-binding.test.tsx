@@ -250,11 +250,24 @@ describe("REGION_LAYER_SLUG_BY_WAREHOUSE_NAME is pinned to the region vocabulary
     }
   });
 
-  it("covers every platform layer a toggle can reach, and names its one exception", () => {
+  it("covers every platform layer a toggle can reach, and names its one toggle-path exception", () => {
     // Both directions at once. The one platform layer with no toggle-path value is stated here
     // rather than skipped, so adding a toggle for it fails this test instead of drifting:
     //   land-context           -- not a `LayerToggleId` at all; it has its own group store and
     //                             reaches `layerBindingInRegion` through LAND_CONTEXT_REGION_LAYER_SLUG.
+    //
+    // TOGGLE-PATH AND BINDING ARE DIFFERENT QUESTIONS, and the exception above is the first one
+    // only. THREE platform layers are currently UNBOUND in every region -- declared in
+    // `platformLayers`, absent from `enabledLayers`, so `layerBindingInRegion` answers `unbound`
+    // with a reason rather than `not_federated`:
+    //   land-context           -- parcel/ownership context; no source bound in the pilot region.
+    //   fire-risk              -- written by services/plantgeo-ml-service, never by agri
+    //                             (`plantgeo_ml_service_20260918` FR-5a); nothing published yet.
+    //   weather-forecast       -- same writer, same state (FR-12); the provider NWP release moved
+    //                             to that service on 2026-09-19 and agri only reads the slug.
+    // The two ML lanes ARE toggle-reachable (they sit in REGION_LAYER_SLUG_BY_WAREHOUSE_NAME, which
+    // is exactly what keeps them off `not_federated` and off an empty map drawn as a working layer),
+    // so they belong in `expected` below and not in the exception set.
     // `botanical-occurrences` used to be a second exception (BACKLOG N40): its three toggles all
     // carried `warehouseLayerName: null`, so no toggle of it could ever report "not available in
     // this region". N40 closed that gap with a dedicated `regionLayerSlug` field, decoupled from

@@ -7,12 +7,14 @@ import pytest
 
 from agri_data_service.foundation.parquet.paths import PartitionPathError
 from agri_data_service.warehouse.parquet.schema import (
+    FORECAST_ORIGINATED_STREAMS,
     FORECAST_PROVENANCE_COLUMNS,
     FORECAST_PROVENANCE_FIELDS,
     FORECAST_PROVENANCE_GRAIN,
     SIGNAL_PLANE_GRAIN,
     SIGNAL_PLANE_SCHEMA,
     SIGNAL_PLANE_STREAM,
+    ForecastOnlyStreamError,
     ParquetStreamSchema,
     StreamSchemaConflictError,
     StreamSchemaError,
@@ -249,10 +251,55 @@ def test_forecast_resolves_for_a_lane_that_has_to_be_autoloaded() -> None:
 
 
 def test_no_registered_lane_declares_a_provenance_column_on_its_observed_side() -> None:
-    """A lane that did would make the same name mean two things across the two kinds."""
+    """A lane that did would make the same name mean two things across the two kinds.
+
+    `FORECAST_ORIGINATED_STREAMS` is excused because for those the two kinds are not two: the lane
+    has NO observed side, so there is no second meaning for a provenance name to collide with. The
+    exemption is read from the constant the lookup itself branches on, never from a literal here, so
+    a stream cannot be quietly excused from this rule without also changing what `get_stream_schema`
+    does with it.
+    """
     for name in registered_stream_names():
+        if name in FORECAST_ORIGINATED_STREAMS:
+            continue  # No observed side at all: `get_stream_schema(name)` refuses for exactly these.
         observed = get_stream_schema(name)
         assert not set(observed.column_names) & set(FORECAST_PROVENANCE_COLUMNS), name
+
+
+def test_a_forecast_originated_stream_is_returned_verbatim_rather_than_re_provenanced() -> None:
+    """`fire-risk` already carries the six columns, so deriving a forecast contract would collide."""
+    for name in FORECAST_ORIGINATED_STREAMS:
+        registered = observed_stream_schema(name)
+        assert get_stream_schema(name, "forecast") is registered, name
+        assert registered.column_names[-FORECAST_PROVENANCE_COLUMN_COUNT:] == FORECAST_PROVENANCE_COLUMNS, name
+        with pytest.raises(StreamSchemaConflictError, match="forecast provenance column"):
+            forecast_stream_schema(registered)
+
+
+def test_a_forecast_originated_stream_refuses_the_observed_kind_the_way_the_ml_service_does() -> None:
+    """The lane has no `kind=observed` prefix, so answering with a contract would invent one.
+
+    `fire-risk` is scored, never measured. A caller handed a schema for its observed side would go
+    on to list `layer=fire-risk/kind=observed/`, find nothing, and report a permanent red gap for a
+    lane that is behaving exactly as designed. The writing service already refuses this ask
+    (`plantgeo_ml_service/warehouse/streams.py::stream_schema`); this is the same refusal on the
+    reading side, so neither service can be talked into the observed kind.
+    """
+    for name in FORECAST_ORIGINATED_STREAMS:
+        with pytest.raises(ForecastOnlyStreamError, match="forecast-only"):
+            get_stream_schema(name, "observed")
+        with pytest.raises(ForecastOnlyStreamError, match="forecast-only"):
+            get_stream_schema(name)
+        # The registration itself is still reachable: tier derivation and this module's own
+        # registry checks need the object, and only the KIND lookup carries the observed claim.
+        assert observed_stream_schema(name).name == name
+
+
+def test_the_observed_refusal_is_catchable_as_an_ordinary_missing_schema() -> None:
+    """A caller with one `StreamSchemaError` handler keeps working; the subclass only adds detail."""
+    for name in FORECAST_ORIGINATED_STREAMS:
+        with pytest.raises(StreamSchemaError):
+            get_stream_schema(name, "observed")
 
 
 def test_an_observed_schema_that_already_claims_a_provenance_name_is_refused() -> None:

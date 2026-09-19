@@ -48,7 +48,9 @@ class WarehouseSession:
     connection: duckdb.DuckDBPyConnection
     bucket_uri: str
 
-    def partition_glob(self, layer: str, kind: str, zoom: int = BASE_ZOOM_TIER, year: str = "*", month: str = "*") -> str:
+    def partition_glob(
+        self, layer: str, kind: str, zoom: int = BASE_ZOOM_TIER, year: str = "*", month: str = "*"
+    ) -> str:
         """The read_parquet glob for one layer at one zoom tier, with the tier always pinned."""
         return (
             f"{self.bucket_uri}/layer={layer}/kind={kind}/zoom={zoom:02d}/"

@@ -69,7 +69,12 @@ UNBOUND_LAYER_SLUGS = tuple(
 #: a surface must be able to ask about it and get a governed absence with a reason; no land-context
 #: lane is published in any region, so the honest manifest answer is `unbound`, not silence
 #: (STYLE-REVIEW-W5 B1).
-PILOT_UNBOUND_LAYER_SLUGS = ("land-context",)
+#: `fire-risk` and `weather-forecast` joined the vocabulary on 2026-09-19 (track
+#: `plantgeo_ml_service_20260918`, FR-5a and FR-12) and are unbound for the same reason
+#: `land-context` is: they are platform layers whose writer, `services/plantgeo-ml-service`, has
+#: published nothing yet. Binding them before a partition exists would report a working layer over
+#: an empty prefix, which is the one failure the binding rule exists to prevent.
+PILOT_UNBOUND_LAYER_SLUGS = ("fire-risk", "land-context", "weather-forecast")
 
 #: Which agent surface name reaches each unbound layer, for the per-layer refusal proof below.
 #: `land-context` is deliberately absent: it is a reference plane read over tRPC and has no agent
@@ -206,10 +211,17 @@ def test_the_capabilities_payload_marks_the_regional_layers_unbound(
 def test_every_unbound_layer_with_an_agent_surface_is_covered_below() -> None:
     """The parametrized refusal proof walks a hand-spelled map; this is what keeps it complete.
 
-    Only `land-context` may be missing from it, and only because it has no agent surface to refuse
-    through -- any OTHER unbound layer dropping out of the map would silently shrink the proof.
+    Three layers may be missing from it, and only because none of them has an agent surface to
+    refuse through -- any OTHER unbound layer dropping out of the map would silently shrink the
+    proof. `land-context` is a reference plane read over tRPC. `fire-risk` and `weather-forecast`
+    are written by `services/plantgeo-ml-service` and reach no agent tool in this service yet; when
+    one gains a surface it belongs in the map, and this assertion is what will say so.
     """
-    assert set(UNBOUND_LAYER_SLUGS) - set(UNBOUND_LAYER_AGENT_SURFACES) == {"land-context"}
+    assert set(UNBOUND_LAYER_SLUGS) - set(UNBOUND_LAYER_AGENT_SURFACES) == {
+        "fire-risk",
+        "land-context",
+        "weather-forecast",
+    }
 
 
 @pytest.mark.parametrize("layer_slug", sorted(UNBOUND_LAYER_AGENT_SURFACES))
@@ -277,8 +289,13 @@ async def test_a_globally_bound_layers_tool_is_not_refused_by_region(
 # --- The PNW regression --------------------------------------------------------------
 
 
-def test_the_pilot_binds_every_platform_layer_but_land_context() -> None:
-    """The pilot's one governed absence, stated as a test rather than as an omission."""
+def test_the_pilot_binds_every_platform_layer_but_the_three_with_no_publisher() -> None:
+    """The pilot's governed absences, stated as a test rather than as an omission.
+
+    One of the three is `land-context`, whose reference plane has no published lane. The other two
+    joined on 2026-09-19 and are unbound for the same shape of reason: `fire-risk` and
+    `weather-forecast` are written by `services/plantgeo-ml-service`, which has published nothing.
+    """
     pnw = load_region("pnw")
     availability = region_layer_availability(pnw)
     assert set(availability) == set(PLATFORM_LAYER_SLUGS)

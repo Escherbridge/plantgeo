@@ -41,6 +41,16 @@ class StreamSchemaConflictError(ValueError):
     """Raised when a stream name is registered twice with different storage contracts."""
 
 
+class ForecastOnlyStreamError(StreamSchemaError):
+    """Raised when a forecast-originated stream is asked for the observed side it never writes.
+
+    Typed, and a subclass of `StreamSchemaError` so an existing "this stream has no contract"
+    handler still catches it. The message mirrors the writing service's own refusal
+    (`services/plantgeo-ml-service/src/plantgeo_ml_service/warehouse/streams.py::stream_schema`)
+    so the two services refuse the same ask in the same words.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class ParquetStreamSchema:
     """The storage contract for one object stream: Arrow schema, grain sort key, and codec."""
@@ -94,6 +104,21 @@ FORECAST_PROVENANCE_COLUMNS: Final[tuple[str, ...]] = tuple(field.name for field
 # every write is total, because an ordering that leaves ties is not reproducible evidence.
 FORECAST_PROVENANCE_GRAIN: Final[tuple[str, ...]] = ("issued_on", "horizon_days", "quantile")
 
+# Streams whose REGISTERED schema is already forecast-shaped, because they have no observed side at
+# all. `fire-risk` is the only one: it is a scored product written by `services/plantgeo-ml-service`
+# (owner decision D2, track `plantgeo_ml_service_20260918`), so `kind=forecast` is the only kind it
+# ever writes and there is no observed row to append the six provenance columns to.
+#
+# Appending them anyway would collide with the six names the schema already carries, which is why
+# `get_stream_schema(name, "forecast")` returns the registered object verbatim for these, and why
+# the "no lane declares a provenance column on its observed side" rule excuses exactly this set.
+#
+# The OBSERVED kind is REFUSED for this set (`ForecastOnlyStreamError`), mirroring the writing
+# service. These slugs are also in `parquet_ops.coverage.NON_SLIDER_REGISTERED_LAYERS`, so the
+# census never asks -- and if some future caller does, it hears "no observed side" rather than being
+# handed a contract for a prefix that will never exist.
+FORECAST_ORIGINATED_STREAMS: Final[frozenset[str]] = frozenset({"fire-risk"})
+
 
 def forecast_stream_schema(observed: ParquetStreamSchema) -> ParquetStreamSchema:
     """Derive a lane's forecast contract: its observed columns, in order, plus the six provenance columns."""
@@ -144,9 +169,25 @@ def observed_stream_schema(name: str) -> ParquetStreamSchema:
 
 
 def get_stream_schema(name: str, kind: PartitionKind = "observed") -> ParquetStreamSchema:
-    """Return one stream-kind's contract: the observed schema, or observed plus provenance for `forecast`."""
+    """Return one stream-kind's contract: the observed schema, or observed plus provenance for `forecast`.
+
+    A `FORECAST_ORIGINATED_STREAMS` member REFUSES the observed kind. It has no observed side, so
+    answering with its registered object would hand a caller a contract for a prefix that will never
+    exist -- and a census or serving read that acted on it would report a permanent gap rather than
+    the absence of a stream. `observed_stream_schema` stays the raw registry lookup for the
+    machinery that must see the registration itself (tier derivation, the registry tests).
+    """
+    partition_kind = validate_partition_kind(kind)
+    if name in FORECAST_ORIGINATED_STREAMS:
+        if partition_kind == "observed":
+            raise ForecastOnlyStreamError(
+                f"stream {name!r} is forecast-only; it has no observed side to read. It is written by "
+                "services/plantgeo-ml-service under kind=forecast alone; ask for the forecast kind"
+            )
+        # Already forecast-shaped; deriving would collide with the provenance names it carries.
+        return observed_stream_schema(name)
     observed = observed_stream_schema(name)
-    if validate_partition_kind(kind) == "observed":
+    if partition_kind == "observed":
         return observed
     cached = _FORECAST_REGISTRY.get(name)
     if cached is None:

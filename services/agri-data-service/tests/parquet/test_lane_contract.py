@@ -1,8 +1,12 @@
 """The lane-nature vocabulary and the static-lookup watermark rule, exercised as pure functions.
 
-Everything here is stdlib-pure: no store, no session, no clock. The driver's use of these rules is
+The nature rules are stdlib-pure: no store, no session, no clock. The driver's use of them is
 pinned in `test_gap_fill.py`; what is pinned here is the rules themselves, because they are what
 decides whether a reference set is "current" or owes a snapshot.
+
+The last section is the one exception and reads the REGISTRY plus the filesystem, because the fact
+it pins -- that a lane claiming a forecaster names a module the ML service actually ships -- exists
+in no single module and had no test at all before 2026-09-19.
 
 The sub-day cases below are named for `evacuation-zones` on purpose: that lane is the one where the
 day-resolution answer was a life-safety defect rather than a staleness annoyance.
@@ -11,6 +15,7 @@ day-resolution answer was a life-safety defect rather than a staleness annoyance
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -33,6 +38,7 @@ from agri_data_service.foundation.parquet.paths import (
     completion_marker_path,
     partition_path,
 )
+from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRATIONS, LANE_REGISTRY
 
 if TYPE_CHECKING:
     from agri_data_service.foundation.parquet.zoom import ZoomTier
@@ -414,3 +420,97 @@ def test_a_coarse_tier_snapshot_never_answers_for_the_tier_below_it() -> None:
     assert newest_covered_day(layer="watersheds", kind="observed", zoom=BASE_TIER, keys=keys) is None
     # And the coarse tier still answers for ITSELF, so this is scoping rather than blanket refusal.
     assert newest_covered_day(layer="watersheds", kind="observed", zoom=WHOLE_WORLD_TIER, keys=keys) == CHANGED_ON
+
+
+# --- The forecast_module claim, bound to the ML service's filesystem -----------------------------
+#
+# `LaneRegistration.forecast_module` is read by NOTHING in agri: no export path branches on it and
+# no census reports it, so until this section it was unenforced prose sitting in a dataclass. It is
+# also the whole of `layer-lanes.md` section 2's rule, which makes shipping a forecaster and claiming
+# a horizon the same fact -- a lane that names a module nobody wrote claims a horizon it cannot
+# serve, and a lane that names nothing while a module sits under its slug hides one it could.
+#
+# Since 2026-09-18 the module lives in the SIBLING service (owner decision D2, track
+# `plantgeo_ml_service_20260918`), in one of two directories: `method/monte_carlo/<stem>.py` for an
+# ensemble forecaster, and `pipeline/<stem>.py` for a lane that service writes end to end.
+#
+# THE TEST SKIPS RATHER THAN FAILS WHEN THE SIBLING TREE IS ABSENT, and that is deliberate: the
+# agri Docker image ships this service alone, so inside it the claim is genuinely uncheckable. A
+# skip with a named reason says so; failing there would make a green sweep depend on which checkout
+# the runner happened to have.
+
+_MONOREPO_ROOT = Path(__file__).resolve().parents[4]
+_ML_SERVICE_PACKAGE = _MONOREPO_ROOT / "services" / "plantgeo-ml-service" / "src" / "plantgeo_ml_service"
+_FORECASTER_DIRECTORIES = ("method/monte_carlo", "pipeline")
+
+
+def _ml_module_paths(stem: str) -> tuple[Path, ...]:
+    """The two places a lane's forecaster may live in the ML service, for one module stem."""
+    return tuple(_ML_SERVICE_PACKAGE / directory / f"{stem}.py" for directory in _FORECASTER_DIRECTORIES)
+
+
+def _require_ml_service_tree() -> None:
+    """Skip the whole check when this checkout holds no sibling service to look in."""
+    if not _ML_SERVICE_PACKAGE.is_dir():
+        pytest.skip(
+            f"no plantgeo-ml-service tree at {_ML_SERVICE_PACKAGE}; the forecast_module claim is only "
+            "checkable in a monorepo checkout, never inside the agri Docker image"
+        )
+
+
+def test_every_forecast_module_claim_names_a_real_ml_module() -> None:
+    """A named stem must be a file: a claimed horizon with no forecaster is a horizon nobody serves."""
+    _require_ml_service_tree()
+    missing: dict[str, list[str]] = {}
+    for registration in LANE_REGISTRATIONS:
+        stem = registration.forecast_module
+        if stem is None:
+            continue
+        candidates = _ml_module_paths(stem)
+        if not any(path.is_file() for path in candidates):
+            missing[registration.slug] = [str(path.relative_to(_MONOREPO_ROOT)) for path in candidates]
+
+    assert missing == {}, f"lanes claiming a forecaster the ML service does not ship: {missing}"
+
+
+def test_a_lane_claiming_no_forecaster_has_no_module_lying_in_wait_under_its_slug() -> None:
+    """The other direction, which is the one that catches a forecaster shipped without its claim.
+
+    The stem probed is the lane's own slug with hyphens replaced, which is the naming rule every
+    forecaster but `vegetation`'s follows -- and `vegetation` DOES claim a module, so it never
+    reaches here. A file found under a silent lane's slug means the registry is a push behind the
+    service, and `forecastable` is answering False for a lane that publishes forecasts.
+    """
+    _require_ml_service_tree()
+    unclaimed: dict[str, list[str]] = {}
+    for registration in LANE_REGISTRATIONS:
+        if registration.forecast_module is not None:
+            continue
+        stem = registration.slug.replace("-", "_")
+        found = [str(path.relative_to(_MONOREPO_ROOT)) for path in _ml_module_paths(stem) if path.is_file()]
+        if found:
+            unclaimed[registration.slug] = found
+
+    assert unclaimed == {}, f"the ML service ships a forecaster for lane(s) claiming none: {unclaimed}"
+
+
+def test_the_two_lanes_the_ml_service_writes_are_registered_with_the_right_claims() -> None:
+    """FR-5a and FR-12, pinned: `fire-risk` claims its module, `weather-forecast` claims none."""
+    fire_risk = LANE_REGISTRY["fire-risk"]
+    weather_forecast = LANE_REGISTRY["weather-forecast"]
+
+    assert (fire_risk.nature, fire_risk.publication_lag_days, fire_risk.cadence_days) == ("daily_series", 0, 1)
+    assert fire_risk.history_floor == date(2026, 9, 19)
+    assert fire_risk.forecast_module == "fire_risk_daily"
+    assert fire_risk.forecastable
+
+    # `release_series`, because the partition day is the provider's ISSUE date and the future-ness
+    # lives in `valid_time` -- the drought pattern. Nothing here projects, so no module is claimed.
+    assert (weather_forecast.nature, weather_forecast.publication_lag_days, weather_forecast.cadence_days) == (
+        "release_series",
+        0,
+        1,
+    )
+    assert weather_forecast.history_floor == date(2026, 9, 18)
+    assert weather_forecast.forecast_module is None
+    assert not weather_forecast.forecastable
