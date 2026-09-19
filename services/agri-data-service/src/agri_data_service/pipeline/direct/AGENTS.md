@@ -1122,6 +1122,23 @@ row shape of any lane in this directory. Built for owner decision D4
 `postgres-weather` executor lane, so the layer stopped advancing on the live map; this writer is what
 un-freezes it.
 
+### Source-response retention: the only retry this rolling feed can ever have
+
+`recovery.py` extends the shared `pipeline/parquet/source_checkpoint.py` store -- the one climate and
+soil already write to -- over this lane's polls. The reason is specific to a ROLLING feed: the
+provider serves "now" and keeps no archive, so unlike every dated lane there is no day this writer
+can re-fetch. A bucket whose Parquet write failed is simply gone unless the parser input was kept.
+
+`forward.py` therefore checkpoints BEFORE the first write, not after it, and counts a point retained
+only after reading it back (`source_checkpoints_retained`), because a write that was not read back
+is a claim, not evidence. Retention is reported beside -- never folded into -- the availability
+counters: a retained body proves a future retry is POSSIBLE, and proves nothing about publication.
+
+`weather_support_sha256` binds every checkpoint to the complete ordered support grid, and
+`recover_weather_day` reports `source_retention_loss` for a day missing any point of that grid
+rather than returning a partial one. Recovery returns observations; it does not publish them, so a
+republication still goes through the forward writer's own lane-day lock and finalizer.
+
 ### The name collision, again, and which producer this actually is
 
 `weather-observations` is overloaded exactly as `warehouse/schemas/weather_observations.py`'s own

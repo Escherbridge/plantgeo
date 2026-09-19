@@ -78,10 +78,15 @@ from agri_data_service.pipeline.direct.weather_observations.rows import (
     WEATHER_OBSERVATIONS_SOURCE_COLUMNS,
     direct_weather_observation_tables,
 )
+from agri_data_service.pipeline.direct.weather_observations.recovery import (
+    WeatherCheckpointReport,
+    checkpoint_current_poll,
+)
 from agri_data_service.pipeline.direct.weather_observations.source import poll_current_conditions
 from agri_data_service.pipeline.direct.weather_observations.support import weather_sample_points
 from agri_data_service.pipeline.parquet.availability_extension import AvailabilityExtensionTally
 from agri_data_service.pipeline.parquet.availability_index import BotoAvailabilityStorage
+from agri_data_service.pipeline.parquet.source_checkpoint import SourceResponseCheckpoints
 from agri_data_service.pipeline.parquet.gap_fill import fill_one_lane_day, postgres_lane_day_lock
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 from agri_data_service.pipeline.parquet.objectstore import BotoObjectStoreBackend, ObjectStore, conform_to_stream_schema
@@ -614,6 +619,7 @@ async def run(args: argparse.Namespace) -> int:
             days_unwritten=0,
             unwritten=[],
             absences_overturned=[],
+            **WeatherCheckpointReport().to_summary(),
             **availability.to_summary(),
         )
         return 0
@@ -621,6 +627,12 @@ async def run(args: argparse.Namespace) -> int:
     credentials = settings.require_object_store()
     store = ObjectStore(BotoObjectStoreBackend.from_credentials(credentials), prefix=settings.object_store_prefix)
     availability_storage = BotoAvailabilityStorage.from_settings()
+    # Retain the parser inputs BEFORE the first Parquet write: this feed keeps no archive, so a
+    # checkpoint taken after a failed write would be a checkpoint that never existed when needed.
+    checkpoint_report = await asyncio.to_thread(
+        checkpoint_current_poll, poll, points, SourceResponseCheckpoints(availability_storage)
+    )
+    emit("weather_observations_source_retention", run_id=run_id, **checkpoint_report.to_summary())
     database_url = settings.require_local_source_loader_database_url()
     results: list[ForwardDayResult] = []
     async with local_source_loader_session(database_url) as session:
@@ -705,6 +717,7 @@ async def run(args: argparse.Namespace) -> int:
         parts=sum(result.parts for result in results),
         rows=sum(result.rows for result in results),
         bytes=sum(result.written_bytes for result in results),
+        **checkpoint_report.to_summary(),
         exit_code=verdict.exit_code,
         days_written=verdict.days_written,
         days_unwritten=verdict.days_unwritten,

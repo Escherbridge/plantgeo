@@ -19,7 +19,6 @@ from agri_data_service.ingest.http import (
     UpstreamHttpError,
     UpstreamPayloadError,
     fetch_bounded,
-    fetch_bounded_json,
 )
 from agri_data_service.ingest.identity import format_javascript_timestamp
 from agri_data_service.ingest.layer_binding import LayerBinding
@@ -369,6 +368,20 @@ def parse_current_weather(payload: object, now: datetime | None = None) -> dict[
     return observation
 
 
+@dataclass(frozen=True, slots=True)
+class CurrentWeatherResponse:
+    """One validated current reading beside the EXACT bytes its parser was handed.
+
+    A rolling current-conditions feed keeps no archive, so a day whose Parquet write failed is gone
+    the moment the poll returns -- unless the parser input itself is retained. `body` is that input,
+    and it is the response text as received, never a re-render of `observation`: re-encoding the
+    parsed dict would checkpoint this parser's opinion rather than the provider's answer.
+    """
+
+    observation: dict[str, object]
+    body: bytes
+
+
 async def get_current_weather(
     client: httpx.AsyncClient,
     latitude: float,
@@ -376,6 +389,16 @@ async def get_current_weather(
     now: datetime | None = None,
 ) -> dict[str, object]:
     """Fetch and validate current conditions for one WGS84 point."""
+    return (await get_current_weather_response(client, latitude, longitude, now)).observation
+
+
+async def get_current_weather_response(
+    client: httpx.AsyncClient,
+    latitude: float,
+    longitude: float,
+    now: datetime | None = None,
+) -> CurrentWeatherResponse:
+    """Fetch one current reading and keep its exact parser input for source-response checkpointing."""
     if (
         not math.isfinite(latitude)
         or not MIN_LATITUDE <= latitude <= MAX_LATITUDE
@@ -383,5 +406,15 @@ async def get_current_weather(
         or not MIN_LONGITUDE <= longitude <= MAX_LONGITUDE
     ):
         raise ValueError("weather coordinates are outside WGS84 bounds")
-    payload = await fetch_bounded_json(client, current_weather_url(latitude, longitude), OPEN_METEO_BOUNDS)
-    return parse_current_weather(payload, now)
+    response = await fetch_bounded(client, current_weather_url(latitude, longitude), OPEN_METEO_BOUNDS)
+    if not response.ok:
+        raise UpstreamHttpError(response.status)
+    if response.payload_error is not None:
+        raise response.payload_error
+    if response.content_type is not None and "json" not in response.content_type.lower():
+        raise UpstreamPayloadError("upstream response was not JSON")
+    try:
+        payload = json.loads(response.text)
+    except ValueError as error:
+        raise UpstreamPayloadError("upstream response contained invalid JSON") from error
+    return CurrentWeatherResponse(observation=parse_current_weather(payload, now), body=response.text.encode("utf-8"))

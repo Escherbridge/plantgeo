@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from agri_data_service.ingest.open_meteo import get_current_weather
+from agri_data_service.ingest.open_meteo import get_current_weather_response
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -32,6 +32,9 @@ class WeatherPointObservation:
     latitude: float
     longitude: float
     observation: dict[str, object]
+    #: The exact provider bytes this observation was parsed from, when the poll was asked to keep
+    #: them; `None` for the ordinary capture-free poll. Never a re-render of `observation`.
+    response_body: bytes | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,16 +55,22 @@ async def poll_current_conditions(
 ) -> WeatherPollResult:
     """Fetch every sample point, keeping one point's failure or staleness from discarding the rest.
 
-    Reuses `get_current_weather` verbatim -- the same bounds check, fetch, value-range validation and
+    Reuses `get_current_weather_response` verbatim -- the same bounds check, fetch, value-range
+    validation and
     `MAX_OBSERVATION_AGE` freshness gate the ingest cron applied -- so a direct-written row and a
     Postgres-written row would have made an identical accept/reject decision on the same response.
     No concurrency limiter is added: `run_weather_ingestion_job` already fans out the full grid (at
     most `MAX_WEATHER_SAMPLE_POINTS` = 150 points) unbounded, and this reuses that proven shape rather
     than inventing a second one.
+
+    Every accepted point keeps its exact parser input in `response_body`: this feed has no archive to
+    re-fetch, so `recovery.py` checkpoints those bytes before the first write. There is deliberately
+    no capture-free variant -- a second poll shape would be a second place for the accept/reject rule
+    to drift, and the body is discarded by the caller, not by the fetch.
     """
     fetched_at = now if now is not None else datetime.now(UTC)
     results = await asyncio.gather(
-        *(get_current_weather(client, latitude, longitude, fetched_at) for latitude, longitude in points),
+        *(get_current_weather_response(client, latitude, longitude, fetched_at) for latitude, longitude in points),
         return_exceptions=True,
     )
     observations: list[WeatherPointObservation] = []
@@ -70,7 +79,14 @@ async def poll_current_conditions(
         if isinstance(result, BaseException):
             unavailable_points += 1
             continue
-        observations.append(WeatherPointObservation(latitude=latitude, longitude=longitude, observation=result))
+        observations.append(
+            WeatherPointObservation(
+                latitude=latitude,
+                longitude=longitude,
+                observation=result.observation,
+                response_body=result.body,
+            )
+        )
     return WeatherPollResult(
         fetched_at=fetched_at,
         points_sampled=len(points),
