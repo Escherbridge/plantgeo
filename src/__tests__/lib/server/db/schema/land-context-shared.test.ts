@@ -23,15 +23,17 @@ describe("region subdivision codes", () => {
   });
 
   it("refuse a manifest that binds a code the declared tuple does not carry", () => {
+    // The declared tuple is passed IN now that a second manifest exists: the rule is per manifest,
+    // and the pilot's tuple would be the wrong thing to check another region's codes against.
     // Adding to one side only is the edit W4 S2 describes: the runtime array grows to four while
     // every `RegionSubdivisionCode`-typed surface still promises three.
-    expect(() => assertAdminCodesMatchDeclaredTuple([...PNW_ADMIN_CODES, "US-MT"])).toThrow(
+    expect(() => assertAdminCodesMatchDeclaredTuple([...PNW_ADMIN_CODES, "US-MT"], PNW_ADMIN_CODES)).toThrow(
       /may only be edited together/
     );
-    expect(() => assertAdminCodesMatchDeclaredTuple(["US-OR", "US-WA", "US-ID"])).toThrow(
+    expect(() => assertAdminCodesMatchDeclaredTuple(["US-OR", "US-WA", "US-ID"], PNW_ADMIN_CODES)).toThrow(
       /may only be edited together/
     );
-    expect(() => assertAdminCodesMatchDeclaredTuple([...PNW_ADMIN_CODES])).not.toThrow();
+    expect(() => assertAdminCodesMatchDeclaredTuple([...PNW_ADMIN_CODES], PNW_ADMIN_CODES)).not.toThrow();
   });
 
   it("are the ONE definition both former restatements now read", () => {

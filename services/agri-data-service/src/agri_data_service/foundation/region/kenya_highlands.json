@@ -1,0 +1,37 @@
+{
+  "slug": "kenya-highlands",
+  "display_name": "Kenya Highlands",
+  "envelope": { "west": 34.0, "south": -5.0, "east": 42.0, "north": 5.0 },
+  "default_camera_envelope": { "west": 35.5, "south": -1.5, "east": 38.5, "north": 1.5 },
+  "sub_envelopes": {},
+  "crs": null,
+  "lattice_pitch_degrees": 0.01,
+  "lattice_origin_rule": "floor_to_cell_origin",
+  "timezone": "Africa/Nairobi",
+  "iso_country_codes": ["KE"],
+  "admin_codes": ["KE-13", "KE-31", "KE-35", "KE-36"],
+  "platform_layers": [
+    "botanical-occurrences",
+    "burn-severity",
+    "drought",
+    "evacuation-zones",
+    "fire-detections",
+    "fire-perimeters",
+    "land-context",
+    "sensors",
+    "signal",
+    "soil-survey",
+    "vegetation",
+    "water-gauges",
+    "watersheds",
+    "weather-observations"
+  ],
+  "enabled_layers": [
+    { "layer_slug": "fire-detections", "source_slug": "firms", "coverage": "global" },
+    { "layer_slug": "vegetation", "source_slug": "sentinel2_ndvi", "coverage": "global" },
+    { "layer_slug": "weather-observations", "source_slug": "open_meteo", "coverage": "global" },
+    { "layer_slug": "watersheds", "source_slug": "hydrosheds", "coverage": "global" },
+    { "layer_slug": "signal", "source_slug": "era5_land_and_nasa_power", "coverage": "global" },
+    { "layer_slug": "botanical-occurrences", "source_slug": "gbif", "coverage": "global" }
+  ]
+}

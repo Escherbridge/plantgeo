@@ -226,3 +226,39 @@ catalogue is a per-request allocation it does not need.
 is Mountain — and this field picks the dominant one rather than modelling a per-admin-code zone
 table; a region whose footprint straddles zones more evenly will need that modelling; this pilot
 does not motivate it yet.
+
+## Why a second manifest is data rather than a fixture
+
+`kenya_highlands.json` is a shipped deployment artefact, registered in `manifest.py`'s
+`_MANIFEST_FILE_BY_SLUG` and selectable with `PLANTGEO_REGION=kenya-highlands`. It is deliberately
+not a fabricated `Region` built inside a test, the way
+`tests/foundation/test_region_layer_availability.py`'s `global_only_region` fixture is.
+
+The fixture proves the CODE paths hold for a region binding only `coverage: global` sources. It
+cannot prove the packaging ones: that a manifest loads through `resources.files()` from the
+installed package, that a second slug resolves without a monkeypatched registry, that `crs: null`
+survives validation, that a manifest with no `sub_envelopes` at all is loadable, and that the
+JSON the next deployment will copy actually parses. Those are exactly the failures a forward
+deployment hits on day one, and a fixture that seeds `load_region`'s private cache by hand skips
+every one of them. The file is the artefact the next deployment copies and edits; the fixture
+remains as the cheaper regression over the same behaviour.
+
+**What the second manifest deliberately does not carry.** It binds no drought, burn-severity,
+soil-survey or land-context source, because no source this build registers reaches Kenya —
+USDM, MTBS, SSURGO, WFIGS, USGS NWIS, NOAA NWS and the Oregon OEM portal are all US-scoped, and
+`assert_region_bindings_are_servable` would refuse a binding to any of them under
+`iso_country_codes: ["KE"]`. Those four (plus `evacuation-zones`, `fire-perimeters`, `sensors` and
+`water-gauges`) are therefore governed absences with a named reason, which is the whole point of
+the manifest carrying `platform_layers` separately from `enabled_layers`.
+
+**`crs` is null and `sub_envelopes` is empty, on purpose.** The pilot declares `crs: 4326` and two
+narrower boxes because two US-source lanes still read their own envelopes from the manifest
+(`burn_severity_bounding_box()`, `botanical_seed_envelope()`). Neither lane is bound here, so a
+sub-envelope for it would be a footprint claim nothing reads. `crs` is optional in the model for
+this case: no projected work is declared for this region yet, and inventing a UTM zone for it
+would be a decision made by a manifest author rather than by the work that needs it.
+
+**No data, no tiles, no lane runs.** Registering the manifest asserts nothing about Parquet
+partitions, PMTiles archives or ingest schedules for this footprint; all of those are empty. What
+it proves is that the platform BOOTS under it and that every surface answers "not available in
+this region" instead of drawing an empty map that reads as an outage.

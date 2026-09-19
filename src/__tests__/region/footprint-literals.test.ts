@@ -4,7 +4,8 @@
 // filesystem to walk `src/`, same reason `manifest-parity.test.ts` carries the same pragma.
 // Stray-literal guard: fails on a new WGS84 footprint literal outside the region manifest.
 // `conductor/code_styleguides/federation.md` §1 "Permitted literal coordinates" and §5 step 4.
-// Regex-scans every `src/**/*.{ts,tsx}` file (excluding tests and `src/lib/region/pnw.ts`) for a
+// Regex-scans every `src/**/*.{ts,tsx}` file (excluding tests and the region manifests themselves,
+// `src/lib/region/{pnw,kenya_highlands}.ts`, which ARE the declaration) for a
 // 4-number bbox string/array/object that reads as a WGS84 footprint (either hemisphere), and for
 // the `US-WA`/`US-OR`/`US-ID`/`Pacific Northwest`/`PNW` markers. See `AGENTS.md` in this directory
 // for why the scan targets declared literals rather than every occurrence of the word "bbox", and
@@ -22,7 +23,11 @@ const SRC_ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
 const EXCLUDED_DIRECTORY_NAMES = new Set(["__tests__", "__benchmarks__", "node_modules"]);
 
 /** Files that ARE the manifest's own declaration -- never "a literal outside the manifest". */
-const ALLOWED_RELATIVE_PATHS = new Set(["lib/region/pnw.ts", "lib/region/region.ts"]);
+const ALLOWED_RELATIVE_PATHS = new Set([
+  "lib/region/pnw.ts",
+  "lib/region/kenya_highlands.ts",
+  "lib/region/region.ts",
+]);
 
 /** A world-extent sentinel string or array; federation.md §1's explicit "no viewport" exception. */
 const WORLD_EXTENT_STRING = "-180,-90,180,90";
