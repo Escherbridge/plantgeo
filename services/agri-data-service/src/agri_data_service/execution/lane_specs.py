@@ -211,20 +211,47 @@ def _registration(slug: str) -> tuple[int, int, str | None]:
     return lane.publication_lag_days, lane.cadence_days, ceiling
 
 
-#: How many whole DECLARED-LAG ALLOWANCES may elapse past the vegetation lane's declared-lag day
-#: before the NDVI promotion turn calls its ceiling stale.
+#: How many days behind TODAY the vegetation lane's newest servable day may be before the NDVI
+#: promotion turn calls its ceiling stale. A SAFETY BOUND, stated as a literal day count in the unit
+#: it is enforced in, and deliberately derived from nothing.
 #:
-#: A declared allowance, not a provider measurement taken this turn: `vegetation`'s registered
-#: `publication_lag_days=7` is the distance a HEALTHY lane already sits behind today, because
-#: `pipeline/parquet/lane_registry.py`'s vegetation `floor_basis` records 7 as a MEASURED MEDIAN gap
-#: between usable Sentinel-2 observation days, worse than the nominal 5-day revisit because cloud
-#: screening removes scenes. A bound measured from `today` therefore spends its first whole allowance
-#: on that declared lag, so an overcast PNW fortnight -- routine Oct-Mar, on a lane where nothing is
-#: wrong -- trips it (STYLE-REVIEW-W9 B1). Counted past the declared-lag day instead, TWO allowances
-#: are a ceiling 21 or more days behind today, which is beyond what the declared median plus one
-#: heavy-tail gap explains. See `execution/AGENTS.md` section Lane activation, which also records why
-#: this allowance is NOT a provider fact (STYLE-REVIEW-W10 S1).
-VEGETATION_PROMOTION_STALE_CEILING_LAG_ALLOWANCES: Final = 2
+#: It used to be `VEGETATION_PROMOTION_STALE_CEILING_LAG_ALLOWANCES = 2`, multiplied back by the
+#: lane's registered `publication_lag_days` (STYLE-REVIEW-W11 S1). Two defects, one of them live:
+#:
+#: 1. The number a reader met was `2` and the bound the code enforced was `3 x lag = 21` days, because
+#:    counting past the declared-lag day spends one whole lag before the counter starts. A constant
+#:    whose real value is computed two files away is what `engineering-principles.md` section 2
+#:    forbids.
+#: 2. `publication_lag_days` is documented in `pipeline/parquet/lane_registry.py`'s vegetation
+#:    `floor_basis` as a MEASURED MEDIAN -- a number this repo expects to RE-MEASURE. Re-measuring it
+#:    to 10 silently moved this safety bound from 21 days to 30, with a GREEN suite, because the
+#:    boundary tests were themselves written as `lag * (allowances + 1)` and tracked the change
+#:    instead of catching it. That is the freshness yardstick again: the test compared the code to
+#:    itself (`.omc` memory `plantgeo-freshness-yardstick-is-tautological`).
+#:
+#: So the two questions are now separate constants with separate owners. "How far behind is NORMAL"
+#: is `publication_lag_days`, owned by the registry, re-measurable at will, and reported but never
+#: multiplied. "How far behind is DEAD" is this literal, owned by this lane, and moved only by
+#: editing this line. 21 is the value the bound has had since STYLE-REVIEW-W9 B1 closed -- restated,
+#: not re-derived: a healthy lane already sits about 7 days behind today, a routine Oct-Mar PNW
+#: overcast fortnight puts it ~16 days behind with nothing wrong, and 21 clears that observed
+#: worst case while still catching a writer that stopped.
+#:
+#: `tests/execution/test_vegetation_partition_promotion.py::test_the_stale_ceiling_bound_is_a_day_count_this_lane_owns`
+#: pins this literal and pins the bound the code enforces against it, so a re-measured lag cannot move
+#: the bound and cannot pass the suite unnoticed.
+VEGETATION_PROMOTION_STALE_CEILING_DAYS: Final = 21
+
+#: How many whole declared-lag medians of slack `VEGETATION_PROMOTION_STALE_CEILING_DAYS` must leave
+#: PAST the declared-lag day to still be believable. A FLOOR checked by
+#: `stale_ceiling_days_clearing_declared_lag`, which can only REFUSE the bound, never move it -- the
+#: one relationship between the two numbers that survives, and it is stated in the direction that
+#: cannot silently rescale anything.
+#:
+#: Two, because the registry calls the 7-day lag a median of a heavy-tailed distribution and W9 B1
+#: proved one median of slack is not enough: a 16-day inter-scene gap is routine and sits one median
+#: past the declared-lag day. At the registered lag of 7 the floor is 21 and the bound is exactly 21.
+VEGETATION_PROMOTION_STALE_CEILING_MINIMUM_SLACK_LAGS: Final = 2
 
 
 def vegetation_promotion_declared_lag_days() -> int:
@@ -239,16 +266,62 @@ def vegetation_promotion_declared_lag_days() -> int:
 
     Read from `LANE_REGISTRY`, never copied: the same rule
     `pipeline/direct/vegetation/products.py` states for the floor and the lag it deliberately does
-    not duplicate. Refuses a non-positive lag, which would make "whole allowances elapsed" undefined
-    rather than merely wrong.
+    not duplicate. This number is REPORTED by the promotion turn and is an input to the floor check
+    below; it is NOT a factor of the staleness bound, which is
+    `VEGETATION_PROMOTION_STALE_CEILING_DAYS` and moves only when that line is edited. Refuses a
+    non-positive lag, which is not a lag at all and would let the floor check pass on nothing.
     """
     lag_days = _registration("vegetation")[0]
     if lag_days < 1:
         raise ValueError(
-            f"lane 'vegetation' registers publication_lag_days={lag_days}; the NDVI promotion staleness "
-            f"bound counts whole declared-lag allowances and cannot be measured against a non-positive one"
+            f"lane 'vegetation' registers publication_lag_days={lag_days}; the NDVI promotion turn "
+            f"reports its ceiling's distance past the declared-lag day and cannot do that for a "
+            f"non-positive lag"
         )
     return lag_days
+
+
+def stale_ceiling_days_clearing_declared_lag(*, stale_ceiling_days: int, declared_lag_days: int) -> int:
+    """Return `stale_ceiling_days` unchanged, or REFUSE it as too tight for this declared lag.
+
+    The only coupling left between the safety bound and the re-measurable median, and it is
+    one-directional by construction: this function returns its first argument or raises. It can never
+    compute a bound, so no re-measurement of `declared_lag_days` can move one.
+
+    The floor is `(1 + VEGETATION_PROMOTION_STALE_CEILING_MINIMUM_SLACK_LAGS) * declared_lag_days`.
+    The `1 +` is the lag a HEALTHY lane already sits behind today and is written out rather than
+    folded into the multiplier -- folding it in is exactly how `= 2` came to mean `3 x lag`.
+
+    Re-measuring the lag DOWNWARD always passes: a bound that is relatively more generous than needed
+    detects a dead writer later, which is the safe direction, and the cost is visible in the report's
+    `ceiling_declared_lag_slack_days`. Re-measuring it UPWARD far enough that 21 days would start
+    refusing lanes that are merely slow raises here instead, which is the point: the bound and the lag
+    are then genuinely in conflict and a person has to decide which one is wrong. In a scheduled turn
+    that surfaces as `main()`'s `failed` report carrying this message, not as a silent re-scaling.
+    """
+    minimum_days = (1 + VEGETATION_PROMOTION_STALE_CEILING_MINIMUM_SLACK_LAGS) * declared_lag_days
+    if stale_ceiling_days < minimum_days:
+        raise ValueError(
+            f"the NDVI promotion stale-ceiling bound is {stale_ceiling_days} days behind today, but lane "
+            f"'vegetation' now declares publication_lag_days={declared_lag_days}, whose heavy tail needs at "
+            f"least {minimum_days} ({VEGETATION_PROMOTION_STALE_CEILING_MINIMUM_SLACK_LAGS} whole declared "
+            f"lags of slack past the declared-lag day); raise VEGETATION_PROMOTION_STALE_CEILING_DAYS "
+            f"deliberately or explain why this lag may sit inside the bound"
+        )
+    return stale_ceiling_days
+
+
+def vegetation_promotion_stale_ceiling_days() -> int:
+    """Return the staleness bound in DAYS BEHIND TODAY, after checking it against the registered lag.
+
+    The one accessor the promotion turn calls. What it returns is
+    `VEGETATION_PROMOTION_STALE_CEILING_DAYS` and nothing else -- the registry is consulted only to
+    REFUSE a bound that has become too tight for a re-measured lag, never to compute one.
+    """
+    return stale_ceiling_days_clearing_declared_lag(
+        stale_ceiling_days=VEGETATION_PROMOTION_STALE_CEILING_DAYS,
+        declared_lag_days=vegetation_promotion_declared_lag_days(),
+    )
 
 
 def _spec(  # noqa: PLR0913 - this is the declarative constructor for the code-owned lane table
