@@ -1098,3 +1098,26 @@ calculations elsewhere are separate and unchanged. With no percentile supplied, 
 remains `unknown`; an absolute flow of 17.7 cfs alone does not establish a low-flow condition.
 Existing Parquet rows retain previously emitted classifications until explicitly corrected or
 replaced; this producer change does not claim to rewrite historical objects.
+
+## agri does not admit provider projections
+
+Owner decision, 2026-09-19: an `ingest/` domain reads OBSERVED data only, so a numerical-weather-
+prediction run has no source domain here. The `weather-forecast` slug, its Open-Meteo Single-Runs
+binding, and anything else that publishes values for a time later than the moment they were measured
+belong to the ML service, not to an agri lane. A previous wave built exactly such a domain
+(`ingest/weather_forecast/` plus `warehouse/schemas/weather_forecast.py`); it never ticked, never
+published, and was removed rather than left as an unowned lane. Do not re-add it: a provider forecast
+arriving here means the layer is in the wrong service. The design work survives at
+`.omc/ultrapilot-20260918/W8-E-PLAN.md` and in the deleted code at commit `c922509d`, which the ML
+service lifts from directly.
+
+One probe verdict is worth carrying forward because it is expensive to rediscover and because the
+provider's own documentation states the opposite. Open-Meteo's hourly `precipitation` timestamp
+labels the **START** of its accumulation hour: the value at hour `t` sums `[t, t+1h)`. The written
+documentation calls it a "sum of the preceding hour", but the API contradicts its own prose --
+`daily=precipitation_sum` for day `D` equals the hourly values at `D`T00:00..23:00, not
+`D`T01:00..`D+1`T00:00, on every wet day of a four-location GFS crosscheck
+(`.omc/research/forecast-s3-probe-20260919/wet-crosscheck-raw.json`, run `2026-09-18T00:00`; for
+example 5.45N/100.31E reports 17.8 mm for 2026-09-19, matching the 00-23 sum of 17.8 and not the
+01-24 sum of 17.5). Any consumer that applies the documented preceding-hour reading shifts every
+precipitation value by exactly one hour.
