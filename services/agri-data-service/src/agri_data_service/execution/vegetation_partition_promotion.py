@@ -53,7 +53,6 @@ from agri_data_service.execution.vegetation_ndvi_plane import (
 )
 from agri_data_service.foundation.canonical import canonical_json, sha256_digest
 from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
-from agri_data_service.pipeline.direct.vegetation.forward import settled_through
 from agri_data_service.warehouse.schemas.vegetation import VEGETATION_PLANE_STREAM
 
 if TYPE_CHECKING:
@@ -404,11 +403,10 @@ def emit(payload: dict[str, object]) -> None:
 def parser() -> argparse.ArgumentParser:
     """Build the bounded governed-plane promotion operator.
 
-    Without `--day`, promotes the newest `--max-days` settled vegetation days (the same
-    `settled_through` boundary `pipeline/direct/vegetation/forward.py` publishes against), so this
-    lane is schedulable exactly like its sibling direct writers. Every day it touches is still
-    idempotent against its own promotion receipt, so a wider `--max-days` never re-registers an
-    unchanged partition.
+    Without `--day`, promotes the newest `--max-days` days trailing the vegetation LANE'S OWN
+    Parquet availability index (`default_promotion_days`), so this lane is schedulable exactly like
+    its sibling direct writers. Every day it touches is still idempotent against its own promotion
+    receipt, so a wider `--max-days` never re-registers an unchanged partition.
     """
     built = argparse.ArgumentParser(description=__doc__)
     built.add_argument("--day", action="append", dest="days", default=None, help="one ISO date; repeatable")
@@ -417,11 +415,30 @@ def parser() -> argparse.ArgumentParser:
     return built
 
 
-def default_promotion_days(*, today: date, max_days: int) -> tuple[date, ...]:
-    """Return the newest `max_days` settled vegetation days, oldest first, with no explicit `--day`."""
+def default_promotion_days(*, availability: AvailabilityIndexDays, today: date, max_days: int) -> tuple[date, ...]:
+    """Return the trailing `max_days` calendar days ending at the newest INDEXED published day.
+
+    The ceiling is the vegetation lane's own Parquet availability index (`read_lane_availability` ->
+    `availability_days_at_base_rung`), never Postgres: `pipeline/direct/vegetation/forward.py`'s
+    `settled_through` queries `agri.vegetation`, which was retired 2026-09-04 and holds no rows for
+    any day this lane could promote (`.omc` memory `agri-vegetation-promotion-unarmed`; incident
+    evidence `conductor/tracks/gapless_parquet_publication_20260901/evidence/ndvi-promotion-activation-20260919.md`).
+    Calling that boundary here is what made the lane's first activated tick raise `ValueError: no
+    vegetation observations exist at or before <today>` instead of promoting.
+
+    Returns an empty tuple when the index carries no `published` day at or before `today` at all --
+    the lane's forward writer having indexed nothing yet is exactly the `not_yet_indexed`/
+    `waiting_for_writer` territory `run_vegetation_promotion`/`_promotion_report` already handle for
+    an empty `days` sequence, so this never raises for that case.
+    """
     if max_days < 1:
         raise ValueError("--max-days must be at least one")
-    ceiling = settled_through(today=today)
+    published_days = sorted(
+        day for day, indexed in availability.verdicts.items() if indexed.state == "published" and day <= today
+    )
+    if not published_days:
+        return ()
+    ceiling = published_days[-1]
     return tuple(sorted(ceiling - timedelta(days=offset) for offset in range(max_days)))
 
 
@@ -632,13 +649,16 @@ def exit_code_for(report: Mapping[str, object]) -> int:
     return 0 if isinstance(status, str) and status in SUCCESSFUL_TURN_STATUSES else 1
 
 
-def read_lane_availability() -> LaneAvailability:
+def read_lane_availability() -> AvailabilityIndexDays:
     """Read the vegetation lane's checksum-bound availability generation as this turn's authority.
 
     Uses the same verified read path the serving side does
     (`parquet_ops/availability_coverage.py` -> `availability_index.read_latest_availability`), so a
     missing, stale, malformed or checksum-invalid index fails closed here exactly as it does there
-    (`layer-lanes.md` §4a).
+    (`layer-lanes.md` §4a). Returned as the concrete `AvailabilityIndexDays`, not the narrower
+    `LaneAvailability` protocol, because `default_promotion_days` needs to enumerate every day's
+    verdict to find the newest `published` one -- something a single `indexed_day(day)` lookup
+    cannot do.
     """
     from agri_data_service.pipeline.parquet.availability_index import (  # noqa: PLC0415 - CLI-only
         BotoAvailabilityStorage,
@@ -666,15 +686,17 @@ async def main(argv: Sequence[str] | None = None) -> int:
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore  # noqa: PLC0415 - CLI-only
 
     arguments = parser().parse_args(argv)
-    days = (
-        tuple(sorted(date.fromisoformat(value) for value in arguments.days))
-        if arguments.days
-        else default_promotion_days(today=datetime.now(UTC).date(), max_days=arguments.max_days)
-    )
     store = ObjectStore.from_settings()
     loader_database_url = settings.require_local_source_loader_database_url()
     try:
         availability = read_lane_availability()
+        days = (
+            tuple(sorted(date.fromisoformat(value) for value in arguments.days))
+            if arguments.days
+            else default_promotion_days(
+                availability=availability, today=datetime.now(UTC).date(), max_days=arguments.max_days
+            )
+        )
         async with local_source_loader_session(loader_database_url) as session:
             report = await run_vegetation_promotion(session, store, days=days, availability=availability)
     except Exception as error:
