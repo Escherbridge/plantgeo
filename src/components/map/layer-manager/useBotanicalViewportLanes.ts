@@ -109,7 +109,7 @@ export function useBotanicalViewportLanes({
   //
   // This is ONE conjunct of the read's enablement, not the whole of it: the rest -- a measurable
   // viewport and the governance conjunction -- is composed inside
-  // `useBotanicalOccurrencesQuery` (`src/hooks/useViewportProxiedLayers.ts:361-371`), which is
+  // `useBotanicalOccurrencesQuery` (`src/hooks/useViewportProxiedLayers.ts:432-442`), which is
   // why nothing below gates on this value. It is named `Requested` rather than `Enabled` so that
   // the distinction is visible at every use site.
   const isAggregateReadRequested = band === "detail" ? false : richnessVisible || effortVisible;
@@ -140,7 +140,7 @@ export function useBotanicalViewportLanes({
   //
   // So the gate now lives where the predicate does. `botanicalRead.answer` is already withheld
   // whenever the observer is not live (`liveViewportRead`,
-  // `src/hooks/useViewportProxiedLayers.ts:165-174`), the raw react-query result is not exported,
+  // `src/hooks/useViewportProxiedLayers.ts:196-216`), the raw react-query result is not exported,
   // and a conjunct added to that enablement reaches every consumer here without this file
   // changing. Everything tRPC-sourced below reads `aggregateBandAnswer`, so the cells, the
   // counts, the note, the truncation flag, the reported state, the store publication and the pin
@@ -362,7 +362,7 @@ export function useBotanicalViewportLanes({
     // Gated by the read itself, for the same reason the answer is: a disabled observer keeps
     // reporting the last key's `isError`, which would raise a fault for a read nobody issued.
     // Reported beside the answer rather than derived from it, because an error has no answer to
-    // carry it (`liveViewportRead`, `src/hooks/useViewportProxiedLayers.ts:165-174`).
+    // carry it (`liveViewportRead`, `src/hooks/useViewportProxiedLayers.ts:196-216`).
     isError: botanicalRead.isError,
     truncated: botanicalAggregate?.truncated === true,
     // From the proxy answer: withheld-locality counts are a detail-band fact, and the detail

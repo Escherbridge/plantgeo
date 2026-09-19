@@ -42,7 +42,7 @@ const FAKE_CONTEXT = {} as QueryFunctionContext;
 
 const BOTANICAL_PATH = ["environmental", "getBotanicalOccurrences"];
 
-/** The inputs the hook actually sends (useViewportProxiedLayers.ts:307-323), minus the defaults. */
+/** The inputs the hook actually sends (useViewportProxiedLayers.ts:444-459), minus the defaults. */
 function botanicalInput(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return { bbox: "-124,44,-122,46", zoom: 12, limit: 2000, ...overrides };
 }

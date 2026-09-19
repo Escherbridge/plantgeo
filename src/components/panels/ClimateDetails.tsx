@@ -122,7 +122,7 @@ function ClimateSignalReport({
   // day they asked for.
   const { requestDate } = useDebouncedLayerDay(definition.toggleId);
 
-  const query = useClimateFieldQuery(bbox, {
+  const read = useClimateFieldQuery(bbox, {
     enabled: true,
     signal,
     variant: climateMode.airTemperatureVariant,
@@ -135,7 +135,7 @@ function ClimateSignalReport({
   // The server echoes `signal` for exactly this: react-query serves a previous key's data for a
   // frame after a form or statistic change, and every caption below is written from
   // `definition`, which has already moved.
-  const served = query.data;
+  const served = read.answer;
   const field = served?.signal === signal ? served : undefined;
   // The archive ends before the live edge, so "the day you asked for" and "the day drawn"
   // routinely differ. Saying so is the whole point: a field silently drawn from months ago
@@ -215,7 +215,7 @@ function ClimateSignalReport({
           — so `isLoading` is permanently false after the first success and this line would never
           appear again. The `served`/`field` term beside it catches a form or statistic change,
           which is a different mismatch and not a date one. */}
-      {((query.isFetching && !query.isPlaceholderData) ||
+      {((read.isFetching && !read.isShowingRetainedAnswer) ||
         (served !== undefined && field === undefined)) && (
         <p role="status" aria-live="polite" className="text-xs text-[hsl(var(--muted-foreground))]">
           Loading the {definition.fieldLabel} field for this view…
@@ -226,7 +226,7 @@ function ClimateSignalReport({
           for, so while this is true the "newest reading at or before {day}" note names the
           PREVIOUS request's day rather than this row's. Worded without "loading" because offline
           pauses a fetch rather than cancelling it. */}
-      {query.isPlaceholderData && field !== undefined && (
+      {read.isShowingRetainedAnswer && field !== undefined && (
         <p role="status" aria-live="polite" className="text-xs text-[hsl(var(--muted-foreground))]">
           The figures below describe the previous request; this one has not arrived yet.
         </p>
@@ -286,7 +286,7 @@ function ClimateSignalReport({
         </p>
       )}
 
-      {query.isError && (
+      {read.isError && (
         <p role="alert" className={NOTICE_CLASS_NAME}>
           The {definition.fieldLabel} field could not be loaded for this view. Try again shortly.
         </p>

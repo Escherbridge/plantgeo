@@ -54,7 +54,7 @@ const lane = vi.hoisted(() => ({
  *
  * `data`/`isError` are the raw observer fields a `keepPreviousData` observer keeps serving after
  * it is disabled; `answer`/`isAnswerLive`/`isError` are the `LiveViewportRead` the real hook
- * returns (`src/hooks/useViewportProxiedLayers.ts:148-174`). Both are handed back deliberately:
+ * returns (`src/hooks/useViewportProxiedLayers.ts:158-216`). Both are handed back deliberately:
  * the retained frame stays reachable here, so a consumer that reads it instead of the published
  * liveness fails these cases rather than passing on a mock that cannot express the defect.
  *
@@ -234,7 +234,7 @@ function pinnedReleaseSetId(): string | null {
  * The caller's toggle gate was not enough either (style review W10, B1): it is one conjunct of an
  * enablement composed inside the read, and the missing one -- a measurable viewport -- is DYNAMIC.
  * The discriminator is now the read's own published liveness
- * (`src/hooks/useViewportProxiedLayers.ts:148-155`), which no consumer re-derives; the
+ * (`src/hooks/useViewportProxiedLayers.ts:158-183`), which no consumer re-derives; the
  * collapsed-container case below is the one the toggle-gate guard still got wrong.
  */
 describe("useBotanicalViewportLanes: the pin follows the lane that drew the cells", () => {

@@ -2,7 +2,7 @@
 
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { ClimateFieldLayer } from "@/components/map/layers/ClimateFieldLayer";
-import { useClimateFieldQuery } from "@/hooks/useViewportProxiedLayers";
+import { drawnDayReadState, useClimateFieldQuery } from "@/hooks/useViewportProxiedLayers";
 import {
   useClimateDisplayMode,
   useDebouncedLayerDay,
@@ -96,7 +96,7 @@ function ClimateSignalLayer({
   const visible = layerVisibility[toggleId];
   const renderForm = climateMode.renderFormFor(signal);
 
-  const query = useClimateFieldQuery(bbox, {
+  const read = useClimateFieldQuery(bbox, {
     enabled: visible,
     signal,
     variant: climateMode.airTemperatureVariant,
@@ -115,7 +115,7 @@ function ClimateSignalLayer({
       layerId: toggleId,
       isDrawn: visible,
       requestedDate: day.settledDate,
-      ...drawnDayFlagsFromQuery(query, "typed"),
+      ...drawnDayFlagsFromQuery(drawnDayReadState(read), "typed"),
     },
   ]);
 
@@ -123,7 +123,7 @@ function ClimateSignalLayer({
   // see src/components/map/AGENTS.md "climate-field". Read back through the echoed `signal`
   // exactly as `ClimateDetails` does, because react-query serves the previous key's data for a
   // frame after a form change and that answer describes a different request.
-  const served = query.data?.signal === signal ? query.data : undefined;
+  const served = read.answer?.signal === signal ? read.answer : undefined;
   const servedForm = served?.renderForm ?? renderForm;
   // The rung that ANSWERED, never the rung this row asked for: the two differ for a frame after a
   // zoom, and the layer sizes its outline off this. NULL until a collection lands, rather than the
@@ -139,7 +139,7 @@ function ClimateSignalLayer({
       signal={signal}
       renderForm={servedForm}
       zoomTier={servedZoomTier}
-      geojson={query.data ?? EMPTY_FEATURE_COLLECTION}
+      geojson={read.answer ?? EMPTY_FEATURE_COLLECTION}
       opacityScale={layerOpacity[toggleId]}
       visible={visible}
     />

@@ -232,12 +232,17 @@ that failed, which is the whole reason the state is surfaced at all.
 
 ## Live viewport reads
 
-`LiveViewportRead` (`useViewportProxiedLayers.ts:148-155`) is what a viewport query hands back
+`LiveViewportRead` (`useViewportProxiedLayers.ts:158-183`) is what a viewport query hands back
 instead of the react-query result: the `answer`, whether that answer `isAnswerLive` for the
-request in hand, and the `isError` that goes with it. `useBotanicalOccurrencesQuery` is the first
-hook to return one (`:396`); the other viewport queries in this file still return their raw
-results, and each one that a consumer gates on should move to this shape rather than growing a
-second copy of its enablement at the call site.
+request in hand, and `isError` / `isFetching` / `isLoading` / `isSuccess` /
+`isShowingRetainedAnswer` — every one of them gated on that same liveness, because a flag read off
+a disabled observer describes the request that observer last ran.
+
+**All five viewport queries in the file return one**, as of the 2026-09-19 sweep:
+`useWatershedsQuery`, `useSoilSurveyQuery`, `useSoilFieldQuery`, `useClimateFieldQuery` and
+`useBotanicalOccurrencesQuery`. `liveViewportRead` (`:196-216`) is the only admission point, and
+`drawnDayReadState` (`:225-232`) is the only translation into the drawn-day registry's vocabulary,
+so no call site reassembles that mapping from a raw observer either.
 
 **Why it exists.** Every query here is configured `placeholderData: KEEP_PREVIOUS_WHILE_PANNING`,
 which is what keeps the map from blanking on a pan. The cost is that `data` OUTLIVES the
@@ -249,10 +254,14 @@ the reported symptom and each missed a conjunct (W8 B3, W9 S1, W10 B1; the third
 to both the observer and `liveViewportRead`, and the raw result is not exported.
 
 **What this does and does not make impossible.** A consumer of a `LiveViewportRead` cannot read a
-retained frame at all — `answer` is withheld (`:165-174`), and there is no other binding to reach
-it through, so a conjunct added to the enablement propagates without any consumer changing. It does
-NOT stop a future hook from returning a raw react-query result and inviting the same mistake; that
-is the rule above, not a type. Nor does it speak for lanes that are not react-query observers —
+retained frame at all — `answer` is withheld (`:196-216`), and there is no other binding to reach
+it through, so a conjunct added to the enablement propagates without any consumer changing. A NEW
+hook here cannot quietly hand one back either: returning a `useQuery(...)` result from this module
+is an eslint error (`eslint.config.mjs`, the `no-restricted-syntax` block scoped to
+`src/hooks/useViewportProxiedLayers.ts`), and `npm run lint` is a stage of the Docker build
+(`Dockerfile:67`), so the ban fails the build rather than a review. What it does NOT cover: a hook
+placed in some OTHER file, and anyone deleting the rule. Nor does it speak for lanes that are not
+react-query observers —
 `useBotanicalOccurrences` (below) resets to `IDLE` when disabled (`useBotanicalOccurrences.ts:161-162`),
 so it retains nothing and needs no gate.
 
@@ -277,15 +286,15 @@ container collapses to zero size with every toggle still on.
 Three consumer-side gates were written for that retained frame in three consecutive waves --
 presence, then the band (W8 B3), then the caller's toggle gate (W9 S1) -- and each missed a
 conjunct of an enablement it could not see. The third miss was `requested !== null`
-(`useViewportProxiedLayers.ts:363`), which is DYNAMIC: `viewportBbox` returns null for a zero-size
+(`useViewportProxiedLayers.ts:434`), which is DYNAMIC: `viewportBbox` returns null for a zero-size
 or hidden container (`src/lib/map/viewport-bbox.ts:57-67`), and this repo has a named memory for
 exactly that class of state (`plantgeo-hidden-tab-blank-map`).
 
 So the gate moved to the definition (style review W10, B1). `useBotanicalOccurrencesQuery` returns
-a `LiveViewportRead` (`useViewportProxiedLayers.ts:148-155`), not the react-query result: the
-enablement is composed once at `useViewportProxiedLayers.ts:361-371`, passed to the observer as
-`enabled` at `:390` and to `liveViewportRead` at `:396` unchanged, and the answer is withheld
-whenever it does not hold (`:165-174`). The raw result is not exported, so a consumer has nothing
+a `LiveViewportRead` (`useViewportProxiedLayers.ts:158-183`), not the react-query result: the
+enablement is composed once at `useViewportProxiedLayers.ts:432-442`, passed to the observer as
+`enabled` at `:461` and to `liveViewportRead` at `:469` unchanged, and the answer is withheld
+whenever it does not hold (`:196-216`). The raw result is not exported, so a consumer has nothing
 to re-derive a gate from, and a conjunct added to that expression reaches every consumer without
 any consumer changing. See `src/components/map/AGENTS.md` section "The pin names the lane that drew
 the cells" for the pin this corrupted three times.

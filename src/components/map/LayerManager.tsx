@@ -16,6 +16,7 @@ import {
 import { scaleOpacityValue, styleLayerOpacityTargets } from "@/lib/map/layer-opacity";
 import { useParquetFireDetections } from "@/hooks/useParquetFireDetections";
 import {
+  drawnDayReadState,
   useSoilFieldQuery,
   useSoilSurveyQuery,
   useViewportBounds,
@@ -481,11 +482,11 @@ export default function LayerManager() {
   // the tRPC input then rejects at any ordinary zoom, so the layer only ever drew when zoomed
   // in past ~13. Passed from the same `useViewportBounds()` derivation SoilDetails reads it
   // from, so the map and the details region stay on ONE react-query entry.
-  const soilSurveyQuery = useSoilSurveyQuery(bbox, { enabled: soilSurveyVisible, zoom });
+  const soilSurveyRead = useSoilSurveyQuery(bbox, { enabled: soilSurveyVisible, zoom });
   // Only the features are drawable: a truncated view and an upstream fault both reach the
   // map as polygons that stop, so the collection's truncated/availability pair is read by
   // SoilDetails instead, from this same query key. See src/lib/server/AGENTS.md §soil-survey.
-  const soilSurveyGeoJSON = soilSurveyQuery.data ?? EMPTY_FEATURE_COLLECTION;
+  const soilSurveyGeoJSON = soilSurveyRead.answer ?? EMPTY_FEATURE_COLLECTION;
 
   // The three herbarium rows and the two lanes that feed them; see
   // `src/components/map/layer-manager/useBotanicalViewportLanes.ts` for why there are two.
@@ -514,7 +515,7 @@ export default function LayerManager() {
   // Three separate days for the same reason -- they are three toggles, and a reader who scrubs
   // moisture back a week has said nothing about temperature.
   const soilMoistureVisible = layerVisibility["soil-moisture"];
-  const soilMoistureQuery = useSoilFieldQuery(bbox, {
+  const soilMoistureRead = useSoilFieldQuery(bbox, {
     enabled: soilMoistureVisible,
     measure: "moisture",
     date: soilMoistureDay.requestDate,
@@ -522,10 +523,10 @@ export default function LayerManager() {
     zoom,
   });
   const soilMoistureGeoJSON: GeoJSON.FeatureCollection =
-    soilMoistureQuery.data ?? EMPTY_FEATURE_COLLECTION;
+    soilMoistureRead.answer ?? EMPTY_FEATURE_COLLECTION;
 
   const soilTemperatureVisible = layerVisibility["soil-temperature"];
-  const soilTemperatureQuery = useSoilFieldQuery(bbox, {
+  const soilTemperatureRead = useSoilFieldQuery(bbox, {
     enabled: soilTemperatureVisible,
     measure: "temperature",
     date: soilTemperatureDay.requestDate,
@@ -533,10 +534,10 @@ export default function LayerManager() {
     zoom,
   });
   const soilTemperatureGeoJSON: GeoJSON.FeatureCollection =
-    soilTemperatureQuery.data ?? EMPTY_FEATURE_COLLECTION;
+    soilTemperatureRead.answer ?? EMPTY_FEATURE_COLLECTION;
 
   const soilVpdVisible = layerVisibility["soil-vpd"];
-  const soilVpdQuery = useSoilFieldQuery(bbox, {
+  const soilVpdRead = useSoilFieldQuery(bbox, {
     enabled: soilVpdVisible,
     measure: "vpd",
     date: soilVpdDay.requestDate,
@@ -544,7 +545,7 @@ export default function LayerManager() {
     zoom,
   });
   const soilVpdGeoJSON: GeoJSON.FeatureCollection =
-    soilVpdQuery.data ?? EMPTY_FEATURE_COLLECTION;
+    soilVpdRead.answer ?? EMPTY_FEATURE_COLLECTION;
 
   // The nine NASA POWER rows read and draw themselves inside `ClimateFieldLayers` below: each
   // signal owns a toggle, a slider and a day, so there is no single climate query or climate
@@ -717,26 +718,26 @@ export default function LayerManager() {
       layerId: "soil-survey",
       isDrawn: soilSurveyVisible,
       requestedDate: null,
-      ...drawnDayFlagsFromQuery(soilSurveyQuery, "typed"),
+      ...drawnDayFlagsFromQuery(drawnDayReadState(soilSurveyRead), "typed"),
       isShowingPreviousDay: false,
     },
     {
       layerId: "soil-moisture",
       isDrawn: soilMoistureVisible,
       requestedDate: soilMoistureDay.settledDate,
-      ...drawnDayFlagsFromQuery(soilMoistureQuery, "typed"),
+      ...drawnDayFlagsFromQuery(drawnDayReadState(soilMoistureRead), "typed"),
     },
     {
       layerId: "soil-temperature",
       isDrawn: soilTemperatureVisible,
       requestedDate: soilTemperatureDay.settledDate,
-      ...drawnDayFlagsFromQuery(soilTemperatureQuery, "typed"),
+      ...drawnDayFlagsFromQuery(drawnDayReadState(soilTemperatureRead), "typed"),
     },
     {
       layerId: "soil-vpd",
       isDrawn: soilVpdVisible,
       requestedDate: soilVpdDay.settledDate,
-      ...drawnDayFlagsFromQuery(soilVpdQuery, "typed"),
+      ...drawnDayFlagsFromQuery(drawnDayReadState(soilVpdRead), "typed"),
     },
     {
       layerId: "weather",

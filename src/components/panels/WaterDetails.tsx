@@ -121,7 +121,7 @@ export function WaterDetails({ bbox, zoom }: WaterDetailsProps) {
   // The same hook LayerManager calls, so the boundaries this tab lists are the ones the
   // map already fetched: one query entry, not a second ~5 MB USGS request 60 s later.
   // See src/lib/server/AGENTS.md §proxied-viewport-queries.
-  const watershedQuery = useWatershedsQuery(bbox, { enabled: true });
+  const watershedRead = useWatershedsQuery(bbox, { enabled: true });
 
   // Each layer's own day, read raw rather than settled, because these are LABELS: a caption
   // must track the pointer even while the queries wait for it to stop.
@@ -146,13 +146,13 @@ export function WaterDetails({ bbox, zoom }: WaterDetailsProps) {
   const gaugeStateNotice = parquetStateNotice(streamflowQuery.data, "streamflow");
   const gaugeReason =
     gaugeStateNotice ?? (streamflowQuery.data === undefined ? capabilityGaugeReason : null);
-  const watersheds = watershedQuery.data?.features ?? [];
+  const watersheds = watershedRead.answer?.features ?? [];
   const droughtStateNotice = parquetStateNotice(droughtQuery.data, "drought classification");
   const watershedsUnavailable =
-    watershedQuery.data?.availability === "unavailable";
+    watershedRead.answer?.availability === "unavailable";
   // USGS stops at its transfer limit and says so. The count below then describes a
   // subset of the view, so it must not be presented as the number of watersheds here.
-  const watershedsTruncated = watershedQuery.data?.truncated === true;
+  const watershedsTruncated = watershedRead.answer?.truncated === true;
   // Wider than the proxy will answer for, so the list is empty by design rather than by fault.
   const watershedListArea = bbox === undefined ? null : bboxSquareDegrees(bbox);
   const beyondWatershedListZoom =
@@ -481,20 +481,20 @@ export function WaterDetails({ bbox, zoom }: WaterDetailsProps) {
               </p>
             )}
 
-            {watershedQuery.isLoading && (
+            {watershedRead.isLoading && (
               <p className="text-xs text-[hsl(var(--muted-foreground))]">
                 Loading watershed data…
               </p>
             )}
 
-            {watershedQuery.isError && (
+            {watershedRead.isError && (
               <p className="text-xs text-red-500" role="alert">
                 Published watershed data could not be loaded. No provider or
                 synthetic fallback is shown.
               </p>
             )}
 
-            {!watershedQuery.isLoading && watersheds.length > 0 && (
+            {!watershedRead.isLoading && watersheds.length > 0 && (
               <>
                 <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 text-center">
                   <span className="block text-2xl font-bold text-blue-600">
@@ -569,7 +569,7 @@ export function WaterDetails({ bbox, zoom }: WaterDetailsProps) {
                 upstream condition rather than a withheld capability. hydrosheds.ts
                 validates before it writes to Redis, so a fault is never cached and
                 reloading this same view really does re-ask the provider. */}
-            {!watershedQuery.isLoading && watershedsUnavailable && bbox && !watershedQuery.isError && (
+            {!watershedRead.isLoading && watershedsUnavailable && bbox && !watershedRead.isError && (
               <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]">
                 The USGS hydrography service did not return boundaries for this view.
                 Please try again shortly.
@@ -589,8 +589,8 @@ export function WaterDetails({ bbox, zoom }: WaterDetailsProps) {
 
             {/* Only claimed once a response actually arrived: an undefined query result
                 is "not answered yet", not "the provider says there are none here". */}
-            {watershedQuery.data &&
-              !watershedQuery.isLoading &&
+            {watershedRead.answer &&
+              !watershedRead.isLoading &&
               !watershedsUnavailable &&
               !beyondWatershedListZoom &&
               watersheds.length === 0 && (

@@ -122,14 +122,14 @@ function SoilFieldSection({
 
   // `visible` alone, where this read used to be `open && visible`: the section is mounted
   // only while the dock has it expanded, so mounting is what "open" means now.
-  const query = useSoilFieldQuery(bbox, {
+  const read = useSoilFieldQuery(bbox, {
     enabled: visible,
     measure,
     date: requestDate,
     depth,
     zoom,
   });
-  const field = query.data;
+  const field = read.answer;
   const aggregated = field !== undefined && field.granularity !== "detail";
   // The archive ends before the live edge, so "the day you asked for" and "the day drawn"
   // routinely differ. Saying so is the whole point: a field silently drawn from four months
@@ -181,7 +181,7 @@ function SoilFieldSection({
               next loads (`keepPreviousData`, see useViewportProxiedLayers), which sets
               `status: "success"` — so `isLoading` is permanently false after the first success
               and this line would never appear again for any later day or viewport. */}
-          {query.isFetching && !query.isPlaceholderData && (
+          {read.isFetching && !read.isShowingRetainedAnswer && (
             <p
               role="status"
               aria-live="polite"
@@ -195,7 +195,7 @@ function SoilFieldSection({
               every day in this section is read off `field`, which is the PREVIOUS request's
               answer while this is true. Worded without "loading" because offline pauses a fetch
               rather than cancelling it, and a retained frame can stand with nothing in flight. */}
-          {query.isPlaceholderData && (
+          {read.isShowingRetainedAnswer && (
             <p
               role="status"
               aria-live="polite"
@@ -278,7 +278,7 @@ function SoilFieldSection({
             </p>
           )}
 
-          {query.isError && (
+          {read.isError && (
             <p
               role="alert"
               className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
@@ -350,7 +350,7 @@ export function SoilDetails({
   // requester of a layer governance withholds from the map.
   const layerVisibility = useLayerVisibility();
   const soilSurveyVisible = layerVisibility["soil-survey"];
-  const soilSurveyQuery = useSoilSurveyQuery(bbox, {
+  const soilSurveyRead = useSoilSurveyQuery(bbox, {
     enabled: soilSurveyVisible,
     zoom,
   });
@@ -359,7 +359,7 @@ export function SoilDetails({
   // day, inside `SoilFieldSection` -- a single day threaded down from this component would be
   // the global slider's shape surviving in a place that now has three independent ones. This
   // component's own feed, the SSURGO survey above, carries no date at all.
-  const soilSurvey = soilSurveyQuery.data;
+  const soilSurvey = soilSurveyRead.answer;
   // USDA holds more map units than it serves for one view and returned a subset; the
   // count below then describes part of the view, not the view.
   const soilSurveyTruncated = soilSurvey?.truncated === true;
@@ -431,7 +431,7 @@ export function SoilDetails({
       {soilSurveyVisible && (
         <div className="mt-1.5 flex flex-col gap-1.5">
           {/* `isFetching`, never `isLoading` -- see the field section above for why. */}
-          {soilSurveyQuery.isFetching && !soilSurveyQuery.isPlaceholderData && (
+          {soilSurveyRead.isFetching && !soilSurveyRead.isShowingRetainedAnswer && (
             <p
               role="status"
               aria-live="polite"
@@ -446,7 +446,7 @@ export function SoilDetails({
               true is the answer for the PREVIOUS viewport. Pan Boise to Portland and the survey
               keeps its old figures for the length of a USDA round trip; stating them as current
               is the same defect the map lane refused to introduce into the watershed LIST. */}
-          {soilSurveyQuery.isPlaceholderData && (
+          {soilSurveyRead.isShowingRetainedAnswer && (
             <p
               role="status"
               aria-live="polite"
@@ -569,7 +569,7 @@ export function SoilDetails({
           {/* The viewport area ceiling lives on the server, so the client learns it has
               been exceeded only from the rejected request; a transient SDA outage
               arrives the same way, hence one note covering both. */}
-          {soilSurveyQuery.isError && (
+          {soilSurveyRead.isError && (
             <p
               role="alert"
               className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"

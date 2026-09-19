@@ -250,7 +250,7 @@ Five rules the registry encodes:
 
 - **The drawn day is the last requested day whose collection actually LANDED** — never merely the last one that was not a placeholder. See §retained-answers.
 - **`isLoading` is narrowed to a request whose answer is not yet on the canvas.** A background refresh of the day already painted (`staleTime` expiring, or a refetch on window focus) is a fetch nobody is waiting on; publishing it blinked an "Updating" mark over an idle map every two minutes, back when the fire feed also polled on a timer.
-- **A layer that is switched off publishes nothing.** TanStack keeps `isPlaceholderData` true off `keepPreviousData` even once a query is *disabled*, so a hidden layer would otherwise report itself permanently mid-load and leave a mark nothing could clear. This is the same trap `resolvedDate` documents, met from the other side.
+- **A layer that is switched off publishes nothing.** TanStack keeps `isPlaceholderData` true off `keepPreviousData` even once a query is *disabled*, so a hidden layer would otherwise report itself permanently mid-load and leave a mark nothing could clear. This is the same trap `resolvedDate` documents, met from the other side. Since the 2026-09-19 sweep the five viewport reads in `useViewportProxiedLayers.ts` gate that flag at the source as well (`isShowingRetainedAnswer`, `src/hooks/useViewportProxiedLayers.ts:170-182`), and reach this registry through `drawnDayReadState` (`:225-232`) rather than as raw results — so the skip here is a second guard rather than the only one. It is still required: the Parquet lanes and the fire read publish from raw react-query results.
 - **Publishers own disjoint sets.** `LayerManager` publishes nine ids; each of the nine `ClimateSignalLayer`s publishes its own, because it owns its own read. The store merges per publisher, so one reader's silence cannot erase another's.
 - **`isOnLatest` is re-answered against the DRAWN day** in `resolveDrawnViewedDays`. Carrying over the row's answer put two different days in one sentence: click "Latest" on a scrubbed layer and the line read an old date with no "behind its latest" mark, while the reverse marked a day that *was* the latest as behind it. Same rule as `useViewedLayerDays`, different subject — that hook answers for the requested day, which is right for the agent payload and wrong for a caption.
 
@@ -1493,7 +1493,7 @@ off below the detail floor. The pin named a generation for a map showing no bota
 
 **The caller's toggle gate was not enough either** (style review W10, B1). It was documented here as
 "the whole predicate", and it is not: it is ONE conjunct of an enablement composed in the producing
-hook (`src/hooks/useViewportProxiedLayers.ts:361-371`), alongside `requested !== null` and the
+hook (`src/hooks/useViewportProxiedLayers.ts:432-442`), alongside `requested !== null` and the
 three-way governance conjunction. `requested !== null` is DYNAMIC — `viewportBbox` returns null for
 a zero-size or hidden container (`src/lib/map/viewport-bbox.ts:57-67`) — so collapsing the map at
 zoom 6 with richness on disabled the observer while every consumer-side gate stayed true, and the
@@ -1503,14 +1503,14 @@ cells, both choropleths and the pin all published for a viewport that did not ex
 `botanicalQuery.data` at the consumer failed for one structural reason: the predicate lives in a
 file the consumer cannot see, and each fix was derived from the reported symptom rather than from
 that predicate. `useBotanicalOccurrencesQuery` returns a `LiveViewportRead`
-(`src/hooks/useViewportProxiedLayers.ts:148-155`) rather than the react-query result — the answer,
+(`src/hooks/useViewportProxiedLayers.ts:158-183`) rather than the react-query result — the answer,
 whether that answer is live for the current request, and the error, with the raw result not
 exported.
 
 Three rules now hold:
 
 1. `aggregateBandAnswer` is `botanicalRead.answer`, already withheld by `liveViewportRead`
-   (`src/hooks/useViewportProxiedLayers.ts:165-174`) whenever the read is not live. Every
+   (`src/hooks/useViewportProxiedLayers.ts:196-216`) whenever the read is not live. Every
    tRPC-sourced value below it — `botanicalAggregate`, the cells, the two choropleth GeoJSONs,
    `aggregateReleaseSetId`, the store publication, the pin, and the lane report's `resultState` /
    `resultNote` / `truncated` — reads that one binding, so a retained answer cannot speak for a

@@ -9,6 +9,12 @@
  * Two of the three are proxied from a third party and one is read from the warehouse; what
  * they share is not their upstream but the sharing hazard, which is that a panel describing
  * a layer must never key its read differently from the map drawing it.
+ *
+ * NO HOOK HERE RETURNS A RAW REACT-QUERY RESULT. Every one returns a `LiveViewportRead`, whose
+ * fields are gated on the enablement composed for that hook's own observer; returning the
+ * observer's result from this file is banned in `eslint.config.mjs` (the
+ * `no-restricted-syntax` entry scoped to this path), so the ban is a build gate rather than a
+ * convention. See `src/hooks/AGENTS.md` section "Live viewport reads".
  */
 
 import { useMemo } from "react";
@@ -24,6 +30,8 @@ import { WORLD_EXTENT_BBOX } from "@/lib/map/world-extent";
 export const WATERSHED_LIST_MAX_SQUARE_DEGREES = 1;
 import { trpc } from "@/lib/trpc/client";
 import { useMapStore } from "@/stores/map-store";
+// Type-only, so nothing of the drawn-day registry is pulled into this module at runtime.
+import type { QueryReadState } from "@/stores/useMetricAtDate";
 // The detail floor is the PLANE's own (`DETAIL_ZOOM_FLOOR = 11` server-side), not a rung on the
 // `ZOOM_TIERS` ladder; imported rather than restated so the two cannot drift.
 import { BOTANICAL_DETAIL_MIN_ZOOM } from "@/lib/botanical-occurrences";
@@ -75,7 +83,9 @@ export const PROXIED_RETRY_COUNT = 1;
  * placeholder stands in, so `isLoading` is permanently false after the first success: a spinner
  * keyed on it never fires again, and any count or day read off `data` describes the PREVIOUS
  * request. The map publishes the drawn day (`usePublishedDrawnLayerDays`); `SoilDetails` and
- * `ClimateDetails` gate their loading lines on `isFetching` and say so on `isPlaceholderData`.
+ * `ClimateDetails` gate their loading lines on `isFetching` and say so on
+ * `isShowingRetainedAnswer` (`LiveViewportRead`, `:158-183`) — which is this flag, gated on the
+ * read being live, since react-query leaves `isPlaceholderData` true on a DISABLED observer.
  *
  * Deliberately NOT applied to `useWatershedsQuery`. Its only consumer is `WaterDetails`, which
  * renders the basins as a LIST under a heading claiming they are the ones in view; a retained
@@ -152,6 +162,24 @@ export interface LiveViewportRead<TAnswer> {
   isAnswerLive: boolean;
   /** The read's transport failure, reported only while the read is live. */
   isError: boolean;
+  /** A request is open for the current key. */
+  isFetching: boolean;
+  /** A first request is open with nothing yet in hand; false forever after under retention. */
+  isLoading: boolean;
+  /** This request LANDED -- react-query's `isSuccess`, stated positively. */
+  isSuccess: boolean;
+  /**
+   * A retained frame from an earlier request is what is in hand -- react-query's
+   * `isPlaceholderData`.
+   *
+   * Gated like everything else here, which closes a trap of its own: TanStack leaves
+   * `isPlaceholderData` TRUE on a DISABLED `keepPreviousData` observer, so an ungated read makes
+   * a hidden layer report itself permanently mid-load. `usePublishedDrawnLayerDays` documents
+   * that trap and works around it by skipping layers that are not drawn
+   * (`src/stores/useMetricAtDate.ts:480-482`); reading it through this field makes the
+   * work-around belt-and-braces rather than the only guard.
+   */
+  isShowingRetainedAnswer: boolean;
 }
 
 /**
@@ -161,15 +189,45 @@ export interface LiveViewportRead<TAnswer> {
  * hook that composed `enabled` and is handed to the observer unchanged at the same call site, so
  * a conjunct added to that expression reaches every consumer of the answer by construction rather
  * than by a reviewer noticing the second copy.
+ *
+ * EVERY field is gated, not only the answer. A flag read off a disabled observer describes the
+ * request that observer last ran, which is the same false-provenance claim the answer would make.
  */
 function liveViewportRead<TAnswer>(
   isAnswerLive: boolean,
-  query: { data: TAnswer | undefined; isError: boolean }
+  query: {
+    data: TAnswer | undefined;
+    isError: boolean;
+    isFetching: boolean;
+    isLoading: boolean;
+    isSuccess: boolean;
+    isPlaceholderData: boolean;
+  }
 ): LiveViewportRead<TAnswer> {
   return {
     answer: isAnswerLive ? query.data : undefined,
     isAnswerLive,
     isError: isAnswerLive && query.isError === true,
+    isFetching: isAnswerLive && query.isFetching === true,
+    isLoading: isAnswerLive && query.isLoading === true,
+    isSuccess: isAnswerLive && query.isSuccess === true,
+    isShowingRetainedAnswer: isAnswerLive && query.isPlaceholderData === true,
+  };
+}
+
+/**
+ * A live read in the drawn-day registry's own vocabulary, with every field already live-gated.
+ *
+ * `drawnDayFlagsFromQuery` (`src/stores/useMetricAtDate.ts:459-475`) reads four react-query
+ * fields; this is the one translation from a `LiveViewportRead` to them, so no call site
+ * reassembles that mapping and none can reach a raw observer to build it from.
+ */
+export function drawnDayReadState(read: LiveViewportRead<unknown>): QueryReadState {
+  return {
+    data: read.answer,
+    isSuccess: read.isSuccess,
+    isFetching: read.isFetching,
+    isPlaceholderData: read.isShowingRetainedAnswer,
   };
 }
 
@@ -189,15 +247,22 @@ export function useWatershedsQuery(
   // those zooms, so an outage is precisely what it is not.
   const area = requested === null ? null : bboxSquareDegrees(requested);
   const withinProxyCeiling = area !== null && area <= WATERSHED_LIST_MAX_SQUARE_DEGREES;
-  return trpc.environmental.getWatersheds.useQuery(
+  // Composed once, spent twice: the observer's `enabled` and the gate on its answer.
+  const isAnswerLive =
+    enabled && requested !== null && withinProxyCeiling && !isWithheld("watersheds");
+  const query = trpc.environmental.getWatersheds.useQuery(
     { bbox: requested ?? NO_VIEWPORT_BBOX },
     {
-      enabled:
-        enabled && requested !== null && withinProxyCeiling && !isWithheld("watersheds"),
+      enabled: isAnswerLive,
       staleTime: WATERSHEDS_STALE_TIME_MS,
       retry: PROXIED_RETRY_COUNT,
     }
   );
+  // This is the one read here NOT configured `KEEP_PREVIOUS_WHILE_PANNING` (see that constant's
+  // "deliberately NOT applied" note), so it retains nothing across a key change -- but a
+  // disabled observer still serves the CURRENT key's cached entry, and the same shape is worth
+  // keeping across all five reads rather than making the reader check which one is which.
+  return liveViewportRead<typeof query.data>(isAnswerLive, query);
 }
 
 /**
@@ -217,15 +282,18 @@ export function useSoilSurveyQuery(
   { enabled, zoom }: ProxiedQueryOptions & { zoom?: number }
 ) {
   const requested = bbox ?? null;
-  return trpc.environmental.getSoilSurvey.useQuery(
+  // Composed once, spent twice: the observer's `enabled` and the gate on its answer.
+  const isAnswerLive = enabled && requested !== null && !isWithheld("soil-survey");
+  const query = trpc.environmental.getSoilSurvey.useQuery(
     { bbox: requested ?? NO_VIEWPORT_BBOX, zoom },
     {
-      enabled: enabled && requested !== null && !isWithheld("soil-survey"),
+      enabled: isAnswerLive,
       staleTime: SOIL_SURVEY_STALE_TIME_MS,
       retry: PROXIED_RETRY_COUNT,
       placeholderData: KEEP_PREVIOUS_WHILE_PANNING,
     }
   );
+  return liveViewportRead<typeof query.data>(isAnswerLive, query);
 }
 
 /** Everything that keys a soil-moisture read; all of it must match across the two callers. */
@@ -266,15 +334,18 @@ export function useSoilFieldQuery(
 ) {
   const requested = bbox ?? null;
   const { toggleId } = soilFieldMeasureDefinition(measure);
-  return trpc.environmental.getSoilField.useQuery(
+  // Composed once, spent twice: the observer's `enabled` and the gate on its answer.
+  const isAnswerLive = enabled && requested !== null && !isWithheld(toggleId);
+  const query = trpc.environmental.getSoilField.useQuery(
     { bbox: requested ?? NO_VIEWPORT_BBOX, measure, date, depth, zoom },
     {
-      enabled: enabled && requested !== null && !isWithheld(toggleId),
+      enabled: isAnswerLive,
       staleTime: SOIL_FIELD_STALE_TIME_MS,
       retry: PROXIED_RETRY_COUNT,
       placeholderData: KEEP_PREVIOUS_WHILE_PANNING,
     }
   );
+  return liveViewportRead<typeof query.data>(isAnswerLive, query);
 }
 
 /**
@@ -443,14 +514,17 @@ export function useClimateFieldQuery(
   { enabled, signal, variant, date, renderForm, zoom }: ClimateFieldQueryOptions
 ) {
   const requested = bbox ?? null;
-  return trpc.environmental.getClimateField.useQuery(
+  // Composed once, spent twice: the observer's `enabled` and the gate on its answer.
+  const isAnswerLive =
+    enabled && requested !== null && !isWithheld(climateFieldToggleId(signal));
+  const query = trpc.environmental.getClimateField.useQuery(
     { bbox: requested ?? NO_VIEWPORT_BBOX, signal, variant, date, renderForm, zoom },
     {
-      enabled:
-        enabled && requested !== null && !isWithheld(climateFieldToggleId(signal)),
+      enabled: isAnswerLive,
       staleTime: CLIMATE_FIELD_STALE_TIME_MS,
       retry: PROXIED_RETRY_COUNT,
       placeholderData: KEEP_PREVIOUS_WHILE_PANNING,
     }
   );
+  return liveViewportRead<typeof query.data>(isAnswerLive, query);
 }
