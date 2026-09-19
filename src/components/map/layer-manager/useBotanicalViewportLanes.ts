@@ -95,7 +95,7 @@ export function useBotanicalViewportLanes({
     (state) => state.setSelectedFeature
   );
   const band = botanicalBandForZoom(zoom);
-  // Enabled when a toggle that could actually DRAW at this band is on. A lit occurrence switch
+  // REQUESTED when a toggle that could actually DRAW at this band is on. A lit occurrence switch
   // at zoom 4 fetches nothing, because the detail layer cannot draw there and the aggregate
   // layers are off -- the gate is about what is drawable, not about what is switched on.
   //
@@ -106,11 +106,17 @@ export function useBotanicalViewportLanes({
   // both lanes at once was two upstream round trips for one screen; this query stays for the two
   // aggregate layers only, which have no proxy-served rung yet. See
   // `src/components/map/AGENTS.md` section "The botanical viewport lanes" for the full argument.
-  const isQueryEnabled = band === "detail" ? false : richnessVisible || effortVisible;
+  //
+  // This is ONE conjunct of the read's enablement, not the whole of it: the rest -- a measurable
+  // viewport and the governance conjunction -- is composed inside
+  // `useBotanicalOccurrencesQuery` (`src/hooks/useViewportProxiedLayers.ts:361-371`), which is
+  // why nothing below gates on this value. It is named `Requested` rather than `Enabled` so that
+  // the distinction is visible at every use site.
+  const isAggregateReadRequested = band === "detail" ? false : richnessVisible || effortVisible;
   // Empty filter strings are "unset" in the store, never sent as an empty query parameter --
   // the service would read `family=` as a filter matching nothing.
-  const botanicalQuery = useBotanicalOccurrencesQuery(bbox, {
-    enabled: isQueryEnabled,
+  const botanicalRead = useBotanicalOccurrencesQuery(bbox, {
+    enabled: isAggregateReadRequested,
     zoom,
     taxonConceptId: botanicalFilters.taxon_concept_id || undefined,
     family: botanicalFilters.family || undefined,
@@ -119,29 +125,31 @@ export function useBotanicalViewportLanes({
     eventEnd: botanicalFilters.event_end || undefined,
     spatialQuality: botanicalFilters.spatial_quality,
   });
-  // ENABLEMENT SCOPES THIS ANSWER, NOT ITS PRESENCE AND NOT THE BAND ALONE (style review W8 B3,
-  // W9 S1).
+  // THE READ REPORTS WHETHER ITS OWN ANSWER IS LIVE; THIS FILE NO LONGER RE-DERIVES THAT (style
+  // review W8 B3, W9 S1, W10 B1 -- the same defect three waves running, each patch one conjunct
+  // short).
   //
   // `useBotanicalOccurrencesQuery` is configured `placeholderData: keepPreviousData`, and a
-  // react-query observer that has been DISABLED still serves the previous key's answer -- so
-  // `botanicalQuery.data` keeps holding whatever this lane last landed, for as long as the hook is
-  // mounted. Testing `botanicalQuery.data !== undefined` let a retained zoom-6 answer supply the
-  // release-set pin for a zoom-11 screen it was never read for; W8's fix scoped it by band, which
-  // closed the DETAIL case and left the identical one at the AGGREGATE band, where the observer is
-  // equally disabled whenever both aggregate toggles are off (`isQueryEnabled`, above) and the
-  // retained frame is equally still in hand.
+  // react-query observer that has been DISABLED still serves the previous key's answer -- so the
+  // lane keeps holding whatever it last landed for as long as this hook is mounted. Three
+  // successive gates on that retained frame were written here, at the consumer: presence
+  // (`data !== undefined`), then the band, then the caller's own toggle gate. Each was a
+  // re-derivation of a predicate composed one module away, and each missed a conjunct -- last the
+  // dynamic `requested !== null`, which a collapsed or hidden map container trips while every
+  // toggle is still on.
   //
-  // `isQueryEnabled` is the whole predicate, not one half of a conjunction: it is false at the
-  // detail band BY CONSTRUCTION, so it subsumes the band test rather than sitting beside it. One
-  // predicate, so the two can never be applied to different consumers again -- which is exactly
-  // how the defect survived: `isError` below already used this one, and nothing else did.
+  // So the gate now lives where the predicate does. `botanicalRead.answer` is already withheld
+  // whenever the observer is not live (`liveViewportRead`,
+  // `src/hooks/useViewportProxiedLayers.ts:165-174`), the raw react-query result is not exported,
+  // and a conjunct added to that enablement reaches every consumer here without this file
+  // changing. Everything tRPC-sourced below reads `aggregateBandAnswer`, so the cells, the
+  // counts, the note, the truncation flag, the reported state, the store publication and the pin
+  // are gated by one value rather than by seven copies of a predicate.
   //
-  // Every tRPC-sourced value in this hook reads `aggregateBandAnswer` and nothing reads
-  // `botanicalQuery.data` directly, so enabling and answering are asked once for the cells, the
-  // counts, the notes, the truncation flag, the reported state, the store publication and the pin
-  // alike. The answer's OWN discriminant is still checked separately below: enabled says a read
-  // was issued for this band, `state === "aggregate"` says the answer in hand is that band's.
-  const aggregateBandAnswer = isQueryEnabled ? botanicalQuery.data : undefined;
+  // The answer's OWN discriminant is still checked separately below: liveness says a read is
+  // being served for the current request, `state === "aggregate"` says the answer in hand is this
+  // band's.
+  const aggregateBandAnswer = botanicalRead.answer;
   // The RETURNED state, never the requested band. A retained frame outlives the zoom it was
   // fetched for, so even within the aggregate band the answer's own discriminant is what keeps
   // specimen points out of the two choropleths.
@@ -306,8 +314,11 @@ export function useBotanicalViewportLanes({
   // the map were read from and not a pointer that has since moved.
   // Keyed on the BAND, the same discriminator the store publication above uses: the pin names the
   // generation the drawn cells came from, so it may only ever come from the lane that drew them.
-  // The band picks the lane; `aggregateBandAnswer`'s enablement gate then decides whether that
-  // lane actually spoke, so a retained frame from a disabled observer can reach neither.
+  // The band picks the lane; each lane then decides for itself whether it is currently speaking,
+  // so no retained frame from a lane that is not can reach the pin. Aggregate: the read withholds
+  // its answer unless it is live (`aggregateBandAnswer`, above). Detail: the proxy hook resets to
+  // `IDLE` the moment it is disabled or its viewport cannot be expressed as a request URL
+  // (`src/hooks/useBotanicalOccurrences.ts:161-162`), so it retains nothing across either.
   const servedBotanicalReleaseSetId =
     band === "detail"
       ? botanicalViewportDetail?.releaseSetId ?? null
@@ -340,7 +351,7 @@ export function useBotanicalViewportLanes({
   );
 
   const laneReport: BotanicalLaneReport = {
-    isQueryEnabled,
+    isAggregateReadLive: botanicalRead.isAnswerLive,
     band,
     hasViewportBbox: bbox !== null,
     resultState: aggregateBandAnswer?.state,
@@ -348,10 +359,11 @@ export function useBotanicalViewportLanes({
       aggregateBandAnswer !== undefined && "note" in aggregateBandAnswer
         ? aggregateBandAnswer.note
         : null,
-    // The same predicate `aggregateBandAnswer` uses, for the same reason: a disabled observer keeps
-    // reporting the last key's `isError`, which would raise a fault for a read nobody issued. Read
-    // off the query rather than the answer because an error has no answer to carry it.
-    isError: isQueryEnabled && botanicalQuery.isError === true,
+    // Gated by the read itself, for the same reason the answer is: a disabled observer keeps
+    // reporting the last key's `isError`, which would raise a fault for a read nobody issued.
+    // Reported beside the answer rather than derived from it, because an error has no answer to
+    // carry it (`liveViewportRead`, `src/hooks/useViewportProxiedLayers.ts:165-174`).
+    isError: botanicalRead.isError,
     truncated: botanicalAggregate?.truncated === true,
     // From the proxy answer: withheld-locality counts are a detail-band fact, and the detail
     // band's tRPC lane no longer runs (W8-D, 2026-09-18).

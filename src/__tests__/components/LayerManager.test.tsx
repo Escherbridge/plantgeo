@@ -2670,7 +2670,7 @@ describe("GBIF occurrence feedback", () => {
   it.each(["refused", "unavailable"] as const)("keeps the shared %s reason visible with only GBIF enabled", (state) => {
     // The tRPC lane's `refused`/`unavailable` discriminant has no proxy-lane equivalent (the
     // proxy expresses a refusal as an HTTP error, never as a landed answer with a `note`), and
-    // `botanical-refused`/`botanical-unavailable` are gated on the tRPC-only `isQueryEnabled`,
+    // `botanical-refused`/`botanical-unavailable` are gated on the tRPC-only `isAggregateReadLive`,
     // which is never true at the detail band any more (W8-D). The reason still reaches a GBIF-only
     // reader, through `botanical-viewport-read` -- its gate grew `gbifVisible` in this same pass
     // precisely so a GBIF-only viewer is not left silent about an errored shared read. The test

@@ -13,7 +13,7 @@ import {
 } from "@/components/map/layer-manager/parquet-layer-faults";
 
 const QUIET_BOTANICAL: BotanicalLaneReport = {
-  isQueryEnabled: false,
+  isAggregateReadLive: false,
   band: "aggregate",
   hasViewportBbox: true,
   resultState: undefined,
@@ -67,7 +67,7 @@ function withBotanical(overrides: Partial<BotanicalLaneReport>): ParquetLayerFau
 /** The state a GBIF-empty notice is owed in: detail band, settled read, no GBIF points back. */
 function gbifEmptyLane(overrides: Partial<BotanicalLaneReport> = {}): ParquetLayerFaultInput {
   return withBotanical({
-    isQueryEnabled: true,
+    isAggregateReadLive: true,
     band: "detail",
     gbifVisible: true,
     gbifReadPhase: "success",

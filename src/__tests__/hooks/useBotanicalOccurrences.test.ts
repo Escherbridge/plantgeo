@@ -194,7 +194,7 @@ describe("useBotanicalOccurrencesQuery", () => {
     );
 
     expect(result.current.isError).toBe(false);
-    expect(result.current.data).toEqual(answer);
+    expect(result.current.answer).toEqual(answer);
   });
 
   it("passes a detail answer through with its features intact", () => {
@@ -212,6 +212,81 @@ describe("useBotanicalOccurrencesQuery", () => {
       useBotanicalOccurrencesQuery(VIEWPORT_BBOX, { enabled: true, zoom: 12 })
     );
 
-    expect(result.current.data).toEqual(answer);
+    expect(result.current.answer).toEqual(answer);
   });
+});
+
+/**
+ * The liveness the read publishes is the enablement it gave its own observer -- by construction.
+ *
+ * Three style reviews running (W8 B3, W9 S1, W10 B1) found the same defect: a consumer re-derived
+ * this predicate from the reported symptom and missed one conjunct. W10's miss was the dynamic
+ * `requested !== null`, which a collapsed map container trips while every toggle is still on.
+ * These cases do not restate the predicate -- they assert the two spellings of it are one value,
+ * so a conjunct added to the enablement expression is covered here without this file changing.
+ */
+describe("useBotanicalOccurrencesQuery: reported liveness is the observer's own enablement", () => {
+  const RETAINED_FRAME = {
+    state: "aggregate",
+    releaseSetId: "ubc-v16.43",
+    publishedAt: "2026-09-01T00:00:00Z",
+    cells: [],
+    counts: { returned: 0, matched: 0 },
+    truncated: true,
+  };
+
+  /** Every way this read can be disabled, plus the two ways it stays live. */
+  const CASES: ReadonlyArray<{
+    label: string;
+    bbox: string | null;
+    enabled: boolean;
+    withheld: readonly string[];
+  }> = [
+    { label: "every conjunct holding", bbox: VIEWPORT_BBOX, enabled: true, withheld: [] },
+    {
+      label: "one toggle withheld while another is still drawable",
+      bbox: VIEWPORT_BBOX,
+      enabled: true,
+      withheld: ["botanical-richness"],
+    },
+    { label: "the caller's gate closed", bbox: VIEWPORT_BBOX, enabled: false, withheld: [] },
+    {
+      label: "a collapsed or hidden container, so no bbox is expressible",
+      bbox: null,
+      enabled: true,
+      withheld: [],
+    },
+    {
+      label: "every botanical toggle withheld",
+      bbox: VIEWPORT_BBOX,
+      enabled: true,
+      withheld: [
+        "botanical-occurrences",
+        "botanical-richness",
+        "botanical-collection-effort",
+      ],
+    },
+  ];
+
+  it.each(CASES)(
+    "reports liveness equal to the observer's `enabled` with $label",
+    ({ bbox, enabled, withheld }) => {
+      inputs.withheld = new Set(withheld);
+      inputs.useQuery.mockReturnValue({
+        data: RETAINED_FRAME,
+        isError: true,
+        isFetching: false,
+        isPlaceholderData: true,
+      });
+
+      const { result } = renderHook(() => useBotanicalOccurrencesQuery(bbox, { enabled, zoom: 6 }));
+
+      const isObserverEnabled = lastCall().options.enabled;
+      expect(result.current.isAnswerLive).toBe(isObserverEnabled);
+      // And the retained frame follows that one value rather than a second copy of it: a
+      // `keepPreviousData` observer hands its last answer back whether or not it is enabled.
+      expect(result.current.answer).toEqual(isObserverEnabled === true ? RETAINED_FRAME : undefined);
+      expect(result.current.isError).toBe(isObserverEnabled === true);
+    }
+  );
 });

@@ -49,11 +49,31 @@ const lane = vi.hoisted(() => ({
   proxyCalls: [] as Record<string, unknown>[],
 }));
 
+/**
+ * The tRPC lane, modelled as react-query leaves it AND as the hook now publishes it.
+ *
+ * `data`/`isError` are the raw observer fields a `keepPreviousData` observer keeps serving after
+ * it is disabled; `answer`/`isAnswerLive`/`isError` are the `LiveViewportRead` the real hook
+ * returns (`src/hooks/useViewportProxiedLayers.ts:148-174`). Both are handed back deliberately:
+ * the retained frame stays reachable here, so a consumer that reads it instead of the published
+ * liveness fails these cases rather than passing on a mock that cannot express the defect.
+ *
+ * Liveness mirrors the real composition's two live conjuncts -- the caller's gate and a
+ * measurable viewport. The third (the governance conjunction) is static per build and is pinned
+ * against the real hook in `src/__tests__/hooks/useBotanicalOccurrences.test.ts`, which asserts
+ * the published liveness IS the observer's `enabled` for every combination.
+ */
 vi.mock("@/hooks/useViewportProxiedLayers", () => ({
   botanicalBandForZoom: () => lane.band,
-  useBotanicalOccurrencesQuery: (_bbox: unknown, options: Record<string, unknown>) => {
-    lane.trpcCalls.push(options);
-    return lane.trpcQuery;
+  useBotanicalOccurrencesQuery: (bbox: unknown, options: Record<string, unknown>) => {
+    lane.trpcCalls.push({ ...options, bbox });
+    const isAnswerLive = options.enabled === true && bbox !== null && bbox !== undefined;
+    return {
+      ...lane.trpcQuery,
+      answer: isAnswerLive ? lane.trpcQuery.data : undefined,
+      isAnswerLive,
+      isError: isAnswerLive && lane.trpcQuery.isError,
+    };
   },
 }));
 
@@ -202,15 +222,20 @@ function pinnedReleaseSetId(): string | null {
  * The release-set pin names the generation the DRAWN cells came from (style review W8, B3).
  *
  * The tRPC lane is configured `placeholderData: keepPreviousData`, and a disabled react-query
- * observer keeps serving the previous key's answer -- so at the detail band `botanicalQuery.data`
+ * observer keeps serving the previous key's answer -- so at the detail band the raw query `data`
  * still holds the aggregate answer a coarse viewport landed. The pre-fix code chose the lane by
  * `botanicalResult !== undefined`, which that retained answer satisfies, so a zoom from 6 to 11
  * pinned and displayed a generation the points on screen were never read from.
  *
- * The band alone was not enough (style review W9, S1). `isQueryEnabled` is false at the detail band
- * AND at the aggregate band whenever both aggregate toggles are off, so scoping by band closed one
- * case of a two-case defect. ENABLEMENT is the discriminator now -- it subsumes the band -- and the
- * aggregate-band case below is the one the band-only guard still got wrong.
+ * The band alone was not enough (style review W9, S1): the caller's toggle gate is false at the
+ * detail band AND at the aggregate band whenever both aggregate toggles are off, so scoping by
+ * band closed one case of a two-case defect.
+ *
+ * The caller's toggle gate was not enough either (style review W10, B1): it is one conjunct of an
+ * enablement composed inside the read, and the missing one -- a measurable viewport -- is DYNAMIC.
+ * The discriminator is now the read's own published liveness
+ * (`src/hooks/useViewportProxiedLayers.ts:148-155`), which no consumer re-derives; the
+ * collapsed-container case below is the one the toggle-gate guard still got wrong.
  */
 describe("useBotanicalViewportLanes: the pin follows the lane that drew the cells", () => {
   beforeEach(() => {
@@ -286,7 +311,8 @@ describe("useBotanicalViewportLanes: the pin follows the lane that drew the cell
   it("withholds the pin at the AGGREGATE band while both aggregate toggles are off", () => {
     // W8's B3 was fixed by scoping the retained answer to the band, which closed the detail case
     // and left this one (style review W9, S1). At zoom 6 with only the UBC occurrences toggle on,
-    // `isQueryEnabled` is false -- the tRPC observer is DISABLED -- yet `keepPreviousData` still
+    // the caller's toggle gate is false -- the tRPC observer is DISABLED -- yet
+    // `keepPreviousData` still
     // hands back the aggregate answer an earlier viewport landed. Nothing botanical is drawn at
     // all here: the occurrences layer is band-gated off below the detail floor, and the two
     // aggregate layers are switched off. A pin under those conditions names a generation for a map
@@ -317,6 +343,49 @@ describe("useBotanicalViewportLanes: the pin follows the lane that drew the cell
     expect(result.current.laneReport.resultState).toBeUndefined();
     expect(result.current.laneReport.resultNote).toBeNull();
     expect(result.current.laneReport.truncated).toBe(false);
+  });
+
+  /**
+   * The collapsed-container case (style review W10, B1) -- the conjunct the third fix missed.
+   *
+   * Nothing about the reader's INTENT changes here: the zoom is still 6, richness is still on, the
+   * caller's toggle gate is still true. What changes is that the map container collapses or is
+   * hidden, so `viewportBbox` can no longer express a viewport (`src/lib/map/viewport-bbox.ts:57-67`
+   * returns null for a zero-size container) and the observer's `requested !== null` conjunct goes
+   * false. The observer is disabled; `keepPreviousData` keeps serving the frame it landed before
+   * the collapse. Every consumer of that frame would then be describing a viewport that does not
+   * exist -- and the pin would claim a generation for cells nobody can see.
+   */
+  it("withholds the pin when the viewport collapses under a live aggregate toggle", () => {
+    lane.band = "aggregate";
+    lane.trpcQuery = {
+      data: { ...aggregateAnswer("release-aggregate"), truncated: true, note: "capped at 5000 cells" },
+      isError: true,
+      isFetching: false,
+      isPlaceholderData: true,
+      isSuccess: true,
+    };
+    const { result, rerender } = renderHook(
+      (props: { bbox: string | null }) =>
+        useBotanicalViewportLanes({ ...BASE_OPTIONS, zoom: 6, richnessVisible: true, bbox: props.bbox }),
+      { initialProps: { bbox: BASE_OPTIONS.bbox as string | null } }
+    );
+    expect(pinnedReleaseSetId()).toBe("release-aggregate");
+
+    rerender({ bbox: null });
+
+    expect(pinnedReleaseSetId()).toBeNull();
+    expect(useBotanicalOccurrenceStore.getState().lastResponse).toBeNull();
+    // Every other consumer of the same retained frame, asserted in the same case: one left behind
+    // is the defect over again, one consumer along.
+    expect(result.current.aggregateReleaseSetId).toBeNull();
+    expect(result.current.richnessGeoJSON).toBeNull();
+    expect(result.current.effortGeoJSON).toBeNull();
+    expect(result.current.laneReport.isAggregateReadLive).toBe(false);
+    expect(result.current.laneReport.resultState).toBeUndefined();
+    expect(result.current.laneReport.resultNote).toBeNull();
+    expect(result.current.laneReport.truncated).toBe(false);
+    expect(result.current.laneReport.isError).toBe(false);
   });
 
   it("reports no aggregate-lane state at the detail band, retained answer or not", () => {

@@ -7,6 +7,14 @@ type: agents
 Directory-level rationale for hooks whose "why" is too long for a one-line doc comment. Add a
 section rather than a new file when the next hook needs one.
 
+**No absolute claim without a citation** (style review W10, closing judgement). A sentence in this
+file asserting that a predicate is complete, a write is safe, or a cost is bounded — "the whole
+predicate", "always", "never", "cannot", "at most once" — must cite the `file:line` that enforces
+it, in the same sentence. Every blocker of that run was preceded by exactly such an uncited
+sentence, and each was refuted by a file the author did not have open; writing the citation is what
+makes the author open it. A claim that cannot be cited is a claim that has not been checked, and it
+belongs in the text as an assumption with its reversal cost, not as an invariant.
+
 ## useLayerCacheControls
 
 The whole per-layer local-cache surface as one hook, added 2026-09-07: the resolved policy
@@ -222,6 +230,32 @@ that failed, which is the whole reason the state is surfaced at all.
 (`src/lib/map/rung-selection.ts`); the ladder, the ceilings and the zoom gate stay here. See
 `src/lib/map/AGENTS.md` "rung-selection.ts".
 
+## Live viewport reads
+
+`LiveViewportRead` (`useViewportProxiedLayers.ts:148-155`) is what a viewport query hands back
+instead of the react-query result: the `answer`, whether that answer `isAnswerLive` for the
+request in hand, and the `isError` that goes with it. `useBotanicalOccurrencesQuery` is the first
+hook to return one (`:396`); the other viewport queries in this file still return their raw
+results, and each one that a consumer gates on should move to this shape rather than growing a
+second copy of its enablement at the call site.
+
+**Why it exists.** Every query here is configured `placeholderData: KEEP_PREVIOUS_WHILE_PANNING`,
+which is what keeps the map from blanking on a pan. The cost is that `data` OUTLIVES the
+enablement that fetched it: a disabled observer keeps serving the previous key's answer. So a
+consumer asking "is this answer about the request I am rendering?" has to consult the enablement —
+which is composed inside the hook, out of its reach. Three waves of consumers re-derived it from
+the reported symptom and each missed a conjunct (W8 B3, W9 S1, W10 B1; the third was a dynamic one,
+`requested !== null`). Liveness is therefore computed exactly where `enabled` is composed, passed
+to both the observer and `liveViewportRead`, and the raw result is not exported.
+
+**What this does and does not make impossible.** A consumer of a `LiveViewportRead` cannot read a
+retained frame at all — `answer` is withheld (`:165-174`), and there is no other binding to reach
+it through, so a conjunct added to the enablement propagates without any consumer changing. It does
+NOT stop a future hook from returning a raw react-query result and inviting the same mistake; that
+is the rule above, not a type. Nor does it speak for lanes that are not react-query observers —
+`useBotanicalOccurrences` (below) resets to `IDLE` when disabled (`useBotanicalOccurrences.ts:161-162`),
+so it retains nothing and needs no gate.
+
 ## useBotanicalOccurrences: the proxy detail lane
 
 Mounted in `LayerManager.tsx` as of 2026-09-18, feeding `BotanicalOccurrencesLayer`'s geojson and
@@ -233,13 +267,28 @@ filters and details panels read all come off its one answer. `useBotanicalOccurr
 serves the two aggregate layers and nothing else. The earlier note here -- that both lanes run at a
 detail zoom -- described the state this replaced.
 
-Which lane speaks is decided by the BAND, and whether it spoke at all by its ENABLEMENT -- never by
-which answer is in hand. This query keeps `placeholderData: KEEP_PREVIOUS_WHILE_PANNING`, and a
-DISABLED observer still serves the previous key's answer, so `botanicalQuery.data` stays populated
-after a zoom out of the aggregate band AND after both aggregate toggles go off WITHIN it. The band
-test alone caught only the first of those two (style review W9, S1); `isQueryEnabled` catches both,
-because it is false at the detail band by construction. See `src/components/map/AGENTS.md` section
-"The pin names the lane that drew the cells" (style review W8 B3, W9 S1) for the pin this corrupted.
+Which lane speaks is decided by the BAND, and whether it is speaking NOW by the read's own
+published liveness -- never by which answer is in hand, and never by a predicate the consumer
+assembles for itself. This query keeps `placeholderData: KEEP_PREVIOUS_WHILE_PANNING`, and a
+DISABLED observer still serves the previous key's answer, so the raw `data` stays populated after a
+zoom out of the aggregate band, after both aggregate toggles go off WITHIN it, and after the map
+container collapses to zero size with every toggle still on.
+
+Three consumer-side gates were written for that retained frame in three consecutive waves --
+presence, then the band (W8 B3), then the caller's toggle gate (W9 S1) -- and each missed a
+conjunct of an enablement it could not see. The third miss was `requested !== null`
+(`useViewportProxiedLayers.ts:363`), which is DYNAMIC: `viewportBbox` returns null for a zero-size
+or hidden container (`src/lib/map/viewport-bbox.ts:57-67`), and this repo has a named memory for
+exactly that class of state (`plantgeo-hidden-tab-blank-map`).
+
+So the gate moved to the definition (style review W10, B1). `useBotanicalOccurrencesQuery` returns
+a `LiveViewportRead` (`useViewportProxiedLayers.ts:148-155`), not the react-query result: the
+enablement is composed once at `useViewportProxiedLayers.ts:361-371`, passed to the observer as
+`enabled` at `:390` and to `liveViewportRead` at `:396` unchanged, and the answer is withheld
+whenever it does not hold (`:165-174`). The raw result is not exported, so a consumer has nothing
+to re-derive a gate from, and a conjunct added to that expression reaches every consumer without
+any consumer changing. See `src/components/map/AGENTS.md` section "The pin names the lane that drew
+the cells" for the pin this corrupted three times.
 
 **A refusal is not a failure.** The route answers governed 400/503 refusals with
 `kind: "governed_refusal"` and their own `detail`; everything else is `transport_fault`.

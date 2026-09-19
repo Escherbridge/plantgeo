@@ -133,6 +133,46 @@ export interface ProxiedQueryOptions {
   enabled: boolean;
 }
 
+/**
+ * A viewport answer together with whether the observer that produced it is LIVE for the request
+ * in hand.
+ *
+ * `KEEP_PREVIOUS_WHILE_PANNING` makes `data` outlive the enablement that fetched it: a disabled
+ * react-query observer keeps serving the previous key's answer for as long as the hook is
+ * mounted. A consumer therefore cannot read provenance off `data` alone, and the enablement it
+ * would have to consult is composed inside the hook -- out of the consumer's reach. Three
+ * consecutive style reviews (W8 B3, W9 S1, W10 B1) watched a consumer re-derive that predicate
+ * and miss one conjunct each time, so the read reports its own liveness instead and hands the
+ * answer back only while it holds. See `src/hooks/AGENTS.md` section "Live viewport reads".
+ */
+export interface LiveViewportRead<TAnswer> {
+  /** The observer's answer, withheld (`undefined`) whenever the read is not live. */
+  answer: TAnswer | undefined;
+  /** The value this hook passed as the observer's `enabled`, republished verbatim. */
+  isAnswerLive: boolean;
+  /** The read's transport failure, reported only while the read is live. */
+  isError: boolean;
+}
+
+/**
+ * Publishes a react-query result gated on the enablement composed for its own observer.
+ *
+ * The single place a retained frame is admitted or withheld. `isAnswerLive` is passed in by the
+ * hook that composed `enabled` and is handed to the observer unchanged at the same call site, so
+ * a conjunct added to that expression reaches every consumer of the answer by construction rather
+ * than by a reviewer noticing the second copy.
+ */
+function liveViewportRead<TAnswer>(
+  isAnswerLive: boolean,
+  query: { data: TAnswer | undefined; isError: boolean }
+): LiveViewportRead<TAnswer> {
+  return {
+    answer: isAnswerLive ? query.data : undefined,
+    isAnswerLive,
+    isError: isAnswerLive && query.isError === true,
+  };
+}
+
 // `isWithheld` is `layer-registry.ts`'s `isLayerPermanentlyWithheld`, imported under the name
 // this file's five call sites already use. The rule moved there so the fire lane's own hook
 // applies the identical predicate rather than a second copy of it.
@@ -284,6 +324,11 @@ export function botanicalBandForZoom(zoom: number): BotanicalBand {
  * still true where they are. Note the band-switch caveat -- see `useBotanicalOccurrences`'s
  * consumer in `LayerManager`, which reads the RETURNED `state` rather than the requested band, so
  * a retained aggregate frame is never fed to the detail layer during a zoom across the floor.
+ *
+ * Returns a `LiveViewportRead`, not the react-query result: the retained frame is reachable only
+ * through `answer`, which `liveViewportRead` withholds whenever the observer is not live. The
+ * raw result is deliberately not exported, so there is nothing for a consumer to re-derive a gate
+ * from.
  */
 export function useBotanicalOccurrencesQuery(
   bbox: string | null | undefined,
@@ -307,7 +352,24 @@ export function useBotanicalOccurrencesQuery(
   }
 ) {
   const requested = bbox ?? null;
-  return trpc.environmental.getBotanicalOccurrences.useQuery(
+  // Composed ONCE, here, and used twice at the same call site: as the observer's `enabled` and as
+  // the gate on the answer it hands back. Every conjunct that can disable this read lives in this
+  // expression -- the caller's toggle gate, a measurable viewport, and the governance
+  // conjunction -- and `requested !== null` is the dynamic one a collapsed or hidden map
+  // container trips (`viewportBbox` returns null for a zero-size container,
+  // `src/lib/map/viewport-bbox.ts:57-67`).
+  const isAnswerLive =
+    enabled &&
+    requested !== null &&
+    // All three toggles share this one read, so the governance gate is the conjunction: the
+    // query is withheld only when EVERY botanical row is, which is the same thing as none of
+    // them being drawable.
+    !(
+      isWithheld("botanical-occurrences") &&
+      isWithheld("botanical-richness") &&
+      isWithheld("botanical-collection-effort")
+    );
+  const query = trpc.environmental.getBotanicalOccurrences.useQuery(
     {
       bbox: requested ?? NO_VIEWPORT_BBOX,
       zoom,
@@ -325,22 +387,15 @@ export function useBotanicalOccurrencesQuery(
       limit: BOTANICAL_OCCURRENCES_MAX_LIMIT,
     },
     {
-      // All three toggles share this one read, so the governance gate is the conjunction: the
-      // query is withheld only when EVERY botanical row is, which is the same thing as none of
-      // them being drawable.
-      enabled:
-        enabled &&
-        requested !== null &&
-        !(
-          isWithheld("botanical-occurrences") &&
-          isWithheld("botanical-richness") &&
-          isWithheld("botanical-collection-effort")
-        ),
+      enabled: isAnswerLive,
       staleTime: BOTANICAL_OCCURRENCES_STALE_TIME_MS,
       retry: PROXIED_RETRY_COUNT,
       placeholderData: KEEP_PREVIOUS_WHILE_PANNING,
     }
   );
+  // The answer type is stated rather than inferred: `query` is react-query's discriminated union
+  // over its own states, and inference from a union argument is not worth depending on here.
+  return liveViewportRead<typeof query.data>(isAnswerLive, query);
 }
 
 /** Everything that keys a climate read; all of it must match across the two callers. */

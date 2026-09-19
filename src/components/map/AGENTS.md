@@ -1,5 +1,12 @@
 # Map interaction boundary
 
+**No absolute claim without a citation** (style review W10, closing judgement). A sentence here
+asserting that a predicate is complete, a write is safe, or a cost is bounded — "the whole
+predicate", "always", "never", "cannot", "at most once" — must cite the `file:line` that enforces
+it, in the same sentence. Every blocker of that run was preceded by exactly such an uncited
+sentence, refuted by a file the author did not have open; writing the citation is what makes the
+author open it. The same rule is stated in `src/hooks/AGENTS.md` and applies to both directories.
+
 ## GBIF feedback
 
 `LayerManager` uses the shared occurrence query's established banners for refusal,
@@ -1436,8 +1443,11 @@ proxy answer turned out to be a strict superset of what the tRPC detail answer a
 `releaseSetId` alongside `servingRung`/the §4a pointer -- so the fix collapses onto the proxy
 lane rather than the tRPC one: it is additive, not a narrowing. Concretely:
 
-- The tRPC query (`isQueryEnabled`) is now enabled ONLY at the aggregate band, for the richness
-  and collection-effort layers, which have no proxy-served rung yet (the follow-up W3-A flagged).
+- The tRPC query is REQUESTED ONLY at the aggregate band (`isAggregateReadRequested`,
+  `useBotanicalViewportLanes.ts:115`), for the richness and collection-effort layers, which have no
+  proxy-served rung yet (the follow-up W3-A flagged). Requested is not the same as live: the read
+  composes the rest of its own enablement and reports the result — see "The pin names the lane that
+  drew the cells" below.
 - The proxy lane's `enabled` gate grew `gbifVisible`, so GBIF's own toggle now shares the UBC
   layer's one detail-band request instead of running its own through tRPC. `gbifFeatures` /
   `gbifGeoJSON` are filtered off the proxy's feature list by `collection_key`, the same seam that
@@ -1448,8 +1458,9 @@ lane rather than the tRPC one: it is additive, not a narrowing. Concretely:
   BAND, not on which answer happens to be in hand. See "The pin names the lane that drew the
   cells" below -- the original fallback ordering was wrong and was fixed on 2026-09-18.
 - `withheldCount` moved off the tRPC answer onto the proxy's, and the `botanical-withheld` fault
-  entry in `parquet-layer-faults.ts` dropped its `isQueryEnabled` gate accordingly (that gate now
-  means "the tRPC lane is enabled", which is false at the detail band where withheld counts live).
+  entry in `parquet-layer-faults.ts` dropped its tRPC-lane gate accordingly (that gate,
+  `isAggregateReadLive`, means "the tRPC read is serving the current request", which is false at
+  the detail band where withheld counts live).
 
 The `gbif-empty` and `botanical-viewport-read` fault entries changed WHICH lane's fields feed
 their conditions, never their message text -- `LayerManager.test.tsx`'s `toBe` pin on the GBIF
@@ -1474,25 +1485,41 @@ had advanced between the two reads the pin was simply wrong, silently, which is 
 what its own comment promised.
 
 **The band alone was not enough** (style review W9, S1). The first fix scoped the retained answer by
-band, which closed the detail case and left the identical one at the AGGREGATE band: `isQueryEnabled`
-is `band === "detail" ? false : richnessVisible || effortVisible`, so a reader at zoom 6 with only
-the UBC occurrences toggle on has a DISABLED observer there too, still holding its retained frame —
-and nothing botanical is drawn at all, because the occurrences layer is band-gated off below the
-detail floor. The pin named a generation for a map showing no botanical cells. The tell was in the
-same file: `isError` was already guarded with `isQueryEnabled` and nothing else was. **Enablement is
-the discriminator; it subsumes the band**, since `isQueryEnabled` is false at the detail band by
-construction, and one predicate cannot be applied to one consumer and forgotten at another.
+band, which closed the detail case and left the identical one at the AGGREGATE band: the caller's
+toggle gate is `band === "detail" ? false : richnessVisible || effortVisible`, so a reader at zoom 6
+with only the UBC occurrences toggle on has a DISABLED observer there too, still holding its
+retained frame — and nothing botanical is drawn at all, because the occurrences layer is band-gated
+off below the detail floor. The pin named a generation for a map showing no botanical cells.
+
+**The caller's toggle gate was not enough either** (style review W10, B1). It was documented here as
+"the whole predicate", and it is not: it is ONE conjunct of an enablement composed in the producing
+hook (`src/hooks/useViewportProxiedLayers.ts:361-371`), alongside `requested !== null` and the
+three-way governance conjunction. `requested !== null` is DYNAMIC — `viewportBbox` returns null for
+a zero-size or hidden container (`src/lib/map/viewport-bbox.ts:57-67`) — so collapsing the map at
+zoom 6 with richness on disabled the observer while every consumer-side gate stayed true, and the
+cells, both choropleths and the pin all published for a viewport that did not exist.
+
+**So the gate now lives at the definition, not at the call site.** Three waves of guarding
+`botanicalQuery.data` at the consumer failed for one structural reason: the predicate lives in a
+file the consumer cannot see, and each fix was derived from the reported symptom rather than from
+that predicate. `useBotanicalOccurrencesQuery` returns a `LiveViewportRead`
+(`src/hooks/useViewportProxiedLayers.ts:148-155`) rather than the react-query result — the answer,
+whether that answer is live for the current request, and the error, with the raw result not
+exported.
 
 Three rules now hold:
 
-1. `aggregateBandAnswer` is `isQueryEnabled ? botanicalQuery.data : undefined`. Every tRPC-sourced
-   value below it — `botanicalAggregate`, the cells, the two choropleth GeoJSONs,
+1. `aggregateBandAnswer` is `botanicalRead.answer`, already withheld by `liveViewportRead`
+   (`src/hooks/useViewportProxiedLayers.ts:165-174`) whenever the read is not live. Every
+   tRPC-sourced value below it — `botanicalAggregate`, the cells, the two choropleth GeoJSONs,
    `aggregateReleaseSetId`, the store publication, the pin, and the lane report's `resultState` /
    `resultNote` / `truncated` — reads that one binding, so a retained answer cannot speak for a
-   read nobody issued. Nothing else in the hook touches `botanicalQuery.data`. `isError` reads the
-   same predicate off the query itself, because an error has no answer to carry it. The answer's
-   own `state === "aggregate"` discriminant is still checked separately: enablement says a read was
-   issued, the discriminant says the answer in hand is this band's.
+   request it was not served for. `isError` is reported beside the answer by the same gate, because
+   an error has no answer to carry it. A conjunct added to the enablement expression therefore
+   reaches every one of those consumers without this file changing, which is the property the three
+   previous fixes lacked. The answer's own `state === "aggregate"` discriminant is still checked
+   separately: liveness says a read is being served, the discriminant says the answer in hand is
+   this band's.
 2. The store publication and `servedBotanicalReleaseSetId` both branch on `band` first: proxy at
    `detail`, tRPC above it. This is a partition, not a preference order.
 3. While the band's own lane has no answer, the pin is CLEARED (`setReleaseSetId(null)`,
@@ -1502,7 +1529,8 @@ Three rules now hold:
    returns the state object unchanged when nothing moved so the repeated write costs no renders.
 
 The fault entries follow: `botanical-truncated` lost its `band === "detail"` message arm (that arm
-required `isQueryEnabled`, which is false at the detail band — it was unreachable), and
+required the tRPC read to be live, and the caller passes `enabled: false` at the detail band —
+`useBotanicalViewportLanes.ts:115` — so it was unreachable), and
 `botanical-request-failed` stopped naming GBIF, which reads the proxy lane now. The remaining
 tRPC-gated entries (`botanical-refused`, `botanical-unavailable`, `botanical-request-failed`,
 `botanical-truncated`) are NOT dead: they are the aggregate band's own vocabulary, reachable

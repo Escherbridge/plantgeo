@@ -59,14 +59,28 @@ export interface FireLaneReport {
  * the only one that runs, so `resultState`/`resultNote`/`isError`/`truncated` still describe it.
  */
 export interface BotanicalLaneReport {
-  /** Whether the tRPC read was issued at all -- the gate the tRPC-only entries below share. Now
-   * true only at the aggregate band; see the interface doc above. */
-  isQueryEnabled: boolean;
+  /**
+   * Whether the tRPC read is currently SERVING the request in hand -- the gate the tRPC-only
+   * entries below share.
+   *
+   * Reported by the read itself (`LiveViewportRead.isAnswerLive`,
+   * `src/hooks/useViewportProxiedLayers.ts:148-155`) rather than re-derived here: `keepPreviousData`
+   * leaves a disabled observer holding its last answer, so "there is an answer" and "this answer
+   * describes the current request" are different questions. False at the detail band, false while
+   * both aggregate toggles are off, and false whenever the viewport cannot be measured.
+   */
+  isAggregateReadLive: boolean;
   band: string;
   /** False when the viewport could not be measured; `gbif-empty` may not speak without one. */
   hasViewportBbox: boolean;
-  /** The tRPC answer's own state: `detail`, `aggregate`, `refused` or `unavailable`. Undefined at
-   * the detail band by construction, so a retained answer cannot speak for a band it never read. */
+  /**
+   * The tRPC answer's own state: `detail`, `aggregate`, `refused` or `unavailable`.
+   *
+   * Undefined whenever the read is not live, including at the detail band, because it is read off
+   * an answer the read itself withholds in that case (`liveViewportRead`,
+   * `src/hooks/useViewportProxiedLayers.ts:165-174`) -- so a retained answer cannot speak for a
+   * request it was not served for.
+   */
   resultState: string | undefined;
   /** The service-authored note, quoted verbatim by the refusal and unavailable entries. */
   resultNote: string | null;
@@ -74,7 +88,7 @@ export interface BotanicalLaneReport {
   isError: boolean;
   /** The tRPC aggregate answer's own cap; the proxy lane's detail-band cap is `detailTruncated`. */
   truncated: boolean;
-  /** From the proxy lane's detail answer, independent of `isQueryEnabled`. */
+  /** From the proxy lane's detail answer, independent of `isAggregateReadLive`. */
   withheldCount: number;
   occurrencesVisible: boolean;
   gbifVisible: boolean;
@@ -231,14 +245,14 @@ export function buildParquetLayerFaults(input: ParquetLayerFaultInput): ParquetL
     // can act on, and paraphrasing them would put this component in the business of explaining a
     // refusal it did not make. A genuine transport fault throws in the procedure instead and
     // reaches the map as a failed query, not as a state here.
-    botanical.isQueryEnabled && botanical.resultState === "refused"
+    botanical.isAggregateReadLive && botanical.resultState === "refused"
       ? {
           layerId: "botanical-refused",
           tone: "notice" as const,
           message: `The specimen occurrence plane declined this request: ${botanical.resultNote}`,
         }
       : null,
-    botanical.isQueryEnabled && botanical.resultState === "unavailable"
+    botanical.isAggregateReadLive && botanical.resultState === "unavailable"
       ? {
           layerId: "botanical-unavailable",
           tone: "notice" as const,
@@ -248,7 +262,7 @@ export function buildParquetLayerFaults(input: ParquetLayerFaultInput): ParquetL
     // The AGGREGATE lane's transport failure, and only that one: GBIF and the UBC specimen layer
     // both read the proxy lane now (W8-D), whose own failure is `botanical-viewport-read` below.
     // Naming GBIF here would credit this sentence to a read it no longer covers.
-    botanical.isQueryEnabled && botanical.isError
+    botanical.isAggregateReadLive && botanical.isError
       ? {
           layerId: "botanical-request-failed",
           tone: "fault" as const,
@@ -261,10 +275,12 @@ export function buildParquetLayerFaults(input: ParquetLayerFaultInput): ParquetL
     // a collecting gap -- which, for this plane specifically, is a claim about where botanists
     // have and have not been.
     //
-    // Cell wording unconditionally (style review W8, N2): `isQueryEnabled` is false at the detail
-    // band, so the specimen-row sentence this used to pick between was unreachable. The proxy
-    // lane's own cap is said by `botanical-viewport-read` instead.
-    botanical.isQueryEnabled && botanical.truncated
+    // Cell wording unconditionally (style review W8, N2): `isAggregateReadLive` is false at the
+    // detail band, because the caller passes `enabled: false` there
+    // (`useBotanicalViewportLanes.ts:115`) and that is one conjunct of the read's enablement
+    // (`useViewportProxiedLayers.ts:361-371`), so the specimen-row sentence this used to pick
+    // between was unreachable. The proxy lane's own cap is said by `botanical-viewport-read`.
+    botanical.isAggregateReadLive && botanical.truncated
       ? {
           layerId: "botanical-truncated",
           tone: "notice" as const,
@@ -276,7 +292,7 @@ export function buildParquetLayerFaults(input: ParquetLayerFaultInput): ParquetL
     // whose locality is protected has no dot, and without this line its absence is
     // indistinguishable from it never having been collected.
     //
-    // NOT gated on `isQueryEnabled` (the tRPC-lane gate): withheld counts are sourced from the
+    // NOT gated on `isAggregateReadLive` (the tRPC-lane gate): withheld counts are sourced from the
     // PROXY answer (W8-D, 2026-09-18), which runs at the detail band while the tRPC lane does
     // not. `withheldCount` is already zero whenever neither lane has answered, so the count alone
     // is the correct gate.
@@ -288,8 +304,9 @@ export function buildParquetLayerFaults(input: ParquetLayerFaultInput): ParquetL
         }
       : null,
     // The Occurrences toggle is switched on but the map is below the detail floor, so nothing is
-    // drawn and nothing was even fetched (`isQueryEnabled` is false in that case, since the
-    // detail layer cannot draw at this band). Without this line a reader who turned the toggle on
+    // drawn and nothing was even fetched (`isAggregateReadLive` is false in that case, since the
+    // caller requests the read only for the two aggregate toggles,
+    // `useBotanicalViewportLanes.ts:115`). Without this line a reader who turned the toggle on
     // at a continental zoom sees an empty map and no explanation -- indistinguishable from the
     // layer being broken.
     botanical.occurrencesVisible && botanical.band !== "detail"
