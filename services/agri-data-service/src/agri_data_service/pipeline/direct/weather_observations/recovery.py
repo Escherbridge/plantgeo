@@ -18,7 +18,6 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import date
 from typing import TYPE_CHECKING, Final, Literal
 
 from agri_data_service.foundation.canonical import canonical_json, sha256_digest
@@ -37,7 +36,7 @@ from agri_data_service.pipeline.parquet.source_checkpoint import (
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
-    from datetime import datetime
+    from datetime import date, datetime
 
     from agri_data_service.pipeline.direct.weather_observations.source import WeatherPollResult
     from agri_data_service.pipeline.parquet.source_checkpoint import SourceResponseCheckpoints

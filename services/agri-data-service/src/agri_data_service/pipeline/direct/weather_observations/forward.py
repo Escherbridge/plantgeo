@@ -228,9 +228,7 @@ class ForwardBucketVerdict:
         return len(self.unwritten)
 
 
-def _bucket_verdict(
-    results: Sequence[ForwardDayResult], *, retention_failed: int = 0
-) -> ForwardBucketVerdict:
+def _bucket_verdict(results: Sequence[ForwardDayResult], *, retention_failed: int = 0) -> ForwardBucketVerdict:
     """Exit 1 only when NO day wrote; some written and some not is `incomplete` at exit 0 -- see module docstring.
 
     A RETENTION FAILURE ALSO COSTS THE TURN ITS `complete`. Until 2026-09-19 the retention counters

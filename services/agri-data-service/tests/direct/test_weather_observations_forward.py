@@ -387,7 +387,9 @@ class TestRecoverDayArgument:
         assert forward.parse_args([]).recover_day is None
 
     def test_the_help_text_says_it_republishes_from_retained_responses(self) -> None:
-        help_text = forward.parser().format_help()
+        # Whitespace-collapsed because argparse WRAPS help into a column, so the phrase an operator
+        # reads on one visual line is split by a newline and an indent in the raw string.
+        help_text = " ".join(forward.parser().format_help().split())
 
         assert "--recover-day" in help_text
         assert "RETAINED PROVIDER RESPONSES" in help_text

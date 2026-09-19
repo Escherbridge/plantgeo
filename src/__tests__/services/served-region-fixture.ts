@@ -22,8 +22,13 @@ import { getRegion } from "@/lib/region/region";
 export function censusStatingRegion(regionSlug: string | null): Record<string, unknown> {
   return {
     coverage_schema_version: 3,
-    generated_at: "2026-08-23T04:00:00+00:00",
-    evaluated_through_day: "2026-08-23",
+    // A day no suite's clock -- real or faked -- is ever set to, so `isReusableSliderCoverage`
+    // ALWAYS rejects the lane cache this leaves behind and a coverage-caching test still fetches
+    // exactly as it did before priming. Sharing the suite's own census day made the primed entry
+    // same-day reusable under `vi.setSystemTime`, and the first read of such a test fetched
+    // nothing at all (verifier W10).
+    generated_at: "2020-01-01T00:00:00+00:00",
+    evaluated_through_day: "2020-01-01",
     lanes: [],
     ...(regionSlug === null ? {} : { region_slug: regionSlug }),
   };
@@ -42,7 +47,8 @@ export interface QueueableFetchStub {
  * means a change to how the census states its region breaks these suites at the fixture rather than
  * leaving them asserting against an identity no wire body could produce.
  *
- * `evaluated_through_day` is a fixed past day, so the lane cache this leaves behind is NOT reusable
+ * `evaluated_through_day` is a fixed day far outside every suite's clock, so the lane cache this
+ * leaves behind is NOT reusable
  * and a suite that exercises coverage caching still fetches exactly as it did before.
  */
 export async function primeServedRegion(

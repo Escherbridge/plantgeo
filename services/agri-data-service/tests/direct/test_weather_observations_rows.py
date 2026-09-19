@@ -14,8 +14,8 @@ import pytest
 from agri_data_service.pipeline.direct.weather_observations.rows import (
     DirectWeatherObservationsRowError,
     _feature_id,
-    observation_day,
     direct_weather_observation_tables,
+    observation_day,
 )
 from agri_data_service.pipeline.direct.weather_observations.source import WeatherPointObservation
 from agri_data_service.warehouse.schemas.weather_observations import WEATHER_OBSERVATIONS_SCHEMA
