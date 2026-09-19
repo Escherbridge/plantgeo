@@ -1183,7 +1183,7 @@ def test_the_declared_lag_is_the_lanes_registered_lag_and_never_a_literal() -> N
     assert vegetation_promotion_declared_lag_days() != registration.cadence_days, (
         "so the lag and the cadence are not interchangeable, and the name must say which is read"
     )
-    assert STALE_AFTER_AGE_DAYS > registration.publication_lag_days, (
+    assert registration.publication_lag_days < STALE_AFTER_AGE_DAYS, (
         "and the bound must leave room past the lag it reports, or a healthy lane is stale on arrival"
     )
 

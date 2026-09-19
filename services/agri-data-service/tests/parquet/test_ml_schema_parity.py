@@ -73,6 +73,11 @@ ML_SCHEMA_FIXTURES: Final = load_scripts_module("regenerate_ml_schema_fixtures.p
 COPIED_CONTRACTS: Final = ML_SCHEMA_FIXTURES.COPIED_CONTRACTS
 CONTRACT_SLUGS: Final[tuple[str, ...]] = tuple(contract.slug for contract in COPIED_CONTRACTS)
 
+#: The exit code `regenerate_ml_schema_fixtures.main` returns on a `SiblingTreeAbsentError` refusal
+#: (`scripts/regenerate_ml_schema_fixtures.py:297`). The script has no named constant for it, so this
+#: is the one copy; do not introduce a second literal `2` for this meaning elsewhere.
+SIBLING_ABSENT_EXIT_CODE: Final = 2
+
 #: This service's half of each copied contract, by the same slug the fixture and the script use.
 #: `expert-labels` is a bare `pyarrow.Schema`; the other two are `ParquetStreamSchema` objects. The
 #: renderer duck-types across that difference rather than branching on the class.
@@ -205,7 +210,9 @@ def test_the_regeneration_refuses_without_the_sibling_tree_so_no_fixture_is_bles
         ML_SCHEMA_FIXTURES.regenerate()
 
     assert "no plantgeo-ml-service tree" in str(refusal.value)
-    assert ML_SCHEMA_FIXTURES.main([]) == 2, "refusing must be an exit code, not just an exception"
+    assert ML_SCHEMA_FIXTURES.main([]) == SIBLING_ABSENT_EXIT_CODE, (
+        "refusing must be an exit code, not just an exception"
+    )
 
 
 # ---------------------------------------------------------------------------------------------
