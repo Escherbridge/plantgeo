@@ -1,17 +1,4 @@
-"""Parity evidence for the agent's move off PostgreSQL: real DuckDB, real Parquet, real statements.
-
-Every statement in `agent/parquet_reads.py` is executed here against Parquet files written to a
-temporary directory through each lane's REGISTERED Arrow schema, and its answer is compared with a
-Python reference that re-expresses the PostgreSQL statement it replaced. The references are written
-out clause by clause in their docstrings and were derived from the `.sql` files deleted in the same
-change (`sql/agent/signals_near_point.sql`, `signal_value_on_day.sql`, `signal_neighbors_in_time.sql`,
-`nearest_signal_cells.sql`, `drought_history_at_point.sql`), so the comparison is against what the
-warehouse used to answer and not against what this module happens to compute.
-
-Nothing here touches an object store, a bucket or the network. `open_guarded_connection()` is the
-real serving connection -- the same memory cap, the same two extensions, the same UTC session zone --
-so a statement that only works because a test relaxed a guard cannot pass.
-"""
+"""Real DuckDB evidence for governed product-lane geometry, bounds, and read-only queries."""
 
 # ruff: noqa: PLR2004 - the literals here are fixture cell counts and offsets the assertion checks directly.
 
@@ -20,7 +7,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
@@ -28,7 +15,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from agri_data_service.agent import parquet_reads
-from agri_data_service.agent.tools import MAX_CELL_FANOUT, _bbox_bounds
+from agri_data_service.agent.tools import _bbox_bounds
 from agri_data_service.foundation.parquet.paths import partition_path
 from agri_data_service.parquet_ops.duckdb_session import open_guarded_connection
 from agri_data_service.parquet_ops.warehouse_reader import spatial_support
@@ -80,11 +67,11 @@ def _connection() -> duckdb.DuckDBPyConnection:
     return open_guarded_connection()
 
 
-def signal_rows(day: date) -> list[dict[str, Any]]:
-    """One day of the signal plane: three cells, two signals each, values keyed to the day."""
+def product_rows(day: date) -> list[dict[str, Any]]:
+    """One day of the dedicated VPD product at three source-cell coordinates."""
     rows: list[dict[str, Any]] = []
     for index, (cell_id, (longitude, latitude)) in enumerate(CELL_POSITIONS.items()):
-        for signal, unit, base in (("air_temperature", "degC", 4.0), ("precipitation", "mm", 1.0)):
+        for signal, unit, base in (("vapor_pressure_deficit", "kPa", 1.0),):
             rows.append(
                 {
                     "support_key": "surface",
@@ -113,12 +100,6 @@ def write_lane_day(root: Path, layer: str, day: date, rows: Sequence[dict[str, A
     return key, str(path)
 
 
-def scope_parameters(radius_meters: float = RADIUS_METERS) -> list[Any]:
-    """The eight shared signal-scope parameters, built exactly as `agent/tools.py` builds them."""
-    west, south, east, north = _bbox_bounds(BOISE_LONGITUDE, BOISE_LATITUDE, radius_meters)
-    return [west, east, south, north, BOISE_LATITUDE, BOISE_LONGITUDE, radius_meters, MAX_CELL_FANOUT]
-
-
 def run_statement(
     session: LocalSession,
     statement: str,
@@ -144,213 +125,7 @@ def spherical_distance_meters(longitude: float, latitude: float) -> float:
     return 2 * earth_radius * math.asin(math.sqrt(half_chord))
 
 
-def postgresql_window_summary(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The deleted `sql/agent/signals_near_point.sql`, re-expressed over the same rows.
-
-    That statement joined `geo.mv_signal_cell_daily` to the cells `agri.spatial_cell` reported
-    within the radius, grouped by `(signal_name, support_key, normalized_unit)`, and projected
-    `min(min_value)`, `max(max_value)` and `sum(avg_value * observation_count) / sum(...)`. The
-    three value columns are taken from `normalized_value` here for the reason RUNBOOK section 0.22.4
-    records: they equalled it on 100% of 701,257 measured rows, which is why the Parquet schema does
-    not carry them. If that ever stops being true this reference stops being the right one.
-    """
-    scoped = [
-        row for row in rows if spherical_distance_meters(row["cell_longitude"], row["cell_latitude"]) <= RADIUS_METERS
-    ]
-    grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
-    for row in scoped:
-        grouped.setdefault((row["signal_name"], row["support_key"], row["normalized_unit"]), []).append(row)
-    summaries = [
-        {
-            "signal_name": signal,
-            "support_key": support,
-            "normalized_unit": unit,
-            "observation_count": sum(row["observation_count"] for row in members),
-            "cell_count": len({row["cell_id"] for row in members}),
-            "day_count": len({row["observed_day"] for row in members}),
-            "first_observed_day": min(row["observed_day"] for row in members),
-            "last_observed_day": max(row["observed_day"] for row in members),
-            "last_observed_at": max(row["newest_observed_at"] for row in members),
-            "minimum_value": min(row["normalized_value"] for row in members),
-            "maximum_value": max(row["normalized_value"] for row in members),
-            "mean_value": (
-                sum(row["normalized_value"] * row["observation_count"] for row in members)
-                / sum(row["observation_count"] for row in members)
-            ),
-            "nearest_cell_distance_m": min(
-                spherical_distance_meters(row["cell_longitude"], row["cell_latitude"]) for row in members
-            ),
-        }
-        for (signal, support, unit), members in grouped.items()
-    ]
-    summaries.sort(key=lambda entry: (-entry["observation_count"], entry["signal_name"]))
-    return summaries
-
-
-def assert_row_matches(measured: dict[str, Any], expected: dict[str, Any]) -> None:
-    """Compare rows with geodesic distance tolerance and weighted-mean rounding tolerance."""
-    for column, want in expected.items():
-        got = measured[column]
-        if column.endswith(("distance_m", "distance_meters")):
-            assert math.isclose(got, want, rel_tol=SPHERICAL_TO_SPHEROIDAL_TOLERANCE), (
-                f"{column}: DuckDB answered {got} and the spherical reference {want}; the two engines "
-                "are ellipsoidal and spherical respectively and may differ only by the stated tolerance"
-            )
-            continue
-        if column == "mean_value" and got is not None and want is not None:
-            # Floating-point weighted sums can round differently across reduction orders.
-            assert math.isclose(got, want, rel_tol=1e-14, abs_tol=1e-14), (
-                f"{column}: DuckDB answered {got!r} and the PostgreSQL reference {want!r}"
-            )
-            continue
-        assert got == want, f"{column}: DuckDB answered {got!r} and the PostgreSQL reference {want!r}"
-
-
 # --- The signal plane --------------------------------------------------------------
-
-
-def test_the_window_summary_answers_exactly_what_the_dropped_matview_answered(
-    tmp_path: Path,
-    connection: duckdb.DuckDBPyConnection,
-) -> None:
-    """Parity for `signals_near_point` over five days: every column, against the PostgreSQL reference."""
-    files: dict[str, str] = {}
-    rows: list[dict[str, Any]] = []
-    for offset in range(5):
-        day = DAY - timedelta(days=offset)
-        day_rows = signal_rows(day)
-        rows.extend(day_rows)
-        key, path = write_lane_day(tmp_path, "signal", day, day_rows)
-        files[key] = path
-    session = LocalSession(connection=connection, files=files)
-
-    measured = run_statement(session, parquet_reads.SIGNAL_WINDOW_SUMMARY, sorted(files), scope_parameters())
-    expected = postgresql_window_summary(rows)
-
-    assert [row["signal_name"] for row in measured] == [row["signal_name"] for row in expected]
-    for got, want in zip(measured, expected, strict=True):
-        assert_row_matches(got, want)
-    # The far cell contributed to neither engine's answer, which is what makes the radius load-bearing.
-    assert all(row["cell_count"] == 2 for row in measured)
-
-
-def test_the_day_statement_answers_the_partition_day_and_never_a_neighbouring_one(
-    tmp_path: Path,
-    connection: duckdb.DuckDBPyConnection,
-) -> None:
-    """The named-day rule, structurally: the day is the part file, so no other day can be reached."""
-    files: dict[str, str] = {}
-    for offset in range(3):
-        day = DAY - timedelta(days=offset)
-        key, path = write_lane_day(tmp_path, "signal", day, signal_rows(day))
-        files[key] = path
-    session = LocalSession(connection=connection, files=files)
-    day_key = partition_path("signal", "observed", 13, DAY)
-
-    measured = run_statement(session, parquet_reads.SIGNAL_DAY_VALUES, [day_key], scope_parameters())
-
-    assert {row["observed_day"] for row in measured} == {DAY}
-    nearest = next(row for row in measured if row["signal_name"] == "air_temperature")
-    # DISTINCT ON (signal, support, unit) ORDER BY distance -- the nearest cell wins, and its own
-    # value travels beside the spread over every admitted cell.
-    assert nearest["nearest_cell_id"] == NEAR_CELL
-    assert nearest["cell_count"] == 2
-    assert nearest["nearest_cell_value"] == pytest.approx(4.14)
-    assert nearest["minimum_value"] == pytest.approx(4.14)
-    assert nearest["maximum_value"] == pytest.approx(5.14)
-
-
-def test_the_neighbour_statement_returns_one_row_per_side_with_its_real_gap(
-    tmp_path: Path,
-    connection: duckdb.DuckDBPyConnection,
-) -> None:
-    """A neighbour handed back without its gap is indistinguishable from an exact answer."""
-    files: dict[str, str] = {}
-    for day in (DAY - timedelta(days=3), DAY - timedelta(days=1), DAY + timedelta(days=2)):
-        key, path = write_lane_day(tmp_path, "signal", day, signal_rows(day))
-        files[key] = path
-    session = LocalSession(connection=connection, files=files)
-
-    measured = run_statement(
-        session,
-        parquet_reads.SIGNAL_TIME_NEIGHBORS,
-        sorted(files),
-        [*scope_parameters(), DAY, DAY, DAY, DAY],
-    )
-
-    by_side = {(row["signal_name"], row["side"]): row for row in measured}
-    before = by_side[("air_temperature", "before")]
-    after = by_side[("air_temperature", "after")]
-    assert before["observed_day"] == DAY - timedelta(days=1)
-    assert before["day_offset"] == -1
-    assert before["distance_days"] == 1
-    assert after["observed_day"] == DAY + timedelta(days=2)
-    assert after["day_offset"] == 2
-    assert after["distance_days"] == 2
-    # Exactly one row per side per signal group; the closer day on each side wins the tie-break.
-    assert len(measured) == 4
-
-
-def test_the_cell_statement_lists_a_cell_that_holds_nothing_on_the_requested_day(
-    tmp_path: Path,
-    connection: duckdb.DuckDBPyConnection,
-) -> None:
-    """The LEFT JOIN is the point: "the nearest cells" must never quietly mean "the ones with data"."""
-    silent_day = DAY - timedelta(days=4)
-    files: dict[str, str] = {}
-    key, path = write_lane_day(tmp_path, "signal", silent_day, signal_rows(silent_day))
-    files[key] = path
-    # The requested day carries the near cell only, so the second cell is known but silent that day.
-    day_rows = [row for row in signal_rows(DAY) if row["cell_id"] == NEAR_CELL]
-    key, path = write_lane_day(tmp_path, "signal", DAY, day_rows)
-    files[key] = path
-    session = LocalSession(connection=connection, files=files)
-
-    measured = run_statement(
-        session,
-        parquet_reads.SIGNAL_CELL_DAY_COUNTS,
-        sorted(files),
-        [*scope_parameters(), DAY, 8],
-    )
-
-    by_cell = {row["cell_id"]: row for row in measured}
-    assert by_cell[NEAR_CELL]["observation_count_on_day"] == 4
-    assert by_cell[SECOND_CELL]["observation_count_on_day"] == 0
-    assert by_cell[SECOND_CELL]["signal_count_on_day"] == 0
-    assert by_cell[SECOND_CELL]["last_observed_at"] is None
-    assert FAR_CELL not in by_cell
-    assert [row["cell_id"] for row in measured] == [NEAR_CELL, SECOND_CELL]
-
-
-def test_the_admitted_cells_are_the_scope_the_postgresql_audit_is_read_over(
-    tmp_path: Path,
-    connection: duckdb.DuckDBPyConnection,
-) -> None:
-    """`signal_coverage_on_day.sql` now takes these two arrays; a wider set would explain the wrong point."""
-    key, path = write_lane_day(tmp_path, "signal", DAY, signal_rows(DAY))
-    session = LocalSession(connection=connection, files={key: path})
-
-    measured = run_statement(session, parquet_reads.SIGNAL_ADMITTED_CELLS, [key], scope_parameters())
-
-    assert [row["cell_id"] for row in measured] == [NEAR_CELL, SECOND_CELL]
-    assert measured[0]["distance_meters"] < measured[1]["distance_meters"]
-    assert measured[0]["distance_meters"] == pytest.approx(
-        spherical_distance_meters(*CELL_POSITIONS[NEAR_CELL]),
-        rel=SPHERICAL_TO_SPHEROIDAL_TOLERANCE,
-    )
-
-
-def test_a_radius_smaller_than_every_cell_answers_nothing_rather_than_widening(
-    tmp_path: Path,
-    connection: duckdb.DuckDBPyConnection,
-) -> None:
-    """The exact test, not the box: a 100 m radius near Boise admits no cell of either grid."""
-    key, path = write_lane_day(tmp_path, "signal", DAY, signal_rows(DAY))
-    session = LocalSession(connection=connection, files={key: path})
-
-    measured = run_statement(session, parquet_reads.SIGNAL_DAY_VALUES, [key], scope_parameters(100.0))
-
-    assert measured == []
 
 
 # --- The drought release set -------------------------------------------------------
@@ -506,9 +281,9 @@ def test_a_point_lane_measures_to_the_rows_own_coordinate(
     connection: duckdb.DuckDBPyConnection,
 ) -> None:
     """A lane declaring a coordinate pair gets the exact geodesic distance, and the far row is dropped."""
-    key, path = write_lane_day(tmp_path, "signal", DAY, signal_rows(DAY))
+    key, path = write_lane_day(tmp_path, "soil-field-vpd", DAY, product_rows(DAY))
     session = LocalSession(connection=connection, files={key: path})
-    support = spatial_support("signal", "observed")
+    support = spatial_support("soil-field-vpd", "observed")
     west, south, east, north = _bbox_bounds(BOISE_LONGITUDE, BOISE_LATITUDE, RADIUS_METERS)
 
     measured = run_statement(
@@ -556,23 +331,6 @@ def test_the_probe_point_is_bound_latitude_first(connection: duckdb.DuckDBPyConn
     assert not math.isclose(plausible_but_wrong, correct, rel_tol=0.05)
 
 
-@pytest.mark.parametrize(
-    "statement",
-    [
-        parquet_reads.SIGNAL_WINDOW_SUMMARY,
-        parquet_reads.SIGNAL_DAY_VALUES,
-        parquet_reads.SIGNAL_ADMITTED_CELLS,
-        parquet_reads.SIGNAL_TIME_NEIGHBORS,
-        parquet_reads.SIGNAL_CELL_DAY_COUNTS,
-    ],
-    ids=["window", "day", "cells", "neighbours", "cell-counts"],
-)
-def test_no_signal_statement_uses_the_spherical_distance_function(statement: str) -> None:
-    """`ST_Distance_Sphere` is banned outright here: fed backwards it lies instead of refusing."""
-    assert "ST_Distance_Sphere(" not in statement
-    assert "ST_Distance_Spheroid(" in statement
-
-
 # --- Read-only and layout tripwires ------------------------------------------------
 
 
@@ -583,14 +341,9 @@ def _statement_id(value: object) -> str:
 
 def all_statements() -> list[tuple[str, str]]:
     """Every DuckDB statement the agent can issue, named by its line-one marker."""
-    point = spatial_support("signal", "observed")
+    point = spatial_support("soil-field-vpd", "observed")
     geometry = spatial_support("watersheds", "observed")
     return [
-        ("window", parquet_reads.SIGNAL_WINDOW_SUMMARY),
-        ("day", parquet_reads.SIGNAL_DAY_VALUES),
-        ("cells", parquet_reads.SIGNAL_ADMITTED_CELLS),
-        ("neighbours", parquet_reads.SIGNAL_TIME_NEIGHBORS),
-        ("cell-counts", parquet_reads.SIGNAL_CELL_DAY_COUNTS),
         ("drought", parquet_reads.DROUGHT_RELEASE_SEVERITY),
         ("point-lane", parquet_reads.point_lane_rows(point)),  # type: ignore[arg-type]
         ("geometry-lane", parquet_reads.geometry_lane_rows(geometry)),  # type: ignore[arg-type]

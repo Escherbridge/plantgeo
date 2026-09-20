@@ -33,6 +33,9 @@ export const REGIONAL_TOOL_EVIDENCE_SOURCES = [
   "climate-field-soil-wetness-profile", "climate-field-soil-wetness-root-zone",
   "climate-field-soil-wetness-surface", "climate-field-wind-speed", "drought-areas",
   "soil-field-moisture", "soil-field-temperature", "soil-field-vpd",
+  "soil-phh2o", "soil-soc", "soil-nitrogen", "soil-bdod", "soil-cec", "soil-ocd",
+  "botanical-occurrences", "botanical-richness", "botanical-collection-effort", "gbif-occurrences",
+  "demand-heatmap", "strategy-recommendations", "fire-risk", "weather-forecast", "groundwater", "land-context",
 ] as const;
 
 export const REGIONAL_CLAIM_EVIDENCE_SOURCES = [
@@ -206,6 +209,10 @@ export interface RegionalAnalysisEvidence {
     source?: string;
     sources?: string[];
     selectedDate?: string;
+    rangeStart?: string;
+    rangeEnd?: string;
+    timeScale?: string;
+    zoom?: number;
     validDates?: string[];
     observedDates?: string[];
     servedDates?: string[];

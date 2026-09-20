@@ -5,10 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import UTC, date, datetime
-from typing import Any, Final, Literal
+from typing import Any, Final, Literal, Self
 
 import structlog
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from sanic import Blueprint, Request
 from sanic import json as json_response
 from sanic.response import HTTPResponse  # noqa: TC002 - sanic-ext evaluates handler annotations at runtime.
@@ -20,6 +20,7 @@ from agri_data_service.agent.graph import (
     execute_graph,
 )
 from agri_data_service.agent.report import AI_GENERATED_DISCLAIMER, ConversationTurn
+from agri_data_service.agent.selection_context import MapSelection  # noqa: TC001 - Pydantic runtime schema.
 from agri_data_service.config import settings
 
 logger = structlog.get_logger()
@@ -55,6 +56,14 @@ class AgentAnalyzeRequest(BaseModel):
         pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     )
     """Exact canonical authoring UUID; names and noncanonical UUID spellings are refused."""
+    map_selection: MapSelection | None = None
+
+    @model_validator(mode="after")
+    def validate_selected_day(self) -> Self:
+        """Refuse conflicting representations of the active day."""
+        if self.map_selection is not None and self.selected_day not in (None, self.map_selection.day):
+            raise ValueError("selected_day must match map_selection.day")
+        return self
 
 
 def _frame(event: dict[str, Any]) -> str:
@@ -97,6 +106,7 @@ async def analyze_location(request: Request) -> HTTPResponse | None:
         as_of=datetime.now(UTC),
         selected_day=payload.selected_day,
         species_id=payload.species_id,
+        map_selection=payload.map_selection,
     )
     context = GraphContext(
         request=agent_request,

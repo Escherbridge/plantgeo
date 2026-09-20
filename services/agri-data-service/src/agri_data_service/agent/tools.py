@@ -26,17 +26,13 @@ from pydantic import Field
 from agri_data_service.agent import parquet_reads, warehouse
 from agri_data_service.agent.botanical_occurrences import (
     botanical_occurrence_current_release,
-    botanical_occurrence_spatial_neighbours,
-    botanical_occurrence_temporal_neighbours,
-    botanical_occurrences_in_region,
 )
+from agri_data_service.agent.selection_evidence import catalogue, parse_selection, retrieve
 from agri_data_service.agent.surfaces import (
     AGENT_SURFACE_NAMES,
     FEATURE_SURFACE_NAMES,
     FIRE_LANE_NAMES,
     FIRE_REGION_LAYERS,
-    SIGNAL_PLANE_LANE,
-    SIGNAL_PLANE_REGION_LAYER,
     STREAM_SURFACE_NAMES,
     surface_lanes,
     surface_region_layer,
@@ -91,41 +87,6 @@ DEFAULT_RADIUS_METERS: Final = 10_000.0
 MAX_RADIUS_METERS: Final = 50_000.0
 MIN_RADIUS_METERS: Final = 100.0
 
-DEFAULT_SUMMARY_ROWS: Final = 25
-MAX_SUMMARY_ROWS: Final = 60
-
-# --- Window caps, and why every one of them fell -----------------------------------
-#
-# THESE ARE SCAN BUDGETS, NOT THE DEPTH OF THE RECORD, and every tool that clamps one says so in
-# its note. Against the dropped `geo.mv_signal_cell_daily` a decade-deep window was a longer
-# contiguous index range; against Parquet it is one object-store GET per written day per lane. A
-# 3,650-day window is therefore thousands of GETs on a request path, not a longer scan.
-#
-# `MAX_DAYS_BACK` and `MAX_WEEKS_BACK` are set TO `warehouse.MAX_SCANNED_DAY_PARTITIONS` (120), the
-# partition budget that already bounds one read's object-store GETs via `narrow_to_budget`. A
-# smaller depth cap bought nothing here: at the old 92 days / 52 weeks the requested span never held
-# 120 written days, so `narrow_to_budget` never fired and the shallower window was pure lost depth at
-# an unchanged worst-case GET cost. Raising the cap to the budget lets `narrow_to_budget` do the
-# bounding it already exists to do -- it reports itself back (`window_narrowed_by_scan_budget`)
-# whenever a fully-published window is wide enough to trip it, same as it always has for the fire
-# lanes below.
-#
-# `MAX_FIRE_YEARS_BACK` stays at 2 and is NOT the same budget: fire's window is walked a year at a
-# time (`warehouse.lane_years`), so its cost is object-store LIST calls, not GETs, and 45 years
-# across two lanes would be roughly 1,080 LISTs. Raising it properly needs a `lane_years`-style
-# listing the way drought already has; that is an owner product decision, not made here.
-#
-# The depth question -- how far back does this lane go at all -- was meant to move to
-# `observation_coverage_on_day`, which is SUPPOSED to answer it from the availability index at the
-# cost of two small GETs. IT CANNOT TODAY: `parquet_coverage_authority` defaults to
-# `census_until_bootstrap` (`config.py:177`) and no lane has a published availability receipt, so
-# every lane comes back `availability_unpublished` and the tool answers
-# `parquet_availability_withheld` instead of a day count. Every note below that points a caller
-# there is naming an intended escape hatch, not a working one.
-
-DEFAULT_DAYS_BACK: Final = 90
-MAX_DAYS_BACK: Final = 120
-
 DEFAULT_WEEKS_BACK: Final = 52
 MAX_WEEKS_BACK: Final = 120
 
@@ -135,53 +96,7 @@ MAX_FIRE_YEARS_BACK: Final = 2
 DEFAULT_FORECAST_ROWS: Final = 40
 MAX_FORECAST_ROWS: Final = 120
 
-# --- Selected-day bounds -----------------------------------------------------------
-#
-# Bounds for the tools that answer at the day the UI has selected. See agent/AGENTS.md,
-# "Answering at the selected day", for what each one is measured against and why.
-
-# 19 signal names are under contract across the three lanes (execution/coverage_contract.py,
-# verified against agri.data_source and agri.signal_observation 2026-08-11). Rows group by
-# signal x support key x unit -- the Parquet signal plane carries no source_parameter column -- so
-# 40 leaves a lane room to publish a second unit spelling without an answer being truncated.
-MAX_DAY_SUMMARY_ROWS: Final = 40
-MAX_COVERAGE_AUDIT_ROWS: Final = 40
-# At most two rows -- one before, one after -- per group the day summary admits.
-MAX_TEMPORAL_NEIGHBOR_ROWS: Final = MAX_DAY_SUMMARY_ROWS * 2
-
-# Measured against production 2026-08-11: NASA POWER is gapless daily over 397 cells from
-# 2022-08-06 to 2026-08-06 and ERA5-Land runs to 2026-08-02, so a neighbour is normally one day
-# out and the widest routine gap is ERA5-Land's four-day publication lag. 180 days sits far
-# above that, which is what makes "no neighbour inside the window" a claim about the data.
-DEFAULT_NEIGHBOR_DAYS: Final = 30
-MAX_NEIGHBOR_DAYS: Final = 180
-
-# agri.spatial_cell 2026-08-11: nasa-power-0.5-degree holds 397 cells at roughly 55 km spacing
-# and sentinel2-ndvi-0p25deg 1,568 at roughly 27.8 km east-west by 20.1 km north-south at 43.6N,
-# so a 50 km radius admits about fourteen centroids of the denser grid. 25 covers both grids at
-# once with headroom.
-DEFAULT_NEAREST_CELLS: Final = 8
-MAX_NEAREST_CELLS: Final = 25
-
-# How far back `nearest_signal_cells` and `forecast_summary_for_cell` look to learn WHICH cells
-# exist near a point.
-#
-# `agri.spatial_cell` was the registry of cells and is gone -- the retirement inventory classes it
-# "drop now" and production no longer has it. The Parquet signal plane carries each row's own cell
-# centroid, so the cell set is recoverable, but only as "cells that reported inside a window"
-# rather than as "cells this grid declares". 30 days is far wider than any contracted lane's
-# cadence, so a cell absent from it has not reported for a month; the tools say that outright
-# rather than presenting an observed set as a registry.
-CELL_UNIVERSE_DAYS: Final = 30
-
-# --- Generic-surface bounds --------------------------------------------------------
-#
-# Bounds for the three tools that answer for ANY catalogue surface rather than for the signal
-# plane alone. See agent/AGENTS.md, "The generic surface triad".
-
-# The availability index answers a whole lane's history from two small GETs, so this window bounds
-# the ANSWER and not the work. 180 days matches MAX_NEIGHBOR_DAYS so both temporal tools make the
-# same claim about how far "no neighbour" was searched.
+# Surface metadata queries report their bounded neighbour window.
 DEFAULT_SURFACE_NEIGHBOR_DAYS: Final = 30
 MAX_SURFACE_NEIGHBOR_DAYS: Final = 180
 
@@ -189,7 +104,6 @@ DEFAULT_SURFACE_FEATURE_ROWS: Final = 12
 MAX_SURFACE_FEATURE_ROWS: Final = 50
 
 # Pre-aggregation caps: how much one read may gather before it collapses to a summary.
-MAX_CELL_FANOUT: Final = 250
 MAX_FIRE_FEATURE_FANOUT: Final = 2_000
 MAX_NAME_FILTER_ENTRIES: Final = 12
 MAX_NAME_LENGTH: Final = 150
@@ -202,32 +116,7 @@ _MAX_LONGITUDE: Final = 180.0
 _MIN_LATITUDE: Final = -90.0
 _MAX_LATITUDE: Final = 90.0
 
-# --- What a published object must actually carry before a question can be asked of it ------
-#
-# A REGISTERED SCHEMA IS A PROMISE, NOT AN OBSERVATION, and the difference is measurable today.
-# `warehouse/parquet/schema.py` declares `cell_longitude` and `cell_latitude` non-nullable on the
-# signal plane, and the newest published z13 part -- `year=2026/month=08/day=06/part-0.parquet`,
-# read 2026-09-04 -- carries eleven columns and neither of them: the lane was exported before the
-# positions were added and the `postgres-*` lanes are stopped, so no re-export has followed.
-#
-# These tuples are the columns each read genuinely needs. `warehouse.scan` probes for them once per
-# read and refuses by name when they are missing, so a lane that owes a re-export says so instead of
-# raising a binder error the model can only report as "the tool broke".
-SIGNAL_PLANE_COLUMNS: Final = (
-    "support_key",
-    "signal_name",
-    "normalized_unit",
-    "cell_id",
-    "observed_day",
-    "normalized_value",
-    "observation_count",
-    "newest_observed_at",
-    "coverage_fraction",
-    "allowed_client_exposure",
-    "cell_longitude",
-    "cell_latitude",
-)
-
+# Required columns are checked against the published objects before reading.
 DROUGHT_LANE_COLUMNS: Final = ("valid_date", "dm_category", "ingested_at", "geom")
 
 # Which column carries "how many features is this row worth" on a fire lane.
@@ -343,17 +232,6 @@ def _bbox_bounds(longitude: float, latitude: float, radius_meters: float) -> tup
     )
 
 
-def _signal_scope_parameters(longitude: float, latitude: float, radius_meters: float) -> list[object]:
-    """The eight parameters every signal statement's shared scope binds, in DuckDB's own order.
-
-    THE PROBE IS LATITUDE FIRST. DuckDB's geodesic distance functions take the ordinates the
-    opposite way round from every geometry function, and `parquet_reads` carries the measurement
-    that proves it. Bound the ordinary way, `ST_Distance_Spheroid` answers NaN.
-    """
-    west, south, east, north = _bbox_bounds(longitude, latitude, radius_meters)
-    return [west, east, south, north, latitude, longitude, radius_meters, MAX_CELL_FANOUT]
-
-
 def _json_safe(value: Any) -> Any:  # noqa: PLR0911 - one return per JSON-incompatible scalar/collection type
     """Convert warehouse scalars that json.dumps cannot serialize.
 
@@ -437,9 +315,9 @@ def _feature_surface_error(raw_surface: str) -> str:
             "supported_surface_names": list(FEATURE_SURFACE_NAMES),
             "note": (
                 "This is a refusal, not an absence. The surfaces this tool cannot answer for are "
-                "the cell-grid signal streams and the drought release set, which have no "
-                "individual features to return -- use signal_value_on_day or "
-                "drought_history_at_point for those. Nothing was queried, so nothing follows "
+                "the cell-grid streams and the drought release set, which have no "
+                "individual features to return -- use surface_evidence_for_selection. "
+                "Nothing was queried, so nothing follows "
                 "about the surface that was named."
             ),
         }
@@ -656,97 +534,10 @@ def _scanned_bounds(scanned: warehouse.ScannedSpan) -> dict[str, Any]:
     }
 
 
-def _filter_by_name(rows: list[dict[str, Any]], names: Sequence[str], column: str) -> list[dict[str, Any]]:
-    """Apply the caller's optional name filter after the read, never inside it.
-
-    The filter is a Python step because the group count the statements return is bounded by the
-    governed contract itself -- 19 signal names across three lanes -- so filtering afterwards costs
-    nothing and keeps an empty list parameter out of a DuckDB prepared statement, where an untyped
-    empty list has no element type to infer.
-    """
-    if not names:
-        return rows
-    wanted = set(names)
-    return [row for row in rows if row.get(column) in wanted]
-
-
 # --- Query implementations ---------------------------------------------------------
 #
 # Each is a plain async function so tests can call it directly; the model-facing tool
 # below is a thin decorated wrapper whose signature is the published schema.
-
-
-@_refuses_serving_faults("signals_near_point")
-async def query_signals_near_point(  # noqa: PLR0913 - the parameter list is the published tool schema.
-    longitude: float,
-    latitude: float,
-    radius_meters: float = DEFAULT_RADIUS_METERS,
-    days_back: int = DEFAULT_DAYS_BACK,
-    signal_names: list[str] | None = None,
-    as_of: datetime | None = None,
-) -> str:
-    """Summarise governed signal observations near a point, from the Parquet signal plane."""
-    if not _valid_coordinate(longitude, latitude):
-        return _coordinate_error("signals_near_point")
-    region_absence = _region_absence("signals_near_point", (SIGNAL_PLANE_REGION_LAYER,))
-    if region_absence is not None:
-        return region_absence
-    radius = _clamp(radius_meters, MIN_RADIUS_METERS, MAX_RADIUS_METERS)
-    window_days = _clamp_int(days_back, 1, MAX_DAYS_BACK)
-    names = _clean_names(signal_names)
-    day_through = (as_of or datetime.now(UTC)).date()
-    day_from = day_through - timedelta(days=window_days)
-    window = await warehouse.lane_window(layer=SIGNAL_PLANE_LANE, first_day=day_from, last_day=day_through)
-    if not window.lane_written:
-        return _lane_never_written_refusal("signals_near_point", (SIGNAL_PLANE_LANE,))
-    window.raise_on_unserveable(_day_span(day_from, day_through))
-    scanned = warehouse.narrow_to_budget(
-        window.published_days(day_from, day_through),
-        requested_from=day_from,
-        requested_through=day_through,
-    )
-    measured = await warehouse.scan(
-        parquet_reads.SIGNAL_WINDOW_SUMMARY,
-        _signal_scope_parameters(longitude, latitude, radius),
-        part_keys=window.part_keys(scanned.days),
-        operation="agent_signals_near_point",
-        layer=SIGNAL_PLANE_LANE,
-        evidence_source=window.evidence_source,
-        required_columns=SIGNAL_PLANE_COLUMNS,
-    )
-    rows = _filter_by_name(measured, names, "signal_name")[:DEFAULT_SUMMARY_ROWS]
-    _record("signals_near_point", len(rows), {"radius_meters": radius, "days_back": window_days})
-    return _payload(
-        {
-            "applied_bounds": {
-                "radius_meters": radius,
-                "days_back": window_days,
-                "day_from": day_from,
-                "day_through": day_through,
-                "signal_names": names,
-                "max_summary_rows": DEFAULT_SUMMARY_ROWS,
-                "max_days_back": MAX_DAYS_BACK,
-                **_scanned_bounds(scanned),
-            },
-            "signal_summaries": rows,
-            "window_day_states": _window_states(window, day_from, day_through),
-            "note": (
-                "Read from the Parquet signal plane the map itself paints from, so this can never "
-                "disagree with what the user sees. It covers the 19 signal names under contract, "
-                "and only readings the ingest lane accepted. window_day_states says what every day "
-                "of the window IS: published days held rows, governed_absence days were looked at "
-                "and the upstream had nothing, and day_not_written days were never written at all "
-                "-- so an empty signal_summaries with governed_absence days is a measured absence "
-                "and one with day_not_written days is a gap about which nothing follows. "
-                "days_back is a SCAN BUDGET, not the depth of the record: the lane may run years "
-                "deeper than max_days_back. Use observation_coverage_on_day and "
-                "observation_temporal_neighbors for published coverage; if their availability "
-                "evidence is withheld, the refusal does not establish the depth of history. "
-                "A signal outside the governed contract is absent here because it is out of scope, "
-                "not because it was unmeasured."
-            ),
-        }
-    )
 
 
 @_refuses_serving_faults("drought_history_at_point")
@@ -1027,7 +818,7 @@ async def _lane_rows(  # noqa: PLR0913 - one argument per coordinate of a bounde
     if isinstance(support, PointSupport):
         rows = await warehouse.scan(
             parquet_reads.point_lane_rows(support),
-            # The probe is LATITUDE FIRST for the geodesic distance; see `_signal_scope_parameters`.
+            # The geodesic distance binds latitude before longitude.
             [west, east, south, north, latitude, longitude, radius_meters, row_limit],
             part_keys=part_keys,
             operation=operation,
@@ -1111,126 +902,6 @@ async def query_forecast_summary_for_cell(
     )
 
 
-async def _admitted_signal_cells(  # noqa: PLR0913 - one coordinate per bounded read; caller pre-resolves window
-    window: LaneWindow,
-    *,
-    longitude: float,
-    latitude: float,
-    radius_meters: float,
-    first_day: date,
-    through_day: date,
-    operation: str,
-) -> list[dict[str, Any]]:
-    """The analysis cells that reported near a point recently, nearest first, from the signal plane.
-
-    Takes an already-resolved `window` rather than resolving its own: the caller must decide what
-    `lane_never_written` means BEFORE this runs, because an empty return here is indistinguishable
-    from "no cell reported nearby" and the two are different claims.
-    """
-    scanned = warehouse.narrow_to_budget(
-        window.published_days(first_day, through_day),
-        requested_from=first_day,
-        requested_through=through_day,
-    )
-    return await warehouse.scan(
-        parquet_reads.SIGNAL_ADMITTED_CELLS,
-        _signal_scope_parameters(longitude, latitude, radius_meters),
-        part_keys=window.part_keys(scanned.days),
-        operation=operation,
-        layer=SIGNAL_PLANE_LANE,
-        evidence_source=window.evidence_source,
-        required_columns=SIGNAL_PLANE_COLUMNS,
-    )
-
-
-@_refuses_serving_faults("signal_value_on_day")
-async def query_signal_value_on_day(
-    longitude: float,
-    latitude: float,
-    day: str,
-    radius_meters: float = DEFAULT_RADIUS_METERS,
-    signal_names: list[str] | None = None,
-) -> str:
-    """Report what each governed signal measured on exactly the caller's day, and the audit for it."""
-    if not _valid_coordinate(longitude, latitude):
-        return _coordinate_error("signal_value_on_day")
-    region_absence = _region_absence("signal_value_on_day", (SIGNAL_PLANE_REGION_LAYER,))
-    if region_absence is not None:
-        return region_absence
-    selected_day = _parse_day(day)
-    if selected_day is None:
-        return _day_error("signal_value_on_day", day)
-    radius = _clamp(radius_meters, MIN_RADIUS_METERS, MAX_RADIUS_METERS)
-    names = _clean_names(signal_names)
-    window = await warehouse.lane_window(layer=SIGNAL_PLANE_LANE, first_day=selected_day, last_day=selected_day)
-    if not window.lane_written:
-        return _lane_never_written_refusal("signal_value_on_day", (SIGNAL_PLANE_LANE,))
-    window.raise_on_unserveable([selected_day])
-    state = window.state_of(selected_day)
-    measured: list[dict[str, Any]] = []
-    cells: list[dict[str, Any]] = []
-    if state == "published":
-        measured, cells = await warehouse.scan_all(
-            (
-                (parquet_reads.SIGNAL_DAY_VALUES, _signal_scope_parameters(longitude, latitude, radius)),
-                (parquet_reads.SIGNAL_ADMITTED_CELLS, _signal_scope_parameters(longitude, latitude, radius)),
-            ),
-            part_keys=window.part_keys([selected_day]),
-            operation="agent_signal_value_on_day",
-            layer=SIGNAL_PLANE_LANE,
-            evidence_source=window.evidence_source,
-            required_columns=SIGNAL_PLANE_COLUMNS,
-        )
-    rows = _filter_by_name(measured, names, "signal_name")[:MAX_DAY_SUMMARY_ROWS]
-    # The former per-cell PostgreSQL audit was empty at cutover and is retired with the ingest
-    # schema. Availability markers and `day_state` carry the governed absence evidence that remains
-    # meaningful to a serving reader.
-    governed: list[dict[str, Any]] = []
-    _record(
-        "signal_value_on_day",
-        len(rows),
-        {
-            "requested_day": selected_day,
-            "radius_meters": radius,
-            "coverage_audit_rows": 0,
-            "coverage_audit_state": "retired",
-        },
-    )
-    return _payload(
-        {
-            "requested_day": selected_day,
-            "applied_bounds": {
-                "requested_day": selected_day,
-                "radius_meters": radius,
-                "signal_names": names,
-                "max_summary_rows": MAX_DAY_SUMMARY_ROWS,
-                "max_coverage_audit_rows": MAX_COVERAGE_AUDIT_ROWS,
-                "max_cells_scanned": MAX_CELL_FANOUT,
-            },
-            "day_state": await _day_state(window, selected_day, state),
-            "signals_on_day": rows,
-            "signals_on_day_truncated": len(rows) >= MAX_DAY_SUMMARY_ROWS,
-            "coverage_audit_on_day": governed,
-            "coverage_audit_on_day_truncated": len(governed) >= MAX_COVERAGE_AUDIT_ROWS,
-            "cells_in_radius": len(cells),
-            "note": (
-                "Every row in signals_on_day was measured ON requested_day and on no other day; "
-                "nothing here is borrowed from a neighbouring day, because the day IS the Parquet "
-                "partition that was read and no timestamp was ever cast to a date to decide it. "
-                "day_state is the warehouse's own verdict and must be read BEFORE the rows: "
-                "published means the day holds data, governed_absence means the lane looked and "
-                "the upstream had nothing (its evidence says why), day_not_written means the day "
-                "was never written and NOTHING follows from the empty list. A signal absent from a "
-                "published day had no accepted reading UNLESS signals_on_day_truncated is true, in "
-                "which case the list hit its row cap. The former per-cell PostgreSQL coverage audit "
-                "was retired with the ingest schema; use day_state and its Parquet availability "
-                "marker for governed absence evidence. For the nearest days that do carry a reading call "
-                "signal_neighbors_in_time, and never quote one of those as this day's value."
-            ),
-        }
-    )
-
-
 async def _day_state(window: LaneWindow, day: date, state: str) -> dict[str, Any]:
     """Render the warehouse's verdict on one day, carrying a governed absence's own evidence.
 
@@ -1248,185 +919,6 @@ async def _day_state(window: LaneWindow, day: date, state: str) -> dict[str, Any
             "run_id": evidence.run_id,
         }
     return verdict
-
-
-@_refuses_serving_faults("signal_neighbors_in_time")
-async def query_signal_neighbors_in_time(  # noqa: PLR0913 - the parameter list is the published tool schema.
-    longitude: float,
-    latitude: float,
-    day: str,
-    radius_meters: float = DEFAULT_RADIUS_METERS,
-    neighbor_days: int = DEFAULT_NEIGHBOR_DAYS,
-    signal_names: list[str] | None = None,
-) -> str:
-    """Return the nearest accepted reading each side of the caller's day, carrying its real gap."""
-    if not _valid_coordinate(longitude, latitude):
-        return _coordinate_error("signal_neighbors_in_time")
-    region_absence = _region_absence("signal_neighbors_in_time", (SIGNAL_PLANE_REGION_LAYER,))
-    if region_absence is not None:
-        return region_absence
-    selected_day = _parse_day(day)
-    if selected_day is None:
-        return _day_error("signal_neighbors_in_time", day)
-    radius = _clamp(radius_meters, MIN_RADIUS_METERS, MAX_RADIUS_METERS)
-    window_days = _clamp_int(neighbor_days, 1, MAX_NEIGHBOR_DAYS)
-    names = _clean_names(signal_names)
-    search_from = selected_day - timedelta(days=window_days)
-    search_through = selected_day + timedelta(days=window_days)
-    window = await warehouse.lane_window(layer=SIGNAL_PLANE_LANE, first_day=search_from, last_day=search_through)
-    if not window.lane_written:
-        return _lane_never_written_refusal("signal_neighbors_in_time", (SIGNAL_PLANE_LANE,))
-    window.raise_on_unserveable(_day_span(search_from, search_through))
-    neighbours = [day for day in window.published_days(search_from, search_through) if day != selected_day]
-    scanned = warehouse.narrow_to_budget(neighbours, requested_from=search_from, requested_through=search_through)
-    measured = await warehouse.scan(
-        parquet_reads.SIGNAL_TIME_NEIGHBORS,
-        # The day is bound FOUR times: DuckDB counts positional parameters by appearance, and the
-        # statement names this one day in both arms and in both gap expressions.
-        [*_signal_scope_parameters(longitude, latitude, radius), *([selected_day] * 4)],
-        part_keys=window.part_keys(scanned.days),
-        operation="agent_signal_neighbors_in_time",
-        layer=SIGNAL_PLANE_LANE,
-        evidence_source=window.evidence_source,
-        required_columns=SIGNAL_PLANE_COLUMNS,
-    )
-    rows = _filter_by_name(measured, names, "signal_name")[:MAX_TEMPORAL_NEIGHBOR_ROWS]
-    _record(
-        "signal_neighbors_in_time",
-        len(rows),
-        {"requested_day": selected_day, "radius_meters": radius, "neighbor_days": window_days},
-    )
-    return _payload(
-        {
-            "requested_day": selected_day,
-            "applied_bounds": {
-                "requested_day": selected_day,
-                "radius_meters": radius,
-                "neighbor_days": window_days,
-                "searched_from": search_from,
-                "searched_through": search_through,
-                "signal_names": names,
-                "max_rows": MAX_TEMPORAL_NEIGHBOR_ROWS,
-                **_scanned_bounds(scanned),
-            },
-            "temporal_neighbors": rows,
-            "temporal_neighbors_truncated": len(rows) >= MAX_TEMPORAL_NEIGHBOR_ROWS,
-            "window_day_states": _window_states(window, search_from, search_through),
-            "note": (
-                "Each row is the nearest accepted reading on a day OTHER than requested_day. "
-                "side says whether it precedes or follows, observed_day is that reading's own "
-                "date, distance_days is the real gap in days and day_offset the same gap signed, "
-                "and nearest_cell_distance_m is how far its cell sits from the point. Never "
-                "report one of these as the value on requested_day -- say which day it came from "
-                "and how far away that is. A signal missing its before or after row has no "
-                "accepted reading on that side between scanned_from and scanned_through, which is "
-                "a statement about the days actually read and not about all of history -- UNLESS "
-                "temporal_neighbors_truncated is true, in which case the list hit its row cap and "
-                "the missing side may simply have been cut. window_day_states says how many days "
-                "in the window were governed absences and how many were never written at all."
-            ),
-        }
-    )
-
-
-@_refuses_serving_faults("nearest_signal_cells")
-async def query_nearest_signal_cells(  # noqa: PLR0913 - the parameter list is the published tool schema.
-    longitude: float,
-    latitude: float,
-    day: str,
-    radius_meters: float = DEFAULT_RADIUS_METERS,
-    cell_count: int = DEFAULT_NEAREST_CELLS,
-    grid_names: list[str] | None = None,
-) -> str:
-    """List the analysis cells nearest a point with their real distances and what they hold that day."""
-    if not _valid_coordinate(longitude, latitude):
-        return _coordinate_error("nearest_signal_cells")
-    region_absence = _region_absence("nearest_signal_cells", (SIGNAL_PLANE_REGION_LAYER,))
-    if region_absence is not None:
-        return region_absence
-    selected_day = _parse_day(day)
-    if selected_day is None:
-        return _day_error("nearest_signal_cells", day)
-    grids = _clean_names(grid_names)
-    if grids:
-        return _grid_filter_refusal(grids)
-    radius = _clamp(radius_meters, MIN_RADIUS_METERS, MAX_RADIUS_METERS)
-    returned_cells = _clamp_int(cell_count, 1, MAX_NEAREST_CELLS)
-    universe_from = selected_day - timedelta(days=CELL_UNIVERSE_DAYS)
-    window = await warehouse.lane_window(layer=SIGNAL_PLANE_LANE, first_day=universe_from, last_day=selected_day)
-    if not window.lane_written:
-        return _lane_never_written_refusal("nearest_signal_cells", (SIGNAL_PLANE_LANE,))
-    window.raise_on_unserveable(_day_span(universe_from, selected_day))
-    scanned = warehouse.narrow_to_budget(
-        window.published_days(universe_from, selected_day),
-        requested_from=universe_from,
-        requested_through=selected_day,
-    )
-    rows = await warehouse.scan(
-        parquet_reads.SIGNAL_CELL_DAY_COUNTS,
-        [*_signal_scope_parameters(longitude, latitude, radius), selected_day, returned_cells],
-        part_keys=window.part_keys(scanned.days),
-        operation="agent_nearest_signal_cells",
-        layer=SIGNAL_PLANE_LANE,
-        evidence_source=window.evidence_source,
-        required_columns=SIGNAL_PLANE_COLUMNS,
-    )
-    _record(
-        "nearest_signal_cells",
-        len(rows),
-        {"requested_day": selected_day, "radius_meters": radius, "cell_count": returned_cells},
-    )
-    return _payload(
-        {
-            "requested_day": selected_day,
-            "applied_bounds": {
-                "requested_day": selected_day,
-                "radius_meters": radius,
-                "cell_count": returned_cells,
-                "grid_names": grids,
-                "max_cells_scanned": MAX_CELL_FANOUT,
-                "cell_universe_days": CELL_UNIVERSE_DAYS,
-                **_scanned_bounds(scanned),
-            },
-            "day_state": await _day_state(window, selected_day, window.state_of(selected_day)),
-            "nearest_cells": rows,
-            "note": (
-                "Cells are ordered by their real distance from the requested point, measured to "
-                "the cell centroid in metres on the curved earth, and are listed whether or not "
-                "they hold anything on requested_day. THE CELL LIST IS OBSERVED, NOT DECLARED: "
-                "agri.spatial_cell, the registry that used to answer 'which cells exist here', is "
-                "gone, so a cell appears only if it reported at least once in the "
-                "cell_universe_days before the requested day. A cell that has been silent longer "
-                "than that is missing from this list, which is a statement about recent reporting "
-                "and not about the grid. cell_id is the plane's own identifier; the grid name and "
-                "resolution the registry carried have no Parquet source and are deliberately "
-                "omitted rather than returned empty. observation_count_on_day counts rows on the "
-                "GOVERNED SIGNAL plane only, so a 0 is not a claim that the cell is empty of "
-                "everything -- read day_state first, because on a governed_absence or "
-                "day_not_written day every count is 0 for a reason that has nothing to do with "
-                "the cells."
-            ),
-        }
-    )
-
-
-def _grid_filter_refusal(grids: Sequence[str]) -> str:
-    """Refuse a grid filter the Parquet signal plane cannot apply, rather than ignoring it."""
-    _record("nearest_signal_cells", 0, {"error": "grid_filter_unavailable", "grid_names": list(grids)})
-    return _payload(
-        {
-            "error": "grid_filter_unavailable",
-            "received_grid_names": list(grids),
-            "note": (
-                "This is a REFUSAL, not an absence. The grid a cell belongs to was a column of "
-                "agri.spatial_cell, which has been retired; the Parquet signal plane carries each "
-                "cell's id and centroid but no grid name, so this filter cannot be applied. "
-                "Answering while silently ignoring the filter would report cells from every grid "
-                "as though they were the grid asked for. Call this tool again without grid_names "
-                "to get every cell near the point."
-            ),
-        }
-    )
 
 
 @_refuses_serving_faults("observation_coverage_on_day")
@@ -1879,47 +1371,6 @@ def _history_anchor(raw_day: str | None) -> datetime | None:
 
 
 @beta_async_tool
-async def signals_near_point(  # noqa: PLR0913 - stable published tool contract
-    longitude: float,
-    latitude: float,
-    radius_meters: float = DEFAULT_RADIUS_METERS,
-    days_back: int = DEFAULT_DAYS_BACK,
-    signal_names: list[str] | None = None,
-    as_of_day: str | None = None,
-) -> str:
-    """Summarise PlantGeo's governed environmental signal observations near a coordinate.
-
-    Returns one summary row per signal, support and unit: how many accepted readings there
-    were, over what window, their value range, and how far the nearest contributing analysis
-    cell was. Covers the governed signal contract (weather, soil moisture and temperature,
-    humidity, radiation and similar) as served to the map itself, so it can never disagree
-    with what the user is looking at. Radius, time window and row count are capped by the
-    service; values beyond the cap are clamped and the applied bounds are reported back to you.
-
-    The time window is a SCAN BUDGET and not the depth of the record: the lane usually runs years
-    deeper than days_back allows in one call. Inspect observation_coverage_on_day and
-    observation_temporal_neighbors for published coverage; a withheld index means history is
-    unknown, not absent.
-
-    Args:
-        longitude: WGS84 longitude in decimal degrees, -180 to 180.
-        latitude: WGS84 latitude in decimal degrees, -90 to 90.
-        radius_meters: Search radius around the point in metres; capped at 50000.
-        days_back: How far back to look in days; capped at 120.
-        signal_names: Optional exact signal names to restrict to. Omit for every signal.
-        as_of_day: End the history window on this ISO YYYY-MM-DD; use the caller's selected day.
-    """
-    return await query_signals_near_point(
-        longitude=longitude,
-        latitude=latitude,
-        radius_meters=radius_meters,
-        days_back=days_back,
-        signal_names=signal_names,
-        as_of=_history_anchor(as_of_day),
-    )
-
-
-@beta_async_tool
 async def drought_history_at_point(
     longitude: float,
     latitude: float,
@@ -2010,122 +1461,13 @@ async def forecast_summary_for_cell(
 
 
 @beta_async_tool
-async def signal_value_on_day(
-    longitude: float,
-    latitude: float,
-    day: str,
-    radius_meters: float = DEFAULT_RADIUS_METERS,
-    signal_names: list[str] | None = None,
-) -> str:
-    """Report what PlantGeo's governed signals measured near a coordinate on ONE specific day.
-
-    Use this whenever you need a value for the day the map is showing. It answers for that day
-    and no other: a signal missing from the result had no accepted reading that day, and nothing
-    is ever substituted from a neighbouring day. Each row carries the nearest contributing cell's
-    own reading and distance, the spread across every cell in range, and the real timestamps the
-    row was built from. Read day_state first -- it says whether the day holds data, was looked at
-    and found deliberately empty by the upstream, or was never written at all. The result also
-    carries what the ingest lane recorded for that day, so a missing value can be explained.
-
-    Args:
-        longitude: WGS84 longitude in decimal degrees, -180 to 180.
-        latitude: WGS84 latitude in decimal degrees, -90 to 90.
-        day: The calendar day to answer for, as ISO YYYY-MM-DD. Use the day the caller selected.
-        radius_meters: Search radius around the point in metres; capped at 50000.
-        signal_names: Optional exact signal names to restrict to. Omit for every signal.
-    """
-    return await query_signal_value_on_day(
-        longitude=longitude,
-        latitude=latitude,
-        day=day,
-        radius_meters=radius_meters,
-        signal_names=signal_names,
-    )
-
-
-@beta_async_tool
-async def signal_neighbors_in_time(  # noqa: PLR0913 - the parameter list is the published tool schema.
-    longitude: float,
-    latitude: float,
-    day: str,
-    radius_meters: float = DEFAULT_RADIUS_METERS,
-    neighbor_days: int = DEFAULT_NEIGHBOR_DAYS,
-    signal_names: list[str] | None = None,
-) -> str:
-    """Find the nearest reading before and after a given day, each with how far away it really is.
-
-    Call this when signal_value_on_day returned nothing for the day you were asked about. For
-    each signal it returns at most two rows -- the closest accepted reading earlier than that day
-    and the closest one later -- carrying that reading's own observation date, the real gap in
-    days, and the distance of the cell it came from. These are neighbours, never answers: report
-    them as "nearest reading is six days earlier", never as the value on the day requested. A
-    signal missing a side simply has no reading there within the days actually scanned.
-
-    Args:
-        longitude: WGS84 longitude in decimal degrees, -180 to 180.
-        latitude: WGS84 latitude in decimal degrees, -90 to 90.
-        day: The calendar day to search around, as ISO YYYY-MM-DD.
-        radius_meters: Search radius around the point in metres; capped at 50000.
-        neighbor_days: How many days each side of the day to search; capped at 180.
-        signal_names: Optional exact signal names to restrict to. Omit for every signal.
-    """
-    return await query_signal_neighbors_in_time(
-        longitude=longitude,
-        latitude=latitude,
-        day=day,
-        radius_meters=radius_meters,
-        neighbor_days=neighbor_days,
-        signal_names=signal_names,
-    )
-
-
-@beta_async_tool
-async def nearest_signal_cells(  # noqa: PLR0913 - the parameter list is the published tool schema.
-    longitude: float,
-    latitude: float,
-    day: str,
-    radius_meters: float = DEFAULT_RADIUS_METERS,
-    cell_count: int = DEFAULT_NEAREST_CELLS,
-    grid_names: list[str] | None = None,
-) -> str:
-    """List the analysis cells nearest a coordinate, each with its real distance in metres.
-
-    Use this to judge whether a reading is actually relevant to the point you were asked about,
-    and to see where the measurements physically are. Cells come back nearest first with their
-    centroid coordinates and how many accepted observations each one holds on the given day --
-    including cells holding nothing, which are listed with a count of zero rather than omitted.
-    The list is of cells that have REPORTED recently, not of every cell a grid declares, because
-    the cell registry has been retired. That count covers the governed signal plane only, so zero
-    never means the cell is empty of everything. If you quote a value from a cell, quote its
-    distance with it.
-
-    Args:
-        longitude: WGS84 longitude in decimal degrees, -180 to 180.
-        latitude: WGS84 latitude in decimal degrees, -90 to 90.
-        day: The calendar day to count observations for, as ISO YYYY-MM-DD.
-        radius_meters: Search radius around the point in metres; capped at 50000.
-        cell_count: How many cells to return, nearest first; capped at 25.
-        grid_names: Deprecated. The Parquet signal plane carries no grid name, so supplying this
-            is refused rather than silently ignored. Omit it.
-    """
-    return await query_nearest_signal_cells(
-        longitude=longitude,
-        latitude=latitude,
-        day=day,
-        radius_meters=radius_meters,
-        cell_count=cell_count,
-        grid_names=grid_names,
-    )
-
-
-@beta_async_tool
 async def observation_coverage_on_day(
     surface_name: str,
     day: str,
 ) -> str:
     """Say whether one map surface has any observation on a given day, and how deep its history is.
 
-    Works for every surface the map publishes, not just the signal grids -- fire detections, burn
+    Works for every surface the map publishes -- fire detections, burn
     severity, evacuation zones, sensors, vegetation, water gauges, weather observations,
     watersheds, soil survey, fire perimeters, the drought release set, the three soil-field
     streams and the nine climate-field streams. Answers from the same published availability index
@@ -2196,7 +1538,7 @@ async def feature_value_near_point(  # noqa: PLR0913 - the parameter list is the
     draws on that day is a feature this returns. Read day_state before the list: an empty list on
     a governed_absence day is a measured absence, and an empty list on a day_not_written day
     supports no conclusion at all. Pair it with observation_coverage_on_day to tell "nothing near
-    this point" apart from "nothing anywhere that day". The cell-grid signal streams and the
+    this point" apart from "nothing anywhere that day". The cell-grid streams and the
     drought release set have no individual features and are refused by name rather than answered
     with an empty list.
 
@@ -2230,7 +1572,7 @@ async def surface_value_near_point(  # noqa: PLR0913 - published bounded tool sc
 ) -> str:
     """Read any feature, climate-field or soil-field map surface on the caller's selected day.
 
-    Reads the surface's own lanes instead of assuming its values exist in the generic signal lane.
+    Reads the surface's declared product lanes.
     Air-temperature mean/min/max and soil depths are returned separately with their own day states.
     Static and release lanes use the latest applicable snapshot at or before the selected day,
     reporting its served_day separately; daily lanes require the exact selected day.
@@ -2256,21 +1598,107 @@ async def surface_value_near_point(  # noqa: PLR0913 - published bounded tool sc
     )
 
 
+async def query_surface_evidence_for_selection(  # noqa: PLR0913 - public selection contract
+    surface_name: str,
+    day: str,
+    longitude: float,
+    latitude: float,
+    range_start: str,
+    range_end: str,
+    time_scale: str = "day",
+    zoom: float = 13,
+    page_start: int = 0,
+) -> str:
+    """Read the selected tile and exact active temporal range through the common evidence reader."""
+    selection = parse_selection(
+        day=day,
+        longitude=longitude,
+        latitude=latitude,
+        range_start=range_start,
+        range_end=range_end,
+        time_scale=time_scale,
+        zoom=zoom,
+        page_start=page_start,
+    )
+    if isinstance(selection, dict):
+        return _payload(selection)
+    result = await retrieve(surface_name, selection)
+    row_count = sum(
+        len(lane.get("selected", {}).get("features", []))
+        + sum(len(entry.get("features", [])) for entry in lane.get("history", []))
+        for lane in result.get("lanes", [])
+    )
+    _record(
+        "surface_evidence_for_selection",
+        row_count,
+        {
+            "surface_name": surface_name,
+            "requested_day": day,
+            "range_start": range_start,
+            "range_end": range_end,
+            "zoom": zoom,
+        },
+    )
+    return _payload(result)
+
+
+@beta_async_tool
+async def list_environmental_layers() -> str:
+    """Discover every map layer and its numeric evidence reader, including climate, vegetation, VPD,
+    soil, water, fires, biodiversity, raster soil products and community surfaces. Availability is
+    resolved at the actual selection; a catalogue entry alone never proves a measurement.
+    """
+    return _payload(catalogue())
+
+
+@beta_async_tool
+async def surface_evidence_for_selection(  # noqa: PLR0913 - public selection contract
+    surface_name: str,
+    day: str,
+    longitude: float,
+    latitude: float,
+    range_start: str,
+    range_end: str,
+    time_scale: str = "day",
+    zoom: float = 13,
+    page_start: int = 0,
+) -> str:
+    """Retrieve map-tile numeric evidence for any catalogue layer at the exact selected day and range.
+
+    Uses coordinate containment in the same map support, including sparse climate grids and VPD;
+    never uses a fixed point radius or reads tile colors. History pages span the full active range
+    and keep dates, governed absences, refusals, distances, source support and truncation explicit.
+    Use this tool for all environmental analysis and RAG. Start with list_environmental_layers.
+
+    Args:
+        surface_name: Exact catalogue name; VPD is soil-field-vpd, NDVI is vegetation.
+        day: Required ISO YYYY-MM-DD selected day; never silently substitute today or latest.
+        longitude: WGS84 selected longitude.
+        latitude: WGS84 selected latitude.
+        range_start: Inclusive active calendar range start, ISO YYYY-MM-DD.
+        range_end: Inclusive active calendar range end, ISO YYYY-MM-DD.
+        time_scale: Active day, week, month, year or all scale; explicit range remains authoritative.
+        zoom: Selected map zoom from 0 to 22; uses the map's published serving rung.
+        page_start: History continuation offset from next_page_start; zero for the balanced first page.
+    """
+    return await query_surface_evidence_for_selection(
+        surface_name,
+        day,
+        longitude,
+        latitude,
+        range_start,
+        range_end,
+        time_scale,
+        zoom,
+        page_start,
+    )
+
+
 WAREHOUSE_TOOLS: Final = (
-    signals_near_point,
-    drought_history_at_point,
-    fire_history_near_point,
-    forecast_summary_for_cell,
-    signal_value_on_day,
-    signal_neighbors_in_time,
-    nearest_signal_cells,
+    list_environmental_layers,
+    surface_evidence_for_selection,
     observation_coverage_on_day,
     observation_temporal_neighbors,
-    feature_value_near_point,
-    surface_value_near_point,
     species_information,
     botanical_occurrence_current_release,
-    botanical_occurrences_in_region,
-    botanical_occurrence_spatial_neighbours,
-    botanical_occurrence_temporal_neighbours,
 )

@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock
 import pytest
 
 from agri_data_service.agent import tools
-from agri_data_service.agent.llm import tool_schemas
 from agri_data_service.agent.surfaces import AGENT_SURFACE_NAMES, surface_lanes
 from agri_data_service.routes import agent_tools as route
 from tests.agent_fakes import FakeAgentWarehouse
@@ -33,31 +32,49 @@ async def test_catalogue_covers_every_map_surface_and_omits_authoring() -> None:
     response = await route.list_agent_tools(SimpleNamespace())
     body = json.loads(response.body)
     assert set(body["surfaces"]) == set(AGENT_SURFACE_NAMES)
-    assert set(body["value_surfaces"]) == set(AGENT_SURFACE_NAMES) - {"drought-areas"}
+    assert set(body["value_surfaces"]) == set(AGENT_SURFACE_NAMES)
     names = {tool["function"]["name"] for tool in body["tools"]}
     assert names == {tool.name for tool in tools.WAREHOUSE_TOOLS} - {"species_information"}
-    assert "surface_value_near_point" in names
-    forecast = next(
-        tool["function"] for tool in body["tools"] if tool["function"]["name"] == "forecast_summary_for_cell"
-    )
-    assert "forecast_parquet_lane_not_published" in forecast["description"]
-    assert "unavailable" in forecast["description"]
+    assert {"surface_evidence_for_selection", "list_environmental_layers"} <= names
+    assert not {"signals_near_point", "signal_value_on_day", "signal_neighbors_in_time", "nearest_signal_cells"} & names
 
 
-async def test_bridge_preserves_typed_missing_lane_refusal(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_bridge_preserves_typed_unbound_region_refusal(monkeypatch: pytest.MonkeyPatch) -> None:
     source = FakeAgentWarehouse()
+    monkeypatch.setenv("PLANTGEO_REGION", "kenya-highlands")
     monkeypatch.setattr(route, "run_context", lambda: tools.run_context(warehouse_source=source))
     response = await route.call_agent_tool(
-        request_for("feature_value_near_point", {**BOISE, "surface_name": "interventions", "day": SELECTED_DAY})
+        request_for(
+            "surface_evidence_for_selection",
+            {
+                **BOISE,
+                "surface_name": "soil-survey",
+                "day": SELECTED_DAY,
+                "range_start": SELECTED_DAY,
+                "range_end": SELECTED_DAY,
+            },
+        )
     )
     assert response.status == OK
     body = json.loads(response.body)
-    assert body["tool"] == "feature_value_near_point"
-    assert body["result"]["error"] == "surface_not_served_from_parquet"
+    assert body["tool"] == "surface_evidence_for_selection"
+    assert body["result"]["state"] == "refused"
+    assert body["result"]["refusal_code"] == "not_available_in_region"
     assert source.executed == []
 
 
-@pytest.mark.parametrize("name", ["species_information", "execute_sql", "unregistered_tool"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "species_information",
+        "execute_sql",
+        "unregistered_tool",
+        "signals_near_point",
+        "signal_value_on_day",
+        "signal_neighbors_in_time",
+        "nearest_signal_cells",
+    ],
+)
 async def test_bridge_rejects_calls_outside_environmental_registry(name: str) -> None:
     response = await route.call_agent_tool(request_for(name, {}))
     assert response.status == BAD_REQUEST
@@ -65,7 +82,7 @@ async def test_bridge_rejects_calls_outside_environmental_registry(name: str) ->
 
 
 async def test_bridge_rejects_oversized_request_before_tool_execution() -> None:
-    request = request_for("surface_value_near_point", {})
+    request = request_for("surface_evidence_for_selection", {})
     request.body = b"x" * (route.MAX_REQUEST_BYTES + 1)
     response = await route.call_agent_tool(request)
     assert response.status == BAD_REQUEST
@@ -75,7 +92,6 @@ async def test_bridge_rejects_oversized_request_before_tool_execution() -> None:
 @pytest.mark.parametrize(
     ("tool", "query_name"),
     [
-        (tools.signals_near_point, "query_signals_near_point"),
         (tools.drought_history_at_point, "query_drought_history_at_point"),
         (tools.fire_history_near_point, "query_fire_history_near_point"),
     ],
@@ -86,20 +102,6 @@ async def test_history_tool_schema_carries_selected_day_to_query(
     query = AsyncMock(return_value="{}")
     monkeypatch.setattr(tools, query_name, query)
     await tool.call({**BOISE, "as_of_day": SELECTED_DAY})
-    assert query.call_args.kwargs["as_of"] == datetime(2024, 3, 14, tzinfo=UTC)
-
-
-async def test_signal_tool_keeps_filter_and_selected_day_in_schema_and_forwarding(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    query = AsyncMock(return_value="{}")
-    monkeypatch.setattr(tools, "query_signals_near_point", query)
-    schema = next(item for item in tool_schemas() if item["function"]["name"] == "signals_near_point")
-    properties = schema["function"]["parameters"]["properties"]
-    assert {"signal_names", "as_of_day"} <= properties.keys()
-
-    await tools.signals_near_point.call({**BOISE, "signal_names": ["soil_moisture"], "as_of_day": SELECTED_DAY})
-    assert query.call_args.kwargs["signal_names"] == ["soil_moisture"]
     assert query.call_args.kwargs["as_of"] == datetime(2024, 3, 14, tzinfo=UTC)
 
 

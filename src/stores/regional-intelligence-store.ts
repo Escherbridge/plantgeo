@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import type { RegionalAnalysisEvidence, RegionalIntelligenceResponse } from '@/lib/regional-intelligence';
+import { DEFAULT_ANALYSIS_WINDOW, type AnalysisTimeScale } from '@/lib/regional-analysis-selection';
 
 export interface ChatMessage {
   id: string;
@@ -37,6 +38,9 @@ interface RegionalIntelligenceState {
   /** Human-readable note about what the agent is doing between text deltas. */
   toolActivity: string | null;
   activity: { id: string; at: string; label: string }[];
+  analysisTimeScale: AnalysisTimeScale;
+  analysisRangeSteps: number;
+  setAnalysisWindow: (timeScale: AnalysisTimeScale, rangeSteps: number) => void;
 
   openPanel: (lat: number, lon: number, precision: LocationPrecision) => void;
   closePanel: () => void;
@@ -77,6 +81,12 @@ export const useRegionalIntelligenceStore = create<RegionalIntelligenceState>()(
       conversationId: null,
       toolActivity: null,
       activity: [],
+      analysisTimeScale: DEFAULT_ANALYSIS_WINDOW.timeScale,
+      analysisRangeSteps: DEFAULT_ANALYSIS_WINDOW.rangeSteps,
+      setAnalysisWindow: (analysisTimeScale, rangeSteps) => set({
+        analysisTimeScale,
+        analysisRangeSteps: Math.max(1, Math.min(10, Math.trunc(rangeSteps) || 1)),
+      }),
 
       openPanel: (lat, lon, precision) => {
         get().abortController?.abort();

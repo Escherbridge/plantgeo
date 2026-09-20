@@ -1070,6 +1070,24 @@ describe("the prompt section describing what each layer is showing", () => {
 });
 
 describe("the viewed-layers request contract", () => {
+  it('seeds selected analyses with metadata only and never reads radius or latest observations', async () => {
+    const selection = { timeScale: 'month' as const, rangeSteps: 1, zoom: 12,
+      layerDays: { 'fire-perimeters': '2024-06-01', 'soil-vpd': '2023-06-01' } };
+    const result = await assembleRegionalContext(43.6, -116.2,
+      [{ layer: 'fire-perimeters', date: '2024-06-01', hasDataOnDate: false }], selection);
+    expect(result.payload).toMatchObject({ firePerimeters: null, fireDetections: null,
+      weather: null, waterScarcity: null, soilProperties: null, communityProposals: [] });
+    expect(result.temporalContext).toMatchObject({ analysisSelection: selection,
+      selectionEvidenceOnly: true, sourcesServedAsOfLatest: [] });
+    for (const reader of [mocks.getParquetFirePerimeters, mocks.getParquetFireDetections,
+      mocks.getPublishedStreamflowGauges, mocks.getPublishedWeatherForPoint,
+      mocks.getPublishedWeatherForBbox, mocks.getSoilProperties, mocks.getParquetBurnSeverity,
+      mocks.getPublishedDroughtClassification, mocks.dbSelect, mocks.dbExecute]) {
+      expect(reader).not.toHaveBeenCalled();
+    }
+    expect(buildTemporalSection(result.temporalContext)).toContain('No initial source was read as-of-latest');
+  });
+
   const validBody = {
     lat: 43.6,
     lon: -116.2,
@@ -1078,6 +1096,14 @@ describe("the viewed-layers request contract", () => {
 
   it("accepts a request that names no viewed layers at all", () => {
     expect(requestSchema.safeParse(validBody).success).toBe(true);
+  });
+
+  it('validates active history settings and rejects impossible selected days', () => {
+    const analysisSelection = { timeScale: 'month', rangeSteps: 2, zoom: 9.5, layerDays: { 'soil-vpd': '2024-02-29' } };
+    expect(requestSchema.safeParse({ ...validBody, analysisSelection }).success).toBe(true);
+    expect(requestSchema.safeParse({ ...validBody, analysisSelection: { ...analysisSelection, layerDays: { vegetation: '2025-02-29' } } }).success).toBe(false);
+    expect(requestSchema.safeParse({ ...validBody, analysisSelection: { ...analysisSelection, rangeSteps: 11 } }).success).toBe(false);
+    expect(requestSchema.safeParse({ ...validBody, analysisSelection: { ...analysisSelection, zoom: 23 } }).success).toBe(false);
   });
 
   it("accepts a viewed-layers array at the bound", () => {

@@ -28,7 +28,6 @@ from agri_data_service.agent.surfaces import (
     AGENT_SURFACE_NAMES,
     SURFACE_PARQUET_LANES,
 )
-from agri_data_service.parquet_ops import faults
 from tests.agent_fakes import FakeAgentWarehouse, absent_lane, published_lane
 
 if TYPE_CHECKING:
@@ -37,10 +36,6 @@ if TYPE_CHECKING:
 SELECTED_DAY = date(2026, 3, 14)
 BOISE_LONGITUDE = -116.2
 BOISE_LATITUDE = 43.6
-
-SIGNAL_LANE = "signal"
-NEAR_CELL = "aaaaaaaa-0000-0000-0000-000000000001"
-SECOND_CELL = "bbbbbbbb-0000-0000-0000-000000000002"
 
 
 class FakeResult:
@@ -98,44 +93,6 @@ def session_provider(session: RecordingSession) -> Any:
     return provider
 
 
-def signal_warehouse(*, published: Sequence[date] = (SELECTED_DAY,)) -> FakeAgentWarehouse:
-    """A warehouse whose signal lane published the named days and holds the standard scripted answers."""
-    source = FakeAgentWarehouse()
-    for day in published:
-        source.listing_store.write_day(SIGNAL_LANE, "observed", 13, day)
-    source.answer(
-        "agent_signal_day_values",
-        [
-            {
-                "signal_name": "air_temperature",
-                "support_key": "surface",
-                "normalized_unit": "degC",
-                "observed_day": SELECTED_DAY,
-                "observation_count": 5,
-                "cell_count": 2,
-                "nearest_cell_distance_m": 4607.7,
-                "nearest_cell_id": NEAR_CELL,
-                "nearest_cell_value": 4.14,
-                "nearest_cell_observed_at": datetime(2026, 3, 14, 12, tzinfo=UTC),
-                "nearest_cell_coverage_fraction": 0.9,
-                "nearest_cell_allowed_client_exposure": True,
-                "minimum_value": 4.14,
-                "maximum_value": 5.14,
-                "mean_value": 4.74,
-                "last_observed_at": datetime(2026, 3, 14, 12, tzinfo=UTC),
-            }
-        ],
-    )
-    source.answer(
-        "agent_signal_admitted_cells",
-        [
-            {"cell_id": NEAR_CELL, "distance_meters": 4607.7},
-            {"cell_id": SECOND_CELL, "distance_meters": 16857.9},
-        ],
-    )
-    return source
-
-
 async def call(tool: Any, source: FakeAgentWarehouse, session: RecordingSession | None = None) -> dict[str, Any]:
     """Run one tool inside a bound run context and decode its payload."""
     async with agent_tools.run_context(
@@ -145,176 +102,7 @@ async def call(tool: Any, source: FakeAgentWarehouse, session: RecordingSession 
         return json.loads(await tool())
 
 
-# --- The four states ---------------------------------------------------------------
-
-
-async def test_a_published_day_reports_its_state_beside_its_rows() -> None:
-    """`day_state` must be readable BEFORE the rows, or an empty list has no interpretation."""
-    source = signal_warehouse()
-    payload = await call(
-        lambda: agent_tools.query_signal_value_on_day(
-            longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, day=SELECTED_DAY.isoformat()
-        ),
-        source,
-    )
-
-    assert payload["day_state"]["state"] == "published"
-    assert payload["day_state"]["lane"] == SIGNAL_LANE
-    assert payload["day_state"]["zoom_tier"] == 13
-    assert payload["signals_on_day"][0]["signal_name"] == "air_temperature"
-
-
-async def test_a_governed_absence_carries_the_upstreams_own_reason_and_no_rows() -> None:
-    """The lane looked and the source had nothing. That is a MEASUREMENT, and its evidence rides with it."""
-    source = FakeAgentWarehouse()
-    source.listing_store.write_absence(
-        SIGNAL_LANE,
-        "observed",
-        13,
-        SELECTED_DAY,
-        reason="upstream_published_nothing",
-        upstream_response="HTTP 200, zero features",
-        recorded_at=datetime(2026, 3, 15, 4, tzinfo=UTC),
-        run_id="run-2026-03-15",
-    )
-    payload = await call(
-        lambda: agent_tools.query_signal_value_on_day(
-            longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, day=SELECTED_DAY.isoformat()
-        ),
-        source,
-    )
-
-    assert payload["day_state"]["state"] == "governed_absence"
-    assert payload["day_state"]["absence"]["reason"] == "upstream_published_nothing"
-    assert payload["day_state"]["absence"]["upstream_response"] == "HTTP 200, zero features"
-    assert payload["day_state"]["absence"]["run_id"] == "run-2026-03-15"
-    assert payload["signals_on_day"] == []
-    # No row read was attempted at all: the day is settled, and reading it would find nothing to read.
-    assert source.markers() == []
-
-
-async def test_a_day_nobody_wrote_is_named_rather_than_answered_as_empty() -> None:
-    """`day_not_written` is a gap. Nothing follows from it, and the payload says which state it is."""
-    source = signal_warehouse(published=[SELECTED_DAY - timedelta(days=3)])
-    payload = await call(
-        lambda: agent_tools.query_signal_value_on_day(
-            longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, day=SELECTED_DAY.isoformat()
-        ),
-        source,
-    )
-
-    assert payload["day_state"]["state"] == "day_not_written"
-    assert payload["signals_on_day"] == []
-    assert source.markers() == []
-
-
-async def test_a_lane_that_never_wrote_anything_is_a_typed_refusal() -> None:
-    """The Parquet spelling of the old unbuilt-matview refusal, and it must still name the lane."""
-    source = FakeAgentWarehouse()
-    payload = await call(
-        lambda: agent_tools.query_signal_value_on_day(
-            longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, day=SELECTED_DAY.isoformat()
-        ),
-        source,
-    )
-
-    assert payload["error"] == "parquet_lane_never_written"
-    assert payload["unwritten_lanes"] == [SIGNAL_LANE]
-    assert "REFUSAL, not an absence" in payload["note"]
-    assert "do not report the subject as absent" in payload["note"]
-
-
-async def test_a_half_written_day_is_refused_rather_than_served_or_called_a_gap() -> None:
-    """Parts with no completion marker: serving them puts a prefix of a release in front of the model."""
-    source = FakeAgentWarehouse()
-    source.listing_store.write_day(SIGNAL_LANE, "observed", 13, SELECTED_DAY, complete=False)
-    payload = await call(
-        lambda: agent_tools.query_signal_value_on_day(
-            longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, day=SELECTED_DAY.isoformat()
-        ),
-        source,
-    )
-
-    assert payload["error"] == "parquet_serving_refused"
-    assert payload["refusal_code"] == "partition_day_incomplete"
-    assert "REFUSAL, not an absence" in payload["note"]
-
-
-async def test_a_lane_whose_published_objects_lack_the_promised_columns_refuses_by_name() -> None:
-    """The live state of the signal lane on 2026-09-04, pinned.
-
-    `warehouse/parquet/schema.py` declares `cell_longitude` and `cell_latitude` non-nullable, and
-    the newest published z13 part -- `year=2026/month=08/day=06/part-0.parquet` -- carries eleven
-    columns and neither of them. Without this refusal every signal tool answers a
-    `duckdb.BinderException`, which reaches the model as "the tool broke" and supports no
-    conclusion at all. With it, the tool says which columns are missing and that the lane owes a
-    re-export -- a fact about the published objects, never about the data.
-    """
-    source = signal_warehouse()
-    source.columns = frozenset(agent_tools.SIGNAL_PLANE_COLUMNS) - {"cell_longitude", "cell_latitude"}
-
-    payload = await call(
-        lambda: agent_tools.query_signal_value_on_day(
-            longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, day=SELECTED_DAY.isoformat()
-        ),
-        source,
-    )
-
-    assert payload["error"] == "parquet_serving_refused"
-    assert payload["refusal_code"] == "lane_columns_absent"
-    assert "cell_latitude, cell_longitude" in payload["refusal_detail"]
-    assert "owes a re-export" in payload["refusal_detail"]
-    assert "says nothing about whether the data exists" in payload["refusal_detail"]
-
-
-async def test_a_serving_fault_is_a_refusal_and_never_a_claim_about_content() -> None:
-    """Every slot busy, a read past its memory ceiling: facts about this process, not about the data."""
-    source = signal_warehouse()
-    source.run_raises = faults.serving_at_capacity(operation="agent_signal_value_on_day", concurrent_reads=3)
-    payload = await call(
-        lambda: agent_tools.query_signal_value_on_day(
-            longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, day=SELECTED_DAY.isoformat()
-        ),
-        source,
-    )
-
-    assert payload["error"] == "parquet_serving_refused"
-    assert payload["refusal_code"] == "serving_at_capacity"
-
-
 # --- Scan budgets are stated, never silent -----------------------------------------
-
-
-async def test_an_over_wide_signal_window_is_clamped_and_the_clamp_is_reported_back() -> None:
-    """A model asking for a decade gets the depth cap, and is TOLD it got it, never a silent decade.
-
-    `MAX_DAYS_BACK` now sits AT the partition budget, so a fully-published window one day cap allows
-    (the span is inclusive of today, so `days_back` days is `days_back + 1` calendar days) is one day
-    over `MAX_SCANNED_DAY_PARTITIONS` -- `narrow_to_budget` is what supplies the final "120", not the
-    day-cap arithmetic, and it reports itself back the same way the fire lanes' narrowing already does.
-    """
-    published = [SELECTED_DAY - timedelta(days=offset) for offset in range(200)]
-    source = signal_warehouse(published=published)
-    source.answer("agent_signal_window_summary", [])
-    budget = agent_tools.warehouse.MAX_SCANNED_DAY_PARTITIONS
-
-    payload = await call(
-        lambda: agent_tools.query_signals_near_point(
-            longitude=BOISE_LONGITUDE,
-            latitude=BOISE_LATITUDE,
-            days_back=3650,
-            as_of=datetime(2026, 3, 14, tzinfo=UTC),
-        ),
-        source,
-    )
-
-    bounds = payload["applied_bounds"]
-    assert bounds["days_back"] == agent_tools.MAX_DAYS_BACK
-    assert bounds["requested_from"] == (SELECTED_DAY - timedelta(days=agent_tools.MAX_DAYS_BACK)).isoformat()
-    assert bounds["window_narrowed_by_scan_budget"] is True
-    assert bounds["scanned_day_count"] == budget
-    assert len(source.part_uris_for("agent_signal_window_summary")) == budget
-    assert "SCAN BUDGET, not the depth of the record" in payload["note"]
 
 
 async def test_a_window_wider_than_the_partition_budget_reports_the_span_it_actually_read() -> None:
@@ -344,125 +132,6 @@ async def test_a_window_wider_than_the_partition_budget_reports_the_span_it_actu
     assert span["scanned_day_count"] == budget
     assert span["scanned_from"] > span["requested_from"]
     assert span["scanned_through"] == SELECTED_DAY.isoformat(), "the NEWEST days are the ones kept"
-
-
-async def test_an_empty_window_explains_itself_with_a_state_census() -> None:
-    """ "No rows" and "no days" are different claims, and the payload has to separate them."""
-    source = signal_warehouse(published=[])
-    source.listing_store.write_absence(
-        SIGNAL_LANE,
-        "observed",
-        13,
-        SELECTED_DAY,
-        reason="upstream_published_nothing",
-        upstream_response="HTTP 200, zero features",
-        recorded_at=datetime(2026, 3, 15, 4, tzinfo=UTC),
-        run_id="run-2026-03-15",
-    )
-
-    payload = await call(
-        lambda: agent_tools.query_signals_near_point(
-            longitude=BOISE_LONGITUDE,
-            latitude=BOISE_LATITUDE,
-            days_back=7,
-            as_of=datetime(2026, 3, 14, tzinfo=UTC),
-        ),
-        source,
-    )
-
-    states = payload["window_day_states"]
-    assert payload["signal_summaries"] == []
-    assert states["governed_absence"] == 1
-    assert states["day_not_written"] == 7
-    assert states["published"] == 0
-
-
-# --- The filters that no longer exist ----------------------------------------------
-
-
-async def test_a_grid_filter_is_refused_rather_than_ignored() -> None:
-    """The retired cell registry carried the grid name; answering unfiltered would widen the question."""
-    source = signal_warehouse()
-    payload = await call(
-        lambda: agent_tools.query_nearest_signal_cells(
-            longitude=BOISE_LONGITUDE,
-            latitude=BOISE_LATITUDE,
-            day=SELECTED_DAY.isoformat(),
-            grid_names=["nasa-power-0.5-degree"],
-        ),
-        source,
-    )
-
-    assert payload["error"] == "grid_filter_unavailable"
-    assert payload["received_grid_names"] == ["nasa-power-0.5-degree"]
-    assert source.markers() == [], "a refused filter must not reach the warehouse"
-
-
-async def test_the_cell_list_says_it_is_observed_rather_than_declared() -> None:
-    """A cell silent longer than the universe window is missing; the note must not let that read as a grid."""
-    source = signal_warehouse(published=[SELECTED_DAY])
-    source.answer(
-        "agent_signal_cell_day_counts",
-        [
-            {
-                "cell_id": NEAR_CELL,
-                "centroid_longitude": -116.25,
-                "centroid_latitude": 43.62,
-                "distance_meters": 4607.7,
-                "observation_count_on_day": 4,
-                "signal_count_on_day": 2,
-                "last_observed_at": datetime(2026, 3, 14, 12, tzinfo=UTC),
-            }
-        ],
-    )
-
-    payload = await call(
-        lambda: agent_tools.query_nearest_signal_cells(
-            longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, day=SELECTED_DAY.isoformat()
-        ),
-        source,
-    )
-
-    assert payload["nearest_cells"][0]["cell_id"] == NEAR_CELL
-    assert "grid_name" not in payload["nearest_cells"][0], "a column with no source is omitted, not nulled"
-    assert "resolution_m" not in payload["nearest_cells"][0]
-    assert "OBSERVED, NOT DECLARED" in payload["note"]
-    assert payload["applied_bounds"]["cell_universe_days"] == agent_tools.CELL_UNIVERSE_DAYS
-
-
-async def test_the_coverage_audit_is_not_read_after_the_parquet_cutover() -> None:
-    """The retired audit cannot be queried to explain a Parquet answer."""
-    source = signal_warehouse()
-    session = RecordingSession()
-
-    payload = await call(
-        lambda: agent_tools.query_signal_value_on_day(
-            longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, day=SELECTED_DAY.isoformat()
-        ),
-        source,
-        session,
-    )
-
-    assert payload["coverage_audit_on_day"] == []
-    assert session.statements == []
-    assert payload["cells_in_radius"] == 2
-
-
-async def test_the_audit_is_not_read_at_all_when_no_cell_is_in_range() -> None:
-    """An audit over cells the value never came from would explain the wrong point."""
-    source = signal_warehouse()
-    source.answer("agent_signal_admitted_cells", [])
-    session = RecordingSession()
-
-    await call(
-        lambda: agent_tools.query_signal_value_on_day(
-            longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, day=SELECTED_DAY.isoformat()
-        ),
-        source,
-        session,
-    )
-
-    assert session.markers() == []
 
 
 async def test_the_forecast_tool_refuses_a_never_written_lane_rather_than_an_empty_cell() -> None:
@@ -691,10 +360,25 @@ async def test_the_fire_summary_reports_whole_lane_history_as_a_discriminated_sh
 
 
 def test_every_catalogue_surface_is_mapped_or_explicitly_refused() -> None:
-    """The only unmapped surface is deliberately refused, never silently sent to PostgreSQL."""
+    """Every surface declares a Parquet lane, an app reader, a botanical reader, or explicit absence."""
     mapped = set(SURFACE_PARQUET_LANES)
     assert mapped <= set(AGENT_SURFACE_NAMES)
-    assert set(AGENT_SURFACE_NAMES) - mapped == {"interventions"}
+    assert set(AGENT_SURFACE_NAMES) - mapped == {
+        "land-context",
+        "interventions",
+        "demand-heatmap",
+        "strategy-recommendations",
+        "soil-phh2o",
+        "soil-soc",
+        "soil-nitrogen",
+        "soil-bdod",
+        "soil-cec",
+        "soil-ocd",
+        "botanical-occurrences",
+        "botanical-richness",
+        "botanical-collection-effort",
+        "gbif-occurrences",
+    }
 
 
 @pytest.mark.parametrize(

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef } from "react";
-import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { create } from "zustand";
 import { useDebounce } from "@/hooks/useDebounce";
 import { getVanillaTrpcClient } from "@/lib/trpc/client";
@@ -61,6 +61,8 @@ const METRIC_GC_TIME_MS = 10 * 60_000;
 /** Resolves one explicitly supported fire-perimeter metric. Overridable for tests. */
 export type MetricAtDateFetcher = (input: MetricAtDateInput) => Promise<MetricAtDateCollection>;
 
+type MetricQueryCollection = MetricAtDateCollection & { retainedFromDate?: string };
+
 /** Cache identity of a metric-at-date request. */
 export function metricAtDateQueryKey(input: MetricAtDateInput): readonly unknown[] {
   return ["metric-at-date", input.metric, input.date, input.variant, input.bbox ?? null];
@@ -119,24 +121,7 @@ export interface UseMetricAtDateResult {
   isLoading: boolean;
   /** True while the pointer is still moving and the query has not caught up. */
   isScrubbing: boolean;
-  /**
-   * The date the returned collection describes. Lags this layer's day while scrubbing, and also
-   * lags `resolvedDate`'s own target while the previous day's collection is retained during a
-   * load -- it always names the day the features in hand belong to, never the day requested.
-   *
-   * Load-bearing under per-layer dates, not less so: with each layer on its own day, a caption
-   * built from the row's slider position instead of this value would mislabel a retained frame
-   * AND put it beside other rows showing genuinely different days, which is unrecoverable for a
-   * reader.
-   *
-   * Names `debouncedDate` -- never the stale `settledDateRef` -- whenever `shouldQuery` is
-   * false. A disabled query still carries `isPlaceholderData: true` from `keepPreviousData`
-   * (TanStack keeps surfacing the last collection's `data` as a placeholder even once the query
-   * that produced it stops running), but `collection` in that branch is the CURRENT day's
-   * refusal, built from `availabilityBeforeQuery` for `debouncedDate` -- not a retained frame at
-   * all. Reading the placeholder flag alone would therefore caption a fresh refusal with the
-   * previous settled day.
-   */
+  /** Day described by the collection in hand; see stores/AGENTS.md for retained frames. */
   resolvedDate: string;
   /**
    * True while the collection is the PREVIOUS day's, retained so the layer does not blank
@@ -196,39 +181,25 @@ export function useMetricAtDate(options: UseMetricAtDateOptions): UseMetricAtDat
     [metric, debouncedDate, variant, bbox]
   );
 
-  const query = useQuery({
+  const query = useQuery<MetricQueryCollection>({
     queryKey: metricAtDateQueryKey(queryInput),
     queryFn: () => fetcher(queryInput),
     enabled: shouldQuery,
     staleTime: METRIC_STALE_TIME_MS,
     gcTime: METRIC_GC_TIME_MS,
-    // Hold the last day's collection while the next one loads instead of dropping to
-    // `undefined`. Without it every date change unmounts the layer's features for the length
-    // of a warehouse round trip, so a scrub reads as the map repeatedly going blank and
-    // refilling rather than as one thing changing.
-    //
-    // Safe ONLY because `resolvedDate` below follows the data rather than the request: a
-    // retained collection is still labelled with the day it actually describes, so no consumer
-    // can render yesterday's features under today's date. That is the same discipline
-    // `MetricAtDateAvailability."request_failed"` exists for -- the hook may lag, it may not
-    // misstate.
-    placeholderData: keepPreviousData,
+    // The observer-only placeholder carries its source query's date; the cache stays GeoJSON.
+    placeholderData: (previousData, previousQuery) => {
+      const previousDate = previousQuery?.queryKey[2];
+      return previousData !== undefined && typeof previousDate === "string"
+        ? { ...previousData, retainedFromDate: previousDate }
+        : undefined;
+    },
   });
 
-  // The day the collection in hand actually describes. `debouncedDate` is the day being asked
-  // for, and while a placeholder is showing those are different.
-  const settledDateRef = useRef(debouncedDate);
-  if (query.data !== undefined && !query.isPlaceholderData) {
-    settledDateRef.current = debouncedDate;
-  }
-  // `shouldQuery` gates the placeholder read, not just `query.isPlaceholderData` alone: TanStack
-  // keeps `isPlaceholderData` true off `keepPreviousData` even after the query is DISABLED (no
-  // fetch is running, but the last successful data still stands in), and `shouldQuery === false`
-  // is exactly the branch below that discards that placeholder and returns a fresh refusal for
-  // `debouncedDate` instead. Reading `settledDateRef.current` there would name the wrong day for
-  // the collection this hook actually returns -- the one bug `resolvedDate` exists not to have.
   const describedDate =
-    shouldQuery && query.isPlaceholderData ? settledDateRef.current : debouncedDate;
+    shouldQuery && query.isPlaceholderData
+      ? query.data?.retainedFromDate ?? debouncedDate
+      : debouncedDate;
 
   // Warm only the neighbourhood a user can reach in a few steps from THIS layer's own day; a
   // full history of ~400 observed days plus the forecast horizon would be hundreds of cache keys.

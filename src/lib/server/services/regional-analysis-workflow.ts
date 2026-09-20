@@ -1,5 +1,7 @@
 import type { RegionalAnalysisEvidence } from '@/lib/regional-intelligence';
 import { isLayerToggleId, LAYER_REGISTRY } from '@/lib/map/layer-registry';
+import { analysisDateRange, DEFAULT_ANALYSIS_WINDOW } from '@/lib/regional-analysis-selection';
+import { selectionTile } from './regional-map-evidence';
 import type { RegionalContextPayload, TemporalContext } from './regional-context';
 import {
   callRegionalEvidenceTool,
@@ -15,13 +17,12 @@ export const REGIONAL_ANALYSIS_STAGES = [
   ['inventory', 'Discover environmental sources'],
   ['local', 'Read local conditions'],
   ['temporal', 'Compare historical conditions'],
-  ['regional', 'Compare regional conditions'],
   ['strategies', 'Screen management alternatives'],
 ] as const;
 
 export const REGIONAL_ANALYSIS_PRIORITY_SURFACES = [
-  'soil-field-moisture', 'soil-field-temperature', 'soil-field-vpd',
-  'soil-survey', 'vegetation', 'watersheds', 'water-gauges', 'drought-areas',
+  'soil-field-vpd', 'vegetation', 'climate-field-precipitation',
+  'soil-field-moisture', 'soil-field-temperature', 'soil-survey', 'watersheds', 'water-gauges', 'drought-areas',
   'weather-observations', 'climate-field-precipitation', 'climate-field-soil-wetness-root-zone',
   'burn-severity', 'fire-detections', 'fire-perimeters',
 ];
@@ -31,11 +32,58 @@ const SOURCE_SURFACE: Record<string, string> = {
   fireDetections: 'fire-detections', firePerimeters: 'fire-perimeters', mtbsPerimeters: 'burn-severity',
 };
 
+export function regionalSurfaceName(layer: string): string {
+  return isLayerToggleId(layer) ? LAYER_REGISTRY[layer].warehouseLayerName ?? layer : layer;
+}
+
 export function regionalEvidenceDay(temporal: TemporalContext, source: string): string {
+  const selected = Object.entries(temporal.analysisSelection?.layerDays ?? {})
+    .find(([layer]) => regionalSurfaceName(layer) === source)?.[1];
+  if (selected) return selected;
   return temporal.readings.find((row) => row.layer === source
     || (isLayerToggleId(row.layer) && LAYER_REGISTRY[row.layer].warehouseLayerName === source)
     || SOURCE_SURFACE[row.evidenceSource ?? ''] === source)?.viewedDate
+    ?? Object.values(temporal.analysisSelection?.layerDays ?? {}).sort().at(-1)
     ?? temporal.viewedDates.at(-1) ?? temporal.serverCurrentDate;
+}
+
+/** Bind numeric tile reads to this request's current location and calendar selection. */
+export function regionalSelectionArguments(
+  payload: RegionalContextPayload, temporal: TemporalContext, source: string, history = true,
+): Record<string, unknown> {
+  const day = regionalEvidenceDay(temporal, source);
+  const window = temporal.analysisSelection ?? DEFAULT_ANALYSIS_WINDOW;
+  const range = history ? analysisDateRange(day, window.timeScale, window.rangeSteps)
+    : { rangeStart: day, rangeEnd: day };
+  return {
+    surface_name: source, day,
+    longitude: payload.location.lon, latitude: payload.location.lat,
+    range_start: range.rangeStart, range_end: range.rangeEnd,
+    time_scale: window.timeScale, zoom: temporal.analysisSelection?.zoom ?? 13,
+  };
+}
+
+export function bindRegionalEvidenceArguments(
+  tool: string, args: Record<string, unknown>, payload: RegionalContextPayload, temporal: TemporalContext,
+): Record<string, unknown> {
+  const source = typeof args.surface_name === 'string' ? regionalSurfaceName(args.surface_name)
+    : tool === 'drought_history_at_point' ? 'drought-areas' : tool === 'fire_history_near_point' ? 'burn-severity' : '';
+  if (tool === 'surface_evidence_for_selection') {
+    return { ...args, ...regionalSelectionArguments(payload, temporal, source) };
+  }
+  const day = regionalEvidenceDay(temporal, source);
+  const tile = 'bbox' in args ? selectionTile(payload.location.lon, payload.location.lat, temporal.analysisSelection?.zoom ?? 13) : null;
+  return {
+    ...args,
+    ...(source && 'surface_name' in args ? { surface_name: source } : {}),
+    ...('longitude' in args || 'latitude' in args ? { longitude: payload.location.lon, latitude: payload.location.lat } : {}),
+    ...('lon' in args || 'lat' in args ? { lon: payload.location.lon, lat: payload.location.lat } : {}),
+    ...('bbox' in args ? { bbox: tile ? {
+      west: tile.bbox[0], south: tile.bbox[1], east: tile.bbox[2], north: tile.bbox[3],
+    } : null } : {}),
+    ...('day' in args ? { day } : {}),
+    ...('as_of_day' in args || ['drought_history_at_point', 'fire_history_near_point'].includes(tool) ? { as_of_day: day } : {}),
+  };
 }
 
 export const STRATEGY_SCREENING = [
@@ -65,7 +113,7 @@ export function evidenceResultStatus(value: unknown): Pick<AuditCall, 'status' |
   let rows = 0;
   const visit = (entry: unknown, key = '') => {
     if (Array.isArray(entry)) {
-      if (['features', 'rows', 'signals', 'releases', 'cells', 'neighbors', 'history', 'signal_summaries', 'weekly_severity', 'signals_on_day', 'temporal_neighbors', 'nearest_cells'].includes(key)) rows += entry.length;
+      if (['features', 'rows', 'weekly_severity'].includes(key)) rows += entry.length;
       if (key === 'layer_summaries') rows += entry.filter((row) => Number(object(row)?.row_count ?? object(row)?.feature_count ?? 0) > 0).length;
       for (const child of entry) visit(child);
     } else if (object(entry)) {
@@ -76,10 +124,10 @@ export function evidenceResultStatus(value: unknown): Pick<AuditCall, 'status' |
     }
   };
   visit(root);
+  if (rows > 0) return { status: 'observed', summary: `${rows} returned measurement records; each retains its own date and spatial support. Missing days are not observations.` };
   if (states.some((state) => ['day_not_written', 'lane_never_written', 'not_published', 'coverage_unknown', 'not_generated', 'upstream_unavailable'].includes(state))) {
     return { status: 'unavailable', reason: 'At least one required partition or coverage state is unavailable; inspect the individual lane evidence.' };
   }
-  if (rows > 0) return { status: 'observed', summary: `${rows} returned evidence records; each retains its own date and spatial support.` };
   if (states.length > 0 && states.every((state) => state === 'governed_absence')) {
     return { status: 'governed_absence', summary: 'The serving contract explicitly declares a governed absence.' };
   }
@@ -91,7 +139,7 @@ export function boundedEvidence(value: unknown, depth = 0, field = ''): unknown 
   if (depth > 12) return { omitted: 'Nested detail exceeds the evidence display bound.' };
   if (typeof value === 'string') return value.length > 2_000 ? `${value.slice(0, 2_000)} [text truncated]` : value;
   if (Array.isArray(value)) {
-    const limit = field === 'weekly_severity' ? 120 : 8;
+    const limit = field === 'weekly_severity' ? 120 : ['history', 'sampled_days'].includes(field) ? 31 : 8;
     const entries = value.slice(0, limit).map((entry) => boundedEvidence(entry, depth + 1));
     return value.length > limit ? { entries, omittedEntries: value.length - limit } : entries;
   }
@@ -159,6 +207,10 @@ export function regionalEvidenceAuditCall(
     ...(source.length > 0 && source.length <= 100 ? { source } : {}),
     ...(sources.length > 0 ? { sources } : {}),
     ...(validDate ? { selectedDate } : {}),
+    ...(isCalendarDay(args.range_start) && isCalendarDay(args.range_end)
+      ? { rangeStart: args.range_start, rangeEnd: args.range_end } : {}),
+    ...(['day', 'week', 'month', 'year', 'all'].includes(String(args.time_scale)) ? { timeScale: String(args.time_scale) } : {}),
+    ...(typeof args.zoom === 'number' && Number.isFinite(args.zoom) && args.zoom >= 0 && args.zoom <= 22 ? { zoom: args.zoom } : {}),
     ...(validDates.length > 0 ? { validDates } : {}),
     ...(observedDates.length > 0 ? { observedDates } : {}),
     ...(servedDates.length > 0 ? { servedDates } : {}),
@@ -194,25 +246,12 @@ export async function prepareRegionalAnalysis(
     stages: REGIONAL_ANALYSIS_STAGES.map(([id, label]) => ({ id, label, status: 'unavailable' })),
     toolCalls: [],
     limitations: [
-      'Regional samples are geographic contrasts, not validated ecological analogues or evidence of treatment outcomes.',
-      'Isolated historical samples are comparisons, not a continuous trend, seasonal baseline, or return period.',
+      'History pages sample the entire requested window. Sampling, omitted days and continuation must be reported; samples do not establish a continuous trend or seasonal baseline.',
       'Missing land-use, livestock, terrain, fuel and amendment-quality measurements remain feasibility checks, not assumed site facts.',
     ],
   };
   let catalogue: RegionalEvidenceCatalogue | null = null;
   const results: EvidenceRead[] = [];
-  const anchor = temporal.viewedDates.at(-1) ?? temporal.serverCurrentDate;
-  const dayFor = (source: string) => regionalEvidenceDay(temporal, source);
-  const coords = { longitude: payload.location.lon, latitude: payload.location.lat };
-  const priorYearDay = (source: string, years: number) => {
-    const selected = dayFor(source);
-    if (!isCalendarDay(selected)) return selected;
-    const date = new Date(`${selected}T00:00:00Z`);
-    const month = date.getUTCMonth();
-    date.setUTCFullYear(date.getUTCFullYear() - years);
-    if (date.getUTCMonth() !== month) date.setUTCDate(0);
-    return date.toISOString().slice(0, 10);
-  };
   try { catalogue = await loadRegionalEvidenceTools(signal); }
   catch (error) { if (signal?.aborted) throw error; }
   if (!catalogue) {
@@ -261,30 +300,26 @@ export async function prepareRegionalAnalysis(
     if (node) node.status = regionalEvidenceStageStatus(entries);
   };
 
-  const surfaces = [...new Set([...REGIONAL_ANALYSIS_PRIORITY_SURFACES.filter((source) => catalogue.surfaces.includes(source)), ...catalogue.surfaces])];
+  const selectedSurfaces = [
+    ...temporal.readings.map((row) => regionalSurfaceName(row.layer)),
+    ...Object.keys(temporal.analysisSelection?.layerDays ?? {}).map(regionalSurfaceName),
+  ];
+  const surfaces = [...new Set([...selectedSurfaces, ...REGIONAL_ANALYSIS_PRIORITY_SURFACES])]
+    .filter((source) => catalogue.surfaces.includes(source)).slice(0, 6);
   await runStage('local', surfaces.map((source) => ({
     source,
-    tool: source === 'drought-areas' ? 'observation_coverage_on_day' : 'surface_value_near_point',
-    args: source === 'drought-areas' ? { surface_name: source, day: dayFor(source) }
-      : { surface_name: source, day: dayFor(source), ...coords, radius_meters: 25_000, feature_count: 3 },
+    tool: 'surface_evidence_for_selection',
+    args: regionalSelectionArguments(payload, temporal, source, false),
   })), 12_000);
-  await runStage('temporal', [
-    ...(['climate-field-precipitation', 'climate-field-soil-wetness-root-zone'] as const).map((source) => ({ tool: 'surface_value_near_point', source, args: { surface_name: source, day: priorYearDay(source, 1), ...coords, radius_meters: 25_000, feature_count: 3 } })),
-    { tool: 'surface_value_near_point', source: 'climate-field-soil-wetness-root-zone', args: { surface_name: 'climate-field-soil-wetness-root-zone', day: priorYearDay('climate-field-soil-wetness-root-zone', 5), ...coords, radius_meters: 25_000, feature_count: 3 } },
-    { tool: 'drought_history_at_point', source: 'drought-areas', args: { ...coords, as_of_day: dayFor('drought-areas'), weeks_back: 104 } },
-    { tool: 'fire_history_near_point', args: { ...coords, as_of_day: dayFor('burn-severity'), radius_meters: 25_000, years_back: 2 } },
-    { tool: 'observation_temporal_neighbors', source: 'climate-field-soil-wetness-root-zone', args: { surface_name: 'climate-field-soil-wetness-root-zone', day: dayFor('climate-field-soil-wetness-root-zone'), neighbor_days: 180 } },
-  ], 10_000);
-  const contrasts = [-1.5, 1.5].map((offset) => ({ latitude: coords.latitude, longitude: ((coords.longitude + offset + 540) % 360) - 180 }));
-  await runStage('regional', contrasts.flatMap((location) => ['climate-field-precipitation', 'climate-field-soil-wetness-root-zone'].map((source) => ({
-    tool: 'surface_value_near_point', source,
-    args: { surface_name: source, day: dayFor(source), ...location, radius_meters: 25_000, feature_count: 3 },
-  }))), 10_000);
-  evidence.stages[4].status = 'partial';
+  await runStage('temporal', surfaces.map((source) => ({
+    source, tool: 'surface_evidence_for_selection', args: regionalSelectionArguments(payload, temporal, source),
+  })), 15_000);
+  evidence.stages[3].status = 'partial';
   evidence.limitations.push('Strategy screening identifies evidence requirements; it does not validate suitability, rank causal benefits, or establish a treatment rate.');
-  if (temporal.viewedDates.length > 1) evidence.limitations.push(`This is a mixed-time comparison. Unselected sources use ${anchor} as the comparison anchor; each selected source keeps its own map day.`);
+  evidence.limitations.push('All catalogue layers remain queryable, including hidden layers. Initial reads prioritize six selected or environmental context layers; use additional reads for other relevant layers and history continuation.');
+  if (temporal.viewedDates.length > 1) evidence.limitations.push('This is a mixed-time comparison. Each selected layer retains its own day; unselected layers inherit the latest selected comparison day.');
   return {
     catalogue, evidence,
-    context: JSON.stringify({ evidence, observations: results, strategyScreening: STRATEGY_SCREENING }),
+    context: JSON.stringify({ selection: temporal.analysisSelection, availableLayers: catalogue.surfaces, evidence, observations: results, strategyScreening: STRATEGY_SCREENING }),
   };
 }

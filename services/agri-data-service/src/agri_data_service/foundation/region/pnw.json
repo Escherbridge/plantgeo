@@ -1,18 +1,44 @@
 {
   "slug": "pnw",
   "display_name": "Pacific Northwest",
-  "envelope": { "west": -126.0, "south": 41.0, "east": -110.0, "north": 50.0 },
-  "default_camera_envelope": { "west": -125.0, "south": 42.0, "east": -111.0, "north": 49.0 },
+  "envelope": {
+    "west": -126.0,
+    "south": 41.0,
+    "east": -110.0,
+    "north": 50.0
+  },
+  "default_camera_envelope": {
+    "west": -125.0,
+    "south": 42.0,
+    "east": -111.0,
+    "north": 49.0
+  },
   "sub_envelopes": {
-    "burn_severity": { "west": -125.0, "south": 42.0, "east": -111.0, "north": 49.0 },
-    "botanical_seed": { "west": -125.0, "south": 41.0, "east": -110.0, "north": 50.0 }
+    "burn_severity": {
+      "west": -125.0,
+      "south": 42.0,
+      "east": -111.0,
+      "north": 49.0
+    },
+    "botanical_seed": {
+      "west": -125.0,
+      "south": 41.0,
+      "east": -110.0,
+      "north": 50.0
+    }
   },
   "crs": 4326,
   "lattice_pitch_degrees": 0.01,
   "lattice_origin_rule": "floor_to_cell_origin",
   "timezone": "America/Los_Angeles",
-  "iso_country_codes": ["US"],
-  "admin_codes": ["US-WA", "US-OR", "US-ID"],
+  "iso_country_codes": [
+    "US"
+  ],
+  "admin_codes": [
+    "US-WA",
+    "US-OR",
+    "US-ID"
+  ],
   "platform_layers": [
     "botanical-occurrences",
     "burn-severity",
@@ -23,7 +49,18 @@
     "fire-risk",
     "land-context",
     "sensors",
-    "signal",
+    "climate-field-air-temperature",
+    "climate-field-dew-point",
+    "climate-field-precipitation",
+    "climate-field-relative-humidity",
+    "climate-field-shortwave-radiation",
+    "climate-field-soil-wetness-profile",
+    "climate-field-soil-wetness-root-zone",
+    "climate-field-soil-wetness-surface",
+    "climate-field-wind-speed",
+    "soil-field-moisture",
+    "soil-field-temperature",
+    "soil-field-vpd",
     "soil-survey",
     "vegetation",
     "water-gauges",
@@ -32,18 +69,125 @@
     "weather-observations"
   ],
   "enabled_layers": [
-    { "layer_slug": "soil-survey", "source_slug": "ssurgo", "coverage": "regional" },
-    { "layer_slug": "fire-detections", "source_slug": "firms", "coverage": "global" },
-    { "layer_slug": "vegetation", "source_slug": "sentinel2_ndvi", "coverage": "global" },
-    { "layer_slug": "burn-severity", "source_slug": "mtbs", "coverage": "regional" },
-    { "layer_slug": "evacuation-zones", "source_slug": "oregon_oem_arcgis", "coverage": "regional" },
-    { "layer_slug": "fire-perimeters", "source_slug": "wfigs", "coverage": "regional" },
-    { "layer_slug": "water-gauges", "source_slug": "usgs_nwis", "coverage": "regional" },
-    { "layer_slug": "sensors", "source_slug": "noaa_nws", "coverage": "regional" },
-    { "layer_slug": "weather-observations", "source_slug": "open_meteo", "coverage": "global" },
-    { "layer_slug": "watersheds", "source_slug": "hydrosheds", "coverage": "global" },
-    { "layer_slug": "drought", "source_slug": "usdm", "coverage": "regional" },
-    { "layer_slug": "signal", "source_slug": "era5_land_and_nasa_power", "coverage": "global" },
-    { "layer_slug": "botanical-occurrences", "source_slug": "gbif", "coverage": "global" }
+    {
+      "layer_slug": "soil-survey",
+      "source_slug": "ssurgo",
+      "coverage": "regional"
+    },
+    {
+      "layer_slug": "fire-detections",
+      "source_slug": "firms",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "vegetation",
+      "source_slug": "sentinel2_ndvi",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "burn-severity",
+      "source_slug": "mtbs",
+      "coverage": "regional"
+    },
+    {
+      "layer_slug": "evacuation-zones",
+      "source_slug": "oregon_oem_arcgis",
+      "coverage": "regional"
+    },
+    {
+      "layer_slug": "fire-perimeters",
+      "source_slug": "wfigs",
+      "coverage": "regional"
+    },
+    {
+      "layer_slug": "water-gauges",
+      "source_slug": "usgs_nwis",
+      "coverage": "regional"
+    },
+    {
+      "layer_slug": "sensors",
+      "source_slug": "noaa_nws",
+      "coverage": "regional"
+    },
+    {
+      "layer_slug": "weather-observations",
+      "source_slug": "open_meteo",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "watersheds",
+      "source_slug": "hydrosheds",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "drought",
+      "source_slug": "usdm",
+      "coverage": "regional"
+    },
+    {
+      "layer_slug": "climate-field-air-temperature",
+      "source_slug": "nasa_power",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "climate-field-dew-point",
+      "source_slug": "nasa_power",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "climate-field-precipitation",
+      "source_slug": "nasa_power",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "climate-field-relative-humidity",
+      "source_slug": "nasa_power",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "climate-field-shortwave-radiation",
+      "source_slug": "nasa_power",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "climate-field-soil-wetness-profile",
+      "source_slug": "nasa_power",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "climate-field-soil-wetness-root-zone",
+      "source_slug": "nasa_power",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "climate-field-soil-wetness-surface",
+      "source_slug": "nasa_power",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "climate-field-wind-speed",
+      "source_slug": "nasa_power",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "soil-field-moisture",
+      "source_slug": "era5_land",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "soil-field-temperature",
+      "source_slug": "era5_land",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "soil-field-vpd",
+      "source_slug": "era5_land",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "botanical-occurrences",
+      "source_slug": "gbif",
+      "coverage": "global"
+    }
   ]
 }

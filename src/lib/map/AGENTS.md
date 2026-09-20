@@ -658,3 +658,10 @@ so the two refusals stay distinguishable. `botanicalServingBandForViewport` and 
 both moved onto it; `selectFinestAdmittingRung` itself keeps its original `TRung | null` signature
 because `landContextRungForViewport` (`src/hooks/useLandContextViewport.ts`) still calls it
 directly and migrating that hook is a separate change.
+
+## Concrete environmental layer bindings
+
+Climate and soil field surfaces bind their own concrete map-layer names in the region catalogue.
+NASA POWER climate fields use `nasa_power`; ERA5-Land soil moisture, temperature and VPD use
+`era5_land`. The retired generic signal layer is not an availability dependency or an agent
+retrieval route. Physical metric column names remain part of the numeric source schema.

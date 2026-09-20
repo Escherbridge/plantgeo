@@ -324,6 +324,28 @@ class Settings(BaseSettings):
     #: `none` is for a local, unauthenticated endpoint (LM Studio); anything reachable sends Bearer.
     agent_llm_auth_header: Literal["bearer", "none"] = "bearer"
     agent_llm_timeout_seconds: float = 60.0
+    agent_map_app_url: str | None = None
+
+    @field_validator("agent_map_app_url")
+    @classmethod
+    def validate_agent_map_app_url(cls, value: str | None) -> str | None:
+        """Validate the configured public map-evidence bridge origin."""
+        if value is None or not value.strip():
+            return None
+        parsed = urlsplit(value.strip())
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in {"", "/"}
+        ):
+            raise ValueError("AGENT_MAP_APP_URL must be a credential-free http(s) origin")
+        if parsed.scheme == "http" and parsed.hostname not in _LOOPBACK_HOSTS:
+            raise ValueError("AGENT_MAP_APP_URL may only use plaintext http on localhost")
+        return value.strip().rstrip("/")
 
     @field_validator("agent_llm_base_url")
     @classmethod

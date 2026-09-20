@@ -62,8 +62,8 @@ function parseColorRamp(value: unknown, property: string): SoilRasterColorStop[]
 }
 
 /** Live SoilGrids PMTiles releases, read through the non-superseded catalogue view. */
-export async function getPublishedSoilRasters(): Promise<PublishedSoilRaster[]> {
-  const rows = await db.execute<{
+export async function getPublishedSoilRasters(database: Pick<typeof db, "execute"> = db): Promise<PublishedSoilRaster[]> {
+  const rows = await database.execute<{
     property: string;
     unit: string;
     scale_divisor: number;

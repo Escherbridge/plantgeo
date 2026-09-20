@@ -45,7 +45,18 @@ const SERVER_CURRENT_DATE = "2026-09-18";
 const BOUND_GLOBAL_LAYER_SLUGS = [
   "botanical-occurrences",
   "fire-detections",
-  "signal",
+  "climate-field-air-temperature",
+  "climate-field-dew-point",
+  "climate-field-precipitation",
+  "climate-field-relative-humidity",
+  "climate-field-shortwave-radiation",
+  "climate-field-soil-wetness-profile",
+  "climate-field-soil-wetness-root-zone",
+  "climate-field-soil-wetness-surface",
+  "climate-field-wind-speed",
+  "soil-field-moisture",
+  "soil-field-temperature",
+  "soil-field-vpd",
   "vegetation",
   "watersheds",
   "weather-observations",
@@ -139,11 +150,9 @@ describe("the catalogue under a region that binds only global sources", () => {
 });
 
 describe("the binding lookup itself", () => {
-  it("resolves the derived signal streams onto the one signal plane they come from", () => {
-    // Twelve climate and soil field streams bind no source of their own. If the signal plane is
-    // unbound they all go dark together, and this mapping is the only thing that says so.
-    expect(regionLayerSlugForToggle("soil-moisture")).toBe("signal");
-    expect(regionLayerSlugForToggle("climate-air-temperature")).toBe("signal");
+  it("binds climate and soil surfaces to their own concrete lanes", () => {
+    expect(regionLayerSlugForToggle("soil-moisture")).toBe("soil-field-moisture");
+    expect(regionLayerSlugForToggle("climate-air-temperature")).toBe("climate-field-air-temperature");
     expect(regionLayerSlugForToggle("drought")).toBe("drought");
   });
 

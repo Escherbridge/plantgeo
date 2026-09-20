@@ -289,7 +289,7 @@ export const LAYER_BINDING_STATES = ["bound_global", "bound_regional", "unbound"
 export type LayerBindingState = (typeof LAYER_BINDING_STATES)[number];
 
 export interface SliderLayerBinding {
-  /** Layer slug as the region manifest spells it (`drought`, `soil-survey`, `signal`). */
+  /** Layer slug as the region manifest spells it (`drought`, `soil-survey`, `soil-field-vpd`). */
   layerSlug: string;
   binding: LayerBindingState;
   /** The bound source's slug; null exactly when `binding` is `unbound`. */

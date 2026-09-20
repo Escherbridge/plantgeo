@@ -324,3 +324,12 @@ when no rung admits the viewport (the one case still refused client-side, withou
 `describeBotanicalOccurrencesState` says so out loud whenever the served rung is not the one the
 zoom asked for: a coarser rung is a SUBSTITUTION OF EVIDENCE, and a reader who is not told has no
 way to know the drawing changed meaning.
+
+## Regional selection windows
+
+`useRegionalIntelligence` reads the current map zoom, analysis time scale/range and sparse layer
+date overrides when each request is sent. Visible layer days retain their independent dates; a
+hidden layer with an explicit date retains that date too. Other queried layers inherit the most
+recent selected comparison day (or the server day when no selection exists). Visibility never
+limits tool discovery. The 64-row request limit accommodates the complete current map registry.
+The analysis panel's window control affects the next request and never mutates a map layer date.

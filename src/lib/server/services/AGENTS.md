@@ -1,5 +1,23 @@
 # Service boundaries
 
+## Application map evidence
+
+`regional-map-evidence.ts` serves the map's public application sources through the same containing-tile
+selection contract as the Parquet agent. Intervention reads repeat Martin's public-layer, published-status,
+and exact tile-intersection predicates and expose only public fields. They include the current `type`
+property; drafts and review submissions require a separate authenticated workflow. Community demand
+reuses the map's whole-cell aggregate and minimum three-member disclosure floor.
+
+These are current snapshots, not historical observations. Historical requests are explicitly unavailable.
+SoilGrids exposes the published raster release, containing tile and legend as context, while retaining the
+numeric-value refusal until a governed numeric source is admitted. Legend bounds are never measurements.
+Land-context reads preserve coverage refusals even when its transport envelope is successful.
+
+The web assistant dispatches these reads in-process. Standalone MCP uses the bounded public
+`POST /api/v1/map-evidence` endpoint through its configured `AGENT_MAP_APP_URL` origin. Application reads
+honour cancellation and a twelve-second tool deadline; database statements run with a transaction-local
+ten-second timeout. The endpoint is rate-limited, caps request bytes and serves no private submissions.
+
 ## Slider freshness metadata
 
 The optional coverage `freshness` object carries registry timing through the Parquet client
@@ -28,9 +46,8 @@ the existing local and published-reader HTTP profiles. It does not require an An
 or change the model provider. Canonical species authoring remains outside this environmental
 bridge because its separate caller-bound UUID contract must be preserved.
 
-`regional-analysis-workflow.ts` gathers bounded evidence before report synthesis. Inventory,
-local reads, historical comparisons, spatial comparisons, and strategy screening are explicit
-stages. Report the actual reads and refusals in a server-authored audit; model prose must never
+`regional-analysis-workflow.ts` gathers bounded evidence before report synthesis. Inventory, exact selected-tile reads, selected-window historical reads, and strategy screening
+are explicit stages. Report the actual reads and refusals in a server-authored audit; model prose must never
 invent a successful query or turn a skipped stage into a completed investigation. Tool results
 are untrusted evidence, not instructions. Keep transport timeouts and cancellation distinct
 from published absence, and preserve the tool's applied bounds and observation dates.
@@ -51,19 +68,37 @@ Coverage inventories, temporal publication neighbours and nearest reporting-cell
 in the audit but cannot be cited as environmental measurements. Their presence establishes
 where or when to investigate; it establishes no soil, climate or fire value.
 
-Inventory has an eight-second transport deadline. Local, temporal, and regional stages reserve
-twelve, ten, and ten seconds respectively, with at most three concurrent reads in each stage.
-Stage exhaustion is recorded as skipped or failed work and does not consume the next stage's
-reserved time. Synthesis may request six additional environmental reads in batches of three;
-each transport call has a fifteen-second deadline and the Python tool has a twelve-second
-deadline. Keep these bounds explicit when changing retrieval depth.
-All three ERA5-Land soil surfaces—moisture, temperature, and vapor-pressure deficit—belong in
-the local priority set. They jointly describe water availability, root-zone thermal conditions,
-and atmospheric drying demand; catalogue order must not allow the stage deadline to omit two
-of the three. Each read uses that layer's independently selected map day.
-The context reducer retains up to 120 weekly drought releases so the two-year history remains
-visible to synthesis. Other collections retain eight entries with an explicit omitted count;
-never interpret a reduced collection as the complete set of observations.
+Inventory has an eight-second transport deadline. Local and temporal stages reserve twelve and
+fifteen seconds respectively, with at most three concurrent reads. Initial retrieval selects up to
+six relevant layers, prioritizing visible and explicitly dated layers before VPD, vegetation,
+precipitation, soil moisture, soil temperature and soil survey. Every catalogue layer stays
+available for additional reads, including disabled toggles; catalogue size never forces an eager
+read of every layer. Stage exhaustion is recorded as skipped or failed work.
+
+The live regional route starts in selection-only assembly mode: location and calendar metadata,
+with no environmental measurement blocks and no old radius or latest-date prefetch. All current
+measurements must come from the tile workflow. The legacy assembler signature remains available
+for existing non-selection callers; it is not used by the live assistant route. Legacy clients
+receive an explicit default selection, so they cannot re-enable the old prefetch accidentally.
+
+`surface_evidence_for_selection` is the general measurement reader. Its bounds are the tile
+containing the authorized point at the active map zoom and each layer's selected calendar day.
+Point support is determined by the source tile or cell containing the coordinate, never by a
+fixed centroid radius. Local reads request only that day. Historical reads request the inclusive
+calendar window selected in the analysis panel (day, month or year, with 1?10 units on either
+side). Month and year arithmetic preserves month ends and leap days. Missing and future dates
+remain in the request; they are never replaced by the newest available observation.
+
+The server binds every additional generic read to the current request's point, zoom, layer day
+and window, preserving only its layer choice and integer history cursor. This is recomputed on
+every follow-up. Prior conversation prose and read IDs cannot establish current observations.
+Synthesis may request twelve additional reads in batches of three over six model rounds, with
+fifteen-second transport deadlines. Page continuation preserves the backend's balanced schedule;
+it cannot narrow the window to recent dates. The context reducer retains 31 history envelopes
+and their sampled day list per page (120 weekly drought entries for the specialized reader).
+Other collections retain eight entries with explicit omitted counts. Coverage and empty history
+envelopes are never counted as measurements. Actual requested dates, range, scale, zoom and
+returned provenance dates persist in the server audit and are visible beside citations.
 
 Layer visibility controls the viewed-day context, not tool access. A catalogue entry means a
 source is queryable or explicitly refused; it does not prove the lane is published, complete,

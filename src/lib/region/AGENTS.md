@@ -156,3 +156,10 @@ fire-perimeters, sensors and water-gauges, `LayerRow` disables those toggles wit
 "not available in this region" caption, and `useLayerVisibility` keeps them false so no layer
 component mounts and no fetch is issued for them. Proving that chain is the whole of the web-side
 second-region proof.
+
+## Concrete climate and soil field bindings
+
+Each climate and soil field map surface has its own platform and enabled-layer entry. Climate
+fields bind `nasa_power`; soil moisture, temperature and VPD bind `era5_land`. Both manifests
+retain order parity with the Python copies. This removes the former generic signal binding
+without changing the producer metric names in published rows.

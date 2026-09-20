@@ -66,7 +66,7 @@ def registered_columns() -> frozenset[str]:
     it makes the probe invisible to a test about anything else, and lets a test that IS about a
     lane owing a re-export narrow the set and watch the refusal fire.
     """
-    lanes = ("signal", "drought", *sorted({lane for lanes in SURFACE_PARQUET_LANES.values() for lane in lanes}))
+    lanes = sorted({lane for lanes in SURFACE_PARQUET_LANES.values() for lane in lanes})
     columns: set[str] = set()
     for lane in lanes:
         try:
@@ -87,6 +87,10 @@ class FakeConnection:
     def execute(self, statement: str, parameters: list[Any]) -> FakeCursor:
         """Record the read and answer it by the statement's line-one marker."""
         if "parquet_schema(" in statement:
+            if "file_name" in statement:
+                return FakeCursor(
+                    [{"file_name": path, "name": name} for path in parameters[0] for name in sorted(self.columns)]
+                )
             return FakeCursor([{"name": name} for name in sorted(self.columns)])
         self.executed.append((statement, list(parameters)))
         return FakeCursor(self.answers.get(marker_of(statement) or "", []))

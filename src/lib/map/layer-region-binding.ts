@@ -12,23 +12,7 @@ import { LAYER_REGISTRY, type LayerToggleId } from "@/lib/map/layer-registry";
 import { getRegion, regionIdentityVerdict } from "@/lib/region/region";
 import type { SliderCapabilities } from "@/types/time-slider";
 
-/**
- * Warehouse layer name to the region-manifest layer slug it binds through.
- *
- * Mirrors `agent/surfaces.py`'s `SURFACE_REGION_LAYER_SLUGS` for every layer that has an agent
- * surface, and is hand-spelled for the same reason that table is: the two namespaces genuinely
- * disagree where it matters. `fire-risk` and `weather-forecast` are here and NOT there, because the
- * agent has no surface for either yet -- that table maps agent surfaces, this one maps warehouse
- * layer names, and only the second is what a map toggle resolves through.
- * `drought-areas` is served by the manifest layer `drought`, and all twelve climate and soil field
- * streams are DERIVED products of the one `signal` plane -- they bind no source of their own, so
- * they inherit `signal`'s binding and go dark together when it is unbound.
- *
- * A warehouse name absent from this table has no manifest layer and can never be unbound:
- * `interventions` (Postgres-only, no source binding concept) and `strategy-recommendations` (a
- * derived surface, not an ingested layer) are the two, and the eight toggles with a null
- * `warehouseLayerName` never reach here at all.
- */
+/** Each concrete map surface binds its own publication lane; see map/AGENTS.md. */
 export const REGION_LAYER_SLUG_BY_WAREHOUSE_NAME: Readonly<Record<string, string>> = {
   "burn-severity": "burn-severity",
   "evacuation-zones": "evacuation-zones",
@@ -48,18 +32,18 @@ export const REGION_LAYER_SLUG_BY_WAREHOUSE_NAME: Readonly<Record<string, string
   "fire-risk": "fire-risk",
   "weather-forecast": "weather-forecast",
   "drought-areas": "drought",
-  "climate-field-air-temperature": "signal",
-  "climate-field-dew-point": "signal",
-  "climate-field-precipitation": "signal",
-  "climate-field-relative-humidity": "signal",
-  "climate-field-shortwave-radiation": "signal",
-  "climate-field-wind-speed": "signal",
-  "climate-field-soil-wetness-surface": "signal",
-  "climate-field-soil-wetness-root-zone": "signal",
-  "climate-field-soil-wetness-profile": "signal",
-  "soil-field-moisture": "signal",
-  "soil-field-temperature": "signal",
-  "soil-field-vpd": "signal",
+  "climate-field-air-temperature": "climate-field-air-temperature",
+  "climate-field-dew-point": "climate-field-dew-point",
+  "climate-field-precipitation": "climate-field-precipitation",
+  "climate-field-relative-humidity": "climate-field-relative-humidity",
+  "climate-field-shortwave-radiation": "climate-field-shortwave-radiation",
+  "climate-field-wind-speed": "climate-field-wind-speed",
+  "climate-field-soil-wetness-surface": "climate-field-soil-wetness-surface",
+  "climate-field-soil-wetness-root-zone": "climate-field-soil-wetness-root-zone",
+  "climate-field-soil-wetness-profile": "climate-field-soil-wetness-profile",
+  "soil-field-moisture": "soil-field-moisture",
+  "soil-field-temperature": "soil-field-temperature",
+  "soil-field-vpd": "soil-field-vpd",
 };
 
 /**

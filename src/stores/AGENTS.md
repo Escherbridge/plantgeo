@@ -21,3 +21,15 @@ Typed manager and climate readers opt into publicationMode typed, so absent data
 load or error has no served date. Legacy untyped adapters retain request bookkeeping. The
 combined streamflow/groundwater water row remains legacy in this bounded change; aggregate
 publication-date semantics require separate work and are not certified here.
+
+`useMetricAtDate` retains a loading frame with TanStack's `placeholderData` callback. The
+callback attaches the previous query key's date to an observer-only copy, so chained pending
+or failed requests cannot relabel the last successful collection. Fetch results, prefetches,
+and externally seeded query-cache entries keep their existing raw GeoJSON shape. This date
+comes from the query that owns the data rather than render-time ref bookkeeping. A disabled
+or unavailable query returns a fresh refusal labelled with the current debounced request day,
+even if TanStack still holds a placeholder internally.
+
+The regional-intelligence store holds an analysis history scale and number of calendar units on
+each side, independently of sparse per-layer map dates. These transient controls survive a new
+chat so the chosen analysis scope stays active; they are read afresh when a question is sent.

@@ -14,6 +14,7 @@ import {
   callRegionalEvidenceTool,
   loadRegionalEvidenceTools,
 } from "@/lib/server/services/regional-evidence-tools";
+import { APP_MAP_SURFACES } from '@/lib/server/services/regional-map-evidence';
 
 const fetchJson = vi.mocked(fetchBoundedJson);
 
@@ -42,7 +43,8 @@ describe("regional environmental tool bridge", () => {
     });
     const catalogue = await loadRegionalEvidenceTools();
     expect(catalogue?.tools[0].input_schema).toEqual({ type: "object" });
-    expect(catalogue?.valueSurfaces).toEqual(["soil-field-moisture"]);
+    expect(catalogue?.valueSurfaces).toEqual(["soil-field-moisture", ...APP_MAP_SURFACES]);
+    expect(catalogue?.surfaces).toEqual(expect.arrayContaining([...APP_MAP_SURFACES]));
     expect(String(fetchJson.mock.calls[0][0])).toBe("http://agri.internal:8000/api/v1/agent-tools/");
   });
 

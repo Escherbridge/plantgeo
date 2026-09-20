@@ -29,6 +29,7 @@ from agri_data_service.agent.report import (
     RemediationReport,
     WebSourceCitation,
 )
+from agri_data_service.agent.selection_context import MapSelection, bind_selection_tools
 
 if TYPE_CHECKING:
     import asyncio
@@ -62,6 +63,16 @@ MAX_PAUSE_RESTARTS: Final = 3
 # Budget rules mirrored from ai-prompt.ts (MAX_SEARCHES_PER_REQUEST, MAX_HISTORY_TURNS).
 MAX_SEARCHES_PER_REQUEST: Final = 3
 MAX_HISTORY_TURNS: Final = 8
+
+_METADATA_TOOLS: Final = frozenset(
+    {
+        "list_environmental_layers",
+        "observation_coverage_on_day",
+        "observation_temporal_neighbors",
+        "botanical_occurrence_current_release",
+        "species_information",
+    }
+)
 
 _PARTIAL_COVERAGE_SEARCHES: Final = 2
 _QUESTION_ONLY_SEARCHES: Final = 1
@@ -121,6 +132,14 @@ class AgentRequest:
     """The day the map is showing. None means the caller did not send one; see agent/AGENTS.md."""
     species_id: str | None = None
     """Canonical authoring UUID supplied by the caller; absent disables model botanical reads."""
+    map_selection: MapSelection | None = None
+
+    def active_selection(self) -> MapSelection:
+        """Resolve a supplied selection or an explicitly single-day legacy request."""
+        if self.map_selection is not None:
+            return self.map_selection
+        day = self.selected_day or self.as_of.date()
+        return MapSelection(day=day, range_start=day, range_end=day)
 
 
 @dataclass(slots=True)
@@ -163,6 +182,20 @@ class WarehouseEvidence:
     tool_calls: tuple[dict[str, Any], ...]
     populated_tools: tuple[str, ...]
     refused: bool
+
+
+def populated_sources(ledger: Sequence[dict[str, Any]]) -> tuple[str, ...]:
+    """Count independent measured layers, excluding catalogue and coverage-only metadata."""
+    return tuple(
+        dict.fromkeys(
+            str(entry.get("surface_name") or entry["tool"])
+            for entry in ledger
+            if entry["tool"] not in _METADATA_TOOLS
+            and int(entry.get("row_count", 0)) > 0
+            and "error" not in entry
+            and "refusal_code" not in entry
+        )
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -309,6 +342,7 @@ class GatherWarehouseEvidence:
                     question=ctx.request.question,
                     selected_day=ctx.request.selected_day,
                     species_id=ctx.request.species_id,
+                    map_selection=ctx.request.map_selection,
                 ),
             }
         )
@@ -318,18 +352,17 @@ class GatherWarehouseEvidence:
         ) as ledger:
             refused = await _run_pass(
                 ctx,
-                tool_list=list(warehouse_tools.WAREHOUSE_TOOLS),
+                tool_list=bind_selection_tools(
+                    warehouse_tools.WAREHOUSE_TOOLS,
+                    longitude=ctx.request.longitude,
+                    latitude=ctx.request.latitude,
+                    selection=ctx.request.active_selection(),
+                ),
                 max_iterations=MAX_WAREHOUSE_ITERATIONS,
                 collect_web=False,
             )
             ctx.tool_ledger.extend(ledger)
-        populated = tuple(
-            dict.fromkeys(
-                str(entry["tool"])
-                for entry in ctx.tool_ledger
-                if int(entry.get("row_count", 0)) > 0 and "error" not in entry
-            )
-        )
+        populated = populated_sources(ctx.tool_ledger)
         ctx.refused = ctx.refused or refused
         await ctx.emit(
             progress_event(
@@ -391,11 +424,11 @@ class AssessSufficiency:
                 reasons=("only one warehouse source returned rows",),
                 coverage=coverage,
             )
-        if populated < available and has_question:
+        if has_question:
             return SufficiencyVerdict(
                 warehouse_is_sufficient=False,
                 searches_allowed=_QUESTION_ONLY_SEARCHES,
-                reasons=("warehouse coverage is partial and the caller asked a specific question",),
+                reasons=("the specific question may require external regional guidance",),
                 coverage=coverage,
             )
         return SufficiencyVerdict(
@@ -432,7 +465,15 @@ class GatherWebEvidence:
         ):
             refused = await _run_pass(
                 ctx,
-                tool_list=[*WAREHOUSE_TOOLS_FOR_WEB, search_tool],
+                tool_list=[
+                    *bind_selection_tools(
+                        WAREHOUSE_TOOLS_FOR_WEB,
+                        longitude=ctx.request.longitude,
+                        latitude=ctx.request.latitude,
+                        selection=ctx.request.active_selection(),
+                    ),
+                    search_tool,
+                ],
                 max_iterations=MAX_WEB_ITERATIONS,
                 collect_web=True,
             )

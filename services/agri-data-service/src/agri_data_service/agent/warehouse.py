@@ -492,15 +492,7 @@ _DECEMBER: Final = 12
 # --- Bounded row reads -------------------------------------------------------------
 
 
-#: The probe that turns a schema drift into a typed refusal instead of a raw binder error.
-#:
-#: MEASURED AGAINST PRODUCTION 2026-09-04, and this is why the probe exists rather than a comment
-#: about robustness: `layer=signal/kind=observed/zoom=13/year=2026/month=08/day=06/part-0.parquet`
-#: carries eleven columns and NEITHER `cell_longitude` NOR `cell_latitude`, although
-#: `warehouse/parquet/schema.py` declares both non-nullable. The lane was exported before the
-#: positions were added and has not been re-exported since. Without this probe every signal tool
-#: answers a `duckdb.BinderException` -- an unexplained tool error, which is precisely the outcome
-#: the refusal discipline exists to prevent.
+# Published object columns must satisfy the reader contract before a query executes.
 _COLUMN_PROBE: Final = "SELECT DISTINCT name FROM parquet_schema(?)"
 
 #: A schema footer or two below which the probe just reads every part anyway; no sampling saved.

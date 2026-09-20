@@ -1,11 +1,13 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 
-const mocks = vi.hoisted(() => ({ stream: vi.fn(), recordExchange: vi.fn() }));
+const mocks = vi.hoisted(() => ({ stream: vi.fn(), recordExchange: vi.fn(), assemble: vi.fn() }));
 vi.mock('@/lib/server/auth', () => ({ getServerSession: async () => ({ user: { id: 'owner' } }) }));
-vi.mock('@/lib/server/services/regional-context', () => ({ assembleRegionalContext: async () => ({
+vi.mock('@/lib/server/services/regional-context', () => ({ assembleRegionalContext: async (...args: unknown[]) => {
+  mocks.assemble(...args);
+  return {
   payload: { location: { lat: 44, lon: -116, geohash: '9r' } }, dataFreshness: {}, contextIsEmpty: true, temporalContext: {},
-}) }));
+}; } }));
 vi.mock('@/lib/server/services/ai-prompt', () => ({ streamRegionalIntelligence: mocks.stream }));
 vi.mock('@/lib/server/services/ai-conversations', () => ({
   openConversation: async () => ({ id: 'saved-conversation', history: [] }), recordExchange: mocks.recordExchange,
@@ -39,6 +41,9 @@ it('streams and persists validated server evidence while retaining the last vali
   expect(mocks.recordExchange).toHaveBeenCalledWith(expect.objectContaining({ structuredResponse: expect.objectContaining({ analysisEvidence: evidence }) }));
   const done = text.split('event: done\ndata: ')[1].split('\n')[0];
   expect(JSON.parse(done).analysisEvidence).toEqual(evidence);
+  expect(mocks.assemble).toHaveBeenCalledWith(44, -116, [], {
+    timeScale: 'month', rangeSteps: 1, zoom: 13, layerDays: {},
+  });
 });
 
 it('rejects a legacy warehouse citation without its exact assembled payload block', async () => {

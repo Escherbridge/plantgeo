@@ -1,15 +1,32 @@
 {
   "slug": "kenya-highlands",
   "display_name": "Kenya Highlands",
-  "envelope": { "west": 34.0, "south": -5.0, "east": 42.0, "north": 5.0 },
-  "default_camera_envelope": { "west": 35.5, "south": -1.5, "east": 38.5, "north": 1.5 },
+  "envelope": {
+    "west": 34.0,
+    "south": -5.0,
+    "east": 42.0,
+    "north": 5.0
+  },
+  "default_camera_envelope": {
+    "west": 35.5,
+    "south": -1.5,
+    "east": 38.5,
+    "north": 1.5
+  },
   "sub_envelopes": {},
   "crs": null,
   "lattice_pitch_degrees": 0.01,
   "lattice_origin_rule": "floor_to_cell_origin",
   "timezone": "Africa/Nairobi",
-  "iso_country_codes": ["KE"],
-  "admin_codes": ["KE-13", "KE-31", "KE-35", "KE-36"],
+  "iso_country_codes": [
+    "KE"
+  ],
+  "admin_codes": [
+    "KE-13",
+    "KE-31",
+    "KE-35",
+    "KE-36"
+  ],
   "platform_layers": [
     "botanical-occurrences",
     "burn-severity",
@@ -20,7 +37,18 @@
     "fire-risk",
     "land-context",
     "sensors",
-    "signal",
+    "climate-field-air-temperature",
+    "climate-field-dew-point",
+    "climate-field-precipitation",
+    "climate-field-relative-humidity",
+    "climate-field-shortwave-radiation",
+    "climate-field-soil-wetness-profile",
+    "climate-field-soil-wetness-root-zone",
+    "climate-field-soil-wetness-surface",
+    "climate-field-wind-speed",
+    "soil-field-moisture",
+    "soil-field-temperature",
+    "soil-field-vpd",
     "soil-survey",
     "vegetation",
     "water-gauges",
@@ -29,11 +57,90 @@
     "weather-observations"
   ],
   "enabled_layers": [
-    { "layer_slug": "fire-detections", "source_slug": "firms", "coverage": "global" },
-    { "layer_slug": "vegetation", "source_slug": "sentinel2_ndvi", "coverage": "global" },
-    { "layer_slug": "weather-observations", "source_slug": "open_meteo", "coverage": "global" },
-    { "layer_slug": "watersheds", "source_slug": "hydrosheds", "coverage": "global" },
-    { "layer_slug": "signal", "source_slug": "era5_land_and_nasa_power", "coverage": "global" },
-    { "layer_slug": "botanical-occurrences", "source_slug": "gbif", "coverage": "global" }
+    {
+      "layer_slug": "fire-detections",
+      "source_slug": "firms",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "vegetation",
+      "source_slug": "sentinel2_ndvi",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "weather-observations",
+      "source_slug": "open_meteo",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "watersheds",
+      "source_slug": "hydrosheds",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "climate-field-air-temperature",
+      "source_slug": "nasa_power",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "climate-field-dew-point",
+      "source_slug": "nasa_power",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "climate-field-precipitation",
+      "source_slug": "nasa_power",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "climate-field-relative-humidity",
+      "source_slug": "nasa_power",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "climate-field-shortwave-radiation",
+      "source_slug": "nasa_power",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "climate-field-soil-wetness-profile",
+      "source_slug": "nasa_power",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "climate-field-soil-wetness-root-zone",
+      "source_slug": "nasa_power",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "climate-field-soil-wetness-surface",
+      "source_slug": "nasa_power",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "climate-field-wind-speed",
+      "source_slug": "nasa_power",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "soil-field-moisture",
+      "source_slug": "era5_land",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "soil-field-temperature",
+      "source_slug": "era5_land",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "soil-field-vpd",
+      "source_slug": "era5_land",
+      "coverage": "global"
+    },
+    {
+      "layer_slug": "botanical-occurrences",
+      "source_slug": "gbif",
+      "coverage": "global"
+    }
   ]
 }

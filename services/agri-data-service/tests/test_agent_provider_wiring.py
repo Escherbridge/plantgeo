@@ -50,7 +50,7 @@ from tests.agent_fakes import FakeAgentWarehouse
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-WAREHOUSE_TOOL_COUNT = 16
+WAREHOUSE_TOOL_COUNT = len(agent_tools.WAREHOUSE_TOOLS)
 SENTINEL_KEY = "sk-test-not-a-real-credential"
 COVERAGE_TOOL = "observation_coverage_on_day"
 COVERAGE_ARGUMENTS = {"surface_name": "vegetation", "day": "2026-03-14"}
@@ -85,7 +85,7 @@ def completion(message: dict[str, Any], *, model: str = "test/model-1") -> dict[
 # Answers a global pointer question ("what generation is current") with genuinely nothing to
 # bound it by -- no coordinate, no surface, no region. See `botanical_occurrence_current_release`
 # and `read_current_botanical_release` in `planes/botanical_occurrences.py`.
-UNSCOPED_WAREHOUSE_TOOLS = {"botanical_occurrence_current_release"}
+UNSCOPED_WAREHOUSE_TOOLS = {"botanical_occurrence_current_release", "list_environmental_layers"}
 
 
 def test_every_warehouse_tool_publishes_a_usable_mcp_descriptor() -> None:
@@ -107,19 +107,17 @@ def test_the_two_surfaces_publish_the_same_tools_from_the_same_objects() -> None
     openai_names = [schema["function"]["name"] for schema in tool_schemas()]
     assert mcp_names == openai_names
     assert set(mcp_names) >= {
-        "signals_near_point",
-        "drought_history_at_point",
-        "fire_history_near_point",
-        "feature_value_near_point",
         COVERAGE_TOOL,
         "observation_temporal_neighbors",
         "species_information",
+        "surface_evidence_for_selection",
+        "list_environmental_layers",
     }
 
 
 def test_the_spatial_tools_publish_their_coordinate_parameters() -> None:
     by_name = {descriptor["name"]: descriptor for descriptor in tool_descriptors()}
-    for name in ("signals_near_point", "drought_history_at_point", "feature_value_near_point"):
+    for name in ("surface_evidence_for_selection",):
         properties = by_name[name]["inputSchema"]["properties"]
         assert "longitude" in properties, name
         assert "latitude" in properties, name

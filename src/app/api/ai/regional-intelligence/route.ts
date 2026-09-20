@@ -15,6 +15,7 @@ import {
 import { remediationReportSchema, reportWarehouseEvidenceIssues } from '@/lib/server/services/remediation-report';
 import { readRegionalAnalysisEvidence } from '@/lib/regional-analysis-evidence';
 import type { RegionalAnalysisEvidence } from '@/lib/regional-intelligence';
+import { ANALYSIS_TIME_SCALES, DEFAULT_ANALYSIS_WINDOW } from '@/lib/regional-analysis-selection';
 export { remediationReportSchema } from '@/lib/server/services/remediation-report';
 import {
   REGIONAL_INTELLIGENCE_INACTIVE_MESSAGE,
@@ -25,26 +26,20 @@ import {
 const MAX_BODY_BYTES = 16 * 1024;
 const DEFAULT_QUESTION = 'Analyze this location';
 
-/**
- * The most layer rows one request may report a day for.
- *
- * The layer registry holds 20 toggles and the map cannot draw a row that is not one of them,
- * so an honest client never reaches this. 24 leaves headroom for a registry that grows before
- * both halves redeploy, and still keeps the array far under MAX_BODY_BYTES: 24 entries at
- * roughly 70 bytes of JSON each is about 1.7 KB of a 16 KB budget, which leaves `question`
- * its full 1000 characters. The bound is here rather than left to the byte cap alone because
- * a body that fits in 16 KB can still carry thousands of tiny entries, and every one of them
- * would become a line of prompt.
- */
-export const MAX_VIEWED_LAYERS = 24;
+/** Bounded catalogue headroom; see hooks/AGENTS.md for selection propagation. */
+export const MAX_VIEWED_LAYERS = 64;
 
 const CALENDAR_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const calendarDaySchema = z.string().regex(CALENDAR_DATE_PATTERN).refine((day) => {
+  const date = new Date(`${day}T00:00:00Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === day;
+});
 
 /** One layer row's own day. `hasDataOnDate` is the client's claim, cross-checked server-side. */
 const viewedLayerSchema = z
   .object({
     layer: z.string().trim().min(1).max(64),
-    date: z.string().regex(CALENDAR_DATE_PATTERN),
+    date: calendarDaySchema,
     hasDataOnDate: z.boolean(),
   })
   .strict();
@@ -57,6 +52,13 @@ export const requestSchema = z.object({
   // Optional on purpose: a client built before per-layer dates, and a map with every layer
   // switched off, both send nothing, and both must still get an answer.
   viewedLayers: z.array(viewedLayerSchema).max(MAX_VIEWED_LAYERS).optional(),
+  analysisSelection: z.object({
+    timeScale: z.enum(ANALYSIS_TIME_SCALES),
+    rangeSteps: z.number().int().min(1).max(10),
+    zoom: z.number().min(0).max(22),
+    layerDays: z.record(z.string().min(1).max(64), calendarDaySchema)
+      .refine((days) => Object.keys(days).length <= MAX_VIEWED_LAYERS),
+  }).strict().optional(),
   locationConsent: z
     .object({
       precision: z.enum(['approximate', 'exact']),
@@ -174,7 +176,10 @@ export async function POST(request: NextRequest) {
   try {
     let context: Awaited<ReturnType<typeof assembleRegionalContext>>;
     try {
-      context = await assembleRegionalContext(lat, lon, body.viewedLayers ?? []);
+      context = await assembleRegionalContext(lat, lon, body.viewedLayers ?? [], body.analysisSelection ?? {
+        ...DEFAULT_ANALYSIS_WINDOW, zoom: 13,
+        layerDays: Object.fromEntries((body.viewedLayers ?? []).map(({ layer, date }) => [layer, date])),
+      });
     } catch (error) {
       console.error('[AI] context assembly failed', error);
       return jsonResponse(

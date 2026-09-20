@@ -51,7 +51,7 @@ const REQUEST_VOTES = sql`(
 /** The unified `InterventionType` a request carries, replacing `strategy_requests.strategy_type`. */
 const REQUEST_STRATEGY_TYPE = sql`coalesce(${features.properties} ->> 'type', 'unspecified')`;
 
-type Database = typeof db;
+type Database = Pick<typeof db, "select">;
 
 /** Coarsest cell, so a whole-globe viewport still groups. */
 const MAXIMUM_CELL_DEGREES = 10;

@@ -21,11 +21,8 @@ from agri_data_service.foundation.region import LayerBinding, Region, RegionEnve
 from agri_data_service.foundation.region.manifest import REGION_ENV_VAR
 
 EXPECTED_LATTICE_PITCH_DEGREES = 0.01  # TIER_RESOLUTION_DEGREES[9], warehouse/parquet/tiers.py
-#: Eleven `layer-lanes.md` §1 original slugs, minus `interventions` (Postgres, no lane), plus
-#: `drought` and `signal` (both named in that section's "thirteen registered streams") and
-#: `botanical-occurrences` (a served plane not counted in that section's tally; see this
-#: package's `AGENTS.md` "Layer bindings, cited" for why the count agrees with "thirteen" anyway).
-EXPECTED_ENABLED_LAYER_COUNT = 13
+#: Each climate and soil product has its own source binding.
+EXPECTED_ENABLED_LAYER_COUNT = 24
 
 
 def test_pnw_manifest_loads_with_the_documented_values() -> None:
@@ -68,7 +65,8 @@ def test_pnw_manifest_sub_envelopes_cannot_be_mutated_in_place() -> None:
         ("weather-observations", "open_meteo", "global"),
         ("watersheds", "hydrosheds", "global"),
         ("drought", "usdm", "regional"),
-        ("signal", "era5_land_and_nasa_power", "global"),
+        ("climate-field-air-temperature", "nasa_power", "global"),
+        ("soil-field-vpd", "era5_land", "global"),
         ("botanical-occurrences", "gbif", "global"),
     ],
 )

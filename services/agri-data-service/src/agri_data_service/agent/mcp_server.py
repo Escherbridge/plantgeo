@@ -44,6 +44,10 @@ DEFAULT_PROTOCOL_VERSION: Final = SUPPORTED_PROTOCOL_VERSIONS[-1]
 
 INSTRUCTIONS: Final = (
     "Bounded, read-only PlantGeo data reads. Environmental tools use governed Parquet. "
+    "For every map layer, discover names with list_environmental_layers and use "
+    "surface_evidence_for_selection with the actual selected coordinate, zoom, day, time scale "
+    "and inclusive active range. Retrieve numeric support containing or intersecting its map tile; "
+    "history is paginated across the full range and incomplete pages do not prove a trend. "
     "species_information requires an exact Species UUID and returns explicitly unpublished, "
     "unverified authoring values plus approved-only companion evidence; it never ranks species "
     "or recommends planting. Every tool caps its own work and reports its evidence posture. A tool "

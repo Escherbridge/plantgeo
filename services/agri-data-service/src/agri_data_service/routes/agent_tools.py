@@ -47,7 +47,7 @@ async def list_agent_tools(_request: Request) -> HTTPResponse:
             "tools": environmental_tool_schemas(),
             "surfaces": list(AGENT_SURFACE_NAMES),
             "feature_surfaces": list(FEATURE_SURFACE_NAMES),
-            "value_surfaces": [surface for surface in AGENT_SURFACE_NAMES if surface != "drought-areas"],
+            "value_surfaces": list(AGENT_SURFACE_NAMES),
         },
         headers=_HEADERS,
     )

@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import {
   drawnDayFlagsFromQuery,
+  metricAtDateQueryKey,
   SCRUB_SETTLE_MS,
   useDrawnLayerDayStore,
   useMetricAtDate,
@@ -64,10 +65,9 @@ function publishedCollection(date: string): MetricAtDateCollection {
  * lands in the gap between `renderHook` returning and this test's first explicit `act` call
  * otherwise -- an update React logs as unwrapped even though nothing here is unobserved.
  */
-async function renderWithClient(fetchMetricAtDate: MetricAtDateFetcher) {
-  const queryClient = new QueryClient({
+async function renderWithClient(fetchMetricAtDate: MetricAtDateFetcher, queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
-  });
+  })) {
   function Wrapper({ children }: { children: ReactNode }) {
     return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
   }
@@ -185,6 +185,50 @@ describe("useMetricAtDate names the day the collection in hand actually describe
 
     expect(result.current.resolvedDate).toBe("2026-08-06");
     expect(result.current.isShowingPreviousDay).toBe(false);
+  });
+
+  it("keeps a seeded collection's day across a failed request and another pending date", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const sourceKey = metricAtDateQueryKey({ metric: "perimeter-acres", date: "2026-08-05", variant: "observed" });
+    const sourceCollection = Object.freeze(publishedCollection("2026-08-05"));
+    queryClient.setQueryData(sourceKey, sourceCollection);
+    const pending = new Map<string, {
+      resolve: (collection: MetricAtDateCollection) => void;
+      reject: (error: Error) => void;
+    }>();
+    const fetcher: MetricAtDateFetcher = (input) => new Promise((resolve, reject) => {
+      pending.set(input.date, { resolve, reject });
+    });
+    const { result } = await renderWithClient(fetcher, queryClient);
+    expect(result.current.resolvedDate).toBe("2026-08-05");
+
+    act(() => useTimeSliderStore.getState().setLayerDate("water", "2026-08-08"));
+    await act(async () => { await vi.advanceTimersByTimeAsync(SCRUB_SETTLE_MS); });
+    expect(result.current.isShowingPreviousDay).toBe(true);
+    expect(result.current.resolvedDate).toBe("2026-08-05");
+    expect(result.current.collection.features).toEqual(sourceCollection.features);
+
+    await act(async () => {
+      pending.get("2026-08-08")!.reject(new Error("source temporarily unavailable"));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(result.current.availability).toBe("request_failed");
+    expect(result.current.resolvedDate).toBe("2026-08-08");
+
+    act(() => useTimeSliderStore.getState().setLayerDate("water", "2026-08-07"));
+    await act(async () => { await vi.advanceTimersByTimeAsync(SCRUB_SETTLE_MS); });
+    expect(result.current.isShowingPreviousDay).toBe(true);
+    expect(result.current.resolvedDate).toBe("2026-08-05");
+    expect(result.current.collection.features).toEqual(sourceCollection.features);
+    expect(queryClient.getQueryData(sourceKey)).toBe(sourceCollection);
+    expect(queryClient.getQueryData(sourceKey)).toEqual(publishedCollection("2026-08-05"));
+
+    await act(async () => {
+      pending.get("2026-08-07")!.resolve(publishedCollection("2026-08-07"));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(result.current.isShowingPreviousDay).toBe(false);
+    expect(result.current.resolvedDate).toBe("2026-08-07");
   });
 });
 

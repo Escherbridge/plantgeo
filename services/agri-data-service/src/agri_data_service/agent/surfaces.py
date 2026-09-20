@@ -20,10 +20,7 @@ if TYPE_CHECKING:
 # would vanish from the agent's vocabulary too, and the agent would answer "I do not know that
 # surface" instead of "that surface stopped being served".
 #
-# 24 names, matching the map's catalogue exactly as of 2026-08-15: 11 geo.layers rows, the 4
-# SLIDER_STREAM_LAYER_NAMES entries (src/types/time-slider.ts), and the 9
-# `climate-field-<signal>` names CLIMATE_FIELD_SIGNAL_IDS produces
-# (src/lib/environmental/climate-field.ts).
+# Names include every selectable data surface and its dedicated serving reader.
 
 # The 11 feature-backed surfaces -- the half the map draws as individual features.
 FEATURE_SURFACE_NAMES: Final = (
@@ -41,7 +38,7 @@ FEATURE_SURFACE_NAMES: Final = (
 )
 
 # The 13 stream names, which are NOT geo.layers rows: one polygon-backed release set and twelve
-# signal-backed cell-grid streams.
+# climate and soil cell-grid streams.
 STREAM_SURFACE_NAMES: Final = (
     "climate-field-air-temperature",
     "climate-field-dew-point",
@@ -58,7 +55,37 @@ STREAM_SURFACE_NAMES: Final = (
     "soil-field-vpd",
 )
 
-AGENT_SURFACE_NAMES: Final = tuple(sorted(FEATURE_SURFACE_NAMES + STREAM_SURFACE_NAMES))
+APP_SURFACE_NAMES: Final = (
+    "demand-heatmap",
+    "interventions",
+    "strategy-recommendations",
+    "soil-phh2o",
+    "soil-soc",
+    "soil-nitrogen",
+    "soil-bdod",
+    "soil-cec",
+    "soil-ocd",
+    "land-context",
+    "fire-risk",
+    "weather-forecast",
+)
+BOTANICAL_SURFACE_NAMES: Final = (
+    "botanical-occurrences",
+    "botanical-richness",
+    "botanical-collection-effort",
+    "gbif-occurrences",
+)
+AGENT_SURFACE_NAMES: Final = tuple(
+    sorted(
+        set(
+            FEATURE_SURFACE_NAMES
+            + STREAM_SURFACE_NAMES
+            + APP_SURFACE_NAMES
+            + BOTANICAL_SURFACE_NAMES
+            + ("fire-risk", "weather-forecast", "land-context")
+        )
+    )
+)
 
 # --- Which Parquet lanes serve each surface ----------------------------------------
 #
@@ -74,8 +101,7 @@ AGENT_SURFACE_NAMES: Final = tuple(sorted(FEATURE_SURFACE_NAMES + STREAM_SURFACE
 # air temperature publishes mean/max/min as three lanes, soil moisture three depths, soil
 # temperature four -- and a day one depth is missing is a day the surface cannot be drawn.
 #
-# `interventions` is deliberately absent. It has no admitted Parquet lane yet, so the agent returns
-# a typed Parquet refusal rather than opening a PostgreSQL fallback or fabricating a payload.
+# App-owned surfaces use their declared app readers; this table lists only Parquet products.
 SURFACE_PARQUET_LANES: Final[dict[str, tuple[str, ...]]] = {
     "burn-severity": ("burn-severity",),
     "evacuation-zones": ("evacuation-zones",),
@@ -87,6 +113,8 @@ SURFACE_PARQUET_LANES: Final[dict[str, tuple[str, ...]]] = {
     "watersheds": ("watersheds",),
     "water-gauges": ("water-gauges",),
     "weather-observations": ("weather-observations",),
+    "fire-risk": ("fire-risk",),
+    "weather-forecast": ("weather-forecast",),
     "drought-areas": ("drought",),
     "climate-field-air-temperature": (
         "climate-field-air-temperature-mean",
@@ -115,24 +143,13 @@ SURFACE_PARQUET_LANES: Final[dict[str, tuple[str, ...]]] = {
     "soil-field-vpd": ("soil-field-vpd",),
 }
 
-# The lane the four signal tools read. NOT one of the map's surface names: `signal` is the governed
-# cell-day plane the climate and soil streams are DERIVED from, so it is addressed by lane slug and
-# never by surface name. `warehouse/parquet/schema.py::SIGNAL_PLANE_STREAM` is the definition.
-SIGNAL_PLANE_LANE: Final = "signal"
-
 # The lanes `fire_history_near_point` summarises, in the order it reports them. Spelled here rather
 # than resolved through `ingest/firms.py` and `ingest/mtbs.py` as the PostgreSQL statement did:
 # those resolvers answer with a `geo.layers` row name, and a Parquet lane slug is a different
 # namespace that happens to agree today.
 FIRE_LANE_NAMES: Final = ("burn-severity", "fire-detections")
 
-# --- The rung the agent reads ------------------------------------------------------
-#
-# Every agent question is a POINT question inside a radius capped at 50 km, which is a z13 viewport
-# by any reading of `foundation/parquet/zoom.py`'s ladder. The base rung is also the only one that
-# carries `cell_id` -- the coarse rungs null it because a coarsened cell spans many source cells and
-# can honestly name none of them -- and the only one whose rows were not aggregated a second time.
-# Reading a coarse rung would answer a farm-scale question with a continent-scale average.
+# Internal point readers use z13; selection retrieval follows the caller's map zoom.
 AGENT_ZOOM_TIER: Final[ZoomTier] = 13
 
 
@@ -140,10 +157,9 @@ AGENT_ZOOM_TIER: Final[ZoomTier] = 13
 #
 # A third hand-spelled table, for the same reason the two above are hand-spelled: derived from the
 # lane names it would be wrong wherever the two namespaces disagree, and they disagree in exactly
-# the places that matter. `drought-areas` is served by the lane `drought`; all twelve climate and
-# soil field surfaces are DERIVED products of the one `signal` plane and bind no source of their
-# own, so they inherit `signal`'s binding. `interventions` is absent here as it is absent from
-# `SURFACE_PARQUET_LANES` and from the manifest -- see `foundation/region/AGENTS.md`.
+# the places that matter. `drought-areas` binds through `drought`; climate and soil products
+# bind their own surface names to their declared upstream sources. App-owned data has no
+# environmental Parquet binding; see `foundation/region/AGENTS.md`.
 #
 # `federation.md` §2: a surface whose layer this region binds no source for answers
 # `not_available_in_region` rather than an empty success. See `agent/AGENTS.md`.
@@ -158,23 +174,27 @@ SURFACE_REGION_LAYER_SLUGS: Final[dict[str, str]] = {
     "watersheds": "watersheds",
     "water-gauges": "water-gauges",
     "weather-observations": "weather-observations",
+    "fire-risk": "fire-risk",
+    "weather-forecast": "weather-forecast",
+    "land-context": "land-context",
+    "botanical-occurrences": "botanical-occurrences",
+    "botanical-richness": "botanical-occurrences",
+    "botanical-collection-effort": "botanical-occurrences",
+    "gbif-occurrences": "botanical-occurrences",
     "drought-areas": "drought",
-    "climate-field-air-temperature": "signal",
-    "climate-field-dew-point": "signal",
-    "climate-field-precipitation": "signal",
-    "climate-field-relative-humidity": "signal",
-    "climate-field-shortwave-radiation": "signal",
-    "climate-field-wind-speed": "signal",
-    "climate-field-soil-wetness-surface": "signal",
-    "climate-field-soil-wetness-root-zone": "signal",
-    "climate-field-soil-wetness-profile": "signal",
-    "soil-field-moisture": "signal",
-    "soil-field-temperature": "signal",
-    "soil-field-vpd": "signal",
+    "climate-field-air-temperature": "climate-field-air-temperature",
+    "climate-field-dew-point": "climate-field-dew-point",
+    "climate-field-precipitation": "climate-field-precipitation",
+    "climate-field-relative-humidity": "climate-field-relative-humidity",
+    "climate-field-shortwave-radiation": "climate-field-shortwave-radiation",
+    "climate-field-wind-speed": "climate-field-wind-speed",
+    "climate-field-soil-wetness-surface": "climate-field-soil-wetness-surface",
+    "climate-field-soil-wetness-root-zone": "climate-field-soil-wetness-root-zone",
+    "climate-field-soil-wetness-profile": "climate-field-soil-wetness-profile",
+    "soil-field-moisture": "soil-field-moisture",
+    "soil-field-temperature": "soil-field-temperature",
+    "soil-field-vpd": "soil-field-vpd",
 }
-
-#: The manifest layer slug the `signal` plane's own four tools read, spelled once.
-SIGNAL_PLANE_REGION_LAYER: Final = "signal"
 
 #: The manifest layer slugs `fire_history_near_point` summarises, in `FIRE_LANE_NAMES` order.
 FIRE_REGION_LAYERS: Final = ("burn-severity", "fire-detections")

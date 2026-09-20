@@ -54,13 +54,24 @@ SELECTED_DAY = "2026-03-14"
 NAIROBI_LONGITUDE = 36.8
 NAIROBI_LATITUDE = -1.3
 
-#: The six sources that serve the whole planet, which are the only ones this manifest may bind.
+#: The global source bindings the second manifest may serve.
 EXPECTED_GLOBAL_BINDINGS = {
     "fire-detections": "firms",
     "vegetation": "sentinel2_ndvi",
     "weather-observations": "open_meteo",
     "watersheds": "hydrosheds",
-    "signal": "era5_land_and_nasa_power",
+    "climate-field-air-temperature": "nasa_power",
+    "climate-field-dew-point": "nasa_power",
+    "climate-field-precipitation": "nasa_power",
+    "climate-field-relative-humidity": "nasa_power",
+    "climate-field-shortwave-radiation": "nasa_power",
+    "climate-field-soil-wetness-profile": "nasa_power",
+    "climate-field-soil-wetness-root-zone": "nasa_power",
+    "climate-field-soil-wetness-surface": "nasa_power",
+    "climate-field-wind-speed": "nasa_power",
+    "soil-field-moisture": "era5_land",
+    "soil-field-temperature": "era5_land",
+    "soil-field-vpd": "era5_land",
     "botanical-occurrences": "gbif",
 }
 

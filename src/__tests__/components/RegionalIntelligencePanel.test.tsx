@@ -35,6 +35,9 @@ const mocks = vi.hoisted(() => ({
     closePanel: vi.fn(),
     cancelAnalysis: vi.fn(),
     setError: vi.fn(),
+    analysisTimeScale: 'month',
+    analysisRangeSteps: 1,
+    setAnalysisWindow: vi.fn(),
   },
 }));
 
@@ -82,6 +85,13 @@ function assistantMessage(response: RegionalIntelligenceResponse): ChatMessage {
 }
 
 describe("RegionalIntelligencePanel strategy chips", () => {
+  it('lets the user choose the calendar scale and symmetric history range for the next question', () => {
+    renderWithProviders(<RegionalIntelligencePanel />);
+    fireEvent.change(screen.getByLabelText('Analysis time scale'), { target: { value: 'year' } });
+    expect(mocks.state.setAnalysisWindow).toHaveBeenCalledWith('year', 1);
+    fireEvent.change(screen.getByLabelText('History range on each side'), { target: { value: '3' } });
+    expect(mocks.state.setAnalysisWindow).toHaveBeenCalledWith('month', 3);
+  });
   it('shows the dated read scope beside each cited claim and keeps the associations in Markdown', () => {
     const response = baseResponse([{
       strategy: 'water_harvesting', title: 'Assess water harvesting feasibility',

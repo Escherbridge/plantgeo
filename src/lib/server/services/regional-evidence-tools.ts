@@ -5,6 +5,7 @@ import {
   UpstreamPayloadError,
 } from "@/lib/server/http/bounded-upstream";
 import { callLandContextTool, isLandContextTool, landContextTools } from "@/lib/server/services/land-context-tools";
+import { APP_MAP_SURFACES, isAppMapSurface, readBoundedAppMapEvidence } from "./regional-map-evidence";
 
 export interface RegionalEvidenceTool {
   name: string;
@@ -80,9 +81,9 @@ export async function loadRegionalEvidenceTools(
   }
   return {
     tools: [...remoteTools, ...inProcessLandContextTools],
-    surfaces: parsed.data.surfaces,
+    surfaces: [...new Set([...parsed.data.surfaces, ...APP_MAP_SURFACES])],
     featureSurfaces: parsed.data.feature_surfaces,
-    valueSurfaces: parsed.data.value_surfaces,
+    valueSurfaces: [...new Set([...parsed.data.value_surfaces, ...APP_MAP_SURFACES])],
   };
 }
 
@@ -97,6 +98,9 @@ export async function callRegionalEvidenceTool(
   // Parquet bridge below, so they work even when AGRI_PARQUET_SERVICE_URL is
   // unconfigured and carry no network transport bound.
   if (isLandContextTool(name)) return callLandContextTool(name, args);
+  if (name === "surface_evidence_for_selection" && isAppMapSurface(args.surface_name)) {
+    return JSON.stringify(await readBoundedAppMapEvidence(args, signal));
+  }
 
   const body = JSON.stringify({ name, arguments: args });
   if (new TextEncoder().encode(body).byteLength > 32 * 1024) {

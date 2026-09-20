@@ -43,7 +43,7 @@ BOISE_LATITUDE = 43.6
 
 GLOBAL_ONLY_REGION_SLUG = "global-only-fixture"
 
-#: The six PNW bindings whose source serves the whole planet, carried over unchanged. Keeping the
+#: The PNW bindings whose sources serve the whole planet. Keeping the
 #: real source slugs means `assert_region_bindings_are_servable` runs against the same coverage
 #: claims production does, so a fabricated region cannot boot on a claim the pilot could not.
 GLOBAL_LAYER_BINDINGS = (
@@ -51,7 +51,18 @@ GLOBAL_LAYER_BINDINGS = (
     LayerBinding(layer_slug="vegetation", source_slug="sentinel2_ndvi", coverage="global"),
     LayerBinding(layer_slug="weather-observations", source_slug="open_meteo", coverage="global"),
     LayerBinding(layer_slug="watersheds", source_slug="hydrosheds", coverage="global"),
-    LayerBinding(layer_slug="signal", source_slug="era5_land_and_nasa_power", coverage="global"),
+    LayerBinding(layer_slug="climate-field-air-temperature", source_slug="nasa_power", coverage="global"),
+    LayerBinding(layer_slug="climate-field-dew-point", source_slug="nasa_power", coverage="global"),
+    LayerBinding(layer_slug="climate-field-precipitation", source_slug="nasa_power", coverage="global"),
+    LayerBinding(layer_slug="climate-field-relative-humidity", source_slug="nasa_power", coverage="global"),
+    LayerBinding(layer_slug="climate-field-shortwave-radiation", source_slug="nasa_power", coverage="global"),
+    LayerBinding(layer_slug="climate-field-soil-wetness-profile", source_slug="nasa_power", coverage="global"),
+    LayerBinding(layer_slug="climate-field-soil-wetness-root-zone", source_slug="nasa_power", coverage="global"),
+    LayerBinding(layer_slug="climate-field-soil-wetness-surface", source_slug="nasa_power", coverage="global"),
+    LayerBinding(layer_slug="climate-field-wind-speed", source_slug="nasa_power", coverage="global"),
+    LayerBinding(layer_slug="soil-field-moisture", source_slug="era5_land", coverage="global"),
+    LayerBinding(layer_slug="soil-field-temperature", source_slug="era5_land", coverage="global"),
+    LayerBinding(layer_slug="soil-field-vpd", source_slug="era5_land", coverage="global"),
     LayerBinding(layer_slug="botanical-occurrences", source_slug="gbif", coverage="global"),
 )
 
@@ -77,9 +88,11 @@ UNBOUND_LAYER_SLUGS = tuple(
 PILOT_UNBOUND_LAYER_SLUGS = ("fire-risk", "land-context", "weather-forecast")
 
 #: Which agent surface name reaches each unbound layer, for the per-layer refusal proof below.
-#: `land-context` is deliberately absent: it is a reference plane read over tRPC and has no agent
-#: surface at all, so there is no tool refusal to prove for it.
+#: The metadata reader proves absence even for surfaces without an admitted numeric lane.
 UNBOUND_LAYER_AGENT_SURFACES = {
+    "fire-risk": "fire-risk",
+    "land-context": "land-context",
+    "weather-forecast": "weather-forecast",
     "burn-severity": "burn-severity",
     "drought": "drought-areas",
     "evacuation-zones": "evacuation-zones",
@@ -209,19 +222,8 @@ def test_the_capabilities_payload_marks_the_regional_layers_unbound(
 
 
 def test_every_unbound_layer_with_an_agent_surface_is_covered_below() -> None:
-    """The parametrized refusal proof walks a hand-spelled map; this is what keeps it complete.
-
-    Three layers may be missing from it, and only because none of them has an agent surface to
-    refuse through -- any OTHER unbound layer dropping out of the map would silently shrink the
-    proof. `land-context` is a reference plane read over tRPC. `fire-risk` and `weather-forecast`
-    are written by `services/plantgeo-ml-service` and reach no agent tool in this service yet; when
-    one gains a surface it belongs in the map, and this assertion is what will say so.
-    """
-    assert set(UNBOUND_LAYER_SLUGS) - set(UNBOUND_LAYER_AGENT_SURFACES) == {
-        "fire-risk",
-        "land-context",
-        "weather-forecast",
-    }
+    """Every unavailable platform layer remains discoverable and is tested as a typed refusal."""
+    assert set(UNBOUND_LAYER_SLUGS) == set(UNBOUND_LAYER_AGENT_SURFACES)
 
 
 @pytest.mark.parametrize("layer_slug", sorted(UNBOUND_LAYER_AGENT_SURFACES))

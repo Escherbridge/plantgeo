@@ -75,7 +75,7 @@ type ReportEvidenceIssue = { code: 'custom'; path: (string | number)[]; message:
 
 function isMeasurementRead(call: RegionalAnalysisEvidence['toolCalls'][number]): boolean {
   return call.status === 'observed' && ![
-    'observation_coverage_on_day', 'observation_temporal_neighbors', 'nearest_signal_cells',
+    'observation_coverage_on_day', 'observation_temporal_neighbors', 'list_environmental_layers',
   ].includes(call.tool);
 }
 

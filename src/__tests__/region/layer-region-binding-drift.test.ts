@@ -23,7 +23,7 @@ vi.mock("@/lib/region/region", async (importOriginal) => {
     ...actual,
     getRegion: () => ({
       slug: "fabricated-narrow-vocabulary",
-      platformLayers: ["soil-survey", "signal"],
+      platformLayers: ["soil-survey", "soil-field-vpd"],
       enabledLayers: [{ layerSlug: "soil-survey", sourceSlug: "ssurgo", coverage: "regional" }],
     }),
   };

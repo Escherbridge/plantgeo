@@ -9,6 +9,7 @@ from dataclasses import replace
 from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Final
 from unittest.mock import AsyncMock
 
@@ -433,6 +434,7 @@ async def test_provider_quota_stops_queued_requests_and_keeps_completed_response
     before that stays held, and a second call for the same turn asks nothing: the circuit is open.
     """
     slept = no_sleep(monkeypatch)
+    monkeypatch.setattr(climate_source, "time", SimpleNamespace(monotonic=lambda: 1000.0))
     cache = ClimateSourceCache(request_budget=len(support.cells) * 2)
     response = cell_day_response(support.cells[0], day=DAY)
     fetch = AsyncMock(side_effect=[response, *quota_answers()])
@@ -445,11 +447,7 @@ async def test_provider_quota_stops_queued_requests_and_keeps_completed_response
     assert fetch.await_count == 1 + TERMINAL_QUOTA_ANSWERS, "one held answer, then every pause spent on one cell"
     assert cache.requests_spent == 1 + TERMINAL_QUOTA_ANSWERS
     assert cache.quota_pauses == NASA_POWER_QUOTA_PAUSE_LIMIT
-    # The recorded sleep is `resume_at - monotonic()`, two clock reads apart: exact on Windows's ~15 ms
-    # clock, a few microseconds short on Linux. The claim is "the whole pause", so compare to the ms.
-    assert slept == pytest.approx(
-        [quota_pause_seconds(pause) for pause in range(NASA_POWER_QUOTA_PAUSE_LIMIT)], abs=1e-3
-    )
+    assert slept == [quota_pause_seconds(pause) for pause in range(NASA_POWER_QUOTA_PAUSE_LIMIT)]
     assert list(cache.responses.values()) == [response]
 
 

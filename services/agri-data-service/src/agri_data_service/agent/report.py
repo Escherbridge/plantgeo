@@ -50,6 +50,21 @@ RegionalToolEvidenceSource = Literal[
     "soil-field-moisture",
     "soil-field-temperature",
     "soil-field-vpd",
+    "soil-phh2o",
+    "soil-soc",
+    "soil-nitrogen",
+    "soil-bdod",
+    "soil-cec",
+    "soil-ocd",
+    "botanical-occurrences",
+    "botanical-richness",
+    "botanical-collection-effort",
+    "gbif-occurrences",
+    "demand-heatmap",
+    "strategy-recommendations",
+    "land-context",
+    "fire-risk",
+    "weather-forecast",
 ]
 RegionalClaimEvidenceSource = RegionalEvidenceSource | RegionalToolEvidenceSource
 
@@ -115,7 +130,7 @@ class RiskSummary(EvidenceClaim):
     level: RiskLevel
     headline: str
     factors: list[str]
-    evidenceSources: list[RegionalClaimEvidenceSource] = Field(max_length=33)
+    evidenceSources: list[RegionalClaimEvidenceSource] = Field(max_length=64)
 
 
 class Observation(EvidenceClaim):

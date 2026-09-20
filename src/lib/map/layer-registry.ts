@@ -160,27 +160,7 @@ const CLIMATE_SIGNAL_ICONS: Readonly<Record<ClimateFieldSignalId, LayerIconName>
   "soil-wetness-profile": "sprout",
 };
 
-/**
- * One registry row per NASA POWER signal, read through `environmental.getClimateField`.
- *
- * The second lane served out of the MODEL plane (`agri.signal_observation`), so like the three
- * ERA5-Land fields above, each row's capability is published as a STREAM -- the days
- * `geo.climate_field_observation` can answer for, per signal -- rather than out of `geo.layers`.
- *
- * NINE rows since 2026-08-10, where one `Climate` row with a signal picker stood before. The
- * old shape was argued for on the grounds that nine signals are "nine answers to what was the
- * weather, only one of which can be painted over a cell at a time", and the second half of that
- * is still true of a FILLED field -- which is why `renderForms` exists and why only air
- * temperature defaults to `field`. The first half was the mistake: one toggle means one
- * `warehouseLayerName`, one capability, one axis, and that axis was computed over every signal
- * in the lane unioned together. A four-cell pilot and a 397-cell field were handed the same
- * scrubbable days and the same "latest observed" date. Nine rows is what makes each axis
- * describe the signal it belongs to.
- *
- * DERIVED from the signal table, not hand-listed: the label, the stream name and the toggle id
- * all come from `climate-field.ts`, so a tenth signal appears in the dock, on the map and on
- * the slider with no edit here beyond one glyph above.
- */
+/** One independently dated NASA POWER map layer per measure; see map/AGENTS.md. */
 const CLIMATE_FIELD_ENTRIES = CLIMATE_FIELD_SIGNAL_IDS.reduce((entries, signal) => {
   const definition = CLIMATE_FIELD_SIGNALS[signal];
   entries[definition.toggleId] = {
@@ -443,13 +423,7 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     panelId: "soil",
     permanentlyUnavailableReason: null,
   },
-  // ERA5-Land volumetric soil water, read through environmental.getSoilField. The first layer
-  // served out of the MODEL plane (agri.signal_observation) rather than geo.features, so its
-  // capability is published as a STREAM -- the days `geo.soil_field_observation` can answer
-  // for this measure -- rather than out of geo.layers. The stream is per MEASURE, not per lane:
-  // moisture, temperature and vpd are three toggles with three sliders, so one shared name
-  // would put three rows on one axis and one row's scrub would move the other two.
-  // See SoilFieldLayer in layers/SoilFieldLayer.tsx.
+  // ERA5-Land soil moisture has its own governed Parquet reader and date axis.
   "soil-moisture": {
     toggleId: "soil-moisture",
     // Read off the measure vocabulary rather than restated: SoilDetails already captioned

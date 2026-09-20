@@ -13,18 +13,12 @@ import type { RegionalIntelligenceResponse } from '@/lib/regional-intelligence';
 import { readRegionalAnalysisEvidence } from '@/lib/regional-analysis-evidence';
 import type { SliderCapabilities } from '@/types/time-slider';
 import type { LocationPrecision } from '@/stores/regional-intelligence-store';
+import { useMapStore } from '@/stores/map-store';
 
 const DEFAULT_QUESTION = 'Analyze this location';
 
-/**
- * The most layer rows one request posts. Mirrors MAX_VIEWED_LAYERS in the route.
- *
- * The list is sliced here rather than left to the server's bound, because the server answers
- * an oversized array with a 400 and the user loses the whole analysis over a reporting detail.
- * The registry holds 20 toggles, so this can only ever bite a registry that grew past the
- * server's bound before both halves redeployed.
- */
-const MAX_VIEWED_LAYERS_POSTED = 24;
+/** Bounded catalogue headroom; see hooks/AGENTS.md for selection propagation. */
+const MAX_VIEWED_LAYERS_POSTED = 64;
 
 /** One layer row's own day, as posted with the analysis request. */
 interface ViewedLayerReport {
@@ -175,6 +169,16 @@ export function useRegionalIntelligence() {
       const viewedLayers = viewedLayersRef.current.length
         ? viewedLayersRef.current
         : undefined;
+      const selectionState = useRegionalIntelligenceStore.getState();
+      const analysisSelection = {
+        timeScale: selectionState.analysisTimeScale,
+        rangeSteps: selectionState.analysisRangeSteps,
+        zoom: Math.max(0, Math.min(22, useMapStore.getState().viewport.zoom)),
+        layerDays: {
+          ...Object.fromEntries((viewedLayers ?? []).map(({ layer, date }) => [layer, date])),
+          ...useTimeSliderStore.getState().layerDates,
+        },
+      };
 
       try {
         // Prior turns live server-side under conversationId; the client never
@@ -191,6 +195,7 @@ export function useRegionalIntelligence() {
             question,
             conversationId: conversationId ?? undefined,
             viewedLayers,
+            analysisSelection,
             locationConsent: { precision, confirmed: true },
           }),
           signal: controller.signal,

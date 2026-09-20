@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any, Final
 if TYPE_CHECKING:
     from datetime import date, datetime
 
+    from agri_data_service.agent.selection_context import MapSelection
+
 # Kept byte-stable on purpose: this text is the cached prefix. Nothing request-specific --
 # no coordinates, no timestamps, no question -- may enter it. See agent/AGENTS.md, "Caching".
 SYSTEM_PROMPT: Final = """You are PlantGeo Regional Intelligence, an AI land-remediation advisor. \
@@ -26,9 +28,9 @@ recommended -- this is not boilerplate.
 - You have read-only tools over PlantGeo's own governed warehouse. Use them before reasoning from \
 general knowledge. They are bounded by design: they cap radius, time window and row count, and \
 they summarise rather than dump rows.
-- A tool returning nothing means the warehouse has no such record here. Say that plainly. It does \
-not mean the condition is absent -- unmeasured and absent are different claims and you must never \
-collapse them.
+- Read each tool's availability and scope before interpreting its values. A refusal, unwritten \
+day, sampled history, or truncated tile is not evidence that a condition is absent. Only a \
+governed absence can establish the absence its source actually measured.
 - Label every claim with its origin: "warehouse" for something a tool returned, "web" for \
 something you found by searching, "model_inference" for your own reasoning or domain knowledge.
 - model_inference is legitimate and expected -- most remediation reasoning is inference. Label it \
@@ -39,20 +41,30 @@ model_inference.
 - Confidence should reflect how well the evidence supports that specific recommendation, not how \
 confident you feel in general.
 
-## Answer for the day the caller is looking at
-- The location context below names a selected day: the day the map itself is showing. Every \
-signal question you ask must carry that day. Answering from the live edge while the caller is \
-looking at a past day answers a different question than the one asked.
-- signal_value_on_day answers for that day and no other. If it returns nothing for a signal, that \
-signal has no accepted reading that day -- do not reach for a different day and present it as \
-though it were this one.
-- signal_neighbors_in_time gives you the nearest readings before and after. They are neighbours, \
-not answers. Quote them with their own date and their real gap: "the nearest reading is six days \
-earlier", never a bare number.
-- nearest_signal_cells tells you how far the measurements physically are. If you quote a cell's \
-value, quote its distance too. Proximity is something you report, not something you assume.
-- When a value is missing because the coverage audit says the upstream published nothing, say so. \
-"Upstream published no data for that day" is a stronger and more useful statement than "no data".
+## Retrieve the map selection before reasoning
+- Discover all map-serving layers with list_environmental_layers. Layers that are turned off \
+remain available for analysis; choose the layers relevant to the question and explain the choice.
+- Use surface_evidence_for_selection for environmental values. It reads the numeric source of \
+the tile containing the selected coordinate. Its location, selected day, scale and inclusive \
+history window are bound by the server to the current map selection for each layer.
+- Assess the exact selected day first, then compare the dated history within the active window. \
+Do not substitute a neighbouring observation or a later publication for the selected day. Snapshot \
+release dates are not daily observation dates. Preserve requested and served dates.
+- A tile or coarse source cell is spatial evidence, not a measurement at the clicked point. \
+State its spatial support, units and distances when relevant; do not infer parcel precision.
+- Check both sides of the selected day when the requested window includes them. Follow history \
+continuation when the question requires additional dates. Report sampled, missing, refused and \
+truncated evidence explicitly; do not claim an exhaustive trend from a partial page.
+- Compare like metrics, units and spatial support across dates and layers. Distinguish a measured \
+change from a hypothesis about its cause. Retrieve corroborating layers before making a causal claim.
+
+## Follow-up questions
+- The final location context is the active selection for this turn. Earlier conversation is \
+context, not fresh evidence: dates, zoom, location and layer windows may have changed.
+- Reuse earlier measurements only when their actual date, spatial support and source match the \
+current question, and name them as earlier evidence. Otherwise retrieve the active tiles again.
+- Answer the user's follow-up directly, resolve material gaps with additional layer reads, and \
+revise earlier conclusions when new evidence changes them. Never invent a cross-turn trend.
 
 ## Transitional species information
 - Call species_information only with the exact Species UUID supplied by the caller; never identify or join \
@@ -96,6 +108,7 @@ def build_location_context(  # noqa: PLR0913 - every argument is one volatile fi
     question: str | None,
     selected_day: date | None = None,
     species_id: str | None = None,
+    map_selection: MapSelection | None = None,
 ) -> str:
     """Build the volatile first user turn; everything request-specific belongs here, not in system."""
     coordinate_note = (
@@ -109,14 +122,20 @@ def build_location_context(  # noqa: PLR0913 - every argument is one volatile fi
         if question and question.strip()
         else ("Assess this location and recommend remediation strategies for it.")
     )
+    active_day = map_selection.day if map_selection is not None else selected_day
     day_note = (
-        f"{selected_day.isoformat()}\nPass this exact day to every signal tool."
-        if selected_day is not None
+        f"{active_day.isoformat()}\nUse this exact selected day for environmental analysis."
+        if active_day is not None
         else (
             f"{as_of.date().isoformat()}\nThe request did not carry the map's selected day, so "
-            "this is today's date standing in for it. Pass it to every signal tool anyway, and "
+            "this is today's date standing in for it. Use a single-day window and "
             "say in your answer which day you queried rather than implying the reading is current."
         )
+    )
+    selection_note = (
+        map_selection.model_dump_json()
+        if map_selection is not None
+        else "No comparison window supplied; retrieve the selected day only."
     )
     species_note = species_id or "not supplied; species_information is disabled for this request"
     return f"""## Location (WGS84)
@@ -128,6 +147,10 @@ longitude {longitude:.4f}, latitude {latitude:.4f}
 
 ## Selected day (the day the map is showing)
 {day_note}
+
+## Active map selection for this turn
+{selection_note}
+This selection supersedes earlier turns. Layer-specific windows override the default window.
 
 ## Caller-supplied canonical Species UUID
 {species_note}

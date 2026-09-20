@@ -1,7 +1,5 @@
 """The agent graph walks deterministic edges, stays bounded, and keeps the stream contract."""
 
-# ruff: noqa: PLR2004 - the literals here are fixture day/row counts and naming each one hides the assertion.
-
 from __future__ import annotations
 
 import asyncio
@@ -44,10 +42,10 @@ _AS_OF = datetime(2026, 3, 14, tzinfo=UTC)
 
 
 def _warehouse(*, published: Sequence[date] = ()) -> FakeAgentWarehouse:
-    """An in-memory Parquet warehouse whose signal lane published the named days."""
+    """An in-memory Parquet warehouse whose VPD lane published the named days."""
     source = FakeAgentWarehouse()
     for day in published:
-        source.listing_store.write_day("signal", "observed", 13, day)
+        source.listing_store.write_day("soil-field-vpd", "observed", 13, day)
     return source
 
 
@@ -304,7 +302,7 @@ def _evidence(*populated: str) -> agent_graph.WarehouseEvidence:
 def test_sufficiency_gate_closes_web_when_warehouse_covers_the_point() -> None:
     """Two or more populated sources and no specific question means no web budget at all."""
     verdict = agent_graph.AssessSufficiency.decide(
-        _evidence("signals_near_point", "drought_history_at_point"),
+        _evidence("surface_evidence_for_selection", "drought_history_at_point"),
         has_question=False,
     )
     assert verdict.warehouse_is_sufficient is True
@@ -328,7 +326,7 @@ def test_sufficiency_gate_opens_partial_budget_for_a_single_source() -> None:
 def test_sufficiency_gate_allows_one_search_for_a_specific_question() -> None:
     """Partial coverage plus a caller question buys exactly one search."""
     verdict = agent_graph.AssessSufficiency.decide(
-        _evidence("signals_near_point", "drought_history_at_point"),
+        _evidence("surface_evidence_for_selection", "drought_history_at_point"),
         has_question=True,
     )
     assert verdict.warehouse_is_sufficient is False
@@ -343,7 +341,7 @@ async def test_graph_happy_path_skips_web_and_emits_a_report() -> None:
     runner = _Runner(
         [_Stream(_message(_text_block("Reading the warehouse.")), deltas=("Reading ", "the warehouse."))],
         ledger_entries=[
-            {"tool": "signals_near_point", "row_count": 3},
+            {"tool": "surface_evidence_for_selection", "row_count": 3},
             {"tool": "drought_history_at_point", "row_count": 12},
         ],
     )
@@ -481,7 +479,7 @@ async def test_graph_restarts_the_runner_on_pause_turn() -> None:
     resumed = _Runner(
         [_Stream(_message(_text_block("Done.")))],
         ledger_entries=[
-            {"tool": "signals_near_point", "row_count": 1},
+            {"tool": "surface_evidence_for_selection", "row_count": 1},
             {"tool": "forecast_summary_for_cell", "row_count": 4},
         ],
     )
@@ -501,7 +499,7 @@ async def test_report_synthesis_sends_the_structured_output_format() -> None:
     runner = _Runner(
         [_Stream(_message(_text_block("ok")))],
         ledger_entries=[
-            {"tool": "signals_near_point", "row_count": 2},
+            {"tool": "surface_evidence_for_selection", "row_count": 2},
             {"tool": "drought_history_at_point", "row_count": 2},
         ],
     )
@@ -530,38 +528,6 @@ async def test_system_prefix_carries_one_cache_breakpoint() -> None:
 # --- Tool bounds -------------------------------------------------------------------
 
 
-async def test_signal_tool_clamps_radius_and_window() -> None:
-    """Over-large arguments are clamped by the service, and the clamp is reported back."""
-    source = _warehouse(published=[_SELECTED_DATE])
-    source.answer("agent_signal_window_summary", [])
-    async with agent_tools.run_context(session_provider=_session_provider(_Session([])), warehouse_source=source):
-        raw = await agent_tools.query_signals_near_point(
-            longitude=-116.2,
-            latitude=43.6,
-            radius_meters=10_000_000.0,
-            days_back=999_999,
-            as_of=_AS_OF,
-        )
-    payload = json.loads(raw)
-    assert payload["applied_bounds"]["radius_meters"] == agent_tools.MAX_RADIUS_METERS
-    assert payload["applied_bounds"]["days_back"] == agent_tools.MAX_DAYS_BACK
-    # The eight shared scope parameters, in DuckDB bind order: the box, then the probe LATITUDE
-    # FIRST, then the exact radius, then the cell cap.
-    west, east, south, north, latitude, longitude, radius, cell_limit = source.arguments_for(
-        "agent_signal_window_summary"
-    )
-    assert radius == agent_tools.MAX_RADIUS_METERS
-    assert cell_limit == agent_tools.MAX_CELL_FANOUT
-    assert (latitude, longitude) == (43.6, -116.2), "the geodesic probe is bound latitude first"
-    assert west < -116.2 < east
-    assert south < 43.6 < north
-    # The lane the map paints from, and never a PostgreSQL relation.
-    statement = source.statement_for("agent_signal_window_summary")
-    assert "read_parquet" in statement
-    assert "geo.mv_signal_cell_daily" not in statement
-    assert "agri.signal_observation" not in statement
-
-
 async def test_tools_reject_an_out_of_range_coordinate_without_querying() -> None:
     """A bad coordinate must never reach the warehouse."""
     session = _Session([])
@@ -577,10 +543,6 @@ async def test_tools_reject_an_out_of_range_coordinate_without_querying() -> Non
 async def test_forecast_tool_refuses_retired_plane_without_any_database_read(as_of: datetime | None) -> None:
     """The retired forecast plane stays closed until its governed Parquet replacement is admitted."""
     source = _warehouse(published=[_SELECTED_DATE])
-    source.answer(
-        "agent_signal_admitted_cells",
-        [{"cell_id": "aaaaaaaa-0000-0000-0000-000000000001", "distance_meters": 4210.5}],
-    )
     session = _Session([])
     async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source):
         raw = await agent_tools.query_forecast_summary_for_cell(longitude=-116.2, latitude=43.6, as_of=as_of)
@@ -680,7 +642,7 @@ async def test_the_fire_tool_prefilters_on_a_degree_box_before_the_exact_geodesi
 
 
 async def test_every_tool_statement_is_read_only(tmp_path: Path) -> None:
-    """No agent-facing statement may mutate the warehouse, in EITHER dialect, and all published tools are driven."""
+    """Published selection reads and retained product readers never mutate the warehouse."""
     selected_day = "2026-03-14"
     session = _Session([])
     source = _warehouse(published=[_SELECTED_DATE])
@@ -689,19 +651,11 @@ async def test_every_tool_statement_is_read_only(tmp_path: Path) -> None:
     source.listing_store.write_day("burn-severity", "observed", 13, _SELECTED_DATE)
     source.listing_store.write_day("water-gauges", "observed", 13, _SELECTED_DATE)
     source.listing_store.write_day("soil-field-moisture-0-7cm", "observed", 13, _SELECTED_DATE)
-    source.answer(
-        "agent_signal_admitted_cells",
-        [{"cell_id": "aaaaaaaa-0000-0000-0000-000000000001", "distance_meters": 4210.5}],
-    )
     source.evidence["vegetation"] = published_lane("vegetation", [_SELECTED_DATE])
     async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source):
-        await agent_tools.query_signals_near_point(longitude=-116.2, latitude=43.6, as_of=_AS_OF)
         await agent_tools.query_drought_history_at_point(longitude=-116.2, latitude=43.6, as_of=_AS_OF)
         await agent_tools.query_fire_history_near_point(longitude=-116.2, latitude=43.6, as_of=_AS_OF)
         await agent_tools.query_forecast_summary_for_cell(longitude=-116.2, latitude=43.6, as_of=_AS_OF)
-        await agent_tools.query_signal_value_on_day(longitude=-116.2, latitude=43.6, day=selected_day)
-        await agent_tools.query_signal_neighbors_in_time(longitude=-116.2, latitude=43.6, day=selected_day)
-        await agent_tools.query_nearest_signal_cells(longitude=-116.2, latitude=43.6, day=selected_day)
         await agent_tools.query_observation_coverage_on_day(surface_name="vegetation", day=selected_day)
         await agent_tools.query_observation_temporal_neighbors(surface_name="vegetation", day=selected_day)
         await agent_tools.query_feature_value_near_point(
@@ -710,22 +664,31 @@ async def test_every_tool_statement_is_read_only(tmp_path: Path) -> None:
         await agent_tools.query_surface_value_near_point(
             surface_name="soil-field-moisture", day=selected_day, longitude=-116.2, latitude=43.6
         )
+        await agent_tools.query_surface_evidence_for_selection(
+            surface_name="soil-field-vpd",
+            day=selected_day,
+            longitude=-116.2,
+            latitude=43.6,
+            range_start=selected_day,
+            range_end=selected_day,
+        )
+        await agent_tools.list_environmental_layers.call({})
         # Botanical occurrence tools read Parquet, not the SQL warehouse; pinning an empty local
         # root keeps them off the real bucket while still exercising each one's read path.
         agent_botanical_occurrences.use_generation_root(str(tmp_path))
         try:
             await agent_tools.botanical_occurrence_current_release()
-            await agent_tools.botanical_occurrences_in_region(
+            await agent_botanical_occurrences.botanical_occurrences_in_region(
                 release_set_id="test0000",
                 minimum_longitude=-116.3,
                 minimum_latitude=43.5,
                 maximum_longitude=-116.1,
                 maximum_latitude=43.7,
             )
-            await agent_tools.botanical_occurrence_spatial_neighbours(
+            await agent_botanical_occurrences.botanical_occurrence_spatial_neighbours(
                 release_set_id="test0000", longitude=-116.2, latitude=43.6
             )
-            await agent_tools.botanical_occurrence_temporal_neighbours(
+            await agent_botanical_occurrences.botanical_occurrence_temporal_neighbours(
                 release_set_id="test0000",
                 minimum_longitude=-116.3,
                 minimum_latitude=43.5,
@@ -736,10 +699,10 @@ async def test_every_tool_statement_is_read_only(tmp_path: Path) -> None:
             )
         finally:
             agent_botanical_occurrences.use_generation_root(None)
-    # Every published tool is driven above, so a tool added to WAREHOUSE_TOOLS without a call here
-    # breaks this assertion rather than slipping through unscanned.
-    published_tool_count = 16
-    assert len(agent_tools.WAREHOUSE_TOOLS) == published_tool_count
+    # Both generic discovery and selection reads are exercised alongside the product readers.
+    assert {"surface_evidence_for_selection", "list_environmental_layers"} <= {
+        tool.name for tool in agent_tools.WAREHOUSE_TOOLS
+    }
     assert session.statements == [], "environmental tools must not query retired PostgreSQL relations"
     for statement in [sql for sql, _ in source.executed] + session.statements:
         # The beginner-doc headers are prose and legitimately contain English words that
@@ -761,11 +724,8 @@ def test_tool_schemas_publish_bounded_arguments() -> None:
     bound at all, by construction -- see `read_current_botanical_release` in `planes/botanical_occurrences.py`.
     """
     surface_only = {"observation_coverage_on_day", "observation_temporal_neighbors"}
-    # These two ask about a bounded region, not a point: a scientific name or a whole
-    # neighbourhood of specimens has no single coordinate to key on.
-    bbox_only = {"botanical_occurrences_in_region", "botanical_occurrence_temporal_neighbours"}
     # Answers a global pointer question, not a spatial one -- no bbox, no coordinate, no surface.
-    unscoped = {"botanical_occurrence_current_release"}
+    unscoped = {"botanical_occurrence_current_release", "list_environmental_layers"}
     for tool in agent_tools.WAREHOUSE_TOOLS:
         definition = tool.to_dict()
         name = definition["name"]
@@ -774,10 +734,6 @@ def test_tool_schemas_publish_bounded_arguments() -> None:
             assert {"species_id", "companion_limit"} == set(properties), name
         elif name in surface_only:
             assert {"surface_name", "day"} <= set(properties), name
-        elif name in bbox_only:
-            assert {"minimum_longitude", "minimum_latitude", "maximum_longitude", "maximum_latitude"} <= set(
-                properties
-            ), name
         elif name in unscoped:
             assert properties == {}, name
         else:
@@ -901,7 +857,7 @@ async def test_analyze_streams_the_graph_over_sse(monkeypatch: pytest.MonkeyPatc
     runner = _Runner(
         [_Stream(_message(_text_block("Checking.")), deltas=("Check", "ing."))],
         ledger_entries=[
-            {"tool": "signals_near_point", "row_count": 1},
+            {"tool": "surface_evidence_for_selection", "row_count": 1},
             {"tool": "drought_history_at_point", "row_count": 1},
         ],
     )

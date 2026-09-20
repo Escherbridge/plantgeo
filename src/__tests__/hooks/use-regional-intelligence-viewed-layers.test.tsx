@@ -10,6 +10,7 @@ vi.mock("@/lib/map/layer-toggle-context", () => ({
 import { useRegionalIntelligence } from "@/hooks/useRegionalIntelligence";
 import { useRegionalIntelligenceStore } from '@/stores/regional-intelligence-store';
 import { useTimeSliderStore } from "@/stores/time-slider-store";
+import { useMapStore } from '@/stores/map-store';
 import type { SliderCapabilities } from "@/types/time-slider";
 
 const FIRE_COVERAGE_GAP = { from: "2023-03-01", to: "2025-11-05" };
@@ -77,7 +78,8 @@ beforeEach(() => {
     ...globalThis.crypto,
     randomUUID: () => "00000000-0000-4000-8000-000000000000",
   });
-  useTimeSliderStore.setState({ capabilities });
+  useTimeSliderStore.setState({ capabilities, layerDates: {} });
+  useRegionalIntelligenceStore.getState().setAnalysisWindow('month', 1);
   mocks.useViewedLayerDays.mockReturnValue([]);
 });
 
@@ -87,6 +89,25 @@ afterEach(() => {
 });
 
 describe("posting the days the user is viewing with an analysis request", () => {
+  it('recomputes hidden selected days, history scale and zoom for each follow-up', async () => {
+    const fetchMock = refusingFetch();
+    vi.stubGlobal('fetch', fetchMock);
+    useRegionalIntelligenceStore.getState().openPanel(44, -116, 'exact');
+    useTimeSliderStore.setState({ layerDates: { 'soil-vpd': '2024-02-29' } });
+    useMapStore.getState().setViewport({ zoom: 8.5 });
+    const { result } = renderHook(() => useRegionalIntelligence());
+    await act(async () => { await result.current.sendFollowUp('Explain VPD'); });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).analysisSelection).toEqual({
+      timeScale: 'month', rangeSteps: 1, zoom: 8.5, layerDays: { 'soil-vpd': '2024-02-29' },
+    });
+    useRegionalIntelligenceStore.getState().setAnalysisWindow('year', 3);
+    useTimeSliderStore.setState({ layerDates: { 'soil-vpd': '2020-06-01' } });
+    useMapStore.getState().setViewport({ zoom: 12 });
+    await act(async () => { await result.current.sendFollowUp('Compare this window'); });
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).analysisSelection).toEqual({
+      timeScale: 'year', rangeSteps: 3, zoom: 12, layerDays: { 'soil-vpd': '2020-06-01' },
+    });
+  });
   it('receives server evidence updates and clears prior request evidence before a follow-up', async () => {
     const store = useRegionalIntelligenceStore.getState();
     store.openPanel(44, -116, 'approximate');

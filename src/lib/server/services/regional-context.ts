@@ -1,6 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { haversineDistance } from "@/lib/map/measurement";
 import type { SoilProperties } from "@/lib/server/services/soilgrids";
+import type { RegionalAnalysisSelection } from '@/lib/regional-analysis-selection';
 import { db } from "@/lib/server/db";
 import { features, layers } from "@/lib/server/db/schema";
 import { presentParquetBurnSeverity } from "@/lib/environmental/parquet-presentation";
@@ -303,6 +304,8 @@ export interface ViewedLayerReading {
 
 /** Everything the agent needs to know about WHEN the payload it is holding describes. */
 export interface TemporalContext {
+  analysisSelection?: RegionalAnalysisSelection;
+  selectionEvidenceOnly?: true;
   /** The server's own today, so every viewed day is anchored to a clock the agent can see. */
   serverCurrentDate: string;
   /** True when the client named no rows: an older client, or nothing visible. */
@@ -877,8 +880,32 @@ interface SourceReadState {
 export async function assembleRegionalContext(
   lat: number,
   lon: number,
-  viewedLayers: ViewedLayerRequest[] = []
+  viewedLayers: ViewedLayerRequest[] = [],
+  selection?: RegionalAnalysisSelection,
 ): Promise<RegionalContextResult> {
+  if (selection) {
+    return {
+      payload: {
+        location: { lat, lon, geohash: `${lat.toFixed(2)}_${lon.toFixed(2)}` },
+        strategyRecommendations: null, strategyContext: [], communityProposals: [],
+        soilProperties: null, waterScarcity: null, weather: null, fireDetections: null,
+        firePerimeters: null, mtbsPerimeters: null, carbonPotential: null,
+      },
+      dataFreshness: {}, contextIsEmpty: true, cacheHit: false,
+      temporalContext: {
+        serverCurrentDate: serverCurrentDate(), viewedLayersUnreported: viewedLayers.length === 0,
+        selectionEvidenceOnly: true, analysisSelection: selection,
+        viewedDates: [...new Set(viewedLayers.map((row) => row.date))].sort(),
+        sourcesServedAsOfLatest: [],
+        readings: viewedLayers.map((row) => ({
+          layer: row.layer, viewedDate: selection.layerDays[row.layer] ?? row.date,
+          clientReportsDataOnDate: row.hasDataOnDate, evidenceSource: null,
+          outcome: 'not_represented_in_payload', reason: 'Read through the selected tile evidence workflow.',
+          clientClaimContradicted: false, setCorrespondence: 'no_payload_block_for_this_row',
+        })),
+      },
+    };
+  }
   const west = Math.max(-180, lon - CONTEXT_RADIUS_DEGREES);
   const south = Math.max(-90, lat - CONTEXT_RADIUS_DEGREES);
   const east = Math.min(180, lon + CONTEXT_RADIUS_DEGREES);

@@ -7,7 +7,9 @@ const mocks = vi.hoisted(() => ({ load: vi.fn(), call: vi.fn() }));
 vi.mock('@/lib/server/services/regional-evidence-tools', () => ({
   loadRegionalEvidenceTools: mocks.load, callRegionalEvidenceTool: mocks.call,
 }));
-import { boundedEvidence, evidenceResultStatus, prepareRegionalAnalysis, REGIONAL_ANALYSIS_PRIORITY_SURFACES, regionalEvidenceAuditCall, regionalEvidenceDay, regionalEvidenceStageStatus, STRATEGY_SCREENING } from '@/lib/server/services/regional-analysis-workflow';
+import { bindRegionalEvidenceArguments, boundedEvidence, evidenceResultStatus, prepareRegionalAnalysis, REGIONAL_ANALYSIS_PRIORITY_SURFACES, regionalEvidenceAuditCall, regionalEvidenceDay, regionalEvidenceStageStatus, STRATEGY_SCREENING } from '@/lib/server/services/regional-analysis-workflow';
+import { analysisDateRange } from '@/lib/regional-analysis-selection';
+import { LAYER_REGISTRY } from '@/lib/map/layer-registry';
 import { reportWarehouseEvidenceIssues } from '@/lib/server/services/remediation-report';
 
 const payload: RegionalContextPayload = {
@@ -32,7 +34,7 @@ const temporal: TemporalContext = {
   ],
   viewedDates: ['2022-06-15', '2022-06-16', '2022-06-17', '2023-06-15', '2024-06-15'], sourcesServedAsOfLatest: [],
 };
-const toolNames = ['surface_value_near_point', 'observation_coverage_on_day', 'drought_history_at_point', 'fire_history_near_point', 'observation_temporal_neighbors'];
+const toolNames = ['surface_evidence_for_selection', 'list_environmental_layers'];
 
 beforeEach(() => {
   mocks.load.mockResolvedValue({ tools: toolNames.map((name) => ({ name, description: name, input_schema: {} })), surfaces: [...REGIONAL_TOOL_EVIDENCE_SOURCES], featureSurfaces: [], valueSurfaces: [] });
@@ -41,10 +43,11 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.resetAllMocks(); });
 
 describe('regional evidence graph', () => {
-  it('attempts every catalogue surface before dated historical and explicit regional comparisons', async () => {
+  it('prefetches relevant exact tiles and active history while keeping the full layer catalogue available', async () => {
     const result = await prepareRegionalAnalysis(payload, temporal);
-    expect(result.evidence.toolCalls.filter((call) => call.stage === 'local').map((call) => call.source).sort()).toEqual([...REGIONAL_TOOL_EVIDENCE_SOURCES].sort());
-    expect(result.evidence.stages.map((stage) => stage.id)).toEqual(['inventory', 'local', 'temporal', 'regional', 'strategies']);
+    expect(result.evidence.toolCalls.filter((call) => call.stage === 'local')).toHaveLength(6);
+    expect(JSON.parse(result.context).availableLayers).toEqual([...REGIONAL_TOOL_EVIDENCE_SOURCES]);
+    expect(result.evidence.stages.map((stage) => stage.id)).toEqual(['inventory', 'local', 'temporal', 'strategies']);
     const local = result.evidence.toolCalls.filter((call) => call.stage === 'local');
     expect(local.find((call) => call.source === 'climate-field-precipitation')?.selectedDate).toBe('2024-06-15');
     expect(local.find((call) => call.source === 'climate-field-soil-wetness-root-zone')?.selectedDate).toBe('2023-06-15');
@@ -56,14 +59,12 @@ describe('regional evidence graph', () => {
     ]));
     const past = result.evidence.toolCalls.filter((call) => call.stage === 'temporal');
     expect(past).toEqual(expect.arrayContaining([
-      expect.objectContaining({ source: 'climate-field-precipitation', selectedDate: '2023-06-15' }),
-      expect.objectContaining({ source: 'climate-field-soil-wetness-root-zone', selectedDate: '2022-06-15' }),
-      expect.objectContaining({ source: 'climate-field-soil-wetness-root-zone', selectedDate: '2018-06-15' }),
+      expect.objectContaining({ source: 'climate-field-precipitation', selectedDate: '2024-06-15', rangeStart: '2024-05-15', rangeEnd: '2024-07-15', timeScale: 'month' }),
+      expect.objectContaining({ source: 'climate-field-soil-wetness-root-zone', selectedDate: '2023-06-15', rangeStart: '2023-05-15', rangeEnd: '2023-07-15' }),
     ]));
-    const regional = result.evidence.toolCalls.filter((call) => call.stage === 'regional');
-    expect(new Set(regional.map((call) => call.location?.lon))).toEqual(new Set([-119.5, -116.5]));
-    expect(regional.every((call) => call.selectedDate === (call.source === 'climate-field-precipitation' ? '2024-06-15' : '2023-06-15'))).toBe(true);
-    expect(result.context).toContain('not validated ecological analogues');
+    expect(mocks.call.mock.calls.every(([name, args]) => name === 'surface_evidence_for_selection'
+      && args.longitude === payload.location.lon && args.latitude === payload.location.lat
+      && !('radius_meters' in args))).toBe(true);
     expect(result.context).toContain('feedstock and production conditions');
     expect(STRATEGY_SCREENING.map((strategy) => strategy.strategy)).toEqual(expect.arrayContaining(['silvopasture', 'biochar', 'managed_grazing', 'fuel_reduction', 'keyline']));
     expect(readRegionalAnalysisEvidence(result.evidence)).toEqual(result.evidence);
@@ -85,7 +86,7 @@ describe('regional evidence graph', () => {
     expect(mocks.call.mock.calls.some((call) => call[1].day === '2025-02-30')).toBe(true);
   });
 
-  it('reserves historical and regional work when local reads exhaust their deadline', async () => {
+  it('reserves selected-window history when local reads exhaust their deadline', async () => {
     vi.useFakeTimers();
     let active = 0;
     let maximum = 0;
@@ -99,11 +100,10 @@ describe('regional evidence graph', () => {
     const result = await pending;
     expect(maximum).toBe(3);
     expect(mocks.call.mock.calls.slice(0, 3).map((call) => call[1].surface_name)).toEqual([
-      'soil-field-moisture', 'soil-field-temperature', 'soil-field-vpd',
+      'climate-field-precipitation', 'climate-field-soil-wetness-root-zone', 'soil-field-moisture',
     ]);
     expect(result.evidence.toolCalls.some((call) => call.stage === 'local' && call.status === 'not_queried')).toBe(true);
     expect(result.evidence.toolCalls.some((call) => call.stage === 'temporal' && call.status === 'error')).toBe(true);
-    expect(result.evidence.toolCalls.some((call) => call.stage === 'regional' && call.status === 'error')).toBe(true);
     expect(result.evidence.toolCalls.some((call) => call.status === 'observed')).toBe(false);
   });
 
@@ -113,6 +113,47 @@ describe('regional evidence graph', () => {
     expect(mocks.call).not.toHaveBeenCalled();
     expect(result.evidence.stages.every((stage) => stage.status === 'unavailable')).toBe(true);
     expect(result.evidence.limitations.join(' ')).toContain('historical and regional comparisons were not performed');
+  });
+
+  it('retains independently selected hidden dates and binds all continuation reads to the latest selection', () => {
+    const current = { ...temporal, analysisSelection: {
+      timeScale: 'year' as const, rangeSteps: 2, zoom: 8.75,
+      layerDays: { 'soil-vpd': '2024-02-29', vegetation: '2020-03-31' },
+    } };
+    const args = bindRegionalEvidenceArguments('surface_evidence_for_selection', {
+      surface_name: 'soil-vpd', day: '2026-09-01', longitude: 1, latitude: 2,
+      range_start: '2026-01-01', range_end: '2026-12-31', zoom: 3, page_start: 31,
+    }, payload, current);
+    expect(args).toEqual({ surface_name: 'soil-field-vpd', day: '2024-02-29', longitude: -118,
+      latitude: 44, range_start: '2022-02-28', range_end: '2026-02-28', zoom: 8.75,
+      time_scale: 'year', page_start: 31 });
+    expect(regionalEvidenceDay(current, 'vegetation')).toBe('2020-03-31');
+  });
+
+  it('uses inclusive calendar windows across leap years and unequal months', () => {
+    expect(analysisDateRange('2024-03-31', 'month', 1)).toEqual({ rangeStart: '2024-02-29', rangeEnd: '2024-04-30' });
+    expect(analysisDateRange('2024-02-29', 'year', 1)).toEqual({ rangeStart: '2023-02-28', rangeEnd: '2025-02-28' });
+    expect(analysisDateRange('2024-12-31', 'day', 2)).toEqual({ rangeStart: '2024-12-29', rangeEnd: '2025-01-02' });
+  });
+
+  it('binds land-context coordinate aliases and area queries to the active selection tile', () => {
+    expect(bindRegionalEvidenceArguments('resolve_land_boundary_at_point', { lon: 5, lat: 6 }, payload, temporal))
+      .toEqual({ lon: -118, lat: 44 });
+    const args = bindRegionalEvidenceArguments('resolve_land_boundary_in_area', {
+      bbox: { west: 1, south: 1, east: 2, north: 2 },
+    }, payload, { ...temporal, analysisSelection: { timeScale: 'day', rangeSteps: 1, zoom: 10, layerDays: {} } });
+    const bbox = args.bbox as { west: number; south: number; east: number; north: number };
+    expect(bbox.west).toBeLessThanOrEqual(-118);
+    expect(bbox.east).toBeGreaterThan(-118);
+    expect(bbox.south).toBeLessThanOrEqual(44);
+    expect(bbox.north).toBeGreaterThan(44);
+    expect(bbox.east - bbox.west).toBeCloseTo(360 / 2 ** 10);
+  });
+
+  it('admits every switchable map surface as an evidence citation regardless of visibility', () => {
+    for (const layer of Object.values(LAYER_REGISTRY)) {
+      expect(REGIONAL_TOOL_EVIDENCE_SOURCES).toContain(layer.warehouseLayerName ?? layer.toggleId);
+    }
   });
 });
 
@@ -169,7 +210,7 @@ describe('evidence audit honesty', () => {
     const entry = regionalEvidenceAuditCall('temporal-1', 'temporal', 'drought_history_at_point', {}, { history });
     expect((entry.validDates?.length ?? 0) + (entry.observedDates?.length ?? 0) + (entry.servedDates?.length ?? 0)).toBeLessThanOrEqual(128);
   });
-  it.each(['signal_summaries', 'weekly_severity', 'signals_on_day', 'temporal_neighbors', 'nearest_cells'])('recognizes real %s payload rows', (key) => {
+  it.each(['features', 'rows', 'weekly_severity'])('recognizes real %s payload rows', (key) => {
     expect(evidenceResultStatus({ [key]: [{ observed_day: '2023-06-15', severity_class: null }] }).status).toBe('observed');
   });
   it('distinguishes empty history summaries, refusals and governed absence from observations', () => {
@@ -177,7 +218,8 @@ describe('evidence audit honesty', () => {
     expect(evidenceResultStatus({ layer_summaries: [{ feature_count: 2, row_count: 2 }] }).status).toBe('observed');
     expect(evidenceResultStatus({ error: 'parquet_availability_withheld' }).status).toBe('refused');
     expect(evidenceResultStatus({ features: [], day_state: { state: 'governed_absence' } }).status).toBe('governed_absence');
-    expect(evidenceResultStatus({ lanes: [{ day_state: { state: 'published' }, features: [{}] }, { day_state: { state: 'lane_never_written' }, features: [] }] }).status).toBe('unavailable');
+    expect(evidenceResultStatus({ lanes: [{ selected: { state: 'published', features: [{ properties: { value: 0.5 } }] }, history: [{ state: 'lane_never_written', features: [] }] }] }).status).toBe('observed');
+    expect(evidenceResultStatus({ lanes: [{ history: [{ state: 'lane_never_written', features: [] }] }], history: { sampled_days: ['2024-01-01'] } }).status).toBe('unavailable');
   });
   it.each(['vegetation', '', '   '])('keeps malformed model arguments from invalidating the audit for %j', (source) => {
     const entry = regionalEvidenceAuditCall('additional-1', 'additional', 'surface_value_near_point', { surface_name: source, day: 'yesterday', latitude: 999, longitude: -118 }, { error: 'invalid_coordinate' });
@@ -215,7 +257,7 @@ describe('evidence audit honesty', () => {
     expect(reportWarehouseEvidenceIssues(invalidReference, payload, evidence).length).toBeGreaterThan(0);
     const refusedReference = { ...report, riskSummary: { ...report.riskSummary, evidenceReadIds: ['one'] } };
     expect(reportWarehouseEvidenceIssues(refusedReference, payload, evidence).length).toBeGreaterThan(0);
-    for (const tool of ['observation_coverage_on_day', 'observation_temporal_neighbors', 'nearest_signal_cells']) {
+    for (const tool of ['observation_coverage_on_day', 'observation_temporal_neighbors', 'list_environmental_layers']) {
       const metadata: RegionalAnalysisEvidence = { ...evidence, toolCalls: [{ ...evidence.toolCalls[0], tool, status: 'observed' }] };
       expect(reportWarehouseEvidenceIssues(refusedReference, payload, metadata).length).toBeGreaterThan(0);
       expect(reportWarehouseEvidenceIssues(report, payload, metadata)).toHaveLength(1);

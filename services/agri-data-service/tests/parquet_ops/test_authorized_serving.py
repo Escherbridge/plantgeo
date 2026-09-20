@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from agri_data_service.agent.surfaces import SIGNAL_PLANE_LANE, SURFACE_PARQUET_LANES
+from agri_data_service.agent.surfaces import SURFACE_PARQUET_LANES
 from agri_data_service.foundation.canonical import sha256_digest
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.paths import absence_marker_path, completion_marker_path, partition_path
@@ -63,7 +63,7 @@ def _row(day: date, *, part: str, completion: str, part_payload: bytes, completi
         rung=13,
         terminal_state="published",
         terminal_receipt=EvidenceReceipt(
-            key="layer=signal/kind=observed/availability/evidence/terminal=" + "1" * 64 + ".json",
+            key="layer=vegetation/kind=observed/availability/evidence/terminal=" + "1" * 64 + ".json",
             sha256="1" * 64,
         ),
         data_receipts=(EvidenceReceipt(key=part, sha256=sha256_digest(part_payload)),),
@@ -75,8 +75,8 @@ def test_day_reads_only_generation_receipts_and_ignores_physical_extra_parts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     day = date(2026, 8, 6)
-    authorized_part = partition_path("signal", "observed", 13, day)
-    completion = completion_marker_path("signal", "observed", 13, day)
+    authorized_part = partition_path("vegetation", "observed", 13, day)
+    completion = completion_marker_path("vegetation", "observed", 13, day)
     part_payload = b"receipt-bound parquet bytes"
     completion_payload = b"receipt-bound completion"
     extra_part = authorized_part.replace("part-0.parquet", "part-1.parquet")
@@ -94,7 +94,7 @@ def test_day_reads_only_generation_receipts_and_ignores_physical_extra_parts(
     rows = FakeRowReader(
         rows_by_key={authorized_part: ({"cell_id": "authorized"},), extra_part: ({"cell_id": "extra"},)}
     )
-    scope = ReadScope(layer="signal", kind="observed", tier=13, bbox=None)
+    scope = ReadScope(layer="vegetation", kind="observed", tier=13, bbox=None)
 
     answered = serving.resolve_authorized_day(
         serving.AuthorizedServingReader(
@@ -113,8 +113,8 @@ def test_day_reads_only_generation_receipts_and_ignores_physical_extra_parts(
 
 def test_mutated_part_is_refused_before_the_row_reader_runs(monkeypatch: pytest.MonkeyPatch) -> None:
     day = date(2026, 8, 6)
-    part = partition_path("signal", "observed", 13, day)
-    completion = completion_marker_path("signal", "observed", 13, day)
+    part = partition_path("vegetation", "observed", 13, day)
+    completion = completion_marker_path("vegetation", "observed", 13, day)
     original = b"original parquet"
     completion_payload = b"completion"
     index = _index(
@@ -134,7 +134,7 @@ def test_mutated_part_is_refused_before_the_row_reader_runs(monkeypatch: pytest.
             serving.AuthorizedServingReader(_ReadOnlyStore({part: b"replacement", completion: completion_payload})),
             FakeListing(),
             rows,
-            scope=ReadScope(layer="signal", kind="observed", tier=13, bbox=None),
+            scope=ReadScope(layer="vegetation", kind="observed", tier=13, bbox=None),
             day=day,
         )
 
@@ -144,8 +144,8 @@ def test_mutated_part_is_refused_before_the_row_reader_runs(monkeypatch: pytest.
 
 def test_verified_part_bytes_are_the_sources_given_to_the_row_reader(monkeypatch: pytest.MonkeyPatch) -> None:
     day = date(2026, 8, 6)
-    part = partition_path("signal", "observed", 13, day)
-    completion = completion_marker_path("signal", "observed", 13, day)
+    part = partition_path("vegetation", "observed", 13, day)
+    completion = completion_marker_path("vegetation", "observed", 13, day)
     payload = b"the exact authorized bytes"
     completion_payload = b"completion"
     index = _index(
@@ -172,7 +172,7 @@ def test_verified_part_bytes_are_the_sources_given_to_the_row_reader(monkeypatch
         serving.AuthorizedServingReader(_ReadOnlyStore({part: payload, completion: completion_payload})),
         FakeListing(),
         rows,
-        scope=ReadScope(layer="signal", kind="observed", tier=13, bbox=None),
+        scope=ReadScope(layer="vegetation", kind="observed", tier=13, bbox=None),
         day=day,
     )
 
@@ -181,16 +181,16 @@ def test_verified_part_bytes_are_the_sources_given_to_the_row_reader(monkeypatch
 
 def test_aggregate_staging_budget_stops_before_fetching_remaining_parts(monkeypatch: pytest.MonkeyPatch) -> None:
     day = date(2026, 8, 6)
-    parts = tuple(partition_path("signal", "observed", 13, day, index) for index in range(3))
+    parts = tuple(partition_path("vegetation", "observed", 13, day, index) for index in range(3))
     payloads = (b"aaaaaa", b"bbbbbb", b"cccccc")
-    completion = completion_marker_path("signal", "observed", 13, day)
+    completion = completion_marker_path("vegetation", "observed", 13, day)
     completion_payload = b"completion"
     row = SimpleNamespace(
         day=day,
         rung=13,
         terminal_state="published",
         terminal_receipt=EvidenceReceipt(
-            key="layer=signal/kind=observed/availability/evidence/terminal=" + "1" * 64 + ".json",
+            key="layer=vegetation/kind=observed/availability/evidence/terminal=" + "1" * 64 + ".json",
             sha256="1" * 64,
         ),
         data_receipts=tuple(
@@ -208,7 +208,7 @@ def test_aggregate_staging_budget_stops_before_fetching_remaining_parts(monkeypa
             serving.AuthorizedServingReader(store),
             FakeListing(),
             FakeRowReader(),
-            scope=ReadScope(layer="signal", kind="observed", tier=13, bbox=None),
+            scope=ReadScope(layer="vegetation", kind="observed", tier=13, bbox=None),
             day=day,
         )
 
@@ -224,7 +224,7 @@ def test_listing_absence_history_opens_no_terminal_evidence(monkeypatch: pytest.
             rung=13,
             terminal_state="governed_absence",
             terminal_receipt=EvidenceReceipt(
-                key=f"layer=signal/kind=observed/availability/evidence/terminal={'1' * 62}{offset:02d}.json",
+                key=f"layer=vegetation/kind=observed/availability/evidence/terminal={'1' * 62}{offset:02d}.json",
                 sha256=f"{'1' * 62}{offset:02d}",
             ),
             data_receipts=(),
@@ -238,20 +238,20 @@ def test_listing_absence_history_opens_no_terminal_evidence(monkeypatch: pytest.
         "read_terminal_evidence",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("unselected absence evidence was read")),
     )
-    scope = ReadScope(layer="signal", kind="observed", tier=13, bbox=None)
+    scope = ReadScope(layer="vegetation", kind="observed", tier=13, bbox=None)
     listing = serving.AuthorizedServingReader(_ReadOnlyStore()).listing(FakeListing(), scope=scope)
 
-    keys = listing.list_keys("signal", "observed", 13, year=2026)
-    first = next(listing.iter_tier_keys("signal", "observed", 13))
+    keys = listing.list_keys("vegetation", "observed", 13, year=2026)
+    first = next(listing.iter_tier_keys("vegetation", "observed", 13))
 
     assert len(keys) == len(days)
-    assert first == absence_marker_path("signal", "observed", 13, days[0])
+    assert first == absence_marker_path("vegetation", "observed", 13, days[0])
 
 
 def test_missing_pointer_refuses_even_when_physical_day_exists(monkeypatch: pytest.MonkeyPatch) -> None:
     day = date(2026, 8, 6)
     physical = FakeListing()
-    physical.write_day("signal", "observed", 13, day)
+    physical.write_day("vegetation", "observed", 13, day)
 
     def missing(*_args: object, **_kwargs: object) -> Any:
         raise AvailabilityUnavailableError("availability_missing", "pointer missing")
@@ -264,7 +264,7 @@ def test_missing_pointer_refuses_even_when_physical_day_exists(monkeypatch: pyte
             serving.AuthorizedServingReader(_ReadOnlyStore()),
             physical,
             FakeRowReader(),
-            scope=ReadScope(layer="signal", kind="observed", tier=13, bbox=None),
+            scope=ReadScope(layer="vegetation", kind="observed", tier=13, bbox=None),
             day=day,
         )
 
@@ -275,7 +275,7 @@ def test_governed_absence_marker_is_read_by_terminal_receipt_and_digest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     day = date(2026, 8, 6)
-    marker = absence_marker_path("signal", "observed", 13, day)
+    marker = absence_marker_path("vegetation", "observed", 13, day)
     payload = GovernedAbsence(
         reason="upstream_published_nothing",
         upstream_response="empty feed",
@@ -288,7 +288,7 @@ def test_governed_absence_marker_is_read_by_terminal_receipt_and_digest(
         rung=13,
         terminal_state="governed_absence",
         terminal_receipt=EvidenceReceipt(
-            key="layer=signal/kind=observed/availability/evidence/terminal=" + "1" * 64 + ".json",
+            key="layer=vegetation/kind=observed/availability/evidence/terminal=" + "1" * 64 + ".json",
             sha256="1" * 64,
         ),
         data_receipts=(),
@@ -305,7 +305,7 @@ def test_governed_absence_marker_is_read_by_terminal_receipt_and_digest(
         serving.AuthorizedServingReader(_ReadOnlyStore({marker: payload})),
         FakeListing(),
         FakeRowReader(),
-        scope=ReadScope(layer="signal", kind="observed", tier=13, bbox=None),
+        scope=ReadScope(layer="vegetation", kind="observed", tier=13, bbox=None),
         day=day,
     )
 
@@ -325,8 +325,7 @@ def test_static_lookup_preserves_the_physical_listing() -> None:
 
 
 def test_every_agent_served_lane_has_authorization_metadata() -> None:
-    served = {SIGNAL_PLANE_LANE}
-    served.update(lane for lanes in SURFACE_PARQUET_LANES.values() for lane in lanes)
+    served = {lane for lanes in SURFACE_PARQUET_LANES.values() for lane in lanes}
 
     assert served <= set(serving._LANES)
     assert {lane for lane in served if serving._LANES[lane].nature == "static_lookup"} == {
@@ -357,7 +356,7 @@ def test_repeated_reads_refresh_the_pointer_but_parse_one_unchanged_generation(
     monkeypatch.setattr(serving, "read_availability_pointer", pointer)
     monkeypatch.setattr(serving, "read_latest_availability", generation)
     authority = serving.AuthorizedServingReader(_ReadOnlyStore())
-    scope = ReadScope(layer="signal", kind="observed", tier=13, bbox=None)
+    scope = ReadScope(layer="vegetation", kind="observed", tier=13, bbox=None)
     instant = datetime(2026, 8, 7, tzinfo=UTC)
 
     authority.listing(FakeListing(), scope=scope, now=instant)

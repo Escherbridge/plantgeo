@@ -4,7 +4,7 @@ import { incompleteReportDiagnostic, providerErrorDiagnostic, reportValidationDi
 import { geminiReportSchema } from './gemini-report-schema';
 import { reportFlowGroundingIssues } from './report-flow-grounding';
 import { soilAiEvidence } from './soil-ai-evidence';
-import { boundedEvidence, prepareRegionalAnalysis, regionalEvidenceAuditCall, regionalEvidenceDay, regionalEvidenceStageStatus } from './regional-analysis-workflow';
+import { bindRegionalEvidenceArguments, boundedEvidence, prepareRegionalAnalysis, regionalEvidenceAuditCall, regionalEvidenceStageStatus } from './regional-analysis-workflow';
 import { callRegionalEvidenceTool } from './regional-evidence-tools';
 import { remediationReportSchema, REMEDIATION_REPORT_JSON_SCHEMA, reportWarehouseEvidenceIssues, type RemediationReport } from './remediation-report';
 import type {
@@ -34,9 +34,10 @@ export type {
 const MAX_HISTORY_TURNS = MAX_REPLAYED_TURNS;
 /** Bounds one request's agentic loop; the last round requires an accepted report. */
 const MAX_TOOL_ROUNDS = 4;
+const MAX_EVIDENCE_TOOL_ROUNDS = 6;
 const MAX_REPORT_CORRECTIONS = 1;
 const MAX_SEARCHES_PER_REQUEST = 3;
-const MAX_EVIDENCE_CALLS_PER_REQUEST = 6;
+const MAX_EVIDENCE_CALLS_PER_REQUEST = 12;
 /**
  * Bounded by the report this feature actually emits, and it must stay under the serving model's own
  * completion ceiling -- a provider REJECTS an over-large request rather than clamping it, so a model
@@ -143,6 +144,10 @@ function buildSystemPrompt(hasWebSearch: boolean): string {
 - List consultProfessionals on every remediation item.
 
 ## Evidence and honesty
+- Use surface_evidence_for_selection for every map-layer analysis. It reads numeric source features supporting the selected tile, and includes the exact requested day plus the active historical window. Never infer measurements from image colors or substitute a nearby cell merely because its centroid is inside a fixed radius.
+- Discover layers through list_environmental_layers and the complete availableLayers catalogue. Hidden toggles remain available. Choose relevant layers dynamically, including vegetation, climate, VPD, botanical layers and published community layers; a catalogue entry alone does not establish observations.
+- This request's selection overrides conversation history. Earlier answers and their read IDs are not measurements for the current dates, location or zoom. The server binds your reads to the current selection; report the returned requested and served days separately.
+- History continuation is available through page_start. Inspect history.complete and next_page_start and request later pages when a claim needs the full window. Never describe a bounded sample as a complete history. Keep unavailable days and refusals explicit, and do not treat future requested dates as forecasts unless a published forecast is returned.
 - You are given warehouse observations for the location. Say plainly which sources were unavailable rather than implying broader coverage than you had.
 - Label every claim with its origin: "warehouse" for a supplied observation, "web" for something you found by searching, "model_inference" for your own reasoning or general domain knowledge.
 - model_inference is legitimate and expected — most remediation reasoning is inference. Label it honestly rather than dressing it up as an observation.
@@ -182,9 +187,9 @@ function buildSystemPrompt(hasWebSearch: boolean): string {
 - You may also be given \`communityProposals\`: nearby intervention proposals other users have submitted. These are unreviewed and not yet approved — you may mention them as local context (what neighbors are already considering), never as evidence supporting your own recommendation's confidence.
 
 ## Evidence graph and additional environmental tools
-- The server runs source inventory, local reads, temporal comparison, regional comparison and strategy screening before synthesis. The supplied graph is an audit of executed evidence retrieval and explicit gaps, not a validated strategy model.
+- The server runs source inventory, selected-tile reads, selected-window history and strategy screening before synthesis. The supplied graph is an audit of executed evidence retrieval and explicit gaps, not a validated strategy model.
 - Inspect each stage and its raw dated evidence. A failed, refused, not_queried or unavailable read is not an observation. Catalogue membership only means a tool can be called, not that its lane is published. Do not fill gaps with a zero or infer a trend from publication dates alone.
-- You may call the deployed environmental tools to resolve a material gap, request another historical date or inspect a candidate region, even when web search is unavailable. Up to ${MAX_EVIDENCE_CALLS_PER_REQUEST} additional calls are allowed. Use the source's selected day for local reads and explicitly name comparison dates and coordinates. History windows must supply as_of_day so they end at the relevant selected day.
+- You may retrieve any relevant catalogue layer and continue a history page even when web search is unavailable. Up to ${MAX_EVIDENCE_CALLS_PER_REQUEST} additional calls are allowed. The server binds each surface_evidence_for_selection call to the current map coordinate, zoom, layer day and complete active window. Preserve those returned bounds and use page_start for continuation.
 - Regional samples are geographic contrasts, not ecological analogues. Compare measured climate, soil moisture, terrain, land use and management prerequisites before discussing transfer; missing matching factors remain unknown. Nearby or environmentally similar conditions never establish treatment efficacy or a causal effect.
 - In the report, cite the environmental source and observation date for material findings, explain historical and regional comparison limits, and name evidence gaps that change strategy feasibility. Do not expose private deliberation; give concise conclusions and their supporting evidence.
 - Attach evidenceReadIds only to warehouse-origin findings supported by tool observations, using each executed read ID supplied with its result and its exact evidenceSource. Historical, regional and additional warehouse findings require these references; their actual stage, dates and location will be displayed beside your claim. Keep recommendations and interpretations labelled model_inference, with their supporting measured findings listed separately in observations. Do not attach tool read IDs to model_inference or web claims. Describe comparison scopes in prose too: a regional comparison is not a measurement at the selected point, and a historical observation is not a current condition.
@@ -291,6 +296,9 @@ function describeViewedDates(temporalContext: TemporalContext): string {
 /** What the payload describes and as of when, row by row. */
 function buildTemporalSection(temporalContext: TemporalContext): string {
   const heading = `## What each map layer is showing, and as of when\nThe server's today is ${temporalContext.serverCurrentDate}.`;
+  if (temporalContext.selectionEvidenceOnly) {
+    return `${heading}\nThe initial payload contains location and selection metadata only. Every environmental observation must come from the selected tile evidence reads below.\nActive selection: ${JSON.stringify(temporalContext.analysisSelection)}\nEach explicitly selected layer retains its own date. An unselected layer inherits the latest selected day, or the server day when no selected date exists. No initial source was read as-of-latest.${describeViewedDates(temporalContext)}`;
+  }
 
   if (temporalContext.viewedLayersUnreported) {
     return `${heading}\nThe client did not report which day each map layer is showing, so every observation above is as-of-latest. Attribute them to their own observation times and to no other day.`;
@@ -316,7 +324,9 @@ function buildUserMessage(
     userQuestion ||
     'Assess this location and recommend remediation strategies for it.';
 
-  const coverageNote = contextIsEmpty
+  const coverageNote = temporalContext.selectionEvidenceOnly
+    ? 'No environmental measurement was prefetched outside the selected tile workflow. The server evidence graph and additional tile reads below establish what is available; empty initial context is not an environmental absence.'
+    : contextIsEmpty
     ? 'No warehouse source resolved in the initial regional snapshot. Check the server evidence graph and later tool results for additional observations before concluding that local evidence is unavailable. Label advice based only on reasoning as model_inference.'
     : 'Sources marked "unavailable" were not observed in the initial regional snapshot. Later graph or tool reads may supply dated evidence. Do not describe an unavailable read as an absent condition.';
   const gauge = payload.waterScarcity?.nearestGauge;
@@ -399,6 +409,7 @@ export async function* streamRegionalIntelligence(
   yield { type: 'evidence', evidence: structuredClone(analysis.evidence) };
   const evidenceTools = analysis.catalogue?.tools ?? [];
   const evidenceToolNames = new Set(evidenceTools.map((tool) => tool.name));
+  const maxToolRounds = evidenceTools.length > 0 ? MAX_EVIDENCE_TOOL_ROUNDS : MAX_TOOL_ROUNDS;
 
   // GENERATE_REMEDIATION_REPORT_TOOL is sent alongside REPORT_TOOL rather than replacing it: the
   // system prompt's Finishing section has always told the model it may call either name, but
@@ -442,9 +453,9 @@ export async function* streamRegionalIntelligence(
   let reportCorrections = 0;
   let correctingReport = false;
 
-  for (let round = 0; round < MAX_TOOL_ROUNDS + MAX_REPORT_CORRECTIONS; round += 1) {
-    if (round >= MAX_TOOL_ROUNDS && !correctingReport) break;
-    const isFinalRound = correctingReport || round >= MAX_TOOL_ROUNDS - 1;
+  for (let round = 0; round < maxToolRounds + MAX_REPORT_CORRECTIONS; round += 1) {
+    if (round >= maxToolRounds && !correctingReport) break;
+    const isFinalRound = correctingReport || round >= maxToolRounds - 1;
     const forceReportTool = (!searchProvider && evidenceTools.length === 0) || isFinalRound;
 
     const completionRequest = {
@@ -608,7 +619,8 @@ export async function* streamRegionalIntelligence(
       await Promise.all(evidenceUses.slice(index, index + 3).map(async (use) => {
       if (use.type !== 'function') return;
       const evidenceId = `additional-${++evidenceCallsAttempted}`;
-      const args = readToolArguments(use.function.arguments);
+      const proposedArgs = readToolArguments(use.function.arguments);
+      const args = proposedArgs ? bindRegionalEvidenceArguments(use.function.name, proposedArgs, payload, temporalContext) : null;
       if (!args || evidenceCallsUsed >= MAX_EVIDENCE_CALLS_PER_REQUEST) {
         toolResults.push({ role: 'tool', tool_call_id: use.id, content: args ? 'The additional environmental evidence budget is exhausted. Synthesize the report and state remaining gaps.' : 'Environmental read failed: arguments must be a JSON object.' });
         if (analysis.evidence.toolCalls.length < 128) analysis.evidence.toolCalls.push({
@@ -619,10 +631,6 @@ export async function* streamRegionalIntelligence(
         return;
       }
       evidenceCallsUsed += 1;
-      if (['signals_near_point', 'drought_history_at_point', 'fire_history_near_point'].includes(use.function.name) && typeof args.as_of_day !== 'string') {
-        const source = use.function.name === 'drought_history_at_point' ? 'drought-areas' : use.function.name === 'fire_history_near_point' ? 'burn-severity' : 'climate-field-precipitation';
-        args.as_of_day = regionalEvidenceDay(temporalContext, source);
-      }
       try {
         const content = await callRegionalEvidenceTool(use.function.name, args, signal);
         const result: unknown = JSON.parse(content);
@@ -702,7 +710,7 @@ export async function* streamRegionalIntelligence(
     // `tool_call_id`, and a batched user message would leave every call unanswered.
     for (const result of toolResults) messages.push(result);
   }
-  console.warn('[AI] report attempts exhausted', { model, reportCorrections, maxToolRounds: MAX_TOOL_ROUNDS });
+  console.warn('[AI] report attempts exhausted', { model, reportCorrections, maxToolRounds });
 }
 
 export {
