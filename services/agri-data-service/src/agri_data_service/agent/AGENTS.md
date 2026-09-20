@@ -763,5 +763,9 @@ class as a lane reporting success having written nothing.
 Agent row reads share the map's availability-authorized listing. A `LaneWindow` retains the exact
 receipt-bound evidence source used to classify it, so a later absence decode cannot fall back to a
 physical listing or cross into a newer generation. Release tools freeze that authorized view before
-their two-pass row plan/replay. Static lookup behavior is unchanged. This path is read-only: agent
+their two-pass row plan/replay. A bare receipt key never reaches an agent DuckDB statement: the
+selected completion and part digests are verified on the serving worker, and every statement in that
+tool call reads the same request-scoped local files containing those verified bytes. Authority
+loading, evidence GETs, temporary writes, schema probes, and row scans all stay off the Sanic event
+loop. Static lookup behavior is unchanged. This path is read-only: agent
 queries do not repair receipts, publish availability, or enqueue ingestion.

@@ -146,6 +146,42 @@ def test_hive_columns_never_reach_a_served_row(session: ServingSession, tmp_path
     assert result.rows[0][0] == key, "a row must be attributed to the RELATIVE key its day is parsed from"
 
 
+def test_exact_source_is_scanned_and_attributed_to_its_logical_receipt_key(
+    session: ServingSession, tmp_path: Path
+) -> None:
+    """A receipt-bound read never reopens the mutable bucket key after its bytes were verified."""
+    logical_key = partition_path("signal", "observed", 13, date(2026, 8, 1))
+    exact_path = tmp_path / "verified.parquet"
+    session.connection.execute(
+        f"COPY ({POSITIONED_SIGNAL_ROW.format(cell_id='verified')}) "
+        f"TO '{exact_path.as_posix()}' (FORMAT PARQUET)"
+    )
+    reader = DuckDbRowReader(session=session)
+    scope = ReadScope(layer="signal", kind="observed", tier=13, bbox=None)
+
+    result = reader.read_rows(
+        RowRead(scope=scope, keys=(logical_key,), object_uris=(exact_path.as_posix(),), row_budget=10)
+    )
+
+    assert result.rows[0][0] == logical_key
+    assert result.rows[0][1]["cell_id"] == "verified"
+
+
+def test_exact_sources_must_match_logical_keys_one_to_one(session: ServingSession, tmp_path: Path) -> None:
+    scope = ReadScope(layer="signal", kind="observed", tier=13, bbox=None)
+    keys = (
+        partition_path("signal", "observed", 13, date(2026, 8, 1)),
+        partition_path("signal", "observed", 13, date(2026, 8, 2)),
+    )
+
+    with pytest.raises(ServingRefusalError) as caught:
+        DuckDbRowReader(session=session).read_rows(
+            RowRead(scope=scope, keys=keys, object_uris=((tmp_path / "only-one.parquet").as_posix(),), row_budget=10)
+        )
+
+    assert caught.value.code == "availability_malformed"
+
+
 def test_only_a_registered_list_column_can_render_as_a_wire_array(session: ServingSession, tmp_path: Path) -> None:
     """Lineage arrays are schema declarations, not permission for arbitrary row cells to become JSON."""
     reader = DuckDbRowReader(session=local_session(session, tmp_path))

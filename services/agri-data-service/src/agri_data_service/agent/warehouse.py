@@ -24,7 +24,7 @@ from agri_data_service.parquet_ops.availability_coverage import (
     AvailabilityCoverageReaderHolder,
     resolve_availability_lanes,
 )
-from agri_data_service.parquet_ops.authorized_serving import AuthorizedServingReaderHolder
+from agri_data_service.parquet_ops.authorized_serving import AuthorizedServingReaderHolder, verified_serving_session
 from agri_data_service.parquet_ops.coverage import registered_census_lanes
 from agri_data_service.parquet_ops.duckdb_session import run_serving_read
 from agri_data_service.parquet_ops.mtbs_snapshot_catalog import configured_snapshot_loader
@@ -304,9 +304,9 @@ async def lane_window(
     a LOST rung -- reads `incomplete` in both and is refused rather than served as an unwritten day.
     """
     scope = ReadScope(layer=layer, kind=kind, tier=tier, bbox=None)
-    listing = source().authorized_listing(scope)
 
     def walk() -> LaneWindow:
+        listing = source().authorized_listing(scope)
         keys = _keys_for_months(listing, layer=layer, kind=kind, tier=tier, first_day=first_day, last_day=last_day)
         statuses = day_status_sets(keys, layer=layer, kind=kind, tier=tier)
         lane_written = bool(keys) or _lane_has_objects(listing, layer=layer, kind=kind, tier=tier)
@@ -332,10 +332,10 @@ async def lane_years(
 ) -> LaneWindow:
     """Classify whole calendar years at once; a release lane's window is sparse and months cost more."""
     scope = ReadScope(layer=layer, kind=kind, tier=tier, bbox=None)
-    listing = source().authorized_listing(scope)
     wanted = tuple(years)
 
     def walk() -> LaneWindow:
+        listing = source().authorized_listing(scope)
         keys = tuple(sorted({key for year in wanted for key in listing.list_keys(layer, kind, tier, year=year)}))
         statuses = day_status_sets(keys, layer=layer, kind=kind, tier=tier)
         lane_written = bool(keys) or _lane_has_objects(listing, layer=layer, kind=kind, tier=tier)
@@ -431,19 +431,28 @@ async def release_rows(
     layer: str,
     as_of: date,
     row_limit: int,
-    read: Callable[[tuple[str, ...]], Awaitable[Sequence[ServedRow]]],
+    read: Callable[[tuple[str, ...], WarehouseListing], Awaitable[Sequence[ServedRow]]],
 ) -> DayEnvelope:
     """Resolve the map's latest applicable release, then validate the bounded rows it actually serves."""
     scope = ReadScope(layer=layer, kind=OBSERVED, tier=AGENT_ZOOM_TIER, bbox=None)
-    listing = _ReleaseListing(source().authorized_listing(scope))
+    listing: _ReleaseListing | None = None
     reader = _ReleaseRows(limit=row_limit)
+
+    def resolve() -> DayEnvelope:
+        nonlocal listing
+        if listing is None:
+            listing = _ReleaseListing(source().authorized_listing(scope))
+        return resolve_release(listing, reader, scope=scope, as_of=as_of)
+
     try:
-        return await asyncio.to_thread(resolve_release, listing, reader, scope=scope, as_of=as_of)
+        return await asyncio.to_thread(resolve)
     except _ReleaseReadNeededError:
         if reader.planned is None:
             raise RuntimeError("release resolver did not supply a row-read plan") from None
-        reader.rows = await read(reader.planned.keys)
-    return await asyncio.to_thread(resolve_release, listing, reader, scope=scope, as_of=as_of)
+        if listing is None:
+            raise RuntimeError("release resolver did not retain its authorized listing") from None
+        reader.rows = await read(reader.planned.keys, listing.underlying)
+    return await asyncio.to_thread(resolve)
 
 
 async def absence_evidence(window: LaneWindow, day: date) -> AbsenceEvidence:
@@ -530,6 +539,7 @@ async def scan(  # noqa: PLR0913 - mirrors scan_all's binding contract, one coor
     part_keys: Sequence[str],
     operation: str,
     layer: str,
+    evidence_source: WarehouseListing,
     required_columns: Sequence[str] = (),
 ) -> list[dict[str, Any]]:
     """Run one bounded DuckDB statement over an explicit part-file list, on an admitted session."""
@@ -538,6 +548,7 @@ async def scan(  # noqa: PLR0913 - mirrors scan_all's binding contract, one coor
         part_keys=part_keys,
         operation=operation,
         layer=layer,
+        evidence_source=evidence_source,
         required_columns=required_columns,
     )
     return answers[0]
@@ -549,6 +560,7 @@ async def scan_all(
     part_keys: Sequence[str],
     operation: str,
     layer: str,
+    evidence_source: WarehouseListing,
     required_columns: Sequence[str] = (),
 ) -> list[list[dict[str, Any]]]:
     """Run several statements over the SAME part files inside ONE admitted session.
@@ -569,26 +581,29 @@ async def scan_all(
         return [[] for _ in reads]
 
     def work(session: ServingSession) -> list[list[dict[str, Any]]]:
-        uris = [session.object_uri(key) for key in part_keys]
-        try:
-            if required_columns:
-                probe_uris = _column_probe_sample(uris)
-                present = {str(row[0]) for row in session.connection.execute(_COLUMN_PROBE, [probe_uris]).fetchall()}
-                missing = tuple(sorted(set(required_columns) - present))
-                if missing:
-                    raise lane_columns_absent(layer=layer, columns=missing, key=part_keys[0])
-            answered: list[list[dict[str, Any]]] = []
-            for statement, parameters in reads:
-                cursor = session.connection.execute(statement, [uris, *parameters])
-                columns = [description[0] for description in cursor.description or ()]
-                answered.append([dict(zip(columns, values, strict=True)) for values in cursor.fetchall()])
-        except duckdb.Error as exc:
-            # Mirrors `interface/http/parquet_routes.py::_as_refusal` -- `OutOfMemoryException` is
-            # the memory guard doing its job, and every reader of this warehouse must refuse it the
-            # same honest way rather than let a raw DuckDB fault reach the model, contradicting the
-            # promise `tools.py` makes about what this decorator refuses.
-            raise faults.read_over_budget(operation=operation) from exc
-        return answered
+        with verified_serving_session(evidence_source, session, part_keys) as verified:
+            uris = [verified.object_uri(key) for key in part_keys]
+            try:
+                if required_columns:
+                    probe_uris = _column_probe_sample(uris)
+                    present = {
+                        str(row[0]) for row in verified.connection.execute(_COLUMN_PROBE, [probe_uris]).fetchall()
+                    }
+                    missing = tuple(sorted(set(required_columns) - present))
+                    if missing:
+                        raise lane_columns_absent(layer=layer, columns=missing, key=part_keys[0])
+                answered: list[list[dict[str, Any]]] = []
+                for statement, parameters in reads:
+                    cursor = verified.connection.execute(statement, [uris, *parameters])
+                    columns = [description[0] for description in cursor.description or ()]
+                    answered.append([dict(zip(columns, values, strict=True)) for values in cursor.fetchall()])
+            except duckdb.Error as exc:
+                # Mirrors `interface/http/parquet_routes.py::_as_refusal` -- `OutOfMemoryException` is
+                # the memory guard doing its job, and every reader of this warehouse must refuse it the
+                # same honest way rather than let a raw DuckDB fault reach the model, contradicting the
+                # promise `tools.py` makes about what this decorator refuses.
+                raise faults.read_over_budget(operation=operation) from exc
+            return answered
 
     return await source().run(work, operation=operation)
 

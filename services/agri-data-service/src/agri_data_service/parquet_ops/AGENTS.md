@@ -772,7 +772,14 @@ revision semantics are separate work.
 
 HTTP and CLI inject a lazy real availability-store reader through `ObjectStoreListing`; catalog verification never writes or invents ETags. A descriptor accompanies both published results (including empty viewports) and a verified zero-source governed absence. Exact day and window reads also validate snapshot metadata, physical key sets and returned release/day/year/unique-fire identities. The same bounded normal warehouse row reader remains responsible for data reads. Intersecting viewports may extend beyond the declared capture footprint; the descriptor states that footprint.
 
-Runtime proof follows the existing immutable-part reader model: source/terminal/manifest/marker bytes are hashed, but serving does not download each Parquet body a second time solely for cryptographic verification. Full physical/source graph digest verification belongs to staged publication and independent publication readback. An out-of-band same-key Parquet overwrite that preserves row identity is an inherited limitation, not protection claimed by this metadata admission path. Served absence evidence is checked against the indexed terminal receipt. There is currently no additional descriptor cache; each selected proof is freshly bounded, and any future cache must bind genuine object identity.
+Runtime proof now binds the bytes DuckDB actually opens. The selected completion receipt is checked
+first, every selected Parquet body is fetched once under a 64 MiB per-object and 512 MiB aggregate
+ceiling, and its SHA-256 must match the availability receipt. Matching bytes are written to generated
+names in a request-scoped temporary directory and DuckDB reads those exact local files; it never
+reopens the mutable object key after the digest check. The temporary tree lives through schema probes
+and row scans and is then removed. Served absence evidence is independently checked against its
+indexed terminal receipt. Static lookup lanes remain the explicit exception because they own no
+availability generation.
 
 The ordinary base-z13 writer emits a canonical schema-v1 completion without embedded part digests.
 The catalog accepts that exact marker shape while retaining the indexed typed data receipts and
@@ -785,12 +792,22 @@ Snapshots have zero additional availability lag after their explicit D+1 date; t
 ## Availability-authorized serving
 
 `authorized_serving.py` is the row-read authority for every `daily_series` and `release_series`
-lane. Each operation re-fetches the mutable `_LATEST.json` pointer, while immutable generations may
-be cached by their content-addressed key. The verified generation supplies the exact part,
+lane. Each operation re-fetches and validates the mutable `_LATEST.json` pointer. Fully parsed,
+verified immutable generations are cached in a bounded per-process map keyed by the complete pointer,
+with one per-lane load lock so concurrent cold requests do not repeat the same parse. Cache admission
+is limited to 8 MiB per serialized generation, 16 MiB and 100,000 rows across all parsed entries,
+and 16 entries; a larger valid generation is revalidated normally but is never retained as an
+unbounded Python object graph. The verified generation supplies the exact part,
 completion, and governed-absence receipts exposed to the existing four-state resolver; unrelated
 physical objects are invisible even when they share an authorized day prefix. Missing, stale,
 malformed, or checksum-invalid availability fails closed with a typed serving refusal. The adapter
 implements no write method and a GET never refreshes a receipt, authors work, or advances a pointer.
+
+Governed-absence rows contribute their canonical marker names directly from generation metadata.
+Listing a month, year, or whole tier therefore opens no terminal documents; only a selected absence
+loads its terminal receipt and marker bytes. This keeps a fire-history existence probe from turning
+1,069 unrelated absences into thousands of synchronous GETs or letting one unrelated corrupt marker
+withhold an otherwise valid published day.
 
 `static_lookup` lanes deliberately retain their physical listing behavior because the availability
 contract applies to time-bearing lanes. MTBS still passes through its additional captured-snapshot

@@ -72,6 +72,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from agri_data_service.agent.warehouse import AgentWarehouseSource, LaneEvidence, LaneWindow
+    from agri_data_service.parquet_ops.warehouse_reader import WarehouseListing
 
 __all__ = [
     "AGENT_SURFACE_NAMES",
@@ -710,6 +711,7 @@ async def query_signals_near_point(  # noqa: PLR0913 - the parameter list is the
         part_keys=window.part_keys(scanned.days),
         operation="agent_signals_near_point",
         layer=SIGNAL_PLANE_LANE,
+        evidence_source=window.evidence_source,
         required_columns=SIGNAL_PLANE_COLUMNS,
     )
     rows = _filter_by_name(measured, names, "signal_name")[:DEFAULT_SUMMARY_ROWS]
@@ -780,6 +782,7 @@ async def query_drought_history_at_point(
         part_keys=window.part_keys(scanned.days),
         operation="agent_drought_history_at_point",
         layer=lane,
+        evidence_source=window.evidence_source,
         required_columns=DROUGHT_LANE_COLUMNS,
     )
     rows = _drought_rows(severity, releases=releases, scanned=scanned.days)
@@ -903,6 +906,7 @@ async def query_fire_history_near_point(
             radius_meters=radius,
             row_limit=MAX_FIRE_FEATURE_FANOUT,
             operation="agent_fire_history_near_point",
+            evidence_source=window.evidence_source,
         )
         summaries.append(
             _fire_lane_summary(
@@ -1010,6 +1014,7 @@ async def _lane_rows(  # noqa: PLR0913 - one argument per coordinate of a bounde
     radius_meters: float,
     row_limit: int,
     operation: str,
+    evidence_source: WarehouseListing,
 ) -> list[dict[str, Any]]:
     """Read the nearest rows of one lane, choosing the statement from its REGISTERED spatial support.
 
@@ -1027,6 +1032,7 @@ async def _lane_rows(  # noqa: PLR0913 - one argument per coordinate of a bounde
             part_keys=part_keys,
             operation=operation,
             layer=lane,
+            evidence_source=evidence_source,
             required_columns=(support.longitude_column, support.latitude_column),
         )
         for row in rows:
@@ -1043,6 +1049,7 @@ async def _lane_rows(  # noqa: PLR0913 - one argument per coordinate of a bounde
             part_keys=part_keys,
             operation=operation,
             layer=lane,
+            evidence_source=evidence_source,
             required_columns=(support.geometry_column,),
         )
         for row in rows:
@@ -1131,6 +1138,7 @@ async def _admitted_signal_cells(  # noqa: PLR0913 - one coordinate per bounded 
         part_keys=window.part_keys(scanned.days),
         operation=operation,
         layer=SIGNAL_PLANE_LANE,
+        evidence_source=window.evidence_source,
         required_columns=SIGNAL_PLANE_COLUMNS,
     )
 
@@ -1170,6 +1178,7 @@ async def query_signal_value_on_day(
             part_keys=window.part_keys([selected_day]),
             operation="agent_signal_value_on_day",
             layer=SIGNAL_PLANE_LANE,
+            evidence_source=window.evidence_source,
             required_columns=SIGNAL_PLANE_COLUMNS,
         )
     rows = _filter_by_name(measured, names, "signal_name")[:MAX_DAY_SUMMARY_ROWS]
@@ -1278,6 +1287,7 @@ async def query_signal_neighbors_in_time(  # noqa: PLR0913 - the parameter list 
         part_keys=window.part_keys(scanned.days),
         operation="agent_signal_neighbors_in_time",
         layer=SIGNAL_PLANE_LANE,
+        evidence_source=window.evidence_source,
         required_columns=SIGNAL_PLANE_COLUMNS,
     )
     rows = _filter_by_name(measured, names, "signal_name")[:MAX_TEMPORAL_NEIGHBOR_ROWS]
@@ -1358,6 +1368,7 @@ async def query_nearest_signal_cells(  # noqa: PLR0913 - the parameter list is t
         part_keys=window.part_keys(scanned.days),
         operation="agent_nearest_signal_cells",
         layer=SIGNAL_PLANE_LANE,
+        evidence_source=window.evidence_source,
         required_columns=SIGNAL_PLANE_COLUMNS,
     )
     _record(
@@ -1664,6 +1675,7 @@ async def query_feature_value_near_point(  # noqa: PLR0913, PLR0911 - schema; re
             radius_meters=radius,
             row_limit=returned_features,
             operation="agent_feature_value_near_point",
+            evidence_source=window.evidence_source,
         )
     features = [_feature_row(row, served_day=selected_day) for row in rows]
     _record(
@@ -1746,7 +1758,7 @@ async def _surface_lane_result(  # noqa: PLR0913 - one coordinate per bounded su
     """Read a daily partition or the map's applicable snapshot and retain both calendar days."""
     nature = next((entry.nature for entry in registered_census_lanes() if entry.layer == lane), None)
 
-    async def read(keys: tuple[str, ...]) -> list[dict[str, Any]]:
+    async def read(keys: tuple[str, ...], evidence_source: WarehouseListing) -> list[dict[str, Any]]:
         return await _lane_rows(
             lane,
             part_keys=keys,
@@ -1755,6 +1767,7 @@ async def _surface_lane_result(  # noqa: PLR0913 - one coordinate per bounded su
             radius_meters=radius_meters,
             row_limit=row_limit,
             operation="agent_surface_value_near_point",
+            evidence_source=evidence_source,
         )
 
     rows: list[dict[str, Any]] = []
@@ -1775,7 +1788,7 @@ async def _surface_lane_result(  # noqa: PLR0913 - one coordinate per bounded su
         if state in {"published", "governed_absence"}:
             served_day = selected_day
         if state == "published":
-            rows = await read(window.part_keys([selected_day]))
+            rows = await read(window.part_keys([selected_day]), window.evidence_source)
     return {
         "parquet_lane": lane,
         "lane_nature": nature,

@@ -181,6 +181,9 @@ class RowRead:
     scope: ReadScope
     keys: tuple[str, ...]
     row_budget: int
+    # Exact receipt-bound sources, one-to-one and in-order with `keys`. When present, the reader
+    # must never reopen the mutable object-store names.
+    object_uris: tuple[str, ...] | None = None
     # True when the caller reports truncation PER DAY, which is the only case where an
     # unpositioned-row probe still changes an answer once the row budget is already exhausted.
     per_day_truncation: bool = False
@@ -212,7 +215,17 @@ class DuckDbRowReader:
         if not read.keys:
             return RowReadResult(rows=(), budget_exhausted=False, unpositioned_rows=0)
         support = spatial_support(read.scope.layer, read.scope.kind)
-        key_of_uri = {self.session.object_uri(key): key for key in read.keys}
+        uris = (
+            tuple(self.session.object_uri(key) for key in read.keys)
+            if read.object_uris is None
+            else read.object_uris
+        )
+        if len(uris) != len(read.keys) or len(set(uris)) != len(uris):
+            raise faults.availability_malformed(
+                layer=read.scope.layer,
+                detail="receipt-bound row sources must match requested keys one-to-one",
+            )
+        key_of_uri = dict(zip(uris, read.keys, strict=True))
         uris = list(key_of_uri)
         if read.scope.bbox is not None:
             self._refuse_unapplicable_bbox(key_of_uri, support, read.scope)

@@ -6,7 +6,7 @@ import asyncio
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
@@ -19,7 +19,7 @@ from agri_data_service.parquet_ops import faults
 from agri_data_service.parquet_ops.read_telemetry import observe_read, stage
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from agri_data_service.config import ObjectStoreCredentials
 
@@ -83,10 +83,11 @@ class ServingSession:
 
     connection: duckdb.DuckDBPyConnection
     bucket_uri: str
+    object_uris: Mapping[str, str] = field(default_factory=dict)
 
     def object_uri(self, relative_key: str) -> str:
         """Return the `s3://` URI for one object key expressed in the frozen partition layout."""
-        return f"{self.bucket_uri}/{relative_key}"
+        return self.object_uris.get(relative_key, f"{self.bucket_uri}/{relative_key}")
 
     def close(self) -> None:
         """Release the connection and the memory it holds."""
