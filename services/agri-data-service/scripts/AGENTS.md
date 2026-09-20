@@ -516,11 +516,13 @@ uv run --no-sync python scripts/verify_quality_receipt.py  # must exit 0
 ### Snapshot-isolated receipt updates
 
 `uv run --no-sync python scripts/update_quality_receipt.py` is the fast iterative-release path.
-It freezes the current Git index with `git write-tree`, exports only that tree's
-`services/agri-data-service/` subtree into a `TemporaryDirectory`, and loads that tree into a
-disposable `GIT_INDEX_FILE`. Every child receives explicit `GIT_DIR`, `GIT_WORK_TREE`, and
-`GIT_INDEX_FILE` values; the wrapper never runs `git add`, `git reset`, or `git restore`, and no
-Git write can reach the checkout's real index. It then runs `uv sync --locked --all-extras` against
+It freezes the current Git index with `git write-tree`, exports that full repository tree into a
+`TemporaryDirectory` so cross-root contract fixtures remain present, and loads the tree into a
+disposable `GIT_INDEX_FILE`. The receipt writer receives explicit `GIT_DIR`, `GIT_WORK_TREE`, and
+`GIT_INDEX_FILE` values; individual quality gates do not inherit those overrides, so pytest's
+hermetic nested-repository tests keep their own Git ownership. The wrapper never runs `git add`,
+`git reset`, or `git restore`, and no Git write can reach the checkout's real index. It then runs
+`uv sync --locked --all-extras` against
 the exported `pyproject.toml` and `uv.lock`, creating a new `.venv` inside the temporary export,
 before invoking the ordinary full `check.py --write-receipt` command there.
 The existing before/after digest and disk/index guards therefore remain active; the wrapper does

@@ -192,13 +192,10 @@ def weather_checkpoint_identity(
     )
 
 
-def weather_checkpoint_set_sha256(
-    points: Sequence[tuple[float, float]], *, day: date, support_sha256: str
-) -> str:
+def weather_checkpoint_set_sha256(points: Sequence[tuple[float, float]], *, day: date, support_sha256: str) -> str:
     """Fingerprint the complete ordered checkpoint keyspace searched for one day."""
     identities = [
-        weather_checkpoint_identity(point, day=day, support_sha256=support_sha256).as_dict()
-        for point in points
+        weather_checkpoint_identity(point, day=day, support_sha256=support_sha256).as_dict() for point in points
     ]
     return sha256_digest(canonical_json(identities))
 
@@ -553,9 +550,7 @@ def recover_weather_day(
     only in the case that used to be refused for free and sometimes wrongly.
     """
     support_sha256 = weather_support_sha256(points)
-    checkpoint_identity_sha256 = weather_checkpoint_set_sha256(
-        points, day=day, support_sha256=support_sha256
-    )
+    checkpoint_identity_sha256 = weather_checkpoint_set_sha256(points, day=day, support_sha256=support_sha256)
     witness = read_support_witness(day, support_sha256, checkpoint_identity_sha256, checkpoints, now=now)
     recovered: list[WeatherPointObservation] = []
     missing_or_rejected = 0

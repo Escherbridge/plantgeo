@@ -109,6 +109,7 @@ def test_run_check_removes_environment_selectors_from_the_direct_receipt_path(
 
     monkeypatch.setenv("PYTEST_ADDOPTS", "-k one_test")
     monkeypatch.setenv("PYTHONPATH", "outside-the-snapshot")
+    monkeypatch.setenv("GIT_INDEX_FILE", "outside-index")
     monkeypatch.setenv("AGRI_TEST_DATABASE_URL", "postgresql://example")
     monkeypatch.setattr(CHECK.subprocess, "run", fake_run)
 
@@ -117,6 +118,7 @@ def test_run_check_removes_environment_selectors_from_the_direct_receipt_path(
     assert result.returncode == 0
     assert "PYTEST_ADDOPTS" not in observed
     assert "PYTHONPATH" not in observed
+    assert "GIT_INDEX_FILE" not in observed
     assert observed["AGRI_TEST_DATABASE_URL"] == "postgresql://example"
 
 

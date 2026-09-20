@@ -650,9 +650,7 @@ class TestTheRefusalNamesWhichEmptyAnswerThisIs:
             witnessed_identities=(("now", "identity-now"),),
         )
 
-        detail = forward._recovery_refusal_detail(
-            self._report("probe_budget_exhausted", witness, unprobed_points=2)
-        )
+        detail = forward._recovery_refusal_detail(self._report("probe_budget_exhausted", witness, unprobed_points=2))
 
         assert "stopped with 2 support points unread" in detail
         assert "lost, not owed" not in detail
@@ -681,9 +679,7 @@ class TestTheRefusalNamesWhichEmptyAnswerThisIs:
             witnessed_identities=(("before", "identity-before"),),
         )
 
-        detail = forward._recovery_refusal_detail(
-            self._report("probe_budget_exhausted", witness, unprobed_points=2)
-        )
+        detail = forward._recovery_refusal_detail(self._report("probe_budget_exhausted", witness, unprobed_points=2))
 
         assert "OWED, not" not in detail, "an unfinished search is not evidence the grid moved"
         assert "lost, not owed" not in detail
@@ -696,8 +692,7 @@ class TestTheRefusalNamesWhichEmptyAnswerThisIs:
             searched_sha256="now",
             searched_checkpoint_identity_sha256="identity-now",
             witnessed_identities=tuple(
-                (f"grid-{index}", f"identity-{index}")
-                for index in range(WEATHER_SUPPORT_WITNESS_LIMIT)
+                (f"grid-{index}", f"identity-{index}") for index in range(WEATHER_SUPPORT_WITNESS_LIMIT)
             ),
         )
 

@@ -16,7 +16,7 @@ import tarfile
 import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Final
 
 from quality_receipt import RECEIPT_FILE_NAME, read_receipt, sanitized_gate_environment, write_receipt
@@ -29,7 +29,6 @@ SERVICE_RELATIVE_PATH: Final = Path("services/agri-data-service")
 FULL_RECEIPT_ARGUMENTS: Final[tuple[str, ...]] = ("scripts/check.py", "--write-receipt")
 VERIFY_ARGUMENTS: Final[tuple[str, ...]] = ("scripts/verify_quality_receipt.py",)
 SYNC_ARGUMENTS: Final[tuple[str, ...]] = ("sync", "--locked", "--all-extras", "--project", ".")
-UV_RUN_ARGUMENTS: Final[tuple[str, ...]] = ("run", "--locked", "--no-sync", "--project", ".", "python")
 
 
 class SnapshotReceiptError(RuntimeError):
@@ -99,18 +98,12 @@ def resolve_snapshot(repository: Path, commit: str | None) -> GitSnapshot:
 
 
 def _safe_extract(payload: bytes, destination: Path) -> Path:
-    """Extract only the service subtree from a Git-authored tar archive."""
-    service_path = SERVICE_RELATIVE_PATH.as_posix()
-    prefix = service_path + "/"
-    ancestors = {
-        Path(*SERVICE_RELATIVE_PATH.parts[:index]).as_posix()
-        for index in range(1, len(SERVICE_RELATIVE_PATH.parts) + 1)
-    }
+    """Extract one Git-authored repository tree without permitting traversal paths."""
     with tarfile.open(fileobj=io.BytesIO(payload), mode="r:") as archive:
         members = archive.getmembers()
-        outside_service = any(member.name not in ancestors and not member.name.startswith(prefix) for member in members)
-        if not members or outside_service:
-            raise SnapshotReceiptError("git archive contained a path outside the agri-data-service subtree")
+        unsafe = any((path := PurePosixPath(member.name)).is_absolute() or ".." in path.parts for member in members)
+        if not members or unsafe:
+            raise SnapshotReceiptError("git archive contained an unsafe repository path")
         archive.extractall(destination, members=members, filter="data")
     exported = destination / SERVICE_RELATIVE_PATH
     if not (exported / "scripts" / "check.py").is_file():
@@ -121,7 +114,7 @@ def _safe_extract(payload: bytes, destination: Path) -> Path:
 def export_snapshot(snapshot: GitSnapshot, repository: Path, destination: Path) -> Path:
     """Export the selected service bytes without consulting the working directory."""
     archive = _run(
-        ("git", "archive", "--format=tar", snapshot.tree, "--", SERVICE_RELATIVE_PATH.as_posix()),
+        ("git", "archive", "--format=tar", snapshot.tree),
         cwd=repository,
     ).stdout
     return _safe_extract(archive, destination)
@@ -209,6 +202,8 @@ def _sync_snapshot_environment(uv_path: str, exported_service: Path, git: Isolat
         if not (exported_service / required).is_file():
             raise SnapshotReceiptError(f"frozen environment requires exported {required}")
     child_env = _sanitized_environment(git.environment)
+    for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+        child_env.pop(name, None)
     _run((uv_path, *SYNC_ARGUMENTS), cwd=exported_service, env=child_env)
     environment = exported_service / ".venv"
     _validate_snapshot_environment(environment, exported_service, child_env)
@@ -216,17 +211,21 @@ def _sync_snapshot_environment(uv_path: str, exported_service: Path, git: Isolat
 
 
 def _run_quality_command(
-    uv_path: str,
     arguments: Sequence[str],
     *,
     exported_service: Path,
     child_env: Mapping[str, str],
+    git: IsolatedGit | None = None,
 ) -> int:
-    """Run one receipt command inside the already-synchronized frozen environment."""
+    """Run one command with the frozen interpreter, exposing disposable Git only when required."""
+    command_environment = dict(child_env)
+    if git is not None:
+        for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+            command_environment[name] = git.environment[name]
     completed = subprocess.run(
-        (uv_path, *UV_RUN_ARGUMENTS, *arguments),
+        (str(_environment_python(exported_service / ".venv")), *arguments),
         cwd=exported_service,
-        env=child_env,
+        env=command_environment,
         check=False,
         shell=False,
     )
@@ -318,10 +317,10 @@ def update_receipt(service_root: Path, *, commit: str | None = None) -> int:
         child_env = _sync_snapshot_environment(uv_path, exported, isolated_git)
         if (
             _run_quality_command(
-                uv_path,
                 FULL_RECEIPT_ARGUMENTS,
                 exported_service=exported,
                 child_env=child_env,
+                git=isolated_git,
             )
             != 0
         ):
@@ -331,7 +330,6 @@ def update_receipt(service_root: Path, *, commit: str | None = None) -> int:
         _record_snapshot(receipt_path, snapshot)
         if (
             _run_quality_command(
-                uv_path,
                 VERIFY_ARGUMENTS,
                 exported_service=exported,
                 child_env=child_env,

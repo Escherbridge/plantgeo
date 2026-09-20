@@ -325,6 +325,9 @@ def select_checks(raw_only: str | None, parser: argparse.ArgumentParser) -> tupl
 def run_check(check: CheckDefinition, uv_path: str) -> CheckResult:
     """Run one check and capture its combined output."""
     started_at = time.perf_counter()
+    child_environment = sanitized_gate_environment(os.environ)
+    for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+        child_environment.pop(name, None)
     try:
         completed: subprocess.CompletedProcess[str] = subprocess.run(
             (uv_path, *UV_RUN_PREFIX, *check.command),
@@ -334,7 +337,7 @@ def run_check(check: CheckDefinition, uv_path: str) -> CheckResult:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            env=sanitized_gate_environment(os.environ),
+            env=child_environment,
         )
     except OSError as error:
         return CheckResult(

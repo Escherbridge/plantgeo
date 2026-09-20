@@ -342,9 +342,7 @@ def test_a_witness_remembers_both_grids_a_day_was_polled_under() -> None:
         == "identity_matches"
     )
     assert (
-        read_support_witness(
-            day, second, _identity_digest((POINTS[0],), day), checkpoints, now=later
-        ).verdict
+        read_support_witness(day, second, _identity_digest((POINTS[0],), day), checkpoints, now=later).verdict
         == "identity_matches"
     )
 
@@ -431,9 +429,7 @@ def test_rewriting_a_legacy_witness_caps_the_combined_identity_history() -> None
     identity_sha256 = _identity_digest(POINTS, day)
 
     record_support_witness(day, support_sha256, identity_sha256, checkpoints, now=later)
-    witness = read_support_witness(
-        day, support_sha256, identity_sha256, checkpoints, now=later
-    )
+    witness = read_support_witness(day, support_sha256, identity_sha256, checkpoints, now=later)
 
     assert witness.verdict == "identity_matches"
     assert witness.legacy_witnessed_sha256 == tuple(legacy[-7:])

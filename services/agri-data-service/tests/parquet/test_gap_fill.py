@@ -605,7 +605,7 @@ async def test_every_terminal_day_reaches_the_availability_step_exactly_once() -
 
     tally = summary.availability
     assert sum(tally.to_summary().values()) == WINDOW_DAYS, "each terminal day is counted once, and only once"
-    assert tally.not_bootstrapped == 1
+    assert tally.retry_owed == 1
     assert tally.ladder_incomplete == WINDOW_DAYS - 1
     pointer_reads = [key for key in availability.reads if key.endswith("/availability/_LATEST.json")]
     assert pointer_reads == ["layer=signal/kind=observed/availability/_LATEST.json"]

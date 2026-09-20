@@ -1010,11 +1010,7 @@ def _recovery_refusal_detail(recovery: WeatherRecoveryReport) -> str:
             "request URLs have changed, so the bucket is OWED, not lost -- restore the build identity "
             "that produced a witnessed keyspace and re-run within the 7-day checkpoint window"
         )
-    if (
-        recovery.state == "no_retained_capture"
-        and witness is not None
-        and witness.verdict == "identity_matches"
-    ):
+    if recovery.state == "no_retained_capture" and witness is not None and witness.verdict == "identity_matches":
         return (
             f"no retained provider response for {day} can still be read under the exact checkpoint "
             f"identity it was polled with ({witness.searched_checkpoint_identity_sha256}), so this day "

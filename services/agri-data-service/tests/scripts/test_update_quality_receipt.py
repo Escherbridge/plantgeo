@@ -192,12 +192,60 @@ def test_sync_is_locked_and_bound_to_exported_project(monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(UPDATE, "_run", fake_run)
     monkeypatch.setattr(UPDATE, "_validate_snapshot_environment", lambda *_args: None)
-    isolated = UPDATE.IsolatedGit(environment={"PATH": "tools", "PYTHONPATH": "leak"})
+    isolated = UPDATE.IsolatedGit(
+        environment={
+            "PATH": "tools",
+            "PYTHONPATH": "leak",
+            "GIT_DIR": "real-git-dir",
+            "GIT_WORK_TREE": "temporary-worktree",
+            "GIT_INDEX_FILE": "disposable-index",
+        }
+    )
 
     child_env = UPDATE._sync_snapshot_environment("uv", exported, isolated)
 
     assert calls == [(("uv", *UPDATE.SYNC_ARGUMENTS), exported, {"PATH": "tools"})]
     assert child_env == {"PATH": "tools"}
+
+
+def test_quality_command_exposes_disposable_git_without_leaking_it_to_environment_sync(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Only the receipt writer gets snapshot Git ownership; uv and later child gates do not."""
+    environment = tmp_path / ".venv"
+    interpreter = environment / "Scripts" / "python.exe"
+    interpreter.parent.mkdir(parents=True)
+    interpreter.write_bytes(b"")
+    observed: dict[str, object] = {}
+
+    def fake_run(command: Sequence[str], **kwargs: object) -> object:
+        observed.update(command=tuple(command), **kwargs)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(UPDATE.subprocess, "run", fake_run)
+    isolated = UPDATE.IsolatedGit(
+        environment={
+            "GIT_DIR": "git-dir",
+            "GIT_WORK_TREE": "work-tree",
+            "GIT_INDEX_FILE": "index-file",
+        }
+    )
+
+    result = UPDATE._run_quality_command(
+        UPDATE.FULL_RECEIPT_ARGUMENTS,
+        exported_service=tmp_path,
+        child_env={"PATH": "tools"},
+        git=isolated,
+    )
+
+    assert result == 0
+    assert observed["command"] == (str(interpreter), *UPDATE.FULL_RECEIPT_ARGUMENTS)
+    assert observed["env"] == {
+        "PATH": "tools",
+        "GIT_DIR": "git-dir",
+        "GIT_WORK_TREE": "work-tree",
+        "GIT_INDEX_FILE": "index-file",
+    }
 
 
 def test_sync_refuses_an_export_without_its_lock(tmp_path: Path) -> None:
