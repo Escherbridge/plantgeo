@@ -17,13 +17,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // A region missing `drought` from its vocabulary while this bundle still asks about it -- the shape
 // a one-character drift in either table produces. Spelled INSIDE the factory because `vi.mock` is
 // hoisted above every `const` in the file. Only the three fields `layerBindingInRegion` reads.
-vi.mock("@/lib/region/region", () => ({
-  getRegion: () => ({
-    slug: "fabricated-narrow-vocabulary",
-    platformLayers: ["soil-survey", "signal"],
-    enabledLayers: [{ layerSlug: "soil-survey", sourceSlug: "ssurgo", coverage: "regional" }],
-  }),
-}));
+vi.mock("@/lib/region/region", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/region/region")>();
+  return {
+    ...actual,
+    getRegion: () => ({
+      slug: "fabricated-narrow-vocabulary",
+      platformLayers: ["soil-survey", "signal"],
+      enabledLayers: [{ layerSlug: "soil-survey", sourceSlug: "ssurgo", coverage: "regional" }],
+    }),
+  };
+});
 
 describe("layerBindingInRegion when the compiled tables disagree", () => {
   beforeEach(() => {
