@@ -153,7 +153,7 @@ def _keys_for_day(store: ObjectStore, layer: str, day: date, tier: ZoomTier) -> 
     )
 
 
-def inspect_day(  # noqa: PLR0912 - each branch refuses one distinct physical-ladder conflict
+def inspect_day(  # noqa: PLR0912, PLR0915 - each branch refuses one distinct physical-ladder conflict
     store: ObjectStore, *, layer: str, day: date
 ) -> DayPlan:
     """Classify one physical day and bind every preserved marker to its Parquet payload."""

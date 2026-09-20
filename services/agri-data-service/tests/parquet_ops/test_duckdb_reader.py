@@ -153,8 +153,7 @@ def test_exact_source_is_scanned_and_attributed_to_its_logical_receipt_key(
     logical_key = partition_path("signal", "observed", 13, date(2026, 8, 1))
     exact_path = tmp_path / "verified.parquet"
     session.connection.execute(
-        f"COPY ({POSITIONED_SIGNAL_ROW.format(cell_id='verified')}) "
-        f"TO '{exact_path.as_posix()}' (FORMAT PARQUET)"
+        f"COPY ({POSITIONED_SIGNAL_ROW.format(cell_id='verified')}) TO '{exact_path.as_posix()}' (FORMAT PARQUET)"
     )
     reader = DuckDbRowReader(session=session)
     scope = ReadScope(layer="signal", kind="observed", tier=13, bbox=None)

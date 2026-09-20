@@ -58,9 +58,7 @@ class FakeStore:
                 run_id="seed",
                 parts=()
                 if legacy
-                else (
-                    CompletedPart(relative_path=self.parts[tier][0], row_count=1, byte_count=20, sha256=DIGEST),
-                ),
+                else (CompletedPart(relative_path=self.parts[tier][0], row_count=1, byte_count=20, sha256=DIGEST),),
             )
 
     def list_partition_keys(
@@ -275,7 +273,8 @@ def test_legacy_count_only_ladder_is_physically_bound_and_upgraded_under_locks()
     assert receipt["failures"] == []
     assert receipt["applied_days"] == [DAY.isoformat()]
     assert store.operations == [f"completion:z{tier}" for tier in COMMAND.LADDER_RUNGS]
-    assert all(store.completions[tier].schema_version == 2 for tier in COMMAND.LADDER_RUNGS)
+    expected_schema_version = 2
+    assert all(store.completions[tier].schema_version == expected_schema_version for tier in COMMAND.LADDER_RUNGS)
     assert all(store.completions[tier].run_id == "legacy-upgrade" for tier in COMMAND.LADDER_RUNGS)
 
 

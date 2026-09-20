@@ -57,6 +57,7 @@ async def test_authority_loading_runs_off_the_event_loop(operation: str) -> None
         elif operation == "years":
             await warehouse.lane_years(layer="drought", years=(2025, 2026))
         else:
+
             async def no_rows(_keys: tuple[str, ...], _listing: Any) -> tuple[Any, ...]:
                 return ()
 

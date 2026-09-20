@@ -20,11 +20,11 @@ import duckdb
 from agri_data_service.agent.surfaces import AGENT_ZOOM_TIER
 from agri_data_service.config import settings
 from agri_data_service.parquet_ops import faults
+from agri_data_service.parquet_ops.authorized_serving import AuthorizedServingReaderHolder, verified_serving_session
 from agri_data_service.parquet_ops.availability_coverage import (
     AvailabilityCoverageReaderHolder,
     resolve_availability_lanes,
 )
-from agri_data_service.parquet_ops.authorized_serving import AuthorizedServingReaderHolder, verified_serving_session
 from agri_data_service.parquet_ops.coverage import registered_census_lanes
 from agri_data_service.parquet_ops.duckdb_session import run_serving_read
 from agri_data_service.parquet_ops.mtbs_snapshot_catalog import configured_snapshot_loader
@@ -554,7 +554,7 @@ async def scan(  # noqa: PLR0913 - mirrors scan_all's binding contract, one coor
     return answers[0]
 
 
-async def scan_all(
+async def scan_all(  # noqa: PLR0913 - query batch plus one explicit authorization/read coordinate per argument
     reads: Sequence[tuple[str, Sequence[object]]],
     *,
     part_keys: Sequence[str],

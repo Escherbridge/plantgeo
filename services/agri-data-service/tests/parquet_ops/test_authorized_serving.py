@@ -13,8 +13,8 @@ from agri_data_service.agent.surfaces import SIGNAL_PLANE_LANE, SURFACE_PARQUET_
 from agri_data_service.foundation.canonical import sha256_digest
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.paths import absence_marker_path, completion_marker_path, partition_path
-from agri_data_service.parquet_ops import faults
 from agri_data_service.parquet_ops import authorized_serving as serving
+from agri_data_service.parquet_ops import faults
 from agri_data_service.parquet_ops.request_params import ReadScope
 from agri_data_service.pipeline.parquet.availability_index import AvailabilityUnavailableError, EvidenceReceipt
 from tests.parquet_ops.fakes import FakeListing, FakeRowReader
@@ -244,7 +244,7 @@ def test_listing_absence_history_opens_no_terminal_evidence(monkeypatch: pytest.
     keys = listing.list_keys("signal", "observed", 13, year=2026)
     first = next(listing.iter_tier_keys("signal", "observed", 13))
 
-    assert len(keys) == 2
+    assert len(keys) == len(days)
     assert first == absence_marker_path("signal", "observed", 13, days[0])
 
 
@@ -252,6 +252,7 @@ def test_missing_pointer_refuses_even_when_physical_day_exists(monkeypatch: pyte
     day = date(2026, 8, 6)
     physical = FakeListing()
     physical.write_day("signal", "observed", 13, day)
+
     def missing(*_args: object, **_kwargs: object) -> Any:
         raise AvailabilityUnavailableError("availability_missing", "pointer missing")
 
@@ -362,7 +363,8 @@ def test_repeated_reads_refresh_the_pointer_but_parse_one_unchanged_generation(
     authority.listing(FakeListing(), scope=scope, now=instant)
     authority.listing(FakeListing(), scope=scope, now=instant)
 
-    assert pointer_reads == 2
+    expected_pointer_reads = 2
+    assert pointer_reads == expected_pointer_reads
     assert generation_reads == 1
 
 
@@ -377,5 +379,7 @@ def test_parsed_generation_cache_evicts_by_cumulative_bytes(monkeypatch: pytest.
     authority._remember_index("second", second)
 
     assert authority._indexes == {"second": second}
-    assert authority._index_cache_bytes == 6
-    assert authority._index_cache_rows == 4
+    expected_bytes = 6
+    expected_rows = 4
+    assert authority._index_cache_bytes == expected_bytes
+    assert authority._index_cache_rows == expected_rows

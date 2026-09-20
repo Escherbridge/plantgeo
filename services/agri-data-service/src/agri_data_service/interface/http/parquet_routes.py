@@ -18,16 +18,16 @@ from sanic.response import HTTPResponse  # noqa: TC002 - sanic-ext evaluates han
 from agri_data_service.config import settings
 from agri_data_service.foundation.region import load_region, region_layer_availability
 from agri_data_service.parquet_ops import faults
-from agri_data_service.parquet_ops.availability_coverage import (
-    AvailabilityCoverageReaderHolder,
-    merge_direct_lane_rows,
-    resolve_availability_lanes,
-)
 from agri_data_service.parquet_ops.authorized_serving import (
     AuthorizedServingReaderHolder,
     resolve_authorized_day,
     resolve_authorized_release,
     resolve_authorized_window,
+)
+from agri_data_service.parquet_ops.availability_coverage import (
+    AvailabilityCoverageReaderHolder,
+    merge_direct_lane_rows,
+    resolve_availability_lanes,
 )
 from agri_data_service.parquet_ops.coverage import CoverageCache, registered_census_lanes
 from agri_data_service.parquet_ops.duckdb_session import run_serving_read
@@ -63,8 +63,8 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from agri_data_service.foundation.region import Region
-    from agri_data_service.parquet_ops.availability_coverage import AvailabilityCoverageReader
     from agri_data_service.parquet_ops.authorized_serving import AuthorizedServingReader
+    from agri_data_service.parquet_ops.availability_coverage import AvailabilityCoverageReader
     from agri_data_service.parquet_ops.request_params import ReadScope
     from agri_data_service.parquet_ops.warehouse_reader import PartitionRowReader, WarehouseListing
     from agri_data_service.parquet_ops.wire import LaneCoverage

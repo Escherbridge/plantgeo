@@ -11,7 +11,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, cast
 
 from agri_data_service.foundation.canonical import sha256_digest
 from agri_data_service.foundation.parquet.paths import (
@@ -24,32 +24,31 @@ from agri_data_service.parquet_ops.availability_coverage import (
     GenerationCachingStorage,
     required_source_ceiling,
 )
-from agri_data_service.parquet_ops.coverage import CensusLane, DEDICATED_SLIDER_PRODUCT_LAYERS
+from agri_data_service.parquet_ops.coverage import DEDICATED_SLIDER_PRODUCT_LAYERS, CensusLane
 from agri_data_service.parquet_ops.serving import resolve_day, resolve_release, resolve_window
 from agri_data_service.pipeline.parquet.availability_index import (
+    EVIDENCE_OBJECT_MAX_BYTES,
     AvailabilityChecksumError,
     AvailabilityError,
     AvailabilityMalformedError,
     AvailabilityUnavailableError,
     BotoAvailabilityStorage,
-    EVIDENCE_OBJECT_MAX_BYTES,
     read_availability_pointer,
     read_latest_availability,
     read_terminal_evidence,
 )
-from agri_data_service.pipeline.parquet.objectstore import availability_lane_root
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
+from agri_data_service.pipeline.parquet.objectstore import availability_lane_root
 from agri_data_service.warehouse.schemas.availability_index import AVAILABILITY_REQUIRED_RUNGS
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-    from collections.abc import Sequence
+    from collections.abc import Callable, Iterator, Sequence
 
     from agri_data_service.config import Settings
     from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.foundation.parquet.zoom import ZoomTier
-    from agri_data_service.parquet_ops.mtbs_snapshot_catalog import VerifiedMtbsSnapshot
     from agri_data_service.parquet_ops.duckdb_session import ServingSession
+    from agri_data_service.parquet_ops.mtbs_snapshot_catalog import VerifiedMtbsSnapshot
     from agri_data_service.parquet_ops.request_params import ReadScope
     from agri_data_service.parquet_ops.warehouse_reader import (
         PartitionRowReader,
@@ -328,6 +327,7 @@ class AvailabilityAuthorizedListing:
     def mtbs_snapshot_loader(self, day: date) -> VerifiedMtbsSnapshot | None:
         """Delegate MTBS proof, but admit only a day present in this exact generation and rung."""
         loader = getattr(self.physical, "mtbs_snapshot_loader", None)
+        loader = cast("Callable[[date], VerifiedMtbsSnapshot | None] | None", loader)
         snapshot = None if loader is None else loader(day)
         if snapshot is None:
             return None
@@ -378,14 +378,14 @@ class AuthorizedServingReader:
     def _read_index(self, *, lane: CensusLane, scope: ReadScope, required_ceiling: date) -> AvailabilityIndex:
         """Read a fresh pointer while parsing each immutable generation at most once per process."""
         lane_root = availability_lane_root(scope.layer, scope.kind)
-        expectations = {
-            "lane_root": lane_root,
-            "expected_lane": scope.layer,
-            "expected_nature": lane.nature,
-            "expected_required_rungs": AVAILABILITY_REQUIRED_RUNGS,
-            "required_source_ceiling": required_ceiling,
-        }
-        pointer = read_availability_pointer(self._store, **expectations)
+        pointer = read_availability_pointer(
+            self._store,
+            lane_root=lane_root,
+            expected_lane=scope.layer,
+            expected_nature=lane.nature,
+            expected_required_rungs=AVAILABILITY_REQUIRED_RUNGS,
+            required_source_ceiling=required_ceiling,
+        )
         with self._cache_lock:
             lock = self._index_locks.setdefault(lane_root, threading.Lock())
         with lock:
@@ -393,7 +393,14 @@ class AuthorizedServingReader:
                 cached = self._indexes.get(lane_root)
             if cached is not None and cached.pointer == pointer:
                 return cached
-            index = read_latest_availability(self._store, **expectations)
+            index = read_latest_availability(
+                self._store,
+                lane_root=lane_root,
+                expected_lane=scope.layer,
+                expected_nature=lane.nature,
+                expected_required_rungs=AVAILABILITY_REQUIRED_RUNGS,
+                required_source_ceiling=required_ceiling,
+            )
             with self._cache_lock:
                 self._remember_index(lane_root, index)
             return index
@@ -463,7 +470,7 @@ def resolve_authorized_day(
     return resolve_day(listing, _receipt_bound_reader(listing, reader), scope=scope, day=day)
 
 
-def resolve_authorized_window(
+def resolve_authorized_window(  # noqa: PLR0913 - authority, physical plane, reader, and closed scope/window
     authority: AuthorizedServingReader,
     physical: WarehouseListing,
     reader: PartitionRowReader,

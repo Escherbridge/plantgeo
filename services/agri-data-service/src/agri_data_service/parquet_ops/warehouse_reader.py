@@ -215,17 +215,15 @@ class DuckDbRowReader:
         if not read.keys:
             return RowReadResult(rows=(), budget_exhausted=False, unpositioned_rows=0)
         support = spatial_support(read.scope.layer, read.scope.kind)
-        uris = (
-            tuple(self.session.object_uri(key) for key in read.keys)
-            if read.object_uris is None
-            else read.object_uris
+        resolved_uris = (
+            tuple(self.session.object_uri(key) for key in read.keys) if read.object_uris is None else read.object_uris
         )
-        if len(uris) != len(read.keys) or len(set(uris)) != len(uris):
+        if len(resolved_uris) != len(read.keys) or len(set(resolved_uris)) != len(resolved_uris):
             raise faults.availability_malformed(
                 layer=read.scope.layer,
                 detail="receipt-bound row sources must match requested keys one-to-one",
             )
-        key_of_uri = dict(zip(uris, read.keys, strict=True))
+        key_of_uri = dict(zip(resolved_uris, read.keys, strict=True))
         uris = list(key_of_uri)
         if read.scope.bbox is not None:
             self._refuse_unapplicable_bbox(key_of_uri, support, read.scope)
