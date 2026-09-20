@@ -56,6 +56,7 @@ DEDICATED_SLIDER_PRODUCT_LAYERS: Final[tuple[str, ...]] = (
     "soil-field-moisture-7-28cm",
 )
 
+
 def census_lane_from_registration(registration: LaneRegistration) -> CensusLane:
     """Project one writer registration into the complete-history coverage contract."""
     return CensusLane(
@@ -66,6 +67,7 @@ def census_lane_from_registration(registration: LaneRegistration) -> CensusLane:
         cadence_days=registration.cadence_days,
         publication_lag_days=registration.publication_lag_days,
     )
+
 
 # Registered lanes the slider census does NOT walk. `calendar` and `signal` are not slider layers at
 # all. `fire-risk` and `weather-forecast` are written by `services/plantgeo-ml-service`, not by any

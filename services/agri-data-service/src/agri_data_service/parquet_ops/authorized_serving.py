@@ -68,15 +68,10 @@ if TYPE_CHECKING:
         EvidenceReceipt,
     )
 
-_LANES: Final = {
-    slug: census_lane_from_registration(registration)
-    for slug, registration in LANE_REGISTRY.items()
-}
+_LANES: Final = {slug: census_lane_from_registration(registration) for slug, registration in LANE_REGISTRY.items()}
 _UNREGISTERED_PRODUCTS: Final = set(DEDICATED_SLIDER_PRODUCT_LAYERS) - _LANES.keys()
 if _UNREGISTERED_PRODUCTS:
-    raise ValueError(
-        "serving products lack a registered history floor: " + ", ".join(sorted(_UNREGISTERED_PRODUCTS))
-    )
+    raise ValueError("serving products lack a registered history floor: " + ", ".join(sorted(_UNREGISTERED_PRODUCTS)))
 
 # One part is bounded independently, then the request is bounded across every part it selected.
 # These are serving-resource guards, not publication limits: an oversized authorized object is

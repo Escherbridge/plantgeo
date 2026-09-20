@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 # The forward token `nasa-firms` and its `run_fire_ingestion_job` were DELETED 2026-09-06: FIRMS
-# forward days belong to `pipeline/direct/fire_detections.py`, which writes Parquet and reuses the
+# forward days belong to `pipeline/direct/fire_detections/`, which writes Parquet and reuses the
 # fetch/parse/identity code below. This archive token survives because `jobs-firms-archive` is still
 # an active durable lane and is the only producer of days below the direct writer's floor.
 FIRMS_ARCHIVE_SOURCE: Final = "nasa-firms-archive"

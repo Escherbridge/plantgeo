@@ -53,8 +53,8 @@ DOMAIN_PARENTS: tuple[str, ...] = ("ingest", "execution")
 # The same "a lane never imports another lane" rule, for the directories the domain-package walk
 # above cannot see: it is keyed on `ingest`/`execution` and looks only for subdirectories, while
 # `layer-lanes.md` section 1 puts one FILE per layer in each lattice directory. `pipeline/direct`
-# holds both shapes at once -- `fire_detections.py` and `water_gauges.py` are modules, `climate/` is
-# a package -- so the walk below treats a subpackage as one lane exactly like a module.
+# holds both shapes at once -- `water_gauges.py` is a module, while `fire_detections/` and
+# `climate/` are packages -- so the walk below treats a subpackage as one lane exactly like a module.
 SIBLING_MODULE_DIRECTORIES: tuple[str, ...] = (
     "pipeline/lanes",
     "warehouse/schemas",

@@ -197,6 +197,92 @@ describe("LayerTimeSlider", () => {
     expect(screen.getByTestId("layer-time-slider-dense-base-water")).not.toBeNull();
   });
 
+  it("states the reported source publication limit without claiming feed health", () => {
+    const sourceCeilingDay = "2019-03-05";
+    useTimeSliderStore.setState({
+      capabilities: {
+        ...CAPABILITIES,
+        layers: [
+          ...CAPABILITIES.layers.slice(0, 1),
+          { ...CAPABILITIES.layers[1], sourceCeilingDay },
+          ...CAPABILITIES.layers.slice(2),
+        ],
+      },
+    });
+    renderWithProviders(<LayerTimeSlider layerId="water" />);
+
+    const note = screen.getByTestId("layer-time-slider-note-water").textContent ?? "";
+    expect(note).toContain(`Reported source publication limit: ${sourceCeilingDay}`);
+    expect(note).toContain("2 days before today");
+    expect(note).not.toMatch(/healthy|on time|normal|ingest gap/i);
+  });
+
+  it("allows a carried release after the publication limit without claiming availability ended", () => {
+    const sourceCeilingDay = "2019-03-03";
+    useTimeSliderStore.setState({
+      capabilities: {
+        ...CAPABILITIES,
+        layers: [
+          ...CAPABILITIES.layers,
+          {
+            ...CAPABILITIES.layers[1],
+            layerName: "drought-areas",
+            sourceCeilingDay,
+            latestObservedDate: SERVER_CURRENT_DATE,
+            describedThroughDay: sourceCeilingDay,
+          },
+        ],
+      },
+    });
+    renderWithProviders(<LayerTimeSlider layerId="drought" />);
+
+    const noteElement = screen.getByTestId("layer-time-slider-note-drought");
+    const note = noteElement.textContent ?? "";
+    expect(note).toContain(`Reported source publication limit: ${sourceCeilingDay}`);
+    expect(note).toContain("Later dates may use an earlier release where supported.");
+    expect(note).not.toMatch(/availability.*ends|not latest|behind its latest/i);
+    expect(screen.getByDisplayValue(SERVER_CURRENT_DATE)).not.toBeNull();
+    expect(screen.getByRole("slider").getAttribute("aria-describedby")?.split(" ")).toContain(
+      noteElement.id
+    );
+  });
+
+  it("shows a source ceiling for an event layer such as Fire Detections", () => {
+    const sourceCeilingDay = "2019-03-06";
+    useTimeSliderStore.setState({
+      capabilities: {
+        ...CAPABILITIES,
+        layers: [
+          { ...CAPABILITIES.layers[0], temporalKind: "event", sourceCeilingDay },
+          ...CAPABILITIES.layers.slice(1),
+        ],
+      },
+    });
+    renderWithProviders(<LayerTimeSlider layerId="vegetation" />);
+
+    const note = screen.getByTestId("layer-time-slider-note-vegetation").textContent ?? "";
+    expect(note).toContain(`Reported source publication limit: ${sourceCeilingDay}`);
+    expect(note).toContain("1 day before today");
+  });
+
+  it("does not describe a source ceiling at the server's current day as delayed", () => {
+    useTimeSliderStore.setState({
+      capabilities: {
+        ...CAPABILITIES,
+        layers: [
+          ...CAPABILITIES.layers.slice(0, 1),
+          { ...CAPABILITIES.layers[1], sourceCeilingDay: SERVER_CURRENT_DATE },
+          ...CAPABILITIES.layers.slice(2),
+        ],
+      },
+    });
+    renderWithProviders(<LayerTimeSlider layerId="water" />);
+
+    expect(screen.getByTestId("layer-time-slider-note-water").textContent).not.toContain(
+      "Reported source publication limit"
+    );
+  });
+
   it("marks a layer that is behind its own latest published day, and offers the way back", () => {
     useTimeSliderStore.setState({ layerDates: { vegetation: "2019-02-14" } });
     renderWithProviders(<LayerTimeSlider layerId="vegetation" />);

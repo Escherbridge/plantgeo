@@ -114,6 +114,25 @@ it does not replace them. It inherits `engineering-principles.md`.
 
 ## Readability and region portability
 
+### Source-direct writer packages
+
+- An active `pipeline/direct` forward writer is a package, never a growing flat module. It carries
+  `AGENTS.md`, an executable `__main__.py`, and `forward.py`; `forward.py` owns `parser()` and the
+  `WRITER_CONTRACT` that the default-deny writer-contract test registers. A new writer is not done
+  until that test recognizes it.
+- Separate source admission, row conformance, publication adaptation, and bounded orchestration as
+  `source -> rows -> adapter -> forward` where those responsibilities exist. This is an ownership
+  rule, not a demand for empty files: archive, static-release, rolling-recovery, and source-protocol
+  packages may use a different shape when their local `AGENTS.md` documents the reason and tests
+  pin the behavior.
+- Package writers by producer and publication lifecycle, not by how the front end groups layers.
+  UI categories can contain several independently scheduled backend packages.
+- Use `pipeline.errors.PipelineOperationError` for ordinary operational boundary failures and
+  populate its stable code/lane/stage/retryable context. Do not introduce a lane-named exception
+  that only changes the class name. Keep a specialized exception only where a caller branches on a
+  distinct semantic condition; document and test that control flow. An old public exception name
+  may be a compatibility alias to the shared type.
+
 - Full-word identifiers: `bounding_box`, `request_timeout_seconds`,
   `ensemble_size`. No `bb`, `tmo`, `n_ens`. Field-standard terms (`ndvi`,
   `huc12`, `srid`) count as words. Name the algorithm at its implementation in

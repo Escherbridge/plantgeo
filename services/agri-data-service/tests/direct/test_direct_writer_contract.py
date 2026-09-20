@@ -1,4 +1,4 @@
-"""All eleven `pipeline/direct` writers, read as ONE table: outcome words, CLI surface, failure policy.
+"""All twelve `pipeline/direct` writers, read as ONE table: outcome words, CLI surface, failure policy.
 
 Sibling to `test_direct_package_registration.py`, which polices whether a writer is WIRED. This one
 polices whether it is UNIFORM -- and, where it is deliberately not, whether it says so.
@@ -45,11 +45,12 @@ from agri_data_service.pipeline.direct.burn_severity.forward import (
 from agri_data_service.pipeline.direct.burn_severity.forward import (
     run_burn_severity_forward,
 )
-from agri_data_service.pipeline.direct.fire_detections import _parse_args
+from agri_data_service.pipeline.direct.fire_detections import DirectFireDetectionsError, _parse_args
 from agri_data_service.pipeline.direct.watersheds.forward import (
     WatershedsForwardConfig,
     run_watersheds_forward,
 )
+from agri_data_service.pipeline.errors import PipelineOperationError
 from agri_data_service.pipeline.parquet.gap_fill import LaneDayOutcome
 
 if TYPE_CHECKING:
@@ -63,7 +64,7 @@ DIRECT_ROOT = _SOURCE_ROOT / "pipeline" / "direct"
 
 #: Package (or flat module) name -> the module that owns its `parser()` and `WRITER_CONTRACT`.
 #: DEFAULT-DENY: `test_every_direct_writer_is_in_this_table` fails if `pipeline/direct` grows a
-#: writer nobody added here, so a twelfth writer is policed the day it lands rather than the day
+#: writer nobody added here, so a new writer is policed the day it lands rather than the day
 #: somebody remembers. `water_gauges` is deliberately absent and its absence is asserted, not assumed
 #: -- see `NON_WRITER_MODULES`.
 WRITER_MODULES: Final[dict[str, str]] = {
@@ -72,7 +73,7 @@ WRITER_MODULES: Final[dict[str, str]] = {
     "climate": "agri_data_service.pipeline.direct.climate.forward",
     "drought": "agri_data_service.pipeline.direct.drought.forward",
     "evacuation_zones": "agri_data_service.pipeline.direct.evacuation_zones.forward",
-    "fire_detections": "agri_data_service.pipeline.direct.fire_detections",
+    "fire_detections": "agri_data_service.pipeline.direct.fire_detections.forward",
     "fire_perimeters": "agri_data_service.pipeline.direct.fire_perimeters.forward",
     "sensors": "agri_data_service.pipeline.direct.sensors.forward",
     "soil": "agri_data_service.pipeline.direct.soil.forward",
@@ -82,7 +83,7 @@ WRITER_MODULES: Final[dict[str, str]] = {
 }
 
 #: Modules under `pipeline/direct/` that are NOT forward writers and therefore owe no contract. One
-#: entry, with its reason, because "eleven writers" is a claim this file should be able to prove
+#: Each entry carries its reason because "twelve writers" is a claim this file should be able to prove
 #: rather than a number it inherits.
 NON_WRITER_MODULES: Final[dict[str, str]] = {
     "botanical_species_profiles": "an offline, reviewed static reference release publisher, not an environmental "
@@ -201,7 +202,7 @@ def test_every_direct_writer_is_in_this_table() -> None:
     assert not stale, f"this table names module(s) {stale} that no longer exist"
 
 
-def test_the_one_non_writer_module_really_has_no_parser() -> None:
+def test_declared_non_writer_modules_really_have_no_parser() -> None:
     """The excuse in NON_WRITER_MODULES is checked, not taken on trust.
 
     Without this, `NON_WRITER_MODULES` would be a way to silence the table by asserting a module is
@@ -212,7 +213,7 @@ def test_the_one_non_writer_module_really_has_no_parser() -> None:
         module = importlib.import_module(f"agri_data_service.pipeline.direct.{package}")
         assert not hasattr(module, "parser"), (
             f"{package} is excused from the writer table but exposes a `parser()`; if it grew a CLI "
-            "it grew a turn, and it now owes a WRITER_CONTRACT like its ten siblings."
+            "it grew a turn, and it now owes a WRITER_CONTRACT like its eleven peers."
         )
 
 
@@ -225,6 +226,35 @@ def test_every_writer_declares_a_contract_and_a_parser(package: str) -> None:
         f"{package} exposes no `parser()` factory, so nothing outside it can enumerate its CLI "
         "surface -- and a knob nobody can enumerate is a knob that drifts unobserved."
     )
+
+
+@pytest.mark.parametrize("package", PACKAGES)
+def test_every_writer_is_a_documented_executable_package_with_its_contract_beside_parser(
+    package: str,
+) -> None:
+    """Active writers share one inspectable package shell even when their internals differ."""
+    package_root = DIRECT_ROOT / package
+    assert package_root.is_dir(), f"{package} must be a package, not a flat writer module"
+    assert (package_root / "AGENTS.md").is_file(), f"{package} has no package architecture document"
+    assert (package_root / "__main__.py").is_file(), f"{package} has no `python -m` entrypoint"
+
+    module = _module(package)
+    assert Path(module.__file__).resolve() == (package_root / "forward.py").resolve(), (
+        f"{package} must declare WRITER_CONTRACT beside parser() in forward.py"
+    )
+    declarations = ast.parse((package_root / "forward.py").read_text(encoding="utf-8")).body
+    assert any(isinstance(node, ast.FunctionDef) and node.name == "parser" for node in declarations), (
+        f"{package} must define parser() in forward.py, not import it"
+    )
+    assert any(
+        isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "WRITER_CONTRACT"
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+        and node.value.func.id == "DirectWriterContract"
+        for node in declarations
+    ), f"{package} must construct its typed WRITER_CONTRACT in forward.py, not re-export it"
 
 
 # ---------------------------------------------------------------------------------------------
@@ -245,7 +275,7 @@ def test_lane_day_outcomes_match_the_shared_literal() -> None:
 
 @pytest.mark.parametrize("package", PACKAGES)
 def test_every_declared_outcome_is_in_the_shared_vocabulary(package: str) -> None:
-    """One monitor has to read all eleven writers, and it can only do that against an enumerable set."""
+    """One monitor has to read all twelve writers, and it can only do that against an enumerable set."""
     undeclared = sorted(_contract(package).turn_outcomes - DIRECT_TURN_OUTCOMES)
     assert not undeclared, (
         f"{package} declares outcome(s) {undeclared} that pipeline/direct/__init__.py does not "
@@ -304,7 +334,7 @@ def test_every_writer_exposes_the_required_flags(package: str) -> None:
     assert not missing, (
         f"{package} exposes neither of, or not all of, the flags every direct writer must have: "
         f"missing {missing}. There is no exemption for these -- a turn nobody can bound or correlate "
-        "is not operable by the same runbook as its ten siblings."
+        "is not operable by the same runbook as its eleven peers."
     )
 
 
@@ -380,7 +410,7 @@ def test_every_bbox_writer_survives_a_negative_leading_bbox(package: str) -> Non
     Both accepted `--bbox` and neither routed argv through `inline_bbox_value`, so the documented
     operator command failed with "argument --bbox: expected one argument" for every real envelope --
     the same class of crash that adding `--bbox` to four writers was meant to end. Parametrised over
-    ALL eleven so a writer that GAINS `--bbox` later is covered the day it does, with nothing to
+    ALL twelve so a writer that GAINS `--bbox` later is covered the day it does, with nothing to
     remember to add here.
     """
     if "--bbox" not in _flags(package):
@@ -409,10 +439,15 @@ def test_fire_detections_accepts_an_operator_supplied_run_id() -> None:
     assert generated.run_id is None, "omitting --run-id must keep the generated default, not pin an empty one"
 
 
+def test_fire_detections_package_preserves_its_error_import_as_the_shared_direct_error() -> None:
+    """The package move must not leave a lane-specific exception hierarchy behind."""
+    assert DirectFireDetectionsError is PipelineOperationError
+
+
 async def test_burn_severity_names_its_unset_bbox_skip_in_a_declared_word(monkeypatch: pytest.MonkeyPatch) -> None:
     """PINS THE ADDED KEY. This no-op reported only a `detail` sentence and no `outcome` at all.
 
-    A monitor reading eleven writers had to string-match one writer's prose to learn a state that its
+    A monitor reading twelve writers had to string-match one writer's prose to learn a state that its
     sibling `evacuation_zones` had been reporting as a word since it was written. Returns before any
     socket or object-store call: the bbox check is the first thing past config validation.
     """

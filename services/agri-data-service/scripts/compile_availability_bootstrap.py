@@ -1220,8 +1220,7 @@ def _resolve_lanes(arguments: argparse.Namespace) -> tuple[CensusLane, ...]:
     time_bearing = tuple(
         census_lane_from_registration(registration)
         for registration in LANE_REGISTRATIONS
-        if nature_has_time_axis(registration.nature)
-        and registration.slug not in FOREIGN_PUBLISHER_BOOTSTRAP_EXCLUSIONS
+        if nature_has_time_axis(registration.nature) and registration.slug not in FOREIGN_PUBLISHER_BOOTSTRAP_EXCLUSIONS
     )
     if arguments.all_time_bearing:
         return time_bearing

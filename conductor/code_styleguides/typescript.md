@@ -71,6 +71,12 @@ compiler's strict mode; it does not replace it.
   expose semantic states for loading, empty, partial, stale, error, and success.
   Split a panel when its data orchestration and visual sections stop being easy
   to test independently.
+- Treat a capability's source ceiling as an upstream-availability boundary, not as client-side
+  coverage evidence. Derive any displayed delay from that ceiling and the payload's server date;
+  do not encode layer-specific lag calendars in a component and do not infer feed health from the
+  ceiling alone.
+  A reported publication limit may be stale and does not bound readable dates when release carry
+  applies; preserve that distinction in displayed text.
 - Subscribe to the narrowest Zustand state slice. Do not read an entire
   store in a high-frequency map component, and do not mirror server data in
   multiple stores without a single source of truth and invalidation plan.

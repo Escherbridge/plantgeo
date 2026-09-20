@@ -428,8 +428,7 @@ def test_availability_cannot_hide_missing_days_before_its_oldest_terminal_row() 
     rows = lane_coverage_from_index(proven, lane=claimed, now=NOW)
 
     assert all(
-        entry.gap_ranges == (DayRange(first_day=date(2026, 7, 30), last_day=date(2026, 7, 31)),)
-        for entry in rows
+        entry.gap_ranges == (DayRange(first_day=date(2026, 7, 30), last_day=date(2026, 7, 31)),) for entry in rows
     )
 
 

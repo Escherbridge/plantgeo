@@ -255,6 +255,24 @@ This index is publication state, not a substitute for per-request served-row cov
 axis comes from availability; the rendered collection still reports its own rows and spatial
 coverage.
 
+### 4b. Source delay is visible and is not a freshness verdict
+
+Every date-bearing slider capability carries the server's `sourceCeilingDay` when the upstream
+cannot offer the current day. The shared layer-time UI states the calendar restriction and its
+distance from `serverCurrentDate`; it never hardcodes a Fire or Climate lag and never derives dates
+from the browser clock. A normal two-, five-, or six-day source boundary must therefore be visible
+before a user mistakes it for a broken ingest.
+
+The ceiling is the last reported publication boundary and may itself be stale. It is not proof
+that ingestion is healthy or that a release cannot serve later dates through bounded carry. UI
+copy names the reported publication limit rather than saying availability ends on that day. It
+must not say "on time" or "within the normal window" unless the server also supplies an independent
+freshness verdict based on the actual latest recorded observation.
+Likewise, the existing `Not latest` state means the user selected a day behind that layer's
+displayable edge; it never means the provider or ingestion is stale. Expected source delay,
+user-selected historical day, governed absence, and independently detected stale ingestion remain
+four separate states and four separate pieces of language.
+
 ## 5. ML stays where it already is, and the lattice does not yet separate it
 
 **Superseded 2026-09-18: the "eventually" below arrived.** `method/ml/` and

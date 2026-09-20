@@ -101,7 +101,7 @@ rolling lookback, so a given detection is typically re-seen across 2+ hourly
 runs before it ages out — re-ingestion of an already-written detection is a
 correct `records_written == 0`, not a failure (see §5).
 
-**Direct Parquet forward path:** `pipeline/direct/fire_detections.py` separately
+**Direct Parquet forward path:** `pipeline/direct/fire_detections/` separately
 fetches exact settled UTC days from every product whose live FIRMS availability window covers the
 day, applies the archive path's SP-over-NRT identity precedence, and writes the deduplicated
 0.005-degree cell-day aggregate directly to the dedicated

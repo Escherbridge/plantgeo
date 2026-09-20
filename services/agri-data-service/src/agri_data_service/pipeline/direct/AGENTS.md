@@ -37,10 +37,31 @@ Modules here fetch upstream products and publish registered Parquet schemas with
 ingested rows in PostgreSQL. PostgreSQL may still supply the shared session-scoped lane-day
 advisory lock during the transition; it is coordination, not a data sink.
 
+## Required package shell; variable internals
+
+Every active source-direct forward writer is a package with `AGENTS.md`, `__main__.py`, and
+`forward.py`. `forward.py` owns both `parser()` and `WRITER_CONTRACT`; `__init__.py` may re-export
+them for compatibility, but it is not a second implementation. The default lifecycle is
+`source -> rows -> adapter -> forward`: source admission, schema conformance, publication binding,
+and bounded orchestration remain separate when those responsibilities exist.
+
+That lifecycle is a responsibility map, not a filename quota. Archive publishers may need fetch,
+quarantine, normalization, and release modules; static publishers may use watermark/registration;
+rolling feeds may need recovery. A deliberate deviation is recorded in the package `AGENTS.md` and
+covered by its contract tests. Front-end groups such as FIRE do not create backend parent packages:
+backend packages follow independently scheduled producers and publication ownership.
+
+Ordinary operational failures use `pipeline.errors.PipelineOperationError` with stable `code`,
+`lane`, `stage`, and `retryable` context. Do not add a lane-named exception whose only behavior is
+to wrap a message. A distinct exception remains appropriate when callers branch on a genuinely
+different semantic state--for example unsettled source data, a quota/deadline stop, malformed
+release evidence, or watermark refusal--and the package document and tests must name that branch.
+Compatibility aliases may preserve an old import while the live type is the shared error.
+
 ## The cross-writer contract lives in `__init__.py`, and each writer claims it
 
-Eleven writers, built over months by different passes, drifted on three axes that a monitor and an
-operator both have to read across all eleven: the WORDS a turn reports, the KNOBS its CLI takes, and
+Twelve writers, built over months by different passes, drifted on three axes that a monitor and an
+operator both have to read across all twelve: the WORDS a turn reports, the KNOBS its CLI takes, and
 what it does with a MALFORMED upstream record. `pipeline/direct/__init__.py` declares all three,
 every writer carries a `WRITER_CONTRACT` beside its `parser()`, and
 `tests/direct/test_direct_writer_contract.py` checks the claim against the code.
@@ -50,7 +71,7 @@ Three things about that module are load-bearing rather than stylistic:
 - It is the package `__init__` and NOT a `contract.py`, because
   `tests/test_layer_import_contract.py::_lane_names` counts every flat `*.py` under this directory
   as its own LANE and `test_lanes_do_not_import_each_other` forbids a lane importing a sibling. A
-  `pipeline/direct/contract.py` would be a twelfth lane the other eleven could not import. Same
+  `pipeline/direct/contract.py` would be another lane the twelve writers could not import. Same
   reasoning `pipeline/lanes/__init__.py::LANE_BASE_ZOOM_TIER` records for itself.
 - `LANE_DAY_OUTCOMES` RESTATES `gap_fill.py::LaneDayOutcome` rather than importing it, because
   `gap_fill` imports `lane_registry`, which imports writer packages, which import this module.
@@ -112,7 +133,7 @@ writer evidence.
 
 ## Fire detections
 
-`fire_detections.py` refreshes settled NASA FIRMS days in the dedicated
+`fire_detections/` refreshes settled NASA FIRMS days in the dedicated
 `layer=fire-detections/kind=observed/zoom=...` namespace. It intentionally leaves
 `ingest/firms.py`, `ingest/commands.py`, and `ingest/runner.py` unchanged, so the existing
 PostgreSQL FIRMS ingestion path remains available while the direct writer is proven.
@@ -827,7 +848,7 @@ Every published day opens DuckDB spatial TWICE, guarded identically both times v
 2. `warehouse/parquet/tiers.py::derivation_session`, opened by `fill_one_lane_day`'s default
    `derive_and_write_day_tiers`, simplifies the already-repaired base rung down to z9/z5/z0. This
    package never opens that session directly and never bypasses it -- the adapter (`adapter.py`) writes
-   ONLY the z13 rung; `fill_one_lane_day` derives the rest, exactly as `fire_detections.py` does.
+   ONLY the z13 rung; `fill_one_lane_day` derives the rest, exactly as `fire_detections/adapter.py` does.
 
 ### The `provenance=` trap does not apply here, by construction
 

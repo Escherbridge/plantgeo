@@ -334,6 +334,9 @@ A layer is finished when all of these are true:
 - [ ] availability index is bootstrapped once and extended by every terminal ingestion/backfill
       outcome; slider reads require no historical listing or data scan
 - [ ] time slider mounts, with a real axis or an honest snapshot/reference declaration
+- [ ] time slider names any server-declared source ceiling and day restriction without presenting
+      it as proof of healthy ingestion or conflating it with a user-selected historical day;
+      publication limits do not imply that readable availability ends when release carry applies
 - [ ] agent tools answer at the selected day, with temporal and spatial neighbours
       carrying their distances
 - [ ] tests cover success and failure; full sweep green

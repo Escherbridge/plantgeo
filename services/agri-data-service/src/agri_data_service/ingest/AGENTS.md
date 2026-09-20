@@ -10,7 +10,7 @@ DELETED, not merely unused"), applied to the ingestion path.
 
 | Deleted | Layer | What owns the layer now |
 |---|---|---|
-| `ingest-firms`, `firms.py::run_fire_ingestion_job`, `FIRMS_SOURCE`, `firms_day_range()` + `FIRMS_DAY_RANGE` | fire-detections | `pipeline/direct/fire_detections.py` (forward); `jobs-firms-archive` still fills history **into Postgres** |
+| `ingest-firms`, `firms.py::run_fire_ingestion_job`, `FIRMS_SOURCE`, `firms_day_range()` + `FIRMS_DAY_RANGE` | fire-detections | `pipeline/direct/fire_detections/` (forward); `jobs-firms-archive` still fills history **into Postgres** |
 | `ingest-streamflow`, `usgs_nwis.py::run_water_ingestion_job`, `USGS_STREAMFLOW_SOURCE` | water-gauges | `pipeline/parquet/water_gauges_forward.py`; `jobs-streamflow-archive` still fills history **into Postgres** |
 | `ingest-weather`, `open_meteo.py::run_weather_ingestion_job`, `build_weather_write`, `OPEN_METEO_SOURCE` | weather-observations | `pipeline/direct/weather_observations/` |
 | `ingest-drought` + `ingest-drought-history`, `usdm.py::PostgresDroughtStore`/`run_drought_ingestion_job`/`DroughtStore`/retention, the whole `usdm_history.py` walk, `sql/ingest/store_drought_area.sql`, `sql/ingest/prune_drought_releases.sql` | drought | `pipeline/direct/drought/` |

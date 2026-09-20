@@ -4,7 +4,7 @@ Generic spatial-envelope mechanisms with zero domain meaning: `west,south,east,n
 parsing and CLI-argument formatting. Extracted 2026-09-18 from `ingest/mtbs.py`, which minted
 `inline_bbox_value` for MTBS's own `--bbox` flag; six `pipeline/direct/<domain>` lanes
 (`evacuation_zones/forward.py`, `sensors/forward.py`, `watersheds/forward.py`,
-`weather_observations/forward.py`, `fire_perimeters/forward.py`, `fire_detections.py`) came to
+`weather_observations/forward.py`, `fire_perimeters/forward.py`, `fire_detections/forward.py`) came to
 import it from one source's ingest module -- a cross-domain leak `layer-lanes.md` §5a names
 directly: "the shared half moves down; the dependents never move sideways." (The `W3-B` survey that
 first flagged this recorded five lanes; `fire_perimeters/forward.py` had gained the same import by

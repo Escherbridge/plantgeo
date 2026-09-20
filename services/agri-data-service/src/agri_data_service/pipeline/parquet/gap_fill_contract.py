@@ -367,9 +367,7 @@ class GapFillSummary:
         }
 
 
-def lane_window(
-    lane: LaneRegistration, *, today: date, first_day: date | None = None
-) -> tuple[date, date] | None:
+def lane_window(lane: LaneRegistration, *, today: date, first_day: date | None = None) -> tuple[date, date] | None:
     """Return the settled `[first, last]` day range a SERIES lane may fill, or `None` when it has none.
 
     `last` is `today - publication_lag_days`, clamped to `writer_ceiling` when a dedicated writer

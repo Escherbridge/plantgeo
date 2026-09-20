@@ -23,6 +23,7 @@ import { layerLabel, type LayerToggleId } from "@/lib/map/layer-registry";
 import { useLayerDay } from "@/lib/map/layer-toggle-context";
 import { cn } from "@/lib/utils";
 import { useDrawnLayerDayStore } from "@/stores/useMetricAtDate";
+import type { SliderLayerCapability } from "@/types/time-slider";
 // Contractually-fixed surface from the parallel lane building this store; do not stub it, do not
 // edit it. See src/components/map/AGENTS.md §synced-days-track for the pinned signatures.
 import { useSyncedDays, useSyncIndexReady } from "@/stores/sync-index-store";
@@ -203,6 +204,26 @@ const AXIS_DISAGREEMENT_STATE: LayerTimeState = {
   reason: null,
   evidenceLanes: [],
 };
+
+function sourceCeilingNote(
+  capability: Pick<SliderLayerCapability, "temporalKind" | "sourceCeilingDay">,
+  serverCurrentDate: string
+): string | null {
+  const sourceCeilingDay = capability.sourceCeilingDay;
+  if (
+    capability.temporalKind === "snapshot" ||
+    sourceCeilingDay === null ||
+    sourceCeilingDay === undefined ||
+    !isCalendarDate(sourceCeilingDay) ||
+    !isCalendarDate(serverCurrentDate) ||
+    sourceCeilingDay >= serverCurrentDate
+  ) {
+    return null;
+  }
+
+  const delayDays = dayOffset(sourceCeilingDay, serverCurrentDate);
+  return `Reported source publication limit: ${sourceCeilingDay} (${delayDays} ${delayDays === 1 ? "day" : "days"} before today). Later dates may use an earlier release where supported.`;
+}
 
 export interface LayerTimeSliderProps {
   layerId: LayerToggleId;
@@ -417,12 +438,15 @@ export function LayerTimeSlider({
   const pendingNote = isFetchingCurrentDay
     ? `Updating ${label}; what's shown may be a moment behind until this finishes.`
     : null;
+  const sourceAvailabilityNote =
+    capabilities === null
+      ? null
+      : sourceCeilingNote(capability, capabilities.serverCurrentDate);
 
-  // Ordered by urgency, day-first: pending is transient and about to change; the coverage note
-  // is about the day the thumb is on; the staleness note is about the row's relationship to its
-  // own record; the synced note is about local storage, the least time-sensitive of the four.
+  // Show pending work, the reported publication limit, selected-day coverage, then local storage.
   const notes = [
     pendingNote,
+    sourceAvailabilityNote,
     coverageNote === null ? null : `${coverageNote}.`,
     isBehindLatestObservedDate && latestObservedDate !== null
       ? `${daysBehindLatest} ${daysBehindLatest === 1 ? "day" : "days"} behind its latest, ${latestObservedDate}.`

@@ -60,6 +60,13 @@ UI primitives before introducing a custom implementation.
   cached data, missing data, and user-entered data. An unavailable source must
   be visible as unavailable; never render it as a normal zero or a blank map
   without explanation.
+- For lagged date-bearing data, distinguish the source's declared publication ceiling from an
+  ingest gap. Render the capability-derived calendar restriction in plain language when the
+  ceiling trails the server day; do not hardcode a layer name or date, do not turn the
+  unpublishable tail into a missing-data claim, and do not call the feed healthy or delayed without
+  an independent server freshness verdict.
+  Describe this as a reported publication limit: it may itself be stale, and release carry may
+  support readable dates beyond it. Avoid internal health-verdict terminology in user-facing copy.
 - AI recommendations must show their supporting signals and freshness, a
   recommendation/not-guarantee notice, and the next safe action. An AI reply
   cannot make a map edit, alert, outreach, or deployment by itself. Put an

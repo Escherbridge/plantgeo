@@ -208,15 +208,7 @@ class LaneRegistration:
                 f"lane {self.slug!r} must cite where its history floor came from; an uncited floor is a guess "
                 "that reads as a measurement"
             )
-        if self.complete_history_floor is None:
-            object.__setattr__(self, "complete_history_floor", self.history_floor)
-        if self.complete_floor_basis is None:
-            object.__setattr__(self, "complete_floor_basis", self.floor_basis)
-        elif not self.complete_floor_basis.strip():
-            raise LaneRegistryError(
-                f"lane {self.slug!r} must cite where its complete history floor came from; an uncited floor "
-                "would turn an unverified archive claim into repair work"
-            )
+        self._normalise_complete_history_floor()
         # WHO WRITES A LANE IS NOT VALIDATED HERE, DELIBERATELY. Since 2026-09-18 two registrations
         # (`fire-risk`, `weather-forecast`) are written entirely by `services/plantgeo-ml-service`
         # and have no writer in this tree at all; their adapters refuse and name that service. The
@@ -254,6 +246,18 @@ class LaneRegistration:
             raise LaneRegistryError(
                 f"lane {self.slug!r} declares writer ceiling {self.writer_ceiling} before its history floor "
                 f"{self.history_floor}"
+            )
+
+    def _normalise_complete_history_floor(self) -> None:
+        """Default complete-history evidence to the writer's declared history evidence."""
+        if self.complete_history_floor is None:
+            object.__setattr__(self, "complete_history_floor", self.history_floor)
+        if self.complete_floor_basis is None:
+            object.__setattr__(self, "complete_floor_basis", self.floor_basis)
+        elif not self.complete_floor_basis.strip():
+            raise LaneRegistryError(
+                f"lane {self.slug!r} must cite where its complete history floor came from; an uncited floor "
+                "would turn an unverified archive claim into repair work"
             )
 
     @property

@@ -1,20 +1,20 @@
 """Source-direct Parquet producers that use PostgreSQL only for publication locks.
 
-THE CROSS-WRITER CONTRACT LIVES HERE, and only here. Eleven writers were built over months by
+THE CROSS-WRITER CONTRACT LIVES HERE, and only here. Twelve writers were built over months by
 different passes; the words they report, the knobs their CLIs expose and what each does with a
 malformed upstream record all drifted. Nothing was wrong with most of the differences -- a lattice
 lane genuinely has no bbox to take and a single-product lane genuinely has no `--product` to offer
--- but a difference nobody wrote down is indistinguishable from an accident, and a twelfth writer
+-- but a difference nobody wrote down is indistinguishable from an accident, and a new writer
 copying an arbitrary sibling inherits whichever it happened to copy.
 
 So every writer declares a `WRITER_CONTRACT` beside its `parser()`, `tests/direct/test_direct_writer_contract.py`
-reads all eleven as one table, and a policy this module does not name cannot be adopted silently.
+reads all twelve as one table, and a policy this module does not name cannot be adopted silently.
 
 IT SITS IN THE PACKAGE `__init__` FOR THE SAME REASON `pipeline/lanes/__init__.py::LANE_BASE_ZOOM_TIER`
 does: `tests/test_layer_import_contract.py::_lane_names` counts every flat `*.py` under
 `pipeline/direct/` as its own LANE, and `test_lanes_do_not_import_each_other` refuses a lane that
-imports a sibling. A `pipeline/direct/contract.py` would therefore be a twelfth lane that the other
-eleven are forbidden to import. The package `__init__` is the one module here every writer may reach.
+imports a sibling. A `pipeline/direct/contract.py` would therefore be another lane that the twelve
+writers are forbidden to import. The package `__init__` is the one module here every writer may reach.
 
 NOTHING HEAVY IS IMPORTED HERE. This module is executed on the way in to every writer, every
 adapter and every test that touches one. It holds strings, frozensets and one dataclass.
@@ -39,7 +39,7 @@ for `GAP_FILL_ZOOM_TIER` and for the identical reason. The anti-drift proof is a
 ## Two failure policies on a bad upstream record, and the axis that separates them
 
 The two policies read as a contradiction only until you notice they answer questions about
-DIFFERENT DEFECTS. Every one of the eleven splits a malformed record the same way:
+DIFFERENT DEFECTS. Every one of the twelve splits a malformed record the same way:
 
 - IDENTITY DEFECT -- the record cannot be keyed at all (no `properties`/`geometry` object, an
   unparseable natural key, a missing GlobalID). Some writers count it and publish the rest; some
@@ -58,7 +58,7 @@ fire-perimeters does. Their declared contracts below are IDENTICAL. What differe
 their live data happened to contain.
 
 The one real outlier on this axis is `fire-detections`, which routes an IDENTITY defect
-("unkeyable or invalid records for {day}; refusing a partial day", `fire_detections.py:245`) into
+("unkeyable or invalid records for {day}; refusing a partial day", `fire_detections/rows.py`) into
 the refuse-the-release bucket where its three peers count and continue. That is declared below as
 what it is, and left alone: changing a live lane's failure policy is an owner decision, not a
 uniformity edit.
@@ -101,8 +101,8 @@ if TYPE_CHECKING:
 LANE_DAY_OUTCOMES: Final[frozenset[str]] = frozenset({"written", "absent", "raised", "blocked", "contended"})
 
 #: The turn ran out of wall clock before reaching this day. NOT a failure: the day is untouched and
-#: the next tick starts where this one stopped. Nine of eleven writers report it; the two that do
-#: not publish at most one day per turn, so they have no walk for a clock to interrupt.
+#: the next tick starts where this one stopped. Writers with multi-day walks report it; writers that
+#: publish at most one day per turn have no walk for a clock to interrupt.
 TIME_BUDGET_EXHAUSTED: Final = "time_budget_exhausted"
 
 #: The turn hit its per-turn upstream-request ceiling before reaching this day. Distinct from
@@ -232,12 +232,12 @@ DIRECT_ONLY_OUTCOMES: Final[frozenset[str]] = frozenset(
 
 #: THE declared set. A writer reporting a word outside this fails
 #: `test_every_declared_outcome_is_in_the_shared_vocabulary`, which is the whole point: one monitor
-#: has to be able to read all eleven writers, and it can only do that against an enumerable set.
+#: has to be able to read all twelve writers, and it can only do that against an enumerable set.
 DIRECT_TURN_OUTCOMES: Final[frozenset[str]] = LANE_DAY_OUTCOMES | DIRECT_ONLY_OUTCOMES
 
 #: Pairs that name the SAME state in two words. Not a rename list -- a rename changes an observable
 #: field on a running lane and is an owner call -- but a declaration, so a monitor written against
-#: one spelling knows to accept the other, and so a twelfth writer knows the pair exists and picks
+#: one spelling knows to accept the other, and so a new writer knows the pair exists and picks
 #: the first element. Kept deliberately small: two words are synonyms only when substituting either
 #: leaves every claim in the record true.
 KNOWN_SYNONYMS: Final[Mapping[str, str]] = {
@@ -304,7 +304,7 @@ UNCONFIGURED_BBOX_POLICIES: Final[frozenset[str]] = frozenset(
 # --------------------------------------------------------------------------------------------
 
 #: Every forward writer exposes these, with no exemption available. `--max-days` is how a turn is
-#: bounded at all and `--run-id` is how its records are correlated across eleven emitters; a writer
+#: bounded at all and `--run-id` is how its records are correlated across twelve emitters; a writer
 #: missing either is not operable by the same runbook as its siblings.
 REQUIRED_FLAGS: Final[frozenset[str]] = frozenset({"--max-days", "--run-id"})
 
@@ -340,7 +340,7 @@ class DirectWriterContractError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class DirectWriterContract:
-    """What one `pipeline/direct` writer declares about itself, so eleven can be read as one table.
+    """What one `pipeline/direct` writer declares about itself, so twelve can be read as one table.
 
     Declared beside the writer's own `parser()` rather than in a central registry HERE, so that a
     policy change and its declaration are one diff and cannot land apart. The table is assembled by

@@ -2,7 +2,7 @@
 
 The forward `geo.features` job this file also covered (`run_fire_ingestion_job`) was deleted
 2026-09-06 with its `ingest-firms` verb and `postgres-firms` lane; what remains here is the parsing
-and identity contract `pipeline/direct/fire_detections.py` still reads.
+and identity contract `pipeline/direct/fire_detections/rows.py` still reads.
 """
 
 # ruff: noqa: PLR2004
@@ -190,5 +190,5 @@ async def test_a_missing_api_key_fails_one_fetch_before_any_request_is_made(
 # the one-satellite-unavailable case, the all-unavailable raise, and the source-cap truncation all
 # exercised `run_fire_ingestion_job`, the deleted `geo.features` forward writer. The equivalent
 # behaviour for the Parquet writer that replaced it is covered by `tests/direct/` against
-# `pipeline/direct/fire_detections.py`, which fans out over the same `FIRMS_VIIRS_SOURCES` through the
+# `pipeline/direct/fire_detections/source.py`, which fans out over the same `FIRMS_VIIRS_SOURCES` through the
 # same `fetch_active_fires` and builds rows with the same `build_fire_detection_write` kept above.

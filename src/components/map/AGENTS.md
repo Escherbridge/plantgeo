@@ -474,6 +474,17 @@ three places, not one:
   signals. For the other nine toggles it answers with the row's day, which is correct only
   because those layers still blank rather than retain.
 
+**The live edge has its own sentence.** `LayerTimeSlider` reads a non-snapshot capability's
+`sourceCeilingDay` beside `serverCurrentDate`. When the ceiling is before the server day, it states
+the reported publication limit and its calendar distance from the server day. The limit may itself
+be stale; it does not establish a normal publication delay or the last readable day. Release carry
+can serve later dates, so the note explains that an earlier release may support them.
+The condition is capability-driven rather than a list of layer names or a calendar constant, and
+the message is absent for a same-day/null ceiling and snapshot layers. Coverage bands remain the
+only statement about observed or missing warehouse days. A source ceiling alone does not prove the
+feed is healthy, so the note makes no such claim; only an independent server
+freshness verdict based on the latest recorded observation may label a feed on time or delayed.
+
 **What survives from the single-slider design, unchanged.** `VegetationPanel` used to own a Year
 slider and a Month slider backed by `vegetation-store`'s `year`/`month`, so the app had two
 clocks that could disagree even before per-layer dates existed. Those fields and both sliders

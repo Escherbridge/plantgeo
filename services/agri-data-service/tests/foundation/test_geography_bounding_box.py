@@ -31,7 +31,7 @@ from agri_data_service.foundation.geography.bounding_box import (
 LANES_THAT_USED_TO_IMPORT_INLINE_BBOX_VALUE_FROM_INGEST_MTBS: tuple[str, ...] = (
     "pipeline/direct/burn_severity/forward.py",
     "pipeline/direct/evacuation_zones/forward.py",
-    "pipeline/direct/fire_detections.py",
+    "pipeline/direct/fire_detections/forward.py",
     "pipeline/direct/fire_perimeters/forward.py",
     "pipeline/direct/sensors/forward.py",
     "pipeline/direct/watersheds/forward.py",
