@@ -1,6 +1,18 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, screen } from "@testing-library/react";
 import { renderWithProviders } from "@/test/utils";
+
+const soilRasterQuery = vi.hoisted(() =>
+  vi.fn((): { data: Array<Record<string, unknown>> } => ({ data: [] }))
+);
+
+vi.mock("@/lib/trpc/client", () => ({
+  trpc: {
+    environmental: {
+      getPublishedSoilRasters: { useQuery: soilRasterQuery },
+    },
+  },
+}));
 
 import { LayerLegend } from "@/components/map/layer-panel/LayerLegend";
 import { DROUGHT_COLORS } from "@/components/map/layers/DroughtLayer";
@@ -49,6 +61,7 @@ function chipRow(): HTMLElement {
 }
 
 beforeEach(() => {
+  soilRasterQuery.mockReturnValue({ data: [] });
   useMapStore.setState({ activeLayers: [] });
   useSoilStore.setState({ fieldDepth: DEFAULT_SOIL_FIELD_DEPTHS });
   useVegetationStore.setState({ mode: "ndvi", ndviMode: "absolute", showNDWI: false });
@@ -273,11 +286,32 @@ describe("LayerLegend", () => {
     }
   });
 
-  it("gives no chip and no section to a switched-on layer that paints nothing", () => {
+  it("paints a SoilGrids legend from the catalogue ramp used by the archive", () => {
+    soilRasterQuery.mockReturnValue({
+      data: [{
+        property: "soc", unit: "g/kg", scaleDivisor: 10, valueMin: 5, valueMax: 460,
+        colorRamp: [{ value: 5, color: "#fff7ec" }, { value: 60, color: "#7f0000" }],
+        archiveUrl: "https://tiles.example.test/raster/soil/soc.pmtiles",
+        minZoom: 0, maxZoom: 10, attribution: "ISRIC", sourceName: "SoilGrids",
+        sourceRelease: "2.0", licenseName: "CC-BY 4.0", bounds: [-125, 42, -111, 49],
+      }],
+    });
     renderWithProviders(<LayerLegend />);
-    // SoilGrids has no published first-party raster, so SoilLayer adds no source at all --
-    // legending it would invent an encoding the map never draws.
-    toggleLayerOn("soil");
+    toggleLayerOn("soil-soc");
+    fireEvent.click(chipRow());
+
+    const entry = screen.getByTestId("legend-entry-soil-soc");
+    expect(entry.textContent).toContain("5 g/kg");
+    expect(entry.textContent).toContain("60 g/kg");
+    const gradient = entry.querySelector<HTMLElement>('span[aria-hidden="true"]')
+      ?.style.backgroundImage ?? "";
+    expect(gradient).toContain(asRenderedColor("#fff7ec"));
+    expect(gradient).toContain(asRenderedColor("#7f0000"));
+  });
+
+  it("gives no chip and no section to a catalogued layer whose release is absent", () => {
+    renderWithProviders(<LayerLegend />);
+    toggleLayerOn("soil-soc");
 
     expect(screen.queryByTestId("layer-legend")).toBeNull();
 

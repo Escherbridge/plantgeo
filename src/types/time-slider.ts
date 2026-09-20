@@ -14,6 +14,14 @@ export type ForecastVariant = "monte_carlo" | "ml";
 /** How a layer behaves over time; decides whether a future date is even meaningful. */
 export type TemporalKind = "snapshot" | "daily_series" | "event";
 
+/** Declared source and ingestion timing, independent of browser polling. */
+export interface LaneFreshness {
+  publicationLagDays: number | null;
+  sourceCadenceDays: number | null;
+  refreshIntervalSeconds: number | null;
+  expectedHorizonDay: string | null;
+}
+
 /** A closed day range, both ends inclusive, YYYY-MM-DD. */
 export interface DayRange {
   from: string;
@@ -142,6 +150,8 @@ export type SnapshotSurfaceLayerName =
 
 /** What one published stream supports temporally, as delivered to the browser. */
 export interface SliderLayerCapability {
+  /** Optional for older serving deployments; omission means timing is unknown. */
+  freshness?: LaneFreshness | null;
   /**
    * The stream this capability describes: a `geo.layers.name`, or one of
    * `SLIDER_STREAM_LAYER_NAMES` for a stream that is not backed by `geo.features`.

@@ -1,5 +1,14 @@
 # Service boundaries
 
+## Slider freshness metadata
+
+The optional coverage `freshness` object carries registry timing through the Parquet client
+and slider capability mapper. The mapper publishes it when the contributing physical rows
+agree; missing or conflicting timing remains unknown. Cadence is source release cadence,
+while refresh interval is scheduled ingestion, independent of browser capability polling.
+The source ceiling remains a separate reported bound rather than an inferred normal delay.
+
+
 Environmental service modules may call the governed Parquet readers and availability contracts
 only. They must not import the relational database client or retry a failed Parquet read against
 PostgreSQL.

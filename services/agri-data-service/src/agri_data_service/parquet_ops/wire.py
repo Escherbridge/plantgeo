@@ -239,6 +239,15 @@ class DayRange:
 
 
 @dataclass(frozen=True, slots=True)
+class LaneRefreshPolicy:
+    """Declared source timing; no claim that a scheduled writer succeeded."""
+
+    publication_lag_days: int | None
+    source_cadence_days: int | None
+    refresh_interval_seconds: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class LaneCoverage:
     """One physical lane and zoom rung's independently readable coverage evidence, and what proved it."""
 
@@ -272,15 +281,14 @@ class LaneCoverage:
     #: census proves each rung on its own and binds no cross-rung contract to state here.
     required_rungs: tuple[int, ...] = ()
     withheld_reason: CoverageWithholding | None = None
-    #: Independent freshness, measured from the lane's REGISTERED lag and today rather than from the
-    #: pointer; see `parquet_ops/freshness.py`. NOT rendered by `to_wire()`: the coverage contract is
-    #: frozen at schema version 3, and these ride a sibling report until the bump named in `AGENTS.md`.
+    #: Independent freshness; only the expected horizon enters optional slider timing (see AGENTS.md).
     expected_horizon_day: date | None = None
     staleness_days: int | None = None
     behind_provider: bool | None = None
+    refresh_policy: LaneRefreshPolicy | None = None
 
     def to_wire(self) -> dict[str, object]:
-        """Render one lane's coverage row exactly as frozen; the freshness fields deliberately stay off it."""
+        """Render coverage and optional timing, leaving operational health verdicts off the wire."""
         return {
             "layer": self.layer,
             "nature": self.nature,
@@ -298,6 +306,20 @@ class LaneCoverage:
             "source_ceiling_day": None if self.source_ceiling_day is None else render_day(self.source_ceiling_day),
             "required_rungs": list(self.required_rungs),
             "withheld_reason": self.withheld_reason,
+            **(
+                {
+                    "freshness": {
+                        "publication_lag_days": self.refresh_policy.publication_lag_days,
+                        "source_cadence_days": self.refresh_policy.source_cadence_days,
+                        "refresh_interval_seconds": self.refresh_policy.refresh_interval_seconds,
+                        "expected_horizon_day": (
+                            None if self.expected_horizon_day is None else render_day(self.expected_horizon_day)
+                        ),
+                    }
+                }
+                if self.refresh_policy is not None
+                else {}
+            ),
         }
 
 

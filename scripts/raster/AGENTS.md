@@ -132,18 +132,14 @@ because palette entry *i* is the ramp evaluated at the value it stands for. A tr
 not 4–6× larger as one might guess — PNG's filters already exploit a smooth gradient — so the
 win is ~39%, worth taking but not dramatic.
 
-## Not done yet
+## Application serving path
 
 Both formats are published and catalogued (6 COG + 6 PMTiles live in `geo.published_raster`).
-`environmental.getPublishedSoilRasters` is a stub returning `[]`; `src/lib/server/services/raster-catalog.ts`
-had zero importers and was removed 2026-09-18 in the readability pass. The server read path does
-not exist yet. Nothing is drawn:
+`environmental.getPublishedSoilRasters` reads the live PMTiles rows through
+`src/lib/server/services/raster-catalog.ts`; that service validates each object key and joins it
+to `RASTER_TILES_BASE_URL`. `LayerManager` threads those releases into one
+`pmtiles://` raster source per property. The six property rows are independent switches with
+independent opacity, and their legends are built from each release's own `color_ramp`.
 
-1. `getEnvironmentalTileTemplate` in `src/lib/vegetation.ts` still returns `""`. It is a
-   *synchronous client* function while the catalog is *async server* state — that mismatch is
-   the actual remaining design decision. Either thread the query result down through
-   `LayerManager` to `SoilLayer`, or let `SoilLayer` run the tRPC query itself.
-2. `SoilLayer.tsx` needs a `pmtiles://` source (`type: "raster"`, `url:`, as
-   `createPmtilesSource` does for the basemap) rather than an XYZ `{z}/{x}/{y}.png` template.
-3. Legend built from the release's `color_ramp`, and the "No soil raster is published" copy in
-   `SoilDetails.tsx` is now false and must go.
+SSURGO remains a separate drainage/map-unit survey. It must not be presented as the source of
+the six continuous SoilGrids property rasters or folded into their toggles.

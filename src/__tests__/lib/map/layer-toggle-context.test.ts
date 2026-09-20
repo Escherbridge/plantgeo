@@ -110,14 +110,10 @@ describe("layer toggle context", () => {
     expect(result.current.visibility.fire).toBe(true);
   });
 
-  it("keeps a withheld layer off even if forced into activeLayers", () => {
-    // `soil` is the currently withheld entry: getEnvironmentalTileTemplate returns an empty
-    // string until a first-party SoilGrids raster release exists. (This was `demand-heatmap`
-    // until the k-anonymity floor satisfied its gate, and `building-footprints` until that
-    // layer was removed outright on 2026-08-15.)
-    useMapStore.setState({ activeLayers: ["soil"] });
+  it("keeps a published SoilGrids property visible when it is active", () => {
+    useMapStore.setState({ activeLayers: ["soil-soc"] });
     const { result } = renderHook(() => useLayerVisibility());
-    expect(result.current["soil"]).toBe(false);
+    expect(result.current["soil-soc"]).toBe(true);
   });
 
   it("toggling a layer on changes what its own slider requests, and off withdraws the request", () => {

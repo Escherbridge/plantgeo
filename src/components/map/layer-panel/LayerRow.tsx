@@ -48,6 +48,8 @@ interface LayerRowProps {
    * `LayerTimeSlider`'s own doc and src/components/map/AGENTS.md §synced-days-track.
    */
   isFetchingSelectedDay?: boolean;
+  /** Runtime capability withholding, such as an absent published raster catalogue row. */
+  catalogUnavailableReason?: string;
 }
 
 /** Bytes as a short, human count -- "0 B", "482 B", "3.2 MB". */
@@ -328,7 +330,12 @@ function LayerSyncResetControl({ layerId, label }: { layerId: LayerToggleId; lab
  * WHETHER a layer gets that control; `LayerTimeSlider` owns everything the control then says,
  * including the mark for a layer sitting behind its own newest published day.
  */
-export function LayerRow({ layerId, legendContext, isFetchingSelectedDay }: LayerRowProps) {
+export function LayerRow({
+  layerId,
+  legendContext,
+  isFetchingSelectedDay,
+  catalogUnavailableReason,
+}: LayerRowProps) {
   const entry = LAYER_REGISTRY[layerId];
   const isToggledOn = useLayerToggle(layerId);
   const toggleLayer = useToggleLayer();
@@ -384,7 +391,8 @@ export function LayerRow({ layerId, legendContext, isFetchingSelectedDay }: Laye
   const regionAbsenceCaption = useTimeSliderStore((state) =>
     unboundLayerCaption(state.capabilities, layerId)
   );
-  const withheldReason = entry.permanentlyUnavailableReason;
+  const withheldReason =
+    entry.permanentlyUnavailableReason ?? catalogUnavailableReason ?? null;
   // One disabled switch, two reasons, and the row keeps them apart in the CAPTION rather than
   // merging them: "this build never publishes it" and "this region binds no source for it" are
   // different facts, and only the second changes when the deployment moves.

@@ -60,25 +60,29 @@ const LANE_BACKED_TOGGLE_IDS: LayerToggleId[] = [
   // Same plane and same reasoning as the three rows above -- a separate collection_key, not a
   // separate producer.
   "gbif-occurrences",
+  // Static SoilGrids PMTiles releases are filled by the published raster catalogue rather than
+  // a Parquet lane. Like the botanical rows, they are working producers with no daily axis.
+  "soil-phh2o",
+  "soil-soc",
+  "soil-nitrogen",
+  "soil-bdod",
+  "soil-cec",
+  "soil-ocd",
 ];
 
 /**
  * The four surfaces no Parquet lane can ever back, measured against production 2026-08-25.
  *
  * `interventions` is a community feature that stays in Postgres by design; `strategy-
- * recommendations` needs an ML label plane that has no labels; `soil` is a raster with no
- * first-party release; `demand-heatmap` is derived at request time and stores nothing per day.
+ * recommendations` needs an ML label plane that has no labels; `demand-heatmap` is derived at
+ * request time and stores nothing per day.
  * Inventing a producer for any of them is a track of its own, not a caption.
  */
 const NON_LANE_TOGGLE_IDS: LayerToggleId[] = [
   "interventions",
   "strategy-recommendations",
-  "soil",
   "demand-heatmap",
 ];
-
-/** The one non-lane surface that is genuinely WITHHELD, so it is captioned by the registry. */
-const WITHHELD_NON_LANE_TOGGLE_ID: LayerToggleId = "soil";
 
 function standingOf(toggleId: LayerToggleId): LayerPublicationStanding | undefined {
   return LAYER_PUBLICATION_STANDINGS[toggleId];
@@ -98,8 +102,8 @@ describe("layer publication standing", () => {
       // XOR. Both would caption the row twice; neither is the silent blank map itself.
       expect({ toggleId, hasStanding, isWithheld }).toEqual({
         toggleId,
-        hasStanding: toggleId !== WITHHELD_NON_LANE_TOGGLE_ID,
-        isWithheld: toggleId === WITHHELD_NON_LANE_TOGGLE_ID,
+        hasStanding: true,
+        isWithheld: false,
       });
     }
   });
@@ -145,7 +149,6 @@ describe("layer publication standing", () => {
   // These three layers have live renderers that would paint the moment a row appeared.
   it("leaves the three standing layers switchable", () => {
     for (const toggleId of NON_LANE_TOGGLE_IDS) {
-      if (toggleId === WITHHELD_NON_LANE_TOGGLE_ID) continue;
       expect(LAYER_REGISTRY[toggleId].permanentlyUnavailableReason).toBeNull();
     }
   });

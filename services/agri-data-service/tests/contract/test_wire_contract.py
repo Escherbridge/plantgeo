@@ -67,7 +67,7 @@ def test_window_fixture_round_trips() -> None:
 @pytest.mark.parametrize("name", ["coverage.json", "coverage_availability.json"])
 def test_coverage_fixture_round_trips(name: str) -> None:
     raw = load(name)
-    assert WireCoverage.model_validate(raw).model_dump(mode="json", by_alias=True) == raw
+    assert WireCoverage.model_validate(raw).model_dump(mode="json", by_alias=True, exclude_unset=True) == raw
 
 
 @pytest.mark.parametrize("name", ["coverage.json", "coverage_availability.json"])

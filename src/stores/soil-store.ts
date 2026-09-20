@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { devtools } from "zustand/middleware";
-import type { SoilProperty } from "@/components/map/layers/SoilLayer";
+import type { SoilProperty } from "@/lib/map/soil-raster";
 import {
   DEFAULT_SOIL_FIELD_DEPTHS,
   type SoilFieldDepth,
@@ -11,7 +11,7 @@ import {
  * Soil DISPLAY state. There is deliberately no `opacity` here: one scalar reached the
  * SoilGrids raster AND both ERA5-Land fields, so dimming the raster necessarily dimmed the
  * two measurements. Opacity is per `LayerToggleId` in `layer-store.layerOpacity` now, which
- * gives `soil`, `soil-moisture` and `soil-temperature` three independent values.
+ * gives every SoilGrids property and every soil field an independent value.
  */
 interface SoilState {
   property: SoilProperty;

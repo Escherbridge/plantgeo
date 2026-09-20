@@ -153,7 +153,7 @@ describe('styleLayerOpacityTargets', () => {
       'soil-survey-fill',
       'soil-survey-summary',
       'ndvi-overlay-layer',
-      'soilgrids-layer',
+      'soilgrids-soc-layer',
       'demand-heatmap-layer',
       'weather-wind',
       'weather-temperature',

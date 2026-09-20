@@ -19,6 +19,7 @@ import {
   type LayerTimeState,
 } from "@/components/map/layer-panel/layer-time-state";
 import { LayerTimeStatus } from "@/components/map/layer-panel/LayerTimeStatus";
+import { LaneAvailabilityLabel } from "@/components/map/layer-panel/LaneAvailabilityLabel";
 import { layerLabel, type LayerToggleId } from "@/lib/map/layer-registry";
 import { useLayerDay } from "@/lib/map/layer-toggle-context";
 import { cn } from "@/lib/utils";
@@ -222,7 +223,7 @@ function sourceCeilingNote(
   }
 
   const delayDays = dayOffset(sourceCeilingDay, serverCurrentDate);
-  return `Reported source publication limit: ${sourceCeilingDay} (${delayDays} ${delayDays === 1 ? "day" : "days"} before today). Later dates may use an earlier release where supported.`;
+  return `Reported publication boundary: ${sourceCeilingDay} (${delayDays} ${delayDays === 1 ? "day" : "days"} before today). This may reflect a configured delay rather than the provider's newest data. Later dates may use an earlier release where supported.`;
 }
 
 export interface LayerTimeSliderProps {
@@ -556,6 +557,8 @@ export function LayerTimeSlider({
           Latest
         </button>
       </div>
+
+      <LaneAvailabilityLabel capability={capability} label={label} />
 
       {/* The synced-days line: a distinct sibling row ON TOP OF the coverage track below, never
           blended into it -- this answers "what has THIS BROWSER saved", the track below answers

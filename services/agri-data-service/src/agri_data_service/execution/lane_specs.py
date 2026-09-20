@@ -30,6 +30,7 @@ from agri_data_service.execution.lane_ids import (
 )
 from agri_data_service.jobs import JobDefinitionSpec, RetryPolicy
 from agri_data_service.pipeline.constants import (
+    DIRECT_HOURLY_REFRESH_INTERVAL_SECONDS,
     FIRE_DETECTIONS_DIRECT_WRITER_START_DAY,
     WATER_GAUGES_DIRECT_WRITER_START_DAY,
 )
@@ -450,6 +451,7 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
     _spec(
         CLIMATE_DIRECT_LANE_ID,
         command=("python", "-m", "agri_data_service.pipeline.direct.climate"),
+        cadence_seconds=DIRECT_HOURLY_REFRESH_INTERVAL_SECONDS,
         # The larger of the two source lags and the earliest of the eight floors cover the shared
         # direct writer contract.
         disposition="source-specific",
@@ -470,6 +472,7 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
     _spec(
         SOIL_DIRECT_LANE_ID,
         command=("python", "-m", "agri_data_service.pipeline.direct.soil"),
+        cadence_seconds=DIRECT_HOURLY_REFRESH_INTERVAL_SECONDS,
         # One shared lag applies: unlike the climate writer's two publication clocks, all eight
         # ERA5-Land streams come off one model on one release schedule. The phase offset is
         # its own so the two direct writers never open their fan-outs in the same minute -- they

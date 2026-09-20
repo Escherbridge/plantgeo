@@ -71,6 +71,7 @@ import {
 import { BOTANICAL_DETAIL_MIN_ZOOM } from "@/lib/botanical-occurrences";
 import { ParquetLayerFaultBanner } from "@/components/map/ParquetLayerFaultBanner";
 import { WORLD_EXTENT_BBOX } from "@/lib/map/world-extent";
+import { soilRasterToggleId } from "@/lib/map/soil-raster";
 
 const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
   type: "FeatureCollection",
@@ -251,6 +252,7 @@ export default function LayerManager() {
   const layerOpacity = useLayerOpacities();
   const vegetationMode = useVegetationDisplayMode();
   const soilMode = useSoilDisplayMode();
+  const soilRasterCatalog = trpc.environmental.getPublishedSoilRasters.useQuery().data ?? [];
   // Shared with DockDetails: one derivation, so the map and the dock's details regions key on
   // one bbox.
   const { zoom, bbox } = useViewportBounds();
@@ -1193,12 +1195,18 @@ export default function LayerManager() {
         showNDWI={vegetationMode.showNDWI}
         opacityScale={layerOpacity.vegetation}
       />
-      <SoilLayer
-        map={map}
-        visible={layerVisibility.soil}
-        property={soilMode.property}
-        opacityScale={layerOpacity.soil}
-      />
+      {soilRasterCatalog.map((release) => {
+        const toggleId = soilRasterToggleId(release.property);
+        return (
+          <SoilLayer
+            key={release.property}
+            map={map}
+            release={release}
+            visible={layerVisibility[toggleId]}
+            opacityScale={layerOpacity[toggleId]}
+          />
+        );
+      })}
       <SoilSurveyLayer
         map={map}
         geojson={soilSurveyGeoJSON}

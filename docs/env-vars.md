@@ -32,6 +32,7 @@ use the database owner.
 | Variable | Policy |
 | --- | --- |
 | `NEXT_PUBLIC_PMTILES_URL` | Public, immutable basemap PMTiles URL with HTTP Range support. Mirror to a reviewed R2/CDN origin for production. |
+| `RASTER_TILES_BASE_URL` | Public HTTP Range-capable origin for immutable archives named by `geo.published_raster.object_key`. The server validates catalogue keys and returns SoilGrids PMTiles URLs from this runtime-only setting. Defaults to `https://tiles.aevani.com`. |
 | `NEXT_PUBLIC_TERRAIN_URL` | Optional reviewed terrain URL template containing `{z}`, `{x}`, and `{y}`. |
 | `NEXT_PUBLIC_DYNAMIC_TILES_URL` | Public/custom HTTPS Martin origin. Leave unset until Martin passes its database, role, catalog, tile, CORS, and rate-limit gates. |
 | `NEXT_PUBLIC_APP_URL` | Public canonical origin used in links and email, `http://localhost:3001` in development. |

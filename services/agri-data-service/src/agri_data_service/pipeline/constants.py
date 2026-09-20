@@ -11,5 +11,6 @@ if TYPE_CHECKING:
     from agri_data_service.foundation.parquet.zoom import ZoomTier
 
 LANE_BASE_ZOOM_TIER: Final[ZoomTier] = ZOOM_TIERS[-1]
+DIRECT_HOURLY_REFRESH_INTERVAL_SECONDS: Final = 3600
 FIRE_DETECTIONS_DIRECT_WRITER_START_DAY: Final = date(2026, 8, 25)
 WATER_GAUGES_DIRECT_WRITER_START_DAY: Final = date(2026, 9, 2)

@@ -13,6 +13,7 @@ import {
   type ClimateFieldToggleId,
 } from "@/lib/environmental/climate-field";
 import { LAYER_TOGGLE_IDS, isLayerToggleId, type LayerToggleId } from "@/lib/map/layer-registry";
+import { SOIL_RASTER_TOGGLE_IDS, type SoilRasterToggleId } from "@/lib/map/soil-raster";
 
 /**
  * How a layer's warehouse lane moves over time. The same three-member vocabulary the server's
@@ -113,9 +114,10 @@ const NATURE_BY_LAYER: Readonly<Record<LayerToggleId, LayerCacheNature>> = {
   "soil-vpd": "daily_series",
 
   // --- declared here; no Parquet lane contract answers for these ---
-  // SoilGrids rasters: a fixed global property surface, and the row is permanently withheld
-  // anyway, so nothing routes a cacheable query to it.
-  soil: "static_lookup",
+  // SoilGrids rasters are immutable reference releases discovered through one catalogue read.
+  ...(Object.fromEntries(
+    SOIL_RASTER_TOGGLE_IDS.map((toggleId) => [toggleId, "static_lookup"])
+  ) as Record<SoilRasterToggleId, LayerCacheNature>),
   // Client-derived from whatever is already on the map; it has no warehouse lane and no
   // allowlisted procedure, so this entry only exists to keep the record exhaustive.
   "demand-heatmap": "static_lookup",

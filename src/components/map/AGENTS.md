@@ -1,5 +1,14 @@
 # Map interaction boundary
 
+## Lane availability labels
+
+`layer-panel/LaneAvailabilityLabel.tsx` displays the capability's readable edge beside
+its declared source cadence. The native disclosure exposes configured publication delay,
+scheduled ingestion interval and the expected source horizon. These are metadata, not a
+successful-refresh receipt or a current-viewport coverage verdict. Missing metadata remains
+unknown; `LayerTimeSlider` retains its selected-day, source-limit and offline-storage notes.
+
+
 **No absolute claim without a citation** (style review W10, closing judgement). A sentence here
 asserting that a predicate is complete, a write is safe, or a cost is bounded — "the whole
 predicate", "always", "never", "cannot", "at most once" — must cite the `file:line` that enforces
@@ -112,7 +121,13 @@ It renders nothing while every toggle is off, which is how the map starts, and n
 
 Two shapes preceded it. Until 2026-08-07 it listed `trpc.layers.list` rows — `geo.layers` names, one flat `stylePresets`/`styleOverrides` swatch each — which named warehouse publications rather than drawn encodings: a fill keyed to a `severity` match showed as one arbitrary colour, a ramp showed as nothing at all, and the card needed a network round-trip before it could say anything. That rewrite dropped tRPC and every `layer-store` field but `legendVisible`. `legendVisible` itself went on 2026-08-09: it was a global boolean with two controls over it (the card's own eye and a second one in the manager's header, the latter governing a card the reader could not see while using it), and disclosure here is now local to the component that owns it.
 
-Two invariants keep it honest, both enforced in `layer-legends.ts`. First, **no colour is written in the legend**: every swatch, class row and ramp stop is imported from the module whose paint expression uses it, and where a ramp was inline in a renderer the renderer now reads an exported constant (`FIRE_DETECTION_FRP_COLOR_STOPS`, `DEMAND_DENSITY_COLOR_STOPS`, `BURN_SEVERITY_ACRES_STOPS`, the `StyleClass` tables in `layers.ts`), so the two cannot drift. Second, **a toggle earns a spec only if switching it on paints something**: `soil` has none because `getEnvironmentalTileTemplate` returns `""` and `SoilLayer` adds no source at all; `vegetation` legends NDVI only, because `getNDWITileUrl` returns `""` unconditionally and NBR is unpublished for the same reason. `LEGENDLESS_TOGGLE_REASONS` records each. Legending a colour the map never draws is the failure this module exists to prevent, so an entry that "looks missing" is a claim to check against the renderer, not a gap to fill.
+Two invariants keep it honest, both enforced in `layer-legends.ts`. First, **no colour is written in the legend**: every swatch, class row and ramp stop is imported from the module whose paint expression uses it, and where a ramp was inline in a renderer the renderer now reads an exported constant (`FIRE_DETECTION_FRP_COLOR_STOPS`, `DEMAND_DENSITY_COLOR_STOPS`, `BURN_SEVERITY_ACRES_STOPS`, the `StyleClass` tables in `layers.ts`), so the two cannot drift. SoilGrids is the catalogue-backed form of the same rule: each of its six legend ramps comes from the live `geo.published_raster.color_ramp` row whose PMTiles archive the renderer draws. Second, **a toggle earns a spec only if switching it on paints something**: `vegetation` legends NDVI only, because `getNDWITileUrl` returns `""` unconditionally and NBR is unpublished for the same reason. `LEGENDLESS_TOGGLE_REASONS` records each. Legending a colour the map never draws is the failure this module exists to prevent, so an entry that "looks missing" is a claim to check against the renderer, not a gap to fill.
+
+SoilGrids rows also require runtime catalogue proof. `DockSections` disables each property until
+`getPublishedSoilRasters` returns that property's live PMTiles release, and gives loading, request
+failure, and unpublished-property states different captions. A partial catalogue leaves proven
+properties usable while withholding only the missing ones; it never turns an empty or failed
+catalogue into six switches that paint nothing.
 
 Where the inventory of encodings and the map disagree, the map wins: `burn-severity` is a ramp over **acres**, not MTBS severity classes (that column is null on every published row). The unmounted `BurnHistoryLayer`/`LandFireLayer` components, whose class tables were legended nowhere for that reason, were deleted 2026-08-08 with the rest of the never-mounted layer files. `src/lib/server/services/landfire.ts`, a *server* module with the same name, was deleted 2026-09-15 after its callers were checked: it had none, its host returned HTTP 404, and its fuel-model table mapped the FBFM40 code space (91–204) rather than EVT's (7008–9829), so every call fell through to defaults. The About page's LANDFIRE "On request" row went with it. A vegetation-type lane is planned separately and is not live.
 
@@ -259,7 +274,7 @@ Five rules the registry encodes:
 Coverage as of 2026-08-17, 18 of 27 toggles: `LayerManager` publishes nine (fire, drought, water, vegetation, soil-survey, soil-moisture, soil-temperature, soil-vpd, weather) and each `ClimateSignalLayer` publishes its own. The nine that do not are correct to be silent for two different reasons, and only one of them is permanent:
 
 - **Six are style-baked** (`fire-perimeters`, `evacuation-zones`, `burn-severity`, `sensors`, `watersheds`, `interventions`). They issue no query at all — the day reaches them as a MapLibre filter applied in place, with no round trip — so there is never a request to be pending and never a retained frame to mislabel. A dead indicator is the right indicator here.
-- **Three are component-mounted with reads this registry does not cover**: `soil` (SoilGrids raster tiles), `demand-heatmap` (`useActionNetworkFeatures`), `strategy-recommendations` (`StrategyLayer`). None carries `keepPreviousData` today, so nothing is currently mislabelled — but each is one option away from it, and their rows show no pending state in the meantime. Adding retention to any of them means adding a report in the same change.
+- **Catalogue-backed/component reads this registry does not cover** include the six SoilGrids raster toggles, `demand-heatmap` (`useActionNetworkFeatures`), and `strategy-recommendations` (`StrategyLayer`). Adding retained answers to any of them means adding a matching pending report in the same change.
 
 The surface says two compatible things: an **"Updating" chip** whenever a visible layer has an open request whose answer is not yet painted, and a **second-line count** — *"N layers on earlier days"* — of layers whose painted day is older than the one their row asks for. They are different populations. Offline is why the second is not worded "still loading": `fetchStatus: "paused"` leaves a retained frame standing with nothing in flight, so the chip is correctly absent while the count is correctly present.
 
@@ -898,9 +913,10 @@ Assert the catalogue's bound parameters against a hand-spelled list, never again
 **Added 2026-08-25, lane C `u4` of the Parquet cutover.** Four toggles are not Parquet lanes and
 cannot be made into them by that programme: `interventions` (a community feature that stays in
 Postgres by design), `strategy-recommendations` (needs an ML label plane that has no labels),
-`soil` (a raster with no first-party release) and `demand-heatmap` (derived at request time, with
+`demand-heatmap` (derived at request time, with
 nothing stored per day). `src/lib/map/layer-publication-standing.ts` gives the first three a
-stated reason; `soil` already carried a `permanentlyUnavailableReason`, which is the fourth.
+stated reason. SoilGrids is no longer in this set: its six PMTiles releases are read from the
+published raster catalogue.
 
 **A standing is not a `permanentlyUnavailableReason`, and the difference is the whole design.**
 That field is a *governance gate*: it disables the switch, reads false in `useLayerVisibility`

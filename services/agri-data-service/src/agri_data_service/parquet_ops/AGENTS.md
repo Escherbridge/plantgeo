@@ -118,6 +118,22 @@ product-local typed refusal.
   no selectable days" is a contract this row would break. The manifest's evidence is not lost; it is
   simply not published until the forward half can prove itself.
 
+## Optional slider timing metadata
+
+Registered census lanes expose an optional `freshness` object with configured
+`publication_lag_days`, `source_cadence_days`, `refresh_interval_seconds`, and
+`expected_horizon_day`. Absence means timing is unknown; it must never become zero lag or
+a healthy verdict. Schema version 3 is retained under the additive/silence-safe rule below.
+The independent operational `staleness_days` and `behind_provider` fields remain off the wire.
+
+Climate and ERA5-Land soil refresh intervals share `pipeline.constants.DIRECT_HOURLY_REFRESH_INTERVAL_SECONDS`
+with the executor's two explicit cadence declarations. The value describes the configured schedule,
+not activation, last execution, successful publication, or the next guaranteed update. Other
+writers state a null refresh interval until a shared schedule contract exists. Only climate,
+ERA5-Land soil and weekly drought state source cadence; other products state null because their
+registry cadence may describe partition accounting rather than source publication. Withheld coverage retains configured timing
+and its independently calculated expected horizon, while keeping all selectable ranges empty.
+
 ## The contract is frozen elsewhere, and this directory obeys it
 
 `tests/contract/wire_contract.py` is the declaration; `tests/contract/fixtures/*.json` are the nine

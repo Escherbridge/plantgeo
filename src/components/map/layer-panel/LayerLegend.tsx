@@ -18,6 +18,7 @@ import {
   useSoilDisplayMode,
 } from "@/lib/map/layer-toggle-context";
 import { useVegetationStore } from "@/stores/vegetation-store";
+import { trpc } from "@/lib/trpc/client";
 
 /** One category's worth of drawn layers, in registry order within the category. */
 interface LegendCategory {
@@ -77,6 +78,7 @@ export function LayerLegend() {
   // store subscription and a settle timer per mount and moves nothing on this card.
   const vegetationMode = useVegetationStore((state) => state.mode);
   const ndviMode = useVegetationStore((state) => state.ndviMode);
+  const soilRasters = trpc.environmental.getPublishedSoilRasters.useQuery().data ?? [];
 
   const [isPinnedOpen, setIsPinnedOpen] = useState(false);
   const [isPointerOrFocusOpen, setIsPointerOrFocusOpen] = useState(false);
@@ -90,6 +92,7 @@ export function LayerLegend() {
       soilFieldDepth: soilDisplayMode.fieldDepth,
       climateRenderForms: climateDisplayMode.renderForms,
       climateFieldVariant: climateDisplayMode.airTemperatureVariant,
+      soilRasters,
     }),
     [
       vegetationMode,
@@ -97,6 +100,7 @@ export function LayerLegend() {
       soilDisplayMode.fieldDepth,
       climateDisplayMode.renderForms,
       climateDisplayMode.airTemperatureVariant,
+      soilRasters,
     ]
   );
 

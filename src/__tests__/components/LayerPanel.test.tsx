@@ -24,6 +24,7 @@ import { useSoilStore } from "@/stores/soil-store";
 import { useTimeSliderStore } from "@/stores/time-slider-store";
 import { useVegetationStore } from "@/stores/vegetation-store";
 import type { SliderCapabilities } from "@/types/time-slider";
+import { soilRasterUnavailableReasons } from "@/components/map/layer-panel/DockSections";
 
 /**
  * Every class that makes an element a scroll container. `overflow-y-auto` is in here on its
@@ -306,16 +307,37 @@ describe("LayerPanel layer tree", () => {
     expect(eye.getAttribute("aria-checked")).toBe("true");
   });
 
-  // Governance, not a rendering accident: a withheld layer reads false in useLayerVisibility
-  // whatever activeLayers says, so its eye must be disabled rather than merely off.
-  it("disables the eye of a withheld layer and says why", () => {
+  it("withholds a soil property until the catalogue proves a live release", () => {
     renderDock();
     openPanel();
 
-    const row = rowFor("soil");
+    const row = rowFor("soil-soc");
     const eye = row.querySelector<HTMLButtonElement>('[role="switch"]');
     expect(eye?.disabled).toBe(true);
-    expect(row.textContent).toContain(LAYER_REGISTRY.soil.permanentlyUnavailableReason!);
+    expect(row.textContent).toContain(LAYER_REGISTRY["soil-soc"].label);
+    expect(row.textContent).toMatch(/catalogue|No live PMTiles release/);
+  });
+
+  it("withholds only SoilGrids properties missing from a partial catalogue", () => {
+    const reasons = soilRasterUnavailableReasons({
+      isPending: false,
+      isError: false,
+      properties: new Set(["soc"]),
+    });
+
+    expect(reasons["soil-soc"]).toBeUndefined();
+    expect(reasons["soil-phh2o"]).toMatch(/No live PMTiles release/);
+    expect(reasons["soil-nitrogen"]).toMatch(/No live PMTiles release/);
+  });
+
+  it("distinguishes a catalogue failure from an unpublished property", () => {
+    const reasons = soilRasterUnavailableReasons({
+      isPending: false,
+      isError: true,
+      properties: new Set(),
+    });
+
+    expect(reasons["soil-soc"]).toMatch(/could not be read/);
   });
 
   /**
@@ -372,7 +394,7 @@ describe("LayerPanel layer tree", () => {
     const opacity = useLayerStore.getState().layerOpacity;
     expect(opacity["soil-moisture"]).toBe(0.5);
     expect(opacity["soil-temperature"]).toBeUndefined();
-    expect(opacity.soil).toBeUndefined();
+    expect(opacity["soil-soc"]).toBeUndefined();
     expect(rowFor("soil-moisture").textContent).toContain("50%");
     expect(rowFor("soil-temperature").textContent).toContain("100%");
   });
@@ -621,18 +643,18 @@ describe("LayerPanel per-layer time sliders", () => {
     ).toBe("no_time_axis");
   });
 
-  // `soil` has no `geo.layers` row behind it at all, so there is no axis to draw and no day to
+  // SoilGrids rasters have no `geo.layers` row behind them, so there is no axis to draw and no day to
   // scrub -- a slider there would be a control over nothing.
   it("gives a layer with no warehouse feed behind it no slider", () => {
     renderDock();
     openPanel();
 
     act(() => {
-      useMapStore.getState().toggleLayer("soil");
+      useMapStore.getState().toggleLayer("soil-soc");
     });
 
-    expect(screen.getByTestId("layer-row-soil")).toBeTruthy();
-    expect(screen.queryByTestId("layer-time-slider-slot-soil")).toBeNull();
+    expect(screen.getByTestId("layer-row-soil-soc")).toBeTruthy();
+    expect(screen.queryByTestId("layer-time-slider-slot-soil-soc")).toBeNull();
   });
 
   /**

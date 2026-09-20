@@ -79,6 +79,12 @@ exist. `coverage_availability.json` is the golden for both halves — one proven
 
 ## Changing the contract
 
+The optional coverage-row `freshness` object supplies declared source lag, source cadence,
+configured writer interval, and the independently calculated expected horizon. Missing metadata
+means unknown, so this addition retains version 3. Existing goldens retain their absent-field
+case; `tests/parquet_ops/test_lane_refresh_metadata.py` validates registered and withheld rows
+against the same strict contract and compares the interval to the real scheduler declarations.
+
 Edit the `WIRE` block, `wire_contract.py`, and the fixtures **in one change**, and expect both test
 suites to fail until all three agree. That is the point. A lane that needs a new field asks for the
 contract change first; it does not add the field and discover the mismatch at the join.

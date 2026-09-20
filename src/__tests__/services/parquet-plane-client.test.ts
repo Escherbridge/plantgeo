@@ -539,6 +539,7 @@ describe("getParquetWarehouseCoverage", () => {
       availabilityGenerationSha256: GENERATION_SHA256,
       availabilityPointerKey: "availability/drought-areas/_LATEST.json",
       sourceCeilingDay: "2026-08-14",
+      freshness: null,
       requiredRungs: [0, 5, 9, 13],
       withheldReason: null,
     });
@@ -1317,6 +1318,21 @@ describe("the frozen wire contract", () => {
     expect(coverage.lanes.every((lane) => lane.coverageAuthority === "census")).toBe(true);
     expect(coverage.lanes.every((lane) => lane.availabilityGenerationSha256 === null)).toBe(true);
     expect(coverage.lanes.every((lane) => lane.withheldReason === null)).toBe(true);
+    expect(coverage.lanes.every((lane) => lane.freshness == null)).toBe(true);
+  });
+
+  it("decodes optional timing independently of publication evidence", async () => {
+    const payload = fixture("coverage") as { lanes: Record<string, unknown>[] };
+    payload.lanes[0].freshness = {
+      publication_lag_days: 9, source_cadence_days: 1,
+      refresh_interval_seconds: 3600, expected_horizon_day: "2026-08-16",
+    };
+    mockedFetch.mockResolvedValue(payload);
+    const coverage = await getParquetWarehouseCoverage();
+    expect(coverage.lanes[0].freshness).toEqual({
+      publicationLagDays: 9, sourceCadenceDays: 1,
+      refreshIntervalSeconds: 3600, expectedHorizonDay: "2026-08-16",
+    });
   });
 
   /**

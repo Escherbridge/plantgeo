@@ -19,7 +19,16 @@ from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.parquet_ops import faults
 from agri_data_service.parquet_ops.freshness import with_freshness
 from agri_data_service.parquet_ops.serving import day_status_sets
-from agri_data_service.parquet_ops.wire import DayRange, LaneCoverage, WarehouseCoverage, contiguous_ranges
+from agri_data_service.parquet_ops.wire import (
+    DayRange,
+    LaneCoverage,
+    LaneRefreshPolicy,
+    WarehouseCoverage,
+    contiguous_ranges,
+)
+from agri_data_service.pipeline.constants import DIRECT_HOURLY_REFRESH_INTERVAL_SECONDS
+from agri_data_service.pipeline.direct.climate.products import CLIMATE_FIELD_PRODUCTS
+from agri_data_service.pipeline.direct.soil.products import SOIL_FIELD_PRODUCTS
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRATIONS
 
 if TYPE_CHECKING:
@@ -44,6 +53,9 @@ MAX_CENSUS_LISTED_KEYS: Final = 600_000
 
 #: Coverage owns no DuckDB connection; this separately bounds its R2 network fan-out on a cold read.
 CENSUS_LIST_WORKERS: Final = 3
+HOURLY_REFRESH_STREAMS: Final = frozenset(product.stream for product in CLIMATE_FIELD_PRODUCTS) | frozenset(
+    product.stream for product in SOIL_FIELD_PRODUCTS
+)
 
 # Dedicated slider products are physical warehouse prefixes even though they are not direct-ingest
 # registrations. Missing expected prefixes remain in the census with null bounds, which is evidence
@@ -66,6 +78,19 @@ def census_lane_from_registration(registration: LaneRegistration) -> CensusLane:
         history_floor=registration.claimed_history_floor,
         cadence_days=registration.cadence_days,
         publication_lag_days=registration.publication_lag_days,
+        refresh_policy=LaneRefreshPolicy(
+            publication_lag_days=(
+                registration.publication_lag_days if nature_has_time_axis(registration.nature) else None
+            ),
+            source_cadence_days=(
+                registration.cadence_days
+                if registration.slug in HOURLY_REFRESH_STREAMS or registration.slug == "drought"
+                else None
+            ),
+            refresh_interval_seconds=(
+                DIRECT_HOURLY_REFRESH_INTERVAL_SECONDS if registration.slug in HOURLY_REFRESH_STREAMS else None
+            ),
+        ),
     )
 
 
@@ -101,6 +126,7 @@ class CensusLane:
     cadence_days: int = 1
     #: How long after a publication day that day may still arrive; only a release series uses it.
     publication_lag_days: int = 0
+    refresh_policy: LaneRefreshPolicy | None = None
 
 
 @dataclass(frozen=True, slots=True)

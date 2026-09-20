@@ -212,7 +212,7 @@ describe("LayerTimeSlider", () => {
     renderWithProviders(<LayerTimeSlider layerId="water" />);
 
     const note = screen.getByTestId("layer-time-slider-note-water").textContent ?? "";
-    expect(note).toContain(`Reported source publication limit: ${sourceCeilingDay}`);
+    expect(note).toContain(`Reported publication boundary: ${sourceCeilingDay}`);
     expect(note).toContain("2 days before today");
     expect(note).not.toMatch(/healthy|on time|normal|ingest gap/i);
   });
@@ -238,7 +238,7 @@ describe("LayerTimeSlider", () => {
 
     const noteElement = screen.getByTestId("layer-time-slider-note-drought");
     const note = noteElement.textContent ?? "";
-    expect(note).toContain(`Reported source publication limit: ${sourceCeilingDay}`);
+    expect(note).toContain(`Reported publication boundary: ${sourceCeilingDay}`);
     expect(note).toContain("Later dates may use an earlier release where supported.");
     expect(note).not.toMatch(/availability.*ends|not latest|behind its latest/i);
     expect(screen.getByDisplayValue(SERVER_CURRENT_DATE)).not.toBeNull();
@@ -261,7 +261,7 @@ describe("LayerTimeSlider", () => {
     renderWithProviders(<LayerTimeSlider layerId="vegetation" />);
 
     const note = screen.getByTestId("layer-time-slider-note-vegetation").textContent ?? "";
-    expect(note).toContain(`Reported source publication limit: ${sourceCeilingDay}`);
+    expect(note).toContain(`Reported publication boundary: ${sourceCeilingDay}`);
     expect(note).toContain("1 day before today");
   });
 
@@ -279,7 +279,7 @@ describe("LayerTimeSlider", () => {
     renderWithProviders(<LayerTimeSlider layerId="water" />);
 
     expect(screen.getByTestId("layer-time-slider-note-water").textContent).not.toContain(
-      "Reported source publication limit"
+      "Reported publication boundary"
     );
   });
 

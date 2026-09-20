@@ -150,6 +150,7 @@ const viewportQueries = vi.hoisted(() => ({
   getWatersheds: vi.fn((): ViewportQueryResult => ({ data: undefined })),
   getSoilSurvey: vi.fn((): ViewportQueryResult => ({ data: undefined })),
   getSoilField: vi.fn((): ViewportQueryResult => ({ data: undefined })),
+  getPublishedSoilRasters: vi.fn((): ViewportQueryResult => ({ data: [] })),
   getClimateField: vi.fn((): ViewportQueryResult => ({ data: undefined })),
   // react-query's `enabled: false` does not evict a cached result -- see the negative
   // test below -- so this is mutable per-test rather than a static `vi.fn(() => ...)`.
@@ -187,6 +188,7 @@ vi.mock("@/lib/trpc/client", () => ({
       getFirePerimeters: { useQuery: viewportQueries.getFirePerimeters },
       getSoilSurvey: { useQuery: viewportQueries.getSoilSurvey },
       getSoilField: { useQuery: viewportQueries.getSoilField },
+      getPublishedSoilRasters: { useQuery: viewportQueries.getPublishedSoilRasters },
       getClimateField: { useQuery: viewportQueries.getClimateField },
       getVegetationIndex: { useQuery: viewportQueries.getVegetationIndex },
       getBotanicalOccurrences: { useQuery: viewportQueries.getBotanicalOccurrences },
@@ -906,12 +908,21 @@ describe("LayerManager applies per-layer opacity", () => {
 
   // Every component-mounted layer folds the multiplier in itself, because five of them
   // already own setPaintProperty on the same properties and two rewrite on every pan. The
-  // three soil toggles take three independent scalars where one `soil-store.opacity` used to
-  // drive the SoilGrids raster and both ERA5-Land fields at once.
+  // SoilGrids and the field layers take independent scalars where one `soil-store.opacity`
+  // used to drive all three at once.
   it("threads a separate scalar into every component-mounted layer", () => {
     useMapStore.setState({
-      activeLayers: ["fire", "soil", "soil-moisture", "soil-temperature"],
+      activeLayers: ["fire", "soil-soc", "soil-moisture", "soil-temperature"],
     });
+    viewportQueries.getPublishedSoilRasters.mockReturnValue(landed([
+      {
+        property: "soc", unit: "g/kg", scaleDivisor: 10, valueMin: 5, valueMax: 460,
+        colorRamp: [{ value: 5, color: "#fff" }, { value: 60, color: "#000" }],
+        archiveUrl: "https://tiles.example.test/raster/soil/soc.pmtiles",
+        minZoom: 0, maxZoom: 10, attribution: "ISRIC", sourceName: "SoilGrids",
+        sourceRelease: "2.0", licenseName: "CC-BY 4.0", bounds: [-125, 42, -111, 49],
+      },
+    ]));
     const fakeMap = createFakeMap();
     fakeMap.setStyleLoaded(true);
     renderLayerManager(fakeMap);

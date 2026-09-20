@@ -151,7 +151,10 @@ const EMPTY_PROXIED_COLLECTION = {
 };
 
 /** Procedures that still expose the legacy array/collection shapes in this test. */
-const ARRAY_PROCEDURES = new Set(["environmental.getGroundwater"]);
+const ARRAY_PROCEDURES = new Set([
+  "environmental.getGroundwater",
+  "environmental.getPublishedSoilRasters",
+]);
 
 /**
  * The two collection reads whose panels caption themselves from a SUPPORT ENVELOPE.

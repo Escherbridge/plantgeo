@@ -83,13 +83,14 @@ def measure_lane_freshness(lane: CensusLane, *, latest_recorded_day: date | None
 
 
 def with_freshness(row: LaneCoverage, *, lane: CensusLane, today: date) -> LaneCoverage:
-    """Return the row carrying its independent freshness verdict; the frozen `to_wire()` is unaffected."""
+    """Attach the independent verdict and optional registered slider timing policy."""
     verdict = measure_lane_freshness(lane, latest_recorded_day=row.latest_recorded_day, today=today)
     return replace(
         row,
         expected_horizon_day=verdict.expected_horizon_day,
         staleness_days=verdict.staleness_days,
         behind_provider=verdict.behind_provider,
+        refresh_policy=lane.refresh_policy,
     )
 
 

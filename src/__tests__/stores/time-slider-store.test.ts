@@ -474,7 +474,7 @@ describe("hasSelectableDay -- one rule decides both the control and the filter",
   it("is false for a toggle that names no warehouse stream at all", () => {
     // The SoilGrids raster and the SSURGO viewport proxy are drawn from upstream, not from a
     // stream the warehouse dates.
-    expect(hasSelectableDay(capabilities, "soil")).toBe(false);
+    expect(hasSelectableDay(capabilities, "soil-soc")).toBe(false);
     expect(hasSelectableDay(capabilities, "soil-survey")).toBe(false);
   });
 

@@ -13,6 +13,11 @@ import {
 } from "@/lib/environmental/climate-field";
 import { SLIDER_STREAM_LAYER_NAMES, SNAPSHOT_SURFACE_LAYER_NAMES } from "@/types/time-slider";
 import type { PanelId } from "@/stores/panel-store";
+import {
+  SOIL_PROPERTY_LABELS,
+  SOIL_RASTER_PROPERTIES,
+  type SoilRasterToggleId,
+} from "@/lib/map/soil-raster";
 
 /** Every toggle id the registry knows. `activeLayers` may also hold user-uploaded layer ids. */
 export type LayerToggleId =
@@ -25,7 +30,7 @@ export type LayerToggleId =
   | "sensors"
   | "watersheds"
   | "vegetation"
-  | "soil"
+  | SoilRasterToggleId
   | "soil-survey"
   | "soil-moisture"
   | "soil-temperature"
@@ -193,6 +198,22 @@ const CLIMATE_FIELD_ENTRIES = CLIMATE_FIELD_SIGNAL_IDS.reduce((entries, signal) 
   // is over `CLIMATE_FIELD_SIGNAL_IDS`, which is `Object.keys` of a record exhaustive over the
   // signal union, so every key does get written.
 }, {} as Record<ClimateFieldToggleId, LayerRegistryEntry>);
+
+const SOIL_RASTER_ENTRIES = SOIL_RASTER_PROPERTIES.reduce((entries, property) => {
+  const toggleId: SoilRasterToggleId = `soil-${property}`;
+  entries[toggleId] = {
+    toggleId,
+    label: SOIL_PROPERTY_LABELS[property],
+    description: `ISRIC SoilGrids v2.0 ${SOIL_PROPERTY_LABELS[property]} model estimate for the top 0–5 cm.`,
+    icon: "mountain",
+    renderKind: "component",
+    styleLayerIds: [],
+    warehouseLayerName: null,
+    panelId: "soil",
+    permanentlyUnavailableReason: null,
+  };
+  return entries;
+}, {} as Record<SoilRasterToggleId, LayerRegistryEntry>);
 
 export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   fire: {
@@ -396,31 +417,9 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     panelId: "vegetation",
     permanentlyUnavailableReason: null,
   },
-  // Rendered from raster tiles, not from a geo.layers feed.
-  soil: {
-    toggleId: "soil",
-    label: "Soil Properties",
-    icon: "mountain",
-    renderKind: "component",
-    styleLayerIds: [],
-    warehouseLayerName: null,
-    panelId: "soil",
-    // SoilLayer resolves its raster template through `getEnvironmentalTileTemplate`, which
-    // returns "" unconditionally, so this switch has never had anything behind it. It read as
-    // an ordinary working toggle -- flip it, watch nothing happen, conclude the data is
-    // missing. The capability is withheld, and the row now says so instead of pretending.
-    //
-    // The point query this caption used to send readers to is in the same state:
-    // `environmental.getSoilProperties` throws PRECONDITION_FAILED for every point until its
-    // source-direct Parquet lane is published, and nothing in src/ calls ISRIC. Inviting the
-    // click was a capability claim with nothing behind it, so the caption now says what the
-    // click does (drops a pin) and what it does not (read anything).
-    permanentlyUnavailableReason:
-      "Soil property rasters are not published yet: no first-party SoilGrids tile release exists, so this layer has no tiles to draw. The point query is not served yet either: no lane publishes SoilGrids estimates, so a map click with the Soil section open drops a pin that reads nothing.",
-  },
   // USDA SSURGO map units, read per viewport through environmental.getSoilSurvey. Distinct
-  // from `soil` above, which would draw the SoilGrids raster: this one is the vector survey
-  // polygons. See soilSurveyLayer in layers.ts.
+  // from the six SoilGrids property rasters: this one is the vector survey polygons. See
+  // soilSurveyLayer in layers.ts.
   //
   // NOT SERVED YET, and honestly so through two channels rather than a gate here. The
   // procedure is an unconditional stub answering `soil_survey_parquet_lane_not_published`
@@ -433,11 +432,10 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   // Deliberately no `permanentlyUnavailableReason`, for the reason soil-temperature below
   // gives: that field is a governance gate a publish step would have to remember to reopen,
   // and it reads false in `useLayerVisibility`, which would silence the section that carries
-  // the honest caption. `soil` is gated because it has no warehouse name and so no
-  // capability channel to be honest through; this row has one.
+  // the honest caption. This row has a warehouse capability channel for that state.
   "soil-survey": {
     toggleId: "soil-survey",
-    label: "Soil Survey (SSURGO)",
+    label: "Drainage & Map Units (SSURGO)",
     icon: "layers",
     renderKind: "component",
     styleLayerIds: [],
@@ -500,6 +498,7 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     permanentlyUnavailableReason: null,
   },
   ...CLIMATE_FIELD_ENTRIES,
+  ...SOIL_RASTER_ENTRIES,
   // Served by /api/v1/action-network's k-anonymity-floored activity grid --
   // aggregateActivityGrid in src/lib/server/services/community-activity.ts groups
   // request-kind geo.features rows into zoom-derived cells with a HAVING count(*) >= 3

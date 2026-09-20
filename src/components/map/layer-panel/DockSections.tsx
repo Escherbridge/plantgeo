@@ -25,6 +25,38 @@ import {
 } from "@/lib/map/layer-toggle-context";
 import { useDrawnLayerDayStore } from "@/stores/useMetricAtDate";
 import { useVegetationStore } from "@/stores/vegetation-store";
+import { trpc } from "@/lib/trpc/client";
+import {
+  SOIL_RASTER_TOGGLE_IDS,
+  soilPropertyForToggle,
+} from "@/lib/map/soil-raster";
+
+const SOIL_RASTER_LOADING_REASON = "Checking the published SoilGrids raster catalogue.";
+const SOIL_RASTER_ERROR_REASON =
+  "The published SoilGrids raster catalogue could not be read. Try again shortly.";
+
+export function soilRasterUnavailableReasons({
+  isPending,
+  isError,
+  properties,
+}: {
+  isPending: boolean;
+  isError: boolean;
+  properties: ReadonlySet<string>;
+}): Partial<Record<(typeof SOIL_RASTER_TOGGLE_IDS)[number], string>> {
+  return Object.fromEntries(
+    SOIL_RASTER_TOGGLE_IDS.flatMap((toggleId) => {
+      const property = soilPropertyForToggle(toggleId);
+      if (property !== null && properties.has(property)) return [];
+      const reason = isPending
+        ? SOIL_RASTER_LOADING_REASON
+        : isError
+          ? SOIL_RASTER_ERROR_REASON
+          : "No live PMTiles release is published for this SoilGrids property.";
+      return [[toggleId, reason]];
+    })
+  );
+}
 
 /**
  * One category: a disclosure caret, a tri-state group eye, an `n of m` count, its layer rows,
@@ -44,9 +76,11 @@ import { useVegetationStore } from "@/stores/vegetation-store";
 function LayerGroupSection({
   group,
   legendContext,
+  unavailableReasons,
 }: {
   group: DockLayerGroup;
   legendContext: LegendContext;
+  unavailableReasons: Partial<Record<keyof typeof LAYER_REGISTRY, string>>;
 }) {
   const [isExpanded, setIsExpanded] = useState(true);
   const layerVisibility = useLayerVisibility();
@@ -65,9 +99,11 @@ function LayerGroupSection({
   const controllable = useMemo(
     () =>
       group.layerIds.filter(
-        (layerId) => LAYER_REGISTRY[layerId].permanentlyUnavailableReason === null
+        (layerId) =>
+          LAYER_REGISTRY[layerId].permanentlyUnavailableReason === null &&
+          unavailableReasons[layerId] === undefined
       ),
-    [group.layerIds]
+    [group.layerIds, unavailableReasons]
   );
   const activeCount = controllable.filter((layerId) => layerVisibility[layerId]).length;
   const allActive = controllable.length > 0 && activeCount === controllable.length;
@@ -142,6 +178,7 @@ function LayerGroupSection({
               key={layerId}
               layerId={layerId}
               legendContext={legendContext}
+              catalogUnavailableReason={unavailableReasons[layerId]}
               isFetchingSelectedDay={drawnDays[layerId]?.isLoading ?? false}
             />
           ))}
@@ -169,6 +206,17 @@ export function DockSections() {
   const climateDisplayMode = useClimateDisplayMode();
   const vegetationMode = useVegetationStore((state) => state.mode);
   const ndviMode = useVegetationStore((state) => state.ndviMode);
+  const soilRasterQuery = trpc.environmental.getPublishedSoilRasters.useQuery();
+  const soilRasters = soilRasterQuery.data ?? [];
+  const unavailableReasons = useMemo(
+    () =>
+      soilRasterUnavailableReasons({
+        isPending: soilRasterQuery.isPending === true,
+        isError: soilRasterQuery.isError === true,
+        properties: new Set(soilRasters.map((release) => release.property)),
+      }),
+    [soilRasterQuery.isError, soilRasterQuery.isPending, soilRasters]
+  );
 
   const legendContext = useMemo<LegendContext>(
     () => ({
@@ -178,6 +226,7 @@ export function DockSections() {
       soilFieldDepth: soilDisplayMode.fieldDepth,
       climateRenderForms: climateDisplayMode.renderForms,
       climateFieldVariant: climateDisplayMode.airTemperatureVariant,
+      soilRasters,
     }),
     [
       vegetationMode,
@@ -185,13 +234,19 @@ export function DockSections() {
       soilDisplayMode.fieldDepth,
       climateDisplayMode.renderForms,
       climateDisplayMode.airTemperatureVariant,
+      soilRasters,
     ]
   );
 
   return (
     <div className="flex flex-col gap-1">
       {DOCK_LAYER_GROUPS.map((group) => (
-        <LayerGroupSection key={group.key} group={group} legendContext={legendContext} />
+        <LayerGroupSection
+          key={group.key}
+          group={group}
+          legendContext={legendContext}
+          unavailableReasons={unavailableReasons}
+        />
       ))}
 
       {/* Teams and Offline govern no layer, so the registry cannot order them and they have no

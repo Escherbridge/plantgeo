@@ -6,7 +6,7 @@ import {
   type SoilProperty,
   SOIL_PROPERTY_LABELS,
   SOIL_PROPERTY_POINT_FIELD,
-} from "@/components/map/layers/SoilLayer";
+} from "@/lib/map/soil-raster";
 import { useSoilStore } from "@/stores/soil-store";
 import { useDebouncedLayerDay, useLayerVisibility } from "@/lib/map/layer-toggle-context";
 import {
@@ -332,6 +332,8 @@ export function SoilDetails({
     { lat: queryPoint?.lat ?? 0, lon: queryPoint?.lon ?? 0 },
     { enabled: !!queryPoint }
   );
+  const soilRasters = trpc.environmental.getPublishedSoilRasters.useQuery().data ?? [];
+  const selectedRaster = soilRasters.find((release) => release.property === selectedProperty);
   // `getSoilProperties` refuses every point with PRECONDITION_FAILED until its source-direct
   // Parquet lane is published (environmental.ts §getSoilProperties); nothing in src/ calls
   // ISRIC. That refusal is OUR gap and is named as such below -- any other error is a real
@@ -601,11 +603,8 @@ export function SoilDetails({
       <div className="mt-4">
         <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-2">
-              {/* "Display property" was a lie about scope. These buttons select nothing on the
-                  map -- the SoilGrids raster they were built for cannot draw at all, because
-                  `getEnvironmentalTileTemplate` returns "" until a first-party tile release
-                  exists. What they DO drive is the point query below: which property the
-                  clicked-point readout leads with. Named for that. */}
+              {/* Raster visibility is controlled by the six independent layer rows. These
+                  buttons only select which matching point-query value is highlighted. */}
               <p className="text-xs text-[hsl(var(--muted-foreground))]">
                 Highlight in point query
               </p>
@@ -631,17 +630,22 @@ export function SoilDetails({
               <p className="text-xs font-semibold mb-1 text-[hsl(var(--foreground))]">
                 {SOIL_PROPERTY_LABELS[selectedProperty]}
               </p>
-              {/* One sentence, not a ternary over a constant: ENVIRONMENTAL_TILES_CONFIGURED is
-                  a literal `false` in src/lib/vegetation.ts, so the other branch was unreachable
-                  copy describing a capability that has never existed. The point query is in the
-                  same state -- `getSoilProperties` refuses every point until its lane is
-                  published -- so "the values below" may not be promised as if they appear. */}
               <p className="text-[10px] text-[hsl(var(--muted-foreground))] leading-relaxed">
-                No soil raster is published, so nothing is drawn for this property, and the
-                point query behind it is not served yet either: no lane publishes SoilGrids
-                estimates. The readout here is intended to be ISRIC SoilGrids model
-                estimates for the top 0–5 cm at the point you click, not on-site soil samples.
+                {selectedRaster === undefined
+                  ? "No live PMTiles release is catalogued for this property. Its layer row remains separate from the SSURGO drainage/map-unit survey."
+                  : `${selectedRaster.sourceName} ${selectedRaster.sourceRelease} model estimate for the top 0–5 cm (${selectedRaster.unit}). Use this property's own layer row to switch it or change its opacity.`}
               </p>
+              {selectedRaster !== undefined && selectedRaster.colorRamp.length > 0 && (
+                <div className="mt-2 flex flex-col gap-1">
+                  {selectedRaster.colorRamp.map((stop) => (
+                    <ColorLegendRow
+                      key={`${stop.value}-${stop.color}`}
+                      color={stop.color}
+                      label={`${stop.value} ${selectedRaster.unit}`.trim()}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Queried point data. Capture is armed for as long as this section is mounted --

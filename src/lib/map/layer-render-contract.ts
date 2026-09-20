@@ -15,6 +15,10 @@ import {
 } from "@/lib/environmental/climate-field";
 import type { LayerToggleId } from "@/lib/map/layer-registry";
 import {
+  SOIL_RASTER_TOGGLE_IDS,
+  type SoilRasterToggleId,
+} from "@/lib/map/soil-raster";
+import {
   latticeCellSpan,
   resolveZoomTier,
   type ServedCellLattice,
@@ -471,12 +475,18 @@ const CLIMATE_FIELD_CONTRACT_ENTRIES = CLIMATE_FIELD_TOGGLE_IDS.reduce(
   {} as Record<ClimateFieldToggleId, LayerRenderContractEntry>
 );
 
+const SOIL_RASTER_CONTRACT_ENTRIES = SOIL_RASTER_TOGGLE_IDS.reduce((entries, toggleId) => {
+  entries[toggleId] = referenceOrUnavailableEntry(toggleId);
+  return entries;
+}, {} as Record<SoilRasterToggleId, LayerRenderContractEntry>);
+
 /**
  * One entry per registry layer. Typed as a total record over `LayerToggleId`, so a new toggle
  * fails to compile here rather than reaching the map with no declared form.
  */
 export const LAYER_RENDER_CONTRACT: Readonly<Record<LayerToggleId, LayerRenderContractEntry>> = {
   ...CLIMATE_FIELD_CONTRACT_ENTRIES,
+  ...SOIL_RASTER_CONTRACT_ENTRIES,
 
   // Event points. FIRMS detections, USGS gauges, Open-Meteo stations and published sensor
   // rows: real observations at real coordinates, whose coarse forms count contributors and
@@ -574,9 +584,8 @@ export const LAYER_RENDER_CONTRACT: Readonly<Record<LayerToggleId, LayerRenderCo
   // tessellated cell, so the contract and the renderer agree and there is nothing to record.
   vegetation: fixedSupportFieldEntry("vegetation", 0.25),
 
-  // Reference or unavailable. `soil` has no published raster release at all; the three
-  // community surfaces have no declared spatial support in this contract yet.
-  soil: referenceOrUnavailableEntry("soil"),
+  // Reference or unavailable. SoilGrids is an immutable reference raster; the three community
+  // surfaces have no declared spatial support in this contract yet.
   "demand-heatmap": referenceOrUnavailableEntry("demand-heatmap"),
   // Both halves of the merged toggle: the Martin-tile published set and the signed-in
   // draft/proposed overlay it absorbed on 2026-09-13. Neither is lane-backed by a Parquet

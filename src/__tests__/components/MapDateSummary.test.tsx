@@ -210,9 +210,9 @@ describe("stating on the canvas what day the drawn layers are showing", () => {
   });
 
   it("stays silent while no dated layer is even on the map", () => {
-    // Only `soil`, which no warehouse stream backs. There is no date to be waiting for, so a
+    // Only a static SoilGrids raster, which no warehouse stream backs. There is no date to be waiting for, so a
     // "Loading dates" box over this map would be a claim about a composite that does not exist.
-    arrangeVisibleLayers(["soil"], { capabilities: null });
+    arrangeVisibleLayers(["soil-soc"], { capabilities: null });
 
     renderWithProviders(<MapDateSummary />);
 

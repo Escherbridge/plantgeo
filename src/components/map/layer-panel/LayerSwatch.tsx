@@ -9,7 +9,7 @@ import type { LayerToggleId } from "@/lib/map/layer-registry";
  * Read entirely off `layerLegendSpec()` -- the module that already reads every colour from the
  * renderer that paints it -- so a chip can never show a colour the map does not draw. A layer
  * with no spec gets a hatched chip rather than a plausible grey: `layer-legends.ts` records
- * (in LEGENDLESS_TOGGLE_REASONS) that `soil` paints nothing at all today, and inventing a
+ * (in LEGENDLESS_TOGGLE_REASONS) when a layer paints nothing at all, and inventing a
  * colour for it is exactly the drift that module exists to prevent.
  */
 

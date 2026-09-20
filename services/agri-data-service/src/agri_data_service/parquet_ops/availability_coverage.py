@@ -621,6 +621,7 @@ def withheld_lane_coverage(
             availability_pointer_key=pointer_key,
             withheld_reason=reason,
             expected_horizon_day=expected_horizon,
+            refresh_policy=lane.refresh_policy,
         )
         for tier in ZOOM_TIERS
     )

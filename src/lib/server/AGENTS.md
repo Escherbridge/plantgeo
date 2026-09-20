@@ -48,3 +48,9 @@ always the correct example to copy.
 `db/schema/land-context/shared.ts`'s `PNW_STATE_CODES`/`PnwStateCode` moved behind
 `getRegion().adminCodes` in the `federation.md` §5 step 2 push; both names stay as deprecated
 aliases, and new code should read `RegionAdminCode` (`src/lib/region/region.ts`) directly.
+# Published raster catalogue
+
+`services/raster-catalog.ts` reads `geo.published_raster`, never `geo.raster_release`, so a
+withdrawn archive cannot be served by forgetting the live-row predicate. Public URLs are made
+only by validating the catalogue `object_key` and joining it to the documented
+`RASTER_TILES_BASE_URL`; catalogue data is never accepted as an absolute URL.

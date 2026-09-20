@@ -782,6 +782,9 @@ function synthesizeCapability(
     // presenting an object-store walk and a checksummed index as the same claim.
     coverageAuthority: rowCoverageAuthority(entries),
     sourceCeilingDay: rowSourceCeilingDay(entries),
+    freshness: entries.length > 0 && entries.every(
+      (entry) => JSON.stringify(entry.freshness ?? null) === JSON.stringify(entries[0].freshness ?? null)
+    ) ? entries[0].freshness ?? null : null,
     requiredRungs: rowRequiredRungs(entries),
   };
 }

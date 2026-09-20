@@ -133,6 +133,9 @@ const queries = vi.hoisted(() => ({
   getSoilField: vi.fn(
     (): SoilFieldResult => ({ data: undefined, isLoading: false, isError: false })
   ),
+  getPublishedSoilRasters: vi.fn(
+    (): { data: Array<Record<string, unknown>> } => ({ data: [] })
+  ),
 }));
 
 vi.mock("@/lib/trpc/client", () => ({
@@ -142,6 +145,7 @@ vi.mock("@/lib/trpc/client", () => ({
       getInterventionSuitability: { useQuery: queries.getInterventionSuitability },
       getSoilSurvey: { useQuery: queries.getSoilSurvey },
       getSoilField: { useQuery: queries.getSoilField },
+      getPublishedSoilRasters: { useQuery: queries.getPublishedSoilRasters },
     },
   },
 }));
@@ -242,6 +246,7 @@ beforeEach(() => {
     isLoading: false,
     isError: false,
   });
+  queries.getPublishedSoilRasters.mockReturnValue({ data: [] });
 });
 
 afterEach(() => {
@@ -647,11 +652,44 @@ describe("SoilDetails property selector", () => {
 
     expect(screen.getByText("6.4")).toBeTruthy();
     expect(screen.getByText("12.3 g/kg")).toBeTruthy();
-    expect(screen.getByText(/ISRIC SoilGrids model estimates for the top 0–5 cm/)).toBeTruthy();
+    expect(screen.getByText(/No live PMTiles release is catalogued for this property/)).toBeTruthy();
     expect(screen.getByText("1.10 g/kg")).toBeTruthy();
     expect(screen.getByText("1.35 g/cm³")).toBeTruthy();
     expect(screen.getByText("18.2 cmol/kg")).toBeTruthy();
     expect(screen.getByText("4.6 kg/m³")).toBeTruthy();
+  });
+
+  it("describes the selected live raster from the catalogue and renders its ramp", () => {
+    queries.getPublishedSoilRasters.mockReturnValue({
+      data: [
+        {
+          property: "soc",
+          unit: "g/kg",
+          scaleDivisor: 10,
+          valueMin: 5,
+          valueMax: 460,
+          colorRamp: [
+            { value: 5, color: "#fff7ec" },
+            { value: 60, color: "#7f0000" },
+          ],
+          archiveUrl: "https://tiles.example.test/raster/soil/soc.pmtiles",
+          minZoom: 0,
+          maxZoom: 10,
+          attribution: "ISRIC SoilGrids",
+          sourceName: "SoilGrids",
+          sourceRelease: "2.0",
+          licenseName: "CC-BY 4.0",
+          bounds: [-125, 42, -111, 49],
+        },
+      ],
+    });
+
+    renderWithPoint();
+
+    expect(screen.getByText(/SoilGrids 2\.0 model estimate/).textContent).toContain("g/kg");
+    expect(screen.getByText("5 g/kg")).toBeTruthy();
+    expect(screen.getByText("60 g/kg")).toBeTruthy();
+    expect(screen.queryByText(/No live PMTiles release/)).toBeNull();
   });
 });
 

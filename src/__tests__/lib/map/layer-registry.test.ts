@@ -146,11 +146,16 @@ describe('layer registry derivations', () => {
       'gbif-occurrences',
     ])
     expect(getLayersForPanel('soil')).toEqual([
-      'soil',
       'soil-survey',
       'soil-moisture',
       'soil-temperature',
       'soil-vpd',
+      'soil-phh2o',
+      'soil-soc',
+      'soil-nitrogen',
+      'soil-bdod',
+      'soil-cec',
+      'soil-ocd',
     ])
     // Climate owns one layer per NASA POWER signal. It owned exactly one for all nine until
     // 2026-08-10, on the grounds that only one can be painted over a cell at a time -- which
@@ -262,13 +267,18 @@ describe('layer registry derivations', () => {
       // A separate source from the three UBC rows above, not a fourth herbarium row -- see
       // layer-registry.ts's own comment on this entry for why it is a sibling toggle.
       'gbif-occurrences': 'GBIF Specimen Occurrences',
-      soil: 'Soil Properties',
-      'soil-survey': 'Soil Survey (SSURGO)',
+      'soil-survey': 'Drainage & Map Units (SSURGO)',
       // Read off SOIL_FIELD_MEASURES rather than restated, which is why the soil section
       // could drop its `label={definition.layerLabel}` without changing a single caption.
       'soil-moisture': 'Soil Moisture (ERA5-Land)',
       'soil-temperature': 'Soil Temperature (ERA5-Land)',
       'soil-vpd': 'Vapor Pressure Deficit (ERA5-Land)',
+      'soil-phh2o': 'pH (H₂O)',
+      'soil-soc': 'Organic Carbon',
+      'soil-nitrogen': 'Nitrogen',
+      'soil-bdod': 'Bulk Density',
+      'soil-cec': 'CEC',
+      'soil-ocd': 'Organic Carbon Density',
       // The nine climate captions have no <LayerToggle> predecessor either: the Climate
       // section was added after the sheets were gone, and these are read off
       // CLIMATE_FIELD_SIGNALS rather than restated -- exactly as the three soil-field rows
@@ -514,26 +524,17 @@ describe('layer registry derivations', () => {
     )
   })
 
-  // demand-heatmap's stub was lifted 2026-08-03: /api/v1/action-network's k-anonymity
-  // floor already satisfies the "reviewed, access-controlled publication" condition it
-  // was withheld pending. building-footprints was the second withheld entry until
-  // 2026-08-15, when the layer was removed outright rather than left as a disabled row.
-  it('withholds the one layer with no tiles to draw, and withholds nothing else', () => {
+  it('withholds no registry layer now that SoilGrids reads its published raster catalogue', () => {
     const withheld = LAYER_TOGGLE_IDS.filter(
       (toggleId) => LAYER_REGISTRY[toggleId].permanentlyUnavailableReason !== null
     )
-    expect(withheld).toEqual(['soil'])
+    expect(withheld).toEqual([])
   })
 
-  // The withheld caption used to send readers to a point query -- "Click the map with the Soil
-  // section open to read SoilGrids model estimates at a point" -- that
-  // environmental.getSoilProperties refuses with PRECONDITION_FAILED for every point. A
-  // caption on a disabled row is the one place a reader is guaranteed to look, so it may not
-  // invite a click that fails; it may say what the click does not do.
-  it('does not invite the point query the soil caption once sent readers to', () => {
-    const caption = LAYER_REGISTRY.soil.permanentlyUnavailableReason
-    expect(caption).not.toBeNull()
-    expect(caption).not.toMatch(/Click the map .* to read/)
-    expect(caption).toMatch(/point query is not served yet/)
+  it('keeps every SoilGrids property separate from the withheld point-query path', () => {
+    for (const toggleId of ['soil-phh2o', 'soil-soc', 'soil-nitrogen', 'soil-bdod', 'soil-cec', 'soil-ocd'] as const) {
+      expect(LAYER_REGISTRY[toggleId].permanentlyUnavailableReason).toBeNull()
+      expect(LAYER_REGISTRY[toggleId].warehouseLayerName).toBeNull()
+    }
   })
 })

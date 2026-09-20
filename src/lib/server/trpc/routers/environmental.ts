@@ -54,6 +54,7 @@ import {
   type SoilSurveyCoverage,
   type SoilSurveyGranularity,
 } from "@/lib/server/services/soil-survey-contracts";
+import { getPublishedSoilRasters } from "@/lib/server/services/raster-catalog";
 import {
   GIBS_NDVI_PRODUCT,
   getEnvironmentalTileTemplate,
@@ -580,7 +581,7 @@ export const environmentalRouter = router({
    * painted with. Returns an empty array when nothing is published, which is the honest
    * answer and the one the layer tree renders as an inert row rather than a broken source.
    */
-  getPublishedSoilRasters: publicProcedure.query(() => []),
+  getPublishedSoilRasters: publicProcedure.query(() => getPublishedSoilRasters()),
 
   getSoilField: publicProcedure
     .input(

@@ -22,9 +22,8 @@ export interface LayerPublicationStanding {
  * a real renderer that would paint the moment its upstream produced a row, so a standing states
  * the emptiness without asserting the layer is forbidden.
  *
- * `soil` is the fourth non-lane surface and is deliberately ABSENT: it is genuinely withheld and
- * already carries a `permanentlyUnavailableReason`, so a standing here would caption that row
- * twice. `layer-publication-standing.test.ts` holds both halves of that split.
+ * SoilGrids is deliberately absent: its static releases are served by the raster catalogue,
+ * so those six rows are working producer-backed layers even though no Parquet lane backs them.
  *
  * No entry may state a count or a date. A caption saying how many rows exist today is wrong the
  * next time a row lands, and a wrong caption is worse than the blank map it replaced -- the test

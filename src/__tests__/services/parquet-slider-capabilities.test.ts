@@ -184,6 +184,25 @@ afterEach(() => {
 });
 
 describe("getParquetSliderCapabilities", () => {
+  it("carries agreed lane timing and withholds conflicting rung timing", async () => {
+    const freshness = {
+      publicationLagDays: 5, sourceCadenceDays: 1,
+      refreshIntervalSeconds: 3600, expectedHorizonDay: "2026-08-23",
+    };
+    setCoverage(withLane(completeCoverage(), "fire-detections", { freshness }));
+    const agreed = await getParquetSliderCapabilities();
+    expect(agreed.layers.find((layer) => layer.layerName === "fire-detections")?.freshness)
+      .toEqual(freshness);
+    const conflicting = withLane(completeCoverage(), "fire-detections", { freshness });
+    const rung = conflicting.find((lane) => lane.layer === "fire-detections");
+    if (!rung) throw new Error("Fixture missing fire detections");
+    rung.freshness = { ...freshness, publicationLagDays: 6 };
+    setCoverage(conflicting);
+    const result = await getParquetSliderCapabilities();
+    expect(result.layers.find((layer) => layer.layerName === "fire-detections")?.freshness)
+      .toBeNull();
+  });
+
   it("serves Parquet dates when the retired PostgreSQL census would fail", async () => {
     mocks.getGeoFeatureSliderCapabilities.mockRejectedValue(
       new Error('materialized view "mv_signal_observation_day" has not been populated')

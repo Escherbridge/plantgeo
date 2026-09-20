@@ -4,7 +4,7 @@ import { isReusableSliderCoverage } from "@/lib/environmental/slider-policy";
 import { fetchBoundedJson, providerUrl } from "@/lib/server/http/bounded-upstream";
 import { getRegion, regionIdentityVerdict } from "@/lib/region/region";
 import type { ZoomTier } from "@/lib/map/zoom-tiers";
-import type { DayRange } from "@/types/time-slider";
+import type { DayRange, LaneFreshness } from "@/types/time-slider";
 import {
   assertExhaustiveParquetPlaneState,
   type ParquetPlaneEnvelope,
@@ -311,6 +311,7 @@ export interface ParquetLatestReleaseRequest extends ParquetReadBase {
 
 /** What one physical lane/rung has and has not written, over its whole published span. */
 export interface ParquetLaneCoverage {
+  freshness?: LaneFreshness | null;
   /** Layer slug as the partition path spells it. */
   layer: string;
   nature: ParquetLaneNature;
@@ -619,6 +620,12 @@ const wireCoverageSchema = z.object({
       // would reject a body the serving side considers valid, which is the drift the freeze forbids.
       availability_pointer_key: z.string().nullable(),
       source_ceiling_day: wireCalendarDaySchema.nullable(),
+      freshness: z.object({
+        publication_lag_days: z.number().int().nonnegative().nullable(),
+        source_cadence_days: z.number().int().positive().nullable(),
+        refresh_interval_seconds: z.number().int().positive().nullable(),
+        expected_horizon_day: wireCalendarDaySchema.nullable(),
+      }).nullable().optional(),
       required_rungs: z.array(wireZoomTierSchema),
       withheld_reason: z.enum(PARQUET_AVAILABILITY_WITHHELD_REASONS).nullable(),
     })
@@ -813,6 +820,12 @@ function decodeCoverage(payload: unknown): ParquetWarehouseCoverage {
       availabilityGenerationSha256: lane.availability_generation_sha256,
       availabilityPointerKey: lane.availability_pointer_key,
       sourceCeilingDay: lane.source_ceiling_day,
+      freshness: lane.freshness ? {
+        publicationLagDays: lane.freshness.publication_lag_days,
+        sourceCadenceDays: lane.freshness.source_cadence_days,
+        refreshIntervalSeconds: lane.freshness.refresh_interval_seconds,
+        expectedHorizonDay: lane.freshness.expected_horizon_day,
+      } : null,
       requiredRungs: lane.required_rungs,
       withheldReason: lane.withheld_reason,
     })),

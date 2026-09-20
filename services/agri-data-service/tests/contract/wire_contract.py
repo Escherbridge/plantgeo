@@ -120,6 +120,15 @@ class WireDayRange(_Frozen):
     to: CalendarDay
 
 
+class WireLaneFreshness(_Frozen):
+    """Optional declared timing; missing metadata conveys no health claim."""
+
+    publication_lag_days: Annotated[int, Field(ge=0)] | None
+    source_cadence_days: Annotated[int, Field(ge=1)] | None
+    refresh_interval_seconds: Annotated[int, Field(ge=1)] | None
+    expected_horizon_day: CalendarDay | None
+
+
 class WireCoverageLane(_Frozen):
     """One physical lane and published zoom rung's independently readable coverage evidence.
 
@@ -129,6 +138,7 @@ class WireCoverageLane(_Frozen):
     """
 
     layer: str = Field(min_length=1)
+    freshness: WireLaneFreshness | None = None
     nature: Literal["daily_series", "release_series", "static_lookup"]
     kind: Literal["observed", "forecast"]
     zoom: Literal[0, 5, 9, 13]

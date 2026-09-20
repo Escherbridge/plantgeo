@@ -9,9 +9,8 @@
  *    module that draws it, so a palette edit reaches the map and the legend in one commit
  *    and the two can never disagree. Labels ARE written here -- they are prose about the
  *    encoding, not the encoding.
- * 2. A toggle gets a spec only when turning it on actually paints something. A layer whose
- *    upstream publishes nothing (`soil`) is absent on purpose: legending a colour the map
- *    never draws is the exact drift this module exists to prevent.
+ * 2. A toggle gets a spec only when turning it on actually paints something. Catalogue-backed
+ *    SoilGrids ramps therefore resolve at runtime from the same release the map draws.
  *    `LEGENDLESS_TOGGLE_REASONS` records why for each.
  */
 
@@ -83,9 +82,13 @@ import {
 import { FIRE_CELL_NOT_A_PERIMETER_NOTE } from "@/lib/map/fire-cell-caption";
 import { WATER_CELL_AGGREGATE_NOTE } from "@/lib/map/water-cell-caption";
 import { LAYER_RENDER_CONTRACT } from "@/lib/map/layer-render-contract";
-import { LAYER_TOGGLE_IDS, type LayerToggleId } from "@/lib/map/layer-registry";
+import { LAYER_REGISTRY, LAYER_TOGGLE_IDS, type LayerToggleId } from "@/lib/map/layer-registry";
 import type { LayerVisibility } from "@/lib/map/layer-toggle-context";
 import type { VegetationMode } from "@/components/map/layers/VegetationLayer";
+import {
+  soilPropertyForToggle,
+  type PublishedSoilRaster,
+} from "@/lib/map/soil-raster";
 
 /** One colour of a ramp. Only the stops worth captioning carry a label. */
 export interface LegendRampStop {
@@ -182,6 +185,8 @@ export interface LegendContext {
   climateRenderForms: Partial<Record<ClimateFieldSignalId, ClimateRenderForm>>;
   /** Only read on `air-temperature`; the other eight signals publish one value. */
   climateFieldVariant: AirTemperatureVariant;
+  /** Live catalogue rows; each carries the exact ramp baked into its PMTiles archive. */
+  soilRasters: readonly PublishedSoilRaster[];
 }
 
 /** The modes the stores seed themselves with. */
@@ -191,15 +196,11 @@ export const DEFAULT_LEGEND_CONTEXT: LegendContext = {
   soilFieldDepth: DEFAULT_SOIL_FIELD_DEPTHS,
   climateRenderForms: {},
   climateFieldVariant: DEFAULT_AIR_TEMPERATURE_VARIANT,
+  soilRasters: [],
 };
 
 /** Why a registry toggle deliberately has no legend spec. A drawn layer must never appear here. */
-export const LEGENDLESS_TOGGLE_REASONS: Partial<Record<LayerToggleId, string>> = {
-  soil:
-    "SoilLayer's tile template comes from getEnvironmentalTileTemplate, which returns an " +
-    "empty string until a first-party SoilGrids raster release exists, so the layer adds no " +
-    "source and paints no colour to legend.",
-};
+export const LEGENDLESS_TOGGLE_REASONS: Partial<Record<LayerToggleId, string>> = {};
 
 /**
  * A class list plus the row every unclassified feature falls to.
@@ -429,7 +430,7 @@ const STATIC_LAYER_LEGENDS: Partial<Record<LayerToggleId, LayerLegendSpec>> = {
   // note says; a second class list per tier would be the same colours claiming to be
   // different encodings.
   "soil-survey": {
-    title: "Soil survey (SSURGO)",
+    title: "Drainage & map units (SSURGO)",
     blocks: [
       {
         kind: "classes",
@@ -584,7 +585,7 @@ const STATIC_LAYER_LEGENDS: Partial<Record<LayerToggleId, LayerLegendSpec>> = {
  *
  * Only NDVI ever draws. NDWI has no upstream at all -- `getNDWITileUrl` returns an empty
  * string unconditionally, so VegetationLayer never adds the raster -- and NBR is
- * unpublished for the same reason `soil` is, so both modes are legended by their absence
+ * unpublished, so both modes are legended by their absence
  * rather than by a ramp for tiles that never arrive.
  */
 export function vegetationLegendSpec(
@@ -699,6 +700,29 @@ export function layerLegendSpec(
   }
   if (toggleId === "soil-vpd") {
     return soilFieldLegendSpec("vpd", context.soilFieldDepth.vpd);
+  }
+  const soilProperty = soilPropertyForToggle(toggleId);
+  if (soilProperty !== null) {
+    const release = context.soilRasters.find((row) => row.property === soilProperty);
+    if (release === undefined) return null;
+    const lastIndex = release.colorRamp.length - 1;
+    const middleIndex = Math.floor(lastIndex / 2);
+    return {
+      title: LAYER_REGISTRY[toggleId].label,
+      blocks: [
+        {
+          kind: "ramp",
+          caption: `${release.sourceName} · 0–5 cm mean`,
+          stops: release.colorRamp.map((stop, index) => ({
+            color: stop.color,
+            label:
+              index === 0 || index === middleIndex || index === lastIndex
+                ? `${stop.value} ${release.unit}`.trim()
+                : undefined,
+          })),
+        },
+      ],
+    };
   }
   // Nine toggles resolve through one branch rather than nine string comparisons: the toggle id
   // carries its signal, so this cannot fall out of step with the registry the way a hand-listed

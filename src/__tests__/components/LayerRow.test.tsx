@@ -167,14 +167,14 @@ describe("LayerRow time control gate", () => {
   });
 
   it("gives a layer with no warehouse stream behind it no time control and no caption", () => {
-    renderRow("soil");
+    renderRow("soil-soc");
 
-    // `soil` was never in the census at all, so there is nothing about time to report -- an
+    // SoilGrids rasters are catalogued releases with no time axis, so there is nothing about time to report -- an
     // "unavailable" or "loading" line here would be a claim about a layer the payload never
     // describes either way.
-    expect(screen.getByTestId("layer-row-soil")).not.toBeNull();
-    expect(timeSliderSlotFor("soil")).toBeNull();
-    expect(timeStatusStateFor("soil")).toBeNull();
+    expect(screen.getByTestId("layer-row-soil-soc")).not.toBeNull();
+    expect(timeSliderSlotFor("soil-soc")).toBeNull();
+    expect(timeStatusStateFor("soil-soc")).toBeNull();
   });
 
   it("gives a layer this payload does not carry no scrubber, and names the absence", () => {
@@ -278,12 +278,12 @@ describe("LayerRow when the capabilities payload does not arrive", () => {
   });
 
   it("claims nothing about a layer that never had dates to fail to load", () => {
-    renderRow("soil");
+    renderRow("soil-soc");
 
-    // `soil` names no warehouse stream at all, so a loading failure says nothing about it and
+    // `soil-soc` names no warehouse stream at all, so a loading failure says nothing about it and
     // the row must not imply otherwise.
-    expect(timeSliderSlotFor("soil")).toBeNull();
-    expect(timeStatusStateFor("soil")).toBeNull();
+    expect(timeSliderSlotFor("soil-soc")).toBeNull();
+    expect(timeStatusStateFor("soil-soc")).toBeNull();
   });
 
   /**
@@ -372,11 +372,11 @@ describe("LayerRow when the payload arrives without its stream scan", () => {
   });
 
   it("still refuses a control to a layer no warehouse stream backs", () => {
-    // A failed stream scan says nothing about `soil`, which names no stream at all. The flag
+    // A failed stream scan says nothing about `soil-soc`, which names no stream at all. The flag
     // must not become a blanket "mount everything".
-    renderRow("soil");
+    renderRow("soil-soc");
 
-    expect(timeSliderSlotFor("soil")).toBeNull();
+    expect(timeSliderSlotFor("soil-soc")).toBeNull();
   });
 
   it("draws the real axis for a layer the short payload does carry", () => {
@@ -602,7 +602,7 @@ describe("layer sync reset control", () => {
  * renderer and paint nothing, because their blocker sits upstream of the map entirely -- a
  * publish step nothing invokes, an untrained model, an anonymity floor. None of them is
  * WITHHELD, so `permanentlyUnavailableReason` (which disables the switch and drops the row out
- * of the dock's group count) is the wrong instrument; `soil` is the one that genuinely is.
+ * of the dock's group count) is the wrong instrument.
  */
 describe("LayerRow publication standings", () => {
   /** A day before every axis below, so the derived availability caption is live for both rows. */
@@ -704,12 +704,13 @@ describe("LayerRow publication standings", () => {
     expect(interventionsRow.textContent).toContain(standing.reason);
   });
 
-  it("leaves the withheld raster captioned by the registry, with no second sentence", () => {
-    renderRow("soil");
+  it("leaves a published raster switchable without a non-lane excuse", () => {
+    renderRow("soil-soc");
 
-    const row = screen.getByTestId("layer-row-soil");
-    expect(row.textContent).toContain(LAYER_REGISTRY.soil.permanentlyUnavailableReason!);
-    expect(LAYER_PUBLICATION_STANDINGS.soil).toBeUndefined();
+    const row = screen.getByTestId("layer-row-soil-soc");
+    expect(LAYER_REGISTRY["soil-soc"].permanentlyUnavailableReason).toBeNull();
+    expect(LAYER_PUBLICATION_STANDINGS["soil-soc"]).toBeUndefined();
+    expect(row.textContent).not.toContain("not published");
   });
 
   it("captions no lane-backed row, so a working layer carries no excuse", () => {

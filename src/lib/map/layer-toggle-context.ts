@@ -42,7 +42,7 @@ import type {
   ClimateFieldSignalId,
   ClimateRenderForm,
 } from "@/lib/environmental/climate-field";
-import type { SoilProperty } from "@/components/map/layers/SoilLayer";
+import type { SoilProperty } from "@/lib/map/soil-raster";
 import type { VegetationMode } from "@/components/map/layers/VegetationLayer";
 import type {
   ForecastVariant,
@@ -583,8 +583,9 @@ export function useVegetationDisplayMode(): VegetationDisplayMode {
  *
  * No `opacity`: one scalar here drove the SoilGrids raster AND both ERA5-Land fields
  * (LayerManager passed `soilMode.opacity` to all three), which made per-layer opacity
- * structurally impossible for them. Each of `soil`, `soil-moisture` and `soil-temperature`
- * now carries its own multiplier in `layer-store.layerOpacity`.
+ * structurally impossible for them. Each SoilGrids property and soil field now carries its own
+ * multiplier in `layer-store.layerOpacity`; SoilGrids visibility itself
+ * is represented by the six property toggles rather than by this highlighted point field.
  */
 export interface SoilDisplayMode {
   property: SoilProperty;
