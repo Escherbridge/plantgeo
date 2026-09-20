@@ -119,7 +119,7 @@ Phase 1 recorded it for `vapour_pressure_deficit_max`; it does not solve it.
 
 **7. CDS prices `derived-era5-land-daily-statistics` by time, not area — and that number does not
 transfer to AgERA5.**
-[`plans/AGENTS.md:50-76`](../../../services/agri-data-service/plans/AGENTS.md#L50-L76) measured
+The retired service-plan documentation measured
 `cost = 2 x variables x days` (limit 400) against that one dataset's costing endpoint, with area
 and grid free. AgERA5's `sis-agrometeorational-indicators` is a structurally different request —
 its published examples retrieve one variable and one statistic per call, not a bundled multi-
@@ -127,11 +127,9 @@ variable ZIP — so this measured figure is evidence about a sibling dataset's c
 number this track may reuse. Phase 1 below re-measures cardinality against AgERA5's own costing
 endpoint before any plan is authored.
 
-**8. Plan-naming and plan-authoring precedent exists and should be extended, not reinvented.**
-`services/agri-data-service/plans/` holds one generator script,
-`author_pnw_soil_moisture_plans.py`, and every plan file follows a
-`<source>-<region>-<purpose>-<start>-<end>.json` naming convention (e.g.
-`era5-land-pnw-soil-20220430-20260430.json`, `open-meteo-era5-land-pnw-vpd-20220430-20260430.json`).
+**8. Historical plan naming and authoring precedent should be extended, not reinvented.**
+The retired service-local generators authored plans with a
+`<source>-<region>-<purpose>-<start>-<end>.json` naming convention.
 A hand-typed plan JSON is the same trap the sibling track named for a wrong `nasa_lattice_plan_checksum` —
 it looks valid forever while pointing at nothing. AgERA5 and CEMS plans should be authored by a
 generator script in this same shape, not hand-typed.
@@ -158,8 +156,7 @@ generator script in this same shape, not hand-typed.
   working credentials and accepted licences for (finding 1). This is the reason this product ranks
   first: zero new credential plumbing.
 - Resolution: 0.1 x 0.1 degree global — already matches PlantGeo's 0.1-degree lattice exactly, so
-  no regrid, unlike the retired lane's 1.0-degree output grid (finding 7 / `plans/AGENTS.md`'s
-  "Extent is free but grid is frozen" section).
+  no regrid, unlike the retired lane's 1.0-degree output grid (finding 7).
 - Temporal: daily, 1979-01-01 to present, updated daily. Licence CC-BY, already accepted under the
   existing CDS terms acceptance.
 - **The cost trap is structural, not a queue-latency repeat of the retired lane's problem.** Unlike
@@ -217,9 +214,8 @@ open-question capture, not implementation.
 ## Non-goals
 
 - **Re-litigating or reversing the CDS soil-state retirement.** Soil moisture and soil temperature
-  stay on Open-Meteo. Nothing here re-registers `era5-land-pnw-soil-20220430-20260430.json` or its
-  western-NA sibling, and nothing here re-chunks the retired lane for throughput — that measured
-  problem was queue latency, not chunk size (`plans/AGENTS.md`'s CDS costing section).
+  stay on Open-Meteo. Nothing here restores or re-chunks the retired lane for throughput — its
+  measured problem was queue latency, not chunk size.
 - **GloFAS river discharge, CAMS air quality, and the Ensemble API.** Those are
   `conductor/tracks/upstream_dataset_expansion_20260806/`'s scope, already built there (with
   persistence blocked, per that track's own follow-up items) and unrelated to CDS — Open-Meteo

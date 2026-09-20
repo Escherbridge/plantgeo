@@ -15,7 +15,7 @@ disjoint files.
 | Phase | Scope | Standard | Status going in | Status as of 2026-08-06 review |
 |---|---|---|---|---|
 | 0 | Retire the CDS soil lane; close the et0-model trap structurally | — | unblocks trust in the lane | **partially done** — task unregistered, guard test and doc pass still open |
-| 1 | `vapour_pressure_deficit_max` | durable | verified (3.32 kPa) — no probe needed | **built, not run** — whitelisted and plan authored, backfill not launched |
+| 1 | `vapour_pressure_deficit_max` | durable | verified (3.32 kPa) — no probe needed | **built, not run** — whitelisted; historical plan retained as a frozen test fixture, backfill not launched |
 | 2 | Open-Meteo Flood API (GloFAS discharge) | cron | needs a live-endpoint probe | **built, blocked on persistence** — lane fetches/caches, warehouse writer missing |
 | 3 | Open-Meteo Air Quality API (CAMS) | cron | needs a live-endpoint probe | **built, blocked on persistence** — same blocker as GloFAS |
 | 4 | Open-Meteo Ensemble API | cron, schema-gated | needs a probe and an owner decision | **built, schema-gated** — quantile carriage done, receipt persistence blocked on a migration |
@@ -32,15 +32,14 @@ records what each phase of *this* plan actually shipped against its own acceptan
 The other two are not: no test anywhere in the repository asserts
 `et0_fao_evapotranspiration` is absent from `OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS` (the
 structural guard this phase exists to add), and `docs/rebuilding-the-dataset.md` still does not
-name the CDS soil-state retirement — `services/agri-data-service/plans/AGENTS.md` was edited this
-session, but for an unrelated lattice-plan-authoring note, not the CDS costing-section pointer this
-phase called for.
+name the CDS soil-state retirement, which this phase called for.
 
 **Phase 1.** The whitelist entry and its bounds test landed
 (`test_vapour_pressure_deficit_is_a_bounded_atmospheric_covariate_not_a_soil_signal`), and
-`open-meteo-era5-land-pnw-vpd-20220430-20260430.json` was authored as its own plan/release set,
-byte-identical to the soil-temperature lattice plan except for `description`, `parameters` and
-`release_set_key`. The backfill run itself has not happened — the plan is unrun.
+A historical VPD plan/release set was byte-identical to the soil-temperature lattice plan except
+for `description`, `parameters` and `release_set_key`. Its backfill did not happen; the retired
+JSON survives only as an immutable regression fixture under `tests/fixtures/historical_plans/`,
+not as runnable input.
 
 **Phases 2-3.** Both lanes (`historical_glofas.py`, `historical_cams.py`) validate, fetch, chunk,
 checkpoint and cache end to end and are reachable via four new CLI verbs, but neither can write a
@@ -98,8 +97,7 @@ silently whitelisted).
   checksum. Land it in `tests/test_historical_open_meteo.py`, beside the existing bounds
   tests it is a sibling of.
 - **Update the docs that currently describe the CDS soil plans as live or reviewed** —
-  `docs/rebuilding-the-dataset.md`'s credential table and `services/agri-data-service/plans/AGENTS.md`'s
-  CDS costing section both need a line stating the soil-state retirement and pointing at
+  `docs/rebuilding-the-dataset.md` needs a line stating the soil-state retirement and pointing at
   this track, so a future reader does not re-propose re-chunking a lane that is being
   retired rather than tuned.
 
@@ -118,11 +116,10 @@ The fastest phase in the track, because the value is already verified.
   maximum)` shape. Open-Meteo documents VPD as non-negative; the reviewed upper bound
   needs its own citation in the entry's comment, the same way the soil-temperature bands
   cite their CDS-level alignment.
-- Author a new plan (new `plan_checksum`, new `release_set.logical_key`) the same way
-  `author_pnw_soil_moisture_plans.py` authors the soil plans — either extend that generator
-  or add a sibling, but do not hand-type a plan JSON, for the same reason the soil plans
-  are generated: a wrong `nasa_lattice_plan_checksum` (or here, a wrong cell/parameter set)
-  looks valid forever while pointing at nothing.
+- Author any future plan (new `plan_checksum`, new `release_set.logical_key`) with a maintained
+  generator rather than hand-typing JSON. The retired soil-plan generator established the reason:
+  a wrong `nasa_lattice_plan_checksum` (or here, a wrong cell/parameter set) looks valid forever
+  while pointing at nothing.
 - Run it through `durable-backfill.sh open-meteo <plan>` against the local warehouse;
   confirm at least one full chunk lands with `is_observed=true`, `quality_flag='accepted'`
   where the provider reported a value, and every value inside the reviewed bounds.

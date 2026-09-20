@@ -60,7 +60,7 @@ SOIL_PRODUCT_IDS: Final[tuple[SoilProductId, ...]] = ("moisture", "temperature",
 #: Last day of the immutable snapshot every one of these eight streams holds, and it is ONE day for
 #: all eight: `scripts/vpd_snapshot_breakdown.py` EXPECTED_LAST_DAY,
 #: `scripts/build_soil_moisture_from_canonical_snapshot.py` EXPECTED_LAST_DAY, and the `window.end_date`
-#: of all three reviewed plans (`plans/open-meteo-era5-land-pnw-{vpd,soiltemp,ndvi-lattice}-20220802-20260802.json`).
+#: of all three reviewed historical plans; the VPD document survives as a frozen test fixture.
 ERA5_LAND_SNAPSHOT_LAST_DAY: Final = date(2026, 8, 2)
 
 #: First day this writer owns: the day after that immutable history ends. Imported by

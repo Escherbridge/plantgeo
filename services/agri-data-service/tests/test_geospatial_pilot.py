@@ -16,6 +16,15 @@ from agri_data_service.execution.geospatial_pilot import (
     load_validated_pilot_bundle,
 )
 
+BOISE_CAPTURE_EVIDENCE = (
+    Path(__file__).resolve().parents[3]
+    / "conductor"
+    / "tracks"
+    / "unified_intervention_layer_20260913"
+    / "evidence"
+    / "boise-intervention-capture-v1.json"
+)
+
 
 def test_gap_register_spans_requested_property_intervention_families() -> None:
     names = set(GAP_INPUTS)
@@ -35,16 +44,12 @@ def test_property_allowlist_excludes_address_owner_and_ranking_fields() -> None:
 
 
 def test_validated_bundle_rejects_missing_content_addressed_capture(tmp_path: Path) -> None:
-    service_root = Path(__file__).resolve().parents[1]
-    plan_path = service_root / "plans" / "boise-intervention-capture-v1.json"
-
     with pytest.raises(FileNotFoundError):
-        load_validated_pilot_bundle(plan_path, tmp_path)
+        load_validated_pilot_bundle(BOISE_CAPTURE_EVIDENCE, tmp_path)
 
 
 def test_repository_capture_plan_derives_content_addressed_root() -> None:
-    service_root = Path(__file__).resolve().parents[1]
-    plan = load_geospatial_capture_plan(service_root / "plans" / "boise-intervention-capture-v1.json")
+    plan = load_geospatial_capture_plan(BOISE_CAPTURE_EVIDENCE)
     root = geospatial_capture_root(Path("capture"), plan)
 
     assert root.parent.name == "boise-hillside-hollow-20260723"

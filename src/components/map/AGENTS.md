@@ -2,11 +2,11 @@
 
 ## Lane availability labels
 
-`layer-panel/LaneAvailabilityLabel.tsx` displays the capability's readable edge beside
-its declared source cadence. The native disclosure exposes configured publication delay,
-scheduled ingestion interval and the expected source horizon. These are metadata, not a
-successful-refresh receipt or a current-viewport coverage verdict. Missing metadata remains
-unknown; `LayerTimeSlider` retains its selected-day, source-limit and offline-storage notes.
+`layer-panel/LaneAvailabilityLabel.tsx` displays one compact line: the capability's readable
+edge, declared source cadence and scheduled check interval. Publication-lag arithmetic and
+derived target dates stay out of each row because they duplicate the live edge without giving
+the reader another action. Missing timing fragments are omitted; `LayerTimeSlider` retains its
+selected-day, source-boundary and offline-storage notes.
 
 
 **No absolute claim without a citation** (style review W10, closing judgement). A sentence here
@@ -490,10 +490,9 @@ three places, not one:
   because those layers still blank rather than retain.
 
 **The live edge has its own sentence.** `LayerTimeSlider` reads a non-snapshot capability's
-`sourceCeilingDay` beside `serverCurrentDate`. When the ceiling is before the server day, it states
-the reported publication limit and its calendar distance from the server day. The limit may itself
-be stale; it does not establish a normal publication delay or the last readable day. Release carry
-can serve later dates, so the note explains that an earlier release may support them.
+`sourceCeilingDay` beside `serverCurrentDate`. When the ceiling is before the server day, it names
+the source boundary without repeating calendar-distance or configured-delay arithmetic. Release
+carry can serve later dates, so the note explains that an earlier release may support them.
 The condition is capability-driven rather than a list of layer names or a calendar constant, and
 the message is absent for a same-day/null ceiling and snapshot layers. Coverage bands remain the
 only statement about observed or missing warehouse days. A source ceiling alone does not prove the
@@ -695,7 +694,9 @@ features carry `false`.
 
 **Ids are derived from the signal, never module constants.** Two rows can be on at once showing
 two different days, so `climate-field` as a fixed `SOURCE_ID` would have them overwrite each
-other. `layerIdsFor(signal)` owns every id one instance uses.
+other. `climate-field-layer-ids.ts` owns every id one instance uses and the hover registry derives
+its geometry targets from that same table. Every fill, outline, isoband, isoline and retained
+point id resolves back to its signal; value-label symbols are excluded from hit testing.
 
 **A form change rebuilds; it does not repaint.** The three forms are different MapLibre layer
 types over different geometry, so `renderForm` is a dependency of the mount effect rather than

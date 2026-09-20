@@ -7,7 +7,7 @@
   "pivot_reconciliation_20260822": {
     "reconciled_at": "2026-08-22T00:00:00Z",
     "verdict": "still valid, needs rescoping. Not superseded -- new Copernicus data sources are orthogonal to the storage-backend pivot.",
-    "evidence": "execution/historical_agera5.py (77 lines) and execution/historical_cems.py (89 lines) exist -- contract classes and signal specifications only (Agera5Period, AGERA5_SIGNAL_SPECIFICATIONS, AGERA5_DATASET_ID/VERSION). plans/author_agera5_plans.py and plans/author_cems_plans.py (72 lines each) exist as plan-generator scaffolding. None of this is wired up: no CLI verbs reference agera5/cems in cli.py or ingest/commands.py, no test file exists for either lane, no data_source registration or backfill run is evidenced. This is materially short of even Phase 1's acceptance criteria (a real backfill run landing governed rows). Last touched in commit 7d917d0 (2026-08-14), which is the same 'seasonal/label/forecast wave' commit that also shipped agri_sdk_layering's Phase 3 -- these two contract files most likely rode along with that wave rather than being purpose-built for this track.",
+    "evidence": "execution/historical_agera5.py (77 lines) and execution/historical_cems.py (89 lines) exist -- contract classes and signal specifications only (Agera5Period, AGERA5_SIGNAL_SPECIFICATIONS, AGERA5_DATASET_ID/VERSION). The unwired plan-generator scaffolds were removed with the retired service-local plan tree. No CLI verbs reference agera5/cems in cli.py or ingest/commands.py, no test file exists for either lane, no data_source registration or backfill run is evidenced. This is materially short of even Phase 1's acceptance criteria (a real backfill run landing governed rows). Last touched in commit 7d917d0 (2026-08-14), which is the same 'seasonal/label/forecast wave' commit that also shipped agri_sdk_layering's Phase 3 -- these two contract files most likely rode along with that wave rather than being purpose-built for this track.",
     "rescoping_note": "Whatever persistence layer this track eventually targets should be Parquet lanes, not a Postgres warehouse row -- the same redirection every other Postgres-writing upstream-ingestion track needs post-pivot. AgERA5/CEMS are weather-adjacent and most likely fold into the weather-observations lane per §0.24.2, but this was not confirmed against the lane's AGENTS.md and should be before Phase 1 resumes."
   },
   "informed_by": [
@@ -15,7 +15,6 @@
     "services/agri-data-service/src/agri_data_service/execution/historical_era5.py",
     "services/agri-data-service/src/agri_data_service/execution/historical_backfill.py",
     "services/agri-data-service/src/agri_data_service/execution/AGENTS.md",
-    "services/agri-data-service/plans/AGENTS.md",
     "services/agri-data-service/durable-backfill.sh",
     "services/agri-data-service/durable-archive-backfill.sh",
     "conductor/tracks/upstream_dataset_expansion_20260806/spec.md"

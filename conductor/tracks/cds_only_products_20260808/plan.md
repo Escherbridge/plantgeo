@@ -67,8 +67,7 @@ No credential gate. Start here.
   existing four-calendar-year window contract from `execution/historical_backfill.py`.
 - **Register a new `data_source`** (DML, no Alembic revision — the same "ensure" pattern every
   existing lane already uses).
-- **Author the plan file with a generator, not by hand.** A sibling to
-  `plans/author_pnw_soil_moisture_plans.py`, following the existing
+- **Author the plan file with a generator, not by hand.** Follow the historical
   `<source>-<region>-<purpose>-<start>-<end>.json` naming convention (spec finding 8). A
   hand-typed plan risks a wrong lattice or checksum that looks valid forever while pointing at
   nothing.

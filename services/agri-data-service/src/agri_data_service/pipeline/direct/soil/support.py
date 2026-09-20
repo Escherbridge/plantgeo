@@ -17,8 +17,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 #: `agri.spatial_cell.grid_name` for the lattice all eight soil streams were written against. It is
-#: the SENTINEL-2 NDVI analysis lattice, not an ERA5 one: the three reviewed plans
-#: (`plans/open-meteo-era5-land-pnw-{vpd,soiltemp,ndvi-lattice}-20220802-20260802.json`) carry
+#: the SENTINEL-2 NDVI analysis lattice, not an ERA5 one: the reviewed historical plans carried
 #: `grid_name: sentinel2-ndvi-0p25deg` while requesting the `era5_land` model, and
 #: `scripts/soil_temperature_snapshot_breakdown.py` EXPECTED_CELL_GRID pins the same value on every
 #: written row. The SUPPORT KEY (`era5-land-0.1deg`) names the source's own resolution and is a

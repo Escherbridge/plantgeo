@@ -1,8 +1,12 @@
+---
+type: evidence
+---
+
 # Label Plane: Owner Decisions, Prod Reality, and Readiness Gaps
 
 **Date:** 2026-08-14, extended 2026-08-15 with the second decision round (§2.1) and §4.7.
 **Status:** supersedes §5 (density target), §6.1 (ECOCROP-first), §6.4 (GBIF fold splitting) and §8 (staged plan) of
-[`label-harvest-strategy-2026-08-14.md`](label-harvest-strategy-2026-08-14.md). §1–§4 and §7 of that document remain
+the earlier label-harvest strategy (retained in git history). §1–§4 and §7 of that document remain
 the grounded schema inventory and are still correct except where §1 below corrects them.
 **Audience:** whoever runs the next harvest and the next training pass.
 

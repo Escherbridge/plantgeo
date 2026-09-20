@@ -106,10 +106,8 @@ would confirm it.
 - **Entity**: one cell of the `sentinel2-ndvi-0p25deg` grid — **1,568 cells total**, keyed
   `sentinel2-ndvi-0p25deg:{latitude:.4f}:{longitude:.4f}`
   (`services/agri-data-service/tests/test_historical_open_meteo.py:77`; example key
-  `sentinel2-ndvi-0p25deg:43.1250:-116.3750`,
-  `services/agri-data-service/plans/author_agera5_plans.py:51`). Measured lattice bounds from the
-  first/last registered keys: latitude **42.1250 to 48.8750**, longitude **-124.8750 to -111.1250**
-  (`services/agri-data-service/tests/test_pnw_soil_moisture_plans.py:209-210`) — the Pacific
+  `sentinel2-ndvi-0p25deg:43.1250:-116.3750`). Measured lattice bounds are pinned in
+  `pipeline/direct/soil/support.py`: latitude **42.1250 to 48.8750**, longitude **-124.8750 to -111.1250** — the Pacific
   Northwest, matching the registered purpose text *"Pacific Northwest 0.25-degree vegetation lattice"*
   (`vegetation_ndvi_plane.py:316`).
 - **Time unit**: one publisher-named UTC day, `DAY_BUCKET_RULE = "iso_date_prefix"`

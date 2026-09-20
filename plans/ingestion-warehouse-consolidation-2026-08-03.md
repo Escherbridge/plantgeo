@@ -23,7 +23,7 @@ Practical research tool, one solo dev, not multi-org. Ceremony is a liability.
 
 Also already decided today, and load-bearing here:
 
-- **The checksum *enforcement* layer is cut.** Keep the checksum columns and the surviving `*_checksum` functions; delete `finalize_*` (4 fns), the `guard_*` triggers, and convert the two `GENERATED ALWAYS … STORED` `value_checksum` columns to plain columns (`db/agri/tables/forecast_iteration_value.sql:17`, `forecast_hindcast_value.sql:25`). See `services/agri-data-service/plans/checksum-layer-audit-2026-08-03.md` §6.
+- **The checksum *enforcement* layer is cut.** Keep the checksum columns and the surviving `*_checksum` functions; delete `finalize_*` (4 fns), the `guard_*` triggers, and convert the two `GENERATED ALWAYS … STORED` `value_checksum` columns to plain columns (`db/agri/tables/forecast_iteration_value.sql:17`, `forecast_hindcast_value.sql:25`). See `plans/checksum-layer-audit-2026-08-03.md` §6.
 - **The hindcast plane is cut; the receipt/publication plane is not** — D5 narrowed the earlier *"does not seem needed lets cut it"*. Table-by-table disposition in §2 DDL sketch A.
 - **`agri` is live in production at head `20260803_0017`: 69 tables, 93 routines, 0 rows.** Destructive simplification is free **right now**. That window closes the moment Phase 4 writes the first `source_release` row — which is why Phases 2 and 3 come before it.
 
@@ -208,7 +208,7 @@ Five refinements to the sketch, each with a reason:
 | Refinement | Why |
 |---|---|
 | **`natural_key` is namespaced** (`firms:<sat>:<acqDate>:<acqTime>:<lat4>:<lon4>`), not the bare producer-local id | Today's key is unique only *within a layer* (`schema.ts:181-184`). Under Type-2 this matters **more**, not less: `natural_key` no longer carries a bare UNIQUE, it carries "these rows are the same place over time". Two producers colliding on an unnamespaced id are therefore not merged into one row — they are interleaved into one *version chain*, producing a plausible-looking history that is fiction. See risk 1. |
-| **`centroid` is a plain column, not `GENERATED … STORED`** | A stored generated column calling a PostGIS function is exactly the mechanism that made the warehouse unrestorable from its own `pg_dump` (`services/agri-data-service/plans/checksum-layer-audit-2026-08-03.md:178-186`). We are deleting the other two this quarter; do not add a third. |
+| **`centroid` is a plain column, not `GENERATED … STORED`** | A stored generated column calling a PostGIS function is exactly the mechanism that made the warehouse unrestorable from its own `pg_dump` (`plans/checksum-layer-audit-2026-08-03.md:178-186`). We are deleting the other two this quarter; do not add a third. |
 | **`resolution_m` and `producer` added** | `resolution_m` mirrors `agri.spatial_cell.resolution_m` (`db/agri/tables/spatial_cell.sql:11`) so retiring that table loses nothing. `producer` makes "which ingest owns this row" answerable without parsing `natural_key`. |
 | **`first_seen_at` is gone — `version_valid_from` on v1 *is* first-seen** | The previous draft added `first_seen_at`/`last_seen_at` because `geo.features.created_at` is measurably not a first-seen timestamp (the refresh path rewrites it, so all 15 016 rows read as created today). Type-2 subsumes that honestly: `min(version_valid_from)` over a `natural_key` is first-seen **by construction**, and it cannot be silently rewritten because closing a version writes `version_valid_to`, never `version_valid_from`. Two columns removed, the guarantee strengthened. |
 | **`last_confirmed_at` kept, and it is *not* a validity column** | "we last saw this shape upstream and it was unchanged" is genuinely useful for staleness detection and is not derivable from the validity interval. Keeping it separate is what stops it drifting into a pseudo-`version_valid_to`. |
@@ -412,7 +412,7 @@ ALTER TABLE agri.forecast_iteration
 >
 > **If you decline it:** delete the `purpose` column and the two WHERE clauses. The plan still works — `geo.metric_daily` is a projection, so a bad batch is fixed by re-running the projector, not by editing rows. The only thing lost is the guarantee that it never *reaches* the map in the first place.
 
-**Also in this revision (the checksum-layer cut):** drop `finalize_*` (4 fns, 886 lines), the `guard_*` triggers, and convert the two `GENERATED ALWAYS … STORED` `value_checksum` columns to plain columns. Keep every checksum column, the identity UNIQUEs, and `materialize_forecast_iteration`'s idempotency block. Full inventory: `services/agri-data-service/plans/checksum-layer-audit-2026-08-03.md` §6.
+**Also in this revision (the checksum-layer cut):** drop `finalize_*` (4 fns, 886 lines), the `guard_*` triggers, and convert the two `GENERATED ALWAYS … STORED` `value_checksum` columns to plain columns. Keep every checksum column, the identity UNIQUEs, and `materialize_forecast_iteration`'s idempotency block. Full inventory: `plans/checksum-layer-audit-2026-08-03.md` §6.
 
 **A2. What survives the cut — table by table (D5).** *"The ml must stay."* The enforcement to remove is the trigger / guard / finalize machinery **on** these tables, never the tables themselves.
 

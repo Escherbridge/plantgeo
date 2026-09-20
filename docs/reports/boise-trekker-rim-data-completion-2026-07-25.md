@@ -16,7 +16,7 @@ drought forecast, and must not be represented as one.
 | Secondary context | USDM weekly D0–D4 drought polygons intersecting the cell |
 | Complete means | four-calendar-year history (validator-enforced window 2022-07-23 → 2026-07-23) pinned in validated release sets through the latest fully-observed UTC day; per-signal coverage audits recorded; provenance = per-release payload checksums + license snapshots + release-set manifest checksums; a finalized, time-honest forecast iteration with reconciled actuals and a fresh evaluation |
 
-Contract of record: `services/agri-data-service/plans/boise-trekker-rim-completion-contract-2026-07-25.md`.
+Contract of record: [`boise-trekker-rim-completion-contract-2026-07-25.md`](boise-trekker-rim-completion-contract-2026-07-25.md).
 
 ## 2. What was pinned (disposable warehouse `plantgeo_boise_completion_20260725`, Alembic `20260725_0011`)
 

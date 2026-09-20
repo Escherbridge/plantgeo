@@ -1,4 +1,4 @@
-"""The REAL 397-cell POWER lattice, read from the plan, plus in-memory point responses over it."""
+"""The REAL 397-cell POWER lattice, read from a frozen fixture, plus in-memory responses."""
 
 from __future__ import annotations
 
@@ -29,7 +29,10 @@ if TYPE_CHECKING:
 #: A synthetic lattice would be free to sit on the wrong step, which is exactly the mistake the
 #: writer made; see `pipeline/direct/AGENTS.md`, "The `grid_name` misnomer".
 NASA_PLAN_PATH: Final = (
-    Path(__file__).resolve().parents[3] / "plans" / "nasa-power-western-na-weather-fast-20220806-20260806.json"
+    Path(__file__).resolve().parents[2]
+    / "fixtures"
+    / "historical_plans"
+    / "nasa-power-western-na-weather-fast-20220806-20260806.json"
 )
 
 #: A stable namespace so a plan cell always renders the same `cell_id`; the real ids live in

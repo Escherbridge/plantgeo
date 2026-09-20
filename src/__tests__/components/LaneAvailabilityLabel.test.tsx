@@ -18,7 +18,7 @@ const capability: SliderLayerCapability = {
 afterEach(cleanup);
 
 describe("LaneAvailabilityLabel", () => {
-  it("separates available data, configured source delay, and scheduled ingestion", () => {
+  it("shows the readable edge, source cadence, and refresh check once", () => {
     render(<LaneAvailabilityLabel label="Temperature" capability={{
       ...capability,
       freshness: {
@@ -28,25 +28,20 @@ describe("LaneAvailabilityLabel", () => {
         expectedHorizonDay: "2026-09-15",
       },
     }} />);
-    expect(screen.getByText("Temperature availability and refresh details:").parentElement?.textContent)
-      .toContain("Latest available day 2026-09-15Daily source · 5-day configured delay · Scheduled refresh hourly.");
-    expect(screen.getByText(/Configured publication delay/).textContent).toContain(
-      "Configured publication delay: 5 days. Scheduled refresh hourly. Target date from configured delay: 2026-09-15."
+    const text = screen.getByText("Temperature timing:").parentElement?.textContent ?? "";
+    expect(text).toContain(
+      "Available through 2026-09-15 · Source daily · Checked hourly"
     );
-    expect(screen.getByText(/Configured publication delay/).textContent).toContain(
-      "not a guarantee of publication"
-    );
+    expect(text).not.toMatch(/delay|target date|guarantee/i);
   });
 
-  it("does not derive a normal delay from an old ceiling or claim freshness", () => {
+  it("omits timing fragments the capability did not report", () => {
     render(<LaneAvailabilityLabel label="Temperature" capability={{
       ...capability, sourceCeilingDay: "2026-01-01",
     }} />);
-    expect(screen.getByText("Temperature availability and refresh details:").parentElement?.textContent)
-      .toContain("Source cadence unknown");
-    expect(screen.getByText(/Publication delay not reported/).textContent)
-      .toContain("Refresh schedule not reported.");
-    expect(screen.queryByText(/behind|on time|healthy|Configured publication delay/)).toBeNull();
+    const text = screen.getByText("Temperature timing:").parentElement?.textContent ?? "";
+    expect(text).toBe("Temperature timing: Available through 2026-09-15");
+    expect(text).not.toMatch(/unknown|refresh|checked|delay|behind|on time|healthy/i);
   });
 
   it("does not replace an unknown available date with the expected source date", () => {
@@ -58,8 +53,8 @@ describe("LaneAvailabilityLabel", () => {
         refreshIntervalSeconds: 86400, expectedHorizonDay: "2026-09-11",
       },
     }} />);
-    expect(screen.getByText("Soil moisture availability and refresh details:").parentElement?.textContent)
-      .toContain("Latest available date unknown");
-    expect(screen.getByText(/Configured publication delay/).textContent).toContain("Scheduled refresh daily.");
+    const text = screen.getByText("Soil moisture timing:").parentElement?.textContent ?? "";
+    expect(text).toContain("Latest date unknown · Source daily · Checked daily");
+    expect(text).not.toMatch(/delay|2026-09-11/);
   });
 });

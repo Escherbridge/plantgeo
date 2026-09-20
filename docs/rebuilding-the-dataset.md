@@ -120,57 +120,13 @@ uv run agri-service ops pipeline-status
 It reports `inactive`, `runnable`, or `blocked` and names the reason, which makes
 it the fastest way to catch a missing or rejected loader DSN.
 
-## Regenerate the plan files first
+## Retired PostgreSQL-era replay plans
 
-**This step is easy to miss and every historical backfill depends on it.** The
-`historical-*` verbs consume checksum-governed plan JSON files, and the Pacific
-Northwest soil-moisture plans are *deliberately not committed* — only their
-generator is. A fresh clone therefore has the generator and none of its output,
-so a backfill invocation fails on a missing `--plan` path until you run it:
-
-```powershell
-Set-Location services/agri-data-service
-uv run python plans/author_pnw_soil_moisture_plans.py
-```
-
-The script's own docstring documents the equivalent direct form,
-`./.venv/Scripts/python.exe plans/author_pnw_soil_moisture_plans.py`.
-
-It writes three artifacts into `services/agri-data-service/plans/`:
-
-| File | Role |
-| --- | --- |
-| `nasa-power-pnw-soil-lattice-20220430-20260430.json` | The NASA POWER sampling lattice that establishes the spatial cells |
-| `nasa-power-pnw-soil-lattice-20220430-20260430-asof-20260805-finalization.json` | The finalization sidecar that closes the lattice release set |
-| `era5-land-pnw-soil-20220430-20260430.json` | The ERA5-Land replay, bound to the lattice checksum |
-
-Why a generator rather than committed files: `HistoricalEra5LandBackfillPlan`
-carries a `nasa_lattice_plan_checksum` field that nothing in the codebase
-recomputes or cross-checks. A hand-typed value would look valid forever while
-pointing at nothing, and it is folded into the ERA5 plan checksum, so a wrong
-value silently poisons the release chain. Running the generator makes that value
-*derived* from a real NASA plan object instead of asserted. Output is written
-through `canonical_json_bytes`, so the run is deterministic — regenerating on
-another machine produces byte-identical files.
-
-Two behaviours to expect:
-
-- The generator **hard-fails rather than overwriting** a NASA lattice plan
-  already on disk whose bytes differ, because regenerating it would orphan the
-  ERA5 checksum binding.
-- It reads the committed canonical lattice at
-  `infra/local-warehouse/plans/nasa-power-na-sampling-20220430-20260430-asof-20260721.json`
-  and borrows cell geometry verbatim, so a later full-coverage run stays
-  idempotent instead of colliding. That file is committed, so the generator works
-  from a clean clone.
-
-One plan present in the maintainer's working tree,
-`nasa-power-pnw-soil-wetness-20220430-20260430.json`, is neither committed nor
-produced by this generator; it would have to be authored again to reproduce that
-particular soil-wetness release.
-
-`tests/test_pnw_soil_moisture_plans.py` re-derives the checksum binding from the
-artifacts on disk, so a hand-edit of either generated file fails the suite.
+The service-local `plans/` tree and its plan generators were retired after the
+environmental serving plane moved to governed Parquet lanes. Do not regenerate
+or run those historical PostgreSQL replay plans. The current rebuild path is the
+lane-specific forward/history/gap workflow documented below and in
+[`layer-lane-standard.md`](layer-lane-standard.md).
 
 ## Ingest
 

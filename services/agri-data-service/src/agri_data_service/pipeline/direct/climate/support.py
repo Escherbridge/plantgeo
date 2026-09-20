@@ -34,7 +34,7 @@ NASA_POWER_SUPPORT_CELL_COUNT: Final = 397
 #: decimal places at all; six is generous and still exact.
 _COORDINATE_QUANTUM: Final = Decimal("0.000001")
 
-#: The measured shape of the pinned lattice, read from `plans/nasa-power-western-na-weather-fast-*.json`
+#: The measured shape of the pinned lattice, preserved in the frozen weather-fast test fixture
 #: (`nasa.cells`, 397 `na-sample:1deg:*` entries): a one-degree integer step over western North
 #: America. 22 longitudes x 21 latitudes is 462 positions, of which the plan samples 397, so the
 #: lattice is a SUBSET of its bounding box and no code may enumerate it from the extent.

@@ -49,7 +49,7 @@ from agri_data_service.execution.weather_observations.nasa_power import (
     HistoricalNasaBackfillPlan,
 )
 
-PLANS_ROOT = Path(__file__).resolve().parent.parent / "plans"
+PLANS_ROOT = Path(__file__).resolve().parent / "fixtures" / "historical_plans"
 NASA_WEATHER_FAST_PLAN = PLANS_ROOT / "nasa-power-western-na-weather-fast-20220806-20260806.json"
 NASA_RADIATION_PLAN = PLANS_ROOT / "nasa-power-western-na-weather-radiation-20220531-20260531.json"
 OPEN_METEO_VPD_PLAN = PLANS_ROOT / "open-meteo-era5-land-pnw-vpd-20220802-20260802.json"

@@ -684,7 +684,10 @@ export default function RegionalIntelligencePanel({
   const previousFocusRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const messagesEnd = messagesEndRef.current;
+    if (messagesEnd && typeof messagesEnd.scrollIntoView === 'function') {
+      messagesEnd.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages]);
 
   useEffect(() => {

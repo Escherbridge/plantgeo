@@ -20,6 +20,15 @@ from agri_data_service.execution.geospatial_capture import (
     validate_geospatial_payload,
 )
 
+BOISE_CAPTURE_EVIDENCE = (
+    Path(__file__).resolve().parents[3]
+    / "conductor"
+    / "tracks"
+    / "unified_intervention_layer_20260913"
+    / "evidence"
+    / "boise-intervention-capture-v1.json"
+)
+
 
 def _payload(key: str = "fixture-1") -> bytes:
     return json.dumps(
@@ -115,8 +124,7 @@ def _plan(
 
 
 def test_repository_pilot_plan_is_frozen_credential_free_and_open_only() -> None:
-    service_root = Path(__file__).resolve().parents[1]
-    plan = load_geospatial_capture_plan(service_root / "plans" / "boise-intervention-capture-v1.json")
+    plan = load_geospatial_capture_plan(BOISE_CAPTURE_EVIDENCE)
 
     assert len(plan.sources) == 3
     assert [source.key for source in plan.sources] == sorted(source.key for source in plan.sources)

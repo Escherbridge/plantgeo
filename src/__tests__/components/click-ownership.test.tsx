@@ -8,6 +8,7 @@ import {
 import { HOVERABLE_LAYER_IDS, TOOLTIP_TAP_LAYER_IDS } from "@/lib/map/hover-fields";
 import { INTERVENTION_STYLE_LAYER_IDS } from "@/lib/map/layer-registry";
 import { setScalarFieldInspectionSuppressed } from "@/lib/map/scalar-field-inspection";
+import { climateFieldLayerIdsFor } from "@/lib/map/climate-field-layer-ids";
 import { useMapStore } from "@/stores/map-store";
 
 /**
@@ -120,6 +121,18 @@ describe("isClickOwnedByAnotherSurface", () => {
     for (const layerId of TOOLTIP_TAP_LAYER_IDS) {
       expect(isClickOwnedByAnotherSurface(mapWith([EARTH, { layer: { id: layerId } }]), POINT)).toBe(true);
     }
+  });
+
+  it("climate geometry is tap-owned only on a coarse pointer", () => {
+    const layerId = climateFieldLayerIdsFor("shortwave-radiation").isobandFillId;
+    setPointer(false);
+    expect(
+      isClickOwnedByAnotherSurface(mapWith([EARTH, { layer: { id: layerId } }]), POINT)
+    ).toBe(false);
+    setPointer(true);
+    expect(
+      isClickOwnedByAnotherSurface(mapWith([EARTH, { layer: { id: layerId } }]), POINT)
+    ).toBe(true);
   });
 
   it("releases a click-owning layer while it is inspection-suppressed", () => {

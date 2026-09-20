@@ -1,4 +1,4 @@
-"""The REAL 1,568-cell ERA5-Land lattice, read from the reviewed plan, plus in-memory archive bodies."""
+"""The REAL 1,568-cell ERA5-Land lattice, read from a frozen fixture, plus archive bodies."""
 
 from __future__ import annotations
 
@@ -44,7 +44,10 @@ if TYPE_CHECKING:
 #: synthetic lattice would be free to sit on the wrong step or the wrong offset, which is the whole
 #: class of mistake `require_pinned_lattice_cell` exists to catch.
 ERA5_PLAN_PATH: Final = (
-    Path(__file__).resolve().parents[3] / "plans" / "open-meteo-era5-land-pnw-vpd-20220802-20260802.json"
+    Path(__file__).resolve().parents[2]
+    / "fixtures"
+    / "historical_plans"
+    / "open-meteo-era5-land-pnw-vpd-20220802-20260802.json"
 )
 
 #: A stable namespace so a plan cell always renders the same `cell_id`; the real ids live in

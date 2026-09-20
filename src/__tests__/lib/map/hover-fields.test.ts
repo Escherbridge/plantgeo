@@ -11,6 +11,14 @@ import {
   WATER_CELL_CAPTION_TITLE,
 } from "@/lib/map/water-cell-caption";
 import { FIRE_CELL_NOT_A_PERIMETER_NOTE } from "@/lib/map/fire-cell-caption";
+import {
+  CLIMATE_FIELD_SIGNAL_IDS,
+  climateFieldSignalDefinition,
+} from "@/lib/environmental/climate-field";
+import {
+  CLIMATE_FIELD_GEOMETRY_LAYER_IDS,
+  climateFieldLayerIdsFor,
+} from "@/lib/map/climate-field-layer-ids";
 
 /** Fails if any rendered string ever leaks a raw null/undefined/NaN sentinel. */
 function assertNoSentinels(content: { title: string; lines: string[] } | null) {
@@ -72,7 +80,68 @@ describe("HOVERABLE_LAYER_IDS", () => {
       // so a hover can state source AND staleness.
       "botanical-richness-fill",
       "botanical-collection-effort-fill",
+      ...CLIMATE_FIELD_GEOMETRY_LAYER_IDS,
     ]);
+  });
+});
+
+describe("formatHoverContent: climate geometry", () => {
+  it.each(CLIMATE_FIELD_SIGNAL_IDS)("formats the %s field from its shared layer id", (signal) => {
+    const definition = climateFieldSignalDefinition(signal);
+    const content = formatHoverContent(climateFieldLayerIdsFor(signal).fillId, {
+      value: signal === "air-temperature" ? -4.5 : 0,
+      observedDay: "2026-09-15",
+      aggregated: false,
+    });
+
+    expect(content?.title).toBe(definition.quantityLabel);
+    expect(content?.lines[0]).toContain(definition.unitLabel);
+    expect(content?.lines).toContain("Observed: Sep 15, 2026");
+    assertNoSentinels(content);
+  });
+
+  it("formats solar-radiation isobands as ranges instead of representative measurements", () => {
+    const ids = climateFieldLayerIdsFor("shortwave-radiation");
+    const definition = climateFieldSignalDefinition("shortwave-radiation");
+    const bandLabel = definition.bands[2].label;
+    const content = formatHoverContent(ids.isobandFillId, {
+      value: 18,
+      bandLabel,
+      observedDay: "2026-09-15",
+      aggregated: true,
+    });
+
+    expect(content).toEqual({
+      title: "Surface shortwave radiation",
+      lines: [`Range: ${bandLabel} MJ/m²/day`, "Observed: Sep 15, 2026"],
+    });
+    expect(formatHoverContent(ids.isolineId, {
+      value: 18,
+      bandLabel,
+    })?.lines[0]).toBe(`Range: ${bandLabel} MJ/m²/day`);
+  });
+
+  it("formats relative humidity and optional coverage without losing zero", () => {
+    const ids = climateFieldLayerIdsFor("relative-humidity");
+    const content = formatHoverContent(
+      ids.fillId,
+      { value: 0, coverageFraction: 0.875 }
+    );
+    expect(content?.title).toBe("Relative humidity");
+    expect(content?.lines).toEqual(["Value: 0.0%", "Coverage: 88%"]);
+
+    const bandLabel = climateFieldSignalDefinition("relative-humidity").bands[2].label;
+    expect(formatHoverContent(ids.isobandFillId, {
+      value: 50,
+      bandLabel,
+    })?.lines[0]).toBe(`Range: ${bandLabel}%`);
+  });
+
+  it("refuses malformed, missing, and unknown climate geometry", () => {
+    const layerId = climateFieldLayerIdsFor("relative-humidity").fillId;
+    expect(formatHoverContent(layerId, {})).toBeNull();
+    expect(formatHoverContent(layerId, { value: "not-a-number" })).toBeNull();
+    expect(formatHoverContent("climate-field-unknown-fill", { value: 42 })).toBeNull();
   });
 });
 

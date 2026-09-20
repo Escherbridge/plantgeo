@@ -177,7 +177,10 @@ NORTH_AMERICA_INTERVENTION_MANIFESTS: Final[dict[str, InterventionSourceManifest
         jurisdiction="us-federal",
         adapter_status="implemented",
         licence_identifier="US Public Domain",
-        licence_snapshot_reference="plans/boise-intervention-capture-v1.json#sources[census-tigerweb-boise-2025]",
+        licence_snapshot_reference=(
+            "conductor/tracks/unified_intervention_layer_20260913/evidence/"
+            "boise-intervention-capture-v1.json#sources[census-tigerweb-boise-2025]"
+        ),
         licence_snapshot_checksum="0025169cd38411e915edbb3f03e89f41a6ba7c471f19f807a55e6850107da96c",
         access_policy="open",
         coverage_geometry=(
@@ -252,7 +255,8 @@ NORTH_AMERICA_INTERVENTION_MANIFESTS: Final[dict[str, InterventionSourceManifest
         adapter_status="implemented",
         licence_identifier="Open Database License (ODbL) 1.0",
         licence_snapshot_reference=(
-            "plans/boise-intervention-capture-v1.json#sources[osm-hillside-to-hollow-20260723]; "
+            "conductor/tracks/unified_intervention_layer_20260913/evidence/"
+            "boise-intervention-capture-v1.json#sources[osm-hillside-to-hollow-20260723]; "
             "reference_capture checksum b8f3e0e9a7312bdbcf796156a4257eebe1daec8f6880e7c5ead3de0552ca13e0 "
             "pins OSM way 674700373 version 19 at 2025-04-09T18:53:39Z"
         ),
@@ -501,7 +505,10 @@ NORTH_AMERICA_INTERVENTION_MANIFESTS: Final[dict[str, InterventionSourceManifest
         jurisdiction="us-federal",
         adapter_status="implemented",
         licence_identifier="United States Government work; public use",
-        licence_snapshot_reference="plans/boise-intervention-capture-v1.json#sources[usfs-wui-2020-hillside-hollow]",
+        licence_snapshot_reference=(
+            "conductor/tracks/unified_intervention_layer_20260913/evidence/"
+            "boise-intervention-capture-v1.json#sources[usfs-wui-2020-hillside-hollow]"
+        ),
         licence_snapshot_checksum="b3a198baeb277b65735381240e9919be317978b6bb6a8ff75ac88ce24ae212da",
         access_policy="open",
         coverage_geometry=(

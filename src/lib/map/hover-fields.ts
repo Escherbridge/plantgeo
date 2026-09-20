@@ -18,6 +18,11 @@ import {
   WATER_CELL_CAPTION_TITLE,
 } from "@/lib/map/water-cell-caption";
 import { PROVISIONAL_BOTANICAL_NOTICE } from "@/lib/environmental/botanical-governance-status";
+import { climateFieldSignalDefinition } from "@/lib/environmental/climate-field";
+import {
+  CLIMATE_FIELD_GEOMETRY_LAYER_IDS,
+  climateFieldSignalForGeometryLayerId,
+} from "@/lib/map/climate-field-layer-ids";
 
 /** Style layer ids the shared hover manager queries via queryRenderedFeatures. */
 export const HOVERABLE_LAYER_IDS: string[] = [
@@ -60,6 +65,7 @@ export const HOVERABLE_LAYER_IDS: string[] = [
   "botanical-occurrences-possible",
   "botanical-richness-fill",
   "botanical-collection-effort-fill",
+  ...CLIMATE_FIELD_GEOMETRY_LAYER_IDS,
 ];
 
 /**
@@ -92,12 +98,9 @@ const LAYER_IDS_WITH_A_DEDICATED_CLICK_POPUP = new Set<string>([
  * `HoverTooltip`'s content is driven by `mousemove`, and a tap fires no `mousemove` at all --
  * there is no hover state on a touchscreen. For the six ids in
  * `LAYER_IDS_WITH_A_DEDICATED_CLICK_POPUP` that is fine, because a tap is a `click` and those two
- * components already answer one. For the other thirteen -- sensors, both fire-perimeter and
- * burn-severity polygons, drought, evacuation zones, both intervention shapes, watersheds, both
- * soil-survey shapes, and weather -- a tap on this map does nothing at
- * all today: `MapView`'s own click handler treats "a feature was under the tap" as reason enough
- * to swallow it (so it never opens the confirm-before-analysis prompt either), and no popup ever
- * answers it. `HoverTooltip`'s tap handler is what closes that gap, for exactly this subset.
+ * components already answer one. For the remaining sensors, climate geometry, fire-perimeter,
+ * burn-severity, drought, evacuation, intervention, watershed, soil-survey, botanical, and
+ * weather surfaces, `HoverTooltip`'s tap handler supplies the reader-facing inspection path.
  */
 export const TOOLTIP_TAP_LAYER_IDS: readonly string[] = HOVERABLE_LAYER_IDS.filter(
   (layerId) => !LAYER_IDS_WITH_A_DEDICATED_CLICK_POPUP.has(layerId)
@@ -156,6 +159,33 @@ function buildContent(title: string, lines: (string | null)[]): HoverContent | n
   const filtered = lines.filter((line): line is string => line !== null);
   if (filtered.length === 0) return null;
   return { title, lines: filtered };
+}
+
+function formatClimateField(layerId: string, props: Properties): HoverContent | null {
+  const signal = climateFieldSignalForGeometryLayerId(layerId);
+  if (signal === null) return null;
+  const value = toFiniteNumber(props.value);
+  if (value === null) return null;
+
+  const definition = climateFieldSignalDefinition(signal);
+  const fractionDigits = signal.includes("wetness") ? 3 : 1;
+  const unitSeparator = definition.unitLabel === "%" ? "" : " ";
+  const formattedValue = `${value.toFixed(fractionDigits)}${unitSeparator}${definition.unitLabel}`;
+  const bandLabel = stringField(props.bandLabel);
+  const observedDay = formatCalendarDay(stringField(props.observedDay));
+  const coverageFraction = toFiniteNumber(props.coverageFraction);
+  const isBandGeometry = layerId.endsWith("-isoband-fill") || layerId.endsWith("-isoline");
+
+  return buildContent(definition.quantityLabel, [
+    isBandGeometry && bandLabel
+      ? `Range: ${bandLabel}${unitSeparator}${definition.unitLabel}`
+      : `Value: ${formattedValue}`,
+    observedDay ? `Observed: ${observedDay}` : null,
+    props.aggregated === true && !isBandGeometry ? "Aggregated climate cell" : null,
+    coverageFraction === null
+      ? null
+      : `Coverage: ${Math.round(coverageFraction * 100)}%`,
+  ]);
 }
 
 /**
@@ -663,6 +693,8 @@ const FORMATTERS: Record<string, (props: Properties) => HoverContent | null> = {
 
 /** Per-layer field selection + unit formatting for the hover tooltip. Null when nothing to show. */
 export function formatHoverContent(layerId: string, properties: Properties): HoverContent | null {
+  const climate = formatClimateField(layerId, properties ?? {});
+  if (climate !== null) return climate;
   const formatter = FORMATTERS[layerId];
   if (!formatter) return null;
   return formatter(properties ?? {});

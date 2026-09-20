@@ -9,6 +9,10 @@ import {
   formatHoverContent,
   type HoverContent,
 } from "@/lib/map/hover-fields";
+import {
+  climateFieldLayerIdsFor,
+  climateFieldSignalForGeometryLayerId,
+} from "@/lib/map/climate-field-layer-ids";
 
 interface HoverTooltipProps {
   map: MapLibreMap;
@@ -175,9 +179,17 @@ export default function HoverTooltip({ map }: HoverTooltipProps) {
     }
 
     function handleSourceData(event: maplibregl.MapSourceDataEvent) {
-      if (event.sourceId !== "vegetation-ndvi-cells" || event.sourceDataType !== "content") return;
+      if (event.sourceDataType !== "content") return;
       setTooltip(previous => {
-        if (previous?.layerId !== "vegetation-ndvi-cells-fill") return previous;
+        if (previous === null) return previous;
+        const climateSignal = climateFieldSignalForGeometryLayerId(previous.layerId);
+        const replacesVegetation =
+          event.sourceId === "vegetation-ndvi-cells" &&
+          previous.layerId === "vegetation-ndvi-cells-fill";
+        const replacesClimate =
+          climateSignal !== null &&
+          event.sourceId === climateFieldLayerIdsFor(climateSignal).sourceId;
+        if (!replacesVegetation && !replacesClimate) return previous;
         pinnedRef.current = false;
         map.getCanvas().style.cursor = "";
         return null;

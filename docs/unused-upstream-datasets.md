@@ -16,7 +16,7 @@ addition is a **new plan + new release set + fresh fetch**, never an edit in pla
 | `soil_temperature_7_to_28cm_mean` | era5_land | ✅ 19.4 °C | Root-zone thermal stress. Whitelisted 2026-08-06. |
 | `soil_temperature_28_to_100cm_mean` | era5_land | ✅ 15.7 °C | Deep soil profile. Whitelisted. |
 | `soil_temperature_100_to_255cm_mean` | era5_land | ✅ 10.0 °C | Deep thermal reservoir. Whitelisted. |
-| `vapour_pressure_deficit_max` | era5_land | ✅ 3.32 kPa — whitelisted, plan authored (`open-meteo-era5-land-pnw-vpd-20220430-20260430.json`); **backfill not yet launched** | Transpiration stress; the standard fire-weather ignition covariate. Absent from every source we ingest. |
+| `vapour_pressure_deficit_max` | era5_land | ✅ 3.32 kPa — whitelisted; the unrun historical plan is retained only as a frozen regression fixture; **backfill not launched** | Transpiration stress; the standard fire-weather ignition covariate. Absent from every source we ingest. |
 | `snow_depth_mean` | era5_land | ✅ 0.0 m | Snowpack melt-out timing — a green-up onset predictor for montane lattice cells. |
 
 ## Verified trap
@@ -112,7 +112,7 @@ every `ingest-backfill` / `ingest-firms` batch). The remaining gates before laun
 
 ## Copernicus CDS
 
-### The soil lane is SUPERSEDED, not retired — nothing deleted, nothing dropped
+### The soil lane is superseded; its service-local plans are retired
 
 Open-Meteo redistributes the same ERA5-Land reanalysis at 0.1° (finer than the 1.0° output grid
 the CDS plans request), keyless, and moved 6.4M rows in an afternoon while CDS managed 2 of 49
@@ -124,10 +124,9 @@ holds no `era5-land` key, and the only residue is a git-ignored `.agri-local-run
 cache whose two checkpoints never reached `validated`. The code stays too — `historical_era5.py`
 is the one working CDS integration template, and every product below reuses its shape.
 
-Artifacts kept and marked rather than removed: `plans/era5-land-pnw-soil-*.json`,
-`plans/era5-land-western-na-soil-*.json`, `infra/local-warehouse/plans/era5-land-na-sampling-*.json`,
-their two generators, `execution/historical_era5.py`, `historical_era5_parquet.py`,
-`execution/historical_writer/era5.py`, and the four `historical-era5-*` CLI verbs.
+The obsolete service-local plan artifacts and generators were removed. The national sampling
+plans under `infra/local-warehouse/plans/` and the reusable CDS integration code remain as
+historical implementation evidence; they are not an active soil-state serving path.
 
 ### What CDS is still the only route to
 

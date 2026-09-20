@@ -14,6 +14,7 @@ import { scaleOpacityValue } from "@/lib/map/layer-opacity";
 import { BASE_ZOOM_TIER, type ZoomTier } from "@/lib/map/zoom-tiers";
 import type { ExpressionSpecification } from "@/types/map";
 import { measuredValueLabelLayer } from "@/lib/map/measured-value-label";
+import { climateFieldLayerIdsFor } from "@/lib/map/climate-field-layer-ids";
 
 /**
  * One NASA POWER signal, drawn from whatever `environmental.getClimateField` served for it --
@@ -59,20 +60,6 @@ function hasParsedStyle(mapInstance: MapLibreMap): boolean {
   } catch {
     return false;
   }
-}
-
-/** Every id one signal's instance owns. Derived, so two instances can never collide. */
-function layerIdsFor(signal: ClimateFieldSignalId) {
-  const sourceId = `climate-field-${signal}`;
-  return {
-    sourceId,
-    fillId: `${sourceId}-fill`,
-    outlineId: `${sourceId}-outline`,
-    isobandFillId: `${sourceId}-isoband-fill`,
-    isolineId: `${sourceId}-isoline`,
-    pointId: `${sourceId}-point`,
-    labelId: `${sourceId}-value-labels`,
-  };
 }
 
 /**
@@ -190,7 +177,7 @@ export function ClimateFieldLayer({
   opacityScale = 1,
   visible = true,
 }: ClimateFieldLayerProps) {
-  const ids = useMemo(() => layerIdsFor(signal), [signal]);
+  const ids = useMemo(() => climateFieldLayerIdsFor(signal), [signal]);
   const paintColor = useMemo(() => fillColorFor(signal), [signal]);
   const pointRadius = useMemo(() => pointRadiusFor(signal), [signal]);
   // Both opacities go through the shared helper, even though both bases are plain numbers:

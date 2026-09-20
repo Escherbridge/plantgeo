@@ -414,7 +414,8 @@ keeps it inline beside its caller rather than in `sql/pipeline/`.
 **`grid_name = 'nasa-power-0.5-degree'` names the POWER PRODUCT's resolution, not the spacing of the
 sample.** The 397 rows behind that label are the NASA plan's `na-sample:1deg:*` cells: a ONE-DEGREE
 integer lattice over western North America, 31N to 51N and 125W to 104W, read verbatim from
-`plans/nasa-power-western-na-weather-fast-20220806-20260806.json` (`nasa.cells`) and described the
+the frozen `tests/fixtures/historical_plans/nasa-power-western-na-weather-fast-20220806-20260806.json`
+(`nasa.cells`) and described the
 same way in `execution/AGENTS.md`, "This plan rides the NASA lattice, not this lane's usual one".
 22 longitudes by 21 latitudes is 462 positions and the plan samples 397 of them, so **the lattice is
 a subset of its own bounding box** and nothing may enumerate it from the extent.

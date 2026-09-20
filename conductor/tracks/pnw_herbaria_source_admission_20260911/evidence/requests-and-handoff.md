@@ -107,7 +107,7 @@ The owner separately requested a versioned nonspatial growth-requirements lookup
 `botanical-species-profile`, keyed by canonical taxon ID. Parent owns that track;
 this source track records only the interface and source-admission implications.
 
-[Label-plane readiness, August 14](../../../../services/agri-data-service/ml/research/label-plane-readiness-2026-08-14.md)
+[Label-plane readiness, August 14](label-plane-readiness-2026-08-14.md)
 reported `agri.species` empty at that historical census, with trait columns already
 present. This pass made no new production census. The current
 [Species model](../../../../services/agri-data-service/src/agri_data_service/models/species.py)

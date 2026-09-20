@@ -222,8 +222,7 @@ function sourceCeilingNote(
     return null;
   }
 
-  const delayDays = dayOffset(sourceCeilingDay, serverCurrentDate);
-  return `Reported publication boundary: ${sourceCeilingDay} (${delayDays} ${delayDays === 1 ? "day" : "days"} before today). This may reflect a configured delay rather than the provider's newest data. Later dates may use an earlier release where supported.`;
+  return `Source boundary ${sourceCeilingDay}. Later dates may use an earlier release.`;
 }
 
 export interface LayerTimeSliderProps {
@@ -396,10 +395,6 @@ export function LayerTimeSlider({
     Math.max(0, dayOffset(firstDay, selectedDate))
   );
   const coverageNote = describeDayCoverage(dayCoverageState(domain, capability, selectedDate));
-  const daysBehindLatest =
-    isBehindLatestObservedDate && latestObservedDate !== null
-      ? dayOffset(selectedDate, latestObservedDate)
-      : 0;
   // Enabled exactly while this layer is PINNED, which is what this button undoes: it deletes the
   // override so the row follows its own live edge again.
   //
@@ -449,9 +444,6 @@ export function LayerTimeSlider({
     pendingNote,
     sourceAvailabilityNote,
     coverageNote === null ? null : `${coverageNote}.`,
-    isBehindLatestObservedDate && latestObservedDate !== null
-      ? `${daysBehindLatest} ${daysBehindLatest === 1 ? "day" : "days"} behind its latest, ${latestObservedDate}.`
-      : null,
     syncedNote,
   ].filter((note): note is string => note !== null);
 

@@ -25,6 +25,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from agri_data_service.execution.geospatial_pilot import ingest_boise_intervention_pilot
 
+BOISE_CAPTURE_EVIDENCE = (
+    Path(__file__).resolve().parents[3]
+    / "conductor"
+    / "tracks"
+    / "unified_intervention_layer_20260913"
+    / "evidence"
+    / "boise-intervention-capture-v1.json"
+)
+
 PROTECTED_COUNT_SQL = {
     "forecast_run": text("SELECT count(*) FROM agri.forecast_run"),
     "forecast_quality_policy": text("SELECT count(*) FROM agri.forecast_quality_policy"),
@@ -57,7 +66,7 @@ async def _protected_state(connection: Any) -> dict[str, int]:
 async def test_pilot_writer_is_idempotent_and_nonpublishing(agri_db_async_dsn: str) -> None:
     service_root = Path(__file__).resolve().parents[1]
     repository_root = service_root.parents[1]
-    plan_path = service_root / "plans" / "boise-intervention-capture-v1.json"
+    plan_path = BOISE_CAPTURE_EVIDENCE
     capture_base = repository_root / ".agri-local-runs" / "north-america-intervention"
     if not capture_base.is_dir():
         pytest.skip(f"local pilot capture is absent: {capture_base} (gitignored; not in a fresh clone)")

@@ -29,10 +29,9 @@ that establishes them.
 - **Auth**: none. POWER is keyless
   (`execution/AGENTS.md:15`: "POWER is keyless, whereas the ERA5-Land soil path ... is gated on a
   Copernicus dataset licence").
-- **License**: recorded in every plan's `source` block as `"NASA POWER data policy"`, license URL
-  `https://power.larc.nasa.gov/docs/services/api/temporal/daily/`
-  (`plans/nasa-power-western-na-soil-wetness-20220806-20260806.json:2011-2013`,
-  `plans/author_pnw_soil_moisture_plans.py:303-311`). No redistribution restriction is recorded in
+- **License**: recorded in the frozen historical fixture's `source` block as
+  `"NASA POWER data policy"`, license URL
+  `https://power.larc.nasa.gov/docs/services/api/temporal/daily/`. No redistribution restriction is recorded in
   the repo beyond that policy reference — **UNVERIFIED** whether it imposes attribution or
   redistribution conditions beyond what the linked policy page states; confirm by reading that page
   directly if redistribution terms matter for a public-facing feature.
@@ -59,7 +58,8 @@ that establishes them.
   paying for quota never forces a re-fetch.
 - **License**: `"CC-BY 4.0 (Open-Meteo) over Copernicus/ECMWF ERA5-Land"`, license URL
   `https://open-meteo.com/en/license`
-  (`tests/test_historical_open_meteo.py:87-95`, `plans/author_pnw_soil_moisture_plans.py:167-175`).
+  (`tests/test_historical_open_meteo.py:87-95` and the frozen VPD fixture under
+  `tests/fixtures/historical_plans/`).
   **CC-BY implies attribution is required on redistribution** — carry the citation string
   ("Open-Meteo is an intermediary redistributor of ERA5-Land") forward into any public-facing surface
   built on this data.

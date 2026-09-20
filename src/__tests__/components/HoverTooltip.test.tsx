@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render } from "@testing-library/react";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import HoverTooltip from "@/components/map/HoverTooltip";
+import { climateFieldSignalDefinition } from "@/lib/environmental/climate-field";
 import { setScalarFieldInspectionSuppressed } from "@/lib/map/scalar-field-inspection";
+import { climateFieldLayerIdsFor } from "@/lib/map/climate-field-layer-ids";
 
 /**
  * Touch fires no `mousemove` at all, so every `TOOLTIP_TAP_LAYER_IDS` layer was uninspectable on
@@ -288,5 +290,53 @@ describe("HoverTooltip: vegetation source invalidation", () => {
     act(() => fakeMap.emit("click", { point: { x: 100, y: 120 } }));
     act(() => fakeMap.emit("sourcedata", { sourceId: "vegetation-ndvi-cells", sourceDataType: "content" }));
     expect(queryByText("Weather station")).toBeTruthy();
+  });
+});
+
+describe("HoverTooltip: climate geometry", () => {
+  it("shows solar radiation on a fine-pointer isoband", () => {
+    setCoarsePointer(false);
+    const layerId = climateFieldLayerIdsFor("shortwave-radiation").isobandFillId;
+    const bandLabel = climateFieldSignalDefinition("shortwave-radiation").bands[2].label;
+    const fakeMap = createFakeMap([{ layer: { id: layerId }, properties: {
+      value: 18,
+      bandLabel,
+      observedDay: "2026-09-15",
+    } }]);
+    const { getByText } = render(<HoverTooltip map={asMap(fakeMap)} />);
+
+    act(() => fakeMap.emit("mousemove", { point: { x: 100, y: 120 } }));
+
+    expect(getByText("Surface shortwave radiation")).toBeTruthy();
+    expect(getByText(`Range: ${bandLabel} MJ/m²/day`)).toBeTruthy();
+    expect(fakeMap.queryRenderedFeatures.mock.calls.at(-1)?.[1].layers).toContain(layerId);
+  });
+
+  it("pins relative humidity on a coarse-pointer geometry tap", () => {
+    setCoarsePointer(true);
+    const layerId = climateFieldLayerIdsFor("relative-humidity").fillId;
+    const fakeMap = createFakeMap([{ layer: { id: layerId }, properties: { value: 62.4 } }]);
+    const { getByText } = render(<HoverTooltip map={asMap(fakeMap)} />);
+
+    act(() => fakeMap.emit("click", { point: { x: 100, y: 120 } }));
+
+    expect(getByText("Relative humidity")).toBeTruthy();
+    expect(getByText("Value: 62.4%")).toBeTruthy();
+    expect(fakeMap.queryRenderedFeatures.mock.calls.at(-1)?.[1].layers).toContain(layerId);
+  });
+
+  it("clears a retained climate caption only when replacement content lands for its source", () => {
+    setCoarsePointer(true);
+    const ids = climateFieldLayerIdsFor("relative-humidity");
+    const fakeMap = createFakeMap([{ layer: { id: ids.fillId }, properties: { value: 62.4 } }]);
+    const { queryByText } = render(<HoverTooltip map={asMap(fakeMap)} />);
+
+    act(() => fakeMap.emit("click", { point: { x: 100, y: 120 } }));
+    act(() => fakeMap.emit("sourcedata", { sourceId: ids.sourceId, sourceDataType: "metadata" }));
+    expect(queryByText("Relative humidity")).toBeTruthy();
+    act(() => fakeMap.emit("sourcedata", { sourceId: "climate-field-wind-speed", sourceDataType: "content" }));
+    expect(queryByText("Relative humidity")).toBeTruthy();
+    act(() => fakeMap.emit("sourcedata", { sourceId: ids.sourceId, sourceDataType: "content" }));
+    expect(queryByText("Relative humidity")).toBeNull();
   });
 });

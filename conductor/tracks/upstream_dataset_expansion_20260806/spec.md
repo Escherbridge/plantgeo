@@ -67,9 +67,8 @@ is also just a string a plan declares.
 **3. Changing a plan's `parameters` changes `plan_checksum` and orphans the checkpoint and
 raw cache.** This is why every addition below is scoped as a new plan file, a new
 `release_set.logical_key`, and a fresh quota-bound fetch — confirmed by the same rule
-already governing the soil-temperature bands whitelisted 2026-08-06 and the standing
-Open-Meteo lattice plans in
-[`plans/AGENTS.md`](../../../services/agri-data-service/plans/AGENTS.md).
+already governing the soil-temperature bands whitelisted 2026-08-06 and the historical
+Open-Meteo lattice contract now preserved by the direct-soil support module and frozen fixture.
 
 **4. The CRON standard is a `railway.json` only, against one shared image.**
 [`infra/cron-weather/railway.json`](../../../infra/cron-weather/railway.json) and
@@ -123,7 +122,7 @@ confirmed against the live endpoint, which is the same status the doc gives
 preference.** Per `docs/unused-upstream-datasets.md` and the session that produced it: the
 keyless Open-Meteo lane moved 6,447,420 rows in an afternoon at 0.1 degrees; the CDS lane
 resolved 2 of 49 monthly periods in a day against repeated 502s and dropped connections, at
-a coarser 1.0-degree output grid. `plans/AGENTS.md`'s CDS costing section shows this is not
+a coarser 1.0-degree output grid. The retired plan documentation showed this is not
 a cost-model problem to tune — area is free and only time-span-per-request is a cost
 input, so a quarterly-period rechunking would help throughput but does nothing about
 provider-side queue latency, which is the actual failure mode observed. Retiring the lane
@@ -189,18 +188,15 @@ Concrete, in scope for Phase 0:
   actually spending wall clock and CDS quota against a queue that is not answering; it is
   outside this repository and outside any agent's authority to touch directly, but the
   plan must name it as a required action, not an assumption someone else will notice it.
-- Stop scheduling and stop authoring new plans against
-  `era5-land-pnw-soil-20220430-20260430.json` and
-  `era5-land-western-na-soil-20220430-20260430.json` (both present, uncommitted, in
-  `services/agri-data-service/plans/`). Retiring the *lane for soil state* does not mean
+- Stop scheduling and stop authoring new plans against the former PNW and western-NA
+  ERA5-Land soil artifacts, now retired with the service-local plan tree. Retiring the
+  *lane for soil state* does not mean
   deleting `historical_era5.py` or the CDS client — per
   `docs/unused-upstream-datasets.md`, CDS remains the only route to AgERA5
   agrometeorological indicators, CEMS fire danger indices, and seasonal forecasts, none of
   which Open-Meteo redistributes. The code stays; the soil-state invocation of it stops.
-- `open-meteo-era5-land-pnw-soiltemp-20220430-20260430.json` already exists in the same
-  directory — the Open-Meteo replacement plan for soil temperature has already been
-  authored. Its presence is evidence the retirement is already underway in intent, not
-  merely proposed here.
+- The historical Open-Meteo replacement plan for soil temperature was evidence that the
+  retirement was already underway in intent, not merely proposed here.
 
 ## The et0 trap, closed structurally
 
