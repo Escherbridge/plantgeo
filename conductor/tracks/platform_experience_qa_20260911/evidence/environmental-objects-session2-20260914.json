@@ -1,0 +1,3414 @@
+{
+  "captured_at": "2026-09-14T19:07:40.394470+00:00",
+  "operation": "read-only strict availability generation and bounded physical sample reads",
+  "bucket": "plantgeo-parquet-9ymvp7gv",
+  "prefix": "",
+  "script_sha256": "3cc091c80e12e1dfbff6e7404c439e0eccc48bc58288186f461577c6b2e6aa03",
+  "layers": {
+    "soil-field-moisture-0-7cm": {
+      "days": {
+        "2026-09-05": [
+          {
+            "rung": 0,
+            "prefix": "layer=soil-field-moisture-0-7cm/kind=observed/zoom=00/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-field-moisture-0-7cm/kind=observed/zoom=00/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:52:51+00:00",
+                "bytes": 422,
+                "sha256": "c720ad406d3e6592972947913c7a4cde1e0b51a28eb970f3e096ed14a329f9db",
+                "document": {
+                  "completed_at": "2026-09-14T00:52:51.301097+00:00",
+                  "part_count": 1,
+                  "parts": [
+                    {
+                      "byte_count": 12028,
+                      "relative_path": "layer=soil-field-moisture-0-7cm/kind=observed/zoom=00/year=2026/month=09/day=05/part-0.parquet",
+                      "row_count": 6,
+                      "sha256": "f4b78b2de5fd1d3178a41616ed1ebfd4b23ff1a9e682ebc5842f09eb90c1bea3"
+                    }
+                  ],
+                  "row_count": 6,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 2
+                }
+              },
+              {
+                "key": "layer=soil-field-moisture-0-7cm/kind=observed/zoom=00/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:52:51+00:00",
+                "bytes": 12028,
+                "sha256": "f4b78b2de5fd1d3178a41616ed1ebfd4b23ff1a9e682ebc5842f09eb90c1bea3",
+                "parquet_rows": 6
+              }
+            ]
+          },
+          {
+            "rung": 5,
+            "prefix": "layer=soil-field-moisture-0-7cm/kind=observed/zoom=05/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-field-moisture-0-7cm/kind=observed/zoom=05/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:52:51+00:00",
+                "bytes": 428,
+                "sha256": "f8872068da9caf582bae8f73a58c5efab1cd3112eb71860b26480cdd5b35458a",
+                "document": {
+                  "completed_at": "2026-09-14T00:52:51.193626+00:00",
+                  "part_count": 1,
+                  "parts": [
+                    {
+                      "byte_count": 15719,
+                      "relative_path": "layer=soil-field-moisture-0-7cm/kind=observed/zoom=05/year=2026/month=09/day=05/part-0.parquet",
+                      "row_count": 1470,
+                      "sha256": "4a9b7c528d4765fd5ca2cb1a7669d2044568c55e38874894261566684b258b32"
+                    }
+                  ],
+                  "row_count": 1470,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 2
+                }
+              },
+              {
+                "key": "layer=soil-field-moisture-0-7cm/kind=observed/zoom=05/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:52:51+00:00",
+                "bytes": 15719,
+                "sha256": "4a9b7c528d4765fd5ca2cb1a7669d2044568c55e38874894261566684b258b32",
+                "parquet_rows": 1470
+              }
+            ]
+          },
+          {
+            "rung": 9,
+            "prefix": "layer=soil-field-moisture-0-7cm/kind=observed/zoom=09/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-field-moisture-0-7cm/kind=observed/zoom=09/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:52:51+00:00",
+                "bytes": 428,
+                "sha256": "48fb8c23edb8c91a06d4fc27b56775a68c8519db8c489500f79eb9e90ee401a2",
+                "document": {
+                  "completed_at": "2026-09-14T00:52:51.036469+00:00",
+                  "part_count": 1,
+                  "parts": [
+                    {
+                      "byte_count": 15708,
+                      "relative_path": "layer=soil-field-moisture-0-7cm/kind=observed/zoom=09/year=2026/month=09/day=05/part-0.parquet",
+                      "row_count": 1470,
+                      "sha256": "ac3a00457ab0bb55cc4f073e4300a2a9a0a6df4a28f536e2e2cf4fe45b08bebb"
+                    }
+                  ],
+                  "row_count": 1470,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 2
+                }
+              },
+              {
+                "key": "layer=soil-field-moisture-0-7cm/kind=observed/zoom=09/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:52:51+00:00",
+                "bytes": 15708,
+                "sha256": "ac3a00457ab0bb55cc4f073e4300a2a9a0a6df4a28f536e2e2cf4fe45b08bebb",
+                "parquet_rows": 1470
+              }
+            ]
+          },
+          {
+            "rung": 13,
+            "prefix": "layer=soil-field-moisture-0-7cm/kind=observed/zoom=13/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-field-moisture-0-7cm/kind=observed/zoom=13/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:52:51+00:00",
+                "bytes": 182,
+                "sha256": "714c5880735c2915f497c399f20d77a3e52340bfa9f95807be958fe347be9357",
+                "document": {
+                  "completed_at": "2026-09-14T00:52:51.315373+00:00",
+                  "part_count": 1,
+                  "row_count": 1470,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 1
+                }
+              },
+              {
+                "key": "layer=soil-field-moisture-0-7cm/kind=observed/zoom=13/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:52:50+00:00",
+                "bytes": 243185,
+                "sha256": "30509f5647612864fc9513b7de0f11365a8ac1d3d6ecc3ac307864ed8d7afca9",
+                "parquet_rows": 1470
+              }
+            ]
+          }
+        ]
+      },
+      "availability": {
+        "verified_generation": true,
+        "pointer": {
+          "bootstrap_receipt_key": "layer=soil-field-moisture-0-7cm/kind=observed/availability/bootstrap/receipt=eedc98d192c6db24e98e8174396929456dd776fda03391e45070df1a9a328056.json",
+          "bootstrap_receipt_sha256": "eedc98d192c6db24e98e8174396929456dd776fda03391e45070df1a9a328056",
+          "created_at": "2026-09-14T00:52:52.774603Z",
+          "earliest_terminal_day": "2022-04-30",
+          "generation_bytes": 634447,
+          "generation_key": "layer=soil-field-moisture-0-7cm/kind=observed/availability/generation=15c7989a949b2abbac237fb7a970bd2e83c9729f06e2fa406b931ddca13bf8f6/availability.parquet",
+          "generation_receipt_sha256": "128fc7d5e81013a030b9bb0b1757204203fa060ee557e29724139c42941b0bd1",
+          "generation_sha256": "15c7989a949b2abbac237fb7a970bd2e83c9729f06e2fa406b931ddca13bf8f6",
+          "lane": "soil-field-moisture-0-7cm",
+          "lane_root": "layer=soil-field-moisture-0-7cm/kind=observed",
+          "latest_terminal_day": "2026-09-05",
+          "nature": "daily_series",
+          "prior_generation_key": "layer=soil-field-moisture-0-7cm/kind=observed/availability/generation=5e7226de3933296f31834afdda2047270f5b9b8f31258195adbc74a6a080b379/availability.parquet",
+          "prior_generation_sha256": "5e7226de3933296f31834afdda2047270f5b9b8f31258195adbc74a6a080b379",
+          "product": "soil-field-moisture-0-7cm",
+          "required_rungs": [
+            0,
+            5,
+            9,
+            13
+          ],
+          "rows": 6360,
+          "schema_version": "1",
+          "source_ceiling": "2026-09-05",
+          "verified_source_inventory_root": "81e6423e7005075f58fcf03c1080cccb89741ce26efd7a1fd918141248b7acdb"
+        },
+        "sample_rows": [
+          {
+            "lane": "soil-field-moisture-0-7cm",
+            "product": "soil-field-moisture-0-7cm",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 0,
+            "terminal_state": "published",
+            "row_count": 6,
+            "source_receipt": {
+              "key": "layer=soil-field-moisture-0-7cm/kind=observed/availability/evidence/source=6323859234ad0cf58e9b3d4f97ef08df841acd0e72393708e0c8b86789568370.json",
+              "sha256": "6323859234ad0cf58e9b3d4f97ef08df841acd0e72393708e0c8b86789568370"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-field-moisture-0-7cm/kind=observed/availability/evidence/terminal=d68af5381d2a589f3f5b01b5e39293cc81b8b6f9dccbedc3ed943cf1eedb1dce.json",
+              "sha256": "d68af5381d2a589f3f5b01b5e39293cc81b8b6f9dccbedc3ed943cf1eedb1dce"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-field-moisture-0-7cm/kind=observed/zoom=00/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "f4b78b2de5fd1d3178a41616ed1ebfd4b23ff1a9e682ebc5842f09eb90c1bea3"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-field-moisture-0-7cm/kind=observed/zoom=00/year=2026/month=09/day=05/_complete.json",
+              "sha256": "c720ad406d3e6592972947913c7a4cde1e0b51a28eb970f3e096ed14a329f9db"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:52:51.330400+00:00"
+          },
+          {
+            "lane": "soil-field-moisture-0-7cm",
+            "product": "soil-field-moisture-0-7cm",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 5,
+            "terminal_state": "published",
+            "row_count": 1470,
+            "source_receipt": {
+              "key": "layer=soil-field-moisture-0-7cm/kind=observed/availability/evidence/source=6323859234ad0cf58e9b3d4f97ef08df841acd0e72393708e0c8b86789568370.json",
+              "sha256": "6323859234ad0cf58e9b3d4f97ef08df841acd0e72393708e0c8b86789568370"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-field-moisture-0-7cm/kind=observed/availability/evidence/terminal=6206fa9a3c38ad194dd1562f83f185512a6d13a63f3f2604148c2eac9264e62f.json",
+              "sha256": "6206fa9a3c38ad194dd1562f83f185512a6d13a63f3f2604148c2eac9264e62f"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-field-moisture-0-7cm/kind=observed/zoom=05/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "4a9b7c528d4765fd5ca2cb1a7669d2044568c55e38874894261566684b258b32"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-field-moisture-0-7cm/kind=observed/zoom=05/year=2026/month=09/day=05/_complete.json",
+              "sha256": "f8872068da9caf582bae8f73a58c5efab1cd3112eb71860b26480cdd5b35458a"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:52:51.330400+00:00"
+          },
+          {
+            "lane": "soil-field-moisture-0-7cm",
+            "product": "soil-field-moisture-0-7cm",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 9,
+            "terminal_state": "published",
+            "row_count": 1470,
+            "source_receipt": {
+              "key": "layer=soil-field-moisture-0-7cm/kind=observed/availability/evidence/source=6323859234ad0cf58e9b3d4f97ef08df841acd0e72393708e0c8b86789568370.json",
+              "sha256": "6323859234ad0cf58e9b3d4f97ef08df841acd0e72393708e0c8b86789568370"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-field-moisture-0-7cm/kind=observed/availability/evidence/terminal=1471a9ee3ddfb89fa4f8417870a839576b27a8e6b78fa1e23ff548e508b8720d.json",
+              "sha256": "1471a9ee3ddfb89fa4f8417870a839576b27a8e6b78fa1e23ff548e508b8720d"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-field-moisture-0-7cm/kind=observed/zoom=09/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "ac3a00457ab0bb55cc4f073e4300a2a9a0a6df4a28f536e2e2cf4fe45b08bebb"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-field-moisture-0-7cm/kind=observed/zoom=09/year=2026/month=09/day=05/_complete.json",
+              "sha256": "48fb8c23edb8c91a06d4fc27b56775a68c8519db8c489500f79eb9e90ee401a2"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:52:51.330400+00:00"
+          },
+          {
+            "lane": "soil-field-moisture-0-7cm",
+            "product": "soil-field-moisture-0-7cm",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 13,
+            "terminal_state": "published",
+            "row_count": 1470,
+            "source_receipt": {
+              "key": "layer=soil-field-moisture-0-7cm/kind=observed/availability/evidence/source=6323859234ad0cf58e9b3d4f97ef08df841acd0e72393708e0c8b86789568370.json",
+              "sha256": "6323859234ad0cf58e9b3d4f97ef08df841acd0e72393708e0c8b86789568370"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-field-moisture-0-7cm/kind=observed/availability/evidence/terminal=b2aabf257eff620c2655c1270952e4cfe030e7d1239df750a57b5696b4593f69.json",
+              "sha256": "b2aabf257eff620c2655c1270952e4cfe030e7d1239df750a57b5696b4593f69"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-field-moisture-0-7cm/kind=observed/zoom=13/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "30509f5647612864fc9513b7de0f11365a8ac1d3d6ecc3ac307864ed8d7afca9"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-field-moisture-0-7cm/kind=observed/zoom=13/year=2026/month=09/day=05/_complete.json",
+              "sha256": "714c5880735c2915f497c399f20d77a3e52340bfa9f95807be958fe347be9357"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:52:51.330400+00:00"
+          }
+        ]
+      }
+    },
+    "soil-field-moisture-7-28cm": {
+      "days": {
+        "2026-09-05": [
+          {
+            "rung": 0,
+            "prefix": "layer=soil-field-moisture-7-28cm/kind=observed/zoom=00/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-field-moisture-7-28cm/kind=observed/zoom=00/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:52:56+00:00",
+                "bytes": 423,
+                "sha256": "4e588d96ba82281b1b3a56eff80e5898eeedf4643e6cdaddd56c3090d4102d6d",
+                "document": {
+                  "completed_at": "2026-09-14T00:52:56.292138+00:00",
+                  "part_count": 1,
+                  "parts": [
+                    {
+                      "byte_count": 12034,
+                      "relative_path": "layer=soil-field-moisture-7-28cm/kind=observed/zoom=00/year=2026/month=09/day=05/part-0.parquet",
+                      "row_count": 6,
+                      "sha256": "76e488d3ecc0e7d449c266d671169a23dd8aaf8ef27a2a3dc6fd4764b7b10d38"
+                    }
+                  ],
+                  "row_count": 6,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 2
+                }
+              },
+              {
+                "key": "layer=soil-field-moisture-7-28cm/kind=observed/zoom=00/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:52:56+00:00",
+                "bytes": 12034,
+                "sha256": "76e488d3ecc0e7d449c266d671169a23dd8aaf8ef27a2a3dc6fd4764b7b10d38",
+                "parquet_rows": 6
+              }
+            ]
+          },
+          {
+            "rung": 5,
+            "prefix": "layer=soil-field-moisture-7-28cm/kind=observed/zoom=05/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-field-moisture-7-28cm/kind=observed/zoom=05/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:52:56+00:00",
+                "bytes": 429,
+                "sha256": "7ab0088da962d882a780b4f3b0108fe0f74631e38e7efa16ec5040f060de291d",
+                "document": {
+                  "completed_at": "2026-09-14T00:52:56.196336+00:00",
+                  "part_count": 1,
+                  "parts": [
+                    {
+                      "byte_count": 15147,
+                      "relative_path": "layer=soil-field-moisture-7-28cm/kind=observed/zoom=05/year=2026/month=09/day=05/part-0.parquet",
+                      "row_count": 1470,
+                      "sha256": "8ab85cb90be4032c8eadba8e668e55c6446b11a15dca60d0cfc5609edad89c16"
+                    }
+                  ],
+                  "row_count": 1470,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 2
+                }
+              },
+              {
+                "key": "layer=soil-field-moisture-7-28cm/kind=observed/zoom=05/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:52:56+00:00",
+                "bytes": 15147,
+                "sha256": "8ab85cb90be4032c8eadba8e668e55c6446b11a15dca60d0cfc5609edad89c16",
+                "parquet_rows": 1470
+              }
+            ]
+          },
+          {
+            "rung": 9,
+            "prefix": "layer=soil-field-moisture-7-28cm/kind=observed/zoom=09/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-field-moisture-7-28cm/kind=observed/zoom=09/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:52:56+00:00",
+                "bytes": 429,
+                "sha256": "bb3f8ffb30161de2f1b9d47e193f4e4285583037a661a9aa63e7e03f3c858f04",
+                "document": {
+                  "completed_at": "2026-09-14T00:52:56.059401+00:00",
+                  "part_count": 1,
+                  "parts": [
+                    {
+                      "byte_count": 15136,
+                      "relative_path": "layer=soil-field-moisture-7-28cm/kind=observed/zoom=09/year=2026/month=09/day=05/part-0.parquet",
+                      "row_count": 1470,
+                      "sha256": "3f23ee2ccd16bdd1f1a7a4b98529deeca6225c860c12e9a2e82534eaeb23326f"
+                    }
+                  ],
+                  "row_count": 1470,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 2
+                }
+              },
+              {
+                "key": "layer=soil-field-moisture-7-28cm/kind=observed/zoom=09/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:52:56+00:00",
+                "bytes": 15136,
+                "sha256": "3f23ee2ccd16bdd1f1a7a4b98529deeca6225c860c12e9a2e82534eaeb23326f",
+                "parquet_rows": 1470
+              }
+            ]
+          },
+          {
+            "rung": 13,
+            "prefix": "layer=soil-field-moisture-7-28cm/kind=observed/zoom=13/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-field-moisture-7-28cm/kind=observed/zoom=13/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:52:56+00:00",
+                "bytes": 182,
+                "sha256": "d2f048fab24242193266417cc1aa05ecfbf1651999ecf74d44618f0b17696885",
+                "document": {
+                  "completed_at": "2026-09-14T00:52:56.305288+00:00",
+                  "part_count": 1,
+                  "row_count": 1470,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 1
+                }
+              },
+              {
+                "key": "layer=soil-field-moisture-7-28cm/kind=observed/zoom=13/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:52:55+00:00",
+                "bytes": 241992,
+                "sha256": "e053e5f7227f18fc2a0cf7ba3d4af54057477be7a67fdc429965d56836e4ef1e",
+                "parquet_rows": 1470
+              }
+            ]
+          }
+        ]
+      },
+      "availability": {
+        "verified_generation": true,
+        "pointer": {
+          "bootstrap_receipt_key": "layer=soil-field-moisture-7-28cm/kind=observed/availability/bootstrap/receipt=ead997206dfb1a6e4378802ead6e782a33dbfe949ba0d9510c09411647853c41.json",
+          "bootstrap_receipt_sha256": "ead997206dfb1a6e4378802ead6e782a33dbfe949ba0d9510c09411647853c41",
+          "created_at": "2026-09-14T00:52:57.306635Z",
+          "earliest_terminal_day": "2022-04-30",
+          "generation_bytes": 634224,
+          "generation_key": "layer=soil-field-moisture-7-28cm/kind=observed/availability/generation=623ec756d6b5d884d1c8476fd17999508d219f2c9a42a81879038d72ddcd6eb2/availability.parquet",
+          "generation_receipt_sha256": "074ccbb120919590d72a1202c2c7058562758255a5346a3c1de29c50191aade9",
+          "generation_sha256": "623ec756d6b5d884d1c8476fd17999508d219f2c9a42a81879038d72ddcd6eb2",
+          "lane": "soil-field-moisture-7-28cm",
+          "lane_root": "layer=soil-field-moisture-7-28cm/kind=observed",
+          "latest_terminal_day": "2026-09-05",
+          "nature": "daily_series",
+          "prior_generation_key": "layer=soil-field-moisture-7-28cm/kind=observed/availability/generation=dc5289eb1fc1576b68bbfeff528a53e98352a2c4695c5255c172b7c39f07b1d1/availability.parquet",
+          "prior_generation_sha256": "dc5289eb1fc1576b68bbfeff528a53e98352a2c4695c5255c172b7c39f07b1d1",
+          "product": "soil-field-moisture-7-28cm",
+          "required_rungs": [
+            0,
+            5,
+            9,
+            13
+          ],
+          "rows": 6360,
+          "schema_version": "1",
+          "source_ceiling": "2026-09-05",
+          "verified_source_inventory_root": "63a2af96ee348d1d964d7b54d674b45bb57abfbc7757355b996da6b4a6799b75"
+        },
+        "sample_rows": [
+          {
+            "lane": "soil-field-moisture-7-28cm",
+            "product": "soil-field-moisture-7-28cm",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 0,
+            "terminal_state": "published",
+            "row_count": 6,
+            "source_receipt": {
+              "key": "layer=soil-field-moisture-7-28cm/kind=observed/availability/evidence/source=4220412578da47c7710a24453446a5a7e80d3f4d90a1203b20b7b9407906e1a9.json",
+              "sha256": "4220412578da47c7710a24453446a5a7e80d3f4d90a1203b20b7b9407906e1a9"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-field-moisture-7-28cm/kind=observed/availability/evidence/terminal=c68c4bcd816a3b818562d418b4ba2f0c301162fb64d2f1ceb0c22ef512cb6b50.json",
+              "sha256": "c68c4bcd816a3b818562d418b4ba2f0c301162fb64d2f1ceb0c22ef512cb6b50"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-field-moisture-7-28cm/kind=observed/zoom=00/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "76e488d3ecc0e7d449c266d671169a23dd8aaf8ef27a2a3dc6fd4764b7b10d38"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-field-moisture-7-28cm/kind=observed/zoom=00/year=2026/month=09/day=05/_complete.json",
+              "sha256": "4e588d96ba82281b1b3a56eff80e5898eeedf4643e6cdaddd56c3090d4102d6d"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:52:56.320027+00:00"
+          },
+          {
+            "lane": "soil-field-moisture-7-28cm",
+            "product": "soil-field-moisture-7-28cm",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 5,
+            "terminal_state": "published",
+            "row_count": 1470,
+            "source_receipt": {
+              "key": "layer=soil-field-moisture-7-28cm/kind=observed/availability/evidence/source=4220412578da47c7710a24453446a5a7e80d3f4d90a1203b20b7b9407906e1a9.json",
+              "sha256": "4220412578da47c7710a24453446a5a7e80d3f4d90a1203b20b7b9407906e1a9"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-field-moisture-7-28cm/kind=observed/availability/evidence/terminal=b96a205a017f927bb0fedfd68f75f504ff3e5a28214da6bd1059a7b104227410.json",
+              "sha256": "b96a205a017f927bb0fedfd68f75f504ff3e5a28214da6bd1059a7b104227410"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-field-moisture-7-28cm/kind=observed/zoom=05/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "8ab85cb90be4032c8eadba8e668e55c6446b11a15dca60d0cfc5609edad89c16"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-field-moisture-7-28cm/kind=observed/zoom=05/year=2026/month=09/day=05/_complete.json",
+              "sha256": "7ab0088da962d882a780b4f3b0108fe0f74631e38e7efa16ec5040f060de291d"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:52:56.320027+00:00"
+          },
+          {
+            "lane": "soil-field-moisture-7-28cm",
+            "product": "soil-field-moisture-7-28cm",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 9,
+            "terminal_state": "published",
+            "row_count": 1470,
+            "source_receipt": {
+              "key": "layer=soil-field-moisture-7-28cm/kind=observed/availability/evidence/source=4220412578da47c7710a24453446a5a7e80d3f4d90a1203b20b7b9407906e1a9.json",
+              "sha256": "4220412578da47c7710a24453446a5a7e80d3f4d90a1203b20b7b9407906e1a9"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-field-moisture-7-28cm/kind=observed/availability/evidence/terminal=15cd126818dac5b94eba3ccbdc23403c86b73b0589176d9a537d8ded7445029c.json",
+              "sha256": "15cd126818dac5b94eba3ccbdc23403c86b73b0589176d9a537d8ded7445029c"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-field-moisture-7-28cm/kind=observed/zoom=09/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "3f23ee2ccd16bdd1f1a7a4b98529deeca6225c860c12e9a2e82534eaeb23326f"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-field-moisture-7-28cm/kind=observed/zoom=09/year=2026/month=09/day=05/_complete.json",
+              "sha256": "bb3f8ffb30161de2f1b9d47e193f4e4285583037a661a9aa63e7e03f3c858f04"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:52:56.320027+00:00"
+          },
+          {
+            "lane": "soil-field-moisture-7-28cm",
+            "product": "soil-field-moisture-7-28cm",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 13,
+            "terminal_state": "published",
+            "row_count": 1470,
+            "source_receipt": {
+              "key": "layer=soil-field-moisture-7-28cm/kind=observed/availability/evidence/source=4220412578da47c7710a24453446a5a7e80d3f4d90a1203b20b7b9407906e1a9.json",
+              "sha256": "4220412578da47c7710a24453446a5a7e80d3f4d90a1203b20b7b9407906e1a9"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-field-moisture-7-28cm/kind=observed/availability/evidence/terminal=ce58551ea5c33d5dd893f180de240aed0ddf319230a5bc238a825759a89f7868.json",
+              "sha256": "ce58551ea5c33d5dd893f180de240aed0ddf319230a5bc238a825759a89f7868"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-field-moisture-7-28cm/kind=observed/zoom=13/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "e053e5f7227f18fc2a0cf7ba3d4af54057477be7a67fdc429965d56836e4ef1e"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-field-moisture-7-28cm/kind=observed/zoom=13/year=2026/month=09/day=05/_complete.json",
+              "sha256": "d2f048fab24242193266417cc1aa05ecfbf1651999ecf74d44618f0b17696885"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:52:56.320027+00:00"
+          }
+        ]
+      }
+    },
+    "soil-field-moisture-28-100cm": {
+      "days": {
+        "2026-09-05": [
+          {
+            "rung": 0,
+            "prefix": "layer=soil-field-moisture-28-100cm/kind=observed/zoom=00/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-field-moisture-28-100cm/kind=observed/zoom=00/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:53:01+00:00",
+                "bytes": 425,
+                "sha256": "7a99def16dd5ab81097e4223421083b973b99218aa9002b737a5fa3726c2118b",
+                "document": {
+                  "completed_at": "2026-09-14T00:53:01.123249+00:00",
+                  "part_count": 1,
+                  "parts": [
+                    {
+                      "byte_count": 12046,
+                      "relative_path": "layer=soil-field-moisture-28-100cm/kind=observed/zoom=00/year=2026/month=09/day=05/part-0.parquet",
+                      "row_count": 6,
+                      "sha256": "257f070188dc543b8d045cd119f0479d7e9320eb3d0682e17d1cbb7cb422788b"
+                    }
+                  ],
+                  "row_count": 6,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 2
+                }
+              },
+              {
+                "key": "layer=soil-field-moisture-28-100cm/kind=observed/zoom=00/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:53:01+00:00",
+                "bytes": 12046,
+                "sha256": "257f070188dc543b8d045cd119f0479d7e9320eb3d0682e17d1cbb7cb422788b",
+                "parquet_rows": 6
+              }
+            ]
+          },
+          {
+            "rung": 5,
+            "prefix": "layer=soil-field-moisture-28-100cm/kind=observed/zoom=05/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-field-moisture-28-100cm/kind=observed/zoom=05/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:53:01+00:00",
+                "bytes": 431,
+                "sha256": "aeb159e43c8a6b2a9952dbd4c7ff5fd558da9ee91dd30e565037427d71acc6dd",
+                "document": {
+                  "completed_at": "2026-09-14T00:53:01.011551+00:00",
+                  "part_count": 1,
+                  "parts": [
+                    {
+                      "byte_count": 15025,
+                      "relative_path": "layer=soil-field-moisture-28-100cm/kind=observed/zoom=05/year=2026/month=09/day=05/part-0.parquet",
+                      "row_count": 1470,
+                      "sha256": "94252137bedb4fc35b753cb8d990e1762575a37d08b63fee0b69d31bababce31"
+                    }
+                  ],
+                  "row_count": 1470,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 2
+                }
+              },
+              {
+                "key": "layer=soil-field-moisture-28-100cm/kind=observed/zoom=05/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:53:00+00:00",
+                "bytes": 15025,
+                "sha256": "94252137bedb4fc35b753cb8d990e1762575a37d08b63fee0b69d31bababce31",
+                "parquet_rows": 1470
+              }
+            ]
+          },
+          {
+            "rung": 9,
+            "prefix": "layer=soil-field-moisture-28-100cm/kind=observed/zoom=09/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-field-moisture-28-100cm/kind=observed/zoom=09/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:53:00+00:00",
+                "bytes": 431,
+                "sha256": "732072c0443f6843a08694d1d0e08cc20afed8ba34e3e229e72f604995145d11",
+                "document": {
+                  "completed_at": "2026-09-14T00:53:00.856891+00:00",
+                  "part_count": 1,
+                  "parts": [
+                    {
+                      "byte_count": 15014,
+                      "relative_path": "layer=soil-field-moisture-28-100cm/kind=observed/zoom=09/year=2026/month=09/day=05/part-0.parquet",
+                      "row_count": 1470,
+                      "sha256": "0758a5eb422a9959494395250df840b4d41ccbd2b46eb09ae737e57385ed82ce"
+                    }
+                  ],
+                  "row_count": 1470,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 2
+                }
+              },
+              {
+                "key": "layer=soil-field-moisture-28-100cm/kind=observed/zoom=09/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:53:00+00:00",
+                "bytes": 15014,
+                "sha256": "0758a5eb422a9959494395250df840b4d41ccbd2b46eb09ae737e57385ed82ce",
+                "parquet_rows": 1470
+              }
+            ]
+          },
+          {
+            "rung": 13,
+            "prefix": "layer=soil-field-moisture-28-100cm/kind=observed/zoom=13/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-field-moisture-28-100cm/kind=observed/zoom=13/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:53:01+00:00",
+                "bytes": 182,
+                "sha256": "9af74b897070c2aa7240c17274979e19bb1b16700b3deddd63c20b31660adf32",
+                "document": {
+                  "completed_at": "2026-09-14T00:53:01.138181+00:00",
+                  "part_count": 1,
+                  "row_count": 1470,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 1
+                }
+              },
+              {
+                "key": "layer=soil-field-moisture-28-100cm/kind=observed/zoom=13/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:53:00+00:00",
+                "bytes": 242982,
+                "sha256": "a48c3b847f4a358a04513514877a7767cc421588f4dbf23579e20e0b04edadf9",
+                "parquet_rows": 1470
+              }
+            ]
+          }
+        ]
+      },
+      "availability": {
+        "verified_generation": true,
+        "pointer": {
+          "bootstrap_receipt_key": "layer=soil-field-moisture-28-100cm/kind=observed/availability/bootstrap/receipt=29412053da62f1e67a34b0db0eb01c94414dfa0fb762813c95f452174caaf3e2.json",
+          "bootstrap_receipt_sha256": "29412053da62f1e67a34b0db0eb01c94414dfa0fb762813c95f452174caaf3e2",
+          "created_at": "2026-09-14T00:53:02.280438Z",
+          "earliest_terminal_day": "2022-04-30",
+          "generation_bytes": 632688,
+          "generation_key": "layer=soil-field-moisture-28-100cm/kind=observed/availability/generation=60e675b25106dae4260abc0d604d88ce2edaf13c652f29cb70258eb3e690db3b/availability.parquet",
+          "generation_receipt_sha256": "2174999c04cfa3971de3757342fe5ec5c3167ce69da27db0c51dcf59ebcc1e22",
+          "generation_sha256": "60e675b25106dae4260abc0d604d88ce2edaf13c652f29cb70258eb3e690db3b",
+          "lane": "soil-field-moisture-28-100cm",
+          "lane_root": "layer=soil-field-moisture-28-100cm/kind=observed",
+          "latest_terminal_day": "2026-09-05",
+          "nature": "daily_series",
+          "prior_generation_key": "layer=soil-field-moisture-28-100cm/kind=observed/availability/generation=d0803cd04b3ff7be1e7e7bd4ff06f8f2c6946e28664c5486815750950ae2e783/availability.parquet",
+          "prior_generation_sha256": "d0803cd04b3ff7be1e7e7bd4ff06f8f2c6946e28664c5486815750950ae2e783",
+          "product": "soil-field-moisture-28-100cm",
+          "required_rungs": [
+            0,
+            5,
+            9,
+            13
+          ],
+          "rows": 6360,
+          "schema_version": "1",
+          "source_ceiling": "2026-09-05",
+          "verified_source_inventory_root": "f8fb28d2f59a1562186e1815ed234ec95d541c47ddead7f599afde51b3428977"
+        },
+        "sample_rows": [
+          {
+            "lane": "soil-field-moisture-28-100cm",
+            "product": "soil-field-moisture-28-100cm",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 0,
+            "terminal_state": "published",
+            "row_count": 6,
+            "source_receipt": {
+              "key": "layer=soil-field-moisture-28-100cm/kind=observed/availability/evidence/source=8bb9b259e98533d081bc2a71543ee7762ce29314dd8b2d246e1c2c18674ce04a.json",
+              "sha256": "8bb9b259e98533d081bc2a71543ee7762ce29314dd8b2d246e1c2c18674ce04a"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-field-moisture-28-100cm/kind=observed/availability/evidence/terminal=03b0d623d3424a30664b379f17f0e9ada27850355e6f678635c7dd8eae63a283.json",
+              "sha256": "03b0d623d3424a30664b379f17f0e9ada27850355e6f678635c7dd8eae63a283"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-field-moisture-28-100cm/kind=observed/zoom=00/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "257f070188dc543b8d045cd119f0479d7e9320eb3d0682e17d1cbb7cb422788b"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-field-moisture-28-100cm/kind=observed/zoom=00/year=2026/month=09/day=05/_complete.json",
+              "sha256": "7a99def16dd5ab81097e4223421083b973b99218aa9002b737a5fa3726c2118b"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:53:01.151605+00:00"
+          },
+          {
+            "lane": "soil-field-moisture-28-100cm",
+            "product": "soil-field-moisture-28-100cm",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 5,
+            "terminal_state": "published",
+            "row_count": 1470,
+            "source_receipt": {
+              "key": "layer=soil-field-moisture-28-100cm/kind=observed/availability/evidence/source=8bb9b259e98533d081bc2a71543ee7762ce29314dd8b2d246e1c2c18674ce04a.json",
+              "sha256": "8bb9b259e98533d081bc2a71543ee7762ce29314dd8b2d246e1c2c18674ce04a"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-field-moisture-28-100cm/kind=observed/availability/evidence/terminal=098fc8fd5356ba5c26847699844369d84c443df4b6946dfe3ac7fbc0fdf26fc0.json",
+              "sha256": "098fc8fd5356ba5c26847699844369d84c443df4b6946dfe3ac7fbc0fdf26fc0"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-field-moisture-28-100cm/kind=observed/zoom=05/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "94252137bedb4fc35b753cb8d990e1762575a37d08b63fee0b69d31bababce31"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-field-moisture-28-100cm/kind=observed/zoom=05/year=2026/month=09/day=05/_complete.json",
+              "sha256": "aeb159e43c8a6b2a9952dbd4c7ff5fd558da9ee91dd30e565037427d71acc6dd"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:53:01.151605+00:00"
+          },
+          {
+            "lane": "soil-field-moisture-28-100cm",
+            "product": "soil-field-moisture-28-100cm",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 9,
+            "terminal_state": "published",
+            "row_count": 1470,
+            "source_receipt": {
+              "key": "layer=soil-field-moisture-28-100cm/kind=observed/availability/evidence/source=8bb9b259e98533d081bc2a71543ee7762ce29314dd8b2d246e1c2c18674ce04a.json",
+              "sha256": "8bb9b259e98533d081bc2a71543ee7762ce29314dd8b2d246e1c2c18674ce04a"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-field-moisture-28-100cm/kind=observed/availability/evidence/terminal=fe16c18dccc27a9dfb88e5ab425bbf4a46a591e4bbe9581f3e3a91b21213c3a0.json",
+              "sha256": "fe16c18dccc27a9dfb88e5ab425bbf4a46a591e4bbe9581f3e3a91b21213c3a0"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-field-moisture-28-100cm/kind=observed/zoom=09/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "0758a5eb422a9959494395250df840b4d41ccbd2b46eb09ae737e57385ed82ce"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-field-moisture-28-100cm/kind=observed/zoom=09/year=2026/month=09/day=05/_complete.json",
+              "sha256": "732072c0443f6843a08694d1d0e08cc20afed8ba34e3e229e72f604995145d11"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:53:01.151605+00:00"
+          },
+          {
+            "lane": "soil-field-moisture-28-100cm",
+            "product": "soil-field-moisture-28-100cm",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 13,
+            "terminal_state": "published",
+            "row_count": 1470,
+            "source_receipt": {
+              "key": "layer=soil-field-moisture-28-100cm/kind=observed/availability/evidence/source=8bb9b259e98533d081bc2a71543ee7762ce29314dd8b2d246e1c2c18674ce04a.json",
+              "sha256": "8bb9b259e98533d081bc2a71543ee7762ce29314dd8b2d246e1c2c18674ce04a"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-field-moisture-28-100cm/kind=observed/availability/evidence/terminal=22eb55ac327c25c106bd6da861dd434d458cf96879c9b02b21b3622c0d6634a4.json",
+              "sha256": "22eb55ac327c25c106bd6da861dd434d458cf96879c9b02b21b3622c0d6634a4"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-field-moisture-28-100cm/kind=observed/zoom=13/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "a48c3b847f4a358a04513514877a7767cc421588f4dbf23579e20e0b04edadf9"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-field-moisture-28-100cm/kind=observed/zoom=13/year=2026/month=09/day=05/_complete.json",
+              "sha256": "9af74b897070c2aa7240c17274979e19bb1b16700b3deddd63c20b31660adf32"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:53:01.151605+00:00"
+          }
+        ]
+      }
+    },
+    "soil-temperature-0-to-7cm": {
+      "days": {
+        "2026-09-05": [
+          {
+            "rung": 0,
+            "prefix": "layer=soil-temperature-0-to-7cm/kind=observed/zoom=00/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-temperature-0-to-7cm/kind=observed/zoom=00/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:53:06+00:00",
+                "bytes": 421,
+                "sha256": "0f8d6ec2abf9e95ecb151d26a1404a180f10cb7368e49ecd03c1a358dfe9b97a",
+                "document": {
+                  "completed_at": "2026-09-14T00:53:06.373606+00:00",
+                  "part_count": 1,
+                  "parts": [
+                    {
+                      "byte_count": 7688,
+                      "relative_path": "layer=soil-temperature-0-to-7cm/kind=observed/zoom=00/year=2026/month=09/day=05/part-0.parquet",
+                      "row_count": 6,
+                      "sha256": "9a1e8628b9b1a430bf99b9033e4b846fe18e83df1ae72154ea429d4e7d4f92ef"
+                    }
+                  ],
+                  "row_count": 6,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 2
+                }
+              },
+              {
+                "key": "layer=soil-temperature-0-to-7cm/kind=observed/zoom=00/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:53:06+00:00",
+                "bytes": 7688,
+                "sha256": "9a1e8628b9b1a430bf99b9033e4b846fe18e83df1ae72154ea429d4e7d4f92ef",
+                "parquet_rows": 6
+              }
+            ]
+          },
+          {
+            "rung": 5,
+            "prefix": "layer=soil-temperature-0-to-7cm/kind=observed/zoom=05/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-temperature-0-to-7cm/kind=observed/zoom=05/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:53:06+00:00",
+                "bytes": 428,
+                "sha256": "f51b33f1bbdbda115465442a718469bb4e6f3d35aeee87fa6abb66ea53494f98",
+                "document": {
+                  "completed_at": "2026-09-14T00:53:06.235469+00:00",
+                  "part_count": 1,
+                  "parts": [
+                    {
+                      "byte_count": 63463,
+                      "relative_path": "layer=soil-temperature-0-to-7cm/kind=observed/zoom=05/year=2026/month=09/day=05/part-0.parquet",
+                      "row_count": 1470,
+                      "sha256": "98651b740ef5e2888b86947e101fe2de9349fc360d5737721d1e790a38a532e4"
+                    }
+                  ],
+                  "row_count": 1470,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 2
+                }
+              },
+              {
+                "key": "layer=soil-temperature-0-to-7cm/kind=observed/zoom=05/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:53:06+00:00",
+                "bytes": 63463,
+                "sha256": "98651b740ef5e2888b86947e101fe2de9349fc360d5737721d1e790a38a532e4",
+                "parquet_rows": 1470
+              }
+            ]
+          },
+          {
+            "rung": 9,
+            "prefix": "layer=soil-temperature-0-to-7cm/kind=observed/zoom=09/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-temperature-0-to-7cm/kind=observed/zoom=09/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:53:05+00:00",
+                "bytes": 428,
+                "sha256": "df2800c73349566fa466da6ce0057f795b5e49c584fdaf808e4fc2c95a7cdcac",
+                "document": {
+                  "completed_at": "2026-09-14T00:53:05.670236+00:00",
+                  "part_count": 1,
+                  "parts": [
+                    {
+                      "byte_count": 63452,
+                      "relative_path": "layer=soil-temperature-0-to-7cm/kind=observed/zoom=09/year=2026/month=09/day=05/part-0.parquet",
+                      "row_count": 1470,
+                      "sha256": "50764ae60f87334bbdd556223f405e568245c34675def2b1cb459eeb4e34f204"
+                    }
+                  ],
+                  "row_count": 1470,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 2
+                }
+              },
+              {
+                "key": "layer=soil-temperature-0-to-7cm/kind=observed/zoom=09/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:53:05+00:00",
+                "bytes": 63452,
+                "sha256": "50764ae60f87334bbdd556223f405e568245c34675def2b1cb459eeb4e34f204",
+                "parquet_rows": 1470
+              }
+            ]
+          },
+          {
+            "rung": 13,
+            "prefix": "layer=soil-temperature-0-to-7cm/kind=observed/zoom=13/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-temperature-0-to-7cm/kind=observed/zoom=13/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:53:06+00:00",
+                "bytes": 182,
+                "sha256": "b814ea0dc0aabd9e05a86e96124e8330216120a06ba7ccbf6b20554d6f4c3d1b",
+                "document": {
+                  "completed_at": "2026-09-14T00:53:06.386932+00:00",
+                  "part_count": 1,
+                  "row_count": 1470,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 1
+                }
+              },
+              {
+                "key": "layer=soil-temperature-0-to-7cm/kind=observed/zoom=13/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:53:05+00:00",
+                "bytes": 150821,
+                "sha256": "4faa0b42db19a9f7ca1ce96bf266c699ae7a8d120c4598a926ea93bd2adf779a",
+                "parquet_rows": 1470
+              }
+            ]
+          }
+        ]
+      },
+      "availability": {
+        "verified_generation": true,
+        "pointer": {
+          "bootstrap_receipt_key": "layer=soil-temperature-0-to-7cm/kind=observed/availability/bootstrap/receipt=200962471ceb726d090a15895223a27a781dd14812edf6d759b8006a03ea1bec.json",
+          "bootstrap_receipt_sha256": "200962471ceb726d090a15895223a27a781dd14812edf6d759b8006a03ea1bec",
+          "created_at": "2026-09-14T00:53:07.200853Z",
+          "earliest_terminal_day": "2022-04-30",
+          "generation_bytes": 631169,
+          "generation_key": "layer=soil-temperature-0-to-7cm/kind=observed/availability/generation=68af3354febc3fca13c721bc1548ce521107865aa7eee922507f865e71853de3/availability.parquet",
+          "generation_receipt_sha256": "4a406d2b499ab038be419426319837f3322ab07d0d97cd9b06c760ccf855edc3",
+          "generation_sha256": "68af3354febc3fca13c721bc1548ce521107865aa7eee922507f865e71853de3",
+          "lane": "soil-temperature-0-to-7cm",
+          "lane_root": "layer=soil-temperature-0-to-7cm/kind=observed",
+          "latest_terminal_day": "2026-09-05",
+          "nature": "daily_series",
+          "prior_generation_key": "layer=soil-temperature-0-to-7cm/kind=observed/availability/generation=41ed0b545a03b4db7a5209f3be60a0d7ffb60c47245837dddbbdea1ff97a4526/availability.parquet",
+          "prior_generation_sha256": "41ed0b545a03b4db7a5209f3be60a0d7ffb60c47245837dddbbdea1ff97a4526",
+          "product": "soil-temperature-0-to-7cm",
+          "required_rungs": [
+            0,
+            5,
+            9,
+            13
+          ],
+          "rows": 6360,
+          "schema_version": "1",
+          "source_ceiling": "2026-09-05",
+          "verified_source_inventory_root": "17ab1b44ad8fe5dc0de752c4e81d777a158b3f594418303dc2682d8075a162b6"
+        },
+        "sample_rows": [
+          {
+            "lane": "soil-temperature-0-to-7cm",
+            "product": "soil-temperature-0-to-7cm",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 0,
+            "terminal_state": "published",
+            "row_count": 6,
+            "source_receipt": {
+              "key": "layer=soil-temperature-0-to-7cm/kind=observed/availability/evidence/source=60565ce0f4302278d2a0cda9b886998640cabb439bc3fd4157f2282f50c1ee2b.json",
+              "sha256": "60565ce0f4302278d2a0cda9b886998640cabb439bc3fd4157f2282f50c1ee2b"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-temperature-0-to-7cm/kind=observed/availability/evidence/terminal=45a6e57f967adf9da085ef8d84a3437b3cbf89e81093e611da2684b03371f9b1.json",
+              "sha256": "45a6e57f967adf9da085ef8d84a3437b3cbf89e81093e611da2684b03371f9b1"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-temperature-0-to-7cm/kind=observed/zoom=00/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "9a1e8628b9b1a430bf99b9033e4b846fe18e83df1ae72154ea429d4e7d4f92ef"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-temperature-0-to-7cm/kind=observed/zoom=00/year=2026/month=09/day=05/_complete.json",
+              "sha256": "0f8d6ec2abf9e95ecb151d26a1404a180f10cb7368e49ecd03c1a358dfe9b97a"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:53:06.402091+00:00"
+          },
+          {
+            "lane": "soil-temperature-0-to-7cm",
+            "product": "soil-temperature-0-to-7cm",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 5,
+            "terminal_state": "published",
+            "row_count": 1470,
+            "source_receipt": {
+              "key": "layer=soil-temperature-0-to-7cm/kind=observed/availability/evidence/source=60565ce0f4302278d2a0cda9b886998640cabb439bc3fd4157f2282f50c1ee2b.json",
+              "sha256": "60565ce0f4302278d2a0cda9b886998640cabb439bc3fd4157f2282f50c1ee2b"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-temperature-0-to-7cm/kind=observed/availability/evidence/terminal=84522a2dd510cc010aeeed4b361701c2c98cd2aac0011b734f4a97786e0bd41e.json",
+              "sha256": "84522a2dd510cc010aeeed4b361701c2c98cd2aac0011b734f4a97786e0bd41e"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-temperature-0-to-7cm/kind=observed/zoom=05/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "98651b740ef5e2888b86947e101fe2de9349fc360d5737721d1e790a38a532e4"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-temperature-0-to-7cm/kind=observed/zoom=05/year=2026/month=09/day=05/_complete.json",
+              "sha256": "f51b33f1bbdbda115465442a718469bb4e6f3d35aeee87fa6abb66ea53494f98"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:53:06.402091+00:00"
+          },
+          {
+            "lane": "soil-temperature-0-to-7cm",
+            "product": "soil-temperature-0-to-7cm",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 9,
+            "terminal_state": "published",
+            "row_count": 1470,
+            "source_receipt": {
+              "key": "layer=soil-temperature-0-to-7cm/kind=observed/availability/evidence/source=60565ce0f4302278d2a0cda9b886998640cabb439bc3fd4157f2282f50c1ee2b.json",
+              "sha256": "60565ce0f4302278d2a0cda9b886998640cabb439bc3fd4157f2282f50c1ee2b"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-temperature-0-to-7cm/kind=observed/availability/evidence/terminal=45dd3159582417c728e6f343b44a5791f8e40930900625b112b703f403d75402.json",
+              "sha256": "45dd3159582417c728e6f343b44a5791f8e40930900625b112b703f403d75402"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-temperature-0-to-7cm/kind=observed/zoom=09/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "50764ae60f87334bbdd556223f405e568245c34675def2b1cb459eeb4e34f204"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-temperature-0-to-7cm/kind=observed/zoom=09/year=2026/month=09/day=05/_complete.json",
+              "sha256": "df2800c73349566fa466da6ce0057f795b5e49c584fdaf808e4fc2c95a7cdcac"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:53:06.402091+00:00"
+          },
+          {
+            "lane": "soil-temperature-0-to-7cm",
+            "product": "soil-temperature-0-to-7cm",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 13,
+            "terminal_state": "published",
+            "row_count": 1470,
+            "source_receipt": {
+              "key": "layer=soil-temperature-0-to-7cm/kind=observed/availability/evidence/source=60565ce0f4302278d2a0cda9b886998640cabb439bc3fd4157f2282f50c1ee2b.json",
+              "sha256": "60565ce0f4302278d2a0cda9b886998640cabb439bc3fd4157f2282f50c1ee2b"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-temperature-0-to-7cm/kind=observed/availability/evidence/terminal=88f0d9529242303f82f35531c09d581728c1e4b601e4816eb20aaaa9769e0b5d.json",
+              "sha256": "88f0d9529242303f82f35531c09d581728c1e4b601e4816eb20aaaa9769e0b5d"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-temperature-0-to-7cm/kind=observed/zoom=13/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "4faa0b42db19a9f7ca1ce96bf266c699ae7a8d120c4598a926ea93bd2adf779a"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-temperature-0-to-7cm/kind=observed/zoom=13/year=2026/month=09/day=05/_complete.json",
+              "sha256": "b814ea0dc0aabd9e05a86e96124e8330216120a06ba7ccbf6b20554d6f4c3d1b"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:53:06.402091+00:00"
+          }
+        ]
+      }
+    },
+    "soil-temperature-7-to-28cm": {
+      "days": {
+        "2026-09-05": [
+          {
+            "rung": 0,
+            "prefix": "layer=soil-temperature-7-to-28cm/kind=observed/zoom=00/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-temperature-7-to-28cm/kind=observed/zoom=00/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:53:11+00:00",
+                "bytes": 422,
+                "sha256": "6b8a7f10d1f1e7ca4fc79262a8f461b7c09a435d045f7204ce31e4a887e9377f",
+                "document": {
+                  "completed_at": "2026-09-14T00:53:11.117195+00:00",
+                  "part_count": 1,
+                  "parts": [
+                    {
+                      "byte_count": 7694,
+                      "relative_path": "layer=soil-temperature-7-to-28cm/kind=observed/zoom=00/year=2026/month=09/day=05/part-0.parquet",
+                      "row_count": 6,
+                      "sha256": "8fe90b01070e9df524006ef3259a9be925abc5737fdc803d812257605310699c"
+                    }
+                  ],
+                  "row_count": 6,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 2
+                }
+              },
+              {
+                "key": "layer=soil-temperature-7-to-28cm/kind=observed/zoom=00/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:53:11+00:00",
+                "bytes": 7694,
+                "sha256": "8fe90b01070e9df524006ef3259a9be925abc5737fdc803d812257605310699c",
+                "parquet_rows": 6
+              }
+            ]
+          },
+          {
+            "rung": 5,
+            "prefix": "layer=soil-temperature-7-to-28cm/kind=observed/zoom=05/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-temperature-7-to-28cm/kind=observed/zoom=05/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:53:10+00:00",
+                "bytes": 429,
+                "sha256": "970e89eb4b11fb02ca4223d2689f21b94438c0ffe8a87850906c13a14c79d9bf",
+                "document": {
+                  "completed_at": "2026-09-14T00:53:10.985880+00:00",
+                  "part_count": 1,
+                  "parts": [
+                    {
+                      "byte_count": 61315,
+                      "relative_path": "layer=soil-temperature-7-to-28cm/kind=observed/zoom=05/year=2026/month=09/day=05/part-0.parquet",
+                      "row_count": 1470,
+                      "sha256": "8bf134f58632e92a5498cadaf5d9a94fad65d187d62adc18aa8ce579d3da5cef"
+                    }
+                  ],
+                  "row_count": 1470,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 2
+                }
+              },
+              {
+                "key": "layer=soil-temperature-7-to-28cm/kind=observed/zoom=05/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:53:10+00:00",
+                "bytes": 61315,
+                "sha256": "8bf134f58632e92a5498cadaf5d9a94fad65d187d62adc18aa8ce579d3da5cef",
+                "parquet_rows": 1470
+              }
+            ]
+          },
+          {
+            "rung": 9,
+            "prefix": "layer=soil-temperature-7-to-28cm/kind=observed/zoom=09/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-temperature-7-to-28cm/kind=observed/zoom=09/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:53:10+00:00",
+                "bytes": 429,
+                "sha256": "1cf3e127ef8bb656bb3132a11a440a10705b848d33b5883350468e5efb26a6e0",
+                "document": {
+                  "completed_at": "2026-09-14T00:53:10.418278+00:00",
+                  "part_count": 1,
+                  "parts": [
+                    {
+                      "byte_count": 61304,
+                      "relative_path": "layer=soil-temperature-7-to-28cm/kind=observed/zoom=09/year=2026/month=09/day=05/part-0.parquet",
+                      "row_count": 1470,
+                      "sha256": "17549e51bf1c093d695aa1edf1a5129e1695d71d08c586df9b73dd30e4a5af8f"
+                    }
+                  ],
+                  "row_count": 1470,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 2
+                }
+              },
+              {
+                "key": "layer=soil-temperature-7-to-28cm/kind=observed/zoom=09/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:53:10+00:00",
+                "bytes": 61304,
+                "sha256": "17549e51bf1c093d695aa1edf1a5129e1695d71d08c586df9b73dd30e4a5af8f",
+                "parquet_rows": 1470
+              }
+            ]
+          },
+          {
+            "rung": 13,
+            "prefix": "layer=soil-temperature-7-to-28cm/kind=observed/zoom=13/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-temperature-7-to-28cm/kind=observed/zoom=13/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:53:11+00:00",
+                "bytes": 182,
+                "sha256": "dbb258e0b0648509b80a08ddd480573be090a383f1cdea207ba1cd9224552a65",
+                "document": {
+                  "completed_at": "2026-09-14T00:53:11.130287+00:00",
+                  "part_count": 1,
+                  "row_count": 1470,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 1
+                }
+              },
+              {
+                "key": "layer=soil-temperature-7-to-28cm/kind=observed/zoom=13/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:53:09+00:00",
+                "bytes": 150866,
+                "sha256": "2a92287068d98d5cb366e5794abb9e4a0525ce914fd3435755fc40b5a7ae3eb5",
+                "parquet_rows": 1470
+              }
+            ]
+          }
+        ]
+      },
+      "availability": {
+        "verified_generation": true,
+        "pointer": {
+          "bootstrap_receipt_key": "layer=soil-temperature-7-to-28cm/kind=observed/availability/bootstrap/receipt=b7bf5929a3a204b01ea103d26e7c5e2bb1f2ced7d66904cd5ebb3a909c4da7a2.json",
+          "bootstrap_receipt_sha256": "b7bf5929a3a204b01ea103d26e7c5e2bb1f2ced7d66904cd5ebb3a909c4da7a2",
+          "created_at": "2026-09-14T00:53:11.954235Z",
+          "earliest_terminal_day": "2022-04-30",
+          "generation_bytes": 632331,
+          "generation_key": "layer=soil-temperature-7-to-28cm/kind=observed/availability/generation=2846d90631630af25624e772b6015a52fe82b888f4bf9a80201abe4cd57301bd/availability.parquet",
+          "generation_receipt_sha256": "1c5b73e129e2f95c22e9ab65045ab930f327b42a24d245318e853c7f157464c1",
+          "generation_sha256": "2846d90631630af25624e772b6015a52fe82b888f4bf9a80201abe4cd57301bd",
+          "lane": "soil-temperature-7-to-28cm",
+          "lane_root": "layer=soil-temperature-7-to-28cm/kind=observed",
+          "latest_terminal_day": "2026-09-05",
+          "nature": "daily_series",
+          "prior_generation_key": "layer=soil-temperature-7-to-28cm/kind=observed/availability/generation=f9952cc0f0dda850291845b8921a08a5976d79572fc6e31f4413f384f3f455a3/availability.parquet",
+          "prior_generation_sha256": "f9952cc0f0dda850291845b8921a08a5976d79572fc6e31f4413f384f3f455a3",
+          "product": "soil-temperature-7-to-28cm",
+          "required_rungs": [
+            0,
+            5,
+            9,
+            13
+          ],
+          "rows": 6360,
+          "schema_version": "1",
+          "source_ceiling": "2026-09-05",
+          "verified_source_inventory_root": "ebb84cb80773835498fb14c3a528e86c6c86f6db6171b4c625f2a1b68a611b6e"
+        },
+        "sample_rows": [
+          {
+            "lane": "soil-temperature-7-to-28cm",
+            "product": "soil-temperature-7-to-28cm",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 0,
+            "terminal_state": "published",
+            "row_count": 6,
+            "source_receipt": {
+              "key": "layer=soil-temperature-7-to-28cm/kind=observed/availability/evidence/source=ec258d84870976075305ed587798a03cd410b5b870e3a320b4649eb9db2ca7d8.json",
+              "sha256": "ec258d84870976075305ed587798a03cd410b5b870e3a320b4649eb9db2ca7d8"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-temperature-7-to-28cm/kind=observed/availability/evidence/terminal=5a88bc90fd2d995e04a3086913575701e6dec0a28a092d6264aff342fa78532f.json",
+              "sha256": "5a88bc90fd2d995e04a3086913575701e6dec0a28a092d6264aff342fa78532f"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-temperature-7-to-28cm/kind=observed/zoom=00/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "8fe90b01070e9df524006ef3259a9be925abc5737fdc803d812257605310699c"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-temperature-7-to-28cm/kind=observed/zoom=00/year=2026/month=09/day=05/_complete.json",
+              "sha256": "6b8a7f10d1f1e7ca4fc79262a8f461b7c09a435d045f7204ce31e4a887e9377f"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:53:11.143100+00:00"
+          },
+          {
+            "lane": "soil-temperature-7-to-28cm",
+            "product": "soil-temperature-7-to-28cm",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 5,
+            "terminal_state": "published",
+            "row_count": 1470,
+            "source_receipt": {
+              "key": "layer=soil-temperature-7-to-28cm/kind=observed/availability/evidence/source=ec258d84870976075305ed587798a03cd410b5b870e3a320b4649eb9db2ca7d8.json",
+              "sha256": "ec258d84870976075305ed587798a03cd410b5b870e3a320b4649eb9db2ca7d8"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-temperature-7-to-28cm/kind=observed/availability/evidence/terminal=37a585439fb0a788d31424efa1341f847db524a3260cdc4ef3a7c5779b0ec1ef.json",
+              "sha256": "37a585439fb0a788d31424efa1341f847db524a3260cdc4ef3a7c5779b0ec1ef"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-temperature-7-to-28cm/kind=observed/zoom=05/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "8bf134f58632e92a5498cadaf5d9a94fad65d187d62adc18aa8ce579d3da5cef"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-temperature-7-to-28cm/kind=observed/zoom=05/year=2026/month=09/day=05/_complete.json",
+              "sha256": "970e89eb4b11fb02ca4223d2689f21b94438c0ffe8a87850906c13a14c79d9bf"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:53:11.143100+00:00"
+          },
+          {
+            "lane": "soil-temperature-7-to-28cm",
+            "product": "soil-temperature-7-to-28cm",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 9,
+            "terminal_state": "published",
+            "row_count": 1470,
+            "source_receipt": {
+              "key": "layer=soil-temperature-7-to-28cm/kind=observed/availability/evidence/source=ec258d84870976075305ed587798a03cd410b5b870e3a320b4649eb9db2ca7d8.json",
+              "sha256": "ec258d84870976075305ed587798a03cd410b5b870e3a320b4649eb9db2ca7d8"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-temperature-7-to-28cm/kind=observed/availability/evidence/terminal=03c007e8701c399c48aab01cf5714a29ef5462037aeed71f6e9e905af05a9733.json",
+              "sha256": "03c007e8701c399c48aab01cf5714a29ef5462037aeed71f6e9e905af05a9733"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-temperature-7-to-28cm/kind=observed/zoom=09/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "17549e51bf1c093d695aa1edf1a5129e1695d71d08c586df9b73dd30e4a5af8f"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-temperature-7-to-28cm/kind=observed/zoom=09/year=2026/month=09/day=05/_complete.json",
+              "sha256": "1cf3e127ef8bb656bb3132a11a440a10705b848d33b5883350468e5efb26a6e0"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:53:11.143100+00:00"
+          },
+          {
+            "lane": "soil-temperature-7-to-28cm",
+            "product": "soil-temperature-7-to-28cm",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 13,
+            "terminal_state": "published",
+            "row_count": 1470,
+            "source_receipt": {
+              "key": "layer=soil-temperature-7-to-28cm/kind=observed/availability/evidence/source=ec258d84870976075305ed587798a03cd410b5b870e3a320b4649eb9db2ca7d8.json",
+              "sha256": "ec258d84870976075305ed587798a03cd410b5b870e3a320b4649eb9db2ca7d8"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-temperature-7-to-28cm/kind=observed/availability/evidence/terminal=2ff686d343e1446038c15f65391db538c9acb1cd13e6e329d9f97caf91906cc7.json",
+              "sha256": "2ff686d343e1446038c15f65391db538c9acb1cd13e6e329d9f97caf91906cc7"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-temperature-7-to-28cm/kind=observed/zoom=13/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "2a92287068d98d5cb366e5794abb9e4a0525ce914fd3435755fc40b5a7ae3eb5"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-temperature-7-to-28cm/kind=observed/zoom=13/year=2026/month=09/day=05/_complete.json",
+              "sha256": "dbb258e0b0648509b80a08ddd480573be090a383f1cdea207ba1cd9224552a65"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:53:11.143100+00:00"
+          }
+        ]
+      }
+    },
+    "soil-temperature-28-to-100cm": {
+      "days": {
+        "2026-09-05": [
+          {
+            "rung": 0,
+            "prefix": "layer=soil-temperature-28-to-100cm/kind=observed/zoom=00/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-temperature-28-to-100cm/kind=observed/zoom=00/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:53:15+00:00",
+                "bytes": 424,
+                "sha256": "d5c1e3bb10c75d8b48a17fd2918e00230b4127ee8472f375f78c81a78e711db3",
+                "document": {
+                  "completed_at": "2026-09-14T00:53:15.793360+00:00",
+                  "part_count": 1,
+                  "parts": [
+                    {
+                      "byte_count": 7700,
+                      "relative_path": "layer=soil-temperature-28-to-100cm/kind=observed/zoom=00/year=2026/month=09/day=05/part-0.parquet",
+                      "row_count": 6,
+                      "sha256": "559289028b234690f8d5c8584e86c522a5f4c7cb5a4a98f69a9b8833bf3a43d0"
+                    }
+                  ],
+                  "row_count": 6,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 2
+                }
+              },
+              {
+                "key": "layer=soil-temperature-28-to-100cm/kind=observed/zoom=00/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:53:15+00:00",
+                "bytes": 7700,
+                "sha256": "559289028b234690f8d5c8584e86c522a5f4c7cb5a4a98f69a9b8833bf3a43d0",
+                "parquet_rows": 6
+              }
+            ]
+          },
+          {
+            "rung": 5,
+            "prefix": "layer=soil-temperature-28-to-100cm/kind=observed/zoom=05/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-temperature-28-to-100cm/kind=observed/zoom=05/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:53:15+00:00",
+                "bytes": 431,
+                "sha256": "735731fd9a11ca3002bb3d154814a952897ec6e2dcf66d49fc628897676c5919",
+                "document": {
+                  "completed_at": "2026-09-14T00:53:15.680922+00:00",
+                  "part_count": 1,
+                  "parts": [
+                    {
+                      "byte_count": 61378,
+                      "relative_path": "layer=soil-temperature-28-to-100cm/kind=observed/zoom=05/year=2026/month=09/day=05/part-0.parquet",
+                      "row_count": 1470,
+                      "sha256": "e1fc6a5113c571049beb15f0864aa41b2c55aae63fed147e4f89c00f52d2cc94"
+                    }
+                  ],
+                  "row_count": 1470,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 2
+                }
+              },
+              {
+                "key": "layer=soil-temperature-28-to-100cm/kind=observed/zoom=05/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:53:15+00:00",
+                "bytes": 61378,
+                "sha256": "e1fc6a5113c571049beb15f0864aa41b2c55aae63fed147e4f89c00f52d2cc94",
+                "parquet_rows": 1470
+              }
+            ]
+          },
+          {
+            "rung": 9,
+            "prefix": "layer=soil-temperature-28-to-100cm/kind=observed/zoom=09/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-temperature-28-to-100cm/kind=observed/zoom=09/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:53:15+00:00",
+                "bytes": 431,
+                "sha256": "12f739fda823cad7512caa4b04cd2848d9c9fc9dcfedb719312eb45b10dc53f6",
+                "document": {
+                  "completed_at": "2026-09-14T00:53:15.091865+00:00",
+                  "part_count": 1,
+                  "parts": [
+                    {
+                      "byte_count": 61367,
+                      "relative_path": "layer=soil-temperature-28-to-100cm/kind=observed/zoom=09/year=2026/month=09/day=05/part-0.parquet",
+                      "row_count": 1470,
+                      "sha256": "24ba83901a379822412ba34dbab5e5e026c8c3e935b230083316a800c77b2e83"
+                    }
+                  ],
+                  "row_count": 1470,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 2
+                }
+              },
+              {
+                "key": "layer=soil-temperature-28-to-100cm/kind=observed/zoom=09/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:53:15+00:00",
+                "bytes": 61367,
+                "sha256": "24ba83901a379822412ba34dbab5e5e026c8c3e935b230083316a800c77b2e83",
+                "parquet_rows": 1470
+              }
+            ]
+          },
+          {
+            "rung": 13,
+            "prefix": "layer=soil-temperature-28-to-100cm/kind=observed/zoom=13/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-temperature-28-to-100cm/kind=observed/zoom=13/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:53:15+00:00",
+                "bytes": 182,
+                "sha256": "7175b01d29ebecb2191ea0b7985925e50874558375e28f503db93aa944305402",
+                "document": {
+                  "completed_at": "2026-09-14T00:53:15.806361+00:00",
+                  "part_count": 1,
+                  "row_count": 1470,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 1
+                }
+              },
+              {
+                "key": "layer=soil-temperature-28-to-100cm/kind=observed/zoom=13/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:53:14+00:00",
+                "bytes": 150874,
+                "sha256": "f4c836511c111a531387c5c0a1b8ea521505b8fed8e25d7950cd82a751413cce",
+                "parquet_rows": 1470
+              }
+            ]
+          }
+        ]
+      },
+      "availability": {
+        "verified_generation": true,
+        "pointer": {
+          "bootstrap_receipt_key": "layer=soil-temperature-28-to-100cm/kind=observed/availability/bootstrap/receipt=a45c7642302e69d8de17eac0cbde82aa2e37c77ac4bf2d6e7c54f334c077e2be.json",
+          "bootstrap_receipt_sha256": "a45c7642302e69d8de17eac0cbde82aa2e37c77ac4bf2d6e7c54f334c077e2be",
+          "created_at": "2026-09-14T00:53:17.270673Z",
+          "earliest_terminal_day": "2022-04-30",
+          "generation_bytes": 637109,
+          "generation_key": "layer=soil-temperature-28-to-100cm/kind=observed/availability/generation=d123a93b6b5a4f0eb35a21b7520aaa010548fce5e25d2ae994fd3fdd0de1544f/availability.parquet",
+          "generation_receipt_sha256": "f91f91737e88f1b72d6e38435c6f6a25120f7da3ba5c05b20e42d1e1ecc53a70",
+          "generation_sha256": "d123a93b6b5a4f0eb35a21b7520aaa010548fce5e25d2ae994fd3fdd0de1544f",
+          "lane": "soil-temperature-28-to-100cm",
+          "lane_root": "layer=soil-temperature-28-to-100cm/kind=observed",
+          "latest_terminal_day": "2026-09-05",
+          "nature": "daily_series",
+          "prior_generation_key": "layer=soil-temperature-28-to-100cm/kind=observed/availability/generation=f37f6a0af17d7ef10be1529a8c977d068517361a6b0943c4b42d3c844c2400d5/availability.parquet",
+          "prior_generation_sha256": "f37f6a0af17d7ef10be1529a8c977d068517361a6b0943c4b42d3c844c2400d5",
+          "product": "soil-temperature-28-to-100cm",
+          "required_rungs": [
+            0,
+            5,
+            9,
+            13
+          ],
+          "rows": 6360,
+          "schema_version": "1",
+          "source_ceiling": "2026-09-05",
+          "verified_source_inventory_root": "7e8b7337a7666a50a3067a1a50093330c53a301fa174a4dd694b556dce8eef6a"
+        },
+        "sample_rows": [
+          {
+            "lane": "soil-temperature-28-to-100cm",
+            "product": "soil-temperature-28-to-100cm",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 0,
+            "terminal_state": "published",
+            "row_count": 6,
+            "source_receipt": {
+              "key": "layer=soil-temperature-28-to-100cm/kind=observed/availability/evidence/source=83558c3cb2372456c894a942d48bd828ad3a28c2a012ae585e59a7ad6e4c59a8.json",
+              "sha256": "83558c3cb2372456c894a942d48bd828ad3a28c2a012ae585e59a7ad6e4c59a8"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-temperature-28-to-100cm/kind=observed/availability/evidence/terminal=0694c0184bbc6433d8a90454b88333fa3d0a767bef9e9a23f0a22509cb84a736.json",
+              "sha256": "0694c0184bbc6433d8a90454b88333fa3d0a767bef9e9a23f0a22509cb84a736"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-temperature-28-to-100cm/kind=observed/zoom=00/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "559289028b234690f8d5c8584e86c522a5f4c7cb5a4a98f69a9b8833bf3a43d0"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-temperature-28-to-100cm/kind=observed/zoom=00/year=2026/month=09/day=05/_complete.json",
+              "sha256": "d5c1e3bb10c75d8b48a17fd2918e00230b4127ee8472f375f78c81a78e711db3"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:53:15.821563+00:00"
+          },
+          {
+            "lane": "soil-temperature-28-to-100cm",
+            "product": "soil-temperature-28-to-100cm",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 5,
+            "terminal_state": "published",
+            "row_count": 1470,
+            "source_receipt": {
+              "key": "layer=soil-temperature-28-to-100cm/kind=observed/availability/evidence/source=83558c3cb2372456c894a942d48bd828ad3a28c2a012ae585e59a7ad6e4c59a8.json",
+              "sha256": "83558c3cb2372456c894a942d48bd828ad3a28c2a012ae585e59a7ad6e4c59a8"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-temperature-28-to-100cm/kind=observed/availability/evidence/terminal=a86a97443ed5f4cc805aeeedddfddea037834b793dcaef44ab4fcc8eae7391e4.json",
+              "sha256": "a86a97443ed5f4cc805aeeedddfddea037834b793dcaef44ab4fcc8eae7391e4"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-temperature-28-to-100cm/kind=observed/zoom=05/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "e1fc6a5113c571049beb15f0864aa41b2c55aae63fed147e4f89c00f52d2cc94"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-temperature-28-to-100cm/kind=observed/zoom=05/year=2026/month=09/day=05/_complete.json",
+              "sha256": "735731fd9a11ca3002bb3d154814a952897ec6e2dcf66d49fc628897676c5919"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:53:15.821563+00:00"
+          },
+          {
+            "lane": "soil-temperature-28-to-100cm",
+            "product": "soil-temperature-28-to-100cm",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 9,
+            "terminal_state": "published",
+            "row_count": 1470,
+            "source_receipt": {
+              "key": "layer=soil-temperature-28-to-100cm/kind=observed/availability/evidence/source=83558c3cb2372456c894a942d48bd828ad3a28c2a012ae585e59a7ad6e4c59a8.json",
+              "sha256": "83558c3cb2372456c894a942d48bd828ad3a28c2a012ae585e59a7ad6e4c59a8"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-temperature-28-to-100cm/kind=observed/availability/evidence/terminal=7158cb1bba3abfcfd2100f8cfa9d96a275f5993fc2621d268f35eed52d0a7505.json",
+              "sha256": "7158cb1bba3abfcfd2100f8cfa9d96a275f5993fc2621d268f35eed52d0a7505"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-temperature-28-to-100cm/kind=observed/zoom=09/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "24ba83901a379822412ba34dbab5e5e026c8c3e935b230083316a800c77b2e83"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-temperature-28-to-100cm/kind=observed/zoom=09/year=2026/month=09/day=05/_complete.json",
+              "sha256": "12f739fda823cad7512caa4b04cd2848d9c9fc9dcfedb719312eb45b10dc53f6"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:53:15.821563+00:00"
+          },
+          {
+            "lane": "soil-temperature-28-to-100cm",
+            "product": "soil-temperature-28-to-100cm",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 13,
+            "terminal_state": "published",
+            "row_count": 1470,
+            "source_receipt": {
+              "key": "layer=soil-temperature-28-to-100cm/kind=observed/availability/evidence/source=83558c3cb2372456c894a942d48bd828ad3a28c2a012ae585e59a7ad6e4c59a8.json",
+              "sha256": "83558c3cb2372456c894a942d48bd828ad3a28c2a012ae585e59a7ad6e4c59a8"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-temperature-28-to-100cm/kind=observed/availability/evidence/terminal=c1b4fce1b3a848385665672fbc5f1a06ef4fefe552d3beab281a34c97cf9e7c1.json",
+              "sha256": "c1b4fce1b3a848385665672fbc5f1a06ef4fefe552d3beab281a34c97cf9e7c1"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-temperature-28-to-100cm/kind=observed/zoom=13/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "f4c836511c111a531387c5c0a1b8ea521505b8fed8e25d7950cd82a751413cce"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-temperature-28-to-100cm/kind=observed/zoom=13/year=2026/month=09/day=05/_complete.json",
+              "sha256": "7175b01d29ebecb2191ea0b7985925e50874558375e28f503db93aa944305402"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:53:15.821563+00:00"
+          }
+        ]
+      }
+    },
+    "soil-temperature-100-to-255cm": {
+      "days": {
+        "2026-09-05": [
+          {
+            "rung": 0,
+            "prefix": "layer=soil-temperature-100-to-255cm/kind=observed/zoom=00/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-temperature-100-to-255cm/kind=observed/zoom=00/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:53:21+00:00",
+                "bytes": 425,
+                "sha256": "05194e9428374591b5cfbed0eda2f0850fe7b18a0e4a20c6444c27d8b47306c4",
+                "document": {
+                  "completed_at": "2026-09-14T00:53:21.255222+00:00",
+                  "part_count": 1,
+                  "parts": [
+                    {
+                      "byte_count": 7706,
+                      "relative_path": "layer=soil-temperature-100-to-255cm/kind=observed/zoom=00/year=2026/month=09/day=05/part-0.parquet",
+                      "row_count": 6,
+                      "sha256": "7edb47f6545d8c4723e4e27e41276352a07d48165719000cf03ea9241a29fc91"
+                    }
+                  ],
+                  "row_count": 6,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 2
+                }
+              },
+              {
+                "key": "layer=soil-temperature-100-to-255cm/kind=observed/zoom=00/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:53:21+00:00",
+                "bytes": 7706,
+                "sha256": "7edb47f6545d8c4723e4e27e41276352a07d48165719000cf03ea9241a29fc91",
+                "parquet_rows": 6
+              }
+            ]
+          },
+          {
+            "rung": 5,
+            "prefix": "layer=soil-temperature-100-to-255cm/kind=observed/zoom=05/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-temperature-100-to-255cm/kind=observed/zoom=05/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:53:21+00:00",
+                "bytes": 432,
+                "sha256": "e76dcaeac5dd26840d5937cc4bac52263dbb485ad973536969e95902ba185f60",
+                "document": {
+                  "completed_at": "2026-09-14T00:53:21.154340+00:00",
+                  "part_count": 1,
+                  "parts": [
+                    {
+                      "byte_count": 61293,
+                      "relative_path": "layer=soil-temperature-100-to-255cm/kind=observed/zoom=05/year=2026/month=09/day=05/part-0.parquet",
+                      "row_count": 1470,
+                      "sha256": "1c0f760ed8a3c90ae806c4b759491355c14a5be7b3d9f3065ffe969d4d462e88"
+                    }
+                  ],
+                  "row_count": 1470,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 2
+                }
+              },
+              {
+                "key": "layer=soil-temperature-100-to-255cm/kind=observed/zoom=05/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:53:21+00:00",
+                "bytes": 61293,
+                "sha256": "1c0f760ed8a3c90ae806c4b759491355c14a5be7b3d9f3065ffe969d4d462e88",
+                "parquet_rows": 1470
+              }
+            ]
+          },
+          {
+            "rung": 9,
+            "prefix": "layer=soil-temperature-100-to-255cm/kind=observed/zoom=09/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-temperature-100-to-255cm/kind=observed/zoom=09/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:53:20+00:00",
+                "bytes": 432,
+                "sha256": "8a5a9c93ebd3620b5afebaa9d7ea821eac985a3a45fc9e7291f22e0cd9b1a0ec",
+                "document": {
+                  "completed_at": "2026-09-14T00:53:20.577156+00:00",
+                  "part_count": 1,
+                  "parts": [
+                    {
+                      "byte_count": 61282,
+                      "relative_path": "layer=soil-temperature-100-to-255cm/kind=observed/zoom=09/year=2026/month=09/day=05/part-0.parquet",
+                      "row_count": 1470,
+                      "sha256": "7d17d189425eb2328fc422a7df0c7bad31fa486d524cbce8a820e18cf8d622f4"
+                    }
+                  ],
+                  "row_count": 1470,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 2
+                }
+              },
+              {
+                "key": "layer=soil-temperature-100-to-255cm/kind=observed/zoom=09/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:53:20+00:00",
+                "bytes": 61282,
+                "sha256": "7d17d189425eb2328fc422a7df0c7bad31fa486d524cbce8a820e18cf8d622f4",
+                "parquet_rows": 1470
+              }
+            ]
+          },
+          {
+            "rung": 13,
+            "prefix": "layer=soil-temperature-100-to-255cm/kind=observed/zoom=13/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-temperature-100-to-255cm/kind=observed/zoom=13/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:53:21+00:00",
+                "bytes": 182,
+                "sha256": "06ac9f1d91f67cb0fc2ce5adab5c808012244a54771ac2b00642b5329b0db8d4",
+                "document": {
+                  "completed_at": "2026-09-14T00:53:21.268328+00:00",
+                  "part_count": 1,
+                  "row_count": 1470,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 1
+                }
+              },
+              {
+                "key": "layer=soil-temperature-100-to-255cm/kind=observed/zoom=13/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:53:19+00:00",
+                "bytes": 151302,
+                "sha256": "b6f896b24c0bc00f3acc8e7706129704c84b49b0d73953ca7aef03e827611991",
+                "parquet_rows": 1470
+              }
+            ]
+          }
+        ]
+      },
+      "availability": {
+        "verified_generation": true,
+        "pointer": {
+          "bootstrap_receipt_key": "layer=soil-temperature-100-to-255cm/kind=observed/availability/bootstrap/receipt=0d80bb3e993de8216de17a3e5bce2f9acfd33ef2b491c5d52cafb95e9ed7ef1d.json",
+          "bootstrap_receipt_sha256": "0d80bb3e993de8216de17a3e5bce2f9acfd33ef2b491c5d52cafb95e9ed7ef1d",
+          "created_at": "2026-09-14T00:53:22.128173Z",
+          "earliest_terminal_day": "2022-04-30",
+          "generation_bytes": 635267,
+          "generation_key": "layer=soil-temperature-100-to-255cm/kind=observed/availability/generation=92675edee51fb5b15e8361d7c53a76990113f24d25eb504906ccd3c664f8886c/availability.parquet",
+          "generation_receipt_sha256": "5298a092a2587a093d75c6850d4f0ff0ef0436bd9cb67b5c87b51ccf4562cf90",
+          "generation_sha256": "92675edee51fb5b15e8361d7c53a76990113f24d25eb504906ccd3c664f8886c",
+          "lane": "soil-temperature-100-to-255cm",
+          "lane_root": "layer=soil-temperature-100-to-255cm/kind=observed",
+          "latest_terminal_day": "2026-09-05",
+          "nature": "daily_series",
+          "prior_generation_key": "layer=soil-temperature-100-to-255cm/kind=observed/availability/generation=18e30aac2a0c4203c35a026520e52befe179f8b0f905d5bbf59d151fc18445d0/availability.parquet",
+          "prior_generation_sha256": "18e30aac2a0c4203c35a026520e52befe179f8b0f905d5bbf59d151fc18445d0",
+          "product": "soil-temperature-100-to-255cm",
+          "required_rungs": [
+            0,
+            5,
+            9,
+            13
+          ],
+          "rows": 6360,
+          "schema_version": "1",
+          "source_ceiling": "2026-09-05",
+          "verified_source_inventory_root": "b82ba5f9381b9280d5482c76582fdaddcfb1aea47ee7dea473f35480c9be5f58"
+        },
+        "sample_rows": [
+          {
+            "lane": "soil-temperature-100-to-255cm",
+            "product": "soil-temperature-100-to-255cm",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 0,
+            "terminal_state": "published",
+            "row_count": 6,
+            "source_receipt": {
+              "key": "layer=soil-temperature-100-to-255cm/kind=observed/availability/evidence/source=9834f297cf25f232b7d353e6792d4680ed40fc9197ec6ff0560cbd97495c8f48.json",
+              "sha256": "9834f297cf25f232b7d353e6792d4680ed40fc9197ec6ff0560cbd97495c8f48"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-temperature-100-to-255cm/kind=observed/availability/evidence/terminal=bd53b6f15079c663fd6216ffa49d27b28bf9e14f48334b4721fbde5d2d580435.json",
+              "sha256": "bd53b6f15079c663fd6216ffa49d27b28bf9e14f48334b4721fbde5d2d580435"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-temperature-100-to-255cm/kind=observed/zoom=00/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "7edb47f6545d8c4723e4e27e41276352a07d48165719000cf03ea9241a29fc91"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-temperature-100-to-255cm/kind=observed/zoom=00/year=2026/month=09/day=05/_complete.json",
+              "sha256": "05194e9428374591b5cfbed0eda2f0850fe7b18a0e4a20c6444c27d8b47306c4"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:53:21.281462+00:00"
+          },
+          {
+            "lane": "soil-temperature-100-to-255cm",
+            "product": "soil-temperature-100-to-255cm",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 5,
+            "terminal_state": "published",
+            "row_count": 1470,
+            "source_receipt": {
+              "key": "layer=soil-temperature-100-to-255cm/kind=observed/availability/evidence/source=9834f297cf25f232b7d353e6792d4680ed40fc9197ec6ff0560cbd97495c8f48.json",
+              "sha256": "9834f297cf25f232b7d353e6792d4680ed40fc9197ec6ff0560cbd97495c8f48"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-temperature-100-to-255cm/kind=observed/availability/evidence/terminal=ef1d11f440e648335c7abb2b861827f5389d862f2319a5e4c89ca9488beb8456.json",
+              "sha256": "ef1d11f440e648335c7abb2b861827f5389d862f2319a5e4c89ca9488beb8456"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-temperature-100-to-255cm/kind=observed/zoom=05/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "1c0f760ed8a3c90ae806c4b759491355c14a5be7b3d9f3065ffe969d4d462e88"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-temperature-100-to-255cm/kind=observed/zoom=05/year=2026/month=09/day=05/_complete.json",
+              "sha256": "e76dcaeac5dd26840d5937cc4bac52263dbb485ad973536969e95902ba185f60"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:53:21.281462+00:00"
+          },
+          {
+            "lane": "soil-temperature-100-to-255cm",
+            "product": "soil-temperature-100-to-255cm",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 9,
+            "terminal_state": "published",
+            "row_count": 1470,
+            "source_receipt": {
+              "key": "layer=soil-temperature-100-to-255cm/kind=observed/availability/evidence/source=9834f297cf25f232b7d353e6792d4680ed40fc9197ec6ff0560cbd97495c8f48.json",
+              "sha256": "9834f297cf25f232b7d353e6792d4680ed40fc9197ec6ff0560cbd97495c8f48"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-temperature-100-to-255cm/kind=observed/availability/evidence/terminal=39a2e68379e31f597a123923856a4553a135531b07ce21cba869ef1a7e945bb7.json",
+              "sha256": "39a2e68379e31f597a123923856a4553a135531b07ce21cba869ef1a7e945bb7"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-temperature-100-to-255cm/kind=observed/zoom=09/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "7d17d189425eb2328fc422a7df0c7bad31fa486d524cbce8a820e18cf8d622f4"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-temperature-100-to-255cm/kind=observed/zoom=09/year=2026/month=09/day=05/_complete.json",
+              "sha256": "8a5a9c93ebd3620b5afebaa9d7ea821eac985a3a45fc9e7291f22e0cd9b1a0ec"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:53:21.281462+00:00"
+          },
+          {
+            "lane": "soil-temperature-100-to-255cm",
+            "product": "soil-temperature-100-to-255cm",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 13,
+            "terminal_state": "published",
+            "row_count": 1470,
+            "source_receipt": {
+              "key": "layer=soil-temperature-100-to-255cm/kind=observed/availability/evidence/source=9834f297cf25f232b7d353e6792d4680ed40fc9197ec6ff0560cbd97495c8f48.json",
+              "sha256": "9834f297cf25f232b7d353e6792d4680ed40fc9197ec6ff0560cbd97495c8f48"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-temperature-100-to-255cm/kind=observed/availability/evidence/terminal=8c30af528a8794dd9a526160dfdea976c55f860a27723d6edce738dca06e92b9.json",
+              "sha256": "8c30af528a8794dd9a526160dfdea976c55f860a27723d6edce738dca06e92b9"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-temperature-100-to-255cm/kind=observed/zoom=13/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "b6f896b24c0bc00f3acc8e7706129704c84b49b0d73953ca7aef03e827611991"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-temperature-100-to-255cm/kind=observed/zoom=13/year=2026/month=09/day=05/_complete.json",
+              "sha256": "06ac9f1d91f67cb0fc2ce5adab5c808012244a54771ac2b00642b5329b0db8d4"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:53:21.281462+00:00"
+          }
+        ]
+      }
+    },
+    "soil-field-vpd": {
+      "days": {
+        "2026-09-05": [
+          {
+            "rung": 0,
+            "prefix": "layer=soil-field-vpd/kind=observed/zoom=00/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-field-vpd/kind=observed/zoom=00/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:53:25+00:00",
+                "bytes": 410,
+                "sha256": "e10f53b93443dda2f885818b1f9569b2ff3784c50718708d7b551db8d8afe31d",
+                "document": {
+                  "completed_at": "2026-09-14T00:53:25.280982+00:00",
+                  "part_count": 1,
+                  "parts": [
+                    {
+                      "byte_count": 3910,
+                      "relative_path": "layer=soil-field-vpd/kind=observed/zoom=00/year=2026/month=09/day=05/part-0.parquet",
+                      "row_count": 6,
+                      "sha256": "79d00d5e4fd0d292989a5e1fa0ec90f0143e86867c839bdaf4c7a3be6bc9ee85"
+                    }
+                  ],
+                  "row_count": 6,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 2
+                }
+              },
+              {
+                "key": "layer=soil-field-vpd/kind=observed/zoom=00/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:53:25+00:00",
+                "bytes": 3910,
+                "sha256": "79d00d5e4fd0d292989a5e1fa0ec90f0143e86867c839bdaf4c7a3be6bc9ee85",
+                "parquet_rows": 6
+              }
+            ]
+          },
+          {
+            "rung": 5,
+            "prefix": "layer=soil-field-vpd/kind=observed/zoom=05/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-field-vpd/kind=observed/zoom=05/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:53:25+00:00",
+                "bytes": 416,
+                "sha256": "ef40040f15c5c9827926bb946a5561944f3758ae092cbd71431c7210bf5fb7d1",
+                "document": {
+                  "completed_at": "2026-09-14T00:53:25.114596+00:00",
+                  "part_count": 1,
+                  "parts": [
+                    {
+                      "byte_count": 6613,
+                      "relative_path": "layer=soil-field-vpd/kind=observed/zoom=05/year=2026/month=09/day=05/part-0.parquet",
+                      "row_count": 1470,
+                      "sha256": "172f4a06f31f3f602b3f73e8f0ebf95fab46b82766be7d0745630c56a98f0ae7"
+                    }
+                  ],
+                  "row_count": 1470,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 2
+                }
+              },
+              {
+                "key": "layer=soil-field-vpd/kind=observed/zoom=05/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:53:25+00:00",
+                "bytes": 6613,
+                "sha256": "172f4a06f31f3f602b3f73e8f0ebf95fab46b82766be7d0745630c56a98f0ae7",
+                "parquet_rows": 1470
+              }
+            ]
+          },
+          {
+            "rung": 9,
+            "prefix": "layer=soil-field-vpd/kind=observed/zoom=09/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-field-vpd/kind=observed/zoom=09/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:53:25+00:00",
+                "bytes": 416,
+                "sha256": "8be0213c29963f35b8a1f9277dfed1e163f81693d2c7ac0ae940be31a865e13e",
+                "document": {
+                  "completed_at": "2026-09-14T00:53:25.016870+00:00",
+                  "part_count": 1,
+                  "parts": [
+                    {
+                      "byte_count": 6602,
+                      "relative_path": "layer=soil-field-vpd/kind=observed/zoom=09/year=2026/month=09/day=05/part-0.parquet",
+                      "row_count": 1470,
+                      "sha256": "72a25ae739e3aab7895b4be2b27fb2475a321c4537608d5db411eb3522fd54fc"
+                    }
+                  ],
+                  "row_count": 1470,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 2
+                }
+              },
+              {
+                "key": "layer=soil-field-vpd/kind=observed/zoom=09/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:53:24+00:00",
+                "bytes": 6602,
+                "sha256": "72a25ae739e3aab7895b4be2b27fb2475a321c4537608d5db411eb3522fd54fc",
+                "parquet_rows": 1470
+              }
+            ]
+          },
+          {
+            "rung": 13,
+            "prefix": "layer=soil-field-vpd/kind=observed/zoom=13/year=2026/month=09/day=05/",
+            "objects": [
+              {
+                "key": "layer=soil-field-vpd/kind=observed/zoom=13/year=2026/month=09/day=05/_complete.json",
+                "last_modified": "2026-09-14 00:53:25+00:00",
+                "bytes": 182,
+                "sha256": "2d70490b6f5810761d0a82910745b97d651df8549dd9c08fd681dc74e68a0cdf",
+                "document": {
+                  "completed_at": "2026-09-14T00:53:25.295944+00:00",
+                  "part_count": 1,
+                  "row_count": 1470,
+                  "run_id": "soil-era5-land-forward:5d3d53ba-8f25-445e-a44f-368399d94c8f",
+                  "schema_version": 1
+                }
+              },
+              {
+                "key": "layer=soil-field-vpd/kind=observed/zoom=13/year=2026/month=09/day=05/part-0.parquet",
+                "last_modified": "2026-09-14 00:53:24+00:00",
+                "bytes": 39048,
+                "sha256": "6cf515c670df68ed49596b1ececaee6bce56bd2cea8219a55fccb38e4066570e",
+                "parquet_rows": 1470
+              }
+            ]
+          }
+        ]
+      },
+      "availability": {
+        "verified_generation": true,
+        "pointer": {
+          "bootstrap_receipt_key": "layer=soil-field-vpd/kind=observed/availability/bootstrap/receipt=d72e8d2b182043622f5f76320abc53e54e020e67217eea8343cada9a22300cfc.json",
+          "bootstrap_receipt_sha256": "d72e8d2b182043622f5f76320abc53e54e020e67217eea8343cada9a22300cfc",
+          "created_at": "2026-09-14T00:53:26.320559Z",
+          "earliest_terminal_day": "2022-04-30",
+          "generation_bytes": 704082,
+          "generation_key": "layer=soil-field-vpd/kind=observed/availability/generation=5bf063dcea6cf0609695a02cfab5c3a315ed4983eff49a0a2243059c36567ec2/availability.parquet",
+          "generation_receipt_sha256": "c8926fc7399fde7dc24a4a480e40ca0f22311bd20aef8b11e227c49567502a09",
+          "generation_sha256": "5bf063dcea6cf0609695a02cfab5c3a315ed4983eff49a0a2243059c36567ec2",
+          "lane": "soil-field-vpd",
+          "lane_root": "layer=soil-field-vpd/kind=observed",
+          "latest_terminal_day": "2026-09-05",
+          "nature": "daily_series",
+          "prior_generation_key": "layer=soil-field-vpd/kind=observed/availability/generation=96d6e89cc24599f3b636b28660ecc0f27cf7c34ec098f964b83298cdcfd2271a/availability.parquet",
+          "prior_generation_sha256": "96d6e89cc24599f3b636b28660ecc0f27cf7c34ec098f964b83298cdcfd2271a",
+          "product": "soil-field-vpd",
+          "required_rungs": [
+            0,
+            5,
+            9,
+            13
+          ],
+          "rows": 6360,
+          "schema_version": "1",
+          "source_ceiling": "2026-09-05",
+          "verified_source_inventory_root": "8c2f9385c459f8854ae9576136dc1a1ced268cbc720a6a58247cf16fe1d6ea6d"
+        },
+        "sample_rows": [
+          {
+            "lane": "soil-field-vpd",
+            "product": "soil-field-vpd",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 0,
+            "terminal_state": "published",
+            "row_count": 6,
+            "source_receipt": {
+              "key": "layer=soil-field-vpd/kind=observed/availability/evidence/source=577c7f2e61ae68528cec4d3196cff7da3eafc78d0840adad6785acb61f1437fa.json",
+              "sha256": "577c7f2e61ae68528cec4d3196cff7da3eafc78d0840adad6785acb61f1437fa"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-field-vpd/kind=observed/availability/evidence/terminal=4dfe8deea71daaa6d770a960b4fc877b7ea64efe35b9cb24014b9f2eda6bfec2.json",
+              "sha256": "4dfe8deea71daaa6d770a960b4fc877b7ea64efe35b9cb24014b9f2eda6bfec2"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-field-vpd/kind=observed/zoom=00/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "79d00d5e4fd0d292989a5e1fa0ec90f0143e86867c839bdaf4c7a3be6bc9ee85"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-field-vpd/kind=observed/zoom=00/year=2026/month=09/day=05/_complete.json",
+              "sha256": "e10f53b93443dda2f885818b1f9569b2ff3784c50718708d7b551db8d8afe31d"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:53:25.310529+00:00"
+          },
+          {
+            "lane": "soil-field-vpd",
+            "product": "soil-field-vpd",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 5,
+            "terminal_state": "published",
+            "row_count": 1470,
+            "source_receipt": {
+              "key": "layer=soil-field-vpd/kind=observed/availability/evidence/source=577c7f2e61ae68528cec4d3196cff7da3eafc78d0840adad6785acb61f1437fa.json",
+              "sha256": "577c7f2e61ae68528cec4d3196cff7da3eafc78d0840adad6785acb61f1437fa"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-field-vpd/kind=observed/availability/evidence/terminal=65e7a58972e27482ce10056348939ae7fd8415137d8d3e63c01d2134b80c54d9.json",
+              "sha256": "65e7a58972e27482ce10056348939ae7fd8415137d8d3e63c01d2134b80c54d9"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-field-vpd/kind=observed/zoom=05/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "172f4a06f31f3f602b3f73e8f0ebf95fab46b82766be7d0745630c56a98f0ae7"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-field-vpd/kind=observed/zoom=05/year=2026/month=09/day=05/_complete.json",
+              "sha256": "ef40040f15c5c9827926bb946a5561944f3758ae092cbd71431c7210bf5fb7d1"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:53:25.310529+00:00"
+          },
+          {
+            "lane": "soil-field-vpd",
+            "product": "soil-field-vpd",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 9,
+            "terminal_state": "published",
+            "row_count": 1470,
+            "source_receipt": {
+              "key": "layer=soil-field-vpd/kind=observed/availability/evidence/source=577c7f2e61ae68528cec4d3196cff7da3eafc78d0840adad6785acb61f1437fa.json",
+              "sha256": "577c7f2e61ae68528cec4d3196cff7da3eafc78d0840adad6785acb61f1437fa"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-field-vpd/kind=observed/availability/evidence/terminal=951c0cab59983f56b22f7bedcc46f002eb6cab80c1d89782d7fb8f844792ed05.json",
+              "sha256": "951c0cab59983f56b22f7bedcc46f002eb6cab80c1d89782d7fb8f844792ed05"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-field-vpd/kind=observed/zoom=09/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "72a25ae739e3aab7895b4be2b27fb2475a321c4537608d5db411eb3522fd54fc"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-field-vpd/kind=observed/zoom=09/year=2026/month=09/day=05/_complete.json",
+              "sha256": "8be0213c29963f35b8a1f9277dfed1e163f81693d2c7ac0ae940be31a865e13e"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:53:25.310529+00:00"
+          },
+          {
+            "lane": "soil-field-vpd",
+            "product": "soil-field-vpd",
+            "nature": "daily_series",
+            "day": "2026-09-05",
+            "rung": 13,
+            "terminal_state": "published",
+            "row_count": 1470,
+            "source_receipt": {
+              "key": "layer=soil-field-vpd/kind=observed/availability/evidence/source=577c7f2e61ae68528cec4d3196cff7da3eafc78d0840adad6785acb61f1437fa.json",
+              "sha256": "577c7f2e61ae68528cec4d3196cff7da3eafc78d0840adad6785acb61f1437fa"
+            },
+            "terminal_receipt": {
+              "key": "layer=soil-field-vpd/kind=observed/availability/evidence/terminal=95e9d8347c55a796a29fce35936b100130e713b5c88ba092c5d77d13710c26a7.json",
+              "sha256": "95e9d8347c55a796a29fce35936b100130e713b5c88ba092c5d77d13710c26a7"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=soil-field-vpd/kind=observed/zoom=13/year=2026/month=09/day=05/part-0.parquet",
+                "sha256": "6cf515c670df68ed49596b1ececaee6bce56bd2cea8219a55fccb38e4066570e"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=soil-field-vpd/kind=observed/zoom=13/year=2026/month=09/day=05/_complete.json",
+              "sha256": "2d70490b6f5810761d0a82910745b97d651df8549dd9c08fd681dc74e68a0cdf"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-05",
+            "published_at": "2026-09-14 00:53:25.310529+00:00"
+          }
+        ]
+      }
+    },
+    "weather-observations": {
+      "days": {
+        "2026-09-14": [
+          {
+            "rung": 0,
+            "prefix": "layer=weather-observations/kind=observed/zoom=00/year=2026/month=09/day=14/",
+            "objects": [
+              {
+                "key": "layer=weather-observations/kind=observed/zoom=00/year=2026/month=09/day=14/_complete.json",
+                "last_modified": "2026-09-14 18:30:37+00:00",
+                "bytes": 409,
+                "sha256": "2ca301347e686ac2bf1766119b3a2d7b9d971270e38d1a0f242b95b20c6d7ef5",
+                "document": {
+                  "completed_at": "2026-09-14T18:30:37.832464+00:00",
+                  "part_count": 1,
+                  "parts": [
+                    {
+                      "byte_count": 4143,
+                      "relative_path": "layer=weather-observations/kind=observed/zoom=00/year=2026/month=09/day=14/part-0.parquet",
+                      "row_count": 6,
+                      "sha256": "11962f07f654167f4b12bfc15d8f27a41d60506f5aa0b259dc3e15c67ffd663c"
+                    }
+                  ],
+                  "row_count": 6,
+                  "run_id": "weather-observations-direct-forward-20260914T183027Z",
+                  "schema_version": 2
+                }
+              },
+              {
+                "key": "layer=weather-observations/kind=observed/zoom=00/year=2026/month=09/day=14/part-0.parquet",
+                "last_modified": "2026-09-14 18:30:37+00:00",
+                "bytes": 4143,
+                "sha256": "11962f07f654167f4b12bfc15d8f27a41d60506f5aa0b259dc3e15c67ffd663c",
+                "parquet_rows": 6
+              }
+            ]
+          },
+          {
+            "rung": 5,
+            "prefix": "layer=weather-observations/kind=observed/zoom=05/year=2026/month=09/day=14/",
+            "objects": [
+              {
+                "key": "layer=weather-observations/kind=observed/zoom=05/year=2026/month=09/day=14/_complete.json",
+                "last_modified": "2026-09-14 18:30:37+00:00",
+                "bytes": 411,
+                "sha256": "c92e3d341254fa7a29d60d5773db7574dab2e4b8bfad8607a50f9fbd27695973",
+                "document": {
+                  "completed_at": "2026-09-14T18:30:37.223679+00:00",
+                  "part_count": 1,
+                  "parts": [
+                    {
+                      "byte_count": 6493,
+                      "relative_path": "layer=weather-observations/kind=observed/zoom=05/year=2026/month=09/day=14/part-0.parquet",
+                      "row_count": 98,
+                      "sha256": "e337f9977ea7a2aef3a3d8f2e76a21e2fe6b6ee79749b1e58289ede567940cc6"
+                    }
+                  ],
+                  "row_count": 98,
+                  "run_id": "weather-observations-direct-forward-20260914T183027Z",
+                  "schema_version": 2
+                }
+              },
+              {
+                "key": "layer=weather-observations/kind=observed/zoom=05/year=2026/month=09/day=14/part-0.parquet",
+                "last_modified": "2026-09-14 18:30:37+00:00",
+                "bytes": 6493,
+                "sha256": "e337f9977ea7a2aef3a3d8f2e76a21e2fe6b6ee79749b1e58289ede567940cc6",
+                "parquet_rows": 98
+              }
+            ]
+          },
+          {
+            "rung": 9,
+            "prefix": "layer=weather-observations/kind=observed/zoom=09/year=2026/month=09/day=14/",
+            "objects": [
+              {
+                "key": "layer=weather-observations/kind=observed/zoom=09/year=2026/month=09/day=14/_complete.json",
+                "last_modified": "2026-09-14 18:30:37+00:00",
+                "bytes": 411,
+                "sha256": "6c8e1ab652bfb27c23ae7b687d11592df819d3054276641d617cdd3e260bb973",
+                "document": {
+                  "completed_at": "2026-09-14T18:30:37.021101+00:00",
+                  "part_count": 1,
+                  "parts": [
+                    {
+                      "byte_count": 6490,
+                      "relative_path": "layer=weather-observations/kind=observed/zoom=09/year=2026/month=09/day=14/part-0.parquet",
+                      "row_count": 98,
+                      "sha256": "80ef785e820a33f9c21c0383274248e10a569e0516af54dc57fe6d83c2edbf8e"
+                    }
+                  ],
+                  "row_count": 98,
+                  "run_id": "weather-observations-direct-forward-20260914T183027Z",
+                  "schema_version": 2
+                }
+              },
+              {
+                "key": "layer=weather-observations/kind=observed/zoom=09/year=2026/month=09/day=14/part-0.parquet",
+                "last_modified": "2026-09-14 18:30:37+00:00",
+                "bytes": 6490,
+                "sha256": "80ef785e820a33f9c21c0383274248e10a569e0516af54dc57fe6d83c2edbf8e",
+                "parquet_rows": 98
+              }
+            ]
+          },
+          {
+            "rung": 13,
+            "prefix": "layer=weather-observations/kind=observed/zoom=13/year=2026/month=09/day=14/",
+            "objects": [
+              {
+                "key": "layer=weather-observations/kind=observed/zoom=13/year=2026/month=09/day=14/_complete.json",
+                "last_modified": "2026-09-14 18:30:37+00:00",
+                "bytes": 175,
+                "sha256": "652b92024d814bfae62d2677b451ee5b31aa100c5934d5396b6213b49403c59c",
+                "document": {
+                  "completed_at": "2026-09-14T18:30:37.854676+00:00",
+                  "part_count": 1,
+                  "row_count": 1791,
+                  "run_id": "weather-observations-direct-forward-20260914T183027Z",
+                  "schema_version": 1
+                }
+              },
+              {
+                "key": "layer=weather-observations/kind=observed/zoom=13/year=2026/month=09/day=14/part-0.parquet",
+                "last_modified": "2026-09-14 18:30:36+00:00",
+                "bytes": 24826,
+                "sha256": "83fd763b42c6dbdb0238a74965855d0468818f11a605b953b8c20e66dfd2646e",
+                "parquet_rows": 1791
+              }
+            ]
+          }
+        ],
+        "2026-09-06": [
+          {
+            "rung": 0,
+            "prefix": "layer=weather-observations/kind=observed/zoom=00/year=2026/month=09/day=06/",
+            "objects": []
+          },
+          {
+            "rung": 5,
+            "prefix": "layer=weather-observations/kind=observed/zoom=05/year=2026/month=09/day=06/",
+            "objects": []
+          },
+          {
+            "rung": 9,
+            "prefix": "layer=weather-observations/kind=observed/zoom=09/year=2026/month=09/day=06/",
+            "objects": []
+          },
+          {
+            "rung": 13,
+            "prefix": "layer=weather-observations/kind=observed/zoom=13/year=2026/month=09/day=06/",
+            "objects": []
+          }
+        ]
+      },
+      "availability": {
+        "verified_generation": true,
+        "pointer": {
+          "bootstrap_receipt_key": "layer=weather-observations/kind=observed/availability/bootstrap/receipt=01532df9acbd2a4a4258c629a7f4fc4eeb18f617c6cf316888959c0f53745008.json",
+          "bootstrap_receipt_sha256": "01532df9acbd2a4a4258c629a7f4fc4eeb18f617c6cf316888959c0f53745008",
+          "created_at": "2026-09-14T18:30:39.843666Z",
+          "earliest_terminal_day": "2018-01-01",
+          "generation_bytes": 746869,
+          "generation_key": "layer=weather-observations/kind=observed/availability/generation=bf9a6cf806530d7c65185d184aaf1854a09ab012b0beff64cdd84d010e679c55/availability.parquet",
+          "generation_receipt_sha256": "ab7a4b6dc1610bbf0e4cd06959d79acf2ed2b5260fe5bdf385c80d96dc348cd0",
+          "generation_sha256": "bf9a6cf806530d7c65185d184aaf1854a09ab012b0beff64cdd84d010e679c55",
+          "lane": "weather-observations",
+          "lane_root": "layer=weather-observations/kind=observed",
+          "latest_terminal_day": "2026-09-14",
+          "nature": "daily_series",
+          "prior_generation_key": "layer=weather-observations/kind=observed/availability/generation=1a4d9b07a218f5ca4664f25043f0c15bb4405955ce124c6779a7fa153ed0a02f/availability.parquet",
+          "prior_generation_sha256": "1a4d9b07a218f5ca4664f25043f0c15bb4405955ce124c6779a7fa153ed0a02f",
+          "product": "weather-observations",
+          "required_rungs": [
+            0,
+            5,
+            9,
+            13
+          ],
+          "rows": 5880,
+          "schema_version": "1",
+          "source_ceiling": "2026-09-14",
+          "verified_source_inventory_root": "3fc94fac61126d811dded91d0fab0d7acbe4e5bc97da6ed3527cdd34b46dea16"
+        },
+        "sample_rows": [
+          {
+            "lane": "weather-observations",
+            "product": "weather-observations",
+            "nature": "daily_series",
+            "day": "2026-09-14",
+            "rung": 0,
+            "terminal_state": "published",
+            "row_count": 6,
+            "source_receipt": {
+              "key": "layer=weather-observations/kind=observed/availability/evidence/source=0b45c0e441f88c7c89b13e4ea3caebf837bd2b1c3854bf658fcaf892db5b6971.json",
+              "sha256": "0b45c0e441f88c7c89b13e4ea3caebf837bd2b1c3854bf658fcaf892db5b6971"
+            },
+            "terminal_receipt": {
+              "key": "layer=weather-observations/kind=observed/availability/evidence/terminal=bc5f7194a6a5a26c9701856f22dd9d333f1d405eae4d2026aba7fcf49498e8a5.json",
+              "sha256": "bc5f7194a6a5a26c9701856f22dd9d333f1d405eae4d2026aba7fcf49498e8a5"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=weather-observations/kind=observed/zoom=00/year=2026/month=09/day=14/part-0.parquet",
+                "sha256": "11962f07f654167f4b12bfc15d8f27a41d60506f5aa0b259dc3e15c67ffd663c"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=weather-observations/kind=observed/zoom=00/year=2026/month=09/day=14/_complete.json",
+              "sha256": "2ca301347e686ac2bf1766119b3a2d7b9d971270e38d1a0f242b95b20c6d7ef5"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-14",
+            "published_at": "2026-09-14 18:30:37.872068+00:00"
+          },
+          {
+            "lane": "weather-observations",
+            "product": "weather-observations",
+            "nature": "daily_series",
+            "day": "2026-09-14",
+            "rung": 5,
+            "terminal_state": "published",
+            "row_count": 98,
+            "source_receipt": {
+              "key": "layer=weather-observations/kind=observed/availability/evidence/source=0b45c0e441f88c7c89b13e4ea3caebf837bd2b1c3854bf658fcaf892db5b6971.json",
+              "sha256": "0b45c0e441f88c7c89b13e4ea3caebf837bd2b1c3854bf658fcaf892db5b6971"
+            },
+            "terminal_receipt": {
+              "key": "layer=weather-observations/kind=observed/availability/evidence/terminal=af723daf848144c4a176bb95477b6522f5aff08df0ad384bfd473b1fd16641f3.json",
+              "sha256": "af723daf848144c4a176bb95477b6522f5aff08df0ad384bfd473b1fd16641f3"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=weather-observations/kind=observed/zoom=05/year=2026/month=09/day=14/part-0.parquet",
+                "sha256": "e337f9977ea7a2aef3a3d8f2e76a21e2fe6b6ee79749b1e58289ede567940cc6"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=weather-observations/kind=observed/zoom=05/year=2026/month=09/day=14/_complete.json",
+              "sha256": "c92e3d341254fa7a29d60d5773db7574dab2e4b8bfad8607a50f9fbd27695973"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-14",
+            "published_at": "2026-09-14 18:30:37.872068+00:00"
+          },
+          {
+            "lane": "weather-observations",
+            "product": "weather-observations",
+            "nature": "daily_series",
+            "day": "2026-09-14",
+            "rung": 9,
+            "terminal_state": "published",
+            "row_count": 98,
+            "source_receipt": {
+              "key": "layer=weather-observations/kind=observed/availability/evidence/source=0b45c0e441f88c7c89b13e4ea3caebf837bd2b1c3854bf658fcaf892db5b6971.json",
+              "sha256": "0b45c0e441f88c7c89b13e4ea3caebf837bd2b1c3854bf658fcaf892db5b6971"
+            },
+            "terminal_receipt": {
+              "key": "layer=weather-observations/kind=observed/availability/evidence/terminal=19c53697e4a3a44103b613aeb4142246eaf770f0397d828ad0023b62fdac46da.json",
+              "sha256": "19c53697e4a3a44103b613aeb4142246eaf770f0397d828ad0023b62fdac46da"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=weather-observations/kind=observed/zoom=09/year=2026/month=09/day=14/part-0.parquet",
+                "sha256": "80ef785e820a33f9c21c0383274248e10a569e0516af54dc57fe6d83c2edbf8e"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=weather-observations/kind=observed/zoom=09/year=2026/month=09/day=14/_complete.json",
+              "sha256": "6c8e1ab652bfb27c23ae7b687d11592df819d3054276641d617cdd3e260bb973"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-14",
+            "published_at": "2026-09-14 18:30:37.872068+00:00"
+          },
+          {
+            "lane": "weather-observations",
+            "product": "weather-observations",
+            "nature": "daily_series",
+            "day": "2026-09-14",
+            "rung": 13,
+            "terminal_state": "published",
+            "row_count": 1791,
+            "source_receipt": {
+              "key": "layer=weather-observations/kind=observed/availability/evidence/source=0b45c0e441f88c7c89b13e4ea3caebf837bd2b1c3854bf658fcaf892db5b6971.json",
+              "sha256": "0b45c0e441f88c7c89b13e4ea3caebf837bd2b1c3854bf658fcaf892db5b6971"
+            },
+            "terminal_receipt": {
+              "key": "layer=weather-observations/kind=observed/availability/evidence/terminal=498155fdacb0f622bded6725f11d00228b4ccf03883669c89635c877d02deaa9.json",
+              "sha256": "498155fdacb0f622bded6725f11d00228b4ccf03883669c89635c877d02deaa9"
+            },
+            "data_receipts": [
+              {
+                "key": "layer=weather-observations/kind=observed/zoom=13/year=2026/month=09/day=14/part-0.parquet",
+                "sha256": "83fd763b42c6dbdb0238a74965855d0468818f11a605b953b8c20e66dfd2646e"
+              }
+            ],
+            "completion_receipt": {
+              "key": "layer=weather-observations/kind=observed/zoom=13/year=2026/month=09/day=14/_complete.json",
+              "sha256": "652b92024d814bfae62d2677b451ee5b31aa100c5934d5396b6213b49403c59c"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-09-14",
+            "published_at": "2026-09-14 18:30:37.872068+00:00"
+          }
+        ]
+      }
+    },
+    "climate-field-shortwave-radiation": {
+      "days": {
+        "2026-05-31": [
+          {
+            "rung": 0,
+            "prefix": "layer=climate-field-shortwave-radiation/kind=observed/zoom=00/year=2026/month=05/day=31/",
+            "objects": [
+              {
+                "key": "layer=climate-field-shortwave-radiation/kind=observed/zoom=00/year=2026/month=05/day=31/_complete.json",
+                "last_modified": "2026-08-27 00:58:33+00:00",
+                "bytes": 234,
+                "sha256": "025189db3eb2ba9273e8bb17b14480919df188c512565abb6f98ce25f966b7b8",
+                "document": {
+                  "completed_at": "2026-08-26T21:48:55+00:00",
+                  "part_count": 1,
+                  "row_count": 24,
+                  "run_id": "climate-field-shortwave-radiation.snapshot-breakdown.v1:465abc4e813bf28c78acd7f97a4da9d19ad959e525de3eb1f422ca2f6e73e94f",
+                  "schema_version": 1
+                }
+              },
+              {
+                "key": "layer=climate-field-shortwave-radiation/kind=observed/zoom=00/year=2026/month=05/day=31/part-0.parquet",
+                "last_modified": "2026-08-27 00:58:32+00:00",
+                "bytes": 11989,
+                "sha256": "d70e0a3e8b70230ca3170ab35ce51def59063f95d1f3993337b4799bf2a5b8d6",
+                "parquet_rows": 24
+              }
+            ]
+          },
+          {
+            "rung": 5,
+            "prefix": "layer=climate-field-shortwave-radiation/kind=observed/zoom=05/year=2026/month=05/day=31/",
+            "objects": [
+              {
+                "key": "layer=climate-field-shortwave-radiation/kind=observed/zoom=05/year=2026/month=05/day=31/_complete.json",
+                "last_modified": "2026-08-27 00:58:32+00:00",
+                "bytes": 235,
+                "sha256": "1539c029ec96830adfa91c7c97024f6361d4b1f0bc0ce149dae833562d1ea04d",
+                "document": {
+                  "completed_at": "2026-08-26T21:48:55+00:00",
+                  "part_count": 1,
+                  "row_count": 397,
+                  "run_id": "climate-field-shortwave-radiation.snapshot-breakdown.v1:465abc4e813bf28c78acd7f97a4da9d19ad959e525de3eb1f422ca2f6e73e94f",
+                  "schema_version": 1
+                }
+              },
+              {
+                "key": "layer=climate-field-shortwave-radiation/kind=observed/zoom=05/year=2026/month=05/day=31/part-0.parquet",
+                "last_modified": "2026-08-27 00:58:32+00:00",
+                "bytes": 13597,
+                "sha256": "e5023c6ce3d2497a4001ee536cf0a0120da8a817301560bed86a2df5284818be",
+                "parquet_rows": 397
+              }
+            ]
+          },
+          {
+            "rung": 9,
+            "prefix": "layer=climate-field-shortwave-radiation/kind=observed/zoom=09/year=2026/month=05/day=31/",
+            "objects": [
+              {
+                "key": "layer=climate-field-shortwave-radiation/kind=observed/zoom=09/year=2026/month=05/day=31/_complete.json",
+                "last_modified": "2026-08-27 00:58:31+00:00",
+                "bytes": 235,
+                "sha256": "1539c029ec96830adfa91c7c97024f6361d4b1f0bc0ce149dae833562d1ea04d",
+                "document": {
+                  "completed_at": "2026-08-26T21:48:55+00:00",
+                  "part_count": 1,
+                  "row_count": 397,
+                  "run_id": "climate-field-shortwave-radiation.snapshot-breakdown.v1:465abc4e813bf28c78acd7f97a4da9d19ad959e525de3eb1f422ca2f6e73e94f",
+                  "schema_version": 1
+                }
+              },
+              {
+                "key": "layer=climate-field-shortwave-radiation/kind=observed/zoom=09/year=2026/month=05/day=31/part-0.parquet",
+                "last_modified": "2026-08-27 00:58:31+00:00",
+                "bytes": 13597,
+                "sha256": "e5023c6ce3d2497a4001ee536cf0a0120da8a817301560bed86a2df5284818be",
+                "parquet_rows": 397
+              }
+            ]
+          },
+          {
+            "rung": 13,
+            "prefix": "layer=climate-field-shortwave-radiation/kind=observed/zoom=13/year=2026/month=05/day=31/",
+            "objects": [
+              {
+                "key": "layer=climate-field-shortwave-radiation/kind=observed/zoom=13/year=2026/month=05/day=31/_complete.json",
+                "last_modified": "2026-08-27 00:58:33+00:00",
+                "bytes": 235,
+                "sha256": "1539c029ec96830adfa91c7c97024f6361d4b1f0bc0ce149dae833562d1ea04d",
+                "document": {
+                  "completed_at": "2026-08-26T21:48:55+00:00",
+                  "part_count": 1,
+                  "row_count": 397,
+                  "run_id": "climate-field-shortwave-radiation.snapshot-breakdown.v1:465abc4e813bf28c78acd7f97a4da9d19ad959e525de3eb1f422ca2f6e73e94f",
+                  "schema_version": 1
+                }
+              },
+              {
+                "key": "layer=climate-field-shortwave-radiation/kind=observed/zoom=13/year=2026/month=05/day=31/part-0.parquet",
+                "last_modified": "2026-08-27 00:58:30+00:00",
+                "bytes": 106587,
+                "sha256": "2adcbdf2bf734b757a207c9a96cabce67825d7a9c55929c9fbc3914ebbcca6d0",
+                "parquet_rows": 397
+              }
+            ]
+          }
+        ],
+        "2026-06-01": [
+          {
+            "rung": 0,
+            "prefix": "layer=climate-field-shortwave-radiation/kind=observed/zoom=00/year=2026/month=06/day=01/",
+            "objects": []
+          },
+          {
+            "rung": 5,
+            "prefix": "layer=climate-field-shortwave-radiation/kind=observed/zoom=05/year=2026/month=06/day=01/",
+            "objects": []
+          },
+          {
+            "rung": 9,
+            "prefix": "layer=climate-field-shortwave-radiation/kind=observed/zoom=09/year=2026/month=06/day=01/",
+            "objects": []
+          },
+          {
+            "rung": 13,
+            "prefix": "layer=climate-field-shortwave-radiation/kind=observed/zoom=13/year=2026/month=06/day=01/",
+            "objects": []
+          }
+        ]
+      },
+      "availability": {
+        "verified_generation": true,
+        "pointer": {
+          "bootstrap_receipt_key": "layer=climate-field-shortwave-radiation/kind=observed/availability/bootstrap/receipt=6f8832b11397556a98fa35f1c6b99e25254c308558d8bed98f78866801a59768.json",
+          "bootstrap_receipt_sha256": "6f8832b11397556a98fa35f1c6b99e25254c308558d8bed98f78866801a59768",
+          "created_at": "2026-09-07T03:02:19.234742Z",
+          "earliest_terminal_day": "2022-04-30",
+          "generation_bytes": 574866,
+          "generation_key": "layer=climate-field-shortwave-radiation/kind=observed/availability/generation=b7abc93f994a818a030f6f1d7527012f3881c5a21e70da4e065d0b4ce48696eb/availability.parquet",
+          "generation_receipt_sha256": "951f25beaf0c2679d445bb903a109efdf160fe4ac857b9d4ff76250a861f14b4",
+          "generation_sha256": "b7abc93f994a818a030f6f1d7527012f3881c5a21e70da4e065d0b4ce48696eb",
+          "lane": "climate-field-shortwave-radiation",
+          "lane_root": "layer=climate-field-shortwave-radiation/kind=observed",
+          "latest_terminal_day": "2026-05-31",
+          "nature": "daily_series",
+          "prior_generation_key": null,
+          "prior_generation_sha256": null,
+          "product": "climate-field-shortwave-radiation",
+          "required_rungs": [
+            0,
+            5,
+            9,
+            13
+          ],
+          "rows": 5972,
+          "schema_version": "1",
+          "source_ceiling": "2026-06-24",
+          "verified_source_inventory_root": "da332eee60998c47c77130227fb02bb6655974c9b5105cf51398dacc56f42995"
+        },
+        "sample_rows": [
+          {
+            "lane": "climate-field-shortwave-radiation",
+            "product": "climate-field-shortwave-radiation",
+            "nature": "daily_series",
+            "day": "2026-05-31",
+            "rung": 0,
+            "terminal_state": "published",
+            "row_count": 24,
+            "source_receipt": {
+              "key": "layer=climate-field-shortwave-radiation/kind=observed/availability/evidence/source=488711d6b44bfb27daad75c92ba70cac97eac351e4c17e5111663de3efef3f68.json",
+              "sha256": "488711d6b44bfb27daad75c92ba70cac97eac351e4c17e5111663de3efef3f68"
+            },
+            "terminal_receipt": {
+              "key": "layer=climate-field-shortwave-radiation/kind=observed/availability/evidence/terminal=18633eafbd9691507c8b6f6bde198767c5a71588e90bf22c3aac1fb0d24e0241.json",
+              "sha256": "18633eafbd9691507c8b6f6bde198767c5a71588e90bf22c3aac1fb0d24e0241"
+            },
+            "data_receipts": [],
+            "completion_receipt": {
+              "key": "layer=climate-field-shortwave-radiation/kind=observed/zoom=00/year=2026/month=05/day=31/_complete.json",
+              "sha256": "025189db3eb2ba9273e8bb17b14480919df188c512565abb6f98ce25f966b7b8"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-06-24",
+            "published_at": "2026-08-26 21:48:55+00:00"
+          },
+          {
+            "lane": "climate-field-shortwave-radiation",
+            "product": "climate-field-shortwave-radiation",
+            "nature": "daily_series",
+            "day": "2026-05-31",
+            "rung": 5,
+            "terminal_state": "published",
+            "row_count": 397,
+            "source_receipt": {
+              "key": "layer=climate-field-shortwave-radiation/kind=observed/availability/evidence/source=488711d6b44bfb27daad75c92ba70cac97eac351e4c17e5111663de3efef3f68.json",
+              "sha256": "488711d6b44bfb27daad75c92ba70cac97eac351e4c17e5111663de3efef3f68"
+            },
+            "terminal_receipt": {
+              "key": "layer=climate-field-shortwave-radiation/kind=observed/availability/evidence/terminal=539085ce49984fc1cfde87608fb83c17b6377017d8ce91ef5de98e8c1bac815a.json",
+              "sha256": "539085ce49984fc1cfde87608fb83c17b6377017d8ce91ef5de98e8c1bac815a"
+            },
+            "data_receipts": [],
+            "completion_receipt": {
+              "key": "layer=climate-field-shortwave-radiation/kind=observed/zoom=05/year=2026/month=05/day=31/_complete.json",
+              "sha256": "1539c029ec96830adfa91c7c97024f6361d4b1f0bc0ce149dae833562d1ea04d"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-06-24",
+            "published_at": "2026-08-26 21:48:55+00:00"
+          },
+          {
+            "lane": "climate-field-shortwave-radiation",
+            "product": "climate-field-shortwave-radiation",
+            "nature": "daily_series",
+            "day": "2026-05-31",
+            "rung": 9,
+            "terminal_state": "published",
+            "row_count": 397,
+            "source_receipt": {
+              "key": "layer=climate-field-shortwave-radiation/kind=observed/availability/evidence/source=488711d6b44bfb27daad75c92ba70cac97eac351e4c17e5111663de3efef3f68.json",
+              "sha256": "488711d6b44bfb27daad75c92ba70cac97eac351e4c17e5111663de3efef3f68"
+            },
+            "terminal_receipt": {
+              "key": "layer=climate-field-shortwave-radiation/kind=observed/availability/evidence/terminal=dc27f7425a1f98d166a2731d5fe153980497d722674d026e6dbab33ab3e1aaa5.json",
+              "sha256": "dc27f7425a1f98d166a2731d5fe153980497d722674d026e6dbab33ab3e1aaa5"
+            },
+            "data_receipts": [],
+            "completion_receipt": {
+              "key": "layer=climate-field-shortwave-radiation/kind=observed/zoom=09/year=2026/month=05/day=31/_complete.json",
+              "sha256": "1539c029ec96830adfa91c7c97024f6361d4b1f0bc0ce149dae833562d1ea04d"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-06-24",
+            "published_at": "2026-08-26 21:48:55+00:00"
+          },
+          {
+            "lane": "climate-field-shortwave-radiation",
+            "product": "climate-field-shortwave-radiation",
+            "nature": "daily_series",
+            "day": "2026-05-31",
+            "rung": 13,
+            "terminal_state": "published",
+            "row_count": 397,
+            "source_receipt": {
+              "key": "layer=climate-field-shortwave-radiation/kind=observed/availability/evidence/source=488711d6b44bfb27daad75c92ba70cac97eac351e4c17e5111663de3efef3f68.json",
+              "sha256": "488711d6b44bfb27daad75c92ba70cac97eac351e4c17e5111663de3efef3f68"
+            },
+            "terminal_receipt": {
+              "key": "layer=climate-field-shortwave-radiation/kind=observed/availability/evidence/terminal=cf11cfe1253dd169057831ad4d71daf35626226e155207eb9ca020e14548f904.json",
+              "sha256": "cf11cfe1253dd169057831ad4d71daf35626226e155207eb9ca020e14548f904"
+            },
+            "data_receipts": [],
+            "completion_receipt": {
+              "key": "layer=climate-field-shortwave-radiation/kind=observed/zoom=13/year=2026/month=05/day=31/_complete.json",
+              "sha256": "1539c029ec96830adfa91c7c97024f6361d4b1f0bc0ce149dae833562d1ea04d"
+            },
+            "absence_reason": null,
+            "source_ceiling": "2026-06-24",
+            "published_at": "2026-08-26 21:48:55+00:00"
+          }
+        ]
+      }
+    }
+  },
+  "limits": [
+    "Sampled days only; not full history certification.",
+    "Source ceilings are publication metadata, not freshly measured upstream receipts.",
+    "Part downloads capped at 8 MiB each and 64 MiB total."
+  ],
+  "downloaded_object_bytes": 2243437,
+  "reconciliation": [
+    {
+      "layer": "soil-field-moisture-0-7cm",
+      "day": "2026-09-05",
+      "rung": 0,
+      "status": "full_part_metadata_match",
+      "completion_schema_versions": [
+        2
+      ],
+      "completion_part_metadata_present": true,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-field-moisture-0-7cm",
+      "day": "2026-09-05",
+      "rung": 5,
+      "status": "full_part_metadata_match",
+      "completion_schema_versions": [
+        2
+      ],
+      "completion_part_metadata_present": true,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-field-moisture-0-7cm",
+      "day": "2026-09-05",
+      "rung": 9,
+      "status": "full_part_metadata_match",
+      "completion_schema_versions": [
+        2
+      ],
+      "completion_part_metadata_present": true,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-field-moisture-0-7cm",
+      "day": "2026-09-05",
+      "rung": 13,
+      "status": "availability_digest_and_counts_match",
+      "completion_schema_versions": [
+        1
+      ],
+      "completion_part_metadata_present": false,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-field-moisture-7-28cm",
+      "day": "2026-09-05",
+      "rung": 0,
+      "status": "full_part_metadata_match",
+      "completion_schema_versions": [
+        2
+      ],
+      "completion_part_metadata_present": true,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-field-moisture-7-28cm",
+      "day": "2026-09-05",
+      "rung": 5,
+      "status": "full_part_metadata_match",
+      "completion_schema_versions": [
+        2
+      ],
+      "completion_part_metadata_present": true,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-field-moisture-7-28cm",
+      "day": "2026-09-05",
+      "rung": 9,
+      "status": "full_part_metadata_match",
+      "completion_schema_versions": [
+        2
+      ],
+      "completion_part_metadata_present": true,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-field-moisture-7-28cm",
+      "day": "2026-09-05",
+      "rung": 13,
+      "status": "availability_digest_and_counts_match",
+      "completion_schema_versions": [
+        1
+      ],
+      "completion_part_metadata_present": false,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-field-moisture-28-100cm",
+      "day": "2026-09-05",
+      "rung": 0,
+      "status": "full_part_metadata_match",
+      "completion_schema_versions": [
+        2
+      ],
+      "completion_part_metadata_present": true,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-field-moisture-28-100cm",
+      "day": "2026-09-05",
+      "rung": 5,
+      "status": "full_part_metadata_match",
+      "completion_schema_versions": [
+        2
+      ],
+      "completion_part_metadata_present": true,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-field-moisture-28-100cm",
+      "day": "2026-09-05",
+      "rung": 9,
+      "status": "full_part_metadata_match",
+      "completion_schema_versions": [
+        2
+      ],
+      "completion_part_metadata_present": true,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-field-moisture-28-100cm",
+      "day": "2026-09-05",
+      "rung": 13,
+      "status": "availability_digest_and_counts_match",
+      "completion_schema_versions": [
+        1
+      ],
+      "completion_part_metadata_present": false,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-temperature-0-to-7cm",
+      "day": "2026-09-05",
+      "rung": 0,
+      "status": "full_part_metadata_match",
+      "completion_schema_versions": [
+        2
+      ],
+      "completion_part_metadata_present": true,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-temperature-0-to-7cm",
+      "day": "2026-09-05",
+      "rung": 5,
+      "status": "full_part_metadata_match",
+      "completion_schema_versions": [
+        2
+      ],
+      "completion_part_metadata_present": true,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-temperature-0-to-7cm",
+      "day": "2026-09-05",
+      "rung": 9,
+      "status": "full_part_metadata_match",
+      "completion_schema_versions": [
+        2
+      ],
+      "completion_part_metadata_present": true,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-temperature-0-to-7cm",
+      "day": "2026-09-05",
+      "rung": 13,
+      "status": "availability_digest_and_counts_match",
+      "completion_schema_versions": [
+        1
+      ],
+      "completion_part_metadata_present": false,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-temperature-7-to-28cm",
+      "day": "2026-09-05",
+      "rung": 0,
+      "status": "full_part_metadata_match",
+      "completion_schema_versions": [
+        2
+      ],
+      "completion_part_metadata_present": true,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-temperature-7-to-28cm",
+      "day": "2026-09-05",
+      "rung": 5,
+      "status": "full_part_metadata_match",
+      "completion_schema_versions": [
+        2
+      ],
+      "completion_part_metadata_present": true,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-temperature-7-to-28cm",
+      "day": "2026-09-05",
+      "rung": 9,
+      "status": "full_part_metadata_match",
+      "completion_schema_versions": [
+        2
+      ],
+      "completion_part_metadata_present": true,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-temperature-7-to-28cm",
+      "day": "2026-09-05",
+      "rung": 13,
+      "status": "availability_digest_and_counts_match",
+      "completion_schema_versions": [
+        1
+      ],
+      "completion_part_metadata_present": false,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-temperature-28-to-100cm",
+      "day": "2026-09-05",
+      "rung": 0,
+      "status": "full_part_metadata_match",
+      "completion_schema_versions": [
+        2
+      ],
+      "completion_part_metadata_present": true,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-temperature-28-to-100cm",
+      "day": "2026-09-05",
+      "rung": 5,
+      "status": "full_part_metadata_match",
+      "completion_schema_versions": [
+        2
+      ],
+      "completion_part_metadata_present": true,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-temperature-28-to-100cm",
+      "day": "2026-09-05",
+      "rung": 9,
+      "status": "full_part_metadata_match",
+      "completion_schema_versions": [
+        2
+      ],
+      "completion_part_metadata_present": true,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-temperature-28-to-100cm",
+      "day": "2026-09-05",
+      "rung": 13,
+      "status": "availability_digest_and_counts_match",
+      "completion_schema_versions": [
+        1
+      ],
+      "completion_part_metadata_present": false,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-temperature-100-to-255cm",
+      "day": "2026-09-05",
+      "rung": 0,
+      "status": "full_part_metadata_match",
+      "completion_schema_versions": [
+        2
+      ],
+      "completion_part_metadata_present": true,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-temperature-100-to-255cm",
+      "day": "2026-09-05",
+      "rung": 5,
+      "status": "full_part_metadata_match",
+      "completion_schema_versions": [
+        2
+      ],
+      "completion_part_metadata_present": true,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-temperature-100-to-255cm",
+      "day": "2026-09-05",
+      "rung": 9,
+      "status": "full_part_metadata_match",
+      "completion_schema_versions": [
+        2
+      ],
+      "completion_part_metadata_present": true,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-temperature-100-to-255cm",
+      "day": "2026-09-05",
+      "rung": 13,
+      "status": "availability_digest_and_counts_match",
+      "completion_schema_versions": [
+        1
+      ],
+      "completion_part_metadata_present": false,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-field-vpd",
+      "day": "2026-09-05",
+      "rung": 0,
+      "status": "full_part_metadata_match",
+      "completion_schema_versions": [
+        2
+      ],
+      "completion_part_metadata_present": true,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-field-vpd",
+      "day": "2026-09-05",
+      "rung": 5,
+      "status": "full_part_metadata_match",
+      "completion_schema_versions": [
+        2
+      ],
+      "completion_part_metadata_present": true,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-field-vpd",
+      "day": "2026-09-05",
+      "rung": 9,
+      "status": "full_part_metadata_match",
+      "completion_schema_versions": [
+        2
+      ],
+      "completion_part_metadata_present": true,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "soil-field-vpd",
+      "day": "2026-09-05",
+      "rung": 13,
+      "status": "availability_digest_and_counts_match",
+      "completion_schema_versions": [
+        1
+      ],
+      "completion_part_metadata_present": false,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "weather-observations",
+      "day": "2026-09-14",
+      "rung": 0,
+      "status": "full_part_metadata_match",
+      "completion_schema_versions": [
+        2
+      ],
+      "completion_part_metadata_present": true,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "weather-observations",
+      "day": "2026-09-14",
+      "rung": 5,
+      "status": "full_part_metadata_match",
+      "completion_schema_versions": [
+        2
+      ],
+      "completion_part_metadata_present": true,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "weather-observations",
+      "day": "2026-09-14",
+      "rung": 9,
+      "status": "full_part_metadata_match",
+      "completion_schema_versions": [
+        2
+      ],
+      "completion_part_metadata_present": true,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "weather-observations",
+      "day": "2026-09-14",
+      "rung": 13,
+      "status": "availability_digest_and_counts_match",
+      "completion_schema_versions": [
+        1
+      ],
+      "completion_part_metadata_present": false,
+      "availability_part_digests_present": true,
+      "errors": []
+    },
+    {
+      "layer": "weather-observations",
+      "day": "2026-09-06",
+      "rung": 0,
+      "status": "unavailable_no_objects_or_availability_row",
+      "availability_rows": 0
+    },
+    {
+      "layer": "weather-observations",
+      "day": "2026-09-06",
+      "rung": 5,
+      "status": "unavailable_no_objects_or_availability_row",
+      "availability_rows": 0
+    },
+    {
+      "layer": "weather-observations",
+      "day": "2026-09-06",
+      "rung": 9,
+      "status": "unavailable_no_objects_or_availability_row",
+      "availability_rows": 0
+    },
+    {
+      "layer": "weather-observations",
+      "day": "2026-09-06",
+      "rung": 13,
+      "status": "unavailable_no_objects_or_availability_row",
+      "availability_rows": 0
+    },
+    {
+      "layer": "climate-field-shortwave-radiation",
+      "day": "2026-05-31",
+      "rung": 0,
+      "status": "counts_only_part_digests_unbound",
+      "completion_schema_versions": [
+        1
+      ],
+      "completion_part_metadata_present": false,
+      "availability_part_digests_present": false,
+      "errors": []
+    },
+    {
+      "layer": "climate-field-shortwave-radiation",
+      "day": "2026-05-31",
+      "rung": 5,
+      "status": "counts_only_part_digests_unbound",
+      "completion_schema_versions": [
+        1
+      ],
+      "completion_part_metadata_present": false,
+      "availability_part_digests_present": false,
+      "errors": []
+    },
+    {
+      "layer": "climate-field-shortwave-radiation",
+      "day": "2026-05-31",
+      "rung": 9,
+      "status": "counts_only_part_digests_unbound",
+      "completion_schema_versions": [
+        1
+      ],
+      "completion_part_metadata_present": false,
+      "availability_part_digests_present": false,
+      "errors": []
+    },
+    {
+      "layer": "climate-field-shortwave-radiation",
+      "day": "2026-05-31",
+      "rung": 13,
+      "status": "counts_only_part_digests_unbound",
+      "completion_schema_versions": [
+        1
+      ],
+      "completion_part_metadata_present": false,
+      "availability_part_digests_present": false,
+      "errors": []
+    },
+    {
+      "layer": "climate-field-shortwave-radiation",
+      "day": "2026-06-01",
+      "rung": 0,
+      "status": "unavailable_no_objects_or_availability_row",
+      "availability_rows": 0
+    },
+    {
+      "layer": "climate-field-shortwave-radiation",
+      "day": "2026-06-01",
+      "rung": 5,
+      "status": "unavailable_no_objects_or_availability_row",
+      "availability_rows": 0
+    },
+    {
+      "layer": "climate-field-shortwave-radiation",
+      "day": "2026-06-01",
+      "rung": 9,
+      "status": "unavailable_no_objects_or_availability_row",
+      "availability_rows": 0
+    },
+    {
+      "layer": "climate-field-shortwave-radiation",
+      "day": "2026-06-01",
+      "rung": 13,
+      "status": "unavailable_no_objects_or_availability_row",
+      "availability_rows": 0
+    }
+  ],
+  "raw_capture_sha256": "33f07ca0402098345d31b99266af26bc3a10b29a856d5037b1ff67f5548f7d8f"
+}

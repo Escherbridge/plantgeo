@@ -1,0 +1,31 @@
+{
+    "captured_at_utc":  "2026-09-13T14:22:18.6893988Z",
+    "repository_head":  "d6fcbc5f1130f43d1a428f285ba7d277361b8775",
+    "scope":  "Read-only Railway configuration/runtime and public coverage API; no physical object or upstream-source census",
+    "project_id":  "6faaf3ea-ac46-4c8b-bbfe-1351dbb9d990",
+    "environment_id":  "b7cfa813-8a5c-4fcd-80f2-cab736d840a7",
+    "coverage_url":  "https://plantgeo-parquet-api-production.up.railway.app/api/v1/parquet/coverage",
+    "coverage_generated_at":  "2026-09-13T14:18:02.063928Z",
+    "artifacts":  [
+                      {
+                          "file":  "activation.json",
+                          "sha256":  "5a7f20d06a56bfd659cf6b9f8cffd4020d32870953741d3ff2eef0e3ad8ffb9e"
+                      },
+                      {
+                          "file":  "coverage.csv",
+                          "sha256":  "4592af58981b5165e372af9980a4c57474f8f539023f60b9860dfa3eef9da3bb"
+                      },
+                      {
+                          "file":  "coverage.json",
+                          "sha256":  "3b157d8ed1d80277a4c11d660bbdf508cfbc52b9028325c8ef0b63b073866d3f"
+                      },
+                      {
+                          "file":  "deployments.json",
+                          "sha256":  "2c54a78e03090431b854975f70a864395b1579c64f964f49e957ce876a71f69e"
+                      },
+                      {
+                          "file":  "executor-tick.json",
+                          "sha256":  "1f418fb0563e6236677b79ef1a7d4fdbe22858b7d21d5d97399b4b480f8b1995"
+                      }
+                  ]
+}

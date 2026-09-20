@@ -1,0 +1,24 @@
+﻿[
+    {
+        "url":  "https://plantgeo-parquet-api-production.up.railway.app/api/v1/botanical-occurrences/query?release_set_id=956c0be71910469005fb494d92aac035223be49d1f5c895c0b1206a716b16ac4\u0026bbox=-130,40,-110,50\u0026zoom=8\u0026limit=10",
+        "deployed_revision":  "not exposed by this response",
+        "method":  "GET",
+        "started_at":  "2026-09-14T18:31:17.0175093Z",
+        "upstream_cache_state":  "unknown",
+        "sha256":  "BA3A2620C960AE716751020411C34BC933EAE1E68A50DCCDDD2EE7CDB3F6F277",
+        "finished_at":  "2026-09-14T18:31:17.4597803Z",
+        "status":  400,
+        "response_file":  "botanical-wide-z8-20260914.json"
+    },
+    {
+        "url":  "https://plantgeo.aevani.com/api/trpc/environmental.getSliderCapabilities",
+        "deployed_revision":  "not exposed by this response",
+        "method":  "GET",
+        "started_at":  "2026-09-14T18:31:17.5325270Z",
+        "upstream_cache_state":  "unknown",
+        "sha256":  "2A22FB96DD178B75A07AA698A880DE5C99C46C857A4EA1F2A9C1E8C81B402C48",
+        "finished_at":  "2026-09-14T18:31:18.0713072Z",
+        "status":  200,
+        "response_file":  "slider-capabilities-20260914.json"
+    }
+]

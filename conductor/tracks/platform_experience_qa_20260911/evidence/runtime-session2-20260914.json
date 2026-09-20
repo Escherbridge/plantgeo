@@ -1,0 +1,236 @@
+{
+  "type": "read_only_runtime_evidence",
+  "captured_at": "2026-09-14T19:04:21.385Z",
+  "project_id": "6faaf3ea-ac46-4c8b-bbfe-1351dbb9d990",
+  "environment_id": "b7cfa813-8a5c-4fcd-80f2-cab736d840a7",
+  "deployments": [
+    {
+      "id": "3bcea139-fed7-4bcb-97e8-3e0ccad7e8be",
+      "serviceId": "fa08a3aa-6d1d-43eb-846b-15dbfd887d61",
+      "createdAt": "2026-09-14T14:26:51.112Z",
+      "status": "SUCCESS",
+      "revision": "0f16e40dae3cce1d3b6d4ac00138254a968d974f"
+    },
+    {
+      "id": "53d9b6b3-3f7e-4b2d-a115-ad744af9da50",
+      "serviceId": "565ecaad-9946-48f1-8a0b-28fa60494a16",
+      "createdAt": "2026-09-14T14:26:51.112Z",
+      "status": "SUCCESS",
+      "revision": "0f16e40dae3cce1d3b6d4ac00138254a968d974f"
+    },
+    {
+      "id": "c80df830-d17d-4e50-b6d4-77dbb4ab09bb",
+      "serviceId": "33aed861-af76-4fdd-a95e-784bdcc95e55",
+      "createdAt": "2026-09-14T14:26:51.112Z",
+      "status": "SUCCESS",
+      "revision": "0f16e40dae3cce1d3b6d4ac00138254a968d974f"
+    },
+    {
+      "id": "f7abef3b-d5c7-4aab-b22e-f150812d5424",
+      "serviceId": "fe6ef46e-7b4c-41ef-8b64-5100a344c526",
+      "createdAt": "2026-09-14T14:26:51.113Z",
+      "status": "SUCCESS",
+      "revision": "0f16e40dae3cce1d3b6d4ac00138254a968d974f"
+    }
+  ],
+  "executor": {
+    "deployment_id": "53d9b6b3-3f7e-4b2d-a115-ad744af9da50",
+    "first_log": "2026-09-14T18:50:24.958981749Z",
+    "last_log": "2026-09-14T19:02:25.272777931Z",
+    "latest_tick": {
+      "timestamp": "2026-09-14T19:02:25.272214511Z",
+      "lanes": [
+        {
+          "blockers": [],
+          "command": null,
+          "detail": "current bucket already settled with status succeeded",
+          "due_prediction": null,
+          "lane_id": "burn-severity-direct-forward",
+          "run_id": "006c675c-240d-460f-97da-58d9f8bf0369",
+          "run_status": "succeeded",
+          "scheduled_for": "2026-09-14T08:55:00+00:00",
+          "slice": null,
+          "state": "not_due"
+        },
+        {
+          "blockers": [],
+          "command": null,
+          "detail": "current bucket already settled with status succeeded",
+          "due_prediction": null,
+          "lane_id": "climate-nasa-power-direct-forward",
+          "run_id": "6434a278-3b59-4448-878c-d7b799c9b7b3",
+          "run_status": "succeeded",
+          "scheduled_for": "2026-09-14T18:40:00+00:00",
+          "slice": null,
+          "state": "not_due"
+        },
+        {
+          "blockers": [],
+          "command": null,
+          "detail": "current bucket already settled with status succeeded",
+          "due_prediction": null,
+          "lane_id": "drought-direct-forward",
+          "run_id": "3e8e3a69-55f4-4f6d-8a9e-1e7aedf24154",
+          "run_status": "succeeded",
+          "scheduled_for": "2026-09-14T18:45:00+00:00",
+          "slice": null,
+          "state": "not_due"
+        },
+        {
+          "blockers": [],
+          "command": null,
+          "detail": "current bucket already settled with status succeeded",
+          "due_prediction": null,
+          "lane_id": "evacuation-zones-direct-forward",
+          "run_id": "9f8c2fb3-bb58-458d-95a9-2f72eb114d3e",
+          "run_status": "succeeded",
+          "scheduled_for": "2026-09-14T18:35:00+00:00",
+          "slice": null,
+          "state": "not_due"
+        },
+        {
+          "blockers": [],
+          "command": null,
+          "detail": "current bucket already settled with status succeeded",
+          "due_prediction": null,
+          "lane_id": "fire-detections-direct-forward",
+          "run_id": "caefc4e4-6773-45d7-898f-41065e4c1a7b",
+          "run_status": "succeeded",
+          "scheduled_for": "2026-09-14T18:15:00+00:00",
+          "slice": null,
+          "state": "not_due"
+        },
+        {
+          "blockers": [
+            "lane is not in the active allow-list"
+          ],
+          "command": [
+            "python",
+            "-m",
+            "agri_data_service.pipeline.direct.fire_perimeters"
+          ],
+          "detail": "shadow schedule prediction only; no ledger or source watermark parity was read",
+          "due_prediction": "would_be_due_if_activated; source watermark parity not evaluated",
+          "lane_id": "fire-perimeters-direct-forward",
+          "run_id": null,
+          "run_status": null,
+          "scheduled_for": "2026-09-14T18:10:00+00:00",
+          "slice": null,
+          "state": "shadow"
+        },
+        {
+          "blockers": [
+            "lane is not in the active allow-list"
+          ],
+          "command": [
+            "python",
+            "-m",
+            "agri_data_service.pipeline.direct.burn_severity"
+          ],
+          "detail": "shadow schedule prediction only; no ledger or source watermark parity was read",
+          "due_prediction": "would_be_due_if_activated; source watermark parity not evaluated",
+          "lane_id": "mtbs-forward",
+          "run_id": null,
+          "run_status": null,
+          "scheduled_for": "2026-09-08T07:55:00+00:00",
+          "slice": null,
+          "state": "shadow"
+        },
+        {
+          "blockers": [
+            "operator supersession required: agri-service ops jobs-supersede-run --lane sensors-direct-forward --run-id def58693-a0b6-4d97-90f2-3127bfc9b418"
+          ],
+          "command": null,
+          "detail": "3 consecutive bucket(s) settled without success; the clock no longer releases this coalesce_latest lane, so bucket 2026-09-14T18:20:00+00:00 waits for a recorded operator supersession",
+          "due_prediction": null,
+          "lane_id": "sensors-direct-forward",
+          "run_id": "def58693-a0b6-4d97-90f2-3127bfc9b418",
+          "run_status": "failed",
+          "scheduled_for": "2026-09-09T14:20:00+00:00",
+          "slice": null,
+          "state": "failed"
+        },
+        {
+          "blockers": [],
+          "command": null,
+          "detail": "current bucket already settled with status succeeded",
+          "due_prediction": null,
+          "lane_id": "soil-era5-land-direct-forward",
+          "run_id": "2bb1202e-49dc-4f67-9425-db3657c621fe",
+          "run_status": "succeeded",
+          "scheduled_for": "2026-09-14T18:50:00+00:00",
+          "slice": null,
+          "state": "not_due"
+        },
+        {
+          "blockers": [],
+          "command": null,
+          "detail": "current bucket already settled with status succeeded",
+          "due_prediction": null,
+          "lane_id": "vegetation-sentinel2-ndvi-direct-forward",
+          "run_id": "6c0fa69a-0d7b-44c0-b57e-05d42e989581",
+          "run_status": "succeeded",
+          "scheduled_for": "2026-09-14T18:05:00+00:00",
+          "slice": null,
+          "state": "not_due"
+        },
+        {
+          "blockers": [],
+          "command": null,
+          "detail": "current bucket already settled with status succeeded",
+          "due_prediction": null,
+          "lane_id": "water-gauges-direct-forward",
+          "run_id": "2260b3b5-6b54-47f5-a043-c3399013687f",
+          "run_status": "succeeded",
+          "scheduled_for": "2026-09-14T18:15:00+00:00",
+          "slice": null,
+          "state": "not_due"
+        },
+        {
+          "blockers": [],
+          "command": null,
+          "detail": "current bucket already settled with status succeeded",
+          "due_prediction": null,
+          "lane_id": "watersheds-direct-forward",
+          "run_id": "2621b465-4821-4da0-8e23-04c55dec5e84",
+          "run_status": "succeeded",
+          "scheduled_for": "2026-09-14T03:00:00+00:00",
+          "slice": null,
+          "state": "not_due"
+        },
+        {
+          "blockers": [],
+          "command": null,
+          "detail": "current bucket already settled with status succeeded",
+          "due_prediction": null,
+          "lane_id": "weather-observations-direct-forward",
+          "run_id": "1342eaa1-3c30-4822-9ca1-f2f7e3f496c0",
+          "run_status": "succeeded",
+          "scheduled_for": "2026-09-14T18:30:00+00:00",
+          "slice": null,
+          "state": "not_due"
+        }
+      ]
+    }
+  },
+  "limits": [
+    "Bounded runtime logs are scheduler reports, not physical publication receipts or browser acceptance.",
+    "Current deployment is base commit; local Session 1/2 changes remain uncommitted and undeployed.",
+    "No remote mutation, supersession, schedule change, or data repair performed."
+  ],
+  "raw_sources": [
+    {
+      "path": ".omc/research/runbook-20260914/railway-session2-raw.json",
+      "sha256": "f2a16b53aae43f3023847bff3550800a945b6c13217bcec1401c878253a44b11"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/railway-session2-executor-raw.json",
+      "sha256": "0774a0dcad006eae9a32bea624b6f3872a5fdc39de10c77157282c968c5914e4"
+    }
+  ],
+  "operations": [
+    "Railway MCP get_status(projectId,environmentId)",
+    "Railway MCP list_deployments(projectId,environmentId,limit=12)",
+    "Railway MCP get_logs(projectId,deploymentId=53d9b6b3-3f7e-4b2d-a115-ad744af9da50,types=[deploy],limit=100)"
+  ]
+}

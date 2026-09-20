@@ -1,0 +1,24 @@
+﻿{
+    "type":  "historical_command_output_recovery",
+    "source":  ".omc/state/freshness-fanout-20260913-1428/climate-freshness/events.jsonl",
+    "source_sha256":  "5d47fefba3719852dbafc776cdb96f8d2c721f81d89509d83592f1860b164022",
+    "method":  "Remove exactly the final CRLF introduced by Get-Content output; strictly encode cp1252 then decode UTF-8. Original body retained. Recovered size and line count match the contemporaneous file inventory at source line 56. No original file digest was recorded; byte identity to the original file is not independently established.",
+    "files":  [
+                  {
+                      "path":  "conductor/tracks/environmental_parquet_serving_20260912/evidence/freshness-audit-20260913/audit.md",
+                      "source_line":  60,
+                      "event_item_id":  "item_33",
+                      "byte_count":  10741,
+                      "line_count":  138,
+                      "sha256":  "1d08d1bb1caca6a81e5e6d9dba7335696ba970205bef489f88a78e8797cbc854"
+                  },
+                  {
+                      "path":  "conductor/tracks/environmental_parquet_serving_20260912/freshness-resolution-plan-20260913.md",
+                      "source_line":  62,
+                      "event_item_id":  "item_34",
+                      "byte_count":  8003,
+                      "line_count":  119,
+                      "sha256":  "5b3753bc2afef50d112e6de317da8427a48325b046feda51192c1c3d181dda6c"
+                  }
+              ]
+}

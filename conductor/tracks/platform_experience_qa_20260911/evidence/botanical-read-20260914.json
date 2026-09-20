@@ -1,0 +1,54 @@
+{
+  "captured_at": "2026-09-14T18:31:25.146377+00:00",
+  "release_set_id": "956c0be71910469005fb494d92aac035223be49d1f5c895c0b1206a716b16ac4",
+  "source_bucket": "plantgeo-parquet-9ymvp7gv",
+  "source_prefix": "",
+  "reader_script_sha256": "46c2a20763256b7c8c767e7034430ce1835f6c3dee0bcf827340a9ce7d59774e",
+  "operation": "read_bytes only; no remote mutation",
+  "objects": {
+    "manifest.json": {
+      "present": true,
+      "key": "botanical-occurrences/956c0be71910469005fb494d92aac035223be49d1f5c895c0b1206a716b16ac4/manifest.json",
+      "bytes": 1769,
+      "sha256": "6fecc4a911d4ee5b357cc17fd56d29e4898d13e6a553773e23275e14ae704110",
+      "counts": {
+        "associations": 30440,
+        "identifications": 0,
+        "nonspatial_occurrences": 177728,
+        "occurrences": 15220,
+        "raw_occurrences": 192948,
+        "releases": 1
+      }
+    },
+    "_COMPLETE": {
+      "present": true,
+      "key": "botanical-occurrences/956c0be71910469005fb494d92aac035223be49d1f5c895c0b1206a716b16ac4/_COMPLETE",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "releases/part-0000.parquet": {
+      "present": true,
+      "key": "botanical-occurrences/956c0be71910469005fb494d92aac035223be49d1f5c895c0b1206a716b16ac4/releases/part-0000.parquet",
+      "bytes": 7821,
+      "sha256": "bcbe21c6f03f3537a071451906e6d75a6195082aa6e3885cd832797d97d6d3e6",
+      "rows": 1,
+      "release_receipts": [
+        {
+          "collection_key": "pnw:UBC:vascular",
+          "source_version": "16.43",
+          "core_row_count": 192948,
+          "extension_row_counts": "{}",
+          "outcome": "release_complete",
+          "reasons": []
+        }
+      ]
+    },
+    "identifications/part-0000.parquet": {
+      "present": true,
+      "key": "botanical-occurrences/956c0be71910469005fb494d92aac035223be49d1f5c895c0b1206a716b16ac4/identifications/part-0000.parquet",
+      "bytes": 2228,
+      "sha256": "cdd9b347669dce0971e9b3bdee2139f68576fde9b250cd39582a5eec0c9e7b25",
+      "rows": 0
+    }
+  }
+}

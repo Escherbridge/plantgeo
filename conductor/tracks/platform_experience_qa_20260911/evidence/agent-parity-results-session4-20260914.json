@@ -1,0 +1,952 @@
+{
+  "operation": "read-only retained agent probe reconciliation; no new remote calls",
+  "receipt_path": ".omc/research/runbook-20260914/session4-agent-20260914T195709241763Z/receipt.json",
+  "receipt_sha256": "fb9972488d8874d1ae1710a13d521295de2d79b0dc6302e638ab67c8959a50d9",
+  "catalogue_sha256": "7895c5e471736f2b26543b292cc8b85f1464613dbfca6f2da38fb3c12e86c00b",
+  "catalogue_sha_matches": true,
+  "matrix_sha_matches": true,
+  "case_count": 16,
+  "all_transport_and_identity_checks_pass": true,
+  "truncated_lane_results": 10,
+  "limitations": [
+    "Selected date/state/provenance checks only; not full QA or browser parity",
+    "Complete HTTP bodies can contain explicitly truncated feature populations",
+    "No row-count equivalence with prior rung5 bbox samples",
+    "Governed sensor absence preserves historical warehouse-empty provenance; not upstream absence certification",
+    "Shortwave client exposure approval remains unresolved"
+  ],
+  "results": [
+    {
+      "id": "shortwave-gap-coverage",
+      "name": "observation_coverage_on_day",
+      "arguments": {
+        "surface_name": "climate-field-shortwave-radiation",
+        "day": "2026-06-01"
+      },
+      "started_at": "2026-09-14T19:57:09.646571+00:00",
+      "http_status": 200,
+      "bytes": 1487,
+      "sha256": "6e8437ee31a7ab66309251355bcc8fadf489151b6ef5abbb9229082579bff44c",
+      "body_path": ".omc/research/runbook-20260914/session4-agent-20260914T195709241763Z/shortwave-gap-coverage--response.json",
+      "checks": {
+        "body_sha_matches": true,
+        "body_size_matches": true,
+        "request_sha_matches": true,
+        "request_matches_matrix": true,
+        "registered_arguments_match": true,
+        "tool_matches": true,
+        "complete_http200": true,
+        "result_is_object": true
+      },
+      "requested_day": "2026-06-01",
+      "typed_error": null,
+      "applied_bounds": null,
+      "lanes": [],
+      "coverage": {
+        "coverage_authority": "availability",
+        "earliest_observed_day": "2022-04-30",
+        "is_covered": false,
+        "lane_states": [
+          {
+            "absence_reason": null,
+            "lane": "climate-field-shortwave-radiation",
+            "lane_nature": "daily_series",
+            "published_at": null,
+            "row_count": 0,
+            "source_ceiling_day": "2026-06-24",
+            "state": "not_published"
+          }
+        ],
+        "latest_observed_day": "2026-05-31",
+        "observation_count": 0,
+        "observed_day_count": 1493,
+        "requested_day": "2026-06-01",
+        "source_ceiling_day": "2026-06-24",
+        "surface_name": "climate-field-shortwave-radiation"
+      }
+    },
+    {
+      "id": "climate-field-shortwave-radiation-2026-05-31",
+      "name": "surface_value_near_point",
+      "arguments": {
+        "surface_name": "climate-field-shortwave-radiation",
+        "day": "2026-05-31",
+        "longitude": -123,
+        "latitude": 48,
+        "radius_meters": 25000,
+        "feature_count": 3
+      },
+      "started_at": "2026-09-14T19:57:10.637036+00:00",
+      "http_status": 200,
+      "bytes": 3409,
+      "sha256": "60bfb9943e14912d5ae6bf5c45368b2b68eda96f5e8c526945b607cae4edfed9",
+      "body_path": ".omc/research/runbook-20260914/session4-agent-20260914T195709241763Z/climate-field-shortwave-radiation-2026-05-31--response.json",
+      "checks": {
+        "body_sha_matches": true,
+        "body_size_matches": true,
+        "request_sha_matches": true,
+        "request_matches_matrix": true,
+        "registered_arguments_match": true,
+        "tool_matches": true,
+        "complete_http200": true,
+        "result_is_object": true
+      },
+      "requested_day": "2026-05-31",
+      "typed_error": null,
+      "applied_bounds": {
+        "feature_count_per_lane": 3,
+        "lane_count": 1,
+        "radius_meters": 25000.0
+      },
+      "lanes": [
+        {
+          "lane": "climate-field-shortwave-radiation",
+          "nature": "daily_series",
+          "state": "published",
+          "requested_day": "2026-05-31",
+          "served_day": "2026-05-31",
+          "feature_count": 1,
+          "features_truncated": false,
+          "feature_served_days": [
+            "2026-05-31"
+          ],
+          "observed_days": [
+            "2026-05-31"
+          ],
+          "distance_bases": [
+            "point"
+          ],
+          "client_exposure_flags": [
+            "False"
+          ],
+          "absence_provenance": null
+        }
+      ]
+    },
+    {
+      "id": "climate-field-shortwave-radiation-2026-06-01",
+      "name": "surface_value_near_point",
+      "arguments": {
+        "surface_name": "climate-field-shortwave-radiation",
+        "day": "2026-06-01",
+        "longitude": -123,
+        "latitude": 48,
+        "radius_meters": 25000,
+        "feature_count": 3
+      },
+      "started_at": "2026-09-14T19:57:12.062870+00:00",
+      "http_status": 200,
+      "bytes": 1204,
+      "sha256": "fc5a1a31f6c55c2c0eae0937069365f8e28ea29408fc5dbfa4568c664c11deb6",
+      "body_path": ".omc/research/runbook-20260914/session4-agent-20260914T195709241763Z/climate-field-shortwave-radiation-2026-06-01--response.json",
+      "checks": {
+        "body_sha_matches": true,
+        "body_size_matches": true,
+        "request_sha_matches": true,
+        "request_matches_matrix": true,
+        "registered_arguments_match": true,
+        "tool_matches": true,
+        "complete_http200": true,
+        "result_is_object": true
+      },
+      "requested_day": "2026-06-01",
+      "typed_error": null,
+      "applied_bounds": {
+        "feature_count_per_lane": 3,
+        "lane_count": 1,
+        "radius_meters": 25000.0
+      },
+      "lanes": [
+        {
+          "lane": "climate-field-shortwave-radiation",
+          "nature": "daily_series",
+          "state": "day_not_written",
+          "requested_day": "2026-06-01",
+          "served_day": null,
+          "feature_count": 0,
+          "features_truncated": false,
+          "feature_served_days": [],
+          "observed_days": [],
+          "distance_bases": [],
+          "client_exposure_flags": [],
+          "absence_provenance": null
+        }
+      ]
+    },
+    {
+      "id": "weather-observations-2026-09-06",
+      "name": "surface_value_near_point",
+      "arguments": {
+        "surface_name": "weather-observations",
+        "day": "2026-09-06",
+        "longitude": -123,
+        "latitude": 48,
+        "radius_meters": 25000,
+        "feature_count": 3
+      },
+      "started_at": "2026-09-14T19:57:12.494659+00:00",
+      "http_status": 200,
+      "bytes": 1165,
+      "sha256": "55fd5224900868c1f8f6402283a5ddbeb2dbe8db19db004a43e787eb69f5ba34",
+      "body_path": ".omc/research/runbook-20260914/session4-agent-20260914T195709241763Z/weather-observations-2026-09-06--response.json",
+      "checks": {
+        "body_sha_matches": true,
+        "body_size_matches": true,
+        "request_sha_matches": true,
+        "request_matches_matrix": true,
+        "registered_arguments_match": true,
+        "tool_matches": true,
+        "complete_http200": true,
+        "result_is_object": true
+      },
+      "requested_day": "2026-09-06",
+      "typed_error": null,
+      "applied_bounds": {
+        "feature_count_per_lane": 3,
+        "lane_count": 1,
+        "radius_meters": 25000.0
+      },
+      "lanes": [
+        {
+          "lane": "weather-observations",
+          "nature": "daily_series",
+          "state": "day_not_written",
+          "requested_day": "2026-09-06",
+          "served_day": null,
+          "feature_count": 0,
+          "features_truncated": false,
+          "feature_served_days": [],
+          "observed_days": [],
+          "distance_bases": [],
+          "client_exposure_flags": [],
+          "absence_provenance": null
+        }
+      ]
+    },
+    {
+      "id": "weather-observations-2026-09-14",
+      "name": "surface_value_near_point",
+      "arguments": {
+        "surface_name": "weather-observations",
+        "day": "2026-09-14",
+        "longitude": -123,
+        "latitude": 48,
+        "radius_meters": 25000,
+        "feature_count": 3
+      },
+      "started_at": "2026-09-14T19:57:12.835751+00:00",
+      "http_status": 200,
+      "bytes": 1167,
+      "sha256": "41f9337162ec97901fd9b5e5d0f409c5a92997d4d94fec03fd325886f112d375",
+      "body_path": ".omc/research/runbook-20260914/session4-agent-20260914T195709241763Z/weather-observations-2026-09-14--response.json",
+      "checks": {
+        "body_sha_matches": true,
+        "body_size_matches": true,
+        "request_sha_matches": true,
+        "request_matches_matrix": true,
+        "registered_arguments_match": true,
+        "tool_matches": true,
+        "complete_http200": true,
+        "result_is_object": true
+      },
+      "requested_day": "2026-09-14",
+      "typed_error": null,
+      "applied_bounds": {
+        "feature_count_per_lane": 3,
+        "lane_count": 1,
+        "radius_meters": 25000.0
+      },
+      "lanes": [
+        {
+          "lane": "weather-observations",
+          "nature": "daily_series",
+          "state": "published",
+          "requested_day": "2026-09-14",
+          "served_day": "2026-09-14",
+          "feature_count": 0,
+          "features_truncated": false,
+          "feature_served_days": [],
+          "observed_days": [],
+          "distance_bases": [],
+          "client_exposure_flags": [],
+          "absence_provenance": null
+        }
+      ]
+    },
+    {
+      "id": "sensors-2026-09-06",
+      "name": "surface_value_near_point",
+      "arguments": {
+        "surface_name": "sensors",
+        "day": "2026-09-06",
+        "longitude": -123,
+        "latitude": 48,
+        "radius_meters": 25000,
+        "feature_count": 3
+      },
+      "started_at": "2026-09-14T19:57:13.967763+00:00",
+      "http_status": 200,
+      "bytes": 1957,
+      "sha256": "e5db25d872e58f66c4e11ab9a06dee5cc101f576cf7b290da02d8eeaae2b5db8",
+      "body_path": ".omc/research/runbook-20260914/session4-agent-20260914T195709241763Z/sensors-2026-09-06--response.json",
+      "checks": {
+        "body_sha_matches": true,
+        "body_size_matches": true,
+        "request_sha_matches": true,
+        "request_matches_matrix": true,
+        "registered_arguments_match": true,
+        "tool_matches": true,
+        "complete_http200": true,
+        "result_is_object": true
+      },
+      "requested_day": "2026-09-06",
+      "typed_error": null,
+      "applied_bounds": {
+        "feature_count_per_lane": 3,
+        "lane_count": 1,
+        "radius_meters": 25000.0
+      },
+      "lanes": [
+        {
+          "lane": "sensors",
+          "nature": "daily_series",
+          "state": "governed_absence",
+          "requested_day": "2026-09-06",
+          "served_day": "2026-09-06",
+          "feature_count": 0,
+          "features_truncated": false,
+          "feature_served_days": [],
+          "observed_days": [],
+          "distance_bases": [],
+          "client_exposure_flags": [],
+          "absence_provenance": {
+            "reason": "the sensors day export returned zero rows for 2026-09-06",
+            "recorded_at": "2026-09-07T00:08:07.658460+00:00",
+            "run_id": "parquet-gap-fill:0ef87f10-aab0-4362-8424-8fd085185047",
+            "upstream_response": "pipeline/lanes/sensors.py's day-scoped export query over this warehouse's own tables returned 0 rows for 2026-09-06 at zoom tier 13, and the writer refused it: refusing to write a zero-row 'sensors' observed partition for 2026-09-06: the warehouse held no qualifying station reading for this day, and an empty file reads as a present day and hides the gap. THIS RUN DID NOT CONTACT THE UPSTREAM SOURCE SYSTEM -- this records what Postgres held at export time, never a claim about what sensors's source published. Reconciling the two against the live source is pipeline/validation's job, not this driver's."
+          }
+        }
+      ]
+    },
+    {
+      "id": "sensors-2026-09-09",
+      "name": "surface_value_near_point",
+      "arguments": {
+        "surface_name": "sensors",
+        "day": "2026-09-09",
+        "longitude": -123,
+        "latitude": 48,
+        "radius_meters": 25000,
+        "feature_count": 3
+      },
+      "started_at": "2026-09-14T19:57:14.313833+00:00",
+      "http_status": 200,
+      "bytes": 2757,
+      "sha256": "817fffc8686b119565183d79124944c62e2575845ad66f42a24dc38da2fca997",
+      "body_path": ".omc/research/runbook-20260914/session4-agent-20260914T195709241763Z/sensors-2026-09-09--response.json",
+      "checks": {
+        "body_sha_matches": true,
+        "body_size_matches": true,
+        "request_sha_matches": true,
+        "request_matches_matrix": true,
+        "registered_arguments_match": true,
+        "tool_matches": true,
+        "complete_http200": true,
+        "result_is_object": true
+      },
+      "requested_day": "2026-09-09",
+      "typed_error": null,
+      "applied_bounds": {
+        "feature_count_per_lane": 3,
+        "lane_count": 1,
+        "radius_meters": 25000.0
+      },
+      "lanes": [
+        {
+          "lane": "sensors",
+          "nature": "daily_series",
+          "state": "published",
+          "requested_day": "2026-09-09",
+          "served_day": "2026-09-09",
+          "feature_count": 3,
+          "features_truncated": true,
+          "feature_served_days": [
+            "2026-09-09"
+          ],
+          "observed_days": [
+            "2026-09-09"
+          ],
+          "distance_bases": [
+            "point"
+          ],
+          "client_exposure_flags": [],
+          "absence_provenance": null
+        }
+      ]
+    },
+    {
+      "id": "soil-field-moisture-2026-09-05",
+      "name": "surface_value_near_point",
+      "arguments": {
+        "surface_name": "soil-field-moisture",
+        "day": "2026-09-05",
+        "longitude": -123,
+        "latitude": 48,
+        "radius_meters": 25000,
+        "feature_count": 3
+      },
+      "started_at": "2026-09-14T19:57:14.961317+00:00",
+      "http_status": 200,
+      "bytes": 45183,
+      "sha256": "f4c190315bd89ef91c23c33350a8961b9d61e062c5f75ac42fff74b805a2ee2d",
+      "body_path": ".omc/research/runbook-20260914/session4-agent-20260914T195709241763Z/soil-field-moisture-2026-09-05--response.json",
+      "checks": {
+        "body_sha_matches": true,
+        "body_size_matches": true,
+        "request_sha_matches": true,
+        "request_matches_matrix": true,
+        "registered_arguments_match": true,
+        "tool_matches": true,
+        "complete_http200": true,
+        "result_is_object": true
+      },
+      "requested_day": "2026-09-05",
+      "typed_error": null,
+      "applied_bounds": {
+        "feature_count_per_lane": 3,
+        "lane_count": 3,
+        "radius_meters": 25000.0
+      },
+      "lanes": [
+        {
+          "lane": "soil-field-moisture-0-7cm",
+          "nature": "daily_series",
+          "state": "published",
+          "requested_day": "2026-09-05",
+          "served_day": "2026-09-05",
+          "feature_count": 3,
+          "features_truncated": true,
+          "feature_served_days": [
+            "2026-09-05"
+          ],
+          "observed_days": [
+            "2026-09-05"
+          ],
+          "distance_bases": [
+            "point"
+          ],
+          "client_exposure_flags": [
+            "True"
+          ],
+          "absence_provenance": null
+        },
+        {
+          "lane": "soil-field-moisture-7-28cm",
+          "nature": "daily_series",
+          "state": "published",
+          "requested_day": "2026-09-05",
+          "served_day": "2026-09-05",
+          "feature_count": 3,
+          "features_truncated": true,
+          "feature_served_days": [
+            "2026-09-05"
+          ],
+          "observed_days": [
+            "2026-09-05"
+          ],
+          "distance_bases": [
+            "point"
+          ],
+          "client_exposure_flags": [
+            "True"
+          ],
+          "absence_provenance": null
+        },
+        {
+          "lane": "soil-field-moisture-28-100cm",
+          "nature": "daily_series",
+          "state": "published",
+          "requested_day": "2026-09-05",
+          "served_day": "2026-09-05",
+          "feature_count": 3,
+          "features_truncated": true,
+          "feature_served_days": [
+            "2026-09-05"
+          ],
+          "observed_days": [
+            "2026-09-05"
+          ],
+          "distance_bases": [
+            "point"
+          ],
+          "client_exposure_flags": [
+            "True"
+          ],
+          "absence_provenance": null
+        }
+      ]
+    },
+    {
+      "id": "soil-field-temperature-2026-09-05",
+      "name": "surface_value_near_point",
+      "arguments": {
+        "surface_name": "soil-field-temperature",
+        "day": "2026-09-05",
+        "longitude": -123,
+        "latitude": 48,
+        "radius_meters": 25000,
+        "feature_count": 3
+      },
+      "started_at": "2026-09-14T19:57:18.070188+00:00",
+      "http_status": 200,
+      "bytes": 15693,
+      "sha256": "f0e747b147b6c3eafc5558ff8b305d97940403a2d70044f4da906550aab9e275",
+      "body_path": ".omc/research/runbook-20260914/session4-agent-20260914T195709241763Z/soil-field-temperature-2026-09-05--response.json",
+      "checks": {
+        "body_sha_matches": true,
+        "body_size_matches": true,
+        "request_sha_matches": true,
+        "request_matches_matrix": true,
+        "registered_arguments_match": true,
+        "tool_matches": true,
+        "complete_http200": true,
+        "result_is_object": true
+      },
+      "requested_day": "2026-09-05",
+      "typed_error": null,
+      "applied_bounds": {
+        "feature_count_per_lane": 3,
+        "lane_count": 4,
+        "radius_meters": 25000.0
+      },
+      "lanes": [
+        {
+          "lane": "soil-temperature-0-to-7cm",
+          "nature": "daily_series",
+          "state": "published",
+          "requested_day": "2026-09-05",
+          "served_day": "2026-09-05",
+          "feature_count": 3,
+          "features_truncated": true,
+          "feature_served_days": [
+            "2026-09-05"
+          ],
+          "observed_days": [
+            "2026-09-05"
+          ],
+          "distance_bases": [
+            "point"
+          ],
+          "client_exposure_flags": [
+            "True"
+          ],
+          "absence_provenance": null
+        },
+        {
+          "lane": "soil-temperature-7-to-28cm",
+          "nature": "daily_series",
+          "state": "published",
+          "requested_day": "2026-09-05",
+          "served_day": "2026-09-05",
+          "feature_count": 3,
+          "features_truncated": true,
+          "feature_served_days": [
+            "2026-09-05"
+          ],
+          "observed_days": [
+            "2026-09-05"
+          ],
+          "distance_bases": [
+            "point"
+          ],
+          "client_exposure_flags": [
+            "True"
+          ],
+          "absence_provenance": null
+        },
+        {
+          "lane": "soil-temperature-28-to-100cm",
+          "nature": "daily_series",
+          "state": "published",
+          "requested_day": "2026-09-05",
+          "served_day": "2026-09-05",
+          "feature_count": 3,
+          "features_truncated": true,
+          "feature_served_days": [
+            "2026-09-05"
+          ],
+          "observed_days": [
+            "2026-09-05"
+          ],
+          "distance_bases": [
+            "point"
+          ],
+          "client_exposure_flags": [
+            "True"
+          ],
+          "absence_provenance": null
+        },
+        {
+          "lane": "soil-temperature-100-to-255cm",
+          "nature": "daily_series",
+          "state": "published",
+          "requested_day": "2026-09-05",
+          "served_day": "2026-09-05",
+          "feature_count": 3,
+          "features_truncated": true,
+          "feature_served_days": [
+            "2026-09-05"
+          ],
+          "observed_days": [
+            "2026-09-05"
+          ],
+          "distance_bases": [
+            "point"
+          ],
+          "client_exposure_flags": [
+            "True"
+          ],
+          "absence_provenance": null
+        }
+      ]
+    },
+    {
+      "id": "watersheds-2026-08-07",
+      "name": "surface_value_near_point",
+      "arguments": {
+        "surface_name": "watersheds",
+        "day": "2026-08-07",
+        "longitude": -123,
+        "latitude": 48,
+        "radius_meters": 25000,
+        "feature_count": 3
+      },
+      "started_at": "2026-09-14T19:57:20.241785+00:00",
+      "http_status": 200,
+      "bytes": 2730,
+      "sha256": "92a83bd3e0d1c4226a81343c4ad8f711c5a0d9f05636479fb1568e28652a7b19",
+      "body_path": ".omc/research/runbook-20260914/session4-agent-20260914T195709241763Z/watersheds-2026-08-07--response.json",
+      "checks": {
+        "body_sha_matches": true,
+        "body_size_matches": true,
+        "request_sha_matches": true,
+        "request_matches_matrix": true,
+        "registered_arguments_match": true,
+        "tool_matches": true,
+        "complete_http200": true,
+        "result_is_object": true
+      },
+      "requested_day": "2026-08-07",
+      "typed_error": null,
+      "applied_bounds": {
+        "feature_count_per_lane": 3,
+        "lane_count": 1,
+        "radius_meters": 25000.0
+      },
+      "lanes": [
+        {
+          "lane": "watersheds",
+          "nature": "static_lookup",
+          "state": "published",
+          "requested_day": "2026-08-07",
+          "served_day": "2026-08-07",
+          "feature_count": 3,
+          "features_truncated": true,
+          "feature_served_days": [
+            "2026-08-07"
+          ],
+          "observed_days": [],
+          "distance_bases": [
+            "centroid"
+          ],
+          "client_exposure_flags": [],
+          "absence_provenance": null
+        }
+      ]
+    },
+    {
+      "id": "watersheds-2026-09-14",
+      "name": "surface_value_near_point",
+      "arguments": {
+        "surface_name": "watersheds",
+        "day": "2026-09-14",
+        "longitude": -123,
+        "latitude": 48,
+        "radius_meters": 25000,
+        "feature_count": 3
+      },
+      "started_at": "2026-09-14T19:57:25.349371+00:00",
+      "http_status": 200,
+      "bytes": 2730,
+      "sha256": "6d4b1b57360eae9f9c57a40661955555d0265c8372c72e443b61a71ea96d743b",
+      "body_path": ".omc/research/runbook-20260914/session4-agent-20260914T195709241763Z/watersheds-2026-09-14--response.json",
+      "checks": {
+        "body_sha_matches": true,
+        "body_size_matches": true,
+        "request_sha_matches": true,
+        "request_matches_matrix": true,
+        "registered_arguments_match": true,
+        "tool_matches": true,
+        "complete_http200": true,
+        "result_is_object": true
+      },
+      "requested_day": "2026-09-14",
+      "typed_error": null,
+      "applied_bounds": {
+        "feature_count_per_lane": 3,
+        "lane_count": 1,
+        "radius_meters": 25000.0
+      },
+      "lanes": [
+        {
+          "lane": "watersheds",
+          "nature": "static_lookup",
+          "state": "published",
+          "requested_day": "2026-09-14",
+          "served_day": "2026-08-07",
+          "feature_count": 3,
+          "features_truncated": true,
+          "feature_served_days": [
+            "2026-08-07"
+          ],
+          "observed_days": [],
+          "distance_bases": [
+            "centroid"
+          ],
+          "client_exposure_flags": [],
+          "absence_provenance": null
+        }
+      ]
+    },
+    {
+      "id": "soil-survey-2026-08-28",
+      "name": "surface_value_near_point",
+      "arguments": {
+        "surface_name": "soil-survey",
+        "day": "2026-08-28",
+        "longitude": -123,
+        "latitude": 48,
+        "radius_meters": 25000,
+        "feature_count": 3
+      },
+      "started_at": "2026-09-14T19:57:27.718060+00:00",
+      "http_status": 200,
+      "bytes": 1138,
+      "sha256": "47c806d28daa72625284d5511c404be71e58bfdddcf7e37c47b39886bbbe2045",
+      "body_path": ".omc/research/runbook-20260914/session4-agent-20260914T195709241763Z/soil-survey-2026-08-28--response.json",
+      "checks": {
+        "body_sha_matches": true,
+        "body_size_matches": true,
+        "request_sha_matches": true,
+        "request_matches_matrix": true,
+        "registered_arguments_match": true,
+        "tool_matches": true,
+        "complete_http200": true,
+        "result_is_object": true
+      },
+      "requested_day": "2026-08-28",
+      "typed_error": null,
+      "applied_bounds": {
+        "feature_count_per_lane": 3,
+        "lane_count": 1,
+        "radius_meters": 25000.0
+      },
+      "lanes": [
+        {
+          "lane": "soil-survey",
+          "nature": "static_lookup",
+          "state": "day_not_written",
+          "requested_day": "2026-08-28",
+          "served_day": null,
+          "feature_count": 0,
+          "features_truncated": false,
+          "feature_served_days": [],
+          "observed_days": [],
+          "distance_bases": [],
+          "client_exposure_flags": [],
+          "absence_provenance": null
+        }
+      ]
+    },
+    {
+      "id": "interventions-2026-08-28",
+      "name": "surface_value_near_point",
+      "arguments": {
+        "surface_name": "interventions",
+        "day": "2026-08-28",
+        "longitude": -123,
+        "latitude": 48,
+        "radius_meters": 25000,
+        "feature_count": 3
+      },
+      "started_at": "2026-09-14T19:57:28.434718+00:00",
+      "http_status": 200,
+      "bytes": 424,
+      "sha256": "4f212acd89a7907ac640b5bbb3002718a7810917e6f51dbc6642fccdf2ea2483",
+      "body_path": ".omc/research/runbook-20260914/session4-agent-20260914T195709241763Z/interventions-2026-08-28--response.json",
+      "checks": {
+        "body_sha_matches": true,
+        "body_size_matches": true,
+        "request_sha_matches": true,
+        "request_matches_matrix": true,
+        "registered_arguments_match": true,
+        "tool_matches": true,
+        "complete_http200": true,
+        "result_is_object": true
+      },
+      "requested_day": null,
+      "typed_error": "surface_not_served_from_parquet",
+      "applied_bounds": null,
+      "lanes": []
+    },
+    {
+      "id": "shortwave-gap-neighbors",
+      "name": "observation_temporal_neighbors",
+      "arguments": {
+        "surface_name": "climate-field-shortwave-radiation",
+        "day": "2026-06-01",
+        "neighbor_days": 7
+      },
+      "started_at": "2026-09-14T19:57:28.665800+00:00",
+      "http_status": 200,
+      "bytes": 925,
+      "sha256": "8e3e206483e505a654b9d2e3a193715f148617b7ce146bf7e88871b1fd1af304",
+      "body_path": ".omc/research/runbook-20260914/session4-agent-20260914T195709241763Z/shortwave-gap-neighbors--response.json",
+      "checks": {
+        "body_sha_matches": true,
+        "body_size_matches": true,
+        "request_sha_matches": true,
+        "request_matches_matrix": true,
+        "registered_arguments_match": true,
+        "tool_matches": true,
+        "complete_http200": true,
+        "result_is_object": true
+      },
+      "requested_day": "2026-06-01",
+      "typed_error": null,
+      "applied_bounds": {
+        "neighbor_days": 7,
+        "requested_day": "2026-06-01",
+        "searched_from": "2026-05-25",
+        "searched_through": "2026-06-08"
+      },
+      "lanes": [],
+      "temporal_neighbors": [
+        {
+          "day_offset": -1,
+          "distance_days": 1,
+          "lane_count": 1,
+          "observation_count": 397,
+          "observed_day": "2026-05-31",
+          "side": "before",
+          "surface_name": "climate-field-shortwave-radiation"
+        }
+      ]
+    },
+    {
+      "id": "drought-selected-window",
+      "name": "drought_history_at_point",
+      "arguments": {
+        "longitude": -123,
+        "latitude": 48,
+        "as_of_day": "2026-09-08",
+        "weeks_back": 2
+      },
+      "started_at": "2026-09-14T19:57:28.915101+00:00",
+      "http_status": 200,
+      "bytes": 2152,
+      "sha256": "5c324bddd886552a587ba8ffb5d25895aa3ecccd63468d0a3f8fde0d6894db44",
+      "body_path": ".omc/research/runbook-20260914/session4-agent-20260914T195709241763Z/drought-selected-window--response.json",
+      "checks": {
+        "body_sha_matches": true,
+        "body_size_matches": true,
+        "request_sha_matches": true,
+        "request_matches_matrix": true,
+        "registered_arguments_match": true,
+        "tool_matches": true,
+        "complete_http200": true,
+        "result_is_object": true
+      },
+      "requested_day": null,
+      "typed_error": null,
+      "applied_bounds": {
+        "max_releases": 120,
+        "max_scanned_day_partitions": 120,
+        "max_weeks_back": 120,
+        "requested_from": "2026-08-25",
+        "requested_through": "2026-09-08",
+        "scanned_day_count": 3,
+        "scanned_from": "2026-08-25",
+        "scanned_through": "2026-09-08",
+        "valid_date_from": "2026-08-25",
+        "weeks_back": 2,
+        "window_narrowed_by_scan_budget": false
+      },
+      "lanes": [],
+      "weekly_severity": [
+        {
+          "covering_class_count": 1,
+          "next_valid_date": null,
+          "prev_valid_date": "2026-09-01",
+          "published_at": "2026-09-12T00:45:20.459938+00:00",
+          "published_class_count": 5,
+          "severity_class": 1,
+          "valid_date": "2026-09-08"
+        },
+        {
+          "covering_class_count": 1,
+          "next_valid_date": "2026-09-08",
+          "prev_valid_date": "2026-08-25",
+          "published_at": "2026-09-07T11:53:14.934621+00:00",
+          "published_class_count": 5,
+          "severity_class": 1,
+          "valid_date": "2026-09-01"
+        },
+        {
+          "covering_class_count": 1,
+          "next_valid_date": "2026-09-01",
+          "prev_valid_date": "2026-08-18",
+          "published_at": "2026-08-27T13:10:46.464976+00:00",
+          "published_class_count": 5,
+          "severity_class": 1,
+          "valid_date": "2026-08-25"
+        }
+      ],
+      "releases_returned": 3
+    },
+    {
+      "id": "forecast-refusal",
+      "name": "forecast_summary_for_cell",
+      "arguments": {
+        "longitude": -123,
+        "latitude": 48,
+        "radius_meters": 25000
+      },
+      "started_at": "2026-09-14T19:57:30.754329+00:00",
+      "http_status": 200,
+      "bytes": 509,
+      "sha256": "06110f5bdf4b0dd8d0c47b4f6104950b899edcd00b66fbb33d6519ecfd95fab9",
+      "body_path": ".omc/research/runbook-20260914/session4-agent-20260914T195709241763Z/forecast-refusal--response.json",
+      "checks": {
+        "body_sha_matches": true,
+        "body_size_matches": true,
+        "request_sha_matches": true,
+        "request_matches_matrix": true,
+        "registered_arguments_match": true,
+        "tool_matches": true,
+        "complete_http200": true,
+        "result_is_object": true
+      },
+      "requested_day": null,
+      "typed_error": "forecast_parquet_lane_not_published",
+      "applied_bounds": {
+        "max_rows": 40,
+        "metric_names": [],
+        "radius_meters": 25000.0
+      },
+      "lanes": [],
+      "resolved_cell": null,
+      "forecast_values": []
+    }
+  ]
+}
