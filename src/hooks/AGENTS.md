@@ -327,6 +327,11 @@ way to know the drawing changed meaning.
 
 ## Regional selection windows
 
+The regional intelligence stream requires a terminal `done`, `error` or `refusal` event. Clean
+EOF before one arrives is a retryable incomplete-stream failure and ends the assistant's
+streaming state. It preserves any partial narration and never overrides a terminal result or
+the user's explicit cancellation.
+
 `useRegionalIntelligence` reads the current map zoom, analysis time scale/range and sparse layer
 date overrides when each request is sent. Visible layer days retain their independent dates; a
 hidden layer with an explicit date retains that date too. Other queried layers inherit the most

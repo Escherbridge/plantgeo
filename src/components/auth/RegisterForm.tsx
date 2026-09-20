@@ -3,10 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { DEFAULT_CALLBACK_URL, safeCallbackUrl } from "@/lib/auth/callback-url";
-
-const MIN_PASSWORD_LENGTH = 8;
-// Mirrors MAX_BCRYPT_PASSWORD_BYTES in src/lib/server/security/registration.ts
-const MAX_PASSWORD_BYTES = 72;
+import { MAX_BCRYPT_PASSWORD_BYTES, MIN_PASSWORD_LENGTH, registrationSchema } from "@/lib/auth/registration";
 
 /** Registration form; redirects to /login with callbackUrl preserved on success. */
 export function RegisterForm({
@@ -24,39 +21,38 @@ export function RegisterForm({
 
   const passwordBytes = new TextEncoder().encode(password).length;
   const passwordTooShort = password.length > 0 && password.length < MIN_PASSWORD_LENGTH;
-  const passwordTooLong = passwordBytes > MAX_PASSWORD_BYTES;
+  const passwordTooLong = passwordBytes > MAX_BCRYPT_PASSWORD_BYTES;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (loading) return;
     setError(null);
-    if (password.length < MIN_PASSWORD_LENGTH) {
-      setError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
-      return;
-    }
-    if (passwordTooLong) {
-      setError("Password is too long.");
+    const parsed = registrationSchema.safeParse({ name, email, password });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message ?? "Check your registration details.");
       return;
     }
     setLoading(true);
-    const res = await fetch("/api/auth/register", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, email, password }),
-    });
-    setLoading(false);
-    // The endpoint acknowledges every well-formed submission identically, so
-    // there is no "already exists" branch to render — an address that is
-    // already registered is told so by email, not by this response.
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      setError((data as { error?: string }).error ?? "Registration failed.");
-    } else {
+    try {
+      const res = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(parsed.data),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError((data as { error?: string }).error ?? "Registration failed. Please try again.");
+        return;
+      }
       const query = new URLSearchParams({ registered: "1" });
       if (destination !== DEFAULT_CALLBACK_URL) {
         query.set("callbackUrl", destination);
       }
       router.push(`/login?${query.toString()}`);
+    } catch {
+      setError("Could not connect to create your account. Check your connection and try again.");
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -64,12 +60,13 @@ export function RegisterForm({
     <form onSubmit={handleSubmit} className="flex flex-col gap-4 w-full max-w-sm" noValidate>
       <div className="flex flex-col gap-1">
         <label className="text-sm text-zinc-300" htmlFor="name">
-          Name
+          Name (optional)
         </label>
         <input
           id="name"
           type="text"
           autoComplete="name"
+          maxLength={100}
           value={name}
           onChange={(e) => setName(e.target.value)}
           className="rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
@@ -83,6 +80,7 @@ export function RegisterForm({
           id="reg-email"
           type="email"
           autoComplete="email"
+          maxLength={254}
           required
           value={email}
           onChange={(e) => setEmail(e.target.value)}
@@ -111,7 +109,7 @@ export function RegisterForm({
           id="reg-password-hint"
           className={`text-[11px] ${passwordTooLong ? "text-red-400" : "text-zinc-500"}`}
         >
-          {MIN_PASSWORD_LENGTH}-{MAX_PASSWORD_BYTES} characters.
+          At least {MIN_PASSWORD_LENGTH} characters, up to {MAX_BCRYPT_PASSWORD_BYTES} bytes.
         </p>
       </div>
       {error && (

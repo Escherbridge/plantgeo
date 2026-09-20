@@ -55,10 +55,10 @@ from published absence, and preserve the tool's applied bounds and observation d
 Warehouse claims may attach up to eight `evidenceReadIds`; only executed reads with returned
 measurements for one of the claim's exact tool sources can be referenced. Web and inference
 claims do not carry read IDs; put their supporting measurements in separate observations.
-A tool-source warehouse citation outside the local stage must reference an
+A tool-source warehouse citation at every stage, including local, must reference an
 observed read of that exact source. Its stage, dates and location are displayed beside the
 claim and in exports so comparison evidence cannot silently acquire local scope. Source-wide
-labels without references admit only observed local reads. Initial-context source labels still
+labels without references are rejected. Initial-context source labels still
 require their distinct payload blocks; a null drought class also requires a published drought
 release timestamp to distinguish measured no-drought from a gauge-only water block.
 Composite fire-history reads identify only lanes whose own summary returned positive row counts.
@@ -67,6 +67,32 @@ date bounds retain their distinction from requested dates.
 Coverage inventories, temporal publication neighbours and nearest reporting-cell metadata remain
 in the audit but cannot be cited as environmental measurements. Their presence establishes
 where or when to investigate; it establishes no soil, climate or fire value.
+
+Provider report schemas are narrowed each round using `reportCitationManifest`: populated legacy
+payload sources and executed measurement reads from the current audit only. The canonical runtime
+validator remains unchanged. This keeps discoverable layers separate from citable observations;
+an empty manifest still permits an inference report with an empty evidence-source array. Every
+prefetched and additional result names its exact report source, read ID and status. Correction
+feedback repeats the current admissible source/read pairs rather than asking the model to infer
+them from lane names or legacy payload labels. New reads refresh the provider schema before the
+next round. Discovery rounds require a tool call, allowing either another read or the final report;
+the final and correction rounds still force the report tool. Safe validation diagnostics include
+the canonical `evidenceReadIds` path without recording model text, coordinates or unknown fields.
+Both report tool aliases and the system prompt ask for 4–6 consolidated observations (hard
+maximum twelve), with 0–3 recommendations (hard maximum eight). Bounds failures report the
+actual previous collection sizes and request consolidation while preserving essential dates,
+units and source/read pairs. The one correction budget and all runtime bounds remain intact;
+the application never truncates a report into validity.
+
+When the current manifest has tool measurement IDs, the provider schema requires an
+`evidenceReadIds` array on every claim. Warehouse tool citations need matching nonempty IDs;
+inference, web and legacy-payload-only claims use `[]`. `normalizeProviderReport` translates
+only an own empty array on a known risk/observation/recommendation claim explicitly labelled
+inference or web into the canonical omitted field. It never deletes nonempty IDs, changes a
+warehouse citation, attaches inferred IDs, or recurses through arbitrary data. Strict canonical
+validation and exact source/read matching follow this transport translation. With no tool
+measurements the provider omits the field entirely. Sampled history describes only its sampled
+dates; an incomplete scan cannot establish the extrema or continuity of the requested period.
 
 Inventory has an eight-second transport deadline. Local and temporal stages reserve twelve and
 fifteen seconds respectively, with at most three concurrent reads. Initial retrieval selects up to

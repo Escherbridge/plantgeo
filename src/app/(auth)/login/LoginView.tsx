@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { LoginForm } from "@/components/auth/LoginForm";
 import { FormNotice } from "@/components/auth/FormNotice";
 import { DEFAULT_CALLBACK_URL, safeCallbackUrl } from "@/lib/auth/callback-url";
+import { REGISTRATION_ACKNOWLEDGEMENT } from "@/lib/auth/registration";
 
 const SIGN_IN_ERROR_MESSAGES: Record<string, string> = {
   CredentialsSignin: "Invalid email or password.",
@@ -37,7 +38,7 @@ export function LoginView() {
         <div className="flex flex-col gap-2">
           {registered && (
             <FormNotice tone="success">
-              Check your email to finish setting up your account before signing in.
+              {REGISTRATION_ACKNOWLEDGEMENT}
             </FormNotice>
           )}
           {reset && <FormNotice tone="success">Your password has been reset. Sign in below.</FormNotice>}

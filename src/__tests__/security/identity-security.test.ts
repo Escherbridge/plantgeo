@@ -132,6 +132,16 @@ describe("credential boundary policies", () => {
     ).toBe(false);
   });
 
+  it.each([undefined, "", "   "])("accepts an omitted or blank optional registration name: %s", (name) => {
+    const parsed = registrationSchema.parse({ name, email: "user@example.com", password: "valid password" });
+    expect(parsed.name).toBeUndefined();
+  });
+
+  it("retains the UTF-8 password boundary in the shared browser and server schema", () => {
+    expect(registrationSchema.safeParse({ email: "user@example.com", password: "é".repeat(36) }).success).toBe(true);
+    expect(registrationSchema.safeParse({ email: "user@example.com", password: "é".repeat(37) }).success).toBe(false);
+  });
+
   it("hashes registration limiter identities and recognizes unique races", () => {
     const request = new Request("https://plantgeo.test/api/auth/register", {
       headers: { "x-forwarded-for": "203.0.113.9, 10.0.0.1" },

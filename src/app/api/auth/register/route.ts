@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/server/db";
+import { REGISTRATION_ACKNOWLEDGEMENT } from "@/lib/auth/registration";
 import { emailVerificationTokens, users } from "@/lib/server/db/schema";
 import { hashPassword } from "@/lib/server/password";
 import { checkRateLimit } from "@/lib/server/middleware/api-auth";
@@ -33,7 +34,7 @@ function acknowledged() {
   return NextResponse.json(
     {
       ok: true,
-      message: "Check your email to finish setting up your account.",
+      message: REGISTRATION_ACKNOWLEDGEMENT,
     },
     { status: 201 }
   );
@@ -97,7 +98,7 @@ export async function POST(request: Request) {
   const parsed = registrationSchema.safeParse(body.data);
   if (!parsed.success) {
     return NextResponse.json(
-      { error: "Invalid registration data" },
+      { error: parsed.error.issues[0]?.message ?? "Invalid registration data" },
       { status: 400 }
     );
   }

@@ -27,20 +27,27 @@ export function LoginForm({
     if (loading) return;
     setError(null);
     setLoading(true);
-    const result = await signIn("credentials", {
-      email,
-      password,
-      redirect: false,
-    });
-    setLoading(false);
-    if (result?.status === 429) {
-      setError("Too many sign-in attempts. Wait a minute and try again.");
-    } else if (result?.status === 503) {
-      setError("Sign-in is temporarily unavailable. Please try again shortly.");
-    } else if (result?.error) {
-      setError("Invalid email or password.");
-    } else {
-      router.push(destination);
+    try {
+      const result = await signIn("credentials", {
+        email,
+        password,
+        redirect: false,
+      });
+      if (result?.status === 429) {
+        setError("Too many sign-in attempts. Wait a minute and try again.");
+      } else if (result?.status === 503) {
+        setError("Sign-in is temporarily unavailable. Please try again shortly.");
+      } else if (result?.error) {
+        setError("Invalid email or password.");
+      } else if (result?.ok) {
+        router.push(destination);
+      } else {
+        setError("Sign-in could not be completed. Please try again.");
+      }
+    } catch {
+      setError("Could not connect to sign in. Check your connection and try again.");
+    } finally {
+      setLoading(false);
     }
   }
 

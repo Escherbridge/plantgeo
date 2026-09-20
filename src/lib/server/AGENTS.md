@@ -15,6 +15,22 @@ unavailable until a publication or validation job repairs it.
 Keep cross-cutting rationale in this file and code comments short. Run all edits before the final
 type, lint, boundary, and test sweep.
 
+## Registration and sign-in
+
+`lib/auth/registration.ts` owns the browser-safe registration schema and generic acknowledgement.
+The form and API normalize email identically, omit blank optional names, reject unknown request
+fields and enforce bcrypt's 72-byte UTF-8 limit before hashing. Validation errors describe malformed
+input only; they disclose no account state. New and duplicate registrations return the same status
+and message, including when transactional email fails, and duplicate submissions never change the
+existing password.
+
+Credential sign-in does not require email verification. Verification remains a separate identity
+proof for capabilities that require it, so signup acknowledgement must not instruct users to wait
+for a verification link before signing in. Email verification, reset links and existing-account
+notices still require a configured provider; account creation tolerates failed delivery. The generic
+acknowledgement explains sign-in without asserting that an account was newly created
+or that email was sent.
+
 ## Canonical contribution review
 
 Publish and reject are pending-review actions, including for administrators. The final UPDATE

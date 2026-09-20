@@ -89,6 +89,52 @@ afterEach(() => {
 });
 
 describe("posting the days the user is viewing with an analysis request", () => {
+  it('ends an incomplete clean SSE stream with a retryable error instead of leaving a streaming message', async () => {
+    useRegionalIntelligenceStore.getState().openPanel(44, -116, 'approximate');
+    const text = 'event: delta\ndata: {"text":"Partial analysis"}\n\n';
+    const read = vi.fn().mockResolvedValueOnce({ done: false, value: new TextEncoder().encode(text) }).mockResolvedValueOnce({ done: true });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: { getReader: () => ({ read }) } }));
+    const { result } = renderHook(() => useRegionalIntelligence());
+    await act(async () => { await result.current.sendFollowUp('Analyze this selection'); });
+    const state = useRegionalIntelligenceStore.getState();
+    expect(state).toMatchObject({ isLoading: false, errorRetryable: true, error: 'The analysis stream ended before completion. Please try again.' });
+    expect(state.messages.at(-1)).toMatchObject({ content: 'Partial analysis', isStreaming: false });
+  });
+
+  it.each(['done', 'error', 'refusal'])('preserves the terminal %s outcome when the stream closes', async (eventType) => {
+    useRegionalIntelligenceStore.getState().openPanel(44, -116, 'approximate');
+    const answer = { aiGenerated: true, riskSummary: { level: 'low' }, observations: [], remediation: [] };
+    const body = eventType === 'done' ? answer : { message: 'The request was declined.', retryable: false };
+    const text = `event: ${eventType}\ndata: ${JSON.stringify(body)}\n\n`;
+    const read = vi.fn().mockResolvedValueOnce({ done: false, value: new TextEncoder().encode(text) }).mockResolvedValueOnce({ done: true });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: { getReader: () => ({ read }) } }));
+    const { result } = renderHook(() => useRegionalIntelligence());
+    await act(async () => { await result.current.sendFollowUp('Analyze this selection'); });
+    const state = useRegionalIntelligenceStore.getState();
+    expect(state.error).toBe(eventType === 'done' ? null : 'The request was declined.');
+    expect(state.errorRetryable).toBe(false);
+    expect(state.messages.at(-1)?.isStreaming).toBe(false);
+    if (eventType === 'done') expect(state.messages.at(-1)?.parsedResponse).toEqual(answer);
+  });
+
+  it('keeps user cancellation when an aborted reader reaches EOF', async () => {
+    useRegionalIntelligenceStore.getState().openPanel(44, -116, 'approximate');
+    let finishRead!: (result: { done: true }) => void;
+    const read = vi.fn(() => new Promise<{ done: true }>((resolve) => { finishRead = resolve; }));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: { getReader: () => ({ read }) } }));
+    const { result } = renderHook(() => useRegionalIntelligence());
+    let request!: Promise<void>;
+    await act(async () => { request = result.current.sendFollowUp('Analyze this selection'); });
+    await waitFor(() => expect(read).toHaveBeenCalled());
+    await act(async () => {
+      useRegionalIntelligenceStore.getState().cancelAnalysis();
+      finishRead({ done: true });
+      await request;
+    });
+    expect(useRegionalIntelligenceStore.getState()).toMatchObject({ error: null, errorRetryable: false, analysisCancelled: true, isLoading: false });
+    expect(useRegionalIntelligenceStore.getState().messages.at(-1)).toMatchObject({ content: 'Analysis canceled. No analysis was completed.', isStreaming: false });
+  });
+
   it('recomputes hidden selected days, history scale and zoom for each follow-up', async () => {
     const fetchMock = refusingFetch();
     vi.stubGlobal('fetch', fetchMock);

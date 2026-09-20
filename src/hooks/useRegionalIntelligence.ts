@@ -179,6 +179,7 @@ export function useRegionalIntelligence() {
           ...useTimeSliderStore.getState().layerDates,
         },
       };
+      let terminalReceived = false;
 
       try {
         // Prior turns live server-side under conversationId; the client never
@@ -289,6 +290,7 @@ export function useRegionalIntelligence() {
                 }
                 break;
               case 'done':
+                terminalReceived = true;
                 setToolActivity(null);
                 if (isRegionalIntelligenceResponse(parsed)) {
                   if (parsed.analysisEvidence) {
@@ -305,20 +307,28 @@ export function useRegionalIntelligence() {
                 }
                 break;
               case 'error':
+              case 'refusal':
+                terminalReceived = true;
                 addActivity('Analysis failed.');
                 setToolActivity(null);
                 setError(
                   (parsed.message as string | undefined) ?? 'Unknown error',
-                  parsed.retryable === true
+                  eventType === 'error' && parsed.retryable === true
                 );
                 updateLastMessage({ isStreaming: false });
                 break;
             }
           }
         }
+        if (!terminalReceived && !controller.signal.aborted && isCurrentRequest()) {
+          throw new RegionalIntelligenceRequestError(
+            'The analysis stream ended before completion. Please try again.',
+            true
+          );
+        }
       } catch (err) {
         if (err instanceof Error && err.name === 'AbortError') return;
-        if (isCurrentRequest()) {
+        if (isCurrentRequest() && !terminalReceived) {
           addActivity('Analysis request failed.');
           setError(
             err instanceof Error ? err.message : 'Unknown error',

@@ -482,9 +482,47 @@ describe("registration", () => {
     try {
       const response = await register("racy@example.com");
       expect(response.status).toBe(201);
-      expect(await response.text()).toContain("Check your email");
+      expect(await response.text()).toContain("Sign in with your account password");
     } finally {
       mocks.db.insert = insert;
+    }
+  });
+
+  it("creates a credential account with a blank optional name", async () => {
+    mocks.state.returning = [{ id: USER_ID, email: "new@example.com" }];
+    const response = await registerAccount(post("/api/auth/register", {
+      name: "   ", email: " New@Example.com ", password: "valid password",
+    }));
+    expect(response.status).toBe(201);
+    expect(insertsFor("users")[0].values).toMatchObject({ name: null, email: "new@example.com" });
+  });
+
+  it("reports malformed fields without looking up or hashing credentials", async () => {
+    const response = await registerAccount(post("/api/auth/register", {
+      email: "not-an-email", password: "valid password",
+    }));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "Enter a valid email address." });
+    expect(mocks.state.selectConditions).toHaveLength(0);
+    expect(mocks.hashPassword).not.toHaveBeenCalled();
+  });
+
+  it("keeps new and existing registration acknowledgements identical when email fails", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.sendEmail.mockRejectedValue(new Error("EMAIL_PROVIDER is not configured"));
+    try {
+      mocks.state.returning = [{ id: USER_ID, email: "new@example.com" }];
+      const created = await register("new@example.com");
+      mocks.state.selectRows.users = [{ id: USER_ID }];
+      const duplicate = await register("new@example.com");
+      expect(created.status).toBe(201);
+      expect(duplicate.status).toBe(201);
+      expect(await duplicate.text()).toBe(await created.text());
+      expect(updatesFor("users")).toHaveLength(0);
+      expect(insertsFor("users")).toHaveLength(1);
+    } finally {
+      mocks.sendEmail.mockResolvedValue(undefined);
+      vi.restoreAllMocks();
     }
   });
 });

@@ -14,6 +14,8 @@ describe("safe AI provider diagnostics", () => {
     expect(reportValidationDiagnostic([{ code: "too_big", path: ["observations", 32, "statement"] }, { code: "private secret", path: ["private prompt"] }])).toEqual([{ code: "too_big", path: "observations.[].statement" }, { code: "unknown", path: "unknown_field" }]);
     expect(providerErrorDiagnostic(failure("Too many states for serving this schema")).reasons).toContain("schema_too_complex");
     expect(providerErrorDiagnostic(failure("Unknown field maxLength")).reasons).toContain("unsupported_schema_keyword");
+    expect(reportValidationDiagnostic([{ code: "custom", path: ["riskSummary", "evidenceReadIds", 0] }]))
+      .toEqual([{ code: "custom", path: "riskSummary.evidenceReadIds.[]" }]);
   });
   it("distinguishes empty, text and structured completions without exposing output or unknown names", () => {
     expect(incompleteReportDiagnostic(undefined, undefined, undefined)).toMatchObject({ messagePresent: false, finishReason: "unknown", contentKind: "empty", reportToolCount: 0 });

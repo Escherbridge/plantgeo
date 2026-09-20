@@ -10,7 +10,7 @@ vi.mock('@/lib/server/services/regional-evidence-tools', () => ({
 import { bindRegionalEvidenceArguments, boundedEvidence, evidenceResultStatus, prepareRegionalAnalysis, REGIONAL_ANALYSIS_PRIORITY_SURFACES, regionalEvidenceAuditCall, regionalEvidenceDay, regionalEvidenceStageStatus, STRATEGY_SCREENING } from '@/lib/server/services/regional-analysis-workflow';
 import { analysisDateRange } from '@/lib/regional-analysis-selection';
 import { LAYER_REGISTRY } from '@/lib/map/layer-registry';
-import { reportWarehouseEvidenceIssues } from '@/lib/server/services/remediation-report';
+import { REMEDIATION_REPORT_JSON_SCHEMA, normalizeProviderReport, remediationReportSchema, reportCitationManifest, reportSchemaForCitations, reportWarehouseEvidenceIssues } from '@/lib/server/services/remediation-report';
 
 const payload: RegionalContextPayload = {
   location: { lat: 44, lon: -118, geohash: '9r' },
@@ -47,6 +47,9 @@ describe('regional evidence graph', () => {
     const result = await prepareRegionalAnalysis(payload, temporal);
     expect(result.evidence.toolCalls.filter((call) => call.stage === 'local')).toHaveLength(6);
     expect(JSON.parse(result.context).availableLayers).toEqual([...REGIONAL_TOOL_EVIDENCE_SOURCES]);
+    expect(JSON.parse(result.context).observations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'local-1', evidenceReadId: 'local-1', evidenceSource: 'climate-field-precipitation', evidenceStatus: 'observed' }),
+    ]));
     expect(result.evidence.stages.map((stage) => stage.id)).toEqual(['inventory', 'local', 'temporal', 'strategies']);
     const local = result.evidence.toolCalls.filter((call) => call.stage === 'local');
     expect(local.find((call) => call.source === 'climate-field-precipitation')?.selectedDate).toBe('2024-06-15');
@@ -245,7 +248,9 @@ describe('evidence audit honesty', () => {
       { id: 'one', stage: 'local', tool: 'surface_value_near_point', source: 'interventions', status: 'governed_absence' },
     ] };
     expect(reportWarehouseEvidenceIssues(report, payload, evidence)).toHaveLength(1);
-    expect(reportWarehouseEvidenceIssues(report, payload, { ...evidence, toolCalls: [{ ...evidence.toolCalls[0], status: 'observed' }] })).toEqual([]);
+    expect(reportWarehouseEvidenceIssues(report, payload, { ...evidence, toolCalls: [{ ...evidence.toolCalls[0], status: 'observed' }] })).toHaveLength(1);
+    expect(reportWarehouseEvidenceIssues({ ...report, riskSummary: { ...report.riskSummary, evidenceReadIds: ['one'] } }, payload,
+      { ...evidence, toolCalls: [{ ...evidence.toolCalls[0], status: 'observed' }] })).toEqual([]);
     for (const stage of ['temporal', 'regional', 'additional'] as const) {
       const comparisonEvidence: RegionalAnalysisEvidence = { ...evidence, toolCalls: [{ ...evidence.toolCalls[0], stage, status: 'observed', selectedDate: '2024-05-01', location: { lat: 44, lon: -116.5 } }] };
       expect(reportWarehouseEvidenceIssues(report, payload, comparisonEvidence)).toHaveLength(1);
@@ -262,6 +267,66 @@ describe('evidence audit honesty', () => {
       expect(reportWarehouseEvidenceIssues(refusedReference, payload, metadata).length).toBeGreaterThan(0);
       expect(reportWarehouseEvidenceIssues(report, payload, metadata)).toHaveLength(1);
     }
+  });
+  it('scopes provider citations to actual measurement pairs and preserves gap-only inference reports', () => {
+    const canonical = JSON.stringify(REMEDIATION_REPORT_JSON_SCHEMA);
+    const emptyManifest = reportCitationManifest(payload, undefined);
+    expect(emptyManifest).toEqual({ payloadSources: [], measurementReads: [] });
+    const emptySchema = reportSchemaForCitations(emptyManifest);
+    expect(emptySchema).toHaveProperty('properties.riskSummary.properties.evidenceSources.maxItems', 0);
+    expect(emptySchema).toHaveProperty('properties.riskSummary.properties.evidenceOrigin.enum', ['web', 'model_inference']);
+    expect(emptySchema).not.toHaveProperty('properties.observations.items.properties.evidenceSource');
+    expect(emptySchema).not.toHaveProperty('properties.observations.items.properties.evidenceReadIds');
+
+    const evidence: RegionalAnalysisEvidence = { version: 1, stages: [], limitations: [], toolCalls: [
+      { id: 'temporal-vpd', stage: 'temporal', tool: 'surface_evidence_for_selection', source: 'soil-field-vpd', status: 'observed', selectedDate: '2026-09-15' },
+      { id: 'failed-vegetation', stage: 'local', tool: 'surface_evidence_for_selection', source: 'vegetation', status: 'refused' },
+      { id: 'coverage', stage: 'local', tool: 'observation_coverage_on_day', source: 'climate-field-precipitation', status: 'observed' },
+      { id: 'internal-lane', stage: 'local', tool: 'surface_evidence_for_selection', source: 'metric_vpd', status: 'observed' },
+    ] };
+    const manifest = reportCitationManifest(payload, evidence);
+    expect(manifest.payloadSources).toEqual([]);
+    expect(manifest.measurementReads).toEqual([expect.objectContaining({ evidenceSource: 'soil-field-vpd', evidenceReadId: 'temporal-vpd', selectedDate: '2026-09-15' })]);
+    const schema = reportSchemaForCitations(manifest);
+    expect(schema).toHaveProperty('properties.observations.items.properties.evidenceSource.enum', ['soil-field-vpd']);
+    expect(schema).toHaveProperty('properties.observations.items.properties.evidenceReadIds.items.enum', ['temporal-vpd']);
+    for (const path of ['properties.riskSummary.required', 'properties.observations.items.required', 'properties.remediation.items.required']) {
+      expect(schema).toHaveProperty(path, expect.arrayContaining(['evidenceReadIds']));
+    }
+    const report = {
+      riskSummary: { level: 'moderate' as const, headline: 'VPD observations are available.', factors: [], evidenceOrigin: 'warehouse' as const, evidenceSources: ['soil-field-vpd' as const], evidenceReadIds: ['temporal-vpd'] },
+      observations: [], remediation: [], professionalConsultation: 'Consult an agronomist.',
+    };
+    expect(reportWarehouseEvidenceIssues(report, payload, evidence)).toEqual([]);
+    const legacyPayload = { ...payload, waterScarcity: { droughtClass: 'D1', nearestGauge: null } };
+    expect(reportCitationManifest(legacyPayload, evidence).payloadSources).toEqual(['drought']);
+    expect(reportWarehouseEvidenceIssues({ ...report, riskSummary: { ...report.riskSummary, evidenceSources: ['drought', 'soil-field-vpd'] } }, legacyPayload, evidence)).toEqual([]);
+    expect(JSON.stringify(REMEDIATION_REPORT_JSON_SCHEMA)).toBe(canonical);
+  });
+  it('normalizes only empty provider arrays on explicit nonwarehouse claims', () => {
+    const report = {
+      riskSummary: { level: 'moderate', headline: 'Evidence is limited.', factors: [], evidenceOrigin: 'model_inference', evidenceSources: [], evidenceReadIds: [] },
+      observations: [{ statement: 'General guidance.', evidenceOrigin: 'web', evidenceReadIds: [] }],
+      remediation: [], professionalConsultation: 'Consult an agronomist.',
+    };
+    const normalized = normalizeProviderReport(report);
+    expect(normalized).not.toHaveProperty('riskSummary.evidenceReadIds');
+    expect(normalized).not.toHaveProperty('observations.0.evidenceReadIds');
+    expect(report).toHaveProperty('riskSummary.evidenceReadIds', []);
+    expect(remediationReportSchema.safeParse(normalized).success).toBe(true);
+    for (const ids of [['one'], null, 'one', {}, ['']]) {
+      const invalid = normalizeProviderReport({ ...report, observations: [{ ...report.observations[0], evidenceReadIds: ids }] });
+      expect(invalid).toHaveProperty('observations.0.evidenceReadIds', ids);
+      expect(remediationReportSchema.safeParse(invalid).success).toBe(false);
+    }
+    for (const evidenceOrigin of ['warehouse', 'unknown']) {
+      const invalid = normalizeProviderReport({ ...report, observations: [{ ...report.observations[0], evidenceOrigin, evidenceSource: 'vegetation' }] });
+      expect(invalid).toHaveProperty('observations.0.evidenceReadIds', []);
+      expect(remediationReportSchema.safeParse(invalid).success).toBe(false);
+    }
+    const nested = normalizeProviderReport({ ...report, observations: [{ ...report.observations[0], custom: { evidenceOrigin: 'web', evidenceReadIds: [] } }] });
+    expect(nested).toHaveProperty('observations.0.custom.evidenceReadIds', []);
+    expect(remediationReportSchema.safeParse(nested).success).toBe(false);
   });
   it('grounds each legacy citation only in its distinct assembled payload block', () => {
     const cited = (source: 'drought' | 'streamflow') => ({

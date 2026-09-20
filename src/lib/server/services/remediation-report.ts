@@ -4,6 +4,7 @@ import {
   INTERVENTION_STRATEGIES,
   PROFESSIONAL_DISCIPLINES,
   REGIONAL_CLAIM_EVIDENCE_SOURCES,
+  REGIONAL_EVIDENCE_SOURCES,
   isRegionalEvidenceSource,
   type RegionalAnalysisEvidence,
   type RegionalClaimEvidenceSource,
@@ -11,16 +12,24 @@ import {
 import type { RegionalContextPayload } from './regional-context';
 
 const evidenceReadIdsSchema = z.array(z.string().trim().min(1).max(100)).max(8).optional()
-  .describe('Only warehouse-origin claims may include these IDs of executed measurement reads for their exact tool source. Required for historical, regional or additional warehouse findings; dates and locations are shown beside the claim. Omit on inference and web claims.');
+  .describe('REQUIRED and nonempty for EVERY warehouse claim citing a tool surface, including local reads. Copy the current manifest IDs matching each exact source. Legacy payload sources alone do not use these IDs. Omit on inference and web claims.');
 
 function warehouseReadIdsOnly(
-  value: { evidenceOrigin: string; evidenceReadIds?: string[] },
+  value: { evidenceOrigin: string; evidenceReadIds?: string[]; evidenceSource?: string; evidenceSources?: string[] },
   context: z.RefinementCtx,
 ): void {
   if (value.evidenceOrigin !== 'warehouse' && value.evidenceReadIds !== undefined) {
     context.addIssue({
       code: 'custom', path: ['evidenceReadIds'],
       message: 'evidenceReadIds are allowed only on warehouse-origin claims.',
+    });
+  }
+  const sources = value.evidenceSources ?? (value.evidenceSource ? [value.evidenceSource] : []);
+  if (value.evidenceOrigin === 'warehouse' && sources.some((source) => !isRegionalEvidenceSource(source))
+    && !value.evidenceReadIds?.length) {
+    context.addIssue({
+      code: 'custom', path: ['evidenceReadIds'],
+      message: 'Every tool-surface warehouse claim requires nonempty evidenceReadIds matching each cited source, including local measurements.',
     });
   }
 }
@@ -111,8 +120,95 @@ function toolAuditSupportsWarehouseClaim(
 ): boolean {
   return evidence?.toolCalls.some((call) =>
     auditSources(call).includes(source) && isMeasurementRead(call)
-    && (readIds.length > 0 ? readIds.includes(call.id) : call.stage === 'local')
+    && readIds.includes(call.id)
   ) ?? false;
+}
+
+/** Report citations admitted by the same payload and read predicates as validation. */
+export function reportCitationManifest(
+  payload: RegionalContextPayload,
+  evidence: RegionalAnalysisEvidence | undefined,
+  dataFreshness: Record<string, string> = {},
+) {
+  return {
+    payloadSources: REGIONAL_EVIDENCE_SOURCES.filter((source) => payloadSupportsWarehouseClaim(source, payload, dataFreshness)),
+    measurementReads: (evidence?.toolCalls ?? []).filter(isMeasurementRead).flatMap((call) =>
+      auditSources(call).filter((source): source is RegionalClaimEvidenceSource =>
+        !isRegionalEvidenceSource(source)
+        && (REGIONAL_CLAIM_EVIDENCE_SOURCES as readonly string[]).includes(source)
+      ).map((evidenceSource) => ({
+        evidenceSource,
+        evidenceReadId: call.id,
+        stage: call.stage,
+        selectedDate: call.selectedDate,
+        rangeStart: call.rangeStart,
+        rangeEnd: call.rangeEnd,
+        servedDates: call.servedDates,
+        observedDates: call.observedDates,
+      }))
+    ),
+  };
+}
+
+/** Narrow provider choices to this turn's actual evidence without weakening the validator. */
+export function reportSchemaForCitations(manifest: ReturnType<typeof reportCitationManifest>): Record<string, unknown> {
+  const sources = [...new Set([
+    ...manifest.payloadSources,
+    ...manifest.measurementReads.map((read) => read.evidenceSource),
+  ])];
+  const readIds = [...new Set(manifest.measurementReads.map((read) => read.evidenceReadId))];
+  const visit = (node: unknown): unknown => {
+    if (Array.isArray(node)) return node.map(visit);
+    if (!node || typeof node !== 'object') return node;
+    const result: Record<string, unknown> = Object.fromEntries(Object.entries(node).map(([key, value]) => [key, visit(value)]));
+    const properties = result.properties as Record<string, Record<string, unknown>> | undefined;
+    if (!properties) return result;
+    if (properties.evidenceOrigin && sources.length === 0) {
+      properties.evidenceOrigin.enum = EVIDENCE_ORIGINS.filter((origin) => origin !== 'warehouse');
+    }
+    if (properties.evidenceSource) {
+      if (sources.length === 0) delete properties.evidenceSource;
+      else properties.evidenceSource.enum = sources;
+    }
+    if (properties.evidenceSources) {
+      properties.evidenceSources.items = sources.length ? { type: 'string', enum: sources } : { type: 'string' };
+      properties.evidenceSources.maxItems = sources.length;
+      properties.evidenceSources.description = sources.length
+        ? 'Only the exact current citation-manifest source names are allowed; catalogue availability is not measurement evidence.'
+        : 'No warehouse measurement is available. Return an empty array [] and label reasoning model_inference.';
+    }
+    if (properties.evidenceReadIds) {
+      if (readIds.length === 0) delete properties.evidenceReadIds;
+      else {
+        properties.evidenceReadIds.items = { ...properties.evidenceReadIds.items as Record<string, unknown>, enum: readIds };
+        properties.evidenceReadIds.description = 'REQUIRED on every claim. For a warehouse tool-surface claim, return nonempty IDs matching each cited source in the current manifest. For model_inference, web, or legacy-payload-only claims, return []. Never omit the array or invent IDs.';
+        result.required = [...new Set([...(Array.isArray(result.required) ? result.required : []), 'evidenceReadIds'])];
+      }
+    }
+    return result;
+  };
+  return visit(REMEDIATION_REPORT_JSON_SCHEMA) as Record<string, unknown>;
+}
+
+/** Translate only empty nonwarehouse citation arrays from the provider transport. */
+export function normalizeProviderReport(input: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!input) return input;
+  const normalizeClaim = (claim: unknown): unknown => {
+    if (!claim || typeof claim !== 'object' || Array.isArray(claim)) return claim;
+    const value = claim as Record<string, unknown>;
+    if (!Object.hasOwn(value, 'evidenceReadIds')
+      || (value.evidenceOrigin !== 'model_inference' && value.evidenceOrigin !== 'web')
+      || !Array.isArray(value.evidenceReadIds) || value.evidenceReadIds.length !== 0) return claim;
+    const normalized = { ...value };
+    delete normalized.evidenceReadIds;
+    return normalized;
+  };
+  return {
+    ...input,
+    riskSummary: normalizeClaim(input.riskSummary),
+    observations: Array.isArray(input.observations) ? input.observations.map(normalizeClaim) : input.observations,
+    remediation: Array.isArray(input.remediation) ? input.remediation.map(normalizeClaim) : input.remediation,
+  };
 }
 
 /** Rejects warehouse labels that no admissible executed evidence read supports. */
@@ -178,7 +274,7 @@ export function reportWarehouseEvidenceIssues(
       code: 'custom' as const,
       path,
       message: source
-        ? `Warehouse citation ${source} is unsupported. Legacy sources require their exact assembled payload block. Tool surfaces require an observed read of that exact source: cite its evidenceReadIds for historical, regional or additional evidence so the actual scope is displayed. Without references only an observed local-stage read supports the citation. Refused, failed, unavailable and skipped reads cannot support a warehouse citation.`
+        ? `Warehouse citation ${source} is unsupported. Legacy sources require their exact assembled payload block. Every tool-surface citation requires a matching observed read in nonempty evidenceReadIds, including local evidence, so the actual dates and scope are displayed. Refused, failed, unavailable and skipped reads cannot support a warehouse citation.`
         : 'A warehouse claim must name the evidence source supported by an admissible executed read.',
     }];
   })];

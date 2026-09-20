@@ -1,8 +1,10 @@
 import { createHash } from "crypto";
 import { z } from "zod";
+import { registrationSchema } from "@/lib/auth/registration";
+
+export { MAX_BCRYPT_PASSWORD_BYTES, registrationSchema } from "@/lib/auth/registration";
 
 export const MAX_REGISTRATION_BODY_BYTES = 8_192;
-export const MAX_BCRYPT_PASSWORD_BYTES = 72;
 export const REGISTRATIONS_PER_MINUTE = 5;
 
 export const MAX_VERIFY_EMAIL_BODY_BYTES = 2_048;
@@ -30,22 +32,6 @@ export const FORGOT_PASSWORD_MIN_DURATION_MS = 500;
 
 /** Base64url alphabet only; rejects padding, whitespace and path separators. */
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{16,512}$/;
-
-export const registrationSchema = z
-  .object({
-    name: z.string().trim().min(1).max(100).optional(),
-    email: z.string().trim().toLowerCase().email().max(254),
-    password: z
-      .string()
-      .min(8)
-      .max(MAX_BCRYPT_PASSWORD_BYTES)
-      .refine(
-        (password) =>
-          Buffer.byteLength(password, "utf8") <= MAX_BCRYPT_PASSWORD_BYTES,
-        "Password is too long"
-      ),
-  })
-  .strict();
 
 export const emailVerificationSchema = z
   .object({ token: z.string().trim().regex(TOKEN_PATTERN) })

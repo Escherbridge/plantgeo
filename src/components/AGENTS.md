@@ -12,6 +12,15 @@ line's non-obvious behavior, not a directory-level concept, so moving it would s
 warning from the line it warns about. See `src/components/map/AGENTS.md` for that layer's own
 notes; this file covers cross-cutting component concerns only.
 
+## Authentication forms
+
+Registration uses the same browser-safe schema as the API, including optional blank names and
+UTF-8 password limits. Registration and credential sign-in always release their loading state
+after transport errors so the user can retry. Navigation requires an acknowledged registration
+or an explicitly successful sign-in result. The generic registration notice preserves account
+privacy, explains that an existing password stays unchanged, and does not claim email verification
+is required before sign-in.
+
 ## ParquetLayerFaultBanner
 
 Extracted from `LayerManager.tsx`'s inline JSX (readability pass 2026-09-18): the alert-stack

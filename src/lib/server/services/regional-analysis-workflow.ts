@@ -11,7 +11,7 @@ import {
 
 type AuditCall = RegionalAnalysisEvidence['toolCalls'][number];
 type ReadRequest = { tool: string; source?: string; args: Record<string, unknown> };
-type EvidenceRead = { id: string; result: unknown };
+type EvidenceRead = { id: string; evidenceReadId: string; evidenceSource?: string; evidenceStatus: AuditCall['status']; result: unknown };
 
 export const REGIONAL_ANALYSIS_STAGES = [
   ['inventory', 'Discover environmental sources'],
@@ -283,8 +283,9 @@ export async function prepareRegionalAnalysis(
           try {
             const raw = await callRegionalEvidenceTool(request.tool, request.args, controller.signal);
             const result: unknown = JSON.parse(raw);
-            entries.push({ ...regionalEvidenceAuditCall(id, stage, request.tool, request.args, result), ...(request.source ? { source: request.source } : {}) });
-            results.push({ id, result: boundedEvidence(result) });
+            const audit = { ...regionalEvidenceAuditCall(id, stage, request.tool, request.args, result), ...(request.source ? { source: request.source } : {}) };
+            entries.push(audit);
+            results.push({ id, evidenceReadId: id, evidenceSource: audit.source, evidenceStatus: audit.status, result: boundedEvidence(result) });
           } catch (error) {
             if (signal?.aborted) throw error;
             entries.push({ ...base, status: 'error', reason: controller.signal.aborted ? 'The evidence read exceeded its reserved stage deadline.' : 'The environmental tool read failed.' });

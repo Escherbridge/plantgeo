@@ -49,7 +49,7 @@ describe('regional analysis evidence boundary', () => {
       expect(remediationReportSchema.safeParse({
         ...report,
         riskSummary: { ...report.riskSummary, evidenceSources: [source] },
-        observations: [{ statement: 'The tool returned evidence for the requested day.', evidenceOrigin: 'warehouse', evidenceSource: source }],
+        observations: [{ statement: 'The tool returned evidence for the requested day.', evidenceOrigin: 'warehouse', evidenceSource: source, evidenceReadIds: ['one'] }],
       }).success).toBe(true);
     }
     expect(remediationReportSchema.safeParse({ ...report, riskSummary: { ...report.riskSummary, evidenceSources: ['invented-surface'] } }).success).toBe(false);
