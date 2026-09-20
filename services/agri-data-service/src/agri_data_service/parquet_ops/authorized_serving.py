@@ -365,7 +365,7 @@ class AuthorizedServingReader:
             raise faults.availability_unpublished(layer=scope.layer, detail="the lane is not registered")
         if lane.nature == "static_lookup":
             return physical
-        nature = cast("AvailabilityNature", lane.nature)
+        nature = lane.nature
         instant = datetime.now(UTC) if now is None else now
         try:
             index = self._read_index(
