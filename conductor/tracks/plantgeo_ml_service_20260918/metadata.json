@@ -549,7 +549,7 @@
         ".so suffix exclusion": "REVERT"
       },
       "sound": "spec-compliant; honest evidence; safe FFI bounds (draws >= pool_width check); fair benchmark with the caveat stated where a reader lands",
-      "disposition": "fix batch applied (M1 pixi.lock --locked in Docker, M2 fail-not-skip under mojo, M3 tie + oversubscribed cases matched bit-for-bit with no kernel change, M4 non-finite refused, .so exclusion reverted, HEADER_SLOTS round-trip, RUNBOOK benchmark pointer); Windows 700 passed, WSL2 716 under python and mojo; receipt cd617706 rewritten over the rebased tree with the sibling guard running; pushed cc6c6868; deploy pending (MOJO_KERNELS=disabled, python dispatch)"
+      "disposition": "fix batch applied (M1 pixi.lock --locked in Docker, M2 fail-not-skip under mojo, M3 tie + oversubscribed cases matched bit-for-bit with no kernel change, M4 non-finite refused, .so exclusion reverted, HEADER_SLOTS round-trip, RUNBOOK benchmark pointer); Windows 700 passed, WSL2 716 under python and mojo; receipt cd617706 rewritten over the rebased tree with the sibling guard running; pushed cc6c6868; first image failed to parse (stage-scoped ARG, 4a4dac5f); fixed d6ef9921; deployed SUCCESS e74a2053 with MOJO_KERNELS=disabled and python dispatch"
     }
   },
   "follow_ups": [
@@ -561,7 +561,8 @@
     "layer-lanes.md section 2 release_series carve-out and section 3 deterministic-product rule were amended 2026-09-19 (this track); the weather-forecast lane's justification now lives in the contract, not only in the schema header",
     "ML-written lanes (fire-risk, weather-forecast) are registered, in platform_layers, excluded from census and repair, and unbound until the publisher is warm: the only visible signal is the coverage payload's unbound row; add a freshness/monitor row for ML-published lanes (pointer age vs cadence) so a cold publisher cannot read healthy by silence (relayed check 2026-09-19)",
     "warehouse/streams.py stream_schema(): add a one-line note beside the two `== \"observed\"` comparisons saying schema selection is the one place the partition kind IS the question (not a proxy for 'where do future values live'), so a later grep finds a reason, not an omission; fold into the next ML sweep (receipt digest)",
-    "ML sweep cross-service guard: scripts/check.py (ML) runs services/agri-data-service/tests/parquet/test_ml_schema_parity.py and the forecast_module binding tests against the current ML tree when the sibling exists on disk (skip in the image); mirror fire-risk/weather-forecast/expert-labels schema parity in the ML tests too (today the ML parity covers five lanes only)"
+    "ML sweep cross-service guard: scripts/check.py (ML) runs services/agri-data-service/tests/parquet/test_ml_schema_parity.py and the forecast_module binding tests against the current ML tree when the sibling exists on disk (skip in the image); mirror fire-risk/weather-forecast/expert-labels schema parity in the ML tests too (today the ML parity covers five lanes only)",
+    "deploy-drift detector (named by both sessions 2026-09-19, not scheduled): a failed build leaves the service serving the previous image with /ready 200, indistinguishable from success by any probe; something should compare each service's running commit (Railway deployment meta) against origin/main and say so out loud. Also: the receipt is a staleness check over its digest inputs only; the Dockerfile and sibling schemas are outside it and were today's two real breakages"
   ],
   "railway": {
     "service": "plantgeo-ml",
@@ -581,7 +582,8 @@
       "82f0495d (769451b3, phase 2C.1)": "SUCCESS 2026-09-19T15:34:14Z",
       "(0e0e26c2 sibling guard)": "pushed 2026-09-19T16:37Z",
       "4a4dac5f (cc6c6868, phase 3)": "FAILED at BUILD_IMAGE in 8 s, empty build log: ARG MOJO_KERNELS declared after a FROM (stage-scoped) so FROM mojo-kernels-${MOJO_KERNELS} did not parse; previous image df7641d5 (0e0e26c2) kept serving; fix 1d3ed402 declares the ARG globally",
-      "df7641d5 (0e0e26c2, sibling guard)": "SUCCESS 2026-09-19T16:37:29Z"
+      "df7641d5 (0e0e26c2, sibling guard)": "SUCCESS 2026-09-19T16:37:29Z",
+      "e74a2053 (d6ef9921, phase 3 image, MOJO_KERNELS=disabled)": "SUCCESS 2026-09-19T16:47:19Z"
     },
     "live_proof_2026_09_19T12_01Z": {
       "/health": 200,
