@@ -145,6 +145,10 @@ class LaneRegistration:
     publication_lag_days: int
     nature: LaneNature
     floor_basis: str
+    # Earliest provider day the COMPLETE lane owes. This is deliberately distinct from
+    # `history_floor`, which remains the first day this registration's writer may own.
+    complete_history_floor: date | None = None
+    complete_floor_basis: str | None = None
     # Days between publications, counted from `history_floor`. 1 means "every day is a candidate".
     # A weekly source registered as daily is not wrong, but it spends the whole backlog writing
     # honest-yet-pointless absence markers for the six days a week it was never going to publish --
@@ -174,6 +178,18 @@ class LaneRegistration:
     # Historical ownership boundary retained for audit; it does not authorize a database writer.
     writer_ceiling: date | None = None
 
+    @property
+    def claimed_history_floor(self) -> date:
+        """Earliest provider day coverage owes, after registration normalization."""
+        assert self.complete_history_floor is not None
+        return self.complete_history_floor
+
+    @property
+    def claimed_floor_basis(self) -> str:
+        """Evidence citation for `claimed_history_floor`, after registration normalization."""
+        assert self.complete_floor_basis is not None
+        return self.complete_floor_basis
+
     def __post_init__(self) -> None:
         validate_layer_slug(self.slug)
         validate_lane_nature(self.nature)
@@ -191,6 +207,15 @@ class LaneRegistration:
             raise LaneRegistryError(
                 f"lane {self.slug!r} must cite where its history floor came from; an uncited floor is a guess "
                 "that reads as a measurement"
+            )
+        if self.complete_history_floor is None:
+            object.__setattr__(self, "complete_history_floor", self.history_floor)
+        if self.complete_floor_basis is None:
+            object.__setattr__(self, "complete_floor_basis", self.floor_basis)
+        elif not self.complete_floor_basis.strip():
+            raise LaneRegistryError(
+                f"lane {self.slug!r} must cite where its complete history floor came from; an uncited floor "
+                "would turn an unverified archive claim into repair work"
             )
         # WHO WRITES A LANE IS NOT VALIDATED HERE, DELIBERATELY. Since 2026-09-18 two registrations
         # (`fire-risk`, `weather-forecast`) are written entirely by `services/plantgeo-ml-service`
@@ -503,6 +528,48 @@ _refuse_vegetation_direct_export: Final[LaneAdapter] = _source_direct_refusal(
 _refuse_water_gauges_direct_export: Final[LaneAdapter] = _source_direct_refusal(
     "agri_data_service.pipeline.direct.water_gauges"
 )
+
+#: Earliest provider days the complete physical lanes owe, where that predates the active writer's
+#: ownership floor. These are corpus measurements/owner decisions, not writer permissions. Keeping
+#: them beside the registrations makes every coverage and repair projection consume one contract.
+_MEASURED_COMPLETE_HISTORY_FLOORS: Final = MappingProxyType(
+    {
+        "climate-field-air-temperature-max": date(2022, 4, 30),
+        "climate-field-air-temperature-mean": date(2022, 4, 30),
+        "climate-field-air-temperature-min": date(2022, 4, 30),
+        "climate-field-dew-point": date(1984, 1, 1),
+        "climate-field-precipitation": date(2022, 4, 30),
+        "climate-field-relative-humidity": date(2018, 1, 1),
+        "climate-field-shortwave-radiation": date(2022, 4, 30),
+        "climate-field-wind-speed": date(2022, 4, 30),
+        "soil-field-moisture-0-7cm": date(2022, 4, 30),
+        "soil-field-moisture-28-100cm": date(2022, 4, 30),
+        "soil-field-moisture-7-28cm": date(2022, 4, 30),
+        "soil-field-vpd": date(2022, 4, 30),
+        "soil-temperature-0-to-7cm": date(2022, 4, 30),
+        "soil-temperature-100-to-255cm": date(2022, 4, 30),
+        "soil-temperature-28-to-100cm": date(2022, 4, 30),
+        "soil-temperature-7-to-28cm": date(2022, 4, 30),
+        "soil-wetness-profile": date(2022, 4, 30),
+        "soil-wetness-root-zone": date(2022, 4, 30),
+        "soil-wetness-surface": date(2022, 4, 30),
+        "water-gauges": date(1990, 9, 30),
+        "weather-observations": date(2018, 1, 1),
+    }
+)
+
+
+def _complete_floor_basis(slug: str, writer_floor: date) -> str:
+    complete_floor = _MEASURED_COMPLETE_HISTORY_FLOORS.get(slug)
+    if complete_floor is None:
+        raise LaneRegistryError(f"lane {slug!r} has no measured complete-history override")
+    return (
+        f"COMPLETE-LANE FLOOR {complete_floor.isoformat()}, distinct from writer ownership floor "
+        f"{writer_floor.isoformat()}: physically measured corpus and binding owner decisions recorded in "
+        "conductor/RUNBOOK.md section Priority, 2026-09-19 and "
+        ".omc/ultrapilot-20260918/ML-DATA-READINESS-20260919.md. This floor authorizes coverage and bounded "
+        "repair detection only; it does not extend any writer's ownership."
+    )
 
 
 # --- The hand-written registrations: source-direct, plus two written by another service --------
@@ -877,6 +944,8 @@ _HAND_WRITTEN_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
         slug=WATER_GAUGES_STREAM,
         adapter=_refuse_water_gauges_direct_export,
         history_floor=date(2026, 5, 24),
+        complete_history_floor=_MEASURED_COMPLETE_HISTORY_FLOORS[WATER_GAUGES_STREAM],
+        complete_floor_basis=_complete_floor_basis(WATER_GAUGES_STREAM, date(2026, 5, 24)),
         publication_lag_days=2,
         nature="daily_series",
         forecast_module="water_gauges",
@@ -941,6 +1010,8 @@ _HAND_WRITTEN_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
         slug=WEATHER_OBSERVATIONS_STREAM,
         adapter=_refuse_weather_observations_direct_export,
         history_floor=date(2026, 8, 1),
+        complete_history_floor=_MEASURED_COMPLETE_HISTORY_FLOORS[WEATHER_OBSERVATIONS_STREAM],
+        complete_floor_basis=_complete_floor_basis(WEATHER_OBSERVATIONS_STREAM, date(2026, 8, 1)),
         publication_lag_days=2,
         nature="daily_series",
         floor_basis=(
@@ -1042,6 +1113,8 @@ _SOURCE_DIRECT_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
             slug=product.stream,
             adapter=_refuse_climate_direct_export,
             history_floor=product.history_floor,
+            complete_history_floor=_MEASURED_COMPLETE_HISTORY_FLOORS[product.stream],
+            complete_floor_basis=_complete_floor_basis(product.stream, product.history_floor),
             publication_lag_days=product.publication_lag_days,
             nature="daily_series",
             floor_basis=_climate_floor_basis(product),
@@ -1053,6 +1126,8 @@ _SOURCE_DIRECT_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
             slug=product.stream,
             adapter=_refuse_soil_direct_export,
             history_floor=product.history_floor,
+            complete_history_floor=_MEASURED_COMPLETE_HISTORY_FLOORS[product.stream],
+            complete_floor_basis=_complete_floor_basis(product.stream, product.history_floor),
             publication_lag_days=product.publication_lag_days,
             nature="daily_series",
             floor_basis=_soil_floor_basis(product),

@@ -590,6 +590,22 @@ def test_only_time_bearing_lanes_may_be_compiled() -> None:
 
     assert lanes
     assert {lane.nature for lane in lanes} <= {"daily_series", "release_series"}
+    assert "signal" in {lane.layer for lane in lanes}
+    assert not ({"fire-risk", "weather-forecast"} & {lane.layer for lane in lanes})
+
+
+def test_signal_can_be_selected_for_observed_availability_bootstrap() -> None:
+    lanes = COMPILER._resolve_lanes(COMPILER._parse_arguments(["--lane", "signal"]))
+
+    assert len(lanes) == 1
+    assert lanes[0].layer == "signal"
+    assert lanes[0].kind == "observed"
+    assert lanes[0].history_floor == date(2022, 4, 30)
+
+
+def test_signal_forecast_bootstrap_is_not_owned_by_the_agri_compiler() -> None:
+    with pytest.raises(SystemExit, match="observed availability only"):
+        COMPILER._resolve_lanes(COMPILER._parse_arguments(["--lane", "signal", "--kind", "forecast"]))
 
 
 def _reader(backend: InMemoryBackend) -> Any:

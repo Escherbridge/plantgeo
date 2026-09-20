@@ -73,7 +73,7 @@ from agri_data_service.foundation.parquet.paths import (  # noqa: E402
     try_parse_completion_marker_path,
     try_parse_partition_path,
 )
-from agri_data_service.parquet_ops.coverage import registered_census_lanes  # noqa: E402
+from agri_data_service.parquet_ops.coverage import census_lane_from_registration  # noqa: E402
 from agri_data_service.pipeline.parquet.availability_index import (  # noqa: E402
     BOOTSTRAP_INPUT_SCHEMA_VERSION,
     DIGESTED_PROVENANCE,
@@ -95,6 +95,7 @@ from agri_data_service.pipeline.parquet.availability_index import (  # noqa: E40
     load_bootstrap_request,
 )
 from agri_data_service.pipeline.parquet.lane_ceiling import allowed_source_ceiling  # noqa: E402
+from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRATIONS  # noqa: E402
 from agri_data_service.pipeline.parquet.objectstore import (  # noqa: E402
     BotoObjectStoreBackend,
     ObjectStore,
@@ -165,6 +166,10 @@ FILTERED_EXCLUSION_REASONS: Final = frozenset({EXCLUSION_BEFORE_SINCE, EXCLUSION
 #: has a ladder problem rather than ordinary sparse history. `--accept-exclusions` names the exact
 #: count an operator has reviewed in a `--dry-run` receipt and accepts anyway.
 REFUSED_DAY_FRACTION_CEILING: Final = 0.10
+
+# Published by the separately owned ML service, not by this service's observed-lane operators. A
+# registration lets agri read their slugs but does not authorize this compiler to bootstrap them.
+FOREIGN_PUBLISHER_BOOTSTRAP_EXCLUSIONS: Final = frozenset({"fire-risk", "weather-forecast"})
 
 
 class CompilationError(RuntimeError):
@@ -1210,7 +1215,14 @@ def _upload_command(*, input_path: Path | None, prefix: str) -> str | None:
 
 def _resolve_lanes(arguments: argparse.Namespace) -> tuple[CensusLane, ...]:
     """Return the lanes to compile, refusing a lane with no time axis to own an index."""
-    time_bearing = tuple(lane for lane in registered_census_lanes() if nature_has_time_axis(lane.nature))
+    if arguments.kind != "observed":
+        raise SystemExit("this agri compiler owns observed availability only; forecast publication is external")
+    time_bearing = tuple(
+        census_lane_from_registration(registration)
+        for registration in LANE_REGISTRATIONS
+        if nature_has_time_axis(registration.nature)
+        and registration.slug not in FOREIGN_PUBLISHER_BOOTSTRAP_EXCLUSIONS
+    )
     if arguments.all_time_bearing:
         return time_bearing
     by_layer = {lane.layer: lane for lane in time_bearing}

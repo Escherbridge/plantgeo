@@ -10,8 +10,7 @@ from __future__ import annotations
 import threading
 from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
-from itertools import pairwise
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Final
 
 from agri_data_service.foundation.parquet.lane_contract import nature_has_time_axis, nature_permits_cadence
@@ -25,12 +24,12 @@ from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRATIONS
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
-    from datetime import date
 
     from agri_data_service.foundation.parquet.lane_contract import LaneNature
     from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.foundation.parquet.zoom import ZoomTier
     from agri_data_service.parquet_ops.warehouse_reader import WarehouseListing
+    from agri_data_service.pipeline.parquet.lane_registry import LaneRegistration
 
 #: How long one census answer is reused. The client caches for 300 s on top of this; the server-side
 #: memo is what stops a burst of cold page loads each paying every whole-stream listing.
@@ -57,6 +56,17 @@ DEDICATED_SLIDER_PRODUCT_LAYERS: Final[tuple[str, ...]] = (
     "soil-field-moisture-7-28cm",
 )
 
+def census_lane_from_registration(registration: LaneRegistration) -> CensusLane:
+    """Project one writer registration into the complete-history coverage contract."""
+    return CensusLane(
+        layer=registration.slug,
+        nature=registration.nature,
+        kind="observed",
+        history_floor=registration.claimed_history_floor,
+        cadence_days=registration.cadence_days,
+        publication_lag_days=registration.publication_lag_days,
+    )
+
 # Registered lanes the slider census does NOT walk. `calendar` and `signal` are not slider layers at
 # all. `fire-risk` and `weather-forecast` are written by `services/plantgeo-ml-service`, not by any
 # agri writer, and this census is OBSERVED-only: `fire-risk` is forecast-only and has no
@@ -82,6 +92,9 @@ class CensusLane:
     layer: str
     nature: LaneNature
     kind: PartitionKind
+    #: The first provider day this lane claims. Coverage owes a terminal verdict from here, even
+    #: when the oldest physical object is later or the lane has not written any data at all.
+    history_floor: date | None = None
     #: Days between publications, from the lane's own registration. 1 means every day is a candidate.
     cadence_days: int = 1
     #: How long after a publication day that day may still arrive; only a release series uses it.
@@ -110,22 +123,19 @@ def registered_census_lanes() -> tuple[CensusLane, ...]:
     caller that asks for one, rather than being smuggled into the list this one shares.
     """
     registered = tuple(
-        CensusLane(
-            layer=registration.slug,
-            nature=registration.nature,
-            kind="observed",
-            cadence_days=registration.cadence_days,
-            publication_lag_days=registration.publication_lag_days,
-        )
+        census_lane_from_registration(registration)
         for registration in LANE_REGISTRATIONS
         if registration.slug not in NON_SLIDER_REGISTERED_LAYERS
     )
     registered_layers = {lane.layer for lane in registered}
-    derived = tuple(
-        CensusLane(layer=layer, nature="daily_series", kind="observed")
-        for layer in DEDICATED_SLIDER_PRODUCT_LAYERS
-        if layer not in registered_layers
-    )
+    # Every former dedicated snapshot product now has a source-direct registration. Keeping this
+    # assertion makes a future product declare its provider floor before it can enter coverage;
+    # inventing a floor from its oldest stored object is the exact hidden-history failure this
+    # census exists to expose.
+    undeclared = tuple(layer for layer in DEDICATED_SLIDER_PRODUCT_LAYERS if layer not in registered_layers)
+    if undeclared:
+        raise ValueError(f"slider products lack a registered history floor: {', '.join(undeclared)}")
+    derived: tuple[CensusLane, ...] = ()
     return registered + derived
 
 
@@ -184,12 +194,6 @@ def close_lane_coverage(  # noqa: PLR0913 - one already-proven fact about the la
     data_days = set(days.data)
     absent_days = set(days.absent)
     conflict_days = set(days.conflict)
-    if not data_days:
-        # Never written: `null` bounds, and no ranges. A slider must not mount an axis over a lane
-        # whose span is a guess -- `soil-survey` has 238,986 source rows and 0 written objects.
-        return _bounded(lane, tier=tier, earliest_day=None, latest_day=None, published_ranges=())
-    earliest_day = min(data_days)
-    latest_day = max(data_days)
     if not nature_has_time_axis(lane.nature):
         # A `static_lookup`'s partition day is a VERSION STAMP, not an observation day, so no day
         # between two versions ever carried an obligation to exist. Ranging over them would report
@@ -197,27 +201,21 @@ def close_lane_coverage(  # noqa: PLR0913 - one already-proven fact about the la
         return _bounded(
             lane,
             tier=tier,
-            earliest_day=earliest_day,
-            latest_day=latest_day,
+            earliest_day=min(data_days) if data_days else None,
+            latest_day=max(data_days) if data_days else None,
             published_ranges=contiguous_ranges(data_days),
         )
+    earliest_day = min(data_days) if data_days else None
+    latest_day = max(data_days) if data_days else None
     if _uses_bounded_release_carry(lane):
         accounted_days = data_days | absent_days
-        latest_status_day = max(accounted_days | conflict_days)
+        latest_status_day = max(accounted_days | conflict_days, default=lane.history_floor or horizon)
         published_days = _release_carried_days(
             data_days,
             lane=lane,
             horizon=carry_edge,
             latest_status_day=latest_status_day,
         )
-        if not published_days:
-            return _bounded(
-                lane,
-                tier=tier,
-                earliest_day=min(data_days),
-                latest_day=max(data_days),
-                published_ranges=(),
-            )
         governed_absence_days = (
             _release_carried_days(
                 absent_days,
@@ -232,13 +230,13 @@ def close_lane_coverage(  # noqa: PLR0913 - one already-proven fact about the la
             nature=lane.nature,
             kind=lane.kind,
             zoom=tier,
-            earliest_day=min(published_days),
-            latest_day=max(published_days),
+            earliest_day=min(published_days) if published_days else None,
+            latest_day=max(published_days) if published_days else None,
             # THE ONE ROW WHERE THESE TWO DIVERGE. `latest_day` is the carried read-through edge;
             # this is the newest release actually on the store, and it can even sit ABOVE the
             # carried edge -- a partition mislabelled past the carry horizon is dropped from
             # `published_days` and stays visible here, which is what keeps a ceiling check honest.
-            latest_recorded_day=max(data_days),
+            latest_recorded_day=max(data_days) if data_days else None,
             published_ranges=contiguous_ranges(published_days),
             gap_ranges=contiguous_ranges(
                 _owed_but_unwritten(
@@ -270,7 +268,9 @@ def close_lane_coverage(  # noqa: PLR0913 - one already-proven fact about the la
             )
         ),
         governed_absence_ranges=contiguous_ranges(
-            day for day in absent_days if day >= earliest_day and day not in data_days
+            day
+            for day in absent_days
+            if day >= (lane.history_floor or min(absent_days | data_days)) and day not in data_days
         ),
     )
 
@@ -493,14 +493,7 @@ def _owed_but_unwritten(
             lane=lane,
             horizon=horizon,
         )
-    ordered = sorted(accounted)
     step = timedelta(days=lane.cadence_days)
-    owed: list[date] = []
-    for previous, following in pairwise(ordered):
-        candidate = previous + step
-        while candidate < following:
-            owed.append(candidate)
-            candidate += step
     # At the LIVE EDGE a release is not missing until its publication lag has run out -- USDM's
     # Tuesday map is not late on the Tuesday. A daily series closes against the horizon itself,
     # matching the client's own `closeCoverageGapsAtLiveEdge`: every day up to the horizon was owed
@@ -508,9 +501,14 @@ def _owed_but_unwritten(
     charge_lag = nature_permits_cadence(lane.nature) and not lag_already_charged
     lag = timedelta(days=lane.publication_lag_days) if charge_lag else timedelta()
     closing_day = horizon - lag
-    candidate = ordered[-1] + step
+    floor = lane.history_floor or min(accounted, default=None)
+    if floor is None:
+        return ()
+    owed: list[date] = []
+    candidate = floor
     while candidate <= closing_day:
-        owed.append(candidate)
+        if candidate not in accounted:
+            owed.append(candidate)
         candidate += step
     return tuple(owed)
 
@@ -547,19 +545,19 @@ def _release_uncovered_days(
 ) -> tuple[date, ...]:
     """Return each day the release reader cannot answer under historical and live carry limits."""
     status_days = accounted | conflict_days
-    if not status_days:
+    floor = lane.history_floor or min(status_days, default=None)
+    if floor is None:
         return ()
     carried = _release_carried_days(
         accounted,
         lane=lane,
         horizon=horizon,
-        latest_status_day=max(status_days),
+        latest_status_day=max(status_days, default=floor),
     )
-    first_status_day = min(status_days)
     return tuple(
-        first_status_day + timedelta(days=offset)
-        for offset in range((horizon - first_status_day).days + 1)
-        if first_status_day + timedelta(days=offset) not in carried
+        floor + timedelta(days=offset)
+        for offset in range(max(0, (horizon - floor).days + 1))
+        if floor + timedelta(days=offset) not in carried
     )
 
 

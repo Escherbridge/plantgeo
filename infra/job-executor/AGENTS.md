@@ -14,6 +14,12 @@ The image omits Alembic and database migration artifacts deliberately. Scheduler
 widens into schema-migration authority. It preserves the source commands, bounded repair commands,
 R2 publication logic; duplicate Railway scheduling configs and retired cache-warming code stay absent.
 
+The runtime copies `scripts/complete_partial_ladders.py` explicitly. This is the receipt-pinned,
+publication-locked repair for physically present base partitions whose derived rungs or legacy
+completion receipts are incomplete. Run it inside the executor over Railway SSH so its advisory
+locks use the private database network; `railway run` is local and must not be made to work by
+exporting production credentials. No other maintenance script enters the runtime implicitly.
+
 Railway cron schedules are prohibited. Do not add `cronSchedule`, a shell fan-out, an infinite drain
 loop or a second periodic service. Source cadence belongs in the executor registry and durable state
 belongs in `agri.job_*`; source/domain checkpoints remain in their existing database rows, manifests

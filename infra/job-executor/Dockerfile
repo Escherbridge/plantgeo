@@ -43,6 +43,7 @@ COPY services/agri-data-service/pyproject.toml services/agri-data-service/uv.loc
 RUN uv sync --locked --no-dev --no-install-project
 
 COPY services/agri-data-service/src/ src/
+COPY services/agri-data-service/scripts/complete_partial_ladders.py scripts/complete_partial_ladders.py
 RUN uv sync --locked --no-dev
 
 # The proof this image's Python source passed a green sweep, taken from the stage that verified it.

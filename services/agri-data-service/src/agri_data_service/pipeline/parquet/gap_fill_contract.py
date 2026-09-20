@@ -367,12 +367,16 @@ class GapFillSummary:
         }
 
 
-def lane_window(lane: LaneRegistration, *, today: date) -> tuple[date, date] | None:
+def lane_window(
+    lane: LaneRegistration, *, today: date, first_day: date | None = None
+) -> tuple[date, date] | None:
     """Return the settled `[first, last]` day range a SERIES lane may fill, or `None` when it has none.
 
     `last` is `today - publication_lag_days`, clamped to `writer_ceiling` when a dedicated writer
     owns newer days. A day the upstream has not published yet is not a gap, and a day beyond the
-    generic writer's ownership is not its work. `first` is the declared history floor.
+    generic writer's ownership is not its work. `first` defaults to the writer's declared history
+    floor. A census may explicitly pass the lane's complete-history floor to expose older provider
+    gaps without changing what the writer itself owns.
 
     A `static_lookup` lane is REFUSED rather than answered. It has no window: its partition day is a
     version stamp keyed to a source watermark, not a position on the calendar, and handing back some
@@ -387,9 +391,10 @@ def lane_window(lane: LaneRegistration, *, today: date) -> tuple[date, date] | N
     last_day = today - timedelta(days=lane.publication_lag_days)
     if lane.writer_ceiling is not None:
         last_day = min(last_day, lane.writer_ceiling)
-    if last_day < lane.history_floor:
+    floor = lane.history_floor if first_day is None else first_day
+    if last_day < floor:
         return None
-    return lane.history_floor, last_day
+    return floor, last_day
 
 
 def zero_row_absence_reason(slug: str, day: date) -> str:

@@ -52,9 +52,9 @@ def _census_shell(lane: LaneRegistration, zoom: ZoomTier, **overrides: object) -
         "forecastable": lane.forecastable,
         "cadence_days": lane.cadence_days,
         "writer_ceiling": lane.writer_ceiling,
-        "history_floor": lane.history_floor,
+        "history_floor": lane.claimed_history_floor,
         "publication_lag_days": lane.publication_lag_days,
-        "floor_basis": lane.floor_basis,
+        "floor_basis": lane.claimed_floor_basis,
         "first_day": None,
         "last_day": None,
         "data_days": 0,
@@ -325,7 +325,7 @@ def _series_lane_census(
     max_days_per_lane: int | None,
 ) -> LaneGapCensus:
     """Classify one `daily_series` or `release_series` lane's settled window AT ONE TIER, from the LISTING alone."""
-    window = lane_window(lane, today=today)
+    window = lane_window(lane, today=today, first_day=lane.claimed_history_floor)
     if window is None:
         return _census_shell(lane, zoom)
     first_day, last_day = window
@@ -355,7 +355,7 @@ def _series_lane_census(
         day
         for day, status in sorted(statuses.items(), reverse=True)
         if status in UNFILLED_PARTITION_STATUSES
-        and (status != "missing" or (day - lane.history_floor).days % lane.cadence_days == 0)
+        and (status != "missing" or (day - first_day).days % lane.cadence_days == 0)
     )
     # THE LADDER SCOPE IS THE SETTLED WINDOW UNIONED WITH THE DIRECT-WRITER TAIL, not the settled
     # window alone and not the whole bucket. `lane_window` clamps `last_day` to `writer_ceiling`, so
@@ -371,7 +371,7 @@ def _series_lane_census(
         base_keys=base_keys,
         zoom=zoom,
         max_days_per_lane=max_days_per_lane,
-        scope=(lane.history_floor, max(last_day, today)),
+        scope=(first_day, max(last_day, today)),
     )
     return _census_shell(
         lane,

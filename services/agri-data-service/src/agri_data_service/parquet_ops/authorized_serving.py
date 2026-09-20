@@ -24,7 +24,10 @@ from agri_data_service.parquet_ops.availability_coverage import (
     GenerationCachingStorage,
     required_source_ceiling,
 )
-from agri_data_service.parquet_ops.coverage import DEDICATED_SLIDER_PRODUCT_LAYERS, CensusLane
+from agri_data_service.parquet_ops.coverage import (
+    DEDICATED_SLIDER_PRODUCT_LAYERS,
+    census_lane_from_registration,
+)
 from agri_data_service.parquet_ops.serving import resolve_day, resolve_release, resolve_window
 from agri_data_service.pipeline.parquet.availability_index import (
     EVIDENCE_OBJECT_MAX_BYTES,
@@ -66,22 +69,14 @@ if TYPE_CHECKING:
     )
 
 _LANES: Final = {
-    slug: CensusLane(
-        layer=slug,
-        nature=registration.nature,
-        kind="observed",
-        cadence_days=registration.cadence_days,
-        publication_lag_days=registration.publication_lag_days,
-    )
+    slug: census_lane_from_registration(registration)
     for slug, registration in LANE_REGISTRY.items()
 }
-_LANES.update(
-    {
-        layer: CensusLane(layer=layer, nature="daily_series", kind="observed")
-        for layer in DEDICATED_SLIDER_PRODUCT_LAYERS
-        if layer not in _LANES
-    }
-)
+_UNREGISTERED_PRODUCTS: Final = set(DEDICATED_SLIDER_PRODUCT_LAYERS) - _LANES.keys()
+if _UNREGISTERED_PRODUCTS:
+    raise ValueError(
+        "serving products lack a registered history floor: " + ", ".join(sorted(_UNREGISTERED_PRODUCTS))
+    )
 
 # One part is bounded independently, then the request is bounded across every part it selected.
 # These are serving-resource guards, not publication limits: an oversized authorized object is

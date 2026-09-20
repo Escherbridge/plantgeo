@@ -322,6 +322,52 @@ def test_a_daily_series_closes_its_gaps_against_today_and_not_against_its_public
     assert censused.gap_ranges == (DayRange(first_day=date(2026, 8, 2), last_day=date(2026, 8, 6)),)
 
 
+def test_a_daily_series_charges_missing_history_before_its_oldest_object() -> None:
+    """The physical minimum is evidence of what exists, never permission to shorten the provider claim."""
+    listing = FakeListing()
+    listing.write_day("signal", "observed", SEEDED_TIER, date(2026, 8, 3))
+    claimed = CensusLane(
+        layer="signal",
+        nature="daily_series",
+        kind="observed",
+        history_floor=date(2026, 8, 1),
+    )
+
+    censused = build_lane_coverage(listing, lane=claimed, tier=SEEDED_TIER, today=date(2026, 8, 3))
+
+    assert censused.earliest_day == date(2026, 8, 3), "the physical edge remains an observed fact"
+    assert censused.gap_ranges == (DayRange(first_day=date(2026, 8, 1), last_day=date(2026, 8, 2)),)
+
+
+def test_a_never_written_time_lane_still_owes_every_claimed_day() -> None:
+    claimed = CensusLane(
+        layer="signal",
+        nature="daily_series",
+        kind="observed",
+        history_floor=date(2026, 8, 1),
+    )
+
+    censused = build_lane_coverage(FakeListing(), lane=claimed, tier=SEEDED_TIER, today=date(2026, 8, 3))
+
+    assert censused.earliest_day is None
+    assert censused.latest_day is None
+    assert censused.gap_ranges == (DayRange(first_day=date(2026, 8, 1), last_day=date(2026, 8, 3)),)
+
+
+def test_every_production_census_lane_carries_its_full_claimed_history_floor() -> None:
+    lanes = registered_census_lanes()
+    floors = {lane.layer: lane.history_floor for lane in lanes}
+
+    assert all(lane.history_floor is not None for lane in lanes)
+    assert set(floors) == set(LANE_REGISTRY) - NON_SLIDER_REGISTERED_LAYERS
+    assert floors["climate-field-dew-point"] == date(1984, 1, 1)
+    assert floors["climate-field-relative-humidity"] == date(2018, 1, 1)
+    assert floors["soil-field-moisture-0-7cm"] == date(2022, 4, 30)
+    assert floors["water-gauges"] == date(1990, 9, 30)
+    assert floors["weather-observations"] == date(2018, 1, 1)
+    assert floors["fire-detections"] == LANE_REGISTRY["fire-detections"].history_floor
+
+
 def test_a_lane_that_has_never_been_written_reports_null_bounds_rather_than_a_guessed_day() -> None:
     """`soil-survey` has 238,986 source rows and 0 written objects; the census must say so."""
     lane = build_lane_coverage(FakeListing(), lane=SOIL_LANE, tier=SEEDED_TIER, today=date(2026, 8, 25))

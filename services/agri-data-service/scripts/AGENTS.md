@@ -116,6 +116,14 @@ destructive rewrite manifest by implication.
 this note's boundary is the digest-window boundary and why one day falls on either side of it (owner
 decision D3, track `environmental_postgres_retirement_20260904`).
 
+Lane selection comes from all time-bearing `LANE_REGISTRATIONS`, rather than from the slider-only
+coverage census. That distinction is load-bearing for `signal`: it is an observed physical lane and
+an agent-serving authority, but deliberately not a slider row. The compiler may bootstrap it.
+`fire-risk` and `weather-forecast` are explicitly excluded because their registrations permit agri
+to read foreign-published slugs; they do not give this service ownership of those publishers. The
+compiler refuses `--kind forecast` for the same reason: every forecast publisher is externally
+owned, while this recovery command belongs to agri's observed corpus.
+
 `_part_receipts` binds one rung's parts in three tiers, cheapest-and-strongest first:
 
 1. **No parts at all** — an emptied derived rung. `digested`, proven by its own marker.

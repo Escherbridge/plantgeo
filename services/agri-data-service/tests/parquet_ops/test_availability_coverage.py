@@ -412,6 +412,27 @@ def test_a_lane_behind_the_live_edge_reports_no_phantom_gap_tail() -> None:
     assert all(entry.gap_ranges == () for entry in rows), "the ceiling, not today, closes an availability lane"
 
 
+def test_availability_cannot_hide_missing_days_before_its_oldest_terminal_row() -> None:
+    claimed = CensusLane(
+        layer="signal",
+        nature="daily_series",
+        kind="observed",
+        history_floor=date(2026, 7, 30),
+    )
+    proven = whole_ladder(
+        claimed,
+        published=[date(2026, 8, 1), date(2026, 8, 2)],
+        source_ceiling=date(2026, 8, 2),
+    )
+
+    rows = lane_coverage_from_index(proven, lane=claimed, now=NOW)
+
+    assert all(
+        entry.gap_ranges == (DayRange(first_day=date(2026, 7, 30), last_day=date(2026, 7, 31)),)
+        for entry in rows
+    )
+
+
 def test_both_authorities_carry_a_release_lane_to_the_same_latest_day() -> None:
     """The SAME lane and the SAME releases must not shorten by four days because the evidence changed.
 

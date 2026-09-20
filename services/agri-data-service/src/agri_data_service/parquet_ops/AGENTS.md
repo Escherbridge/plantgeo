@@ -151,6 +151,23 @@ longer may. `availability_coverage.py` answers a lane from **one pointer GET** o
 `<lane-root>/availability/_LATEST.json` plus **one bounded Parquet GET** of the
 `generation=<sha>/availability.parquet` that pointer names, and never touches a `WarehouseListing`.
 
+### Coverage starts at the claimed floor
+
+`earliest_day` is the oldest physical published object, not the beginning of the lane's obligation.
+Coverage therefore closes gaps from `CensusLane.history_floor`, including days before the oldest
+object and the whole claimed interval when a time-bearing lane has written nothing. Governed
+absences satisfy that obligation; they do not move it. Cadence is anchored at the claimed floor,
+never at the first object that happened to survive.
+
+For most lanes the registered writer floor is also the complete-lane floor. The generated
+climate/soil registrations are different: their `history_floor` is the live writer handoff after an
+immutable snapshot in the same physical prefix. `coverage.CLAIMED_HISTORY_FLOOR_OVERRIDES` binds
+their complete history to the physically measured 2026-09-19 corpus instead. It also records the
+owner-directed water/weather floors that the old shallow contracts contradicted. A future product
+may not enter the slider or authorized serving through the former dedicated-product fallback; it
+must have a registration and thus an explicit provider floor. Static lookup floors remain inert
+because their partition days are version stamps, not an owed calendar series.
+
 `lane_root` is `foundation.parquet.paths.stream_prefix(layer, kind)` minus its trailing separator —
 `layer=signal/kind=observed`. It is derived from the SAME helper the warehouse writes through and the
 census lists through, deliberately: a second spelling here would make a published index invisible to
