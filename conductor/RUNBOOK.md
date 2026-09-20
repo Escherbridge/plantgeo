@@ -81,6 +81,34 @@ weather observations 1,709; burn severity 2,079; four static lanes without immut
 and the two withheld/unpublished lanes above. Direct physical audits and the repair order are pinned
 in `tracks/gapless_parquet_publication_20260901/evidence/lane-gap-census-20260920.md`.
 
+### Manual per-lane checkpoint (owner, 2026-09-20)
+
+The broad cross-lane repair wave is stopped. Further completeness work is manually driven one lane
+at a time through physical census, bounded repair, availability publication, serving proof and a
+lane-specific runbook update. The last fully checked and live revision before this checkpoint is
+`8eb89e77`: main, Parquet API, executor and Martin all reached Railway `SUCCESS`; their public
+readiness checks passed. The next repository checkpoint is intentionally pushed without a new
+format/lint/type/test sweep or quality-receipt refresh at the owner's direction, so it is source
+handoff evidence, **not** a release verdict or proof that the Docker quality gate will admit it.
+
+Facts preserved for the lane sessions:
+
+- `signal` physically holds 1,344 selectable observed days from `2022-04-30..2026-08-31`, but the
+  public `2026-08-06` read refuses with `availability_unpublished`. Its dry-run bootstrap found
+  5,376 rung rows and excluded 241 days: 222 partial ladders (`2025-12-28..2026-08-06`) plus 19 days
+  with absence markers on only a subset of rungs (`2026-08-07..25`). No signal pointer was advanced.
+- Sensors `2026-07-30..2026-08-23` has 25 repairable z13-only days (75,113 base rows); vegetation
+  `2026-09-01` and water-gauges `2026-09-06` each need only a legacy z13 receipt upgrade. These were
+  dry-run proofs only; no production ladder or availability write was applied.
+- Vegetation `2026-09-02..05` and sensors `2026-09-10..11` have no z13 source parts and therefore
+  require source-level ingestion or an honestly evidenced governed absence. Sensors `2026-07-29`
+  already holds four-rung absence markers and requires a source/governance decision, not ladder
+  derivation.
+- The checkpoint introduces a distinct complete-history-floor contract and permits the observed
+  `signal` lane to enter the agri availability bootstrap while continuing to exclude foreign
+  forecast publishers. Each lane session must re-read and validate that contract before using it;
+  the interrupted cross-lane pass did not establish a release verdict.
+
 ## Outstanding work
 
 | Area | Owning track | Next proof |
