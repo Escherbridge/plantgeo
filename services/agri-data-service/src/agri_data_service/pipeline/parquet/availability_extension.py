@@ -348,15 +348,16 @@ async def extend_availability_for_lane_day(  # noqa: PLR0911, PLR0913 - one type
         index = _read_extension_index(availability, lane_root=lane_root)
     except AvailabilityUnavailableError as unavailable:
         if unavailable.code == "availability_missing":
-            # NOTHING is owed: the offline bootstrap builds generation zero from the objects this day
-            # is already among, so a claim here would be satisfied by the bootstrap and never read.
-            _clear_claim(store, lane=lane, kind=kind, day=day)
             return AvailabilityExtensionOutcome(
-                state="not_bootstrapped",
+                state="retry_owed",
                 lane_root=lane_root,
                 day=day,
-                reason=f"{lane_root} has no availability generation yet, so this terminal day joins none",
+                reason=(
+                    f"{lane_root} has no availability generation yet; the terminal day's claim remains "
+                    "pending until bootstrap or reconciliation establishes a verified head"
+                ),
                 error_kind="availability_not_bootstrapped",
+                retry_marker=claimed,
             )
         return _read_failure(lane_root, day, unavailable, retry_marker=claimed)
     except AvailabilityError as error:

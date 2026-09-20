@@ -256,21 +256,42 @@ def _bootstrap_availability_owned(store: AvailabilityStorage, request: Bootstrap
     raise AvailabilityConflictError("availability bootstrap pointer remained contended after bounded retries")
 
 
-async def publish_availability(
+async def publish_availability(  # noqa: PLR0913 - publication plus optional reviewed-head pair
     session: AsyncSession,
     store: AvailabilityStorage,
     request: PublicationRequest,
     *,
     publication_barrier: AvailabilityPublicationBarrier = postgres_lane_publication_barrier,
+    expected_head_generation_key: str | None = None,
+    expected_head_generation_sha256: str | None = None,
 ) -> PublicationResult:
-    """Publish terminal outcomes while exclusively owning the lane publication boundary."""
+    """Publish terminal outcomes while exclusively owning the lane publication boundary.
+
+    Optional head pins make a reviewed repair fail closed instead of rebasing onto a newer head.
+    """
+    if (expected_head_generation_key is None) != (expected_head_generation_sha256 is None):
+        raise ValueError("expected availability head key and digest must be supplied together")
     async with publication_barrier(session, request.config.identity.lane_root) as granted:
         if not granted:
             raise AvailabilityConflictError("availability publication barrier is contended")
-        return _refresh_coverage_rollup(store, _publish_availability_owned(store, request))
+        return _refresh_coverage_rollup(
+            store,
+            _publish_availability_owned(
+                store,
+                request,
+                expected_head_generation_key=expected_head_generation_key,
+                expected_head_generation_sha256=expected_head_generation_sha256,
+            ),
+        )
 
 
-def _publish_availability_owned(store: AvailabilityStorage, request: PublicationRequest) -> PublicationResult:
+def _publish_availability_owned(
+    store: AvailabilityStorage,
+    request: PublicationRequest,
+    *,
+    expected_head_generation_key: str | None = None,
+    expected_head_generation_sha256: str | None = None,
+) -> PublicationResult:
     """Append or correct terminal outcomes and conditionally advance the pointer; caller owns its barrier."""
     _require_sha256(request.input_sha256, "publication input sha256")
     _require_utc(request.created_at, "created_at")
@@ -284,6 +305,13 @@ def _publish_availability_owned(store: AvailabilityStorage, request: Publication
     snapshots: tuple[EvidenceSnapshot, ...] | None = None
     for attempt in range(1, MAX_PUBLICATION_ATTEMPTS + 1):
         latest = _load_latest_required(store, request.config.identity.lane_root)
+        if expected_head_generation_key is not None and (
+            latest.pointer.generation_key != expected_head_generation_key
+            or latest.pointer.generation_sha256 != expected_head_generation_sha256
+        ):
+            raise AvailabilityConflictError(
+                "availability head changed after review; refusing to rebase the pinned publication"
+            )
         _require_config_compatible(request.config, latest.pointer)
         classification = _classify_request_rows(latest.rows, request.rows)
         if classification.is_exact_replay and request.config.source_ceiling <= latest.pointer.source_ceiling:

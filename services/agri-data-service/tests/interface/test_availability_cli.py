@@ -188,6 +188,37 @@ def test_a_malformed_document_is_refused_with_a_typed_message(
     assert not touched
 
 
+def test_physical_reconciliation_apply_requires_reviewed_document_and_head_pins(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The mutating form cannot construct live dependencies without both dry-run pins."""
+    touched = _forbid_live_dependencies(monkeypatch)
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "data",
+            "availability-reconcile-physical",
+            "--lane",
+            "water-gauges",
+            "--kind",
+            "observed",
+            "--start",
+            "2026-09-06",
+            "--end",
+            "2026-09-06",
+            "--output",
+            str(tmp_path / "publication.json"),
+            "--apply",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "requires --expected-sha256 and --expected-head-generation" in result.output
+    assert not touched
+
+
 def test_apply_publishes_through_the_contract_and_reports_its_pointer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -19,7 +19,7 @@ import pytest
 
 from agri_data_service.db.vegetation_publication import unlocked_vegetation_publication_barrier
 from agri_data_service.foundation.canonical import sha256_digest
-from agri_data_service.foundation.parquet.completion import PartitionCompletion
+from agri_data_service.foundation.parquet.completion import CompletedPart, PartitionCompletion
 from agri_data_service.foundation.parquet.paths import COMPLETION_FILE_NAME, completion_marker_path
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.pipeline.parquet.availability_extension import (
@@ -34,6 +34,7 @@ from agri_data_service.pipeline.parquet.availability_extension import (
 )
 from agri_data_service.pipeline.parquet.availability_index import (
     MAX_PUBLICATION_ATTEMPTS,
+    AvailabilityConflictError,
     AvailabilityIdentity,
     AvailabilityRow,
     BootstrapInventoryEvidence,
@@ -42,16 +43,21 @@ from agri_data_service.pipeline.parquet.availability_index import (
     SourceEvidence,
     StoredAvailabilityObject,
     TerminalEvidence,
+    _bootstrap_availability_owned,
     availability_bootstrap_marker_key,
     availability_pointer_key,
     build_bootstrap_inventory_evidence,
     build_source_evidence,
     build_terminal_evidence,
     compute_verified_source_inventory_root,
+    load_publication_request,
+    publish_availability,
     read_latest_availability,
 )
-from agri_data_service.pipeline.parquet.availability_index import (
-    _bootstrap_availability_owned as bootstrap_availability,
+from agri_data_service.pipeline.parquet.availability_reconciliation import (
+    AvailabilityReconciliationError,
+    compile_physical_ladder_reconciliation,
+    install_reconciliation_evidence,
 )
 from agri_data_service.pipeline.parquet.derivation import DerivationResult, DerivedTierReport
 from agri_data_service.pipeline.parquet.gap_fill import (
@@ -74,8 +80,11 @@ from agri_data_service.warehouse.schemas.availability_index import AVAILABILITY_
 from tests.parquet.test_gap_fill import RecordingSession
 from tests.parquet.test_objectstore_writer import WHOLE_WORLD_TIER, RecordingBackend, signal_rows
 
+bootstrap_availability = _bootstrap_availability_owned
+
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
+    from pathlib import Path
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -209,11 +218,17 @@ def _lane_part_objects(backend: LoggingBackend) -> dict[str, bytes]:
     }
 
 
-def write_published_day(store: ObjectStore, *, day: date, completed_at: datetime = NOW) -> WrittenObjectLedger:
+def write_published_day(
+    store: ObjectStore,
+    *,
+    day: date,
+    completed_at: datetime = NOW,
+    record_parts: bool = False,
+) -> WrittenObjectLedger:
     """Write one whole published ladder -- parts and completion marker at every rung -- and keep its receipts."""
     with store.recording_written_objects() as ledger:
         for tier in ZOOM_TIERS:
-            store.write_partition(
+            receipt = store.write_partition(
                 signal_rows(),
                 layer=LANE,
                 kind=GAP_FILL_PARTITION_KIND,
@@ -226,6 +241,18 @@ def write_published_day(store: ObjectStore, *, day: date, completed_at: datetime
                     row_count=ROWS_PER_RUNG,
                     completed_at=completed_at,
                     run_id=RUN_ID,
+                    parts=(
+                        (
+                            CompletedPart(
+                                relative_path=receipt.relative_path,
+                                row_count=receipt.row_count,
+                                byte_count=receipt.byte_count,
+                                sha256=receipt.sha256,
+                            ),
+                        )
+                        if record_parts
+                        else ()
+                    ),
                 ),
                 layer=LANE,
                 kind=GAP_FILL_PARTITION_KIND,
@@ -247,6 +274,7 @@ def write_published_day_split_across_parts(
     *,
     day: date,
     base_parts: int = PARTS_PAST_THE_UNPADDED_BREAK,
+    record_parts: bool = False,
 ) -> WrittenObjectLedger:
     """Write one published ladder whose BASE rung is split across `base_parts` real part files.
 
@@ -254,7 +282,7 @@ def write_published_day_split_across_parts(
     Parquet object the availability contract will open and re-hash.
     """
     with store.recording_written_objects() as ledger:
-        for index in range(base_parts):
+        base_receipts = [
             store.write_partition(
                 signal_rows(cell_ids=(f"base-{index}",)),
                 layer=LANE,
@@ -263,8 +291,28 @@ def write_published_day_split_across_parts(
                 day=day,
                 part_index=index,
             )
+            for index in range(base_parts)
+        ]
         store.write_completion_marker(
-            PartitionCompletion(part_count=base_parts, row_count=base_parts, completed_at=NOW, run_id=RUN_ID),
+            PartitionCompletion(
+                part_count=base_parts,
+                row_count=base_parts,
+                completed_at=NOW,
+                run_id=RUN_ID,
+                parts=(
+                    tuple(
+                        CompletedPart(
+                            relative_path=receipt.relative_path,
+                            row_count=receipt.row_count,
+                            byte_count=receipt.byte_count,
+                            sha256=receipt.sha256,
+                        )
+                        for receipt in sorted(base_receipts, key=lambda item: item.relative_path)
+                    )
+                    if record_parts
+                    else ()
+                ),
+            ),
             layer=LANE,
             kind=GAP_FILL_PARTITION_KIND,
             zoom=GAP_FILL_ZOOM_TIER,
@@ -273,9 +321,26 @@ def write_published_day_split_across_parts(
         for tier in ZOOM_TIERS:
             if tier == GAP_FILL_ZOOM_TIER:
                 continue
-            store.write_partition(signal_rows(), layer=LANE, kind=GAP_FILL_PARTITION_KIND, zoom=tier, day=day)
+            receipt = store.write_partition(signal_rows(), layer=LANE, kind=GAP_FILL_PARTITION_KIND, zoom=tier, day=day)
             store.write_completion_marker(
-                PartitionCompletion(part_count=1, row_count=ROWS_PER_RUNG, completed_at=NOW, run_id=RUN_ID),
+                PartitionCompletion(
+                    part_count=1,
+                    row_count=ROWS_PER_RUNG,
+                    completed_at=NOW,
+                    run_id=RUN_ID,
+                    parts=(
+                        (
+                            CompletedPart(
+                                relative_path=receipt.relative_path,
+                                row_count=receipt.row_count,
+                                byte_count=receipt.byte_count,
+                                sha256=receipt.sha256,
+                            ),
+                        )
+                        if record_parts
+                        else ()
+                    ),
+                ),
                 layer=LANE,
                 kind=GAP_FILL_PARTITION_KIND,
                 zoom=tier,
@@ -311,8 +376,10 @@ def bootstrap_lane(
     *,
     day: date = BOOTSTRAP_DAY,
     published_at: datetime = NOW - timedelta(days=1),
+    source_ceiling: date | None = None,
 ) -> AvailabilityIdentity:
     """Give the lane a generation zero built from one REAL published day, as the offline bootstrap does."""
+    ceiling = day if source_ceiling is None else source_ceiling
     ledger = write_published_day(store, day=day, completed_at=published_at)
     manifest_key = f"{LANE_ROOT}/availability/manifest/bootstrap.json"
     storage.put_immutable(manifest_key, b"verified bootstrap manifest", content_type="application/json")
@@ -325,16 +392,23 @@ def bootstrap_lane(
         required_rungs=AVAILABILITY_REQUIRED_RUNGS,
         verified_source_inventory_root=compute_verified_source_inventory_root((manifest,)),
     )
-    rows = seed_day_rows(storage, identity, ledger, day=day, published_at=published_at)
+    rows = seed_day_rows(
+        storage,
+        identity,
+        ledger,
+        day=day,
+        published_at=published_at,
+        source_ceiling=ceiling,
+    )
     inventory = build_bootstrap_inventory_evidence(
-        BootstrapInventoryEvidence(identity=identity, source_ceiling=day, object_receipts=(manifest,))
+        BootstrapInventoryEvidence(identity=identity, source_ceiling=ceiling, object_receipts=(manifest,))
     )
     storage.put_immutable(inventory.receipt.key, inventory.payload, content_type="application/json")
     bootstrap_availability(
         storage,
         BootstrapRequest(
             identity=identity,
-            source_ceiling=day,
+            source_ceiling=ceiling,
             created_at=published_at,
             input_receipts=(inventory.receipt,),
             rows=rows,
@@ -344,23 +418,25 @@ def bootstrap_lane(
     return identity
 
 
-def seed_day_rows(
+def seed_day_rows(  # noqa: PLR0913 - mirrors the availability evidence inputs explicitly
     storage: LaneAvailabilityStorage,
     identity: AvailabilityIdentity,
     ledger: WrittenObjectLedger,
     *,
     day: date,
     published_at: datetime,
+    source_ceiling: date | None = None,
 ) -> tuple[AvailabilityRow, ...]:
     """Build and seed one already-written day's evidence, the way an offline input document would."""
     source_key = f"{LANE_ROOT}/availability/source/day={day.isoformat()}/bootstrap.json"
     source_payload = f"bootstrap source for {day.isoformat()}".encode()
     storage.put_immutable(source_key, source_payload, content_type="application/json")
+    ceiling = day if source_ceiling is None else source_ceiling
     source_evidence = build_source_evidence(
         SourceEvidence(
             identity=identity,
             day=day,
-            source_ceiling=day,
+            source_ceiling=ceiling,
             object_receipts=(EvidenceReceipt(key=source_key, sha256=sha256_digest(source_payload)),),
         )
     )
@@ -378,7 +454,7 @@ def seed_day_rows(
                 rung=rung,
                 terminal_state="published",
                 row_count=completion.row_count,
-                source_ceiling=day,
+                source_ceiling=ceiling,
                 published_at=published_at,
                 source_receipt=source_evidence.receipt,
                 data_receipts=tuple(EvidenceReceipt(key=part.relative_path, sha256=part.sha256) for part in parts),
@@ -402,7 +478,7 @@ def seed_day_rows(
                 data_receipts=tuple(EvidenceReceipt(key=part.relative_path, sha256=part.sha256) for part in parts),
                 completion_receipt=EvidenceReceipt(key=completion.relative_path, sha256=completion.sha256),
                 absence_reason=None,
-                source_ceiling=day,
+                source_ceiling=ceiling,
                 published_at=published_at,
             )
         )
@@ -525,18 +601,174 @@ async def test_a_governed_absence_joins_the_generation_with_one_reason_across_th
 
 
 @pytest.mark.asyncio
-async def test_a_lane_with_no_bootstrap_is_reported_and_writes_nothing() -> None:
-    """Production bootstrap is separately authorized: until it runs, a terminal day stays terminal."""
+async def test_a_lane_with_no_bootstrap_preserves_the_terminal_day_claim() -> None:
+    """A later bootstrap cannot be assumed to include a day that completed before its head existed."""
     backend, store, storage, _log = new_lane()
     ledger = write_published_day(store, day=DAY)
-    before = dict(backend.objects)
+    parts_before = _lane_part_objects(backend)
 
     outcome = await extend(store, storage, published_outcome(ledger))
 
-    assert outcome.state == "not_bootstrapped"
+    assert outcome.state == "retry_owed"
     assert outcome.error_kind == "availability_not_bootstrapped"
-    assert backend.objects == before
+    marker = availability_retry_path(LANE, GAP_FILL_PARTITION_KIND, DAY)
+    assert outcome.retry_marker == marker
+    assert backend.objects[marker]
+    assert _lane_part_objects(backend) == parts_before
     assert availability_pointer_key(LANE_ROOT) not in backend.objects
+
+
+def test_physical_reconciliation_compiles_only_the_complete_unblessed_day() -> None:
+    """A pure audit binds every part, marker, and current head without rewriting the ladder."""
+    backend, store, storage, _log = new_lane()
+    bootstrap_lane(store, storage, source_ceiling=CEILING)
+    write_published_day_split_across_parts(store, day=DAY, record_parts=True)
+    physical_before = _lane_part_objects(backend)
+
+    compiled = compile_physical_ladder_reconciliation(
+        store,
+        storage,
+        lane=LANE,
+        kind=GAP_FILL_PARTITION_KIND,
+        start_day=DAY,
+        end_day=DAY,
+    )
+
+    document = json.loads(compiled.document)
+    assert compiled.candidate_days == (DAY,)
+    assert compiled.already_blessed_days == ()
+    assert compiled.row_count == len(AVAILABILITY_REQUIRED_RUNGS)
+    assert {row["rung"] for row in document["rows"]} == set(AVAILABILITY_REQUIRED_RUNGS)
+    assert all(row["data_receipts"] for row in document["rows"])
+    base = next(row for row in document["rows"] if row["rung"] == GAP_FILL_ZOOM_TIER)
+    assert [receipt["key"] for receipt in base["data_receipts"]] == sorted(
+        receipt["key"] for receipt in base["data_receipts"]
+    )
+    assert all(row["completion_receipt_key"] for row in document["rows"])
+    assert compiled.head_generation_key == read_latest_availability(storage, lane_root=LANE_ROOT).pointer.generation_key
+    assert _lane_part_objects(backend) == physical_before
+    assert all(artifact.receipt.key not in backend.objects for artifact in compiled.artifacts)
+
+
+def test_physical_reconciliation_refuses_an_incomplete_ladder() -> None:
+    backend, store, storage, _log = new_lane()
+    bootstrap_lane(store, storage, source_ceiling=CEILING)
+    write_published_day(store, day=DAY)
+    backend.objects.pop(completion_marker_path(LANE, GAP_FILL_PARTITION_KIND, ZOOM_TIERS[0], DAY))
+
+    with pytest.raises(AvailabilityReconciliationError, match="has no completion marker"):
+        compile_physical_ladder_reconciliation(
+            store,
+            storage,
+            lane=LANE,
+            kind=GAP_FILL_PARTITION_KIND,
+            start_day=DAY,
+            end_day=DAY,
+        )
+
+
+def test_physical_reconciliation_refuses_a_derived_empty_marker_beside_parts() -> None:
+    _backend, store, storage, _log = new_lane()
+    bootstrap_lane(store, storage, source_ceiling=CEILING)
+    write_published_day(store, day=DAY, record_parts=True)
+    tier = ZOOM_TIERS[0]
+    store.clear_completion_marker(LANE, GAP_FILL_PARTITION_KIND, tier, DAY)
+    store.write_completion_marker(
+        PartitionCompletion(part_count=0, row_count=0, completed_at=NOW, run_id=RUN_ID, derived_empty=True),
+        layer=LANE,
+        kind=GAP_FILL_PARTITION_KIND,
+        zoom=tier,
+        day=DAY,
+    )
+
+    with pytest.raises(AvailabilityReconciliationError, match=r"physical part.*derived-empty"):
+        compile_physical_ladder_reconciliation(
+            store,
+            storage,
+            lane=LANE,
+            kind=GAP_FILL_PARTITION_KIND,
+            start_day=DAY,
+            end_day=DAY,
+        )
+
+
+def test_physical_reconciliation_refuses_legacy_count_only_markers() -> None:
+    _backend, store, storage, _log = new_lane()
+    bootstrap_lane(store, storage, source_ceiling=CEILING)
+    write_published_day(store, day=DAY)
+
+    with pytest.raises(AvailabilityReconciliationError, match="legacy count-only completion marker"):
+        compile_physical_ladder_reconciliation(
+            store,
+            storage,
+            lane=LANE,
+            kind=GAP_FILL_PARTITION_KIND,
+            start_day=DAY,
+            end_day=DAY,
+        )
+
+
+def test_physical_reconciliation_cannot_widen_history_before_the_current_floor() -> None:
+    _backend, store, storage, _log = new_lane()
+    bootstrap_lane(store, storage)
+    earlier = BOOTSTRAP_DAY - timedelta(days=1)
+    write_published_day(store, day=earlier)
+
+    with pytest.raises(AvailabilityReconciliationError, match="before the current generation's authorized earliest"):
+        compile_physical_ladder_reconciliation(
+            store,
+            storage,
+            lane=LANE,
+            kind=GAP_FILL_PARTITION_KIND,
+            start_day=earlier,
+            end_day=earlier,
+        )
+
+
+@pytest.mark.asyncio
+async def test_reviewed_reconciliation_refuses_a_newer_head_instead_of_rebasing(tmp_path: Path) -> None:
+    _backend, store, storage, _log = new_lane()
+    bootstrap_lane(store, storage, source_ceiling=CEILING)
+    write_published_day(store, day=DAY, record_parts=True)
+    compiled = compile_physical_ladder_reconciliation(
+        store,
+        storage,
+        lane=LANE,
+        kind=GAP_FILL_PARTITION_KIND,
+        start_day=DAY,
+        end_day=DAY,
+    )
+    document = tmp_path / "publication.json"
+    document.write_bytes(compiled.document)
+    request = load_publication_request(
+        document,
+        expected_sha256=compiled.document_sha256,
+        expected_row_count=compiled.row_count,
+    )
+
+    newer_ledger = write_published_day(store, day=CEILING)
+    newer = await extend(
+        store,
+        storage,
+        published_outcome(newer_ledger, day=CEILING, source_ceiling=CEILING),
+        day=CEILING,
+    )
+    assert newer.state == "extended"
+    install_reconciliation_evidence(storage, compiled)
+
+    with pytest.raises(AvailabilityConflictError, match="head changed after review"):
+        await publish_availability(
+            cast("AsyncSession", object()),
+            storage,
+            request,
+            publication_barrier=granted_barrier,
+            expected_head_generation_key=compiled.head_generation_key,
+            expected_head_generation_sha256=compiled.head_generation_sha256,
+        )
+
+    current = read_latest_availability(storage, lane_root=LANE_ROOT)
+    assert CEILING in current.selectable_days()
+    assert DAY not in current.selectable_days()
 
 
 @pytest.mark.asyncio

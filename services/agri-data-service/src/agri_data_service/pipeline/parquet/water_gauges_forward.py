@@ -57,7 +57,11 @@ from agri_data_service.pipeline.direct.water_gauges import (
     DirectWaterGaugesForwardAdapter,
     tables_by_publisher_day,
 )
-from agri_data_service.pipeline.parquet.availability_extension import AvailabilityExtensionTally
+from agri_data_service.pipeline.parquet.availability_extension import (
+    DEFAULT_MAX_RETRIES_PER_LANE,
+    AvailabilityExtensionTally,
+    retry_pending_availability,
+)
 from agri_data_service.pipeline.parquet.availability_index import BotoAvailabilityStorage
 from agri_data_service.pipeline.parquet.gap_fill import fill_one_lane_day, postgres_lane_day_lock
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
@@ -89,6 +93,7 @@ MAX_CONTENTION_POLL_SECONDS: Final = 60.0
 DEFAULT_CONTENTION_TIMEOUT_SECONDS: Final = 900.0
 MAX_CONTENTION_TIMEOUT_SECONDS: Final = 3_600.0
 VERIFICATION_MISMATCH_SAMPLE: Final = 5
+MAX_AVAILABILITY_RETRIES_PER_TURN: Final = DEFAULT_MAX_RETRIES_PER_LANE
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,6 +194,41 @@ def _report_bucket_incomplete(run_id: str, verdict: ForwardBucketVerdict) -> Non
 def emit(event: str, **fields: object) -> None:
     """Write one stable JSON progress record without exposing credentials."""
     print(json.dumps({"event": event, **fields}, separators=(",", ":"), sort_keys=True), flush=True)
+
+
+async def _retry_owed_availability(
+    session: AsyncSession,
+    store: ObjectStore,
+    availability_storage: AvailabilityStorage,
+    availability: AvailabilityExtensionTally,
+) -> int:
+    """Drain a bounded claim batch before selecting new source days; a drain fault never blocks writes."""
+    try:
+        outcomes = await retry_pending_availability(
+            session,
+            store,
+            lane=LANE_REGISTRY[WATER_GAUGES_STREAM].slug,
+            kind=KIND,
+            availability=availability_storage,
+            now=lambda: datetime.now(UTC),
+            max_days=MAX_AVAILABILITY_RETRIES_PER_TURN,
+        )
+    except Exception as error:
+        emit(
+            "water_gauges_forward_availability_retry_failed",
+            layer=WATER_GAUGES_STREAM,
+            detail=f"{type(error).__name__}: {error}",
+        )
+        return 0
+    for outcome in outcomes:
+        availability.record(outcome)
+        emit(
+            "water_gauges_forward_availability_retry",
+            layer=WATER_GAUGES_STREAM,
+            state=outcome.state,
+            detail=outcome.note,
+        )
+    return len(outcomes)
 
 
 def _owned_publisher_tables(tables: Mapping[date, pa.Table]) -> dict[date, pa.Table]:
@@ -539,24 +579,6 @@ async def run(args: argparse.Namespace) -> int:
         publisher_days_seen=[day.isoformat() for day in publisher_tables],
         publisher_days_owned=[day.isoformat() for day in tables],
     )
-    if not tables:
-        emit(
-            "water_gauges_forward_complete",
-            run_id=run_id,
-            outcome=("no_writable_records" if not publisher_tables else "outside_owned_window"),
-            days=0,
-            rows_added=0,
-            rows_updated=0,
-            bytes=0,
-            exit_code=0,
-            days_written=0,
-            days_unwritten=0,
-            unwritten=[],
-            absences_overturned=[],
-            **availability.to_summary(),
-        )
-        return 0
-
     credentials = settings.require_object_store()
     store = ObjectStore(
         BotoObjectStoreBackend.from_credentials(credentials),
@@ -568,6 +590,24 @@ async def run(args: argparse.Namespace) -> int:
     database_url = settings.require_local_source_loader_database_url()
     results: list[ForwardDayResult] = []
     async with local_source_loader_session(database_url) as session:
+        await _retry_owed_availability(session, store, availability_storage, availability)
+        if not tables:
+            emit(
+                "water_gauges_forward_complete",
+                run_id=run_id,
+                outcome=("no_writable_records" if not publisher_tables else "outside_owned_window"),
+                days=0,
+                rows_added=0,
+                rows_updated=0,
+                bytes=0,
+                exit_code=0,
+                days_written=0,
+                days_unwritten=0,
+                unwritten=[],
+                absences_overturned=[],
+                **availability.to_summary(),
+            )
+            return 0
         for day, table in tables.items():
             result = await _publish_day(
                 session,

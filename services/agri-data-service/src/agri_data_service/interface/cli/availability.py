@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import date
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import click
 
@@ -24,10 +25,18 @@ from agri_data_service.pipeline.parquet.availability_index import (
     load_publication_request,
     publish_availability,
 )
+from agri_data_service.pipeline.parquet.availability_reconciliation import (
+    AvailabilityReconciliationError,
+    ReconciliationCompilation,
+    compile_physical_ladder_reconciliation,
+    install_reconciliation_evidence,
+)
+from agri_data_service.pipeline.parquet.objectstore import BotoObjectStoreBackend, ObjectStore
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
 
+    from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.pipeline.parquet.availability_index import (
         AvailabilityIdentity,
         BootstrapRequest,
@@ -135,6 +144,95 @@ def availability_publish(
     _run("availability-publish", preview, apply_=apply_, work=lambda: _apply_publication(request))
 
 
+@click.command("availability-reconcile-physical")
+@click.option("--lane", required=True, help="Registered physical layer slug.")
+@click.option("--kind", required=True, type=click.Choice(["observed", "forecast"]))
+@click.option("--start", "start_text", required=True, help="Inclusive first day (YYYY-MM-DD).")
+@click.option("--end", "end_text", required=True, help="Inclusive last day (YYYY-MM-DD).")
+@click.option(
+    "--output",
+    "output_path",
+    required=True,
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Local path for the deterministic availability-publication input.",
+)
+@click.option("--expected-sha256", help="Required with --apply; pin from the reviewed dry run.")
+@click.option("--expected-head-generation", help="Required with --apply; head generation key from the dry run.")
+@click.option("--apply", "apply_", is_flag=True, default=False, help="Install evidence and invoke the CAS publisher.")
+def availability_reconcile_physical(  # noqa: PLR0913 - each option is a safety pin or range coordinate
+    lane: str,
+    kind: str,
+    start_text: str,
+    end_text: str,
+    output_path: Path,
+    expected_sha256: str | None,
+    expected_head_generation: str | None,
+    *,
+    apply_: bool,
+) -> None:
+    """Compile complete physical ladders into a pinned availability-only publication."""
+    try:
+        start_day = date.fromisoformat(start_text)
+        end_day = date.fromisoformat(end_text)
+    except ValueError as exc:
+        raise click.ClickException(f"invalid_reconciliation_range: {exc}") from exc
+    if apply_ and (expected_sha256 is None or expected_head_generation is None):
+        raise click.ClickException("--apply requires --expected-sha256 and --expected-head-generation")
+    try:
+        storage = _storage()
+        store = ObjectStore(
+            BotoObjectStoreBackend.from_credentials(settings.require_object_store()),
+            prefix=settings.object_store_prefix,
+        )
+        compilation = compile_physical_ladder_reconciliation(
+            store,
+            storage,
+            lane=lane,
+            kind=cast("PartitionKind", kind),
+            start_day=start_day,
+            end_day=end_day,
+        )
+    except (AvailabilityError, AvailabilityReconciliationError, OSError, ValueError) as exc:
+        raise click.ClickException(f"availability_reconciliation_refused: {exc}") from exc
+    if expected_sha256 is not None and compilation.document_sha256 != expected_sha256:
+        raise click.ClickException(
+            f"reconciliation digest is {compilation.document_sha256}, expected {expected_sha256}"
+        )
+    if expected_head_generation is not None and compilation.head_generation_key != expected_head_generation:
+        raise click.ClickException(
+            f"reconciliation head is {compilation.head_generation_key}, expected {expected_head_generation}"
+        )
+    output_path.write_bytes(compilation.document)
+    request = _load(
+        lambda: load_publication_request(
+            output_path,
+            expected_sha256=compilation.document_sha256,
+            expected_row_count=compilation.row_count,
+        )
+    )
+    preview = {
+        **_request_preview(
+            identity=request.config.identity,
+            rows=len(request.rows),
+            input_sha256=request.input_sha256,
+            source_ceiling=request.config.source_ceiling.isoformat(),
+            created_at=request.created_at.isoformat(),
+        ),
+        "candidate_days": [day.isoformat() for day in compilation.candidate_days],
+        "already_blessed_days": [day.isoformat() for day in compilation.already_blessed_days],
+        "head_generation_key": compilation.head_generation_key,
+        "head_generation_sha256": compilation.head_generation_sha256,
+        "head_pointer_sha256": compilation.head_pointer_sha256,
+        "output": str(output_path),
+    }
+    _run(
+        "availability-reconcile-physical",
+        preview,
+        apply_=apply_,
+        work=lambda: _apply_reconciliation(storage, compilation, request),
+    )
+
+
 def _request_preview(
     *,
     identity: AvailabilityIdentity,
@@ -207,6 +305,23 @@ async def _apply_publication(request: PublicationRequest) -> PublicationResult:
         return await publish_availability(session, _storage(), request)
 
 
+async def _apply_reconciliation(
+    storage: BotoAvailabilityStorage,
+    compilation: ReconciliationCompilation,
+    request: PublicationRequest,
+) -> PublicationResult:
+    """Install immutable evidence, then delegate the only mutable step to the existing CAS publisher."""
+    install_reconciliation_evidence(storage, compilation)
+    async with asyncio.timeout(_APPLY_TIMEOUT_SECONDS), receiver_writer_session() as session:
+        return await publish_availability(
+            session,
+            storage,
+            request,
+            expected_head_generation_key=compilation.head_generation_key,
+            expected_head_generation_sha256=compilation.head_generation_sha256,
+        )
+
+
 def _storage() -> BotoAvailabilityStorage:
     return BotoAvailabilityStorage.from_settings(settings)
 
@@ -215,4 +330,4 @@ def _emit(payload: dict[str, object]) -> None:
     click.echo(json.dumps(payload, sort_keys=True, separators=(",", ":")))
 
 
-__all__ = ["availability_bootstrap", "availability_publish"]
+__all__ = ["availability_bootstrap", "availability_publish", "availability_reconcile_physical"]

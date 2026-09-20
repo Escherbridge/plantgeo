@@ -31,6 +31,14 @@ every referenced object digest and attempts conditional publication. The command
 history, activate schedulers or grant production authorization; bootstrap inputs must already name
 the exact verified manifest/checkpoint receipts.
 
+`data availability-reconcile-physical` is the bounded discovery exception: it reads one
+lane/kind/date range directly from object storage, refuses incomplete ladders and blessed receipt
+mismatches, and writes a deterministic local `availability-publish` input for complete unblessed
+days. Its default run does not mutate the bucket. `--apply` additionally requires the reviewed
+document SHA-256 and audited head-generation key, installs immutable typed evidence, and hands the
+request to the existing CAS publisher. It never rewrites a data part, and public reads may author a
+candidate through the pure compiler but may not trigger this apply path.
+
 ## Executor operator inputs
 
 `ops jobs-set-lane-enabled` previews or applies an exact registered executor definition's durable

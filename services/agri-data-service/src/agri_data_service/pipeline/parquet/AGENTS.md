@@ -798,11 +798,13 @@ and `parquet_ops/availability_coverage.py` needs that answer to tell a lane that
 from one that LOST its pointer.
 
 The terminal-day publisher and its retry path also consult this marker when `_LATEST.json` is
-missing. Only a missing pointer AND missing bootstrap marker mean `not_bootstrapped`. A surviving
-marker means the head was lost: the publisher reports `retry_owed` and retains the physical-receipt
-claim until an operator restores the verified head. An unreadable marker also preserves the claim;
-it cannot prove the lane never had an index. This prevents a storage incident from permanently
-dropping completed days out of the retry ledger. Neither path recreates generation zero.
+missing. A terminal-day publisher ALWAYS reports `retry_owed` and retains its physical-receipt
+claim: a later bootstrap is independently compiled and cannot be assumed to include a day merely
+because that day completed before the head existed. The retry path may describe a genuinely absent
+bootstrap as `not_bootstrapped`, but it likewise preserves the claim. A surviving or unreadable
+marker proves even less and also preserves it. This prevents either first-activation ordering or a
+storage incident from permanently dropping completed days out of the retry ledger. Neither path
+recreates generation zero.
 
 The receipts come from a WRITE LEDGER, not from re-reading the bucket. `ObjectStore` grew
 `recording_written_objects()`: a scope that captures the `ParquetWriteReceipt`,
@@ -841,10 +843,9 @@ ceiling below the days it publishes.
 - `extended` - the generation now covers the day at every required rung, pointer advanced last.
 - `skipped_unchanged` - the generation already carries these exact grains and receipts. A replay,
   including the retry path, is a no-op rather than a correction generation.
-- `not_bootstrapped` - the lane has no generation zero (production bootstrap is separately
-  authorized and has not run), or no conditional storage is wired into this run. Nothing is owed:
-  the offline bootstrap builds generation zero FROM the objects this day is already among, so the
-  claim is cleared rather than left for a retry that would find the day already covered.
+- `not_bootstrapped` - no conditional storage is wired into this run, or a retry found that the
+  separately authorized generation zero still does not exist. A v2 claim already written for a
+  terminal day is retained; only the unwired case has no durable retry seam.
 - `ladder_incomplete` - this day cannot form the exact required-rungs ladder, so no honest row set
   exists. A retry would rebuild the identical gap, so none is kept and the day is LOST from the
   index. It is therefore a named field in `GapFillSummary.to_summary()` and in the drain's report
@@ -879,12 +880,60 @@ byte-identical evidence and rows from the claim, re-writes the evidence objects 
 republishes, and drops the claim. `MAX_AVAILABILITY_RETRY_BYTES` moved to 8 MiB to hold them:
 `soil-survey` streams ~3,016 parts in one day, and a claim that could not fit would lose that day.
 
-The claim is cleared on success, on `skipped_unchanged`, on `not_bootstrapped`, and on
-`ladder_incomplete` - the last because a claim that can never be satisfied would spin a drain
-forever. `run_gap_fill` drains up to `DEFAULT_MAX_RETRIES_PER_LANE` claims per lane BEFORE taking
+The claim is cleared on success, on `skipped_unchanged`, and on `ladder_incomplete` - the last
+because a claim that can never be satisfied would spin a drain forever. It is NOT cleared merely
+because the availability head is absent. `run_gap_fill` drains up to `DEFAULT_MAX_RETRIES_PER_LANE` claims per lane BEFORE taking
 any new day, because owed availability is the cheap half of a tick and a spent budget would
 otherwise defer it forever. The cost of claim-first is one extra PUT and one DELETE per terminal
 lane-day, which is the price of never losing one.
+
+`water_gauges_forward.run` owns the same recovery obligation as the climate and soil direct
+drivers. It drains at most `DEFAULT_MAX_RETRIES_PER_LANE` pending water claims inside its existing
+writer session before publishing newly fetched days, including turns whose NWIS snapshot yields no
+owned publisher day. A retry fault is tallied/emitted and never blocks fresh source publication.
+
+### Physical-ladder availability reconciliation
+
+`availability_reconciliation.compile_physical_ladder_reconciliation` is the pure audit seam for a
+bounded lane/kind/date range. It reads the verified current generation, hashes every physical part,
+requires every completion marker's part and row counts (and v2 per-part receipts) to match, and
+compares already blessed days against those bytes. Any incomplete ladder or blessed mismatch
+refuses the whole compilation. Only complete unblessed days become rows, with typed source and
+terminal evidence generated deterministically from the physical receipts. The result binds the
+generation key, generation digest and canonical pointer digest it was audited against.
+
+The reconciler admits only v2 nonempty completion markers carrying every part identity. A legacy
+count-only marker does not prove which bytes its counts described and is refused rather than
+upgraded by inference. A derived-empty marker is also checked against the live day listing; any
+physical part beside it is a contradiction and refuses the compilation.
+
+Physical completeness does not authorize a wider provider history. The range may not begin before
+the current generation's earliest terminal day, and it may not end beyond its source ceiling. A
+lane with no pointer is refused by the verified-head read and must use the separately reviewed
+bootstrap path; the reconciler has no override that can turn an old object into source-contract
+evidence.
+
+The compiler never writes Parquet, evidence or `_LATEST.json`. `data
+availability-reconcile-physical` writes its publication document locally in the default dry run;
+`--apply` requires the reviewed document digest and head-generation key, installs only immutable
+typed evidence, then delegates the mutable step to `availability_index.publish_availability` and
+its existing verification/barrier/CAS path. A serving read or gap detector may invoke the pure
+per-day compiler/audit to author a deduplicated repair candidate, but must never publish inline;
+the executor/operator remains the mutation boundary.
+
+Apply passes both the reviewed generation key and generation digest into that publisher. They are
+rechecked after the lane publication barrier is acquired and on every CAS attempt. A newer head is
+therefore a refusal, never an invitation to rebase a reviewed repair onto state the operator did
+not inspect.
+
+The deferred enqueue integration point is
+`pipeline/parquet/gap_fill.py::run_gap_fill`, immediately after its
+`gap_census.build_gap_census` call: that process already owns lane-scoped recovery work and can
+deduplicate a `(lane, kind, day, head_generation_key)` repair request. It may invoke
+`compile_physical_ladder_reconciliation` with `start_day == end_day` as the pure receipt audit, but
+must enqueue the resulting pin rather than publish it. Do not put this hook in
+`parquet_ops/availability_coverage.py`; that module is on the public serving read path and a read
+must not acquire write authority.
 
 `input_sha256` on the publication request is the SOURCE EVIDENCE digest, not a re-hash of the rows
 being published. Hashing a request's own rows and shipping the digest alongside them proved nothing;

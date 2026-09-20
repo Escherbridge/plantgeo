@@ -20,6 +20,10 @@ from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct.water_gauges import OverturnedAbsence, RetractedAbsenceMarker
 from agri_data_service.pipeline.parquet import water_gauges_forward as forward
+from agri_data_service.pipeline.parquet.availability_extension import (
+    AvailabilityExtensionOutcome,
+    AvailabilityExtensionTally,
+)
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from agri_data_service.warehouse.schemas.water_gauges import WATER_GAUGES_SCHEMA
 from tests.parquet.test_objectstore_writer import RecordingBackend
@@ -217,3 +221,62 @@ def test_a_retraction_followed_by_a_failed_write_is_still_reported_on_the_attemp
     assert attempt["absence_overturned"]["markers"][0]["run_id"] == RETIRED_PRODUCER_RUN_ID, (
         "the retired producer's provenance must reach the parsed report, not only stderr"
     )
+
+
+def test_forward_self_drains_a_bounded_availability_batch(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    captured: dict[str, object] = {}
+    owed = AvailabilityExtensionOutcome(
+        state="extended",
+        lane_root="layer=water-gauges/kind=observed",
+        day=DAY_ONE,
+        reason="recovered",
+    )
+
+    async def retry(_session: object, _store: object, **kwargs: object) -> tuple[AvailabilityExtensionOutcome, ...]:
+        captured.update(kwargs)
+        return (owed,)
+
+    monkeypatch.setattr(forward, "retry_pending_availability", retry)
+    tally = AvailabilityExtensionTally()
+
+    count = asyncio.run(
+        forward._retry_owed_availability(
+            cast("Any", object()),
+            cast("Any", object()),
+            cast("Any", object()),
+            tally,
+        )
+    )
+
+    assert count == 1
+    assert captured["lane"] == "water-gauges"
+    assert captured["kind"] == "observed"
+    assert captured["max_days"] == forward.MAX_AVAILABILITY_RETRIES_PER_TURN
+    assert tally.extended == 1
+    event = json.loads(capsys.readouterr().out.strip())
+    assert event["event"] == "water_gauges_forward_availability_retry"
+
+
+def test_forward_availability_drain_failure_never_blocks_source_publication(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    async def retry(*_args: object, **_kwargs: object) -> tuple[AvailabilityExtensionOutcome, ...]:
+        raise RuntimeError("temporary read fault")
+
+    monkeypatch.setattr(forward, "retry_pending_availability", retry)
+
+    count = asyncio.run(
+        forward._retry_owed_availability(
+            cast("Any", object()),
+            cast("Any", object()),
+            cast("Any", object()),
+            AvailabilityExtensionTally(),
+        )
+    )
+
+    assert count == 0
+    event = json.loads(capsys.readouterr().out.strip())
+    assert event["event"] == "water_gauges_forward_availability_retry_failed"
+    assert event["detail"] == "RuntimeError: temporary read fault"
