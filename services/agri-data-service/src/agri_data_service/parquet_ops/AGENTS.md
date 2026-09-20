@@ -781,3 +781,19 @@ parts still require exact digest equality with the index. This reader compatibil
 rewrite a published marker or weaken the publication writer's physical digest verification.
 
 Snapshots have zero additional availability lag after their explicit D+1 date; this admission does not change the historical cohort contract or unrelated lanes. Publication and weekly-capture/daily-ready scheduling belong to the direct producer. Ordinary forward absence authoring must stop at the ownership floor so an unrelated calendar marker cannot shadow a valid replacement.
+
+## Availability-authorized serving
+
+`authorized_serving.py` is the row-read authority for every `daily_series` and `release_series`
+lane. Each operation re-fetches the mutable `_LATEST.json` pointer, while immutable generations may
+be cached by their content-addressed key. The verified generation supplies the exact part,
+completion, and governed-absence receipts exposed to the existing four-state resolver; unrelated
+physical objects are invisible even when they share an authorized day prefix. Missing, stale,
+malformed, or checksum-invalid availability fails closed with a typed serving refusal. The adapter
+implements no write method and a GET never refreshes a receipt, authors work, or advances a pointer.
+
+`static_lookup` lanes deliberately retain their physical listing behavior because the availability
+contract applies to time-bearing lanes. MTBS still passes through its additional captured-snapshot
+proof; the snapshot day must also occur in the exact availability generation used for the request.
+The ordinary day/window row budgets, per-day truncation semantics, release requested/served-day
+distinction, bbox filtering, and four-state wire envelopes remain owned by `serving.py`.

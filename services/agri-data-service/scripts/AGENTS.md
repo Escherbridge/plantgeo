@@ -1031,12 +1031,17 @@ exact keys, row counts, byte counts, and digests are recorded only after the der
 The z13 Parquet objects are never rewritten or deleted.
 
 Preflight reads every rung that claims completion and compares its recorded part identities with the
-physical Parquet bytes; legacy count-only markers are not strong enough to preserve automatically.
+physical Parquet bytes. A legacy count-only marker is never treated as v2 evidence: it becomes an
+explicit repair item only when its part and row counts match a full physical read. The plan pins the
+old marker SHA-256 plus every part key, row count, byte count and SHA-256. Under the publication
+barrier and lane-day locks, a second identical preflight is required before the first PUT; the marker
+is then re-attested as v2 with the repair run/time and those exact part receipts. The operator reads
+the marker and parts back after the PUT and requires the exact expected bytes and identities.
+
 One refusal aborts an entire `--apply` range before its first PUT. Dry runs retain all refused days in
-the receipt and exit nonzero, so splitting around a conflict is an explicit operator decision. Once
-ownership is held, the command repeats the whole preflight and compares the exact z13 keys, row
-counts, byte counts and SHA-256 digests with the reviewed state before its first write. An unmarked
-z13 beneath any already-complete derived rung is refused rather than retroactively closed.
+the receipt and exit nonzero, so splitting around a conflict is an explicit operator decision. An
+unmarked z13 beneath any already-complete derived rung is refused rather than retroactively closed.
+Complete v2 rungs are never rewritten.
 
 This command deliberately has no availability dependency and does not bless a repaired day. Run the
 separate availability reconciler only after its receipt and a new physical inspection show a complete

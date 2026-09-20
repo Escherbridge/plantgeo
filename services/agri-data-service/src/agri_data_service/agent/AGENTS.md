@@ -759,3 +759,9 @@ of the warehouse the port made visible.
 UI has selected, never `latest`), and every temporal or spatial neighbour must carry its real distance
 and its own observation date. Silently substituting a neighbour for an exact answer is the same bug
 class as a lane reporting success having written nothing.
+
+Agent row reads share the map's availability-authorized listing. A `LaneWindow` retains the exact
+receipt-bound evidence source used to classify it, so a later absence decode cannot fall back to a
+physical listing or cross into a newer generation. Release tools freeze that authorized view before
+their two-pass row plan/replay. Static lookup behavior is unchanged. This path is read-only: agent
+queries do not repair receipts, publish availability, or enqueue ingestion.

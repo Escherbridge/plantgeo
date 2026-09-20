@@ -23,6 +23,12 @@ from agri_data_service.parquet_ops.availability_coverage import (
     merge_direct_lane_rows,
     resolve_availability_lanes,
 )
+from agri_data_service.parquet_ops.authorized_serving import (
+    AuthorizedServingReaderHolder,
+    resolve_authorized_day,
+    resolve_authorized_release,
+    resolve_authorized_window,
+)
 from agri_data_service.parquet_ops.coverage import CoverageCache, registered_census_lanes
 from agri_data_service.parquet_ops.duckdb_session import run_serving_read
 from agri_data_service.parquet_ops.faults import ServingRefusalError
@@ -33,7 +39,6 @@ from agri_data_service.parquet_ops.request_params import (
     parse_read_scope,
     parse_window,
 )
-from agri_data_service.parquet_ops.serving import resolve_day, resolve_release, resolve_window
 from agri_data_service.parquet_ops.warehouse_reader import DuckDbRowReader, ObjectStoreListing
 from agri_data_service.parquet_ops.wire import (
     PARAM_AS_OF,
@@ -59,6 +64,7 @@ if TYPE_CHECKING:
 
     from agri_data_service.foundation.region import Region
     from agri_data_service.parquet_ops.availability_coverage import AvailabilityCoverageReader
+    from agri_data_service.parquet_ops.authorized_serving import AuthorizedServingReader
     from agri_data_service.parquet_ops.request_params import ReadScope
     from agri_data_service.parquet_ops.warehouse_reader import PartitionRowReader, WarehouseListing
     from agri_data_service.parquet_ops.wire import LaneCoverage
@@ -87,6 +93,10 @@ _REFUSAL_HTTP_STATUS: Final[dict[str, int]] = {
     "object_store_session_unavailable": HTTP_SERVICE_UNAVAILABLE,
     "serving_extension_unavailable": HTTP_SERVICE_UNAVAILABLE,
     "census_budget_exhausted": HTTP_CONFLICT,
+    "availability_unpublished": HTTP_SERVICE_UNAVAILABLE,
+    "availability_stale": HTTP_SERVICE_UNAVAILABLE,
+    "availability_malformed": HTTP_SERVICE_UNAVAILABLE,
+    "availability_checksum_invalid": HTTP_SERVICE_UNAVAILABLE,
 }
 
 #: Row reads finish inside the client's 15 s budget. Coverage retains a 29 s shielded build budget:
@@ -96,6 +106,7 @@ COVERAGE_TIMEOUT_SECONDS: Final = 29.0
 
 _coverage_cache = CoverageCache()
 _availability_readers = AvailabilityCoverageReaderHolder()
+_authorized_serving_readers = AuthorizedServingReaderHolder()
 
 
 class _CoveragePayloadCache:
@@ -180,6 +191,11 @@ def open_availability_reader() -> AvailabilityCoverageReader:
     return _availability_readers.get(settings)
 
 
+def open_authorized_serving_reader() -> AuthorizedServingReader:
+    """Return the fresh-pointer authority used by row reads. Patched in tests."""
+    return _authorized_serving_readers.get(settings)
+
+
 @parquet_bp.get(f"/{ROUTE_DAY}")
 async def read_day(request: Request) -> HTTPResponse:
     """One layer's rows for one day at one tier, or the state that says why there are none."""
@@ -190,7 +206,9 @@ async def read_day(request: Request) -> HTTPResponse:
         return _refused(exc)
 
     def work(reader: PartitionRowReader) -> dict[str, object]:
-        return resolve_day(open_listing(), reader, scope=scope, day=day).to_wire()
+        return resolve_authorized_day(
+            open_authorized_serving_reader(), open_listing(), reader, scope=scope, day=day
+        ).to_wire()
 
     return await _answer(lambda: _run_row_read(work, route=ROUTE_DAY), ROW_READ_TIMEOUT_SECONDS, route=ROUTE_DAY)
 
@@ -205,7 +223,14 @@ async def read_window(request: Request) -> HTTPResponse:
         return _refused(exc)
 
     def work(reader: PartitionRowReader) -> dict[str, object]:
-        days = resolve_window(open_listing(), reader, scope=scope, first_day=first_day, last_day=last_day)
+        days = resolve_authorized_window(
+            open_authorized_serving_reader(),
+            open_listing(),
+            reader,
+            scope=scope,
+            first_day=first_day,
+            last_day=last_day,
+        )
         return render_window(days)
 
     return await _answer(
@@ -225,7 +250,9 @@ async def read_release(request: Request) -> HTTPResponse:
         return _refused(exc)
 
     def work(reader: PartitionRowReader) -> dict[str, object]:
-        return resolve_release(open_listing(), reader, scope=scope, as_of=as_of).to_wire()
+        return resolve_authorized_release(
+            open_authorized_serving_reader(), open_listing(), reader, scope=scope, as_of=as_of
+        ).to_wire()
 
     return await _answer(
         lambda: _run_row_read(work, route=ROUTE_RELEASE),

@@ -68,6 +68,11 @@ def warehouse(monkeypatch: pytest.MonkeyPatch) -> tuple[FakeListing, FakeRowRead
     listing = FakeListing()
     reader = FakeRowReader()
     monkeypatch.setattr(parquet_routes, "open_listing", lambda: listing)
+    monkeypatch.setattr(
+        parquet_routes,
+        "open_authorized_serving_reader",
+        lambda: SimpleNamespace(listing=lambda physical, **_kwargs: physical),
+    )
 
     async def fake_run_row_read(
         work: Callable[[FakeRowReader], dict[str, object]],
@@ -525,7 +530,11 @@ async def test_an_over_budget_read_is_a_coded_refusal_the_client_will_not_retry(
     """The guard tripping is the guard WORKING; escaping as a generic 500 is what made it an outage."""
     listing, _ = warehouse
     listing.write_day("signal", "observed", 13, date(2026, 8, 6))
-    monkeypatch.setattr(parquet_routes, "resolve_day", _raising(duckdb.OutOfMemoryException("out of memory")))
+    monkeypatch.setattr(
+        parquet_routes,
+        "resolve_authorized_day",
+        _raising(duckdb.OutOfMemoryException("out of memory")),
+    )
 
     response = await parquet_routes.read_day(request_with(layer="signal", zoom="13", day="2026-08-06"))
     error = payload_of(response)["error"]
@@ -545,7 +554,11 @@ async def test_an_unforeseen_fault_is_a_coded_refusal_rather_than_a_generic_500(
     """A botocore fault, a listing budget, an unrenderable cell: all of them used to reach Sanic bare."""
     listing, _ = warehouse
     listing.write_day("signal", "observed", 13, date(2026, 8, 6))
-    monkeypatch.setattr(parquet_routes, "resolve_day", _raising(ValueError("row attributed to a key nobody asked for")))
+    monkeypatch.setattr(
+        parquet_routes,
+        "resolve_authorized_day",
+        _raising(ValueError("row attributed to a key nobody asked for")),
+    )
 
     response = await parquet_routes.read_day(request_with(layer="signal", zoom="13", day="2026-08-06"))
     error = payload_of(response)["error"]
@@ -594,6 +607,10 @@ def test_the_http_adapter_owns_every_core_refusal_status() -> None:
         "object_store_session_unavailable",
         "serving_extension_unavailable",
         "census_budget_exhausted",
+        "availability_unpublished",
+        "availability_stale",
+        "availability_malformed",
+        "availability_checksum_invalid",
     }
 
     assert set(parquet_routes._REFUSAL_HTTP_STATUS) == expected

@@ -18,6 +18,7 @@ sys.path.insert(0, str(SERVICE_ROOT / "src"))
 
 from agri_data_service.config import settings  # noqa: E402
 from agri_data_service.db.engine import local_source_loader_session  # noqa: E402
+from agri_data_service.foundation.canonical import sha256_digest  # noqa: E402
 from agri_data_service.foundation.parquet.completion import CompletedPart, PartitionCompletion  # noqa: E402
 from agri_data_service.foundation.parquet.paths import (  # noqa: E402
     try_parse_absence_marker_path,
@@ -66,6 +67,8 @@ class RungState:
     parts: tuple[str, ...]
     has_absence: bool
     completion: PartitionCompletion | None
+    completion_sha256: str | None = None
+    physical_parts: tuple[CompletedPart, ...] = ()
 
     @property
     def complete(self) -> bool:
@@ -83,17 +86,31 @@ class DayPlan:
     states: tuple[RungState, ...]
     base_receipts: tuple[CompletedPart, ...] = ()
     missing_derived: tuple[ZoomTier, ...] = ()
+    legacy_completion_rungs: tuple[ZoomTier, ...] = ()
     base_marker_missing: bool = False
     refusal: str | None = None
 
     @property
     def repairable(self) -> bool:
-        return self.refusal is None and bool(self.missing_derived or self.base_marker_missing)
+        return self.refusal is None and bool(
+            self.missing_derived or self.legacy_completion_rungs or self.base_marker_missing
+        )
 
     def to_wire(self) -> dict[str, object]:
+        legacy_receipts = [
+            {
+                "completion_sha256": state.completion_sha256,
+                "parts": [part.to_wire() for part in state.physical_parts],
+                "rung": state.tier,
+            }
+            for state in self.states
+            if state.tier in self.legacy_completion_rungs
+        ]
         return {
             "base_marker_missing": self.base_marker_missing,
             "day": self.day.isoformat(),
+            "legacy_completion_receipts": legacy_receipts,
+            "legacy_completion_rungs": list(self.legacy_completion_rungs),
             "missing_derived_rungs": list(self.missing_derived),
             "refusal": self.refusal,
             "status": "refused" if self.refusal else ("repairable" if self.repairable else "complete"),
@@ -142,7 +159,7 @@ def inspect_day(  # noqa: PLR0912 - each branch refuses one distinct physical-la
     """Classify one physical day and bind every preserved marker to its Parquet payload."""
     states: list[RungState] = []
     problems: list[str] = []
-    physical_by_tier: dict[ZoomTier, tuple[CompletedPart, ...]] = {}
+    legacy_completion_rungs: list[ZoomTier] = []
     for tier in LADDER_RUNGS:
         keys = _keys_for_day(store, layer, day, tier)
         parts = tuple(sorted(key for key in keys if try_parse_partition_path(key) is not None))
@@ -152,9 +169,8 @@ def inspect_day(  # noqa: PLR0912 - each branch refuses one distinct physical-la
             problems.append(f"z{tier} has duplicate marker names")
         receipt = store.read_completion_receipt(layer, KIND, tier, day) if completion_keys else None
         marker = None if receipt is None else receipt.completion
-        state = RungState(tier=tier, parts=parts, has_absence=bool(absences), completion=marker)
-        states.append(state)
-        if state.has_absence:
+        physical_parts: tuple[CompletedPart, ...] = ()
+        if absences:
             problems.append(f"z{tier} carries a governed-absence marker")
         if marker is not None:
             if marker.derived_empty:
@@ -173,35 +189,55 @@ def inspect_day(  # noqa: PLR0912 - each branch refuses one distinct physical-la
                     )
                     for part in sorted(physical.parts, key=lambda item: item.relative_path)
                 )
-                physical_by_tier[tier] = physical_parts
+                physical_paths = tuple(part.relative_path for part in physical_parts)
+                physical_population_matches = physical_paths == parts
+                if not physical_population_matches:
+                    problems.append(
+                        f"z{tier} listing names {len(parts)} part(s), physical read returned "
+                        f"{len(physical_parts)} different part(s)"
+                    )
                 physical_rows = sum(part.row_count for part in physical_parts)
                 if marker.row_count != physical_rows:
                     problems.append(
                         f"z{tier} completion claims {marker.row_count} row(s), physical parts hold {physical_rows}"
                     )
-                if not marker.parts:
-                    problems.append(f"z{tier} completion does not record physical part identities")
-                elif marker.parts != physical_parts:
+                if marker.parts and marker.parts != physical_parts:
                     problems.append(f"z{tier} completion part identities do not match the physical parts")
+                elif not marker.parts and marker.row_count == physical_rows and physical_population_matches:
+                    legacy_completion_rungs.append(tier)
         elif parts and tier != BASE_RUNG:
             problems.append(f"z{tier} has unclosed derived parts")
+        elif parts:
+            physical = store.read_partition_with_receipts(layer, KIND, tier, day)
+            physical_parts = tuple(
+                CompletedPart(
+                    relative_path=part.relative_path,
+                    row_count=part.row_count,
+                    byte_count=part.byte_count,
+                    sha256=part.sha256,
+                )
+                for part in sorted(physical.parts, key=lambda item: item.relative_path)
+            )
+            if tuple(part.relative_path for part in physical_parts) != parts:
+                problems.append(
+                    f"z{tier} listing names {len(parts)} part(s), physical read returned "
+                    f"{len(physical_parts)} different part(s)"
+                )
+        state = RungState(
+            tier=tier,
+            parts=parts,
+            has_absence=bool(absences),
+            completion=marker,
+            completion_sha256=None if receipt is None else receipt.sha256,
+            physical_parts=physical_parts,
+        )
+        states.append(state)
 
     base = next(state for state in states if state.tier == BASE_RUNG)
     if not base.parts:
         problems.append(f"z{BASE_RUNG} has no source parts")
     if base.completion is not None and not base.complete:
         problems.append(f"z{BASE_RUNG} completion does not close its source parts")
-    if base.parts and BASE_RUNG not in physical_by_tier:
-        physical = store.read_partition_with_receipts(layer, KIND, BASE_RUNG, day)
-        physical_by_tier[BASE_RUNG] = tuple(
-            CompletedPart(
-                relative_path=part.relative_path,
-                row_count=part.row_count,
-                byte_count=part.byte_count,
-                sha256=part.sha256,
-            )
-            for part in sorted(physical.parts, key=lambda item: item.relative_path)
-        )
     derived_states = tuple(state for state in states if state.tier != BASE_RUNG)
     base_marker_missing = bool(base.parts and base.completion is None)
     if base_marker_missing and any(state.complete for state in derived_states):
@@ -212,8 +248,9 @@ def inspect_day(  # noqa: PLR0912 - each branch refuses one distinct physical-la
     return DayPlan(
         day=day,
         states=tuple(states),
-        base_receipts=physical_by_tier.get(BASE_RUNG, ()),
+        base_receipts=base.physical_parts,
         missing_derived=missing,
+        legacy_completion_rungs=tuple(legacy_completion_rungs),
         base_marker_missing=base_marker_missing,
         refusal="; ".join(problems) if problems else None,
     )
@@ -263,6 +300,28 @@ def complete_day(  # noqa: PLR0913 - explicit seams keep object writes and clock
             base_table=base.table,
             tiers=plan.missing_derived,
         )
+    expected_upgrades: dict[ZoomTier, tuple[PartitionCompletion, str]] = {}
+    for tier in plan.legacy_completion_rungs:
+        state = next(item for item in plan.states if item.tier == tier)
+        if state.completion is None or not state.physical_parts:
+            raise LadderCompletionError(
+                f"{layer} {day.isoformat()} z{tier}: legacy completion lost its pinned marker or parts"
+            )
+        upgraded = PartitionCompletion(
+            part_count=len(state.physical_parts),
+            row_count=sum(part.row_count for part in state.physical_parts),
+            completed_at=now(),
+            run_id=run_id,
+            parts=state.physical_parts,
+        )
+        store.write_completion_marker(
+            upgraded,
+            layer=layer,
+            kind=KIND,
+            zoom=tier,
+            day=day,
+        )
+        expected_upgrades[tier] = (upgraded, sha256_digest(upgraded.to_json_bytes()))
     if plan.base_marker_missing:
         completed_parts = tuple(
             CompletedPart(
@@ -292,6 +351,17 @@ def complete_day(  # noqa: PLR0913 - explicit seams keep object writes and clock
             f"{layer} {day.isoformat()}: apply ended without a complete ladder: "
             f"{final.refusal or final.missing_derived}"
         )
+    for tier, (expected, expected_sha256) in expected_upgrades.items():
+        final_state = next(item for item in final.states if item.tier == tier)
+        planned_state = next(item for item in plan.states if item.tier == tier)
+        if (
+            final_state.completion != expected
+            or final_state.completion_sha256 != expected_sha256
+            or final_state.physical_parts != planned_state.physical_parts
+        ):
+            raise LadderCompletionError(
+                f"{layer} {day.isoformat()} z{tier}: upgraded completion or physical parts changed after PUT"
+            )
     return final
 
 

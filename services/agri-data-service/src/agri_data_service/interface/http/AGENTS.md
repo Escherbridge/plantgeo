@@ -28,6 +28,12 @@ rendering live in top-level `agri_data_service.parquet_ops`.
 
 Current MTBS reads inject the existing availability object-store adapter lazily into the common listing. The common resolver owns snapshot evidence and optional `mtbs_snapshot` wire metadata, including empty viewports; the HTTP adapter has no independent release authority.
 
+All day, window, and release routes now enter that common resolver through
+`parquet_ops.authorized_serving`. Time-bearing reads therefore use the freshly fetched availability
+pointer and receipt-bound generation rather than an S3 history listing. Availability authority
+faults are HTTP 503 transport/serving refusals and never HTTP 200 content states. Static lookups keep
+their existing listing path, and no GET performs a receipt repair or any other object-store write.
+
 ## Transitional botanical authoring lookup
 
 `botanical_species_information.py` is a deliberately temporary nonspatial reader. It accepts only

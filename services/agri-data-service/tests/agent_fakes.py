@@ -143,6 +143,11 @@ class FakeAgentWarehouse:
             for layer in layers
         )
 
+    def authorized_listing(self, scope: object) -> FakeListing:
+        """Treat the deliberately scripted fake inventory as its test availability authority."""
+        del scope
+        return self.listing_store
+
     # --- Scripting helpers ---------------------------------------------------------
 
     def answer(self, marker: str, rows: Sequence[dict[str, Any]]) -> None:
@@ -200,6 +205,11 @@ class RefusingWarehouse:
     def availability_evidence(self, layers: Sequence[str], now: datetime) -> tuple[LaneEvidence, ...]:
         """Refuse: no test may read a real availability index."""
         del layers, now
+        raise AssertionError(_UNBOUND_MESSAGE)
+
+    def authorized_listing(self, scope: object) -> FakeListing:
+        """Refuse: no test may read the real availability authority."""
+        del scope
         raise AssertionError(_UNBOUND_MESSAGE)
 
 

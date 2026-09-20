@@ -111,3 +111,4 @@ docs/*.pdf
 *.pdf
 .omc
 NUL
+.agentgraph/

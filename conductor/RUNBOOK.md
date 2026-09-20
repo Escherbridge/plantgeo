@@ -1,7 +1,7 @@
 ---
 type: runbook
 status: active
-updated_on: 2026-09-19
+updated_on: 2026-09-20
 ---
 
 # Current operating runbook
@@ -50,7 +50,7 @@ that is complete and honest about itself.
 ### The measured corpus, 2026-09-19
 
 Full census at `.omc/ultrapilot-20260918/ML-DATA-READINESS-20260919.md` (gitignored). Warehouse holds
-1,252,681 objects / 26.46 GB. Twenty lanes carry multi-year daily history — `climate-field-dew-point`
+1,252,681 objects / 26.46 GB. Twenty-three lanes carry multi-year history — `climate-field-dew-point`
 to **1984** (15,598 days), `fire-detections` to **2000** (8,383 days), climate/soil families to
 2022 (~1,600 days each). **The old "only vegetation has depth, everything else starts 2026-08-02"
 claim is false and retired.**
@@ -60,9 +60,11 @@ Three structural facts that shape any backfill or feature work:
 - **Day counts overstate the corpus.** `water-gauges` deep history is largely fictional (above);
   `fire-detections` early years are 4 rows (2000) / 6 (2010) / 8 (2020) vs 148 (2026); NDVI is
   irregularly sampled by cloud masking (six sampled days gave 169/146/36/539/136/73 cells).
-- **Only two distinct resolutions exist.** All four rungs carry identical published-day counts, and
-  z5 = z9 = z13 are the same data. Native grids differ by family: climate 1.0° (397 cells), soil
-  0.25° (1,470 cells). A cross-lane matrix needs a regridding step nobody has written.
+- **Only two distinct native resolutions were measured in the sampled dense families.** The
+  2026-09-19 availability census reported identical day counts at all four rungs, but that is not
+  proof of physical rung equality: the 2026-09-20 audit found 25 sensor days with z13 only and
+  legacy count-only markers. Climate is 1.0° (397 cells) and soil 0.25° (1,470 cells); a cross-lane
+  matrix still needs an explicit regridding step.
 - **The HTTP window route truncates silently.** `MAX_WINDOW_DAYS = 31`, `WINDOW_ROW_BUDGET = 120_000`,
   and **no cursor or offset on any route** — a measured `water-gauges` window returned exactly 120,000
   rows with 18 of 31 days dropped, indistinguishable from a complete read. Bulk work reads the object
@@ -72,6 +74,12 @@ Three structural facts that shape any backfill or feature work:
 Two lanes publish nothing: `soil-survey` (never published) and `climate-field-shortwave-radiation`
 (withheld `availability_stale` on the NASA POWER provider regression, `ALLSKY_SFC_SW_DWN = -999`
 from 2026-07-01 — probe POWER before touching it).
+
+Live refresh on 2026-09-20: dense climate/soil families advanced one day and remain gapless. Open
+non-ML debt is RH 56 historical days; vegetation `2026-09-01..05`; sensors 27 days; water 11,594;
+weather observations 1,709; burn severity 2,079; four static lanes without immutable availability;
+and the two withheld/unpublished lanes above. Direct physical audits and the repair order are pinned
+in `tracks/gapless_parquet_publication_20260901/evidence/lane-gap-census-20260920.md`.
 
 ## Outstanding work
 
@@ -104,8 +112,10 @@ Incremental pushes and live-site QA are authorized; there are no active users. V
 follow `main` → Railway build → migration readiness → traffic. Each checkpoint records its
 commit/deployment identity, build result and live QA evidence in
 `tracks/platform_experience_qa_20260911/evidence/release-checkpoint-<date>-<sha>.md`. A push is not
-green until **all four platform services** (plantgeo-main, plantgeo-parquet-api,
-plantgeo-job-executor, plantgeo-martin) report the same commit. A fifth service,
+green until every changed platform service reports `SUCCESS`; an unchanged service may report
+`SKIPPED` only when the checkpoint records its prior serving revision and proves that revision is
+compatible with the change. Record the status of all four platform services (plantgeo-main,
+plantgeo-parquet-api, plantgeo-job-executor, plantgeo-martin). A fifth service,
 **plantgeo-ml** (the Railway service name; the directory is `services/plantgeo-ml-service/`), exists
 in the same project as of 2026-09-19. It is owned by the ML session, its watch pattern covers only
 its own directory — the wave-9 push SKIPPED it rather than rebuilding it — and its result is not
@@ -119,6 +129,14 @@ admission, governed publication and real-human acceptance are not waived. Produc
 CHANGES-REQUIRED, always with the same shape — a rule true in prose and broken by a mechanism a few
 files away — and none surfaced in a green sweep. Authoring, verification and review stay three
 separate lanes; review every pushed range, fix in the next wave.
+
+**Session 23 deployment recovery (2026-09-20).** Wave-12 review debt, availability reconciliation,
+locked ladder repair, isolated snapshot release gates and the verified Python receipt landed in
+`1ed49d3a`, `df0abc3c`, `f3402768`, `316a62ed` and `e20e044f`. A later broad checkpoint
+`c02f7e7b` accidentally restored the retired agri forecast/PostgreSQL surface and failed the main,
+Parquet API and executor builds. `fae95a94` removed that restoration, repaired the region test mock,
+and reached `SUCCESS` on all four non-ML services; live readiness probes passed. Full evidence:
+`tracks/platform_experience_qa_20260911/evidence/release-checkpoint-20260920-fae95a94.md`.
 
 ## Deployed state and carried follow-ups (Sessions 1–21, 2026-09-14 → 2026-09-18)
 

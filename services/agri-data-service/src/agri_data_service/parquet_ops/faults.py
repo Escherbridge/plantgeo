@@ -113,6 +113,40 @@ def census_budget_exhausted(*, listed_keys: int) -> ServingRefusalError:
     )
 
 
+def availability_unpublished(*, layer: str, detail: str) -> ServingRefusalError:
+    """A time-bearing lane has no current availability authority for serving."""
+    return ServingRefusalError(
+        "availability_unpublished",
+        f"{layer} has no published availability authority ({detail}); physical objects alone are not permission "
+        "to serve a time-bearing day",
+    )
+
+
+def availability_stale(*, layer: str, detail: str) -> ServingRefusalError:
+    """A lane's mutable availability head is too old or no longer names a readable generation."""
+    return ServingRefusalError(
+        "availability_stale",
+        f"{layer} availability is stale or unavailable ({detail}); serving from an older physical listing would "
+        "turn an authority failure into a data claim",
+    )
+
+
+def availability_malformed(*, layer: str, detail: str) -> ServingRefusalError:
+    """Availability bytes do not satisfy their frozen schema or lane identity."""
+    return ServingRefusalError(
+        "availability_malformed",
+        f"{layer} availability is malformed ({detail}); the lane is refused rather than interpreted loosely",
+    )
+
+
+def availability_checksum_invalid(*, layer: str, detail: str) -> ServingRefusalError:
+    """A pointer, generation, evidence document, or governed marker failed its digest binding."""
+    return ServingRefusalError(
+        "availability_checksum_invalid",
+        f"{layer} availability evidence failed checksum verification ({detail}); unbound bytes are not served",
+    )
+
+
 def snapshot_unpublished(*, layer: str, snapshot_id: str, detail: str) -> ServingRefusalError:
     """An allowlisted immutable product is not provably closed by its manifest and marker."""
     return ServingRefusalError(

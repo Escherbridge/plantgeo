@@ -24,6 +24,7 @@ from agri_data_service.parquet_ops.availability_coverage import (
     AvailabilityCoverageReaderHolder,
     resolve_availability_lanes,
 )
+from agri_data_service.parquet_ops.authorized_serving import AuthorizedServingReaderHolder
 from agri_data_service.parquet_ops.coverage import registered_census_lanes
 from agri_data_service.parquet_ops.duckdb_session import run_serving_read
 from agri_data_service.parquet_ops.mtbs_snapshot_catalog import configured_snapshot_loader
@@ -77,6 +78,10 @@ class AgentWarehouseSource(Protocol):
         """Answer each lane's coverage from its published availability index. Blocking; run in a thread."""
         ...
 
+    def authorized_listing(self, scope: ReadScope) -> WarehouseListing:
+        """Return a fresh-pointer, receipt-bound listing for row serving."""
+        ...
+
 
 @dataclass(frozen=True, slots=True)
 class LaneWindow:
@@ -88,6 +93,7 @@ class LaneWindow:
     keys: tuple[str, ...]
     statuses: DayStatusSets
     lane_written: bool
+    evidence_source: WarehouseListing = field(repr=False, compare=False)
 
     def state_of(self, day: date) -> str:
         """Name the ONE state this lane is in on `day`, in the frozen four-state vocabulary."""
@@ -183,6 +189,7 @@ class _ObjectStoreSource:
     def __init__(self) -> None:
         self._listing: ObjectStoreListing | None = None
         self._availability = AvailabilityCoverageReaderHolder()
+        self._serving_authority = AuthorizedServingReaderHolder()
 
     def listing(self) -> WarehouseListing:
         """Build the listing once per process; a client per request costs more than the read does."""
@@ -241,6 +248,10 @@ class _ObjectStoreSource:
             evidence.append(fold_availability_index(reader.read(lane, now=now), layer=layer, nature=lane.nature))
         return tuple(evidence)
 
+    def authorized_listing(self, scope: ReadScope) -> WarehouseListing:
+        """Bind a row read to the current availability generation without publishing anything."""
+        return self._serving_authority.get(settings).listing(self.listing(), scope=scope)
+
 
 _default_source: Final = _ObjectStoreSource()
 
@@ -292,13 +303,22 @@ async def lane_window(
     every base row away reads `data` here and in the census, and a marker with no parts beside it --
     a LOST rung -- reads `incomplete` in both and is refused rather than served as an unwritten day.
     """
-    listing = source().listing()
+    scope = ReadScope(layer=layer, kind=kind, tier=tier, bbox=None)
+    listing = source().authorized_listing(scope)
 
     def walk() -> LaneWindow:
         keys = _keys_for_months(listing, layer=layer, kind=kind, tier=tier, first_day=first_day, last_day=last_day)
         statuses = day_status_sets(keys, layer=layer, kind=kind, tier=tier)
         lane_written = bool(keys) or _lane_has_objects(listing, layer=layer, kind=kind, tier=tier)
-        return LaneWindow(layer=layer, kind=kind, tier=tier, keys=keys, statuses=statuses, lane_written=lane_written)
+        return LaneWindow(
+            layer=layer,
+            kind=kind,
+            tier=tier,
+            keys=keys,
+            statuses=statuses,
+            lane_written=lane_written,
+            evidence_source=listing,
+        )
 
     return await asyncio.to_thread(walk)
 
@@ -311,14 +331,23 @@ async def lane_years(
     tier: ZoomTier = AGENT_ZOOM_TIER,
 ) -> LaneWindow:
     """Classify whole calendar years at once; a release lane's window is sparse and months cost more."""
-    listing = source().listing()
+    scope = ReadScope(layer=layer, kind=kind, tier=tier, bbox=None)
+    listing = source().authorized_listing(scope)
     wanted = tuple(years)
 
     def walk() -> LaneWindow:
         keys = tuple(sorted({key for year in wanted for key in listing.list_keys(layer, kind, tier, year=year)}))
         statuses = day_status_sets(keys, layer=layer, kind=kind, tier=tier)
         lane_written = bool(keys) or _lane_has_objects(listing, layer=layer, kind=kind, tier=tier)
-        return LaneWindow(layer=layer, kind=kind, tier=tier, keys=keys, statuses=statuses, lane_written=lane_written)
+        return LaneWindow(
+            layer=layer,
+            kind=kind,
+            tier=tier,
+            keys=keys,
+            statuses=statuses,
+            lane_written=lane_written,
+            evidence_source=listing,
+        )
 
     return await asyncio.to_thread(walk)
 
@@ -405,9 +434,9 @@ async def release_rows(
     read: Callable[[tuple[str, ...]], Awaitable[Sequence[ServedRow]]],
 ) -> DayEnvelope:
     """Resolve the map's latest applicable release, then validate the bounded rows it actually serves."""
-    listing = _ReleaseListing(source().listing())
-    reader = _ReleaseRows(limit=row_limit)
     scope = ReadScope(layer=layer, kind=OBSERVED, tier=AGENT_ZOOM_TIER, bbox=None)
+    listing = _ReleaseListing(source().authorized_listing(scope))
+    reader = _ReleaseRows(limit=row_limit)
     try:
         return await asyncio.to_thread(resolve_release, listing, reader, scope=scope, as_of=as_of)
     except _ReleaseReadNeededError:
@@ -420,8 +449,7 @@ async def release_rows(
 async def absence_evidence(window: LaneWindow, day: date) -> AbsenceEvidence:
     """Decode one governed-absence marker; an absence served without its evidence is not one."""
     scope = _absence_scope(window)
-    listing = source().listing()
-    return await asyncio.to_thread(read_absence_evidence, listing, scope=scope, day=day)
+    return await asyncio.to_thread(read_absence_evidence, window.evidence_source, scope=scope, day=day)
 
 
 def _absence_scope(window: LaneWindow) -> ReadScope:
