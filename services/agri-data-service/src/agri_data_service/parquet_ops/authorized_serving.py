@@ -59,6 +59,7 @@ if TYPE_CHECKING:
     from agri_data_service.parquet_ops.wire import DayEnvelope
     from agri_data_service.pipeline.parquet.availability_index import (
         AvailabilityIndex,
+        AvailabilityNature,
         AvailabilityRow,
         AvailabilityStorage,
         EvidenceReceipt,
@@ -364,10 +365,11 @@ class AuthorizedServingReader:
             raise faults.availability_unpublished(layer=scope.layer, detail="the lane is not registered")
         if lane.nature == "static_lookup":
             return physical
+        nature = cast("AvailabilityNature", lane.nature)
         instant = datetime.now(UTC) if now is None else now
         try:
             index = self._read_index(
-                lane=lane,
+                nature=nature,
                 scope=scope,
                 required_ceiling=required_source_ceiling(lane, now=instant),
             )
@@ -375,14 +377,20 @@ class AuthorizedServingReader:
             raise _availability_refusal(scope.layer, exc) from exc
         return AvailabilityAuthorizedListing(index=index, scope=scope, store=self._store, physical=physical)
 
-    def _read_index(self, *, lane: CensusLane, scope: ReadScope, required_ceiling: date) -> AvailabilityIndex:
+    def _read_index(
+        self,
+        *,
+        nature: AvailabilityNature,
+        scope: ReadScope,
+        required_ceiling: date,
+    ) -> AvailabilityIndex:
         """Read a fresh pointer while parsing each immutable generation at most once per process."""
         lane_root = availability_lane_root(scope.layer, scope.kind)
         pointer = read_availability_pointer(
             self._store,
             lane_root=lane_root,
             expected_lane=scope.layer,
-            expected_nature=lane.nature,
+            expected_nature=nature,
             expected_required_rungs=AVAILABILITY_REQUIRED_RUNGS,
             required_source_ceiling=required_ceiling,
         )
@@ -397,7 +405,7 @@ class AuthorizedServingReader:
                 self._store,
                 lane_root=lane_root,
                 expected_lane=scope.layer,
-                expected_nature=lane.nature,
+                expected_nature=nature,
                 expected_required_rungs=AVAILABILITY_REQUIRED_RUNGS,
                 required_source_ceiling=required_ceiling,
             )
