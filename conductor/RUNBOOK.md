@@ -1,7 +1,7 @@
 ---
 type: runbook
 status: active
-updated_on: 2026-09-18
+updated_on: 2026-09-19
 ---
 
 # Current operating runbook
@@ -15,6 +15,63 @@ linked below. Only open state, standing rules and pointers stay here.
 Environmental payloads write directly to governed Parquet and read only from the Parquet serving plane. PostgreSQL environmental observation tables, materialized views, archive readers, writers, migrations, and fallback options are retired. Missing or incomplete Parquet coverage must produce an explicit unavailable or governed-absence response and a bounded source-direct repair task.
 
 PostgreSQL remains for transactional application data, community interventions, operational job state, and approved small reference lookups such as species profiles.
+
+## Priority (owner, 2026-09-19) — data completeness is #1
+
+> "We need to get our data right. That should be our #1 priority: solid data layers and layer
+> serving, ingestion to date every day. That should be perfect and everything else will naturally
+> fall into place."
+
+Every other track below is subordinate to this until a lane census shows no unexplained holes.
+Acceptance evidence, mobile, multiscale and release verdicts wait; they are downstream of a corpus
+that is complete and honest about itself.
+
+**Four owner decisions taken 2026-09-19, all binding:**
+
+1. **"All to date, don't worry about ML yet."** A lane is current when it holds *every day the
+   provider has actually published*, ingested up to the provider's edge. Do NOT block lane currency
+   on the ML forecast lane, and do NOT fabricate days to reach literal today —
+   `scripts/check-fabricated-observations.mjs` exists to prevent exactly that. Provider edges as
+   measured: climate ~5 d, soil ~9 d, vegetation ~7 d.
+2. **Full backfill to each lane's earliest claimed day.** The holes are real and large —
+   `water-gauges` 11,594 gap days against 1,545 published (1990-09-30 returns 2 rows; 2005 and 2018
+   sample days return `day_not_written`), `weather-observations` 1,709, `burn-severity` 2,079 with
+   only 7 published days. Re-ingest from source rather than narrowing the claimed range. Where the
+   provider archive genuinely cannot serve a day, write an explicit governed absence — a lane must
+   never claim depth it does not have.
+3. **Arm the NDVI promotion lane, with pre-checks first.** Confirm `agri.spatial_cell` holds the
+   `sentinel2-ndvi-0p25deg` cells after the 2026-09-09 rebuild-from-empty, settle the stale
+   `2026-09-19T02:25:00+00:00` work item (retry_wait, attempt 2/5), then arm and watch one turn. This
+   lane has failed activation twice in production on exactly this class of missing precondition; both
+   rolled back cleanly.
+4. **Fold the wave-12 review debt into the data work** as its first commit rather than running
+   another full fix-wave cycle.
+
+### The measured corpus, 2026-09-19
+
+Full census at `.omc/ultrapilot-20260918/ML-DATA-READINESS-20260919.md` (gitignored). Warehouse holds
+1,252,681 objects / 26.46 GB. Twenty lanes carry multi-year daily history — `climate-field-dew-point`
+to **1984** (15,598 days), `fire-detections` to **2000** (8,383 days), climate/soil families to
+2022 (~1,600 days each). **The old "only vegetation has depth, everything else starts 2026-08-02"
+claim is false and retired.**
+
+Three structural facts that shape any backfill or feature work:
+
+- **Day counts overstate the corpus.** `water-gauges` deep history is largely fictional (above);
+  `fire-detections` early years are 4 rows (2000) / 6 (2010) / 8 (2020) vs 148 (2026); NDVI is
+  irregularly sampled by cloud masking (six sampled days gave 169/146/36/539/136/73 cells).
+- **Only two distinct resolutions exist.** All four rungs carry identical published-day counts, and
+  z5 = z9 = z13 are the same data. Native grids differ by family: climate 1.0° (397 cells), soil
+  0.25° (1,470 cells). A cross-lane matrix needs a regridding step nobody has written.
+- **The HTTP window route truncates silently.** `MAX_WINDOW_DAYS = 31`, `WINDOW_ROW_BUDGET = 120_000`,
+  and **no cursor or offset on any route** — a measured `water-gauges` window returned exactly 120,000
+  rows with 18 of 31 days dropped, indistinguishable from a complete read. Bulk work reads the object
+  store with DuckDB, filtered to availability-blessed days. `release_series` lanes (drought,
+  burn-severity) return `day_not_written` from `/day`; `/release` is their reader.
+
+Two lanes publish nothing: `soil-survey` (never published) and `climate-field-shortwave-radiation`
+(withheld `availability_stale` on the NASA POWER provider regression, `ALLSKY_SFC_SW_DWN = -999`
+from 2026-07-01 — probe POWER before touching it).
 
 ## Outstanding work
 
