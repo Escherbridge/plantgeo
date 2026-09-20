@@ -76,7 +76,7 @@ WEATHER_CURRENT_CHECKPOINT_PROVIDER: Final = "open-meteo-current-conditions-v1"
 #: gap `layer-lanes.md` section 4 forbids. It can only arise when a `deadline` is passed --
 #: `forward.py::_run_recovery_turn` passes none, because reading the retained grid IS that turn.
 #:
-#: FIVE since 2026-09-19 (style review W10, S5). `foreign_support_grid` is the second thing that is
+#: FIVE since 2026-09-19 (style review W10, S5). `foreign_checkpoint_identity` is the second thing that is
 #: not a loss: every checkpoint key is bound to `weather_support_sha256(points)`, and both inputs to
 #: that digest -- `INGEST_BBOX` and the sample spacing -- are environment facts read at call time
 #: (`support.py::weather_sample_points`), so an operator may move the grid without a deploy. Every
@@ -84,9 +84,9 @@ WEATHER_CURRENT_CHECKPOINT_PROVIDER: Final = "open-meteo-current-conditions-v1"
 #: about that is a false claim of permanent loss made in the exact moment an operator is deciding
 #: whether to panic. The discriminator is the support witness below, not a guess.
 #:
-#: IT IS EARNED, NOT ASSUMED (style review W11, B1). `foreign_support_grid` is reachable only from
-#: an EXHAUSTED walk that recovered nothing AND a witness that names a different grid -- both halves,
-#: because the witness set is best-effort and its absence of this grid is not evidence against it.
+#: IT IS EARNED, NOT ASSUMED (style review W11, B1). `foreign_checkpoint_identity` is reachable only from
+#: an EXHAUSTED walk that recovered nothing AND a witness that names a different identity -- both
+#: halves, because the witness set is best-effort and absence is not evidence against an identity.
 #: It was once returned before the first read, which let one swallowed witness write refuse a
 #: recovery whose bodies were sitting under the searched key all along.
 WeatherRecoveryState = Literal[
@@ -94,7 +94,7 @@ WeatherRecoveryState = Literal[
     "partial_capture",
     "no_retained_capture",
     "probe_budget_exhausted",
-    "foreign_support_grid",
+    "foreign_checkpoint_identity",
 ]
 
 
@@ -192,6 +192,17 @@ def weather_checkpoint_identity(
     )
 
 
+def weather_checkpoint_set_sha256(
+    points: Sequence[tuple[float, float]], *, day: date, support_sha256: str
+) -> str:
+    """Fingerprint the complete ordered checkpoint keyspace searched for one day."""
+    identities = [
+        weather_checkpoint_identity(point, day=day, support_sha256=support_sha256).as_dict()
+        for point in points
+    ]
+    return sha256_digest(canonical_json(identities))
+
+
 #: Identity namespace for the per-day record of WHICH support grids this lane has polled a day under.
 #: Its own provider string, so a witness can never be mistaken for a retained provider response by
 #: `recover_weather_day` -- the two live in the same key space and are told apart by this field.
@@ -245,8 +256,8 @@ class WeatherSupportWitness:
     standing (`record_support_witness`), eviction at `WEATHER_SUPPORT_WITNESS_LIMIT` drops the
     oldest, and a lost compare-and-swap writes nothing at all
     (`pipeline/parquet/source_checkpoint.py:118`). So a PRESENT digest is evidence -- the day really
-    was polled under that grid -- while an ABSENT one is evidence of nothing. `other_grids_witnessed`
-    therefore says only "a different grid is on the record", never "this one is not"; what it is
+    was polled under that identity -- while an ABSENT one is evidence of nothing. `other_identities_witnessed`
+    therefore says only "a different identity is on the record", never "this one is not"; what it is
     allowed to decide is fixed at the one place that reads it (`recover_weather_day`), which walks
     the configured grid first in every case and asks this verdict only about an empty result.
     """
@@ -254,10 +265,18 @@ class WeatherSupportWitness:
     day: date
     #: The digest the recovery searched under, i.e. the grid this process is configured for now.
     searched_sha256: str
-    #: Grids this day is known to have been polled under, oldest first; empty when none is readable.
-    witnessed_sha256: tuple[str, ...] = ()
-    #: Was a witness object readable at all? `False` makes every verdict below an honest "unknown".
-    recorded: bool = False
+    #: The full ordered checkpoint identity set this recovery constructs.
+    searched_checkpoint_identity_sha256: str = ""
+    #: Modern witnesses as `(support digest, complete identity-set digest)`, oldest first.
+    witnessed_identities: tuple[tuple[str, str], ...] = ()
+    #: Grid-only entries decoded from the legacy witness schema; diagnostic, never conclusive.
+    legacy_witnessed_sha256: tuple[str, ...] = ()
+
+    @property
+    def witnessed_sha256(self) -> tuple[str, ...]:
+        """List all witnessed grids for diagnostics, including legacy grid-only entries."""
+        modern = tuple(support for support, _identity in self.witnessed_identities)
+        return tuple(dict.fromkeys((*modern, *self.legacy_witnessed_sha256)))
 
     @property
     def truncated(self) -> bool:
@@ -265,52 +284,84 @@ class WeatherSupportWitness:
 
         Reported rather than reasoned about: nothing here refuses on a witness, so truncation can
         only widen an already one-sided reading. It travels on `to_event` so an operator reading a
-        `foreign_support_grid` refusal knows the named grids may not be all of them.
+        `foreign_checkpoint_identity` refusal knows the named identities may not be all of them.
         """
-        return len(self.witnessed_sha256) >= WEATHER_SUPPORT_WITNESS_LIMIT
+        witnessed = len(self.witnessed_identities) + len(self.legacy_witnessed_sha256)
+        return witnessed >= WEATHER_SUPPORT_WITNESS_LIMIT
 
     @property
-    def verdict(self) -> Literal["grid_matches", "other_grids_witnessed", "no_witness"]:
-        """Which of the three this is. Only `grid_matches` and `other_grids_witnessed` are evidence.
+    def verdict(self) -> Literal["identity_matches", "other_identities_witnessed", "no_witness"]:
+        """Which keyspace is evidenced; legacy grid-only entries remain unknown.
 
         Named for what is on the record, not for what is inferred from it: the previous name for the
         third case was `grid_changed`, which asserted a move from the mere absence of the searched
         digest and cost a recovery its walk (style review W11, B1).
         """
-        if not self.recorded or not self.witnessed_sha256:
-            return "no_witness"
-        return "grid_matches" if self.searched_sha256 in self.witnessed_sha256 else "other_grids_witnessed"
+        if self.searched_checkpoint_identity_sha256 in {
+            identity_sha256 for _support_sha256, identity_sha256 in self.witnessed_identities
+        }:
+            return "identity_matches"
+        if self.witnessed_identities:
+            return "other_identities_witnessed"
+        return "no_witness"
 
     def to_event(self) -> dict[str, object]:
         """Render the grid question for a progress stream: what was searched, and what was witnessed."""
         return {
-            "support_grid_verdict": self.verdict,
+            "checkpoint_identity_verdict": self.verdict,
             "searched_support_sha256": self.searched_sha256,
             "witnessed_support_sha256": list(self.witnessed_sha256),
+            "searched_checkpoint_identity_sha256": self.searched_checkpoint_identity_sha256,
+            "witnessed_checkpoint_identity_sha256": [
+                identity_sha256 for _support_sha256, identity_sha256 in self.witnessed_identities
+            ],
             "witness_truncated": self.truncated,
         }
 
 
-def _witnessed_grids(checkpoint: SourceCheckpoint | None) -> tuple[str, ...]:
-    """Decode a witness body into its digests, treating anything unreadable as no witness at all."""
+def _witnessed_identities(
+    checkpoint: SourceCheckpoint | None,
+) -> tuple[tuple[tuple[str, str], ...], tuple[str, ...]]:
+    """Decode modern identity witnesses and retain legacy grid-only entries as diagnostics."""
     if checkpoint is None:
-        return ()
+        return (), ()
     try:
         decoded = json.loads(checkpoint.body)
     except ValueError:
-        return ()
+        return (), ()
     if not isinstance(decoded, dict):
-        return ()
-    held = decoded.get("support_sha256")
-    if not isinstance(held, list):
-        return ()
-    return tuple(entry for entry in held if isinstance(entry, str))
+        return (), ()
+    entries = decoded.get("checkpoint_identities")
+    modern: list[tuple[str, str]] = []
+    if isinstance(entries, list):
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            support_sha256 = entry.get("support_sha256")
+            identity_sha256 = entry.get("checkpoint_identity_sha256")
+            if isinstance(support_sha256, str) and isinstance(identity_sha256, str):
+                modern.append((support_sha256, identity_sha256))
+    legacy = decoded.get("legacy_support_sha256", decoded.get("support_sha256", []))
+    modern_entries = tuple(modern[-WEATHER_SUPPORT_WITNESS_LIMIT:])
+    legacy_entries = (
+        tuple(entry for entry in legacy if isinstance(entry, str))[-WEATHER_SUPPORT_WITNESS_LIMIT:]
+        if isinstance(legacy, list)
+        else ()
+    )
+    legacy_slots = WEATHER_SUPPORT_WITNESS_LIMIT - len(modern_entries)
+    bounded_legacy = legacy_entries[-legacy_slots:] if legacy_slots > 0 else ()
+    return modern_entries, bounded_legacy
 
 
 def record_support_witness(
-    day: date, support_sha256: str, checkpoints: SourceResponseCheckpoints, *, now: datetime
-) -> tuple[str, ...]:
-    """Remember that this day was polled under this grid, unioned with whatever is already witnessed.
+    day: date,
+    support_sha256: str,
+    checkpoint_identity_sha256: str,
+    checkpoints: SourceResponseCheckpoints,
+    *,
+    now: datetime,
+) -> tuple[tuple[str, str], ...]:
+    """Remember the exact checkpoint keyspace used for this day.
 
     Rewritten on every poll rather than only when the set changes, so the witness ages out of the
     `CHECKPOINT_MAX_AGE` window at the same rate as the bodies it describes -- a witness that expired
@@ -335,23 +386,44 @@ def record_support_witness(
     poll, since `fetched_at` is the turn's own clock, but not two calls sharing an instant.
     """
     identity = weather_support_witness_identity(day)
-    held = _witnessed_grids(checkpoints.read(identity, now=now))
-    merged = held if support_sha256 in held else (*held, support_sha256)[-WEATHER_SUPPORT_WITNESS_LIMIT:]
-    body = canonical_json({"support_sha256": list(merged)}).encode()
+    held, legacy = _witnessed_identities(checkpoints.read(identity, now=now))
+    entry = (support_sha256, checkpoint_identity_sha256)
+    candidates = held if entry in held else (*held, entry)
+    merged = candidates[-WEATHER_SUPPORT_WITNESS_LIMIT:]
+    legacy_slots = WEATHER_SUPPORT_WITNESS_LIMIT - len(merged)
+    bounded_legacy = legacy[-legacy_slots:] if legacy_slots > 0 else ()
+    body = canonical_json(
+        {
+            "checkpoint_identities": [
+                {
+                    "support_sha256": witnessed_support,
+                    "checkpoint_identity_sha256": witnessed_identity,
+                }
+                for witnessed_support, witnessed_identity in merged
+            ],
+            "legacy_support_sha256": list(bounded_legacy),
+        }
+    ).encode()
     checkpoints.write(identity, SourceCheckpoint(body=body, retrieved_at=now), response_sha256=sha256_digest(body))
     return merged
 
 
 def read_support_witness(
-    day: date, support_sha256: str, checkpoints: SourceResponseCheckpoints, *, now: datetime
+    day: date,
+    support_sha256: str,
+    checkpoint_identity_sha256: str,
+    checkpoints: SourceResponseCheckpoints,
+    *,
+    now: datetime,
 ) -> WeatherSupportWitness:
-    """Ask, in ONE object read, whether this day was ever polled under the grid about to be searched."""
-    held = _witnessed_grids(checkpoints.read(weather_support_witness_identity(day), now=now))
+    """Ask, in one object read, which complete checkpoint keyspaces were witnessed."""
+    held, legacy = _witnessed_identities(checkpoints.read(weather_support_witness_identity(day), now=now))
     return WeatherSupportWitness(
         day=day,
         searched_sha256=support_sha256,
-        witnessed_sha256=held,
-        recorded=bool(held),
+        searched_checkpoint_identity_sha256=checkpoint_identity_sha256,
+        witnessed_identities=held,
+        legacy_witnessed_sha256=legacy,
     )
 
 
@@ -417,7 +489,13 @@ def checkpoint_current_poll(
             failed += 1
             by_day[day][1] += 1
     for day in by_day:
-        record_support_witness(day, support_sha256, checkpoints, now=poll.fetched_at)
+        record_support_witness(
+            day,
+            support_sha256,
+            weather_checkpoint_set_sha256(accepted, day=day, support_sha256=support_sha256),
+            checkpoints,
+            now=poll.fetched_at,
+        )
     return WeatherCheckpointReport(
         attempted=len(poll.observations),
         retained=retained,
@@ -455,7 +533,7 @@ def recover_weather_day(
 
     THE GRID QUESTION IS ANSWERED AFTER THE WALK, NOT INSTEAD OF IT (style review W11, B1). The
     witness is read first, in one object read, but nothing is refused on it: EVERY day is walked,
-    and the verdict only names which empty answer an exhausted walk earned. `foreign_support_grid`
+    and the verdict only names which empty answer an exhausted walk earned. `foreign_checkpoint_identity`
     needs both halves -- a walk of this grid that recovered nothing, and a witness naming a
     different one -- because the witness set is a lower bound on the grids a day was polled under
     (`WeatherSupportWitness`), so the absence of the searched digest from it is not evidence that
@@ -475,7 +553,10 @@ def recover_weather_day(
     only in the case that used to be refused for free and sometimes wrongly.
     """
     support_sha256 = weather_support_sha256(points)
-    witness = read_support_witness(day, support_sha256, checkpoints, now=now)
+    checkpoint_identity_sha256 = weather_checkpoint_set_sha256(
+        points, day=day, support_sha256=support_sha256
+    )
+    witness = read_support_witness(day, support_sha256, checkpoint_identity_sha256, checkpoints, now=now)
     recovered: list[WeatherPointObservation] = []
     missing_or_rejected = 0
     unprobed = 0
@@ -508,14 +589,14 @@ def recover_weather_day(
     state: WeatherRecoveryState
     if not recovered:
         # Three empty answers, ordered by how much of the search actually happened. An unfinished
-        # search is not an empty bucket: `no_retained_capture` is the word the forward writer prints
-        # as "lost, not owed", and it is only true of a grid that was walked to the end. A completed
-        # empty walk plus a witnessed OTHER grid is the only combination that may claim a move --
-        # the walk supplies the negative about this grid, the witness the positive about another.
+        # search is not an empty bucket: `no_retained_capture` means the checkpoint identity this
+        # build constructs was walked to the end. A completed empty walk plus a witnessed OTHER
+        # identity is the only combination that may claim a move -- the walk supplies the negative
+        # about this keyspace, the witness the positive about another.
         if unprobed:
             state = "probe_budget_exhausted"
-        elif witness.verdict == "other_grids_witnessed":
-            state = "foreign_support_grid"
+        elif witness.verdict == "other_identities_witnessed":
+            state = "foreign_checkpoint_identity"
         else:
             state = "no_retained_capture"
     elif missing_or_rejected or unprobed:
@@ -550,6 +631,7 @@ __all__ = [
     "record_support_witness",
     "recover_weather_day",
     "weather_checkpoint_identity",
+    "weather_checkpoint_set_sha256",
     "weather_support_sha256",
     "weather_support_witness_identity",
 ]

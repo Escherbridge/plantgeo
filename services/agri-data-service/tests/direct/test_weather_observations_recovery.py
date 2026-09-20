@@ -14,12 +14,15 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
+from agri_data_service.foundation.canonical import sha256_digest
+from agri_data_service.pipeline.direct.weather_observations import recovery as recovery_module
 from agri_data_service.pipeline.direct.weather_observations.recovery import (
     checkpoint_current_poll,
     read_support_witness,
     record_support_witness,
     recover_weather_day,
     weather_checkpoint_identity,
+    weather_checkpoint_set_sha256,
     weather_support_sha256,
     weather_support_witness_identity,
 )
@@ -27,12 +30,17 @@ from agri_data_service.pipeline.direct.weather_observations.source import (
     WeatherPointObservation,
     WeatherPollResult,
 )
-from agri_data_service.pipeline.parquet.source_checkpoint import SourceResponseCheckpoints
+from agri_data_service.pipeline.parquet.source_checkpoint import SourceCheckpoint, SourceResponseCheckpoints
 from tests.parquet.test_availability_index import MemoryAvailabilityStorage
 
 FETCHED_AT = datetime(2026, 9, 13, 18, 30, tzinfo=UTC)
 OBSERVED_UNIX = int(datetime(2026, 9, 13, 18, 0, tzinfo=UTC).timestamp())
 POINTS: tuple[tuple[float, float], ...] = ((45.5, -122.6), (47.6, -122.3))
+
+
+def _identity_digest(points: tuple[tuple[float, float], ...], day: date) -> str:
+    support_sha256 = weather_support_sha256(points)
+    return weather_checkpoint_set_sha256(points, day=day, support_sha256=support_sha256)
 
 
 def _body(temperature: float) -> bytes:
@@ -127,12 +135,12 @@ def test_a_checkpoint_cannot_be_read_back_under_a_different_support_grid() -> No
 
     recovered = recover_weather_day(date(2026, 9, 13), (POINTS[0],), checkpoints, now=FETCHED_AT)
 
-    assert recovered.state == "foreign_support_grid"
+    assert recovered.state == "foreign_checkpoint_identity"
     assert recovered.recovered_points == 0
     assert recovered.missing_or_rejected_points == 1, "the grid WAS walked; that is what earns the claim"
     assert recovered.unprobed_points == 0, "an unfinished walk could not have earned it"
     assert recovered.witness is not None
-    assert recovered.witness.verdict == "other_grids_witnessed"
+    assert recovered.witness.verdict == "other_identities_witnessed"
     assert recovered.witness.witnessed_sha256 == (weather_support_sha256(POINTS),)
     assert recovered.support_sha256 == weather_support_sha256((POINTS[0],))
 
@@ -143,7 +151,7 @@ def test_a_corrupt_retained_body_is_a_rejection_rather_than_a_fabricated_reading
     checkpoint_current_poll(_poll((POINTS[0], b"{not json")), POINTS, checkpoints)
 
     # The SAME grid the poll used: a narrower one would walk keys that cannot exist and land on
-    # `foreign_support_grid`, and this is about a body that cannot be parsed, not a grid that moved.
+    # `foreign_checkpoint_identity`, and this is about a body that cannot be parsed, not a moved keyspace.
     recovered = recover_weather_day(date(2026, 9, 13), POINTS, checkpoints, now=FETCHED_AT)
 
     assert recovered.state == "no_retained_capture"
@@ -252,9 +260,11 @@ def test_the_recovery_event_names_the_verdict_without_carrying_the_readings() ->
         "recovered_points": 2,
         "missing_or_rejected_points": 0,
         "unprobed_points": 0,
-        "support_grid_verdict": "grid_matches",
+        "checkpoint_identity_verdict": "identity_matches",
         "searched_support_sha256": weather_support_sha256(POINTS),
         "witnessed_support_sha256": [weather_support_sha256(POINTS)],
+        "searched_checkpoint_identity_sha256": _identity_digest(POINTS, date(2026, 9, 13)),
+        "witnessed_checkpoint_identity_sha256": [_identity_digest(POINTS, date(2026, 9, 13))],
         # Whether the witnessed list could be all of them: one grid is nowhere near the eviction
         # bound, and a reader must not have to know the bound to tell a full record from a capped one.
         "witness_truncated": False,
@@ -294,8 +304,14 @@ def test_a_poll_witnesses_the_grid_it_polled_each_day_under() -> None:
     checkpoint_current_poll(_straddling_poll(), POINTS, checkpoints)
 
     for day in (date(2026, 9, 13), date(2026, 9, 14)):
-        witness = read_support_witness(day, weather_support_sha256(POINTS), checkpoints, now=FETCHED_AT)
-        assert witness.verdict == "grid_matches"
+        witness = read_support_witness(
+            day,
+            weather_support_sha256(POINTS),
+            _identity_digest(POINTS, day),
+            checkpoints,
+            now=FETCHED_AT,
+        )
+        assert witness.verdict == "identity_matches"
         assert witness.witnessed_sha256 == (weather_support_sha256(POINTS),)
 
 
@@ -309,13 +325,120 @@ def test_a_witness_remembers_both_grids_a_day_was_polled_under() -> None:
     checkpoints = _checkpoints()
     first, second = weather_support_sha256(POINTS), weather_support_sha256((POINTS[0],))
 
-    record_support_witness(date(2026, 9, 13), first, checkpoints, now=FETCHED_AT)
-    record_support_witness(date(2026, 9, 13), second, checkpoints, now=FETCHED_AT + timedelta(minutes=30))
+    day = date(2026, 9, 13)
+    record_support_witness(day, first, _identity_digest(POINTS, day), checkpoints, now=FETCHED_AT)
+    record_support_witness(
+        day,
+        second,
+        _identity_digest((POINTS[0],), day),
+        checkpoints,
+        now=FETCHED_AT + timedelta(minutes=30),
+    )
 
     # Read at an instant at or after the write, or the envelope refuses its own future-dated body.
     later = FETCHED_AT + timedelta(hours=1)
-    assert read_support_witness(date(2026, 9, 13), first, checkpoints, now=later).verdict == "grid_matches"
-    assert read_support_witness(date(2026, 9, 13), second, checkpoints, now=later).verdict == "grid_matches"
+    assert (
+        read_support_witness(day, first, _identity_digest(POINTS, day), checkpoints, now=later).verdict
+        == "identity_matches"
+    )
+    assert (
+        read_support_witness(
+            day, second, _identity_digest((POINTS[0],), day), checkpoints, now=later
+        ).verdict
+        == "identity_matches"
+    )
+
+
+def test_a_provider_change_is_owed_until_the_original_identity_is_restored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    day = date(2026, 9, 13)
+    checkpoints = _checkpoints()
+    checkpoint_current_poll(_poll((POINTS[0], _body(19.5)), (POINTS[1], _body(17.25))), POINTS, checkpoints)
+    original_provider = recovery_module.WEATHER_CURRENT_CHECKPOINT_PROVIDER
+
+    monkeypatch.setattr(recovery_module, "WEATHER_CURRENT_CHECKPOINT_PROVIDER", f"{original_provider}-v2")
+    moved = recover_weather_day(day, POINTS, checkpoints, now=FETCHED_AT)
+
+    assert moved.state == "foreign_checkpoint_identity"
+    assert moved.witness is not None
+    assert moved.witness.verdict == "other_identities_witnessed"
+
+    monkeypatch.setattr(recovery_module, "WEATHER_CURRENT_CHECKPOINT_PROVIDER", original_provider)
+    restored = recover_weather_day(day, POINTS, checkpoints, now=FETCHED_AT)
+
+    assert restored.state == "complete_capture"
+    assert restored.recovered_points == 2
+
+
+def test_a_request_url_change_is_owed_until_the_original_identity_is_restored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    day = date(2026, 9, 13)
+    checkpoints = _checkpoints()
+    checkpoint_current_poll(_poll((POINTS[0], _body(19.5)), (POINTS[1], _body(17.25))), POINTS, checkpoints)
+    original_url = recovery_module.current_weather_url
+
+    monkeypatch.setattr(
+        recovery_module,
+        "current_weather_url",
+        lambda latitude, longitude: f"{original_url(latitude, longitude)}&identity_revision=2",
+    )
+    moved = recover_weather_day(day, POINTS, checkpoints, now=FETCHED_AT)
+
+    assert moved.state == "foreign_checkpoint_identity"
+    assert moved.witness is not None
+    assert moved.witness.verdict == "other_identities_witnessed"
+
+    monkeypatch.setattr(recovery_module, "current_weather_url", original_url)
+    restored = recover_weather_day(day, POINTS, checkpoints, now=FETCHED_AT)
+
+    assert restored.state == "complete_capture"
+    assert restored.recovered_points == 2
+
+
+def test_a_legacy_grid_only_witness_is_diagnostic_and_cannot_prove_a_loss() -> None:
+    day = date(2026, 9, 13)
+    checkpoints = _checkpoints()
+    support_sha256 = weather_support_sha256(POINTS)
+    body = json.dumps({"support_sha256": [support_sha256]}).encode()
+    checkpoints.write(
+        weather_support_witness_identity(day),
+        SourceCheckpoint(body=body, retrieved_at=FETCHED_AT),
+        response_sha256=sha256_digest(body),
+    )
+
+    recovered = recover_weather_day(day, POINTS, checkpoints, now=FETCHED_AT)
+
+    assert recovered.state == "no_retained_capture"
+    assert recovered.witness is not None
+    assert recovered.witness.verdict == "no_witness"
+    assert recovered.witness.legacy_witnessed_sha256 == (support_sha256,)
+
+
+def test_rewriting_a_legacy_witness_caps_the_combined_identity_history() -> None:
+    day = date(2026, 9, 13)
+    checkpoints = _checkpoints()
+    legacy = [f"legacy-{index}" for index in range(10)]
+    body = json.dumps({"support_sha256": legacy}).encode()
+    checkpoints.write(
+        weather_support_witness_identity(day),
+        SourceCheckpoint(body=body, retrieved_at=FETCHED_AT),
+        response_sha256=sha256_digest(body),
+    )
+    later = FETCHED_AT + timedelta(minutes=30)
+    support_sha256 = weather_support_sha256(POINTS)
+    identity_sha256 = _identity_digest(POINTS, day)
+
+    record_support_witness(day, support_sha256, identity_sha256, checkpoints, now=later)
+    witness = read_support_witness(
+        day, support_sha256, identity_sha256, checkpoints, now=later
+    )
+
+    assert witness.verdict == "identity_matches"
+    assert witness.legacy_witnessed_sha256 == tuple(legacy[-7:])
+    assert len(witness.witnessed_sha256) == 8
+    assert witness.truncated is True
 
 
 def test_a_day_with_no_witness_is_walked_rather_than_refused() -> None:
@@ -366,7 +489,7 @@ def test_a_day_whose_witness_write_failed_is_walked_and_recovered_rather_than_ca
     that day's witness write loses its swap -- so the witness still reads (wide,) while every body
     this recovery wants is sitting under the key it is about to construct.
 
-    Before this change the verdict alone refused the day: zero probes, `foreign_support_grid`, exit
+    Before this change the verdict alone refused the day: zero probes, `foreign_checkpoint_identity`, exit
     1, and an operator told to restore the bbox that would move the configured grid AWAY from the
     readable bodies, for the whole seven days the checkpoints survive. The walk is what settles it.
     """
@@ -376,7 +499,13 @@ def test_a_day_whose_witness_write_failed_is_walked_and_recovered_rather_than_ca
     checkpoints = SourceResponseCheckpoints(storage)
     # Monday's witness is seeded through the same writer with the refusal lifted, so the object
     # under test is a real witness body and not a fixture's idea of one.
-    record_support_witness(day, weather_support_sha256(POINTS), checkpoints, now=FETCHED_AT)
+    record_support_witness(
+        day,
+        weather_support_sha256(POINTS),
+        _identity_digest(POINTS, day),
+        checkpoints,
+        now=FETCHED_AT,
+    )
     storage.refusing = True
 
     later = FETCHED_AT + timedelta(hours=1)
@@ -401,7 +530,7 @@ def test_a_day_whose_witness_write_failed_is_walked_and_recovered_rather_than_ca
     recovered = recover_weather_day(day, narrow, checkpoints, now=later)
 
     assert recovered.witness is not None
-    assert recovered.witness.verdict == "other_grids_witnessed", "the witness is WRONG, not absent"
+    assert recovered.witness.verdict == "other_identities_witnessed", "the witness is WRONG, not absent"
     assert recovered.witness.witnessed_sha256 == (weather_support_sha256(POINTS),), "Tuesday's write never landed"
     assert recovered.state == "complete_capture", "walked, not refused: no verdict may outrank a readable body"
     assert recovered.recovered_points == 1

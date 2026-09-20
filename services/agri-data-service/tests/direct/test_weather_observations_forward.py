@@ -575,7 +575,9 @@ class TestTheRefusalNamesWhichEmptyAnswerThisIs:
     """STYLE-REVIEW-W10 S5: one wording claimed permanent loss for three very different states."""
 
     @staticmethod
-    def _report(state: str, witness: WeatherSupportWitness | None) -> WeatherRecoveryReport:
+    def _report(
+        state: str, witness: WeatherSupportWitness | None, *, unprobed_points: int = 0
+    ) -> WeatherRecoveryReport:
         return WeatherRecoveryReport(
             day=DAY_THREE,
             state=cast("Any", state),
@@ -583,6 +585,7 @@ class TestTheRefusalNamesWhichEmptyAnswerThisIs:
             recovered_points=0,
             missing_or_rejected_points=0,
             observations=(),
+            unprobed_points=unprobed_points,
             support_sha256="now",
             witness=witness,
         )
@@ -591,11 +594,11 @@ class TestTheRefusalNamesWhichEmptyAnswerThisIs:
         witness = WeatherSupportWitness(
             day=DAY_THREE,
             searched_sha256="now",
-            witnessed_sha256=("before",),
-            recorded=True,
+            searched_checkpoint_identity_sha256="identity-now",
+            witnessed_identities=(("before", "identity-before"),),
         )
 
-        detail = forward._recovery_refusal_detail(self._report("foreign_support_grid", witness))
+        detail = forward._recovery_refusal_detail(self._report("foreign_checkpoint_identity", witness))
 
         assert "OWED, not" in detail
         assert "lost, not owed" not in detail, "the bodies are on disk under the previous digest"
@@ -610,17 +613,51 @@ class TestTheRefusalNamesWhichEmptyAnswerThisIs:
         assert "UNKNOWN, not" in detail
         assert "lost, not owed" not in detail
 
-    def test_a_searched_matching_grid_with_nothing_readable_is_still_a_loss(self) -> None:
+    def test_a_legacy_grid_only_witness_is_unknown_rather_than_lost(self) -> None:
         witness = WeatherSupportWitness(
             day=DAY_THREE,
             searched_sha256="now",
-            witnessed_sha256=("now",),
-            recorded=True,
+            searched_checkpoint_identity_sha256="identity-now",
+            legacy_witnessed_sha256=("now",),
         )
 
         detail = forward._recovery_refusal_detail(self._report("no_retained_capture", witness))
 
-        assert "lost, not owed" in detail, "the one case where the claim is true must still be made"
+        assert witness.verdict == "no_witness"
+        assert "legacy grid-only" in detail
+        assert "UNKNOWN, not" in detail
+        assert "lost, not owed" not in detail
+
+    def test_an_exact_matching_identity_with_nothing_readable_is_a_loss(self) -> None:
+        witness = WeatherSupportWitness(
+            day=DAY_THREE,
+            searched_sha256="now",
+            searched_checkpoint_identity_sha256="identity-now",
+            witnessed_identities=(("now", "identity-now"),),
+        )
+
+        detail = forward._recovery_refusal_detail(self._report("no_retained_capture", witness))
+
+        assert "identity-now" in detail
+        assert "lost, not owed" in detail
+
+    def test_only_a_completed_walk_may_describe_the_current_build_identity_as_unreadable(self) -> None:
+        """STYLE-REVIEW-W12 S2: a matching witness cannot upgrade an unfinished walk."""
+        witness = WeatherSupportWitness(
+            day=DAY_THREE,
+            searched_sha256="now",
+            searched_checkpoint_identity_sha256="identity-now",
+            witnessed_identities=(("now", "identity-now"),),
+        )
+
+        detail = forward._recovery_refusal_detail(
+            self._report("probe_budget_exhausted", witness, unprobed_points=2)
+        )
+
+        assert "stopped with 2 support points unread" in detail
+        assert "lost, not owed" not in detail
+        assert "UNKNOWN, not" in detail
+        assert "no support witness names the day" not in detail
 
     def test_a_report_that_never_asked_the_grid_question_claims_neither_a_loss_nor_a_move(self) -> None:
         """STYLE-REVIEW-W11 B1: the default branch is the one that claims least, not the loss."""
@@ -634,17 +671,19 @@ class TestTheRefusalNamesWhichEmptyAnswerThisIs:
         """The move claim is keyed to the state that required an exhausted walk, never to the witness.
 
         `recovery.py::recover_weather_day` cannot produce this pair -- an empty walk plus another
-        witnessed grid IS `foreign_support_grid` -- and this asserts which half the text trusts if
+        witnessed identity IS `foreign_checkpoint_identity` -- and this asserts which half the text trusts if
         a later caller ever constructs one: the walked state, not the best-effort record.
         """
         witness = WeatherSupportWitness(
             day=DAY_THREE,
             searched_sha256="now",
-            witnessed_sha256=("before",),
-            recorded=True,
+            searched_checkpoint_identity_sha256="identity-now",
+            witnessed_identities=(("before", "identity-before"),),
         )
 
-        detail = forward._recovery_refusal_detail(self._report("probe_budget_exhausted", witness))
+        detail = forward._recovery_refusal_detail(
+            self._report("probe_budget_exhausted", witness, unprobed_points=2)
+        )
 
         assert "OWED, not" not in detail, "an unfinished search is not evidence the grid moved"
         assert "lost, not owed" not in detail
@@ -655,11 +694,14 @@ class TestTheRefusalNamesWhichEmptyAnswerThisIs:
         witness = WeatherSupportWitness(
             day=DAY_THREE,
             searched_sha256="now",
-            witnessed_sha256=tuple(f"grid-{index}" for index in range(WEATHER_SUPPORT_WITNESS_LIMIT)),
-            recorded=True,
+            searched_checkpoint_identity_sha256="identity-now",
+            witnessed_identities=tuple(
+                (f"grid-{index}", f"identity-{index}")
+                for index in range(WEATHER_SUPPORT_WITNESS_LIMIT)
+            ),
         )
 
-        detail = forward._recovery_refusal_detail(self._report("foreign_support_grid", witness))
+        detail = forward._recovery_refusal_detail(self._report("foreign_checkpoint_identity", witness))
 
         assert witness.truncated
         assert "older ones may be missing" in detail

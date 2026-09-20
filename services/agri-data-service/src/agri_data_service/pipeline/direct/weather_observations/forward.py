@@ -190,8 +190,8 @@ VERIFICATION_MISMATCH_SAMPLE: Final = 5
 #: day `time_budget_exhausted`, and `_bucket_verdict` then returns exit 1, which this module's
 #: docstring defines as this lane's breaker. A quarter covers the probe's ordinary cost and leaves
 #: three quarters to the writes, which are the half of the turn that has no second chance.
-#: Enforced in `_repair_owed_days` (`forward.py:817-867`), which is the only caller of either probe phase
-#: (`forward.py:848` and `forward.py:851` are the only two call sites in `src/`).
+#: Enforced in `forward.py::_repair_owed_days`, the only caller of the two probe phases
+#: `forward.py::_days_owed_a_recovery` and `forward.py::_recover_owed_days`.
 RECOVERY_PROBE_BUDGET_SHARE: Final = 0.25
 
 
@@ -271,8 +271,8 @@ def _bucket_verdict(
     breaker (module docstring). It is `incomplete`, on stderr, and named per unwritten day.
 
     A DEGRADED REPAIR PROBE COSTS THE TURN ITS `complete` FOR THE SAME REASON AND NO MORE. It does
-    not touch the exit code either (`_repair_owed_days`, `forward.py:817-867`, returns a
-    `RecoveryPhase` on every path including `except Exception` at `forward.py:853`, so a probe fault
+    not touch the exit code either (`forward.py::_repair_owed_days` returns a `RecoveryPhase` on
+    every path including its `except Exception`, so a probe fault
     can no longer reach `main()`'s catch-all), but it is not nothing: the probe is the
     only reader of checkpoints that this same turn's retention is about to overwrite, so a turn that
     could not probe has closed a repair window rather than postponed it.
@@ -702,7 +702,7 @@ def _days_owed_a_recovery(
     W10, N4). `absent` is not `data`, so a day whose every tier carries an absence marker is owed a
     recovery on this poll and on every poll for as long as the absence stands. The cost is one
     checkpoint GET per support point per poll -- ~150 here -- inside the probe's share of the turn's
-    window (`RECOVERY_PROBE_BUDGET_SHARE`, `forward.py:185-194`), so it can delay the probe's other
+    window (`forward.py::RECOVERY_PROBE_BUDGET_SHARE`), so it can delay the probe's other
     days but never the writes. It is kept deliberately rather than short-circuited: a retained body
     for an absent day is exactly the evidence that OVERTURNS the absence, which the writer reports
     as `absence_overturned` (`adapter.py::OverturnedAbsence`, carried to the terminal report through
@@ -765,13 +765,12 @@ class RecoveryPhase:
     `_recover_owed_days`), and until 2026-09-19 it ran there unwrapped: one transient 5xx from the
     object store unwound through `run()` to `main()`'s catch-all, so a poll of a feed with NO ARCHIVE
     was neither published nor retained and the instants it held were gone for good. Every
-    construction below is therefore a REPORT, never an exception: `_repair_owed_days`
-    (`forward.py:817-867`) is the only producer of a probe verdict -- `run()` binds this type only at
-    `forward.py:1170` and the no-day report at `forward.py:1146` -- and it converts a fault into
-    `state="failed"` at `forward.py:856-861`. `_tables_after_recovery` (`forward.py:891-945`) RESTATES
-    one, through `dataclasses.replace` at `forward.py:945`, to add a merge fault to a probe verdict it
-    does not otherwise change; that is the second and last place a `RecoveryPhase` comes from, and it
-    cannot raise either.
+    construction below is therefore a REPORT, never an exception: `forward.py::_repair_owed_days`
+    is the only producer of a probe verdict -- `forward.py::run` binds this type only from that
+    producer and for the no-day report -- and it converts a fault into `state="failed"`.
+    `forward.py::_tables_after_recovery` RESTATES one through `dataclasses.replace` to add a merge
+    fault to a probe verdict it does not otherwise change; that is the second and last place a
+    `RecoveryPhase` comes from, and it cannot raise either.
     """
 
     state: str
@@ -785,7 +784,7 @@ class RecoveryPhase:
     #: A fault folding the probe's OUTPUT into this poll's day buckets, as opposed to a fault in its
     #: I/O. Separate from `error_type` because the probe succeeded: what failed is the merge, and the
     #: turn's answer to that is to publish the poll WITHOUT the recovered readings rather than to
-    #: lose the poll (`_tables_after_recovery`, `forward.py:891-945`).
+    #: lose the poll (`forward.py::_tables_after_recovery`).
     merge_error_type: str | None = None
     merge_detail: str | None = None
 
@@ -906,17 +905,17 @@ def _tables_after_recovery(
     `direct_weather_observation_tables`, and the only thing downstream of that raise was `main()`'s
     catch-all -- which drops a poll of a feed with no archive, unretained, to protect a repair. The
     exposure is narrow (`recovery.py::recover_weather_day` rejects unparseable and wrong-day bodies
-    per point, `recovery.py:427-432`) but narrow is not closed, and the merge is the probe's output
+    per point) but narrow is not closed, and the merge is the probe's output
     rather than the poll's, so it is the probe that must pay for it.
 
     THE SIBLING PATHS NOW AGREE ON A MISSING DAY (style review W10, S6). `_run_recovery_turn` raises
-    when its reparse names days other than the one requested (`forward.py:1060-1061`); this path
+    when its reparse names days other than the one requested (`forward.py::_run_recovery_turn`); this path
     used to filter the same condition away with `if day in repaired`, a silent narrowing sitting
     where its sibling refuses. It refuses here too now -- and because the refusal happens inside
     this guard, refusing costs the recovery and not the poll.
 
     The two `emit` calls are inside the guard as briefed, though they are the least of it: `emit`
-    (`forward.py:336-338`) is `json.dumps` over plain scalars and a `print`, so its only fault mode
+    (`forward.py::emit`) is `json.dumps` over plain scalars and a `print`, so its only fault mode
     is a closed stdout -- under which the failure emit below cannot speak either and no report of
     any kind survives the turn.
     """
@@ -987,43 +986,65 @@ def _recovery_refusal_detail(recovery: WeatherRecoveryReport) -> str:
     makes the three cases distinguishable; this only has to speak them.
 
     EVERY BRANCH IS SELECTED BY POSITIVE EVIDENCE, AND THE DEFAULT IS THE ONE THAT CLAIMS LEAST
-    (style review W11, B1). The move claim needs a witnessed other grid AND the exhausted walk that
-    `recovery.py::recover_weather_day` requires before it will say `foreign_support_grid`; the loss
-    claim needs the searched grid to be on the record for the day (`grid_matches`). Anything else --
-    no witness, an unreadable one, a report that never asked -- falls to UNKNOWN, which is what the
-    evidence supports, and says what to TRY rather than what to restore: telling an operator to
-    restore a bbox on evidence this thin is how a readable day gets moved out of reach.
+    (style review W11, B1). The move claim needs a witnessed other identity AND the exhausted walk that
+    `recovery.py::recover_weather_day` requires before it will say `foreign_checkpoint_identity`; the
+    loss claim needs both a completed empty walk and the exact ordered checkpoint keyspace on the
+    record for the day (`identity_matches`). Anything else -- no witness, a legacy grid-only witness,
+    an unreadable one, a report that never asked -- falls to UNKNOWN, which is what the evidence
+    supports, and says what to TRY rather than what to restore: telling an operator to restore a
+    bbox on evidence this thin is how a readable day gets moved out of reach.
     """
     day = recovery.day.isoformat()
     witness = recovery.witness
-    if recovery.state == "foreign_support_grid" and witness is not None:
-        witnessed = ", ".join(witness.witnessed_sha256)
+    if recovery.state == "foreign_checkpoint_identity" and witness is not None:
+        witnessed = ", ".join(identity for _support, identity in witness.witnessed_identities)
         capped = (
-            f" (the witness holds at most {WEATHER_SUPPORT_WITNESS_LIMIT} grids, so older ones may be missing)"
+            f" (the witness holds at most {WEATHER_SUPPORT_WITNESS_LIMIT} identities, so older ones may be missing)"
             if witness.truncated
             else ""
         )
         return (
-            f"every support point for {day} was read under the grid this turn is configured for "
-            f"({recovery.support_sha256}) and none is retained, while the day IS on record as polled "
-            f"under {witnessed}{capped}. INGEST_BBOX or the weather sample spacing has changed since, "
-            "so the bucket is OWED, not lost -- restore the bbox and spacing that produced the "
-            "witnessed grid and re-run within the 7-day checkpoint window"
+            f"every support point for {day} was read under checkpoint identity "
+            f"{witness.searched_checkpoint_identity_sha256} and none is retained, while the day IS "
+            f"on record as polled under {witnessed}{capped}. The provider, support grid, or exact "
+            "request URLs have changed, so the bucket is OWED, not lost -- restore the build identity "
+            "that produced a witnessed keyspace and re-run within the 7-day checkpoint window"
         )
-    if witness is not None and witness.verdict == "grid_matches":
+    if (
+        recovery.state == "no_retained_capture"
+        and witness is not None
+        and witness.verdict == "identity_matches"
+    ):
         return (
-            f"no retained provider response for {day} can still be read under the support grid it was "
-            f"polled with ({recovery.support_sha256}), so this day cannot be republished from checkpoints. "
-            "Open-Meteo's current-conditions endpoint has no archive to re-fetch it from either: the "
-            "bucket is lost, not owed"
+            f"no retained provider response for {day} can still be read under the exact checkpoint "
+            f"identity it was polled with ({witness.searched_checkpoint_identity_sha256}), so this day "
+            "cannot be republished from checkpoints. Open-Meteo's current-conditions endpoint has no "
+            "archive to re-fetch it from either: the bucket is lost, not owed"
         )
+    if recovery.state == "probe_budget_exhausted":
+        searched_identity = (
+            witness.searched_checkpoint_identity_sha256
+            if witness is not None and witness.searched_checkpoint_identity_sha256
+            else "unknown"
+        )
+        return (
+            f"the recovery probe for {day} stopped with {recovery.unprobed_points} support points "
+            f"unread under checkpoint identity {searched_identity}. "
+            "Any witness is only context until the walk completes, so the bucket is UNKNOWN, not "
+            "provably lost or moved; retry --recover-day without the poll deadline"
+        )
+    searched_identity = (
+        witness.searched_checkpoint_identity_sha256
+        if witness is not None and witness.searched_checkpoint_identity_sha256
+        else "unknown"
+    )
     return (
-        f"no retained provider response for {day} can be read under support grid "
-        f"{recovery.support_sha256}, and no support witness names the day, so whether a body exists "
-        "under a different grid cannot be told from here -- a witness expires with the bodies and its "
-        "write is best-effort, so its silence is not an answer. The bucket is UNKNOWN, not provably "
-        "lost: re-run --recover-day with the INGEST_BBOX and weather sample spacing that were in "
-        "effect when the day was polled, and treat it as lost only if that turn is empty too"
+        f"no retained provider response for {day} can be read under checkpoint identity "
+        f"{searched_identity}, and no conclusive "
+        "witness matches it. The witness may be absent, unreadable, or from the legacy grid-only "
+        "schema, so its silence is not an answer. The bucket is UNKNOWN, not provably lost: re-run "
+        "--recover-day with the provider, support grid, and request-URL identity that were in effect "
+        "when the day was polled, and treat it as lost only if that exact-identity turn is empty too"
     )
 
 
@@ -1182,7 +1203,7 @@ async def run(args: argparse.Namespace) -> int:
     # RECOVER BEFORE RETAINING. Both steps touch the same keys and this poll's retention overwrites
     # them, so the repair of a bucket an earlier poll failed to write has to read them first. The
     # phase is bounded and cannot raise -- both properties are enforced in `_repair_owed_days`
-    # (`forward.py:817-867`, whose every return is a `RecoveryPhase`), not here -- so the two
+    # (`forward.py::_repair_owed_days`, whose every return is a `RecoveryPhase`), not here -- so the two
     # statements after it run for a failed probe exactly as for an idle one.
     recovery_phase = await _repair_owed_days(
         store, checkpoints, tuple(tables), points, now=fetched_at, deadline=deadline
