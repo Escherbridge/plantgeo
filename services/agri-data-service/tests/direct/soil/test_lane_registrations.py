@@ -66,15 +66,16 @@ def test_all_eight_streams_share_one_floor_and_one_clock() -> None:
     assert date(2026, 8, 3) == SOIL_DIRECT_WRITER_START_DAY
 
 
-def test_every_soil_floor_cites_the_snapshot_and_the_measured_redistributor_lag() -> None:
-    """An uncited floor is a guess that reads as a measurement; the citation is the guard."""
+def test_every_soil_floor_cites_the_snapshot_and_bounded_source_edge() -> None:
+    """The registration distinguishes the documented candidate from measured source jitter."""
     for product in SOIL_FIELD_PRODUCTS:
         basis = LANE_REGISTRY[product.stream].floor_basis
         assert "daily_series" in basis, product.stream
         assert "SOURCE-DIRECT" in basis, product.stream
         assert ERA5_LAND_SNAPSHOT_LAST_DAY.isoformat() in basis, product.stream
-        assert "coverage_census.py" in basis, product.stream
-        assert "REDISTRIBUTOR" in basis, product.stream
+        assert "documented" in basis, product.stream
+        assert "measured" in basis, product.stream
+        assert "nine-day" in basis, product.stream
 
 
 @pytest.mark.asyncio

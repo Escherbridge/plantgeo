@@ -1102,12 +1102,12 @@ def _soil_floor_basis(product: SoilFieldProduct) -> str:
         f"streams ends ({product.snapshot_last_day.isoformat()}) -- `scripts/vpd_snapshot_breakdown.py` and "
         "`scripts/build_soil_moisture_from_canonical_snapshot.py` both pin EXPECTED_LAST_DAY=2026-08-02, and the "
         "three reviewed plans' window.end_date agrees. Those days are immutable and the adapter refuses to "
-        f"republish them. Lag {ERA5_LAND_ARCHIVE_PUBLICATION_LAG_DAYS} is the MEASURED publication lag of the "
-        "REDISTRIBUTOR this writer reads, `execution/coverage_census.py` "
-        "PUBLICATION_LAG_DAYS['open-meteo-era5-land-archive'], measured against production 2026-08-11. It is "
-        "deliberately not the ~5-day ERA5T latency of the Copernicus product itself: asking for a day "
-        "Open-Meteo has not mirrored returns an all-null series, which this writer would record as a governed "
-        "absence that is simply wrong."
+        f"republish them. Lag {ERA5_LAND_ARCHIVE_PUBLICATION_LAG_DAYS} is Open-Meteo's documented ERA5-Land "
+        "publication delay and therefore the candidate edge this writer probes, not a claim that every such "
+        "day is already complete. An all-null candidate with no later published proof remains source-unsettled; "
+        "the bounded forward walk may look back four frontier days, covering the measured nine-day "
+        "redistributor edge beneath the five-day candidate, and publish the next older complete day without "
+        "ever probing a newer date."
     )
 
 

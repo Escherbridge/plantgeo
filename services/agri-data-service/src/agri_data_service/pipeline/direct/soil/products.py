@@ -68,16 +68,20 @@ ERA5_LAND_SNAPSHOT_LAST_DAY: Final = date(2026, 8, 2)
 #: between the closed manifest and the live lane is ONE constant rather than six copies of a date.
 SOIL_DIRECT_WRITER_START_DAY: Final = date(2026, 8, 3)
 
-#: The MEASURED publication lag of this upstream: `execution/coverage_census.py`
-#: PUBLICATION_LAG_DAYS["open-meteo-era5-land-archive"] = 9, measured against production 2026-08-11
-#: when the archive's newest day was 2026-08-02.
-#:
-#: It is deliberately NOT the ~5-day ERA5T near-real-time latency of the CDS product itself. Nine is
-#: what the REDISTRIBUTOR was observed to publish at, and this writer reads the redistributor. Asking
-#: for a day the archive has not mirrored yet returns a present, entirely-null series, which this
-#: writer would have to record as a governed absence -- a wrong one that no later run retracts by
-#: itself. Over-waiting costs one tick; under-waiting manufactures a false absence.
-ERA5_LAND_ARCHIVE_PUBLICATION_LAG_DAYS: Final = 9
+#: Open-Meteo's documented ERA5-Land publication delay. This is a CANDIDATE edge rather than proof
+#: that a particular day is available: the archive can answer that edge with an entirely-null series
+#: while its mirror is still settling. The forward walk therefore probes this day, refuses an
+#: unproven all-null answer, and may look backward within a hard source-specific window to publish
+#: the next older complete day. The
+#: retired value of nine encoded one production observation from 2026-08-11 as permanent policy and
+#: held every stream behind days the redistributor had already published.
+ERA5_LAND_ARCHIVE_PUBLICATION_LAG_DAYS: Final = 5
+
+#: How many all-null candidate-frontier days the forward writer may step past while discovering the
+#: redistributor's actual settled edge. Four covers the measured 2026-08-11 shape, when the newest
+#: available ERA5-Land day was nine days behind today: the documented five-day candidate plus four
+#: unsettled days. This is a hard per-turn lookback, not permission to probe newer than the candidate.
+ERA5_LAND_ARCHIVE_FRONTIER_LOOKBACK_DAYS: Final = 4
 
 #: The `agri.signal_observation.support_key` every row of these eight streams carries. It names the
 #: SOURCE's native 0.1-degree lattice, not the 0.25-degree analysis lattice the cells sit on; the two
@@ -235,6 +239,7 @@ def products_for(product_id: str) -> tuple[SoilFieldProduct, ...]:
 
 
 __all__ = [
+    "ERA5_LAND_ARCHIVE_FRONTIER_LOOKBACK_DAYS",
     "ERA5_LAND_ARCHIVE_PUBLICATION_LAG_DAYS",
     "ERA5_LAND_SNAPSHOT_LAST_DAY",
     "ERA5_LAND_SOURCE_KEY",

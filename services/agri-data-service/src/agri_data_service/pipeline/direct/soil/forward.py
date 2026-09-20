@@ -39,6 +39,7 @@ from agri_data_service.pipeline.direct.soil.adapter import (
     refuse_immutable_day,
 )
 from agri_data_service.pipeline.direct.soil.products import (
+    ERA5_LAND_ARCHIVE_FRONTIER_LOOKBACK_DAYS,
     SOIL_DEFAULT_TIME_BUDGET_SECONDS,
     SOIL_PRODUCT_IDS,
     products_for,
@@ -112,6 +113,12 @@ SOIL_TIME_BUDGET_OUTCOME: Final = TIME_BUDGET_EXHAUSTED
 SOIL_SOURCE_UNSETTLED_OUTCOME: Final = SOURCE_UNSETTLED
 #: The one outcome a bounded turn reports instead of fetching past its per-turn request budget.
 SOIL_REQUEST_BUDGET_OUTCOME: Final = REQUEST_BUDGET_EXHAUSTED
+#: Day outcomes that settle a selected day rather than leaving it owed.
+SOIL_DAY_WROTE_OUTCOMES: Final[frozenset[str]] = frozenset({"written", "absent"})
+#: Unproven all-null candidate-frontier days may be stepped past within the source's measured jitter
+#: window so an available older day can drain. Provider deferrals never take this path;
+#: `_steps_past_unsettled_frontier` distinguishes them with the turn cache's quota circuit.
+SOIL_UNSETTLED_FRONTIER_SKIPS: Final = ERA5_LAND_ARCHIVE_FRONTIER_LOOKBACK_DAYS
 
 #: What this writer promises about its own failure policy, CLI surface and reported words; see
 #: `pipeline/direct/__init__.py` for the axes and `tests/direct/test_direct_writer_contract.py` for
@@ -170,11 +177,13 @@ class SoilForwardConfig:
 
         Counted in CHUNKS, not cells: one archive request carries fifty locations and every
         variable, so a day costs `ceil(1568 / 50) = 32` requests no matter how many products are
-        selected. The `+ 1` is integer-ceiling arithmetic, not slack. All eight products share one
-        publication clock, so unlike the climate writer there is no second edge to multiply by.
+        selected. The `+ 1` in the ceiling expression is integer-ceiling arithmetic. One additional
+        day in the source's bounded lookback funds unsettled-frontier discovery: an all-null candidate
+        does not spend a `max_days` slot, so every permitted probe and the older publication days must
+        fit under this same hard request bound. All eight products share fetched days and one clock.
         """
         chunks_per_day = -(-ERA5_LAND_SUPPORT_CELL_COUNT // ERA5_LAND_CHUNK_CELL_COUNT)
-        return chunks_per_day * self.max_days
+        return chunks_per_day * (self.max_days + SOIL_UNSETTLED_FRONTIER_SKIPS)
 
 
 class SoilForwardConfigError(ValueError):
@@ -267,6 +276,10 @@ async def _publish_product(  # noqa: PLR0913 - the store, product, support, cach
 ) -> dict[str, object]:
     """Take one product's turn: census its owed window, then publish at most `max_days` days.
 
+    A candidate-edge day refused as source-unsettled does not spend a publication slot. The walk
+    may step backward within `SOIL_UNSETTLED_FRONTIER_SKIPS` and try older owed days under the ordinary
+    request and time bounds. A provider deferral does spend the slot and stops the walk.
+
     THE OWED LEDGER IS DRAINED FIRST, once per product per run. Nothing else retries these claims:
     `retry_pending_availability` is otherwise called only from `run_gap_fill`, and activating
     `soil-era5-land-direct-forward` deactivates the eight generic lanes through `conflicts_with` --
@@ -287,9 +300,11 @@ async def _publish_product(  # noqa: PLR0913 - the store, product, support, cach
     first_day = max(product.history_floor, ceiling - timedelta(days=SOIL_BACKLOG_SCAN_DAYS - 1))
     statuses = await asyncio.to_thread(_tier_status_window, store, product, first_day, ceiling)
     backlog = _pending_days(product, statuses)
-    selected = backlog[: config.max_days]
     published: list[dict[str, object]] = []
-    for day in selected:
+    unsettled_frontier_days: list[date] = []
+    for day in backlog:
+        if len(published) - len(unsettled_frontier_days) >= config.max_days:
+            break
         if time.monotonic() >= deadline:
             published.append(_stopped_day(day, outcome=SOIL_TIME_BUDGET_OUTCOME, detail="before the day started"))
             break
@@ -306,28 +321,31 @@ async def _publish_product(  # noqa: PLR0913 - the store, product, support, cach
                 )
             )
             break
-        published.append(
-            await _publish_day_with_retries(
-                session,
-                store,
-                product,
-                day,
-                support=support,
-                chunks=chunks,
-                cache=cache,
-                today=today,
-                run_id=run_id,
-                config=config,
-                deadline=deadline,
-                availability_storage=availability_storage,
-                availability=availability,
-                mirrored_past=_mirrored_past_day(statuses, day),
-            )
+        result = await _publish_day_with_retries(
+            session,
+            store,
+            product,
+            day,
+            support=support,
+            chunks=chunks,
+            cache=cache,
+            today=today,
+            run_id=run_id,
+            config=config,
+            deadline=deadline,
+            availability_storage=availability_storage,
+            availability=availability,
+            mirrored_past=_mirrored_past_day(statuses, day),
         )
+        published.append(result)
+        if _steps_past_unsettled_frontier(result, cache=cache, skips_taken=len(unsettled_frontier_days)):
+            unsettled_frontier_days.append(day)
     return {
         "layer": product.stream,
         "product": product.product_id,
-        "outcome": "idempotent_noop" if not backlog else "published",
+        "outcome": _product_outcome(backlog, published),
+        "source_unsettled_days": sum(1 for day in published if day["outcome"] == SOIL_SOURCE_UNSETTLED_OUTCOME),
+        "unsettled_frontier_days": [day.isoformat() for day in unsettled_frontier_days],
         "history_floor": product.history_floor.isoformat(),
         "settled_through": ceiling.isoformat(),
         "publication_lag_days": product.publication_lag_days,
@@ -336,6 +354,27 @@ async def _publish_product(  # noqa: PLR0913 - the store, product, support, cach
         "availability_retried_days": retried,
         "days": published,
     }
+
+
+def _product_outcome(backlog: Sequence[date], published: Sequence[Mapping[str, object]]) -> str:
+    """Report the turn's material result, including the bound that stopped it after a frontier."""
+    if not backlog or not published:
+        return IDEMPOTENT_NOOP
+    if any(day["outcome"] in SOIL_DAY_WROTE_OUTCOMES for day in published):
+        return PUBLISHED
+    return next(
+        (str(day["outcome"]) for day in published if day["outcome"] != SOIL_SOURCE_UNSETTLED_OUTCOME),
+        SOIL_SOURCE_UNSETTLED_OUTCOME,
+    )
+
+
+def _steps_past_unsettled_frontier(result: Mapping[str, object], *, cache: SoilSourceCache, skips_taken: int) -> bool:
+    """Return whether an upstream all-null frontier, rather than a provider deferral, may be skipped."""
+    return (
+        result["outcome"] == SOIL_SOURCE_UNSETTLED_OUTCOME
+        and cache.deferred_refusal is None
+        and skips_taken < SOIL_UNSETTLED_FRONTIER_SKIPS
+    )
 
 
 async def _retry_owed_availability(  # noqa: PLR0913 - one coordinate of the product's turn per arg
@@ -393,6 +432,8 @@ def _skipped(product: SoilFieldProduct, *, today: date, outcome: str) -> dict[st
         "layer": product.stream,
         "product": product.product_id,
         "outcome": outcome,
+        "source_unsettled_days": 0,
+        "unsettled_frontier_days": [],
         "history_floor": product.history_floor.isoformat(),
         "settled_through": settled_through(product, today=today).isoformat(),
         "publication_lag_days": product.publication_lag_days,
@@ -858,12 +899,14 @@ async def main(argv: Sequence[str] | None = None) -> int:
 __all__ = [
     "SOIL_ABSENCE_RECHECK_DAYS",
     "SOIL_BACKLOG_SCAN_DAYS",
+    "SOIL_DAY_WROTE_OUTCOMES",
     "SOIL_DEFAULT_TIME_BUDGET_SECONDS",
     "SOIL_DIRECT_ALL_TIERS",
     "SOIL_MAX_DAYS",
     "SOIL_REQUEST_BUDGET_OUTCOME",
     "SOIL_SOURCE_UNSETTLED_OUTCOME",
     "SOIL_TIME_BUDGET_OUTCOME",
+    "SOIL_UNSETTLED_FRONTIER_SKIPS",
     "SoilForwardConfig",
     "SoilForwardConfigError",
     "main",
