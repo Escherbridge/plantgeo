@@ -436,7 +436,8 @@ The receipt records:
 - `digest_domain` -- the digest function's own name, copied from `DIGEST_DOMAIN`. A receipt written
   by an older algorithm then fails as "written with digest domain X, this verifier computes Y",
   which names its own remedy, rather than as "source changed", which sends an operator to re-run a
-  sweep that cannot help. `schema_version` is **2** because that key is required.
+  sweep that cannot help. `schema_version` is **3** because gate commands are structured argv
+  arrays rather than shell-like strings; a v2 receipt must be regenerated.
 - `digest_file_count`, `generated_at`, the `python`/`uv`/`ruff`/`mypy`/`pytest` versions that
   produced the judgement, and each gate's command, status and duration.
 
@@ -467,8 +468,11 @@ describes committed bytes is therefore the writer's job alone, and only the writ
 
 ### What the verifier says when it refuses
 
-`scripts/verify_quality_receipt.py` recomputes the digest, checks every recorded gate passed, and
-exits non-zero on any mismatch. Its digest-mismatch message lists the three causes in the order they
+`scripts/verify_quality_receipt.py` recomputes the digest, requires the exact ordered four-gate
+name/command set declared in `quality_receipt.REQUIRED_CHECK_COMMANDS`, checks every gate passed,
+and exits non-zero on any mismatch. A shortened list or a scoped pytest command is not a release
+receipt even when every recorded row says `pass`. Its digest-mismatch message lists the three
+causes in the order they
 occur -- (1) an input edited after the sweep, (2) a receipt committed without a new or changed input,
 (3) an input excluded by `.gitignore` or `.dockerignore` -- each with its own fix, because only the
 first is repaired by re-running the sweep. A differing file count points at 2 or 3; an equal count
@@ -508,6 +512,50 @@ git add <every new or edited digest input>                 # the writer refuses 
 uv run --no-sync python scripts/check.py --write-receipt   # refuses unless all four gates are green
 uv run --no-sync python scripts/verify_quality_receipt.py  # must exit 0
 ```
+
+### Snapshot-isolated receipt updates
+
+`uv run --no-sync python scripts/update_quality_receipt.py` is the fast iterative-release path.
+It freezes the current Git index with `git write-tree`, exports only that tree's
+`services/agri-data-service/` subtree into a `TemporaryDirectory`, and loads that tree into a
+disposable `GIT_INDEX_FILE`. Every child receives explicit `GIT_DIR`, `GIT_WORK_TREE`, and
+`GIT_INDEX_FILE` values; the wrapper never runs `git add`, `git reset`, or `git restore`, and no
+Git write can reach the checkout's real index. It then runs `uv sync --locked --all-extras` against
+the exported `pyproject.toml` and `uv.lock`, creating a new `.venv` inside the temporary export,
+before invoking the ordinary full `check.py --write-receipt` command there.
+The existing before/after digest and disk/index guards therefore remain active; the wrapper does
+not mint a receipt itself and has no scoped-test mode.
+
+The child does not inherit `PYTHONPATH`, `VIRTUAL_ENV`, uv project/environment selectors, or
+pytest/mypy/ruff selectors. After sync, the wrapper rejects an editable `.pth` path outside the
+temporary environment/export and proves that `agri_data_service` imports from the exported `src/`.
+This makes a staged deletion stay deleted instead of falling back to the checkout's editable install.
+
+It adds the selected tree id to the receipt as diagnostic `snapshot` metadata, runs the same
+git-free verifier the Docker stages run, then takes an exclusive install lock. The final install
+uses a unique, fsynced, same-directory temporary file and checks the real index immediately before
+and after atomic replacement. A late index race rolls the receipt back and refuses success. The
+temporary export and install artifacts are removed on success or failure.
+Untracked and unstaged files in the developer checkout are never copied, so unrelated concurrent
+work cannot enter the digest or the checks. Staged files are intentionally included: they are the
+snapshot being certified.
+
+Use `--commit REF` to certify an existing commit instead of the index. The ref is resolved to one
+commit and root-tree id before export; later branch movement cannot change the bytes under test.
+Neither mode changes the selected Git snapshot, stages the receipt, commits, pushes, or deploys.
+
+```bash
+# Certify exactly the staged/index bytes, ignoring unrelated unstaged and untracked work.
+uv run --no-sync python scripts/update_quality_receipt.py
+
+# Certify an existing commit exactly.
+uv run --no-sync python scripts/update_quality_receipt.py --commit <ref>
+```
+
+The original `check.py --write-receipt` workflow remains supported for a clean disk/index tree and
+is still useful when no isolation is needed. A changed/batch/only invocation cannot reach either
+receipt path: the updater's command is a constant full invocation, and `check.py` independently
+refuses scoped receipt requests.
 
 ### 2026-09-03: a Windows receipt that could not verify on Linux
 
@@ -964,6 +1012,34 @@ observation-retention SLA. The six-day bound is the repository's measured acquis
 `ingest/sensors.py`, not a newly asserted official guarantee; older windows remain incomplete.
 Captured references live in `.omc/research/nws-official-api-docs-20260910.json` and
 `.omc/research/nws-official-openapi-spec-20260910.json` at repository root.
+
+## Physical ladder completion
+
+`complete_partial_ladders.py` repairs a bounded date range whose z13 source parts already exist but
+whose four-rung physical ladder is incomplete. It is dry-run by default; `--apply` is the only write
+mode, and a range is capped at 366 days. The operator must quiesce that lane's writers for the range
+before the dry-run review. Apply additionally takes the existing lane publication barrier and every
+canonical lane-day lock for the range, refusing contention before any PUT.
+
+The command accepts `daily_series` observation days and `static_lookup` version days. It refuses
+`release_series`, governed absences, missing z13 data, unclosed coarse parts, marker/part count
+disagreement, and every other mixed claim. Complete rungs are never rewritten. Missing coarse rungs
+use `pipeline/parquet/derivation.py::derive_and_write_day_tiers`; an unmarked z13 is read back and its
+exact keys, row counts, byte counts, and digests are recorded only after the derived rungs finish.
+The z13 Parquet objects are never rewritten or deleted.
+
+Preflight reads every rung that claims completion and compares its recorded part identities with the
+physical Parquet bytes; legacy count-only markers are not strong enough to preserve automatically.
+One refusal aborts an entire `--apply` range before its first PUT. Dry runs retain all refused days in
+the receipt and exit nonzero, so splitting around a conflict is an explicit operator decision. Once
+ownership is held, the command repeats the whole preflight and compares the exact z13 keys, row
+counts, byte counts and SHA-256 digests with the reviewed state before its first write. An unmarked
+z13 beneath any already-complete derived rung is refused rather than retroactively closed.
+
+This command deliberately has no availability dependency and does not bless a repaired day. Run the
+separate availability reconciler only after its receipt and a new physical inspection show a complete
+ladder. Example plans: `python scripts/complete_partial_ladders.py --lane sensors --from-day
+2026-07-30 --through-day 2026-08-23` and a one-version evacuation repair with the same two date flags.
 ## Adopt an existing MTBS current capture
 
 `stage_mtbs_current_snapshot.py --capture <dir> --prepared <dir>

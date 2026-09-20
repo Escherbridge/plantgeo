@@ -14,17 +14,78 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable, Iterable, Mapping
 
 SERVICE_ROOT: Final = Path(__file__).resolve().parent.parent
 RECEIPT_FILE_NAME: Final = "QUALITY_RECEIPT.json"
 RECEIPT_PATH: Final = SERVICE_ROOT / RECEIPT_FILE_NAME
 
-#: Bumped to 2 when `digest_domain` became a required key.
-RECEIPT_SCHEMA_VERSION: Final = 2
+#: Bumped to 3 when recorded gate commands became structured argv arrays.
+RECEIPT_SCHEMA_VERSION: Final = 3
 
 #: The one command that produces a valid receipt; quoted in every refusal.
 RECEIPT_REWRITE_COMMAND: Final = "uv run --no-sync python scripts/check.py --write-receipt"
+
+#: Exact release gate recorded in a valid receipt. Shared so the writer and the git-free Docker
+#: verifier cannot silently disagree about whether a shortened or scoped run is complete.
+REQUIRED_CHECK_COMMANDS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
+    ("format", ("ruff", "format", "--check", "src", "tests", "scripts")),
+    ("lint", ("ruff", "check", "src", "tests", "scripts")),
+    ("mypy", ("mypy", "src", "scripts")),
+    ("pytest", ("pytest", "-q")),
+)
+
+#: Environment selectors that can change which code or tests an apparently canonical gate runs.
+GATE_SHAPING_ENVIRONMENT_VARIABLES: Final[frozenset[str]] = frozenset(
+    {
+        "CONDA_PREFIX",
+        "COVERAGE_PROCESS_CONFIG",
+        "COVERAGE_PROCESS_START",
+        "MYPY_CONFIG_FILE",
+        "MYPYPATH",
+        "PYTHONHOME",
+        "PYTHONNOUSERSITE",
+        "PYTHONOPTIMIZE",
+        "PYTHONPATH",
+        "PYTHONSAFEPATH",
+        "PYTHONSTARTUP",
+        "PYTHONUSERBASE",
+        "PYTHONWARNINGS",
+        "PYTEST_ADDOPTS",
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
+        "PYTEST_PLUGINS",
+        "RUFF_CONFIG",
+        "UV_ALL_EXTRAS",
+        "UV_BUILD_CONSTRAINT",
+        "UV_CONFIG_FILE",
+        "UV_CONSTRAINT",
+        "UV_DEFAULT_GROUPS",
+        "UV_DEV",
+        "UV_EXTRA",
+        "UV_FROZEN",
+        "UV_GROUP",
+        "UV_LOCKED",
+        "UV_NO_CONFIG",
+        "UV_NO_DEFAULT_GROUPS",
+        "UV_NO_DEV",
+        "UV_NO_EXTRA",
+        "UV_NO_GROUP",
+        "UV_NO_PROJECT",
+        "UV_NO_SYNC",
+        "UV_OVERRIDE",
+        "UV_PROJECT",
+        "UV_PROJECT_ENVIRONMENT",
+        "UV_PYTHON",
+        "UV_WORKING_DIR",
+        "VIRTUAL_ENV",
+    }
+)
+
+
+def sanitized_gate_environment(environment: Mapping[str, str]) -> dict[str, str]:
+    """Remove inherited selectors that could narrow or redirect a recorded release gate."""
+    return {key: value for key, value in environment.items() if key.upper() not in GATE_SHAPING_ENVIRONMENT_VARIABLES}
+
 
 #: Domain-separation prefix so a digest of this tree can never be replayed as a digest of anything
 #: else that happens to length-prefix paths and bytes the same way. Bumped to v2 because the digest

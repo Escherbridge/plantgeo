@@ -97,6 +97,29 @@ def _receipt_path(root: Path) -> Path:
     return root / QUALITY_RECEIPT.RECEIPT_FILE_NAME
 
 
+def test_run_check_removes_environment_selectors_from_the_direct_receipt_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The legacy writer cannot record a full gate while pytest or imports are externally narrowed."""
+    observed: dict[str, str] = {}
+
+    def fake_run(*_args: object, **kwargs: object) -> Any:
+        observed.update(kwargs["env"])
+        return CHECK.subprocess.CompletedProcess(args=(), returncode=0, stdout="")
+
+    monkeypatch.setenv("PYTEST_ADDOPTS", "-k one_test")
+    monkeypatch.setenv("PYTHONPATH", "outside-the-snapshot")
+    monkeypatch.setenv("AGRI_TEST_DATABASE_URL", "postgresql://example")
+    monkeypatch.setattr(CHECK.subprocess, "run", fake_run)
+
+    result = CHECK.run_check(CHECK.CHECKS[-1], "/usr/bin/uv")
+
+    assert result.returncode == 0
+    assert "PYTEST_ADDOPTS" not in observed
+    assert "PYTHONPATH" not in observed
+    assert observed["AGRI_TEST_DATABASE_URL"] == "postgresql://example"
+
+
 def test_write_receipt_refuses_a_partial_selection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

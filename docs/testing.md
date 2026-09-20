@@ -64,6 +64,19 @@ For a run without a test database, remove `AGRI_TEST_DATABASE_URL`,
 from the child process environment. Do not set them to empty strings: existing harnesses
 distinguish an absent variable from a configured one.
 
+For an iterative release in a dirty shared checkout, stage the intended Python-service snapshot
+and run `uv run --no-sync python scripts/update_quality_receipt.py`. It exports the index into an
+isolated temporary tree and binds all Git operations to a disposable index. It creates a fresh
+environment with `uv sync --locked --all-extras` from the exported project and lock; inherited
+Python, uv-project, pytest, mypy, and ruff selectors are removed, and editable `.pth` fallbacks to
+the checkout are refused. It runs the full four-gate receipt sweep against those exact bytes,
+checks the index immediately before and after a locked atomic install, and copies back only the
+verified receipt. Unstaged and untracked work
+does not participate, and the updater never stages or unstages caller files. `--commit REF` selects
+an existing commit instead. This is still a full-suite release receipt; scoped `--changed`,
+`--batch`, and `--only` runs remain ineligible. The Docker verifier requires the exact ordered
+four-gate name/command set, so a passing scoped receipt cannot be relabelled as full green.
+
 ## Keeping tests useful
 
 Remove a test when its only subject is code that has been proven retired. Preserve the

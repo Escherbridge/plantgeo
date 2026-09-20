@@ -15,6 +15,7 @@ from quality_receipt import (
     DIGEST_FILES,
     RECEIPT_PATH,
     RECEIPT_REWRITE_COMMAND,
+    REQUIRED_CHECK_COMMANDS,
     ReceiptError,
     compute_tree_digest,
     read_receipt,
@@ -22,16 +23,24 @@ from quality_receipt import (
 
 
 def _recorded_failures(receipt: dict[str, object]) -> list[str]:
-    """Return the name of every check the receipt itself records as not passing."""
+    """Validate the exact release gate and return every check recorded as not passing."""
     checks = receipt.get("checks")
     if not isinstance(checks, list) or not checks:
         raise ReceiptError("receipt records no checks")
     failures: list[str] = []
+    recorded_commands: list[tuple[object, object]] = []
     for entry in checks:
         if not isinstance(entry, dict):
             raise ReceiptError(f"receipt check entry is not an object: {entry!r}")
+        recorded_commands.append((entry.get("name"), entry.get("command")))
         if entry.get("status") != "pass":
             failures.append(str(entry.get("name", "(unnamed)")))
+    expected_commands = [(name, list(command)) for name, command in REQUIRED_CHECK_COMMANDS]
+    if recorded_commands != expected_commands:
+        raise ReceiptError(
+            "receipt does not record the exact full release gate; "
+            f"expected {expected_commands!r}, got {recorded_commands!r}"
+        )
     return failures
 
 

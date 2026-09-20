@@ -1,4 +1,4 @@
-.PHONY: dev test lint format check receipt verify-receipt migrate migration-status seed local-status maintain-job-logs install
+.PHONY: dev test lint format check receipt receipt-snapshot verify-receipt migrate migration-status seed local-status maintain-job-logs install
 
 # `install` is the ONLY target that syncs. Every other target runs `uv run --no-sync`: a bare
 # `uv run` re-resolves from the lock's default groups, which drops the dev extra and takes pytest,
@@ -21,6 +21,9 @@ check:
 
 receipt:
 	uv run --no-sync python scripts/check.py --write-receipt
+
+receipt-snapshot:
+	uv run --no-sync python scripts/update_quality_receipt.py
 
 verify-receipt:
 	uv run --no-sync python scripts/verify_quality_receipt.py

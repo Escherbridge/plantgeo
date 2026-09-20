@@ -20,7 +20,10 @@ if TYPE_CHECKING:
 QUALITY_RECEIPT = load_scripts_module("quality_receipt.py", "quality_receipt")
 VERIFY = load_scripts_module("verify_quality_receipt.py", "plantgeo_verify_quality_receipt_module")
 
-PASSING_CHECK = {"name": "pytest", "command": "pytest -q", "status": "pass", "duration_seconds": 1.0}
+PASSING_CHECKS = [
+    {"name": name, "command": list(command), "status": "pass", "duration_seconds": 1.0}
+    for name, command in QUALITY_RECEIPT.REQUIRED_CHECK_COMMANDS
+]
 
 
 def _write_source(tree: Path) -> None:
@@ -39,7 +42,7 @@ def _receipt_for(tree: Path, **overrides: object) -> Path:
         "tree_digest": f"sha256:{tree_digest}",
         "digest_file_count": file_count,
         "tools": {"python": "3.12.10"},
-        "checks": [PASSING_CHECK],
+        "checks": PASSING_CHECKS,
     }
     payload.update(overrides)
     receipt_path = tree / QUALITY_RECEIPT.RECEIPT_FILE_NAME
@@ -95,8 +98,8 @@ def test_verify_refuses_a_stale_digest_domain(tmp_path: Path) -> None:
 def test_verify_refuses_a_recorded_failing_check(tmp_path: Path) -> None:
     """A receipt that admits a red gate is still a receipt; it must not build an image."""
     _write_source(tmp_path)
-    failing = {**PASSING_CHECK, "status": "fail"}
-    receipt_path = _receipt_for(tmp_path, checks=[failing])
+    failing_checks = [*PASSING_CHECKS[:-1], {**PASSING_CHECKS[-1], "status": "fail"}]
+    receipt_path = _receipt_for(tmp_path, checks=failing_checks)
 
     with pytest.raises(QUALITY_RECEIPT.ReceiptError, match="records failing checks: pytest"):
         VERIFY.verify(receipt_path)
@@ -108,6 +111,26 @@ def test_verify_refuses_a_receipt_with_no_checks(tmp_path: Path) -> None:
     receipt_path = _receipt_for(tmp_path, checks=[])
 
     with pytest.raises(QUALITY_RECEIPT.ReceiptError, match="records no checks"):
+        VERIFY.verify(receipt_path)
+
+
+def test_verify_refuses_a_shortened_or_scoped_gate(tmp_path: Path) -> None:
+    """A hand-edited subset cannot turn scoped checks into a full release receipt."""
+    _write_source(tmp_path)
+    receipt_path = _receipt_for(tmp_path, checks=[PASSING_CHECKS[-1]])
+
+    with pytest.raises(QUALITY_RECEIPT.ReceiptError, match="exact full release gate"):
+        VERIFY.verify(receipt_path)
+
+
+def test_verify_refuses_a_relabelled_scoped_pytest_command(tmp_path: Path) -> None:
+    """All names passing is insufficient when the recorded pytest command selected one test."""
+    _write_source(tmp_path)
+    scoped_checks = [dict(check) for check in PASSING_CHECKS]
+    scoped_checks[-1]["command"] = ["pytest", "-q", "tests/test_one.py"]
+    receipt_path = _receipt_for(tmp_path, checks=scoped_checks)
+
+    with pytest.raises(QUALITY_RECEIPT.ReceiptError, match="exact full release gate"):
         VERIFY.verify(receipt_path)
 
 

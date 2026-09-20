@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
 import shutil
 import subprocess
@@ -20,12 +21,14 @@ from quality_receipt import (
     DIGEST_FILES,
     RECEIPT_FILE_NAME,
     RECEIPT_SCHEMA_VERSION,
+    REQUIRED_CHECK_COMMANDS,
     SERVICE_ROOT,
     compute_digest,
     compute_tree_digest,
     digest_input_paths,
     is_digest_input,
     normalize_content,
+    sanitized_gate_environment,
     write_receipt,
 )
 
@@ -96,10 +99,7 @@ if TYPE_CHECKING:
 
 
 CHECKS: Final[tuple[CheckDefinition, ...]] = (
-    CheckDefinition("format", ("ruff", "format", "--check", "src", "tests", "scripts")),
-    CheckDefinition("lint", ("ruff", "check", "src", "tests", "scripts")),
-    CheckDefinition("mypy", ("mypy", "src", "scripts")),
-    CheckDefinition("pytest", ("pytest", "-q")),
+    *(CheckDefinition(name, command) for name, command in REQUIRED_CHECK_COMMANDS),
 )
 
 #: Every child runs under `--no-sync`. A bare `uv run` re-resolves the environment from the lock's
@@ -334,6 +334,7 @@ def run_check(check: CheckDefinition, uv_path: str) -> CheckResult:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            env=sanitized_gate_environment(os.environ),
         )
     except OSError as error:
         return CheckResult(
@@ -425,7 +426,7 @@ def build_receipt(results: Sequence[CheckResult], uv_path: str, digest: tuple[st
         "checks": [
             {
                 "name": result.name,
-                "command": " ".join(check.command),
+                "command": list(check.command),
                 "status": "pass" if result.returncode == 0 else "fail",
                 "duration_seconds": round(result.duration_seconds, 3),
             }
