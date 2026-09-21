@@ -13,6 +13,7 @@ export function geminiReportSchema(schema: Record<string, unknown>): Record<stri
     const label = INSTRUCTION_BOUNDS[key];
     if (label && typeof value === "number") {
       instructions.push(`${label}: ${value}.`);
+      if ((key === "maxItems" && value === 0) || (key === "minItems" && value === 1)) result[key] = value;
     } else if (Array.isArray(value)) {
       result[key] = value.map((item: unknown) => item !== null && typeof item === "object" && !Array.isArray(item) ? geminiReportSchema(item as Record<string, unknown>) : item);
     } else if (value !== null && typeof value === "object") {

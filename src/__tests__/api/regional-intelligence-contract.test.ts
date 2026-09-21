@@ -376,8 +376,8 @@ describe("generate_remediation_report tool wiring", () => {
       const reportSchemaForRound = (round: number) => mocks.completionStream.mock.calls[round][0].tools
         .find((tool: { function: { name: string } }) => tool.function.name === 'remediation_report').function.parameters;
       expect(reportSchemaForRound(0)).toHaveProperty('properties.riskSummary.properties.evidenceOrigin.enum', ['web', 'model_inference']);
-      expect(reportSchemaForRound(1)).toHaveProperty('properties.observations.items.properties.evidenceSource.enum', ['vegetation']);
-      expect(reportSchemaForRound(1)).toHaveProperty('properties.observations.items.properties.evidenceReadIds.items.enum', ['additional-1']);
+      expect(reportSchemaForRound(1)).toHaveProperty('properties.observations.items.anyOf.0.properties.evidenceSource.enum', ['vegetation']);
+      expect(reportSchemaForRound(1)).toHaveProperty('properties.observations.items.anyOf.0.properties.evidenceReadIds.items.enum', ['additional-1']);
       expect(mocks.completionStream.mock.calls[1][0].messages).toEqual(expect.arrayContaining([
         expect.objectContaining({ role: 'tool', tool_call_id: 'vegetation', content: expect.stringContaining('"evidenceSource":"vegetation"') }),
       ]));
@@ -438,7 +438,7 @@ describe("generate_remediation_report tool wiring", () => {
     expect(JSON.stringify(mocks.completionStream.mock.calls.at(-1)?.[0].messages)).toContain('selection overrides conversation history');
   });
 
-  it("includes generate_remediation_report in the tools array actually sent to the provider", async () => {
+  it("advertises only the canonical report tool while retaining the legacy alias export", async () => {
     const { streamRegionalIntelligence, REPORT_TOOL, GENERATE_REMEDIATION_REPORT_TOOL } =
       await import("@/lib/server/services/ai-prompt");
 
@@ -466,9 +466,8 @@ describe("generate_remediation_report tool wiring", () => {
       if (event.type !== 'evidence') events.push(event);
     }
 
-    expect(capturedTools?.map((tool) => tool.function.name)).toEqual(
-      expect.arrayContaining([REPORT_TOOL.name, GENERATE_REMEDIATION_REPORT_TOOL.name])
-    );
+    expect(capturedTools?.map((tool) => tool.function.name)).toContain(REPORT_TOOL.name);
+    expect(capturedTools?.map((tool) => tool.function.name)).not.toContain(GENERATE_REMEDIATION_REPORT_TOOL.name);
   });
 
   it("dispatches a generate_remediation_report tool_use as the report, in a single round", async () => {
@@ -581,7 +580,7 @@ describe("generate_remediation_report tool wiring", () => {
     expect(events.filter((event) => event.type === 'report')).toEqual([{ type: 'report', report: corrected }]);
     expect(mocks.completionStream).toHaveBeenCalledTimes(2);
     const correction = mocks.completionStream.mock.calls[1][0];
-    expect(correction.tools[0].function.parameters).toHaveProperty('properties.observations.items.properties.evidenceSource.enum', ['soil-field-vpd']);
+    expect(correction.tools[0].function.parameters).toHaveProperty('properties.observations.items.anyOf.0.properties.evidenceSource.enum', ['soil-field-vpd']);
     expect(correction.messages).toEqual(expect.arrayContaining([
       expect.objectContaining({ role: 'tool', tool_call_id: 'wrong-source', content: expect.stringContaining('"evidenceSource":"soil-field-vpd","evidenceReadId":"local-1"') }),
     ]));
@@ -625,7 +624,7 @@ describe("generate_remediation_report tool wiring", () => {
     ]));
   });
 
-  it('requires decoder citation arrays and translates empty inference arrays before validating the saved report', async () => {
+  it('requires measured decoder citations and preserves compatibility with empty inference arrays', async () => {
     const { streamRegionalIntelligence } = await import('@/lib/server/services/ai-prompt');
     mocks.loadEvidenceTools.mockResolvedValue({
       tools: [{ name: 'surface_evidence_for_selection', description: 'Read selected tile', input_schema: { type: 'object' } }],
@@ -640,12 +639,44 @@ describe("generate_remediation_report tool wiring", () => {
     expect(events.filter((event) => event.type === 'report')).toEqual([{ type: 'report', report: canonical }]);
     expect(mocks.completionStream).toHaveBeenCalledTimes(1);
     const schema = mocks.completionStream.mock.calls[0][0].tools[0].function.parameters;
-    for (const path of ['properties.riskSummary.required', 'properties.observations.items.required', 'properties.remediation.items.required']) {
-      expect(schema).toHaveProperty(path, expect.arrayContaining(['evidenceReadIds']));
+    for (const path of ['properties.riskSummary', 'properties.observations.items', 'properties.remediation.items']) {
+      expect(schema).toHaveProperty(`${path}.anyOf.0.required`, expect.arrayContaining(['evidenceReadIds']));
+      expect(schema).toHaveProperty(`${path}.anyOf.1.required`, expect.not.arrayContaining(['evidenceReadIds']));
+      expect(schema).not.toHaveProperty(`${path}.anyOf.1.properties.evidenceReadIds`);
+      expect(schema).toHaveProperty(`${path}.anyOf.1.additionalProperties`, false);
     }
-    expect(schema).toHaveProperty('properties.observations.items.properties.evidenceReadIds.description', expect.stringContaining('return []'));
+    expect(schema).toHaveProperty('properties.observations.items.anyOf.0.properties.evidenceReadIds.description', expect.stringContaining('Required for warehouse tool-surface claims'));
     expect(remediationReportSchema.safeParse(transport).success).toBe(false);
     expect(remediationReportSchema.safeParse(canonical).success).toBe(true);
+  });
+
+  it('rejects nonempty inference recommendation IDs and excludes them from the complete inference branch', async () => {
+    const { streamRegionalIntelligence } = await import('@/lib/server/services/ai-prompt');
+    mocks.loadEvidenceTools.mockResolvedValue({
+      tools: [{ name: 'surface_evidence_for_selection', description: 'Read selected tile', input_schema: { type: 'object' } }],
+      surfaces: ['vegetation'], featureSurfaces: ['vegetation'], valueSurfaces: [],
+    });
+    mocks.callEvidenceTool.mockResolvedValue(JSON.stringify({ features: [{ served_day: '2026-08-14', properties: { ndvi: 0.5 } }] }));
+    const invalid = { ...validReport,
+      remediation: [validReport.remediation[0], validReport.remediation[0]].map((claim) => ({ ...claim, evidenceReadIds: ['local-1'] })),
+    };
+    const corrected = { ...validReport, remediation: [validReport.remediation[0], validReport.remediation[0]] };
+    mocks.completionStream
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'invalid-inference', name: 'remediation_report', input: invalid }]))
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'corrected-inference', name: 'remediation_report', input: corrected }]));
+    const events = [];
+    for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
+    expect(mocks.completionStream).toHaveBeenCalledTimes(2);
+    expect(events.filter((event) => event.type === 'report')).toEqual([{ type: 'report', report: { ...validReport, remediation: [validReport.remediation[0], validReport.remediation[0]] } }]);
+    const request = mocks.completionStream.mock.calls[1][0];
+    expect(request.tools[0].function.parameters).not.toHaveProperty('properties.remediation.items.anyOf.1.properties.evidenceReadIds');
+    expect(request.tools[0].function.parameters).toHaveProperty('properties.remediation.items.anyOf.1.additionalProperties', false);
+    expect(request.tools[0].function.parameters).toHaveProperty('properties.remediation.items.anyOf.1.required', ['strategy', 'title', 'rationale', 'timeframe', 'confidence', 'consultProfessionals', 'evidenceOrigin']);
+    expect(request.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: 'tool', tool_call_id: 'invalid-inference', content: expect.stringContaining('remediation.0.evidenceReadIds') }),
+      expect.objectContaining({ role: 'tool', tool_call_id: 'invalid-inference', content: expect.stringContaining('remediation.1.evidenceReadIds') }),
+      expect.objectContaining({ role: 'tool', tool_call_id: 'invalid-inference', content: expect.stringContaining('Omit evidenceReadIds entirely for inference') }),
+    ]));
   });
 
   it.each([false, true])('targets overlong consultation text without relaxing its bound (repeated=%s)', async (repeated) => {
@@ -739,8 +770,7 @@ describe("generate_remediation_report tool wiring", () => {
       expect(mocks.completionStream).toHaveBeenCalledTimes(1);
       const request = mocks.completionStream.mock.calls[0][0];
       expect(request.tool_choice).toEqual({ type: "function", function: { name: "remediation_report" } });
-      expect(request.tools).toHaveLength(2);
-      expect(request.tools[0].function.parameters).toEqual(request.tools[1].function.parameters);
+      expect(request.tools).toHaveLength(1);
       expect(request.tools[0].function.parameters).not.toHaveProperty("properties.observations.maxItems");
       expect(request.tools[0].function.parameters).toHaveProperty("properties.observations.description", "Maximum item count: 12.");
     } finally { provider.mockRestore(); }

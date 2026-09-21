@@ -70,7 +70,7 @@ where or when to investigate; it establishes no soil, climate or fire value.
 
 Provider report schemas are narrowed each round using `reportCitationManifest`: populated legacy
 payload sources and executed measurement reads from the current audit only. The canonical runtime
-validator remains unchanged. This keeps discoverable layers separate from citable observations;
+validator remains strict. This keeps discoverable layers separate from citable observations;
 an empty manifest still permits an inference report with an empty evidence-source array. Every
 prefetched and additional result names its exact report source, read ID and status. Correction
 feedback repeats the current admissible source/read pairs rather than asking the model to infer
@@ -78,21 +78,34 @@ them from lane names or legacy payload labels. New reads refresh the provider sc
 next round. Discovery rounds require a tool call, allowing either another read or the final report;
 the final and correction rounds still force the report tool. Safe validation diagnostics include
 the canonical `evidenceReadIds` path without recording model text, coordinates or unknown fields.
-Both report tool aliases and the system prompt ask for 4–6 consolidated observations (hard
+The report tool and system prompt ask for 4–6 consolidated observations (hard
 maximum twelve), with 0–3 recommendations (hard maximum eight). Bounds failures report the
 actual previous collection sizes and request consolidation while preserving essential dates,
 units and source/read pairs. The one correction budget and all runtime bounds remain intact;
 the application never truncates a report into validity.
 
-When the current manifest has tool measurement IDs, the provider schema requires an
-`evidenceReadIds` array on every claim. Warehouse tool citations need matching nonempty IDs;
-inference, web and legacy-payload-only claims use `[]`. `normalizeProviderReport` translates
-only an own empty array on a known risk/observation/recommendation claim explicitly labelled
-inference or web into the canonical omitted field. It never deletes nonempty IDs, changes a
-warehouse citation, attaches inferred IDs, or recurses through arbitrary data. Strict canonical
-validation and exact source/read matching follow this transport translation. With no tool
-measurements the provider omits the field entirely. Sampled history describes only its sampled
-dates; an incomplete scan cannot establish the extrema or continuity of the requested period.
+When the current manifest has tool measurement IDs, each provider claim uses a nested `anyOf`
+with complete object branches: warehouse tool citations require matching nonempty
+`evidenceReadIds`; inference and web omit the field from both properties and required fields.
+A third branch permits warehouse claims without IDs only for available legacy payload sources.
+Every branch copies all shared claim properties and required fields and rejects additional
+properties. The outer report remains an object. This follows the Google structured-output
+example for nested unions; live followups with partial branches omitted sibling claim fields,
+and empty-array cardinality alone failed to keep IDs off inference recommendations. These are
+observed provider behaviors, not a general JSON Schema limitation. The Gemini projection
+preserves small zero/one cardinality constraints while moving large collection and text limits
+into descriptions. Only `remediation_report` is advertised, since offering two identical report
+declarations produced duplicate calls. The legacy alias remains exported and dispatchable.
+
+For compatibility with earlier provider responses, `normalizeProviderReport` translates only
+an own empty array on a known risk/observation/recommendation claim explicitly labelled inference
+or web into the canonical omitted field. It never deletes nonempty IDs, changes a warehouse
+citation, attaches inferred IDs, or recurses through arbitrary data. Strict canonical validation
+and exact source/read matching follow this translation. With no tool measurements the provider
+omits the field entirely. Sampled history describes only its sampled dates; an incomplete scan
+cannot establish the extrema or continuity of the requested period.
+The final consistency instruction checks comparison directions against dated values in both
+findings and recommendation rationales and requires all supporting comparison reads to be cited.
 
 Inventory has an eight-second transport deadline. Local and temporal stages reserve twelve and
 fifteen seconds respectively, with at most three concurrent reads. Initial retrieval selects up to

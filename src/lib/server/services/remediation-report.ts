@@ -181,8 +181,28 @@ export function reportSchemaForCitations(manifest: ReturnType<typeof reportCitat
       if (readIds.length === 0) delete properties.evidenceReadIds;
       else {
         properties.evidenceReadIds.items = { ...properties.evidenceReadIds.items as Record<string, unknown>, enum: readIds };
-        properties.evidenceReadIds.description = 'REQUIRED on every claim. For a warehouse tool-surface claim, return nonempty IDs matching each cited source in the current manifest. For model_inference, web, or legacy-payload-only claims, return []. Never omit the array or invent IDs.';
-        result.required = [...new Set([...(Array.isArray(result.required) ? result.required : []), 'evidenceReadIds'])];
+        properties.evidenceReadIds.description = 'Required for warehouse tool-surface claims: nonempty executed IDs matching each cited source in the current manifest. Include every read used for a comparison. Never invent IDs.';
+        const required = Array.isArray(result.required) ? result.required : [];
+        const citationBranch = (origins: string[], measured: boolean, payloadOnly = false) => {
+          const branchProperties: Record<string, Record<string, unknown>> = { ...properties, evidenceOrigin: { ...properties.evidenceOrigin, enum: origins } };
+          if (measured) branchProperties.evidenceReadIds = { ...properties.evidenceReadIds, minItems: 1 };
+          else delete branchProperties.evidenceReadIds;
+          if (payloadOnly && properties.evidenceSource) branchProperties.evidenceSource = { ...properties.evidenceSource, enum: manifest.payloadSources };
+          if (payloadOnly && properties.evidenceSources) branchProperties.evidenceSources = { ...properties.evidenceSources, items: { type: 'string', enum: manifest.payloadSources } };
+          return {
+            ...result,
+            properties: branchProperties,
+            required: measured ? [...new Set([...required, 'evidenceReadIds'])] : required.filter((key) => key !== 'evidenceReadIds'),
+            additionalProperties: false,
+          };
+        };
+        return {
+          anyOf: [
+            citationBranch(['warehouse'], true),
+            citationBranch(['web', 'model_inference'], false),
+            ...(manifest.payloadSources.length ? [citationBranch(['warehouse'], false, true)] : []),
+          ],
+        };
       }
     }
     return result;

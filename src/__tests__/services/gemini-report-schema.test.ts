@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { geminiReportSchema } from "@/lib/server/services/gemini-report-schema";
-import { remediationReportSchema, REMEDIATION_REPORT_JSON_SCHEMA } from "@/lib/server/services/remediation-report";
+import { remediationReportSchema, REMEDIATION_REPORT_JSON_SCHEMA, reportSchemaForCitations } from "@/lib/server/services/remediation-report";
 
 describe("Gemini report schema projection", () => {
   it("moves decoding length/count bounds into instructions without mutating structural constraints or the canonical schema", () => {
@@ -27,5 +27,32 @@ describe("Gemini report schema projection", () => {
     expect(remediationReportSchema.safeParse({ ...valid, observations: [{ statement: "x".repeat(501), evidenceOrigin: "model_inference" }] }).success).toBe(false);
     expect(remediationReportSchema.safeParse({ ...valid, professionalConsultation: "" }).success).toBe(false);
     expect(remediationReportSchema.safeParse({ ...valid, unexpected: true }).success).toBe(false);
+  });
+
+  it('keeps complete citation branches and forbidden inference fields while simplifying large bounds', () => {
+    const scoped = reportSchemaForCitations({ payloadSources: [], measurementReads: [{
+      evidenceSource: 'vegetation', evidenceReadId: 'local-1', stage: 'local', selectedDate: '2026-09-09',
+      rangeStart: undefined, rangeEnd: undefined, servedDates: undefined, observedDates: undefined,
+    }] });
+    const projected = geminiReportSchema(scoped);
+    expect(projected).toHaveProperty('type', 'object');
+    for (const { path, required } of [
+      { path: 'properties.riskSummary', required: ['level', 'headline', 'factors', 'evidenceOrigin', 'evidenceSources'] },
+      { path: 'properties.observations.items', required: ['statement', 'evidenceOrigin'] },
+      { path: 'properties.remediation.items', required: ['strategy', 'title', 'rationale', 'timeframe', 'confidence', 'consultProfessionals', 'evidenceOrigin'] },
+    ]) {
+      expect(projected).not.toHaveProperty(`${path}.properties`);
+      for (const index of [0, 1]) {
+        expect(projected).toHaveProperty(`${path}.anyOf.${index}.type`, 'object');
+        expect(projected).toHaveProperty(`${path}.anyOf.${index}.additionalProperties`, false);
+        expect(projected).toHaveProperty(`${path}.anyOf.${index}.required`, index === 0 ? [...required, 'evidenceReadIds'] : required);
+        for (const field of required) expect(projected).toHaveProperty(`${path}.anyOf.${index}.properties.${field}`);
+      }
+      expect(projected).toHaveProperty(`${path}.anyOf.0.properties.evidenceReadIds.minItems`, 1);
+      expect(projected).not.toHaveProperty(`${path}.anyOf.0.properties.evidenceReadIds.maxItems`);
+      expect(projected).toHaveProperty(`${path}.anyOf.0.properties.evidenceReadIds.description`, expect.stringContaining('Maximum item count: 8.'));
+      expect(projected).not.toHaveProperty(`${path}.anyOf.1.properties.evidenceReadIds`);
+      expect(projected).toHaveProperty(`${path}.anyOf.1.properties.evidenceOrigin.enum`, ['web', 'model_inference']);
+    }
   });
 });

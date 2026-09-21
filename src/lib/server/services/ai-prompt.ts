@@ -193,7 +193,8 @@ function buildSystemPrompt(hasWebSearch: boolean): string {
 - You may retrieve any relevant catalogue layer and continue a history page even when web search is unavailable. Up to ${MAX_EVIDENCE_CALLS_PER_REQUEST} additional calls are allowed. The server binds each surface_evidence_for_selection call to the current map coordinate, zoom, layer day and complete active window. Preserve those returned bounds and use page_start for continuation.
 - Regional samples are geographic contrasts, not ecological analogues. Compare measured climate, soil moisture, terrain, land use and management prerequisites before discussing transfer; missing matching factors remain unknown. Nearby or environmentally similar conditions never establish treatment efficacy or a causal effect.
 - In the report, cite the environmental source and observation date for material findings, explain historical and regional comparison limits, and name evidence gaps that change strategy feasibility. Do not expose private deliberation; give concise conclusions and their supporting evidence.
-- EVERY warehouse-origin finding that cites a tool surface MUST include nonempty evidenceReadIds matching each exact evidenceSource, including local observations. Copy the executed IDs from the current citation manifest. Dates, stage and location are displayed beside the claim; include every read used for a comparison. When the report schema requires evidenceReadIds on every claim, return [] for model_inference, web and legacy-payload-only claims; never attach actual read IDs to them. Keep recommendations and interpretations labelled model_inference, with their supporting measured findings listed separately in observations. Describe comparison scopes in prose too: a regional comparison is not a measurement at the selected point, and a historical observation is not a current condition.
+- EVERY warehouse-origin finding that cites a tool surface MUST include nonempty evidenceReadIds matching each exact evidenceSource, including local observations. Copy the executed IDs from the current citation manifest. Dates, stage and location are displayed beside the claim; include every read used for a comparison. Omit evidenceReadIds entirely from model_inference, web and legacy-payload-only claims; the field is not allowed in those schema branches. Keep recommendations and interpretations labelled model_inference, with their supporting measured findings listed separately in observations. Describe comparison scopes in prose too: a regional comparison is not a measurement at the selected point, and a historical observation is not a current condition.
+- Before reporting, check every numerical comparison against its dated values in both observations and recommendation rationales: a positive later-minus-earlier difference is an increase, a negative difference is a decrease. Two sampled dates alone do not establish a stable trend. Each measured comparison must cite ALL supporting read IDs for the dates it discusses, including temporal reads when local reads contain only the selected date.
 - Coverage inventories, publication neighbors and nearest reporting-cell metadata help plan reads. They contain no environmental measurement and cannot be used as evidenceReadIds for a measured-condition claim; retrieve actual surface values or measured history first.
 - The current report citation manifest is the authority for evidenceSource, evidenceSources and evidenceReadIds. Copy its exact source names and matching read IDs; legacy payload names and availableLayers are not interchangeable citations. Tool schemas update after new measurements arrive. If the manifest is empty, report the gaps with evidenceOrigin model_inference, evidenceSources [], and omit evidenceSource/evidenceReadIds. Missing evidence alone does not establish a low measured risk.
 ${
@@ -203,7 +204,7 @@ ${
 }
 
 ## Finishing
-- End your turn by calling remediation_report or generate_remediation_report. Follow the schema limits; if validation rejects the report, correct it rather than repeat it. Everything the reader sees comes from an accepted report.
+- End your turn by calling remediation_report exactly once. Follow the schema limits; if validation rejects the report, correct it rather than repeat it. Everything the reader sees comes from an accepted report.
 - Make a tool call every round: request useful evidence when needed, otherwise deliver the complete report. Plain narration cannot finish the analysis.
 - Return ONE concise report. Aim for 4–6 consolidated observations, hard maximum 12; do not create an observation for every source row, read, date or gap. Combine related findings while preserving their dates and provenance. Aim for 0–3 remediation recommendations, hard maximum 8. Choose the most decision-relevant findings rather than listing the entire evidence graph.
 - Hard limits: riskSummary.headline 300 characters; at most 8 risk factors of 240 characters each; each observation statement 500 characters; each recommendation title 160 and rationale 900 characters; at most 5 consultProfessionals and 8 evidenceReadIds per claim. professionalConsultation is one short sentence, target below 200 characters, hard maximum 600. Empty observations/remediation arrays are valid when evidence is limited.
@@ -415,15 +416,11 @@ export async function* streamRegionalIntelligence(
   const evidenceToolNames = new Set(evidenceTools.map((tool) => tool.name));
   const maxToolRounds = evidenceTools.length > 0 ? MAX_EVIDENCE_TOOL_ROUNDS : MAX_TOOL_ROUNDS;
 
-  // GENERATE_REMEDIATION_REPORT_TOOL is sent alongside REPORT_TOOL rather than replacing it: the
-  // system prompt's Finishing section has always told the model it may call either name, but
-  // until 2026-08-14 only REPORT_TOOL was ever in this array, so a model that took that
-  // instruction at its word and called generate_remediation_report produced a tool_use no dispatch
-  // below recognized — see the report-matching fix just below.
+  // Advertise one report tool; retain the legacy alias only when dispatching older responses.
   const availableTools = (
     searchProvider
-      ? [SEARCH_TOOL, REPORT_TOOL, GENERATE_REMEDIATION_REPORT_TOOL, ...evidenceTools]
-      : [REPORT_TOOL, GENERATE_REMEDIATION_REPORT_TOOL, ...evidenceTools]
+      ? [SEARCH_TOOL, REPORT_TOOL, ...evidenceTools]
+      : [REPORT_TOOL, ...evidenceTools]
   );
   const system = buildSystemPrompt(searchProvider !== null);
 
@@ -567,7 +564,7 @@ export async function* streamRegionalIntelligence(
         ? `\nRewrite the report compactly rather than repeating the rejected arrays. The previous report contained ${Array.isArray(reportInput?.observations) ? reportInput.observations.length : 'unknown'} observations and ${Array.isArray(reportInput?.remediation) ? reportInput.remediation.length : 'unknown'} recommendations. Select and combine the most decision-relevant findings into 4–6 observations (never more than 12), and 0–3 recommendations (never more than 8). Do not emit one entry per data row, source, day, read or gap. Preserve essential dates, units and citation pairs within the consolidated findings. Also enforce every string/list limit: headline 300 characters, at most 8 factors of 240 characters each, statement 500, title 160, rationale 900, at most 5 professional disciplines and 8 read IDs per claim, and consultation one sentence below 200 characters (absolute maximum 600). Count each array before making the corrected call.`
         : '';
       const citationArrayInstruction = citationManifest.measurementReads.length > 0
-        ? 'The schema requires evidenceReadIds on EVERY claim. Use nonempty matching IDs for warehouse tool citations, and [] for inference, web or legacy-payload-only claims. Never omit the required array.'
+        ? 'Choose a complete claim schema branch. Warehouse tool citations require nonempty matching evidenceReadIds. Omit evidenceReadIds entirely for inference, web or legacy-payload-only claims; that field is not allowed in those branches. Include all other required claim fields.'
         : 'No tool measurement IDs are available. Omit evidenceReadIds.';
       messages.push(message);
       for (const use of toolUses) {
@@ -614,7 +611,7 @@ export async function* streamRegionalIntelligence(
       messages.push({
         role: 'user',
         content:
-          'Call remediation_report or generate_remediation_report now with what you have. Do not ask a follow-up question.',
+          'Call remediation_report exactly once now with what you have. Do not ask a follow-up question.',
       });
       continue;
     }

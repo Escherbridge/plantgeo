@@ -288,10 +288,29 @@ describe('evidence audit honesty', () => {
     expect(manifest.payloadSources).toEqual([]);
     expect(manifest.measurementReads).toEqual([expect.objectContaining({ evidenceSource: 'soil-field-vpd', evidenceReadId: 'temporal-vpd', selectedDate: '2026-09-15' })]);
     const schema = reportSchemaForCitations(manifest);
-    expect(schema).toHaveProperty('properties.observations.items.properties.evidenceSource.enum', ['soil-field-vpd']);
-    expect(schema).toHaveProperty('properties.observations.items.properties.evidenceReadIds.items.enum', ['temporal-vpd']);
-    for (const path of ['properties.riskSummary.required', 'properties.observations.items.required', 'properties.remediation.items.required']) {
-      expect(schema).toHaveProperty(path, expect.arrayContaining(['evidenceReadIds']));
+    expect(schema).toHaveProperty('properties.observations.items.anyOf.0.properties.evidenceSource.enum', ['soil-field-vpd']);
+    expect(schema).toHaveProperty('properties.observations.items.anyOf.0.properties.evidenceReadIds.items.enum', ['temporal-vpd']);
+    const claimFields = [
+      { path: 'properties.riskSummary', required: ['level', 'headline', 'factors', 'evidenceOrigin', 'evidenceSources'] },
+      { path: 'properties.observations.items', required: ['statement', 'evidenceOrigin'] },
+      { path: 'properties.remediation.items', required: ['strategy', 'title', 'rationale', 'timeframe', 'confidence', 'consultProfessionals', 'evidenceOrigin'] },
+    ];
+    for (const { path, required } of claimFields) {
+      expect(schema).not.toHaveProperty(`${path}.properties`);
+      expect(schema).not.toHaveProperty(`${path}.required`);
+      expect(schema).toHaveProperty(`${path}.anyOf`, expect.any(Array));
+      for (const index of [0, 1]) {
+        const branch = `${path}.anyOf.${index}`;
+        expect(schema).toHaveProperty(`${branch}.type`, 'object');
+        expect(schema).toHaveProperty(`${branch}.additionalProperties`, false);
+        expect(schema).toHaveProperty(`${branch}.required`, index === 0 ? [...required, 'evidenceReadIds'] : required);
+        for (const field of required) expect(schema).toHaveProperty(`${branch}.properties.${field}`);
+      }
+      expect(schema).toHaveProperty(`${path}.anyOf.0.properties.evidenceOrigin.enum`, ['warehouse']);
+      expect(schema).toHaveProperty(`${path}.anyOf.0.properties.evidenceReadIds.minItems`, 1);
+      expect(schema).toHaveProperty(`${path}.anyOf.0.properties.evidenceReadIds.maxItems`, 8);
+      expect(schema).toHaveProperty(`${path}.anyOf.1.properties.evidenceOrigin.enum`, ['web', 'model_inference']);
+      expect(schema).not.toHaveProperty(`${path}.anyOf.1.properties.evidenceReadIds`);
     }
     const report = {
       riskSummary: { level: 'moderate' as const, headline: 'VPD observations are available.', factors: [], evidenceOrigin: 'warehouse' as const, evidenceSources: ['soil-field-vpd' as const], evidenceReadIds: ['temporal-vpd'] },
@@ -300,6 +319,17 @@ describe('evidence audit honesty', () => {
     expect(reportWarehouseEvidenceIssues(report, payload, evidence)).toEqual([]);
     const legacyPayload = { ...payload, waterScarcity: { droughtClass: 'D1', nearestGauge: null } };
     expect(reportCitationManifest(legacyPayload, evidence).payloadSources).toEqual(['drought']);
+    const legacySchema = reportSchemaForCitations(reportCitationManifest(legacyPayload, evidence));
+    for (const { path, required } of claimFields) {
+      expect(legacySchema).toHaveProperty(`${path}.anyOf.2.type`, 'object');
+      expect(legacySchema).toHaveProperty(`${path}.anyOf.2.additionalProperties`, false);
+      expect(legacySchema).toHaveProperty(`${path}.anyOf.2.required`, required);
+      for (const field of required) expect(legacySchema).toHaveProperty(`${path}.anyOf.2.properties.${field}`);
+      expect(legacySchema).not.toHaveProperty(`${path}.anyOf.2.properties.evidenceReadIds`);
+    }
+    expect(legacySchema).toHaveProperty('properties.observations.items.anyOf.2.properties.evidenceOrigin.enum', ['warehouse']);
+    expect(legacySchema).toHaveProperty('properties.observations.items.anyOf.2.properties.evidenceSource.enum', ['drought']);
+    expect(legacySchema).toHaveProperty('properties.riskSummary.anyOf.2.properties.evidenceSources.items.enum', ['drought']);
     expect(reportWarehouseEvidenceIssues({ ...report, riskSummary: { ...report.riskSummary, evidenceSources: ['drought', 'soil-field-vpd'] } }, legacyPayload, evidence)).toEqual([]);
     expect(JSON.stringify(REMEDIATION_REPORT_JSON_SCHEMA)).toBe(canonical);
   });
