@@ -24,6 +24,7 @@ from agri_data_service.parquet_ops.wire import (
     PublishedDay,
     ServedRow,
 )
+from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 from agri_data_service.warehouse.mtbs_releases import MTBS_ANNUAL_RELEASE_DATES
 from agri_data_service.warehouse.mtbs_snapshots import MTBS_SNAPSHOT_FIRST_DAY
 
@@ -180,6 +181,24 @@ def _attach_window_snapshot(
     return envelope
 
 
+def _resolve_calendar_release(
+    listing: WarehouseListing,
+    reader: PartitionRowReader,
+    *,
+    scope: ReadScope,
+    as_of: date,
+) -> DayEnvelope:
+    """Resolve the newest admitted edition without substituting an older published one."""
+    release_days = LANE_REGISTRY[scope.layer].release_days
+    assert release_days is not None
+    eligible = tuple(day for day in release_days if day <= as_of)
+    if eligible:
+        return replace(resolve_day(listing, reader, scope=scope, day=eligible[-1]), requested_day=as_of)
+    if listing.list_keys(scope.layer, scope.kind, scope.tier):
+        return DayNotWritten(requested_day=as_of)
+    return LaneNeverWritten(requested_day=as_of)
+
+
 def resolve_release(
     listing: WarehouseListing,
     reader: PartitionRowReader,
@@ -188,6 +207,9 @@ def resolve_release(
     as_of: date,
 ) -> DayEnvelope:
     """Answer with the newest release at or before `as_of`, reported at the release's OWN day."""
+    registration = LANE_REGISTRY.get(scope.layer)
+    if registration is not None and registration.release_days is not None and scope.kind == "observed":
+        return _resolve_calendar_release(listing, reader, scope=scope, as_of=as_of)
     snapshot = _latest_snapshot(listing, scope=scope, day=as_of)
     if snapshot is not None:
         day = snapshot.descriptor.available_day

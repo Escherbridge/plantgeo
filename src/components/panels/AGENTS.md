@@ -252,3 +252,11 @@ owns the atomic pending-status guard; client invalidation is feedback, not concu
 A failed query refresh must retain any mutation explanation. Only explicit FORBIDDEN or
 UNAUTHORIZED errors are described as access denial; other query errors say the queue could
 not load. A failed refresh must not clear the unsent review note from component state.
+
+
+## Land context boundary and office provenance (2026-09-20)
+
+The selected surface record remains the first evidence entry when public-office contacts load.
+Office identities come from intersected jurisdiction polygons, not from surface feature keys.
+Dissolved BLM management areas have no source-native parcel identifier and must not display a
+fabricated one. Route scope retains the source's documented meaning and geographic limitations.

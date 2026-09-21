@@ -15,6 +15,7 @@ import {
 } from "@/lib/map/layer-toggle-context";
 import { scaleOpacityValue, styleLayerOpacityTargets } from "@/lib/map/layer-opacity";
 import { useParquetFireDetections } from "@/hooks/useParquetFireDetections";
+import { useCropCover } from "@/hooks/useCropCover";
 import {
   drawnDayReadState,
   useSoilFieldQuery,
@@ -229,6 +230,10 @@ const LandContextViewportLayer = dynamic(
     import("@/components/map/layers/LandContextViewportLayer").then((m) => ({
       default: m.LandContextViewportLayer,
     })),
+  { ssr: false }
+);
+const CropCoverLayer = dynamic(
+  () => import("@/components/map/land-context/CropCoverLayer").then((module) => ({ default: module.CropCoverLayer })),
   { ssr: false }
 );
 
@@ -650,6 +655,9 @@ export default function LayerManager() {
   // decodes the answer through the click lane's own feature path, and hands back both the
   // boundaries to draw and the one caption that states which of its states it is in.
   const landContextViewport = useLandContextViewportBoundaries();
+  const cropCover = useCropCover();
+  const cropCoverVisible = cropCover.enabled && cropCover.availability.data?.available === true &&
+    !cropCover.availability.isError && !cropCover.query.isError;
 
   const parquetLayerFaults = buildParquetLayerFaults({
     burnSeverityEnabled,
@@ -671,6 +679,18 @@ export default function LayerManager() {
     botanicalDetailMinZoom: BOTANICAL_DETAIL_MIN_ZOOM,
     landContextFault: landContextViewport.fault,
   });
+  if (cropCover.enabled) {
+    const failed = cropCover.availability.isError || cropCover.query.isError;
+    const years = [...new Set(cropCover.query.data?.geojson?.features.map((feature) => String(feature.properties?.observed_year)) ?? [])];
+    parquetLayerFaults.push({
+      layerId: "crop-cover",
+      tone: failed ? "fault" : "notice",
+      message: failed ? "Crop-cover estimates could not be read." : cropCover.query.isFetching
+        ? "Reading estimated crop cover." : cropCover.query.data?.geojson?.features.length
+          ? `Estimated crop cover (${years.join(", ")}); published ${cropCover.query.data.servedDay}. ${cropCover.query.data.message}`
+          : cropCover.query.data?.message ?? cropCover.availability.data?.reason ?? "Checking crop-cover availability.",
+    });
+  }
 
   // What each live layer is actually DRAWING, for the surfaces that caption the map. The other
   // half of `keepPreviousData` above; see src/components/map/AGENTS.md "A layer must not blank
@@ -1325,6 +1345,7 @@ export default function LayerManager() {
         geojson={landContextViewport.geoJSON}
         visible={landContextViewport.geoJSON !== null}
       />
+      <CropCoverLayer geojson={cropCoverVisible ? cropCover.query.data?.geojson ?? null : null} visible={cropCoverVisible} />
       <ParquetLayerFaultBanner faults={parquetLayerFaults} />
       {/* Not a data layer and so not in the registry: it marks where the user clicked,
           and DockDetails' capture hook (SoilDetailsBody, DockDetails.tsx:100-101) is the

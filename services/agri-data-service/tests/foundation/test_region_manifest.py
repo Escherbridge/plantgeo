@@ -22,7 +22,7 @@ from agri_data_service.foundation.region.manifest import REGION_ENV_VAR
 
 EXPECTED_LATTICE_PITCH_DEGREES = 0.01  # TIER_RESOLUTION_DEGREES[9], warehouse/parquet/tiers.py
 #: Each climate and soil product has its own source binding.
-EXPECTED_ENABLED_LAYER_COUNT = 24
+EXPECTED_ENABLED_LAYER_COUNT = 26
 
 
 def test_pnw_manifest_loads_with_the_documented_values() -> None:
@@ -59,6 +59,8 @@ def test_pnw_manifest_sub_envelopes_cannot_be_mutated_in_place() -> None:
     ("layer_slug", "source_slug", "coverage"),
     [
         ("burn-severity", "mtbs", "regional"),
+        ("land-context", "blm_surface_management", "regional"),
+        ("crop-cover", "usda_cdl", "regional"),
         ("fire-detections", "firms", "global"),
         ("vegetation", "sentinel2_ndvi", "global"),
         ("sensors", "noaa_nws", "regional"),

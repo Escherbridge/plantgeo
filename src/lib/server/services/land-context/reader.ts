@@ -46,6 +46,7 @@ import {
   pruneCandidatesByBbox,
   readCoverageStatus,
   type BboxDegrees,
+  LAND_CONTEXT_PRODUCT_LAYERS,
 } from "./parquet-reader";
 import type {
   BoundedResponse,
@@ -54,6 +55,7 @@ import type {
   ParcelKey,
   PilotState,
 } from "./types";
+import type { ZoomTier } from "@/lib/map/zoom-tiers";
 
 /**
  * Whether this deployment's region admits the subdivision code, read from the SELECTED manifest.
@@ -161,10 +163,11 @@ export async function readPointContainment(
     publicContactUrl: null,
     verificationTime: null,
     documentedHelp: null,
-    unresolvedGaps: [],
+    unresolvedGaps: gap ? [gap] : [],
     isCurrentReferenceOnly: true,
   }));
 
+  if (gap) results.push(emptyResult(refusal?.coverageState ?? "partial_area_coverage", gap));
   const estimatedBytes = estimateResponseBytes(results);
   if (estimatedBytes > MAX_RESPONSE_BYTES) {
     return budgetExceeded("response_bytes_would_exceed_limit", MAX_RESPONSE_BYTES, estimatedBytes);
@@ -181,7 +184,7 @@ export async function readPointContainment(
  */
 export async function readBoundedAoiIntersection(
   bbox: BboxDegrees,
-  options: { maxFeatures?: number; maxVertices?: number } = {}
+  options: { maxFeatures?: number; maxVertices?: number; zoomTier?: ZoomTier } = {}
 ): Promise<BoundedResponse<LandContextResult[]>> {
   if (!isLandContextBoundInRegion()) return { status: "ok", data: [regionUnboundResult()] };
   const maxFeatures = options.maxFeatures ?? MAX_FEATURES_RETURNED;
@@ -202,8 +205,8 @@ export async function readBoundedAoiIntersection(
     return budgetExceeded("geometry_vertices_exceed_limit", MAX_AOI_GEOMETRY_VERTICES, 4);
   }
 
-  const pruned = await pruneCandidatesByBbox(bbox);
-  const { features, gap } = await exactIntersectCandidates(pruned.candidateKeys, bbox);
+  const pruned = await pruneCandidatesByBbox(bbox, options.zoomTier);
+  const { features, gap, refusal: dataRefusal } = await exactIntersectCandidates(pruned.candidateKeys, bbox);
 
   if (features.length === 0) {
     // The pointer GET's typed refusal wins: a layer with no lane registered anywhere is
@@ -215,7 +218,7 @@ export async function readBoundedAoiIntersection(
       status: "ok",
       data: [
         emptyResult(
-          pruned.refusal?.coverageState ?? "partial_area_coverage",
+          pruned.refusal?.coverageState ?? dataRefusal?.coverageState ?? "unknown_coverage",
           pruned.refusal?.detail ?? gap
         ),
       ],
@@ -238,10 +241,11 @@ export async function readBoundedAoiIntersection(
     publicContactUrl: null,
     verificationTime: null,
     documentedHelp: null,
-    unresolvedGaps: [],
+    unresolvedGaps: gap ? [gap] : [],
     isCurrentReferenceOnly: true,
   }));
 
+  if (gap) results.push(emptyResult(dataRefusal?.coverageState ?? "partial_area_coverage", gap));
   const estimatedBytes = estimateResponseBytes(results);
   if (estimatedBytes > MAX_RESPONSE_BYTES) {
     return budgetExceeded("response_bytes_would_exceed_limit", MAX_RESPONSE_BYTES, estimatedBytes);
@@ -299,7 +303,7 @@ export async function readBoundaryByParcelKey(
  * caller can distinguish a reviewed crosswalk from an unreviewed guess.
  */
 export async function readContactsForSubject(
-  subjectId: string,
+  subjectId: string | readonly string[],
   topic: string | null,
   options: { maxFeatures?: number } = {}
 ): Promise<BoundedResponse<LandContextResult[]>> {
@@ -341,7 +345,7 @@ export async function readContactsForSubject(
     const office = officeById.get(rel.objectId) ?? null;
     const officeRoutes = office ? routesByOffice.get(office.officeId) ?? [] : [];
     const primaryRoute = officeRoutes[0] ?? null;
-    const gaps: string[] = [];
+    const gaps: string[] = gap ? [gap] : [];
     if (!office) gaps.push("no admitted office record for this relationship's object ID");
     if (!primaryRoute) gaps.push("no admitted public contact route for this office");
     if (rel.reviewStatus !== "reviewed") {
@@ -371,6 +375,49 @@ export async function readContactsForSubject(
   }
 
   return { status: "ok", data: results };
+}
+
+/** Offices whose published jurisdiction intersects the selection, not inferred program duties. */
+export async function readContactsForSelection(
+  selection: { mode: "point"; lon: number; lat: number } | { mode: "area"; bbox: BboxDegrees },
+  topic: string | null = null
+): Promise<BoundedResponse<LandContextResult[]>> {
+  if (!isLandContextBoundInRegion()) return { status: "ok", data: [regionUnboundResult()] };
+  let candidates: Awaited<ReturnType<typeof findContainingFeatures>>;
+  if (selection.mode === "point") {
+    candidates = await findContainingFeatures(selection.lon, selection.lat, LAND_CONTEXT_PRODUCT_LAYERS.offices);
+  } else {
+    const area = bboxAreaSquareDegrees(selection.bbox);
+    if (!isWithinAoiAreaBudget(area)) return budgetExceeded("aoi_area_exceeds_limit", MAX_AOI_AREA_SQUARE_DEGREES, area);
+    const pruned = await pruneCandidatesByBbox(selection.bbox, undefined, LAND_CONTEXT_PRODUCT_LAYERS.offices);
+    const resolved = await exactIntersectCandidates(pruned.candidateKeys, selection.bbox);
+    candidates = { ...resolved, gap: pruned.gap || resolved.gap, refusal: pruned.refusal ?? resolved.refusal ?? null };
+  }
+  candidates.features = candidates.features.filter((feature) =>
+    feature.boundary.familyType === "blm_office_jurisdiction" && feature.overlapBasis.kind !== "bbox_intersection");
+  if (!candidates.features.length) return { status: "ok", data: [emptyResult(
+    candidates.refusal?.coverageState ?? "unknown_coverage",
+    candidates.gap || "No published office jurisdiction matched this selection; a responsible office has not been established."
+  )] };
+  if (candidates.features.length > MAX_FEATURES_RETURNED) return budgetExceeded("feature_count_would_exceed_limit", MAX_FEATURES_RETURNED, candidates.features.length);
+  const subjects = [...new Set(candidates.features.map(({ boundary }) => `${boundary.sourceNamespace}:${boundary.nativeFeatureKey}`))];
+  const contacts = await readContactsForSubject(subjects, topic);
+  if (contacts.status === "ok") {
+    for (const result of contacts.data) {
+      const office = candidates.features.find(({ boundary }) =>
+        `${boundary.sourceNamespace}:${boundary.nativeFeatureKey}` === result.assignmentEvidence?.subjectId);
+      if (office) {
+        result.sourceFeature = office.boundary;
+        result.sourceRelease = office.sourceRelease;
+        result.matchedRegionOrOverlap = office.overlapBasis;
+      }
+      result.unresolvedGaps.push("Office geography overlaps the selection. Program responsibility or permission is not established by this overlap.");
+      if (candidates.gap) result.unresolvedGaps.push(candidates.gap);
+    }
+    const bytes = estimateResponseBytes(contacts.data);
+    if (bytes > MAX_RESPONSE_BYTES) return budgetExceeded("response_bytes_would_exceed_limit", MAX_RESPONSE_BYTES, bytes);
+  }
+  return contacts;
 }
 
 /** Coverage status for a state/county, independent of any specific feature lookup. */

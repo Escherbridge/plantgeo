@@ -63,6 +63,8 @@ RegionalToolEvidenceSource = Literal[
     "demand-heatmap",
     "strategy-recommendations",
     "land-context",
+    "land-context-boundaries",
+    "crop-cover",
     "fire-risk",
     "weather-forecast",
 ]

@@ -206,7 +206,7 @@ describe("the binding lookup itself", () => {
  */
 describe("layerBindingInRegion across the deploy window", () => {
   const statedBound: SliderLayerBinding[] = [
-    { layerSlug: "land-context", binding: "bound_regional", sourceSlug: "a-parcel-source", reason: null },
+    { layerSlug: "fire-risk", binding: "bound_regional", sourceSlug: "a-reviewed-forecast-source", reason: null },
   ];
   const statedUnbound: SliderLayerBinding[] = [
     { layerSlug: "soil-survey", binding: "unbound", sourceSlug: null, reason: "no_source_bound_in_region" },
@@ -216,16 +216,18 @@ describe("layerBindingInRegion across the deploy window", () => {
   ];
 
   it("lets a stated payload row outrank the compiled manifest, in both directions", () => {
-    // The manifest is a deploy behind: it does not bind land-context, and it does bind soil-survey.
-    expect(layerBindingInRegion(capabilities(statedBound), "land-context")).toBe("bound");
+    // A newer serving payload can bind an otherwise unbound layer or withhold a compiled binding.
+    expect(layerBindingInRegion(capabilities(statedBound), "fire-risk")).toBe("bound");
     expect(layerBindingInRegion(capabilities(statedUnbound), "soil-survey")).toBe("unbound");
   });
 
   it("reads the manifest when the payload states nothing at all", () => {
     for (const silent of [null, capabilities(), capabilities([]), capabilities(statedUnbound)]) {
       expect(layerBindingInRegion(silent, "drought")).toBe("bound");
-      // In the vocabulary, bound by nothing: a STATEMENT, which is why this one is not fail-open.
-      expect(layerBindingInRegion(silent, "land-context")).toBe("unbound");
+      expect(layerBindingInRegion(silent, "land-context")).toBe("bound");
+      expect(layerBindingInRegion(silent, "crop-cover")).toBe("bound");
+      // A declared platform layer with no pilot source stays unavailable on payload silence.
+      expect(layerBindingInRegion(silent, "fire-risk")).toBe("unbound");
       // Outside the vocabulary: a genuine unknown, and an unknown layer is not an unbound one.
       expect(layerBindingInRegion(silent, "a-layer-this-build-never-heard-of")).toBe("not_federated");
     }
@@ -259,35 +261,10 @@ describe("REGION_LAYER_SLUG_BY_WAREHOUSE_NAME is pinned to the region vocabulary
     }
   });
 
-  it("covers every platform layer a toggle can reach, and names its one toggle-path exception", () => {
-    // Both directions at once. The one platform layer with no toggle-path value is stated here
-    // rather than skipped, so adding a toggle for it fails this test instead of drifting:
-    //   land-context           -- not a `LayerToggleId` at all; it has its own group store and
-    //                             reaches `layerBindingInRegion` through LAND_CONTEXT_REGION_LAYER_SLUG.
-    //
-    // TOGGLE-PATH AND BINDING ARE DIFFERENT QUESTIONS, and the exception above is the first one
-    // only. THREE platform layers are currently UNBOUND in every region -- declared in
-    // `platformLayers`, absent from `enabledLayers`, so `layerBindingInRegion` answers `unbound`
-    // with a reason rather than `not_federated`:
-    //   land-context           -- parcel/ownership context; no source bound in the pilot region.
-    //   fire-risk              -- written by services/plantgeo-ml-service, never by agri
-    //                             (`plantgeo_ml_service_20260918` FR-5a); nothing published yet.
-    //   weather-forecast       -- same writer, same state (FR-12); the provider NWP release moved
-    //                             to that service on 2026-09-19 and agri only reads the slug.
-    // The two ML lanes ARE toggle-reachable (they sit in REGION_LAYER_SLUG_BY_WAREHOUSE_NAME, which
-    // is exactly what keeps them off `not_federated` and off an empty map drawn as a working layer),
-    // so they belong in `expected` below and not in the exception set.
-    // `botanical-occurrences` used to be a second exception (BACKLOG N40): its three toggles all
-    // carried `warehouseLayerName: null`, so no toggle of it could ever report "not available in
-    // this region". N40 closed that gap with a dedicated `regionLayerSlug` field, decoupled from
-    // the slider's `warehouseLayerName` key (`layer-registry.ts`, `layer-region-binding.ts`), so
-    // its toggles now reach the vocabulary too.
-    const PLATFORM_LAYERS_WITH_NO_TOGGLE_PATH = new Set(["land-context"]);
-    const expected = new Set(
-      getRegion().platformLayers.filter((slug) => !PLATFORM_LAYERS_WITH_NO_TOGGLE_PATH.has(slug))
-    );
-
-    expect(TOGGLE_REACHABLE_REGION_LAYER_SLUGS).toEqual(expected);
+  it("covers every platform layer through the shared mapping or its dedicated controls", () => {
+    expect(TOGGLE_REACHABLE_REGION_LAYER_SLUGS).toEqual(new Set(getRegion().platformLayers));
+    expect(REGION_LAYER_SLUG_BY_WAREHOUSE_NAME["land-context-boundaries"]).toBe("land-context");
+    expect(REGION_LAYER_SLUG_BY_WAREHOUSE_NAME["crop-cover"]).toBe("crop-cover");
   });
 
   it("gives every toggle with a warehouse layer name a slug in the vocabulary", () => {

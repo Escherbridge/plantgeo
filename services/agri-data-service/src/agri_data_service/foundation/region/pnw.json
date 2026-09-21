@@ -14,6 +14,12 @@
     "north": 49.0
   },
   "sub_envelopes": {
+    "crop_cover": {
+      "west": -125.0,
+      "south": 42.0,
+      "east": -111.0,
+      "north": 49.0
+    },
     "burn_severity": {
       "west": -125.0,
       "south": 42.0,
@@ -42,6 +48,7 @@
   "platform_layers": [
     "botanical-occurrences",
     "burn-severity",
+    "crop-cover",
     "drought",
     "evacuation-zones",
     "fire-detections",
@@ -69,6 +76,16 @@
     "weather-observations"
   ],
   "enabled_layers": [
+    {
+      "layer_slug": "land-context",
+      "source_slug": "blm_surface_management",
+      "coverage": "regional"
+    },
+    {
+      "layer_slug": "crop-cover",
+      "source_slug": "usda_cdl",
+      "coverage": "regional"
+    },
     {
       "layer_slug": "soil-survey",
       "source_slug": "ssurgo",

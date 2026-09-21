@@ -179,8 +179,8 @@ describe("the region-binding gate", () => {
 
     const { result } = renderHook(() => useLandContextViewportBoundaries());
 
-    expect(latestEnabled()).toBe(false);
-    expect(result.current.state).toBe("layer_unbound_in_region");
+    expect(latestEnabled()).toBe(true);
+    expect(result.current.state).toBe("reading");
   });
 
   it("issues no request when no group is switched on, and says nothing about it", () => {
@@ -234,7 +234,7 @@ describe("every state reaches a reader as its own caption", () => {
 
   it("names an over-budget AOI a rung would otherwise admit", () => {
     // 10 x 10 square degrees: the z9 rung admits 100, the AOI budget caps at 1.
-    lane.viewport = { zoom: 9, bbox: "-120,40,-110,50" };
+    lane.viewport = { zoom: 5, bbox: "-150,0,-90,40" };
 
     const { result } = renderHook(() => useLandContextViewportBoundaries());
 

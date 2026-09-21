@@ -331,6 +331,7 @@ def test_every_agent_served_lane_has_authorization_metadata() -> None:
     assert {lane for lane in served if serving._LANES[lane].nature == "static_lookup"} == {
         "evacuation-zones",
         "fire-perimeters",
+        "land-context-boundaries",
         "soil-survey",
         "watersheds",
     }

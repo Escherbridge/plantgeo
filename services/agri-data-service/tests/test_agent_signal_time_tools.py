@@ -194,6 +194,8 @@ def test_the_agent_catalogue_is_the_map_catalogue_hand_spelled() -> None:
         "fire-risk",
         "weather-forecast",
         "land-context",
+        "land-context-boundaries",
+        "crop-cover",
         "demand-heatmap",
         "strategy-recommendations",
         "soil-phh2o",

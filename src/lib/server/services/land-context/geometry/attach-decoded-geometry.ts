@@ -40,7 +40,7 @@ export function attachDecodedGeometry(result: LandContextResult): LandContextRes
   if (!result.sourceFeature) {
     return { ...result, geometry: null };
   }
-  const sourceFeature = { ...result.sourceFeature, geometryWkb: null };
+  const sourceFeature = { ...result.sourceFeature, geometryWkb: null, geometry: undefined };
   try {
     return { ...result, sourceFeature, geometry: decodeBoundaryGeometry(result.sourceFeature) };
   } catch (error) {

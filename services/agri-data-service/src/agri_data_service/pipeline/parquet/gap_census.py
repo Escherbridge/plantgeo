@@ -355,7 +355,14 @@ def _series_lane_census(
         day
         for day, status in sorted(statuses.items(), reverse=True)
         if status in UNFILLED_PARTITION_STATUSES
-        and (status != "missing" or (day - first_day).days % lane.cadence_days == 0)
+        and (
+            status != "missing"
+            or (
+                day in lane.release_days
+                if lane.release_days is not None
+                else (day - first_day).days % lane.cadence_days == 0
+            )
+        )
     )
     # THE LADDER SCOPE IS THE SETTLED WINDOW UNIONED WITH THE DIRECT-WRITER TAIL, not the settled
     # window alone and not the whole bucket. `lane_window` clamps `last_day` to `writer_ceiling`, so

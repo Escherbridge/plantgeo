@@ -138,6 +138,8 @@ def forecast_stream_schema(observed: ParquetStreamSchema) -> ParquetStreamSchema
 
 def stream_schema_module(name: str) -> str:
     """Return the module a lane's schema is autoloaded from: slug `fire-detections` maps to `fire_detections`."""
+    if name in {"land-context-boundaries", "land-context-offices", "land-context-contacts"}:
+        return f"{LANE_SCHEMA_PACKAGE}.land_context"
     return f"{LANE_SCHEMA_PACKAGE}.{validate_layer_slug(name).replace('-', '_')}"
 
 

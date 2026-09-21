@@ -172,6 +172,30 @@ describe('regional evidence graph', () => {
     expect(bbox.east - bbox.west).toBeCloseTo(360 / 2 ** 10);
   });
 
+  it('pins crop estimates to the selected published edition and map scale, not model arguments', () => {
+    const args = bindRegionalEvidenceArguments('read_crop_cover_in_area', {
+      bbox: { west: 1, south: 1, east: 2, north: 2 }, asOfDay: '2030-01-01', zoomTier: 13,
+    }, payload, { ...temporal, analysisSelection: {
+      timeScale: 'month', rangeSteps: 1, zoom: 8, layerDays: {}, cropCoverReleaseDay: '2025-02-27',
+    } });
+    expect(args).toMatchObject({ asOfDay: '2025-02-27', zoomTier: 5 });
+    const audit = regionalEvidenceAuditCall('crop-1', 'local', 'read_crop_cover_in_area', args,
+      { servedDay: '2025-02-27', geojson: { features: [{ properties: { observed_year: 2024, release_day: '2025-02-27' } }] } });
+    expect(audit).toMatchObject({ source: 'crop-cover', selectedDate: '2025-02-27' });
+  });
+
+  it('pins the generic crop surface to the annual edition independently of other layer dates', () => {
+    const selected = { ...temporal, analysisSelection: {
+      timeScale: 'year' as const, rangeSteps: 1, zoom: 8, layerDays: { vegetation: '2024-05-01' },
+      cropCoverReleaseDay: '2025-02-27',
+    } };
+    const args = bindRegionalEvidenceArguments('surface_evidence_for_selection', {
+      surface_name: 'crop-cover', day: '2030-01-01',
+    }, payload, selected);
+    expect(args).toMatchObject({ surface_name: 'crop-cover', day: '2025-02-27', zoom: 8 });
+    expect(regionalEvidenceDay(temporal, 'crop-cover')).toBe(temporal.serverCurrentDate);
+  });
+
   it('admits every switchable map surface as an evidence citation regardless of visibility', () => {
     for (const layer of Object.values(LAYER_REGISTRY)) {
       expect(REGIONAL_TOOL_EVIDENCE_SOURCES).toContain(layer.warehouseLayerName ?? layer.toggleId);
@@ -180,6 +204,24 @@ describe('regional evidence graph', () => {
 });
 
 describe('evidence audit honesty', () => {
+  it.each(['crop-cover', 'land-context-boundaries'] as const)('admits %s claims only with a matching successful read', (source) => {
+    const report = remediationReportSchema.parse({
+      riskSummary: { level: 'low', headline: 'Reference evidence is available.', factors: [], evidenceOrigin: 'model_inference', evidenceSources: [] },
+      observations: [{ statement: 'The published source returned context for this location.', evidenceOrigin: 'warehouse', evidenceSource: source, evidenceReadIds: ['read-1'] }],
+      remediation: [], professionalConsultation: 'Consult the relevant local professional.',
+    });
+    const evidence: RegionalAnalysisEvidence = { version: 1, stages: [], limitations: [], toolCalls: [{
+      id: 'read-1', stage: 'local', tool: 'surface_evidence_for_selection', source, status: 'observed',
+    }] };
+    expect(reportWarehouseEvidenceIssues(report, payload, evidence)).toEqual([]);
+    expect(reportCitationManifest(payload, evidence).measurementReads).toEqual([
+      expect.objectContaining({ evidenceSource: source, evidenceReadId: 'read-1' }),
+    ]);
+    expect(reportWarehouseEvidenceIssues(report, payload, { ...evidence,
+      toolCalls: [{ ...evidence.toolCalls[0], status: 'unavailable' }],
+    })).not.toEqual([]);
+  });
+
   it('resolves only current server-authored fact selectors and preserves legacy canonical report parsing', () => {
     const result = { selection: { longitude: -116.2, latitude: 43.6 }, features: [{ observed_day: '2026-09-09', properties: { vpd: 2.38, unit: 'kPa' } }] };
     const facts = buildRegionalMeasurementFacts([{ id: 'local-1', source: 'soil-field-vpd', result }]).facts;

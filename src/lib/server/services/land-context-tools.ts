@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { readContactsForSelection } from "@/lib/server/services/land-context/reader";
+import { readCropCover } from "@/lib/server/services/land-context/crop-cover";
+import { daySchema } from "@/lib/server/services/parquet-trpc-readers/shared";
 import {
   draftInquiry,
   readBoundedAoiIntersection,
@@ -234,12 +237,12 @@ function lookupContactsForSubjectTool(): LandContextTool {
   return {
     name: "lookup_land_contacts_for_subject",
     description:
-      `Look up every applicable public office, program adviser, or documented contact route for a resolved land-context subject (parcel or boundary feature ID), optionally scoped by topic. Returns every applicable office/route with its route meaning, assignment evidence and review status — never a single "best guess" contact. ${scopeNote()} Read-only.`,
+      `Look up every applicable public office, program adviser, or documented contact route for an explicit office subject ID (not a surface management feature ID), optionally scoped by topic. Returns every applicable office/route with its route meaning, assignment evidence and review status — never a single "best guess" contact. ${scopeNote()} Read-only.`,
     input_schema: {
       type: "object",
       additionalProperties: false,
       properties: {
-        subjectId: { type: "string", minLength: 1, maxLength: 200, description: "The subject ID from a prior boundary resolution result." },
+        subjectId: { type: "string", minLength: 1, maxLength: 200, description: "The office subject ID from a prior spatial office lookup." },
         topic: { type: "string", minLength: 1, maxLength: 200, nullable: true, description: "Optional topic to scope contact routes to (e.g. a land-use or program topic)." },
         maxFeatures: maxFeaturesProperty(),
       },
@@ -279,6 +282,56 @@ function coverageStatusTool(): LandContextTool {
         .object({ state: admittedSubdivisionCodeSchema, county: z.string().trim().min(1).max(200).nullable().default(null) })
         .parse(args);
       return readCoverageForRegion(input.state, input.county);
+    },
+  };
+}
+
+function contactsAtPointTool(): LandContextTool {
+  return {
+    name: "lookup_land_contacts_at_point",
+    description: `Find public office jurisdictions containing the selected point, then their documented contact routes. Geographic overlap establishes neither legal authority nor responsibility for a particular program. ${scopeNote()} Read-only.`,
+    readOnly: true,
+    input_schema: { type: "object", additionalProperties: false, properties: {
+      lon: { type: "number", minimum: -180, maximum: 180 },
+      lat: { type: "number", minimum: -90, maximum: 90 },
+    }, required: ["lon", "lat"] },
+    handler: (args) => {
+      const input = z.object({ lon: z.number().min(-180).max(180), lat: z.number().min(-90).max(90) }).parse(args);
+      return readContactsForSelection({ mode: "point", ...input });
+    },
+  };
+}
+
+function contactsInAreaTool(): LandContextTool {
+  return {
+    name: "lookup_land_contacts_in_area",
+    description: `Find published public office jurisdictions intersecting a selected area and return documented routes. Do not infer program duties or permission from geographic overlap. ${scopeNote()} Read-only.`,
+    readOnly: true,
+    input_schema: { type: "object", additionalProperties: false, properties: {
+      bbox: { type: "object", properties: {
+        west: { type: "number" }, south: { type: "number" }, east: { type: "number" }, north: { type: "number" },
+      }, required: ["west", "south", "east", "north"], additionalProperties: false },
+    }, required: ["bbox"] },
+    handler: (args) => readContactsForSelection({ mode: "area", ...z.object({ bbox: bboxSchema }).parse(args) }),
+  };
+}
+
+function cropCoverInAreaTool(): LandContextTool {
+  return {
+    name: "read_crop_cover_in_area",
+    description: `Read the USDA crop-cover edition published on or before the selected release day for a bounded view. Return the observed year, publication date, classified pixel area shares, resolutions and source provenance. Estimated grid cells are not parcels; crop fractions are not confidence scores. ${scopeNote()} Read-only.`,
+    readOnly: true,
+    input_schema: { type: "object", additionalProperties: false, properties: {
+      bbox: { type: "object", properties: {
+        west: { type: "number" }, south: { type: "number" }, east: { type: "number" }, north: { type: "number" },
+      }, required: ["west", "south", "east", "north"], additionalProperties: false },
+      asOfDay: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$", description: "Selected publication day, YYYY-MM-DD." },
+      zoomTier: { type: "integer", enum: [0, 5, 9, 13] },
+    }, required: ["bbox", "asOfDay", "zoomTier"] },
+    handler: (args) => {
+      const input = z.object({ bbox: bboxSchema, asOfDay: daySchema,
+        zoomTier: z.union([z.literal(0), z.literal(5), z.literal(9), z.literal(13)]) }).parse(args);
+      return readCropCover(input.bbox, input.asOfDay, input.zoomTier);
     },
   };
 }
@@ -355,6 +408,9 @@ const LAND_CONTEXT_TOOL_BUILDERS = [
   lookupContactsForSubjectTool,
   coverageStatusTool,
   draftLandInquiryTextTool,
+  contactsAtPointTool,
+  contactsInAreaTool,
+  cropCoverInAreaTool,
 ] as const;
 
 /**
@@ -416,7 +472,7 @@ export async function callLandContextTool(name: string, args: Record<string, unk
   // The region is asked BEFORE the arguments are parsed: in a region that binds no land-context
   // source there is no argument that would answer, and a validation error would blame the caller
   // for the deployment's footprint.
-  if (!isLandContextBoundInRegion()) return JSON.stringify(landContextRegionAbsence());
+  if (name !== "read_crop_cover_in_area" && !isLandContextBoundInRegion()) return JSON.stringify(landContextRegionAbsence());
   const result = await tool.handler(args);
   return JSON.stringify(result);
 }

@@ -60,8 +60,8 @@ describe("deriveLandContextNotices", () => {
     expect(notices[0].layerId).toBe("land-context-select-point");
     expect(notices[0].tone).toBe("notice");
     expect(notices[0].message).toContain("Parcels & land use, BLM lands");
-    expect(notices[0].message).toContain("click a point on the map");
-    expect(notices[0].message).toContain("never the current view");
+    expect(notices[0].message).toContain("Click a point");
+    expect(notices[0].message).toContain("boundaries load for the current view");
     expect(notices[0].message).not.toContain("Electric utility");
   });
 
@@ -272,7 +272,7 @@ describe("<LandContextStatusNotice />", () => {
     render(<LandContextStatusNotice />);
     const notice = screen.getByTestId("land-context-notice-land-context-select-point");
     expect(notice.getAttribute("role")).toBe("status");
-    expect(notice.textContent).toContain("BLM lands: click a point on the map");
+    expect(notice.textContent).toContain("BLM lands: boundaries load for the current view");
     // Each pill is its own live region; a live container would double-announce.
     expect(screen.getByTestId("land-context-notices").hasAttribute("aria-live")).toBe(false);
   });

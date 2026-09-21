@@ -41,8 +41,8 @@ vi.mock("@/lib/server/services/land-context/region-binding", async (importOrigin
 
 describe("readBoundedAoiIntersection budget enforcement", () => {
   it("returns a typed budget_exceeded response, never a truncated ok, when AOI area exceeds the limit", async () => {
-    // MAX_AOI_AREA_SQUARE_DEGREES is 1; build a bbox with area well beyond it.
-    const oversizedBbox = { west: -125, south: 40, east: -110, north: 55 }; // 15 x 15 = 225 sq deg
+    // Build a bbox larger than the admitted regional budget.
+    const oversizedBbox = { west: -150, south: 0, east: -90, north: 40 }; // 2,400 square degrees
     const area = (oversizedBbox.east - oversizedBbox.west) * (oversizedBbox.north - oversizedBbox.south);
     expect(area).toBeGreaterThan(MAX_AOI_AREA_SQUARE_DEGREES);
 

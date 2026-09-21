@@ -77,6 +77,7 @@ def census_lane_from_registration(registration: LaneRegistration) -> CensusLane:
         kind="observed",
         history_floor=registration.claimed_history_floor,
         cadence_days=registration.cadence_days,
+        release_days=registration.release_days,
         publication_lag_days=registration.publication_lag_days,
         refresh_policy=LaneRefreshPolicy(
             publication_lag_days=(
@@ -127,6 +128,7 @@ class CensusLane:
     #: How long after a publication day that day may still arrive; only a release series uses it.
     publication_lag_days: int = 0
     refresh_policy: LaneRefreshPolicy | None = None
+    release_days: tuple[date, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -532,6 +534,8 @@ def _owed_but_unwritten(
     floor = lane.history_floor or min(accounted, default=None)
     if floor is None:
         return ()
+    if lane.release_days is not None:
+        return tuple(day for day in lane.release_days if floor <= day <= closing_day and day not in accounted)
     owed: list[date] = []
     candidate = floor
     while candidate <= closing_day:

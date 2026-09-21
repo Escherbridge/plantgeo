@@ -543,3 +543,16 @@ down — and it refuses in a dry run too, which would otherwise never reach the 
 
 Changes in this directory affect the Python quality fingerprint. Regenerate
 `services/agri-data-service/QUALITY_RECEIPT.json` only after the final code and test edits are settled.
+# PNW reference-data schedules
+
+The BLM forward, reconcile and backfill definitions run daily at 09:00, 11:00 and 13:00 UTC.
+Each command owns one complete current source snapshot and uses the same package lock. Backfill
+means replay of admitted immutable capture evidence; no pre-admission history is invented.
+The crop maintenance definition runs daily at 10:00 UTC. Its single command performs all three
+duties: detect incomplete admitted editions, restore the oldest one, then check the newest source
+monthly after history is complete. It writes at most one annual edition per invocation.
+
+These definitions are initially shadow registrations. Add their four lane IDs to the production
+active-lane allowlist only after the PR's code is deployed and the initial production readback
+is verified. Existing deployed code cannot execute these new definitions. The crop working
+directory is disposable; verified original source captures remain in immutable object storage.

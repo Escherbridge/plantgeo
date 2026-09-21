@@ -111,6 +111,7 @@ export interface MetricAtDateCollection extends GeoJSON.FeatureCollection {
  * `climate-field-*` -- which is the same guarantee this record gives by inspection.
  */
 export const SLIDER_STREAM_LAYER_NAMES = {
+  cropCover: "crop-cover",
   drought: "drought-areas",
   soilMoisture: "soil-field-moisture",
   soilTemperature: "soil-field-temperature",

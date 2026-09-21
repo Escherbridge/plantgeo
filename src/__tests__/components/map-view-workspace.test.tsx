@@ -131,7 +131,7 @@ vi.mock("@/lib/trpc/client", () => ({
       resolveBoundaryInArea: {
         useQuery: () => ({ data: undefined, isLoading: false, isError: false }),
       },
-      lookupContactsForSubject: {
+      lookupContactsForSelection: {
         useQuery: () => ({ data: undefined, isLoading: false, isError: false }),
       },
     },

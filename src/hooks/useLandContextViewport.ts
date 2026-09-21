@@ -34,7 +34,7 @@ import { useViewportBounds, PROXIED_RETRY_COUNT } from "@/hooks/useViewportProxi
  * a typed `budget_exceeded`, so asking anyway would surface a refusal banner on every regional
  * pan; the hook reports `area_over_budget` instead and issues no request at all.
  */
-export const LAND_CONTEXT_MAX_AOI_SQUARE_DEGREES = 1;
+export const LAND_CONTEXT_MAX_AOI_SQUARE_DEGREES = 1_600;
 
 /**
  * `RUNG_MAX_BBOX_SQUARE_DEGREES` from `src/lib/server/services/land-context/parquet-reader.ts`,
@@ -215,7 +215,7 @@ export function useLandContextViewport({
   const isAsking = state === "reading" && resolved.bbox !== null;
 
   const query = trpc.landContext.resolveBoundaryInArea.useQuery(
-    { bbox: resolved.bbox ?? NO_VIEWPORT_BBOX },
+    { bbox: resolved.bbox ?? NO_VIEWPORT_BBOX, zoomTier: landContextRungForViewport(zoom, 0) ?? 0 },
     {
       enabled: isAsking,
       staleTime: LAND_CONTEXT_STALE_TIME_MS,

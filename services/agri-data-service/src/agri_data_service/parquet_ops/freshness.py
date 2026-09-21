@@ -67,7 +67,7 @@ def measure_lane_freshness(lane: CensusLane, *, latest_recorded_day: date | None
             expected_horizon_day=expected, staleness_days=None, behind_provider=None, tolerance_days=tolerance
         )
     staleness = max(0, (expected - latest_recorded_day).days)
-    if lane.nature == "release_series" and lane.cadence_days == 1:
+    if lane.nature == "release_series" and lane.cadence_days == 1 and lane.release_days is None:
         # An irregular release cohort (burn-severity: MTBS releases years apart, registered cadence 1)
         # has no rhythm to be behind; staleness is still stated, but flagging it would keep the
         # operator's short list permanently noisy.

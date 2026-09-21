@@ -118,9 +118,7 @@ export function deriveLandContextNotices(input: LandContextNoticeInput): LandCon
         layerId: "land-context-select-point",
         tone: "notice",
         message:
-          `${labelList(enabled)}: click a point on the map to look it up. ` +
-          "Land context is looked up at a clicked point or a selected area, never the current view, " +
-          "and nothing is drawn until you select one.",
+          `${labelList(enabled)}: boundaries load for the current view. Click a point to inspect its published boundary and contact evidence.`,
       },
     ];
   }

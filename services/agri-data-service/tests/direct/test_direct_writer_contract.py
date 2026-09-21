@@ -68,6 +68,8 @@ DIRECT_ROOT = _SOURCE_ROOT / "pipeline" / "direct"
 #: somebody remembers. `water_gauges` is deliberately absent and its absence is asserted, not assumed
 #: -- see `NON_WRITER_MODULES`.
 WRITER_MODULES: Final[dict[str, str]] = {
+    "crop_cover": "agri_data_service.pipeline.direct.crop_cover.forward",
+    "land_context": "agri_data_service.pipeline.direct.land_context.forward",
     "botanical_occurrences": "agri_data_service.pipeline.direct.botanical_occurrences.forward",
     "burn_severity": "agri_data_service.pipeline.direct.burn_severity.forward",
     "climate": "agri_data_service.pipeline.direct.climate.forward",
@@ -586,29 +588,17 @@ def test_the_four_lattice_and_national_lanes_still_refuse_a_bbox() -> None:
         assert "--bbox" not in _flags(package), package
 
 
-def test_watersheds_is_still_the_only_writer_without_a_retry_series() -> None:
-    """NEGATIVE CONTROL. Ten writers retry; this one fetches once, and that is argued rather than owed.
-
-    One turn is one ~9,400-basin, ~47-request NHDPlus_HR walk with no cheaper attribute-only probe to
-    re-poll, against a national reference layer measured to hold exactly ONE load day in its entire
-    history -- so a failed turn costs nothing the next cron tick does not recover. Adding the retry
-    trio "for parity" would double the most expensive fetch in this package to shorten a recovery
-    nothing is waiting on.
-
-    `botanical_occurrences` joined this set 2026-09-12 for an unrelated reason: its turn opens no
-    socket at all. Its input is an archive `fetch.py` already transferred into quarantine under a
-    granted permission verdict; `fetch.py` itself holds the real eight-attempt retry ceiling for the
-    one command that does transfer. See `WRITER_CONTRACT.flags_absent_on_purpose["--retry-attempts"]`
-    in `pipeline/direct/botanical_occurrences/forward.py`.
-    """
+def test_writers_without_retry_series_declare_their_alternative_recovery() -> None:
+    """Only documented archive replay and scheduled complete-capture recovery omit retry controls."""
     without_retries = {package for package in PACKAGES if "--retry-attempts" not in _flags(package)}
-    assert without_retries == {"botanical_occurrences", "watersheds"}, (
-        f"the set of writers with no retry series changed to {sorted(without_retries)}; if watersheds "
-        "gained one, delete its exemption, and if another writer lost one, that is a regression"
+    assert without_retries == {"botanical_occurrences", "watersheds", "crop_cover", "land_context"}, (
+        f"the set of writers with no retry series changed to {sorted(without_retries)}; "
+        "every omitted retry series requires a documented recovery contract"
     )
-    excused = _contract("watersheds").flags_absent_on_purpose
-    for flag in ("--retry-attempts", "--retry-base-seconds", "--retry-max-seconds"):
-        assert flag in excused, f"watersheds omits {flag} with no declared reason"
+    for package in without_retries:
+        excused = _contract(package).flags_absent_on_purpose
+        for flag in ("--retry-attempts", "--retry-base-seconds", "--retry-max-seconds"):
+            assert flag in excused, f"{package} omits {flag} with no declared reason"
 
 
 def test_the_two_record_ceiling_spellings_are_both_still_in_use() -> None:

@@ -390,6 +390,9 @@ def lane_window(lane: LaneRegistration, *, today: date, first_day: date | None =
     if lane.writer_ceiling is not None:
         last_day = min(last_day, lane.writer_ceiling)
     floor = lane.history_floor if first_day is None else first_day
+    if lane.release_days is not None:
+        candidates = tuple(day for day in lane.release_days if floor <= day <= last_day)
+        return (candidates[0], candidates[-1]) if candidates else None
     if last_day < floor:
         return None
     return floor, last_day

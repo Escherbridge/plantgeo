@@ -67,7 +67,7 @@ base rung that says nothing.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, cast
 
 import polars as pl
 
@@ -433,7 +433,12 @@ def derive_and_write_day_tiers(  # noqa: PLR0913 - one coordinate of the day bei
         source = _as_frame(base_table if base_table is not None else store.read_partition(layer, kind, 13, day))
         for tier in tiers:
             try:
-                derived = derive_tier(source, stream=layer, tier=tier, connection=connection)
+                if layer == "crop-cover":
+                    from agri_data_service.pipeline.direct.crop_cover.rows import derive_table  # noqa: PLC0415
+
+                    derived = cast("pl.DataFrame", pl.from_arrow(derive_table(source.to_arrow(), tier)))
+                else:
+                    derived = derive_tier(source, stream=layer, tier=tier, connection=connection)
             except Exception as error:
                 raise TierWriteError(
                     f"{layer} z{tier} {day.isoformat()}: the derivation itself failed, so this day has no honest "

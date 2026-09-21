@@ -163,3 +163,10 @@ Each climate and soil field map surface has its own platform and enabled-layer e
 fields bind `nasa_power`; soil moisture, temperature and VPD bind `era5_land`. Both manifests
 retain order parity with the Python copies. This removes the former generic signal binding
 without changing the producer metric names in published rows.
+# PNW land and crop source admission
+
+The PNW manifest binds land context to `blm_surface_management` and annual crop cover to
+`usda_cdl`. Binding states source eligibility; land-context controls independently require
+readable warehouse publication for each product. County parcels, electric territories and
+state-managed land remain explicitly unavailable and expose no switch. The Kenya manifest
+retains both capabilities in the platform vocabulary without inheriting either US source.

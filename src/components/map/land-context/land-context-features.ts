@@ -50,15 +50,19 @@ export function groupForResult(result: LandContextResult): LandContextGroupId | 
 }
 
 /** A drawable feature, or null for every result that is a coverage statement rather than a match. */
-export function toFeature(result: BoundaryResult, index: number): LandContextFeature | null {
+export function toFeature(result: BoundaryResult, _index: number): LandContextFeature | null {
   if (result.coverageState !== "matched" || !result.sourceFeature) return null;
   const group = groupForResult(result);
   if (!group) return null;
 
   return {
-    id: `${result.sourceFeature.sourceNamespace}:${result.sourceFeature.nativeFeatureKey}:${index}`,
+    id: `${result.sourceFeature.sourceNamespace}:${result.sourceFeature.nativeFeatureKey}`,
+    evidence: result,
     group,
-    title: result.organizationOffice?.officialPublicName ?? result.sourceFeature.nativeFeatureKey,
+    title: result.organizationOffice?.officialPublicName ??
+      (result.sourceFeature.sourceNativeFeatureKey === null
+        ? `${result.sourceFeature.state} — aggregated management area`
+        : result.sourceFeature.displayName ?? result.sourceFeature.sourceNativeFeatureKey ?? result.sourceFeature.nativeFeatureKey),
     category: result.sourceFeature.interestType,
     sourceVintage: result.sourceRelease?.sourceVersion,
     contactRouteSummary: result.documentedHelp ?? undefined,

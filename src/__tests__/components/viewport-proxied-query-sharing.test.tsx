@@ -154,6 +154,7 @@ const EMPTY_PROXIED_COLLECTION = {
 const ARRAY_PROCEDURES = new Set([
   "environmental.getGroundwater",
   "environmental.getPublishedSoilRasters",
+  "landContext.availability",
 ]);
 
 /**
@@ -210,7 +211,9 @@ function recordingLink(): TRPCLink<AppRouter> {
       observable((observer) => {
         recordedOperations.push({ path: op.path, input: op.input });
         const timer = setTimeout(() => {
-          const data = PARQUET_ARRAY_PROCEDURES.has(op.path)
+          const data = op.path === "landContext.cropAvailability"
+            ? { available: false, latestDay: null, releaseDays: [], reason: "No published test edition" }
+            : PARQUET_ARRAY_PROCEDURES.has(op.path)
             ? {
                 state: "ready",
                 requestedDay: "2026-08-28",

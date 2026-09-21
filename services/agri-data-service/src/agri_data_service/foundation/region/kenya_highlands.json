@@ -30,6 +30,7 @@
   "platform_layers": [
     "botanical-occurrences",
     "burn-severity",
+    "crop-cover",
     "drought",
     "evacuation-zones",
     "fire-detections",

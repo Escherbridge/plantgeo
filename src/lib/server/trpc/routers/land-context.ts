@@ -1,5 +1,8 @@
 import { z } from "zod";
 import { router, publicProcedure } from "@/lib/server/trpc/init";
+import { readLandContextAvailability } from "@/lib/server/services/land-context/availability";
+import { readCropCover, readCropCoverAvailability } from "@/lib/server/services/land-context/crop-cover";
+import { readContactsForSelection } from "@/lib/server/services/land-context/reader";
 import {
   attachDecodedGeometries,
   attachDecodedGeometryToOne,
@@ -54,6 +57,17 @@ const parcelKeySchema = z.object({
 });
 
 export const landContextRouter = router({
+  availability: publicProcedure.query(() => readLandContextAvailability()),
+  lookupContactsForSelection: publicProcedure.input(z.discriminatedUnion("mode", [
+    z.object({ mode: z.literal("point"), lon: z.number().min(-180).max(180), lat: z.number().min(-90).max(90) }),
+    z.object({ mode: z.literal("area"), bbox: bboxSchema }),
+  ])).query(({ input }) => readContactsForSelection(input)),
+  cropAvailability: publicProcedure.query(() => readCropCoverAvailability()),
+  cropCoverInArea: publicProcedure.input(z.object({
+    bbox: bboxSchema,
+    asOfDay: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    zoomTier: z.union([z.literal(0), z.literal(5), z.literal(9), z.literal(13)]),
+  })).query(({ input }) => readCropCover(input.bbox, input.asOfDay, input.zoomTier)),
   /**
    * Boundary resolution by point containment. Returns every containing
    * feature (never just the nearest), each with its overlap basis and
@@ -85,12 +99,13 @@ export const landContextRouter = router({
     .input(
       z.object({
         bbox: bboxSchema,
+        zoomTier: z.union([z.literal(0), z.literal(5), z.literal(9), z.literal(13)]).optional(),
         maxFeatures: z.number().int().min(1).max(MAX_FEATURES_RETURNED).optional(),
       })
     )
     .query(async ({ input }) => {
       return attachDecodedGeometries(
-        await readBoundedAoiIntersection(input.bbox, { maxFeatures: input.maxFeatures })
+        await readBoundedAoiIntersection(input.bbox, { maxFeatures: input.maxFeatures, zoomTier: input.zoomTier })
       );
     }),
 

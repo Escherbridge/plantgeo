@@ -29,9 +29,17 @@ export function LandContextPanelHost() {
 
   const focused = candidateIndex !== null ? results[candidateIndex] : null;
 
-  const contactsQuery = trpc.landContext.lookupContactsForSubject.useQuery(
-    { subjectId: focused?.id ?? "", topic: null },
-    { enabled: Boolean(focused) }
+  const selectionCoordinates = selection?.areaPolygon ?? [];
+  const selectionBbox = selectionCoordinates.length ? {
+    west: Math.min(...selectionCoordinates.map((point) => point[0])),
+    south: Math.min(...selectionCoordinates.map((point) => point[1])),
+    east: Math.max(...selectionCoordinates.map((point) => point[0])),
+    north: Math.max(...selectionCoordinates.map((point) => point[1])),
+  } : null;
+  const contactsQuery = trpc.landContext.lookupContactsForSelection.useQuery(
+    selectionBbox ? { mode: "area", bbox: selectionBbox } :
+      { mode: "point", lon: selection?.point?.[0] ?? 0, lat: selection?.point?.[1] ?? 0 },
+    { enabled: Boolean(focused && (selectionBbox || selection?.point)) }
   );
 
   const panelData = useMemo(() => {
@@ -49,7 +57,10 @@ export function LandContextPanelHost() {
           ? `Parcel ${selection.parcelId}`
           : "Selected area";
 
-    return toLandContextPanelData(contactResults, selectionLabel);
+    return toLandContextPanelData(
+      [...(focused.evidence ? [focused.evidence] : []), ...contactResults],
+      selectionLabel
+    );
   }, [focused, selection, contactsQuery.data]);
 
   if (!panelOpen) return null;

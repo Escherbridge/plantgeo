@@ -219,7 +219,7 @@ function captionFor(input: CaptionInput): ParquetLayerFault | null {
         layerId: "land-context-area-over-budget",
         tone: "notice",
         message:
-          "Land-context boundaries load automatically for a viewport of about one square degree or smaller. Zoom in to read them for this view.",
+          "This view is too wide for the available land-context boundaries. Zoom in to read them.",
       };
     case "reading":
       return readingCaption(input);

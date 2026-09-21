@@ -132,6 +132,16 @@ afterEach(() => {
 });
 
 describe("useLandContextQuery geometry", () => {
+  it("keeps a stable source identity and provenance when result ordering changes", () => {
+    const boundary = matched(POLYGON);
+    queries.point.data = { status: "ok", data: [boundary] };
+    const { result, rerender } = renderHook(() => useLandContextQuery(POINT, BLM_ON));
+    const id = result.current.data[0].id;
+    queries.point.data = { status: "ok", data: [coverageOnly("unknown_coverage", [GAP]), boundary] };
+    rerender();
+    expect(result.current.data[0].id).toBe(id);
+    expect(result.current.data[0].evidence?.sourceRelease).toEqual(boundary.sourceRelease);
+  });
   it("draws the geometry the router decoded", () => {
     queries.point.data = { status: "ok", data: [matched(POLYGON)] };
     const { result } = renderHook(() => useLandContextQuery(POINT, BLM_ON));

@@ -121,8 +121,8 @@ function withLane(
 }
 
 function natureFor(layer: string): CoverageRow["nature"] {
-  if (layer === "drought" || layer === "burn-severity") return "release_series";
-  if (["watersheds", "soil-survey", "evacuation-zones", "fire-perimeters"].includes(layer)) {
+  if (layer === "drought" || layer === "burn-severity" || layer === "crop-cover") return "release_series";
+  if (["watersheds", "soil-survey", "evacuation-zones", "fire-perimeters", "land-context-boundaries"].includes(layer)) {
     return "static_lookup";
   }
   return "daily_series";
@@ -234,6 +234,8 @@ describe("getParquetSliderCapabilities", () => {
   });
   it("owns every catalogue row but publishes only end-to-end Parquet readers with exact evidence", async () => {
     const expectedCatalogue = [
+      "crop-cover",
+      "land-context-boundaries",
       "drought-areas",
       "fire-detections",
       "fire-perimeters",
@@ -262,6 +264,8 @@ describe("getParquetSliderCapabilities", () => {
       expectedCatalogue
     );
     expect(PARQUET_CAPABILITY_LANES).toEqual([
+      "crop-cover",
+      "land-context-boundaries",
       "drought",
       "fire-detections",
       "fire-perimeters",

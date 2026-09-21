@@ -15,7 +15,7 @@
 import { REGION_SUBDIVISION_CODES } from "@/lib/region/region";
 
 /** Largest AOI a single bounded query may cover, in square degrees (EPSG:4326). */
-export const MAX_AOI_AREA_SQUARE_DEGREES = 1;
+export const MAX_AOI_AREA_SQUARE_DEGREES = 1_600;
 
 /** Largest polygon vertex count this service will accept in a caller-supplied AOI. */
 export const MAX_AOI_GEOMETRY_VERTICES = 2_000;

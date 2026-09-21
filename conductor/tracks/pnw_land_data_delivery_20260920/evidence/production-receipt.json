@@ -1,0 +1,1397 @@
+{
+  "type": "production-publication-evidence",
+  "recorded_at": "2026-09-21T03:37:11.576069+00:00",
+  "branch": "feat/pnw-land-context-data",
+  "scope": "New worktree code verified against production data; merge, deployment and schedule activation remain pending.",
+  "preflight": {
+    "blm_state_exists": false,
+    "crop_index_exists": false,
+    "existing_base_objects": {
+      "land-context-boundaries": 0,
+      "land-context-offices": 0,
+      "land-context-contacts": 0,
+      "crop-cover": 0
+    }
+  },
+  "blm_capture": {
+    "manifest_sha256": "d3ff5ede79ed9be2245748013a4564b3fb6e9bcc4dba5ad35883aea8ccd33af9",
+    "content_sha256": "f418156340be17c67a08d13481f7a530bb6ed6d0928a047d6640e8ab7a5d4939",
+    "captured_at": "2026-09-21T02:53:48.368027+00:00",
+    "source_counts": {
+      "blm-orwa-ownership": 41190,
+      "blm-national-sma-idaho": 6,
+      "blm-field-offices": 35,
+      "census-state-context": 3
+    }
+  },
+  "blm_publication": {
+    "day": "2026-09-21",
+    "manifest_sha256": "d3ff5ede79ed9be2245748013a4564b3fb6e9bcc4dba5ad35883aea8ccd33af9",
+    "mode": "refresh",
+    "outcome": "written",
+    "products": [
+      {
+        "base_rows": 39630,
+        "layer": "land-context-boundaries",
+        "outcome": "written",
+        "parts": 40,
+        "rows_across_write": 39630,
+        "source": {
+          "captured_at": "2026-09-21T02:53:48.368027+00:00",
+          "content_sha256": "f418156340be17c67a08d13481f7a530bb6ed6d0928a047d6640e8ab7a5d4939",
+          "day": "2026-09-21",
+          "manifest_sha256": "d3ff5ede79ed9be2245748013a4564b3fb6e9bcc4dba5ad35883aea8ccd33af9"
+        },
+        "verified_static_snapshot": true,
+        "written_bytes": 14054792
+      },
+      {
+        "base_rows": 34,
+        "layer": "land-context-offices",
+        "outcome": "written",
+        "parts": 1,
+        "rows_across_write": 34,
+        "source": {
+          "captured_at": "2026-09-21T02:53:48.368027+00:00",
+          "content_sha256": "f418156340be17c67a08d13481f7a530bb6ed6d0928a047d6640e8ab7a5d4939",
+          "day": "2026-09-21",
+          "manifest_sha256": "d3ff5ede79ed9be2245748013a4564b3fb6e9bcc4dba5ad35883aea8ccd33af9"
+        },
+        "verified_static_snapshot": true,
+        "written_bytes": 3745842
+      },
+      {
+        "base_rows": 34,
+        "layer": "land-context-contacts",
+        "outcome": "written",
+        "parts": 1,
+        "rows_across_write": 34,
+        "source": {
+          "captured_at": "2026-09-21T02:53:48.368027+00:00",
+          "content_sha256": "f418156340be17c67a08d13481f7a530bb6ed6d0928a047d6640e8ab7a5d4939",
+          "day": "2026-09-21",
+          "manifest_sha256": "d3ff5ede79ed9be2245748013a4564b3fb6e9bcc4dba5ad35883aea8ccd33af9"
+        },
+        "verified_static_snapshot": true,
+        "written_bytes": 11278
+      }
+    ],
+    "run_id": "pnw-land-initial-blm-20260921",
+    "status": "completed"
+  },
+  "crop_captures": [
+    {
+      "observed_year": 2022,
+      "release_day": "2023-01-30",
+      "raster": {
+        "Name": "2022_30m_cdls",
+        "OBJECTID": 37
+      },
+      "source_url": "https://pdi.scinet.usda.gov/image/rest/services/CDL_WM/ImageServer",
+      "metadata_url": "https://www.nass.usda.gov/Research_and_Science/Cropland/metadata/metadata_wa22.htm",
+      "source_resolution_m": 30,
+      "analysis_resolution_m": 30,
+      "bbox": [
+        -125.0,
+        42.0,
+        -111.0,
+        49.0
+      ],
+      "coverage": "EPSG:5070 grid-aligned envelope containing bbox; US data only; adjoining-state fringes included",
+      "started_at": "2026-09-21T02:44:56.839195+00:00",
+      "captured_at": "2026-09-21T02:45:39.788824+00:00",
+      "manifest_sha256": "964563f4259f6ac0fd83312d3b441a9d93383dbc50e172fd1ca9ed81dd45d773",
+      "tile_count": 99
+    },
+    {
+      "observed_year": 2023,
+      "release_day": "2024-01-31",
+      "raster": {
+        "Name": "2023_30m_cdls",
+        "OBJECTID": 38
+      },
+      "source_url": "https://pdi.scinet.usda.gov/image/rest/services/CDL_WM/ImageServer",
+      "metadata_url": "https://www.nass.usda.gov/Research_and_Science/Cropland/metadata/metadata_wa23.htm",
+      "source_resolution_m": 30,
+      "analysis_resolution_m": 30,
+      "bbox": [
+        -125.0,
+        42.0,
+        -111.0,
+        49.0
+      ],
+      "coverage": "EPSG:5070 grid-aligned envelope containing bbox; US data only; adjoining-state fringes included",
+      "started_at": "2026-09-21T02:43:50.333615+00:00",
+      "captured_at": "2026-09-21T02:44:56.835033+00:00",
+      "manifest_sha256": "9fb53fa9296f0a36ee2a5dee2d70186f9c2135c917e22ec6db44b5cd5f5c0a4a",
+      "tile_count": 99
+    },
+    {
+      "observed_year": 2024,
+      "release_day": "2025-02-27",
+      "raster": {
+        "Name": "2024_10m_cdls",
+        "OBJECTID": 39
+      },
+      "source_url": "https://pdi.scinet.usda.gov/image/rest/services/CDL_WM/ImageServer",
+      "metadata_url": "https://www.nass.usda.gov/Research_and_Science/Cropland/metadata/metadata_CDL24_FGDC-STD-001-1998.htm",
+      "source_resolution_m": 10,
+      "analysis_resolution_m": 30,
+      "bbox": [
+        -125.0,
+        42.0,
+        -111.0,
+        49.0
+      ],
+      "coverage": "EPSG:5070 grid-aligned envelope containing bbox; US data only; adjoining-state fringes included",
+      "started_at": "2026-09-21T02:42:39.517562+00:00",
+      "captured_at": "2026-09-21T02:43:50.328655+00:00",
+      "manifest_sha256": "69aee4813c1d080daa2505c13f5d984cf8347330de9d9398c0ba1d7da0bf1782",
+      "tile_count": 99
+    },
+    {
+      "observed_year": 2025,
+      "release_day": "2026-02-27",
+      "raster": {
+        "Name": "2025_10m_cdls",
+        "OBJECTID": 40
+      },
+      "source_url": "https://pdi.scinet.usda.gov/image/rest/services/CDL_WM/ImageServer",
+      "metadata_url": "https://www.nass.usda.gov/Research_and_Science/Cropland/metadata/metadata_CDL25_FGDC-STD-001-1998.htm",
+      "source_resolution_m": 10,
+      "analysis_resolution_m": 30,
+      "bbox": [
+        -125.0,
+        42.0,
+        -111.0,
+        49.0
+      ],
+      "coverage": "EPSG:5070 grid-aligned envelope containing bbox; US data only; adjoining-state fringes included",
+      "started_at": "2026-09-21T02:41:47.006426+00:00",
+      "captured_at": "2026-09-21T02:42:39.514229+00:00",
+      "manifest_sha256": "e9b1e08059dc360663a8943a4de468a96f8155c6445840aa352f0714339763fa",
+      "tile_count": 99
+    }
+  ],
+  "crop_bootstrap": {
+    "advanced": true,
+    "pointer": {
+      "bootstrap_receipt_key": "layer=crop-cover/kind=observed/availability/bootstrap/receipt=5dc4fdd7cd12fd72a052b7bb42b64541a2c8e26fa3ccb7867285b7d8ec98d53a.json",
+      "bootstrap_receipt_sha256": "5dc4fdd7cd12fd72a052b7bb42b64541a2c8e26fa3ccb7867285b7d8ec98d53a",
+      "created_at": "2026-09-21T03:30:38.746035Z",
+      "earliest_terminal_day": "2023-01-30",
+      "generation_bytes": 15932,
+      "generation_key": "layer=crop-cover/kind=observed/availability/generation=2036876282ff95203d123236a45fbe2d54efb262c33fa11a431156b87f2de2fe/availability.parquet",
+      "generation_receipt_sha256": "5d80766959452592b1658a16659f6a20ba3b5341b9ed74c0eba4c19b3cbf622d",
+      "generation_sha256": "2036876282ff95203d123236a45fbe2d54efb262c33fa11a431156b87f2de2fe",
+      "lane": "crop-cover",
+      "lane_root": "layer=crop-cover/kind=observed",
+      "latest_terminal_day": "2026-02-27",
+      "nature": "release_series",
+      "prior_generation_key": null,
+      "prior_generation_sha256": null,
+      "product": "crop-cover",
+      "required_rungs": [
+        0,
+        5,
+        9,
+        13
+      ],
+      "rows": 16,
+      "schema_version": "1",
+      "source_ceiling": "2026-02-27",
+      "verified_source_inventory_root": "83c4ad961af03828436ea4655d09c8e4872a4b70ab69d9f737a0a5c31833ef55"
+    }
+  },
+  "physical_readback": {
+    "land-context-boundaries": {
+      "2026-09-21": {
+        "0": 3,
+        "5": 3,
+        "9": 3,
+        "13": 39630
+      }
+    },
+    "land-context-offices": {
+      "2026-09-21": {
+        "0": 34,
+        "5": 34,
+        "9": 34,
+        "13": 34
+      }
+    },
+    "land-context-contacts": {
+      "2026-09-21": {
+        "0": 34,
+        "5": 34,
+        "9": 34,
+        "13": 34
+      }
+    },
+    "crop-cover": {
+      "2023-01-30": {
+        "0": 123,
+        "5": 447,
+        "9": 6834,
+        "13": 107767
+      },
+      "2024-01-31": {
+        "0": 123,
+        "5": 447,
+        "9": 6834,
+        "13": 107767
+      },
+      "2025-02-27": {
+        "0": 123,
+        "5": 447,
+        "9": 6833,
+        "13": 107759
+      },
+      "2026-02-27": {
+        "0": 125,
+        "5": 450,
+        "9": 6896,
+        "13": 109009
+      }
+    },
+    "crop_selectable_days": [
+      "2023-01-30",
+      "2024-01-31",
+      "2025-02-27",
+      "2026-02-27"
+    ]
+  },
+  "serving_readback": [
+    {
+      "layer": "crop-cover",
+      "requested_day": "2023-01-30",
+      "served_day": "2023-01-30",
+      "rows": 391,
+      "seconds": 2.172,
+      "truncated": false,
+      "sample_columns": [
+        "aggregation_cell_m",
+        "analysis_resolution_m",
+        "cell_area_ha",
+        "class_areas_json",
+        "class_names_json",
+        "classified_fraction",
+        "crop_area_ha",
+        "crop_fraction",
+        "dominant_crop_code",
+        "dominant_crop_name",
+        "estimation_method",
+        "feature_id",
+        "geometry_wkb",
+        "grid_x",
+        "grid_y",
+        "ingested_at",
+        "observed_year",
+        "release_day",
+        "source",
+        "source_resolution_m",
+        "source_sha256",
+        "source_url"
+      ]
+    },
+    {
+      "layer": "crop-cover",
+      "requested_day": "2024-01-31",
+      "served_day": "2024-01-31",
+      "rows": 391,
+      "seconds": 0.797,
+      "truncated": false,
+      "sample_columns": [
+        "aggregation_cell_m",
+        "analysis_resolution_m",
+        "cell_area_ha",
+        "class_areas_json",
+        "class_names_json",
+        "classified_fraction",
+        "crop_area_ha",
+        "crop_fraction",
+        "dominant_crop_code",
+        "dominant_crop_name",
+        "estimation_method",
+        "feature_id",
+        "geometry_wkb",
+        "grid_x",
+        "grid_y",
+        "ingested_at",
+        "observed_year",
+        "release_day",
+        "source",
+        "source_resolution_m",
+        "source_sha256",
+        "source_url"
+      ]
+    },
+    {
+      "layer": "crop-cover",
+      "requested_day": "2025-02-27",
+      "served_day": "2025-02-27",
+      "rows": 391,
+      "seconds": 0.516,
+      "truncated": false,
+      "sample_columns": [
+        "aggregation_cell_m",
+        "analysis_resolution_m",
+        "cell_area_ha",
+        "class_areas_json",
+        "class_names_json",
+        "classified_fraction",
+        "crop_area_ha",
+        "crop_fraction",
+        "dominant_crop_code",
+        "dominant_crop_name",
+        "estimation_method",
+        "feature_id",
+        "geometry_wkb",
+        "grid_x",
+        "grid_y",
+        "ingested_at",
+        "observed_year",
+        "release_day",
+        "source",
+        "source_resolution_m",
+        "source_sha256",
+        "source_url"
+      ]
+    },
+    {
+      "layer": "crop-cover",
+      "requested_day": "2026-02-27",
+      "served_day": "2026-02-27",
+      "rows": 393,
+      "seconds": 0.5,
+      "truncated": false,
+      "sample_columns": [
+        "aggregation_cell_m",
+        "analysis_resolution_m",
+        "cell_area_ha",
+        "class_areas_json",
+        "class_names_json",
+        "classified_fraction",
+        "crop_area_ha",
+        "crop_fraction",
+        "dominant_crop_code",
+        "dominant_crop_name",
+        "estimation_method",
+        "feature_id",
+        "geometry_wkb",
+        "grid_x",
+        "grid_y",
+        "ingested_at",
+        "observed_year",
+        "release_day",
+        "source",
+        "source_resolution_m",
+        "source_sha256",
+        "source_url"
+      ]
+    },
+    {
+      "layer": "land-context-boundaries",
+      "requested_day": "2026-09-21",
+      "served_day": "2026-09-21",
+      "rows": 3,
+      "seconds": 3.281,
+      "truncated": false,
+      "sample_columns": [
+        "aggregation_basis",
+        "county",
+        "family",
+        "geom_wkb",
+        "geometry_wkb",
+        "interest_type",
+        "label",
+        "native_feature_key",
+        "native_feature_version",
+        "release_admission_verdict",
+        "release_canonical_endpoint",
+        "release_captured_at",
+        "release_day",
+        "release_publisher",
+        "release_source_version",
+        "release_source_watermark_at",
+        "source_feature_count",
+        "source_manifest_sha256",
+        "source_namespace",
+        "source_native_feature_key",
+        "state"
+      ]
+    },
+    {
+      "layer": "land-context-offices",
+      "requested_day": "2026-09-21",
+      "served_day": "2026-09-21",
+      "rows": 34,
+      "seconds": 0.938,
+      "truncated": false,
+      "sample_columns": [
+        "aggregation_basis",
+        "county",
+        "family",
+        "geom_wkb",
+        "geometry_wkb",
+        "interest_type",
+        "label",
+        "native_feature_key",
+        "native_feature_version",
+        "release_admission_verdict",
+        "release_canonical_endpoint",
+        "release_captured_at",
+        "release_day",
+        "release_publisher",
+        "release_source_version",
+        "release_source_watermark_at",
+        "source_feature_count",
+        "source_manifest_sha256",
+        "source_namespace",
+        "source_native_feature_key",
+        "state"
+      ]
+    },
+    {
+      "layer": "land-context-contacts",
+      "requested_day": "2026-09-21",
+      "served_day": "2026-09-21",
+      "rows": 34,
+      "seconds": 0.687,
+      "truncated": false,
+      "sample_columns": [
+        "applicable_geography",
+        "assignment_method",
+        "documented_help",
+        "documented_topic",
+        "effective_from",
+        "effective_to",
+        "forwarding_documented",
+        "object_id",
+        "office_id",
+        "office_type",
+        "official_inquiry_url",
+        "official_public_name",
+        "organization_id",
+        "parent_organization_id",
+        "public_business_email",
+        "public_business_phone",
+        "published_professional_name",
+        "relationship_kind",
+        "release_day",
+        "review_status",
+        "route_meaning",
+        "route_status",
+        "route_type",
+        "source_evidence_url",
+        "source_manifest_sha256",
+        "subject_id",
+        "verified_at"
+      ]
+    }
+  ],
+  "scoped_coverage_readback": {
+    "coverage_schema_version": 3,
+    "generated_at": "2026-09-21T03:33:06.630309Z",
+    "evaluated_through_day": "2026-09-21",
+    "lanes": [
+      {
+        "layer": "crop-cover",
+        "nature": "release_series",
+        "kind": "observed",
+        "zoom": 0,
+        "earliest_day": "2023-01-30",
+        "latest_day": "2026-02-27",
+        "latest_recorded_day": "2026-02-27",
+        "published_ranges": [
+          {
+            "from": "2023-01-30",
+            "to": "2023-01-30"
+          },
+          {
+            "from": "2024-01-31",
+            "to": "2024-01-31"
+          },
+          {
+            "from": "2025-02-27",
+            "to": "2025-02-27"
+          },
+          {
+            "from": "2026-02-27",
+            "to": "2026-02-27"
+          }
+        ],
+        "gap_ranges": [],
+        "governed_absence_ranges": [],
+        "coverage_authority": "availability",
+        "availability_generation_sha256": "2036876282ff95203d123236a45fbe2d54efb262c33fa11a431156b87f2de2fe",
+        "availability_pointer_key": "layer=crop-cover/kind=observed/availability/_LATEST.json",
+        "source_ceiling_day": "2026-02-27",
+        "required_rungs": [
+          0,
+          5,
+          9,
+          13
+        ],
+        "withheld_reason": null,
+        "freshness": {
+          "publication_lag_days": 0,
+          "source_cadence_days": null,
+          "refresh_interval_seconds": null,
+          "expected_horizon_day": "2026-02-27"
+        }
+      },
+      {
+        "layer": "crop-cover",
+        "nature": "release_series",
+        "kind": "observed",
+        "zoom": 5,
+        "earliest_day": "2023-01-30",
+        "latest_day": "2026-02-27",
+        "latest_recorded_day": "2026-02-27",
+        "published_ranges": [
+          {
+            "from": "2023-01-30",
+            "to": "2023-01-30"
+          },
+          {
+            "from": "2024-01-31",
+            "to": "2024-01-31"
+          },
+          {
+            "from": "2025-02-27",
+            "to": "2025-02-27"
+          },
+          {
+            "from": "2026-02-27",
+            "to": "2026-02-27"
+          }
+        ],
+        "gap_ranges": [],
+        "governed_absence_ranges": [],
+        "coverage_authority": "availability",
+        "availability_generation_sha256": "2036876282ff95203d123236a45fbe2d54efb262c33fa11a431156b87f2de2fe",
+        "availability_pointer_key": "layer=crop-cover/kind=observed/availability/_LATEST.json",
+        "source_ceiling_day": "2026-02-27",
+        "required_rungs": [
+          0,
+          5,
+          9,
+          13
+        ],
+        "withheld_reason": null,
+        "freshness": {
+          "publication_lag_days": 0,
+          "source_cadence_days": null,
+          "refresh_interval_seconds": null,
+          "expected_horizon_day": "2026-02-27"
+        }
+      },
+      {
+        "layer": "crop-cover",
+        "nature": "release_series",
+        "kind": "observed",
+        "zoom": 9,
+        "earliest_day": "2023-01-30",
+        "latest_day": "2026-02-27",
+        "latest_recorded_day": "2026-02-27",
+        "published_ranges": [
+          {
+            "from": "2023-01-30",
+            "to": "2023-01-30"
+          },
+          {
+            "from": "2024-01-31",
+            "to": "2024-01-31"
+          },
+          {
+            "from": "2025-02-27",
+            "to": "2025-02-27"
+          },
+          {
+            "from": "2026-02-27",
+            "to": "2026-02-27"
+          }
+        ],
+        "gap_ranges": [],
+        "governed_absence_ranges": [],
+        "coverage_authority": "availability",
+        "availability_generation_sha256": "2036876282ff95203d123236a45fbe2d54efb262c33fa11a431156b87f2de2fe",
+        "availability_pointer_key": "layer=crop-cover/kind=observed/availability/_LATEST.json",
+        "source_ceiling_day": "2026-02-27",
+        "required_rungs": [
+          0,
+          5,
+          9,
+          13
+        ],
+        "withheld_reason": null,
+        "freshness": {
+          "publication_lag_days": 0,
+          "source_cadence_days": null,
+          "refresh_interval_seconds": null,
+          "expected_horizon_day": "2026-02-27"
+        }
+      },
+      {
+        "layer": "crop-cover",
+        "nature": "release_series",
+        "kind": "observed",
+        "zoom": 13,
+        "earliest_day": "2023-01-30",
+        "latest_day": "2026-02-27",
+        "latest_recorded_day": "2026-02-27",
+        "published_ranges": [
+          {
+            "from": "2023-01-30",
+            "to": "2023-01-30"
+          },
+          {
+            "from": "2024-01-31",
+            "to": "2024-01-31"
+          },
+          {
+            "from": "2025-02-27",
+            "to": "2025-02-27"
+          },
+          {
+            "from": "2026-02-27",
+            "to": "2026-02-27"
+          }
+        ],
+        "gap_ranges": [],
+        "governed_absence_ranges": [],
+        "coverage_authority": "availability",
+        "availability_generation_sha256": "2036876282ff95203d123236a45fbe2d54efb262c33fa11a431156b87f2de2fe",
+        "availability_pointer_key": "layer=crop-cover/kind=observed/availability/_LATEST.json",
+        "source_ceiling_day": "2026-02-27",
+        "required_rungs": [
+          0,
+          5,
+          9,
+          13
+        ],
+        "withheld_reason": null,
+        "freshness": {
+          "publication_lag_days": 0,
+          "source_cadence_days": null,
+          "refresh_interval_seconds": null,
+          "expected_horizon_day": "2026-02-27"
+        }
+      },
+      {
+        "layer": "land-context-boundaries",
+        "nature": "static_lookup",
+        "kind": "observed",
+        "zoom": 0,
+        "earliest_day": "2026-09-21",
+        "latest_day": "2026-09-21",
+        "latest_recorded_day": "2026-09-21",
+        "published_ranges": [
+          {
+            "from": "2026-09-21",
+            "to": "2026-09-21"
+          }
+        ],
+        "gap_ranges": [],
+        "governed_absence_ranges": [],
+        "coverage_authority": "census",
+        "availability_generation_sha256": null,
+        "availability_pointer_key": null,
+        "source_ceiling_day": null,
+        "required_rungs": [],
+        "withheld_reason": null,
+        "freshness": {
+          "publication_lag_days": null,
+          "source_cadence_days": null,
+          "refresh_interval_seconds": null,
+          "expected_horizon_day": null
+        }
+      },
+      {
+        "layer": "land-context-boundaries",
+        "nature": "static_lookup",
+        "kind": "observed",
+        "zoom": 5,
+        "earliest_day": "2026-09-21",
+        "latest_day": "2026-09-21",
+        "latest_recorded_day": "2026-09-21",
+        "published_ranges": [
+          {
+            "from": "2026-09-21",
+            "to": "2026-09-21"
+          }
+        ],
+        "gap_ranges": [],
+        "governed_absence_ranges": [],
+        "coverage_authority": "census",
+        "availability_generation_sha256": null,
+        "availability_pointer_key": null,
+        "source_ceiling_day": null,
+        "required_rungs": [],
+        "withheld_reason": null,
+        "freshness": {
+          "publication_lag_days": null,
+          "source_cadence_days": null,
+          "refresh_interval_seconds": null,
+          "expected_horizon_day": null
+        }
+      },
+      {
+        "layer": "land-context-boundaries",
+        "nature": "static_lookup",
+        "kind": "observed",
+        "zoom": 9,
+        "earliest_day": "2026-09-21",
+        "latest_day": "2026-09-21",
+        "latest_recorded_day": "2026-09-21",
+        "published_ranges": [
+          {
+            "from": "2026-09-21",
+            "to": "2026-09-21"
+          }
+        ],
+        "gap_ranges": [],
+        "governed_absence_ranges": [],
+        "coverage_authority": "census",
+        "availability_generation_sha256": null,
+        "availability_pointer_key": null,
+        "source_ceiling_day": null,
+        "required_rungs": [],
+        "withheld_reason": null,
+        "freshness": {
+          "publication_lag_days": null,
+          "source_cadence_days": null,
+          "refresh_interval_seconds": null,
+          "expected_horizon_day": null
+        }
+      },
+      {
+        "layer": "land-context-boundaries",
+        "nature": "static_lookup",
+        "kind": "observed",
+        "zoom": 13,
+        "earliest_day": "2026-09-21",
+        "latest_day": "2026-09-21",
+        "latest_recorded_day": "2026-09-21",
+        "published_ranges": [
+          {
+            "from": "2026-09-21",
+            "to": "2026-09-21"
+          }
+        ],
+        "gap_ranges": [],
+        "governed_absence_ranges": [],
+        "coverage_authority": "census",
+        "availability_generation_sha256": null,
+        "availability_pointer_key": null,
+        "source_ceiling_day": null,
+        "required_rungs": [],
+        "withheld_reason": null,
+        "freshness": {
+          "publication_lag_days": null,
+          "source_cadence_days": null,
+          "refresh_interval_seconds": null,
+          "expected_horizon_day": null
+        }
+      },
+      {
+        "layer": "land-context-contacts",
+        "nature": "static_lookup",
+        "kind": "observed",
+        "zoom": 0,
+        "earliest_day": "2026-09-21",
+        "latest_day": "2026-09-21",
+        "latest_recorded_day": "2026-09-21",
+        "published_ranges": [
+          {
+            "from": "2026-09-21",
+            "to": "2026-09-21"
+          }
+        ],
+        "gap_ranges": [],
+        "governed_absence_ranges": [],
+        "coverage_authority": "census",
+        "availability_generation_sha256": null,
+        "availability_pointer_key": null,
+        "source_ceiling_day": null,
+        "required_rungs": [],
+        "withheld_reason": null,
+        "freshness": {
+          "publication_lag_days": null,
+          "source_cadence_days": null,
+          "refresh_interval_seconds": null,
+          "expected_horizon_day": null
+        }
+      },
+      {
+        "layer": "land-context-contacts",
+        "nature": "static_lookup",
+        "kind": "observed",
+        "zoom": 5,
+        "earliest_day": "2026-09-21",
+        "latest_day": "2026-09-21",
+        "latest_recorded_day": "2026-09-21",
+        "published_ranges": [
+          {
+            "from": "2026-09-21",
+            "to": "2026-09-21"
+          }
+        ],
+        "gap_ranges": [],
+        "governed_absence_ranges": [],
+        "coverage_authority": "census",
+        "availability_generation_sha256": null,
+        "availability_pointer_key": null,
+        "source_ceiling_day": null,
+        "required_rungs": [],
+        "withheld_reason": null,
+        "freshness": {
+          "publication_lag_days": null,
+          "source_cadence_days": null,
+          "refresh_interval_seconds": null,
+          "expected_horizon_day": null
+        }
+      },
+      {
+        "layer": "land-context-contacts",
+        "nature": "static_lookup",
+        "kind": "observed",
+        "zoom": 9,
+        "earliest_day": "2026-09-21",
+        "latest_day": "2026-09-21",
+        "latest_recorded_day": "2026-09-21",
+        "published_ranges": [
+          {
+            "from": "2026-09-21",
+            "to": "2026-09-21"
+          }
+        ],
+        "gap_ranges": [],
+        "governed_absence_ranges": [],
+        "coverage_authority": "census",
+        "availability_generation_sha256": null,
+        "availability_pointer_key": null,
+        "source_ceiling_day": null,
+        "required_rungs": [],
+        "withheld_reason": null,
+        "freshness": {
+          "publication_lag_days": null,
+          "source_cadence_days": null,
+          "refresh_interval_seconds": null,
+          "expected_horizon_day": null
+        }
+      },
+      {
+        "layer": "land-context-contacts",
+        "nature": "static_lookup",
+        "kind": "observed",
+        "zoom": 13,
+        "earliest_day": "2026-09-21",
+        "latest_day": "2026-09-21",
+        "latest_recorded_day": "2026-09-21",
+        "published_ranges": [
+          {
+            "from": "2026-09-21",
+            "to": "2026-09-21"
+          }
+        ],
+        "gap_ranges": [],
+        "governed_absence_ranges": [],
+        "coverage_authority": "census",
+        "availability_generation_sha256": null,
+        "availability_pointer_key": null,
+        "source_ceiling_day": null,
+        "required_rungs": [],
+        "withheld_reason": null,
+        "freshness": {
+          "publication_lag_days": null,
+          "source_cadence_days": null,
+          "refresh_interval_seconds": null,
+          "expected_horizon_day": null
+        }
+      },
+      {
+        "layer": "land-context-offices",
+        "nature": "static_lookup",
+        "kind": "observed",
+        "zoom": 0,
+        "earliest_day": "2026-09-21",
+        "latest_day": "2026-09-21",
+        "latest_recorded_day": "2026-09-21",
+        "published_ranges": [
+          {
+            "from": "2026-09-21",
+            "to": "2026-09-21"
+          }
+        ],
+        "gap_ranges": [],
+        "governed_absence_ranges": [],
+        "coverage_authority": "census",
+        "availability_generation_sha256": null,
+        "availability_pointer_key": null,
+        "source_ceiling_day": null,
+        "required_rungs": [],
+        "withheld_reason": null,
+        "freshness": {
+          "publication_lag_days": null,
+          "source_cadence_days": null,
+          "refresh_interval_seconds": null,
+          "expected_horizon_day": null
+        }
+      },
+      {
+        "layer": "land-context-offices",
+        "nature": "static_lookup",
+        "kind": "observed",
+        "zoom": 5,
+        "earliest_day": "2026-09-21",
+        "latest_day": "2026-09-21",
+        "latest_recorded_day": "2026-09-21",
+        "published_ranges": [
+          {
+            "from": "2026-09-21",
+            "to": "2026-09-21"
+          }
+        ],
+        "gap_ranges": [],
+        "governed_absence_ranges": [],
+        "coverage_authority": "census",
+        "availability_generation_sha256": null,
+        "availability_pointer_key": null,
+        "source_ceiling_day": null,
+        "required_rungs": [],
+        "withheld_reason": null,
+        "freshness": {
+          "publication_lag_days": null,
+          "source_cadence_days": null,
+          "refresh_interval_seconds": null,
+          "expected_horizon_day": null
+        }
+      },
+      {
+        "layer": "land-context-offices",
+        "nature": "static_lookup",
+        "kind": "observed",
+        "zoom": 9,
+        "earliest_day": "2026-09-21",
+        "latest_day": "2026-09-21",
+        "latest_recorded_day": "2026-09-21",
+        "published_ranges": [
+          {
+            "from": "2026-09-21",
+            "to": "2026-09-21"
+          }
+        ],
+        "gap_ranges": [],
+        "governed_absence_ranges": [],
+        "coverage_authority": "census",
+        "availability_generation_sha256": null,
+        "availability_pointer_key": null,
+        "source_ceiling_day": null,
+        "required_rungs": [],
+        "withheld_reason": null,
+        "freshness": {
+          "publication_lag_days": null,
+          "source_cadence_days": null,
+          "refresh_interval_seconds": null,
+          "expected_horizon_day": null
+        }
+      },
+      {
+        "layer": "land-context-offices",
+        "nature": "static_lookup",
+        "kind": "observed",
+        "zoom": 13,
+        "earliest_day": "2026-09-21",
+        "latest_day": "2026-09-21",
+        "latest_recorded_day": "2026-09-21",
+        "published_ranges": [
+          {
+            "from": "2026-09-21",
+            "to": "2026-09-21"
+          }
+        ],
+        "gap_ranges": [],
+        "governed_absence_ranges": [],
+        "coverage_authority": "census",
+        "availability_generation_sha256": null,
+        "availability_pointer_key": null,
+        "source_ceiling_day": null,
+        "required_rungs": [],
+        "withheld_reason": null,
+        "freshness": {
+          "publication_lag_days": null,
+          "source_cadence_days": null,
+          "refresh_interval_seconds": null,
+          "expected_horizon_day": null
+        }
+      }
+    ],
+    "layer_bindings": [
+      {
+        "layer": "botanical-occurrences",
+        "binding": "bound_global",
+        "source": "gbif",
+        "reason": null
+      },
+      {
+        "layer": "burn-severity",
+        "binding": "bound_regional",
+        "source": "mtbs",
+        "reason": null
+      },
+      {
+        "layer": "climate-field-air-temperature",
+        "binding": "bound_global",
+        "source": "nasa_power",
+        "reason": null
+      },
+      {
+        "layer": "climate-field-dew-point",
+        "binding": "bound_global",
+        "source": "nasa_power",
+        "reason": null
+      },
+      {
+        "layer": "climate-field-precipitation",
+        "binding": "bound_global",
+        "source": "nasa_power",
+        "reason": null
+      },
+      {
+        "layer": "climate-field-relative-humidity",
+        "binding": "bound_global",
+        "source": "nasa_power",
+        "reason": null
+      },
+      {
+        "layer": "climate-field-shortwave-radiation",
+        "binding": "bound_global",
+        "source": "nasa_power",
+        "reason": null
+      },
+      {
+        "layer": "climate-field-soil-wetness-profile",
+        "binding": "bound_global",
+        "source": "nasa_power",
+        "reason": null
+      },
+      {
+        "layer": "climate-field-soil-wetness-root-zone",
+        "binding": "bound_global",
+        "source": "nasa_power",
+        "reason": null
+      },
+      {
+        "layer": "climate-field-soil-wetness-surface",
+        "binding": "bound_global",
+        "source": "nasa_power",
+        "reason": null
+      },
+      {
+        "layer": "climate-field-wind-speed",
+        "binding": "bound_global",
+        "source": "nasa_power",
+        "reason": null
+      },
+      {
+        "layer": "crop-cover",
+        "binding": "bound_regional",
+        "source": "usda_cdl",
+        "reason": null
+      },
+      {
+        "layer": "drought",
+        "binding": "bound_regional",
+        "source": "usdm",
+        "reason": null
+      },
+      {
+        "layer": "evacuation-zones",
+        "binding": "bound_regional",
+        "source": "oregon_oem_arcgis",
+        "reason": null
+      },
+      {
+        "layer": "fire-detections",
+        "binding": "bound_global",
+        "source": "firms",
+        "reason": null
+      },
+      {
+        "layer": "fire-perimeters",
+        "binding": "bound_regional",
+        "source": "wfigs",
+        "reason": null
+      },
+      {
+        "layer": "fire-risk",
+        "binding": "unbound",
+        "source": null,
+        "reason": "no_source_bound_in_region"
+      },
+      {
+        "layer": "land-context",
+        "binding": "bound_regional",
+        "source": "blm_surface_management",
+        "reason": null
+      },
+      {
+        "layer": "sensors",
+        "binding": "bound_regional",
+        "source": "noaa_nws",
+        "reason": null
+      },
+      {
+        "layer": "soil-field-moisture",
+        "binding": "bound_global",
+        "source": "era5_land",
+        "reason": null
+      },
+      {
+        "layer": "soil-field-temperature",
+        "binding": "bound_global",
+        "source": "era5_land",
+        "reason": null
+      },
+      {
+        "layer": "soil-field-vpd",
+        "binding": "bound_global",
+        "source": "era5_land",
+        "reason": null
+      },
+      {
+        "layer": "soil-survey",
+        "binding": "bound_regional",
+        "source": "ssurgo",
+        "reason": null
+      },
+      {
+        "layer": "vegetation",
+        "binding": "bound_global",
+        "source": "sentinel2_ndvi",
+        "reason": null
+      },
+      {
+        "layer": "water-gauges",
+        "binding": "bound_regional",
+        "source": "usgs_nwis",
+        "reason": null
+      },
+      {
+        "layer": "watersheds",
+        "binding": "bound_global",
+        "source": "hydrosheds",
+        "reason": null
+      },
+      {
+        "layer": "weather-forecast",
+        "binding": "unbound",
+        "source": null,
+        "reason": "no_source_bound_in_region"
+      },
+      {
+        "layer": "weather-observations",
+        "binding": "bound_global",
+        "source": "open_meteo",
+        "reason": null
+      }
+    ],
+    "region_slug": "pnw",
+    "region_display_name": "Pacific Northwest"
+  },
+  "crop_area_conservation": [
+    {
+      "year": 2022,
+      "rungs": [
+        {
+          "rung": 0,
+          "rows": 123,
+          "crop_area_ha": 8613793.98
+        },
+        {
+          "rung": 5,
+          "rows": 447,
+          "crop_area_ha": 8613793.98
+        },
+        {
+          "rung": 9,
+          "rows": 6834,
+          "crop_area_ha": 8613793.98
+        },
+        {
+          "rung": 13,
+          "rows": 107767,
+          "crop_area_ha": 8613793.98
+        }
+      ],
+      "area_conserved": true
+    },
+    {
+      "year": 2023,
+      "rungs": [
+        {
+          "rung": 0,
+          "rows": 123,
+          "crop_area_ha": 8662786.379999999
+        },
+        {
+          "rung": 5,
+          "rows": 447,
+          "crop_area_ha": 8662786.379999999
+        },
+        {
+          "rung": 9,
+          "rows": 6834,
+          "crop_area_ha": 8662786.379999999
+        },
+        {
+          "rung": 13,
+          "rows": 107767,
+          "crop_area_ha": 8662786.379999999
+        }
+      ],
+      "area_conserved": true
+    },
+    {
+      "year": 2024,
+      "rungs": [
+        {
+          "rung": 0,
+          "rows": 123,
+          "crop_area_ha": 6739201.89
+        },
+        {
+          "rung": 5,
+          "rows": 447,
+          "crop_area_ha": 6739201.890000001
+        },
+        {
+          "rung": 9,
+          "rows": 6833,
+          "crop_area_ha": 6739201.890000001
+        },
+        {
+          "rung": 13,
+          "rows": 107759,
+          "crop_area_ha": 6739201.89
+        }
+      ],
+      "area_conserved": true
+    },
+    {
+      "year": 2025,
+      "rungs": [
+        {
+          "rung": 0,
+          "rows": 125,
+          "crop_area_ha": 7389718.74
+        },
+        {
+          "rung": 5,
+          "rows": 450,
+          "crop_area_ha": 7389718.740000001
+        },
+        {
+          "rung": 9,
+          "rows": 6896,
+          "crop_area_ha": 7389718.74
+        },
+        {
+          "rung": 13,
+          "rows": 109009,
+          "crop_area_ha": 7389718.74
+        }
+      ],
+      "area_conserved": true
+    }
+  ],
+  "validation": {
+    "frontend_test_files": 229,
+    "frontend_tests": 3072,
+    "frontend_gates": [
+      {
+        "gate": "check:data-boundary",
+        "exit_code": 0
+      },
+      {
+        "gate": "type-check",
+        "exit_code": 0
+      },
+      {
+        "gate": "lint",
+        "exit_code": 0
+      },
+      {
+        "gate": "test",
+        "exit_code": 0
+      }
+    ],
+    "python_receipt": {
+      "checks": [
+        {
+          "command": [
+            "ruff",
+            "format",
+            "--check",
+            "src",
+            "tests",
+            "scripts"
+          ],
+          "duration_seconds": 0.286,
+          "name": "format",
+          "status": "pass"
+        },
+        {
+          "command": [
+            "ruff",
+            "check",
+            "src",
+            "tests",
+            "scripts"
+          ],
+          "duration_seconds": 0.173,
+          "name": "lint",
+          "status": "pass"
+        },
+        {
+          "command": [
+            "mypy",
+            "src",
+            "scripts"
+          ],
+          "duration_seconds": 22.113,
+          "name": "mypy",
+          "status": "pass"
+        },
+        {
+          "command": [
+            "pytest",
+            "-q"
+          ],
+          "duration_seconds": 145.876,
+          "name": "pytest",
+          "status": "pass"
+        }
+      ],
+      "digest_domain": "plantgeo.agri-data-service.quality-receipt.v2",
+      "digest_file_count": 928,
+      "generated_at": "2026-09-21T03:24:11.125207Z",
+      "schema_version": 3,
+      "snapshot": {
+        "commit": null,
+        "git_tree": "a8340cfc216fb713e378521a242b135184bc68f2",
+        "kind": "index"
+      },
+      "tools": {
+        "mypy": "mypy 2.3.0 (compiled: yes)",
+        "pytest": "pytest 9.1.1",
+        "python": "3.12.9",
+        "ruff": "ruff 0.15.22",
+        "uv": "uv 0.9.18 (0cee76417 2025-12-16)"
+      },
+      "tree_digest": "sha256:2dec127f6fc65218a9ad503fa541754830049b87aac12c94d0844525a687cac6"
+    }
+  }
+}

@@ -83,9 +83,9 @@ def test_each_source_is_bound_to_its_layer_by_the_pilot_manifest() -> None:
         assert binding.coverage == source.coverage.coverage
 
 
-def test_the_registry_exposes_exactly_the_three_implemented_sources() -> None:
+def test_the_registry_exposes_exactly_the_five_implemented_sources() -> None:
     """A registry that quietly lost an entry would make the boot check pass for the wrong reason."""
-    assert set(declared_source_coverage_claims()) == {"mtbs", "usdm", "ssurgo"}
+    assert set(declared_source_coverage_claims()) == {"mtbs", "usdm", "ssurgo", "blm_surface_management", "usda_cdl"}
 
 
 def test_the_pilot_region_is_servable_and_names_its_unverified_bindings() -> None:
