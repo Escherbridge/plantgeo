@@ -14,6 +14,10 @@ The image omits Alembic and database migration artifacts deliberately. Scheduler
 widens into schema-migration authority. It preserves the source commands, bounded repair commands,
 R2 publication logic; duplicate Railway scheduling configs and retired cache-warming code stay absent.
 
+The runtime installs `libexpat1` for Rasterio/GDAL's `libexpat.so.1` dependency, matching the
+data-service image. The final unprivileged build check imports Rasterio as well as loading
+DuckDB extensions; executor startup can otherwise defer the native-library failure until a lane runs.
+
 The runtime copies `scripts/complete_partial_ladders.py` explicitly. This is the receipt-pinned,
 publication-locked repair for physically present base partitions whose derived rungs or legacy
 completion receipts are incomplete. Run it inside the executor over Railway SSH so its advisory

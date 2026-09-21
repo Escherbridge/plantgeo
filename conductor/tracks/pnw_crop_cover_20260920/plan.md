@@ -16,7 +16,8 @@ for the indexed physical-ladder correction and separate quality/deployment accep
 - [x] Integrate selected-day reads and truthful estimation labels.
 - [x] Validate source captures, area conservation and production readback.
 - [x] Close the current independent PR review's physical publication-ladder findings and record final validation.
-- [ ] Verify the merged revision is deployed and all four admitted editions are readable through the live data service and browser.
+- [ ] Verify the merged revision is deployed and all four admitted editions are readable through the live data service.
+- [ ] Verify all four admitted editions and their controls in the live browser.
 - [ ] Activate `crop-cover-usda-maintain`, preserving existing active lanes.
 - [ ] Collect crop maintenance's first successful scheduled turn before closing this track.
 

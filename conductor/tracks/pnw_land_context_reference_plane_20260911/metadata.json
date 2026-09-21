@@ -7,7 +7,7 @@
   "updated_on": "2026-09-21",
   "coordination_gates": "evidence/land-herbaria-coordination-20260912.md",
   "registration_status": "registered_in_progress",
-  "execution_scope": "September 12 owner override authorized schema, reader, UI and agent implementation. September 20 authorized bounded BLM/crop delivery and production ingestion. The current owner request authorizes PR review, track updates, merging and deployment monitoring; PR #10 passed review and quality gates and is ready to merge. Acquisition against the four unresolved sources remains gated. Schedule activation remains separate follow-up work.",
+  "execution_scope": "September 12 owner override authorized schema, reader, UI and agent implementation. September 20 authorized bounded BLM/crop delivery and production ingestion. The current owner request authorizes PR review, track updates, merging and deployment monitoring; PR #10 merged after review and quality gates on September 21, with deployment in progress. Acquisition against the four unresolved sources remains gated. Schedule activation remains separate follow-up work.",
   "rights_gates_status": "Four source-specific rights gates remain unresolved and block data acquisition from Idaho utility polygons, Idaho state-land, Oregon utilities, and county parcels. Gate verdicts documented in evidence/rights-gate-verdicts-20260912.md. Schema/UI/contract implementation is not blocked by these gates.",
   "depends_on": [],
   "related_tracks": [
@@ -18,7 +18,7 @@
     "multiscale_polygon_surface_20260901",
     "gapless_parquet_publication_20260901"
   ],
-  "next_gate": "Merge reviewed PR #10, then record deployed-code/API acceptance separately from browser and schedule acceptance in pnw_land_data_delivery_20260920. Remaining source rights, authoritative feeds, native identity, watermarks and coverage continue in pnw_land_sources_deferred_20260920. Botanical-to-parcel/contact associations retain separate admission and precision gates.",
+  "next_gate": "Record deployment of merged PR #10 and API acceptance separately from browser and schedule acceptance in pnw_land_data_delivery_20260920. Remaining source rights, authoritative feeds, native identity, watermarks and coverage continue in pnw_land_sources_deferred_20260920. Botanical-to-parcel/contact associations retain separate admission and precision gates.",
   "delivery_track": "pnw_land_data_delivery_20260920",
   "deferred_source_track": "pnw_land_sources_deferred_20260920",
   "publication_evidence": "../pnw_land_data_delivery_20260920/evidence/production-delivery-20260921.md",

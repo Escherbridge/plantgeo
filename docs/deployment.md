@@ -12,6 +12,13 @@ database migration receipt before traffic moves.
 - Redis provides cache, pub/sub, and job coordination.
 - Object storage holds Parquet datasets, availability indexes, PMTiles, and raster products.
 
+Both Python runtime images install Debian `libexpat1`, which provides `libexpat.so.1` for
+the locked Rasterio/GDAL wheel. Installing the Python wheel alone on slim Bookworm does not
+supply that shared library. Each image imports Rasterio in its final unprivileged build check,
+alongside the DuckDB extension check, so a missing native dependency fails the image build.
+The API imports crop-cover support during startup; the executor may reach that import only
+when a lane runs, so successful executor startup alone does not verify this dependency.
+
 ## Database order
 
 For an empty database:

@@ -19,7 +19,7 @@ ingestion. Initial BLM publication is recorded in the
 [delivery evidence](../pnw_land_data_delivery_20260920/evidence/production-delivery-20260921.md).
 The current owner request authorizes PR review, track updates, merging and deployment monitoring.
 [PR #10](https://github.com/Escherbridge/plantgeo/pull/10) passed corrective review and quality
-gates and is ready to merge; deployment and schedule acceptance remain open in the
+gates and merged on September 21; deployment is in progress and schedule acceptance remains open in the
 [delivery plan](../pnw_land_data_delivery_20260920/plan.md).
 Unresolved parcel, utility and state-land sources remain in the
 [deferred source track](../pnw_land_sources_deferred_20260920/plan.md). The applicable

@@ -50,6 +50,10 @@ RUN python scripts/verify_quality_receipt.py
 # --- runtime stage: lean, --no-dev, unchanged from before the gates were added. ---
 FROM base AS runtime
 
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends libexpat1 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Resolve only from the committed lock before adding frequently changing source.
 COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-dev --no-install-project
@@ -80,7 +84,7 @@ RUN python -c "from agri_data_service.parquet_ops.duckdb_session import install_
 USER plantgeo
 
 # Fails the BUILD, not the first request, if the pre-install did not land where the session looks.
-RUN python -c "from agri_data_service.parquet_ops.duckdb_session import open_guarded_connection; open_guarded_connection().close()"
+RUN python -c "import rasterio; from agri_data_service.parquet_ops.duckdb_session import open_guarded_connection; open_guarded_connection().close()"
 
 EXPOSE 8000
 

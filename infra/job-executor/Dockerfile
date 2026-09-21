@@ -34,7 +34,7 @@ ENV PYTHONUNBUFFERED=1 \
     NEXT_TELEMETRY_DISABLED=1
 
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends libatomic1 libstdc++6 \
+    && apt-get install --yes --no-install-recommends libatomic1 libexpat1 libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app/agri-service
@@ -57,6 +57,6 @@ RUN python -c "from agri_data_service.parquet_ops.duckdb_session import install_
 
 USER plantgeo
 
-RUN python -c "from agri_data_service.parquet_ops.duckdb_session import open_guarded_connection; open_guarded_connection().close()"
+RUN python -c "import rasterio; from agri_data_service.parquet_ops.duckdb_session import open_guarded_connection; open_guarded_connection().close()"
 
 CMD ["agri-service", "ops", "jobs-executor"]

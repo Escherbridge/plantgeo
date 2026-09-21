@@ -14,7 +14,7 @@
     "environmental_parquet_serving_20260912",
     "multiscale_polygon_surface_20260901"
   ],
-  "next_gate": "Merge reviewed PR #10 and record deployed-code/API acceptance separately from live browser, accessibility and agent acceptance. No browser is available in the current review session. BLM inquiry routes remain unverified; broader source/contact acceptance continues in pnw_land_sources_deferred_20260920. Optional botanical association retains separate admission/precision review.",
+  "next_gate": "Record deployment of merged PR #10 and API acceptance separately from live browser, accessibility and agent acceptance. No browser is available in the current review session. BLM inquiry routes remain unverified; broader source/contact acceptance continues in pnw_land_sources_deferred_20260920. Optional botanical association retains separate admission/precision review.",
   "registration_status": "registered_in_progress",
   "registry": "conductor/tracks.md",
   "authorization_scope": "September 12 owner override authorized schema, UI, reader and agent implementation. September 20 authorized bounded BLM/crop delivery and production ingestion. The current owner request authorizes PR review, track updates, merging and deployment monitoring. Real ingestion against the four unresolved reference-plane sources remains gated. Schedule activation remains separate follow-up work.",
@@ -41,7 +41,7 @@
     "pnw-state-managed-land-context",
     "pnw-place-contact-details"
   ],
-  "surfaces_status": "BLM/crop controls and branch-code readback recorded in PR #10; corrective review and quality gates passed, ready to merge. Deployment and browser acceptance remain pending. Parcel, utility and state-managed families remain unavailable. Published BLM inquiry routes are unverified.",
+  "surfaces_status": "BLM/crop controls and branch-code readback recorded in PR #10, merged after corrective review and quality gates. Deployment is in progress; browser acceptance remains pending. Parcel, utility and state-managed families remain unavailable. Published BLM inquiry routes are unverified.",
   "delivery_track": "pnw_land_data_delivery_20260920",
   "deferred_source_track": "pnw_land_sources_deferred_20260920",
   "publication_evidence": "../pnw_land_data_delivery_20260920/evidence/production-delivery-20260921.md",

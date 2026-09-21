@@ -11,8 +11,8 @@ owner override authorized implementation; September 20 added bounded BLM/crop de
 ingestion. The current owner request authorizes PR review, track updates, merging and
 deployment monitoring. Initial publication is recorded in the
 [delivery evidence](../pnw_land_data_delivery_20260920/evidence/production-delivery-20260921.md);
-PR #10 passed corrective review and quality gates and is ready to merge; live browser,
-deployment and schedule acceptance remain open.
+PR #10 merged after corrective review and quality gates on September 21; deployment is in
+progress and live browser/schedule acceptance remains open.
 
 The [delivery plan](../pnw_land_data_delivery_20260920/plan.md) owns those bounded acceptance
 gates. The checklist below retains the broader experience requirements. Published BLM office

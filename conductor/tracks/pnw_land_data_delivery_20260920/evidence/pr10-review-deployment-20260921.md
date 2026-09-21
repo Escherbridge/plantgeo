@@ -2,7 +2,7 @@
 type: evidence
 track: pnw_land_data_delivery_20260920
 recorded_at: 2026-09-21
-status: review_and_quality_gates_passed_merge_pending
+status: merged_deployment_in_progress
 ---
 
 # PR #10 review and deployment acceptance
@@ -80,16 +80,37 @@ pytest (152.89 s). The Docker-compatible quality-receipt verifier also passed. T
 - Digest: `sha256:6f0a9a7cd40b9f3f693dfd89e86fc75d453bb8a161e831848c3bea86ae2e3db1`.
 - Generated: `2026-09-21T04:47:22.101165Z`.
 
-Independent review and the quality gates are complete. PR #10 is ready to merge; the final
-commit and merge revisions will be recorded when available. No deployment acceptance follows
-from these local verification results.
+Independent review and the quality gates are complete. The reviewed corrective commit is
+`0a9ecabebf9b53a100ad1ef8437a4fc121a479e6`. PR #10 merged at `2026-09-21T04:53:52Z` as
+`fcadc3536cb46eae58c37c0e1442733249f2c43e`. No deployment acceptance follows from the local
+verification results alone.
+
+## Railway deployment observations
+
+Project: `6faaf3ea-ac46-4c8b-bbfe-1351dbb9d990`; environment:
+`b7cfa813-8a5c-4fcd-80f2-cab736d840a7`. Initial observations after merge bind the following
+deployments to merge commit `fcadc3536cb46eae58c37c0e1442733249f2c43e`:
+
+| Service | Deployment ID | Observed state |
+| --- | --- | --- |
+| Frontend/main | `033210c3-3ccb-4d85-8515-715a77a1d2b4` | BUILDING |
+| Parquet API | `4e21b2ae-2cc2-4f48-a3fb-595fcae1a3c3` | FAILED during startup after a successful build |
+| Job executor | `5d678762-3453-4d6c-9a16-86d49ac2a2b9` | SUCCESS |
+| Martin | `34835837-187c-4e73-b0a7-6c9b0c4fc9d5` | SUCCESS |
+| ML | No new deployment | SKIPPED; unchanged watched scope |
+
+The Parquet API startup failed while importing Rasterio because `libexpat.so.1` was missing
+from the runtime image. Railway retained the previous healthy API deployment. A runtime
+dependency correction is being prepared and independently reviewed; recovery deployment and
+post-deployment API readback remain pending. The frontend is still building. No overall
+deployment acceptance is claimed.
 
 ## Acceptance state
 
 - [x] Complete separate source/test review of the corrective batch.
 - [x] Record passing integrated quality gates and independent review of the corrective batch.
-- [ ] Record the final commit revision after Git normalization.
-- [ ] Merge PR #10 and record the exact merge revision.
+- [x] Record the final commit revision after Git normalization.
+- [x] Merge PR #10 and record the exact merge revision.
 - [ ] Verify frontend, data-service and job-executor deployment of that revision and service health.
 - [ ] Verify post-deployment APIs, BLM product reads and all four crop editions.
 - [ ] Capture live browser acceptance for controls, selected editions and unavailable-family notices.
@@ -97,6 +118,6 @@ from these local verification results.
 
 Browser acceptance is independently pending because `cua.getBrowser` reported no available
 browser in this session. API/readiness evidence cannot substitute for browser evidence.
-No PR #10 merge or deployment is claimed at this stage. Schedules have not been activated,
+PR #10 is merged and deployment is in progress. Schedules have not been activated,
 allowlists have not been changed and no new ingestion was triggered by this review request.
 The delivery, BLM and crop tracks remain `in_progress`; broader deferred sources remain planned.
