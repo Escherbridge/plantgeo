@@ -744,8 +744,8 @@ describe("generate_remediation_report tool wiring", () => {
     expect(mocks.completionStream.mock.calls[4][0].tool_choice).toEqual({ type: "function", function: { name: "remediation_report" } });
   });
 
-  it("retains forced report selection for other configured models", async () => {
-    vi.stubEnv("OPENROUTER_MODEL", "another/provider-model");
+  it.each(['another/provider-model', 'google/gemini-2.5-flash-preview'])("retains existing request settings for other configured models: %s", async (model) => {
+    vi.stubEnv("OPENROUTER_MODEL", model);
     const { streamRegionalIntelligence } = await import("@/lib/server/services/ai-prompt");
     mocks.completionStream
       .mockReturnValueOnce(fakeCompletionStream([{ id: "invalid", name: "remediation_report", input: {} }]))
@@ -755,10 +755,11 @@ describe("generate_remediation_report tool wiring", () => {
     expect(events).toEqual([{ type: "report", report: validReport }]);
     expect(mocks.completionStream.mock.calls[1][0].tool_choice).toEqual({ type: "function", function: { name: "remediation_report" } });
     expect(mocks.completionStream.mock.calls[0][0].tools[0].function.parameters).toHaveProperty("properties.observations.maxItems", 12);
+    for (const [request] of mocks.completionStream.mock.calls) expect(request).not.toHaveProperty('reasoning');
   });
 
-  it("forces a compatible report on the first Gemini call without search", async () => {
-    vi.stubEnv("OPENROUTER_MODEL", "google/gemini-2.5-flash-lite");
+  it.each(['google/gemini-2.5-flash-lite', 'google/gemini-2.5-flash'])("bounds reasoning and forces a compatible report for %s without search", async (model) => {
+    vi.stubEnv("OPENROUTER_MODEL", model);
     const webEvidence = await import("@/lib/server/services/web-evidence");
     const provider = vi.spyOn(webEvidence, "getWebEvidenceProvider").mockReturnValue(null);
     const { streamRegionalIntelligence } = await import("@/lib/server/services/ai-prompt");
@@ -769,11 +770,29 @@ describe("generate_remediation_report tool wiring", () => {
       expect(events).toEqual([{ type: "report", report: validReport }]);
       expect(mocks.completionStream).toHaveBeenCalledTimes(1);
       const request = mocks.completionStream.mock.calls[0][0];
+      expect(request.model).toBe(model);
+      expect(request.reasoning).toEqual({ max_tokens: 2048, exclude: true });
       expect(request.tool_choice).toEqual({ type: "function", function: { name: "remediation_report" } });
       expect(request.tools).toHaveLength(1);
       expect(request.tools[0].function.parameters).not.toHaveProperty("properties.observations.maxItems");
       expect(request.tools[0].function.parameters).toHaveProperty("properties.observations.description", "Maximum item count: 12.");
     } finally { provider.mockRestore(); }
+  });
+
+  it.each(['google/gemini-2.5-flash-lite', 'google/gemini-2.5-flash'])("preserves bounded private reasoning during the %s correction round", async (model) => {
+    vi.stubEnv('OPENROUTER_MODEL', model);
+    const { streamRegionalIntelligence } = await import('@/lib/server/services/ai-prompt');
+    mocks.completionStream
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'invalid', name: 'remediation_report', input: {} }]))
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'valid', name: 'remediation_report', input: validReport }]));
+    const events = [];
+    for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) if (event.type !== 'evidence') events.push(event);
+    expect(events).toEqual([{ type: 'report', report: validReport }]);
+    expect(mocks.completionStream).toHaveBeenCalledTimes(2);
+    for (const [request] of mocks.completionStream.mock.calls) {
+      expect(request.reasoning).toEqual({ max_tokens: 2048, exclude: true });
+      expect(request.tools[0].function.parameters).not.toHaveProperty('properties.observations.maxItems');
+    }
   });
 
   it("requires a tool in search-enabled rounds until the final forced report round", async () => {

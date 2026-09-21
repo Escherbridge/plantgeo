@@ -45,7 +45,8 @@ describe("Gemini report schema projection", () => {
       for (const index of [0, 1]) {
         expect(projected).toHaveProperty(`${path}.anyOf.${index}.type`, 'object');
         expect(projected).toHaveProperty(`${path}.anyOf.${index}.additionalProperties`, false);
-        expect(projected).toHaveProperty(`${path}.anyOf.${index}.required`, index === 0 ? [...required, 'evidenceReadIds'] : required);
+        const warehouseRequired = [...required, ...(path === 'properties.riskSummary' ? [] : ['evidenceSource']), 'evidenceReadIds'];
+        expect(projected).toHaveProperty(`${path}.anyOf.${index}.required`, index === 0 ? warehouseRequired : required);
         for (const field of required) expect(projected).toHaveProperty(`${path}.anyOf.${index}.properties.${field}`);
       }
       expect(projected).toHaveProperty(`${path}.anyOf.0.properties.evidenceReadIds.minItems`, 1);

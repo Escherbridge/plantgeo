@@ -183,22 +183,30 @@ export function reportSchemaForCitations(manifest: ReturnType<typeof reportCitat
         properties.evidenceReadIds.items = { ...properties.evidenceReadIds.items as Record<string, unknown>, enum: readIds };
         properties.evidenceReadIds.description = 'Required for warehouse tool-surface claims: nonempty executed IDs matching each cited source in the current manifest. Include every read used for a comparison. Never invent IDs.';
         const required = Array.isArray(result.required) ? result.required : [];
-        const citationBranch = (origins: string[], measured: boolean, payloadOnly = false) => {
+        const citationBranch = (origins: string[], measured: boolean, payloadOnly = false, measuredSource?: string) => {
           const branchProperties: Record<string, Record<string, unknown>> = { ...properties, evidenceOrigin: { ...properties.evidenceOrigin, enum: origins } };
-          if (measured) branchProperties.evidenceReadIds = { ...properties.evidenceReadIds, minItems: 1 };
+          if (measured) {
+            const sourceReadIds = measuredSource
+              ? [...new Set(manifest.measurementReads.filter((read) => read.evidenceSource === measuredSource).map((read) => read.evidenceReadId))]
+              : readIds;
+            branchProperties.evidenceReadIds = { ...properties.evidenceReadIds, items: { ...properties.evidenceReadIds.items as Record<string, unknown>, enum: sourceReadIds }, minItems: 1 };
+            if (measuredSource) branchProperties.evidenceSource = { ...properties.evidenceSource, enum: [measuredSource] };
+          }
           else delete branchProperties.evidenceReadIds;
           if (payloadOnly && properties.evidenceSource) branchProperties.evidenceSource = { ...properties.evidenceSource, enum: manifest.payloadSources };
           if (payloadOnly && properties.evidenceSources) branchProperties.evidenceSources = { ...properties.evidenceSources, items: { type: 'string', enum: manifest.payloadSources } };
           return {
             ...result,
             properties: branchProperties,
-            required: measured ? [...new Set([...required, 'evidenceReadIds'])] : required.filter((key) => key !== 'evidenceReadIds'),
+            required: measured ? [...new Set([...required, ...(measuredSource ? ['evidenceSource'] : []), 'evidenceReadIds'])] : required.filter((key) => key !== 'evidenceReadIds'),
             additionalProperties: false,
           };
         };
         return {
           anyOf: [
-            citationBranch(['warehouse'], true),
+            ...(properties.evidenceSource
+              ? [...new Set(manifest.measurementReads.map((read) => read.evidenceSource))].map((source) => citationBranch(['warehouse'], true, false, source))
+              : [citationBranch(['warehouse'], true)]),
             citationBranch(['web', 'model_inference'], false),
             ...(manifest.payloadSources.length ? [citationBranch(['warehouse'], false, true)] : []),
           ],

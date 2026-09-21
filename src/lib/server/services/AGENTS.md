@@ -87,9 +87,13 @@ the application never truncates a report into validity.
 When the current manifest has tool measurement IDs, each provider claim uses a nested `anyOf`
 with complete object branches: warehouse tool citations require matching nonempty
 `evidenceReadIds`; inference and web omit the field from both properties and required fields.
-A third branch permits warehouse claims without IDs only for available legacy payload sources.
+A legacy branch permits warehouse claims without IDs only for available legacy payload sources.
 Every branch copies all shared claim properties and required fields and rejects additional
-properties. The outer report remains an object. This follows the Google structured-output
+properties. Each singular-source warehouse observation or recommendation has one branch per
+observed source: its source is required and fixed, and its ID choices contain only that source's
+executed measurement reads. Newly executed reads refresh the corresponding branch. The
+multi-source risk summary retains its combined choices and exact source/read runtime validation.
+The outer report remains an object. This follows the Google structured-output
 example for nested unions; live followups with partial branches omitted sibling claim fields,
 and empty-array cardinality alone failed to keep IDs off inference recommendations. These are
 observed provider behaviors, not a general JSON Schema limitation. The Gemini projection
@@ -106,6 +110,17 @@ omits the field entirely. Sampled history describes only its sampled dates; an i
 cannot establish the extrema or continuity of the requested period.
 The final consistency instruction checks comparison directions against dated values in both
 findings and recommendation rationales and requires all supporting comparison reads to be cited.
+
+The report-schema projection and OpenRouter reasoning budget apply only to the exact model IDs
+`google/gemini-2.5-flash-lite` and `google/gemini-2.5-flash`. Both receive
+`reasoning: { max_tokens: 2048, exclude: true }` on every model round, including the bounded
+correction. OpenRouter documents the token budget and exclusion of reasoning from returned
+responses in its [reasoning-token guide](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens).
+Live followup comparisons without reasoning mixed stale values and reversed measured directions;
+Flash with this bounded budget produced consistent dates, values, directions and read citations
+in the reproduced case. This is observed improvement, not a guarantee of factual correctness.
+The default remains Flash Lite and deployment may choose Flash through `OPENROUTER_MODEL`.
+Other configured models retain their existing request settings and scoped canonical report schema.
 
 Inventory has an eight-second transport deadline. Local and temporal stages reserve twelve and
 fifteen seconds respectively, with at most three concurrent reads. Initial retrieval selects up to

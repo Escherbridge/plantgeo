@@ -54,8 +54,9 @@ const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
  * lever that matters here: every turn ends in a large structured tool call.
  */
 const DEFAULT_MODEL = 'google/gemini-2.5-flash-lite';
-/** Provider schema compatibility is scoped to the reproduced model; see AGENTS.md. */
-const COMPATIBLE_REPORT_SCHEMA_MODEL = 'google/gemini-2.5-flash-lite';
+/** Schema compatibility and bounded reasoning apply only to verified models; see AGENTS.md. */
+const GEMINI_REPORT_MODELS = new Set(['google/gemini-2.5-flash-lite', 'google/gemini-2.5-flash']);
+const GEMINI_REASONING_TOKENS = 2_048;
 
 /**
  * One tool, described the way this module has always described them.
@@ -195,6 +196,7 @@ function buildSystemPrompt(hasWebSearch: boolean): string {
 - In the report, cite the environmental source and observation date for material findings, explain historical and regional comparison limits, and name evidence gaps that change strategy feasibility. Do not expose private deliberation; give concise conclusions and their supporting evidence.
 - EVERY warehouse-origin finding that cites a tool surface MUST include nonempty evidenceReadIds matching each exact evidenceSource, including local observations. Copy the executed IDs from the current citation manifest. Dates, stage and location are displayed beside the claim; include every read used for a comparison. Omit evidenceReadIds entirely from model_inference, web and legacy-payload-only claims; the field is not allowed in those schema branches. Keep recommendations and interpretations labelled model_inference, with their supporting measured findings listed separately in observations. Describe comparison scopes in prose too: a regional comparison is not a measurement at the selected point, and a historical observation is not a current condition.
 - Before reporting, check every numerical comparison against its dated values in both observations and recommendation rationales: a positive later-minus-earlier difference is an increase, a negative difference is a decrease. Two sampled dates alone do not establish a stable trend. Each measured comparison must cite ALL supporting read IDs for the dates it discusses, including temporal reads when local reads contain only the selected date.
+- Each warehouse observation or recommendation cites one exact source and only that source's matching read IDs. Present cross-layer interpretations separately as model_inference, with the supporting measurements in individual observations.
 - Coverage inventories, publication neighbors and nearest reporting-cell metadata help plan reads. They contain no environmental measurement and cannot be used as evidenceReadIds for a measured-condition claim; retrieve actual surface values or measured history first.
 - The current report citation manifest is the authority for evidenceSource, evidenceSources and evidenceReadIds. Copy its exact source names and matching read IDs; legacy payload names and availableLayers are not interchangeable citations. Tool schemas update after new measurements arrive. If the manifest is empty, report the gaps with evidenceOrigin model_inference, evidenceSources [], and omit evidenceSource/evidenceReadIds. Missing evidence alone does not establish a low measured risk.
 ${
@@ -461,13 +463,14 @@ export async function* streamRegionalIntelligence(
     const reportSchema = reportSchemaForCitations(citationManifest);
     const tools = availableTools.map((tool) => {
       if (tool !== REPORT_TOOL && tool !== GENERATE_REMEDIATION_REPORT_TOOL) return asFunctionTool(tool);
-      return asFunctionTool({ ...tool, input_schema: model === COMPATIBLE_REPORT_SCHEMA_MODEL
+      return asFunctionTool({ ...tool, input_schema: GEMINI_REPORT_MODELS.has(model)
         ? geminiReportSchema(reportSchema) : reportSchema });
     });
 
     const completionRequest = {
       model,
       max_tokens: MAX_OUTPUT_TOKENS,
+      ...(GEMINI_REPORT_MODELS.has(model) ? { reasoning: { max_tokens: GEMINI_REASONING_TOKENS, exclude: true } } : {}),
       messages,
       tools,
       // Require productive tool use while allowing the model to choose further evidence.

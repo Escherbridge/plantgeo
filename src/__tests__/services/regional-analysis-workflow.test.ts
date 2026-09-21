@@ -303,7 +303,8 @@ describe('evidence audit honesty', () => {
         const branch = `${path}.anyOf.${index}`;
         expect(schema).toHaveProperty(`${branch}.type`, 'object');
         expect(schema).toHaveProperty(`${branch}.additionalProperties`, false);
-        expect(schema).toHaveProperty(`${branch}.required`, index === 0 ? [...required, 'evidenceReadIds'] : required);
+        const warehouseRequired = [...required, ...(path === 'properties.riskSummary' ? [] : ['evidenceSource']), 'evidenceReadIds'];
+        expect(schema).toHaveProperty(`${branch}.required`, index === 0 ? warehouseRequired : required);
         for (const field of required) expect(schema).toHaveProperty(`${branch}.properties.${field}`);
       }
       expect(schema).toHaveProperty(`${path}.anyOf.0.properties.evidenceOrigin.enum`, ['warehouse']);
@@ -332,6 +333,44 @@ describe('evidence audit honesty', () => {
     expect(legacySchema).toHaveProperty('properties.riskSummary.anyOf.2.properties.evidenceSources.items.enum', ['drought']);
     expect(reportWarehouseEvidenceIssues({ ...report, riskSummary: { ...report.riskSummary, evidenceSources: ['drought', 'soil-field-vpd'] } }, legacyPayload, evidence)).toEqual([]);
     expect(JSON.stringify(REMEDIATION_REPORT_JSON_SCHEMA)).toBe(canonical);
+  });
+  it('binds each singular warehouse source to its own read IDs and refreshes only that source after new reads', () => {
+    const evidence: RegionalAnalysisEvidence = { version: 1, stages: [], limitations: [], toolCalls: [
+      { id: 'local-vpd', stage: 'local', tool: 'surface_evidence_for_selection', source: 'soil-field-vpd', status: 'observed' },
+      { id: 'temporal-vpd', stage: 'temporal', tool: 'surface_evidence_for_selection', source: 'soil-field-vpd', status: 'observed' },
+      { id: 'local-vegetation', stage: 'local', tool: 'surface_evidence_for_selection', source: 'vegetation', status: 'observed' },
+      { id: 'refused-precipitation', stage: 'local', tool: 'surface_evidence_for_selection', source: 'climate-field-precipitation', status: 'refused' },
+    ] };
+    const schema = reportSchemaForCitations(reportCitationManifest(payload, evidence));
+    const snapshot = JSON.stringify(schema);
+    const additionalEvidence: RegionalAnalysisEvidence = { ...evidence, toolCalls: [...evidence.toolCalls,
+      { id: 'additional-vegetation', stage: 'additional', tool: 'surface_evidence_for_selection', source: 'vegetation', status: 'observed' },
+    ] };
+    const refreshed = reportSchemaForCitations(reportCitationManifest(payload, additionalEvidence));
+    for (const path of ['properties.observations.items', 'properties.remediation.items']) {
+      expect(schema).toHaveProperty(`${path}.anyOf`, expect.any(Array));
+      expect(schema).not.toHaveProperty(`${path}.anyOf.3`);
+      expect(schema).toHaveProperty(`${path}.anyOf.0.properties.evidenceSource.enum`, ['soil-field-vpd']);
+      expect(schema).toHaveProperty(`${path}.anyOf.0.properties.evidenceReadIds.items.enum`, ['local-vpd', 'temporal-vpd']);
+      expect(schema).toHaveProperty(`${path}.anyOf.1.properties.evidenceSource.enum`, ['vegetation']);
+      expect(schema).toHaveProperty(`${path}.anyOf.1.properties.evidenceReadIds.items.enum`, ['local-vegetation']);
+      for (const index of [0, 1]) {
+        expect(schema).toHaveProperty(`${path}.anyOf.${index}.required`, expect.arrayContaining(['evidenceSource', 'evidenceReadIds']));
+      }
+      expect(schema).not.toHaveProperty(`${path}.anyOf.2.properties.evidenceReadIds`);
+      expect(refreshed).toHaveProperty(`${path}.anyOf.0.properties.evidenceReadIds.items.enum`, ['local-vpd', 'temporal-vpd']);
+      expect(refreshed).toHaveProperty(`${path}.anyOf.1.properties.evidenceReadIds.items.enum`, ['local-vegetation', 'additional-vegetation']);
+    }
+    expect(JSON.stringify(schema)).toBe(snapshot);
+    const mismatched = remediationReportSchema.parse({
+      riskSummary: { level: 'moderate', headline: 'Evidence is limited.', factors: [], evidenceOrigin: 'model_inference', evidenceSources: [] },
+      observations: [{ statement: 'VPD is measured.', evidenceOrigin: 'warehouse', evidenceSource: 'soil-field-vpd', evidenceReadIds: ['local-vegetation'] }],
+      remediation: [], professionalConsultation: 'Consult an agronomist.',
+    });
+    expect(reportWarehouseEvidenceIssues(mismatched, payload, evidence).length).toBeGreaterThan(0);
+    expect(normalizeProviderReport(mismatched)).toHaveProperty('observations.0.evidenceReadIds', ['local-vegetation']);
+    const matching = { ...mismatched, observations: [{ ...mismatched.observations[0], evidenceReadIds: ['local-vpd', 'temporal-vpd'] }] };
+    expect(reportWarehouseEvidenceIssues(matching, payload, evidence)).toEqual([]);
   });
   it('normalizes only empty provider arrays on explicit nonwarehouse claims', () => {
     const report = {
