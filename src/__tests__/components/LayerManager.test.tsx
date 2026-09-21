@@ -9,6 +9,10 @@ vi.mock("next-auth/react", () => ({
   useSession: () => ({ status: "unauthenticated" }),
 }));
 import { act } from "@testing-library/react";
+vi.mock("@/hooks/useCropCover", () => ({ useCropCover: () => ({
+  enabled: false, day: null, availability: { data: undefined, isError: false },
+  query: { data: undefined, isError: false, isFetching: false },
+}) }));
 import { keepPreviousData } from "@tanstack/react-query";
 import { renderWithProviders } from "@/test/utils";
 import { MapProvider } from "@/lib/map/map-context";

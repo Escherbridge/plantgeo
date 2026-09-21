@@ -3,6 +3,7 @@ import { buildRegionalMeasurementFacts, type RegionalMeasurementFacts } from './
 import { isLayerToggleId, LAYER_REGISTRY } from '@/lib/map/layer-registry';
 import { analysisDateRange, DEFAULT_ANALYSIS_WINDOW } from '@/lib/regional-analysis-selection';
 import { selectionTile } from './regional-map-evidence';
+import { resolveZoomTier } from '@/lib/map/zoom-tiers';
 import type { RegionalContextPayload, TemporalContext } from './regional-context';
 import {
   callRegionalEvidenceTool,
@@ -38,6 +39,7 @@ export function regionalSurfaceName(layer: string): string {
 }
 
 export function regionalEvidenceDay(temporal: TemporalContext, source: string): string {
+  if (source === 'crop-cover') return temporal.analysisSelection?.cropCoverReleaseDay ?? temporal.serverCurrentDate;
   const selected = Object.entries(temporal.analysisSelection?.layerDays ?? {})
     .find(([layer]) => regionalSurfaceName(layer) === source)?.[1];
   if (selected) return selected;
@@ -76,6 +78,10 @@ export function bindRegionalEvidenceArguments(
   const tile = 'bbox' in args ? selectionTile(payload.location.lon, payload.location.lat, temporal.analysisSelection?.zoom ?? 13) : null;
   return {
     ...args,
+    ...(tool === 'read_crop_cover_in_area' ? {
+      asOfDay: temporal.analysisSelection?.cropCoverReleaseDay ?? temporal.serverCurrentDate,
+      zoomTier: resolveZoomTier(temporal.analysisSelection?.zoom ?? 13),
+    } : {}),
     ...(source && 'surface_name' in args ? { surface_name: source } : {}),
     ...('longitude' in args || 'latitude' in args ? { longitude: payload.location.lon, latitude: payload.location.lat } : {}),
     ...('lon' in args || 'lat' in args ? { lon: payload.location.lon, lat: payload.location.lat } : {}),
@@ -182,7 +188,9 @@ function collectProvenanceDays(
     for (const entry of value) collectProvenanceDays(entry, dates, depth + 1);
   } else if (object(value)) {
     for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-      if (['valid_date', 'observed_day', 'served_day'].includes(key) && isCalendarDay(entry)) {
+      if ((key === 'servedDay' || key === 'release_day') && isCalendarDay(entry)) {
+        dates.served_day.add(entry);
+      } else if (['valid_date', 'observed_day', 'served_day'].includes(key) && isCalendarDay(entry)) {
         dates[key as ProvenanceDateField].add(entry);
       } else collectProvenanceDays(entry, dates, depth + 1);
       if (Object.values(dates).reduce((total, entries) => total + entries.size, 0) >= 128) break;
@@ -194,7 +202,7 @@ function collectProvenanceDays(
 export function regionalEvidenceAuditCall(
   id: string, stage: string, tool: string, args: Record<string, unknown>, result: unknown,
 ): AuditCall {
-  const selectedDate = args.day ?? args.as_of_day;
+  const selectedDate = tool === 'read_crop_cover_in_area' ? args.asOfDay : args.day ?? args.as_of_day;
   const validDate = isCalendarDay(selectedDate);
   const provenance = collectProvenanceDays(result);
   const summaries = object(result)?.layer_summaries;
@@ -211,7 +219,7 @@ export function regionalEvidenceAuditCall(
   const observedDates = [...provenance.observed_day].sort();
   const servedDates = [...provenance.served_day].sort();
   const source = typeof args.surface_name === 'string' ? args.surface_name.trim()
-    : tool === 'drought_history_at_point' ? 'drought-areas' : '';
+    : tool === 'drought_history_at_point' ? 'drought-areas' : tool === 'read_crop_cover_in_area' ? 'crop-cover' : '';
   const sources = observedFireSummaries.length > 0
     ? ['burn-severity', 'fire-detections'].filter((lane) => observedFireSummaries.some((summary) =>
       object(summary)?.layer_name === lane && Number(object(summary)?.row_count ?? 0) > 0))

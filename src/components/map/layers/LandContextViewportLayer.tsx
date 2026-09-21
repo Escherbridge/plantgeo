@@ -22,10 +22,6 @@ import { LAND_CONTEXT_GROUP_IDS, type LandContextGroupId } from "@/stores/land-c
  * exporting them would invite a third lane to fork them. See `src/components/map/AGENTS.md`
  * section "The land-context viewport lane".
  */
-const SOURCE_ID = "land-context-viewport";
-const FILL_LAYER_ID = "land-context-viewport-fill";
-const LINE_LAYER_ID = "land-context-viewport-line";
-const LAYER_IDS = [FILL_LAYER_ID, LINE_LAYER_ID];
 
 const GROUP_COLORS: Readonly<Record<LandContextGroupId, string>> = {
   "parcels-land-use": "#f59e0b",
@@ -52,6 +48,8 @@ const AUTHORED_LINE_OPACITY = 0.7;
 
 interface LandContextViewportLayerProps {
   map: MapLibreMap | null;
+  idPrefix?: string;
+  colorExpression?: unknown[];
   /** Boundaries for the current viewport, or null when the lane drew nothing. */
   geojson: GeoJSON.FeatureCollection | null;
   visible?: boolean;
@@ -64,7 +62,12 @@ export function LandContextViewportLayer({
   geojson,
   visible = true,
   opacityScale = 1,
+  idPrefix = "land-context-viewport",
+  colorExpression,
 }: LandContextViewportLayerProps) {
+  const sourceId = idPrefix;
+  const fillLayerId = `${idPrefix}-fill`;
+  const lineLayerId = `${idPrefix}-line`;
   const fillOpacity = AUTHORED_FILL_OPACITY * opacityScale;
   const lineOpacity = AUTHORED_LINE_OPACITY * opacityScale;
 
@@ -82,34 +85,34 @@ export function LandContextViewportLayer({
 
     const beforeId = getFirstSymbolLayer(m);
 
-    if (!m.getSource(SOURCE_ID)) {
-      m.addSource(SOURCE_ID, { type: "geojson", data: current.geojson, promoteId: "featureId" });
+    if (!m.getSource(sourceId)) {
+      m.addSource(sourceId, { type: "geojson", data: current.geojson, promoteId: "featureId" });
     } else {
-      (m.getSource(SOURCE_ID) as GeoJSONSource).setData(current.geojson);
+      (m.getSource(sourceId) as GeoJSONSource).setData(current.geojson);
     }
 
-    if (!m.getLayer(FILL_LAYER_ID)) {
+    if (!m.getLayer(fillLayerId)) {
       m.addLayer(
         {
-          id: FILL_LAYER_ID,
+          id: fillLayerId,
           type: "fill",
-          source: SOURCE_ID,
+          source: sourceId,
           paint: {
-            "fill-color": groupColorExpression() as never,
+            "fill-color": (colorExpression ?? groupColorExpression()) as never,
             "fill-opacity": current.fillOpacity,
           },
         },
         beforeId
       );
     }
-    if (!m.getLayer(LINE_LAYER_ID)) {
+    if (!m.getLayer(lineLayerId)) {
       m.addLayer(
         {
-          id: LINE_LAYER_ID,
+          id: lineLayerId,
           type: "line",
-          source: SOURCE_ID,
+          source: sourceId,
           paint: {
-            "line-color": groupColorExpression() as never,
+            "line-color": (colorExpression ?? groupColorExpression()) as never,
             "line-width": 1,
             "line-opacity": current.lineOpacity,
           },
@@ -117,11 +120,11 @@ export function LandContextViewportLayer({
         beforeId
       );
     }
-  }, []);
+  }, [sourceId, fillLayerId, lineLayerId, colorExpression]);
 
   const removeLayers = useCallback((m: MapLibreMap) => {
-    safeRemoveLayerAndSource(m, LAYER_IDS, SOURCE_ID);
-  }, []);
+    safeRemoveLayerAndSource(m, [fillLayerId, lineLayerId], sourceId);
+  }, [sourceId, fillLayerId, lineLayerId]);
 
   // Persistent listener: survives every future basemap swap, which wipes custom layers.
   useEffect(() => {
@@ -163,7 +166,7 @@ export function LandContextViewportLayer({
     }
     try {
       if (!map.getStyle()) return;
-      const source = map.getSource(SOURCE_ID) as GeoJSONSource | undefined;
+      const source = map.getSource(sourceId) as GeoJSONSource | undefined;
       if (source) {
         source.setData(geojson);
         return;
@@ -172,7 +175,7 @@ export function LandContextViewportLayer({
     } catch {
       // Style torn down mid-swap; the persistent style.load listener re-adds from the ref.
     }
-  }, [map, geojson, visible, addLayers, removeLayers]);
+  }, [map, geojson, visible, addLayers, removeLayers, sourceId]);
 
   // The multiplier, applied without a rebuild.
   useEffect(() => {
@@ -182,13 +185,13 @@ export function LandContextViewportLayer({
     } catch {
       return;
     }
-    if (map.getLayer(FILL_LAYER_ID)) {
-      map.setPaintProperty(FILL_LAYER_ID, "fill-opacity", fillOpacity);
+    if (map.getLayer(fillLayerId)) {
+      map.setPaintProperty(fillLayerId, "fill-opacity", fillOpacity);
     }
-    if (map.getLayer(LINE_LAYER_ID)) {
-      map.setPaintProperty(LINE_LAYER_ID, "line-opacity", lineOpacity);
+    if (map.getLayer(lineLayerId)) {
+      map.setPaintProperty(lineLayerId, "line-opacity", lineOpacity);
     }
-  }, [map, visible, fillOpacity, lineOpacity]);
+  }, [map, visible, fillOpacity, lineOpacity, fillLayerId, lineLayerId]);
 
   return null;
 }

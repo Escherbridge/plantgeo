@@ -140,6 +140,8 @@ interface ParquetCapabilityContract {
 }
 
 const DIRECT_PARQUET_CAPABILITIES = [
+  { layerName: SLIDER_STREAM_LAYER_NAMES.cropCover, temporalKind: "event", parquetNature: "release_series", servingReader: "parquet", parquetLanes: ["crop-cover"] },
+  { layerName: "land-context-boundaries", temporalKind: "snapshot", parquetNature: "static_lookup", servingReader: "parquet", parquetLanes: ["land-context-boundaries"] },
   { layerName: SLIDER_STREAM_LAYER_NAMES.drought, temporalKind: "daily_series", parquetNature: "release_series", servingReader: "parquet", parquetLanes: ["drought"] },
   { layerName: "fire-detections", temporalKind: "event", parquetNature: "daily_series", servingReader: "parquet", parquetLanes: ["fire-detections"] },
   { layerName: "fire-perimeters", temporalKind: "event", parquetNature: "static_lookup", servingReader: "parquet", parquetLanes: ["fire-perimeters"] },

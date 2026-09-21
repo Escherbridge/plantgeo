@@ -1657,3 +1657,19 @@ land-context Parquet lane anywhere in the service, so the drawing path below `la
 is correct but unexercised. That is deliberate -- the renderer exists so the lane's first real
 release draws rather than needing this work done again -- and it is why the empty-with-coverage
 row above is the one that actually ships.
+
+
+## Land context publication controls (2026-09-20)
+
+The Land context dock offers a BLM switch only after its boundary product has published census
+evidence. Parcel, electric utility and state-managed families retain explicit unavailable text
+without switches; BLM publication cannot enable any of them. Crop cover is a separate estimated
+imagery product with its own source-edition selection, so it never captures administrative clicks
+or requests office routes. Its map colors encode crop area share, not confidence. Dock details
+state observed year, source and analysis resolutions, aggregation size and source link.
+
+The viewport renderer accepts an isolated source/layer prefix and color expression so crop and
+administrative geometry share lifecycle handling without sharing data or selection state.
+The clicked boundary retains source evidence through the store. Office lookup intersects the
+selected location/area with the separate published office jurisdiction product, then reads the
+matching official routes once. Geographic overlap does not establish a particular program duty.

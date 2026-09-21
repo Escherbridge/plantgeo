@@ -6,6 +6,7 @@ export interface RegionalAnalysisSelection {
   rangeSteps: number;
   zoom: number;
   layerDays: Record<string, string>;
+  cropCoverReleaseDay?: string;
 }
 
 export const DEFAULT_ANALYSIS_WINDOW = { timeScale: 'month', rangeSteps: 1 } as const;

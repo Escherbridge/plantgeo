@@ -147,7 +147,8 @@ export function toLandContextPanelData(
 
   const place: PlaceDetail = {
     selectionLabel,
-    parcelOrTractId: primary?.sourceFeature?.nativeFeatureKey,
+    parcelOrTractId: primary?.sourceFeature?.sourceNativeFeatureKey === null
+      ? undefined : primary?.sourceFeature?.sourceNativeFeatureKey ?? primary?.sourceFeature?.nativeFeatureKey,
     county: primary?.sourceFeature?.county ?? undefined,
     state: primary?.sourceFeature?.state,
     ownershipCategory: primary?.sourceFeature?.interestType,

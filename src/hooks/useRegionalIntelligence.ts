@@ -14,6 +14,7 @@ import { readRegionalAnalysisEvidence } from '@/lib/regional-analysis-evidence';
 import type { SliderCapabilities } from '@/types/time-slider';
 import type { LocationPrecision } from '@/stores/regional-intelligence-store';
 import { useMapStore } from '@/stores/map-store';
+import { useLandContextStore } from '@/stores/land-context-store';
 
 const DEFAULT_QUESTION = 'Analyze this location';
 
@@ -170,10 +171,13 @@ export function useRegionalIntelligence() {
         ? viewedLayersRef.current
         : undefined;
       const selectionState = useRegionalIntelligenceStore.getState();
+      const cropSelection = useLandContextStore.getState();
+      const cropCoverReleaseDay = cropSelection.cropCoverReleaseDay ?? cropSelection.cropCoverLatestPublishedDay;
       const analysisSelection = {
         timeScale: selectionState.analysisTimeScale,
         rangeSteps: selectionState.analysisRangeSteps,
         zoom: Math.max(0, Math.min(22, useMapStore.getState().viewport.zoom)),
+        ...(cropCoverReleaseDay ? { cropCoverReleaseDay } : {}),
         layerDays: {
           ...Object.fromEntries((viewedLayers ?? []).map(({ layer, date }) => [layer, date])),
           ...useTimeSliderStore.getState().layerDates,

@@ -1,16 +1,23 @@
 ---
 type: track-plan
 track: pnw_land_contact_experience_20260911
-status: planned
+status: in_progress
 ---
 
 # Plan
 
-This is a **registered planned packet**. [conductor/tracks.md](../../tracks.md)
-is the sole current work registry and indexes it as `planned`. Completing the
-packet does not complete or activate the track.
-No implementation, ingestion, outreach, publication or deployment is authorized
-by this plan. No tests or runtime acceptance are performed by creating it.
+This track is `in_progress` in [conductor/tracks.md](../../tracks.md). The September 12
+owner override authorized implementation; September 20 added bounded BLM/crop delivery and
+ingestion. The current owner request authorizes PR review, track updates, merging and
+deployment monitoring. Initial publication is recorded in the
+[delivery evidence](../pnw_land_data_delivery_20260920/evidence/production-delivery-20260921.md);
+PR #10 passed corrective review and quality gates and is ready to merge; live browser,
+deployment and schedule acceptance remain open.
+
+The [delivery plan](../pnw_land_data_delivery_20260920/plan.md) owns those bounded acceptance
+gates. The checklist below retains the broader experience requirements. Published BLM office
+inquiry records remain unverified routes; unavailable parcel, utility and state-land sources
+and broader verified contacts continue in the [deferred source track](../pnw_land_sources_deferred_20260920/plan.md).
 
 Dependency:
 [pnw_land_context_reference_plane_20260911](../pnw_land_context_reference_plane_20260911/spec.md).
@@ -21,8 +28,8 @@ for evidence, admission status and unresolved source questions.
 
 - [ ] Apply the [September 12 coordination gates](../pnw_land_context_reference_plane_20260911/evidence/land-herbaria-coordination-20260912.md): keep withheld/unadmitted botanical associations out of parcel IDs, contact explanations and drafts, while preserving independently admitted land lookup and public records help.
 - [x] Complete independent planning review and parent registration as `planned`.
-- [ ] Obtain separate implementation authorization and assign code write sets
-  before work starts.
+- [x] Record implementation authorization from the September 12 owner override and bounded
+  BLM/crop delivery authorization from September 20; further source admissions retain their gates.
 - [ ] Freeze four PNW toggle meanings: parcels/nonpersonal use, electric
   retail/distribution territories, BLM surface plus office, and state-managed
   interests plus actual agency/program routing.

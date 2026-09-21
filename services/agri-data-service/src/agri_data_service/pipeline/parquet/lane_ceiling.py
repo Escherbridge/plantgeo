@@ -19,18 +19,16 @@ if TYPE_CHECKING:
 
 
 class LaneCeilingFacts(Protocol):
-    """The two registration facts a source ceiling is computed from, named structurally.
-
-    A Protocol rather than a concrete type because the two callers hold different lane records --
-    `LaneRegistration` on the write side, `CensusLane` on the read side -- and a shared base class
-    would drag the whole registry into `parquet_ops`.
-    """
+    """Registration facts shared by writer and reader ceiling calculations."""
 
     @property
     def nature(self) -> LaneNature: ...
 
     @property
     def publication_lag_days(self) -> int: ...
+
+    @property
+    def release_days(self) -> tuple[date, ...] | None: ...
 
 
 def allowed_source_ceiling(lane: LaneCeilingFacts, *, today: date) -> date:
@@ -46,7 +44,10 @@ def allowed_source_ceiling(lane: LaneCeilingFacts, *, today: date) -> date:
     """
     if not nature_has_time_axis(lane.nature):
         return today
-    return today - timedelta(days=lane.publication_lag_days)
+    closing_day = today - timedelta(days=lane.publication_lag_days)
+    if lane.release_days is not None:
+        return max((day for day in lane.release_days if day <= closing_day), default=closing_day)
+    return closing_day
 
 
 __all__ = ["LaneCeilingFacts", "allowed_source_ceiling"]

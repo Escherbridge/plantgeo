@@ -34,12 +34,11 @@ describe("getRegion", () => {
     }).toThrow();
   });
 
-  it("carries the thirteen registered streams from layer-lanes.md §1, minus interventions plus botanical-occurrences", () => {
-    // `interventions` has no Parquet lane (Postgres-only, `layer-lanes.md` §1) and is not an
-    // enabled-layer binding; `botanical-occurrences` is a served plane the manifest also binds
-    // (STYLE-REVIEW-W1.md B1) even though that section's own tally does not name it.
+  it("declares the admitted pilot sources without treating interventions as an environmental lane", () => {
     const slugs = getRegion().enabledLayers.map((binding) => binding.layerSlug);
     expect(slugs).toEqual([
+      "land-context",
+      "crop-cover",
       "soil-survey",
       "fire-detections",
       "vegetation",
@@ -66,5 +65,7 @@ describe("getRegion", () => {
       "botanical-occurrences",
     ]);
     expect(slugs).not.toContain("interventions");
+    expect(getRegion().enabledLayers.find((binding) => binding.layerSlug === "land-context")?.sourceSlug).toBe("blm_surface_management");
+    expect(getRegion().enabledLayers.find((binding) => binding.layerSlug === "crop-cover")?.sourceSlug).toBe("usda_cdl");
   });
 });

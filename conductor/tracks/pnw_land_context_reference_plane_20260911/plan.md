@@ -1,15 +1,23 @@
 ---
 type: track-plan
 track: pnw_land_context_reference_plane_20260911
-status: planned
+status: in_progress
 ---
 
 # Plan
 
-All steps below are future work. The current registry records this packet as
-`planned`; explicit execution scope and source admission precede activation.
-Completing this planning record does not authorize implementation, data capture,
-outreach, publication, deployment or runtime changes.
+The current registry records this track as `in_progress`. Implementation was authorized by
+the September 12 owner override; the September 20 authorization added bounded BLM and USDA
+crop delivery and ingestion. The current owner request authorizes PR review, track updates,
+merging and deployment monitoring. BLM publication and branch-code readback are recorded in
+the [initial delivery evidence](../pnw_land_data_delivery_20260920/evidence/production-delivery-20260921.md).
+
+The [delivery plan](../pnw_land_data_delivery_20260920/plan.md) owns final PR review, deployment,
+live acceptance and first successful scheduled turns. PR #10 passed review and quality gates
+and is ready to merge. The checklist
+below retains the broader family requirements; initial BLM delivery does not close parcel,
+utility, state-land or verified-contact work. Those source admissions continue in the
+[deferred source track](../pnw_land_sources_deferred_20260920/plan.md).
 
 ## R0 — admission and identity decisions
 
@@ -38,7 +46,7 @@ outreach, publication, deployment or runtime changes.
 - [ ] Resolve independent contact/crop facets without naively intersecting every
   publication day or hiding valid geometry behind optional enrichment gaps.
 
-## R2 — bounded acquisition and maintenance, only after authorization
+## R2 — bounded acquisition and maintenance by admitted source
 
 - [ ] Admit exact sources/releases before any capture; retain immutable source
   and rights evidence and bounded validation/normalization receipts.
@@ -51,7 +59,7 @@ outreach, publication, deployment or runtime changes.
 - [ ] Prove contact removal/source corrections cannot be mistaken for partial
   acquisition; preserve explicit lineage and manifest rollback references.
 
-## R3 — readers and agent data parity, only after implementation authorization
+## R3 — readers and agent data parity
 
 - [ ] Provide bounded point/bbox/AOI and ID/topic relationship readers against
   admitted Parquet, with explicit limits, cursors and terminal status.
@@ -73,5 +81,5 @@ outreach, publication, deployment or runtime changes.
 - [ ] Apply the whole implementation batch before the appropriate final
   type/lint/boundary and scoped test sweep; retain release gates separately.
 - [ ] Obtain independent data-governance, relationship and temporal review.
-- [ ] Seek any later publication/deployment decision under the release policy;
-  this packet grants no release or outreach authority.
+- [ ] Record publication/deployment acceptance under the release policy for each admitted
+  slice; the current merge request does not resolve unadmitted source or broader product gates.

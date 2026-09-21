@@ -25,6 +25,7 @@ export const PNW = {
   envelope: { west: -126, south: 41, east: -110, north: 50 },
   defaultCameraEnvelope: { west: -125, south: 42, east: -111, north: 49 },
   subEnvelopes: {
+    crop_cover: { west: -125, south: 42, east: -111, north: 49 },
     burn_severity: { west: -125, south: 42, east: -111, north: 49 },
     botanical_seed: { west: -125, south: 41, east: -110, north: 50 },
   },
@@ -42,10 +43,11 @@ export const PNW = {
   // `enabledLayers` is a governed absence, a slug absent from here is not a federated layer at all,
   // and `layerBindingInRegion` needs both answers to tell those apart offline. Mirrors
   // `foundation/region/layer_availability.py`'s `PLATFORM_LAYER_SLUGS` (STYLE-REVIEW-W5 B1).
-  // `land-context` is in the vocabulary and bound by nothing: no land-context lane is published.
+  // Land and crop source bindings still require published coverage before the dock offers a switch.
   platformLayers: [
     "botanical-occurrences",
     "burn-severity",
+    "crop-cover",
     "drought",
     "evacuation-zones",
     "fire-detections",
@@ -73,6 +75,8 @@ export const PNW = {
     "weather-observations",
   ],
   enabledLayers: [
+    { layerSlug: "land-context", sourceSlug: "blm_surface_management", coverage: "regional" },
+    { layerSlug: "crop-cover", sourceSlug: "usda_cdl", coverage: "regional" },
     { layerSlug: "soil-survey", sourceSlug: "ssurgo", coverage: "regional" },
     { layerSlug: "fire-detections", sourceSlug: "firms", coverage: "global" },
     { layerSlug: "vegetation", sourceSlug: "sentinel2_ndvi", coverage: "global" },

@@ -20,14 +20,22 @@ SENSORS_DIRECT_LANE_ID: Final = "sensors-direct-forward"
 WATERSHEDS_DIRECT_LANE_ID: Final = "watersheds-direct-forward"
 EVACUATION_ZONES_DIRECT_LANE_ID: Final = "evacuation-zones-direct-forward"
 BURN_SEVERITY_DIRECT_LANE_ID: Final = "burn-severity-direct-forward"
+LAND_CONTEXT_FORWARD_LANE_ID: Final = "land-context-blm-forward"
+LAND_CONTEXT_RECONCILE_LANE_ID: Final = "land-context-blm-reconcile"
+LAND_CONTEXT_BACKFILL_LANE_ID: Final = "land-context-blm-backfill"
+CROP_COVER_MAINTENANCE_LANE_ID: Final = "crop-cover-usda-maintain"
 
 __all__ = [
     "BURN_SEVERITY_DIRECT_LANE_ID",
     "CLIMATE_DIRECT_LANE_ID",
+    "CROP_COVER_MAINTENANCE_LANE_ID",
     "DROUGHT_DIRECT_LANE_ID",
     "EVACUATION_ZONES_DIRECT_LANE_ID",
     "FIRE_DETECTIONS_DIRECT_LANE_ID",
     "FIRE_PERIMETERS_DIRECT_LANE_ID",
+    "LAND_CONTEXT_BACKFILL_LANE_ID",
+    "LAND_CONTEXT_FORWARD_LANE_ID",
+    "LAND_CONTEXT_RECONCILE_LANE_ID",
     "MTBS_FORWARD_LANE_ID",
     "SENSORS_DIRECT_LANE_ID",
     "SOIL_DIRECT_LANE_ID",

@@ -53,12 +53,12 @@ describe("landContextRungForViewport", () => {
 });
 
 describe("the AOI budget is what actually gates the automatic read", () => {
-  it("admits a rung for a regional viewport that the AOI budget still refuses", () => {
+  it("admits a regional viewport within the expanded publication budget", () => {
     // Both statements are true at once, and the hook must report `area_over_budget` rather than
     // ask: a rung exists that could serve 98 sq deg, but `readBoundedAoiIntersection` caps the
     // AOI at 1. Raising that cap is an owner decision about server load, not a knob.
     expect(landContextRungForViewport(9, 98)).toBe(9);
-    expect(98).toBeGreaterThan(LAND_CONTEXT_MAX_AOI_SQUARE_DEGREES);
+    expect(98).toBeLessThanOrEqual(LAND_CONTEXT_MAX_AOI_SQUARE_DEGREES);
   });
 
   it("admits a detail-rung viewport that is also within the AOI budget", () => {

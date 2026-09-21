@@ -7,9 +7,7 @@ unbound". The fabricated region here is the next deployment standing the pilot's
 PlantGeo has no US-specific feeds: MTBS, SSURGO, USDM, WFIGS, USGS NWIS, NOAA NWS and the Oregon OEM
 portal all stop at the border, so seven layers arrive unbound and must each say so.
 
-The PNW half of the file is the regression that keeps the rest honest: the pilot binds every
-platform layer but `land-context`, which is in the vocabulary precisely so a surface can ask about
-it and be told `unbound` with a reason rather than nothing at all (STYLE-REVIEW-W5 B1).
+The PNW binds BLM and crop sources while unpublished ML products remain explicitly unbound.
 """
 
 from __future__ import annotations
@@ -85,11 +83,12 @@ UNBOUND_LAYER_SLUGS = tuple(
 #: `land-context` is: they are platform layers whose writer, `services/plantgeo-ml-service`, has
 #: published nothing yet. Binding them before a partition exists would report a working layer over
 #: an empty prefix, which is the one failure the binding rule exists to prevent.
-PILOT_UNBOUND_LAYER_SLUGS = ("fire-risk", "land-context", "weather-forecast")
+PILOT_UNBOUND_LAYER_SLUGS = ("fire-risk", "weather-forecast")
 
 #: Which agent surface name reaches each unbound layer, for the per-layer refusal proof below.
 #: The metadata reader proves absence even for surfaces without an admitted numeric lane.
 UNBOUND_LAYER_AGENT_SURFACES = {
+    "crop-cover": "crop-cover",
     "fire-risk": "fire-risk",
     "land-context": "land-context",
     "weather-forecast": "weather-forecast",
@@ -291,7 +290,7 @@ async def test_a_globally_bound_layers_tool_is_not_refused_by_region(
 # --- The PNW regression --------------------------------------------------------------
 
 
-def test_the_pilot_binds_every_platform_layer_but_the_three_with_no_publisher() -> None:
+def test_the_pilot_binds_land_and_crop_sources_and_retains_unpublished_forecast_absences() -> None:
     """The pilot's governed absences, stated as a test rather than as an omission.
 
     One of the three is `land-context`, whose reference plane has no published lane. The other two
@@ -303,8 +302,9 @@ def test_the_pilot_binds_every_platform_layer_but_the_three_with_no_publisher() 
     assert set(availability) == set(PLATFORM_LAYER_SLUGS)
     unbound = [status.layer_slug for status in availability.values() if status.binding == "unbound"]
     assert unbound == sorted(PILOT_UNBOUND_LAYER_SLUGS)
-    assert availability["land-context"].source_slug is None
-    assert availability["land-context"].reason == "no_source_bound_in_region"
+    assert availability["land-context"].source_slug == "blm_surface_management"
+    assert availability["crop-cover"].source_slug == "usda_cdl"
+    assert availability["land-context"].reason is None
     assert all(
         is_layer_bound(pnw, layer_slug)
         for layer_slug in PLATFORM_LAYER_SLUGS
@@ -332,8 +332,8 @@ def test_the_pilots_census_field_carries_the_whole_vocabulary_with_one_absence()
     assert all(binding.source is not None and binding.reason is None for binding in bound)
     land_context = next(binding for binding in bindings if binding.layer == "land-context")
     assert (land_context.binding, land_context.source, land_context.reason) == (
-        "unbound",
+        "bound_regional",
+        "blm_surface_management",
         None,
-        "no_source_bound_in_region",
     )
     assert set(bindings[0].to_wire()) == {"layer", "binding", "source", "reason"}

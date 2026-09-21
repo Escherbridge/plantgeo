@@ -1,7 +1,7 @@
 ---
 type: track-spec
 slug: pnw_land_context_reference_plane_20260911
-status: planned
+status: in_progress
 ---
 
 # PNW land context and public contact reference plane
@@ -12,19 +12,26 @@ Define a governed reference plane that answers which land or service boundaries
 intersect a place, which public office or adviser is relevant to an idea, and
 which documented public route can help with a contact-process inquiry.
 
-This is a **registered planned packet**. [The registry](../../tracks.md) remains
-the sole current work registry and indexes it as `planned`. Registration does
-not activate the track or authorize execution.
-Research and planning do not authorize implementation, acquisition/ingestion,
-contact with anyone, publication, deployment or scheduler changes. No release
-is admitted. Future execution requires explicit scope and the applicable
-[release policy](../../release-governance.md).
+This track is `in_progress` in [the current registry](../../tracks.md).
+The September 12 owner override authorized schema, reader, UI and agent implementation;
+the September 20 authorization added bounded BLM and USDA crop implementation and production
+ingestion. Initial BLM publication is recorded in the
+[delivery evidence](../pnw_land_data_delivery_20260920/evidence/production-delivery-20260921.md).
+The current owner request authorizes PR review, track updates, merging and deployment monitoring.
+[PR #10](https://github.com/Escherbridge/plantgeo/pull/10) passed corrective review and quality
+gates and is ready to merge; deployment and schedule acceptance remain open in the
+[delivery plan](../pnw_land_data_delivery_20260920/plan.md).
+Unresolved parcel, utility and state-land sources remain in the
+[deferred source track](../pnw_land_sources_deferred_20260920/plan.md). The applicable
+[release policy](../../release-governance.md) and source-specific gates still apply.
 
 The companion [experience track](../pnw_land_contact_experience_20260911/spec.md)
 owns product presentation. This track owns proposed source admission, reference
 identity, relationship evidence, serving contracts and agent data parity.
 The [source inventory](evidence/source-inventory.md) is the retained evidence
-baseline; its source metadata findings are not live coverage or ingestion receipts.
+baseline; its source metadata findings are not live coverage or ingestion receipts. The later
+delivery evidence separately records admitted BLM sources and their initial publication. Official
+office names and state office websites remain unverified inquiry routes, not verified responsibility.
 
 The [September 12 coordination gates](evidence/land-herbaria-coordination-20260912.md)
 govern any later Herbaria association. Unadmitted or withheld/generalized
@@ -197,7 +204,8 @@ Proposed names and registration points are not claims that tools already exist.
 
 ## Future acceptance
 
-All future stages remain unchecked in [the plan](plan.md). Acceptance must
+The broader family acceptance checklist remains open in [the plan](plan.md); bounded BLM and
+crop delivery is tracked separately and does not complete that checklist. Acceptance must
 demonstrate source-rights admission, stable identity, excluded-field handling,
 snapshot freshness, reproducible manifests, bounded readers, exact/ambiguous
 boundary behavior, optional-facet independence, temporal truth and agent/UI
@@ -206,7 +214,7 @@ public-land, overlapping-territory and missing-source cases.
 
 Preserve measured coverage denominators and rejected sources; a representative
 sample is not complete PNW coverage. Later runtime changes require their scoped
-checks after the full batch and independent review. This documentation packet
-requires only metadata/frontmatter/link/whitespace/scope validation and a
-separate [planning review](evidence/independent-review.md). Planning acceptance
-does not complete the track or authorize publication.
+checks after the full batch and independent review. The historical
+[planning review](evidence/independent-review.md) establishes planning quality only. Initial
+publication receipts, final PR review, live acceptance and schedule evidence remain distinct;
+none alone completes the broader track.

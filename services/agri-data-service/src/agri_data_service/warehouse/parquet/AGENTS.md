@@ -13,6 +13,10 @@ prefix, so the three cannot drift. Slug `fire-detections` maps to module
 only place that mapping is spelled.
 
 ## Registration is autoloading, deliberately
+
+The three land-context products share `schemas/land_context.py`: boundaries, office geography,
+and documented routes belong to one source capture and schema owner. `stream_schema_module`
+maps those exact three slugs to the shared module; other slugs retain automatic naming.
 `get_stream_schema` imports the lane's module on a miss and expects it to have called
 `register_stream_schema` at import time. The alternative — a central dict every lane edits — would
 serialise the sixteen-stream wave-2 fan-out onto one file. A lane that registers nothing fails

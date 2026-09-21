@@ -32,6 +32,10 @@ EXPECTED_SCHEDULES = {
     "watersheds-direct-forward": "0 3 * * *",
     "evacuation-zones-direct-forward": "35 * * * *",
     "burn-severity-direct-forward": "55 8 * * *",
+    "land-context-blm-forward": "0 9 * * *",
+    "land-context-blm-reconcile": "0 11 * * *",
+    "land-context-blm-backfill": "0 13 * * *",
+    "crop-cover-usda-maintain": "0 10 * * *",
 }
 
 

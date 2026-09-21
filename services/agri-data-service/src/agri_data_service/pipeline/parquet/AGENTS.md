@@ -1666,3 +1666,19 @@ undergo deduplication. Every final revalidation batch is joined before pointer C
 including all retries, within the existing publication barrier. No cached read replaces
 physical verification. The bound can hold up to eight object payloads at their existing
 byte ceilings; it is not a request to raise those ceilings.
+
+## Explicit publication calendars
+
+An irregular `release_series` may declare sorted, unique `release_days` instead of
+cadence arithmetic. The calendar begins at the registered history floor and uses the
+default cadence of one solely as a compatibility value. Missing partitions create work
+only on admitted release dates; intervening dates are neither gaps nor governed
+absences. Incomplete physical partitions remain visible to repair. The source ceiling
+is the latest admitted release on or before the lag-adjusted horizon. A new upstream
+edition requires an explicit calendar admission, never an extrapolated future date.
+
+USDA CDL shares `warehouse/crop_cover_releases.py` between source capture and the lane
+registration. Source verification still proves each edition's publisher metadata;
+the calendar cannot substitute for capture evidence. Coverage retains actual edition
+days rather than synthesizing daily carry, and missing admitted editions remain
+detectable even when older annual data has been published.

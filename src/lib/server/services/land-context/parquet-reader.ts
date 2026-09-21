@@ -1,7 +1,7 @@
 /**
  * Parquet-plane storage layer for the land-context reference plane.
  *
- * Two published products, two phases, one pointer GET and one data GET per read -- the shape
+ * Published reference products, two phases, one pointer GET and one data GET per read -- the shape
  * `conductor/code_styleguides/layer-lanes.md` §4a requires. See
  * `src/lib/server/services/land-context/AGENTS.md` for why the two products are denormalized,
  * why a parcel-key read still stops short, and what an empty answer here does and does not prove.
@@ -26,7 +26,8 @@ import type {
   RouteMeaning,
   SourceReleaseRef,
 } from "./types";
-import { decodeBoundaryGeometry } from "./geometry/boundary-geometry-adapter";
+import { decodeBoundaryGeometry, decodePublishedGeometry } from "./geometry/boundary-geometry-adapter";
+import { boundaryIntersectsBbox, containsBoundaryPoint } from "./geometry/spatial-match";
 
 // Re-exported so callers of this reader can decode
 // `CandidateBoundaryFeature.boundary.geometryWkb` without importing from `./geometry` directly.
@@ -34,19 +35,13 @@ import { decodeBoundaryGeometry } from "./geometry/boundary-geometry-adapter";
 // `geometryWkb` decodes to `null`, malformed-but-present WKB throws `WkbDecodeError`.
 export { decodeBoundaryGeometry };
 
-/**
- * The two Parquet products this reader reads, by their layer slug.
- *
- * NEITHER SLUG IS REGISTERED IN `pipeline/parquet/lane_registry.py` TODAY. They are a declared
- * expectation, and the warehouse coverage census -- not this constant -- is what decides whether
- * anything is published: an unregistered slug simply never appears in the census, and every read
- * below reports that as a stated gap rather than as an empty collection.
- */
+/** Independently published reference products; see AGENTS.md. */
 export const LAND_CONTEXT_PRODUCT_LAYERS = {
   /** `land_context.boundary_versions` joined to its `source_releases` row, one flat row per feature. */
   boundaries: "land-context-boundaries",
   /** `place_office_topic_relationships` joined to `organizations` and `public_contact_routes`. */
   contacts: "land-context-contacts",
+  offices: "land-context-offices",
 } as const;
 
 /**
@@ -139,13 +134,15 @@ export function bboxSquareDegrees(bbox: BboxDegrees): number {
  */
 export function selectServingRung(
   publishedTiers: readonly ZoomTier[],
-  bboxAreaSquareDegrees: number
+  bboxAreaSquareDegrees: number,
+  finestAllowed?: ZoomTier
 ): RungSelectionResult<ZoomTier> {
   return selectFinestAdmittingRungResult({
     coarsestFirst: ZOOM_TIERS,
     maxBboxSquareDegrees: RUNG_MAX_BBOX_SQUARE_DEGREES,
     areaSquareDegrees: bboxAreaSquareDegrees,
     isPublished: (tier) => publishedTiers.includes(tier),
+    finestAllowed,
   });
 }
 
@@ -195,7 +192,8 @@ function lanesForProduct(
  */
 async function resolveServingPartition(
   layer: string,
-  bboxAreaSquareDegrees: number
+  bboxAreaSquareDegrees: number,
+  finestAllowed?: ZoomTier
 ): Promise<PointerResolution | PointerRefusal> {
   let census: Awaited<ReturnType<typeof getParquetWarehouseCoverage>>;
   try {
@@ -232,7 +230,7 @@ async function resolveServingPartition(
   }
 
   const publishedTiers = readable.map((lane) => lane.zoomTier);
-  const rungSelection = selectServingRung(publishedTiers, bboxAreaSquareDegrees);
+  const rungSelection = selectServingRung(publishedTiers, bboxAreaSquareDegrees, finestAllowed);
   if (rungSelection.kind === "rung_not_on_ladder") {
     // Structurally unreachable from this call site (no `finestAllowed` is ever set above), but
     // named so a future caller that DOES set one is not silently folded into the area refusal.
@@ -300,6 +298,12 @@ const boundaryRowSchema = z.object({
   state: pilotStateSchema,
   county: nullableText,
   geom_wkb: nullableText,
+  geometry_wkb: z.unknown().optional(),
+  aggregation_basis: nullableText.optional(),
+  source_native_feature_key: nullableText.optional(),
+  label: z.string().optional(),
+  source_feature_count: z.number().int().positive().optional(),
+  source_manifest_sha256: z.string().optional(),
   release_publisher: z.string().min(1),
   release_canonical_endpoint: z.string().min(1),
   release_source_version: z.string().min(1),
@@ -362,6 +366,11 @@ function toBoundaryRef(row: BoundaryRow): BoundaryVersionRef {
     state: row.state,
     county: row.county,
     geometryWkb: row.geom_wkb,
+    ...(row.geometry_wkb == null ? {} : { geometry: decodePublishedGeometry(row.geometry_wkb) }),
+    aggregationBasis: row.aggregation_basis,
+    sourceNativeFeatureKey: row.source_native_feature_key,
+    displayName: row.label,
+    sourceFeatureCount: row.source_feature_count,
   };
 }
 
@@ -376,6 +385,7 @@ function toSourceReleaseRef(row: BoundaryRow): SourceReleaseRef {
     // watermark, which is a change clock and not a release date.
     sourcePublishedTime: null,
     admissionVerdict: row.release_admission_verdict,
+    sourceManifestSha256: row.source_manifest_sha256,
   };
 }
 
@@ -398,6 +408,7 @@ function bboxOverlapBasis(partition: ServingPartition, bbox: BboxDegrees): Overl
 interface ProductRows<TRow> {
   rows: TRow[];
   gap: string;
+  refusal?: CoverageRefusal | null;
 }
 
 async function readProductRows<TRow>(
@@ -422,6 +433,7 @@ async function readProductRows<TRow>(
     return {
       rows: [],
       gap: `land-context read of ${partition.layer} failed (${failure.fault.kind}): ${failure.fault.message}; this is a transport failure, not a coverage finding`,
+      refusal: { coverageState: "upstream_unavailable", detail: "The boundary data request did not complete." },
     };
   }
 
@@ -432,6 +444,7 @@ async function readProductRows<TRow>(
         return {
           rows: [],
           gap: `${partition.layer} rows do not match the schema this reader declares; see src/lib/server/services/land-context/AGENTS.md`,
+          refusal: { coverageState: "upstream_unavailable", detail: "The published rows could not be validated." },
         };
       }
       return {
@@ -474,11 +487,14 @@ async function readProductRows<TRow>(
  * SET IS NEVER A COVERAGE FINDING; read the gap.
  */
 export async function pruneCandidatesByBbox(
-  bbox: BboxDegrees
+  bbox: BboxDegrees,
+  finestAllowed?: ZoomTier,
+  layer: string = LAND_CONTEXT_PRODUCT_LAYERS.boundaries
 ): Promise<{ candidateKeys: string[]; gap: string; refusal: CoverageRefusal | null }> {
   const resolved = await resolveServingPartition(
-    LAND_CONTEXT_PRODUCT_LAYERS.boundaries,
-    bboxSquareDegrees(bbox)
+    layer,
+    bboxSquareDegrees(bbox),
+    finestAllowed
   );
   if (resolved.partition === null) {
     return {
@@ -500,7 +516,7 @@ export async function pruneCandidatesByBbox(
 export async function exactIntersectCandidates(
   candidateKeys: string[],
   bbox: BboxDegrees
-): Promise<{ features: CandidateBoundaryFeature[]; gap: string }> {
+): Promise<{ features: CandidateBoundaryFeature[]; gap: string; refusal?: CoverageRefusal | null }> {
   if (candidateKeys.length === 0) {
     return {
       features: [],
@@ -510,23 +526,34 @@ export async function exactIntersectCandidates(
 
   const features: CandidateBoundaryFeature[] = [];
   const gaps: string[] = [];
+  let dataRefusal: CoverageRefusal | null = null;
   for (const key of candidateKeys) {
     const partition = parsePartitionKey(key);
     if (partition === null) {
       gaps.push(`candidate key "${key}" is not a partition key this reader issued`);
       continue;
     }
-    const { rows, gap } = await readProductRows(partition, boundaryRowSchema, bbox);
+    const { rows, gap, refusal: rowRefusal } = await readProductRows(partition, boundaryRowSchema, bbox);
+    dataRefusal = rowRefusal ?? dataRefusal;
     if (gap.length > 0) gaps.push(gap);
     for (const row of rows) {
+      if (row.release_admission_verdict !== "admitted") {
+        gaps.push("A source release awaiting admission was withheld.");
+        continue;
+      }
+      const boundary = toBoundaryRef(row);
+      const intersection = boundaryIntersectsBbox(decodeBoundaryGeometry(boundary), bbox);
+      if (intersection === false) continue;
       features.push({
-        boundary: toBoundaryRef(row),
-        overlapBasis: bboxOverlapBasis(partition, bbox),
+        boundary,
+        overlapBasis: intersection === true
+          ? { kind: "exact_geometry_intersection", description: `Published boundary geometry intersects the requested area (release day ${partition.day}).` }
+          : bboxOverlapBasis(partition, bbox),
         sourceRelease: toSourceReleaseRef(row),
       });
     }
   }
-  return { features, gap: gaps.join("; ") };
+  return { features, gap: [...new Set(gaps)].join("; "), refusal: dataRefusal };
 }
 
 /**
@@ -536,7 +563,8 @@ export async function exactIntersectCandidates(
  */
 export async function findContainingFeatures(
   lon: number,
-  lat: number
+  lat: number,
+  layer: string = LAND_CONTEXT_PRODUCT_LAYERS.boundaries
 ): Promise<{ features: CandidateBoundaryFeature[]; gap: string; refusal: CoverageRefusal | null }> {
   const probe: BboxDegrees = {
     west: lon - POINT_PROBE_PAD_DEGREES,
@@ -544,11 +572,22 @@ export async function findContainingFeatures(
     east: lon + POINT_PROBE_PAD_DEGREES,
     north: lat + POINT_PROBE_PAD_DEGREES,
   };
-  const pruned = await pruneCandidatesByBbox(probe);
+  const pruned = await pruneCandidatesByBbox(probe, undefined, layer);
   if (pruned.candidateKeys.length === 0) {
     return { features: [], gap: pruned.gap, refusal: pruned.refusal };
   }
-  return { ...(await exactIntersectCandidates(pruned.candidateKeys, probe)), refusal: null };
+  const result = await exactIntersectCandidates(pruned.candidateKeys, probe);
+  return {
+    ...result,
+    refusal: result.refusal ?? null,
+    features: result.features.flatMap((feature) => {
+      const contains = containsBoundaryPoint(decodeBoundaryGeometry(feature.boundary), [lon, lat]);
+      if (contains === false) return [];
+      return [{ ...feature, overlapBasis: contains === true
+        ? { kind: "point_containment" as const, description: "The selected point intersects the published boundary geometry; this is not a legal ownership determination." }
+        : feature.overlapBasis }];
+    }),
+  };
 }
 
 /**
@@ -598,7 +637,7 @@ export async function findBoundaryByParcelKey(
  * product's nature rather than by a rectangle.
  */
 export async function findRelationshipsAndRoutes(
-  subjectId: string,
+  subjectId: string | readonly string[],
   topic: string | null
 ): Promise<{
   relationships: PlaceOfficeTopicRelationshipRef[];
@@ -620,9 +659,10 @@ export async function findRelationshipsAndRoutes(
     };
   }
 
-  const { rows, gap } = await readProductRows(resolved.partition, contactRowSchema, null);
+  const { rows, gap, refusal: dataRefusal } = await readProductRows(resolved.partition, contactRowSchema, null);
+  if (dataRefusal) return { ...empty, gap, refusal: dataRefusal };
   const matching = rows
-    .filter((row) => row.subject_id === subjectId)
+    .filter((row) => typeof subjectId === "string" ? row.subject_id === subjectId : subjectId.includes(row.subject_id))
     .filter((row) => topic === null || row.documented_topic === topic);
   if (matching.length === 0) return { ...empty, gap };
   if (matching.length > MAX_FEATURES_RETURNED) {

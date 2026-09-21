@@ -14,6 +14,8 @@ import type { SliderCapabilities } from "@/types/time-slider";
 
 /** Each concrete map surface binds its own publication lane; see map/AGENTS.md. */
 export const REGION_LAYER_SLUG_BY_WAREHOUSE_NAME: Readonly<Record<string, string>> = {
+  "crop-cover": "crop-cover",
+  "land-context-boundaries": "land-context",
   "burn-severity": "burn-severity",
   "evacuation-zones": "evacuation-zones",
   "fire-detections": "fire-detections",

@@ -1,0 +1,10 @@
+{
+  "slug": "pnw_crop_cover_20260920",
+  "title": "PNW crop-cover estimates",
+  "type": "feature",
+  "status": "in_progress",
+  "created_on": "2026-09-20",
+  "updated_on": "2026-09-21",
+  "parent_track": "pnw_land_data_delivery_20260920",
+  "execution_scope": "Publish annual USDA CDL classifications aggregated into equal-area cells with source resolution, analysis resolution, area fractions and release dates."
+}

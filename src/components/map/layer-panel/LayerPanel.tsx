@@ -19,6 +19,8 @@ import { ViewDockSection } from "@/components/map/layer-panel/ViewDockSection";
 import { Button } from "@/components/ui/button";
 import { useMap } from "@/lib/map/map-context";
 import { usePanelStore } from "@/stores/panel-store";
+import { trpc } from "@/lib/trpc/client";
+import { CropCoverControls } from "@/components/map/land-context/CropCoverControls";
 import {
   LAND_CONTEXT_GROUP_IDS,
   LAND_CONTEXT_GROUP_LABELS,
@@ -143,6 +145,20 @@ function LandContextDockSection() {
   const [isExpanded, setIsExpanded] = useState(true);
   const enabledGroups = useLandContextStore((state) => state.enabledGroups);
   const toggleGroup = useLandContextStore((state) => state.toggleGroup);
+  const setGroupEnabled = useLandContextStore((state) => state.setGroupEnabled);
+  const availability = trpc.landContext.availability.useQuery(undefined, {
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+  });
+
+  useEffect(() => {
+    for (const group of LAND_CONTEXT_GROUP_IDS) {
+      if (enabledGroups[group] && (availability.isError ||
+          (availability.data && !availability.data.some((entry) => entry.group === group && entry.status === "available")))) {
+        setGroupEnabled(group, false);
+      }
+    }
+  }, [availability.data, availability.isError, enabledGroups, setGroupEnabled]);
 
   return (
     <div
@@ -178,15 +194,26 @@ function LandContextDockSection() {
           data-testid="dock-section-body-land-context"
           className="mb-1 mt-1 flex flex-col gap-1"
         >
-          {LAND_CONTEXT_GROUP_IDS.map((group) => (
-            <LandContextGroupRow
-              key={group}
-              icon={MapPinned}
-              label={LAND_CONTEXT_GROUP_LABELS[group]}
-              isOn={enabledGroups[group]}
-              onToggle={() => toggleGroup(group)}
-            />
-          ))}
+          <CropCoverControls />
+          {LAND_CONTEXT_GROUP_IDS.map((group) => {
+            const entry = availability.data?.find((candidate) => candidate.group === group);
+            return entry?.status === "available" && !availability.isError ? (
+              <LandContextGroupRow
+                key={group}
+                icon={MapPinned}
+                label={LAND_CONTEXT_GROUP_LABELS[group]}
+                isOn={enabledGroups[group]}
+                onToggle={() => toggleGroup(group)}
+              />
+            ) : (
+              <div key={group} className="px-1 py-1 text-xs text-[hsl(var(--muted-foreground))]">
+                <span>{LAND_CONTEXT_GROUP_LABELS[group]}</span>
+                <p className="mt-0.5 text-[10px]">
+                  {availability.isError ? "Availability could not be checked." : entry?.reason ?? "Checking availability…"}
+                </p>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

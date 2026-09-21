@@ -56,6 +56,15 @@ function renderDock(map: MapLibreMap | null = null) {
     links: [httpBatchLink({ url: "http://localhost/api/trpc", transformer: superjson })],
   });
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  queryClient.setQueryData([["landContext", "availability"], { type: "query" }], [
+    { group: "blm-lands", status: "available", reason: "Published", latestDay: "2026-09-20" },
+    { group: "parcels-land-use", status: "unavailable", reason: "Unavailable", latestDay: null },
+    { group: "electric-utility-territories", status: "unavailable", reason: "Unavailable", latestDay: null },
+    { group: "state-managed-lands", status: "unavailable", reason: "Unavailable", latestDay: null },
+  ]);
+  queryClient.setQueryData([["landContext", "cropAvailability"], { type: "query" }], {
+    available: false, latestDay: null, releaseDays: [], reason: "Not yet published",
+  });
   return renderWithProviders(
     <trpc.Provider client={trpcClient} queryClient={queryClient}>
       <MapProvider value={map}><LayerPanel /></MapProvider>
@@ -799,4 +808,14 @@ describe("LayerPanel control sections", () => {
     expect(useMapStore.getState().is3DEnabled).toBe(true);
     expect(useMapStore.getState().activeLayers).toEqual(["sensors"]);
   });
+});
+
+
+it('offers a published BLM switch but no fabricated parcel, utility or state-land switches', () => {
+  renderDock();
+  if (!screen.queryByTestId('layer-panel')) openPanel();
+  expect(screen.getByRole('switch', { name: 'BLM lands' })).toBeTruthy();
+  expect(screen.queryByRole('switch', { name: 'Parcels & land use' })).toBeNull();
+  expect(screen.queryByRole('switch', { name: 'Electric utility territories' })).toBeNull();
+  expect(screen.queryByRole('switch', { name: 'State-managed lands' })).toBeNull();
 });

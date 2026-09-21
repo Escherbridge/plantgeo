@@ -1,0 +1,10 @@
+{
+  "slug": "pnw_blm_sources_20260920",
+  "title": "PNW BLM sources",
+  "type": "feature",
+  "status": "in_progress",
+  "created_on": "2026-09-20",
+  "updated_on": "2026-09-21",
+  "parent_track": "pnw_land_data_delivery_20260920",
+  "execution_scope": "Publish BLM surface management and separately typed administrative office geography across Washington, Oregon and Idaho."
+}

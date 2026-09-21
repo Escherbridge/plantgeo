@@ -183,52 +183,18 @@ reading as an outage. A stale answer is retained across a PENDING request and dr
 matching the `keepPreviousData` rule stated for the proxied-viewport queries.
 ## land-context-viewport
 
-`useLandContextViewport.ts` is the automatic viewport read the owner admitted on 2026-09-18 --
-the third of the three options `conductor/RUNBOOK.md` "Finding 4" left open. It is **additive**:
-`useLandContextQuery` keeps answering the click-driven point/parcel selection unchanged, and the
-two key different react-query entries, so neither can shrink the other's answer.
+`useLandContextViewport` reads automatically without replacing the explicit click selection.
+The client sends its zoom tier and bbox. The server chooses the finest published tier no finer
+than that zoom whose area ceiling admits the view. Coarse BLM products dissolve by source/state,
+so a regional view can fit the same 200-feature/2 MB response limits. Both client and server cap
+area at 1,600 square degrees; the repeated constants are pinned by tests because browser modules
+cannot import server modules. The response does not state a served rung, so the client reports
+`rung_unknown`, never a computed rung as if the server had confirmed it.
 
-Three numbers live here as restated copies, not imports, because their homes are server-only
-(`scripts/check-client-server-imports.mjs` forbids `@/lib/server/**` from a hook) -- the same
-device `WATERSHED_LIST_MAX_SQUARE_DEGREES` uses in `useViewportProxiedLayers.ts`:
-
-- `LAND_CONTEXT_MAX_AOI_SQUARE_DEGREES` mirrors `MAX_AOI_AREA_SQUARE_DEGREES` (`budgets.ts`). It
-  is the **binding** constraint: at 1 square degree the automatic read only fires from roughly z10
-  in, and a wider viewport reports `area_over_budget` rather than collecting a refusal banner on
-  every pan. Raising it is a scoped, reviewed budget change and an owner decision, not a knob.
-- `LAND_CONTEXT_RUNG_MAX_BBOX_SQUARE_DEGREES` mirrors `RUNG_MAX_BBOX_SQUARE_DEGREES`
-  (`land-context/parquet-reader.ts`).
-- The rung is **selected on the server** from the bbox it receives. The procedure takes no zoom on
-  purpose: a zoom in the input would be part of the query key, and the map and any panel reading
-  the same viewport would split into two entries drawing two different aggregations of it.
-
-`landContextRungForViewport` picks from zoom AND bbox size -- the finest rung at or below the
-zoom's own tier that still admits the area. Zoom alone is the defect the 2026-09-14 handoff
-confirmed against the botanical plane: a normal regional viewport landed on a rung bounded at 100
-square degrees and was refused, while the rung below it would have answered at 16x the budget.
-
-**The client walk is a gate, never a caption.** `selectServingRung` (`parquet-reader.ts`) takes no
-zoom and walks finest-first, so for a small bbox at a low map zoom it can serve two rungs finer than
-`landContextRungForViewport` would name. The hook therefore uses its walk only to decide whether
-*any* rung admits the viewport (`no_rung_serves_this_viewport`), and reports `servedZoomTier`, which
-is the rung the SERVER states. `resolveBoundaryInArea` states none today, so that field is
-`"rung_unknown"` once a result is in hand -- a value a caption must render as "rung not reported",
-never as a tier (STYLE-REVIEW-W2 S3). Giving it a real tier means adding the served rung to the
-response, not re-deriving it on the client.
-
-### land-context-viewport: mounted, and moved (N12)
-
-Mounted as of the 2026-09-18 wave-3 mount, and moved again the same day: this hook is now called
-from `useLandContextViewportBoundaries`
-(`src/components/map/layer-manager/useLandContextViewportBoundaries.ts`), not from `LayerManager.tsx`
-directly -- see that module's own header for why the decode moved into one shared lane. `area_over_
-budget` still renders through `ParquetLayerFaultBanner` with `tone: "notice"` -- the caption tone,
-never the fault tone. An automatic read that silently does not fire is indistinguishable from one
-that failed, which is the whole reason the state is surfaced at all.
-
-`landContextRungForViewport` now delegates its walk to `selectFinestAdmittingRung`
-(`src/lib/map/rung-selection.ts`); the ladder, the ceilings and the zoom gate stay here. See
-`src/lib/map/AGENTS.md` "rung-selection.ts".
+`useCropCover` independently reads USDA CDL estimates, keyed by selected source edition and view.
+The edition selector offers published release days from the census; rows supply the observed
+year. It is an annual-reference selector, not a daily observation slider. Disabling availability
+or a failed read suppresses geometry. Collapsing the dock does not stop the map query.
 
 ## Live viewport reads
 

@@ -122,6 +122,8 @@ DIRECT_PACKAGE_PATH_DEPTH: Final = 5
 
 DIRECT_PACKAGES: Final = frozenset(
     {
+        "crop_cover",
+        "land_context",
         "climate",
         "soil",
         "vegetation",

@@ -273,7 +273,7 @@ async def test_ordinary_publication_indexes_all_rungs_and_refuses_lost_physical_
     physical = [
         key
         for key in storage.backend.objects
-        if f"/day={day.day:02d}/" in key
+        if f"/year={day.year:04d}/month={day.month:02d}/day={day.day:02d}/" in key
         and "/zoom=" in key
         and (key.endswith(".parquet") if not empty else key.endswith("absent.json"))
     ]

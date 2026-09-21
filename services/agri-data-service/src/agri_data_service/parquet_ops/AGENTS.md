@@ -847,3 +847,14 @@ contract applies to time-bearing lanes. MTBS still passes through its additional
 proof; the snapshot day must also occur in the exact availability generation used for the request.
 The ordinary day/window row budgets, per-day truncation semantics, release requested/served-day
 distinction, bbox filtering, and four-state wire envelopes remain owned by `serving.py`.
+
+## Explicit annual editions
+
+`CensusLane.release_days` carries the registration's admitted publication calendar.
+Coverage and freshness compare published editions with those dates; they do not charge
+daily gaps between annual editions. Published ranges and `latest_recorded_day` retain
+the actual publication dates. The generic release reader selects the newest admitted
+edition at or before the requested day and resolves that exact partition. If that
+edition is missing, the result remains missing rather than falling back to an older
+crop year. Layers without an explicit calendar retain their existing cadence and
+release-selection behavior.

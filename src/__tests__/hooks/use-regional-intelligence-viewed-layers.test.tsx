@@ -11,6 +11,7 @@ import { useRegionalIntelligence } from "@/hooks/useRegionalIntelligence";
 import { useRegionalIntelligenceStore } from '@/stores/regional-intelligence-store';
 import { useTimeSliderStore } from "@/stores/time-slider-store";
 import { useMapStore } from '@/stores/map-store';
+import { useLandContextStore } from '@/stores/land-context-store';
 import type { SliderCapabilities } from "@/types/time-slider";
 
 const FIRE_COVERAGE_GAP = { from: "2023-03-01", to: "2025-11-05" };
@@ -74,6 +75,7 @@ function postedBody(fetchMock: ReturnType<typeof refusingFetch>) {
 }
 
 beforeEach(() => {
+  useLandContextStore.setState({ cropCoverReleaseDay: null, cropCoverLatestPublishedDay: null });
   vi.stubGlobal("crypto", {
     ...globalThis.crypto,
     randomUUID: () => "00000000-0000-4000-8000-000000000000",
@@ -367,4 +369,18 @@ describe("posting the days the user is viewing with an analysis request", () => 
       { layer: "water", date: "2025-04-01", hasDataOnDate: true },
     ]);
   });
+});
+
+
+it('posts the resolved annual crop edition and rereads it for every follow-up', async () => {
+  const fetchMock = refusingFetch();
+  vi.stubGlobal('fetch', fetchMock);
+  useRegionalIntelligenceStore.getState().openPanel(44, -116, 'exact');
+  useLandContextStore.setState({ cropCoverLatestPublishedDay: '2026-02-27', cropCoverReleaseDay: null });
+  const { result } = renderHook(() => useRegionalIntelligence());
+  await act(async () => { await result.current.sendFollowUp('Read crop cover'); });
+  expect(JSON.parse(fetchMock.mock.calls[0][1].body).analysisSelection.cropCoverReleaseDay).toBe('2026-02-27');
+  useLandContextStore.setState({ cropCoverReleaseDay: '2025-02-27' });
+  await act(async () => { await result.current.sendFollowUp('Read the selected edition'); });
+  expect(JSON.parse(fetchMock.mock.calls[1][1].body).analysisSelection.cropCoverReleaseDay).toBe('2025-02-27');
 });

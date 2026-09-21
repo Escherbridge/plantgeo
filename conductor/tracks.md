@@ -1,6 +1,6 @@
 ---
 type: track-registry
-updated_on: 2026-09-18
+updated_on: 2026-09-21
 ---
 
 # Current tracks
@@ -33,13 +33,17 @@ This registry contains planned, active, and blocked work only. Completed impleme
 
 | Track | State | Outstanding work |
 | --- | --- | --- |
+| [PNW land data delivery](tracks/pnw_land_data_delivery_20260920/plan.md) | in_progress | PR #10 corrective review and quality gates passed; ready to merge. Deployed-code health, live browser acceptance, lane activation and first successful scheduled turns remain separate gates. |
+| [PNW BLM sources](tracks/pnw_blm_sources_20260920/plan.md) | in_progress | Initial boundaries, office jurisdictions and unverified inquiry records published; PR #10 review/validation passed. Merge, deployed readback, refresh/reconcile/backfill activation and successful turns remain. |
+| [PNW crop-cover estimates](tracks/pnw_crop_cover_20260920/plan.md) | in_progress | USDA CDL 2022–2025 editions published; PR #10 review/validation passed. Merge, all four editions verified live, maintenance activation and a successful turn remain. |
+| [PNW remaining land sources](tracks/pnw_land_sources_deferred_20260920/plan.md) | planned | Additional BLM interests, NLCD, parcels, utilities and state-managed inventories; unavailable sources have no switches. |
 | [Botanical species profile lookup](tracks/botanical_species_profile_lookup_20260911/plan.md) | active | Census the approved Railway lookup, admit growth and composition sources, publish immutable profiles, and prove API/agent/MCP parity. |
 | [PNW Herbaria source admission](tracks/pnw_herbaria_source_admission_20260911/plan.md) | active | Resolve exact release identity, field maps, reuse and coordinate policies, and quarantine controls before a bounded specimen pilot. |
 | [Botanical occurrence Parquet lane](tracks/botanical_occurrence_parquet_lane_20260911/plan.md) | planned | Publish governed occurrence and taxonomy data after source admission. |
 | [Botanical occurrence experience](tracks/botanical_occurrence_experience_20260911/plan.md) | active | Mounted map experience and September 14 GBIF feedback fixes under QA; source admission, viewport policy and browser/agent acceptance remain open. |
 | [Species recommendation validation](tracks/botanical_species_recommendation_validation_20260911/plan.md) | planned | Establish evidence and evaluation for species-specific recommendations. |
-| [PNW land reference plane](tracks/pnw_land_context_reference_plane_20260911/plan.md) | in_progress | Implement schema, UI, and reader contracts. Four source rights gates deferred (see evidence/rights-gate-verdicts-20260912.md); ingestion blocked pending gate clearance. |
-| [PNW land contact experience](tracks/pnw_land_contact_experience_20260911/plan.md) | in_progress | Implement UI, reader contracts, and agent integration. Proceeding in parallel with reference-plane rights review (see evidence/rights-gate-verdicts-20260912.md). |
+| [PNW land reference plane](tracks/pnw_land_context_reference_plane_20260911/plan.md) | in_progress | BLM initial publication recorded; PR #10 review and quality gates passed, ready to merge. Deployment acceptance and parcel/utility/state source admissions remain open in their delivery/deferred tracks. |
+| [PNW land contact experience](tracks/pnw_land_contact_experience_20260911/plan.md) | in_progress | BLM office geography and unverified inquiry records published; PR #10 corrective review passed, ready to merge. Live product/accessibility/agent acceptance and broader verified routes remain open. |
 
 ## Other planned or blocked work
 

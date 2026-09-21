@@ -44,6 +44,7 @@ export const KENYA_HIGHLANDS = {
   platformLayers: [
     "botanical-occurrences",
     "burn-severity",
+    "crop-cover",
     "drought",
     "evacuation-zones",
     "fire-detections",

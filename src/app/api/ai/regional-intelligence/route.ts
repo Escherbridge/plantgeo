@@ -56,6 +56,7 @@ export const requestSchema = z.object({
     timeScale: z.enum(ANALYSIS_TIME_SCALES),
     rangeSteps: z.number().int().min(1).max(10),
     zoom: z.number().min(0).max(22),
+    cropCoverReleaseDay: calendarDaySchema.optional(),
     layerDays: z.record(z.string().min(1).max(64), calendarDaySchema)
       .refine((days) => Object.keys(days).length <= MAX_VIEWED_LAYERS),
   }).strict().optional(),

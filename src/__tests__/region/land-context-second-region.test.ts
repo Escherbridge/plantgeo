@@ -88,6 +88,9 @@ describe("the agent tools under a region that binds no land-context source", () 
       "lookup_land_contacts_for_subject",
       "land_context_coverage_status",
       "draft_land_inquiry_text",
+      "lookup_land_contacts_at_point",
+      "lookup_land_contacts_in_area",
+      "read_crop_cover_in_area",
     ]);
   });
 
@@ -114,7 +117,7 @@ describe("the agent tools under a region that binds no land-context source", () 
 });
 
 describe("the reason REGION_SUBDIVISION_CODES may stay the pilot's tuple", () => {
-  it("holds only while no registered manifest binds a land-context source", () => {
+  it("allows only the pilot to bind the current physical land-context schema", () => {
     // The day this fails, the Drizzle `pgEnum` and the Parquet row schema stop describing the only
     // region that has a land-context plane, and both must move behind the selected manifest.
     const registeredManifests: { slug: string; enabledLayers: readonly { layerSlug: string }[] }[] = [
@@ -125,7 +128,7 @@ describe("the reason REGION_SUBDIVISION_CODES may stay the pilot's tuple", () =>
       expect(
         manifest.enabledLayers.some((binding) => binding.layerSlug === "land-context"),
         manifest.slug
-      ).toBe(false);
+      ).toBe(manifest.slug === PNW.slug);
     }
   });
 });

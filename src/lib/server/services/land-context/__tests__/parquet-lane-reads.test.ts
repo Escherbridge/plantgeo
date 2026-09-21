@@ -39,9 +39,12 @@ import {
   readBoundaryByParcelKey,
   readBoundedAoiIntersection,
   readContactsForSubject,
+  readContactsForSelection,
   readCoverageForRegion,
 } from "@/lib/server/services/land-context/reader";
 import { UpstreamTimeoutError } from "@/lib/server/http/bounded-upstream";
+import { readLandContextAvailability } from "../availability";
+import { readCropCover, readCropCoverAvailability } from "../crop-cover";
 
 const BOUNDARY_LAYER = LAND_CONTEXT_PRODUCT_LAYERS.boundaries;
 
@@ -61,7 +64,7 @@ function laneCoverage(overrides: {
     earliestDay: latestDay,
     latestDay,
     latestRecordedDay: latestDay,
-    publishedRanges: [],
+    publishedRanges: [] as { from: string; to: string }[],
     gapRanges: [],
     governedAbsenceRanges: [],
     coverageAuthority: "availability",
@@ -235,6 +238,24 @@ describe("pruneCandidatesByBbox: the pointer GET", () => {
 });
 
 describe("exactIntersectCandidates: the data GET", () => {
+  it("uses clipped published geometry and rejects bbox false positives", async () => {
+    const geometry = { type: "Polygon", coordinates: [
+      [[-121.5, 44], [-121, 44], [-121.5, 44.5], [-121.5, 44]],
+    ] };
+    getParquetLatestRelease.mockResolvedValue(published([boundaryRow({ geom_wkb: null, geometry_wkb: geometry })]));
+    const result = await exactIntersectCandidates(
+      [`${BOUNDARY_LAYER}/kind=observed/zoom=13/day=2026-09-17`],
+      { west: -121.1, south: 44.4, east: -121.05, north: 44.45 }
+    );
+    expect(result.features).toHaveLength(0);
+  });
+
+  it("withholds unadmitted source releases", async () => {
+    getParquetLatestRelease.mockResolvedValue(published([boundaryRow({ release_admission_verdict: "pending" })]));
+    const result = await exactIntersectCandidates([`${BOUNDARY_LAYER}/kind=observed/zoom=13/day=2026-09-17`], SMALL_BBOX);
+    expect(result.features).toHaveLength(0);
+    expect(result.gap).toContain("withheld");
+  });
   it("reads nothing at all when the pointer phase pruned everything away", async () => {
     const result = await exactIntersectCandidates([], SMALL_BBOX);
 
@@ -480,6 +501,18 @@ describe("the three readers that used to invent a coverage state", () => {
 });
 
 describe("the bounded reader above it", () => {
+  it("retains data-phase failures as failures and partial rows as partial", async () => {
+    getParquetWarehouseCoverage.mockResolvedValue(census([laneCoverage({ layer: BOUNDARY_LAYER, zoomTier: 13 })]));
+    getParquetLatestRelease.mockRejectedValueOnce(new UpstreamTimeoutError("data timed out"));
+    const failed = await readBoundedAoiIntersection(SMALL_BBOX);
+    expect(failed).toMatchObject({ status: "ok", data: [{ coverageState: "upstream_unavailable" }] });
+    getParquetLatestRelease.mockResolvedValueOnce(published([boundaryRow()], true));
+    const partial = await readBoundedAoiIntersection(SMALL_BBOX);
+    expect(partial.status).toBe("ok");
+    if (partial.status !== "ok") throw new Error("expected bounded response");
+    expect(partial.data.map((row) => row.coverageState)).toEqual(["matched", "partial_area_coverage"]);
+    expect(partial.data[0].unresolvedGaps[0]).toContain("row budget");
+  });
   it("turns an unregistered lane into a typed coverage state carrying the census's own words", async () => {
     getParquetWarehouseCoverage.mockResolvedValue(census([]));
 
@@ -506,5 +539,86 @@ describe("contract ties", () => {
       "contact_process_inquiry",
       "documented_introduction_forwarding",
     ]);
+  });
+});
+
+
+describe("family availability and annual crop evidence", () => {
+  it("joins exact office jurisdictions to routes once, without treating surface IDs as offices", async () => {
+    getParquetWarehouseCoverage.mockResolvedValue(census([
+      laneCoverage({ layer: LAND_CONTEXT_PRODUCT_LAYERS.offices, zoomTier: 13 }),
+      laneCoverage({ layer: LAND_CONTEXT_PRODUCT_LAYERS.contacts, zoomTier: 0 }),
+    ]));
+    const office = boundaryRow({ source_namespace: "blm-field-offices", native_feature_key: "OR1",
+      family: "blm_office_jurisdiction", geom_wkb: null, geometry_wkb: { type: "Polygon", coordinates: [
+        [[-121.5, 44], [-121, 44], [-121, 44.5], [-121.5, 44.5], [-121.5, 44]],
+      ] } });
+    const contact = {
+      subject_id: "blm-field-offices:OR1", object_id: "office-1", relationship_kind: "geographic_jurisdiction_overlap",
+      applicable_geography: "Published office boundary", documented_topic: null,
+      assignment_method: "source_documented_office", review_status: "reviewed", effective_from: null, effective_to: null,
+      source_evidence_url: "https://www.blm.gov/", organization_id: "blm", office_id: "office-1",
+      official_public_name: "Public Office", office_type: "field_office", parent_organization_id: null,
+      route_type: "official_state_website", route_meaning: "records_assistance", documented_help: "State website for inquiry",
+      official_inquiry_url: "https://www.blm.gov/oregon-washington", public_business_phone: null,
+      public_business_email: null, published_professional_name: null, route_status: "active", verified_at: null,
+      forwarding_documented: false,
+    };
+    getParquetLatestRelease.mockImplementation(async ({ layer }: { layer: string }) => published(
+      layer === LAND_CONTEXT_PRODUCT_LAYERS.offices ? [office] : [contact]
+    ));
+    const result = await readContactsForSelection({ mode: "point", lon: -121.25, lat: 44.25 });
+    expect(result).toMatchObject({ status: "ok", data: [{ organizationOffice: { officeId: "office-1" },
+      matchedRegionOrOverlap: { kind: "point_containment" } }] });
+    expect(getParquetLatestRelease.mock.calls.filter(([input]) => input.layer === LAND_CONTEXT_PRODUCT_LAYERS.contacts)).toHaveLength(1);
+  });
+  it("enables only published BLM, never the other administrative families", async () => {
+    getParquetWarehouseCoverage.mockResolvedValue(census(([0, 5, 9, 13] as const).map((zoomTier) => laneCoverage({ layer: BOUNDARY_LAYER, zoomTier }))));
+    const groups = await readLandContextAvailability();
+    expect(groups.filter((group) => group.status === "available").map((group) => group.group)).toEqual(["blm-lands"]);
+    getParquetWarehouseCoverage.mockResolvedValue(census([]));
+    expect((await readLandContextAvailability()).find((group) => group.group === "blm-lands")?.status).toBe("not_published");
+  });
+
+  it("withholds incomplete editions and uses regional crop grid resolution", async () => {
+    const ladder = ([0, 5, 9, 13] as const).map((zoomTier) => laneCoverage({ layer: "crop-cover", zoomTier, latestDay: "2026-02-27" }));
+    getParquetWarehouseCoverage.mockResolvedValue(census(ladder.slice(0, 3)));
+    expect(await readCropCoverAvailability()).toMatchObject({ available: false, releaseDays: [] });
+    getParquetWarehouseCoverage.mockResolvedValue(census(ladder.map((lane) => lane.zoomTier === 13 ?
+      { ...lane, latestDay: "2025-02-27", latestRecordedDay: "2025-02-27" } : lane)));
+    expect(await readCropCoverAvailability()).toMatchObject({ available: false, releaseDays: [] });
+    getParquetWarehouseCoverage.mockResolvedValue(census(ladder));
+    getParquetLatestRelease.mockResolvedValue(published([]));
+    await readCropCover(REGIONAL_BBOX, "2026-02-27", 13);
+    expect(getParquetLatestRelease).toHaveBeenLastCalledWith(expect.objectContaining({ zoomTier: 5 }));
+    await readCropCover({ west: -123, south: 43, east: -121, north: 45 }, "2026-02-27", 13);
+    expect(getParquetLatestRelease).toHaveBeenLastCalledWith(expect.objectContaining({ zoomTier: 9 }));
+  });
+
+  it("honors the requested zoom ceiling on small regional views", () => {
+    expect(selectServingRung([0, 5, 9, 13], 0.25, 5)).toEqual({ kind: "selected", rung: 5 });
+  });
+
+  it("offers only published annual editions and preserves classification provenance", async () => {
+    const lane = { ...laneCoverage({ layer: "crop-cover", zoomTier: 5, latestDay: "2026-02-27" }),
+      publishedRanges: [{ from: "2025-02-27", to: "2025-02-27" }, { from: "2026-02-27", to: "2026-02-27" }] };
+    getParquetWarehouseCoverage.mockResolvedValue(census(([0, 5, 9, 13] as const).map((zoomTier) => ({ ...lane, zoomTier }))));
+    expect((await readCropCoverAvailability()).releaseDays).toEqual(["2026-02-27", "2025-02-27"]);
+    const row = {
+      feature_id: "crop-cell-1", observed_year: 2024, release_day: "2025-02-27", source: "usda-cdl",
+      source_url: "https://nassgeodata.gmu.edu/", source_resolution_m: 10, analysis_resolution_m: 30,
+      aggregation_cell_m: 1000, estimation_method: "nearest_neighbor_resampled_pixel_area",
+      dominant_crop_code: 1, dominant_crop_name: "Corn", crop_fraction: 0.4, classified_fraction: 0.8,
+      crop_area_ha: 40, cell_area_ha: 100, class_areas_json: '{"1":40,"141":40}',
+      geometry_wkb: { type: "Polygon", coordinates: [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]] },
+      source_sha256: "a".repeat(64), ingested_at: "2026-09-20T00:00:00Z",
+    };
+    getParquetLatestRelease.mockResolvedValue({ ...published([row]), servedDay: "2025-02-27" });
+    const result = await readCropCover(SMALL_BBOX, "2025-02-27", 5);
+    expect(getParquetLatestRelease).toHaveBeenCalledWith(expect.objectContaining({ asOfDay: "2025-02-27", zoomTier: 5 }));
+    expect(result.geojson?.features[0].properties).toMatchObject({ observed_year: 2024, crop_fraction: 0.4, source_sha256: "a".repeat(64) });
+    expect(result.message).toContain("not confidence scores");
+    getParquetLatestRelease.mockResolvedValue(published([{ ...row, release_day: "2026-02-27" }]));
+    await expect(readCropCover(SMALL_BBOX, "2025-02-27", 5)).rejects.toThrow("newer than the requested day");
   });
 });

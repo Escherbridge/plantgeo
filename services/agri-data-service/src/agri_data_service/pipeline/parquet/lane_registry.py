@@ -60,6 +60,7 @@ from agri_data_service.pipeline.direct.climate.products import (
     SHORTWAVE_LAG_MEASUREMENT_EVIDENCE,
 )
 from agri_data_service.pipeline.direct.evacuation_zones.watermark import read_evacuation_zones_source_watermark
+from agri_data_service.pipeline.direct.land_context.watermark import read_land_context_source_watermark
 from agri_data_service.pipeline.direct.soil.products import (
     ERA5_LAND_ARCHIVE_PUBLICATION_LAG_DAYS,
     SOIL_FIELD_PRODUCTS,
@@ -71,6 +72,7 @@ from agri_data_service.pipeline.parquet.objectstore import (
     AbsenceWriteReceipt,
     ParquetWriteReceipt,
 )
+from agri_data_service.warehouse.crop_cover_releases import CDL_RELEASE_DATES
 from agri_data_service.warehouse.parquet.schema import SIGNAL_PLANE_STREAM
 from agri_data_service.warehouse.schemas.burn_severity import BURN_SEVERITY_STREAM
 from agri_data_service.warehouse.schemas.drought import DROUGHT_STREAM
@@ -154,6 +156,8 @@ class LaneRegistration:
     # honest-yet-pointless absence markers for the six days a week it was never going to publish --
     # measured at ~2,000 for `burn-severity` before its five real releases are reached.
     cadence_days: int = 1
+    # Explicit publisher calendar for irregular releases; see parquet/AGENTS.md.
+    release_days: tuple[date, ...] | None = None
     # The module stem that forecasts this lane, or None for `horizon: none`. Since 2026-09-18 the
     # stem names a module under `services/plantgeo-ml-service`, which is the service that writes
     # `kind=forecast` partitions (owner decision D2, track `plantgeo_ml_service_20260918`). TWO
@@ -193,6 +197,7 @@ class LaneRegistration:
     def __post_init__(self) -> None:
         validate_layer_slug(self.slug)
         validate_lane_nature(self.nature)
+        self._validate_release_days()
         if self.cadence_days < 1:
             raise LaneRegistryError(f"lane {self.slug!r} declares a cadence of under one day")
         if self.cadence_days > 1 and not nature_permits_cadence(self.nature):
@@ -247,6 +252,17 @@ class LaneRegistration:
                 f"lane {self.slug!r} declares writer ceiling {self.writer_ceiling} before its history floor "
                 f"{self.history_floor}"
             )
+
+    def _validate_release_days(self) -> None:
+        """An explicit release calendar replaces cadence arithmetic, never daily observations."""
+        if self.release_days is None:
+            return
+        if self.nature != "release_series" or self.cadence_days != 1:
+            raise LaneRegistryError("explicit release days require release_series with the default cadence")
+        if not self.release_days or self.release_days != tuple(sorted(set(self.release_days))):
+            raise LaneRegistryError("explicit release days must be nonempty, unique and chronologically sorted")
+        if self.release_days[0] != self.history_floor:
+            raise LaneRegistryError("explicit release calendar must begin at the declared history floor")
 
     def _normalise_complete_history_floor(self) -> None:
         """Default complete-history evidence to the writer's declared history evidence."""
@@ -1141,13 +1157,41 @@ _SOURCE_DIRECT_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
 )
 
 # --- The conformed calendar dimension -----------------------------------------------------------
+_REFERENCE_DATA_REGISTRATIONS: Final = (
+    *(
+        LaneRegistration(
+            slug=slug,
+            adapter=_source_direct_refusal("agri_data_service.pipeline.direct.land_context"),
+            history_floor=date(2026, 9, 20),
+            publication_lag_days=0,
+            nature="static_lookup",
+            watermark=read_land_context_source_watermark,
+            floor_basis="PNW BLM source admission 2026-09-20; current captured reference, no inferred history.",
+        )
+        for slug in ("land-context-boundaries", "land-context-offices", "land-context-contacts")
+    ),
+    LaneRegistration(
+        slug="crop-cover",
+        adapter=_source_direct_refusal("agri_data_service.pipeline.direct.crop_cover"),
+        history_floor=date(2023, 1, 30),
+        publication_lag_days=0,
+        nature="release_series",
+        release_days=tuple(CDL_RELEASE_DATES.values()),
+        floor_basis=(
+            "USDA CDL 2022 first admitted edition, published 2023-01-30; the source-specific "
+            "annual release calendar owns capture and repair, not a daily exporter."
+        ),
+    ),
+)
+
 #
 # The floor is DERIVED, not declared: the union of every source-bearing lane's own floor, so the
 # dimension covers every day any lane can key to it. Deriving it is what stops the calendar and the
 # deepest lane (`fire-detections`, 2000-11-01) drifting apart when a floor is next corrected.
 
 CALENDAR_HISTORY_FLOOR: Final[date] = min(
-    registration.history_floor for registration in (*_HAND_WRITTEN_REGISTRATIONS, *_SOURCE_DIRECT_REGISTRATIONS)
+    registration.history_floor
+    for registration in (*_HAND_WRITTEN_REGISTRATIONS, *_SOURCE_DIRECT_REGISTRATIONS, *_REFERENCE_DATA_REGISTRATIONS)
 )
 
 CALENDAR_REGISTRATION: Final = LaneRegistration(
@@ -1169,7 +1213,12 @@ CALENDAR_REGISTRATION: Final = LaneRegistration(
 
 LANE_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = tuple(
     sorted(
-        (*_HAND_WRITTEN_REGISTRATIONS, *_SOURCE_DIRECT_REGISTRATIONS, CALENDAR_REGISTRATION),
+        (
+            *_HAND_WRITTEN_REGISTRATIONS,
+            *_SOURCE_DIRECT_REGISTRATIONS,
+            *_REFERENCE_DATA_REGISTRATIONS,
+            CALENDAR_REGISTRATION,
+        ),
         key=lambda entry: entry.slug,
     )
 )

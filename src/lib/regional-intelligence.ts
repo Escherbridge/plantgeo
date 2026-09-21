@@ -25,6 +25,7 @@ export type RegionalEvidenceSource =
 
 /** Governed tool surfaces; see services/AGENTS.md for their separate freshness contract. */
 export const REGIONAL_TOOL_EVIDENCE_SOURCES = [
+  "crop-cover", "land-context-boundaries",
   "burn-severity", "evacuation-zones", "fire-detections", "fire-perimeters",
   "interventions", "sensors", "soil-survey", "vegetation", "watersheds",
   "water-gauges", "weather-observations", "climate-field-air-temperature",

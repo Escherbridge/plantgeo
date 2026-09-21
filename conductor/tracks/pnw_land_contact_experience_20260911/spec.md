@@ -1,18 +1,22 @@
 ---
 type: track-spec
 slug: pnw_land_contact_experience_20260911
-status: planned
+status: in_progress
 ---
 
 # PNW land context and public contact experience
 
-## Planning status and outcome
+## Current status and outcome
 
-This is a **registered planned packet**. [conductor/tracks.md](../../tracks.md)
-remains the sole current work registry and indexes it as `planned`.
-Completing these planning documents does not complete or activate the track.
-This work authorizes no implementation, ingestion, outreach, publication or
-deployment. Those actions require their applicable later authorization and gates.
+This track is `in_progress` in [conductor/tracks.md](../../tracks.md). The September 12
+owner override authorized implementation; September 20 added bounded BLM and USDA crop
+delivery and ingestion. Initial production publication and branch-code readback are recorded
+in the [delivery evidence](../pnw_land_data_delivery_20260920/evidence/production-delivery-20260921.md).
+The current owner request authorizes PR review, track updates, merging and deployment
+monitoring. PR #10 passed corrective review and quality gates and is ready to merge, with
+deployment, live browser acceptance and schedule acceptance open in the
+[delivery plan](../pnw_land_data_delivery_20260920/plan.md).
+These receipts do not establish completion of the broader contact experience below.
 
 Help a person exploring a location or bounded project area understand its parcel,
 published land-use evidence, utility territory and public-land management, then
@@ -24,8 +28,9 @@ The experience depends on
 [pnw_land_context_reference_plane_20260911](../pnw_land_context_reference_plane_20260911/spec.md).
 Its [source inventory](../pnw_land_context_reference_plane_20260911/evidence/source-inventory.md)
 is the shared admission and source-evidence reference. The existing research
-informed this packet; it does not establish live data coverage, source admission
-or implemented behavior.
+informed this packet; the later delivery evidence separately establishes bounded BLM and
+crop publication. Published office inquiry records contain official names and state office
+websites with unverified route status; they do not establish a responsible program contact.
 
 Apply the [September 12 coordination gates](../pnw_land_context_reference_plane_20260911/evidence/land-herbaria-coordination-20260912.md)
 to any later botanical association. Private-name exclusion does not make a
@@ -33,12 +38,16 @@ specimen-derived parcel ID safe to expose: preserve admitted precision and
 withholding in the panel, agent and draft. Ordinary land lookup and public
 records help remain independently governed.
 
-## Scope and four toggles
+## Family scope and publication-dependent controls
 
 Limit product scope to Washington, Oregon and Idaho. The upstream query envelope
 is `[-125, 42, -111, 49]`; intersect with the WA/OR/ID administrative footprint
 because the rectangle includes other territory. Do not imply full-state coverage
-where only particular counties, agencies or providers are admitted.
+where only particular counties, agencies or providers are admitted. The table describes
+family scope, not four available switches. PR #10 exposes switches only for readable products,
+provides an independent USDA crop-cover control, and uses notices for unavailable parcel,
+utility and state-managed families. The admitted crop grid uses the declared PNW envelope,
+including adjacent US fringes; the BLM source products are clipped to actual WA/OR/ID geography.
 
 | Toggle | Place information | Useful public routes |
 | --- | --- | --- |
@@ -230,8 +239,9 @@ full PNW coverage.
 Independent source/relationship, UI/agent-parity and accessibility review must
 evaluate the complete implementation separately from its authors, after one
 integrated verification sweep. Planning packet review proves only planning
-quality. Runtime acceptance, source admission, registry activation and track
-completion remain future gates.
+quality. Runtime acceptance, admission of the remaining source families, verified contact
+relationships and track completion remain open gates. BLM/crop deployment and scheduled-turn
+acceptance are recorded separately in the delivery track.
 
 Open design inputs include current Oregon utility-feed reconciliation, Idaho
 utility and state-interest source/keys, permitted parcel coverage, reviewed

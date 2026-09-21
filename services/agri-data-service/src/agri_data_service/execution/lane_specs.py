@@ -15,10 +15,14 @@ from typing import TYPE_CHECKING, Final, Literal
 from agri_data_service.execution.lane_ids import (
     BURN_SEVERITY_DIRECT_LANE_ID,
     CLIMATE_DIRECT_LANE_ID,
+    CROP_COVER_MAINTENANCE_LANE_ID,
     DROUGHT_DIRECT_LANE_ID,
     EVACUATION_ZONES_DIRECT_LANE_ID,
     FIRE_DETECTIONS_DIRECT_LANE_ID,
     FIRE_PERIMETERS_DIRECT_LANE_ID,
+    LAND_CONTEXT_BACKFILL_LANE_ID,
+    LAND_CONTEXT_FORWARD_LANE_ID,
+    LAND_CONTEXT_RECONCILE_LANE_ID,
     MTBS_FORWARD_LANE_ID,
     SENSORS_DIRECT_LANE_ID,
     SOIL_DIRECT_LANE_ID,
@@ -726,9 +730,76 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
     ),
 )
 
+_REFERENCE_DATA_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
+    *(
+        _spec(
+            lane_id,
+            command=(
+                "python",
+                "-m",
+                "agri_data_service.pipeline.direct.land_context",
+                "--mode",
+                mode,
+                "--max-days",
+                "1",
+                "--time-budget-seconds",
+                "3600",
+            ),
+            disposition="source-specific",
+            cadence_seconds=86400,
+            phase_offset_seconds=hour * 3600,
+            schedule=f"0 {hour} * * *",
+            timeout_seconds=3600 + COMMAND_CLEANUP_MARGIN_SECONDS,
+            selection_policy=selection,
+            description=(
+                f"BLM {mode}; one complete regional source snapshot; shared package lock serializes all duties."
+            ),
+            writer_floor="2026-09-20",
+        )
+        for lane_id, mode, hour, selection in (
+            (LAND_CONTEXT_FORWARD_LANE_ID, "refresh", 9, "capture current source; unchanged content is a no-op"),
+            (LAND_CONTEXT_RECONCILE_LANE_ID, "reconcile", 11, "restore missing ladders from captured source evidence"),
+            (
+                LAND_CONTEXT_BACKFILL_LANE_ID,
+                "backfill",
+                13,
+                "recover pending publication; no invented historical snapshots",
+            ),
+        )
+    ),
+    _spec(
+        CROP_COVER_MAINTENANCE_LANE_ID,
+        command=(
+            "python",
+            "-m",
+            "agri_data_service.pipeline.direct.crop_cover",
+            "--operation",
+            "maintain",
+            "--capture-root",
+            "/tmp/plantgeo-crop-cover",
+            "--max-days",
+            "1",
+            "--time-budget-seconds",
+            "3600",
+        ),
+        disposition="source-specific",
+        cadence_seconds=86400,
+        phase_offset_seconds=10 * 3600,
+        schedule="0 10 * * *",
+        timeout_seconds=3600 + COMMAND_CLEANUP_MARGIN_SECONDS,
+        selection_policy="oldest missing admitted annual edition first; monthly latest-source refresh once complete",
+        description=(
+            "One scheduled owner performs crop gap detection, annual backfill and forward refresh; "
+            "four admitted editions only."
+        ),
+        writer_floor="2023-01-30",
+    ),
+)
+
 _LANE_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
     *_JOBS_SPECS,
     *_MIGRATION_INPUT_SPECS,
+    *_REFERENCE_DATA_SPECS,
 )
 
 LANE_SPECS: Final[Mapping[str, LaneExecutionSpec]] = MappingProxyType({spec.lane_id: spec for spec in _LANE_SPECS})

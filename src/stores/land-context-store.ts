@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { devtools } from "zustand/middleware";
-import type { CoverageState } from "@/lib/environmental/land-context-contract";
+import type { CoverageState, LandContextResult } from "@/lib/environmental/land-context-contract";
 
 /**
  * The four independently toggleable land-context groups. See
@@ -54,6 +54,8 @@ export interface LandContextSelectionInput {
  */
 export interface LandContextFeature {
   id: string;
+  /** Original evidence retained for the detail panel and stable contact lookup. */
+  evidence?: LandContextResult;
   group: LandContextGroupId;
   /** Short human label for hover card / list item, e.g. "Parcel 12-3456-789". */
   title: string;
@@ -117,6 +119,12 @@ export interface LandContextResultMeta {
 export type LandContextQueryStatus = "idle" | "loading" | "settled" | "error";
 
 interface LandContextState {
+  cropCoverEnabled: boolean;
+  cropCoverReleaseDay: string | null;
+  cropCoverLatestPublishedDay: string | null;
+  setCropCoverLatestPublishedDay: (day: string | null) => void;
+  setCropCoverEnabled: (enabled: boolean) => void;
+  setCropCoverReleaseDay: (day: string | null) => void;
   /** Per-group on/off, independent of any other group. */
   enabledGroups: Record<LandContextGroupId, boolean>;
   toggleGroup: (group: LandContextGroupId) => void;
@@ -178,6 +186,13 @@ const ALL_GROUPS_ENABLED: Record<LandContextGroupId, boolean> = {
 
 export const useLandContextStore = create<LandContextState>()(
   devtools((set, get) => ({
+    cropCoverEnabled: false,
+    cropCoverReleaseDay: null,
+    cropCoverLatestPublishedDay: null,
+    setCropCoverLatestPublishedDay: (day) => set((state) => state.cropCoverLatestPublishedDay === day
+      ? state : { cropCoverLatestPublishedDay: day }),
+    setCropCoverEnabled: (enabled) => set({ cropCoverEnabled: enabled }),
+    setCropCoverReleaseDay: (day) => set({ cropCoverReleaseDay: day }),
     enabledGroups: { ...ALL_GROUPS_ENABLED },
     toggleGroup: (group) =>
       set((state) => ({

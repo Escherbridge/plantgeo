@@ -171,6 +171,13 @@ REPAIR_EXCLUSIONS: Final[Mapping[str, str]] = MappingProxyType(
         "evacuation-zones": "static_lookup: a version stamp has no owed day to repair",
         "watersheds": "static_lookup: a version stamp has no owed day to repair",
         "soil-survey": "static_lookup with no admitted publisher yet (R4)",
+        "land-context-boundaries": "static_lookup: land-context-blm-reconcile repairs the immutable snapshot ladder",
+        "land-context-offices": "static_lookup: land-context-blm-reconcile repairs the immutable snapshot ladder",
+        "land-context-contacts": "static_lookup: land-context-blm-reconcile repairs the immutable snapshot ladder",
+        "crop-cover": (
+            "crop-cover-usda-maintain detects and repairs missing admitted annual editions; "
+            "its bounded source captures cannot be selected by this calendar-day repair command"
+        ),
         "fire-risk": "forecast-originated: services/plantgeo-ml-service writes this lane, not an agri direct writer",
         "weather-forecast": (
             "forecast-originated: services/plantgeo-ml-service writes this lane, not an agri direct writer"

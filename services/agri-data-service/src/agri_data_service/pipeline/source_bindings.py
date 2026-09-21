@@ -24,7 +24,7 @@ a second, weaker assertion that cannot see two protocols sharing member names (S
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final
 
 from agri_data_service.foundation.region.bindings import LayerSourceContracts
@@ -35,7 +35,9 @@ if TYPE_CHECKING:
     from agri_data_service.foundation.region.manifest import Region
     from agri_data_service.foundation.region.source_coverage import SourceCoverageClaim
     from agri_data_service.pipeline.direct.burn_severity.source_protocol import BurnSeveritySource
+    from agri_data_service.pipeline.direct.crop_cover.source_protocol import CropCoverSource
     from agri_data_service.pipeline.direct.drought.source_protocol import DroughtSource
+    from agri_data_service.pipeline.direct.land_context.source_protocol import LandContextSource
     from agri_data_service.pipeline.direct.soil_survey.source_protocol import SoilSurveySource
 
 #: The manifest layer slugs this module resolves sources for. Spelled once so a resolver, the
@@ -43,6 +45,8 @@ if TYPE_CHECKING:
 DROUGHT_LAYER_SLUG: Final = "drought"
 BURN_SEVERITY_LAYER_SLUG: Final = "burn-severity"
 SOIL_SURVEY_LAYER_SLUG: Final = "soil-survey"
+LAND_CONTEXT_LAYER_SLUG: Final = "land-context"
+CROP_COVER_LAYER_SLUG: Final = "crop-cover"
 
 
 class UnboundLayerError(RuntimeError):
@@ -74,6 +78,8 @@ class SourceRegistry:
     drought: Mapping[str, DroughtSource]
     burn_severity: Mapping[str, BurnSeveritySource]
     soil_survey: Mapping[str, SoilSurveySource]
+    land_context: Mapping[str, LandContextSource] = field(default_factory=dict)
+    crop_cover: Mapping[str, CropCoverSource] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Refuse a registry where one slug is registered under two layers, before anything reads it."""
@@ -99,6 +105,8 @@ class SourceRegistry:
             DROUGHT_LAYER_SLUG: self.drought,
             BURN_SEVERITY_LAYER_SLUG: self.burn_severity,
             SOIL_SURVEY_LAYER_SLUG: self.soil_survey,
+            LAND_CONTEXT_LAYER_SLUG: self.land_context,
+            CROP_COVER_LAYER_SLUG: self.crop_cover,
         }
 
     def coverage_claims(self) -> dict[str, SourceCoverageClaim]:
@@ -109,9 +117,11 @@ class SourceRegistry:
         entry here can shadow another (STYLE-REVIEW-W6 S6).
         """
         return {
-            slug: source.coverage
-            for layer_sources in (self.drought, self.burn_severity, self.soil_survey)
-            for slug, source in layer_sources.items()
+            **{slug: source.coverage for slug, source in self.drought.items()},
+            **{slug: source.coverage for slug, source in self.burn_severity.items()},
+            **{slug: source.coverage for slug, source in self.soil_survey.items()},
+            **{slug: source.coverage for slug, source in self.land_context.items()},
+            **{slug: source.coverage for slug, source in self.crop_cover.items()},
         }
 
     def layer_contracts(self) -> LayerSourceContracts:
@@ -123,9 +133,11 @@ class SourceRegistry:
         from agri_data_service.pipeline.direct.burn_severity.source_protocol import (  # noqa: PLC0415
             BurnSeveritySource as BurnSeveritySourceProtocol,
         )
+        from agri_data_service.pipeline.direct.crop_cover.source_protocol import CropCoverSource  # noqa: PLC0415
         from agri_data_service.pipeline.direct.drought.source_protocol import (  # noqa: PLC0415
             DroughtSource as DroughtSourceProtocol,
         )
+        from agri_data_service.pipeline.direct.land_context.source_protocol import LandContextSource  # noqa: PLC0415
         from agri_data_service.pipeline.direct.soil_survey.source_protocol import (  # noqa: PLC0415
             SoilSurveySource as SoilSurveySourceProtocol,
         )
@@ -135,6 +147,8 @@ class SourceRegistry:
                 DROUGHT_LAYER_SLUG: DroughtSourceProtocol,
                 BURN_SEVERITY_LAYER_SLUG: BurnSeveritySourceProtocol,
                 SOIL_SURVEY_LAYER_SLUG: SoilSurveySourceProtocol,
+                LAND_CONTEXT_LAYER_SLUG: LandContextSource,
+                CROP_COVER_LAYER_SLUG: CropCoverSource,
             },
             sources_by_layer=self.sources_by_layer(),
         )
@@ -150,13 +164,17 @@ def _source_registry() -> SourceRegistry:
     edges into `app.py`'s import graph.
     """
     from agri_data_service.pipeline.direct.burn_severity.mtbs import MTBS_BURN_SEVERITY_SOURCE  # noqa: PLC0415
+    from agri_data_service.pipeline.direct.crop_cover.source_protocol import USDA_CROP_COVER_SOURCE  # noqa: PLC0415
     from agri_data_service.pipeline.direct.drought.usdm import USDM_DROUGHT_SOURCE  # noqa: PLC0415
+    from agri_data_service.pipeline.direct.land_context.source_protocol import BLM_LAND_CONTEXT_SOURCE  # noqa: PLC0415
     from agri_data_service.pipeline.direct.soil_survey.ssurgo import SSURGO_SOIL_SURVEY_SOURCE  # noqa: PLC0415
 
     return SourceRegistry(
         drought={USDM_DROUGHT_SOURCE.source_slug: USDM_DROUGHT_SOURCE},
         burn_severity={MTBS_BURN_SEVERITY_SOURCE.source_slug: MTBS_BURN_SEVERITY_SOURCE},
         soil_survey={SSURGO_SOIL_SURVEY_SOURCE.source_slug: SSURGO_SOIL_SURVEY_SOURCE},
+        land_context={BLM_LAND_CONTEXT_SOURCE.source_slug: BLM_LAND_CONTEXT_SOURCE},
+        crop_cover={USDA_CROP_COVER_SOURCE.source_slug: USDA_CROP_COVER_SOURCE},
     )
 
 
@@ -227,9 +245,21 @@ def resolve_burn_severity_source(*, region: Region | None = None) -> BurnSeverit
     return _resolve_bound_source(BURN_SEVERITY_LAYER_SLUG, _source_registry().burn_severity, region=region)
 
 
+def resolve_land_context_source(*, region: Region | None = None) -> LandContextSource:
+    """Resolve the admitted regional land reference source."""
+    return _resolve_bound_source(LAND_CONTEXT_LAYER_SLUG, _source_registry().land_context, region=region)
+
+
+def resolve_crop_cover_source(*, region: Region | None = None) -> CropCoverSource:
+    """Resolve the admitted annual classified-crop source."""
+    return _resolve_bound_source(CROP_COVER_LAYER_SLUG, _source_registry().crop_cover, region=region)
+
+
 __all__ = [
     "BURN_SEVERITY_LAYER_SLUG",
+    "CROP_COVER_LAYER_SLUG",
     "DROUGHT_LAYER_SLUG",
+    "LAND_CONTEXT_LAYER_SLUG",
     "SOIL_SURVEY_LAYER_SLUG",
     "DuplicateSourceSlugError",
     "SourceRegistry",
@@ -237,5 +267,7 @@ __all__ = [
     "declared_layer_source_contracts",
     "declared_source_coverage_claims",
     "resolve_burn_severity_source",
+    "resolve_crop_cover_source",
     "resolve_drought_source",
+    "resolve_land_context_source",
 ]

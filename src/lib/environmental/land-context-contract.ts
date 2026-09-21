@@ -65,6 +65,11 @@ export interface BoundaryVersionRef {
    * null-vs-throw contract.
    */
   geometryWkb: string | null;
+  geometry?: GeoJSON.Geometry | null;
+  aggregationBasis?: string | null;
+  sourceNativeFeatureKey?: string | null;
+  displayName?: string;
+  sourceFeatureCount?: number;
 }
 
 export interface OrganizationOfficeRef {
@@ -128,6 +133,7 @@ export interface SourceReleaseRef {
   sourceEffectiveTime: string | null;
   sourcePublishedTime: string | null;
   admissionVerdict: "admitted" | "rejected" | "pending";
+  sourceManifestSha256?: string;
 }
 
 /**

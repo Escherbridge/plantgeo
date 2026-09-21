@@ -13,7 +13,7 @@ import { layerBindingInRegion } from "@/lib/map/layer-region-binding";
 import { getRegion, regionIdentityVerdict } from "@/lib/region/region";
 import type { SliderCapabilities } from "@/types/time-slider";
 
-/** A payload that STATES `soil-survey` is bound, which the pilot manifest also says. */
+/** A foreign payload that claims a binding absent from the compiled pilot. */
 function capabilitiesFrom(servedRegionSlug: string | null | undefined): SliderCapabilities {
   return {
     serverCurrentDate: "2026-09-18",
@@ -21,7 +21,7 @@ function capabilitiesFrom(servedRegionSlug: string | null | undefined): SliderCa
     streamsUnavailable: false,
     layers: [],
     layerBindings: [
-      { layerSlug: "land-context", binding: "bound_regional", sourceSlug: "someone-elses", reason: null },
+      { layerSlug: "fire-risk", binding: "bound_regional", sourceSlug: "someone-elses", reason: null },
     ],
     servedRegionSlug,
   };
@@ -55,14 +55,14 @@ describe("regionIdentityVerdict", () => {
 
 describe("layerBindingInRegion when the census names another region", () => {
   it("refuses the payload's bindings and answers from the compiled manifest", () => {
-    // `land-context` is a platform layer no manifest binds, so the compiled answer is `unbound`.
+    // `fire-risk` is a platform layer no manifest binds, so the compiled answer is `unbound`.
     // Trusting the foreign payload would have answered `bound` -- another region's binding read as
     // this one's, which is exactly the silent wrong-region render this field exists to stop.
-    expect(layerBindingInRegion(capabilitiesFrom("kenya-highlands"), "land-context")).toBe("unbound");
+    expect(layerBindingInRegion(capabilitiesFrom("kenya-highlands"), "fire-risk")).toBe("unbound");
   });
 
   it("still trusts a payload that agrees, and one that states no region at all", () => {
-    expect(layerBindingInRegion(capabilitiesFrom(getRegion().slug), "land-context")).toBe("bound");
-    expect(layerBindingInRegion(capabilitiesFrom(undefined), "land-context")).toBe("bound");
+    expect(layerBindingInRegion(capabilitiesFrom(getRegion().slug), "fire-risk")).toBe("bound");
+    expect(layerBindingInRegion(capabilitiesFrom(undefined), "fire-risk")).toBe("bound");
   });
 });

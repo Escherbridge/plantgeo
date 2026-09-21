@@ -74,7 +74,7 @@ EXPECTED_CENSUS_LIST_WORKERS: Final = 3
 #: Unchanged by the 2026-09-19 `fire-risk`/`weather-forecast` registrations: both are written by
 #: services/plantgeo-ml-service and are excluded in `NON_SLIDER_REGISTERED_LAYERS` until a
 #: `kind=forecast` census exists and that publisher is warm.
-EXPECTED_REGISTERED_CENSUS_LANES: Final = 30
+EXPECTED_REGISTERED_CENSUS_LANES: Final = 34
 
 #: Every registered physical lane must report all four serving rungs.
 EXPECTED_CENSUS_RUNG_ROWS: Final = EXPECTED_REGISTERED_CENSUS_LANES * len(ZOOM_TIERS)

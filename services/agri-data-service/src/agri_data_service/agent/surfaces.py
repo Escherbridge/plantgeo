@@ -40,6 +40,8 @@ FEATURE_SURFACE_NAMES: Final = (
 # The 13 stream names, which are NOT geo.layers rows: one polygon-backed release set and twelve
 # climate and soil cell-grid streams.
 STREAM_SURFACE_NAMES: Final = (
+    "crop-cover",
+    "land-context-boundaries",
     "climate-field-air-temperature",
     "climate-field-dew-point",
     "climate-field-precipitation",
@@ -103,6 +105,8 @@ AGENT_SURFACE_NAMES: Final = tuple(
 #
 # App-owned surfaces use their declared app readers; this table lists only Parquet products.
 SURFACE_PARQUET_LANES: Final[dict[str, tuple[str, ...]]] = {
+    "crop-cover": ("crop-cover",),
+    "land-context-boundaries": ("land-context-boundaries",),
     "burn-severity": ("burn-severity",),
     "evacuation-zones": ("evacuation-zones",),
     "fire-detections": ("fire-detections",),
@@ -164,6 +168,8 @@ AGENT_ZOOM_TIER: Final[ZoomTier] = 13
 # `federation.md` §2: a surface whose layer this region binds no source for answers
 # `not_available_in_region` rather than an empty success. See `agent/AGENTS.md`.
 SURFACE_REGION_LAYER_SLUGS: Final[dict[str, str]] = {
+    "crop-cover": "crop-cover",
+    "land-context-boundaries": "land-context",
     "burn-severity": "burn-severity",
     "evacuation-zones": "evacuation-zones",
     "fire-detections": "fire-detections",

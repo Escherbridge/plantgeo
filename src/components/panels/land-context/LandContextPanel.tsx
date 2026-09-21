@@ -12,6 +12,7 @@ import type { LandContextPanelData } from "./types";
 
 interface LandContextPanelProps {
   data: LandContextPanelData | null;
+  contactNotice?: string;
   /** Simple close affordance; the map/store owner decides when this panel mounts at all. */
   onClose?: () => void;
   /**
@@ -65,19 +66,21 @@ function budgetExceededMessage(budgetExceeded: NonNullable<
 
 export function LandContextPanel({
   data,
+  contactNotice,
   onClose,
   resultsCount,
   candidateIndex = null,
   onFocusPreviousCandidate,
   onFocusNextCandidate,
 }: LandContextPanelProps) {
-  const budgetExceeded = useLandContextStore((state) => state.resultMeta?.budgetExceeded ?? null);
+  const resultMeta = useLandContextStore((state) => state.resultMeta);
+  const budgetExceeded = resultMeta?.budgetExceeded ?? null;
   // `resultMeta.partialCoverage` never co-occurs with a matched feature: `readBoundedAoiIntersection`
   // (`src/lib/server/services/land-context/reader.ts`) only ever reports `partial_area_coverage`
   // in the branch where `features.length === 0`, so the old `data`-gated caveat below never rendered
   // in production (N11). `coverageNotices` carries the same state and is populated on exactly the
   // no-match responses the caveat exists for, so read it directly instead of the derived boolean.
-  const coverageNotices = useLandContextStore((state) => state.resultMeta?.coverageNotices ?? []);
+  const coverageNotices = resultMeta?.coverageNotices ?? [];
   const partialCoverage = coverageNotices.some((notice) => notice.coverageState === "partial_area_coverage");
   const selection = useLandContextStore((state) => state.selection);
   const queryStatus = useLandContextStore((state) => state.queryStatus);
@@ -170,7 +173,7 @@ export function LandContextPanel({
       ) : null}
 
       <PlaceDetailsSection place={data.place} />
-      <RelevantPartiesSection officeCards={data.officeCards} />
+      <RelevantPartiesSection officeCards={data.officeCards} notice={contactNotice} />
       <RouteRationaleSection officeCards={data.officeCards} />
       <DocumentedHelpSection officeCards={data.officeCards} />
       <EvidenceTimeSection evidence={data.evidence} />
