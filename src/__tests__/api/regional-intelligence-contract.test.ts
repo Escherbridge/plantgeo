@@ -388,9 +388,10 @@ describe("generate_remediation_report tool wiring", () => {
     const { streamRegionalIntelligence } = await import('@/lib/server/services/ai-prompt');
     mocks.loadEvidenceTools.mockResolvedValue({ tools: [{ name: 'drought_history_at_point', description: 'Dated history', input_schema: { type: 'object' } }], surfaces: [], featureSurfaces: [], valueSurfaces: [] });
     mocks.callEvidenceTool.mockResolvedValue(JSON.stringify({ weekly_severity: [{ valid_date: '2024-01-01', severity_class: null }] }));
+    const grounded = { ...validReport, observations: [{ statement: 'Drought history was returned for 2024-01-01.', evidenceOrigin: 'warehouse', evidenceSource: 'drought-areas', evidenceReadIds: ['additional-1'] }] };
     mocks.completionStream
       .mockReturnValueOnce(fakeCompletionStream(Array.from({ length: 13 }, (_, index) => ({ id: `history-${index}`, name: 'drought_history_at_point', input: { longitude: -116.2, latitude: 43.6 } }))))
-      .mockReturnValueOnce(fakeCompletionStream([{ id: 'final', name: 'remediation_report', input: validReport }]));
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'final', name: 'remediation_report', input: grounded }]));
     const events = [];
     for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, { ...minimalTemporalContext(), viewedDates: ['2024-01-02'] }, [])) events.push(event);
     const audit = events.filter((event) => event.type === 'evidence').at(-1);
@@ -603,6 +604,39 @@ describe("generate_remediation_report tool wiring", () => {
     expect(correction.tools[0].function.parameters).toHaveProperty('properties.riskSummary.properties.evidenceOrigin.enum', ['web', 'model_inference']);
   });
 
+  it.each(['empty', 'inference_only', 'repeated_empty'] as const)('rejects a follow-up that omits available measured observations: %s', async (mode) => {
+    const { streamRegionalIntelligence } = await import('@/lib/server/services/ai-prompt');
+    mocks.loadEvidenceTools.mockResolvedValue({
+      tools: [{ name: 'surface_evidence_for_selection', description: 'Read selected tile', input_schema: { type: 'object' } }],
+      surfaces: ['vegetation'], featureSurfaces: ['vegetation'], valueSurfaces: [],
+    });
+    mocks.callEvidenceTool.mockResolvedValue(JSON.stringify({
+      lanes: [{ selected: { state: 'published', features: [{ served_day: '2026-09-09', properties: { ndvi: 0.5 } }] },
+        history: [{ state: 'unavailable', features: [] }] }],
+    }));
+    const omitted = { ...validReport, observations: mode === 'inference_only' ? validReport.observations : [], remediation: [] };
+    const grounded = { ...omitted, observations: [{ statement: 'Vegetation NDVI is 0.5 on 2026-09-09.', evidenceOrigin: 'warehouse', evidenceSource: 'vegetation', evidenceReadIds: ['local-1'] }] };
+    mocks.completionStream
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'omitted', name: 'remediation_report', input: omitted }]))
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'corrected', name: 'remediation_report', input: mode === 'repeated_empty' ? omitted : grounded }]));
+    const temporal = { ...minimalTemporalContext(), analysisSelection: {
+      timeScale: 'day' as const, rangeSteps: 7, zoom: 13, layerDays: { vegetation: '2026-09-09' },
+    } };
+    const events: Array<{ type: string; report?: unknown }> = [];
+    const collect = async () => {
+      for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, temporal,
+        [{ role: 'assistant', content: 'Previous selection had incomplete historical coverage.' }])) events.push(event);
+    };
+    if (mode === 'repeated_empty') await expect(collect()).rejects.toThrow('bounded correction attempt');
+    else await collect();
+    expect(events.filter((event) => event.type === 'report')).toEqual(mode === 'repeated_empty' ? [] : [{ type: 'report', report: grounded }]);
+    expect(mocks.completionStream).toHaveBeenCalledTimes(2);
+    for (const [request] of mocks.completionStream.mock.calls) expect(request.tools[0].function.parameters).toHaveProperty('properties.observations.minItems', 1);
+    expect(mocks.completionStream.mock.calls[1][0].messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: 'tool', tool_call_id: 'omitted', content: expect.stringContaining('Measured tool evidence is available') }),
+    ]));
+  });
+
   it('corrects a local tool finding without IDs even when the same source has an observed local read', async () => {
     const { streamRegionalIntelligence } = await import('@/lib/server/services/ai-prompt');
     mocks.loadEvidenceTools.mockResolvedValue({
@@ -657,17 +691,18 @@ describe("generate_remediation_report tool wiring", () => {
       surfaces: ['vegetation'], featureSurfaces: ['vegetation'], valueSurfaces: [],
     });
     mocks.callEvidenceTool.mockResolvedValue(JSON.stringify({ features: [{ served_day: '2026-08-14', properties: { ndvi: 0.5 } }] }));
-    const invalid = { ...validReport,
+    const grounded = { ...validReport, observations: [{ statement: 'Vegetation NDVI is 0.5.', evidenceOrigin: 'warehouse', evidenceSource: 'vegetation', evidenceReadIds: ['local-1'] }] };
+    const invalid = { ...grounded,
       remediation: [validReport.remediation[0], validReport.remediation[0]].map((claim) => ({ ...claim, evidenceReadIds: ['local-1'] })),
     };
-    const corrected = { ...validReport, remediation: [validReport.remediation[0], validReport.remediation[0]] };
+    const corrected = { ...grounded, remediation: [validReport.remediation[0], validReport.remediation[0]] };
     mocks.completionStream
       .mockReturnValueOnce(fakeCompletionStream([{ id: 'invalid-inference', name: 'remediation_report', input: invalid }]))
       .mockReturnValueOnce(fakeCompletionStream([{ id: 'corrected-inference', name: 'remediation_report', input: corrected }]));
     const events = [];
     for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
     expect(mocks.completionStream).toHaveBeenCalledTimes(2);
-    expect(events.filter((event) => event.type === 'report')).toEqual([{ type: 'report', report: { ...validReport, remediation: [validReport.remediation[0], validReport.remediation[0]] } }]);
+    expect(events.filter((event) => event.type === 'report')).toEqual([{ type: 'report', report: corrected }]);
     const request = mocks.completionStream.mock.calls[1][0];
     expect(request.tools[0].function.parameters).not.toHaveProperty('properties.remediation.items.anyOf.1.properties.evidenceReadIds');
     expect(request.tools[0].function.parameters).toHaveProperty('properties.remediation.items.anyOf.1.additionalProperties', false);

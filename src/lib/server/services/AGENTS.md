@@ -110,6 +110,13 @@ omits the field entirely. Sampled history describes only its sampled dates; an i
 cannot establish the extrema or continuity of the requested period.
 The final consistency instruction checks comparison directions against dated values in both
 findings and recommendation rationales and requires all supporting comparison reads to be cited.
+When the current manifest contains executed measurement reads, the provider observations array
+requires at least one entry and runtime validation requires a warehouse observation citing one
+of those measured tool sources. Existing validation still checks every exact source/read pair.
+This prevents an empty or inference-only followup from discarding available facts because other
+history dates are missing. The normal bounded correction explains the omission; it never writes
+an observation or repairs IDs. Refusals, coverage metadata and unavailable dates do not trigger
+this floor. Genuine no-data reports and empty recommendation arrays remain valid.
 
 The report-schema projection and OpenRouter reasoning budget apply only to the exact model IDs
 `google/gemini-2.5-flash-lite` and `google/gemini-2.5-flash`. Both receive

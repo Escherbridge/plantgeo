@@ -248,13 +248,14 @@ describe('evidence audit honesty', () => {
       { id: 'one', stage: 'local', tool: 'surface_value_near_point', source: 'interventions', status: 'governed_absence' },
     ] };
     expect(reportWarehouseEvidenceIssues(report, payload, evidence)).toHaveLength(1);
-    expect(reportWarehouseEvidenceIssues(report, payload, { ...evidence, toolCalls: [{ ...evidence.toolCalls[0], status: 'observed' }] })).toHaveLength(1);
-    expect(reportWarehouseEvidenceIssues({ ...report, riskSummary: { ...report.riskSummary, evidenceReadIds: ['one'] } }, payload,
+    const observed = { statement: 'An intervention was returned.', evidenceOrigin: 'warehouse' as const, evidenceSource: 'interventions' as const, evidenceReadIds: ['one'] };
+    expect(reportWarehouseEvidenceIssues(report, payload, { ...evidence, toolCalls: [{ ...evidence.toolCalls[0], status: 'observed' }] })).toHaveLength(2);
+    expect(reportWarehouseEvidenceIssues({ ...report, riskSummary: { ...report.riskSummary, evidenceReadIds: ['one'] }, observations: [observed] }, payload,
       { ...evidence, toolCalls: [{ ...evidence.toolCalls[0], status: 'observed' }] })).toEqual([]);
     for (const stage of ['temporal', 'regional', 'additional'] as const) {
       const comparisonEvidence: RegionalAnalysisEvidence = { ...evidence, toolCalls: [{ ...evidence.toolCalls[0], stage, status: 'observed', selectedDate: '2024-05-01', location: { lat: 44, lon: -116.5 } }] };
-      expect(reportWarehouseEvidenceIssues(report, payload, comparisonEvidence)).toHaveLength(1);
-      const cited = { ...report, riskSummary: { ...report.riskSummary, evidenceReadIds: ['one'] } };
+      expect(reportWarehouseEvidenceIssues(report, payload, comparisonEvidence)).toHaveLength(2);
+      const cited = { ...report, riskSummary: { ...report.riskSummary, evidenceReadIds: ['one'] }, observations: [observed] };
       expect(reportWarehouseEvidenceIssues(cited, payload, comparisonEvidence)).toEqual([]);
       expect(reportWarehouseEvidenceIssues(cited, payload, { ...comparisonEvidence, toolCalls: [{ ...comparisonEvidence.toolCalls[0], source: 'vegetation' }] }).length).toBeGreaterThan(0);
     }
@@ -277,6 +278,7 @@ describe('evidence audit honesty', () => {
     expect(emptySchema).toHaveProperty('properties.riskSummary.properties.evidenceOrigin.enum', ['web', 'model_inference']);
     expect(emptySchema).not.toHaveProperty('properties.observations.items.properties.evidenceSource');
     expect(emptySchema).not.toHaveProperty('properties.observations.items.properties.evidenceReadIds');
+    expect(emptySchema).not.toHaveProperty('properties.observations.minItems');
 
     const evidence: RegionalAnalysisEvidence = { version: 1, stages: [], limitations: [], toolCalls: [
       { id: 'temporal-vpd', stage: 'temporal', tool: 'surface_evidence_for_selection', source: 'soil-field-vpd', status: 'observed', selectedDate: '2026-09-15' },
@@ -288,6 +290,7 @@ describe('evidence audit honesty', () => {
     expect(manifest.payloadSources).toEqual([]);
     expect(manifest.measurementReads).toEqual([expect.objectContaining({ evidenceSource: 'soil-field-vpd', evidenceReadId: 'temporal-vpd', selectedDate: '2026-09-15' })]);
     const schema = reportSchemaForCitations(manifest);
+    expect(schema).toHaveProperty('properties.observations.minItems', 1);
     expect(schema).toHaveProperty('properties.observations.items.anyOf.0.properties.evidenceSource.enum', ['soil-field-vpd']);
     expect(schema).toHaveProperty('properties.observations.items.anyOf.0.properties.evidenceReadIds.items.enum', ['temporal-vpd']);
     const claimFields = [
@@ -315,7 +318,7 @@ describe('evidence audit honesty', () => {
     }
     const report = {
       riskSummary: { level: 'moderate' as const, headline: 'VPD observations are available.', factors: [], evidenceOrigin: 'warehouse' as const, evidenceSources: ['soil-field-vpd' as const], evidenceReadIds: ['temporal-vpd'] },
-      observations: [], remediation: [], professionalConsultation: 'Consult an agronomist.',
+      observations: [{ statement: 'VPD observations are available.', evidenceOrigin: 'warehouse' as const, evidenceSource: 'soil-field-vpd' as const, evidenceReadIds: ['temporal-vpd'] }], remediation: [], professionalConsultation: 'Consult an agronomist.',
     };
     expect(reportWarehouseEvidenceIssues(report, payload, evidence)).toEqual([]);
     const legacyPayload = { ...payload, waterScarcity: { droughtClass: 'D1', nearestGauge: null } };
@@ -372,6 +375,33 @@ describe('evidence audit honesty', () => {
     const matching = { ...mismatched, observations: [{ ...mismatched.observations[0], evidenceReadIds: ['local-vpd', 'temporal-vpd'] }] };
     expect(reportWarehouseEvidenceIssues(matching, payload, evidence)).toEqual([]);
   });
+  it('requires a measured observation when current reads exist without treating gaps or metadata as measurements', () => {
+    const gapReport = remediationReportSchema.parse({
+      riskSummary: { level: 'moderate', headline: 'Historical coverage is incomplete.', factors: [], evidenceOrigin: 'model_inference', evidenceSources: [] },
+      observations: [], remediation: [], professionalConsultation: 'Consult an agronomist.',
+    });
+    const evidence: RegionalAnalysisEvidence = { version: 1, stages: [], limitations: ['Some historical dates are missing.'], toolCalls: [
+      { id: 'local-vpd', stage: 'local', tool: 'surface_evidence_for_selection', source: 'soil-field-vpd', status: 'observed', selectedDate: '2026-09-09' },
+      { id: 'historical-gap', stage: 'temporal', tool: 'surface_evidence_for_selection', source: 'soil-field-vpd', status: 'unavailable' },
+    ] };
+    for (const observations of [[], [{ statement: 'Historical evidence is limited.', evidenceOrigin: 'model_inference' as const }]]) {
+      expect(reportWarehouseEvidenceIssues({ ...gapReport, observations }, payload, evidence)).toEqual([
+        expect.objectContaining({ path: ['observations'], message: expect.stringContaining('Measured tool evidence is available') }),
+      ]);
+    }
+    const measured = { ...gapReport, observations: [{ statement: 'VPD is 0.9 kPa on 2026-09-09.', evidenceOrigin: 'warehouse' as const, evidenceSource: 'soil-field-vpd' as const, evidenceReadIds: ['local-vpd'] }] };
+    expect(reportWarehouseEvidenceIssues(measured, payload, evidence)).toEqual([]);
+    expect(measured.remediation).toEqual([]);
+    expect(reportWarehouseEvidenceIssues(gapReport, payload, undefined)).toEqual([]);
+    for (const status of ['unavailable', 'refused', 'governed_absence', 'error', 'not_queried'] as const) {
+      const noMeasurements = { ...evidence, toolCalls: [{ ...evidence.toolCalls[0], status }] };
+      expect(reportWarehouseEvidenceIssues(gapReport, payload, noMeasurements)).toEqual([]);
+      expect(reportSchemaForCitations(reportCitationManifest(payload, noMeasurements))).not.toHaveProperty('properties.observations.minItems');
+    }
+    for (const tool of ['observation_coverage_on_day', 'observation_temporal_neighbors', 'list_environmental_layers']) {
+      expect(reportWarehouseEvidenceIssues(gapReport, payload, { ...evidence, toolCalls: [{ ...evidence.toolCalls[0], tool }] })).toEqual([]);
+    }
+  });
   it('normalizes only empty provider arrays on explicit nonwarehouse claims', () => {
     const report = {
       riskSummary: { level: 'moderate', headline: 'Evidence is limited.', factors: [], evidenceOrigin: 'model_inference', evidenceSources: [], evidenceReadIds: [] },
@@ -413,7 +443,7 @@ describe('evidence audit honesty', () => {
       version: 1, stages: [], limitations: [], toolCalls: [
         { id: 'one', stage: 'local', tool: 'surface_value_near_point', source: 'drought-areas', status: 'observed' },
       ],
-    })).toHaveLength(1);
+    })).toHaveLength(2);
     const legacyWithRead = { ...cited('drought'), riskSummary: { ...cited('drought').riskSummary, evidenceReadIds: ['one'] } };
     expect(reportWarehouseEvidenceIssues(legacyWithRead, droughtOnly, {
       version: 1, stages: [], limitations: [], toolCalls: [
@@ -424,7 +454,7 @@ describe('evidence audit honesty', () => {
   it('requires every risk-summary ID and every declared tool source to correspond', () => {
     const report = {
       riskSummary: { level: 'low' as const, headline: 'Two tool sources.', factors: [], evidenceOrigin: 'warehouse' as const, evidenceSources: ['interventions' as const, 'vegetation' as const], evidenceReadIds: ['combined'] },
-      observations: [], remediation: [], professionalConsultation: 'Consult an agronomist.',
+      observations: [{ statement: 'Vegetation evidence was returned.', evidenceOrigin: 'warehouse' as const, evidenceSource: 'vegetation' as const, evidenceReadIds: ['combined'] }], remediation: [], professionalConsultation: 'Consult an agronomist.',
     };
     const combined: RegionalAnalysisEvidence = { version: 1, stages: [], limitations: [], toolCalls: [
       { id: 'combined', stage: 'additional', tool: 'fire_history_near_point', sources: ['interventions', 'vegetation'], status: 'observed' },

@@ -36,6 +36,8 @@ describe("Gemini report schema projection", () => {
     }] });
     const projected = geminiReportSchema(scoped);
     expect(projected).toHaveProperty('type', 'object');
+    expect(projected).toHaveProperty('properties.observations.minItems', 1);
+    expect(projected).toHaveProperty('properties.observations.description', expect.stringContaining('Measurements were returned'));
     for (const { path, required } of [
       { path: 'properties.riskSummary', required: ['level', 'headline', 'factors', 'evidenceOrigin', 'evidenceSources'] },
       { path: 'properties.observations.items', required: ['statement', 'evidenceOrigin'] },

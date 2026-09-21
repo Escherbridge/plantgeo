@@ -163,6 +163,10 @@ export function reportSchemaForCitations(manifest: ReturnType<typeof reportCitat
     const result: Record<string, unknown> = Object.fromEntries(Object.entries(node).map(([key, value]) => [key, visit(value)]));
     const properties = result.properties as Record<string, Record<string, unknown>> | undefined;
     if (!properties) return result;
+    if (properties.observations && readIds.length > 0) {
+      properties.observations.minItems = 1;
+      properties.observations.description = 'Measurements were returned. Include at least one warehouse observation grounded in an exact current source/read pair. Historical gaps do not erase available measurements.';
+    }
     if (properties.evidenceOrigin && sources.length === 0) {
       properties.evidenceOrigin.enum = EVIDENCE_ORIGINS.filter((origin) => origin !== 'warehouse');
     }
@@ -252,6 +256,14 @@ export function reportWarehouseEvidenceIssues(
     readIds: string[];
   }> = [];
   const referenceIssues: ReportEvidenceIssue[] = [];
+  const measuredSources = new Set(reportCitationManifest(payload, evidence, dataFreshness).measurementReads.map((read) => read.evidenceSource));
+  if (measuredSources.size > 0 && !report.observations.some((claim) => claim.evidenceOrigin === 'warehouse'
+    && claim.evidenceSource !== undefined && measuredSources.has(claim.evidenceSource))) {
+    referenceIssues.push({
+      code: 'custom', path: ['observations'],
+      message: 'Measured tool evidence is available. Include at least one warehouse observation describing an actual returned measurement with its exact source and matching read IDs. Empty or inference-only observations omit available evidence; historical gaps do not erase current measurements. Do not invent facts or IDs.',
+    });
+  }
   const verifyReferences = (
     readIds: string[] | undefined,
     sources: readonly RegionalClaimEvidenceSource[],
