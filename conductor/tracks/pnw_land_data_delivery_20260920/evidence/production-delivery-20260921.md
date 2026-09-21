@@ -7,7 +7,8 @@ status: verified_initial_publication
 
 # Initial PNW land-context production publication
 
-The isolated `feat/pnw-land-context-data` worktree implements real BLM reference products,
+The isolated `feat/pnw-land-context-data` worktree, delivered in
+[PR #10](https://github.com/Escherbridge/plantgeo/pull/10), implements real BLM reference products,
 USDA-derived crop-cover estimates, publication-dependent controls, and explicit unavailable
 states for parcels/recorded land use, electric territories and state-managed lands. The user
 authorized this implementation, production ingestion and a pull request on September 20.

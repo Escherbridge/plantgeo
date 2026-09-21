@@ -11,7 +11,7 @@ status: in_progress
 - [x] Bind PNW sources; retain explicit unavailability outside PNW.
 - [x] Apply all implementation fixes, then run integrated checks and independent review.
 - [x] Ingest validated products into the existing production warehouse; verify readback.
-- [ ] Open a pull request with ingestion evidence and explicit follow-up tracks.
+- [x] Open [PR #10](https://github.com/Escherbridge/plantgeo/pull/10) with ingestion evidence and explicit follow-up tracks.
 - [ ] After merge/deployment, verify the live browser and activate the four new scheduled definitions.
 
 Implementation and initial production ingestion are verified in

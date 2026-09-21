@@ -33,7 +33,7 @@ This registry contains planned, active, and blocked work only. Completed impleme
 
 | Track | State | Outstanding work |
 | --- | --- | --- |
-| [PNW land data delivery](tracks/pnw_land_data_delivery_20260920/plan.md) | in_progress | Implementation and production data verified; PR delivery, deployment and live browser acceptance remain. |
+| [PNW land data delivery](tracks/pnw_land_data_delivery_20260920/plan.md) | in_progress | Implementation and production data verified in PR #10; deployment and live browser acceptance remain. |
 | [PNW BLM sources](tracks/pnw_blm_sources_20260920/plan.md) | in_progress | Production boundaries, office jurisdictions and inquiry records verified; activate refresh/reconcile/backfill after deployment. |
 | [PNW crop-cover estimates](tracks/pnw_crop_cover_20260920/plan.md) | in_progress | USDA CDL 2022–2025 editions published and selected-release reads verified; activate maintenance after deployment. |
 | [PNW remaining land sources](tracks/pnw_land_sources_deferred_20260920/plan.md) | planned | Additional BLM interests, NLCD, parcels, utilities and state-managed inventories; unavailable sources have no switches. |
