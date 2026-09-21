@@ -2,15 +2,23 @@
 
 from __future__ import annotations
 
+import io
 import json
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+from unittest.mock import MagicMock
 
 import numpy as np
 import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 import rasterio
 from rasterio.transform import from_origin
 
+from agri_data_service.foundation.parquet.completion import PartitionCompletion
+from agri_data_service.foundation.parquet.paths import partition_path
+from agri_data_service.foundation.parquet.zoom import validate_zoom_tier
+from agri_data_service.pipeline.direct.crop_cover import forward
 from agri_data_service.pipeline.direct.crop_cover.archive import ARCHIVE_ROOT, archive_capture, replay_capture
 from agri_data_service.pipeline.direct.crop_cover.products import CDL_SERVICE, GRID_METRES, RELEASE_DAYS, metadata_url
 from agri_data_service.pipeline.direct.crop_cover.rows import build_tables, derive_table
@@ -24,8 +32,11 @@ from agri_data_service.pipeline.direct.crop_cover.source import (
     verify_tiff,
 )
 from agri_data_service.pipeline.errors import PipelineOperationError
+from agri_data_service.pipeline.parquet.availability_index import AvailabilityRow, EvidenceReceipt
+from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from agri_data_service.warehouse.schemas.crop_cover import CROP_COVER_SCHEMA
 from tests.parquet.availability_documents import MemoryAvailabilityStorage
+from tests.parquet.test_objectstore_writer import RecordingBackend
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -235,3 +246,115 @@ def test_manifest_cannot_relabel_hashed_source_evidence(tmp_path: Path, field: s
     path.write_bytes(canonical_bytes(manifest))
     with pytest.raises(PipelineOperationError, match=reason):
         read_manifest(path)
+
+
+def _indexed_crop_ladder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[ObjectStore, RecordingBackend]:
+    tables = build_tables(_capture_fixture(tmp_path))
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    day = RELEASE_DAYS[TEST_YEAR]
+    completed = datetime(2026, 9, 21, tzinfo=UTC)
+    rows = []
+    evidence = EvidenceReceipt(key="evidence/source.json", sha256="a" * 64)
+    for tier, table in tables.items():
+        zoom = validate_zoom_tier(tier)
+        parts = [
+            store.write_partition(
+                table.slice(index, 1), layer="crop-cover", kind="observed", zoom=zoom, day=day, part_index=index
+            )
+            for index in range(table.num_rows)
+        ]
+        marker = store.write_completion_marker(
+            PartitionCompletion(part_count=len(parts), row_count=table.num_rows, completed_at=completed, run_id="test"),
+            layer="crop-cover",
+            kind="observed",
+            zoom=zoom,
+            day=day,
+        )
+        rows.append(
+            AvailabilityRow(
+                lane="crop-cover",
+                product="crop-cover",
+                nature="release_series",
+                day=day,
+                rung=tier,
+                terminal_state="published",
+                row_count=table.num_rows,
+                source_receipt=evidence,
+                terminal_receipt=evidence,
+                data_receipts=tuple(
+                    sorted(
+                        (EvidenceReceipt(key=part.relative_path, sha256=part.sha256) for part in parts),
+                        key=lambda receipt: receipt.key,
+                    )
+                ),
+                completion_receipt=EvidenceReceipt(key=marker.relative_path, sha256=marker.sha256),
+                absence_reason=None,
+                source_ceiling=day,
+                published_at=completed,
+            )
+        )
+    index = MagicMock(rows=tuple(rows))
+    index.selectable_days.return_value = (day,)
+    monkeypatch.setattr(forward, "read_latest_availability", lambda *_args, **_kwargs: index)
+    return store, backend
+
+
+@pytest.mark.parametrize("damage", ["missing_one", "missing_all", "extra", "changed"])
+def test_indexed_crop_ladder_detects_physical_damage_with_unchanged_markers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, damage: str
+) -> None:
+    store, backend = _indexed_crop_ladder(tmp_path, monkeypatch)
+    day = RELEASE_DAYS[TEST_YEAR]
+    parts = store.list_day_parts("crop-cover", "observed", 13, day)
+    assert len(parts) > 1
+    marker = store.read_completion_receipt("crop-cover", "observed", 13, day)
+    if damage.startswith("missing"):
+        for key in parts if damage == "missing_all" else parts[:1]:
+            backend.delete(store.key_for(key))
+    elif damage == "extra":
+        backend.put(
+            store.key_for(partition_path("crop-cover", "observed", 13, day, part_index=999)),
+            backend.objects[store.key_for(parts[0])],
+            content_type="application/vnd.apache.parquet",
+        )
+    else:
+        table = pq.read_table(io.BytesIO(backend.objects[store.key_for(parts[0])]))
+        changed = table.set_column(
+            table.schema.get_field_index("source_sha256"),
+            table.schema.field("source_sha256"),
+            pa.array(["f" * 64] * table.num_rows),
+        )
+        output = io.BytesIO()
+        pq.write_table(changed, output)
+        backend.put(store.key_for(parts[0]), output.getvalue(), content_type="application/vnd.apache.parquet")
+    assert store.read_completion_receipt("crop-cover", "observed", 13, day) == marker
+    assert not forward.indexed_ladder(store, MemoryAvailabilityStorage(), day)
+
+
+@pytest.mark.asyncio
+async def test_intact_indexed_crop_release_repairs_as_noop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store, _backend = _indexed_crop_ladder(tmp_path, monkeypatch)
+    monkeypatch.setattr(ObjectStore, "from_settings", lambda: store)
+    monkeypatch.setattr(forward.BotoAvailabilityStorage, "from_settings", MemoryAvailabilityStorage)
+    args = forward._parse_args(
+        [
+            "--operation",
+            "repair",
+            "--year",
+            str(TEST_YEAR),
+            "--capture-dir",
+            str(tmp_path),
+            "--bbox",
+            ",".join(map(str, forward.capture_envelope())),
+        ]
+    )
+    result = await forward.run(args)
+    assert result["outcome"] == "idempotent_noop"
+
+
+def test_crop_ladder_does_not_hide_storage_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store, backend = _indexed_crop_ladder(tmp_path, monkeypatch)
+    monkeypatch.setattr(backend, "get", MagicMock(side_effect=OSError("storage unavailable")))
+    with pytest.raises(OSError, match="storage unavailable"):
+        forward.indexed_ladder(store, MemoryAvailabilityStorage(), RELEASE_DAYS[TEST_YEAR])

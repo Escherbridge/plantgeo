@@ -4,10 +4,10 @@
   "type": "data-governance",
   "status": "in_progress",
   "created_on": "2026-09-11",
-  "updated_on": "2026-09-12",
+  "updated_on": "2026-09-21",
   "coordination_gates": "evidence/land-herbaria-coordination-20260912.md",
   "registration_status": "registered_in_progress",
-  "execution_scope": "implementation_authorized_2026-09-12_owner_override. Schema, reader contracts, UI components, and agent integration are authorized. Real ingestion against the four gated sources remains blocked (see rights_gates_status).",
+  "execution_scope": "September 12 owner override authorized schema, reader, UI and agent implementation. September 20 authorized bounded BLM/crop delivery and production ingestion. The current owner request authorizes PR review, track updates, merging and deployment monitoring; PR #10 passed review and quality gates and is ready to merge. Acquisition against the four unresolved sources remains gated. Schedule activation remains separate follow-up work.",
   "rights_gates_status": "Four source-specific rights gates remain unresolved and block data acquisition from Idaho utility polygons, Idaho state-land, Oregon utilities, and county parcels. Gate verdicts documented in evidence/rights-gate-verdicts-20260912.md. Schema/UI/contract implementation is not blocked by these gates.",
   "depends_on": [],
   "related_tracks": [
@@ -18,7 +18,10 @@
     "multiscale_polygon_surface_20260901",
     "gapless_parquet_publication_20260901"
   ],
-  "next_gate": "Resolve per-source rights, current authoritative feeds, native identity, source watermarks and PNW coverage. Keep any later botanical-to-parcel/contact association behind exact-release admission and precision review; do not block independent land families on Herbaria.",
+  "next_gate": "Merge reviewed PR #10, then record deployed-code/API acceptance separately from browser and schedule acceptance in pnw_land_data_delivery_20260920. Remaining source rights, authoritative feeds, native identity, watermarks and coverage continue in pnw_land_sources_deferred_20260920. Botanical-to-parcel/contact associations retain separate admission and precision gates.",
+  "delivery_track": "pnw_land_data_delivery_20260920",
+  "deferred_source_track": "pnw_land_sources_deferred_20260920",
+  "publication_evidence": "../pnw_land_data_delivery_20260920/evidence/production-delivery-20260921.md",
   "geographic_scope": {
     "states": [
       "WA",
@@ -41,7 +44,23 @@
   ],
   "source_inventory": "evidence/source-inventory.md",
   "independent_review": "evidence/independent-review.md",
-  "admitted_releases": [],
+  "admitted_releases": [
+    {
+      "product": "land-context-boundaries",
+      "release_day": "2026-09-21",
+      "status": "initial_publication_recorded_code_review_passed_deployment_pending"
+    },
+    {
+      "product": "land-context-offices",
+      "release_day": "2026-09-21",
+      "status": "initial_publication_recorded_code_review_passed_deployment_pending"
+    },
+    {
+      "product": "land-context-contacts",
+      "release_day": "2026-09-21",
+      "status": "initial_publication_recorded_routes_unverified_code_review_passed_deployment_pending"
+    }
+  ],
   "private_owner_data_policy": "Private owner names and personal owner contact data excluded by default; exclusion is not a coverage gap.",
   "open_gates": [
     "Idaho utility polygon source",

@@ -35,7 +35,11 @@ from agri_data_service.pipeline.parquet.gap_fill import (
     postgres_lane_day_lock,
 )
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
-from agri_data_service.pipeline.parquet.objectstore import ObjectStore
+from agri_data_service.pipeline.parquet.objectstore import (
+    ConcurrentPrunePartitionError,
+    ObjectStore,
+    PartitionNotWrittenError,
+)
 from agri_data_service.warehouse.parquet.schema import get_stream_schema
 
 if TYPE_CHECKING:
@@ -98,8 +102,22 @@ def ladder_complete(store: ObjectStore, layer: str, *, day: date, manifest: str)
         objects = tier_day_objects(keys, layer=layer, kind="observed", zoom=tier)
         if classify_partition_day(day, objects, zoom=tier) != "data":
             return False
-        table = store.read_partition(layer, "observed", tier, day)
-        if not table.num_rows or set(table.column("source_manifest_sha256").to_pylist()) != {manifest}:
+        completion = store.read_completion_marker(layer, "observed", tier, day)
+        if completion is None:
+            return False
+        try:
+            physical = store.read_partition_with_receipts(layer, "observed", tier, day)
+        except (PartitionNotWrittenError, ConcurrentPrunePartitionError):
+            return False
+        if (
+            physical.table.num_rows != completion.row_count
+            or len(physical.parts) != completion.part_count
+            or set(physical.table.column("source_manifest_sha256").to_pylist()) != {manifest}
+        ):
+            return False
+        if completion.parts and {
+            (part.relative_path, part.sha256, part.row_count, part.byte_count) for part in physical.parts
+        } != {(part.relative_path, part.sha256, part.row_count, part.byte_count) for part in completion.parts}:
             return False
     return True
 

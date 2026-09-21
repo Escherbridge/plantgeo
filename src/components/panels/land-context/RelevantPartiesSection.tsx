@@ -4,6 +4,7 @@ import type { OfficeCardData } from "./types";
 
 interface RelevantPartiesSectionProps {
   officeCards: OfficeCardData[];
+  notice?: string;
 }
 
 /**
@@ -11,7 +12,7 @@ interface RelevantPartiesSectionProps {
  * one card per office, every relationship still listed inside it (spec "Deduplicate a shared
  * office card ... while retaining every relevant feature/relationship").
  */
-export function RelevantPartiesSection({ officeCards }: RelevantPartiesSectionProps) {
+export function RelevantPartiesSection({ officeCards, notice }: RelevantPartiesSectionProps) {
   const deduped = dedupeOfficeCards(officeCards);
 
   return (
@@ -20,7 +21,8 @@ export function RelevantPartiesSection({ officeCards }: RelevantPartiesSectionPr
         Relevant parties
       </h3>
 
-      {deduped.length === 0 ? (
+      {notice && <p role="status" className="mt-2 text-xs text-zinc-500">{notice}</p>}
+      {deduped.length === 0 && !notice ? (
         <p className="mt-2 text-xs text-zinc-500">No published office/program route resolved for this selection.</p>
       ) : (
         <div className="mt-2 space-y-2">

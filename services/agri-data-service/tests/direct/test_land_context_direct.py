@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import time
 from dataclasses import replace
@@ -12,8 +13,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import polars as pl
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
+from agri_data_service.foundation.parquet.completion import CompletedPart, PartitionCompletion
+from agri_data_service.foundation.parquet.paths import partition_path
+from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.pipeline import source_bindings
 from agri_data_service.pipeline.direct.land_context import forward, source
 from agri_data_service.pipeline.direct.land_context.products import (
@@ -35,11 +41,13 @@ from agri_data_service.pipeline.direct.land_context.source import (
     digest,
     replay_snapshot,
 )
-from agri_data_service.pipeline.direct.land_context.watermark import read_state
+from agri_data_service.pipeline.direct.land_context.watermark import STATE_KEY, read_state
 from agri_data_service.pipeline.errors import PipelineOperationError
+from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from agri_data_service.warehouse.parquet.tiers import derivation_session, derive_tier
 from agri_data_service.warehouse.schemas.land_context import BOUNDARIES_STREAM, CONTACTS_STREAM, OFFICES_STREAM
 from tests.parquet.availability_documents import MemoryAvailabilityStorage
+from tests.parquet.test_objectstore_writer import RecordingBackend
 
 CAPTURED = datetime(2026, 9, 20, 12, tzinfo=UTC)
 DAY = date(2026, 9, 20)
@@ -285,3 +293,102 @@ async def test_static_publication_finalizes_only_verified_ladders_without_daily_
         _stored, state = read_state(storage)
         assert state["published"] is None
         assert state["pending"]["manifest_sha256"] == snapshot.manifest_sha256
+
+
+def _published_blm_ladders() -> tuple[ObjectStore, RecordingBackend, LandContextSnapshot]:
+    snapshot = fixture_snapshot()
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    for layer, table in snapshot_tables(snapshot, release_day=DAY).items():
+        for tier in ZOOM_TIERS:
+            receipts = [
+                store.write_partition(
+                    table.slice(index, 1), layer=layer, kind="observed", zoom=tier, day=DAY, part_index=index
+                )
+                for index in range(table.num_rows)
+            ]
+            parts = (
+                tuple(
+                    CompletedPart(
+                        relative_path=part.relative_path,
+                        row_count=part.row_count,
+                        byte_count=part.byte_count,
+                        sha256=part.sha256,
+                    )
+                    for part in receipts
+                )
+                if tier != max(ZOOM_TIERS)
+                else ()
+            )
+            store.write_completion_marker(
+                PartitionCompletion(
+                    part_count=len(receipts),
+                    row_count=table.num_rows,
+                    completed_at=CAPTURED,
+                    run_id="test",
+                    parts=parts,
+                ),
+                layer=layer,
+                kind="observed",
+                zoom=tier,
+                day=DAY,
+            )
+    return store, backend, snapshot
+
+
+@pytest.mark.parametrize("damage", ["missing_one", "missing_all", "extra", "foreign_source", "changed_derived"])
+def test_blm_ladder_detects_physical_damage_with_unchanged_markers(damage: str) -> None:
+    store, backend, snapshot = _published_blm_ladders()
+    tier = 9 if damage == "changed_derived" else 13
+    parts = store.list_day_parts(BOUNDARIES_STREAM, "observed", tier, DAY)
+    assert len(parts) > 1
+    marker = store.read_completion_receipt(BOUNDARIES_STREAM, "observed", tier, DAY)
+    if damage.startswith("missing"):
+        for key in parts if damage == "missing_all" else parts[:1]:
+            backend.delete(store.key_for(key))
+    elif damage == "extra":
+        backend.put(
+            store.key_for(partition_path(BOUNDARIES_STREAM, "observed", tier, DAY, part_index=999)),
+            backend.objects[store.key_for(parts[0])],
+            content_type="application/vnd.apache.parquet",
+        )
+    else:
+        table = pq.read_table(io.BytesIO(backend.objects[store.key_for(parts[0])]))
+        column = "label" if damage == "changed_derived" else "source_manifest_sha256"
+        changed = table.set_column(
+            table.schema.get_field_index(column), table.schema.field(column), pa.array(["f" * 64] * table.num_rows)
+        )
+        output = io.BytesIO()
+        pq.write_table(changed, output)
+        backend.put(store.key_for(parts[0]), output.getvalue(), content_type="application/vnd.apache.parquet")
+    assert store.read_completion_receipt(BOUNDARIES_STREAM, "observed", tier, DAY) == marker
+    assert not forward.ladder_complete(store, BOUNDARIES_STREAM, day=DAY, manifest=snapshot.manifest_sha256)
+
+
+@pytest.mark.asyncio
+async def test_intact_blm_ladders_reconcile_without_capture_or_replay(monkeypatch: pytest.MonkeyPatch) -> None:
+    store, _backend, snapshot = _published_blm_ladders()
+    storage = MemoryAvailabilityStorage()
+    storage.seed(
+        STATE_KEY,
+        canonical_bytes(
+            {"schema": "blm-pnw-publication-state/v1", "pending": None, "published": forward._coordinates(snapshot)}
+        ),
+    )
+    source_capture = AsyncMock()
+    replay = AsyncMock()
+    monkeypatch.setattr(source_bindings, "resolve_land_context_source", lambda: MagicMock(capture=source_capture))
+    monkeypatch.setattr(forward, "replay_snapshot", replay)
+    args = argparse.Namespace(capture_manifest=None, mode="reconcile", run_id="test", time_budget_seconds=30)
+    result = await forward._owned_turn(MagicMock(), store, storage, args)
+    assert result["status"] == "completed"
+    assert result["outcome"] == "unchanged"
+    source_capture.assert_not_called()
+    replay.assert_not_called()
+
+
+def test_blm_ladder_does_not_hide_storage_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    store, backend, snapshot = _published_blm_ladders()
+    monkeypatch.setattr(backend, "get", MagicMock(side_effect=OSError("storage unavailable")))
+    with pytest.raises(OSError, match="storage unavailable"):
+        forward.ladder_complete(store, BOUNDARIES_STREAM, day=DAY, manifest=snapshot.manifest_sha256)

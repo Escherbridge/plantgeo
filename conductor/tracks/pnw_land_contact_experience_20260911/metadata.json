@@ -4,7 +4,7 @@
   "type": "feature",
   "status": "in_progress",
   "created_on": "2026-09-11",
-  "updated_on": "2026-09-12",
+  "updated_on": "2026-09-21",
   "coordination_gates": "../pnw_land_context_reference_plane_20260911/evidence/land-herbaria-coordination-20260912.md",
   "depends_on": [
     "pnw_land_context_reference_plane_20260911"
@@ -14,10 +14,10 @@
     "environmental_parquet_serving_20260912",
     "multiscale_polygon_surface_20260901"
   ],
-  "next_gate": "Freeze source-backed selection/contact/time contracts and source-admission gates with the reference-plane owner, including refusal of unauthorized occurrence-derived parcel/contact claims. Any optional botanical association needs separate admission/precision review; implementation and shared-file ownership remain unauthorized.",
+  "next_gate": "Merge reviewed PR #10 and record deployed-code/API acceptance separately from live browser, accessibility and agent acceptance. No browser is available in the current review session. BLM inquiry routes remain unverified; broader source/contact acceptance continues in pnw_land_sources_deferred_20260920. Optional botanical association retains separate admission/precision review.",
   "registration_status": "registered_in_progress",
   "registry": "conductor/tracks.md",
-  "authorization_scope": "implementation_authorized_2026-09-12_owner_override. Schema, UI, reader contracts, and agent integration are authorized. Real ingestion against the four reference-plane-defined gated sources remains blocked.",
+  "authorization_scope": "September 12 owner override authorized schema, UI, reader and agent implementation. September 20 authorized bounded BLM/crop delivery and production ingestion. The current owner request authorizes PR review, track updates, merging and deployment monitoring. Real ingestion against the four unresolved reference-plane sources remains gated. Schedule activation remains separate follow-up work.",
   "rights_gates_status": "Four source-specific rights gates (defined in pnw_land_context_reference_plane) remain unresolved and block data acquisition. Gate verdicts documented in ../pnw_land_context_reference_plane_20260911/evidence/rights-gate-verdicts-20260912.md. Schema/UI/contract implementation is not blocked by these gates.",
   "source_inventory": "../pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
   "geography": {
@@ -41,10 +41,13 @@
     "pnw-state-managed-land-context",
     "pnw-place-contact-details"
   ],
-  "surfaces_status": "proposed_only_not_implemented",
+  "surfaces_status": "BLM/crop controls and branch-code readback recorded in PR #10; corrective review and quality gates passed, ready to merge. Deployment and browser acceptance remain pending. Parcel, utility and state-managed families remain unavailable. Published BLM inquiry routes are unverified.",
+  "delivery_track": "pnw_land_data_delivery_20260920",
+  "deferred_source_track": "pnw_land_sources_deferred_20260920",
+  "publication_evidence": "../pnw_land_data_delivery_20260920/evidence/production-delivery-20260921.md",
   "partitions": {
-    "confidence": "planned",
-    "ownership_status": "Future code write sets and shared-file transfers must be assigned at the authorization gate; these slices allocate no implementation ownership.",
+    "confidence": "implementation_in_progress_acceptance_pending",
+    "ownership_status": "These retained slices describe the broader experience work. Bounded BLM/crop implementation and review are tracked by pnw_land_data_delivery_20260920; remaining source and contact work is not claimed complete.",
     "slices": [
       {
         "id": "x0",

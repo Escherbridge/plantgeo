@@ -46,7 +46,7 @@ export function LandContextPanelHost() {
     if (!focused || !selection) return null;
 
     const contactResults: LandContextResult[] =
-      contactsQuery.data && "status" in contactsQuery.data && contactsQuery.data.status === "ok"
+      !contactsQuery.isError && contactsQuery.data && contactsQuery.data.status === "ok"
         ? contactsQuery.data.data
         : [];
 
@@ -61,13 +61,34 @@ export function LandContextPanelHost() {
       [...(focused.evidence ? [focused.evidence] : []), ...contactResults],
       selectionLabel
     );
-  }, [focused, selection, contactsQuery.data]);
+  }, [focused, selection, contactsQuery.data, contactsQuery.isError]);
+
+  let contactNotice: string | undefined;
+  if (focused) {
+    if (!selectionBbox && !selection?.point) {
+      contactNotice = "Select a point or area to look up its published office contacts.";
+    } else if (contactsQuery.isError) {
+      contactNotice = "Office contacts could not be read. The boundary evidence remains available; try the lookup again.";
+    } else if (contactsQuery.isFetching || !contactsQuery.data) {
+      contactNotice = "Reading published office contacts for this selection…";
+    } else if (contactsQuery.data.status === "budget_exceeded") {
+      contactNotice = "The office lookup exceeded its area or response limit. Select a smaller area and try again.";
+    } else {
+      const coverage = contactsQuery.data.data.filter((result) => result.coverageState !== "matched");
+      if (coverage.length) {
+        const failed = coverage.some((result) => result.coverageState === "upstream_unavailable");
+        const gaps = [...new Set(coverage.flatMap((result) => result.unresolvedGaps))];
+        contactNotice = `${failed ? "Office contacts could not be read." : "Office contact coverage is incomplete or unavailable."} ${gaps.join(" ")}`.trim();
+      }
+    }
+  }
 
   if (!panelOpen) return null;
 
   return (
     <LandContextPanel
       data={panelData}
+      contactNotice={contactNotice}
       onClose={closePanel}
       resultsCount={results.length}
       candidateIndex={candidateIndex}

@@ -12,7 +12,7 @@ Owner authorization: 2026-09-20 request to implement in an isolated worktree, ma
 
 Data contracts: governed Parquet publication; observed source classifications distinguished from forecasts; source year, release day and capture time remain separate; no fabricated parcels, service territories, ownership or responsible contacts. Outside-source geography remains unavailable. UI switches depend on actual readable publication, not registration alone.
 
-Verification: source evidence, meaningful domain tests, full type/lint/boundary checks, affected Python tests and an independent review after the complete implementation batch. Production writes stay within the new product prefixes and use the ordinary publication locks and completion protocol. PR creation does not authorize merging main.
+Verification: source evidence, meaningful domain tests, full type/lint/boundary checks, affected Python tests and an independent review after the complete implementation batch. Production writes stay within the new product prefixes and use the ordinary publication locks and completion protocol. The current owner request separately authorizes review, track updates, merging and deployment monitoring for the existing PR scope; it does not resolve the source-admission work listed below. This track remains planned.
 
 ## Next source admissions
 

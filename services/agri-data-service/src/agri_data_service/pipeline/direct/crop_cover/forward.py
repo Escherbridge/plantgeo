@@ -50,7 +50,12 @@ from agri_data_service.pipeline.parquet.gap_fill import (
     unlocked_lane_day,
 )
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
-from agri_data_service.pipeline.parquet.objectstore import ObjectStore, availability_lane_root
+from agri_data_service.pipeline.parquet.objectstore import (
+    ConcurrentPrunePartitionError,
+    ObjectStore,
+    PartitionNotWrittenError,
+    availability_lane_root,
+)
 from agri_data_service.pipeline.source_bindings import resolve_crop_cover_source
 from agri_data_service.warehouse.schemas.crop_cover import CROP_COVER_STREAM
 
@@ -59,7 +64,7 @@ if TYPE_CHECKING:
 
     import pyarrow as pa
 
-    from agri_data_service.pipeline.parquet.availability_index import AvailabilityStorage
+    from agri_data_service.pipeline.parquet.availability_index import AvailabilityRow, AvailabilityStorage
 
 WRITER_CONTRACT: DirectWriterContract = DirectWriterContract(
     slug=CROP_COVER_STREAM,
@@ -102,8 +107,33 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser().parse_args(inline_bbox_value(list(sys.argv[1:] if argv is None else argv)))
 
 
+def _indexed_rung_matches(store: ObjectStore, row: AvailabilityRow) -> bool:
+    """Bind the current physical rung to its indexed receipts and counts."""
+    if row.terminal_state != "published" or row.completion_receipt is None:
+        return False
+    tier = validate_zoom_tier(row.rung)
+    marker = store.read_completion_receipt(CROP_COVER_STREAM, "observed", tier, row.day)
+    if (
+        marker is None
+        or marker.relative_path != row.completion_receipt.key
+        or marker.sha256 != row.completion_receipt.sha256
+    ):
+        return False
+    try:
+        physical = store.read_partition_with_receipts(CROP_COVER_STREAM, "observed", tier, row.day)
+    except (PartitionNotWrittenError, ConcurrentPrunePartitionError):
+        return False
+    return (
+        physical.table.num_rows == row.row_count
+        and physical.table.num_rows == marker.completion.row_count
+        and len(physical.parts) == marker.completion.part_count
+        and {(part.relative_path, part.sha256) for part in physical.parts}
+        == {(receipt.key, receipt.sha256) for receipt in row.data_receipts}
+    )
+
+
 def indexed_ladder(store: ObjectStore, storage: AvailabilityStorage, day: date) -> bool:
-    """Require the availability generation to bind the exact four current completion receipts."""
+    """Verify indexed completion receipts and the physical parts they publish."""
     try:
         index = read_latest_availability(
             storage,
@@ -113,17 +143,9 @@ def indexed_ladder(store: ObjectStore, storage: AvailabilityStorage, day: date) 
         )
     except AvailabilityUnavailableError:
         return False
-    if day not in index.selectable_days():
-        return False
-    for row in index.rows:
-        if row.day != day:
-            continue
-        if row.terminal_state != "published" or row.completion_receipt is None:
-            return False
-        marker = store.read_completion_receipt(CROP_COVER_STREAM, "observed", validate_zoom_tier(row.rung), day)
-        if marker is None or marker.sha256 != row.completion_receipt.sha256:
-            return False
-    return True
+    return day in index.selectable_days() and all(
+        _indexed_rung_matches(store, row) for row in index.rows if row.day == day
+    )
 
 
 async def maintain(options: argparse.Namespace) -> dict[str, object]:

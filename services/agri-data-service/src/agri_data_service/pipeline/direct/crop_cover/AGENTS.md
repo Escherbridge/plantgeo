@@ -136,6 +136,11 @@ does at most one annual release. A local file lock serializes maintenance in the
 directory; the shared lane-day database lock serializes actual publication across machines.
 Publication refuses an older capture if another writer already published newer source bytes.
 
+The no-op check reads every physical part and compares its path and SHA-256 to the index's
+exact data-receipt set, as well as the index and completion row counts and completion part count.
+Matching completion bytes alone cannot establish that data still exists or has not changed.
+Missing or concurrently pruned parts select repair; unrelated storage failures remain failures.
+
 Schedule maintenance daily for forward refresh and gap repair, and additional bounded
 history turns until all admitted years are published. It refuses to report success while
 the availability index is missing or references different completion bytes, even when all

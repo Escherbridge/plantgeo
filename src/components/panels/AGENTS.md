@@ -260,3 +260,12 @@ The selected surface record remains the first evidence entry when public-office 
 Office identities come from intersected jurisdiction polygons, not from surface feature keys.
 Dissolved BLM management areas have no source-native parcel identifier and must not display a
 fabricated one. Route scope retains the source's documented meaning and geographic limitations.
+
+The Relevant parties section reports contact loading, transport failures, bounded refusals and
+the reader's non-matched coverage explanations independently of the selected boundary evidence.
+An unsuccessful office read must not become an empty-office claim. Stale contacts are discarded
+after a failed query, while the boundary's source record remains visible.
+
+The panel selects the stored result metadata before deriving optional coverage notices. Returning
+a newly allocated empty array from a Zustand selector makes an absent-metadata snapshot unstable
+and can loop React updates. The real-store panel tests deliberately retain absent metadata.

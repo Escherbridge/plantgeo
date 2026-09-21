@@ -64,6 +64,12 @@ manifest is checked, and the base is read back against the reconstructed input. 
 `static_lookup` lanes: daily availability indexes and bootstrap are not applicable. Immutable
 source manifests, completion markers, and the pending/published state retain typed capture evidence.
 
+Reconciliation reads the complete physical part set and compares its row and part counts with
+each completion marker before allowing an unchanged result. When the marker carries part receipts,
+their paths, SHA-256 digests, row counts and byte counts must also match exactly. Legacy base
+markers without those receipts retain count and source-manifest checks; they do not claim byte
+verification. Missing or concurrently pruned parts select replay; unrelated storage failures propagate.
+
 The pending pointer remains until all three products have four verified physical rungs and matching
 base readback. A later invocation replays the original hash-verified response graph, retaining its
 original capture day. It does not backdate a fresh fetch to fill a failed old snapshot. The runtime's command deadline must also bound synchronous DuckDB/object
