@@ -10,6 +10,7 @@ import {
   type RegionalClaimEvidenceSource,
 } from '@/lib/regional-intelligence';
 import type { RegionalContextPayload } from './regional-context';
+import type { RegionalMeasurementFact } from './regional-measurement-facts';
 
 const evidenceReadIdsSchema = z.array(z.string().trim().min(1).max(100)).max(8).optional()
   .describe('REQUIRED and nonempty for EVERY warehouse claim citing a tool surface, including local reads. Copy the current manifest IDs matching each exact source. Legacy payload sources alone do not use these IDs. Omit on inference and web claims.');
@@ -151,7 +152,7 @@ export function reportCitationManifest(
 }
 
 /** Narrow provider choices to this turn's actual evidence without weakening the validator. */
-export function reportSchemaForCitations(manifest: ReturnType<typeof reportCitationManifest>): Record<string, unknown> {
+export function reportSchemaForCitations(manifest: ReturnType<typeof reportCitationManifest>, measurementFacts?: readonly RegionalMeasurementFact[]): Record<string, unknown> {
   const sources = [...new Set([
     ...manifest.payloadSources,
     ...manifest.measurementReads.map((read) => read.evidenceSource),
@@ -163,7 +164,7 @@ export function reportSchemaForCitations(manifest: ReturnType<typeof reportCitat
     const result: Record<string, unknown> = Object.fromEntries(Object.entries(node).map(([key, value]) => [key, visit(value)]));
     const properties = result.properties as Record<string, Record<string, unknown>> | undefined;
     if (!properties) return result;
-    if (properties.observations && readIds.length > 0) {
+    if (properties.observations && (measurementFacts === undefined ? readIds.length > 0 : measurementFacts.length > 0)) {
       properties.observations.minItems = 1;
       properties.observations.description = 'Measurements were returned. Include at least one warehouse observation grounded in an exact current source/read pair. Historical gaps do not erase available measurements.';
     }
@@ -175,11 +176,35 @@ export function reportSchemaForCitations(manifest: ReturnType<typeof reportCitat
       else properties.evidenceSource.enum = sources;
     }
     if (properties.evidenceSources) {
-      properties.evidenceSources.items = sources.length ? { type: 'string', enum: sources } : { type: 'string' };
-      properties.evidenceSources.maxItems = sources.length;
-      properties.evidenceSources.description = sources.length
-        ? 'Only the exact current citation-manifest source names are allowed; catalogue availability is not measurement evidence.'
-        : 'No warehouse measurement is available. Return an empty array [] and label reasoning model_inference.';
+      properties.evidenceOrigin.enum = ['model_inference'];
+      properties.evidenceSources.items = { type: 'string' };
+      properties.evidenceSources.maxItems = 0;
+      properties.evidenceSources.description = 'Return []. Risk level, headline and factors are model interpretation; cite supporting measurements separately in observations.';
+      delete properties.evidenceReadIds;
+      result.required = (Array.isArray(result.required) ? result.required : []).filter((key) => key !== 'evidenceReadIds');
+      return result;
+    }
+    if (properties.strategy && properties.rationale && properties.evidenceOrigin) {
+      properties.evidenceOrigin.enum = ['web', 'model_inference'];
+      delete properties.evidenceSource;
+      delete properties.evidenceReadIds;
+      result.required = (Array.isArray(result.required) ? result.required : []).filter((key) => !['evidenceSource', 'evidenceReadIds'].includes(key));
+      return result;
+    }
+    if (measurementFacts !== undefined && properties.statement && properties.evidenceOrigin) {
+      const inference = {
+        ...result,
+        properties: { statement: properties.statement, evidenceOrigin: { type: 'string', enum: ['web', 'model_inference'] } },
+        required: ['statement', 'evidenceOrigin'], additionalProperties: false,
+      };
+      return measurementFacts.length > 0 ? { anyOf: [{
+        type: 'object', additionalProperties: false,
+        properties: {
+          evidenceOrigin: { type: 'string', enum: ['warehouse'] },
+          measurementFactId: { type: 'string', enum: measurementFacts.map((fact) => fact.id), description: 'Select one current server-authored measurement fact. The server supplies its exact statement, source and read citations; do not add or rewrite them.' },
+        },
+        required: ['evidenceOrigin', 'measurementFactId'],
+      }, inference] } : inference;
     }
     if (properties.evidenceReadIds) {
       if (readIds.length === 0) delete properties.evidenceReadIds;
@@ -194,9 +219,18 @@ export function reportSchemaForCitations(manifest: ReturnType<typeof reportCitat
               ? [...new Set(manifest.measurementReads.filter((read) => read.evidenceSource === measuredSource).map((read) => read.evidenceReadId))]
               : readIds;
             branchProperties.evidenceReadIds = { ...properties.evidenceReadIds, items: { ...properties.evidenceReadIds.items as Record<string, unknown>, enum: sourceReadIds }, minItems: 1 };
-            if (measuredSource) branchProperties.evidenceSource = { ...properties.evidenceSource, enum: [measuredSource] };
+            if (measuredSource) {
+              branchProperties.evidenceSource = { ...properties.evidenceSource, enum: [measuredSource] };
+              if (properties.statement) branchProperties.statement = {
+                ...properties.statement,
+                description: `Describe only measurements returned by ${measuredSource}, using this source's reads (${sourceReadIds.join(', ')}), units and actual observation dates. Do not describe another source, missing data, unavailable dates or whole-window absence. Availability belongs in the server evidence limitations. Cite every read used for a dated comparison.`,
+              };
+            }
           }
-          else delete branchProperties.evidenceReadIds;
+          else {
+            delete branchProperties.evidenceReadIds;
+            if (!payloadOnly) delete branchProperties.evidenceSource;
+          }
           if (payloadOnly && properties.evidenceSource) branchProperties.evidenceSource = { ...properties.evidenceSource, enum: manifest.payloadSources };
           if (payloadOnly && properties.evidenceSources) branchProperties.evidenceSources = { ...properties.evidenceSources, items: { type: 'string', enum: manifest.payloadSources } };
           return {
@@ -220,6 +254,42 @@ export function reportSchemaForCitations(manifest: ReturnType<typeof reportCitat
     return result;
   };
   return visit(REMEDIATION_REPORT_JSON_SCHEMA) as Record<string, unknown>;
+}
+
+/** Resolve only exact current fact selectors; supplied warehouse prose is never repaired. */
+export function resolveProviderMeasurementReport(input: Record<string, unknown> | null, facts: readonly RegionalMeasurementFact[]): {
+  report: Record<string, unknown> | null; issues: ReportEvidenceIssue[];
+} {
+  const issues: ReportEvidenceIssue[] = [];
+  if (!input || !Array.isArray(input.observations)) return { report: input, issues };
+  const validateInterpretation = (claim: unknown, path: (string | number)[], risk = false) => {
+    if (!claim || typeof claim !== 'object' || Array.isArray(claim)) return;
+    const fields = claim as Record<string, unknown>;
+    const allowed = risk ? ['model_inference'] : ['model_inference', 'web'];
+    if (!allowed.includes(String(fields.evidenceOrigin))) issues.push({ code: 'custom', path: [...path, 'evidenceOrigin'], message: risk ? 'Risk assessment must be model_inference. Select supporting measured facts in observations.' : 'Recommendations and nonwarehouse observations must be model_inference or web; select measured facts separately.' });
+    for (const key of ['evidenceSource', 'evidenceReadIds']) {
+      if (Object.hasOwn(fields, key)) issues.push({ code: 'custom', path: [...path, key], message: 'Interpretations cannot carry warehouse source or read-ID fields. Select supporting measurements separately by measurementFactId.' });
+    }
+    if (risk && Array.isArray(fields.evidenceSources) && fields.evidenceSources.length > 0) issues.push({ code: 'custom', path: [...path, 'evidenceSources'], message: 'Risk interpretation requires evidenceSources: []; supporting sources belong to selected measurement facts.' });
+  };
+  validateInterpretation(input.riskSummary, ['riskSummary'], true);
+  if (Array.isArray(input.remediation)) input.remediation.forEach((claim, index) => validateInterpretation(claim, ['remediation', index]));
+  const current = new Map(facts.map((fact) => [fact.id, fact]));
+  const observations = input.observations.map((claim: unknown, index: number) => {
+    if (!claim || typeof claim !== 'object' || Array.isArray(claim)) return claim;
+    const fields = claim as Record<string, unknown>;
+    if (fields.evidenceOrigin !== 'warehouse') {
+      validateInterpretation(claim, ['observations', index]);
+      return claim;
+    }
+    const fact = typeof fields.measurementFactId === 'string' ? current.get(fields.measurementFactId) : undefined;
+    if (!fact || Object.keys(fields).some((key) => !['evidenceOrigin', 'measurementFactId'].includes(key))) {
+      issues.push({ code: 'custom', path: ['observations', index, 'measurementFactId'], message: 'Warehouse observations must contain only evidenceOrigin:"warehouse" and one exact current measurementFactId. Unknown IDs and supplied statement/source/read IDs are rejected. Select an available fact without rewriting it.' });
+      return claim;
+    }
+    return { statement: fact.statement, evidenceOrigin: 'warehouse', evidenceSource: fact.source, evidenceReadIds: [...fact.evidenceReadIds] };
+  });
+  return { report: { ...input, observations }, issues };
 }
 
 /** Translate only empty nonwarehouse citation arrays from the provider transport. */
@@ -249,6 +319,7 @@ export function reportWarehouseEvidenceIssues(
   payload: RegionalContextPayload,
   evidence: RegionalAnalysisEvidence | undefined,
   dataFreshness: Record<string, string> = {},
+  measurementFacts?: readonly RegionalMeasurementFact[],
 ): ReportEvidenceIssue[] {
   const claims: Array<{
     source: RegionalClaimEvidenceSource | undefined;
@@ -256,7 +327,9 @@ export function reportWarehouseEvidenceIssues(
     readIds: string[];
   }> = [];
   const referenceIssues: ReportEvidenceIssue[] = [];
-  const measuredSources = new Set(reportCitationManifest(payload, evidence, dataFreshness).measurementReads.map((read) => read.evidenceSource));
+  const measuredSources = new Set(measurementFacts === undefined
+    ? reportCitationManifest(payload, evidence, dataFreshness).measurementReads.map((read) => read.evidenceSource)
+    : measurementFacts.map((fact) => fact.source));
   if (measuredSources.size > 0 && !report.observations.some((claim) => claim.evidenceOrigin === 'warehouse'
     && claim.evidenceSource !== undefined && measuredSources.has(claim.evidenceSource))) {
     referenceIssues.push({

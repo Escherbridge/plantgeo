@@ -7,10 +7,11 @@ const mocks = vi.hoisted(() => ({ load: vi.fn(), call: vi.fn() }));
 vi.mock('@/lib/server/services/regional-evidence-tools', () => ({
   loadRegionalEvidenceTools: mocks.load, callRegionalEvidenceTool: mocks.call,
 }));
-import { bindRegionalEvidenceArguments, boundedEvidence, evidenceResultStatus, prepareRegionalAnalysis, REGIONAL_ANALYSIS_PRIORITY_SURFACES, regionalEvidenceAuditCall, regionalEvidenceDay, regionalEvidenceStageStatus, STRATEGY_SCREENING } from '@/lib/server/services/regional-analysis-workflow';
+import { bindRegionalEvidenceArguments, boundedEvidence, evidenceResultStatus, prepareRegionalAnalysis, REGIONAL_ANALYSIS_PRIORITY_SURFACES, regionalEvidenceAuditCall, regionalEvidenceDay, regionalEvidenceLimitations, regionalEvidenceStageStatus, STRATEGY_SCREENING } from '@/lib/server/services/regional-analysis-workflow';
 import { analysisDateRange } from '@/lib/regional-analysis-selection';
 import { LAYER_REGISTRY } from '@/lib/map/layer-registry';
-import { REMEDIATION_REPORT_JSON_SCHEMA, normalizeProviderReport, remediationReportSchema, reportCitationManifest, reportSchemaForCitations, reportWarehouseEvidenceIssues } from '@/lib/server/services/remediation-report';
+import { REMEDIATION_REPORT_JSON_SCHEMA, normalizeProviderReport, resolveProviderMeasurementReport, remediationReportSchema, reportCitationManifest, reportSchemaForCitations, reportWarehouseEvidenceIssues } from '@/lib/server/services/remediation-report';
+import { buildRegionalMeasurementFacts } from '@/lib/server/services/regional-measurement-facts';
 
 const payload: RegionalContextPayload = {
   location: { lat: 44, lon: -118, geohash: '9r' },
@@ -76,6 +77,24 @@ describe('regional evidence graph', () => {
   it('resolves both canonical surface names and client toggle IDs', () => {
     expect(regionalEvidenceDay(temporal, 'soil-field-moisture')).toBe('2022-06-15');
     expect(regionalEvidenceDay({ ...temporal, readings: [reading('soil-field-vpd', '2021-01-01')] }, 'soil-field-vpd')).toBe('2021-01-01');
+  });
+
+  it('discloses partial availability per prefetched source in both the audit and model context', async () => {
+    mocks.call.mockImplementation(async (_tool, args) => JSON.stringify({
+      history: { sampled_days: [args.day], complete: false, next_page_start: 1 },
+      lanes: [{ selected: { requested_day: args.day, state: 'published', features: [{ properties: { value: 0.4 } }] },
+        history: [{ requested_day: args.day, state: 'published', features: [{ properties: { value: 0.4 } }] }] }],
+    }));
+    const result = await prepareRegionalAnalysis(payload, temporal);
+    expect(result.evidence.limitations).toEqual(expect.arrayContaining([
+      expect.stringContaining('climate-field-precipitation [local-1]: availability only'),
+      expect.stringContaining('climate-field-precipitation [temporal-1]: availability only'),
+    ]));
+    expect(JSON.parse(result.context).evidence.limitations).toEqual(result.evidence.limitations);
+    expect(result.measurementFacts.facts.length).toBeGreaterThan(0);
+    expect(JSON.parse(result.context).measurementFacts).toEqual(result.measurementFacts);
+    expect(result.evidence.limitations.length).toBeLessThanOrEqual(40);
+    expect(readRegionalAnalysisEvidence(result.evidence)).not.toBeNull();
   });
 
   it('keeps an unobservable calendar day from crashing historical planning or corrupting the audit', async () => {
@@ -161,6 +180,162 @@ describe('regional evidence graph', () => {
 });
 
 describe('evidence audit honesty', () => {
+  it('resolves only current server-authored fact selectors and preserves legacy canonical report parsing', () => {
+    const result = { selection: { longitude: -116.2, latitude: 43.6 }, features: [{ observed_day: '2026-09-09', properties: { vpd: 2.38, unit: 'kPa' } }] };
+    const facts = buildRegionalMeasurementFacts([{ id: 'local-1', source: 'soil-field-vpd', result }]).facts;
+    const base = { riskSummary: { level: 'moderate', headline: 'Interpretation of current evidence.', factors: [], evidenceOrigin: 'model_inference', evidenceSources: [] }, observations: [], remediation: [], professionalConsultation: 'Consult an agronomist.' };
+    const selector = { evidenceOrigin: 'warehouse', measurementFactId: facts[0].id };
+    const resolved = resolveProviderMeasurementReport({ ...base, observations: [selector] }, facts);
+    expect(resolved.issues).toEqual([]);
+    expect(resolved.report).toHaveProperty('observations', [{ statement: facts[0].statement, evidenceOrigin: 'warehouse', evidenceSource: facts[0].source, evidenceReadIds: facts[0].evidenceReadIds }]);
+    expect(remediationReportSchema.safeParse(resolved.report).success).toBe(true);
+    const oldCanonical = { ...base, observations: [{ statement: 'Previously saved VPD observation.', evidenceOrigin: 'warehouse', evidenceSource: 'soil-field-vpd', evidenceReadIds: ['local-1'] }] };
+    expect(remediationReportSchema.safeParse(oldCanonical).success).toBe(true);
+    expect(resolveProviderMeasurementReport(oldCanonical, facts).issues.length).toBeGreaterThan(0);
+    for (const observation of [
+      { evidenceOrigin: 'warehouse', measurementFactId: 'unknown' },
+      { ...selector, statement: 'Vegetation is unavailable throughout the entire window.' },
+      { ...selector, evidenceSource: 'vegetation' },
+      { ...selector, evidenceReadIds: ['other-read'] },
+    ]) expect(resolveProviderMeasurementReport({ ...base, observations: [observation] }, facts).issues.length).toBeGreaterThan(0);
+    expect(resolveProviderMeasurementReport({ ...base, observations: [selector] }, []).issues.length).toBeGreaterThan(0);
+    const nextFacts = buildRegionalMeasurementFacts([{ id: 'local-1', source: 'soil-field-vpd', result: { ...result, features: [{ observed_day: '2026-09-10', properties: { vpd: 1.8, unit: 'kPa' } }] } }]).facts;
+    expect(resolveProviderMeasurementReport({ ...base, observations: [selector] }, nextFacts).issues.length).toBeGreaterThan(0);
+    const manifest = reportCitationManifest(payload, { version: 1, stages: [], limitations: [], toolCalls: [{ id: 'local-1', stage: 'local', tool: 'surface_evidence_for_selection', source: 'soil-field-vpd', status: 'observed' }] });
+    const schema = reportSchemaForCitations(manifest, facts);
+    expect(schema).toHaveProperty('properties.observations.items.anyOf.0.required', ['evidenceOrigin', 'measurementFactId']);
+    expect(schema).toHaveProperty('properties.observations.items.anyOf.0.properties.measurementFactId.enum', [facts[0].id]);
+    for (const field of ['statement', 'evidenceSource', 'evidenceReadIds']) expect(schema).not.toHaveProperty(`properties.observations.items.anyOf.0.properties.${field}`);
+    const noFacts = reportSchemaForCitations(manifest, []);
+    expect(noFacts).not.toHaveProperty('properties.observations.minItems');
+    expect(noFacts).toHaveProperty('properties.observations.items.properties.evidenceOrigin.enum', ['web', 'model_inference']);
+    expect(noFacts).not.toHaveProperty('properties.observations.items.anyOf');
+    expect(reportWarehouseEvidenceIssues(remediationReportSchema.parse(base), payload, { version: 1, stages: [], limitations: [], toolCalls: [{ id: 'local-1', stage: 'local', tool: 'surface_evidence_for_selection', source: 'soil-field-vpd', status: 'observed' }] }, {}, [])).toEqual([]);
+  });
+
+  it('enforces inference-only risk and uncited management/inference claims in current fact transport', () => {
+    const base = { riskSummary: { level: 'moderate', headline: 'Interpretation.', factors: [], evidenceOrigin: 'model_inference', evidenceSources: [] }, observations: [], remediation: [], professionalConsultation: 'Consult an agronomist.' };
+    const recommendation = { strategy: 'cover_cropping', title: 'Assess cover crops', rationale: 'Assess suitability.', timeframe: 'short_term', confidence: 'low', consultProfessionals: [], evidenceOrigin: 'model_inference' };
+    for (const input of [
+      { ...base, riskSummary: { ...base.riskSummary, evidenceOrigin: 'warehouse' } },
+      { ...base, riskSummary: { ...base.riskSummary, evidenceSources: ['soil-field-vpd'] } },
+      { ...base, riskSummary: { ...base.riskSummary, evidenceReadIds: [] } },
+      { ...base, remediation: [{ ...recommendation, evidenceOrigin: 'warehouse' }] },
+      { ...base, remediation: [{ ...recommendation, evidenceSource: 'soil-field-vpd' }] },
+      { ...base, observations: [{ statement: 'A limitation.', evidenceOrigin: 'model_inference', evidenceSource: 'soil-field-vpd' }] },
+      { ...base, observations: [{ statement: 'A limitation.', evidenceOrigin: 'model_inference', evidenceReadIds: [] }] },
+    ]) expect(resolveProviderMeasurementReport(input, []).issues.length).toBeGreaterThan(0);
+    expect(resolveProviderMeasurementReport({ ...base, remediation: [recommendation] }, []).issues).toEqual([]);
+  });
+
+  it('omits only opaque storage lineage from model context while preserving arbitrary measurements and provenance', () => {
+    const properties = {
+      selected_source_part_key: 's3://bucket/' + 'opaque/'.repeat(200), input_source_part_keys: ['opaque-part-key'],
+      selected_source_part_sha256: 'a'.repeat(64), input_source_part_sha256s: ['a'.repeat(64)],
+      selected_source_row_sha256: 'b'.repeat(64), input_source_row_sha256s: ['b'.repeat(64)],
+      input_source_row_digest: 'c'.repeat(64), source_manifest_sha256: 'd'.repeat(64), selected_source_release_payload_checksum: 'e'.repeat(64),
+      source_key: 'era5_land', source_parameter: 'vpd', source_snapshot_id: 'snapshot-1', selected_source_release_id: 'release-1',
+      support_key: 'containing-cell', cell_id: 'cell-1', station_id: 'station-2', observed_day: '2026-09-09',
+      normalized_value: 2.38, normalized_unit: 'kPa', custom_scientific_metric: 7.3, confidence: 0.9,
+    };
+    const retained = { source_key: 'era5_land', source_parameter: 'vpd', source_snapshot_id: 'snapshot-1', selected_source_release_id: 'release-1',
+      support_key: 'containing-cell', cell_id: 'cell-1', station_id: 'station-2', observed_day: '2026-09-09',
+      normalized_value: 2.38, normalized_unit: 'kPa', custom_scientific_metric: 7.3, confidence: 0.9,
+    };
+    const raw = { history: { sampled_days: ['2026-09-09'], complete: false, next_page_start: 3 },
+      lanes: [{ selected: { requested_day: '2026-09-09', state: 'published', features: [{ served_day: '2026-09-09', covers_probe_point: true,
+        support_bbox: [-117, 43, -116, 44], spatial_relation: 'containing_cell', properties }] } }],
+    };
+    const original = JSON.stringify(raw);
+    const projected = boundedEvidence(raw);
+    expect(projected).toHaveProperty('lanes.0.selected.features.0.properties', { ...retained, omittedStorageLineageFields: 9 });
+    expect(projected).toHaveProperty('lanes.0.selected.features.0.support_bbox', [-117, 43, -116, 44]);
+    expect(projected).toHaveProperty('lanes.0.selected.features.0.covers_probe_point', true);
+    expect(projected).toHaveProperty('lanes.0.selected.features.0.spatial_relation', 'containing_cell');
+    expect(projected).toHaveProperty('lanes.0.selected.requested_day', '2026-09-09');
+    expect(projected).toHaveProperty('history', raw.history);
+    expect(JSON.stringify(raw)).toBe(original);
+    expect(JSON.stringify(projected).length).toBeLessThan(original.length / 2);
+  });
+
+  it('keeps checked calendar gaps source-specific and separate from served dates and whole-window absence', () => {
+    const args = { surface_name: 'vegetation', day: '2026-09-13', range_start: '2026-08-13', range_end: '2026-10-13' };
+    const result = {
+      history: { sampled_days: ['2026-08-13', '2026-09-13', '2026-10-13'], complete: false, next_page_start: 3, requested_day_count: 62 },
+      lanes: [{ selected: { requested_day: '2026-09-13', served_day: '2026-09-12', state: 'published', features: [] }, history: [
+        { requested_day: '2026-08-13', state: 'governed_absence', features: [] },
+        { requested_day: '2026-09-13', state: 'published', features: [] },
+        { requested_day: '2026-10-13', state: 'day_not_written', features: [] },
+      ] }],
+    };
+    const audit = regionalEvidenceAuditCall('temporal-2', 'temporal', 'surface_evidence_for_selection', args, result);
+    const [limitation] = regionalEvidenceLimitations(audit, result);
+    expect(limitation).toContain('vegetation [temporal-2]: availability only, not a measured condition');
+    expect(limitation).toContain('Explicitly checked history calendar dates (3): 2026-08-13, 2026-09-13, 2026-10-13');
+    expect(limitation).not.toContain('2026-09-12');
+    expect(limitation).toContain('governed_absence at checked requests: 2026-08-13');
+    expect(limitation).toContain('published at checked requests: 2026-09-13');
+    expect(limitation).toContain('day_not_written at checked requests: 2026-10-13');
+    expect(limitation).toContain('History completeness reported by this response: incomplete');
+    expect(limitation).toContain('Continuation page_start: 3');
+    expect(limitation).toContain('Unchecked dates remain unknown');
+    expect(limitation).toContain('not evidence of environmental absence');
+  });
+
+  it('retains available selected measurements beside sparse historical gaps', () => {
+    const feature = { properties: { ndvi: 0.3558 }, served_day: '2026-09-09' };
+    const result = {
+      history: { sampled_days: ['2026-09-02', '2026-09-09', '2026-09-16'], complete: false, next_page_start: null },
+      lanes: [{ selected: { requested_day: '2026-09-09', state: 'published', features: [feature] }, history: [
+        { requested_day: '2026-09-02', state: 'day_not_written', features: [] },
+        { requested_day: '2026-09-09', state: 'published', features: [feature] },
+        { requested_day: '2026-09-16', state: 'day_not_written', features: [] },
+      ] }],
+    };
+    const audit = regionalEvidenceAuditCall('temporal-2', 'temporal', 'surface_evidence_for_selection', { surface_name: 'vegetation', day: '2026-09-09' }, result);
+    const [limitation] = regionalEvidenceLimitations(audit, result);
+    expect(audit.status).toBe('observed');
+    expect(limitation).toContain('Selected request 2026-09-09: 1/1 lane responses contain measurement records');
+    expect(limitation).toContain('2/3 history lane responses contained no measurement records');
+    expect(limitation).toContain('day_not_written at checked requests: 2026-09-02, 2026-09-16');
+    expect(limitation).toContain('History completeness reported by this response: incomplete');
+    expect(limitation).not.toContain('Continuation page_start');
+  });
+
+  it('does not infer calendar scans or completeness for event intervals and unsupported snapshot history', () => {
+    const args = { surface_name: 'botanical-occurrences', day: '2026-09-09' };
+    const result = { history: { complete: false, next_page_start: null },
+      lanes: [{ selected: { requested_day: args.day, state: 'published', features: [{ observed_interval: ['2020-01-01', '2021-01-01'] }] }, history: [] }],
+    };
+    const audit = regionalEvidenceAuditCall('temporal-1', 'temporal', 'surface_evidence_for_selection', args, result);
+    expect(regionalEvidenceLimitations(audit, result)[0]).toContain('does not declare a checked history calendar-day list');
+    const snapshot = { ...result, history: { sampled_days: [], complete: false, next_page_start: null, state: 'historical_snapshots_not_published' } };
+    const limitation = regionalEvidenceLimitations({ ...audit, source: 'interventions' }, snapshot)[0];
+    expect(limitation).toContain('Explicitly checked history calendar dates (0): none');
+    expect(limitation).toContain('History completeness reported by this response: incomplete');
+    expect(limitation).toContain('historical_snapshots_not_published');
+    expect(limitation.length).toBeLessThanOrEqual(2_000);
+    expect(regionalEvidenceLimitations(audit, { ...result, history: { complete: true } })).toEqual([]);
+    expect(regionalEvidenceLimitations(audit, null)).toEqual([]);
+    expect(regionalEvidenceLimitations(audit, {})).toEqual([]);
+    expect(regionalEvidenceLimitations({ ...audit, tool: 'list_environmental_layers' }, snapshot)).toEqual([]);
+  });
+
+  it('bounds multilane disclosures and preserves the unknown-date caveat in the persisted audit', () => {
+    const sampledDays = Array.from({ length: 31 }, (_, index) => `2026-08-${String(index + 1).padStart(2, '0')}`);
+    const result = { history: { sampled_days: sampledDays, complete: false, next_page_start: 31 },
+      lanes: Array.from({ length: 16 }, (_, index) => ({
+        selected: { requested_day: '2026-08-15', state: `${index}-${'state'.repeat(20)}`, features: index === 0 ? [{ properties: { value: 1 } }] : [] },
+        history: sampledDays.map((day) => ({ requested_day: day, state: `${index}-${'state'.repeat(20)}`, features: [] })),
+      })),
+    };
+    const audit = regionalEvidenceAuditCall('temporal-1', 'temporal', 'surface_evidence_for_selection', { surface_name: 'vegetation', day: '2026-08-15' }, result);
+    const [limitation] = regionalEvidenceLimitations(audit, result);
+    expect(limitation).toContain('1/16 lane responses contain measurement records');
+    expect(limitation.length).toBeLessThanOrEqual(2_000);
+    expect(limitation).toContain('Unchecked dates remain unknown');
+    expect(readRegionalAnalysisEvidence({ version: 1, stages: [], toolCalls: [audit], limitations: Array.from({ length: 40 }, () => limitation) })).not.toBeNull();
+  });
   it('keeps two years of weekly drought history instead of reducing it to eight recent releases', () => {
     const weekly = Array.from({ length: 104 }, (_, week) => ({ week, severity_class: week < 52 ? 3 : 0 }));
     expect(boundedEvidence({ weekly_severity: weekly })).toEqual({ weekly_severity: weekly });
@@ -275,7 +450,7 @@ describe('evidence audit honesty', () => {
     expect(emptyManifest).toEqual({ payloadSources: [], measurementReads: [] });
     const emptySchema = reportSchemaForCitations(emptyManifest);
     expect(emptySchema).toHaveProperty('properties.riskSummary.properties.evidenceSources.maxItems', 0);
-    expect(emptySchema).toHaveProperty('properties.riskSummary.properties.evidenceOrigin.enum', ['web', 'model_inference']);
+    expect(emptySchema).toHaveProperty('properties.riskSummary.properties.evidenceOrigin.enum', ['model_inference']);
     expect(emptySchema).not.toHaveProperty('properties.observations.items.properties.evidenceSource');
     expect(emptySchema).not.toHaveProperty('properties.observations.items.properties.evidenceReadIds');
     expect(emptySchema).not.toHaveProperty('properties.observations.minItems');
@@ -291,12 +466,18 @@ describe('evidence audit honesty', () => {
     expect(manifest.measurementReads).toEqual([expect.objectContaining({ evidenceSource: 'soil-field-vpd', evidenceReadId: 'temporal-vpd', selectedDate: '2026-09-15' })]);
     const schema = reportSchemaForCitations(manifest);
     expect(schema).toHaveProperty('properties.observations.minItems', 1);
+    expect(schema).toHaveProperty('properties.riskSummary.properties.evidenceOrigin.enum', ['model_inference']);
+    expect(schema).toHaveProperty('properties.riskSummary.properties.evidenceSources.maxItems', 0);
+    expect(schema).not.toHaveProperty('properties.riskSummary.properties.evidenceReadIds');
+    expect(schema).toHaveProperty('properties.riskSummary.required', ['level', 'headline', 'factors', 'evidenceOrigin', 'evidenceSources']);
+    expect(schema).toHaveProperty('properties.remediation.items.properties.evidenceOrigin.enum', ['web', 'model_inference']);
+    expect(schema).not.toHaveProperty('properties.remediation.items.properties.evidenceSource');
+    expect(schema).not.toHaveProperty('properties.remediation.items.properties.evidenceReadIds');
+    expect(schema).toHaveProperty('properties.remediation.items.required', ['strategy', 'title', 'rationale', 'timeframe', 'confidence', 'consultProfessionals', 'evidenceOrigin']);
     expect(schema).toHaveProperty('properties.observations.items.anyOf.0.properties.evidenceSource.enum', ['soil-field-vpd']);
     expect(schema).toHaveProperty('properties.observations.items.anyOf.0.properties.evidenceReadIds.items.enum', ['temporal-vpd']);
     const claimFields = [
-      { path: 'properties.riskSummary', required: ['level', 'headline', 'factors', 'evidenceOrigin', 'evidenceSources'] },
       { path: 'properties.observations.items', required: ['statement', 'evidenceOrigin'] },
-      { path: 'properties.remediation.items', required: ['strategy', 'title', 'rationale', 'timeframe', 'confidence', 'consultProfessionals', 'evidenceOrigin'] },
     ];
     for (const { path, required } of claimFields) {
       expect(schema).not.toHaveProperty(`${path}.properties`);
@@ -306,7 +487,7 @@ describe('evidence audit honesty', () => {
         const branch = `${path}.anyOf.${index}`;
         expect(schema).toHaveProperty(`${branch}.type`, 'object');
         expect(schema).toHaveProperty(`${branch}.additionalProperties`, false);
-        const warehouseRequired = [...required, ...(path === 'properties.riskSummary' ? [] : ['evidenceSource']), 'evidenceReadIds'];
+        const warehouseRequired = [...required, 'evidenceSource', 'evidenceReadIds'];
         expect(schema).toHaveProperty(`${branch}.required`, index === 0 ? warehouseRequired : required);
         for (const field of required) expect(schema).toHaveProperty(`${branch}.properties.${field}`);
       }
@@ -315,6 +496,7 @@ describe('evidence audit honesty', () => {
       expect(schema).toHaveProperty(`${path}.anyOf.0.properties.evidenceReadIds.maxItems`, 8);
       expect(schema).toHaveProperty(`${path}.anyOf.1.properties.evidenceOrigin.enum`, ['web', 'model_inference']);
       expect(schema).not.toHaveProperty(`${path}.anyOf.1.properties.evidenceReadIds`);
+      expect(schema).not.toHaveProperty(`${path}.anyOf.1.properties.evidenceSource`);
     }
     const report = {
       riskSummary: { level: 'moderate' as const, headline: 'VPD observations are available.', factors: [], evidenceOrigin: 'warehouse' as const, evidenceSources: ['soil-field-vpd' as const], evidenceReadIds: ['temporal-vpd'] },
@@ -333,7 +515,9 @@ describe('evidence audit honesty', () => {
     }
     expect(legacySchema).toHaveProperty('properties.observations.items.anyOf.2.properties.evidenceOrigin.enum', ['warehouse']);
     expect(legacySchema).toHaveProperty('properties.observations.items.anyOf.2.properties.evidenceSource.enum', ['drought']);
-    expect(legacySchema).toHaveProperty('properties.riskSummary.anyOf.2.properties.evidenceSources.items.enum', ['drought']);
+    expect(legacySchema).toHaveProperty('properties.riskSummary.properties.evidenceOrigin.enum', ['model_inference']);
+    expect(legacySchema).toHaveProperty('properties.riskSummary.properties.evidenceSources.maxItems', 0);
+    expect(remediationReportSchema.safeParse(report).success).toBe(true);
     expect(reportWarehouseEvidenceIssues({ ...report, riskSummary: { ...report.riskSummary, evidenceSources: ['drought', 'soil-field-vpd'] } }, legacyPayload, evidence)).toEqual([]);
     expect(JSON.stringify(REMEDIATION_REPORT_JSON_SCHEMA)).toBe(canonical);
   });
@@ -350,13 +534,16 @@ describe('evidence audit honesty', () => {
       { id: 'additional-vegetation', stage: 'additional', tool: 'surface_evidence_for_selection', source: 'vegetation', status: 'observed' },
     ] };
     const refreshed = reportSchemaForCitations(reportCitationManifest(payload, additionalEvidence));
-    for (const path of ['properties.observations.items', 'properties.remediation.items']) {
+    for (const path of ['properties.observations.items']) {
       expect(schema).toHaveProperty(`${path}.anyOf`, expect.any(Array));
       expect(schema).not.toHaveProperty(`${path}.anyOf.3`);
       expect(schema).toHaveProperty(`${path}.anyOf.0.properties.evidenceSource.enum`, ['soil-field-vpd']);
       expect(schema).toHaveProperty(`${path}.anyOf.0.properties.evidenceReadIds.items.enum`, ['local-vpd', 'temporal-vpd']);
       expect(schema).toHaveProperty(`${path}.anyOf.1.properties.evidenceSource.enum`, ['vegetation']);
       expect(schema).toHaveProperty(`${path}.anyOf.1.properties.evidenceReadIds.items.enum`, ['local-vegetation']);
+      expect(schema).toHaveProperty(`${path}.anyOf.0.properties.statement.description`, expect.stringContaining('Describe only measurements returned by soil-field-vpd'));
+      expect(schema).toHaveProperty(`${path}.anyOf.1.properties.statement.description`, expect.stringContaining('Describe only measurements returned by vegetation'));
+      expect(schema).not.toHaveProperty(`${path}.anyOf.2.properties.statement.description`);
       for (const index of [0, 1]) {
         expect(schema).toHaveProperty(`${path}.anyOf.${index}.required`, expect.arrayContaining(['evidenceSource', 'evidenceReadIds']));
       }

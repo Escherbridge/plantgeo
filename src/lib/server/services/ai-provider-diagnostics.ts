@@ -72,7 +72,7 @@ export function providerErrorDiagnostic(error: unknown) {
 /** Return canonical issue codes and known field paths only, never validation messages or inputs. */
 export function reportValidationDiagnostic(issues: ReadonlyArray<{ code: string; path: ReadonlyArray<PropertyKey> }>) {
   const codes = new Set(["invalid_type", "too_big", "too_small", "invalid_value", "unrecognized_keys", "invalid_format", "not_multiple_of", "invalid_union", "invalid_key", "invalid_element", "custom"]);
-  const fields = new Set(["riskSummary", "level", "headline", "factors", "evidenceOrigin", "evidenceSources", "evidenceReadIds", "observations", "statement", "evidenceSource", "remediation", "strategy", "title", "rationale", "timeframe", "confidence", "consultProfessionals", "professionalConsultation"]);
+  const fields = new Set(["riskSummary", "level", "headline", "factors", "evidenceOrigin", "evidenceSources", "evidenceReadIds", "measurementFactId", "observations", "statement", "evidenceSource", "remediation", "strategy", "title", "rationale", "timeframe", "confidence", "consultProfessionals", "professionalConsultation"]);
   return issues.slice(0, 12).map((issue) => ({
     code: codes.has(issue.code) ? issue.code : "unknown",
     path: issue.path.map((part) => typeof part === "number" ? "[]" : typeof part === "string" && fields.has(part) ? part : "unknown_field").join(".") || "report",

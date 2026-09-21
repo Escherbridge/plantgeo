@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { reportFlowGroundingIssues } from "@/lib/server/services/report-flow-grounding";
 import { REGIONAL_CLAIM_EVIDENCE_SOURCES } from "@/lib/regional-intelligence";
 import type { WaterGauge } from "@/lib/environmental/water";
+import { buildRegionalMeasurementFacts } from '@/lib/server/services/regional-measurement-facts';
 
 vi.mock("@/lib/server/db", () => ({ db: {} }));
 const mocks = vi.hoisted(() => ({
@@ -64,6 +65,16 @@ const validReport = {
   professionalConsultation:
     "Confirm defensible-space spacing with a local wildfire mitigation specialist before clearing.",
 };
+
+function factReportFixture(result: unknown, id: string, source: string, base: Record<string, unknown> = validReport) {
+  const fact = buildRegionalMeasurementFacts([{ id, source, result }]).facts[0];
+  if (!fact) throw new Error('The measurement fixture must contain a renderable fact.');
+  return {
+    fact,
+    report: { ...base, observations: [{ statement: fact.statement, evidenceOrigin: 'warehouse', evidenceSource: fact.source, evidenceReadIds: fact.evidenceReadIds }] },
+    transport: { ...base, observations: [{ evidenceOrigin: 'warehouse', measurementFactId: fact.id }] },
+  };
+}
 
 const unclassifiedGauge: WaterGauge = {
   siteNo: '123', siteName: 'Nearest gauge', lat: 44.66, lon: -118.83,
@@ -347,24 +358,22 @@ describe("generate_remediation_report tool wiring", () => {
       tools: [{ name: 'surface_value_near_point', description: 'Read governed surface evidence', input_schema: { type: 'object' } }],
       surfaces: ['vegetation'], featureSurfaces: ['vegetation'], valueSurfaces: ['vegetation'],
     });
-    mocks.callEvidenceTool.mockResolvedValue(JSON.stringify({ features: [{ served_day: '2024-05-01', properties: { cover: 0.25 } }], day_state: { state: 'published' } }));
-    const groundedReport = { ...validReport, observations: [{
-      statement: 'The vegetation read at 43.6, -116.2 returned dated evidence for 2024-05-01.',
-      evidenceOrigin: 'warehouse', evidenceSource: 'vegetation', evidenceReadIds: ['additional-1'],
-    }] };
+    const evidenceResult = { features: [{ served_day: '2024-05-01', properties: { cover: 0.25 } }], day_state: { state: 'published' } };
+    mocks.callEvidenceTool.mockResolvedValue(JSON.stringify(evidenceResult));
+    const grounded = factReportFixture(evidenceResult, 'additional-1', 'vegetation');
     mocks.completionStream
       .mockReturnValueOnce(fakeCompletionStream([
         { id: 'premature', name: 'remediation_report', input: { ...validReport, riskSummary: { ...validReport.riskSummary, headline: 'Premature report' } } },
         { id: 'vegetation', name: 'surface_value_near_point', input: { surface_name: 'vegetation', day: '2024-05-01', longitude: -116.2, latitude: 43.6 } },
       ]))
-      .mockReturnValueOnce(fakeCompletionStream([{ id: 'grounded', name: 'remediation_report', input: groundedReport }]));
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'grounded', name: 'remediation_report', input: grounded.transport }]));
     try {
       const events = [];
       for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, { ...minimalTemporalContext(), viewedDates: ['2024-05-01'] }, [])) events.push(event);
       expect(mocks.completionStream).toHaveBeenCalledTimes(2);
       expect(mocks.completionStream.mock.calls[0][0].tool_choice).toBe('required');
       expect(mocks.completionStream.mock.calls[0][0].tools.map((tool: { function: { name: string } }) => tool.function.name)).toContain('surface_value_near_point');
-      expect(events.filter((event) => event.type === 'report')).toEqual([{ type: 'report', report: groundedReport }]);
+      expect(events.filter((event) => event.type === 'report')).toEqual([{ type: 'report', report: grounded.report }]);
       expect(mocks.completionStream.mock.calls[1][0].messages).toEqual(expect.arrayContaining([
         expect.objectContaining({ role: 'tool', tool_call_id: 'vegetation', content: expect.stringContaining('2024-05-01') }),
         expect.objectContaining({ role: 'tool', tool_call_id: 'vegetation', content: expect.stringContaining('additional-1') }),
@@ -375,9 +384,9 @@ describe("generate_remediation_report tool wiring", () => {
       expect(JSON.stringify(mocks.completionStream.mock.calls[0][0].messages)).toContain('initial regional snapshot');
       const reportSchemaForRound = (round: number) => mocks.completionStream.mock.calls[round][0].tools
         .find((tool: { function: { name: string } }) => tool.function.name === 'remediation_report').function.parameters;
-      expect(reportSchemaForRound(0)).toHaveProperty('properties.riskSummary.properties.evidenceOrigin.enum', ['web', 'model_inference']);
-      expect(reportSchemaForRound(1)).toHaveProperty('properties.observations.items.anyOf.0.properties.evidenceSource.enum', ['vegetation']);
-      expect(reportSchemaForRound(1)).toHaveProperty('properties.observations.items.anyOf.0.properties.evidenceReadIds.items.enum', ['additional-1']);
+      expect(reportSchemaForRound(0)).toHaveProperty('properties.riskSummary.properties.evidenceOrigin.enum', ['model_inference']);
+      expect(reportSchemaForRound(1)).toHaveProperty('properties.observations.items.anyOf.0.properties.measurementFactId.enum', [grounded.fact.id]);
+      expect(reportSchemaForRound(1)).not.toHaveProperty('properties.observations.items.anyOf.0.properties.statement');
       expect(mocks.completionStream.mock.calls[1][0].messages).toEqual(expect.arrayContaining([
         expect.objectContaining({ role: 'tool', tool_call_id: 'vegetation', content: expect.stringContaining('"evidenceSource":"vegetation"') }),
       ]));
@@ -388,10 +397,9 @@ describe("generate_remediation_report tool wiring", () => {
     const { streamRegionalIntelligence } = await import('@/lib/server/services/ai-prompt');
     mocks.loadEvidenceTools.mockResolvedValue({ tools: [{ name: 'drought_history_at_point', description: 'Dated history', input_schema: { type: 'object' } }], surfaces: [], featureSurfaces: [], valueSurfaces: [] });
     mocks.callEvidenceTool.mockResolvedValue(JSON.stringify({ weekly_severity: [{ valid_date: '2024-01-01', severity_class: null }] }));
-    const grounded = { ...validReport, observations: [{ statement: 'Drought history was returned for 2024-01-01.', evidenceOrigin: 'warehouse', evidenceSource: 'drought-areas', evidenceReadIds: ['additional-1'] }] };
     mocks.completionStream
       .mockReturnValueOnce(fakeCompletionStream(Array.from({ length: 13 }, (_, index) => ({ id: `history-${index}`, name: 'drought_history_at_point', input: { longitude: -116.2, latitude: 43.6 } }))))
-      .mockReturnValueOnce(fakeCompletionStream([{ id: 'final', name: 'remediation_report', input: grounded }]));
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'final', name: 'remediation_report', input: validReport }]));
     const events = [];
     for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, { ...minimalTemporalContext(), viewedDates: ['2024-01-02'] }, [])) events.push(event);
     const audit = events.filter((event) => event.type === 'evidence').at(-1);
@@ -406,21 +414,21 @@ describe("generate_remediation_report tool wiring", () => {
     mocks.loadEvidenceTools.mockResolvedValue({ tools: [{
       name: 'surface_evidence_for_selection', description: 'Read the selected layer tile and history', input_schema: { type: 'object' },
     }], surfaces: [], featureSurfaces: [], valueSurfaces: [] });
-    mocks.callEvidenceTool.mockImplementation(async (_name, args) => JSON.stringify({
+    const evidenceResult = (args: Record<string, unknown>) => ({
       surface_name: args.surface_name,
       history: { complete: args.page_start === 31, next_page_start: args.page_start === 31 ? null : 31 },
       lanes: [{ selected: { state: 'published', requested_day: args.day, served_day: args.day,
         features: [{ served_day: args.day, properties: { ndvi: 0.7 } }] } }],
-    }));
+    });
+    mocks.callEvidenceTool.mockImplementation(async (_name, args) => JSON.stringify(evidenceResult(args)));
     const staleArgs = { surface_name: 'vegetation', day: '2001-01-01', longitude: 1, latitude: 2,
       range_start: '2000-01-01', range_end: '2002-01-01', zoom: 3 };
-    const groundedReport = { ...validReport, observations: [{ statement: 'Vegetation evidence returned for the selected window.',
-      evidenceOrigin: 'warehouse', evidenceSource: 'vegetation', evidenceReadIds: ['additional-2'] }] };
     for (const day of ['2024-02-29', '2020-06-01']) {
+      const grounded = factReportFixture(evidenceResult({ surface_name: 'vegetation', day, page_start: 31 }), 'additional-2', 'vegetation');
       mocks.completionStream
         .mockReturnValueOnce(fakeCompletionStream([{ id: 'page-one', name: 'surface_evidence_for_selection', input: staleArgs }]))
         .mockReturnValueOnce(fakeCompletionStream([{ id: 'page-two', name: 'surface_evidence_for_selection', input: { ...staleArgs, page_start: 31 } }]))
-        .mockReturnValueOnce(fakeCompletionStream([{ id: 'report', name: 'remediation_report', input: groundedReport }]));
+        .mockReturnValueOnce(fakeCompletionStream([{ id: 'report', name: 'remediation_report', input: grounded.transport }]));
       const temporal = { ...minimalTemporalContext(), analysisSelection: {
         timeScale: 'year' as const, rangeSteps: 1, zoom: 11.5, layerDays: { vegetation: day },
       } };
@@ -434,6 +442,12 @@ describe("generate_remediation_report tool wiring", () => {
       expect(events.some((event) => event.type === 'report')).toBe(true);
       expect(events.filter((event) => event.type === 'evidence').at(-1)?.evidence.toolCalls)
         .toEqual(expect.arrayContaining([expect.objectContaining({ id: 'additional-2', selectedDate: day, timeScale: 'year', zoom: 11.5 })]));
+      expect(events.filter((event) => event.type === 'evidence').at(-1)?.evidence.limitations)
+        .toEqual(expect.arrayContaining([expect.stringContaining('vegetation [additional-1]: availability only')]));
+      const nextRequest = mocks.completionStream.mock.calls.at(-2)?.[0];
+      expect(nextRequest.messages).toEqual(expect.arrayContaining([
+        expect.objectContaining({ role: 'tool', tool_call_id: 'page-one', content: expect.stringContaining('"limitations":["vegetation [additional-1]: availability only') }),
+      ]));
     }
     expect(mocks.completionStream).toHaveBeenCalledTimes(6);
     expect(JSON.stringify(mocks.completionStream.mock.calls.at(-1)?.[0].messages)).toContain('selection overrides conversation history');
@@ -568,22 +582,23 @@ describe("generate_remediation_report tool wiring", () => {
       tools: [{ name: 'surface_evidence_for_selection', description: 'Read selected tile', input_schema: { type: 'object' } }],
       surfaces: ['soil-field-vpd'], featureSurfaces: [], valueSurfaces: ['soil-field-vpd'],
     });
-    mocks.callEvidenceTool.mockResolvedValue(JSON.stringify({ features: [{ served_day: '2026-08-14', properties: { vpd: 0.9 } }] }));
+    const evidenceResult = { features: [{ served_day: '2026-08-14', properties: { vpd: 0.9 } }] };
+    mocks.callEvidenceTool.mockResolvedValue(JSON.stringify(evidenceResult));
     const unsupported = { ...validReport, observations: [{
       statement: 'VPD was 0.9 kPa.', evidenceOrigin: 'warehouse', evidenceSource: 'soilProperties', evidenceReadIds: ['local-1'],
     }] };
-    const corrected = { ...unsupported, observations: [{ ...unsupported.observations[0], evidenceSource: 'soil-field-vpd' }] };
+    const corrected = factReportFixture(evidenceResult, 'local-1', 'soil-field-vpd');
     mocks.completionStream
       .mockReturnValueOnce(fakeCompletionStream([{ id: 'wrong-source', name: 'remediation_report', input: unsupported }]))
-      .mockReturnValueOnce(fakeCompletionStream([{ id: 'correct-source', name: 'remediation_report', input: corrected }]));
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'correct-source', name: 'remediation_report', input: corrected.transport }]));
     const events = [];
     for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
-    expect(events.filter((event) => event.type === 'report')).toEqual([{ type: 'report', report: corrected }]);
+    expect(events.filter((event) => event.type === 'report')).toEqual([{ type: 'report', report: corrected.report }]);
     expect(mocks.completionStream).toHaveBeenCalledTimes(2);
     const correction = mocks.completionStream.mock.calls[1][0];
-    expect(correction.tools[0].function.parameters).toHaveProperty('properties.observations.items.anyOf.0.properties.evidenceSource.enum', ['soil-field-vpd']);
+    expect(correction.tools[0].function.parameters).toHaveProperty('properties.observations.items.anyOf.0.properties.measurementFactId.enum', expect.arrayContaining([corrected.fact.id]));
     expect(correction.messages).toEqual(expect.arrayContaining([
-      expect.objectContaining({ role: 'tool', tool_call_id: 'wrong-source', content: expect.stringContaining('"evidenceSource":"soil-field-vpd","evidenceReadId":"local-1"') }),
+      expect.objectContaining({ role: 'tool', tool_call_id: 'wrong-source', content: expect.stringContaining(corrected.fact.id) }),
     ]));
   });
 
@@ -599,9 +614,9 @@ describe("generate_remediation_report tool wiring", () => {
     expect(events.filter((event) => event.type === 'report')).toEqual([{ type: 'report', report: corrected }]);
     const correction = mocks.completionStream.mock.calls[1][0];
     expect(correction.messages).toEqual(expect.arrayContaining([
-      expect.objectContaining({ role: 'tool', tool_call_id: 'unsupported', content: expect.stringContaining('"payloadSources":[],"measurementReads":[]') }),
+      expect.objectContaining({ role: 'tool', tool_call_id: 'unsupported', content: expect.stringContaining('"facts":[],"omittedFacts":0') }),
     ]));
-    expect(correction.tools[0].function.parameters).toHaveProperty('properties.riskSummary.properties.evidenceOrigin.enum', ['web', 'model_inference']);
+    expect(correction.tools[0].function.parameters).toHaveProperty('properties.riskSummary.properties.evidenceOrigin.enum', ['model_inference']);
   });
 
   it.each(['empty', 'inference_only', 'repeated_empty'] as const)('rejects a follow-up that omits available measured observations: %s', async (mode) => {
@@ -610,15 +625,16 @@ describe("generate_remediation_report tool wiring", () => {
       tools: [{ name: 'surface_evidence_for_selection', description: 'Read selected tile', input_schema: { type: 'object' } }],
       surfaces: ['vegetation'], featureSurfaces: ['vegetation'], valueSurfaces: [],
     });
-    mocks.callEvidenceTool.mockResolvedValue(JSON.stringify({
+    const evidenceResult = {
       lanes: [{ selected: { state: 'published', features: [{ served_day: '2026-09-09', properties: { ndvi: 0.5 } }] },
         history: [{ state: 'unavailable', features: [] }] }],
-    }));
+    };
+    mocks.callEvidenceTool.mockResolvedValue(JSON.stringify(evidenceResult));
     const omitted = { ...validReport, observations: mode === 'inference_only' ? validReport.observations : [], remediation: [] };
-    const grounded = { ...omitted, observations: [{ statement: 'Vegetation NDVI is 0.5 on 2026-09-09.', evidenceOrigin: 'warehouse', evidenceSource: 'vegetation', evidenceReadIds: ['local-1'] }] };
+    const grounded = factReportFixture(evidenceResult, 'local-1', 'vegetation', omitted);
     mocks.completionStream
       .mockReturnValueOnce(fakeCompletionStream([{ id: 'omitted', name: 'remediation_report', input: omitted }]))
-      .mockReturnValueOnce(fakeCompletionStream([{ id: 'corrected', name: 'remediation_report', input: mode === 'repeated_empty' ? omitted : grounded }]));
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'corrected', name: 'remediation_report', input: mode === 'repeated_empty' ? omitted : grounded.transport }]));
     const temporal = { ...minimalTemporalContext(), analysisSelection: {
       timeScale: 'day' as const, rangeSteps: 7, zoom: 13, layerDays: { vegetation: '2026-09-09' },
     } };
@@ -629,7 +645,7 @@ describe("generate_remediation_report tool wiring", () => {
     };
     if (mode === 'repeated_empty') await expect(collect()).rejects.toThrow('bounded correction attempt');
     else await collect();
-    expect(events.filter((event) => event.type === 'report')).toEqual(mode === 'repeated_empty' ? [] : [{ type: 'report', report: grounded }]);
+    expect(events.filter((event) => event.type === 'report')).toEqual(mode === 'repeated_empty' ? [] : [{ type: 'report', report: grounded.report }]);
     expect(mocks.completionStream).toHaveBeenCalledTimes(2);
     for (const [request] of mocks.completionStream.mock.calls) expect(request.tools[0].function.parameters).toHaveProperty('properties.observations.minItems', 1);
     expect(mocks.completionStream.mock.calls[1][0].messages).toEqual(expect.arrayContaining([
@@ -643,45 +659,54 @@ describe("generate_remediation_report tool wiring", () => {
       tools: [{ name: 'surface_evidence_for_selection', description: 'Read selected tile', input_schema: { type: 'object' } }],
       surfaces: ['vegetation'], featureSurfaces: ['vegetation'], valueSurfaces: [],
     });
-    mocks.callEvidenceTool.mockResolvedValue(JSON.stringify({ features: [{ served_day: '2026-08-14', properties: { ndvi: 0.5 } }] }));
+    const evidenceResult = { features: [{ served_day: '2026-08-14', properties: { ndvi: 0.5 } }] };
+    mocks.callEvidenceTool.mockResolvedValue(JSON.stringify(evidenceResult));
     const unsupported = { ...validReport, observations: [{ statement: 'Vegetation evidence was measured.', evidenceOrigin: 'warehouse', evidenceSource: 'vegetation' }] };
-    const corrected = { ...unsupported, observations: [{ ...unsupported.observations[0], evidenceReadIds: ['local-1'] }] };
+    const corrected = factReportFixture(evidenceResult, 'local-1', 'vegetation');
     mocks.completionStream
       .mockReturnValueOnce(fakeCompletionStream([{ id: 'missing-id', name: 'remediation_report', input: unsupported }]))
-      .mockReturnValueOnce(fakeCompletionStream([{ id: 'with-id', name: 'remediation_report', input: corrected }]));
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'with-id', name: 'remediation_report', input: corrected.transport }]));
     const events = [];
     for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
-    expect(events.filter((event) => event.type === 'report')).toEqual([{ type: 'report', report: corrected }]);
+    expect(events.filter((event) => event.type === 'report')).toEqual([{ type: 'report', report: corrected.report }]);
     expect(mocks.completionStream).toHaveBeenCalledTimes(2);
     expect(mocks.completionStream.mock.calls[1][0].messages).toEqual(expect.arrayContaining([
-      expect.objectContaining({ role: 'tool', tool_call_id: 'missing-id', content: expect.stringContaining('including local observations') }),
+      expect.objectContaining({ role: 'tool', tool_call_id: 'missing-id', content: expect.stringContaining('one exact current measurementFactId') }),
     ]));
   });
 
-  it('requires measured decoder citations and preserves compatibility with empty inference arrays', async () => {
+  it('requires current fact selectors and rejects legacy empty citation fields in current inference transport', async () => {
     const { streamRegionalIntelligence } = await import('@/lib/server/services/ai-prompt');
     mocks.loadEvidenceTools.mockResolvedValue({
       tools: [{ name: 'surface_evidence_for_selection', description: 'Read selected tile', input_schema: { type: 'object' } }],
       surfaces: ['vegetation'], featureSurfaces: ['vegetation'], valueSurfaces: [],
     });
-    mocks.callEvidenceTool.mockResolvedValue(JSON.stringify({ features: [{ served_day: '2026-08-14', properties: { ndvi: 0.5 } }] }));
-    const canonical = { ...validReport, observations: [{ statement: 'Vegetation evidence was measured.', evidenceOrigin: 'warehouse', evidenceSource: 'vegetation', evidenceReadIds: ['local-1'] }] };
-    const transport = { ...canonical, riskSummary: { ...canonical.riskSummary, evidenceReadIds: [] }, remediation: canonical.remediation.map((claim) => ({ ...claim, evidenceReadIds: [] })) };
-    mocks.completionStream.mockReturnValueOnce(fakeCompletionStream([{ id: 'report', name: 'remediation_report', input: transport }]));
+    const evidenceResult = { features: [{ served_day: '2026-08-14', properties: { ndvi: 0.5 } }] };
+    mocks.callEvidenceTool.mockResolvedValue(JSON.stringify(evidenceResult));
+    const canonical = factReportFixture(evidenceResult, 'local-1', 'vegetation');
+    const transport = { ...canonical.transport, riskSummary: { ...validReport.riskSummary, evidenceReadIds: [] }, remediation: validReport.remediation.map((claim) => ({ ...claim, evidenceReadIds: [] })) };
+    mocks.completionStream
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'invalid', name: 'remediation_report', input: transport }]))
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'report', name: 'remediation_report', input: canonical.transport }]));
     const events = [];
     for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
-    expect(events.filter((event) => event.type === 'report')).toEqual([{ type: 'report', report: canonical }]);
-    expect(mocks.completionStream).toHaveBeenCalledTimes(1);
+    expect(events.filter((event) => event.type === 'report')).toEqual([{ type: 'report', report: canonical.report }]);
+    expect(mocks.completionStream).toHaveBeenCalledTimes(2);
     const schema = mocks.completionStream.mock.calls[0][0].tools[0].function.parameters;
-    for (const path of ['properties.riskSummary', 'properties.observations.items', 'properties.remediation.items']) {
-      expect(schema).toHaveProperty(`${path}.anyOf.0.required`, expect.arrayContaining(['evidenceReadIds']));
+    expect(schema).toHaveProperty('properties.riskSummary.properties.evidenceOrigin.enum', ['model_inference']);
+    expect(schema).not.toHaveProperty('properties.riskSummary.properties.evidenceReadIds');
+    expect(schema).toHaveProperty('properties.remediation.items.properties.evidenceOrigin.enum', ['web', 'model_inference']);
+    expect(schema).not.toHaveProperty('properties.remediation.items.properties.evidenceSource');
+    expect(schema).not.toHaveProperty('properties.remediation.items.properties.evidenceReadIds');
+    for (const path of ['properties.observations.items']) {
+      expect(schema).toHaveProperty(`${path}.anyOf.0.required`, ['evidenceOrigin', 'measurementFactId']);
       expect(schema).toHaveProperty(`${path}.anyOf.1.required`, expect.not.arrayContaining(['evidenceReadIds']));
       expect(schema).not.toHaveProperty(`${path}.anyOf.1.properties.evidenceReadIds`);
       expect(schema).toHaveProperty(`${path}.anyOf.1.additionalProperties`, false);
     }
-    expect(schema).toHaveProperty('properties.observations.items.anyOf.0.properties.evidenceReadIds.description', expect.stringContaining('Required for warehouse tool-surface claims'));
+    expect(schema).toHaveProperty('properties.observations.items.anyOf.0.properties.measurementFactId.enum', expect.arrayContaining([canonical.fact.id]));
     expect(remediationReportSchema.safeParse(transport).success).toBe(false);
-    expect(remediationReportSchema.safeParse(canonical).success).toBe(true);
+    expect(remediationReportSchema.safeParse(canonical.report).success).toBe(true);
   });
 
   it('rejects nonempty inference recommendation IDs and excludes them from the complete inference branch', async () => {
@@ -690,23 +715,24 @@ describe("generate_remediation_report tool wiring", () => {
       tools: [{ name: 'surface_evidence_for_selection', description: 'Read selected tile', input_schema: { type: 'object' } }],
       surfaces: ['vegetation'], featureSurfaces: ['vegetation'], valueSurfaces: [],
     });
-    mocks.callEvidenceTool.mockResolvedValue(JSON.stringify({ features: [{ served_day: '2026-08-14', properties: { ndvi: 0.5 } }] }));
-    const grounded = { ...validReport, observations: [{ statement: 'Vegetation NDVI is 0.5.', evidenceOrigin: 'warehouse', evidenceSource: 'vegetation', evidenceReadIds: ['local-1'] }] };
-    const invalid = { ...grounded,
+    const evidenceResult = { features: [{ served_day: '2026-08-14', properties: { ndvi: 0.5 } }] };
+    mocks.callEvidenceTool.mockResolvedValue(JSON.stringify(evidenceResult));
+    const grounded = factReportFixture(evidenceResult, 'local-1', 'vegetation', { ...validReport, remediation: [validReport.remediation[0], validReport.remediation[0]] });
+    const invalid = { ...grounded.transport,
       remediation: [validReport.remediation[0], validReport.remediation[0]].map((claim) => ({ ...claim, evidenceReadIds: ['local-1'] })),
     };
-    const corrected = { ...grounded, remediation: [validReport.remediation[0], validReport.remediation[0]] };
     mocks.completionStream
       .mockReturnValueOnce(fakeCompletionStream([{ id: 'invalid-inference', name: 'remediation_report', input: invalid }]))
-      .mockReturnValueOnce(fakeCompletionStream([{ id: 'corrected-inference', name: 'remediation_report', input: corrected }]));
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'corrected-inference', name: 'remediation_report', input: grounded.transport }]));
     const events = [];
     for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
     expect(mocks.completionStream).toHaveBeenCalledTimes(2);
-    expect(events.filter((event) => event.type === 'report')).toEqual([{ type: 'report', report: corrected }]);
+    expect(events.filter((event) => event.type === 'report')).toEqual([{ type: 'report', report: grounded.report }]);
     const request = mocks.completionStream.mock.calls[1][0];
-    expect(request.tools[0].function.parameters).not.toHaveProperty('properties.remediation.items.anyOf.1.properties.evidenceReadIds');
-    expect(request.tools[0].function.parameters).toHaveProperty('properties.remediation.items.anyOf.1.additionalProperties', false);
-    expect(request.tools[0].function.parameters).toHaveProperty('properties.remediation.items.anyOf.1.required', ['strategy', 'title', 'rationale', 'timeframe', 'confidence', 'consultProfessionals', 'evidenceOrigin']);
+    expect(request.tools[0].function.parameters).not.toHaveProperty('properties.remediation.items.properties.evidenceReadIds');
+    expect(request.tools[0].function.parameters).not.toHaveProperty('properties.remediation.items.properties.evidenceSource');
+    expect(request.tools[0].function.parameters).toHaveProperty('properties.remediation.items.additionalProperties', false);
+    expect(request.tools[0].function.parameters).toHaveProperty('properties.remediation.items.required', ['strategy', 'title', 'rationale', 'timeframe', 'confidence', 'consultProfessionals', 'evidenceOrigin']);
     expect(request.messages).toEqual(expect.arrayContaining([
       expect.objectContaining({ role: 'tool', tool_call_id: 'invalid-inference', content: expect.stringContaining('remediation.0.evidenceReadIds') }),
       expect.objectContaining({ role: 'tool', tool_call_id: 'invalid-inference', content: expect.stringContaining('remediation.1.evidenceReadIds') }),

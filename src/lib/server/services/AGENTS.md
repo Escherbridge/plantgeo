@@ -84,15 +84,21 @@ actual previous collection sizes and request consolidation while preserving esse
 units and source/read pairs. The one correction budget and all runtime bounds remain intact;
 the application never truncates a report into validity.
 
-When the current manifest has tool measurement IDs, each provider claim uses a nested `anyOf`
-with complete object branches: warehouse tool citations require matching nonempty
-`evidenceReadIds`; inference and web omit the field from both properties and required fields.
-A legacy branch permits warehouse claims without IDs only for available legacy payload sources.
-Every branch copies all shared claim properties and required fields and rejects additional
-properties. Each singular-source warehouse observation or recommendation has one branch per
-observed source: its source is required and fixed, and its ID choices contain only that source's
-executed measurement reads. Newly executed reads refresh the corresponding branch. The
-multi-source risk summary retains its combined choices and exact source/read runtime validation.
+The current selected-map workflow always passes a measurement-fact pool, including an explicit
+empty pool, to the provider schema and resolver. Warehouse observations contain only
+`evidenceOrigin: warehouse` and one current `measurementFactId`. The server supplies the exact
+statement, source and read IDs from that fact before canonical validation. A valid ID accompanied
+by model-authored statement/source/read fields is rejected, as are unknown or stale IDs; there
+is no repair or fallback to unrestricted warehouse prose. Additional reads refresh the pool and
+schema. Up to ten facts per executed read preserve representation across available sources;
+the existing bounded read budget also bounds the total pool. Fact omissions are explicit.
+Provider
+risk assessments are labelled model inference with an empty source list and no read IDs;
+management recommendations are inference or web guidance without measurement-source fields.
+Nonwarehouse observations also omit source and read IDs. Supporting measured facts belong in
+separate warehouse observations. The resolver enforces these interpretation rules even if the
+provider ignores its schema. Canonical legacy report parsing stays compatible; the optional
+legacy provider-schema mode is never used by the current selected-map workflow.
 The outer report remains an object. This follows the Google structured-output
 example for nested unions; live followups with partial branches omitted sibling claim fields,
 and empty-array cardinality alone failed to keep IDs off inference recommendations. These are
@@ -110,13 +116,38 @@ omits the field entirely. Sampled history describes only its sampled dates; an i
 cannot establish the extrema or continuity of the requested period.
 The final consistency instruction checks comparison directions against dated values in both
 findings and recommendation rationales and requires all supporting comparison reads to be cited.
-When the current manifest contains executed measurement reads, the provider observations array
+When the current pool contains eligible measurement facts, the provider observations array
 requires at least one entry and runtime validation requires a warehouse observation citing one
-of those measured tool sources. Existing validation still checks every exact source/read pair.
+of those facts' measured sources. Existing validation still checks every exact source/read pair.
 This prevents an empty or inference-only followup from discarding available facts because other
 history dates are missing. The normal bounded correction explains the omission; it never writes
 an observation or repairs IDs. Refusals, coverage metadata and unavailable dates do not trigger
 this floor. Genuine no-data reports and empty recommendation arrays remain valid.
+Observed metadata-only records that cannot form a fact receive an explicit limitation and do
+not force the model to invent a measurement. Without a current fact pool, legacy validation
+retains its ledger-based completeness rule.
+
+Availability limitations are authored from raw serving envelopes before model projection and
+shown through the existing evidence audit. Each names its source/read, selected request result,
+explicit `history.sampled_days`, reported completeness, no-record states and continuation cursor.
+Served dates never stand in for checked calendar dates; a null cursor never changes an incomplete
+response to complete. Readers without a calendar-day list retain that limitation. The list stays
+within forty entries and two thousand characters per entry, including the unknown-date caveat;
+prefetch reserves room for the final workflow notes and additional reads use the same disclosure.
+Current warehouse statements are rendered from actual serving records by
+`regional-measurement-facts.ts`; the model selects them without editing their source, dates,
+values, units or spatial-support wording. IDs fingerprint the source, selection and record so
+changed evidence cannot reuse a prior fact selection. Availability claims remain in the audit.
+Risk and recommendation prose remains model interpretation; exact source/read validation still
+runs on every resolved measured observation.
+
+The model-facing bounded projection omits only nine declared opaque storage-lineage fields:
+source part keys, part/row hashes, the row digest, manifest hash and release payload checksum.
+Each object counts those omitted fields. All other dynamic measurement properties, natural IDs,
+release identities, units, dates, coverage, cell/point support, spatial relations and pagination
+remain available. The raw serving result and server-authored audit are not modified, and selected
+and historical envelopes are not deduplicated. This removes repeated opaque strings that dominated
+live prompts without replacing scientific evidence with a fixed metric allowlist.
 
 The report-schema projection and OpenRouter reasoning budget apply only to the exact model IDs
 `google/gemini-2.5-flash-lite` and `google/gemini-2.5-flash`. Both receive

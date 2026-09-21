@@ -16,6 +16,8 @@ describe("safe AI provider diagnostics", () => {
     expect(providerErrorDiagnostic(failure("Unknown field maxLength")).reasons).toContain("unsupported_schema_keyword");
     expect(reportValidationDiagnostic([{ code: "custom", path: ["riskSummary", "evidenceReadIds", 0] }]))
       .toEqual([{ code: "custom", path: "riskSummary.evidenceReadIds.[]" }]);
+    expect(reportValidationDiagnostic([{ code: 'custom', path: ['observations', 1, 'measurementFactId'] }]))
+      .toEqual([{ code: 'custom', path: 'observations.[].measurementFactId' }]);
   });
   it("distinguishes empty, text and structured completions without exposing output or unknown names", () => {
     expect(incompleteReportDiagnostic(undefined, undefined, undefined)).toMatchObject({ messagePresent: false, finishReason: "unknown", contentKind: "empty", reportToolCount: 0 });
