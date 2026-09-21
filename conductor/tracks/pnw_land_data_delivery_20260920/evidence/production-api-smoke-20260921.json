@@ -1,0 +1,176 @@
+{
+  "recorded_at": "2026-09-21T05:11:17.720109+00:00",
+  "results": [
+    {
+      "name": "app-ready",
+      "http_status": 200,
+      "status": "ready",
+      "checks": {
+        "configuration": true,
+        "database": true,
+        "redis": true
+      },
+      "timestamp": "2026-09-21T05:11:04.552Z",
+      "duration_seconds": 0.47
+    },
+    {
+      "name": "data-ready",
+      "http_status": 200,
+      "status": "ready",
+      "profile": "published_reader",
+      "checks": {
+        "database_profile": true,
+        "receiver_identity": true,
+        "extensions": true,
+        "migration": true,
+        "serving_surface": true
+      },
+      "duration_seconds": 0.3
+    },
+    {
+      "name": "land-availability",
+      "http_status": 200,
+      "groups": [
+        {
+          "group": "parcels-land-use",
+          "status": "unavailable",
+          "reason": "Parcel boundaries and recorded land use are not available. Crop estimates do not identify ownership.",
+          "latestDay": null
+        },
+        {
+          "group": "electric-utility-territories",
+          "status": "unavailable",
+          "reason": "Electric utility service territories are not available.",
+          "latestDay": null
+        },
+        {
+          "group": "state-managed-lands",
+          "status": "unavailable",
+          "reason": "State-managed land boundaries are not available.",
+          "latestDay": null
+        },
+        {
+          "group": "blm-lands",
+          "status": "available",
+          "reason": "BLM surface-management reference published 2026-09-21.",
+          "latestDay": "2026-09-21"
+        }
+      ],
+      "duration_seconds": 2.17
+    },
+    {
+      "name": "crop-availability",
+      "http_status": 200,
+      "available": true,
+      "latestDay": "2026-02-27",
+      "releaseDays": [
+        "2026-02-27",
+        "2025-02-27",
+        "2024-01-31",
+        "2023-01-30"
+      ],
+      "reason": "USDA Cropland Data Layer estimates.",
+      "duration_seconds": 0.23
+    },
+    {
+      "name": "crop-2022",
+      "http_status": 200,
+      "served_day": "2023-01-30",
+      "features": 391,
+      "truncated": false,
+      "message": "Estimated crop cover from classified satellite imagery. Cells are not parcels; area shares are not confidence scores.",
+      "duration_seconds": 1.11
+    },
+    {
+      "name": "crop-2023",
+      "http_status": 200,
+      "served_day": "2024-01-31",
+      "features": 391,
+      "truncated": false,
+      "message": "Estimated crop cover from classified satellite imagery. Cells are not parcels; area shares are not confidence scores.",
+      "duration_seconds": 0.74
+    },
+    {
+      "name": "crop-2024",
+      "http_status": 200,
+      "served_day": "2025-02-27",
+      "features": 391,
+      "truncated": false,
+      "message": "Estimated crop cover from classified satellite imagery. Cells are not parcels; area shares are not confidence scores.",
+      "duration_seconds": 0.72
+    },
+    {
+      "name": "crop-2025",
+      "http_status": 200,
+      "served_day": "2026-02-27",
+      "features": 393,
+      "truncated": false,
+      "message": "Estimated crop cover from classified satellite imagery. Cells are not parcels; area shares are not confidence scores.",
+      "duration_seconds": 0.75
+    },
+    {
+      "name": "blm-boundaries",
+      "http_status": 200,
+      "status": "ok",
+      "results": 1,
+      "coverage_states": [
+        "unknown_coverage"
+      ],
+      "duration_seconds": 4.49
+    },
+    {
+      "name": "office-lookup",
+      "http_status": 200,
+      "status": "ok",
+      "results": 1,
+      "coverage_states": [
+        "matched"
+      ],
+      "gaps": [
+        [
+          "Office geography overlaps the selection. Program responsibility or permission is not established by this overlap."
+        ]
+      ],
+      "duration_seconds": 0.83
+    },
+    {
+      "name": "land-context-boundaries",
+      "http_status": 200,
+      "state": "published",
+      "served_day": "2026-09-21",
+      "rows": 3,
+      "truncated": false,
+      "duration_seconds": 1.11
+    },
+    {
+      "name": "land-context-offices",
+      "http_status": 200,
+      "state": "published",
+      "served_day": "2026-09-21",
+      "rows": 34,
+      "truncated": false,
+      "duration_seconds": 0.75
+    },
+    {
+      "name": "land-context-contacts",
+      "http_status": 200,
+      "state": "published",
+      "served_day": "2026-09-21",
+      "rows": 34,
+      "truncated": false,
+      "duration_seconds": 0.38
+    }
+  ],
+  "positive_boundary_probe": {
+    "deployment_revision": "85c4b8f451355bfc2fc5aeb3073635c86de2e198",
+    "sample_method": "ST_PointOnSurface on published Oregon geometry",
+    "interior_point": [-120.08706734793398, 43.16310152889562],
+    "procedure": "resolveBoundaryInArea",
+    "bbox": [-120.088, 43.162, -120.086, 43.164],
+    "zoom": 13,
+    "http_status": 200,
+    "status": "ok",
+    "matched_records": 2,
+    "unresolved_gaps": [[], []]
+  }
+}

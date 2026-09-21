@@ -28,7 +28,7 @@ interface RecordedListener {
   handler: Listener;
 }
 
-function mapFixture() {
+function mapFixture({ styleParsed = true, sourcesLoaded = true } = {}) {
   const layers = new Map<string, LayerSpecification>();
   const sources = new Map<
     string,
@@ -41,17 +41,20 @@ function mapFixture() {
   let foreignHits: { layer: { id: string } }[] = [];
 
   const map = {
-    getStyle: () => ({ version: 8, sources: {}, layers: [...layers.values()] }),
-    isStyleLoaded: () => true,
+    getStyle: () => styleParsed ? { version: 8, sources: {}, layers: [...layers.values()] } : undefined,
+    isStyleLoaded: () => styleParsed && sourcesLoaded,
     getLayer: (id: string) => layers.get(id),
     getSource: (id: string) => sources.get(id),
     addLayer: vi.fn((layer: LayerSpecification) => {
+      if (!styleParsed) throw new Error("Style is not parsed");
       layers.set(layer.id, layer);
     }),
     addSource: vi.fn((id: string, input: { data: GeoJSON.FeatureCollection }) => {
+      if (!styleParsed) throw new Error("Style is not parsed");
       const source = {
         data: input.data,
         setData: vi.fn((data: GeoJSON.FeatureCollection) => {
+          if (!styleParsed) throw new Error("Style is not parsed");
           source.data = data;
         }),
       };
@@ -59,7 +62,12 @@ function mapFixture() {
     }),
     removeLayer: vi.fn((id: string) => layers.delete(id)),
     removeSource: vi.fn((id: string) => sources.delete(id)),
-    setLayoutProperty: vi.fn(),
+    setLayoutProperty: vi.fn((id: string, _name: string, visibility: "visible" | "none") => {
+      if (!styleParsed) throw new Error("Style is not parsed");
+      const layer = layers.get(id);
+      if (!layer) throw new Error(`Missing layer ${id}`);
+      layer.layout = { ...layer.layout, visibility };
+    }),
     queryRenderedFeatures: vi.fn((_point: unknown, options?: { layers?: string[] }) =>
       options?.layers ? renderedHits : foreignHits
     ),
@@ -84,6 +92,18 @@ function mapFixture() {
     layers,
     sources,
     listeners,
+    beginStyleSwap() {
+      styleParsed = false;
+      sourcesLoaded = false;
+      layers.clear();
+      sources.clear();
+    },
+    parseStyle() {
+      styleParsed = true;
+    },
+    finishSources() {
+      sourcesLoaded = true;
+    },
     setRenderedHits(hits: { properties: Record<string, unknown> }[]) {
       renderedHits = hits;
     },
@@ -354,6 +374,88 @@ describe("LandContextLayer breaks the selection deadlock", () => {
       mode: "point",
       point: [-116.2, 43.6],
     });
+  });
+});
+
+describe("LandContextLayer admits parsed styles independently of source loading", () => {
+  it("installs on a delayed mount and applies results and visibility while unrelated sources load", () => {
+    const first = feature("blm:first", "blm-lands");
+    const second = feature("blm:second", "blm-lands");
+    resetStore({ enabledGroups: { ...ALL_OFF, "blm-lands": true }, results: [first] });
+    const fixture = mapFixture({ sourcesLoaded: false });
+    render(<LandContextLayer map={fixture.map} />);
+
+    const source = fixture.sources.get("land-context-results");
+    expect(source?.data.features.map((entry) => entry.id)).toEqual([first.id]);
+    expect(fixture.layers.get("land-context-fill-blm-lands")?.layout?.visibility).toBe("visible");
+
+    act(() => {
+      useLandContextStore.setState({ results: [second], enabledGroups: { ...ALL_OFF } });
+    });
+
+    expect(fixture.sources.get("land-context-results")).toBe(source);
+    expect(source?.data.features.map((entry) => entry.id)).toEqual([second.id]);
+    expect(fixture.layers.get("land-context-fill-blm-lands")?.layout?.visibility).toBe("none");
+    expect(fixture.layers.get("land-context-line-blm-lands")?.layout?.visibility).toBe("none");
+    expect(fixture.calls.isStyleLoaded()).toBe(false);
+
+    act(() => useLandContextStore.setState({ results: [] }));
+    expect(source?.data.features).toEqual([]);
+
+    act(() => {
+      fixture.finishSources();
+      fixture.fire("sourcedata", {});
+    });
+    expect(fixture.sources.get("land-context-results")).toBe(source);
+    expect(fixture.calls.addSource).toHaveBeenCalledTimes(1);
+    expect(fixture.calls.addLayer).toHaveBeenCalledTimes(8);
+  });
+
+  it("waits for a truly unparsed style and restores the latest results and visibility after a swap", () => {
+    const first = feature("blm:first", "blm-lands");
+    const second = feature("state:second", "state-managed-lands");
+    const fixture = mapFixture({ styleParsed: false, sourcesLoaded: false });
+    render(<LandContextLayer map={fixture.map} />);
+    const [styleHandler] = fixture.bareListeners("style.load");
+
+    act(() => {
+      useLandContextStore.setState({ results: [first], enabledGroups: { ...ALL_OFF, "blm-lands": true } });
+    });
+    expect(fixture.calls.addSource).not.toHaveBeenCalled();
+    expect(fixture.calls.addLayer).not.toHaveBeenCalled();
+    expect(fixture.calls.setLayoutProperty).not.toHaveBeenCalled();
+
+    act(() => {
+      fixture.parseStyle();
+      fixture.fire("style.load", {});
+    });
+    const originalSource = fixture.sources.get("land-context-results");
+    expect(originalSource?.data.features.map((entry) => entry.id)).toEqual([first.id]);
+    expect(fixture.layers.get("land-context-fill-blm-lands")?.layout?.visibility).toBe("visible");
+
+    act(() => {
+      fixture.beginStyleSwap();
+      useLandContextStore.setState({
+        results: [second],
+        enabledGroups: { ...ALL_OFF, "state-managed-lands": true },
+      });
+    });
+    expect(fixture.sources.size).toBe(0);
+    expect(fixture.layers.size).toBe(0);
+
+    act(() => {
+      fixture.parseStyle();
+      fixture.fire("style.load", {});
+    });
+    const restoredSource = fixture.sources.get("land-context-results");
+    expect(restoredSource).not.toBe(originalSource);
+    expect(restoredSource?.data.features.map((entry) => entry.id)).toEqual([second.id]);
+    expect(fixture.layers.get("land-context-fill-blm-lands")?.layout?.visibility).toBe("none");
+    expect(fixture.layers.get("land-context-line-blm-lands")?.layout?.visibility).toBe("none");
+    expect(fixture.layers.get("land-context-fill-state-managed-lands")?.layout?.visibility).toBe("visible");
+    expect(fixture.layers.get("land-context-line-state-managed-lands")?.layout?.visibility).toBe("visible");
+    expect(fixture.calls.isStyleLoaded()).toBe(false);
+    expect(fixture.bareListeners("style.load")).toEqual([styleHandler]);
   });
 });
 

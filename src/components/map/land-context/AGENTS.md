@@ -53,6 +53,20 @@ except under a label. After this change it opens over vector ground unless a gen
 selection and fires one `resolveBoundaryAtPoint` per vertex. Closing it needs a store flag set by the
 drawing tool (outside this directory) that `isClickOwnedByAnotherSurface` then reads -- one line here.
 
+## Parsed-style admission and selection updates
+
+`LandContextLayer` creates its shared source and group layers once `getStyle()` exposes a parsed
+style. Unrelated Martin or raster requests can keep `isStyleLoaded()` false after `style.load`,
+including on a delayed mount, so source completion cannot gate creation or store updates. Results
+update the existing source and visibility updates each existing group layer immediately. Missing
+resources during an unparsed style are skipped; the persistent `style.load` listener restores the
+latest results and enabled groups from refs. Its registration remains stable across store changes.
+
+`LandContextLayer.test.tsx` distinguishes parsed style from source readiness and rejects writes
+before parsing. It covers delayed mount, replacement and empty results, disabling visible layers
+during source loading, source-only completion, and latest-state replay after a style swap. This is
+component lifecycle coverage; live browser acceptance remains a separate deployment gate.
+
 ## Geometry
 
 The frozen contract carries hex WKB (`BoundaryVersionRef.geometryWkb`). Browser code may not import the

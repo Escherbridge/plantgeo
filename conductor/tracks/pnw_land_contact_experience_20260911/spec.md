@@ -13,8 +13,9 @@ owner override authorized implementation; September 20 added bounded BLM and USD
 delivery and ingestion. Initial production publication and branch-code readback are recorded
 in the [delivery evidence](../pnw_land_data_delivery_20260920/evidence/production-delivery-20260921.md).
 The current owner request authorizes PR review, track updates, merging and deployment
-monitoring. PR #10 merged after corrective review and quality gates on September 21, with
-deployment in progress and live browser/schedule acceptance open in the
+monitoring. PR #10 merged after corrective review and quality gates on September 21.
+Runtime recovery and live API reads passed. The retrospective PR #9 corrective deployment
+and live browser/schedule acceptance remain open in the
 [delivery plan](../pnw_land_data_delivery_20260920/plan.md).
 These receipts do not establish completion of the broader contact experience below.
 

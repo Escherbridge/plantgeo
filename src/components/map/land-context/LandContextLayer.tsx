@@ -182,7 +182,7 @@ export function LandContextLayer({ map }: LandContextLayerProps) {
     if (!map) return;
     const onStyleLoad = () => addAllLayers(map);
     map.on("style.load", onStyleLoad);
-    if (map.isStyleLoaded()) addAllLayers(map);
+    if (map.getStyle()) addAllLayers(map);
     return () => {
       map.off("style.load", onStyleLoad);
       removeAllLayers(map);
@@ -191,14 +191,14 @@ export function LandContextLayer({ map }: LandContextLayerProps) {
 
   // Keep the shared source in sync with the store's current results.
   useEffect(() => {
-    if (!map || !map.isStyleLoaded()) return;
+    if (!map) return;
     const source = map.getSource(SOURCE_ID) as GeoJSONSource | undefined;
     if (source) source.setData(toFeatureCollection(results));
   }, [map, results]);
 
   // Toggle visibility per group without touching the source/data.
   useEffect(() => {
-    if (!map || !map.isStyleLoaded()) return;
+    if (!map) return;
     for (const group of LAND_CONTEXT_GROUP_IDS) {
       const visibility = enabledGroups[group] ? "visible" : "none";
       if (map.getLayer(fillLayerId(group))) map.setLayoutProperty(fillLayerId(group), "visibility", visibility);

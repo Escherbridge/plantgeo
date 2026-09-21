@@ -14,7 +14,8 @@ the [initial delivery evidence](../pnw_land_data_delivery_20260920/evidence/prod
 
 The [delivery plan](../pnw_land_data_delivery_20260920/plan.md) owns final PR review, deployment,
 live acceptance and first successful scheduled turns. PR #10 passed review and quality gates
-and merged on September 21; deployment is in progress. The checklist
+and merged on September 21; runtime recovery and live API reads passed. The delivery plan
+retains the retrospective PR #9 corrective deployment and browser/schedule gates. The checklist
 below retains the broader family requirements; initial BLM delivery does not close parcel,
 utility, state-land or verified-contact work. Those source admissions continue in the
 [deferred source track](../pnw_land_sources_deferred_20260920/plan.md).

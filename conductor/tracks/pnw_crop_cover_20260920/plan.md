@@ -16,13 +16,14 @@ for the indexed physical-ladder correction and separate quality/deployment accep
 - [x] Integrate selected-day reads and truthful estimation labels.
 - [x] Validate source captures, area conservation and production readback.
 - [x] Close the current independent PR review's physical publication-ladder findings and record final validation.
-- [ ] Verify the merged revision is deployed and all four admitted editions are readable through the live data service.
+- [x] Verify recovery revision `85c4b8f4` is deployed and all four admitted editions are readable through the live data service.
 - [ ] Verify all four admitted editions and their controls in the live browser.
 - [ ] Activate `crop-cover-usda-maintain`, preserving existing active lanes.
 - [ ] Collect crop maintenance's first successful scheduled turn before closing this track.
 
 [Production evidence](../pnw_land_data_delivery_20260920/evidence/production-delivery-20260921.md)
 records all four published editions, their immutable source manifests, conserved ladders and
-verified selected-release reads using the branch code. Deployment and schedule acceptance
-remain pending. Native 10-m regional processing, older history and future
+verified selected-release reads using the branch code. Recovery deployment and all four live
+API edition reads subsequently passed; browser and schedule acceptance remain pending.
+Native 10-m regional processing, older history and future
 crop-year admissions remain separate follow-up work.
