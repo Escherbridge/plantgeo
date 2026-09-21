@@ -341,19 +341,11 @@ export const burnSeverityOutlineLayer: LayerSpecification = {
   },
 };
 
-/**
- * Land vs air, the one classification every intervention row actually carries.
- *
- * Replaces the former `priority`-keyed palette on 2026-09-13 (unified_intervention_layer
- * track, OQ-2). `submitIntervention` has never written `priority`, so essentially every
- * real row fell through to the neutral fallback and the three priority colours were a
- * palette for a field nobody produced. `category` is written on every submission and is
- * projected by `geo.intervention_tiles()` as of drizzle/0001_intervention_tiles_category.sql
- * (Martin must be restarted for the published tiles to carry it).
- */
+/** Published intervention categories; see AGENTS.md for publication and provenance rules. */
 export const INTERVENTION_CATEGORY_CLASSES: readonly StyleClass[] = [
   { value: "land", color: "#0d9488", label: "Land intervention" },
   { value: "air", color: "#7c3aed", label: "Air intervention" },
+  { value: "data", color: "#be185d", label: "Community data intervention" },
 ];
 
 export const INTERVENTION_UNCLASSIFIED_LABEL = "Category not set";

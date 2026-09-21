@@ -72,6 +72,21 @@ describe("useInterventionDraftsOverlay merge and dedupe", () => {
     mocks.sessionStatus = "authenticated";
   });
 
+  it("carries data origin and collection details on both own and proposed records", () => {
+    const dataDetails = { lane: "water-gauges", collectionMethod: "Read the gauge", observedOn: "2025-09-15", dataUrl: "https://example.org/gauges.csv" };
+    mocks.listMySubmissions.mockReturnValue(queryResult({ data: [{
+      id: "own-data", status: "published", properties: { type: "data_submission", category: "data", dataOrigin: "community", dataDetails, geometry: { type: "Point", coordinates: [1, 2] } },
+    }] }));
+    mocks.listProposed.mockReturnValue(queryResult({ data: [{
+      id: "proposed-data", name: "Water survey", type: "data_collection", category: "data", dataOrigin: "community", dataDetails, longitude: 1, latitude: 2,
+    }] }));
+    const { result } = renderHook(() => useInterventionDraftsOverlay());
+    expect(result.current.geojson.features.map((feature) => feature.properties.category)).toEqual(["data", "data"]);
+    for (const id of ["own-data", "proposed-data"]) {
+      expect(result.current.recordsById.get(id)).toMatchObject({ category: "data", dataOrigin: "community", dataDetails });
+    }
+  });
+
   it("carries the caller's own drawn geometry, tagged isOwn and with its real status", () => {
     mocks.listMySubmissions.mockReturnValue(
       queryResult({

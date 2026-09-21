@@ -542,7 +542,9 @@ const STATIC_LAYER_LEGENDS: Partial<Record<LayerToggleId, LayerLegendSpec>> = {
         kind: "note",
         text:
           "Sites still in review are visible to their submitter and to signed-in reviewers, " +
-          "and draw orange whatever their category. Everyone sees published sites.",
+          "and draw orange whatever their category. Everyone sees published sites. " +
+          "Data collection and submissions remain community data after publication; " +
+          "verified-source environmental layers are separate.",
       },
     ],
   },

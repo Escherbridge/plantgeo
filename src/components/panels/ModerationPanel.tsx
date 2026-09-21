@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { trpc } from "@/lib/trpc/client";
+import { DataInterventionSummary } from "@/components/intervention/DataInterventionSummary";
 import { ShieldCheck, CheckCircle2, XCircle, AlertCircle, Info, Sparkles, MapPin } from "lucide-react";
 
 /** Effect evidence for one proposal; only the absence case exists today. See AGENTS.md. */
@@ -133,6 +134,7 @@ export function ModerationPanel() {
                     {item.description}
                   </p>
                 )}
+                <DataInterventionSummary type={item.type} dataDetails={item.dataDetails} dataOrigin={item.dataOrigin} />
 
                 {/* Moderation Controls */}
                 <div className="mt-4 pt-3 border-t border-zinc-800 flex flex-col md:flex-row md:items-center justify-between gap-3">

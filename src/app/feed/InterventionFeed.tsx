@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/editorial";
 import { EditorialSelectField } from "@/components/ui/editorial/fields";
 import { InterventionLikeButton } from "@/components/intervention/InterventionLikeButton";
+import { DataInterventionSummary } from "@/components/intervention/DataInterventionSummary";
 import { InterventionDetailModal } from "@/components/map/InterventionDetailModal";
 import { buildMapFocusHref } from "@/lib/map/focus-params";
 import { trpc } from "@/lib/trpc/client";
@@ -28,6 +29,8 @@ const TYPE_OPTIONS = [
   { value: "cover_cropping", label: "Cover cropping" },
   { value: "biochar", label: "Biochar" },
   { value: "keyline", label: "Keyline design" },
+  { value: "data_collection", label: "Data collection" },
+  { value: "data_submission", label: "Data submission" },
 ] as const;
 
 type TypeFilter = (typeof TYPE_OPTIONS)[number]["value"];
@@ -37,6 +40,8 @@ type ProposedIntervention = {
   name: string | null;
   type: string | null;
   description: string | null;
+  dataDetails?: unknown;
+  dataOrigin?: string | null;
   longitude: number | null;
   latitude: number | null;
   createdAt: Date | string | null;
@@ -95,6 +100,7 @@ function ProposalRow({ proposal }: { proposal: ProposedIntervention }) {
             {proposal.description}
           </p>
         )}
+        <DataInterventionSummary type={proposal.type} dataDetails={proposal.dataDetails} dataOrigin={proposal.dataOrigin} />
         <p className="mt-tight font-editorial-label text-label text-ink-muted uppercase">
           Awaiting review
           {submitted && <> — proposed {submitted}</>}

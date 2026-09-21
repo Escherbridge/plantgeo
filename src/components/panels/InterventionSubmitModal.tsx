@@ -16,6 +16,8 @@ import {
 import type { InterventionGeometry } from "@/lib/geo/intervention-geometry-schema";
 import { getStyle } from "@/lib/map/styles";
 import { useMapStore } from "@/stores/map-store";
+import { DataInterventionFields } from "@/components/intervention/DataInterventionFields";
+import { isDataInterventionType, validateDataInterventionDetails, type DataInterventionDetails } from "@/lib/environmental/data-intervention";
 
 const InterventionDrawControl = dynamic(
   () =>
@@ -64,6 +66,7 @@ export function InterventionSubmitModal({
   );
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [dataDetails, setDataDetails] = useState<DataInterventionDetails>({ lane: "", collectionMethod: "" });
   const [publicationConsent, setPublicationConsent] = useState(false);
   const [geometry, setGeometry] = useState<InterventionGeometry | null>(null);
   const [geometryError, setGeometryError] = useState<string | null>(null);
@@ -148,11 +151,22 @@ export function InterventionSubmitModal({
       setError("Draw a point or polygon before submitting.");
       return;
     }
+    const submittedDataDetails = interventionType === "data_collection"
+      ? { lane: dataDetails.lane, collectionMethod: dataDetails.collectionMethod }
+      : dataDetails;
+    const dataIssue = isDataInterventionType(interventionType)
+      ? validateDataInterventionDetails(interventionType, submittedDataDetails)
+      : null;
+    if (dataIssue) {
+      setError(dataIssue);
+      return;
+    }
     submitMutation.mutate({
       name: name.trim(),
       type: interventionType,
       category,
       description: description.trim() || undefined,
+      dataDetails: isDataInterventionType(interventionType) ? submittedDataDetails : undefined,
       geometry,
       teamId,
       publicationConsent: true,
@@ -214,6 +228,7 @@ export function InterventionSubmitModal({
             >
               <option value="land">Land</option>
               <option value="air">Air</option>
+              <option value="data">Data</option>
             </select>
           </div>
 
@@ -239,6 +254,10 @@ export function InterventionSubmitModal({
               ))}
             </select>
           </div>
+
+          {isDataInterventionType(interventionType) && (
+            <DataInterventionFields type={interventionType} value={dataDetails} onChange={setDataDetails} />
+          )}
 
           <div className="flex flex-col gap-1">
             <span className="text-sm font-medium text-[hsl(var(--foreground))]">

@@ -80,6 +80,21 @@ afterEach(() => {
 });
 
 describe("InterventionFeed social row (FR-4)", () => {
+  it("offers both data filters and keeps community origin alongside review status", () => {
+    mocks.listProposedQuery.mockReturnValue({
+      data: [{ ...PROPOSAL, type: "data_collection", dataOrigin: "community", dataDetails: { lane: "fire-detections", collectionMethod: "Timestamp photographs" } }],
+      isPending: false,
+      error: null,
+    });
+    render(<InterventionFeed />);
+    expect(screen.getByRole("option", { name: "Data collection" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Data submission" })).toBeTruthy();
+    expect(screen.getByText("Community collection plan")).toBeTruthy();
+    expect(screen.getByText("Fire detections")).toBeTruthy();
+    expect(screen.getByText(/Awaiting review/)).toBeTruthy();
+    expect(screen.queryByText("Verified source data")).toBeNull();
+  });
+
   it("does not claim telemetry for a proposal with no measured outcomes", () => {
     render(<InterventionFeed />);
     expect(screen.getByText(PROPOSAL.name)).toBeTruthy();

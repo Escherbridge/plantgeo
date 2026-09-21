@@ -12,6 +12,21 @@ line's non-obvious behavior, not a directory-level concept, so moving it would s
 warning from the line it warns about. See `src/components/map/AGENTS.md` for that layer's own
 notes; this file covers cross-cutting component concerns only.
 
+## Community data intervention fields and provenance
+
+`intervention/DataInterventionFields` is shared by both intervention submission surfaces. A
+collection plan asks for a lane and collection method; a dataset submission also asks for its
+observation day and an HTTP(S) evidence link. Field labels use instance-specific IDs because
+the map workspace and community modal can coexist. Collection payloads omit hidden date/link
+values retained from a submission draft, so those values cannot silently publish or block a plan.
+
+`intervention/DataInterventionSummary` renders the same lane, method, observation day and safe
+link in submission history, feed, moderation and map details. Its origin label is independent of
+publication or review status. Every supported data intervention writer produces community data;
+only an exact community origin is labelled, while missing, unknown and legacy `verified_source`
+values remain unknown. Stored JSON is not a governed-source attestation. Details are validated
+before rendering a link, and observation days retain their calendar date without localization.
+
 ## Authentication forms
 
 Registration uses the same browser-safe schema as the API, including optional blank names and

@@ -70,3 +70,24 @@ aliases, and new code should read `RegionAdminCode` (`src/lib/region/region.ts`)
 withdrawn archive cannot be served by forgetting the live-row predicate. Public URLs are made
 only by validating the catalogue `object_key` and joining it to the documented
 `RASTER_TILES_BASE_URL`; catalogue data is never accepted as an absolute URL.
+
+## Community collection and dataset submission
+
+`interventions.submitIntervention` accepts `data_collection` and `data_submission` only in the
+`data` category, with strictly validated `dataDetails`. It stamps `dataOrigin = community`,
+records authenticated authorship and consent, and always starts at `pending_review`. Expert
+publication changes review status only: it does not confer verified-source provenance or
+promote a community record into an environmental Parquet lane. Dataset URLs are retained as
+evidence references and are never fetched by this workflow.
+
+The collection or submission site retains the existing 500-acre polygon cap and vertex limits.
+A dataset may describe a larger area; a point can identify its submission or collection site.
+Feed, detail and moderation reads retain lane, evidence and origin so publication cannot hide
+the distinction. Missing historical provenance is not inferred from publication status.
+
+The legacy `proposeIntervention` flow and machine intervention ingress reject data types; they
+cannot omit the validated data payload. The generic `contributions.submitObservation` procedure
+accepts only the global `interventions` application layer, refuses environmental and team-layer
+targets, rejects provenance/authorship claims and data-workflow payloads, and stamps authenticated
+authorship plus community origin. These restrictions close older arbitrary-property write paths.
+Machine ingress retains its legacy physical-type subset and cannot mint verified-source origin.

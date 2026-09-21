@@ -2,12 +2,14 @@ import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import type { InterventionCategory, InterventionType } from '@/lib/environmental/intervention';
 import type { InterventionGeometry } from '@/lib/geo/intervention-geometry-schema';
+import type { DataInterventionDetails } from '@/lib/environmental/data-intervention';
 
 interface InterventionDraftState {
   category: InterventionCategory;
   interventionType: InterventionType;
   name: string;
   description: string;
+  dataDetails: DataInterventionDetails;
   publicationConsent: boolean;
   geometry: InterventionGeometry | null;
   geometryError: string | null;
@@ -18,6 +20,7 @@ interface InterventionDraftState {
   setInterventionType: (interventionType: InterventionType) => void;
   setName: (name: string) => void;
   setDescription: (description: string) => void;
+  setDataDetails: (dataDetails: DataInterventionDetails) => void;
   setPublicationConsent: (publicationConsent: boolean) => void;
   setGeometry: (geometry: InterventionGeometry | null) => void;
   setGeometryError: (geometryError: string | null) => void;
@@ -32,6 +35,7 @@ const draftDefaults = {
   interventionType: 'reforestation' as InterventionType,
   name: '',
   description: '',
+  dataDetails: { lane: '', collectionMethod: '' } as DataInterventionDetails,
   publicationConsent: false,
   geometry: null as InterventionGeometry | null,
   geometryError: null as string | null,
@@ -40,7 +44,9 @@ const draftDefaults = {
 /** Whether a draft contains work beyond its initial location. */
 export function hasInterventionDraftWork(state: InterventionDraftState): boolean {
   return Object.entries(draftDefaults).some(
-    ([key, value]) => state[key as keyof typeof draftDefaults] !== value
+    ([key, value]) => key === 'dataDetails'
+      ? Object.values(state.dataDetails).some((field) => Boolean(field))
+      : state[key as keyof typeof draftDefaults] !== value
   );
 }
 
@@ -55,6 +61,7 @@ export const useInterventionDraftStore = create<InterventionDraftState>()(
       setInterventionType: (interventionType) => set({ interventionType }),
       setName: (name) => set({ name }),
       setDescription: (description) => set({ description }),
+      setDataDetails: (dataDetails) => set({ dataDetails }),
       setPublicationConsent: (publicationConsent) => set({ publicationConsent }),
       setGeometry: (geometry) => set({ geometry, geometryError: null }),
       setGeometryError: (geometryError) => set({ geometryError }),

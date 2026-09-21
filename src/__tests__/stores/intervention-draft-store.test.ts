@@ -20,6 +20,7 @@ describe("intervention draft store", () => {
   it.each([
     { name: "Unfinished name" },
     { description: "Unfinished description" },
+    { dataDetails: { lane: "water-gauges", collectionMethod: "" } },
     { category: "air" as const },
     { interventionType: "biochar" as const },
     { publicationConsent: true },
@@ -45,6 +46,17 @@ describe("intervention draft store", () => {
       lat: null,
       lon: null,
     });
+  });
+
+  it("preserves data details until an explicit reset and recognizes cleared fields", () => {
+    const details = { lane: "water-gauges", collectionMethod: "Gauge reading", observedOn: "2025-09-15", dataUrl: "https://example.org/water" };
+    useInterventionDraftStore.getState().setDataDetails(details);
+    expect(useInterventionDraftStore.getState().dataDetails).toEqual(details);
+    expect(hasInterventionDraftWork(useInterventionDraftStore.getState())).toBe(true);
+    useInterventionDraftStore.getState().seedLocation(46, -120);
+    expect(useInterventionDraftStore.getState().dataDetails).toEqual({ lane: "", collectionMethod: "" });
+    useInterventionDraftStore.getState().setDataDetails({ lane: "", collectionMethod: "" });
+    expect(hasInterventionDraftWork(useInterventionDraftStore.getState())).toBe(false);
   });
 
   it("survives a simulated unmount/remount cycle (values set before are present after)", () => {

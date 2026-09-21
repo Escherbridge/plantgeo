@@ -85,6 +85,19 @@ function renderPanel() {
 }
 
 describe("CommunityDetails submission status", () => {
+  it("shows approved data submissions with community provenance", () => {
+    listMySubmissionsQuery.mockReturnValue({ data: [{
+      id: "water-data",
+      status: "published",
+      properties: { name: "Gauge observations", type: "data_submission", dataOrigin: "community", dataDetails: { lane: "water-gauges", collectionMethod: "Read gauge", observedOn: "2025-09-15", dataUrl: "https://example.org/water.csv" } },
+    }] });
+    renderPanel();
+    expect(screen.getByText(/Approved/)).toBeTruthy();
+    expect(screen.getByText("Community collected data")).toBeTruthy();
+    expect(screen.getByText("Water gauges")).toBeTruthy();
+    expect(screen.queryByText("Verified source data")).toBeNull();
+  });
+
   it("shows an empty state before any recommendation has been submitted", () => {
     renderPanel();
 

@@ -1,3 +1,5 @@
+import type { DataInterventionDetails } from "@/lib/environmental/data-intervention";
+
 /**
  * The one record shape the intervention detail modal renders, whichever of the
  * two origins resolved it.
@@ -39,6 +41,8 @@ export interface InterventionDetailRecord {
    */
   kind?: "intervention" | "request" | null;
   description: string | null;
+  dataDetails?: DataInterventionDetails | null;
+  dataOrigin?: string | null;
   /** The real drawn geometry, not a centroid -- null only when the row has none. */
   geometry: GeoJSON.Geometry | null;
   submittedByUserId: string | null;

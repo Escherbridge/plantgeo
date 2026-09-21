@@ -519,7 +519,7 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     toggleId: "interventions",
     label: "Interventions",
     description:
-      "Published intervention sites plus, when you are signed in, your own submissions and the wider review queue. Anything still in review draws orange; published sites draw in their category colour (land or air).",
+      "Published intervention sites plus, when you are signed in, your own submissions and the wider review queue. Anything still in review draws orange; published sites draw in their category colour (land, air or community data).",
     icon: "sprout",
     renderKind: "style",
     styleLayerIds: [

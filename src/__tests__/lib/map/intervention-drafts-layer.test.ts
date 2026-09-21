@@ -97,7 +97,7 @@ describe("intervention-drafts overlay: distinct, category-differentiated styling
     expect(interventionDraftsOutlineLayer.paint?.["line-dasharray"]).toBeDefined();
   });
 
-  it("keys color and dash pattern off category so land and air read apart", () => {
+  it("distinguishes data by color while preserving land and air dash patterns", () => {
     const dasharray = interventionDraftsOutlineLayer.paint?.["line-dasharray"];
     expect(dasharray).toEqual(
       expect.arrayContaining([
@@ -125,7 +125,7 @@ describe("intervention-drafts overlay: distinct, category-differentiated styling
       "#2563eb",
       ["==", ["get", "status"], "pending_review"],
       "#f97316",
-      ["match", ["get", "category"], "land", "#0d9488", "air", "#7c3aed", UNCLASSIFIED_FILL_COLOR],
+      ["match", ["get", "category"], "land", "#0d9488", "air", "#7c3aed", "data", "#be185d", UNCLASSIFIED_FILL_COLOR],
     ]);
   });
 

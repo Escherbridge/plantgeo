@@ -11,6 +11,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AIR_INTERVENTION_TYPES,
+  DATA_INTERVENTION_TYPES,
   LAND_INTERVENTION_TYPES,
   type InterventionType,
 } from "@/lib/environmental/intervention";
@@ -52,8 +53,18 @@ describe("unified intervention/request type vocabulary (OQ-D)", () => {
   it("labels and category buckets stay in step with the widened union", () => {
     expect(INTERVENTION_TYPE_LABELS.water_harvesting).toBe("Water Harvesting");
     expect(TYPES_BY_CATEGORY.land).toContain("water_harvesting");
-    for (const type of [...LAND_INTERVENTION_TYPES, ...AIR_INTERVENTION_TYPES]) {
+    for (const type of [...LAND_INTERVENTION_TYPES, ...AIR_INTERVENTION_TYPES, ...DATA_INTERVENTION_TYPES]) {
       expect(INTERVENTION_TYPE_LABELS[type], type).toBeTruthy();
+    }
+  });
+
+  it("keeps data activities in their own category", () => {
+    expect(TYPES_BY_CATEGORY.data).toEqual(["data_collection", "data_submission"]);
+    expect(INTERVENTION_TYPE_LABELS.data_collection).toBe("Data Collection");
+    expect(INTERVENTION_TYPE_LABELS.data_submission).toBe("Data Submission");
+    for (const type of DATA_INTERVENTION_TYPES) {
+      expect(LAND_INTERVENTION_TYPES).not.toContain(type);
+      expect(AIR_INTERVENTION_TYPES).not.toContain(type);
     }
   });
 });

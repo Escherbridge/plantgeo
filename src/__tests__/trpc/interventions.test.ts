@@ -402,3 +402,64 @@ describe("interventions.proposeIntervention input schema", () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe("community data intervention submission", () => {
+  const collectionDetails = { lane: "water-gauges", collectionMethod: "Record staff gauge height" };
+  const submittedDetails = { ...collectionDetails, observedOn: "2024-02-29", dataUrl: "https://example.org/gauges.csv" };
+
+  it.each([
+    { type: "data_collection", dataDetails: collectionDetails },
+    { type: "data_submission", dataDetails: submittedDetails },
+  ])("records $type as attributed community data awaiting review", async ({ type, dataDetails }) => {
+    const calls: BuilderCall[] = [];
+    const caller = callerWith([[{ id: LAYER_ID }], featureRow()], contributorSession(), calls);
+    await caller.submitIntervention(validSubmissionInput({ type, category: "data", dataDetails }));
+    expect(insertedValues(calls)).toMatchObject({
+      layerId: LAYER_ID,
+      status: "pending_review",
+      properties: { type, category: "data", dataDetails, dataOrigin: "community", submittedByUserId: CONTRIBUTOR_USER_ID, publicationConsent: true },
+    });
+  });
+
+  it.each([
+    { type: "data_collection", category: "land", dataDetails: collectionDetails },
+    { type: "data_submission", category: "air", dataDetails: submittedDetails },
+    { type: "cloud_seeding", category: "land" },
+    { type: "reforestation", category: "air" },
+    { type: "reforestation", category: "data" },
+    { type: "data_collection", category: "data" },
+    { type: "data_submission", category: "data", dataDetails: collectionDetails },
+    { type: "reforestation", category: "land", dataDetails: collectionDetails },
+    { type: "data_collection", category: "data", dataDetails: { ...collectionDetails, dataOrigin: "verified_source" } },
+    { type: "data_collection", category: "data", dataDetails: collectionDetails, dataOrigin: "verified_source" },
+    { type: "data_collection", category: "data", dataDetails: collectionDetails, provenance: "verified_source" },
+  ])("rejects invalid data/category/origin payload %# before writing", async (payload) => {
+    const calls: BuilderCall[] = [];
+    const caller = callerWith([], contributorSession(), calls);
+    await expect(caller.submitIntervention(validSubmissionInput(payload))).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(calls).toHaveLength(0);
+  });
+
+  it.each([
+    { session: null, code: "UNAUTHORIZED" },
+    { session: contributorSession({ platformRole: "viewer" }), code: "FORBIDDEN" },
+  ])("requires contributor access for data submission: $code", async ({ session, code }) => {
+    const caller = callerWith([], session);
+    await expect(caller.submitIntervention(validSubmissionInput({ type: "data_submission", category: "data", dataDetails: submittedDetails }))).rejects.toMatchObject({ code });
+  });
+
+  it("retains the existing bounded collection footprint", async () => {
+    const caller = callerWith([], contributorSession());
+    await expect(caller.submitIntervention(validSubmissionInput({
+      type: "data_collection", category: "data", dataDetails: collectionDetails,
+      geometry: { type: "Polygon", coordinates: [squareRingOfSide(3000)] },
+    }))).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  it.each(["data_collection", "data_submission"])("rejects %s through the legacy proposal bypass", async (strategyType) => {
+    const calls: BuilderCall[] = [];
+    const caller = callerWith([], contributorSession(), calls);
+    await expect(caller.proposeIntervention({ title: "Observe the stream", strategyType, lat: 1, lon: 1 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(calls).toHaveLength(0);
+  });
+});

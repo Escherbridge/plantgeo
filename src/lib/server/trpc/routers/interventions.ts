@@ -13,10 +13,18 @@ import { features, layers, teamMembers } from "@/lib/server/db/schema";
 import { isTeamEditorRole } from "@/lib/server/security/access-control";
 import {
   AIR_INTERVENTION_TYPES,
+  DATA_INTERVENTION_TYPES,
   InterventionCategorySchema,
   LAND_INTERVENTION_TYPES,
   type InterventionType,
 } from "@/lib/environmental/intervention";
+import {
+  DataInterventionDetailsSchema,
+  isDataInterventionType,
+  readDataInterventionDetails,
+  validateDataInterventionDetails,
+  type DataInterventionDetails,
+} from "@/lib/environmental/data-intervention";
 import {
   countInterventionGeometryPositions,
   getInterventionAreaCapIssue,
@@ -112,9 +120,10 @@ const BoundedInterventionGeometrySchema = InterventionGeometrySchema.superRefine
  * drifted out of step with `InterventionType` in the first place.
  */
 const InterventionTypeSchema = z.enum([
+  ...DATA_INTERVENTION_TYPES,
   ...LAND_INTERVENTION_TYPES,
   ...AIR_INTERVENTION_TYPES,
-] as [InterventionType, ...InterventionType[]]);
+] as const);
 
 /**
  * The request flow's narrower vocabulary (OQ-D): land types only. An
@@ -253,6 +262,7 @@ export const interventionsRouter = router({
           name: z.string().trim().min(3).max(256),
           type: InterventionTypeSchema,
           category: InterventionCategorySchema,
+          dataDetails: DataInterventionDetailsSchema.optional(),
           description: z
             .string()
             .trim()
@@ -264,7 +274,26 @@ export const interventionsRouter = router({
           teamId: z.string().uuid().optional(),
           publicationConsent: z.literal(true),
         })
+        .strict()
         .superRefine((value, context) => {
+          const category = isDataInterventionType(value.type)
+            ? "data"
+            : AIR_INTERVENTION_TYPES.includes(value.type) ? "air" : "land";
+          if (value.category !== category) {
+            context.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `This intervention type requires the ${category} category`,
+              path: ["category"],
+            });
+          }
+          const dataIssue = validateDataInterventionDetails(value.type, value.dataDetails);
+          if (dataIssue) {
+            context.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: dataIssue,
+              path: ["dataDetails"],
+            });
+          }
           const issue = getInterventionAreaCapIssue(value.geometry, value.category);
           if (issue) {
             context.addIssue({
@@ -295,6 +324,8 @@ export const interventionsRouter = router({
             name: input.name,
             type: input.type,
             category: input.category,
+            ...(input.dataDetails ? { dataDetails: input.dataDetails } : {}),
+            dataOrigin: "community",
             description: input.description ?? null,
             geometry: input.geometry,
             submittedByUserId: userId,
@@ -352,7 +383,7 @@ export const interventionsRouter = router({
         // request area cannot slip past it.
         geometry: BoundedInterventionGeometrySchema,
         publicationConsent: z.literal(true),
-      }).superRefine((value, context) => {
+      }).strict().superRefine((value, context) => {
         const issue = getInterventionAreaCapIssue(value.geometry, "land");
         if (issue) {
           context.addIssue({
@@ -379,6 +410,7 @@ export const interventionsRouter = router({
             // Requests are land-category-only, so the category is not asked for
             // and not inferred -- it is the one value it can be.
             category: "land",
+            dataOrigin: "community",
             description: input.description ?? null,
             geometry: input.geometry,
             submittedByUserId: userId,
@@ -463,6 +495,8 @@ export const interventionsRouter = router({
           name: sql<string | null>`${features.properties} ->> 'name'`,
           type: sql<string | null>`${features.properties} ->> 'type'`,
           category: sql<string | null>`${features.properties} ->> 'category'`,
+          dataDetails: sql<DataInterventionDetails | null>`${features.properties} -> 'dataDetails'`,
+          dataOrigin: sql<string | null>`${features.properties} ->> 'dataOrigin'`,
           description: sql<
             string | null
           >`${features.properties} ->> 'description'`,
@@ -524,6 +558,8 @@ export const interventionsRouter = router({
           name: sql<string | null>`${features.properties} ->> 'name'`,
           type: sql<string | null>`${features.properties} ->> 'type'`,
           category: sql<string | null>`${features.properties} ->> 'category'`,
+          dataDetails: sql<unknown>`${features.properties} -> 'dataDetails'`,
+          dataOrigin: sql<string | null>`${features.properties} ->> 'dataOrigin'`,
           // NULL on every row written before 2026-09-13, which is read as
           // `"intervention"` below rather than backfilled.
           kind: sql<string | null>`${features.properties} ->> 'kind'`,
@@ -565,6 +601,8 @@ export const interventionsRouter = router({
         name: row.name,
         type: row.type,
         category: row.category,
+        dataDetails: readDataInterventionDetails(row.dataDetails),
+        dataOrigin: row.dataOrigin ?? null,
         kind: row.kind === REQUEST_KIND ? "request" : "intervention",
         // `unknown`, never a plausible-looking default: a NULL status is a data
         // fault, and naming it one is better than showing a reader a standing
@@ -589,13 +627,16 @@ export const interventionsRouter = router({
     .input(
       z.object({
         title: z.string().min(3).max(255),
-        strategyType: z.string(),
+        strategyType: z.string().refine(
+          (type) => !isDataInterventionType(type),
+          "Data interventions must use the validated data submission form",
+        ),
         lat: z.number().min(-90).max(90),
         lon: z.number().min(-180).max(180),
         cellId: z.string().optional(),
         causalTauEst: z.number().optional(),
         description: z.string().optional(),
-      })
+      }).strict()
     )
     .mutation(async ({ ctx, input }) => {
       const userId = currentUserId(ctx.session);
@@ -618,6 +659,7 @@ export const interventionsRouter = router({
               ? {}
               : { causalTauEst: input.causalTauEst }),
             submittedByUserId: userId,
+            dataOrigin: "community",
             publicationConsent: true,
           },
         })

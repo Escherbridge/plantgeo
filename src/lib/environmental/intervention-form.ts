@@ -1,6 +1,7 @@
 import {
   LAND_INTERVENTION_TYPES,
   AIR_INTERVENTION_TYPES,
+  DATA_INTERVENTION_TYPES,
   type InterventionCategory,
   type InterventionType,
 } from "@/lib/environmental/intervention";
@@ -26,11 +27,14 @@ export const INTERVENTION_TYPE_LABELS: Record<InterventionType, string> = {
   keyline: "Keyline Design",
   water_harvesting: "Water Harvesting",
   cloud_seeding: "Cloud Seeding",
+  data_collection: "Data Collection",
+  data_submission: "Data Submission",
 };
 
 export const TYPES_BY_CATEGORY: Record<InterventionCategory, InterventionType[]> = {
   land: LAND_INTERVENTION_TYPES,
   air: AIR_INTERVENTION_TYPES,
+  data: [...DATA_INTERVENTION_TYPES],
 };
 
 /**

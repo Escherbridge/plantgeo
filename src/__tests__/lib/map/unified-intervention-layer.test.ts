@@ -147,6 +147,9 @@ describe("shared intervention paint expression (FR-1, OQ-2)", () => {
     expect(paint({ status: "pending_review", category: "air" })).toBe(
       INTERVENTION_PENDING_REVIEW_COLOR
     );
+    expect(paint({ status: "pending_review", category: "data" })).toBe(
+      INTERVENTION_PENDING_REVIEW_COLOR
+    );
     expect(paint({ status: "pending_review" })).toBe(INTERVENTION_PENDING_REVIEW_COLOR);
     expect(INTERVENTION_PENDING_REVIEW_COLOR).toBe("#f97316");
   });
@@ -154,6 +157,7 @@ describe("shared intervention paint expression (FR-1, OQ-2)", () => {
   it("paints a published feature by category", () => {
     expect(paint(publishedLand)).toBe("#0d9488");
     expect(paint({ status: "published", category: "air" })).toBe("#7c3aed");
+    expect(paint({ status: "published", category: "data" })).toBe("#be185d");
   });
 
   it("falls back to the shared neutral for a feature with no category reported", () => {

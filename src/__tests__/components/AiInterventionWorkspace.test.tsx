@@ -239,6 +239,23 @@ describe("AiInterventionWorkspace close confirmation", () => {
 });
 
 describe("AiInterventionWorkspace draft preservation", () => {
+  it("retains data collection fields across mode switches and new map actions", () => {
+    const onClose = vi.fn();
+    const { rerender } = render(<AiInterventionWorkspace coordinates={[-120, 46]} initialMode="intervention" onClose={onClose} />);
+    fireEvent.change(screen.getByLabelText("Category"), { target: { value: "data" } });
+    fireEvent.change(screen.getByLabelText(/Data lane/), { target: { value: "fire-detections" } });
+    fireEvent.change(screen.getByLabelText(/Collection method/), { target: { value: "Photograph and timestamp visible smoke from safe locations." } });
+    fireEvent.click(screen.getByRole("tab", { name: /ai analysis/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /propose intervention/i }));
+    expect((screen.getByLabelText(/Data lane/) as HTMLSelectElement).value).toBe("fire-detections");
+    rerender(<AiInterventionWorkspace coordinates={[-119, 45]} initialMode="intervention" onClose={onClose} />);
+    expect(useInterventionDraftStore.getState()).toMatchObject({
+      lat: 46,
+      lon: -120,
+      dataDetails: { lane: "fire-detections", collectionMethod: "Photograph and timestamp visible smoke from safe locations." },
+    });
+  });
+
   it("preserves a typed proposal before drawing when a new coordinate arrives", () => {
     const onClose = vi.fn();
     const { rerender } = render(

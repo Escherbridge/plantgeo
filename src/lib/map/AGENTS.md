@@ -278,10 +278,17 @@ request falls through to the category arm — the colour it would have had anywa
 
 All six paint with `INTERVENTION_STATUS_COLOR` (layers.ts) — one `case` on `status` over a `match`
 on `category`, so `pending_review` is orange whatever its category, everything else is land teal /
-air violet, and an unclassified row falls to the shared neutral grey. It replaced a `priority`-keyed
+air violet / community data rose, and an unclassified row falls to the shared neutral grey. It replaced a `priority`-keyed
 palette for a field `submitIntervention` never writes. `category` reaches the PUBLISHED tiles only
 via `drizzle/0002_intervention_tiles_category.sql`, and **Martin must be restarted after that
 migration** or the tiles keep serving the old attribute set and every published site draws grey.
+
+The `data` category covers collection plans and submitted community evidence. Its rose category
+colour describes a community intervention, never a verified environmental observation. Review
+status remains independent of data origin: publication changes visibility, while detail and
+review surfaces retain the community provenance. The existing tile projection already carries
+arbitrary category values, so adding this category needs no tile migration. Data details travel
+through the by-ID API or the draft record; they are not embedded in vector tiles.
 
 ## Environmental layer serving
 

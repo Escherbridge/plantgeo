@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ZoomTier } from "@/lib/map/zoom-tiers";
+import { DATA_INTERVENTION_LANES } from "@/lib/environmental/data-intervention";
+import { SOIL_RASTER_TOGGLE_IDS } from "@/lib/map/soil-raster";
+import { LAYER_REGISTRY } from "@/lib/map/layer-registry";
+import { LAND_CONTEXT_REGION_LAYER_SLUG } from "@/lib/map/layer-region-binding";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   CLIMATE_FIELD_SIGNAL_IDS,
   climateFieldStreamName,
@@ -53,6 +59,19 @@ import {
 const ZOOM_TIERS = [0, 5, 9, 13] as const satisfies readonly ZoomTier[];
 const FIRST_DAY = "2022-08-05";
 const LAST_DAY = "2026-08-20";
+
+it("offers data activities for environmental streams and non-slider source surfaces", () => {
+  const offered = DATA_INTERVENTION_LANES.map(({ id }) => id);
+  const profileSchema = readFileSync(resolve(process.cwd(), "services/agri-data-service/src/agri_data_service/warehouse/schemas/botanical_species_profile.py"), "utf8");
+  const profileStream = /name="(botanical-species-profile)"/.exec(profileSchema)?.[1];
+  expect(profileStream).toBeDefined();
+  expect(new Set(offered).size).toBe(offered.length);
+  expect([...offered].sort()).toEqual([
+    ...PARQUET_CAPABILITY_LANES, "fire-risk", "weather-forecast",
+    LAYER_REGISTRY["botanical-occurrences"].regionLayerSlug,
+    LAND_CONTEXT_REGION_LAYER_SLUG, profileStream, ...SOIL_RASTER_TOGGLE_IDS,
+  ].sort());
+});
 
 const baseCapability = (layerName: string) => ({
   layerName,

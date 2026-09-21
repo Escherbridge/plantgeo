@@ -15,6 +15,8 @@ import {
 } from "@/lib/environmental/intervention-form";
 import type { InterventionGeometry } from "@/lib/geo/intervention-geometry-schema";
 import { useInterventionDraftStore } from "@/stores/intervention-draft-store";
+import { DataInterventionFields } from "@/components/intervention/DataInterventionFields";
+import { isDataInterventionType, validateDataInterventionDetails } from "@/lib/environmental/data-intervention";
 
 const InterventionDrawControl = dynamic(
   () =>
@@ -70,6 +72,7 @@ export function InterventionProposalForm({
   const interventionType = useInterventionDraftStore((state) => state.interventionType);
   const name = useInterventionDraftStore((state) => state.name);
   const description = useInterventionDraftStore((state) => state.description);
+  const dataDetails = useInterventionDraftStore((state) => state.dataDetails);
   const publicationConsent = useInterventionDraftStore((state) => state.publicationConsent);
   const geometry = useInterventionDraftStore((state) => state.geometry);
   const geometryError = useInterventionDraftStore((state) => state.geometryError);
@@ -77,6 +80,7 @@ export function InterventionProposalForm({
   const setInterventionType = useInterventionDraftStore((state) => state.setInterventionType);
   const setName = useInterventionDraftStore((state) => state.setName);
   const setDescription = useInterventionDraftStore((state) => state.setDescription);
+  const setDataDetails = useInterventionDraftStore((state) => state.setDataDetails);
   const setPublicationConsent = useInterventionDraftStore(
     (state) => state.setPublicationConsent
   );
@@ -133,11 +137,22 @@ export function InterventionProposalForm({
       setError("Draw a point or polygon before submitting.");
       return;
     }
+    const submittedDataDetails = interventionType === "data_collection"
+      ? { lane: dataDetails.lane, collectionMethod: dataDetails.collectionMethod }
+      : dataDetails;
+    const dataIssue = isDataInterventionType(interventionType)
+      ? validateDataInterventionDetails(interventionType, submittedDataDetails)
+      : null;
+    if (dataIssue) {
+      setError(dataIssue);
+      return;
+    }
     submitMutation.mutate({
       name: name.trim(),
       type: interventionType,
       category,
       description: description.trim() || undefined,
+      dataDetails: isDataInterventionType(interventionType) ? submittedDataDetails : undefined,
       geometry,
       teamId,
       publicationConsent: true,
@@ -172,6 +187,7 @@ export function InterventionProposalForm({
           >
             <option value="land">Land</option>
             <option value="air">Air</option>
+            <option value="data">Data</option>
           </select>
         </div>
 
@@ -197,6 +213,10 @@ export function InterventionProposalForm({
             ))}
           </select>
         </div>
+
+        {isDataInterventionType(interventionType) && (
+          <DataInterventionFields type={interventionType} value={dataDetails} onChange={setDataDetails} />
+        )}
 
         <div className="flex flex-col gap-1">
           <span className="text-sm font-medium text-[hsl(var(--foreground))]">

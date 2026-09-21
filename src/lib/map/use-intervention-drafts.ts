@@ -7,6 +7,7 @@ import { useSession } from "next-auth/react";
 import { trpc } from "@/lib/trpc/client";
 import type { InterventionCategory } from "@/lib/environmental/intervention";
 import type { InterventionDetailRecord } from "@/lib/map/intervention-detail";
+import { readDataInterventionDetails } from "@/lib/environmental/data-intervention";
 
 /** One drafted or proposed intervention feature's properties, as the overlay paints it. */
 export interface InterventionDraftProperties {
@@ -35,7 +36,7 @@ const EMPTY_COLLECTION: InterventionDraftFeatureCollection = {
 };
 
 function toCategory(value: unknown): InterventionCategory | null {
-  return value === "land" || value === "air" ? value : null;
+  return value === "land" || value === "air" || value === "data" ? value : null;
 }
 
 interface OwnSubmissionRow {
@@ -72,6 +73,8 @@ interface ProposedRow {
   type: string | null;
   category: string | null;
   description?: string | null;
+  dataDetails?: unknown;
+  dataOrigin?: string | null;
   longitude: number | null;
   latitude: number | null;
   createdAt?: Date | string | null;
@@ -117,6 +120,8 @@ function ownSubmissionRecord(row: OwnSubmissionRow): InterventionDetailRecord {
     category: toCategory(properties.category),
     status: row.status,
     description: asString(properties.description),
+    dataDetails: readDataInterventionDetails(properties.dataDetails),
+    dataOrigin: asString(properties.dataOrigin),
     geometry:
       geometry && typeof geometry === "object" && "type" in geometry
         ? (geometry as GeoJSON.Geometry)
@@ -144,6 +149,8 @@ function proposedRecord(row: ProposedRow): InterventionDetailRecord {
     category: toCategory(row.category),
     status: "pending_review",
     description: row.description ?? null,
+    dataDetails: readDataInterventionDetails(row.dataDetails),
+    dataOrigin: row.dataOrigin ?? null,
     geometry:
       row.longitude === null || row.latitude === null
         ? null

@@ -166,3 +166,24 @@ and a cached page surfaces as an error state rather than as a layer drawing `und
 
 Vocabulary: this contract is CAMELCASE — the decoded server vocabulary — while the layer components
 speak the plane's snake_case. `botanical-presentation.ts` remains the one seam between the two.
+
+## Community data interventions
+
+`data-intervention.ts` defines collection plans and submitted dataset references for the `data`
+intervention category. Its lane IDs mirror the environmental Parquet capability streams plus
+forecast reference lanes, botanical occurrences and species profiles, land context and the six
+independently published SoilGrids properties. A parity test compares the list with the serving
+catalogue, map source identities and the botanical profile schema. Calendar and the internal
+combined signal plane are excluded. Botanical richness and effort are views of occurrences,
+not additional submission lanes. A target in this list does not claim that source coverage is
+available in the selected region or that community records enter its publication namespace.
+
+Collection plans require a lane and a collection method. Dataset submissions additionally
+require a real, nonfuture observation date and an HTTP(S) dataset or evidence link. Optional
+date/link fields on a collection plan obey the same validation. Submitted URLs are references;
+these contracts never fetch or ingest their contents.
+
+Origin and review status are separate. `community` means community collected data even after
+expert publication. `verified_source` names independently governed provider data; no community
+form offers that choice. Historical rows lacking an origin remain unspecified. The browser and
+server use the same validation and labels, and the server exclusively assigns stored origin.

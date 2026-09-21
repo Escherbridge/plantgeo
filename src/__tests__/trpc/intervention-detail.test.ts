@@ -118,6 +118,19 @@ function detailRow(overrides: Row = {}): Row[] {
 }
 
 describe("interventions.getInterventionDetail", () => {
+  it("preserves community data origin after publication without claiming source verification", async () => {
+    const dataDetails = { lane: "water-gauges", collectionMethod: "Gauge reading", observedOn: "2024-02-29", dataUrl: "https://example.org/readings.csv" };
+    const caller = callerWith([LAYER_ROW, detailRow({ type: "data_submission", category: "data", dataDetails, dataOrigin: "community" })], null);
+    await expect(caller.getInterventionDetail({ featureId: FEATURE_ID })).resolves.toMatchObject({
+      type: "data_submission", category: "data", dataDetails, dataOrigin: "community", status: "published",
+    });
+  });
+
+  it("does not infer source verification from a historical published row", async () => {
+    const caller = callerWith([LAYER_ROW, detailRow()], null);
+    await expect(caller.getInterventionDetail({ featureId: FEATURE_ID })).resolves.toMatchObject({ dataOrigin: null, dataDetails: null });
+  });
+
   it("returns the full drawn geometry and field set for a published row, signed out", async () => {
     // `publicProcedure`: the published Martin layer is already visible to a
     // signed-out reader on the map, so clicking one must not demand a session.

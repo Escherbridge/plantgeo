@@ -2,7 +2,14 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, contributorProcedure, expertProcedure } from "@/lib/server/trpc/init";
 import { features, layers } from "@/lib/server/db/schema";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
+import { isDataInterventionType } from "@/lib/environmental/data-intervention";
+
+const APPLICATION_CONTRIBUTION_LAYERS = ["interventions"];
+const SERVER_OWNED_CONTRIBUTION_PROPERTIES = [
+  "dataOrigin", "provenance", "source", "sourceType", "dataDetails",
+  "submittedByUserId", "submittedByTeamId",
+];
 
 /** Canonical pending-only review errors; see src/lib/server/AGENTS.md. */
 const contributionNotFound = () =>
@@ -15,15 +22,36 @@ export const contributionsRouter = router({
     .input(
       z.object({
         layerId: z.string().uuid(),
-        properties: z.record(z.unknown()).default({}),
-      })
+        properties: z.record(z.unknown()).default({}).superRefine((properties, context) => {
+          if (SERVER_OWNED_CONTRIBUTION_PROPERTIES.some((key) => key in properties)) {
+            context.addIssue({ code: z.ZodIssueCode.custom, message: "Contribution origin and authorship are assigned by the server" });
+          }
+          if (isDataInterventionType(properties.type) || properties.category === "data") {
+            context.addIssue({ code: z.ZodIssueCode.custom, message: "Data interventions must use the validated data submission form" });
+          }
+        }),
+      }).strict()
     )
     .mutation(async ({ ctx, input }) => {
+      const userId = (ctx.session.user as { id?: string } | undefined)?.id;
+      if (!userId) throw new TRPCError({ code: "UNAUTHORIZED", message: "User ID required" });
+      const [layer] = await ctx.db
+        .select({ id: layers.id })
+        .from(layers)
+        .where(and(
+          eq(layers.id, input.layerId),
+          inArray(layers.name, APPLICATION_CONTRIBUTION_LAYERS),
+          isNull(layers.teamId),
+        ))
+        .limit(1);
+      if (!layer) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Observations may only be submitted to a supported community layer" });
+      }
       const [feature] = await ctx.db
         .insert(features)
         .values({
           layerId: input.layerId,
-          properties: input.properties,
+          properties: { ...input.properties, submittedByUserId: userId, dataOrigin: "community" },
           status: "pending_review",
         })
         .returning();

@@ -88,6 +88,24 @@ beforeEach(() => {
 // a reviewer approving a submission onto the public map could not tell what it was or where
 // it was. Everything asserted here is already carried by listPendingReview's projection.
 describe("ContributionQueue row identification", () => {
+  it("shows reviewers the data lane, evidence and community origin before approval", () => {
+    mocks.listPendingReviewQuery.mockReturnValue({
+      data: [{ ...PENDING_FEATURE, properties: {
+        ...PENDING_FEATURE.properties,
+        type: "data_submission",
+        dataOrigin: "community",
+        dataDetails: { lane: "water-gauges", collectionMethod: "Staff gauge reading", observedOn: "2025-09-15", dataUrl: "https://example.org/gauge.csv" },
+      } }], isLoading: false, error: undefined,
+    });
+    renderWithProviders(<ContributionQueue />);
+    expect(screen.getByText("Community collected data")).toBeTruthy();
+    expect(screen.getByText("Water gauges")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Open dataset or evidence" }).getAttribute("href")).toBe("https://example.org/gauge.csv");
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    expect(mocks.publishMutate).toHaveBeenCalledWith({ featureId: "feature-1" });
+    expect(screen.queryByText("Verified source data")).toBeNull();
+  });
+
   it("names the submission, its category, its layer and when it arrived", () => {
     renderWithProviders(<ContributionQueue />);
 

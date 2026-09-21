@@ -1,5 +1,15 @@
 # Selected and served dates
 
+## Intervention data drafts
+
+The intervention draft keeps lane, collection method, observation day and evidence link beside
+its other fields. Mode switches and navigation retain them; successful submission, explicit
+discard and a genuinely new location reset them. Empty data fields do not count as unfinished
+work simply because their object reference changed. Nonempty fields protect the original
+location even before any geometry is drawn. The community modal uses independent local state.
+
+## Layer date state
+
 `useViewedLayerDays` and `resolveLayerDate` describe selected request context. Daily agents
 must retain an explicitly selected missing day so tools can answer that day without silently
 falling back to today. Publication availability must not rewrite or remove that selection.

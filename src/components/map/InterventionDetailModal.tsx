@@ -4,6 +4,7 @@ import { useMemo, type ReactNode } from "react";
 import { trpc } from "@/lib/trpc/client";
 import { InterventionCommentThread } from "@/components/intervention/InterventionCommentThread";
 import { InterventionLikeButton } from "@/components/intervention/InterventionLikeButton";
+import { DataInterventionSummary } from "@/components/intervention/DataInterventionSummary";
 import {
   contributorFallbackLabel,
   useDisplayNames,
@@ -293,6 +294,7 @@ function InterventionDetailBody({
         <Field label="Created" value={formatTimestamp(record.createdAt)} />
         <Field label="Updated" value={formatTimestamp(record.updatedAt)} />
       </dl>
+      <DataInterventionSummary type={record.type} dataDetails={record.dataDetails} dataOrigin={record.dataOrigin} />
       <section>
         <h3 className="font-medium">Description</h3>
         <p className="whitespace-pre-wrap">{record.description ?? "None given"}</p>

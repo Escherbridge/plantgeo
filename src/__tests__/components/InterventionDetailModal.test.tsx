@@ -101,6 +101,36 @@ function renderCard(overrides: Partial<InterventionDetailCardProps> = {}) {
 afterEach(cleanup);
 
 describe("InterventionDetailCard", () => {
+  it.each(["pending_review", "published", "rejected"])("keeps community provenance distinct from %s status", (status) => {
+    renderCard({ record: {
+      ...RECORD,
+      type: "data_submission",
+      category: "data",
+      status,
+      dataOrigin: "community",
+      dataDetails: { lane: "water-gauges", collectionMethod: "Staff gauge reading", observedOn: "2025-09-15", dataUrl: "https://example.org/gauge.csv" },
+    } });
+    expect(screen.getByText("Community collected data")).toBeTruthy();
+    expect(screen.getByText("Water gauges")).toBeTruthy();
+    expect(screen.getByText("Staff gauge reading")).toBeTruthy();
+    expect(screen.getByText("2025-09-15")).toBeTruthy();
+    expect(screen.queryByText("Verified source data")).toBeNull();
+    expect(screen.getByRole("link", { name: "Open dataset or evidence" }).getAttribute("href")).toBe("https://example.org/gauge.csv");
+  });
+
+  it.each(["approved", "verified_source", null])("keeps unattested provenance %s unknown and refuses unsafe links", (dataOrigin) => {
+    renderCard({ record: {
+      ...RECORD,
+      type: "data_submission",
+      category: "data",
+      dataOrigin,
+      dataDetails: { lane: "water-gauges", collectionMethod: "Staff gauge reading", dataUrl: "javascript:alert(1)" },
+    } });
+    expect(screen.getByText("Data origin unknown")).toBeTruthy();
+    expect(screen.queryByText("Verified source data")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Open dataset or evidence" })).toBeNull();
+  });
+
   it("renders every field of the resolved record", () => {
     renderCard();
 

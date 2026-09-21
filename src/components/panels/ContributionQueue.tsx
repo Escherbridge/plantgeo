@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { buildMapFocusHref } from "@/lib/map/focus-params";
 import { trpc } from "@/lib/trpc/client";
+import { DataInterventionSummary } from "@/components/intervention/DataInterventionSummary";
 
 /** A rejection with no reason can't be acted on by the submitter — see src/app/moderation/page.tsx. */
 function hasRejectReason(note: string): boolean {
@@ -21,6 +22,8 @@ function hasRejectReason(note: string): boolean {
 interface SubmissionSummary {
   name: string | null;
   category: string | null;
+  dataDetails: unknown;
+  dataOrigin: unknown;
   description: string | null;
   longitude: number | null;
   latitude: number | null;
@@ -43,6 +46,8 @@ function readSubmissionSummary(properties: unknown): SubmissionSummary {
   return {
     name: typeof bag.name === "string" && bag.name.trim() !== "" ? bag.name : null,
     category: typeof bag.type === "string" && bag.type.trim() !== "" ? bag.type : null,
+    dataDetails: bag.dataDetails,
+    dataOrigin: bag.dataOrigin,
     description:
       typeof bag.description === "string" && bag.description.trim() !== ""
         ? bag.description
@@ -169,6 +174,7 @@ export function ContributionQueue() {
             {summary.description && (
               <p className="text-xs text-zinc-300 line-clamp-3">{summary.description}</p>
             )}
+            <DataInterventionSummary type={summary.category} dataDetails={summary.dataDetails} dataOrigin={summary.dataOrigin} />
 
             {/* Approving publishes a location to the public map, so the reviewer gets to
                 look at it first — same camera deep-link contract /feed writes. */}

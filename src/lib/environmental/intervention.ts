@@ -21,13 +21,15 @@ export type InterventionType =
    * rather than two lists a form and a label map keep in sync by hand.
    */
   | "water_harvesting"
-  | "cloud_seeding";
+  | "cloud_seeding"
+  | "data_collection"
+  | "data_submission";
 
-/** Whether an intervention acts on land parcels or on airborne/atmospheric targets. */
-export const InterventionCategorySchema = z.enum(["land", "air"]);
+/** The activity an intervention proposes. */
+export const InterventionCategorySchema = z.enum(["land", "air", "data"]);
 export type InterventionCategory = z.infer<typeof InterventionCategorySchema>;
 
-/** Every `InterventionType` defaults to `"land"` except the air-category types below. */
+/** Intervention types acting on land parcels. */
 export const LAND_INTERVENTION_TYPES: InterventionType[] = [
   "reforestation",
   "silvopasture",
@@ -38,3 +40,5 @@ export const LAND_INTERVENTION_TYPES: InterventionType[] = [
 ];
 
 export const AIR_INTERVENTION_TYPES: InterventionType[] = ["cloud_seeding"];
+
+export const DATA_INTERVENTION_TYPES = ["data_collection", "data_submission"] as const;

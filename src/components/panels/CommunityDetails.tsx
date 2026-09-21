@@ -6,6 +6,9 @@ import { RequestSubmitModal } from "@/components/panels/RequestSubmitModal";
 import { InterventionSubmitModal } from "@/components/panels/InterventionSubmitModal";
 import { useAuthStore } from "@/stores/auth-store";
 import { invalidateInterventionDraftsOverlay } from "@/lib/map/use-intervention-drafts";
+import { DataInterventionSummary } from "@/components/intervention/DataInterventionSummary";
+import { INTERVENTION_TYPE_LABELS } from "@/lib/environmental/intervention-form";
+import type { InterventionType } from "@/lib/environmental/intervention";
 
 // The panel's own STRATEGY_TYPES/STRATEGY_COLORS/STRATEGY_LABELS tables went with the request
 // list they filtered and painted (`public_strategy_requests_20260913` Phase 3). They were a
@@ -18,23 +21,19 @@ const INTERVENTION_STATUS_LABELS: Record<string, string> = {
   rejected: "Not accepted",
 };
 
-const INTERVENTION_TYPE_LABELS: Record<string, string> = {
-  reforestation: "Reforestation",
-  silvopasture: "Silvopasture",
-  cover_cropping: "Cover Cropping",
-  biochar: "Biochar",
-  keyline: "Keyline Design",
-};
-
 /** Narrows the jsonb properties bag a submission row carries. */
 function readInterventionSummary(properties: unknown): {
   name: string;
   type: string;
+  dataDetails: unknown;
+  dataOrigin: unknown;
 } {
-  const bag = (properties ?? {}) as { name?: unknown; type?: unknown };
+  const bag = (properties ?? {}) as Record<string, unknown>;
   return {
     name: typeof bag.name === "string" ? bag.name : "Untitled site",
     type: typeof bag.type === "string" ? bag.type : "",
+    dataDetails: bag.dataDetails,
+    dataOrigin: bag.dataOrigin,
   };
 }
 
@@ -133,7 +132,7 @@ export function CommunityDetails({ mapCenter }: CommunityDetailsProps) {
           ) : (
             <ul className="flex flex-col gap-2">
               {interventionSubmissions.map((submission) => {
-                const { name, type } = readInterventionSummary(
+                const { name, type, dataDetails, dataOrigin } = readInterventionSummary(
                   submission.properties
                 );
                 const status = submission.status ?? "pending_review";
@@ -146,10 +145,11 @@ export function CommunityDetails({ mapCenter }: CommunityDetailsProps) {
                       {name}
                     </p>
                     <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
-                      {INTERVENTION_TYPE_LABELS[type] ?? type}
+                      {INTERVENTION_TYPE_LABELS[type as InterventionType] ?? type}
                       {type && " · "}
                       {INTERVENTION_STATUS_LABELS[status] ?? status}
                     </p>
+                    <DataInterventionSummary type={type} dataDetails={dataDetails} dataOrigin={dataOrigin} />
                     {status === "rejected" && submission.reviewNote && (
                       <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
                         Reviewer note: {submission.reviewNote}

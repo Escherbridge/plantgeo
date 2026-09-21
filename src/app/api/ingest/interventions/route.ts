@@ -12,14 +12,14 @@ export const runtime = "nodejs";
 const INTERVENTIONS_LAYER_ID =
   process.env.INTERVENTIONS_LAYER_ID ?? "interventions";
 
-// Mirrors InterventionType in src/lib/environmental/intervention.ts.
+// Legacy physical interventions supported by machine ingress.
 const InterventionTypeSchema = z.enum([
   "reforestation",
   "silvopasture",
   "cover_cropping",
   "biochar",
   "keyline",
-]);
+], { errorMap: () => ({ message: "Machine ingress accepts land interventions only; submit data activities through the community submission form" }) });
 
 const InterventionIngestSchema = z
   .object({
@@ -31,7 +31,12 @@ const InterventionIngestSchema = z
         type: InterventionTypeSchema,
         status: z.string().trim().min(1).max(64),
       })
-      .passthrough(),
+      .passthrough()
+      .superRefine((properties, context) => {
+        if (["dataOrigin", "provenance", "dataDetails"].some((key) => key in properties) || properties.category === "data") {
+          context.addIssue({ code: z.ZodIssueCode.custom, message: "Data activities and source provenance cannot be submitted through machine intervention ingress" });
+        }
+      }),
   })
   .strict();
 
@@ -64,6 +69,7 @@ export async function POST(request: NextRequest) {
     featureId: id,
     properties: {
       ...properties,
+      dataOrigin: "community",
       geometry,
     },
   });
