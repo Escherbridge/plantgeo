@@ -15,6 +15,7 @@ export const DATA_INTERVENTION_LANES = [
   { id: "weather-forecast", label: "Weather forecasts" },
   { id: "sensors", label: "Sensors" },
   { id: "vegetation", label: "Vegetation" },
+  { id: "crop-cover", label: "Crop cover" },
   { id: "soil-survey", label: "Soil survey" },
   { id: "evacuation-zones", label: "Evacuation zones" },
   { id: "soil-field-moisture-0-7cm", label: "Soil moisture (0–7 cm)" },
@@ -39,6 +40,7 @@ export const DATA_INTERVENTION_LANES = [
   { id: "botanical-occurrences", label: "Botanical occurrences" },
   { id: "botanical-species-profile", label: "Botanical species profiles" },
   { id: "land-context", label: "Land context" },
+  { id: "land-context-boundaries", label: "Land context boundaries" },
   ...SOIL_RASTER_PROPERTIES.map((property) => ({
     id: soilRasterToggleId(property),
     label: `SoilGrids ${SOIL_PROPERTY_LABELS[property]}`,
