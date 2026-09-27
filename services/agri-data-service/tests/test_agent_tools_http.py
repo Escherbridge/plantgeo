@@ -81,6 +81,18 @@ async def test_bridge_rejects_calls_outside_environmental_registry(name: str) ->
     assert json.loads(response.body)["code"] == "unknown_environmental_tool"
 
 
+async def test_bridge_names_each_rejected_argument_without_echoing_its_value() -> None:
+    """The live map agent's model needs to know WHICH argument broke; the old body said only the code."""
+    arguments = {"surface_name": "soil-survey", "day": SELECTED_DAY, "latitude": 42.912345}
+    response = await route.call_agent_tool(request_for("observation_coverage_on_day", arguments))
+    assert response.status == BAD_REQUEST
+    body = json.loads(response.body)
+    assert body["tool"] == "observation_coverage_on_day"
+    assert body["error"] == body["code"] == "invalid_tool_arguments"
+    assert body["detail"].startswith("latitude: ")
+    assert "42.912345" not in response.body.decode()
+
+
 async def test_bridge_rejects_oversized_request_before_tool_execution() -> None:
     request = request_for("surface_evidence_for_selection", {})
     request.body = b"x" * (route.MAX_REQUEST_BYTES + 1)

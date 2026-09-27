@@ -15,6 +15,10 @@ _BUCKET_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9]$")
 _PRODUCTION_DATABASE_NAME = "plantgeo"
 #: The only hosts an API key may be sent to over plaintext http; see the base-URL validator.
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+#: Railway private-network hostnames; traffic under this suffix never leaves the project's network.
+_RAILWAY_PRIVATE_HOST_SUFFIX = ".railway.internal"
+#: C0 and C1 control characters, including tab, CR and LF.
+_CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 #: Which evidence the slider census is allowed to be built from. `census_until_bootstrap` is
 #: TRANSITIONAL and is deleted once every lane's production bootstrap receipt is recorded; see
@@ -345,6 +349,41 @@ class Settings(BaseSettings):
             raise ValueError("AGENT_MAP_APP_URL must be a credential-free http(s) origin")
         if parsed.scheme == "http" and parsed.hostname not in _LOOPBACK_HOSTS:
             raise ValueError("AGENT_MAP_APP_URL may only use plaintext http on localhost")
+        return value.strip().rstrip("/")
+
+    # Private strategy-knowledge (literature) service the agent's three strategy tools call. Absent,
+    # those tools answer the typed `strategy_knowledge_not_configured` refusal. See agent/AGENTS.md,
+    # "Strategy knowledge (literature) tools".
+    strategy_knowledge_url: str | None = None
+
+    @field_validator("strategy_knowledge_url")
+    @classmethod
+    def validate_strategy_knowledge_url(cls, value: str | None) -> str | None:
+        """Accept a credential-free origin; plaintext http only on loopback or Railway private networking."""
+        if value is None or not value.strip():
+            return None
+        # urlsplit silently drops tab/CR/LF, so a split host validates here and httpx raises InvalidURL later.
+        if _CONTROL_CHARACTERS.search(value) or any(character.isspace() for character in value.strip()):
+            raise ValueError("STRATEGY_KNOWLEDGE_URL must not contain control characters or whitespace")
+        parsed = urlsplit(value.strip())
+        try:
+            _ = parsed.port  # urlsplit parses the port lazily; reading it rejects a malformed one
+        except ValueError as exc:
+            raise ValueError("STRATEGY_KNOWLEDGE_URL has an invalid port") from exc
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in {"", "/"}
+        ):
+            raise ValueError("STRATEGY_KNOWLEDGE_URL must be a credential-free http(s) origin with no path")
+        hostname = parsed.hostname or ""
+        private_host = hostname in _LOOPBACK_HOSTS or hostname.endswith(_RAILWAY_PRIVATE_HOST_SUFFIX)
+        if parsed.scheme == "http" and not private_host:
+            raise ValueError("STRATEGY_KNOWLEDGE_URL may only use plaintext http on loopback or *.railway.internal")
         return value.strip().rstrip("/")
 
     @field_validator("agent_llm_base_url")

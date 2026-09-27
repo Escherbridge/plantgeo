@@ -9,7 +9,7 @@ import pytest
 
 from agri_data_service.agent import tools as agent_tools
 from agri_data_service.agent.botanical_species_profiles import species_information, use_profile_storage
-from agri_data_service.agent.graph import AssessSufficiency, WarehouseEvidence
+from agri_data_service.agent.graph import LITERATURE_TOOLS, AssessSufficiency, WarehouseEvidence
 from agri_data_service.agent.llm import execute_tool_call, tool_schemas
 from agri_data_service.agent.mcp_server import McpToolServer, tool_descriptors
 from agri_data_service.pipeline.direct.botanical_species_profiles.publication import artifact_key
@@ -93,7 +93,11 @@ async def test_species_tool_reads_parquet_and_records_reference_evidence_without
 
 
 def test_static_lookup_does_not_make_complete_environmental_coverage_permanently_partial() -> None:
-    environmental_tools = tuple(tool.name for tool in agent_tools.WAREHOUSE_TOOLS if tool.name != "species_information")
+    environmental_tools = tuple(
+        tool.name
+        for tool in agent_tools.WAREHOUSE_TOOLS
+        if tool.name != "species_information" and tool.name not in LITERATURE_TOOLS
+    )
     evidence = WarehouseEvidence(tool_calls=(), populated_tools=environmental_tools, refused=False)
     verdict = AssessSufficiency.decide(evidence, has_question=True)
     assert verdict.warehouse_is_sufficient is True

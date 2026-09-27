@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_vali
 
 # Vocabularies mirrored from src/lib/regional-intelligence.ts. That module is the single
 # definition; these are its Python projection and must not drift. See agent/AGENTS.md.
-EvidenceOrigin = Literal["warehouse", "web", "model_inference"]
+EvidenceOrigin = Literal["warehouse", "web", "literature", "model_inference"]
 
 RegionalEvidenceSource = Literal[
     "drought",
@@ -67,8 +67,15 @@ RegionalToolEvidenceSource = Literal[
     "crop-cover",
     "fire-risk",
     "weather-forecast",
+    "groundwater",
+    "strategy-knowledge",
 ]
 RegionalClaimEvidenceSource = RegionalEvidenceSource | RegionalToolEvidenceSource
+
+#: The one origin/source pair a strategy-knowledge (literature) claim carries; see agent/AGENTS.md.
+LITERATURE_EVIDENCE_ORIGIN: Final = "literature"
+STRATEGY_KNOWLEDGE_EVIDENCE_SOURCE: Final = "strategy-knowledge"
+MODEL_INFERENCE_EVIDENCE_ORIGIN: Final = "model_inference"
 
 InterventionStrategy = Literal[
     "keyline",
@@ -120,10 +127,38 @@ class EvidenceClaim(BaseModel):
 
     @model_validator(mode="after")
     def read_ids_require_warehouse_origin(self) -> EvidenceClaim:
-        """Keep server read references off web and model-inference claims."""
+        """Keep server read references off web, literature and model-inference claims."""
         if "evidenceReadIds" in self.model_fields_set and self.evidenceOrigin != "warehouse":
             raise ValueError("evidenceReadIds are allowed only on warehouse-origin claims")
         return self
+
+
+def _require_literature_pairing(origin: str, source: str | None) -> None:
+    """Literature cites exactly strategy-knowledge, and only literature may cite strategy-knowledge."""
+    if origin == LITERATURE_EVIDENCE_ORIGIN and source != STRATEGY_KNOWLEDGE_EVIDENCE_SOURCE:
+        raise ValueError('evidenceOrigin "literature" requires evidenceSource "strategy-knowledge"')
+    if source == STRATEGY_KNOWLEDGE_EVIDENCE_SOURCE and origin != LITERATURE_EVIDENCE_ORIGIN:
+        raise ValueError('evidenceSource "strategy-knowledge" is allowed only with evidenceOrigin "literature"')
+
+
+def _pair_literature_provenance(data: Any) -> Any:
+    """Fill a missing "strategy-knowledge" source on literature claims and strip it from
+    web/model_inference claims, ahead of the strict after-validator. Never changes an origin or
+    touches read IDs; a genuinely conflicting source (e.g. literature + "soil-phh2o") is left
+    alone for `_require_literature_pairing` to reject. Mirrors `pairLiteratureProvenance` in
+    remediation-report.ts. See agent/AGENTS.md, "Literature/strategy-knowledge normalisation".
+    """
+    if not isinstance(data, dict):
+        return data
+    origin = data.get("evidenceOrigin")
+    source = data.get("evidenceSource")
+    if origin == LITERATURE_EVIDENCE_ORIGIN and source in (None, ""):
+        return {**data, "evidenceSource": STRATEGY_KNOWLEDGE_EVIDENCE_SOURCE}
+    if origin in (MODEL_INFERENCE_EVIDENCE_ORIGIN, "web") and source == STRATEGY_KNOWLEDGE_EVIDENCE_SOURCE:
+        paired = dict(data)
+        paired.pop("evidenceSource", None)
+        return paired
+    return data
 
 
 class RiskSummary(EvidenceClaim):
@@ -134,12 +169,34 @@ class RiskSummary(EvidenceClaim):
     factors: list[str]
     evidenceSources: list[RegionalClaimEvidenceSource] = Field(max_length=64)
 
+    @model_validator(mode="after")
+    def risk_is_never_literature(self) -> RiskSummary:
+        """Keep literature out of the risk judgement, matching remediation-report.ts."""
+        if (
+            self.evidenceOrigin == LITERATURE_EVIDENCE_ORIGIN
+            or STRATEGY_KNOWLEDGE_EVIDENCE_SOURCE in self.evidenceSources
+        ):
+            raise ValueError('riskSummary cannot be literature-origin or cite "strategy-knowledge"')
+        return self
+
 
 class Observation(EvidenceClaim):
     """One statement about what the supplied data actually shows."""
 
     statement: str
     evidenceSource: RegionalClaimEvidenceSource | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def pair_literature_provenance(cls, data: Any) -> Any:
+        """Normalise the literature/strategy-knowledge pairing before field validation."""
+        return _pair_literature_provenance(data)
+
+    @model_validator(mode="after")
+    def literature_pairs_with_strategy_knowledge(self) -> Observation:
+        """Enforce the literature origin/source pairing."""
+        _require_literature_pairing(self.evidenceOrigin, self.evidenceSource)
+        return self
 
 
 class RemediationRecommendation(EvidenceClaim):
@@ -153,6 +210,18 @@ class RemediationRecommendation(EvidenceClaim):
     consultProfessionals: list[ProfessionalDiscipline]
     evidenceSource: RegionalClaimEvidenceSource | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def pair_literature_provenance(cls, data: Any) -> Any:
+        """Normalise the literature/strategy-knowledge pairing before field validation."""
+        return _pair_literature_provenance(data)
+
+    @model_validator(mode="after")
+    def literature_pairs_with_strategy_knowledge(self) -> RemediationRecommendation:
+        """Enforce the literature origin/source pairing."""
+        _require_literature_pairing(self.evidenceOrigin, self.evidenceSource)
+        return self
+
 
 class RemediationReport(BaseModel):
     """The full briefing, shaped exactly like ai-prompt.ts's remediation_report tool input."""
@@ -163,6 +232,28 @@ class RemediationReport(BaseModel):
     observations: list[Observation]
     remediation: list[RemediationRecommendation]
     professionalConsultation: str
+
+
+_SINGLE_SOURCE_SECTIONS: Final = ("observations", "remediation")
+
+
+def downgrade_literature_claims(report: RemediationReport) -> tuple[RemediationReport, tuple[str, ...]]:
+    """Relabel every literature claim model_inference without its source; return the paths changed.
+
+    Used when no strategy-knowledge call answered this run. See agent/AGENTS.md, "A literature claim
+    needs a literature answer from this run".
+    """
+    payload = report.model_dump()
+    downgraded: list[str] = []
+    for section in _SINGLE_SOURCE_SECTIONS:
+        for index, claim in enumerate(payload[section]):
+            if claim["evidenceOrigin"] == LITERATURE_EVIDENCE_ORIGIN:
+                claim["evidenceOrigin"] = MODEL_INFERENCE_EVIDENCE_ORIGIN
+                claim["evidenceSource"] = None
+                downgraded.append(f"{section}[{index}]")
+    if not downgraded:
+        return report, ()
+    return RemediationReport.model_validate(payload), tuple(downgraded)
 
 
 class WebSourceCitation(BaseModel):

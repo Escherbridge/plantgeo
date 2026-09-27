@@ -18,12 +18,14 @@ if TYPE_CHECKING:
 
 from agri_data_service.agent import botanical_occurrences as agent_botanical_occurrences
 from agri_data_service.agent import graph as agent_graph
+from agri_data_service.agent import strategy_knowledge
 from agri_data_service.agent import tools as agent_tools
 from agri_data_service.agent.report import (
     Observation,
     RemediationRecommendation,
     RemediationReport,
     RiskSummary,
+    downgrade_literature_claims,
     report_json_schema,
 )
 from agri_data_service.agent.surfaces import AGENT_SURFACE_NAMES
@@ -177,7 +179,7 @@ class _Runner:
             raise StopAsyncIteration
         # Recording here stands in for the real tools running inside the runner.
         for entry in self._ledger_entries:
-            agent_tools._record(str(entry["tool"]), int(entry["row_count"]), {})
+            agent_tools._record(str(entry["tool"]), int(entry["row_count"]), dict(entry.get("detail", {})))
         self._ledger_entries = []
         return self._streams.pop(0)
 
@@ -516,6 +518,134 @@ async def test_report_synthesis_sends_the_structured_output_format() -> None:
     assert "thinking" not in parse_call, "adaptive thinking is the model default and must not be sent"
 
 
+# --- Literature claims need a literature answer ------------------------------------
+
+_MEASURED_LEDGER: tuple[dict[str, Any], ...] = (
+    {"tool": "surface_evidence_for_selection", "row_count": 3},
+    {"tool": "drought_history_at_point", "row_count": 12},
+)
+
+
+def _literature_entry(tool: str, state: str, *, result_count: int = 1) -> dict[str, Any]:
+    """A ledger entry matching `strategy_knowledge.ask`'s shape; `result_count` only rides an answer."""
+    detail = {"evidence_domain": strategy_knowledge.LITERATURE_EVIDENCE_DOMAIN, "state": state}
+    if state == "answered":
+        detail["result_count"] = result_count
+    return {"tool": tool, "row_count": 0, "detail": detail}
+
+
+def _literature_report() -> RemediationReport:
+    payload = _report().model_dump()
+    payload["remediation"][0].update({"evidenceOrigin": "literature", "evidenceSource": "strategy-knowledge"})
+    payload["observations"].append(
+        {
+            "statement": "Cited trials report thinning lowers crown-fire spread.",
+            "evidenceOrigin": "literature",
+            "evidenceSource": "strategy-knowledge",
+        }
+    )
+    return RemediationReport.model_validate(payload)
+
+
+async def _run_with_ledger(*entries: dict[str, Any]) -> tuple[agent_graph.ReportOutcome, list[dict[str, Any]]]:
+    runner = _Runner([_Stream(_message(_text_block("ok")))], ledger_entries=[*_MEASURED_LEDGER, *entries])
+    context = _context(_client([runner], _parsed(_literature_report())))
+    outcome = await agent_graph.execute_graph(context)
+    return outcome, _drain(context)
+
+
+@pytest.mark.parametrize(
+    "entries",
+    [
+        pytest.param((), id="no-literature-call"),
+        pytest.param(
+            (
+                _literature_entry("search_environmental_strategies", "refused"),
+                _literature_entry("search_strategy_research_findings", "refused"),
+            ),
+            id="only-refusals",
+        ),
+        pytest.param(
+            (_literature_entry("search_environmental_strategies", "answered", result_count=0),),
+            id="answered-but-zero-records",
+        ),
+    ],
+)
+async def test_an_unbacked_literature_claim_is_downgraded_and_recorded(entries: tuple[dict[str, Any], ...]) -> None:
+    outcome, events = await _run_with_ledger(*entries)
+
+    assert outcome.report is not None
+    recommendation = outcome.report.remediation[0]
+    assert (recommendation.evidenceOrigin, recommendation.evidenceSource) == ("model_inference", None)
+    assert recommendation.title == _report().remediation[0].title, "the claim is relabelled, never dropped"
+    assert outcome.report.observations[1].evidenceOrigin == "model_inference"
+    assert outcome.report.observations[0].evidenceOrigin == "warehouse", "non-literature claims are untouched"
+    [downgrade] = [event for event in events if event.get("status") == "literature_downgraded"]
+    assert downgrade["node"] == "synthesize_report"
+    assert downgrade["detail"]["claims"] == ["observations[1]", "remediation[0]"]
+    [streamed] = [event for event in events if event["type"] == "report"]
+    assert streamed["report"]["remediation"][0]["evidenceOrigin"] == "model_inference"
+
+
+async def test_a_literature_claim_backed_by_an_answered_call_is_kept() -> None:
+    outcome, events = await _run_with_ledger(
+        _literature_entry("search_environmental_strategies", "refused"),
+        _literature_entry("get_environmental_strategies", "answered", result_count=2),
+    )
+
+    assert outcome.report is not None
+    recommendation = outcome.report.remediation[0]
+    assert (recommendation.evidenceOrigin, recommendation.evidenceSource) == ("literature", "strategy-knowledge")
+    assert not [event for event in events if event.get("status") == "literature_downgraded"]
+
+
+def test_literature_answered_requires_a_populated_result_count() -> None:
+    """`state: "answered"` alone is not enough: a real search that matched nothing backs no claim."""
+    assert (
+        agent_graph.literature_answered(
+            ({"tool": "search_environmental_strategies", "state": "answered", "result_count": 0},)
+        )
+        is False
+    )
+    assert (
+        agent_graph.literature_answered(
+            ({"tool": "search_environmental_strategies", "state": "answered", "result_count": 1},)
+        )
+        is True
+    )
+    # A missing result_count (an older or malformed ledger entry) fails closed, the same as zero.
+    assert agent_graph.literature_answered(({"tool": "get_environmental_strategies", "state": "answered"},)) is False
+
+
+async def test_a_literature_answer_from_the_web_pass_backs_a_claim() -> None:
+    """The web pass also offers the literature tools, so its ledger is kept for this check."""
+    warehouse_runner = _Runner([_Stream(_message(_text_block("Nothing stored here.")))])
+    web_runner = _Runner(
+        [_Stream(_message(_text_block("Read the literature.")))],
+        ledger_entries=[_literature_entry("search_strategy_research_findings", "answered")],
+    )
+    context = _context(_client([warehouse_runner, web_runner], _parsed(_literature_report())))
+
+    outcome = await agent_graph.execute_graph(context)
+
+    assert outcome.report is not None
+    assert outcome.report.remediation[0].evidenceOrigin == "literature"
+    assert agent_graph.literature_answered(context.tool_ledger)
+
+
+def test_downgrading_a_report_without_literature_is_a_no_op() -> None:
+    report = _report()
+    assert downgrade_literature_claims(report) == (report, ())
+
+
+def test_coverage_counts_location_tools_only() -> None:
+    """species_information and the three literature tools are never measured coverage."""
+    verdict = agent_graph.AssessSufficiency.decide(_evidence(), has_question=False)
+    names = {tool.name for tool in agent_tools.WAREHOUSE_TOOLS}
+    assert names >= agent_graph.LITERATURE_TOOLS
+    assert verdict.coverage["tools_available"] == len(names - {"species_information"} - agent_graph.LITERATURE_TOOLS)
+
+
 async def test_system_prefix_carries_one_cache_breakpoint() -> None:
     """Prompt caching depends on a stable system prefix with the breakpoint on its last block."""
     context = _context(_client([], _parsed(None)))
@@ -713,19 +843,21 @@ async def test_every_tool_statement_is_read_only(tmp_path: Path) -> None:
 
 
 def test_tool_schemas_publish_bounded_arguments() -> None:
-    """Every model-facing tool must advertise a bounded surface, keyed by place or by layer.
+    """Every model-facing tool must advertise a bounded surface, keyed by place, layer or literature query.
 
-    Two of the ten are not point-scoped: observation_coverage_on_day and
-    observation_temporal_neighbors ask about a whole map surface on a day, so a coordinate would be
-    a parameter they had nothing to do with. Every tool is still keyed by SOMETHING the service
-    validates -- a coordinate it range-checks, or a surface name it checks against the hand-spelled
-    catalogue -- so none of them can be handed an unbounded question. `botanical_occurrence_current_release`
-    is the one genuine exception: "what generation is current" has no spatial or surface scope to
-    bound at all, by construction -- see `read_current_botanical_release` in `planes/botanical_occurrences.py`.
+    Two are not point-scoped: observation_coverage_on_day and observation_temporal_neighbors ask about
+    a whole map surface on a day, so a coordinate would be a parameter they had nothing to do with.
+    The three strategy-knowledge tools are coordinate-free by design -- the literature service never
+    sees a location -- and are keyed instead by a length-capped query or one to five strategy ids,
+    with a result cap of ten. Every tool is still keyed by SOMETHING the service validates, so none of
+    them can be handed an unbounded question. `botanical_occurrence_current_release` is the one genuine
+    exception: "what generation is current" has no spatial or surface scope to bound at all, by
+    construction -- see `read_current_botanical_release` in `planes/botanical_occurrences.py`.
     """
     surface_only = {"observation_coverage_on_day", "observation_temporal_neighbors"}
     # Answers a global pointer question, not a spatial one -- no bbox, no coordinate, no surface.
     unscoped = {"botanical_occurrence_current_release", "list_environmental_layers"}
+    literature_searches = {"search_environmental_strategies", "search_strategy_research_findings"}
     for tool in agent_tools.WAREHOUSE_TOOLS:
         definition = tool.to_dict()
         name = definition["name"]
@@ -736,6 +868,13 @@ def test_tool_schemas_publish_bounded_arguments() -> None:
             assert {"surface_name", "day"} <= set(properties), name
         elif name in unscoped:
             assert properties == {}, name
+        elif name in literature_searches:
+            assert not {"longitude", "latitude"} & set(properties), name
+            assert properties["query"]["maxLength"] == strategy_knowledge.MAX_QUERY_CHARACTERS, name
+            assert properties["limit"]["maximum"] == strategy_knowledge.MAX_RESULTS, name
+        elif name == "get_environmental_strategies":
+            assert set(properties) == {"strategy_ids"}, name
+            assert properties["strategy_ids"]["maxItems"] == strategy_knowledge.MAX_STRATEGY_IDS, name
         else:
             assert {"longitude", "latitude"} <= set(properties), name
         assert definition["description"]

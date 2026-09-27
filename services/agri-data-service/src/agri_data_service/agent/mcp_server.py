@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any, Final
 import structlog
 
 from agri_data_service.agent import tools as warehouse_tools
-from agri_data_service.agent.llm import tool_by_name, tool_schemas
+from agri_data_service.agent.llm import tool_by_name, tool_error_payload, tool_schemas
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -50,7 +50,12 @@ INSTRUCTIONS: Final = (
     "history is paginated across the full range and incomplete pages do not prove a trend. "
     "species_information requires an exact Species UUID and returns explicitly unpublished, "
     "unverified authoring values plus approved-only companion evidence; it never ranks species "
-    "or recommends planting. Every tool caps its own work and reports its evidence posture. A tool "
+    "or recommends planting. search_environmental_strategies, get_environmental_strategies and "
+    "search_strategy_research_findings return literature-grounded strategies and findings from the "
+    "strategy-knowledge service, never measurements at a location. They need no dates or coordinates: "
+    "call them directly for 'what can we do' questions, put only measured site facts in site_profile "
+    "(never a day, coordinate, range or surface name) and cite them as literature. Every tool caps "
+    "its own work and reports its evidence posture. A tool "
     "that cannot honestly answer returns a typed refusal -- lane_columns_absent, "
     "parquet_availability_withheld, day_not_written -- rather than an empty result; read the "
     "refusal, do not treat it as 'no data here'."
@@ -138,7 +143,9 @@ class McpToolServer:
         try:
             answer = await tool.call(arguments)
         except (TypeError, ValueError) as error:
-            return _content(f"{type(error).__name__}: {error}", is_error=True)
+            failure = tool_error_payload(name, error)
+            detail = f" -- {failure['detail']}" if "detail" in failure else ""
+            return _content(f"{failure['error']}{detail}", is_error=True)
         return _content(answer if isinstance(answer, str) else json.dumps(answer, default=str))
 
 

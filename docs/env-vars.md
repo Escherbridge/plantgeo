@@ -269,6 +269,12 @@ and abuse testing. Large artifacts should move to immutable object storage with
 a checksum-addressed database reference rather than being forced through inline
 publication.
 
+### Agent strategy-knowledge (literature) tools
+
+| Variable | Service | Policy |
+| --- | --- | --- |
+| `STRATEGY_KNOWLEDGE_URL` | `plantgeo-parquet-api` | Origin of the private `plantgeo-strategy-knowledge` service that the agent's three literature tools call (`search_environmental_strategies`, `get_environmental_strategies`, `search_strategy_research_findings`). Production value: `http://${{plantgeo-strategy-knowledge.RAILWAY_PRIVATE_DOMAIN}}:8000`. The service has no public domain. Must be a credential-free origin with no path, query or fragment: `https` anywhere, plaintext `http` only on loopback or a `*.railway.internal` host. Unset, the tools answer the typed `strategy_knowledge_not_configured` refusal and every other tool is unaffected. See `services/agri-data-service/src/agri_data_service/agent/AGENTS.md`, "Strategy knowledge (literature) tools". |
+
 ## Railway policy
 
 Production private references use exact service names. The web application

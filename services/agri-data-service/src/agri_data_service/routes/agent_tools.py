@@ -11,7 +11,7 @@ from sanic import Blueprint, Request
 from sanic import json as json_response
 from sanic.response import HTTPResponse  # noqa: TC002 - Sanic evaluates annotations at runtime.
 
-from agri_data_service.agent.llm import tool_by_name, tool_schemas
+from agri_data_service.agent.llm import argument_error_detail, tool_by_name, tool_schemas
 from agri_data_service.agent.surfaces import AGENT_SURFACE_NAMES, FEATURE_SURFACE_NAMES
 from agri_data_service.agent.tools import run_context
 
@@ -53,8 +53,11 @@ async def list_agent_tools(_request: Request) -> HTTPResponse:
     )
 
 
-def _refusal(name: str, code: str, status: int) -> HTTPResponse:
-    return json_response({"tool": name, "error": code, "code": code}, status=status, headers=_HEADERS)
+def _refusal(name: str, code: str, status: int, detail: str | None = None) -> HTTPResponse:
+    body = {"tool": name, "error": code, "code": code}
+    if detail:
+        body["detail"] = detail
+    return json_response(body, status=status, headers=_HEADERS)
 
 
 @agent_tools_bp.post("/call")
@@ -80,6 +83,8 @@ async def call_agent_tool(request: Request) -> HTTPResponse:
             payload.name,
             "tool_read_timeout" if timed_out else "invalid_tool_arguments",
             _UNAVAILABLE if timed_out else _BAD_REQUEST,
+            # Which argument broke which rule, bounded and value-free; see agent/AGENTS.md.
+            None if timed_out else argument_error_detail(error),
         )
     if len(encoded.encode("utf-8")) > MAX_RESPONSE_BYTES:
         return _refusal(payload.name, "tool_response_too_large", _UNAVAILABLE)

@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final
 
 import httpx
+from pydantic import ValidationError
 
 from agri_data_service.agent.tools import WAREHOUSE_TOOLS
 from agri_data_service.config import settings
@@ -43,6 +44,16 @@ PROBE_MAX_TOKENS: Final = 1
 MAX_OUTPUT_TOKENS: Final = 16_000
 
 _CHAT_COMPLETIONS_PATH: Final = "/chat/completions"
+
+#: Bounds on the schema-violation detail a model reads back after a rejected call.
+MAX_ARGUMENT_ERRORS: Final = 8
+MAX_ARGUMENT_ERROR_CHARACTERS: Final = 600
+_MAX_LOCATION_PART_CHARACTERS: Final = 60
+
+#: A live Gemini eval (via OpenRouter) echoed its own Python-style call site,
+#: `default_api.search_environmental_strategies`, instead of the published tool name. Stripped only
+#: when the remainder names a REGISTERED tool, so a genuinely unknown name still fails loudly.
+_PROVIDER_TOOL_NAME_PREFIX: Final = "default_api."
 
 
 class LlmProviderError(RuntimeError):
@@ -87,6 +98,75 @@ def tool_by_name(name: str) -> Any:
     raise KeyError(f"no warehouse tool named {name!r}; available: {available}")
 
 
+def _canonical_tool_name(name: str) -> str:
+    """`name`, or the tool it names once a `default_api.` prefix a provider echoed back is stripped.
+
+    Only stripped when the remainder is itself a registered tool, so a name that merely starts with
+    the prefix by coincidence, or names nothing real either way, is left alone and still becomes the
+    ordinary "no warehouse tool named" error `tool_by_name` raises.
+    """
+    if name.startswith(_PROVIDER_TOOL_NAME_PREFIX):
+        remainder = name[len(_PROVIDER_TOOL_NAME_PREFIX) :]
+        if any(tool.name == remainder for tool in WAREHOUSE_TOOLS):
+            return remainder
+    return name
+
+
+def argument_error_detail(error: BaseException) -> str | None:
+    """Each schema violation as `location: message`, bounded, or None when `error` is not one.
+
+    `beta_async_tool` re-raises pydantic's ValidationError as a bare "Invalid arguments" ValueError, so
+    the actionable part is on its cause. Input values are never echoed. See agent/AGENTS.md, "The MCP
+    tool surface".
+    """
+    validation = _validation_error(error)
+    if validation is None:
+        return None
+    issues = validation.errors(include_url=False, include_context=False, include_input=False)
+    parts = [f"{_error_location(issue['loc'])}: {issue['msg']}" for issue in issues[:MAX_ARGUMENT_ERRORS]]
+    if len(issues) > MAX_ARGUMENT_ERRORS:
+        parts.append(f"and {len(issues) - MAX_ARGUMENT_ERRORS} more")
+    detail = "; ".join(parts)
+    if len(detail) <= MAX_ARGUMENT_ERROR_CHARACTERS:
+        return detail
+    return f"{detail[: MAX_ARGUMENT_ERROR_CHARACTERS - 3]}..."
+
+
+def tool_error_payload(name: str, error: BaseException) -> dict[str, Any]:
+    """The `{"error", "tool"}` answer to a malformed call, plus `detail` when the schema rejected it."""
+    # A ValidationError's own str() quotes the rejected input; only its bounded detail is rendered.
+    summary = "invalid arguments" if isinstance(error, ValidationError) else str(error)
+    body: dict[str, Any] = {"error": f"{type(error).__name__}: {summary}", "tool": name}
+    detail = argument_error_detail(error)
+    if detail:
+        body["detail"] = detail
+    return body
+
+
+def _validation_error(error: BaseException) -> ValidationError | None:
+    """The first pydantic ValidationError on `error`'s cause/context chain."""
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        if isinstance(current, ValidationError):
+            return current
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return None
+
+
+def _error_location(location: tuple[int | str, ...]) -> str:
+    """`site_profile.day` / `goals[0]`; each key capped, since a model-invented key can be any length."""
+    rendered = ""
+    for part in location:
+        if isinstance(part, int):
+            rendered += f"[{part}]"
+        else:
+            name = str(part)[:_MAX_LOCATION_PART_CHARACTERS]
+            rendered = f"{rendered}.{name}" if rendered else name
+    return rendered or "arguments"
+
+
 async def execute_tool_call(tool_call: dict[str, Any]) -> dict[str, Any]:
     """Run one `tool_calls` entry and render the `role: "tool"` message that answers it.
 
@@ -94,10 +174,15 @@ async def execute_tool_call(tool_call: dict[str, Any]) -> dict[str, Any]:
     refusal payload (`tools._refuses_serving_faults`), so `lane_columns_absent` and
     `parquet_availability_withheld` arrive as ordinary tool content and reach the model as the
     designed four-state answer. Only a malformed call -- unknown tool, unparseable arguments,
-    arguments the schema rejects -- becomes an error message, and it says which.
+    arguments the schema rejects -- becomes an error message, and it says which; a schema rejection
+    also carries `detail` naming each offending argument, so the model can correct and retry.
+
+    `name` is resolved to its canonical form (`_canonical_tool_name`) before the lookup, and that
+    canonical name -- never the provider's raw string -- is what comes back in this message's `name`
+    and, through it, in the run ledger `converse` builds from `result["name"]`.
     """
     function = tool_call.get("function") or {}
-    name = str(function.get("name") or "")
+    name = _canonical_tool_name(str(function.get("name") or ""))
     raw_arguments = function.get("arguments") or "{}"
     try:
         arguments = json.loads(raw_arguments) if isinstance(raw_arguments, str) else dict(raw_arguments)
@@ -105,7 +190,7 @@ async def execute_tool_call(tool_call: dict[str, Any]) -> dict[str, Any]:
             raise TypeError("tool arguments must be a JSON object")
         content = await tool_by_name(name).call(arguments)
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
-        content = json.dumps({"error": f"{type(error).__name__}: {error}", "tool": name})
+        content = json.dumps(tool_error_payload(name, error))
     return {
         "role": "tool",
         "tool_call_id": str(tool_call.get("id") or ""),

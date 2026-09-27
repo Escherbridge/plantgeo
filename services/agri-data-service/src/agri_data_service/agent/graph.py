@@ -28,6 +28,7 @@ from agri_data_service.agent.report import (
     ConversationTurn,
     RemediationReport,
     WebSourceCitation,
+    downgrade_literature_claims,
 )
 from agri_data_service.agent.selection_context import MapSelection, bind_selection_tools
 
@@ -64,14 +65,27 @@ MAX_PAUSE_RESTARTS: Final = 3
 MAX_SEARCHES_PER_REQUEST: Final = 3
 MAX_HISTORY_TURNS: Final = 8
 
-_METADATA_TOOLS: Final = frozenset(
+# The strategy-knowledge (literature) tools: never coverage, and the only backing for a literature claim.
+LITERATURE_TOOLS: Final = frozenset(
     {
-        "list_environmental_layers",
-        "observation_coverage_on_day",
-        "observation_temporal_neighbors",
-        "botanical_occurrence_current_release",
-        "species_information",
+        "search_environmental_strategies",
+        "get_environmental_strategies",
+        "search_strategy_research_findings",
     }
+)
+
+# Never a measured surface: catalogue, coverage and reference reads, including the literature tools.
+_METADATA_TOOLS: Final = (
+    frozenset(
+        {
+            "list_environmental_layers",
+            "observation_coverage_on_day",
+            "observation_temporal_neighbors",
+            "botanical_occurrence_current_release",
+            "species_information",
+        }
+    )
+    | LITERATURE_TOOLS
 )
 
 _PARTIAL_COVERAGE_SEARCHES: Final = 2
@@ -195,6 +209,21 @@ def populated_sources(ledger: Sequence[dict[str, Any]]) -> tuple[str, ...]:
             and "error" not in entry
             and "refusal_code" not in entry
         )
+    )
+
+
+def literature_answered(ledger: Sequence[dict[str, Any]]) -> bool:
+    """Whether any strategy-knowledge call answered AND found at least one record during this run.
+
+    An 'answered' call that matched nothing (result_count 0) is a real, reachable answer -- the model
+    still learns nothing matched -- but it backs no claim, so it must not unlock literature provenance
+    the way a populated answer does. `result_count` rides every answered ledger entry
+    (`strategy_knowledge.py::ask`): the two searches count their `results` list,
+    `get_environmental_strategies` counts found `strategies`.
+    """
+    return any(
+        entry["tool"] in LITERATURE_TOOLS and entry.get("state") == "answered" and int(entry.get("result_count", 0)) > 0
+        for entry in ledger
     )
 
 
@@ -404,7 +433,10 @@ class AssessSufficiency:
     def decide(evidence: WarehouseEvidence, *, has_question: bool) -> SufficiencyVerdict:
         """Pure budget rule: fewer distinct populated sources buys more search budget."""
         populated = len(evidence.populated_tools)
-        available = sum(tool.name != "species_information" for tool in warehouse_tools.WAREHOUSE_TOOLS)
+        available = sum(
+            tool.name != "species_information" and tool.name not in LITERATURE_TOOLS
+            for tool in warehouse_tools.WAREHOUSE_TOOLS
+        )
         coverage = {
             "populated_tools": list(evidence.populated_tools),
             "tool_calls_made": len(evidence.tool_calls),
@@ -462,7 +494,7 @@ class GatherWebEvidence:
         async with warehouse_tools.run_context(
             session_provider=ctx.session_provider,
             allowed_species_id=ctx.request.species_id or "",
-        ):
+        ) as ledger:
             refused = await _run_pass(
                 ctx,
                 tool_list=[
@@ -477,6 +509,8 @@ class GatherWebEvidence:
                 max_iterations=MAX_WEB_ITERATIONS,
                 collect_web=True,
             )
+            # Sufficiency was already judged; kept so a literature call made here can back a claim.
+            ctx.tool_ledger.extend(ledger)
         ctx.refused = ctx.refused or refused
         await ctx.emit(
             progress_event(
@@ -515,6 +549,21 @@ class SynthesizeReport:
             return ReportOutcome(report=None, refused=True)
         parsed = getattr(response, "parsed_output", None)
         report = parsed if isinstance(parsed, RemediationReport) else None
+        if report is not None and not literature_answered(ctx.tool_ledger):
+            # Downgrade, not reject: see agent/AGENTS.md, "A literature claim needs a literature answer".
+            report, downgraded = downgrade_literature_claims(report)
+            if downgraded:
+                await ctx.emit(
+                    progress_event(
+                        self.name,
+                        "literature_downgraded",
+                        {
+                            "claims": list(downgraded),
+                            "reason": "no strategy-knowledge call answered this run",
+                            "relabelled_as": "model_inference",
+                        },
+                    )
+                )
         ctx.report = report
         await ctx.emit(progress_event(self.name, "completed", {"report_produced": report is not None}))
         return ReportOutcome(report=report, refused=False)

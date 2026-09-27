@@ -1,5 +1,130 @@
 # The location-analysis agent graph
 
+## Strategy knowledge (literature) tools (2026-09-26)
+
+`search_environmental_strategies`, `get_environmental_strategies` and
+`search_strategy_research_findings` are registered in `tools.py::WAREHOUSE_TOOLS`; their client,
+refusals and projection live in `strategy_knowledge.py`, which imports nothing from `tools.py`. Each
+calls `POST {STRATEGY_KNOWLEDGE_URL}/v1/tools/{search_strategies|get_strategy|search_findings}` on the
+`plantgeo-strategy-knowledge` service. Being in the one registry, they reach every agent surface: the
+graph's warehouse and web passes, the Next.js tool bridge (`routes/agent_tools.py`) and MCP.
+
+**Why a separate service, over private networking.** The knowledge base is a Chroma index plus an
+ONNX embedder with its own corpus lifecycle (a bucket-published `corpus_version`, and a
+`--pull-from-bucket` start that fails the deploy rather than serve half a corpus). Carrying that here
+would add heavy dependencies to a service whose toolchain avoids unrelated `uv sync`s, and couple two
+release cadences. The owner decision (2026-09-26) keeps it private-network only, with no public
+domain. `config.py` therefore accepts `https` anywhere but plaintext `http` only on loopback or a
+`*.railway.internal` host, and never a credential, path, query or fragment.
+
+**Coordinate-free by design.** The service never sees a location. The model reads the warehouse first
+and passes a `site_profile` built only from values it actually read. Field names mirror
+strategy-knowledge `site_profile.py`: soil, slope and burn values boost, while `land_cover` and
+`region` filter. Filters are `Literal` enums copied from strategy-knowledge `vocabulary.py`, so the
+schema publishes every accepted value. `test_agent_strategy_knowledge.py` parses the service's own
+source and fails on drift. An invented value fails validation locally and never reaches the service.
+`search_environmental_strategies` and `search_strategy_research_findings` also take a top-level
+`region: RegionFilter` (distinct from `site_profile.region`), forwarded to the service's own `region`
+filter; `strategy_knowledge._normalize_region_filter` wraps a lone region string into a one-element
+list before `list[Region]` validation, since a live eval sent `region="pnw_westside"` rather than a list.
+
+**Portable schema.** Pydantic would publish the nested `site_profile` as `$defs`/`$ref`, and each
+optional parameter as `anyOf [X, null]`. No other bridge tool publishes either, and the live map
+agent forwards the catalogue to Gemini through OpenRouter. `strategy_knowledge.literature_tool` is
+therefore `beta_async_tool` with an explicit `input_schema`: the inferred schema with references
+inlined and null branches collapsed, and `_patch_site_profile_schema` substitutes the strict
+`StrategySiteProfile` shape back in over `site_profile`'s own loosened type (below). Validation still
+runs against the function signature. For the same reason `burn_severity` and `land_cover` are
+published as strings, coercing numbers; the service's `str | int` fields parse a digit string as an
+MTBS class or NLCD code.
+
+**`site_profile` is advisory, not a filter.** It only boosts or filters the ranking, so one bad hint
+must not sink an otherwise-good call: `search_environmental_strategies` and
+`search_strategy_research_findings` type it as a loose dict and `strategy_knowledge.sanitize_site_profile`
+validates each key on its own against `StrategySiteProfile`, dropping an unknown key or an
+out-of-range value into a bounded `site_profile_ignored` list on the payload instead of rejecting the
+whole call, while every FILTER (`goals`, `land_use`, `fire_phase`, `min_evidence`, `strategy_id`,
+`ids`, `limit`, `query`) still validates strictly against the function signature and rejects outright.
+A live Gemini eval also echoed its own Python-style call site, `default_api.search_environmental_strategies`,
+instead of the published tool name; `llm.py::_canonical_tool_name` strips exactly that prefix when the
+remainder names a registered tool, so the call still dispatches.
+
+**Model-facing descriptions.** `agent ask` and MCP clients see no system prompt, so the three
+docstrings carry the calling rules themselves. First, the tools need no date, coordinate or layer,
+so a "how can we" question calls them directly; a live Gemini eval asked the user for dates instead.
+Second, `site_profile` holds only the listed measured keys, never the selected day, coordinates,
+range or surface name; the same eval stuffed those in. Third, the literature attribution rule.
+
+**Bounds.** An 8 s wall-clock deadline (`asyncio.timeout` around the httpx call) sits under the
+bridge's 12 s deadline. The response is capped at 1 MiB, checked against the declared length and
+counted while streaming. The request sends `Accept-Encoding: identity`, so the count is wire bytes and
+nothing is inflated before the check. A response that declares any other `Content-Encoding` is
+refused unread (`strategy_knowledge_unavailable`). `config.py` also rejects control characters and
+whitespace anywhere in `STRATEGY_KNOWLEDGE_URL`: `urlsplit` silently drops tab/CR/LF, so a split
+host would validate and httpx would raise `InvalidURL` at call time. Other bounds: at most 10
+results, 1-5 ids and a 500-character query. The
+payload is a bounded projection: identity, summaries, family, goals, evidence strength, actions,
+rates as stated, citation title/URL, finding magnitudes and excerpts, `claim_tier` and
+`corpus_version`. Facet texts, snippets, scores and paging internals are dropped.
+
+**Refusal states.** Each is a payload, never an exception, whose note opens "This is a REFUSAL, not
+an absence". A refusal is a fact about the service, never about the literature.
+
+| Code | When |
+|---|---|
+| `strategy_knowledge_not_configured` | `STRATEGY_KNOWLEDGE_URL` unset; no request is sent |
+| `strategy_knowledge_unavailable` | timeout, connection error, 5xx or `not_ready`, any other non-200, over-budget or non-JSON body |
+| `strategy_knowledge_rejected_arguments` | 400 (or 413) from the service; its error detail is echoed |
+
+**Why metadata-exempt.** Literature is not a measurement at this location. Every call records
+`row_count=0` with `evidence_domain: literature_reference`, and all three names sit in
+`graph.py::LITERATURE_TOOLS`, which is part of `_METADATA_TOOLS`. Exemption is by name, so even a
+mis-recorded row count cannot make the sufficiency gate treat literature as local coverage or use it
+to close the web pass. For the same reason the gate's `coverage.tools_available` count excludes them.
+
+**Provenance rule.** A claim grounded in these tools carries `evidenceOrigin: "literature"` and
+`evidenceSource: "strategy-knowledge"` (`report.py`, mirrored in `src/lib/regional-intelligence.ts`;
+the drift test reads both). `report.py` enforces the pairing in both directions on `Observation` and
+`RemediationRecommendation`: literature requires strategy-knowledge, and strategy-knowledge is
+allowed only on literature. `RiskSummary` may be neither literature-origin nor list
+`strategy-knowledge` in `evidenceSources`, matching `remediation-report.ts`, where the risk judgement
+is never literature. `evidenceReadIds` stay warehouse-only; the existing validator rejects them on a
+literature claim. Magnitudes and rates are quoted only as reported, with their conditions, and never
+extrapolated to the selected site. Literature is not time-bound, so no freshness max-age applies.
+
+**Literature/strategy-knowledge normalisation.** `messages.parse` gives the graph no correction
+round, so a single mislabelled claim used to fail the whole parse. `Observation` and
+`RemediationRecommendation` each carry a `model_validator(mode="before")` running
+`_pair_literature_provenance` ahead of the strict pairing check: a `literature` claim with a missing
+or empty `evidenceSource` gets `"strategy-knowledge"` filled in, and a `web`/`model_inference` claim
+that cites `"strategy-knowledge"` has that source stripped. It never changes an `evidenceOrigin` or
+touches `evidenceReadIds`, and a genuinely conflicting source (e.g. `literature` + `"soil-phh2o"`)
+still reaches `_require_literature_pairing` and is rejected. This mirrors `pairLiteratureProvenance`
+in `remediation-report.ts`, which runs the same two-way fill/strip ahead of Zod validation.
+
+**A literature claim needs a literature answer from this run.** `/agent/analyze` checks this after
+`synthesize_report` parses the report (`graph.py::literature_answered`). The check needs one ledger
+entry for a `LITERATURE_TOOLS` tool with `state: "answered"` AND `result_count > 0`, from either pass
+-- a reachable service that matched nothing still teaches the model that, but backs no claim, so a
+zero-record answer does not unlock provenance. `result_count` already rides every answered ledger
+entry (`strategy_knowledge.py::ask`): the searches count their `results` list, `get_environmental_strategies`
+counts found `strategies`. The web pass's ledger is kept for this. If no qualifying entry exists,
+every literature claim is downgraded, not rejected
+(`report.py::downgrade_literature_claims`). It becomes `model_inference` with no `evidenceSource`,
+and a `progress` event with status `literature_downgraded` lists the claim paths. Why downgrade:
+
+- With no answered call, the claim can only come from the model's own knowledge, and
+  `model_inference` is the honest label for that.
+- A downgrade only ever weakens provenance.
+- The graph has no correction round, unlike the TypeScript flow, so a rejection would throw away
+  the whole report, warehouse observations included, over one labelling mistake.
+
+**Open item (not implemented): approved-only literature.** The tools pass on every record the service
+returns, whatever its `review_state` (`machine_extracted` included). They label that state but do not
+filter on it. An approved-only filter, like the one `species_information` applies to companion
+evidence, is still owed. It would go either in the service or in the `strategy_knowledge.py`
+projection.
+
 ## Selection evidence and RAG contract (2026-09-20)
 
 `list_environmental_layers` discovers every map surface, including non-slider botanical,
@@ -106,7 +231,7 @@ and disclose when their data is current-only or cannot answer that day.
 The retired generic agent tool vocabulary and its deletion evidence are recorded in
 `conductor/tracks/repository_conformity_hardening_20260901/signal-tool-retirement.md`.
 The single `WAREHOUSE_TOOLS` registry exposes catalogue discovery, selection evidence, metadata,
-botanical evidence, and the caller-scoped species lookup.
+botanical evidence, the caller-scoped species lookup, and the three strategy-knowledge literature tools.
 
 ## Topology
 
@@ -255,11 +380,16 @@ A grid cell containing the coordinate is still a cell measurement, not a point m
 `remediation[]`, `professionalConsultation`. The enum members are the Python projection of
 `src/lib/regional-intelligence.ts`, which stays the single definition; drift is a contract
 break, and `test_report_rejects_a_vocabulary_the_frontend_cannot_render` is the tripwire.
+`test_agent_strategy_knowledge.py::test_the_typescript_vocabulary_matches_the_python_projection`
+asserts full equality: exact order for `EVIDENCE_ORIGINS`, and set equality for
+`REGIONAL_EVIDENCE_SOURCES` and `REGIONAL_TOOL_EVIDENCE_SOURCES`. It found `groundwater` missing
+here on 2026-09-26.
 The camelCase field names carry a file-level `ruff: noqa: N815` for exactly this reason —
 these are wire names, not Python identifiers we are free to restyle.
 
 Report claim sources also accept the 39 map data surface names through
-`RegionalClaimEvidenceSource`. The nine initial-context freshness keys remain a separate
+`RegionalClaimEvidenceSource`. The `literature` origin and `strategy-knowledge` source belong to the
+strategy-knowledge tools; see "Strategy knowledge (literature) tools" above. The nine initial-context freshness keys remain a separate
 contract; accepting a surface citation does not create a timestamp or affirm a measurement.
 The TypeScript live flow attaches its optional server evidence ledger after model report
 validation. Historical reports without that ledger remain valid and retain their original data.
@@ -355,7 +485,7 @@ for supplying an exact UUID and receive the same bounded response contract.
 
 The graph is an opinionated consumer: it decides in Python whether the public web is warranted,
 budgets searches, and forces a structured report. `agent/mcp_server.py` is the unopinionated one.
-It lists the same six tools over MCP stdio and calls them, carrying none of that policy, because a
+It lists the same `WAREHOUSE_TOOLS` over MCP stdio and calls them, carrying none of that policy, because a
 second quiet copy of the sufficiency gate is the way the two surfaces start disagreeing.
 
 Neither surface owns a schema. `agent/llm.py::tool_schemas` reads `.name`, `.description` and
@@ -363,6 +493,24 @@ Neither surface owns a schema. `agent/llm.py::tool_schemas` reads `.name`, `.des
 `tools[].function` shape; `mcp_server.tool_descriptors` renames one field to MCP's `inputSchema`. A
 parameter added to a tool therefore appears on both surfaces without either being edited, and the
 docstring that already documents the caps and the four-state contract is what the model reads.
+
+**A rejected call says which argument broke which rule.** `beta_async_tool` re-raises pydantic's
+`ValidationError` as a bare `ValueError("Invalid arguments for function X")`, which a model cannot act
+on. A live Gemini eval gave up after one. `llm.py::argument_error_detail` walks the exception's
+`__cause__`/`__context__` chain and renders each error as `location: message`, for example
+`site_profile.day: Extra inputs are not permitted`. It caps the list at 8 errors and 600 characters,
+and it never echoes input values (`include_input=False`; a key name in a location is capped at 60
+characters). Three paths use it:
+
+| Path | Where the detail goes |
+|---|---|
+| `llm.execute_tool_call` | `detail` beside the existing `error` and `tool` keys |
+| `routes/agent_tools.py` | `detail` on the 400 `invalid_tool_arguments` body, beside `tool`, `error` and `code` |
+| MCP `tools/call` | appended to the `isError` text |
+
+The live map agent sees the bridge's `detail` only if `regional-evidence-tools.ts` relays the 400
+body. Today `fetchBoundedJson` throws on any non-2xx, so the model reads a generic "read failed".
+The graph's Anthropic runner renders the SDK's `repr(exc)` and is not covered.
 
 **The provider is a second, separate credential.** `ANTHROPIC_API_KEY` drives `/agent/analyze`;
 `AGENT_LLM_*` drives the MCP surface's CLI harness. They are not interchangeable in either

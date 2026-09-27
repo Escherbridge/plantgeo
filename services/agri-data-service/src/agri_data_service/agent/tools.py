@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Final
 from anthropic import beta_async_tool
 from pydantic import Field
 
-from agri_data_service.agent import parquet_reads, warehouse
+from agri_data_service.agent import parquet_reads, strategy_knowledge, warehouse
 from agri_data_service.agent.botanical_occurrences import (
     botanical_occurrence_current_release,
 )
@@ -1694,6 +1694,171 @@ async def surface_evidence_for_selection(  # noqa: PLR0913 - public selection co
     )
 
 
+# --- Strategy knowledge (literature) -----------------------------------------------
+#
+# Coordinate-free reads of the private strategy-knowledge service. The client, refusals, projection and
+# `literature_tool` (a `beta_async_tool` with a provider-portable schema) live in `agent/strategy_knowledge.py`;
+# these three only publish the signature and record the ledger row.
+# row_count is always 0: literature is never a measured surface, and graph.py's `_METADATA_TOOLS`
+# exempts all three from the sufficiency gate. See agent/AGENTS.md, "Strategy knowledge (literature) tools".
+
+
+async def _literature_answer(
+    tool_name: str,
+    service_tool: strategy_knowledge.ServiceTool,
+    arguments: dict[str, Any],
+    *,
+    site_profile_ignored: Sequence[dict[str, str]] = (),
+) -> str:
+    """Call the literature service, record a zero-row literature ledger entry, and render the payload.
+
+    `site_profile_ignored` -- the site_profile keys `sanitize_site_profile` dropped, and why -- rides
+    on the envelope and the note beside whatever the service answered or refused, so the model learns
+    which of its own hints were unusable without the call itself failing over them.
+    """
+    answer = await strategy_knowledge.ask(tool_name, service_tool, arguments)
+    payload = answer.payload
+    if site_profile_ignored:
+        payload = {
+            **payload,
+            "site_profile_ignored": list(site_profile_ignored),
+            "note": (
+                f"{payload['note']} site_profile_ignored names each site_profile key this call could "
+                "not use -- an unknown key or a value outside its range -- and why; every other filter "
+                "and every valid site_profile key were still applied."
+            ),
+        }
+    _record(tool_name, 0, answer.ledger_detail)
+    return _payload(payload)
+
+
+@strategy_knowledge.literature_tool
+async def search_environmental_strategies(  # noqa: PLR0913 - the parameter list is the published tool schema.
+    query: strategy_knowledge.StrategyQuery,
+    goals: strategy_knowledge.GoalFilter = None,
+    land_use: strategy_knowledge.LandUseFilter = None,
+    region: strategy_knowledge.RegionFilter = None,
+    fire_phase: strategy_knowledge.FirePhaseFilter = None,
+    min_evidence: strategy_knowledge.MinimumEvidence = None,
+    site_profile: strategy_knowledge.RawSiteProfile = None,
+    limit: strategy_knowledge.ResultLimit = strategy_knowledge.DEFAULT_RESULTS,
+) -> str:
+    """Rank literature-grounded strategies for a land need: water, drought, soil, erosion, fire, carbon, yield.
+
+    Needs NO date, coordinate or map layer. Call it directly for any "what should we do" or "how can
+    we" question (e.g. "keep crops going with less irrigation water"), ideally after reading local
+    evidence with the other tools; never ask the user for dates first. Returns strategies reported by
+    cited guidance and research (ids, names, summaries, goals, fire phase, evidence strength). They are
+    literature, NOT measurements at this site: cite anything used with evidenceOrigin "literature" and
+    evidenceSource "strategy-knowledge", never with evidenceReadIds. Follow up with
+    get_environmental_strategies (actions, citations) and search_strategy_research_findings (reported
+    effects). A typed refusal (strategy_knowledge_*) says nothing about whether a strategy exists.
+
+    Args:
+        query: The land need in plain language, e.g. "reduce irrigation water use on cropland in drought".
+        goals: Optional outcomes to keep; published enum values only.
+        land_use: Optional land uses to keep; 'general' and untagged strategies always pass.
+        region: Optional geographic regions to keep; published enum values only, e.g. "pnw_westside"
+            or ["pnw_westside", "pnw_inland"]. A single value may be given as a plain string.
+        fire_phase: Optional wildfire phases to keep; only wildfire strategies carry a phase.
+        min_evidence: Optional weakest evidence strength to keep, from ai_synthesis_only (weakest) to
+            review_or_meta_analysis (strongest).
+        site_profile: Optional MEASURED site facts only, using just these keys: slope_pct, soil_ph,
+            sand_pct, clay_pct, soil_organic_carbon_pct, electrical_conductivity_ds_m, burn_severity,
+            days_since_fire, annual_precip_mm, land_cover, region. Never the selected day, coordinates,
+            a date range or a surface/layer name. Omit the object, or any key, you did not read.
+        limit: Strategies to return, 1-10.
+    """
+    sanitized = strategy_knowledge.sanitize_site_profile(site_profile)
+    return await _literature_answer(
+        "search_environmental_strategies",
+        "search_strategies",
+        strategy_knowledge.service_arguments(
+            query=query,
+            goals=goals,
+            land_use=land_use,
+            region=region,
+            fire_phase=fire_phase,
+            min_evidence=min_evidence,
+            site_profile=sanitized.profile,
+            limit=limit,
+        ),
+        site_profile_ignored=sanitized.ignored,
+    )
+
+
+@strategy_knowledge.literature_tool
+async def get_environmental_strategies(strategy_ids: strategy_knowledge.StrategyIds) -> str:
+    """Read full literature records for one to five strategies found by search_environmental_strategies.
+
+    Needs NO date, coordinate or map layer, only strategy ids. Each record carries its summary, actions,
+    application rate and timing as the source states them, slope guidance, soil conditions, scale, cost
+    and labor, benefits, risks and limitations, evidence strength, and citations (title, URL). Unknown
+    ids come back in not_found. This is literature, NOT a measurement at this site: cite it with
+    evidenceOrigin "literature" and evidenceSource "strategy-knowledge", never with evidenceReadIds,
+    and quote rates exactly as reported.
+
+    Args:
+        strategy_ids: One to five strategy_id values copied exactly from a search result.
+    """
+    return await _literature_answer(
+        "get_environmental_strategies",
+        "get_strategy",
+        strategy_knowledge.service_arguments(ids=strategy_ids),
+    )
+
+
+@strategy_knowledge.literature_tool
+async def search_strategy_research_findings(  # noqa: PLR0913 - the parameter list is the published tool schema.
+    query: strategy_knowledge.StrategyQuery,
+    goals: strategy_knowledge.GoalFilter = None,
+    region: strategy_knowledge.RegionFilter = None,
+    strategy_id: strategy_knowledge.OptionalStrategyId = None,
+    min_evidence: strategy_knowledge.MinimumEvidence = None,
+    site_profile: strategy_knowledge.RawSiteProfile = None,
+    limit: strategy_knowledge.ResultLimit = strategy_knowledge.DEFAULT_RESULTS,
+) -> str:
+    """Search research findings from the strategy literature: reported, reviewed or measured effects.
+
+    Needs NO date, coordinate or map layer; call it directly when asked how well a practice works.
+    Each finding carries a paraphrased claim, its conditions, effect direction, the magnitude exactly
+    as reported (or null), study type, evidence strength, linked strategy ids, a verbatim excerpt and
+    its source title and URL. Findings describe other sites and studies: they are NOT measurements at
+    this site and NOT predictions for it. Report a magnitude only as reported, with its conditions,
+    never extrapolated here. Cite with evidenceOrigin "literature" and evidenceSource
+    "strategy-knowledge", never with evidenceReadIds. A typed refusal says nothing about whether a
+    finding exists.
+
+    Args:
+        query: The effect or question in plain language, e.g. "straw mulch effect on post-fire erosion".
+        goals: Optional outcomes to keep; published enum values only.
+        region: Optional geographic regions to keep; published enum values only, e.g. "pnw_westside"
+            or ["pnw_westside", "pnw_inland"]. A single value may be given as a plain string.
+        strategy_id: Optional strategy_id from a strategy result; keeps only findings linked to it.
+        min_evidence: Optional weakest evidence strength to keep.
+        site_profile: Optional MEASURED site facts only, using just these keys: slope_pct, soil_ph,
+            sand_pct, clay_pct, soil_organic_carbon_pct, electrical_conductivity_ds_m, burn_severity,
+            days_since_fire, annual_precip_mm, land_cover, region. Never the selected day, coordinates,
+            a date range or a surface/layer name. Omit the object, or any key, you did not read.
+        limit: Findings to return, 1-10.
+    """
+    sanitized = strategy_knowledge.sanitize_site_profile(site_profile)
+    return await _literature_answer(
+        "search_strategy_research_findings",
+        "search_findings",
+        strategy_knowledge.service_arguments(
+            query=query,
+            goals=goals,
+            region=region,
+            strategy_id=strategy_id,
+            min_evidence=min_evidence,
+            site_profile=sanitized.profile,
+            limit=limit,
+        ),
+        site_profile_ignored=sanitized.ignored,
+    )
+
+
 WAREHOUSE_TOOLS: Final = (
     list_environmental_layers,
     surface_evidence_for_selection,
@@ -1701,4 +1866,7 @@ WAREHOUSE_TOOLS: Final = (
     observation_temporal_neighbors,
     species_information,
     botanical_occurrence_current_release,
+    search_environmental_strategies,
+    get_environmental_strategies,
+    search_strategy_research_findings,
 )

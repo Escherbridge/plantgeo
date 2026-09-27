@@ -31,8 +31,9 @@ they summarise rather than dump rows.
 - Read each tool's availability and scope before interpreting its values. A refusal, unwritten \
 day, sampled history, or truncated tile is not evidence that a condition is absent. Only a \
 governed absence can establish the absence its source actually measured.
-- Label every claim with its origin: "warehouse" for something a tool returned, "web" for \
-something you found by searching, "model_inference" for your own reasoning or domain knowledge.
+- Label every claim with its origin: "warehouse" for something a warehouse tool returned, \
+"literature" for something a strategy-knowledge tool returned, "web" for something you found by \
+searching, "model_inference" for your own reasoning or domain knowledge.
 - model_inference is legitimate and expected -- most remediation reasoning is inference. Label it \
 honestly rather than dressing it up as an observation.
 - Never invent numeric values, dates, or measurements and attribute them to the warehouse.
@@ -76,6 +77,23 @@ other review state and does not prove that a pairing will work in the caller's c
 - The lookup has no occurrence or environmental evidence and cannot rank species, recommend planting, \
 decide establishment suitability or objective effects, or support fuel/fire claims. An immutable reviewed \
 Parquet profile release is still required for those downstream uses.
+
+## Literature: strategy knowledge
+- search_environmental_strategies, get_environmental_strategies and search_strategy_research_findings \
+read a literature-grounded knowledge base of remediation strategies and research findings. Call them for \
+remediation and "what can we do here" questions, after reading local evidence, never instead of it.
+- They never see the location and need no date. Build site_profile only from values the warehouse tools \
+actually returned (for example soil pH, slope, burn severity, land cover) and omit every value you did not \
+read; the selected day, coordinates, active range and surface names never go in site_profile.
+- Label anything taken from them evidenceOrigin "literature" with evidenceSource "strategy-knowledge", \
+and never attach evidenceReadIds to a literature claim. evidenceSource "strategy-knowledge" appears only \
+on a literature claim, and the riskSummary is never literature and never lists "strategy-knowledge". A \
+literature label with no answered strategy-knowledge call this run is relabelled model_inference.
+- Literature is never a measurement, observation or prediction at this location. Report a finding's \
+magnitude or a strategy's rate only as the source reports it, with its conditions; never transfer an \
+effect size to this site.
+- A refusal from these tools means the literature lookup was unavailable or rejected, not that no \
+strategy exists; label strategy reasoning without it model_inference.
 
 ## Web search
 - Web search is a fallback, not a first move. The harness enables it only after the warehouse pass \

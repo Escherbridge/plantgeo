@@ -1,0 +1,85 @@
+[
+  {
+    "id": "boise-foothills-post-fire",
+    "longitude": -116.13,
+    "latitude": 43.66,
+    "question": "A hillside above my property in the Boise foothills burned two weeks ago, and winter rains are coming soon. How do I stop it from eroding down onto the road below before the rain hits?",
+    "expect_strategy_tool": true,
+    "expected_family_ids": [
+      "post-fire-mulching",
+      "post-fire-erosion-barriers",
+      "post-fire-reseeding",
+      "hydrophobic-soil-treatment"
+    ],
+    "forbidden_strategy_ids": [],
+    "notes": "Post-fire erosion-control window; any one of the four families is a correct retrieval. Real member ids: post-fire-straw-mulching, contour-log-erosion-barriers, post-fire-grass-reseeding-rocky-mountain, break-hydrophobic-soil-layer (strategy_registry.json)."
+  },
+  {
+    "id": "western-wa-sour-pasture",
+    "longitude": -122.95,
+    "latitude": 46.66,
+    "question": "Our pasture soil in western Washington tests sour and forage yields have been sliding for a couple of seasons. What should we do to fix the soil chemistry?",
+    "expect_strategy_tool": true,
+    "expected_family_ids": [
+      "soil-chemistry-correction"
+    ],
+    "forbidden_strategy_ids": [
+      "elemental-sulfur-soil-acidification"
+    ],
+    "notes": "Sour pasture soil is acidic; the correct move raises pH (lime-application-acidic-soils, agricultural-liming-carbon-removal, both family soil-chemistry-correction). elemental-sulfur-soil-acidification LOWERS pH and would make the problem worse -- it is in the same family and must be forbidden by id, not by family."
+  },
+  {
+    "id": "owyhee-cheatgrass",
+    "longitude": -116.9,
+    "latitude": 42.9,
+    "question": "Cheatgrass takes over our Owyhee County rangeland after every fire and keeps crowding out the native perennial grasses. How do we restore perennial cover for good?",
+    "expect_strategy_tool": true,
+    "expected_family_ids": [
+      "invasive-annual-grass-control",
+      "post-fire-reseeding",
+      "revegetation-and-species-selection",
+      "post-fire-weed-control"
+    ],
+    "forbidden_strategy_ids": [],
+    "notes": "Real member ids: till-burn-herbicide-reseed-invasive-annual-grass, climate-matched-sagebrush-seed-source-post-fire-restoration, weather-centric-rangeland-revegetation-planning, post-fire-noxious-weed-control (family post-fire-weed-control, families.json)."
+  },
+  {
+    "id": "palouse-wheat-carbon",
+    "longitude": -117.18,
+    "latitude": 46.73,
+    "question": "Our Palouse wheat farm wants to build soil carbon and cut erosion on these hillsides. What practices should we adopt?",
+    "expect_strategy_tool": true,
+    "expected_family_ids": [
+      "cover-cropping",
+      "tillage-reduction",
+      "biochar-soil-application",
+      "crop-rotation-diversification"
+    ],
+    "forbidden_strategy_ids": [],
+    "notes": "Real member ids: cover-cropping-organic-matter-maintenance, reduced-tillage-no-till, biochar-soil-amendment-cropland, diversified-crop-rotation."
+  },
+  {
+    "id": "treasure-valley-water-cut",
+    "longitude": -116.56,
+    "latitude": 43.58,
+    "question": "Our irrigation allocation in the Treasure Valley was cut this summer. What can we do to keep the crop alive on less water?",
+    "expect_strategy_tool": true,
+    "expected_family_ids": [
+      "irrigation-water-management",
+      "mulch-and-residue-cover",
+      "soil-water-conditioning-amendments"
+    ],
+    "forbidden_strategy_ids": [],
+    "notes": "Real member ids: climate-informed-deficit-irrigation-scheduling-sorghum, organic-mulch-moisture-weed-control, soil-surfactant-application-irrigation-penetration."
+  },
+  {
+    "id": "control-max-temperature",
+    "longitude": -116.2,
+    "latitude": 43.6,
+    "question": "What was the maximum air temperature here on the selected day?",
+    "expect_strategy_tool": false,
+    "expected_family_ids": [],
+    "forbidden_strategy_ids": [],
+    "notes": "Control: a pure warehouse-measurement question with no restoration decision in it anywhere. Any strategy-tool call here is a false positive -- the model reaching for literature when a warehouse read answers the question."
+  }
+]

@@ -27,13 +27,18 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
-from pydantic import SecretStr
+from pydantic import BaseModel, ConfigDict, SecretStr, ValidationError
 
 from agri_data_service.agent import tools as agent_tools
 from agri_data_service.agent.llm import (
+    MAX_ARGUMENT_ERROR_CHARACTERS,
+    MAX_ARGUMENT_ERRORS,
     LlmProviderError,
     OpenAiCompletionsClient,
+    _canonical_tool_name,
+    argument_error_detail,
     execute_tool_call,
+    tool_error_payload,
     tool_schemas,
 )
 from agri_data_service.agent.mcp_server import (
@@ -223,6 +228,84 @@ async def test_a_tool_call_round_trips_from_the_provider_through_the_warehouse_a
     assert [entry["tool"] for entry in ledger] == [COVERAGE_TOOL]
 
 
+# --- The `default_api.` prefix a provider may echo back ----------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw_name", "expected"),
+    [
+        (f"default_api.{COVERAGE_TOOL}", COVERAGE_TOOL),
+        (COVERAGE_TOOL, COVERAGE_TOOL),
+        ("default_api.no_such_tool", "default_api.no_such_tool"),
+        ("default_api.", "default_api."),
+    ],
+)
+def test_canonical_tool_name_strips_the_prefix_only_over_a_registered_remainder(raw_name: str, expected: str) -> None:
+    assert _canonical_tool_name(raw_name) == expected
+
+
+async def test_a_default_api_prefixed_tool_name_is_dispatched_to_the_real_tool() -> None:
+    """Live eval (gemini-2.5-flash-lite): Gemini called `default_api.search_environmental_strategies`,
+    its own Python-style call site, instead of the published tool name."""
+    async with agent_tools.run_context(warehouse_source=FakeAgentWarehouse()):
+        answer = await execute_tool_call(
+            {
+                "id": "call_default_api",
+                "type": "function",
+                "function": {"name": f"default_api.{COVERAGE_TOOL}", "arguments": json.dumps(COVERAGE_ARGUMENTS)},
+            }
+        )
+    assert answer["name"] == COVERAGE_TOOL, "the canonical name, not the provider's raw string"
+    payload = json.loads(answer["content"])
+    assert payload["error"] == "parquet_availability_withheld"
+
+
+async def test_a_default_api_prefix_over_an_unknown_remainder_still_errors_by_name() -> None:
+    answer = await execute_tool_call(
+        {"id": "call_x", "type": "function", "function": {"name": "default_api.no_such_tool", "arguments": "{}"}}
+    )
+    assert answer["name"] == "default_api.no_such_tool"
+    assert "no warehouse tool named 'default_api.no_such_tool'" in json.loads(answer["content"])["error"]
+
+
+async def test_a_default_api_prefixed_call_records_the_canonical_name_in_the_ledger_and_transcript() -> None:
+    turns: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        turns.append(body)
+        if len(turns) == 1:
+            return httpx.Response(
+                200,
+                json=completion(
+                    {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {
+                                    "name": f"default_api.{COVERAGE_TOOL}",
+                                    "arguments": json.dumps(COVERAGE_ARGUMENTS),
+                                },
+                            }
+                        ],
+                    }
+                ),
+            )
+        return httpx.Response(200, json=completion({"role": "assistant", "content": "answered"}))
+
+    client = client_answering(handler)
+    async with agent_tools.run_context(warehouse_source=FakeAgentWarehouse()) as ledger:
+        outcome = await client.converse([{"role": "user", "content": "is vegetation covered on 2026-03-14?"}])
+
+    assert outcome["tool_calls"] == [{"tool": COVERAGE_TOOL, "arguments": COVERAGE_ARGUMENTS}]
+    tool_message = next(message for message in outcome["transcript"] if message.get("role") == "tool")
+    assert tool_message["name"] == COVERAGE_TOOL
+    assert [entry["tool"] for entry in ledger] == [COVERAGE_TOOL]
+
+
 async def test_an_unknown_tool_name_answers_the_model_instead_of_raising() -> None:
     answer = await execute_tool_call(
         {"id": "call_x", "type": "function", "function": {"name": "no_such_tool", "arguments": "{}"}}
@@ -236,6 +319,56 @@ async def test_unparseable_arguments_answer_the_model_instead_of_raising() -> No
         {"id": "call_y", "type": "function", "function": {"name": COVERAGE_TOOL, "arguments": "{not json"}}
     )
     assert "JSONDecodeError" in json.loads(answer["content"])["error"]
+
+
+async def test_a_schema_rejection_names_each_argument_without_echoing_its_value() -> None:
+    """The bare SDK "Invalid arguments" left a model unable to self-correct; `detail` says what broke."""
+    arguments = {"day": "2026-03-14", "latitude": 42.912345}
+    answer = await execute_tool_call(
+        {"id": "call_z", "type": "function", "function": {"name": COVERAGE_TOOL, "arguments": json.dumps(arguments)}}
+    )
+    payload = json.loads(answer["content"])
+    assert set(payload) == {"error", "tool", "detail"}
+    assert payload["tool"] == COVERAGE_TOOL
+    assert payload["error"] == f"ValueError: Invalid arguments for function {COVERAGE_TOOL}"
+    assert "surface_name: " in payload["detail"]
+    assert "latitude: " in payload["detail"]
+    assert "42.912345" not in answer["content"]
+
+
+async def test_a_schema_rejection_detail_is_bounded() -> None:
+    too_many = {f"unexpected_argument_{index}_{'x' * 80}": index for index in range(20)}
+    answer = await execute_tool_call(
+        {"id": "call_b", "type": "function", "function": {"name": COVERAGE_TOOL, "arguments": json.dumps(too_many)}}
+    )
+    detail = json.loads(answer["content"])["detail"]
+    assert len(detail) <= MAX_ARGUMENT_ERROR_CHARACTERS
+    assert detail.count(": ") <= MAX_ARGUMENT_ERRORS
+    assert "x" * 61 not in detail, "a model-invented key is capped, never echoed whole"
+
+
+class StrictArguments(BaseModel):
+    """A closed argument model for the cause-chain test."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    limit: int
+
+
+def test_the_detail_is_found_on_the_cause_chain_and_absent_for_other_errors() -> None:
+    with pytest.raises(ValidationError) as caught:
+        StrictArguments.model_validate({"limit": "many", "extra": 1})
+    wrapped = ValueError("Invalid arguments for function probe")
+    wrapped.__cause__ = caught.value
+    detail = argument_error_detail(wrapped)
+    assert detail is not None
+    assert "limit: " in detail
+    assert "extra: Extra inputs are not permitted" in detail
+    assert "many" not in detail
+    assert argument_error_detail(ValueError("plain")) is None
+    assert "detail" not in tool_error_payload("probe", KeyError("no such tool"))
+    direct = tool_error_payload("probe", caught.value)
+    assert direct["error"] == "ValidationError: invalid arguments", "a ValidationError's str() quotes the input"
 
 
 # --- The MCP surface ---------------------------------------------------------------
@@ -305,6 +438,9 @@ async def test_arguments_the_schema_rejects_answer_iserror_rather_than_crashing(
     )
     assert response is not None
     assert response["result"]["isError"] is True
+    text = response["result"]["content"][0]["text"]
+    assert text.startswith(f"ValueError: Invalid arguments for function {COVERAGE_TOOL} -- ")
+    assert "surface_name: " in text
 
 
 async def test_an_unknown_tool_is_invalid_params_and_names_what_exists() -> None:
