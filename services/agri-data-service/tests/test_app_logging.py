@@ -10,17 +10,19 @@ import json
 from typing import TYPE_CHECKING
 
 from agri_data_service import app as app_module
+from agri_data_service.config import settings
 
 if TYPE_CHECKING:
     import pytest
 
-    from agri_data_service.app import AgriApp
-
 
 def test_web_process_lines_are_redacted_json(
-    app: AgriApp, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    del app  # building it is what calls create_app(), which is what this test is really about
+    # A developer .env with SANIC_DEBUG=true selects the console renderer; pin the production path.
+    monkeypatch.setattr(settings, "sanic_debug", False)
+    app_module.create_app()  # building the app is what calls configure_logging, the subject here
+    capsys.readouterr()  # drop app-construction output; only the canary line is under test
     monkeypatch.setenv("SOME_SERVICE_API_KEY", "supersecretvalue123")
     app_module.logger.info("web_process_canary_event", token="supersecretvalue123")
     captured = capsys.readouterr()
