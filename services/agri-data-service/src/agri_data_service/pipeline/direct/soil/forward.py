@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Final
 
 from agri_data_service.config import settings
 from agri_data_service.db.engine import local_source_loader_session
+from agri_data_service.execution.open_meteo_lane import date_range
 from agri_data_service.foundation.parquet.paths import partition_day_statuses
 from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct import (
@@ -41,14 +42,18 @@ from agri_data_service.pipeline.direct.soil.adapter import (
 from agri_data_service.pipeline.direct.soil.products import (
     ERA5_LAND_ARCHIVE_FRONTIER_LOOKBACK_DAYS,
     SOIL_DEFAULT_TIME_BUDGET_SECONDS,
+    SOIL_DISTINCT_PUBLICATION_CLOCKS,
     SOIL_PRODUCT_IDS,
     products_for,
 )
 from agri_data_service.pipeline.direct.soil.source import (
     ERA5_LAND_CHUNK_CELL_COUNT,
+    SoilEdgeProbe,
     SoilSourceCache,
+    SoilSourceError,
     SoilTimeBudgetExhaustedError,
     fetch_soil_day,
+    probe_soil_edge,
     support_chunks,
 )
 from agri_data_service.pipeline.direct.soil.support import ERA5_LAND_SUPPORT_CELL_COUNT, load_era5_land_support
@@ -84,7 +89,7 @@ if TYPE_CHECKING:
 SOIL_DIRECT_ALL_TIERS: Final[tuple[ZoomTier, ...]] = (LANE_BASE_ZOOM_TIER, *DERIVED_ZOOM_TIERS)
 SOIL_DIRECT_RUN_ID_PREFIX: Final = "soil-era5-land-forward:"
 SOIL_DEFAULT_MAX_DAYS: Final = 1
-SOIL_MAX_DAYS: Final = 5
+SOIL_MAX_DAYS: Final = 1
 SOIL_MAX_TIME_BUDGET_SECONDS: Final = 3_000.0
 SOIL_DEFAULT_RETRY_ATTEMPTS: Final = 4
 SOIL_MAX_RETRY_ATTEMPTS: Final = 10
@@ -106,6 +111,10 @@ SOIL_BACKLOG_SCAN_DAYS: Final = 400
 #: would spend every turn re-fetching days that settled years ago. Rechecks are queued BEHIND real
 #: gaps, so they can never starve a day that has no data at all.
 SOIL_ABSENCE_RECHECK_DAYS: Final = 14
+#: Logical requests `probe_soil_edge` spends: one two-location, fourteen-day request. See `soil/AGENTS.md`.
+SOIL_EDGE_PROBE_REQUESTS: Final = 1
+#: The probe's window is exactly `SOIL_ABSENCE_RECHECK_DAYS` wide; see `soil/AGENTS.md`.
+SOIL_EDGE_PROBE_WINDOW_DAYS: Final = SOIL_ABSENCE_RECHECK_DAYS
 #: The one outcome a bounded turn reports instead of failing when its wall clock runs out.
 SOIL_TIME_BUDGET_OUTCOME: Final = TIME_BUDGET_EXHAUSTED
 #: The outcome an all-null day reports when nothing proves the mirror has moved past it. Not a
@@ -173,17 +182,9 @@ class SoilForwardConfig:
 
     @property
     def request_budget(self) -> int:
-        """Cap this turn's upstream chunk requests.
-
-        Counted in CHUNKS, not cells: one archive request carries fifty locations and every
-        variable, so a day costs `ceil(1568 / 50) = 32` requests no matter how many products are
-        selected. The `+ 1` in the ceiling expression is integer-ceiling arithmetic. One additional
-        day in the source's bounded lookback funds unsettled-frontier discovery: an all-null candidate
-        does not spend a `max_days` slot, so every permitted probe and the older publication days must
-        fit under this same hard request bound. All eight products share fetched days and one clock.
-        """
+        """Cap this turn's upstream chunk requests (in chunks, not cells) plus its one probe; see `soil/AGENTS.md`."""
         chunks_per_day = -(-ERA5_LAND_SUPPORT_CELL_COUNT // ERA5_LAND_CHUNK_CELL_COUNT)
-        return chunks_per_day * (self.max_days + SOIL_UNSETTLED_FRONTIER_SKIPS)
+        return chunks_per_day * self.max_days + SOIL_EDGE_PROBE_REQUESTS
 
 
 class SoilForwardConfigError(ValueError):
@@ -223,9 +224,24 @@ async def run_soil_forward(config: SoilForwardConfig) -> dict[str, object]:
         support = await load_era5_land_support(session)
         chunks = support_chunks(support)
         await session.rollback()
+        # ONE SETTLEMENT READ FOR THE WHOLE RUN. All eight products key to the same publication
+        # clock (checked below), so one probe answers "has the archive moved past the edge" for
+        # every one of them; see `soil/AGENTS.md`, "Candidate publication edge and unsettled frontier".
+        if SOIL_DISTINCT_PUBLICATION_CLOCKS != 1:
+            raise SoilSourceError("the run-level probe assumes every soil product shares one settled edge")
+        ceiling = settled_through(products[0], today=today)
+        edge_probe = await probe_soil_edge(
+            support=support,
+            window_first=ceiling - timedelta(days=SOIL_EDGE_PROBE_WINDOW_DAYS - 1),
+            window_last=ceiling,
+            cache=cache,
+            deadline=deadline,
+        )
         for product in products:
             if time.monotonic() >= deadline:
-                results.append(_skipped(product, today=today, outcome=SOIL_TIME_BUDGET_OUTCOME))
+                results.append(
+                    _skipped(product, today=today, outcome=SOIL_TIME_BUDGET_OUTCOME, probe_status=edge_probe.status)
+                )
                 continue
             results.append(
                 await _publish_product(
@@ -241,6 +257,7 @@ async def run_soil_forward(config: SoilForwardConfig) -> dict[str, object]:
                     deadline=deadline,
                     availability_storage=availability_storage,
                     availability=availability,
+                    edge_probe=edge_probe,
                 )
             )
 
@@ -252,6 +269,16 @@ async def run_soil_forward(config: SoilForwardConfig) -> dict[str, object]:
         "streams": [product.stream for product in products],
         "request_budget": cache.request_budget,
         "requests_spent": cache.requests_spent,
+        "weighted_calls": cache.weighted_calls,
+        "fetch_attempts": cache.fetch_attempts,
+        "http_requests": cache.http_requests,
+        "probe": {
+            "status": edge_probe.status,
+            "window_first": edge_probe.window_first.isoformat(),
+            "window_last": edge_probe.window_last.isoformat(),
+            "valued_days": sorted(day.isoformat() for day in edge_probe.valued_days),
+            "detail": edge_probe.detail,
+        },
         **availability.to_summary(),
         "results": results,
     }
@@ -259,7 +286,7 @@ async def run_soil_forward(config: SoilForwardConfig) -> dict[str, object]:
     return report
 
 
-async def _publish_product(  # noqa: PLR0913 - the store, product, support, cache, clock and budget are distinct
+async def _publish_product(  # noqa: PLR0913 - the store, product, support, cache, clock, budget and probe are distinct
     session: AsyncSession,
     store: ObjectStore,
     product: SoilFieldProduct,
@@ -273,12 +300,16 @@ async def _publish_product(  # noqa: PLR0913 - the store, product, support, cach
     deadline: float,
     availability_storage: AvailabilityStorage,
     availability: AvailabilityExtensionTally,
+    edge_probe: SoilEdgeProbe | None = None,
 ) -> dict[str, object]:
     """Take one product's turn: census its owed window, then publish at most `max_days` days.
 
     A candidate-edge day refused as source-unsettled does not spend a publication slot. The walk
     may step backward within `SOIL_UNSETTLED_FRONTIER_SKIPS` and try older owed days under the ordinary
     request and time bounds. A provider deferral does spend the slot and stops the walk.
+
+    `edge_probe` is the run's one settlement read; `None` means fully ungated (only the frontier unit
+    tests pass it) -- see `soil/AGENTS.md`, "The invalid gate".
 
     THE OWED LEDGER IS DRAINED FIRST, once per product per run. Nothing else retries these claims:
     `retry_pending_availability` is otherwise called only from `run_gap_fill`, and activating
@@ -288,7 +319,9 @@ async def _publish_product(  # noqa: PLR0913 - the store, product, support, cach
     """
     ceiling = settled_through(product, today=today)
     if ceiling < product.history_floor:
-        return _skipped(product, today=today, outcome="not_yet_settled")
+        # No census read yet, so report the run's own probe status, not a per-product derived one.
+        probe_status = "invalid" if edge_probe is None else edge_probe.status
+        return _skipped(product, today=today, outcome="not_yet_settled", probe_status=probe_status)
     retried = await _retry_owed_availability(
         session,
         store,
@@ -299,15 +332,34 @@ async def _publish_product(  # noqa: PLR0913 - the store, product, support, cach
     )
     first_day = max(product.history_floor, ceiling - timedelta(days=SOIL_BACKLOG_SCAN_DAYS - 1))
     statuses = await asyncio.to_thread(_tier_status_window, store, product, first_day, ceiling)
-    backlog = _pending_days(product, statuses)
+    base_tier = statuses[LANE_BASE_ZOOM_TIER]
+    effective_status = "invalid" if edge_probe is None else _effective_probe_status(edge_probe, base_tier)
+    newest_data_day = max((day for day, status in base_tier.items() if status == "data"), default=None)
+    pending, rechecks = _owed_and_recheck_days(product, statuses)
+    backlog = (*pending, *rechecks)
+    recheck_days = frozenset(rechecks)
     published: list[dict[str, object]] = []
     unsettled_frontier_days: list[date] = []
+    probe_gated_days: list[date] = []
     for day in backlog:
-        if len(published) - len(unsettled_frontier_days) >= config.max_days:
+        if len(published) - len(unsettled_frontier_days) - len(probe_gated_days) >= config.max_days:
             break
         if time.monotonic() >= deadline:
             published.append(_stopped_day(day, outcome=SOIL_TIME_BUDGET_OUTCOME, detail="before the day started"))
             break
+        gate = _probe_gate(
+            day,
+            edge_probe=edge_probe,
+            effective_status=effective_status,
+            is_recheck=day in recheck_days,
+            base_is_data=base_tier.get(day) == "data",
+            newest_data_day=newest_data_day,
+        )
+        if gate is not None:
+            outcome, detail = gate
+            published.append(_stopped_day(day, outcome=outcome, detail=detail))
+            probe_gated_days.append(day)
+            continue
         await cache.restore(chunks, day, deadline=deadline)
         if time.monotonic() >= deadline:
             published.append(_stopped_day(day, outcome=SOIL_TIME_BUDGET_OUTCOME, detail="after checkpoint restore"))
@@ -343,7 +395,7 @@ async def _publish_product(  # noqa: PLR0913 - the store, product, support, cach
     return {
         "layer": product.stream,
         "product": product.product_id,
-        "outcome": _product_outcome(backlog, published),
+        "outcome": _product_outcome(backlog, published, probe_gated_days=probe_gated_days),
         "source_unsettled_days": sum(1 for day in published if day["outcome"] == SOIL_SOURCE_UNSETTLED_OUTCOME),
         "unsettled_frontier_days": [day.isoformat() for day in unsettled_frontier_days],
         "history_floor": product.history_floor.isoformat(),
@@ -352,18 +404,86 @@ async def _publish_product(  # noqa: PLR0913 - the store, product, support, cach
         "scan_first_day": first_day.isoformat(),
         "backlog_days": len(backlog),
         "availability_retried_days": retried,
+        "probe_status": effective_status,
+        "probe_gated_days": [day.isoformat() for day in probe_gated_days],
         "days": published,
     }
 
 
-def _product_outcome(backlog: Sequence[date], published: Sequence[Mapping[str, object]]) -> str:
-    """Report the turn's material result, including the bound that stopped it after a frontier."""
+def _effective_probe_status(edge_probe: SoilEdgeProbe, census: Mapping[date, PartitionDayStatus]) -> str:
+    """Derive one product's effective probe status; see `soil/AGENTS.md`, "The probe" status table."""
+    if edge_probe.status != "ok":
+        return edge_probe.status
+    window_days = tuple(date_range(edge_probe.window_first, edge_probe.window_last))
+    data_days = {day for day in window_days if census.get(day) == "data"}
+    if data_days - edge_probe.valued_days:
+        return "invalid"
+    if not edge_probe.valued_days and not data_days:
+        return "blind"
+    return "ok"
+
+
+_PROBE_GATE_DETAIL: Final[Mapping[str, str]] = {
+    "blind": "probe_blind",
+    "unavailable": "probe_unavailable",
+    "deferred": "probe_deferred",
+}
+
+
+#: The probe-invalid gate's own outcome/detail pair; see `soil/AGENTS.md`.
+_PROBE_INVALID_GATE: Final = (SOIL_SOURCE_UNSETTLED_OUTCOME, "probe_invalid")
+
+
+def _probe_gate(  # noqa: PLR0913 - the day, probe, its derived status and two per-day census facts are distinct
+    day: date,
+    *,
+    edge_probe: SoilEdgeProbe | None,
+    effective_status: str,
+    is_recheck: bool,
+    base_is_data: bool,
+    newest_data_day: date | None,
+) -> tuple[str, str] | None:
+    """Return the (outcome, detail) the probe gates `day` with, or `None` to walk it normally; see `soil/AGENTS.md`."""
+    if edge_probe is None or base_is_data:
+        return None
+    if effective_status == "invalid":
+        if newest_data_day is not None and day > newest_data_day:
+            return _PROBE_INVALID_GATE
+        return None
+    if not edge_probe.window_first <= day <= edge_probe.window_last:
+        return None
+    if effective_status == "ok":
+        if day in edge_probe.valued_days:
+            return None
+        detail = "absence_unchanged" if is_recheck else "newer_than_probed_edge"
+    else:
+        detail = _PROBE_GATE_DETAIL[effective_status]
+    outcome = IDEMPOTENT_NOOP if is_recheck else SOIL_SOURCE_UNSETTLED_OUTCOME
+    return outcome, detail
+
+
+def _product_outcome(
+    backlog: Sequence[date],
+    published: Sequence[Mapping[str, object]],
+    *,
+    probe_gated_days: Sequence[date] = (),
+) -> str:
+    """Report the turn's material result, ignoring probe-gated entries that spent nothing; see `soil/AGENTS.md`."""
     if not backlog or not published:
         return IDEMPOTENT_NOOP
-    if any(day["outcome"] in SOIL_DAY_WROTE_OUTCOMES for day in published):
+    if not probe_gated_days:
+        ungated = list(published)
+    else:
+        gated = {day.isoformat() for day in probe_gated_days}
+        ungated = [entry for entry in published if entry.get("day") not in gated]
+    if not ungated:
+        if all(entry["outcome"] == IDEMPOTENT_NOOP for entry in published):
+            return IDEMPOTENT_NOOP
+        return SOIL_SOURCE_UNSETTLED_OUTCOME
+    if any(entry["outcome"] in SOIL_DAY_WROTE_OUTCOMES for entry in ungated):
         return PUBLISHED
     return next(
-        (str(day["outcome"]) for day in published if day["outcome"] != SOIL_SOURCE_UNSETTLED_OUTCOME),
+        (str(entry["outcome"]) for entry in ungated if entry["outcome"] != SOIL_SOURCE_UNSETTLED_OUTCOME),
         SOIL_SOURCE_UNSETTLED_OUTCOME,
     )
 
@@ -426,8 +546,18 @@ async def _retry_owed_availability(  # noqa: PLR0913 - one coordinate of the pro
     return len(outcomes)
 
 
-def _skipped(product: SoilFieldProduct, *, today: date, outcome: str) -> dict[str, object]:
-    """Report a product that took no turn, naming why rather than reporting an empty success."""
+def _skipped(
+    product: SoilFieldProduct,
+    *,
+    today: date,
+    outcome: str,
+    probe_status: str,
+    probe_gated_days: Sequence[date] = (),
+) -> dict[str, object]:
+    """Report a product that took no turn, naming why rather than reporting an empty success.
+
+    Never reads the census: `probe_status` here is the run's own probe status, not a derived one.
+    """
     return {
         "layer": product.stream,
         "product": product.product_id,
@@ -437,6 +567,8 @@ def _skipped(product: SoilFieldProduct, *, today: date, outcome: str) -> dict[st
         "history_floor": product.history_floor.isoformat(),
         "settled_through": settled_through(product, today=today).isoformat(),
         "publication_lag_days": product.publication_lag_days,
+        "probe_status": probe_status,
+        "probe_gated_days": [day.isoformat() for day in probe_gated_days],
         "days": [],
     }
 
@@ -754,19 +886,20 @@ def _tier_status_day(
     }
 
 
-def _pending_days(
+def _owed_and_recheck_days(
     product: SoilFieldProduct,
     statuses: Mapping[ZoomTier, Mapping[date, PartitionDayStatus]],
-) -> tuple[date, ...]:
-    """Return the owed days newest first, then the recent ABSENCES this turn should re-examine.
+) -> tuple[tuple[date, ...], tuple[date, ...]]:
+    """Split the census into real gaps (newest first) and recent ABSENCES this turn should re-examine.
 
     A governed absence is not permanent evidence -- the archive backfills a day it first answered
     null for -- so the newest `SOIL_ABSENCE_RECHECK_DAYS` of them are re-selected, behind every day
-    that owes real work. See `pipeline/direct/AGENTS.md`.
+    that owes real work. See `pipeline/direct/AGENTS.md`. Two return values, not one merged tuple, so
+    `_publish_product` can tell a real gap from an absence recheck when a probe gates a day.
     """
     days = tuple(statuses[SOIL_DIRECT_ALL_TIERS[0]])
     if not days:
-        return ()
+        return (), ()
     recheck_floor = max(days) - timedelta(days=SOIL_ABSENCE_RECHECK_DAYS - 1)
     pending: list[date] = []
     rechecks: list[date] = []
@@ -784,7 +917,7 @@ def _pending_days(
             continue
         if any(status != "data" for status in rung.values()):
             pending.append(day)
-    return (*pending, *rechecks)
+    return tuple(pending), tuple(rechecks)
 
 
 def _mirrored_past_day(
@@ -902,6 +1035,8 @@ __all__ = [
     "SOIL_DAY_WROTE_OUTCOMES",
     "SOIL_DEFAULT_TIME_BUDGET_SECONDS",
     "SOIL_DIRECT_ALL_TIERS",
+    "SOIL_EDGE_PROBE_REQUESTS",
+    "SOIL_EDGE_PROBE_WINDOW_DAYS",
     "SOIL_MAX_DAYS",
     "SOIL_REQUEST_BUDGET_OUTCOME",
     "SOIL_SOURCE_UNSETTLED_OUTCOME",

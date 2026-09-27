@@ -223,7 +223,10 @@ and it can only run on a day the walk SELECTS. `_pending_days` skipped every day
 the days governed as absent within the newest `SOIL_ABSENCE_RECHECK_DAYS` / `CLIMATE_ABSENCE_RECHECK_DAYS`
 (14) of the scan window. Rechecks come **last**, so a day with no data at all always outranks a day
 that already has an answer, and the window is bounded because re-fetching absences from years ago
-would spend every turn on days that settled long since.
+would spend every turn on days that settled long since. Soil's own selector is
+`forward.py::_owed_and_recheck_days`, which returns the same two lists as a `(pending, rechecks)` pair
+rather than one concatenated tuple, so the settlement probe can gate a real gap and an absence recheck
+with different outcome words; see `soil/AGENTS.md`.
 
 A recheck of a day the source still answers all-null is cheap and safe: the proof that justified the
 original absence is still standing (the later day is still published), so the marker is simply
@@ -278,8 +281,8 @@ at all.
 The per-turn request budget is sized in DAYS, not in product-days: one archive request carries every
 variable for its locations, so eight products asking for the SAME day cost one day's worth of
 requests. `SoilSourceCache` / `ClimateSourceCache` hold the responses per `(chunk|cell, day)` and the
-budget is `chunks_per_day x --max-days` (soil) or `cells x --max-days x distinct publication clocks`
-(climate).
+budget is `chunks_per_day x --max-days + 1` (soil, the `+ 1` funding the settlement probe; see
+`soil/AGENTS.md`) or `cells x --max-days x distinct publication clocks` (climate).
 
 The consequence to plan around: **the budget covers one distinct day across the eight products.** When
 the products agree on which day they owe — the normal case, since they share a publication clock —
@@ -742,10 +745,12 @@ variables for one day, so a settled day costs `ceil(1568 / 50) = 32` requests TO
 eight products, because the cache is keyed `(chunk_key, day)` and not by product. Fifty is the
 `chunk_cell_count` of all three reviewed plans; the endpoint's own ceiling is 200
 (`ingest/open_meteo.py` MAX_ARCHIVE_LOCATIONS_PER_REQUEST). A larger chunk buys fewer round trips at
-NO quota saving -- Open-Meteo weights a request by locations x variables x timesteps, not by count --
-and costs a four-times larger body to lose on one transport error. One settled day is therefore
-1,568 x 8 x 1 = 12,544 weighted units and roughly one to two megabytes of response, once per turn,
-whatever `--product` selects.
+NO quota saving: per the pricing page captured at
+`.omc/research/open-meteo-pricing-20260926.html`, one request costs 1.0 per location at 10 or fewer
+variables and 14 or fewer days (`source.py::open_meteo_request_weight`), NOT locations x variables x
+timesteps -- and a larger chunk still costs a four-times larger body to lose on one transport error.
+One settled day is therefore 1,568 weighted calls and roughly one to two megabytes of response, once
+per turn, whatever `--product` selects.
 
 ### What is reused, and the one thing that is not
 
@@ -803,21 +808,26 @@ whole budget and the executor's SIGKILL would land on a writer holding a session
 ### Entry point
 
 `python -m agri_data_service.pipeline.direct.soil`, with `--product` naming one of `moisture`,
-`temperature`, `vpd` or `all`, `--max-days` (default 1, max 5) days per product per turn,
-`--time-budget-seconds`, `--run-id`, and the bounded retry and contention knobs. Days are taken
-newest-settled-first and one at a time under the lane-day lock; a day already complete at every rung
-is an idempotent no-op. Required runtime variables are the ordinary object-store settings and
-`LOCAL_SOURCE_LOADER_DATABASE_URL` (or its existing fallback). The archive needs no key.
+`temperature`, `vpd` or `all`, `--max-days` (default 1, **max 1** -- the G0 legacy soil cap, spec
+FR-24), `--time-budget-seconds`, `--run-id`, and the bounded retry and contention knobs. Days are
+taken newest-settled-first and one at a time under the lane-day lock; a day already complete at
+every rung is an idempotent no-op. Required runtime variables are the ordinary object-store settings
+and `LOCAL_SOURCE_LOADER_DATABASE_URL` (or its existing fallback). Every turn spends at most 33
+logical requests (32 chunk fan-outs plus one settlement probe); see `soil/AGENTS.md`, "Candidate
+publication edge and unsettled frontier".
+
+Once `OPEN_METEO_API_KEY` is set on the executor, every request this lane makes -- chunk and probe
+alike -- moves to the paid customer archive host in place of the keyless one; the key is read from
+the environment at fetch time and never persists into a checkpoint, a log line or a written row.
 
 The lane extends the availability index the same way the climate writer does, and drains its own owed
 retry claims per product -- activating it deactivates the eight generic
 `parquet-soil-field-*`/`parquet-soil-temperature-*` lanes through `conflicts_with`, so nothing else
 would ever come back for a claim it leaves behind.
 
-The executor lane is `soil-era5-land-direct-forward`, hourly at :50 -- distinct from the climate
-writer at :40, the fire and water writers at :15 and the SoilGrids warmer at :25. IT SHIPS IN
-SHADOW: it is in no active lane list, and activation stays an explicit operator act through the
-executor's allow-list variable.
+This lane is ACTIVE IN PRODUCTION, activated through the executor's allow-list variable like every
+other direct writer (`execution/lane_specs.py`'s own spec description says so). Its cadence and phase
+are not restated here -- see `execution/lane_specs.py`.
 
 ## Drought
 

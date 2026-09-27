@@ -25,11 +25,12 @@ import hashlib
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Literal
 
 from agri_data_service.execution.open_meteo_lane import (
     ISO_DATE_LENGTH,
     bounded_numeric_series,
+    date_range,
     fetch_lane_capture,
     max_grid_offset_degrees,
     nearest_native_grid_point,
@@ -56,7 +57,14 @@ from agri_data_service.pipeline.direct.soil.products import (
     SOIL_DIRECT_SNAPSHOT_PREFIX,
     SOIL_SOURCE_PARAMETERS,
 )
-from agri_data_service.pipeline.direct.soil.support import ERA5_LAND_VALUE_CELL_COUNT
+from agri_data_service.pipeline.direct.soil.support import (
+    ERA5_LAND_SUPPORT_EAST,
+    ERA5_LAND_SUPPORT_NORTH,
+    ERA5_LAND_SUPPORT_SOUTH,
+    ERA5_LAND_SUPPORT_STEP_DEGREES,
+    ERA5_LAND_SUPPORT_WEST,
+    ERA5_LAND_VALUE_CELL_COUNT,
+)
 from agri_data_service.pipeline.parquet.source_checkpoint import (
     SourceCheckpoint,
     SourceCheckpointIdentity,
@@ -78,9 +86,11 @@ if TYPE_CHECKING:
 
 #: Cells per request. 50 is the `chunk_cell_count` of all three reviewed plans, so a forward chunk
 #: asks the provider for exactly the shape four years of history were fetched in. The endpoint's own
-#: ceiling is 200 (`ingest/open_meteo.py` MAX_ARCHIVE_LOCATIONS_PER_REQUEST) and quota is weighted by
-#: locations x variables x timesteps rather than by request count, so a larger chunk would buy fewer
-#: round trips at no quota saving and a four-times larger body to lose on one transport error.
+#: ceiling is 200 (`ingest/open_meteo.py` MAX_ARCHIVE_LOCATIONS_PER_REQUEST) and quota is NOT weighted
+#: by locations x variables x timesteps: per the captured pricing page, one request costs 1.0 per
+#: location at 10 or fewer variables and 14 or fewer days (`open_meteo_request_weight`), so a larger
+#: chunk would buy fewer round trips at no quota saving and a four-times larger body to lose on one
+#: transport error.
 ERA5_LAND_CHUNK_CELL_COUNT: Final = 50
 
 #: Simultaneous chunk requests. Two, matching `open_meteo_lane.DEFAULT_CHUNK_CONCURRENCY`: this is a
@@ -92,6 +102,11 @@ ERA5_LAND_CHUNK_CONCURRENCY: Final = 2
 #: is left as it is rather than narrowed here: the byte cost of a day is stated in
 #: `pipeline/direct/AGENTS.md` and enforced by the same reader the history was fetched through.
 ERA5_LAND_DAY_TIMESTEP_COUNT: Final = 1
+
+#: Locations in one settlement probe request. Two, not one: a one-location Open-Meteo answer is a
+#: bare JSON object, and `execution/open_meteo_lane.py::canonical_location_document` raises
+#: `ValueError` on any non-array body, so the probe needs a second cell purely to stay array-shaped.
+SOIL_EDGE_PROBE_CELL_COUNT: Final = 2
 
 
 class SoilSourceError(RuntimeError):
@@ -146,6 +161,13 @@ class SoilSourceCache:
     request_budget: int
     responses: dict[tuple[str, date], SoilChunkDayResponse] = field(default_factory=dict)
     requests_spent: int = 0
+    #: Weighted Open-Meteo quota cost of every logical request this turn made. See `soil/AGENTS.md`.
+    weighted_calls: float = 0.0
+    #: Fetch-scaffold calls (`fetch_lane_capture` attempts), not wire sends. See `soil/AGENTS.md`.
+    fetch_attempts: int = 0
+    #: Every real HTTP send, including `fetch_bounded`'s internal transport retries and redirects.
+    #: See `soil/AGENTS.md`.
+    http_requests: int = 0
     deferred_refusal: SoilProviderDeferredError | None = None
     checkpoints: SourceResponseCheckpoints | None = None
     restored_days: set[tuple[str, date]] = field(default_factory=set)
@@ -262,6 +284,28 @@ class SoilDaySource:
         return not self.values
 
 
+def open_meteo_request_weight(locations: int, days: int, variables: int) -> float:
+    """One archive request's Open-Meteo quota weight; see `direct/AGENTS.md`, "One archive request per chunk-day"."""
+    return locations * max(1.0, days / 14) * max(1.0, variables / 10)
+
+
+def probe_cells(support: Era5LandSupport) -> tuple[Era5LandSupportCell, Era5LandSupportCell]:
+    """Resolve the two on-lattice cells straddling the extent centre; see `soil/AGENTS.md` for why."""
+    centre_longitude = (ERA5_LAND_SUPPORT_WEST + ERA5_LAND_SUPPORT_EAST) / 2
+    centre_latitude = (ERA5_LAND_SUPPORT_SOUTH + ERA5_LAND_SUPPORT_NORTH) / 2
+    half_step = ERA5_LAND_SUPPORT_STEP_DEGREES / 2
+    probe_latitude = centre_latitude - half_step
+    west = support.resolve(float(centre_longitude - half_step), float(probe_latitude))
+    east = support.resolve(float(centre_longitude + half_step), float(probe_latitude))
+    if west is None or east is None:
+        raise SoilSourceError(
+            f"the probe cells at ({centre_longitude - half_step}, {probe_latitude}) and "
+            f"({centre_longitude + half_step}, {probe_latitude}) are not on the pinned ERA5-Land "
+            "support; the support may have changed shape"
+        )
+    return (west, east)
+
+
 def support_chunks(support: Era5LandSupport) -> tuple[Era5LandChunk, ...]:
     """Cut the ordered support into stable request chunks, refusing a lattice the archive cannot separate.
 
@@ -338,8 +382,9 @@ async def fill_chunk_day_cache(  # noqa: PLR0913 - the day, chunks, cache, clock
             if cache.deferred_refusal is not None:
                 raise cache.deferred_refusal
             cache.requests_spent += 1
+            cache.weighted_calls += open_meteo_request_weight(len(chunk.cells), 1, len(SOIL_SOURCE_PARAMETERS))
             try:
-                response = await _fetch_chunk_day(client, chunk, day=day, now=now, deadline=deadline)
+                response = await _fetch_chunk_day(client, chunk, day=day, now=now, deadline=deadline, cache=cache)
             except SoilProviderDeferredError as error:
                 cache.deferred_refusal = error
                 raise
@@ -354,6 +399,7 @@ async def fill_chunk_day_cache(  # noqa: PLR0913 - the day, chunks, cache, clock
             return response
 
     async with upstream_client(OPEN_METEO_ARCHIVE_BOUNDS) as client:
+        _instrumented(client, cache)
         answers = await asyncio.gather(*(one(chunk, client) for chunk in missing), return_exceptions=True)
 
     failures: list[tuple[Era5LandChunk, BaseException]] = []
@@ -512,7 +558,7 @@ def parse_soil_chunk_body(
             )
         seen_grid_points.add((latitude, longitude))
         daily = _daily_block(location, cell=cell, day=day)
-        _require_named_day(daily, cell=cell, day=day)
+        _require_named_day(daily, cell=cell, days=(day,))
         for parameter in SOIL_SOURCE_PARAMETERS:
             specification = OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS[parameter]
             _require_provider_unit(location, parameter=parameter, cell=cell, day=day)
@@ -610,13 +656,65 @@ def deadline_bounded_sleep(deadline: float | None, *, day: date) -> Callable[[fl
     return waiter
 
 
-async def _fetch_chunk_day(
+def _refuse_after_attempts(day: date) -> Callable[[str, UpstreamError | None, int], Exception]:
+    """Map an exhausted fetch to a deferred-quota or unsettled refusal, naming the day for context.
+
+    Shared by `_capture_chunk` and `probe_soil_edge`'s own `fetch_lane_capture` call: both refuse the
+    same way, and the probe's `chunk_key` argument is the literal string `"edge-probe"`.
+    """
+
+    def refuse(chunk_key: str, cause: UpstreamError | None, attempts: int) -> Exception:
+        error_type = (
+            SoilProviderDeferredError if isinstance(cause, OpenMeteoRateLimitError) else SoilSourceUnsettledError
+        )
+        return error_type(
+            f"the Open-Meteo archive refused {chunk_key} for {day.isoformat()} after {attempts} attempt(s): "
+            f"{type(cause).__name__ if cause is not None else 'no response'}: {cause}"
+        )
+
+    return refuse
+
+
+def _counting_fetch_text(cache: SoilSourceCache) -> Callable[[httpx.AsyncClient, str], Awaitable[str]]:
+    """Return a `fetch_text` closure charging one `fetch_attempts` before the bare-name module fetch."""
+
+    async def counted(client: httpx.AsyncClient, url: str) -> str:
+        cache.fetch_attempts += 1
+        return await fetch_archive_daily(client, url)
+
+    return counted
+
+
+def _count_http_request(cache: SoilSourceCache) -> Callable[[httpx.Request], Awaitable[None]]:
+    """Return an httpx `request` event hook charging one `http_requests` per real send.
+
+    `async def`, not a plain `def`: httpx 0.28's `AsyncClient` awaits every request hook, so a
+    sync hook returns `None` where an awaitable was required and raises `TypeError` on every send.
+    """
+
+    async def hook(_request: httpx.Request) -> None:
+        cache.http_requests += 1
+
+    return hook
+
+
+def _instrumented(client: httpx.AsyncClient, cache: SoilSourceCache) -> httpx.AsyncClient:
+    """Attach the true-send counter to an already-open client, keeping its other hooks."""
+    client.event_hooks = {
+        **client.event_hooks,
+        "request": [*client.event_hooks.get("request", []), _count_http_request(cache)],
+    }
+    return client
+
+
+async def _fetch_chunk_day(  # noqa: PLR0913 - the client, chunk, day, clocks and cache are distinct
     client: httpx.AsyncClient,
     chunk: Era5LandChunk,
     *,
     day: date,
     now: datetime | None,
     deadline: float | None,
+    cache: SoilSourceCache,
 ) -> SoilChunkDayResponse:
     """Issue one bounded chunk request and narrow its body, naming the chunk-day on every refusal."""
     keyless_url = soil_chunk_url(chunk, day=day)
@@ -634,6 +732,7 @@ async def _fetch_chunk_day(
         day=day,
         now=now,
         deadline=deadline,
+        cache=cache,
     )
     return parse_soil_chunk_body(
         chunk,
@@ -644,7 +743,7 @@ async def _fetch_chunk_day(
     )
 
 
-async def _capture_chunk(  # noqa: PLR0913 - the client, chunk, request, day and clocks are distinct
+async def _capture_chunk(  # noqa: PLR0913 - the client, chunk, request, day, clocks and cache are distinct
     client: httpx.AsyncClient,
     chunk: Era5LandChunk,
     *,
@@ -652,18 +751,9 @@ async def _capture_chunk(  # noqa: PLR0913 - the client, chunk, request, day and
     day: date,
     now: datetime | None,
     deadline: float | None,
+    cache: SoilSourceCache,
 ) -> OpenMeteoLaneCapture:
     """Run one chunk through the shared retry/quota policy, translating its failure into a refusal."""
-
-    def refuse(chunk_key: str, cause: UpstreamError | None, attempts: int) -> Exception:
-        error_type = (
-            SoilProviderDeferredError if isinstance(cause, OpenMeteoRateLimitError) else SoilSourceUnsettledError
-        )
-        return error_type(
-            f"the Open-Meteo archive refused {chunk_key} for {day.isoformat()} after {attempts} attempt(s): "
-            f"{type(cause).__name__ if cause is not None else 'no response'}: {cause}"
-        )
-
     return await fetch_lane_capture(
         OPEN_METEO_ARCHIVE_LANE,
         chunk.key,
@@ -671,11 +761,126 @@ async def _capture_chunk(  # noqa: PLR0913 - the client, chunk, request, day and
         # resolved is the whole adaptation, exactly as `fetch_open_meteo_archive_chunk` does it.
         OpenMeteoProductRequest(base_url=request.base_url, request_url=request.request_url),
         client=client,
-        fetch_text=fetch_archive_daily,
-        error_factory=refuse,
+        fetch_text=_counting_fetch_text(cache),
+        error_factory=_refuse_after_attempts(day),
         retrieved_at=now,
         sleep=deadline_bounded_sleep(deadline, day=day),
     )
+
+
+@dataclass(frozen=True, slots=True)
+class SoilEdgeProbe:
+    """One run's settlement read of the archive edge; see `soil/AGENTS.md`, "The probe"."""
+
+    status: Literal["ok", "unavailable", "deferred"]
+    window_first: date
+    window_last: date
+    valued_days: frozenset[date]
+    detail: str | None
+
+
+def _parse_probe_capture(
+    cells: Sequence[Era5LandSupportCell],
+    payload: bytes,
+    *,
+    window_days: Sequence[date],
+) -> frozenset[date]:
+    """Narrow the probe's canonical body to the window days every parameter answered at both cells."""
+    max_offset = max_grid_offset_degrees(OPEN_METEO_ARCHIVE_NATIVE_GRID_DEGREES)
+    locations = ordered_locations(OPEN_METEO_ARCHIVE_LANE, payload, len(cells))
+    valued_at_every_cell: frozenset[date] | None = None
+    for cell, location in zip(cells, locations, strict=True):
+        validated_grid_point(OPEN_METEO_ARCHIVE_LANE, cell.analysis_cell, location, max_offset)
+        daily = _daily_block(location, cell=cell, day=window_days[-1])
+        _require_named_day(daily, cell=cell, days=window_days)
+        valued_here = frozenset(window_days)
+        for parameter in SOIL_SOURCE_PARAMETERS:
+            specification = OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS[parameter]
+            series = bounded_numeric_series(
+                OPEN_METEO_ARCHIVE_LANE,
+                daily,
+                parameter,
+                minimum=specification.minimum,
+                maximum=specification.maximum,
+                expected_count=len(window_days),
+                subject="probe variable",
+            )
+            valued_here &= frozenset(day for day, value in zip(window_days, series, strict=True) if value is not None)
+        valued_at_every_cell = valued_here if valued_at_every_cell is None else valued_at_every_cell & valued_here
+    return valued_at_every_cell if valued_at_every_cell is not None else frozenset()
+
+
+async def probe_soil_edge(  # noqa: PLR0913 - the support, window bounds, cache and clocks are distinct
+    *,
+    support: Era5LandSupport,
+    window_first: date,
+    window_last: date,
+    cache: SoilSourceCache,
+    deadline: float | None,
+    now: datetime | None = None,
+) -> SoilEdgeProbe:
+    """Ask the archive once whether it has moved past `window_last`, never failing the run to answer.
+
+    Only `probe_cells` raising `SoilSourceError` escapes (a changed support is a code error); every
+    upstream or body fault the probe itself can hit becomes `"unavailable"` or `"deferred"`. See
+    `soil/AGENTS.md`, "Candidate publication edge and unsettled frontier".
+    """
+
+    def settled(
+        status: Literal["ok", "unavailable", "deferred"],
+        *,
+        valued_days: frozenset[date],
+        detail: str | None,
+    ) -> SoilEdgeProbe:
+        return SoilEdgeProbe(
+            status=status, window_first=window_first, window_last=window_last, valued_days=valued_days, detail=detail
+        )
+
+    if cache.deferred_refusal is not None:
+        return settled("deferred", valued_days=frozenset(), detail=str(cache.deferred_refusal))
+    try:
+        require_time_remaining(deadline, day=window_last)
+    except SoilTimeBudgetExhaustedError as stop:
+        return settled("unavailable", valued_days=frozenset(), detail=f"{type(stop).__name__}: {stop}")
+    cells = probe_cells(support)
+    window_days = tuple(date_range(window_first, window_last))
+    cache.requests_spent += 1
+    cache.weighted_calls += open_meteo_request_weight(
+        SOIL_EDGE_PROBE_CELL_COUNT, len(window_days), len(SOIL_SOURCE_PARAMETERS)
+    )
+    request = archive_daily_request(
+        [(cell.cell_latitude, cell.cell_longitude) for cell in cells],
+        SOIL_SOURCE_PARAMETERS,
+        window_first,
+        window_last,
+        model=OPEN_METEO_ERA5_LAND_MODEL,
+    )
+    try:
+        async with upstream_client(OPEN_METEO_ARCHIVE_BOUNDS) as client:
+            _instrumented(client, cache)
+            capture = await fetch_lane_capture(
+                OPEN_METEO_ARCHIVE_LANE,
+                "edge-probe",
+                OpenMeteoProductRequest(base_url=request.base_url, request_url=request.request_url),
+                client=client,
+                fetch_text=_counting_fetch_text(cache),
+                error_factory=_refuse_after_attempts(window_last),
+                retrieved_at=now,
+                sleep=deadline_bounded_sleep(deadline, day=window_last),
+            )
+        valued_days = _parse_probe_capture(cells, capture.canonical_payload, window_days=window_days)
+    except SoilProviderDeferredError as error:
+        cache.deferred_refusal = error
+        return settled("deferred", valued_days=frozenset(), detail=str(error))
+    except (
+        SoilSourceUnsettledError,
+        ValueError,
+        ArithmeticError,
+        RecursionError,
+        SoilTimeBudgetExhaustedError,
+    ) as error:
+        return settled("unavailable", valued_days=frozenset(), detail=f"{type(error).__name__}: {error}")
+    return settled("ok", valued_days=valued_days, detail=None)
 
 
 def _daily_block(location: Mapping[str, object], *, cell: Era5LandSupportCell, day: date) -> dict[str, object]:
@@ -697,24 +902,31 @@ def _daily_block(location: Mapping[str, object], *, cell: Era5LandSupportCell, d
     return daily
 
 
-def _require_named_day(daily: Mapping[str, object], *, cell: Era5LandSupportCell, day: date) -> None:
-    """Refuse a body whose daily axis is not exactly the day that was asked for.
+def _require_named_day(daily: Mapping[str, object], *, cell: Era5LandSupportCell, days: Sequence[date]) -> None:
+    """Refuse a body whose daily axis is not exactly `days`, in order -- the publisher's own ISO prefix.
 
-    THE DAY IS THE PUBLISHER'S OWN ISO PREFIX, never an instant recast into a local calendar --
-    mirrors `_archive_days`, and the reason `time_zone` is pinned to GMT on every request.
+    Never an instant recast into a local calendar -- mirrors `_archive_days`, and the reason
+    `time_zone` is pinned to GMT on every request. One day for a chunk, the whole window for the
+    probe; see `soil/AGENTS.md`.
     """
     raw = daily.get("time")
-    if not isinstance(raw, list) or len(raw) != ERA5_LAND_DAY_TIMESTEP_COUNT:
+    if not isinstance(raw, list) or len(raw) != len(days):
+        window = days[0].isoformat() if len(days) == 1 else f"{days[0].isoformat()}..{days[-1].isoformat()}"
         raise SoilSourceUnsettledError(
-            f"the archive location for {cell.cell_key!r} on {day.isoformat()} does not carry exactly "
-            f"{ERA5_LAND_DAY_TIMESTEP_COUNT} daily timestep(s)"
+            f"the archive location for {cell.cell_key!r} on {window} does not carry exactly "
+            f"{len(days)} daily timestep(s)"
         )
-    named = raw[0]
-    if not isinstance(named, str) or len(named) < ISO_DATE_LENGTH or named[:ISO_DATE_LENGTH] != day.isoformat():
-        raise SoilSourceUnsettledError(
-            f"the archive answered day {named!r} for support cell {cell.cell_key!r} when "
-            f"{day.isoformat()} was asked for"
+    for expected, named in zip(days, raw, strict=True):
+        malformed = (
+            not isinstance(named, str)
+            or len(named) < ISO_DATE_LENGTH
+            or named[:ISO_DATE_LENGTH] != expected.isoformat()
         )
+        if malformed:
+            raise SoilSourceUnsettledError(
+                f"the archive answered day {named!r} for support cell {cell.cell_key!r} when "
+                f"{expected.isoformat()} was asked for"
+            )
 
 
 def _require_provider_unit(
@@ -751,10 +963,12 @@ __all__ = [
     "ERA5_LAND_CHUNK_CELL_COUNT",
     "ERA5_LAND_CHUNK_CONCURRENCY",
     "ERA5_LAND_DAY_TIMESTEP_COUNT",
+    "SOIL_EDGE_PROBE_CELL_COUNT",
     "Era5LandChunk",
     "SoilCellValue",
     "SoilChunkDayResponse",
     "SoilDaySource",
+    "SoilEdgeProbe",
     "SoilProviderDeferredError",
     "SoilSourceCache",
     "SoilSourceError",
@@ -765,7 +979,10 @@ __all__ = [
     "deadline_bounded_sleep",
     "fetch_soil_day",
     "fill_chunk_day_cache",
+    "open_meteo_request_weight",
     "parse_soil_chunk_body",
+    "probe_cells",
+    "probe_soil_edge",
     "receipt_clock",
     "soil_chunk_url",
     "soil_day_from_cache",

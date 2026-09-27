@@ -163,6 +163,49 @@ def chunk_body(
     return canonical_location_document(OPEN_METEO_ARCHIVE_LANE, json.dumps(locations).encode("utf-8"))
 
 
+def probe_location(
+    cell: Era5LandSupportCell,
+    *,
+    days: Sequence[date],
+    valued_days: Sequence[date],
+    ordinal: int,
+) -> dict[str, Any]:
+    """Render one probe location spanning the whole recheck window, in the shape `probe_soil_edge` parses.
+
+    A multi-day sibling of `location_object`: every window day gets its own `daily["time"]` entry, and
+    a day outside `valued_days` is null for every parameter, exactly as an unproven candidate edge is.
+    """
+    latitude, longitude = native_grid_point(cell)
+    valued = frozenset(valued_days)
+    daily: dict[str, Any] = {"time": [day.isoformat() for day in days]}
+    for parameter in SOIL_SOURCE_PARAMETERS:
+        daily[parameter] = [DEFAULT_PARAMETER_VALUE if day in valued else None for day in days]
+    location: dict[str, Any] = {
+        "latitude": latitude,
+        "longitude": longitude,
+        "elevation": SAMPLE_ELEVATION_METRES,
+        # Stripped by `canonical_location_document`; present because the provider always sends it.
+        "generationtime_ms": 0.123,
+        "utc_offset_seconds": 0,
+        "timezone": "GMT",
+        "timezone_abbreviation": "GMT",
+        "daily_units": {"time": "iso8601", **dict.fromkeys(SOIL_SOURCE_PARAMETERS, "unit")},
+        "daily": daily,
+    }
+    if ordinal:
+        # The provider omits `location_id` on the first entry and numbers the rest from 1.
+        location["location_id"] = ordinal
+    return location
+
+
+def probe_body(cells: Sequence[Era5LandSupportCell], *, days: Sequence[date], valued_days: Sequence[date]) -> bytes:
+    """Render the probe's two-location, fourteen-day canonical archive document, through the real canonicalizer."""
+    locations = [
+        probe_location(cell, days=days, valued_days=valued_days, ordinal=ordinal) for ordinal, cell in enumerate(cells)
+    ]
+    return canonical_location_document(OPEN_METEO_ARCHIVE_LANE, json.dumps(locations).encode("utf-8"))
+
+
 def chunk_day_response(
     chunk: Era5LandChunk,
     *,
