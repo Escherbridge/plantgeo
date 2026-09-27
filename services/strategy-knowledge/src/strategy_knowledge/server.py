@@ -8,7 +8,7 @@ description the calling model reads. One tool table serves MCP (stdio or `/mcp`)
 import inspect
 import logging
 from collections.abc import AsyncIterator, Callable, Mapping
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass
 from typing import Annotated, Any, Final
 
@@ -32,6 +32,7 @@ from strategy_knowledge.queries import (
     PassageSearch,
     StrategySearch,
 )
+from strategy_knowledge.query_intent import MAXIMUM_CONTEXT_QUERY_CHARACTERS
 from strategy_knowledge.search import DEFAULT_FAMILY_DIVERSITY
 from strategy_knowledge.site_profile import SiteProfile
 from strategy_knowledge.storage import BucketSync
@@ -73,6 +74,16 @@ READ_ONLY: Final = ToolAnnotations(
 )
 
 QueryText = Annotated[str, Field(min_length=1, description="What you are looking for, in plain language.")]
+ContextQuery = Annotated[
+    str | None,
+    Field(
+        max_length=MAXIMUM_CONTEXT_QUERY_CHARACTERS,
+        description=(
+            "Optional: the user's own words (their verbatim question), ranked as a second signal beside query; "
+            "at most 2000 characters."
+        ),
+    ),
+]
 Goals = Annotated[
     list[Goal] | None,
     Field(description="Outcomes wanted; a record matches if it states or infers any of them (stated ranks higher)."),
@@ -198,17 +209,22 @@ class StrategyKnowledgeService:
     slot: LoadedKnowledgeBase
 
 
-def _lifespan(slot: LoadedKnowledgeBase) -> Callable[[MCPServer], Any]:
-    """The session lifespan: rebind `sys.stdout`, then open the knowledge base (AGENTS.md "stdout is the transport").
+def _lifespan(slot: LoadedKnowledgeBase, *, protect_stdout: bool) -> Callable[[MCPServer], Any]:
+    """The session lifespan: open the knowledge base, rebinding `sys.stdout` first when stdio owns fd 1.
 
-    The SDK enters it inside `stdio_server()`, i.e. after the transport claimed fd 1, so the index load and any
-    ONNX model download or stray print land on stderr, never on the wire. Over HTTP the streamable-HTTP session
-    manager enters it once per process (AGENTS.md "HTTP transport").
+    The SDK enters it inside `stdio_server()`, i.e. after the transport claimed fd 1, so `protect_stdout=True`
+    there sends the index load, any ONNX model download or a stray print to stderr, never onto the wire
+    (AGENTS.md "stdout is the transport"). Over HTTP the streamable-HTTP session manager enters this SAME
+    lifespan once per process (AGENTS.md "HTTP transport"), but HTTP never claims fd 1 as a wire and
+    `log_access_event` (`http_app.py`) is contracted to write its JSON lines to REAL stdout for the process's
+    whole lifetime (AGENTS.md "Observability") -- so `protect_stdout=False` there leaves `sys.stdout` alone
+    (2026-09-27 review: the shared lifespan used to rebind it unconditionally, which silently sent every HTTP
+    access-log line to stderr instead).
     """
 
     @asynccontextmanager
     async def lifespan(_server: MCPServer) -> AsyncIterator[None]:
-        with reserved_stdout():
+        with reserved_stdout() if protect_stdout else nullcontext():
             slot.value = await anyio.to_thread.run_sync(slot.loader)
             logger.info("serving %s (corpus %s)", SERVER_NAME, slot.value.index_corpus_version or "never fully built")
             yield
@@ -254,6 +270,7 @@ def _tool_functions(slot: LoadedKnowledgeBase) -> tuple[Callable[..., dict[str, 
         ] = None,
         site_profile: SiteValues = None,
         min_evidence: MinimumEvidence = None,
+        context_query: ContextQuery = None,
         family_diversity: Annotated[
             int,
             Field(ge=0, le=MAXIMUM_FAMILY_DIVERSITY, description="Max strategies per family (default 2; 0 = no cap)."),
@@ -267,8 +284,9 @@ def _tool_functions(slot: LoadedKnowledgeBase) -> tuple[Callable[..., dict[str, 
         goals (stated vs inferred), fire_phase, evidence strength and rank, citation_count, review_state and
         score, plus the filters and site-profile derivation actually applied, and the strategies held back by
         the per-family cap (open them with get_family). Page with offset = next_offset; truncated = true means
-        the fixed candidate pool ran out before the page did (narrow the query or filters). Next: get_strategy
-        for full records and citations, compare_strategies to choose between candidates.
+        the fixed candidate pool ran out before the page did (narrow the query or filters). query_intent echoes
+        the lay terms, pH direction, soil-condition boosts and lexical expansion read from query + context_query.
+        Next: get_strategy for full records and citations, compare_strategies to choose between candidates.
         """
         request = StrategySearch(
             query=query,
@@ -281,6 +299,7 @@ def _tool_functions(slot: LoadedKnowledgeBase) -> tuple[Callable[..., dict[str, 
             fire_phase=fire_phase or [],
             site_profile=site_profile,
             min_evidence=min_evidence,
+            context_query=context_query,
             family_diversity=family_diversity,
             limit=limit,
             offset=offset,
@@ -328,6 +347,7 @@ def _tool_functions(slot: LoadedKnowledgeBase) -> tuple[Callable[..., dict[str, 
             Field(description="Keep findings whose effect direction on the response is this."),
         ] = None,
         strategy_id: Annotated[str | None, Field(description="Keep findings linked to this strategy.")] = None,
+        context_query: ContextQuery = None,
         limit: Limit = DEFAULT_LIMIT,
         offset: Offset = 0,
     ) -> dict[str, Any]:
@@ -347,6 +367,7 @@ def _tool_functions(slot: LoadedKnowledgeBase) -> tuple[Callable[..., dict[str, 
             study_type=study_type or [],
             direction=direction,
             strategy_id=strategy_id,
+            context_query=context_query,
             limit=limit,
             offset=offset,
         )
@@ -418,15 +439,20 @@ def build_tool_table(slot: LoadedKnowledgeBase) -> ToolTable:
     return ToolTable({tool.name: tool for tool in tools})
 
 
-def build_service(load_knowledge_base: Callable[[], KnowledgeBase]) -> StrategyKnowledgeService:
-    """The MCP server over the shared tool table; the knowledge base is opened by the server lifespan, not here."""
+def build_service(
+    load_knowledge_base: Callable[[], KnowledgeBase], *, protect_stdout: bool = True
+) -> StrategyKnowledgeService:
+    """The MCP server over the shared tool table; the knowledge base is opened by the server lifespan, not here.
+
+    `protect_stdout` defaults to True (the stdio contract); HTTP serving passes False -- see `_lifespan`.
+    """
     slot = LoadedKnowledgeBase(load_knowledge_base)
     table = build_tool_table(slot)
     server: MCPServer = MCPServer(
         SERVER_NAME,
         instructions=INSTRUCTIONS,
         version=SERVER_VERSION,
-        lifespan=_lifespan(slot),
+        lifespan=_lifespan(slot, protect_stdout=protect_stdout),
         tools=list(table.tools.values()),
     )
     return StrategyKnowledgeService(server=server, tools=table, slot=slot)

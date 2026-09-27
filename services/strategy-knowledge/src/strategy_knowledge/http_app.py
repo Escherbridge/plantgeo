@@ -1,11 +1,15 @@
 """The HTTP transport: `/health`, `/ready`, `POST /v1/tools/{tool_name}` and MCP streamable HTTP at `/mcp`.
 
-One Starlette app over the same tool table and knowledge-base slot the stdio server uses. See AGENTS.md sections
-"HTTP transport" and "Deploy (Railway)".
+One Starlette app over the same tool table and knowledge-base slot the stdio server uses. JSON access-log lines
+go to stdout and a `limit_concurrency` cap fails excess load fast; see AGENTS.md sections "HTTP transport",
+"Observability" and "Deploy (Railway)".
 """
 
 import json
 import logging
+import re
+import time
+import uuid
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from functools import partial
@@ -15,9 +19,12 @@ import anyio.to_thread
 import uvicorn
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
+from starlette.datastructures import Headers, MutableHeaders
+from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Mount, Route
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from strategy_knowledge.config import Settings
 from strategy_knowledge.server import (
@@ -37,6 +44,59 @@ TOOL_PATH: Final = "/v1/tools/{tool_name}"
 LOOPBACK_HOSTS: Final = ("127.0.0.1", "localhost", "[::1]")
 #: Railway private-network name of this service (contract C2); `RAILWAY_PRIVATE_DOMAIN` is added at run time too.
 RAILWAY_SERVICE_HOST: Final = "plantgeo-strategy-knowledge.railway.internal"
+#: Echoed on every response; taken from the caller when present (AGENTS.md "Observability").
+REQUEST_ID_HEADER: Final = "X-Request-ID"
+#: A caller-sent request id must look like this or it is replaced with a generated one (AGENTS.md "Observability"):
+#: an unbounded or odd-charset header would otherwise land in every log line for the request's lifetime.
+REQUEST_ID_PATTERN: Final = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+
+
+def log_access_event(event: str, /, **fields: Any) -> None:
+    """One compact JSON line to real stdout: HTTP-mode observability never carries query or passage text."""
+    print(json.dumps({"event": event, **fields}, separators=(",", ":")))
+
+
+class AccessLogMiddleware:
+    """Assigns/echoes `X-Request-ID` and logs one `mcp_request` line per `/mcp` call (AGENTS.md "Observability").
+
+    A raw ASGI middleware, not `BaseHTTPMiddleware`: the mounted MCP app's response is read straight through to
+    `send`, so nothing here buffers or reshapes it. The id is exposed to route handlers via `scope["state"]`,
+    which `Request.state` reads (Starlette's own mechanism for passing per-request context without middleware
+    subclassing).
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        caller_request_id = Headers(scope=scope).get(REQUEST_ID_HEADER)
+        request_id = (
+            caller_request_id
+            if caller_request_id and REQUEST_ID_PATTERN.fullmatch(caller_request_id)
+            else uuid.uuid4().hex
+        )
+        scope.setdefault("state", {})["request_id"] = request_id
+        is_mcp_request = scope["path"].startswith(MCP_PATH)
+        started = time.perf_counter()
+        status: dict[str, int] = {}
+
+        async def send_with_request_id(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                status["code"] = message["status"]
+                MutableHeaders(scope=message).append(REQUEST_ID_HEADER, request_id)
+            await send(message)
+
+        await self.app(scope, receive, send_with_request_id)
+        if is_mcp_request:
+            log_access_event(
+                "mcp_request",
+                status=status.get("code"),
+                ms=round((time.perf_counter() - started) * 1000, 1),
+                request_id=request_id,
+            )
 
 
 def transport_security(extra_hosts: Iterable[str] = ()) -> TransportSecuritySettings:
@@ -107,29 +167,56 @@ def build_http_app(service: StrategyKnowledgeService, *, extra_allowed_hosts: It
         )
 
     async def call_tool(request: Request) -> Response:
-        """One MCP tool over plain HTTP: the JSON body is its arguments, the response its exact MCP JSON text."""
-        body = await read_capped_body(request)
-        if body is None:
-            return _error(413, error="request_too_large", limit_bytes=MAXIMUM_REQUEST_BYTES)
+        """One MCP tool over plain HTTP: the JSON body is its arguments, the response its exact MCP JSON text.
+
+        Logs exactly one `tool_call` line to stdout per call (AGENTS.md "Observability"): never the arguments or
+        the answer, only the outcome, timing, served corpus_version and request id. The log happens in a
+        `finally` so a body read that raises before any `finish()` call (a client disconnecting mid-stream) is
+        still counted, as `aborted`, instead of leaving the call with no record at all.
+        """
+        started = time.perf_counter()
         name = request.path_params["tool_name"]
-        if name not in service.tools:
-            return _error(404, error="unknown_tool", tools=service.tools.names)
-        if service.slot.value is None:
-            return _error(503, error="not_ready")
-        response: Response
+        request_id = getattr(request.state, "request_id", None)
+        logged_status: str | None = None
+
+        def finish(response: Response, status: str) -> Response:
+            nonlocal logged_status
+            logged_status = status
+            return response
+
+        def log(status: str) -> None:
+            knowledge_base = service.slot.value
+            log_access_event(
+                "tool_call",
+                tool=name,
+                status=status,
+                ms=round((time.perf_counter() - started) * 1000, 1),
+                corpus_version=knowledge_base.index_corpus_version if knowledge_base is not None else None,
+                request_id=request_id,
+            )
+
         try:
-            arguments = parse_arguments(body)
-            text = await anyio.to_thread.run_sync(partial(_call_and_render, service, name, arguments))
-        except ToolArgumentsError as error:
-            response = _error(400, error="invalid_arguments", detail=str(error))
-        except KnowledgeBaseNotLoadedError:
-            response = _error(503, error="not_ready")
-        except Exception:
-            logger.exception("tool %s failed", name)
-            response = _error(500, error="internal_error")
-        else:
-            response = Response(text, media_type="application/json")
-        return response
+            body = await read_capped_body(request)
+            if body is None:
+                oversized = _error(413, error="request_too_large", limit_bytes=MAXIMUM_REQUEST_BYTES)
+                return finish(oversized, "request_too_large")
+            if name not in service.tools:
+                return finish(_error(404, error="unknown_tool", tools=service.tools.names), "unknown_tool")
+            if service.slot.value is None:
+                return finish(_error(503, error="not_ready"), "not_ready")
+            try:
+                arguments = parse_arguments(body)
+                text = await anyio.to_thread.run_sync(partial(_call_and_render, service, name, arguments))
+            except ToolArgumentsError as error:
+                return finish(_error(400, error="invalid_arguments", detail=str(error)), "invalid_arguments")
+            except KnowledgeBaseNotLoadedError:
+                return finish(_error(503, error="not_ready"), "not_ready")
+            except Exception:
+                logger.exception("tool %s failed", name)
+                return finish(_error(500, error="internal_error"), "internal_error")
+            return finish(Response(text, media_type="application/json"), "ok")
+        finally:
+            log(logged_status if logged_status is not None else "aborted")
 
     @asynccontextmanager
     async def lifespan(_app: Starlette) -> AsyncIterator[None]:
@@ -143,7 +230,8 @@ def build_http_app(service: StrategyKnowledgeService, *, extra_allowed_hosts: It
         Route(TOOL_PATH, call_tool, methods=["POST"]),
         Mount("/", app=mcp_app),
     ]
-    return Starlette(routes=routes, lifespan=lifespan)
+    middleware = [Middleware(AccessLogMiddleware)]
+    return Starlette(routes=routes, middleware=middleware, lifespan=lifespan)
 
 
 def _call_and_render(service: StrategyKnowledgeService, name: str, arguments: dict[str, Any]) -> str:
@@ -152,7 +240,23 @@ def _call_and_render(service: StrategyKnowledgeService, name: str, arguments: di
 
 
 def serve_http(settings: Settings, *, host: str, port: int, pull_from_bucket: bool = False) -> None:
-    """Serve HTTP with uvicorn; a failed pull or a stale pulled index fails startup and exits 3, never serving."""
-    service = build_service(lambda: load_serving_knowledge_base(settings, pull_from_bucket=pull_from_bucket))
+    """Serve HTTP with uvicorn; a failed pull or a stale pulled index fails startup and exits 3, never serving.
+
+    `limit_concurrency` (AGENTS.md "Observability") caps concurrent requests; uvicorn answers 503 to whatever
+    arrives past the cap instead of queuing it behind a slow tool call.
+    """
+    # protect_stdout=False: HTTP never claims fd 1 as a wire, and `log_access_event` below is contracted to
+    # write real stdout for the process's whole lifetime (AGENTS.md "Observability") -- see `server._lifespan`.
+    service = build_service(
+        lambda: load_serving_knowledge_base(settings, pull_from_bucket=pull_from_bucket), protect_stdout=False
+    )
     app = build_http_app(service, extra_allowed_hosts=settings.allowed_hosts)
-    uvicorn.run(app, host=host, port=port, lifespan="on", log_config=None, server_header=False)
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        lifespan="on",
+        log_config=None,
+        server_header=False,
+        limit_concurrency=settings.limit_concurrency,
+    )

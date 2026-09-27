@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any, Final
 import structlog
 
 from agri_data_service.agent import tools as warehouse_tools
-from agri_data_service.agent.llm import tool_by_name, tool_error_payload, tool_schemas
+from agri_data_service.agent.llm import INSTRUCTIONS, tool_by_name, tool_error_payload, tool_schemas
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -42,24 +42,10 @@ SERVER_VERSION: Final = "0.1.0"
 SUPPORTED_PROTOCOL_VERSIONS: Final = ("2024-11-05", "2025-03-26", "2025-06-18")
 DEFAULT_PROTOCOL_VERSION: Final = SUPPORTED_PROTOCOL_VERSIONS[-1]
 
-INSTRUCTIONS: Final = (
-    "Bounded, read-only PlantGeo data reads. Environmental tools use governed Parquet. "
-    "For every map layer, discover names with list_environmental_layers and use "
-    "surface_evidence_for_selection with the actual selected coordinate, zoom, day, time scale "
-    "and inclusive active range. Retrieve numeric support containing or intersecting its map tile; "
-    "history is paginated across the full range and incomplete pages do not prove a trend. "
-    "species_information requires an exact Species UUID and returns explicitly unpublished, "
-    "unverified authoring values plus approved-only companion evidence; it never ranks species "
-    "or recommends planting. search_environmental_strategies, get_environmental_strategies and "
-    "search_strategy_research_findings return literature-grounded strategies and findings from the "
-    "strategy-knowledge service, never measurements at a location. They need no dates or coordinates: "
-    "call them directly for 'what can we do' questions, put only measured site facts in site_profile "
-    "(never a day, coordinate, range or surface name) and cite them as literature. Every tool caps "
-    "its own work and reports its evidence posture. A tool "
-    "that cannot honestly answer returns a typed refusal -- lane_columns_absent, "
-    "parquet_availability_withheld, day_not_written -- rather than an empty result; read the "
-    "refusal, do not treat it as 'no data here'."
-)
+# `INSTRUCTIONS` is imported, not defined here: the text now lives in `agent/llm.py` (see that
+# module's docstring on the constant) so `llm.agent_system_message` can build the same system
+# message without an `agent.llm` <-> `agent.mcp_server` import cycle. `mcp_server.INSTRUCTIONS`
+# still resolves for every existing caller/test, unchanged, via this import.
 
 _PARSE_ERROR: Final = -32700
 _INVALID_REQUEST: Final = -32600

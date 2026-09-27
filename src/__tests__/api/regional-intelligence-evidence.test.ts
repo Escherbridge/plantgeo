@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 
-const mocks = vi.hoisted(() => ({ stream: vi.fn(), recordExchange: vi.fn(), assemble: vi.fn() }));
+const mocks = vi.hoisted(() => ({ stream: vi.fn(), recordExchange: vi.fn(), assemble: vi.fn(), history: [] as { role: 'user' | 'assistant'; content: string }[] }));
 vi.mock('@/lib/server/auth', () => ({ getServerSession: async () => ({ user: { id: 'owner' } }) }));
 vi.mock('@/lib/server/services/regional-context', () => ({ assembleRegionalContext: async (...args: unknown[]) => {
   mocks.assemble(...args);
@@ -10,7 +10,7 @@ vi.mock('@/lib/server/services/regional-context', () => ({ assembleRegionalConte
 }; } }));
 vi.mock('@/lib/server/services/ai-prompt', () => ({ streamRegionalIntelligence: mocks.stream }));
 vi.mock('@/lib/server/services/ai-conversations', () => ({
-  openConversation: async () => ({ id: 'saved-conversation', history: [] }), recordExchange: mocks.recordExchange,
+  openConversation: async () => ({ id: 'saved-conversation', history: [...mocks.history] }), recordExchange: mocks.recordExchange,
 }));
 vi.mock('@/lib/server/security/regional-intelligence-access', () => ({
   REGIONAL_INTELLIGENCE_SERVING_STATE: 'active', REGIONAL_INTELLIGENCE_INACTIVE_MESSAGE: 'Unavailable',
@@ -19,7 +19,7 @@ vi.mock('@/lib/server/security/regional-intelligence-access', () => ({
 
 import { POST } from '@/app/api/ai/regional-intelligence/route';
 
-afterEach(() => { vi.unstubAllEnvs(); vi.clearAllMocks(); });
+afterEach(() => { vi.unstubAllEnvs(); vi.clearAllMocks(); mocks.history.splice(0); });
 
 it('streams and persists validated server evidence while retaining the last valid audit', async () => {
   vi.stubEnv('OPENROUTER_API_KEY', 'test-key');
@@ -88,4 +88,24 @@ it('persists scoped references to an observed regional comparison', async () => 
   }));
   expect(await response.text()).toContain('event: done');
   expect(mocks.recordExchange).toHaveBeenCalledWith(expect.objectContaining({ structuredResponse: expect.objectContaining({ observations: report.observations, analysisEvidence: evidence }) }));
+});
+
+it('hands the agent the verbatim sources of the literature question seed: prior turns and this question', async () => {
+  vi.stubEnv('OPENROUTER_API_KEY', 'test-key');
+  const history = [
+    { role: 'user' as const, content: 'My pasture is sour.' },
+    { role: 'assistant' as const, content: 'Historical saved AI answer; as recorded.' },
+  ];
+  mocks.history.push(...history);
+  mocks.stream.mockImplementation(async function* () { yield { type: 'refusal' }; });
+  const response = await POST(new NextRequest('https://plantgeo.test/api/ai/regional-intelligence', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lat: 44, lon: -116, question: '  What can I do about it?  ', locationConsent: { precision: 'approximate', confirmed: true } }),
+  }));
+  await response.text();
+  // ai-prompt.ts builds server_context.user_question from exactly these two arguments.
+  expect(mocks.stream).toHaveBeenCalledWith(
+    expect.objectContaining({ location: { lat: 44, lon: -116, geohash: '9r' } }), {}, true, {},
+    history, 'What can I do about it?', expect.any(AbortSignal),
+  );
 });

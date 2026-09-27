@@ -8,8 +8,8 @@ from conftest import SOURCE_ID, HashingEmbedder, seed_store
 
 from strategy_knowledge.corpus import REGISTRY_FILE, CorpusStore, read_json, write_json
 from strategy_knowledge.index import PASSAGES, STRATEGY_FACETS, Indexer
-from strategy_knowledge.knowledge_base import KnowledgeBase, RequestError, snippet
-from strategy_knowledge.metadata import FACET_TEXT_KEY
+from strategy_knowledge.knowledge_base import CollectionView, KnowledgeBase, RequestError, snippet
+from strategy_knowledge.metadata import FACET_TEXT_KEY, SEARCH_TERMS_KEY
 from strategy_knowledge.queries import FindingSearch, PassageSearch, StrategySearch
 from strategy_knowledge.site_profile import SiteProfile
 from strategy_knowledge.vocabulary import CLAIM_TIER
@@ -177,3 +177,92 @@ def test_filter_semantics_name_every_region_a_filter_admits(knowledge_base: Know
     semantics = " ".join(knowledge_base.list_facets()["filter_semantics"])
     assert "'global'" in semantics
     assert "'north_america_general'" in semantics
+
+
+def test_search_strategies_echoes_query_intent_and_context_use(knowledge_base: KnowledgeBase) -> None:
+    plain = knowledge_base.search_strategies(StrategySearch(query="straw mulch", family_diversity=0))
+    assert plain["context_query_used"] is False
+    assert plain["query_intent"] == {
+        "lay_terms": [],
+        "ph_direction": None,
+        "soil_condition_boosts": [],
+        "expansion_tokens": [],
+    }
+    blank = knowledge_base.search_strategies(StrategySearch(query="straw mulch", context_query="   "))
+    assert blank["context_query_used"] is False
+    burnt = knowledge_base.search_strategies(
+        StrategySearch(query="straw mulch", context_query="the hillside got burnt", family_diversity=0),
+    )
+    assert burnt["context_query_used"] is True
+    assert burnt["query_intent"]["lay_terms"] == ["burnt", "hillside"]
+    assert burnt["query_intent"]["soil_condition_boosts"] == ["burned_high_severity"]
+    assert burnt["boosts"]["query_intent_soil_conditions"] == ["burned_high_severity"]
+    straw = next(row for row in burnt["results"] if row["strategy_id"] == STRAW)
+    assert "soil_burned_high_severity" in straw["boosted_by"]
+
+
+def test_a_context_query_adds_a_second_ranking_signal(knowledge_base: KnowledgeBase) -> None:
+    alone = knowledge_base.search_strategies(StrategySearch(query="soil", family_diversity=0, limit=10))
+    guided = knowledge_base.search_strategies(
+        StrategySearch(query="soil", context_query="biochar for sandy coarse ground", family_diversity=0, limit=10),
+    )
+    assert guided["context_query_used"] is True
+    assert _ids(guided).index(BIOCHAR) <= _ids(alone).index(BIOCHAR)
+    alone_score = next(row["score"] for row in alone["results"] if row["strategy_id"] == BIOCHAR)
+    assert next(row["score"] for row in guided["results"] if row["strategy_id"] == BIOCHAR) > alone_score
+
+
+def test_search_findings_reads_the_context_but_applies_no_soil_boost(knowledge_base: KnowledgeBase) -> None:
+    response = knowledge_base.search_findings(FindingSearch(query="sediment", context_query="burnt hillside"))
+    assert response["context_query_used"] is True
+    assert response["query_intent"]["lay_terms"] == ["burnt", "hillside"]
+    assert response["query_intent"]["soil_condition_boosts"] == []
+    assert "burned" in response["query_intent"]["expansion_tokens"]
+    assert response["results"]
+
+
+def test_bm25_reads_family_text_and_registry_search_terms(tmp_path: Path, embedder: HashingEmbedder) -> None:
+    store = seed_store(tmp_path / "terms")
+    registry = read_json(store.path(REGISTRY_FILE))
+    for row in registry["strategies"]:
+        if row["strategy_id"] == COVER:
+            row["search_terms"] = ["zzyzx hardpan buster"]
+    write_json(store.path(REGISTRY_FILE), registry)
+    Indexer(store, embedder).rebuild_all()
+    terms = KnowledgeBase.open(store, embedder)
+    view = terms.views[STRATEGY_FACETS]
+    cover_documents = [identifier for identifier, row in view.metadatas.items() if row["strategy_id"] == COVER]
+    assert cover_documents
+    for identifier in cover_documents:
+        assert view.metadatas[identifier][SEARCH_TERMS_KEY] == (
+            "Cover cropping|Living cover between cash crops.|zzyzx hardpan buster"
+        )
+    assert {identifier.split("::")[0] for identifier in view.lexical.search("zzyzx", None, 10)} == {COVER}
+    assert _ids(terms.search_strategies(StrategySearch(query="zzyzx", limit=1))) == [COVER]
+
+
+class _IndexBeforeSearchTerms:
+    """A collection whose metadata predates `search_terms`, as in the index published before this key existed."""
+
+    def get(self, include: list[str]) -> dict[str, Any]:
+        """Four facet rows with keywords but no search_terms key."""
+        assert "metadatas" in include
+        ids = ["a::overview", "b::overview", "c::overview", "d::overview"]
+        return {
+            "ids": ids,
+            "documents": [
+                "Straw mulch (overview): cover",
+                "Biochar (overview): char",
+                "Rye (overview): cover",
+                "Gypsum (overview): calcium",
+            ],
+            "metadatas": [{"strategy_id": identifier[0], "keywords": "bales"} for identifier in ids[:1]]
+            + [{"strategy_id": identifier[0]} for identifier in ids[1:]],
+        }
+
+
+def test_an_index_built_before_search_terms_still_loads_and_ranks() -> None:
+    view = CollectionView.load(_IndexBeforeSearchTerms())  # type: ignore[arg-type]
+    assert view.size == 4
+    assert view.lexical.search("bales", None, 5) == ["a::overview"]
+    assert view.lexical.search("straw", None, 5) == ["a::overview"]

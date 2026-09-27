@@ -44,6 +44,46 @@ EXCERPT_WINDOW_AFTER: Final = 2
 REPORTED_LINE_SAMPLE: Final = 6
 #: A number as a magnitude states it: digits with optional decimal or thousands separators ("1.5", "1,000").
 NUMBER_TOKEN: Final = re.compile(r"\d+(?:[.,]\d+)*")
+#: Text that addresses an AI or model with instructions (prompt injection); AGENTS.md "Validation".
+INSTRUCTION_TEXT_PATTERNS: Final = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        (
+            r"\b(?:ignore|disregard|forget|override)\s+(?:all\s+|any\s+)?(?:the\s+|your\s+)?"
+            r"(?:previous|prior|above|earlier|preceding|system)\s+(?:instructions?|prompts?|messages?|rules|context)\b"
+        ),
+        (
+            r"\byou\s+are\s+(?:now\s+)?(?:an?\s+)?(?:ai|a\.i\.|large\s+language\s+model|language\s+model|llm|"
+            r"chatbot|ai\s+assistant|assistant)\b"
+        ),
+        r"\bas\s+an\s+ai(?:\s+language)?\s+model\b",
+        # "system:" is left out: PDF line wraps put it at a line start ("...in your\nsystem: planted ...").
+        r"(?:^|\n)\s*(?:assistant|chatgpt)\s*:",
+        r"\bsystem\s+prompt\b",
+        r"<\|?\s*(?:im_start|im_end|system|endoftext)\s*\|?>",
+        r"\[/?INST\]",
+        r"\b(?:new|updated|hidden)\s+instructions?\s*:",
+        r"\bdo\s+not\s+(?:tell|inform|reveal\s+to)\s+the\s+user\b",
+        r"\b(?:ai|llm|language\s+model|chatbot)s?\s+(?:reading|processing|summari[sz]ing)\s+this\b",
+    )
+)
+SECURE_URL_SCHEME: Final = "https://"
+SOURCE_URL_FIELDS: Final = ("url", "final_url")
+#: Families whose members must carry registry `search_terms`: the pH, salinity and compaction needs whose lay
+#: vocabulary ("sour", "salty", "hardpan") the facet text does not use (AGENTS.md "Validation").
+SEARCH_TERMS_REQUIRED_FAMILIES: Final = frozenset({"soil-chemistry-correction", "tillage-reduction"})
+STRATEGY_TEXT_FIELDS: Final = (
+    "name",
+    "summary",
+    "actions",
+    "application_rate",
+    "timing",
+    "slope_guidance",
+    "benefits",
+    "risks_limitations",
+    "notes",
+    "search_terms",
+)
 
 REQUIRED_STRATEGY_FIELDS: Final = (
     "strategy_id",
@@ -252,6 +292,57 @@ def plan_coverage_problems(plan: ChunkPlan, line_count: int) -> list[str]:
     return file_coverage_problems(plan.source_id, line_count, covered, plan.assigned_ranges)
 
 
+def instruction_text_found(text: str) -> str | None:
+    """The first span of `text` that addresses an AI or model with instructions, else None."""
+    for pattern in INSTRUCTION_TEXT_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            return match.group(0).strip()
+    return None
+
+
+def check_instruction_text(problems: list[str], where: str, texts: Iterable[Any]) -> None:
+    """Report (never drop) a record whose text addresses an AI or model with instructions."""
+    for text in texts:
+        if not text:
+            continue
+        found = instruction_text_found(str(text))
+        if found is not None:
+            problems.append(f"{where}: text addresses an AI or model with instructions ({found[:60]!r}); review it")
+            return
+
+
+def _text_values(value: Any) -> list[str]:
+    """Every string inside a scalar, list or mapping field (facets, citations)."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, Mapping):
+        return [text for item in value.values() for text in _text_values(item)]
+    if isinstance(value, list | tuple):
+        return [text for item in value for text in _text_values(item)]
+    return []
+
+
+def strategy_texts(record: Mapping[str, Any]) -> list[str]:
+    """A strategy's free-text fields, facets and citation excerpts: what an agent eventually reads."""
+    texts = [text for field_name in STRATEGY_TEXT_FIELDS for text in _text_values(record.get(field_name))]
+    texts.extend(_text_values(record.get("facets")))
+    texts.extend(str(citation.get("excerpt", "")) for citation in record.get("sources") or [])
+    return texts
+
+
+def check_search_terms(problems: list[str], where: str, record: Mapping[str, Any]) -> None:
+    """`search_terms` is a list of non-empty strings, and non-empty for the pH/salinity/compaction families."""
+    terms = record.get("search_terms")
+    if terms is not None and (not isinstance(terms, list) or not all(isinstance(t, str) and t.strip() for t in terms)):
+        problems.append(f"{where}: search_terms must be a list of non-empty strings")
+        return
+    if record.get("family_id") in SEARCH_TERMS_REQUIRED_FAMILIES and not terms:
+        problems.append(f"{where}: family {record.get('family_id')} requires non-empty search_terms (lay vocabulary)")
+
+
 def check_goals(problems: list[str], where: str, goals: Any) -> None:
     """Goals must be an object of known goal -> stated|inferred."""
     if goals is None:
@@ -350,7 +441,13 @@ def _check_chunk(report: ValidationReport, chunk: dict[str, Any], context: Block
         return
     if end > context.line_count:
         problems.append(f"{where}: line_end {end} beyond the raw file's {context.line_count} lines")
-    words = len(" ".join(context.raw_lines[start - 1 : end]).split())
+    raw_text = "\n".join(context.raw_lines[start - 1 : end])
+    words = len(raw_text.split())
+    check_instruction_text(
+        problems,
+        where,
+        [raw_text, chunk.get("title"), chunk.get("summary"), *(chunk.get("keywords") or [])],
+    )
     report.stats["chunks"] += 1
     report.stats["chunk_words"] += words
     content_type = chunk.get("content_type")
@@ -395,6 +492,11 @@ def _check_finding(report: ValidationReport, finding: dict[str, Any], context: B
         if variable.get("role") not in VARIABLE_ROLES:
             problems.append(f"{where}: variable role {variable.get('role')!r}")
     excerpt = str(finding.get("excerpt", ""))
+    check_instruction_text(
+        problems,
+        where,
+        [finding.get("claim"), finding.get("conditions"), finding.get("magnitude"), excerpt],
+    )
     check_excerpt_length(report, where, excerpt)
     line_start, line_end = int(finding.get("line_start") or 0), int(finding.get("line_end") or 0)
     if excerpt_in_lines(excerpt, context.raw_lines, line_start, line_end):
@@ -428,6 +530,7 @@ def _check_candidate(report: ValidationReport, candidate: dict[str, Any], contex
     for field_name, vocabulary in LIST_ENUM_FIELDS.items():
         check_enum(problems, where, field_name, candidate.get(field_name), vocabulary)
     check_goals(problems, where, candidate.get("goals", {}))
+    check_instruction_text(problems, where, strategy_texts(candidate))
     if candidate.get("fire_phase") and "wildfire_resilience" not in (candidate.get("goals") or {}):
         report.stats["candidates_fire_phase_without_wildfire_goal"] += 1
     check_citations(report, where, candidate.get("sources"), context.raw_forms_for, ai_synthesis_is_error=True)
@@ -526,6 +629,8 @@ def validate_strategy(
     family_id = record.get("family_id")
     if family_ids is not None and family_id and family_id not in family_ids:
         problems.append(f"{where}: family_id {family_id} not in families.json")
+    check_search_terms(problems, where, record)
+    check_instruction_text(problems, where, strategy_texts(record))
     if not check_citations(report, where, record.get("sources"), raw_forms_for):
         problems.append(f"{where}: no primary (non-AI) citation")
     return report
@@ -541,6 +646,12 @@ def validate_source_entry(entry: dict[str, Any]) -> list[str]:
     check_enum(problems, where, "wildfire_relevance", entry.get("wildfire_relevance"), "wildfire_relevance")
     check_enum(problems, where, "region_focus", entry.get("region_focus"), "region")
     check_goals(problems, where, entry.get("goals"))
+    problems.extend(
+        f"{where}: {field_name} {entry[field_name]!r} is not an https URL"
+        for field_name in SOURCE_URL_FIELDS
+        if entry.get(field_name) and not str(entry[field_name]).lower().startswith(SECURE_URL_SCHEME)
+    )
+    check_instruction_text(problems, where, [entry.get("title"), entry.get("summary"), entry.get("publisher")])
     return problems
 
 
@@ -648,6 +759,13 @@ def _validate_registry(
         else None
     )
     report.problems.extend(_duplicate_problems("registry", "strategy_id", rows))
+    if families_path.is_file() and source_id is None:
+        for family in records_from(read_json(families_path), "families"):
+            check_instruction_text(
+                report.problems,
+                f"families/{family.get('family_id')}",
+                [family.get("name"), family.get("description")],
+            )
     for row in rows:
         cited = {str(citation.get("source_id")) for citation in row.get("sources") or []}
         if source_id is not None and source_id not in cited:

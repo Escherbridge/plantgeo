@@ -1,5 +1,6 @@
 """The HTTP transport: health, readiness, the tool route against MCP, refusals, /mcp, pull-first and serve flags."""
 
+import json
 from pathlib import Path
 from typing import Any, Final
 
@@ -10,14 +11,16 @@ from mcp import Client
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
-from strategy_knowledge import cli, server
+from strategy_knowledge import cli, http_app, server
 from strategy_knowledge.config import Settings, load_settings
 from strategy_knowledge.corpus import CorpusStore
 from strategy_knowledge.http_app import (
     MAXIMUM_REQUEST_BYTES,
     MCP_PATH,
     RAILWAY_SERVICE_HOST,
+    REQUEST_ID_HEADER,
     build_http_app,
+    serve_http,
     transport_security,
 )
 from strategy_knowledge.index import Indexer
@@ -55,7 +58,7 @@ PRIVATE_HOST: Final = f"{RAILWAY_SERVICE_HOST}:8000"
 
 
 def _app(knowledge_base: KnowledgeBase) -> Starlette:
-    return build_http_app(build_service(lambda: knowledge_base))
+    return build_http_app(build_service(lambda: knowledge_base, protect_stdout=False))
 
 
 def _mcp_texts(knowledge_base: KnowledgeBase) -> dict[str, str]:
@@ -158,7 +161,7 @@ def test_an_unexpected_failure_is_a_json_500_without_the_traceback(
     knowledge_base: KnowledgeBase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    service = build_service(lambda: knowledge_base)
+    service = build_service(lambda: knowledge_base, protect_stdout=False)
 
     def explode() -> dict[str, Any]:
         raise RuntimeError("secret internals")
@@ -194,6 +197,141 @@ def test_mcp_hosts_are_loopback_the_railway_host_and_configured_ones(tmp_path: P
     for host in ("127.0.0.1", "localhost", "[::1]", RAILWAY_SERVICE_HOST, *settings.allowed_hosts):
         assert host in allowed
         assert f"{host}:*" in allowed
+
+
+def _access_log_lines(captured: str) -> list[dict[str, Any]]:
+    """Every JSON access-log line the HTTP app printed to stdout, decoded (AGENTS.md "Observability")."""
+    return [json.loads(line) for line in captured.splitlines() if line.strip()]
+
+
+def test_request_id_is_echoed_or_generated(knowledge_base: KnowledgeBase) -> None:
+    with TestClient(_app(knowledge_base)) as client:
+        supplied = client.post("/v1/tools/list_facets", json={}, headers={REQUEST_ID_HEADER: "caller-supplied-id"})
+        generated = client.get("/health")
+    assert supplied.headers[REQUEST_ID_HEADER] == "caller-supplied-id"
+    assert generated.headers[REQUEST_ID_HEADER]
+    assert generated.headers[REQUEST_ID_HEADER] != "caller-supplied-id"
+
+
+def test_a_malformed_caller_request_id_is_replaced_with_a_generated_one(knowledge_base: KnowledgeBase) -> None:
+    # An unbounded or odd-charset header would otherwise land in every log line for the request's lifetime
+    # (AGENTS.md "Observability"); a space and a 200-character id are both outside [A-Za-z0-9._-]{1,128}.
+    with TestClient(_app(knowledge_base)) as client:
+        spaced = client.get("/health", headers={REQUEST_ID_HEADER: "has a space"})
+        overlong = client.get("/health", headers={REQUEST_ID_HEADER: "x" * 200})
+    assert spaced.headers[REQUEST_ID_HEADER] != "has a space"
+    assert overlong.headers[REQUEST_ID_HEADER] != "x" * 200
+
+
+def test_tool_calls_log_one_json_line_with_no_query_or_passage_text(
+    knowledge_base: KnowledgeBase,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    query = "straw mulch on burned slopes"
+    with TestClient(_app(knowledge_base)) as client:
+        response = client.post(
+            "/v1/tools/search_strategies",
+            json={"query": query},
+            headers={REQUEST_ID_HEADER: "req-1"},
+        )
+    assert response.status_code == 200
+    lines = _access_log_lines(capsys.readouterr().out)
+    tool_calls = [line for line in lines if line["event"] == "tool_call"]
+    assert len(tool_calls) == 1
+    line = tool_calls[0]
+    assert line["tool"] == "search_strategies"
+    assert line["status"] == "ok"
+    assert line["request_id"] == "req-1"
+    assert line["corpus_version"] == knowledge_base.index_corpus_version
+    assert isinstance(line["ms"], (int, float))
+    assert set(line) == {"event", "tool", "status", "ms", "corpus_version", "request_id"}
+    assert "straw" not in json.dumps(lines).lower()
+
+
+def test_a_refused_tool_call_still_logs_its_outcome(
+    knowledge_base: KnowledgeBase,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with TestClient(_app(knowledge_base)) as client:
+        client.post("/v1/tools/search_strategies", json={"query": ""})
+    tool_calls = [line for line in _access_log_lines(capsys.readouterr().out) if line["event"] == "tool_call"]
+    assert tool_calls[0]["status"] == "invalid_arguments"
+
+
+def test_mcp_requests_log_one_json_line(knowledge_base: KnowledgeBase, capsys: pytest.CaptureFixture[str]) -> None:
+    with TestClient(_app(knowledge_base)) as client:
+        # TestClient's default Host ("testserver") is not on the DNS-rebinding allowlist (loopback/Railway
+        # host only); an explicit loopback Host is needed here the way the other /mcp tests already send one.
+        response = client.post(
+            MCP_PATH,
+            json=INITIALIZE,
+            headers={**MCP_ACCEPT, REQUEST_ID_HEADER: "mcp-req-1", "host": "127.0.0.1"},
+        )
+    assert response.status_code == 200
+    assert response.headers[REQUEST_ID_HEADER] == "mcp-req-1"
+    mcp_requests = [line for line in _access_log_lines(capsys.readouterr().out) if line["event"] == "mcp_request"]
+    assert len(mcp_requests) == 1
+    assert mcp_requests[0]["request_id"] == "mcp-req-1"
+    assert mcp_requests[0]["status"] == 200
+    assert isinstance(mcp_requests[0]["ms"], (int, float))
+
+
+def test_a_body_read_failure_still_logs_one_aborted_line(
+    knowledge_base: KnowledgeBase,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`call_tool`'s logging moved into a `finally` so a failure before any `finish()` call - a client
+    disconnecting mid-read - is still counted, as `aborted`, instead of leaving no record (AGENTS.md
+    "Observability")."""
+
+    async def _raises(*_args: Any, **_kwargs: Any) -> bytes | None:
+        raise RuntimeError("client disconnected mid-read")
+
+    monkeypatch.setattr(http_app, "read_capped_body", _raises)
+    with TestClient(_app(knowledge_base), raise_server_exceptions=False) as client:
+        client.post("/v1/tools/search_strategies", json={"query": "x"})
+    tool_calls = [line for line in _access_log_lines(capsys.readouterr().out) if line["event"] == "tool_call"]
+    assert len(tool_calls) == 1
+    assert tool_calls[0]["status"] == "aborted"
+
+
+def test_health_and_ready_are_not_logged(knowledge_base: KnowledgeBase, capsys: pytest.CaptureFixture[str]) -> None:
+    with TestClient(_app(knowledge_base)) as client:
+        client.get("/health")
+        client.get("/ready")
+    assert _access_log_lines(capsys.readouterr().out) == []
+
+
+def test_limit_concurrency_is_validated_and_defaults_to_sixteen(tmp_path: Path) -> None:
+    absent = tmp_path / "absent.env"
+    assert load_settings({}, absent).limit_concurrency == 16
+    assert load_settings({"STRATEGY_KB_LIMIT_CONCURRENCY": "64"}, absent).limit_concurrency == 64
+    for invalid in ("0", "-1", "not-a-number", "99999"):
+        assert load_settings({"STRATEGY_KB_LIMIT_CONCURRENCY": invalid}, absent).limit_concurrency == 16
+
+
+def test_serve_http_wires_limit_concurrency_into_uvicorn(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(http_app.uvicorn, "run", lambda _app, **options: calls.append(options))
+    settings = Settings(
+        cache_dir=tmp_path,
+        prefix="strategy-knowledge/",
+        embedding_model="hashing",
+        object_store_values={},
+        limit_concurrency=42,
+    )
+    serve_http(settings, host="127.0.0.1", port=8000)
+    assert calls == [
+        {
+            "host": "127.0.0.1",
+            "port": 8000,
+            "lifespan": "on",
+            "log_config": None,
+            "server_header": False,
+            "limit_concurrency": 42,
+        },
+    ]
 
 
 class FakeBucketSync:
@@ -279,7 +417,7 @@ def test_a_lifespan_startup_failure_never_serves() -> None:
 
     with (
         pytest.raises(ServingRefusedError, match="bucket pull failed"),
-        TestClient(build_http_app(build_service(failing_loader))),
+        TestClient(build_http_app(build_service(failing_loader, protect_stdout=False))),
     ):
         pass
 

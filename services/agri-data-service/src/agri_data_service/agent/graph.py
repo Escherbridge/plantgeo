@@ -16,7 +16,9 @@ from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Literal
 
 import structlog
+from pydantic import ValidationError
 
+from agri_data_service.agent import strategy_knowledge
 from agri_data_service.agent import tools as warehouse_tools
 from agri_data_service.agent.prompts import (
     REPORT_INSTRUCTION,
@@ -66,13 +68,7 @@ MAX_SEARCHES_PER_REQUEST: Final = 3
 MAX_HISTORY_TURNS: Final = 8
 
 # The strategy-knowledge (literature) tools: never coverage, and the only backing for a literature claim.
-LITERATURE_TOOLS: Final = frozenset(
-    {
-        "search_environmental_strategies",
-        "get_environmental_strategies",
-        "search_strategy_research_findings",
-    }
-)
+LITERATURE_TOOLS: Final = strategy_knowledge.LITERATURE_TOOL_NAMES
 
 # Never a measured surface: catalogue, coverage and reference reads, including the literature tools.
 _METADATA_TOOLS: Final = (
@@ -154,6 +150,24 @@ class AgentRequest:
             return self.map_selection
         day = self.selected_day or self.as_of.date()
         return MapSelection(day=day, range_start=day, range_end=day)
+
+    def strategy_context(self) -> strategy_knowledge.StrategyContext:
+        """Server-owned literature context: the user's own words and the map point, no site_facts.
+
+        No measured read this graph runs yields a site_facts value it can trust; see agent/AGENTS.md,
+        "Server-owned site facts".
+        """
+        user_turns = [turn.content for turn in self.history if turn.role == "user"]
+        if self.question:
+            user_turns.append(self.question)
+        user_question = "\n".join(user_turns) or None
+        try:
+            return strategy_knowledge.StrategyContext(
+                user_question=user_question, longitude=self.longitude, latitude=self.latitude, site_facts=None
+            )
+        except ValidationError:
+            # The route already refuses an off-globe point; this only keeps a bad one out of the region lookup.
+            return strategy_knowledge.StrategyContext(user_question=user_question)
 
 
 @dataclass(slots=True)
@@ -378,6 +392,7 @@ class GatherWarehouseEvidence:
         async with warehouse_tools.run_context(
             session_provider=ctx.session_provider,
             allowed_species_id=ctx.request.species_id or "",
+            strategy_context=ctx.request.strategy_context(),
         ) as ledger:
             refused = await _run_pass(
                 ctx,
@@ -494,6 +509,7 @@ class GatherWebEvidence:
         async with warehouse_tools.run_context(
             session_provider=ctx.session_provider,
             allowed_species_id=ctx.request.species_id or "",
+            strategy_context=ctx.request.strategy_context(),
         ) as ledger:
             refused = await _run_pass(
                 ctx,

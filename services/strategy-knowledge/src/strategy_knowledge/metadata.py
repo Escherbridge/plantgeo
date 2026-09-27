@@ -8,7 +8,7 @@ import json
 from collections.abc import Iterable, Mapping
 from typing import Final
 
-from strategy_knowledge.models import Chunk, Finding, PassageWindow, RegistryStrategy
+from strategy_knowledge.models import Chunk, Family, Finding, PassageWindow, RegistryStrategy
 from strategy_knowledge.vocabulary import EVIDENCE_RANK, FACET_LABELS
 
 MetadataValue = str | int | float | bool
@@ -30,6 +30,8 @@ RECORD_HASH_KEY: Final = "record_hash"
 CORPUS_VERSION_KEY: Final = "corpus_version"
 #: The raw facet text, kept for display because the embedded document is prefixed with the strategy name.
 FACET_TEXT_KEY: Final = "facet_text"
+#: BM25-only document vocabulary: the family's name and description plus the strategy's registry `search_terms`.
+SEARCH_TERMS_KEY: Final = "search_terms"
 WILDFIRE_GOAL: Final = "wildfire_resilience"
 #: A passage's section trail is cut to its last this-many words, so a window always keeps >= 120 of its 180.
 MAXIMUM_TRAIL_WORDS: Final = 60
@@ -78,10 +80,22 @@ def facet_document(strategy_name: str, facet: str, text: str) -> str:
     return f"{strategy_name} ({FACET_LABELS.get(facet, facet)}): {text}"
 
 
-def strategy_facet_metadata(strategy: RegistryStrategy, facet: str, facet_text: str = "") -> Metadata:
+def strategy_search_terms(strategy: RegistryStrategy, family: Family | None = None) -> str:
+    """The `search_terms` value: family name + description, then the strategy's own registry search terms."""
+    family_terms = [family.name or "", family.description or ""] if family is not None else []
+    return joined(dict.fromkeys([*family_terms, *strategy.search_terms]))
+
+
+def strategy_facet_metadata(
+    strategy: RegistryStrategy,
+    facet: str,
+    facet_text: str = "",
+    family: Family | None = None,
+) -> Metadata:
     """Metadata of one `strategy_facets` document (strategy x facet), carrying the raw facet text for display.
 
     `keywords` leaves the strategy name out: `facet_document` already prefixes it, and BM25 must count it once.
+    `search_terms` is BM25-only too (AGENTS.md "Metadata").
     """
     goals = dict(strategy.goals)
     lexical_terms = [*strategy.materials, *strategy.equipment, strategy.nrcs_practice_code or ""]
@@ -95,6 +109,7 @@ def strategy_facet_metadata(strategy: RegistryStrategy, facet: str, facet_text: 
         "evidence_rank": EVIDENCE_RANK[strategy.evidence_strength],
         "source_ids": joined(dict.fromkeys(citation.source_id for citation in strategy.sources)),
         "keywords": joined(lexical_terms),
+        SEARCH_TERMS_KEY: strategy_search_terms(strategy, family),
         **goal_keys(goals),
         **tagged_one_hot(LAND_USE_PREFIX, strategy.land_use, LAND_USE_UNTAGGED),
         **tagged_one_hot(REGION_PREFIX, strategy.region, REGION_UNTAGGED),

@@ -75,6 +75,44 @@ export function isStrategyKnowledgeTool(tool: string): boolean {
   return (STRATEGY_KNOWLEDGE_TOOLS as readonly string[]).includes(tool);
 }
 
+/** Effect directions a strategy-knowledge finding reports (strategy-knowledge `vocabulary.Direction`). */
+export const LITERATURE_DIRECTIONS = [
+  "increase",
+  "decrease",
+  "no_effect",
+  "mixed",
+  "conditional",
+  "not_applicable",
+] as const;
+
+export type LiteratureDirection = (typeof LITERATURE_DIRECTIONS)[number];
+
+/**
+ * One cited literature record, written by the SERVER from this turn's answered strategy-knowledge
+ * results, never by the model. See `src/lib/server/services/AGENTS.md` §literature-grounding.
+ */
+export interface LiteratureCitation {
+  recordId: string;
+  kind: "finding" | "strategy";
+  title: string;
+  /** Verbatim as the record reports it (e.g. "−65%"); findings only. */
+  magnitude?: string;
+  direction?: LiteratureDirection;
+  conditions?: string;
+  /** https only. */
+  sourceUrl?: string;
+}
+
+/** Literature provenance fields shared by observations and recommendations. */
+export interface LiteratureClaimFields {
+  /** Model-supplied finding/strategy ids; kept only on a grounded literature claim. */
+  literatureRecordIds?: string[];
+  /** Server-resolved records behind `literatureRecordIds`. */
+  literatureCitations?: LiteratureCitation[];
+  /** Why a literature claim was downgraded to model_inference; server-written. */
+  groundingNote?: string;
+}
+
 /** Maximum accepted age for a published source before it is rendered as stale. */
 export const REGIONAL_EVIDENCE_MAX_AGE_MS: Record<
   RegionalEvidenceSource,
@@ -201,7 +239,7 @@ export interface WebSourceCitation {
   url: string;
 }
 
-export interface RemediationRecommendation {
+export interface RemediationRecommendation extends LiteratureClaimFields {
   strategy: InterventionStrategy;
   title: string;
   rationale: string;
@@ -262,12 +300,12 @@ export interface RegionalIntelligenceResponse {
     evidenceSources: RegionalClaimEvidenceSource[];
     evidenceReadIds?: string[];
   };
-  observations: {
+  observations: ({
     statement: string;
     evidenceOrigin: EvidenceOrigin;
     evidenceSource?: RegionalClaimEvidenceSource;
     evidenceReadIds?: string[];
-  }[];
+  } & LiteratureClaimFields)[];
   remediation: RemediationRecommendation[];
   professionalConsultation: string;
   webSources: WebSourceCitation[];

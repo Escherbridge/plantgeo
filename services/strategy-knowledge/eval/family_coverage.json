@@ -1,0 +1,164 @@
+[
+  {
+    "query": "plant a tree windbreak to protect a field from wind erosion",
+    "filters": {},
+    "expected_any_of": [
+      "windbreak-shelterbelt"
+    ],
+    "k": 5,
+    "kind": "family"
+  },
+  {
+    "query": "turn leftover forest residue into wood pellets for fuel",
+    "filters": {},
+    "expected_any_of": [
+      "wood-fuel-pellet-production-forest-residue"
+    ],
+    "k": 5,
+    "kind": "family"
+  },
+  {
+    "query": "safely compost livestock carcasses on the farm",
+    "filters": {},
+    "expected_any_of": [
+      "livestock-mortality-composting"
+    ],
+    "k": 5,
+    "kind": "family"
+  },
+  {
+    "query": "rotate through several different crops over multiple years instead of monocropping",
+    "filters": {},
+    "expected_any_of": [
+      "diversified-crop-rotation"
+    ],
+    "k": 5,
+    "kind": "family"
+  },
+  {
+    "query": "control tile drainage to cut nitrogen loss from the field",
+    "filters": {},
+    "expected_any_of": [
+      "controlled-drainage-water-table-management"
+    ],
+    "k": 5,
+    "kind": "family"
+  },
+  {
+    "query": "use satellite data to map where fuels are driest and fire risk is highest",
+    "filters": {},
+    "expected_any_of": [
+      "satellite-fire-risk-mapping-tool"
+    ],
+    "k": 5,
+    "kind": "family"
+  },
+  {
+    "query": "leave the biggest trees standing to store more forest carbon",
+    "filters": {},
+    "expected_any_of": [
+      "large-diameter-tree-retention"
+    ],
+    "k": 5,
+    "kind": "family"
+  },
+  {
+    "query": "assess how vulnerable this forest stand is to climate change",
+    "filters": {},
+    "expected_any_of": [
+      "forest-ecosystem-vulnerability-assessment-approach"
+    ],
+    "k": 5,
+    "kind": "family"
+  },
+  {
+    "query": "build a raised garden bed with compost as the base",
+    "filters": {},
+    "expected_any_of": [
+      "raised-bed-compost-construction"
+    ],
+    "k": 5,
+    "kind": "family"
+  },
+  {
+    "query": "map where to remove encroaching conifer and mesquite to restore prairie grouse habitat",
+    "filters": {},
+    "expected_any_of": [
+      "conifer-mesquite-removal-prairie-grouse-habitat"
+    ],
+    "k": 5,
+    "kind": "family"
+  },
+  {
+    "query": "cut back irrigation on purpose to conserve water in a blueberry field",
+    "filters": {},
+    "expected_any_of": [
+      "deficit-irrigation-blueberry-water-conservation"
+    ],
+    "k": 5,
+    "kind": "family"
+  },
+  {
+    "query": "use a leaf color chart to decide how much nitrogen to apply without soil testing",
+    "filters": {},
+    "expected_any_of": [
+      "leaf-color-chart-nitrogen-monitoring"
+    ],
+    "k": 5,
+    "kind": "family"
+  },
+  {
+    "query": "interseed legumes into grass pasture to boost forage productivity",
+    "filters": {},
+    "expected_any_of": [
+      "legume-grass-mixture-pasture-intercropping"
+    ],
+    "k": 5,
+    "kind": "family"
+  },
+  {
+    "query": "use satellite NDVI data to forecast forage availability for grazing allotments",
+    "filters": {},
+    "expected_any_of": [
+      "satellite-forage-forecast-grazing-allotments"
+    ],
+    "k": 5,
+    "kind": "family"
+  },
+  {
+    "query": "replant trees on a hillside after a wildfire killed the forest",
+    "filters": {},
+    "expected_any_of": [
+      "post-fire-tree-reforestation"
+    ],
+    "k": 5,
+    "kind": "family"
+  },
+  {
+    "query": "choose plant species that will handle a changing climate when revegetating a site",
+    "filters": {},
+    "expected_any_of": [
+      "climate-adaptive-plant-species-selection"
+    ],
+    "k": 5,
+    "kind": "family"
+  },
+  {
+    "query": "test the soil for heavy metals before starting a vegetable garden",
+    "filters": {},
+    "expected_any_of": [
+      "soil-test-heavy-metal-contamination"
+    ],
+    "k": 5,
+    "kind": "family"
+  },
+  {
+    "query": "use a soil surfactant to help irrigation water penetrate compacted potato ground",
+    "filters": {},
+    "expected_any_of": [
+      "soil-surfactant-application-irrigation-penetration"
+    ],
+    "k": 5,
+    "kind": "family"
+  }
+]

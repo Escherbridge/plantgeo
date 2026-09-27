@@ -11,7 +11,7 @@ import pytest
 from conftest import SOURCE_ID, HashingEmbedder
 
 from strategy_knowledge.config import Settings
-from strategy_knowledge.corpus import CorpusStore
+from strategy_knowledge.corpus import REGISTRY_FILE, CorpusStore
 from strategy_knowledge.index import Indexer
 from strategy_knowledge.storage import INDEX_POINTER_KEY, BucketSync, KeyState, classify
 
@@ -259,7 +259,48 @@ def test_the_index_archive_is_labelled_with_the_index_stamp(indexed_store: tuple
     assert bucket.put_keys[-1] == INDEX_POINTER_KEY
 
 
+def test_atomic_publish_uploads_archive_then_corpus_then_pointer(indexed_store: tuple[CorpusStore, str]) -> None:
+    """The pinned publish order: the archive first, sources.json (last of the corpus) next, LATEST last of all."""
+    store, version = indexed_store
+    bucket = FakeBucket()
+    report = _sync(store.root, bucket).push(with_index=True)
+    assert not report.failed
+    assert bucket.put_keys[0] == f"index/{version}/chroma.tar.gz"
+    assert bucket.put_keys[-2] == KEY
+    assert bucket.put_keys[-1] == INDEX_POINTER_KEY
+
+
+def test_bare_push_refuses_a_diverging_corpus_unless_corpus_only(
+    indexed_store: tuple[CorpusStore, str],
+) -> None:
+    """Once a corpus+index is published, a plain push of a further corpus change is refused wholesale."""
+    store, version = indexed_store
+    bucket = FakeBucket()
+    sync = _sync(store.root, bucket)
+    assert not sync.push(with_index=True).failed
+    _write(store.root, "corpus/findings/extra.json", b'{"extra": true}')
+    refused = sync.push()
+    assert refused.failed
+    assert any("differs from the local corpus" in reason for reason in refused.index_refusals)
+    assert f"{PREFIX}corpus/findings/extra.json" not in bucket.objects
+    acknowledged = sync.push(corpus_only=True)
+    assert not acknowledged.failed
+    assert "corpus/findings/extra.json" in acknowledged.transferred
+    assert f"{PREFIX}corpus/findings/extra.json" in bucket.objects
+    # The pointer is untouched: the bucket now serves a stale index on purpose, as --corpus-only acknowledges.
+    assert bucket.objects[f"{PREFIX}{INDEX_POINTER_KEY}"] == f"{version}\n".encode()
+
+
+def test_bare_push_proceeds_when_nothing_is_published_yet(tmp_path: Path, bucket: FakeBucket) -> None:
+    """No `--corpus-only` guard applies before any index has ever been published to this bucket."""
+    _write(tmp_path, KEY, b"v1")
+    report = _sync(tmp_path, bucket).push()
+    assert not report.failed
+    assert report.transferred == [KEY]
+
+
 def test_a_partial_index_is_never_pushed(indexed_store: tuple[CorpusStore, str], embedder: HashingEmbedder) -> None:
+    """An atomic `--with-index` publish uploads nothing at all once the index turns out unpublishable."""
     store, _version = indexed_store
     Indexer(store, embedder).update(SOURCE_ID)
     bucket = FakeBucket()
@@ -267,7 +308,8 @@ def test_a_partial_index_is_never_pushed(indexed_store: tuple[CorpusStore, str],
     assert report.failed
     assert any("partial index updates" in reason for reason in report.index_refusals)
     assert bucket.index_keys() == []
-    assert f"{PREFIX}{KEY}" in bucket.objects
+    assert bucket.objects == {}
+    assert bucket.put_keys == []
 
 
 def test_the_index_is_not_pushed_when_the_corpus_push_kept_remote_changes(
@@ -282,6 +324,61 @@ def test_the_index_is_not_pushed_when_the_corpus_push_kept_remote_changes(
     assert report.kept_remote_changes == [KEY]
     assert any("corpus push" in reason for reason in report.index_refusals)
     assert bucket.index_keys() == []
+
+
+def test_a_diverging_corpus_uploads_nothing_at_all_not_just_the_index(
+    indexed_store: tuple[CorpusStore, str],
+    embedder: HashingEmbedder,
+) -> None:
+    """A local corpus change AND a remote-only key together must leave `bucket.put_keys` empty.
+
+    A 2026-09-27 review found the old code still uploaded the local-changed key here even though the index was
+    (correctly) refused: `corpus_diverges` skipped only the archive and the pointer, not the corpus keys loop.
+    The registry edit is a byte-only change (a trailing newline: still valid JSON, no field touched) so the
+    corpus_version changes and the rebuilt index stays fresh, without altering what the registry actually says.
+    """
+    store, _version = indexed_store
+    bucket = FakeBucket()
+    sync = _sync(store.root, bucket)
+    assert not sync.push(with_index=True).failed
+    registry_path = store.path(REGISTRY_FILE)
+    registry_path.write_bytes(registry_path.read_bytes() + b"\n")
+    Indexer(store, embedder).rebuild_all()  # keeps the local index fresh for the new local corpus_version
+    bucket.put("corpus/findings/another-machines-finding.json", b'{"from": "another machine"}')
+    puts_before_the_diverging_push = list(bucket.put_keys)  # the first push above legitimately uploaded these
+    report = sync.push(with_index=True)
+    assert report.failed
+    assert bucket.put_keys == puts_before_the_diverging_push
+    assert report.kept_remote_changes == ["corpus/findings/another-machines-finding.json"]
+    assert any("corpus push" in reason for reason in report.index_refusals)
+
+
+def test_an_unsafe_rejected_remote_key_also_blocks_an_atomic_publish(
+    indexed_store: tuple[CorpusStore, str],
+    embedder: HashingEmbedder,
+) -> None:
+    """A rejected key (a directory marker) makes the corpus untrustworthy too, not just a reason to skip it.
+
+    The old pointer guard checked `report.rejected_keys` before publishing; the newer key-state-only
+    `_corpus_will_diverge` dropped that check (2026-09-27 review) even though the refusal message already
+    claimed to consider "refused keys" - so a locally-changed index would still have been archived and
+    published (`_pointer_needs_upload` sees an ordinary `LOCAL_CHANGED` pointer, not a rejected key) alongside
+    an unsafe key sitting in the bucket. A rejected key is invisible to `_corpus_will_diverge` itself (`_keys()`
+    never yields one), so it must be added on separately, not folded into that helper.
+    """
+    store, _version = indexed_store
+    bucket = FakeBucket()
+    sync = _sync(store.root, bucket)
+    assert not sync.push(with_index=True).failed
+    registry_path = store.path(REGISTRY_FILE)
+    registry_path.write_bytes(registry_path.read_bytes() + b"\n")
+    Indexer(store, embedder).rebuild_all()  # a genuine local change, so the pointer is not already `SAME`
+    bucket.put("corpus/unsafe/", b"")  # a directory marker: refused, never a valid local target
+    puts_before_the_diverging_push = list(bucket.put_keys)  # the first push above legitimately uploaded these
+    report = sync.push(with_index=True)
+    assert report.failed
+    assert report.rejected_keys == ["corpus/unsafe/"]
+    assert bucket.put_keys == puts_before_the_diverging_push
 
 
 def test_a_latest_changed_remotely_since_the_last_sync_is_not_overwritten(

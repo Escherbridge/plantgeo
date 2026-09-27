@@ -254,6 +254,88 @@ describe("RegionalIntelligencePanel strategy chips", () => {
     expect(screen.queryByRole("button", { name: /Initial context sources/ })).toBeNull();
   });
 
+  it("shows a literature claim's server-written citations and quietly labels a downgraded claim", () => {
+    const response = baseResponse([
+      {
+        strategy: "cover_cropping", title: "Screen reduced tillage for water savings",
+        rationale: "Northern Great Plains trials reported a −65% relative median change in soil evaporation.",
+        timeframe: "long_term", confidence: "low", consultProfessionals: ["agronomist"],
+        evidenceOrigin: "literature", evidenceSource: "strategy-knowledge",
+        literatureRecordIds: ["sk-finding-F8101", "reduced-tillage-no-till"],
+        literatureCitations: [
+          {
+            recordId: "sk-finding-F8101", kind: "finding", title: "Tillage and water loss in the Northern Great Plains",
+            magnitude: "−65%", direction: "mixed", conditions: "Northern Great Plains irrigated cropland",
+            sourceUrl: "https://example.org/tillage-study",
+          },
+          // A saved report can predate the https-only validator: its link is never rendered.
+          { recordId: "reduced-tillage-no-till", kind: "strategy", title: "Reduced tillage / no-till", sourceUrl: "http://example.org/insecure" },
+        ],
+      },
+      {
+        strategy: "cover_cropping", title: "Expect lower evaporation here",
+        rationale: "Switching to no-till here would cut your soil evaporation by 65%.",
+        timeframe: "long_term", confidence: "low", consultProfessionals: [],
+        evidenceOrigin: "model_inference",
+        groundingNote: "It restates a literature magnitude as an expected outcome at this site; cited studies describe other sites.",
+      },
+    ]);
+    mocks.state.messages = [assistantMessage(response)];
+    renderWithProviders(<RegionalIntelligencePanel />);
+    const grounded = within(screen.getByText(response.remediation[0].title).closest("article") as HTMLElement);
+    expect(grounded.getByText("Literature · strategy-knowledge")).toBeTruthy();
+    const citations = within(grounded.getByRole("list", { name: "Literature citations" }));
+    expect(citations.getByText("Tillage and water loss in the Northern Great Plains")).toBeTruthy();
+    expect(citations.getByText("· Reported −65% (direction: mixed)")).toBeTruthy();
+    expect(citations.getByText("· Conditions: Northern Great Plains irrigated cropland")).toBeTruthy();
+    const link = citations.getByRole("link", { name: /Source for Tillage and water loss/ });
+    expect(link.getAttribute("href")).toBe("https://example.org/tillage-study");
+    expect(link.getAttribute("rel")).toContain("noopener");
+    expect(citations.getAllByRole("link")).toHaveLength(1);
+    expect(grounded.queryByText("Not grounded in the cited research")).toBeNull();
+
+    const downgraded = within(screen.getByText(response.remediation[1].title).closest("article") as HTMLElement);
+    expect(downgraded.getByText("AI inference")).toBeTruthy();
+    expect(downgraded.getByText("Not grounded in the cited research")).toBeTruthy();
+    expect(downgraded.queryByRole("list", { name: "Literature citations" })).toBeNull();
+
+    const markdown = reportToMarkdown(response);
+    expect(markdown).toContain("- Literature: Tillage and water loss in the Northern Great Plains · Reported −65% (direction: mixed) · Conditions: Northern Great Plains irrigated cropland · [Source](https://example.org/tillage-study)");
+    expect(markdown).toContain("- Literature: Reduced tillage / no-till\n");
+    expect(markdown).not.toContain("http://example.org/insecure");
+    expect(markdown).toContain("_Not grounded in the cited research: It restates a literature magnitude");
+  });
+
+  it("escapes Markdown syntax in cited free text and encodes parentheses in the source URL", () => {
+    const response = baseResponse([{
+      strategy: "cover_cropping", title: "Cite a title with Markdown-like text",
+      rationale: "See the cited finding.",
+      timeframe: "long_term", confidence: "low", consultProfessionals: [],
+      evidenceOrigin: "literature", evidenceSource: "strategy-knowledge",
+      literatureRecordIds: ["sk-finding-escape"],
+      literatureCitations: [{
+        recordId: "sk-finding-escape", kind: "finding",
+        title: "Effect of [no-till] on *evaporation* (field study)",
+        // Free text taken verbatim from the record, same as title/conditions (wave-2 fix-stage
+        // review): the Markdown export must escape it too, not just render it live emphasis/a link.
+        magnitude: "*−65%* [see table 2](x)",
+        conditions: "Trials in `plot_1` (irrigated)",
+        sourceUrl: "https://example.org/study_(2019)",
+      }],
+    }]);
+    mocks.state.messages = [assistantMessage(response)];
+    // The UI renders the raw text as text (JSX escapes it for the DOM); only the Markdown export
+    // needs its own escaping, so the on-screen citation is untouched.
+    renderWithProviders(<RegionalIntelligencePanel />);
+    expect(screen.getByText("Effect of [no-till] on *evaporation* (field study)")).toBeTruthy();
+
+    const markdown = reportToMarkdown(response);
+    expect(markdown).toContain("Effect of \\[no-till\\] on \\*evaporation\\* \\(field study\\)");
+    expect(markdown).toContain("Reported \\*−65%\\* \\[see table 2\\]\\(x\\)");
+    expect(markdown).toContain("Trials in \\`plot_1\\` \\(irrigated\\)");
+    expect(markdown).toContain("[Source](https://example.org/study_%282019%29)");
+  });
+
   it("labels an observation instant with its viewer timezone rather than an ambiguous calendar date", () => {
     mocks.state.dataFreshness = { streamflow: "2026-09-10T06:45:00Z" };
     const formatter = vi.spyOn(Date.prototype, "toLocaleString");

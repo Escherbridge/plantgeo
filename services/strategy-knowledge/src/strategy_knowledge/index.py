@@ -33,7 +33,7 @@ from strategy_knowledge.metadata import (
     sealed,
     strategy_facet_metadata,
 )
-from strategy_knowledge.models import FindingsFile, RegistryStrategy
+from strategy_knowledge.models import Family, FindingsFile, RegistryStrategy
 from strategy_knowledge.validate import plan_coverage_problems
 from strategy_knowledge.vocabulary import FACETS, SCHEMA_VERSION
 
@@ -210,17 +210,24 @@ def check_compatible(name: str, metadata: Mapping[str, Any] | None, embedding_mo
         )
 
 
-def strategy_records(strategies: Iterable[RegistryStrategy]) -> dict[str, list[IndexRecord]]:
-    """strategy_id -> its facet documents; a strategy without authored facets indexes its summary as overview."""
+def strategy_records(
+    strategies: Iterable[RegistryStrategy],
+    families: Mapping[str, Family] | None = None,
+) -> dict[str, list[IndexRecord]]:
+    """strategy_id -> its facet documents; a strategy without authored facets indexes its summary as overview.
+
+    Each facet's BM25 `search_terms` carries its family's name and description (AGENTS.md "Metadata").
+    """
     grouped: dict[str, list[IndexRecord]] = {}
     for strategy in strategies:
+        family = (families or {}).get(strategy.family_id or "")
         facets = {facet: getattr(strategy.facets, facet) for facet in FACETS if getattr(strategy.facets, facet)}
         origin = "authored"
         if not facets and strategy.summary:
             facets, origin = {SUMMARY_FALLBACK_FACET: strategy.summary}, "summary_fallback"
         records = []
         for facet, text in facets.items():
-            metadata = {**strategy_facet_metadata(strategy, facet, text), "facet_origin": origin}
+            metadata = {**strategy_facet_metadata(strategy, facet, text, family), "facet_origin": origin}
             document = facet_document(strategy.name, facet, text)
             records.append(IndexRecord(f"{strategy.strategy_id}::{facet}", document, metadata))
         grouped[strategy.strategy_id] = records
@@ -339,9 +346,10 @@ class Indexer:
         }
         strategies = self.store.load_registry()
         aliases = self.store.strategy_aliases(strategies)
+        families = {family.family_id: family for family in self.store.load_families()}
         report["collections"][STRATEGY_FACETS] = self._sync(
             collections[STRATEGY_FACETS],
-            strategy_records(strategies),
+            strategy_records(strategies, families),
             corpus_version,
             drop=None,
         )

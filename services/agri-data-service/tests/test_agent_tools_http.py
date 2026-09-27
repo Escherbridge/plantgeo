@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 
-from agri_data_service.agent import tools
+from agri_data_service.agent import strategy_knowledge, tools
 from agri_data_service.agent.surfaces import AGENT_SURFACE_NAMES, surface_lanes
+from agri_data_service.config import settings
 from agri_data_service.routes import agent_tools as route
 from tests.agent_fakes import FakeAgentWarehouse
 from tests.parquet_ops.test_mtbs_snapshot_catalog import warehouse as snapshot_warehouse
@@ -232,3 +235,204 @@ async def test_surface_snapshot_retains_mtbs_proof_over_returned_rows(invalid_id
         assert result["served_day"] == descriptor.available_day.isoformat()
         assert result["day_state"]["mtbs_snapshot"] == descriptor.to_wire()
         assert result["features"][0]["properties"]["release_identifier"] == descriptor.release_identifier
+
+
+# --- server_context (seam S1) -------------------------------------------------------
+
+SERVER_CONTEXT: dict[str, Any] = {
+    "user_question": "my pasture has gone sour",
+    "point": {"longitude": -116.13, "latitude": 43.66},
+    "site_facts": {"soil_ph": 5.4, "burn_severity": "high"},
+}
+PRIVATE_ORIGIN = "http://plantgeo-strategy-knowledge.railway.internal:8000"
+FINDINGS_ANSWER: dict[str, Any] = {"claim_tier": "literature_grounded", "corpus_version": "c0ffee", "results": []}
+
+
+def request_with_context(name: str, arguments: dict[str, Any], server_context: Any) -> Any:
+    """`request_for`, carrying the out-of-band S1 object beside the model's arguments."""
+    payload = {"name": name, "arguments": arguments, "server_context": server_context}
+    return SimpleNamespace(json=payload, body=json.dumps(payload).encode())
+
+
+class _ContextProbe:
+    """A registered tool stand-in that records the strategy context bound while it runs."""
+
+    def __init__(self) -> None:
+        self.seen: list[strategy_knowledge.StrategyContext | None] = []
+
+    async def call(self, _arguments: dict[str, Any]) -> str:
+        self.seen.append(strategy_knowledge.current_strategy_context())
+        return "{}"
+
+
+async def test_bridge_forwards_server_context_to_a_literature_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "strategy_knowledge_url", PRIVATE_ORIGIN)
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(OK, json=FINDINGS_ANSWER)
+
+    with strategy_knowledge.use_transport(httpx.MockTransport(handler)):
+        response = await route.call_agent_tool(
+            request_with_context(
+                "search_strategy_research_findings",
+                {"query": "lime", "site_profile": {"slope_pct": 40}, "region": "pnw_westside"},
+                SERVER_CONTEXT,
+            )
+        )
+
+    assert response.status == OK
+    [request] = seen
+    body = json.loads(request.content)
+    assert body["context_query"] == SERVER_CONTEXT["user_question"]
+    assert body["site_profile"] == {"soil_ph": 5.4, "burn_severity": "high", "region": "great_basin_high_desert"}
+    assert "region" not in body
+    assert "43.66" not in request.content.decode(), "the literature service never sees the coordinate"
+    result = json.loads(response.body)["result"]
+    assert result["site_profile_source"] == "server"
+    assert result["site_profile_dropped"] == ["slope_pct", "region(argument)"]
+
+
+async def test_bridge_without_server_context_labels_the_profile_caller_asserted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "strategy_knowledge_url", PRIVATE_ORIGIN)
+    transport = httpx.MockTransport(lambda _request: httpx.Response(OK, json=FINDINGS_ANSWER))
+    with strategy_knowledge.use_transport(transport):
+        response = await route.call_agent_tool(
+            request_for("search_strategy_research_findings", {"query": "lime", "site_profile": {"soil_ph": 5.0}})
+        )
+    assert response.status == OK
+    assert json.loads(response.body)["result"]["site_profile_source"] == "caller_asserted"
+
+
+@pytest.mark.parametrize(
+    ("name", "binds"),
+    [("search_environmental_strategies", True), ("list_environmental_layers", False)],
+)
+async def test_bridge_binds_server_context_only_for_the_literature_tools(
+    monkeypatch: pytest.MonkeyPatch, name: str, binds: bool
+) -> None:
+    probe = _ContextProbe()
+    monkeypatch.setattr(route, "tool_by_name", lambda _name: probe)
+    response = await route.call_agent_tool(request_with_context(name, {}, SERVER_CONTEXT))
+    assert response.status == OK
+    [bound] = probe.seen
+    if binds:
+        assert bound is not None
+        assert (bound.longitude, bound.latitude) == (-116.13, 43.66)
+        assert bound.user_question == SERVER_CONTEXT["user_question"]
+    else:
+        assert bound is None, "other tools ignore server_context rather than fail on it"
+    assert strategy_knowledge.current_strategy_context() is None, "the binding ends with the call"
+
+
+async def test_bridge_ignores_a_malformed_server_context_for_a_non_literature_tool() -> None:
+    """S1: server_context is honoured for the three literature tools only, and the contract says it
+    is IGNORED, not an error, everywhere else -- a malformed one on a warehouse tool call must not
+    turn into a 400 the caller never asked for."""
+    off_globe = {**SERVER_CONTEXT, "point": {"longitude": 512.25, "latitude": 43.66}}
+    response = await route.call_agent_tool(request_with_context("list_environmental_layers", {}, off_globe))
+    assert response.status == OK
+
+
+@pytest.mark.parametrize(
+    ("server_context", "detail_prefix", "hidden"),
+    [
+        pytest.param(
+            {**SERVER_CONTEXT, "point": {"longitude": 512.25, "latitude": 43.66}},
+            "server_context.point.longitude: ",
+            "512.25",
+            id="off-globe-longitude",
+        ),
+        pytest.param(
+            {**SERVER_CONTEXT, "site_facts": {"slope_pct": 37.5}},
+            "server_context.site_facts.slope_pct: ",
+            "37.5",
+            id="slope-is-not-a-site-fact",
+        ),
+        pytest.param(
+            {**SERVER_CONTEXT, "site_facts": {"soil_ph": 71.25}},
+            "server_context.site_facts.soil_ph: ",
+            "71.25",
+            id="unscaled-soilgrids-ph",
+        ),
+        pytest.param(
+            {**SERVER_CONTEXT, "coordinates": "-116.2,43.6"},
+            "server_context.coordinates: ",
+            "-116.2,43.6",
+            id="unknown-key",
+        ),
+    ],
+)
+async def test_bridge_rejects_a_bad_server_context_without_echoing_it(
+    server_context: dict[str, Any], detail_prefix: str, hidden: str
+) -> None:
+    response = await route.call_agent_tool(
+        request_with_context("search_environmental_strategies", {"query": "lime"}, server_context)
+    )
+    assert response.status == BAD_REQUEST
+    body = json.loads(response.body)
+    assert body["error"] == body["code"] == "invalid_tool_arguments"
+    assert body["tool"] == "search_environmental_strategies"
+    assert body["detail"].startswith(detail_prefix)
+    assert hidden not in response.body.decode()
+
+
+async def test_bridge_keeps_the_generic_refusal_when_more_than_server_context_is_wrong() -> None:
+    payload = {"arguments": {}, "server_context": {"point": {"longitude": 512.25, "latitude": 0}}}
+    response = await route.call_agent_tool(SimpleNamespace(json=payload, body=json.dumps(payload).encode()))
+    assert response.status == BAD_REQUEST
+    assert json.loads(response.body)["code"] == "invalid_tool_request"
+
+
+async def test_bridge_returns_400_not_500_for_an_unhashable_name_alongside_server_context() -> None:
+    """`_parse_call` used to test `raw.get("name") not in LITERATURE_TOOL_NAMES` before pydantic ever
+    validated `name`'s type; a frozenset membership check hashes its argument, so an unhashable `name`
+    (a list, say) raised a bare `TypeError` here instead of the ordinary 400 a non-string name gets
+    everywhere else (wave-2 fix-stage review)."""
+    payload = {"name": ["not", "a", "string"], "arguments": {}, "server_context": {}}
+    response = await route.call_agent_tool(SimpleNamespace(json=payload, body=json.dumps(payload).encode()))
+    assert response.status == BAD_REQUEST
+    assert json.loads(response.body)["code"] == "invalid_tool_request"
+
+
+# --- ContextVar isolation under concurrency (minor finding, wave-2 fix-stage review) ------
+
+
+class _InterleavingProbe:
+    """A registered tool stand-in proving `bound_strategy_context` never leaks across two
+    `call_agent_tool` runs in flight together: each records ITS OWN bound context's `user_question`
+    before and after an `await` point where the event loop could interleave with the other call. A
+    future regression that bound context outside the per-request task -- module level, a cached client
+    -- would let one call observe the other's `user_question` here."""
+
+    def __init__(self) -> None:
+        self.observed: list[tuple[str, str | None, str | None]] = []
+
+    async def call(self, arguments: dict[str, Any]) -> str:
+        which = arguments["which"]
+        before = strategy_knowledge.current_strategy_context()
+        await asyncio.sleep(0)
+        after = strategy_knowledge.current_strategy_context()
+        self.observed.append((which, before.user_question if before else None, after.user_question if after else None))
+        return "{}"
+
+
+async def test_concurrent_literature_calls_keep_their_own_strategy_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    probe = _InterleavingProbe()
+    monkeypatch.setattr(route, "tool_by_name", lambda _name: probe)
+    context_a = {**SERVER_CONTEXT, "user_question": "call A"}
+    context_b = {**SERVER_CONTEXT, "user_question": "call B", "point": {"longitude": -120.5, "latitude": 45.5}}
+
+    await asyncio.gather(
+        route.call_agent_tool(request_with_context("search_environmental_strategies", {"which": "a"}, context_a)),
+        route.call_agent_tool(request_with_context("search_environmental_strategies", {"which": "b"}, context_b)),
+    )
+
+    assert len(probe.observed) == 2
+    for which, before, after in probe.observed:
+        expected = "call A" if which == "a" else "call B"
+        assert before == expected, "leaked the other concurrent call's context before the await point"
+        assert after == expected, "leaked the other concurrent call's context after an interleaved await"

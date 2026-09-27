@@ -49,16 +49,38 @@ that source's ids are re-indexed. Contract and rationale: `services/strategy-kno
 6. **Index.** `uv run strategy-kb index --source <source_id>` (partial; `index_is_stale` stays true), then a full
    `uv run strategy-kb index` before publishing. Either exits 1 when it left a planned source out (stale or
    unregistered, named in the log): fix that source before publishing - such an index is never stamped full.
-7. **Regression eval.** `uv run strategy-kb eval --golden eval/golden_queries.json`. Baseline 2026-09-26:
-   hit@5 = 1.0 over 24 queries. A drop means the new source crowded out existing answers - report it before
-   pushing. Add 1-3 golden queries for what the new source contributes, written in plain land-manager words.
-8. **Publish.** `uv run strategy-kb sync push --with-index`, then tell the user the new `corpus_version`. The
-   push uploads `corpus/sources.json` last and refuses the index (exit 1, reasons in `index_refusals`, nothing
-   under `index/` touched) when the local index is partial or stale, when the corpus push kept remote changes,
-   or when `index/LATEST` changed in the bucket since your last sync - pull, re-index, and push again; do not
-   force past it without asking the user.
+7. **Regression eval.** Run `uv run strategy-kb eval --golden eval/<file>.json` for every file under `eval/`
+   (see `eval/README.md`), not just `eval/golden_queries.json` - that set alone is saturated (hit@5 = 1.0) and
+   would stay green through a regression the other sets exist to catch (a 2026-09-27 review found the skill
+   only ran the saturated set). Compare each file's hit@5/MRR/forbidden@3 against the table in
+   `services/strategy-knowledge/AGENTS.md` section "Retrieval". Treat any drop in `eval/agent_queries_heldout.json`
+   (HELD-OUT - never tune against it) or any rise in a `forbidden_at_3` violation rate anywhere as a stop-and-report,
+   the same as a hit@5 drop on the golden set. Add 1-3 golden queries for what the new source contributes, written
+   in plain land-manager words.
+8. **Publish (atomic).** `uv run strategy-kb sync push --with-index`. This is the atomic publish: everything is
+   checked before the first byte moves (the local index is complete, fresh, and stamped for the local corpus),
+   then it uploads in a fixed order - the index archive, the corpus (`corpus/sources.json` last), and
+   `index/LATEST` last of all - so a run that dies part-way never leaves LATEST naming a corpus version whose
+   files did not fully arrive. If the index turns out unpublishable, or the corpus push would keep remote
+   changes, or `index/LATEST` changed in the bucket since your last sync, the push refuses and uploads **nothing
+   at all** (exit 1, reasons in `index_refusals`) - pull, re-index, and push again; do not force past it, and
+   do not pass `--corpus-only` here (that flag is only for a deliberate corpus-without-index push elsewhere, and
+   would leave the bucket serving a stale index on purpose).
+9. **Redeploy and confirm.** Redeploy the Railway service `plantgeo-strategy-knowledge` (project Aevani,
+   environment production) so it pulls the corpus and index you just published. The service has no public
+   domain (private network only), so confirm the served `corpus_version` one of two ways:
+   - the deploy log line `serving strategy-knowledge (corpus <version>)` (`server.py`'s lifespan logs this once
+     the knowledge base opens), matched against the `corpus_version` step 8 printed; or
+   - `railway ssh` into a service on the same private network (or a one-off) and curl
+     `http://plantgeo-strategy-knowledge.railway.internal:8000/ready`, which answers
+     `{"status":"ready","corpus_version":<hex>,"index_is_stale":false}` only once the pulled index is full and
+     fresh (503 otherwise).
+
+   Tell the user the new `corpus_version` and that the redeploy confirmed it is being served.
 
 ## Never
 - Commit raw source text (`.cache/` is gitignored; raw text is copyrighted and lives only in the bucket).
 - Cite or index the AI-synthesis source type as evidence.
 - Hand-edit `strategy_registry.json` ids, or run `index` and `serve` against the same cache at the same time.
+- Publish with `--corpus-only` as a substitute for step 8's atomic publish, or skip step 9: a push without a
+  confirmed redeploy leaves the old corpus_version serving indefinitely.

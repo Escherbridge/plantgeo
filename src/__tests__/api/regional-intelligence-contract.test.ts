@@ -550,22 +550,38 @@ describe("generate_remediation_report tool wiring", () => {
     ], surfaces: [], featureSurfaces: [], valueSurfaces: [] });
     mocks.callEvidenceTool.mockResolvedValue(JSON.stringify(literaturePayload('search_strategy_research_findings', 2)));
     // Both pairing slips at once: literature without its source, and the source on an inference claim.
-    const literatureRecommendation = { ...validReport.remediation[0], evidenceOrigin: 'literature' as const };
-    const slipped = { ...validReport, remediation: [literatureRecommendation, { ...validReport.remediation[0], evidenceSource: 'strategy-knowledge' }] };
+    // The literature claim cites a returned finding id and restates no number, so it stays literature;
+    // its model-written citation is server-owned and replaced from the record.
+    const literatureRecommendation = { ...validReport.remediation[0], evidenceOrigin: 'literature' as const, literatureRecordIds: ['finding-0'] };
+    // A number no cited record reports is downgraded to inference, never rejected.
+    const ungrounded = { ...validReport.remediation[0], title: 'Thin surface fuels by 40%', evidenceOrigin: 'literature' as const, literatureRecordIds: ['finding-1'] };
+    const slipped = { ...validReport, remediation: [
+      { ...literatureRecommendation, literatureCitations: [{ recordId: 'finding-0', kind: 'finding', title: 'Invented', magnitude: '99%' }] },
+      { ...validReport.remediation[0], evidenceSource: 'strategy-knowledge' },
+      ungrounded,
+    ] };
     mocks.completionStream
       .mockReturnValueOnce(fakeCompletionStream([{ id: 'findings', name: 'search_strategy_research_findings', input: { query: 'fuel reduction effect on fire severity' } }]))
       .mockReturnValueOnce(fakeCompletionStream([{ id: 'report', name: 'remediation_report', input: slipped }]));
     const events = [];
     for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
-    // Accepted without spending the single correction.
+    // Accepted without spending the single correction: pairing and grounding are server-owned.
     expect(mocks.completionStream).toHaveBeenCalledTimes(2);
+    const { evidenceOrigin: _origin, literatureRecordIds: _ids, ...ungroundedFields } = ungrounded;
     expect(events.filter((event) => event.type === 'report')).toEqual([{ type: 'report', report: {
-      ...validReport, remediation: [{ ...literatureRecommendation, evidenceSource: 'strategy-knowledge' }, validReport.remediation[0]],
+      ...validReport, remediation: [
+        { ...literatureRecommendation, evidenceSource: 'strategy-knowledge', literatureCitations: [{ recordId: 'finding-0', kind: 'finding', title: 'Reported effect 0.' }] },
+        validReport.remediation[0],
+        { ...ungroundedFields, evidenceOrigin: 'model_inference', groundingNote: 'It states 40%, which no cited record reports.' },
+      ],
     } }]);
     expect(reportSchemaFor(0)).toHaveProperty('properties.remediation.items.properties.evidenceOrigin.enum', ['web', 'model_inference']);
     expect(reportSchemaFor(0)).not.toHaveProperty('properties.remediation.items.properties.evidenceSource');
+    expect(reportSchemaFor(0)).not.toHaveProperty('properties.remediation.items.properties.literatureRecordIds');
     expect(reportSchemaFor(1)).toHaveProperty('properties.remediation.items.properties.evidenceOrigin.enum', ['web', 'model_inference', 'literature']);
     expect(reportSchemaFor(1)).toHaveProperty('properties.remediation.items.properties.evidenceSource.enum', ['strategy-knowledge']);
+    expect(reportSchemaFor(1)).toHaveProperty('properties.remediation.items.properties.literatureRecordIds');
+    expect(JSON.stringify(reportSchemaFor(1))).not.toContain('literatureCitations');
     const audit = events.filter((event) => event.type === 'evidence').at(-1);
     expect(audit?.evidence.toolCalls).toEqual(expect.arrayContaining([expect.objectContaining({
       stage: 'additional', tool: 'search_strategy_research_findings', source: 'strategy-knowledge', status: 'answered',

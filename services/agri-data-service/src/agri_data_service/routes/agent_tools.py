@@ -9,9 +9,10 @@ from typing import Any, Final
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sanic import Blueprint, Request
 from sanic import json as json_response
-from sanic.response import HTTPResponse  # noqa: TC002 - Sanic evaluates annotations at runtime.
+from sanic.response import HTTPResponse
 
 from agri_data_service.agent.llm import argument_error_detail, tool_by_name, tool_schemas
+from agri_data_service.agent.strategy_knowledge import LITERATURE_TOOL_NAMES, ServerContext, bound_strategy_context
 from agri_data_service.agent.surfaces import AGENT_SURFACE_NAMES, FEATURE_SURFACE_NAMES
 from agri_data_service.agent.tools import run_context
 
@@ -32,6 +33,8 @@ class AgentToolCallRequest(BaseModel):
 
     name: str = Field(min_length=1, max_length=80)
     arguments: dict[str, Any]
+    server_context: ServerContext | None = None
+    """Seam S1: honoured for the three literature tools only; see agent/AGENTS.md, "Server-owned site facts"."""
 
 
 def environmental_tool_schemas() -> list[dict[str, Any]]:
@@ -53,6 +56,12 @@ async def list_agent_tools(_request: Request) -> HTTPResponse:
     )
 
 
+def _only_server_context_failed(error: ValidationError) -> bool:
+    """Whether every issue sits under `server_context`, so the rest of the request was well formed."""
+    issues = error.errors(include_url=False, include_context=False, include_input=False)
+    return bool(issues) and all(issue["loc"][:1] == ("server_context",) for issue in issues)
+
+
 def _refusal(name: str, code: str, status: int, detail: str | None = None) -> HTTPResponse:
     body = {"tool": name, "error": code, "code": code}
     if detail:
@@ -60,21 +69,58 @@ def _refusal(name: str, code: str, status: int, detail: str | None = None) -> HT
     return json_response(body, status=status, headers=_HEADERS)
 
 
-@agent_tools_bp.post("/call")
-async def call_agent_tool(request: Request) -> HTTPResponse:
-    """Execute one schema-validated tool inside the existing Parquet admission boundary."""
+def _parse_call(request: Request, names: set[str]) -> AgentToolCallRequest | HTTPResponse:
+    """The validated call, or the 400 refusal that says why there is none."""
     if len(request.body) > MAX_REQUEST_BYTES:
         return _refusal("", "tool_request_too_large", _BAD_REQUEST)
     try:
-        payload = AgentToolCallRequest.model_validate(request.json or {})
-    except (ValidationError, ValueError):
+        raw = request.json or {}
+    except ValueError:
         return _refusal("", "invalid_tool_request", _BAD_REQUEST)
-    names = {schema["function"]["name"] for schema in environmental_tool_schemas()}
+    if isinstance(raw, dict) and "server_context" in raw:
+        # Seam S1: server_context is honoured for the three literature tools only, and the contract
+        # says it is IGNORED, not an error, on every other call -- so a malformed one is dropped
+        # before validation rather than merely unread after a 400 the caller never asked for.
+        # `name` is checked for `str` BEFORE the `in` test: `LITERATURE_TOOL_NAMES` is a frozenset,
+        # and membership hashes its argument, so an unhashable `name` (a list, say) would otherwise
+        # raise TypeError here instead of reaching pydantic's ordinary "name must be a string" 400
+        # (wave-2 fix-stage review).
+        name = raw.get("name")
+        if not isinstance(name, str) or name not in LITERATURE_TOOL_NAMES:
+            raw = {key: value for key, value in raw.items() if key != "server_context"}
+    try:
+        payload = AgentToolCallRequest.model_validate(raw)
+    except ValidationError as error:
+        if not _only_server_context_failed(error):
+            return _refusal("", "invalid_tool_request", _BAD_REQUEST)
+        # Value-free, bounded field detail (`include_input=False`); see agent/AGENTS.md.
+        name = raw.get("name") if isinstance(raw, dict) else None
+        return _refusal(
+            name if isinstance(name, str) and name in names else "",
+            "invalid_tool_arguments",
+            _BAD_REQUEST,
+            argument_error_detail(error),
+        )
     if payload.name not in names:
         return _refusal(payload.name, "unknown_environmental_tool", _BAD_REQUEST)
+    return payload
+
+
+@agent_tools_bp.post("/call")
+async def call_agent_tool(request: Request) -> HTTPResponse:
+    """Execute one schema-validated tool inside the existing Parquet admission boundary."""
+    payload = _parse_call(request, {schema["function"]["name"] for schema in environmental_tool_schemas()})
+    if isinstance(payload, HTTPResponse):
+        return payload
+    strategy_context = (
+        payload.server_context.strategy_context()
+        if payload.server_context is not None and payload.name in LITERATURE_TOOL_NAMES
+        else None
+    )
     try:
         async with asyncio.timeout(TOOL_TIMEOUT_SECONDS), run_context():
-            result = await tool_by_name(payload.name).call(payload.arguments)
+            with bound_strategy_context(strategy_context):
+                result = await tool_by_name(payload.name).call(payload.arguments)
         content = json.loads(result) if isinstance(result, str) else result
         encoded = json.dumps(content, default=str, allow_nan=False)
     except (TimeoutError, TypeError, ValueError) as error:

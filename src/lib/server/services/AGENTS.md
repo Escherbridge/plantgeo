@@ -223,19 +223,165 @@ reach the live agent through the same bridge catalogue but are literature, not m
   additional read (with or without records) completes the stage.
 - Never measurement: `isMeasurementRead` and `regionalFactsForRead` exclude the tools by name, so
   literature never enters the citation manifest, measurement facts or warehouse citations.
-- Arguments pass through unbound: the server never injects the request's coordinate or day.
+- Arguments stay coordinate-free: the server never injects the request's coordinate or day, and
+  `bindRegionalEvidenceArguments` DROPS the model's `site_profile` and top-level `region`
+  (`SERVER_OWNED_LITERATURE_ARGUMENTS`). Owner decision 3 (wave-2 contract): site facts are
+  server-owned, because models invented them (Gemini's "slope 50%" with no slope read) and
+  mis-shaped them (`region: "idaho"`). The tool result tells the model what was dropped
+  (`serverOwnedArgumentsDropped`).
 - Budget: at most four literature calls per request, separate from the twelve measured reads.
-  The context reducer keeps up to ten top-level `results`/`strategies`/`findings` entries of a
+  Only `answered`, `answered_no_records`, `unavailable` and transport failures spend it. A
+  rejection (a 400 argument error or a `refused` payload) spends a separate cap of three
+  (`MAX_REJECTED_LITERATURE_CALLS_PER_REQUEST`), so a model fixing its arguments is not starved
+  of answers, yet the loop stays bounded. Answer slots are reserved at dispatch (`literatureCallsInFlight`),
+  so a parallel batch of three cannot overrun four; the rejection cap is counted on completion,
+  so one batch can overshoot it by at most two.
+- Repeat guard: an identical call (tool name + canonical JSON of the bound arguments, keys
+  sorted recursively) that was rejected earlier in the request -- argument error, refusal, or
+  unparseable arguments -- is not re-sent. The model gets `{evidenceStatus: "refused", reason:
+  "repeated_rejected_call"}` and the audit records `not_queried`. It applies to every evidence
+  tool, not only literature. Lone-string list coercion is N/A here: TS does not validate
+  literature arguments, the agri bridge does (lane B).
+- The context reducer keeps up to ten top-level `results`/`strategies`/`findings` entries of a
   literature payload (the tools' own `limit` ceiling); every other collection keeps eight.
 - Report gate: the literature origin is offered in the per-round report schema, and accepted by
   `resolveProviderMeasurementReport`, only when an audit call from one of the three tools is exactly
   `answered` (`strategyKnowledgeAnswered`) this request -- `answered_no_records` does not count.
   Unset URL, service down, a zero-record answer, or a failed catalogue therefore leaves only
   web/model_inference.
-- Pairing: `pairLiteratureProvenance` runs before validation. It fills a missing
+- Pairing: `pairLiteratureProvenance` runs before grounding and validation. It fills a missing
   `strategy-knowledge` source on literature claims and strips it from web/model_inference claims,
-  so a pairing slip never spends the single report correction. It never changes an origin, never
-  touches read IDs, and leaves a conflicting warehouse source for the validator to reject.
+  so a pairing slip never spends the single report correction. It also strips model-written
+  `literatureCitations`/`groundingNote` from every claim (both are server-owned) and
+  `literatureRecordIds` from non-literature claims. It never changes an origin, never touches read
+  IDs, and leaves a conflicting warehouse source for the validator to reject. See §literature-grounding
+  for what runs after it.
+
+#### literature-server-context
+
+Every literature call carries an out-of-band `server_context` in the bridge POST body (seam S1,
+`.omc/ultrapilot-strategy-integration-20260926/CONTRACT-WAVE2.md`); `callRegionalEvidenceTool`
+sends it only for the three literature tools, never with a measured read. The agri bridge derives
+the region enum from `point`, drops model-supplied site facts, and forwards `user_question` to
+strategy-knowledge as `context_query`. Strategy-knowledge itself never sees coordinates.
+
+**Deploy-skew fallback (wave-2 fix-stage review).** `AgentToolCallRequest` on the agri side is
+`extra="forbid"`, so a not-yet-redeployed bridge rejects the WHOLE request (`invalid_tool_request`,
+not the per-argument `invalid_tool_arguments`) the first time it sees an unrecognised `server_context`
+field. `callRegionalEvidenceTool` treats that one code, and only when it sent `server_context`, as a
+signal to retry once with the field removed rather than surfacing it to the model as an unfixable
+argument error -- this keeps literature answering (as `caller_asserted`) through the push-deploy
+window instead of losing it for as long as the two services are skewed. Agri and web still deploy
+independently; this is a safety net, not a substitute for redeploying agri first when both change.
+- `user_question` (`literatureUserQuestion`): every user turn in the replayed history plus this
+  request's question, verbatim, joined by `\n`, latest last, front-truncated to 2000 characters.
+  C0/C1 control runs become one space, and the replay-omission marker `conversation-history.ts`
+  prefixes is removed. Assistant turns are never included, and neither is a saved user turn that is
+  exactly the route's `DEFAULT_QUESTION` filler (`Analyze this location`, persisted by
+  `recordExchange` when the user typed nothing). The route passes `body.question?.trim()`
+  UNDEFAULTED (never its own display fallback `Analyze this location`, used only for the saved
+  conversation record): a server-authored filler string must never masquerade as the user's own
+  words in a retrieval signal forwarded to strategy-knowledge. `ai-prompt.ts` `buildUserMessage`
+  supplies its own separate default text for the model-facing "Question" section.
+- `point`: `payload.location` as `{longitude, latitude}`, omitted if out of range.
+- `site_facts` (`literatureSiteFacts`): only values measured by reads executed THIS request.
+  Prefetch and additional reads append `siteFactObservationsForRead` results to the workflow's
+  `siteFactObservations` ledger; the context is rebuilt at each literature call. A record counts
+  only when its own support contains the point (`covers_probe_point === true`). Soil, land
+  cover and precipitation come from the selected day only; fire dates also come from sampled
+  history. A fact whose reads disagree is omitted. `slope_pct` is never sent (no slope surface)
+  and neither is `region` (the bridge derives it).
+
+| S1 key | source | conversion |
+|---|---|---|
+| `soil_ph` | metric named `ph`/`phh2o` (or read from `soil-phh2o`); `payload.soilProperties.ph` | unit `pH` as is; `pH*10`/`pH x10` / 10 (SoilGrids raw); bounds 2-12 |
+| `soil_organic_carbon_pct` | metric `soc`/`organic carbon`; `payload.soilProperties.organicCarbon` (g/kg) | g/kg / 10; dg/kg / 100 (SoilGrids raw); % as is; `ocd` (kg/m3) is density and never used |
+| `sand_pct`, `clay_pct` | metric `sand`/`clay` | g/kg / 10 (SoilGrids raw); % or g/100g as is |
+| `electrical_conductivity_ds_m` | metric `ec`/`conductivity` | dS/m or mS/cm as is; uS/cm / 1000 |
+| `burn_severity` | `burn-severity` record `severity_class`, PAIRED to that record's own `ignition_date` | MTBS 2/3/4 or the name -> low/moderate/high; 1, 5, 6 omitted; kept only for the SAME fire that sets `days_since_fire` (wave-2 fix-stage review: an older or unrelated burn-severity record's class must never be reported against a newer perimeter's day) |
+| `days_since_fire` | newest `burn-severity` `ignition_date` or `fire-perimeters` `fire_discovery_at` | server today minus that day; future days dropped. MTBS `observed_day` is the publication day and satellite detections are thermal anomalies, so neither is a fire date |
+| `annual_precip_mm` | metric named `annual ... precip...` | mm/yr only; daily mm/day values are never summed |
+| `land_cover` | `nlcd_class_name`/`land_cover_class`/`land_cover` text or an NLCD code | as given; crop-cover (CDL) fractions are not mapped |
+
+Metric records are `normalized_value`/`normalized_unit`/`signal_name` or
+`metric_value`/`metric_unit`/`metric_name`. A value with a missing or unknown unit, or outside
+the bounds after conversion, is dropped rather than guessed. What is live today (2026-09-27):
+the SoilGrids map surfaces return `numeric_values_unavailable` and `payload.soilProperties` is
+withheld (null), `soil-survey` carries no pH or texture, MTBS `severity_class` is null on every
+published row, and no annual-precipitation or NLCD surface exists. So `site_facts` is usually
+only `days_since_fire`, or absent, until those lanes publish values. That is correct: an absent
+fact is unknown, never zero.
+
+#### literature-grounding
+
+The live report's per-claim literature grounding (CONTRACT-WAVE2 seam S4), in `remediation-report.ts`,
+wired into the live agent loop by `ai-prompt.ts` `streamRegionalIntelligence`.
+
+- **Records.** `literatureRecordsFromResult(result)` reads one answered strategy-knowledge payload
+  (the RAW parsed result, never `boundedEvidence(result)`: grounding must see every record the turn
+  actually answered, not the model's display-bounded projection). `ai-prompt.ts` appends to a
+  per-request `literatureRecords: LiteratureRecord[]` on every `audit.status === 'answered'` call.
+  - Findings are read by `finding_id`. The citation's title is `source.title`, falling back to the
+    claim; magnitude, direction and conditions are copied verbatim; the source link is `source.url`
+    when https.
+  - Strategies are read by `strategy_id` from both search hits and `get_strategy` records. The title
+    is the strategy name; the link is the first https citation url.
+  - Each record also keeps its own fields as grounding text: findings count `claim`, `magnitude`,
+    `conditions`, `excerpt` plus the source title/year; strategies count `name`, `summary`,
+    `actions`, `application_rate`, `timing`, `slope_guidance`, `soil_conditions`, `scale`,
+    `time_to_effect`, `benefits`, `risks_limitations`, `nrcs_practice_code` plus each citation's
+    title/year/excerpt. This is
+    WIDER than the contract's literal "magnitude/excerpt/summary" pin -- a disclosed, deliberate
+    deviation (narrowing it would drop fields the authored `literature-grounding.test.ts` suite
+    already exercises, e.g. a strategy's `application_rate` grounding its own residue-cover
+    percentage). Owner sign-off on widening S4 to the actual field list is still open; narrow it if
+    the owner instead wants the strict three fields.
+  - A refusal yields no records.
+- **Ownership.** The model writes only `literatureRecordIds`. The server writes
+  `literatureCitations` and `groundingNote`; both are removed from `REMEDIATION_REPORT_JSON_SCHEMA`
+  and `pairLiteratureProvenance` strips any the model sends (see §strategy-knowledge Pairing).
+  `reportSchemaForCitations` offers `literatureRecordIds` only when literature answered, with an enum
+  of this turn's ids when `literatureRecordIds` is passed.
+- **Grounding.** `groundLiteratureClaims(pairLiteratureProvenance(input), literatureRecords)` runs
+  before `resolveProviderMeasurementReport`; `ai-prompt.ts` chains all three on every candidate
+  report. It resolves each literature claim's ids against this turn's answered records only; unknown
+  ids beside a valid one are dropped. The claim is DOWNGRADED to `model_inference` (evidenceSource,
+  ids and citations removed; a short `groundingNote` added) when:
+  - it cites no valid id;
+  - a number, range or ratio in its text (NFKC-normalised; U+2212 and U+2010-U+2014 hyphens/dashes,
+    the em dash included, fold to `-` and U+2044 folds to `/` -- `normalizeNumericText`'s
+    `DASH_CLASS` builds this from numeric code points (`String.fromCharCode`), not literal glyphs or
+    `\u` source escapes, so an editor, formatter or copy-paste silently swapping one look-alike dash
+    for another cannot narrow the class unnoticed; NFKC already folds U+FE58 to U+2014; a leading-dot
+    decimal like `.5` counts too; a range is split into endpoints, each compared
+    unsigned) is missing from every cited record's
+    own grounding text -- never "anywhere in this turn's tool text" (agent-evals FINDINGS r4 #1: that
+    check would false-fail a correct figure and pass a real distortion). A word-form magnitude with NO
+    digits ("halved", "halves", "doubled", "tripled", "quadrupled", "thirds", "quarters") is checked
+    the same way, but against the SAME lemma in the cited record's text (`MAGNITUDE_WORD_LEMMA`),
+    never converted to an assumed percentage -- a wrong numeric equivalent would be worse than
+    declining to ground it;
+  - its effect verb, in a sentence carrying numbers, reverses the strict `increase`/`decrease`
+    direction of EVERY cited record that reports that sentence's OWN numbers (records reporting none
+    of the sentence's numbers are not consulted, so one claim can restate an increase finding and a
+    decrease finding in separate sentences); a `mixed`/`conditional`/`no_effect` record carries no
+    single sign to contradict, so it is never checked;
+  - a sentence restates a cited number as an outcome expected at this site (`promisesSiteOutcome`;
+    negation is scoped to the CLAUSE carrying the promise, not the whole sentence, so a trailing hedge
+    in a later clause of the same sentence cannot blanket-suppress an earlier promise).
+
+  A downgrade is NEVER a validation issue: `MAX_REPORT_CORRECTIONS = 1` would turn one into a
+  user-visible failure. With no records the function is a no-op, so the existing "no
+  strategy-knowledge literature tool answered" rule in `resolveProviderMeasurementReport` still
+  rejects an unsupported literature claim.
+- **UI.** `RegionalIntelligencePanel`'s `LiteratureCitations` lists each cited title, "Reported
+  &lt;magnitude&gt; (direction: &lt;direction&gt;)", conditions and an https-only Source link. A
+  downgraded item shows a quiet "Not grounded in the cited research" label with its note. The
+  Markdown export (`literatureMarkdownLines`) mirrors both, escaping Markdown syntax characters in
+  cited free text -- title, magnitude AND conditions alike (wave-2 fix-stage review: magnitude is
+  record free text exactly like the other two, and was the one field the export left unescaped) --
+  and percent-encoding `(`/`)` in the source URL so cited wording cannot reinterpret as formatting or
+  truncate the link.
 
 ## Region identity on row reads
 

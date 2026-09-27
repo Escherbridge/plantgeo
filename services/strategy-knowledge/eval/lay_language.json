@@ -1,0 +1,83 @@
+[
+  {
+    "query": "sour ground, nothing will grow",
+    "filters": {},
+    "expected_any_of": [
+      "lime-application-acidic-soils",
+      "agricultural-liming-carbon-removal"
+    ],
+    "k": 5,
+    "kind": "lay"
+  },
+  {
+    "query": "hardpan under the garden, water just sits on top",
+    "filters": {},
+    "expected_any_of": [
+      "brassica-cover-cropping-compaction-relief",
+      "strip-tillage-zone-till"
+    ],
+    "k": 5,
+    "kind": "lay"
+  },
+  {
+    "query": "hillside keeps washing out every time it rains",
+    "filters": {},
+    "expected_any_of": [
+      "contour-farming",
+      "terracing-hilly-cropland",
+      "grassed-waterways"
+    ],
+    "k": 5,
+    "kind": "lay"
+  },
+  {
+    "query": "field got burnt and now it's all washed out on the slope",
+    "filters": {},
+    "expected_any_of": [
+      "post-fire-straw-mulching",
+      "contour-log-erosion-barriers",
+      "contour-straw-wattle-installation"
+    ],
+    "k": 5,
+    "kind": "lay"
+  },
+  {
+    "query": "salty field, salt crust on top, nothing will grow",
+    "filters": {},
+    "expected_any_of": [
+      "saline-soil-leaching-and-salt-tolerant-management",
+      "gypsum-sodic-and-crusting-remediation"
+    ],
+    "k": 5,
+    "kind": "lay"
+  },
+  {
+    "query": "soil is so salty nothing will grow, not even weeds",
+    "filters": {},
+    "expected_any_of": [
+      "saline-soil-leaching-and-salt-tolerant-management"
+    ],
+    "k": 5,
+    "kind": "lay"
+  },
+  {
+    "query": "burnt hillside washed out after the fire, water just runs off now",
+    "filters": {},
+    "expected_any_of": [
+      "break-hydrophobic-soil-layer",
+      "contour-log-erosion-barriers"
+    ],
+    "k": 5,
+    "kind": "lay"
+  },
+  {
+    "query": "sandy ground won't grow anything, water runs right through it",
+    "filters": {},
+    "expected_any_of": [
+      "biochar-sandy-soil-water-retention-amendment",
+      "biochar-amendment-coarse-soils"
+    ],
+    "k": 5,
+    "kind": "lay"
+  }
+]

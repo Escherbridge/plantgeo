@@ -9,14 +9,26 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
+import unicodedata
+import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, Any, Final, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Final, Literal, NamedTuple
 
 import httpx
+import structlog
 from anthropic import beta_async_tool
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, StringConstraints, ValidationError
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    ValidationError,
+    model_validator,
+)
 
 from agri_data_service.agent.report import LITERATURE_EVIDENCE_ORIGIN, STRATEGY_KNOWLEDGE_EVIDENCE_SOURCE
 from agri_data_service.config import settings
@@ -29,21 +41,46 @@ if TYPE_CHECKING:
 __all__ = [
     "LITERATURE_EVIDENCE_DOMAIN",
     "LITERATURE_EVIDENCE_ORIGIN",
+    "LITERATURE_TOOL_NAMES",
     "NOT_CONFIGURED",
+    "REGION_ARGUMENT_DROPPED",
+    "REGION_BOXES",
     "REJECTED_ARGUMENTS",
     "STRATEGY_KNOWLEDGE_EVIDENCE_SOURCE",
     "UNAVAILABLE",
+    "LiteratureCallPlan",
     "RawSiteProfile",
+    "RegionBox",
     "SanitizedSiteProfile",
+    "ServerContext",
+    "ServerContextPoint",
+    "SiteFacts",
     "StrategyAnswer",
+    "StrategyContext",
     "StrategySiteProfile",
     "ask",
+    "bound_strategy_context",
+    "current_strategy_context",
+    "derive_region",
     "literature_tool",
+    "plan_literature_call",
     "portable_schema",
     "sanitize_site_profile",
+    "server_site_profile",
     "service_arguments",
     "use_transport",
 ]
+
+logger = structlog.get_logger()
+
+#: The three model-facing literature tools; the bridge honours `server_context` for these alone.
+LITERATURE_TOOL_NAMES: Final = frozenset(
+    {
+        "search_environmental_strategies",
+        "get_environmental_strategies",
+        "search_strategy_research_findings",
+    }
+)
 
 # --- Provenance and bounds ---------------------------------------------------------
 
@@ -57,7 +94,12 @@ REQUEST_TIMEOUT_SECONDS: Final = 8.0
 #: Counted on the wire: the request asks for `identity`, so no decompression happens before the cap.
 MAX_RESPONSE_BYTES: Final = 1_048_576
 _REQUEST_HEADERS: Final = {"Accept-Encoding": "identity"}
+_REQUEST_ID_HEADER: Final = "X-Request-ID"
 _IDENTITY_ENCODINGS: Final = frozenset({"", "identity"})
+#: In-flight strategy-knowledge calls per event loop; the service's own cap answers a fast 503 above it.
+MAX_CONCURRENT_CALLS: Final = 4
+#: strategy-knowledge's `context_query` limit; the verbatim question keeps its LAST characters.
+MAX_USER_QUESTION_CHARACTERS: Final = 2_000
 DEFAULT_RESULTS: Final = 5
 MAX_RESULTS: Final = 10
 MAX_STRATEGY_IDS: Final = 5
@@ -183,29 +225,28 @@ ServiceTool = Literal["search_strategies", "get_strategy", "search_findings"]
 # --- Model-facing argument types ---------------------------------------------------
 
 StrategyQuery = Annotated[str, Field(min_length=1, max_length=MAX_QUERY_CHARACTERS)]
-GoalFilter = Annotated[list[Goal], Field(max_length=MAX_FILTER_VALUES)] | None
-LandUseFilter = Annotated[list[LandUse], Field(max_length=MAX_FILTER_VALUES)] | None
-FirePhaseFilter = Annotated[list[FirePhase], Field(max_length=MAX_FILTER_VALUES)] | None
 
 
-def _normalize_region_filter(value: Any) -> Any:
-    """Wrap a lone Region string in a one-element list; anything else (a real list, None) passes through.
+def _wrap_lone_string(value: Any) -> Any:
+    """Wrap a lone string in a one-element list; anything else (a real list, None) passes through.
 
-    A live eval (google/gemini-2.5-flash-lite) sent `region="pnw_westside"` rather than
-    `region=["pnw_westside"]` on every call. This runs BEFORE `list[Region]` validation, so an invalid
-    region string still fails that validation normally -- it is just as strict as a supplied list, one
-    element earlier.
+    Runs BEFORE the `list[...]` validation, so an invalid string still fails exactly as it would inside a
+    list. See agent/AGENTS.md, "A lone string is a one-element list filter".
     """
     return [value] if isinstance(value, str) else value
 
 
-RegionFilter = (
-    Annotated[list[Region], BeforeValidator(_normalize_region_filter), Field(max_length=MAX_FILTER_VALUES)] | None
-)
+#: Applied to EVERY list filter; the published schema is unchanged (a BeforeValidator adds no schema).
+_LONE_STRING_AS_LIST: Final = BeforeValidator(_wrap_lone_string)
+
+GoalFilter = Annotated[list[Goal], _LONE_STRING_AS_LIST, Field(max_length=MAX_FILTER_VALUES)] | None
+LandUseFilter = Annotated[list[LandUse], _LONE_STRING_AS_LIST, Field(max_length=MAX_FILTER_VALUES)] | None
+FirePhaseFilter = Annotated[list[FirePhase], _LONE_STRING_AS_LIST, Field(max_length=MAX_FILTER_VALUES)] | None
+RegionFilter = Annotated[list[Region], _LONE_STRING_AS_LIST, Field(max_length=MAX_FILTER_VALUES)] | None
 MinimumEvidence = EvidenceStrength | None
 ResultLimit = Annotated[int, Field(ge=1, le=MAX_RESULTS)]
 StrategyId = Annotated[str, Field(min_length=1, max_length=MAX_ID_CHARACTERS)]
-StrategyIds = Annotated[list[StrategyId], Field(min_length=1, max_length=MAX_STRATEGY_IDS)]
+StrategyIds = Annotated[list[StrategyId], _LONE_STRING_AS_LIST, Field(min_length=1, max_length=MAX_STRATEGY_IDS)]
 OptionalStrategyId = StrategyId | None
 
 # Published as strings (numbers are coerced), which the service's `str | int` fields accept, so the schema
@@ -306,6 +347,316 @@ def _site_profile_field_reason(error: ValidationError) -> str:
     if len(message) <= _MAX_SITE_PROFILE_REASON_CHARACTERS:
         return message
     return f"{message[: _MAX_SITE_PROFILE_REASON_CHARACTERS - 3]}..."
+
+
+# --- Server-owned site context (seams S1/S2) -----------------------------------------
+#
+# The server, not the model, owns the site facts a literature call is boosted and filtered by. See
+# agent/AGENTS.md, "Server-owned site facts".
+
+Longitude = Annotated[float, Field(ge=-180, le=180, allow_inf_nan=False)]
+Latitude = Annotated[float, Field(ge=-90, le=90, allow_inf_nan=False)]
+
+
+def _clean_user_question(value: Any) -> Any:
+    """Strip control characters (newlines kept), keep the LAST 2000 characters, and map blank to None."""
+    if not isinstance(value, str):
+        return value
+    kept = "".join(character for character in value if character == "\n" or unicodedata.category(character) != "Cc")
+    return kept[-MAX_USER_QUESTION_CHARACTERS:].strip() or None
+
+
+#: The user's verbatim messages, latest last, front-truncated; cleaned before length validation.
+UserQuestion = Annotated[
+    Annotated[str, Field(min_length=1, max_length=MAX_USER_QUESTION_CHARACTERS)] | None,
+    BeforeValidator(_clean_user_question),
+]
+
+
+class SiteFacts(BaseModel):
+    """Measured site facts (S1): strategy-knowledge `SiteProfile` minus `slope_pct` and `region`."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, coerce_numbers_to_str=True)
+
+    soil_ph: Annotated[float, Field(ge=0, le=14, allow_inf_nan=False)] | None = None
+    sand_pct: Annotated[float, Field(ge=0, le=100, allow_inf_nan=False)] | None = None
+    clay_pct: Annotated[float, Field(ge=0, le=100, allow_inf_nan=False)] | None = None
+    soil_organic_carbon_pct: Annotated[float, Field(ge=0, le=100, allow_inf_nan=False)] | None = None
+    electrical_conductivity_ds_m: Annotated[float, Field(ge=0, le=1_000, allow_inf_nan=False)] | None = None
+    burn_severity: BurnSeverity | None = None
+    days_since_fire: Annotated[int, Field(ge=0, le=36_500)] | None = None
+    annual_precip_mm: Annotated[float, Field(ge=0, le=20_000, allow_inf_nan=False)] | None = None
+    land_cover: LandCover | None = None
+
+
+class StrategyContext(BaseModel):
+    """Out-of-band literature context for one run or bridge call (S2); the model never sees or sets it."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    user_question: UserQuestion = None
+    longitude: Longitude | None = None
+    latitude: Latitude | None = None
+    site_facts: SiteFacts | None = None
+
+    @model_validator(mode="after")
+    def _point_is_whole(self) -> StrategyContext:
+        """A coordinate is both halves or neither."""
+        if (self.longitude is None) != (self.latitude is None):
+            raise ValueError("longitude and latitude must be given together")
+        return self
+
+
+class ServerContextPoint(BaseModel):
+    """The map point on the bridge wire (S1), WGS84."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    longitude: Longitude
+    latitude: Latitude
+
+
+class ServerContext(BaseModel):
+    """The bridge request's optional `server_context` object (S1)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    user_question: UserQuestion = None
+    point: ServerContextPoint | None = None
+    site_facts: SiteFacts | None = None
+
+    def strategy_context(self) -> StrategyContext:
+        """The same facts in the S2 shape the tools read."""
+        return StrategyContext(
+            user_question=self.user_question,
+            longitude=self.point.longitude if self.point else None,
+            latitude=self.point.latitude if self.point else None,
+            site_facts=self.site_facts,
+        )
+
+
+class RegionBox(NamedTuple):
+    """One inclusive lon/lat box; `region=None` marks a band too ambiguous to label."""
+
+    region: Region | None
+    west: float
+    south: float
+    east: float
+    north: float
+    area: str
+
+
+# Coarse box table, first match wins (deterministic precedence). Ambiguity bands come first so a
+# border strip never inherits either neighbour; nothing matching (open ocean, Hawaii, Pacific islands,
+# the Ural gap) is None. Boxes include adjacent coastal water. The Cascade crest splits pnw_westside
+# from pnw_inland at -121.3 in Washington, stepping west in Oregon (-121.7, then -122.1). Never
+# north_america_general/global/general: the service's region filter admits those itself.
+# See agent/AGENTS.md, "The region table".
+REGION_BOXES: Final[tuple[RegionBox, ...]] = (
+    # Ambiguity bands: a wrong region is a HARD filter in the service, None only skips it.
+    RegionBox(None, -121.4, 45.6, -121.2, 49.0, "Cascade crest, Washington"),
+    RegionBox(None, -121.8, 44.0, -121.6, 45.6, "Cascade crest, northern Oregon"),
+    RegionBox(None, -122.2, 42.0, -122.0, 44.0, "Cascade crest, southern Oregon"),
+    RegionBox(None, -109.5, 42.5, -104.05, 45.0, "Wyoming basins between the Northern and Southern Rockies"),
+    RegionBox(None, -111.5, 37.0, -109.05, 42.0, "eastern Utah, Wasatch/Uinta beside the Colorado Plateau"),
+    RegionBox(None, -106.7, 29.3, -104.0, 31.8, "Rio Grande border, El Paso to Presidio"),
+    RegionBox(None, -104.0, 25.8, -100.0, 29.8, "Rio Grande border, Big Bend to Eagle Pass"),
+    RegionBox(None, -100.0, 25.8, -99.0, 27.6, "Rio Grande border, Laredo"),
+    RegionBox(None, -99.0, 25.8, -97.1, 26.4, "Rio Grande border, lower valley"),
+    RegionBox(None, -89.2, 36.9, -82.0, 39.15, "Ohio River valley, Midwest/Southeast transition"),
+    RegionBox(None, -83.0, 38.0, -75.0, 39.7, "Mid-Atlantic transition"),
+    RegionBox(None, -95.2, 48.0, -89.0, 49.4, "Minnesota-Ontario border lakes"),
+    RegionBox(None, -77.0, 43.5, -74.3, 45.1, "St. Lawrence River border"),
+    RegionBox(None, -79.3, 42.85, -78.9, 43.3, "Niagara River border"),
+    RegionBox(None, -71.5, 45.0, -70.0, 46.5, "Maine/New Hampshire-Quebec border"),
+    RegionBox(None, -117.1, 32.53, -114.7, 32.72, "Imperial Valley/Mexicali border strip"),
+    RegionBox(None, -84.4, 45.5, -81.5, 46.0, "Manitoulin Island and the North Channel"),
+    RegionBox(None, -69.3, 47.0, -67.8, 47.5, "St. John River border strip, Edmundston"),
+    RegionBox(None, -172.5, 62.5, -168.0, 67.0, "Bering Strait"),
+    RegionBox(None, -58.0, 59.5, -11.0, 84.0, "Greenland"),
+    RegionBox(None, -72.0, 76.0, -58.0, 84.0, "Greenland, Nares Strait"),
+    RegionBox(None, 32.2, 27.5, 60.0, 42.0, "Levant, Anatolia, Caucasus and Iran"),
+    RegionBox(None, 34.5, 12.3, 60.0, 27.5, "Arabian Peninsula and the Red Sea coast"),
+    RegionBox(None, -18.5, 27.5, -13.0, 33.5, "Canary Islands and Madeira"),
+    RegionBox(None, 130.5, -11.0, 151.0, 0.0, "New Guinea"),
+    # Chukotka before alaska, whose westernmost box spans the antimeridian side of the Bering Sea.
+    RegionBox("asia", -180.0, 62.0, -172.5, 72.0, "Chukotka"),
+    RegionBox("alaska", -180.0, 51.0, -141.0, 72.0, "Alaska mainland and Aleutians"),
+    RegionBox("alaska", -138.0, 57.5, -134.0, 60.0, "Alaska panhandle, Juneau and Haines"),
+    RegionBox("alaska", -136.0, 54.6, -131.0, 57.5, "Alaska panhandle, Sitka to Ketchikan"),
+    RegionBox("alaska", -141.0, 58.5, -138.0, 60.0, "Alaska, Yakutat coast"),
+    RegionBox("alaska", 172.0, 51.0, 180.0, 53.5, "western Aleutians"),
+    RegionBox("pnw_westside", -124.8, 45.6, -121.3, 49.0, "Washington west of the Cascade crest"),
+    RegionBox("pnw_westside", -124.6, 44.0, -121.7, 45.6, "northern Oregon west of the Cascade crest"),
+    RegionBox("pnw_westside", -124.6, 42.0, -122.1, 44.0, "southern Oregon west of the Cascade crest"),
+    RegionBox("pnw_inland", -121.3, 46.0, -116.0, 49.0, "eastern Washington and the Idaho panhandle"),
+    RegionBox("pnw_inland", -121.3, 45.6, -116.9, 46.0, "south-central Washington"),
+    RegionBox("pnw_inland", -121.7, 44.0, -116.9, 45.6, "north-central and northeastern Oregon"),
+    RegionBox("pnw_inland", -122.1, 42.0, -121.0, 44.0, "Oregon east slope and Klamath basin"),
+    RegionBox("california", -124.5, 32.53, -120.0, 42.0, "California west of -120"),
+    RegionBox("california", -120.0, 32.53, -116.0, 35.0, "southern California coast and basins"),
+    RegionBox("california", -120.0, 35.0, -118.5, 38.5, "Sierra Nevada and the southern Central Valley"),
+    RegionBox("great_basin_high_desert", -121.0, 42.0, -116.9, 44.0, "southeastern Oregon high desert"),
+    RegionBox("great_basin_high_desert", -117.1, 42.0, -111.0, 44.0, "Snake River Plain and Owyhee"),
+    RegionBox("great_basin_high_desert", -120.0, 38.5, -111.5, 42.0, "Nevada and western Utah"),
+    RegionBox("great_basin_high_desert", -118.5, 37.0, -111.5, 38.5, "central Nevada and southwestern Utah"),
+    RegionBox("northern_rockies", -116.9, 44.0, -111.0, 46.0, "central Idaho and southwestern Montana"),
+    RegionBox("northern_rockies", -116.0, 46.0, -110.0, 49.0, "northern Idaho mountains and western Montana"),
+    RegionBox("northern_rockies", -111.0, 42.5, -109.5, 46.0, "Yellowstone, Tetons and Bozeman"),
+    RegionBox("southern_rockies", -109.05, 37.0, -104.8, 41.0, "Colorado west of the Front Range edge"),
+    RegionBox("southern_rockies", -111.0, 41.0, -105.0, 42.5, "southern Wyoming"),
+    RegionBox("southern_rockies", -108.0, 35.5, -105.0, 37.0, "northern New Mexico mountains"),
+    RegionBox("southwest", -118.5, 35.0, -114.0, 37.0, "Mojave: southern Nevada and Death Valley"),
+    RegionBox("southwest", -116.0, 32.53, -114.8, 35.0, "southeastern California deserts"),
+    RegionBox("southwest", -114.8, 32.5, -104.0, 37.0, "Arizona and New Mexico"),
+    RegionBox("southwest", -111.1, 31.3, -104.0, 32.5, "southern Arizona and New Mexico border strip"),
+    RegionBox("southwest", -113.3, 32.03, -111.1, 32.5, "southwestern Arizona, Ajo"),
+    RegionBox("southwest", -112.2, 31.7, -111.1, 32.03, "southwestern Arizona, Tohono O'odham"),
+    RegionBox("great_plains_texas", -104.0, 25.8, -93.8, 33.6, "Texas"),
+    RegionBox("great_plains_texas", -104.0, 33.6, -94.5, 36.5, "Texas panhandle, Oklahoma, eastern New Mexico"),
+    RegionBox("great_plains_texas", -104.8, 36.5, -97.0, 49.0, "central and northern Great Plains"),
+    RegionBox("great_plains_texas", -109.5, 45.0, -104.0, 49.0, "eastern Montana"),
+    RegionBox("us_midwest", -97.0, 36.5, -89.0, 49.0, "Missouri to Minnesota"),
+    RegionBox("us_midwest", -89.0, 37.8, -82.4, 46.0, "Illinois, Indiana, Ohio, Michigan, Wisconsin"),
+    RegionBox("us_midwest", -90.5, 45.5, -84.4, 47.5, "Upper Peninsula of Michigan"),
+    RegionBox("us_midwest", -82.4, 38.4, -80.5, 41.98, "eastern Ohio"),
+    RegionBox("us_southeast", -94.5, 24.4, -79.8, 30.7, "Gulf coast and Florida"),
+    RegionBox("us_southeast", -94.5, 30.7, -75.4, 36.6, "Arkansas to the Carolinas"),
+    RegionBox("us_southeast", -89.6, 36.5, -75.2, 38.0, "Kentucky and Virginia south of the transition"),
+    RegionBox("us_northeast", -80.6, 39.7, -74.7, 42.3, "Pennsylvania and New York's Southern Tier"),
+    RegionBox("us_northeast", -79.8, 42.0, -78.9, 42.6, "western New York, Lake Erie shore"),
+    RegionBox("us_northeast", -78.9, 42.0, -73.3, 43.5, "western and central New York"),
+    RegionBox("us_northeast", -74.7, 40.5, -69.9, 45.0, "New England, eastern New York, New Jersey north"),
+    RegionBox("us_northeast", -75.6, 38.4, -73.9, 41.4, "New Jersey south and the Delaware shore"),
+    RegionBox("us_northeast", -71.1, 43.0, -66.9, 45.2, "southern Maine"),
+    RegionBox("us_northeast", -70.0, 45.2, -67.8, 47.5, "northern Maine"),
+    RegionBox("canada", -141.0, 49.0, -95.2, 83.5, "western and northern Canada"),
+    RegionBox("canada", -95.2, 45.0, -52.0, 83.5, "eastern Canada"),
+    RegionBox("canada", -82.4, 41.7, -74.3, 45.0, "southern Ontario"),
+    RegionBox("latin_america", -117.5, 14.5, -86.5, 32.7, "Mexico"),
+    RegionBox("latin_america", -92.5, 7.0, -77.0, 18.5, "Central America"),
+    RegionBox("latin_america", -85.0, 10.0, -59.0, 23.7, "Caribbean"),
+    RegionBox("latin_america", -82.0, -56.0, -34.0, 12.6, "South America"),
+    RegionBox("europe", -10.0, 36.0, -1.5, 44.0, "Portugal and western Spain"),
+    RegionBox("europe", -1.5, 37.3, 3.5, 44.0, "eastern Spain and the Balearics"),
+    RegionBox("europe", -10.5, 44.0, 45.0, 71.5, "Europe north of 44N to the Volga"),
+    RegionBox("europe", -25.0, 63.0, -13.0, 67.0, "Iceland"),
+    RegionBox("europe", 3.5, 38.0, 12.0, 44.0, "southern France, Corsica, Sardinia, western Italy"),
+    RegionBox("europe", 12.0, 36.4, 26.0, 44.0, "Italy, Sicily, the Balkans and Greece"),
+    RegionBox("europe", 14.1, 35.7, 14.7, 36.1, "Malta"),
+    RegionBox("europe", 23.4, 34.8, 26.4, 35.8, "Crete"),
+    RegionBox("europe", 26.0, 41.9, 30.0, 44.0, "eastern Bulgaria and the Black Sea coast"),
+    RegionBox("africa", -18.0, -35.0, 52.0, 33.0, "Africa south of 33N"),
+    RegionBox("africa", -18.0, 33.0, 11.6, 37.5, "Morocco, Algeria and Tunisia"),
+    RegionBox("oceania", 112.5, -44.0, 154.0, -10.5, "Australia"),
+    RegionBox("oceania", 166.0, -47.5, 179.0, -34.0, "New Zealand"),
+    RegionBox("asia", 60.0, 5.0, 130.0, 78.0, "Asia east of 60E"),
+    RegionBox("asia", 130.0, 24.0, 146.0, 78.0, "Japan, Korea's east and the Russian Far East"),
+    RegionBox("asia", 90.0, -11.0, 131.0, 5.0, "maritime Southeast Asia"),
+    RegionBox("asia", 146.0, 40.0, 180.0, 78.0, "Kamchatka, the Kurils and northeast Siberia"),
+)
+
+
+#: WGS84 coordinate range, restated as plain floats (`Longitude`/`Latitude` above are pydantic Field
+#: bounds, not directly usable in a bare comparison) so a caller's raw float pair is range-checked
+#: the same way before `derive_region` ever looks at `REGION_BOXES`.
+_MIN_LONGITUDE_DEGREES: Final = -180.0
+_MAX_LONGITUDE_DEGREES: Final = 180.0
+_MIN_LATITUDE_DEGREES: Final = -90.0
+_MAX_LATITUDE_DEGREES: Final = 90.0
+
+
+def derive_region(longitude: float, latitude: float) -> Region | None:
+    """The first `REGION_BOXES` entry containing the point, or None (ambiguous band, open ocean, bad input)."""
+    in_range = (
+        _MIN_LONGITUDE_DEGREES <= longitude <= _MAX_LONGITUDE_DEGREES
+        and _MIN_LATITUDE_DEGREES <= latitude <= _MAX_LATITUDE_DEGREES
+    )
+    if not in_range:  # NaN fails both comparisons.
+        return None
+    for box in REGION_BOXES:
+        if box.west <= longitude <= box.east and box.south <= latitude <= box.north:
+            return box.region
+    return None
+
+
+_strategy_context: ContextVar[StrategyContext | None] = ContextVar("strategy_knowledge_context", default=None)
+
+
+@contextmanager
+def bound_strategy_context(context: StrategyContext | None) -> Iterator[None]:
+    """Bind `context` (None clears it) for every literature call inside the block."""
+    token = _strategy_context.set(context)
+    try:
+        yield
+    finally:
+        _strategy_context.reset(token)
+
+
+def current_strategy_context() -> StrategyContext | None:
+    """The bound server context, or None on the MCP/external path."""
+    return _strategy_context.get()
+
+
+def server_site_profile(context: StrategyContext) -> StrategySiteProfile | None:
+    """The context's measured facts plus the region derived from its point; None when neither exists."""
+    values: dict[str, Any] = context.site_facts.model_dump(exclude_none=True) if context.site_facts else {}
+    if context.longitude is not None and context.latitude is not None:
+        region = derive_region(context.longitude, context.latitude)
+        if region is not None:
+            values["region"] = region
+    return StrategySiteProfile.model_validate(values) if values else None
+
+
+SiteProfileSource = Literal["server", "caller_asserted", "none"]
+#: Named in `site_profile_dropped` when a server context discards the model's top-level region filter.
+REGION_ARGUMENT_DROPPED: Final = "region(argument)"
+
+
+@dataclass(frozen=True, slots=True)
+class LiteratureCallPlan:
+    """What one literature call sends, and the provenance labels its payload carries (S2)."""
+
+    site_profile: StrategySiteProfile | None
+    region: list[str] | None
+    context_query: str | None
+    site_profile_source: SiteProfileSource
+    #: None on the external path, where nothing is discarded and the key is omitted.
+    site_profile_dropped: tuple[str, ...] | None
+    site_profile_ignored: tuple[dict[str, str], ...]
+
+
+def plan_literature_call(
+    raw_site_profile: RawSiteProfile = None, region: Sequence[str] | None = None
+) -> LiteratureCallPlan:
+    """Server context wins: its facts replace the model's site_profile and region; else the advisory path."""
+    context = current_strategy_context()
+    if context is None:
+        sanitized = sanitize_site_profile(raw_site_profile)
+        asserted = isinstance(raw_site_profile, dict) and bool(raw_site_profile)
+        return LiteratureCallPlan(
+            site_profile=sanitized.profile,
+            region=list(region) if region is not None else None,
+            context_query=None,
+            site_profile_source="caller_asserted" if asserted else "none",
+            site_profile_dropped=None,
+            site_profile_ignored=sanitized.ignored,
+        )
+    dropped = (
+        [str(key)[:_MAX_SITE_PROFILE_FIELD_NAME_CHARACTERS] for key in raw_site_profile][:MAX_SITE_PROFILE_IGNORED]
+        if isinstance(raw_site_profile, dict)
+        else []
+    )
+    if region:
+        dropped.append(REGION_ARGUMENT_DROPPED)
+    return LiteratureCallPlan(
+        site_profile=server_site_profile(context),
+        region=None,
+        context_query=context.user_question,
+        site_profile_source="server",
+        site_profile_dropped=tuple(dropped),
+        site_profile_ignored=(),
+    )
 
 
 # --- Portable published schema -----------------------------------------------------
@@ -423,14 +774,58 @@ def service_arguments(**arguments: Any) -> dict[str, Any]:
     return body
 
 
+#: One (loop, Semaphore) per event loop: a Semaphore binds to the loop it first waits on.
+_call_slots: dict[int, tuple[asyncio.AbstractEventLoop, asyncio.Semaphore]] = {}
+
+
+def _call_slot() -> asyncio.Semaphore:
+    """This loop's MAX_CONCURRENT_CALLS Semaphore, created lazily; closed loops' entries are pruned."""
+    loop = asyncio.get_running_loop()
+    entry = _call_slots.get(id(loop))
+    if entry is None or entry[0] is not loop:
+        for key, (known_loop, _) in list(_call_slots.items()):
+            if known_loop.is_closed():
+                _call_slots.pop(key, None)
+        entry = (loop, asyncio.Semaphore(MAX_CONCURRENT_CALLS))
+        _call_slots[id(loop)] = entry
+    return entry[1]
+
+
 async def ask(tool_name: str, service_tool: ServiceTool, arguments: Mapping[str, Any]) -> StrategyAnswer:
     """Call one strategy-knowledge tool and project its answer; every failure is a typed refusal."""
+    started = time.perf_counter()
     origin = settings.strategy_knowledge_url
     if not origin:
-        return refusal(tool_name, NOT_CONFIGURED, "STRATEGY_KNOWLEDGE_URL is not set on this service")
-    decoded = await _exchange(f"{origin}/v1/tools/{service_tool}", arguments)
-    if isinstance(decoded, _Refused):
-        return refusal(tool_name, decoded.code, decoded.detail)
+        answer = refusal(tool_name, NOT_CONFIGURED, "STRATEGY_KNOWLEDGE_URL is not set on this service")
+        _log_literature_call(tool_name, answer, started, request_id=None)
+        return answer
+    request_id = uuid.uuid4().hex
+    async with _call_slot():
+        decoded = await _exchange(f"{origin}/v1/tools/{service_tool}", arguments, request_id)
+    answer = (
+        refusal(tool_name, decoded.code, decoded.detail)
+        if isinstance(decoded, _Refused)
+        else _answered(tool_name, service_tool, decoded)
+    )
+    _log_literature_call(tool_name, answer, started, request_id=request_id)
+    return answer
+
+
+def _log_literature_call(tool_name: str, answer: StrategyAnswer, started: float, *, request_id: str | None) -> None:
+    """One `literature_call` event per ask: tool, status, ms, result_count, request_id."""
+    detail = answer.ledger_detail
+    logger.info(
+        "literature_call",
+        tool=tool_name,
+        status=detail["state"] if detail["state"] == "answered" else detail.get("error"),
+        ms=round((time.perf_counter() - started) * 1000, 1),
+        result_count=detail.get("result_count"),
+        request_id=request_id,
+    )
+
+
+def _answered(tool_name: str, service_tool: ServiceTool, decoded: Mapping[str, Any]) -> StrategyAnswer:
+    """The bounded projection of a 200 answer, and its ledger detail."""
     projected = _PROJECTIONS[service_tool](decoded)
     result_count = len(projected.get("results", projected.get("strategies", [])))
     return StrategyAnswer(
@@ -472,11 +867,14 @@ def refusal(tool_name: str, code: str, detail: str) -> StrategyAnswer:
 
 
 async def _exchange(  # noqa: PLR0911 - one return per refusal class the response is sorted into.
-    url: str, arguments: Mapping[str, Any]
+    url: str, arguments: Mapping[str, Any], request_id: str
 ) -> dict[str, Any] | _Refused:
-    """One bounded request: the decoded 200 body, or the refusal that classifies why there is none."""
+    """One bounded request: the decoded 200 body, or the refusal that classifies why there is none.
+
+    Any non-200 other than 400/413 -- including the service's own 503 concurrency cap -- is UNAVAILABLE.
+    """
     try:
-        status, body = await _post(url, arguments)
+        status, body = await _post(url, arguments, request_id)
     except _ResponseOverBudgetError:
         return _Refused(UNAVAILABLE, f"the response exceeded its {MAX_RESPONSE_BYTES}-byte budget")
     except _UnrequestedEncodingError:
@@ -493,14 +891,15 @@ async def _exchange(  # noqa: PLR0911 - one return per refusal class the respons
     return decoded
 
 
-async def _post(url: str, arguments: Mapping[str, Any]) -> tuple[int, bytes]:
+async def _post(url: str, arguments: Mapping[str, Any], request_id: str) -> tuple[int, bytes]:
     """POST the arguments and read at most MAX_RESPONSE_BYTES of the answer inside one wall-clock deadline."""
+    headers = {**_REQUEST_HEADERS, _REQUEST_ID_HEADER: request_id}
     async with (
         asyncio.timeout(REQUEST_TIMEOUT_SECONDS),
         httpx.AsyncClient(
             timeout=REQUEST_TIMEOUT_SECONDS, follow_redirects=False, transport=_transport.get()
         ) as client,
-        client.stream("POST", url, json=dict(arguments), headers=_REQUEST_HEADERS) as response,
+        client.stream("POST", url, json=dict(arguments), headers=headers) as response,
     ):
         if response.headers.get("content-encoding", "").strip().lower() not in _IDENTITY_ENCODINGS:
             raise _UnrequestedEncodingError

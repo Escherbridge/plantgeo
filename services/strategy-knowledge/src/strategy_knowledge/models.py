@@ -88,6 +88,14 @@ class RegistryStrategy(StrategyRecord):
     merged_from: list[str] = Field(default_factory=list)
     facets: StrategyFacets = Field(default_factory=StrategyFacets)
     review_state: str | None = None
+    #: Lay and technical words a land manager types for this need; BM25-only (AGENTS.md "Metadata").
+    search_terms: list[str] = Field(default_factory=list)
+
+    @field_validator("search_terms", mode="before")
+    @classmethod
+    def search_terms_default_when_null(cls, value: object) -> object:
+        """A registry row written before search terms existed may carry `search_terms: null`."""
+        return [] if value is None else value
 
     @field_validator("facets", mode="before")
     @classmethod

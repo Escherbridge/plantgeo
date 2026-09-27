@@ -4,6 +4,7 @@ from typing import Annotated, Final
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from strategy_knowledge.query_intent import MAXIMUM_CONTEXT_QUERY_CHARACTERS
 from strategy_knowledge.search import DEFAULT_FAMILY_DIVERSITY
 from strategy_knowledge.site_profile import SiteProfile
 from strategy_knowledge.vocabulary import (
@@ -28,6 +29,15 @@ MAXIMUM_FAMILY_DIVERSITY: Final = 20
 Query = Annotated[str, Field(min_length=1, description="Natural-language description of the need or question.")]
 Limit = Annotated[int, Field(ge=1, le=MAXIMUM_LIMIT, description="Results per page (1-50).")]
 Offset = Annotated[int, Field(ge=0, description="Results to skip; pass the previous response's next_offset.")]
+# Second retrieval signal fused with `query` at the strategy level (contract seam S3); BM25-only expansion,
+# the dense query text itself is never rewritten. Not on `PassageSearch` (S3 covers strategies/findings only).
+ContextQuery = Annotated[
+    str | None,
+    Field(
+        max_length=MAXIMUM_CONTEXT_QUERY_CHARACTERS,
+        description="The user's verbatim question, ranked beside query.",
+    ),
+]
 
 
 class SearchRequest(BaseModel):
@@ -52,6 +62,7 @@ class StrategySearch(SearchRequest):
     fire_phase: list[FirePhase] = Field(default_factory=list)
     site_profile: SiteProfile | None = None
     min_evidence: EvidenceStrength | None = None
+    context_query: ContextQuery = None
     family_diversity: Annotated[int, Field(ge=0, le=MAXIMUM_FAMILY_DIVERSITY)] = DEFAULT_FAMILY_DIVERSITY
 
 
@@ -66,6 +77,7 @@ class FindingSearch(SearchRequest):
     study_type: list[StudyType] = Field(default_factory=list)
     direction: Direction | None = None
     strategy_id: str | None = None
+    context_query: ContextQuery = None
 
 
 class PassageSearch(SearchRequest):

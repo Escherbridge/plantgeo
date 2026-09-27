@@ -28,6 +28,7 @@ import {
   regionalEvidenceSnapshotDay,
   regionalEvidencePublicationDay,
   type EvidenceOrigin,
+  type LiteratureCitation,
   type RegionalAnalysisEvidence,
   type RegionalIntelligenceResponse,
 } from '@/lib/regional-intelligence';
@@ -117,6 +118,109 @@ function ClaimEvidenceReferences({
       {checks.map((check) => <li key={check.id}>Cited evidence: {check.description}</li>)}
     </ul>
   );
+}
+
+/** Label for a literature item the server downgraded to model_inference (see `groundLiteratureClaims`). */
+const NOT_GROUNDED_LABEL = 'Not grounded in the cited research';
+
+/** Only an absolute https link is ever rendered, even from an older saved report. */
+function httpsSourceUrl(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    return new URL(value).protocol === 'https:' ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * "Reported −65% (direction: mixed)": the record's own magnitude and direction, verbatim. `magnitude`
+ * is free text taken as-is from the cited record, so it goes through the same `escape` as title and
+ * conditions (wave-2 fix-stage review: the Markdown path left it unescaped, unlike the other two).
+ */
+function literatureEffect(citation: LiteratureCitation, escape: (text: string) => string = (text) => text): string | undefined {
+  const direction = citation.direction ? `direction: ${humanize(citation.direction)}` : undefined;
+  if (citation.magnitude) return `Reported ${escape(citation.magnitude)}${direction ? ` (${direction})` : ''}`;
+  return direction ? `Reported ${direction}` : undefined;
+}
+
+/** JSX renders text as text, so this is safe without escaping there; `escape` is applied only for Markdown export. */
+function literatureCitationText(citation: LiteratureCitation, escape: (text: string) => string = (text) => text): string {
+  return [escape(citation.title), literatureEffect(citation, escape), citation.conditions ? `Conditions: ${escape(citation.conditions)}` : undefined]
+    .filter(Boolean).join(' · ');
+}
+
+/** Escapes Markdown syntax characters in cited free text (record title/conditions, downgrade notes) for export.
+ * An underscore between two alphanumeric characters ("plot_1") is left bare: CommonMark never treats an
+ * intraword underscore as an emphasis delimiter, so escaping it would only add a visible, spurious backslash. */
+function escapeMarkdown(text: string): string {
+  return text.replace(/([\\`*_{}[\]()#+!|<>~])/g, (_match, char: string, offset: number, source: string) => {
+    if (char === '_') {
+      const before = source[offset - 1];
+      const after = source[offset + 1];
+      if (before && after && /[A-Za-z0-9]/.test(before) && /[A-Za-z0-9]/.test(after)) return char;
+    }
+    return `\\${char}`;
+  });
+}
+
+/** Percent-encodes parentheses so a cited source URL cannot truncate a Markdown `[Source](url)` link early. */
+function markdownLinkUrl(url: string): string {
+  return url.replace(/\(/g, '%28').replace(/\)/g, '%29');
+}
+
+function LiteratureCitations({ citations }: { citations: LiteratureCitation[] | undefined }) {
+  if (!citations?.length) return null;
+  return (
+    <ul aria-label="Literature citations" className="mt-1 space-y-1 text-xs text-gray-600 dark:text-gray-300">
+      {citations.map((citation) => {
+        const sourceUrl = httpsSourceUrl(citation.sourceUrl);
+        const effect = literatureEffect(citation);
+        return (
+          <li key={citation.recordId} className="break-words">
+            <span className="font-medium">{citation.title}</span>
+            {effect && <span> · {effect}</span>}
+            {citation.conditions && <span> · Conditions: {citation.conditions}</span>}
+            {sourceUrl && (
+              <>
+                {' · '}
+                <a
+                  href={sourceUrl}
+                  target="_blank"
+                  rel="noopener noreferrer nofollow"
+                  className="text-blue-600 underline hover:text-blue-800 dark:text-blue-400"
+                >
+                  Source <span className="sr-only">for {citation.title} (opens in a new tab)</span>
+                </a>
+              </>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function GroundingNote({ note }: { note: string | undefined }) {
+  if (!note) return null;
+  return (
+    <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+      <span>{NOT_GROUNDED_LABEL}</span> · {note}
+    </p>
+  );
+}
+
+function literatureMarkdownLines(
+  item: { literatureCitations?: LiteratureCitation[]; groundingNote?: string },
+  indent: string,
+): string[] {
+  return [
+    ...(item.literatureCitations ?? []).map((citation) => {
+      const sourceUrl = httpsSourceUrl(citation.sourceUrl);
+      return `${indent}Literature: ${literatureCitationText(citation, escapeMarkdown)}${sourceUrl ? ` · [Source](${markdownLinkUrl(sourceUrl)})` : ''}`;
+    }),
+    ...(item.groundingNote ? [`${indent}_${NOT_GROUNDED_LABEL}: ${escapeMarkdown(item.groundingNote)}_`] : []),
+  ];
 }
 
 function evidenceDisplayStages(evidence: RegionalAnalysisEvidence): RegionalAnalysisEvidence['stages'] {
@@ -256,6 +360,8 @@ function ObservationsList({
                 source={observation.evidenceSource}
               />
             </div>
+            {observation.evidenceOrigin === 'literature' && <LiteratureCitations citations={observation.literatureCitations} />}
+            <GroundingNote note={observation.groundingNote} />
             <ClaimEvidenceReferences ids={observation.evidenceOrigin === 'warehouse' ? observation.evidenceReadIds : undefined} evidence={evidence} />
           </li>
         ))}
@@ -312,6 +418,8 @@ function RemediationCard({
       <div className="mt-2">
         <OriginBadge origin={item.evidenceOrigin} source={item.evidenceSource} />
       </div>
+      {item.evidenceOrigin === 'literature' && <LiteratureCitations citations={item.literatureCitations} />}
+      <GroundingNote note={item.groundingNote} />
       <ClaimEvidenceReferences ids={item.evidenceOrigin === 'warehouse' ? item.evidenceReadIds : undefined} evidence={evidence} />
     </article>
   );
@@ -372,6 +480,7 @@ export function reportToMarkdown(response: RegionalIntelligenceResponse): string
     for (const observation of response.observations) {
       const source = observation.evidenceSource ? ` (${humanize(observation.evidenceSource)})` : '';
       lines.push(`- ${observation.statement} — _${originLabel(observation.evidenceOrigin, observation.evidenceSource)}${source}_`);
+      lines.push(...literatureMarkdownLines(observation.evidenceOrigin === 'literature' ? observation : { groundingNote: observation.groundingNote }, '  '));
       for (const check of citedEvidenceChecks(observation.evidenceOrigin === 'warehouse' ? observation.evidenceReadIds : undefined, response.analysisEvidence)) {
         lines.push(`  Cited evidence: ${check.description}`);
       }
@@ -397,6 +506,7 @@ export function reportToMarkdown(response: RegionalIntelligenceResponse): string
       }
       lines.push('');
       lines.push(`_Evidence origin: ${originLabel(item.evidenceOrigin, item.evidenceSource)}_`);
+      lines.push(...literatureMarkdownLines(item.evidenceOrigin === 'literature' ? item : { groundingNote: item.groundingNote }, '- '));
       for (const check of citedEvidenceChecks(item.evidenceOrigin === 'warehouse' ? item.evidenceReadIds : undefined, response.analysisEvidence)) {
         lines.push(`- Cited evidence: ${check.description}`);
       }

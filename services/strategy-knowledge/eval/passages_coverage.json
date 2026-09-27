@@ -1,0 +1,47 @@
+[
+  {
+    "query": "what does the biochar fact sheet say about applying biochar beyond the basics",
+    "filters": {},
+    "expected_any_of": [
+      "01-pnwbiochar-wp-content-uploads-2023-09-fact-sheet-part2-1-pdf"
+    ],
+    "k": 5,
+    "kind": "passages"
+  },
+  {
+    "query": "how does composting help reduce wildfire risk through soil health",
+    "filters": {},
+    "expected_any_of": [
+      "02-lacompost-blog-compost-and-fires"
+    ],
+    "k": 5,
+    "kind": "passages"
+  },
+  {
+    "query": "guidance on controlling soil erosion after a wildfire in southern Utah",
+    "filters": {},
+    "expected_any_of": [
+      "05-extension-ecorestore-research-soil-erosion-after-wildfire-guiding-recovery"
+    ],
+    "k": 5,
+    "kind": "passages"
+  },
+  {
+    "query": "what does the SARE building soils guide say about organic soil amendments for healthy soils",
+    "filters": {},
+    "expected_any_of": [
+      "15-sare-wp-content-uploads-building-soils-for-better-crops-pdf"
+    ],
+    "k": 5,
+    "kind": "passages"
+  },
+  {
+    "query": "study on adding limestone to Mississippi River basin farmland as a carbon sink",
+    "filters": {},
+    "expected_any_of": [
+      "25-phys-news-2026-09-adding-limestone-mississippi-river-basin-html"
+    ],
+    "k": 5,
+    "kind": "passages"
+  }
+]

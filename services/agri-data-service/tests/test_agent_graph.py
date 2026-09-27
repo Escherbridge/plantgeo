@@ -21,6 +21,7 @@ from agri_data_service.agent import graph as agent_graph
 from agri_data_service.agent import strategy_knowledge
 from agri_data_service.agent import tools as agent_tools
 from agri_data_service.agent.report import (
+    ConversationTurn,
     Observation,
     RemediationRecommendation,
     RemediationReport,
@@ -631,6 +632,62 @@ async def test_a_literature_answer_from_the_web_pass_backs_a_claim() -> None:
     assert outcome.report is not None
     assert outcome.report.remediation[0].evidenceOrigin == "literature"
     assert agent_graph.literature_answered(context.tool_ledger)
+
+
+def test_the_request_builds_the_server_literature_context() -> None:
+    """Seam S2: the user's own turns (latest last) and the map point; no site_facts this graph can trust."""
+    request = agent_graph.AgentRequest(
+        longitude=-116.2,
+        latitude=43.6,
+        precision="exact",
+        question="and after the fire?",
+        history=(
+            ConversationTurn(role="user", content="my pasture is sour"),
+            ConversationTurn(role="assistant", content="Lime is often used."),
+            ConversationTurn(role="user", content="how much?"),
+        ),
+    )
+    context = request.strategy_context()
+    assert context.user_question == "my pasture is sour\nhow much?\nand after the fire?"
+    assert (context.longitude, context.latitude) == (-116.2, 43.6)
+    assert context.site_facts is None
+    assert strategy_knowledge.server_site_profile(context) == strategy_knowledge.StrategySiteProfile(
+        region="great_basin_high_desert"
+    )
+
+
+def test_an_off_globe_request_keeps_its_question_but_drops_the_point() -> None:
+    request = agent_graph.AgentRequest(longitude=-316.2, latitude=43.6, precision="exact", question="why?")
+    context = request.strategy_context()
+    assert context.user_question == "why?"
+    assert context.longitude is None
+    assert context.latitude is None
+
+
+async def test_both_model_passes_bind_the_server_literature_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    bound: list[strategy_knowledge.StrategyContext | None] = []
+
+    async def record_context(_ctx: agent_graph.GraphContext, **_kwargs: Any) -> bool:
+        bound.append(strategy_knowledge.current_strategy_context())
+        return False
+
+    monkeypatch.setattr(agent_graph, "_run_pass", record_context)
+    context = _context(_client([], _parsed(None)), question="stop the erosion")
+
+    await agent_graph.GATHER_WAREHOUSE_EVIDENCE.run(context)
+    await agent_graph.GATHER_WEB_EVIDENCE.run(
+        context,
+        agent_graph.SufficiencyVerdict(
+            warehouse_is_sufficient=False, searches_allowed=1, reasons=("synthetic",), coverage={}
+        ),
+    )
+
+    assert bound == [context.request.strategy_context()] * len(bound)
+    assert len(bound) == _EXPECTED_MODEL_PASSES_WITH_WEB
+    [first, _] = bound
+    assert first is not None
+    assert first.user_question == "stop the erosion"
+    assert strategy_knowledge.current_strategy_context() is None, "the binding ends with each pass"
 
 
 def test_downgrading_a_report_without_literature_is_a_no_op() -> None:

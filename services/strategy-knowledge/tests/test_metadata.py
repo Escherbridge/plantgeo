@@ -8,14 +8,16 @@ from strategy_knowledge.metadata import (
     LAND_USE_UNTAGGED,
     RECORD_HASH_KEY,
     REGION_UNTAGGED,
+    SEARCH_TERMS_KEY,
     finding_metadata,
     passage_document,
     passage_metadata,
     sealed,
     strategy_facet_metadata,
+    strategy_search_terms,
     tagged_one_hot,
 )
-from strategy_knowledge.models import Chunk, Finding, PassageWindow, RegistryStrategy
+from strategy_knowledge.models import Chunk, Family, Finding, PassageWindow, RegistryStrategy
 
 
 @pytest.fixture
@@ -120,3 +122,26 @@ def test_the_strategy_name_counts_once_for_bm25(registry: dict[str, RegistryStra
     metadata = strategy_facet_metadata(strategy, "how_to")
     assert strategy.name not in str(metadata["keywords"]).split("|")
     assert metadata["name"] == strategy.name
+
+
+def test_search_terms_carry_the_family_and_the_registry_terms(registry: dict[str, RegistryStrategy]) -> None:
+    family = Family(
+        family_id="post-fire-mulching",
+        name="Post-fire mulching",
+        description="Mulch covers for burned ground.",
+    )
+    strategy = registry["post-fire-straw-mulching"].model_copy(update={"search_terms": ["burnt hillside", "straw"]})
+    metadata = strategy_facet_metadata(strategy, "how_to", family=family)
+    assert str(metadata[SEARCH_TERMS_KEY]).split("|") == [
+        "Post-fire mulching",
+        "Mulch covers for burned ground.",
+        "burnt hillside",
+        "straw",
+    ]
+    assert strategy_search_terms(registry["post-fire-straw-mulching"]) == ""
+
+
+def test_a_registry_row_without_search_terms_still_loads() -> None:
+    rows = read_json(FIXTURES / "strategy_registry.json")["strategies"]
+    assert RegistryStrategy.model_validate(rows[0]).search_terms == []
+    assert RegistryStrategy.model_validate({**rows[0], "search_terms": None}).search_terms == []

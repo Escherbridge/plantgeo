@@ -334,29 +334,102 @@ class BucketSync:
             manifest[key.relative] = {"etag": key.remote_etag, "md5": md5_file(key.target)}
             report.transferred.append(key.relative)
 
-    def push(self, *, with_index: bool = False, on_conflict: ConflictPolicy = "fail") -> SyncReport:
-        """Upload local changes under raw/ and corpus/ (sources.json last), never over a remote change since.
+    def push(
+        self,
+        *,
+        with_index: bool = False,
+        corpus_only: bool = False,
+        on_conflict: ConflictPolicy = "fail",
+    ) -> SyncReport:
+        """Upload local raw/ and corpus/ changes (sources.json last); with `with_index`, publish the index too.
 
-        Every key, and with `with_index` index/LATEST, is classified first: an undecided conflict anywhere stops the
-        push before anything is uploaded. The index goes up only after the corpus push left nothing unsynced.
+        An atomic publish (`with_index=True`) checks everything before the first upload — the local index's
+        publishability against the local corpus, then every key's three-way conflict state — and uploads in a
+        fixed order: the index archive, the corpus, and the LATEST pointer last, so a run that stops partway
+        never leaves LATEST naming a corpus version whose files did not fully arrive. A bare push additionally
+        refuses when the bucket already serves a published corpus version the local corpus would diverge from,
+        unless `corpus_only` acknowledges that the server will refuse to serve until a matching index follows.
         """
         report = SyncReport()
         manifest = self._load_manifest()
         keys = self._planned_keys(manifest, report)
         pointer = self._index_pointer(manifest, report) if with_index else None
+        if with_index and pointer is None:
+            return report
+        if not with_index and not corpus_only and self._refuse_divergent_corpus(report):
+            return report
+        # `report.rejected_keys` (an unsafe remote key under corpus/) also means the bucket's corpus cannot be
+        # trusted to match what this push would leave; the old pointer guard checked this and the new one must
+        # too (AGENTS.md "Storage").
+        corpus_diverges = pointer is not None and (
+            self._corpus_will_diverge(keys, on_conflict) or bool(report.rejected_keys)
+        )
         states = [(key.relative, key.state) for key in keys]
         if pointer is not None:
             states.append((INDEX_POINTER_KEY, pointer.state))
         if self._blocked_by_conflicts(states, report, on_conflict):
             return report
+        publish_archive = (
+            pointer is not None and not corpus_diverges and self._pointer_needs_upload(pointer, on_conflict)
+        )
         try:
+            if publish_archive:
+                self._push_archive(pointer, report)
             for key in keys:
-                self._push_key(key, manifest, report, on_conflict)
+                # A diverging corpus refuses the index below; local-changed corpus keys are skipped here too
+                # (not just the index), so the push is atomic end to end instead of half-uploading the corpus
+                # while only the index refuses (AGENTS.md "Storage").
+                self._push_key(key, manifest, report, on_conflict, upload_local=not corpus_diverges)
             if pointer is not None:
-                self._push_pointer(pointer, manifest, report, on_conflict)
+                self._push_pointer(pointer, manifest, report, on_conflict, corpus_diverges=corpus_diverges)
         finally:
             self._save_manifest(manifest)
         return report
+
+    def _remote_published_corpus_version(self) -> str | None:
+        """The corpus_version index/LATEST names in the bucket, or None when nothing is published there yet."""
+        if INDEX_POINTER_KEY not in self._remote_etags(INDEX_DIRECTORY):
+            return None
+        pointer = self.client.get_object(Bucket=self.bucket, Key=f"{self.prefix}{INDEX_POINTER_KEY}")
+        return pointer["Body"].read().decode(errors="replace").strip()
+
+    def _refuse_divergent_corpus(self, report: SyncReport) -> bool:
+        """Refuse a bare push (no `--corpus-only`) when the bucket's published corpus would diverge from ours."""
+        published = self._remote_published_corpus_version()
+        local_version = self.store.corpus_version()
+        if published is None or published == local_version:
+            return False
+        self._refuse_index(
+            report,
+            f"the bucket already serves corpus {published}, which differs from the local corpus {local_version}; "
+            "pass --corpus-only to push anyway (the server will refuse to serve until a matching index is "
+            "published) or `sync push --with-index` to publish both together",
+        )
+        return True
+
+    @staticmethod
+    def _corpus_will_diverge(keys: Sequence[KeyView], on_conflict: ConflictPolicy) -> bool:
+        """True when this push will leave the bucket's corpus different from what the local index was built from."""
+        return any(
+            key.state in (KeyState.REMOTE_ONLY, KeyState.REMOTE_CHANGED)
+            or (key.state is KeyState.CONFLICT and on_conflict == "remote")
+            for key in keys
+        )
+
+    @staticmethod
+    def _pointer_needs_upload(pointer: IndexPointer, on_conflict: ConflictPolicy) -> bool:
+        """False when the pointer step below will short-circuit without writing (already published, or remote wins)."""
+        if pointer.state is KeyState.SAME:
+            return False
+        if pointer.state is KeyState.CONFLICT and on_conflict == "remote":
+            return False
+        return pointer.state is not KeyState.REMOTE_CHANGED
+
+    def _push_archive(self, pointer: IndexPointer, report: SyncReport) -> None:
+        """Upload the index archive under its version-keyed path — first in the atomic-publish order."""
+        archive_key = f"{INDEX_DIRECTORY}/{pointer.corpus_version}/{INDEX_ARCHIVE_NAME}"
+        self._put(archive_key, self._index_archive())
+        report.transferred.append(archive_key)
 
     def _push_key(
         self,
@@ -364,8 +437,16 @@ class BucketSync:
         manifest: dict[str, dict[str, str]],
         report: SyncReport,
         on_conflict: ConflictPolicy,
+        *,
+        upload_local: bool = True,
     ) -> None:
-        """Apply one key's push decision and record the synced state."""
+        """Apply one key's push decision and record the synced state.
+
+        `upload_local=False` (an atomic `--with-index` push whose corpus would diverge) still reports the
+        remote-side outcomes as usual but skips the local-changed upload and its manifest write, so a local
+        change is never partially uploaded while the index refuses beside it: the whole corpus is left exactly
+        as it was, ready to retry once the divergence is resolved (AGENTS.md "Storage").
+        """
         if key.state is KeyState.SAME and key.remote_etag is not None and key.local_md5 is not None:
             report.unchanged += 1
             manifest[key.relative] = {"etag": key.remote_etag, "md5": key.local_md5}
@@ -377,7 +458,7 @@ class BucketSync:
             # Record the local file as seen, so the next pull treats the kept remote object as the change.
             report.resolved_conflicts[key.relative] = "remote"
             manifest[key.relative] = {"etag": FORCE_CHANGED, "md5": key.local_md5 or FORCE_CHANGED}
-        elif key.local_md5 is not None:
+        elif key.local_md5 is not None and upload_local:
             if key.state is KeyState.CONFLICT:
                 report.resolved_conflicts[key.relative] = "local"
             etag = self._put(key.relative, key.target.read_bytes()) or key.local_md5
@@ -430,15 +511,15 @@ class BucketSync:
         manifest: dict[str, dict[str, str]],
         report: SyncReport,
         on_conflict: ConflictPolicy,
+        *,
+        corpus_diverges: bool,
     ) -> None:
-        """Upload the archive, then index/LATEST, when the corpus push and the pointer's three-way check allow it."""
-        if report.failed or report.kept_remote_changes or "remote" in report.resolved_conflicts.values():
-            self._refuse_index(
-                report,
-                "the corpus push left the bucket's corpus different from the local corpus the index was built "
-                "from (conflicts, refused keys or kept remote changes); pull, re-index, then push again",
-            )
-            return
+        """Write index/LATEST last, once the archive is up and the pointer's three-way check allows it.
+
+        `corpus_diverges` is decided up front from the keys' own states (`_corpus_will_diverge`), so this refusal
+        needs no re-read of the bucket: it is true exactly when the corpus push above left (or will leave) the
+        bucket's corpus different from the local corpus the archive was built from.
+        """
         if pointer.state is KeyState.SAME:
             manifest[INDEX_POINTER_KEY] = {"etag": pointer.remote_etag or pointer.local_md5, "md5": pointer.local_md5}
             report.unchanged += 1
@@ -454,11 +535,16 @@ class BucketSync:
                 "index); pull it with `strategy-kb sync pull --with-index` instead of overwriting it",
             )
             return
-        archive_key = f"{INDEX_DIRECTORY}/{pointer.corpus_version}/{INDEX_ARCHIVE_NAME}"
-        self._put(archive_key, self._index_archive())
+        if corpus_diverges:
+            self._refuse_index(
+                report,
+                "the corpus push left the bucket's corpus different from the local corpus the index was built "
+                "from (conflicts, refused keys or kept remote changes); pull, re-index, then push again",
+            )
+            return
         etag = self._put(INDEX_POINTER_KEY, pointer.payload) or pointer.local_md5
         manifest[INDEX_POINTER_KEY] = {"etag": etag, "md5": pointer.local_md5}
-        report.transferred.extend([archive_key, INDEX_POINTER_KEY])
+        report.transferred.append(INDEX_POINTER_KEY)
         if pointer.state is KeyState.CONFLICT:
             report.resolved_conflicts[INDEX_POINTER_KEY] = "local"
 

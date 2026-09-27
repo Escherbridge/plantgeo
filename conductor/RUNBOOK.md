@@ -306,8 +306,8 @@ Live: UBC v16.43 (Canadensys IPT, not the consortium portal) published as genera
 after the name-join fix (UBC declares no `dwc:scientificName`; the joined-name fallback never invents
 a species); route, proxy, four agent tools and the map mount are live and independently reviewed;
 `identifications` is a valid zero-row file (receipt shows `extension_row_counts: {}`), closed.
-`plantgeo-parquet-api-production.up.railway.app` is the public data-API domain (originally
-generated for verification, now relied on).
+The data API has no public domain since 2026-09-27 (owner: private-only). Probe it with
+`docs/runbooks/private-service-probes.md` (`railway ssh` into plantgeo-main, private hostname).
 
 Admitted by owner decision 2026-09-19 (`evidence/owner-admission-decision-20260919.md`; the ledger
 cites that decision, not the 2026-09-13 acquisition one, and names what is still unchecked). The map

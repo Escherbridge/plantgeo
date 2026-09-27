@@ -1,0 +1,821 @@
+[
+  {
+    "query": "how do I stop a steep slope from eroding after a bad wildfire before the fall rains hit",
+    "filters": {},
+    "expected_any_of": [
+      "post-fire-straw-mulching",
+      "post-fire-wood-chip-mulching",
+      "post-fire-hydromulch-application",
+      "contour-log-erosion-barriers",
+      "contour-straw-wattle-installation"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "steep burned hillside is at risk of washing away before the rainy season starts",
+    "filters": {},
+    "expected_any_of": [
+      "post-fire-straw-mulching",
+      "post-fire-wood-chip-mulching",
+      "post-fire-hydromulch-application",
+      "contour-log-erosion-barriers",
+      "contour-straw-wattle-installation"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "prevent soil loss on a scorched hill ahead of autumn rainstorms",
+    "filters": {},
+    "expected_any_of": [
+      "post-fire-straw-mulching",
+      "post-fire-wood-chip-mulching",
+      "post-fire-hydromulch-application",
+      "contour-log-erosion-barriers",
+      "contour-straw-wattle-installation"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "water won't soak into the burned soil, it just runs off",
+    "filters": {},
+    "expected_any_of": [
+      "break-hydrophobic-soil-layer"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "the fire left the ground so it repels water and rain sheets right off",
+    "filters": {},
+    "expected_any_of": [
+      "break-hydrophobic-soil-layer"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "post-fire soil is water-repellent and rainfall isn't infiltrating",
+    "filters": {},
+    "expected_any_of": [
+      "break-hydrophobic-soil-layer"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "alternative to burning slash piles from forest thinning",
+    "filters": {},
+    "expected_any_of": [
+      "in-woods-biochar-production",
+      "in-woods-biochar-production-soil-application",
+      "post-fire-slash-distribution-erosion-control"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "what can I do with leftover logging debris besides pile burning",
+    "filters": {},
+    "expected_any_of": [
+      "in-woods-biochar-production",
+      "in-woods-biochar-production-soil-application",
+      "post-fire-slash-distribution-erosion-control"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "non-burn options for disposing of thinning residue in the forest",
+    "filters": {},
+    "expected_any_of": [
+      "in-woods-biochar-production",
+      "in-woods-biochar-production-soil-application",
+      "post-fire-slash-distribution-erosion-control"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "cheatgrass has invaded the burned sagebrush rangeland",
+    "filters": {},
+    "expected_any_of": [
+      "till-burn-herbicide-reseed-invasive-annual-grass",
+      "sagebrush-fuel-treatment-cheatgrass-resistance",
+      "post-fire-noxious-weed-control",
+      "post-fire-invasive-species-monitoring-and-herbicide"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "invasive annual grasses are choking out sagebrush after the wildfire",
+    "filters": {},
+    "expected_any_of": [
+      "till-burn-herbicide-reseed-invasive-annual-grass",
+      "sagebrush-fuel-treatment-cheatgrass-resistance",
+      "post-fire-noxious-weed-control",
+      "post-fire-invasive-species-monitoring-and-herbicide"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "post-fire sagebrush steppe is being overrun by an invasive annual grass",
+    "filters": {},
+    "expected_any_of": [
+      "till-burn-herbicide-reseed-invasive-annual-grass",
+      "sagebrush-fuel-treatment-cheatgrass-resistance",
+      "post-fire-noxious-weed-control",
+      "post-fire-invasive-species-monitoring-and-herbicide"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "sandy soil drains too quickly and can't hold water",
+    "filters": {},
+    "expected_any_of": [
+      "biochar-sandy-soil-water-retention-amendment",
+      "biochar-amendment-coarse-soils"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "field is too sandy and moisture disappears fast, want better water retention",
+    "filters": {},
+    "expected_any_of": [
+      "biochar-sandy-soil-water-retention-amendment",
+      "biochar-amendment-coarse-soils"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "how to make a sandy field retain moisture longer between waterings",
+    "filters": {},
+    "expected_any_of": [
+      "biochar-sandy-soil-water-retention-amendment",
+      "biochar-amendment-coarse-soils"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "acidic soil is dragging down crop yields",
+    "filters": {},
+    "expected_any_of": [
+      "lime-application-acidic-soils",
+      "agricultural-liming-carbon-removal"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "soil pH is too low and it's hurting the harvest",
+    "filters": {},
+    "expected_any_of": [
+      "lime-application-acidic-soils",
+      "agricultural-liming-carbon-removal"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "sour ground is stunting the crop, pH is way down",
+    "filters": {},
+    "expected_any_of": [
+      "lime-application-acidic-soils",
+      "agricultural-liming-carbon-removal"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "how to keep nutrients from washing out of compost-amended fields",
+    "filters": {},
+    "expected_any_of": [
+      "co-composted-biochar-nutrient-leaching-reduction",
+      "cocompost-biochar-with-manure"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "compost is leaching nitrogen and phosphorus before the crop can use it",
+    "filters": {},
+    "expected_any_of": [
+      "co-composted-biochar-nutrient-leaching-reduction",
+      "cocompost-biochar-with-manure"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "reduce nutrient runoff from soil that's been amended with compost",
+    "filters": {},
+    "expected_any_of": [
+      "co-composted-biochar-nutrient-leaching-reduction",
+      "cocompost-biochar-with-manure"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "abandoned mine site has heavy metal contamination in the ground",
+    "filters": {},
+    "expected_any_of": [
+      "biochar-contaminant-remediation",
+      "biochar-heavy-metal-contaminant-adsorption",
+      "biochar-contaminant-immobilization"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "legacy mine tailings are contaminated with lead and cadmium",
+    "filters": {},
+    "expected_any_of": [
+      "biochar-contaminant-remediation",
+      "biochar-heavy-metal-contaminant-adsorption",
+      "biochar-contaminant-immobilization"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "soil near an old mine has toxic heavy metals in it",
+    "filters": {},
+    "expected_any_of": [
+      "biochar-contaminant-remediation",
+      "biochar-heavy-metal-contaminant-adsorption",
+      "biochar-contaminant-immobilization"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "heavy rainstorms are carving gullies into the sloped cropland",
+    "filters": {},
+    "expected_any_of": [
+      "contour-farming",
+      "terracing-hilly-cropland",
+      "grassed-waterways",
+      "reduced-tillage-no-till",
+      "edge-of-field-filter-strips"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "farm fields on rolling terrain are gullying out after big rains",
+    "filters": {},
+    "expected_any_of": [
+      "contour-farming",
+      "terracing-hilly-cropland",
+      "grassed-waterways",
+      "reduced-tillage-no-till",
+      "edge-of-field-filter-strips"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "rain is cutting channels through the hilly farmland",
+    "filters": {},
+    "expected_any_of": [
+      "contour-farming",
+      "terracing-hilly-cropland",
+      "grassed-waterways",
+      "reduced-tillage-no-till",
+      "edge-of-field-filter-strips"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "compacted subsoil layer is blocking root growth",
+    "filters": {},
+    "expected_any_of": [
+      "brassica-cover-cropping-compaction-relief",
+      "strip-tillage-zone-till"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "there's a hardpan under the field and roots can't punch through it",
+    "filters": {},
+    "expected_any_of": [
+      "brassica-cover-cropping-compaction-relief",
+      "strip-tillage-zone-till"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "crop roots are stopped cold by a compacted soil layer",
+    "filters": {},
+    "expected_any_of": [
+      "brassica-cover-cropping-compaction-relief",
+      "strip-tillage-zone-till"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "keep post-fire debris flows from wrecking the ranch road and culverts",
+    "filters": {},
+    "expected_any_of": [
+      "water-bar-and-culvert-installation",
+      "straw-bale-check-dam"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "burned watershed threatens to bury the access road and drain pipes in debris",
+    "filters": {},
+    "expected_any_of": [
+      "water-bar-and-culvert-installation",
+      "straw-bale-check-dam"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "safeguard road infrastructure and culverts from fire-related mudflows",
+    "filters": {},
+    "expected_any_of": [
+      "water-bar-and-culvert-installation",
+      "straw-bale-check-dam"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "fire-killed snags are a falling hazard near people",
+    "filters": {},
+    "expected_any_of": [
+      "snag-hazard-tree-removal"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "dead burned trees are at risk of toppling onto workers or visitors",
+    "filters": {},
+    "expected_any_of": [
+      "snag-hazard-tree-removal"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "hazard trees from the wildfire need to come down before they fall",
+    "filters": {},
+    "expected_any_of": [
+      "snag-hazard-tree-removal"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "rotating livestock through small paddocks to restore pasture health",
+    "filters": {},
+    "expected_any_of": [
+      "management-intensive-rotational-grazing",
+      "mob-grazing-soil-amelioration"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "using frequent paddock moves to rebuild degraded rangeland soil",
+    "filters": {},
+    "expected_any_of": [
+      "management-intensive-rotational-grazing",
+      "mob-grazing-soil-amelioration"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "intensive paddock rotation to bring pasture soil back to life",
+    "filters": {},
+    "expected_any_of": [
+      "management-intensive-rotational-grazing",
+      "mob-grazing-soil-amelioration"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "sodic soil is crusting over and blocking water infiltration",
+    "filters": {},
+    "expected_any_of": [
+      "gypsum-sodic-and-crusting-remediation"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "high-sodium field has a hard crust that keeps rain from soaking in",
+    "filters": {},
+    "expected_any_of": [
+      "gypsum-sodic-and-crusting-remediation"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "soil surface is sealing shut on a sodium-affected field, water pools instead of soaking in",
+    "filters": {},
+    "expected_any_of": [
+      "gypsum-sodic-and-crusting-remediation"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "nitrogen-fixing cover crop between cash crop rotations",
+    "filters": {},
+    "expected_any_of": [
+      "legume-cover-cropping",
+      "cover-crop-species-mixtures"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "want to fix atmospheric nitrogen in the soil between plantings",
+    "filters": {},
+    "expected_any_of": [
+      "legume-cover-cropping",
+      "cover-crop-species-mixtures"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "legume cover crop to add free nitrogen between growing seasons",
+    "filters": {},
+    "expected_any_of": [
+      "legume-cover-cropping",
+      "cover-crop-species-mixtures"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "choosing the right conditions for a prescribed fire",
+    "filters": {},
+    "expected_any_of": [
+      "prescribed-burn-weather-window-scheduling",
+      "prescribed-broadcast-burning-fuel-reduction"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "how do I know which days are safe for a prescribed burn",
+    "filters": {},
+    "expected_any_of": [
+      "prescribed-burn-weather-window-scheduling",
+      "prescribed-broadcast-burning-fuel-reduction"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "weather window planning for a controlled burn",
+    "filters": {},
+    "expected_any_of": [
+      "prescribed-burn-weather-window-scheduling",
+      "prescribed-broadcast-burning-fuel-reduction"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "reduce flammability of yard landscaping during fire season",
+    "filters": {},
+    "expected_any_of": [
+      "compost-soil-amendment-fire-resilience",
+      "organic-mulch-moisture-weed-control"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "want defensible-space landscaping that stays green through summer drought",
+    "filters": {},
+    "expected_any_of": [
+      "compost-soil-amendment-fire-resilience",
+      "organic-mulch-moisture-weed-control"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "make home landscaping more fire-resistant during the dry months",
+    "filters": {},
+    "expected_any_of": [
+      "compost-soil-amendment-fire-resilience",
+      "organic-mulch-moisture-weed-control"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "verticillium wilt is showing up in the potato crop",
+    "filters": {},
+    "expected_any_of": [
+      "compost-suppression-verticillium-wilt-potato"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "potato field has a soil-borne fungal wilt problem",
+    "filters": {},
+    "expected_any_of": [
+      "compost-suppression-verticillium-wilt-potato"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "wilt disease living in the soil is hitting potato yields",
+    "filters": {},
+    "expected_any_of": [
+      "compost-suppression-verticillium-wilt-potato"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "reseed native grasses on a scorched mountain slope",
+    "filters": {},
+    "expected_any_of": [
+      "post-fire-grass-reseeding-rocky-mountain",
+      "post-fire-seeding-microsite-establishment",
+      "post-fire-rye-nurse-crop-reseeding-texas"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "restore native grass cover to a burned hillside at elevation",
+    "filters": {},
+    "expected_any_of": [
+      "post-fire-grass-reseeding-rocky-mountain",
+      "post-fire-seeding-microsite-establishment",
+      "post-fire-rye-nurse-crop-reseeding-texas"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "revegetate a fire-scarred mountain hillside with native grass",
+    "filters": {},
+    "expected_any_of": [
+      "post-fire-grass-reseeding-rocky-mountain",
+      "post-fire-seeding-microsite-establishment",
+      "post-fire-rye-nurse-crop-reseeding-texas"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "carbon-removing agricultural practice for climate mitigation",
+    "filters": {},
+    "expected_any_of": [
+      "agricultural-liming-carbon-removal",
+      "in-woods-biochar-production",
+      "biochar-soil-amendment-cropland",
+      "on-farm-ring-kiln-biochar-production"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "which farming method actually pulls CO2 out of the air",
+    "filters": {},
+    "expected_any_of": [
+      "agricultural-liming-carbon-removal",
+      "in-woods-biochar-production",
+      "biochar-soil-amendment-cropland",
+      "on-farm-ring-kiln-biochar-production"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "sequester atmospheric carbon through a farm practice",
+    "filters": {},
+    "expected_any_of": [
+      "agricultural-liming-carbon-removal",
+      "in-woods-biochar-production",
+      "biochar-soil-amendment-cropland",
+      "on-farm-ring-kiln-biochar-production"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "using dairy lagoon waste as crop fertilizer",
+    "filters": {},
+    "expected_any_of": [
+      "dairy-lagoon-effluent-land-application-silage",
+      "dairy-digestate-nutrient-recovery-fertilizer-replacement",
+      "manure-application-cropland"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "recycling manure lagoon nutrients back onto fields",
+    "filters": {},
+    "expected_any_of": [
+      "dairy-lagoon-effluent-land-application-silage",
+      "dairy-digestate-nutrient-recovery-fertilizer-replacement",
+      "manure-application-cropland"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "turn liquid manure storage into a fertilizer source",
+    "filters": {},
+    "expected_any_of": [
+      "dairy-lagoon-effluent-land-application-silage",
+      "dairy-digestate-nutrient-recovery-fertilizer-replacement",
+      "manure-application-cropland"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "stop soil from washing away",
+    "filters": {
+      "site_profile": {
+        "slope_pct": 45,
+        "burn_severity": "high",
+        "days_since_fire": 20
+      }
+    },
+    "expected_any_of": [
+      "post-fire-straw-mulching",
+      "post-fire-wood-chip-mulching",
+      "post-fire-hydromulch-application",
+      "contour-log-erosion-barriers",
+      "contour-straw-wattle-installation",
+      "break-hydrophobic-soil-layer"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "how to keep the ground from eroding",
+    "filters": {
+      "site_profile": {
+        "slope_pct": 45,
+        "burn_severity": "high",
+        "days_since_fire": 20
+      }
+    },
+    "expected_any_of": [
+      "post-fire-straw-mulching",
+      "post-fire-wood-chip-mulching",
+      "post-fire-hydromulch-application",
+      "contour-log-erosion-barriers",
+      "contour-straw-wattle-installation",
+      "break-hydrophobic-soil-layer"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "control erosion on the property",
+    "filters": {
+      "site_profile": {
+        "slope_pct": 45,
+        "burn_severity": "high",
+        "days_since_fire": 20
+      }
+    },
+    "expected_any_of": [
+      "post-fire-straw-mulching",
+      "post-fire-wood-chip-mulching",
+      "post-fire-hydromulch-application",
+      "contour-log-erosion-barriers",
+      "contour-straw-wattle-installation",
+      "break-hydrophobic-soil-layer"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "make the soil better",
+    "filters": {
+      "site_profile": {
+        "soil_ph": 5.0
+      },
+      "land_use": [
+        "cropland"
+      ]
+    },
+    "expected_any_of": [
+      "lime-application-acidic-soils",
+      "agricultural-liming-carbon-removal"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "how can I improve poor soil quality",
+    "filters": {
+      "site_profile": {
+        "soil_ph": 5.0
+      },
+      "land_use": [
+        "cropland"
+      ]
+    },
+    "expected_any_of": [
+      "lime-application-acidic-soils",
+      "agricultural-liming-carbon-removal"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "boost overall soil health",
+    "filters": {
+      "site_profile": {
+        "soil_ph": 5.0
+      },
+      "land_use": [
+        "cropland"
+      ]
+    },
+    "expected_any_of": [
+      "lime-application-acidic-soils",
+      "agricultural-liming-carbon-removal"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "cut down fire fuel loads in the woods",
+    "filters": {
+      "goals": [
+        "wildfire_resilience"
+      ],
+      "min_evidence": "peer_reviewed_experiment"
+    },
+    "expected_any_of": [
+      "mechanical-fuel-thinning-forest",
+      "prescribed-broadcast-burning-fuel-reduction",
+      "managed-wildfire-resource-benefit"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "lower the wildfire risk by thinning forest fuels",
+    "filters": {
+      "goals": [
+        "wildfire_resilience"
+      ],
+      "min_evidence": "peer_reviewed_experiment"
+    },
+    "expected_any_of": [
+      "mechanical-fuel-thinning-forest",
+      "prescribed-broadcast-burning-fuel-reduction",
+      "managed-wildfire-resource-benefit"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  },
+  {
+    "query": "manage excess fuel buildup in a forested stand",
+    "filters": {
+      "goals": [
+        "wildfire_resilience"
+      ],
+      "min_evidence": "peer_reviewed_experiment"
+    },
+    "expected_any_of": [
+      "mechanical-fuel-thinning-forest",
+      "prescribed-broadcast-burning-fuel-reduction",
+      "managed-wildfire-resource-benefit"
+    ],
+    "k": 5,
+    "kind": "paraphrase"
+  }
+]

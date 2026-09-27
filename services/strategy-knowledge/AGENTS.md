@@ -37,8 +37,9 @@ exists once, as the `Region` literal in `vocabulary.py`; one-hot `region_<value>
 | `materialize.py` | chunk plans + raw text -> balanced passage windows (trail + text <= 180 words) |
 | `metadata.py` | DESIGN section 8 one-hot flattening, labelled facet documents, section trails, record hashes |
 | `filters.py` | one filter expression -> Chroma `where` and a Python predicate |
-| `lexical.py` | Okapi BM25 over one collection |
-| `search.py` | reciprocal-rank fusion, capped boosts, facet collapse, family diversity, paging |
+| `lexical.py` | Okapi BM25 over one collection, light stemming, weighted expansion tokens |
+| `query_intent.py` | lay vocabulary + pH direction -> capped soil-condition boosts, a pH demotion and BM25-only expansion tokens |
+| `search.py` | strategy-level weighted reciprocal-rank fusion, capped boosts, facet collapse, family diversity, paging |
 | `site_profile.py` | DESIGN section 10 rules |
 | `embedding.py` | the injectable `TextEmbedder` seam; production MiniLM |
 | `index.py` | preflight, build / incremental update of the three collections, full-vs-partial stamp |
@@ -46,7 +47,7 @@ exists once, as the `Region` literal in `vocabulary.py`; one-hot `region_<value>
 | `queries.py` | validated request models shared by the MCP tools and the eval harness |
 | `server.py` | the eight tools as one `ToolTable`, the MCP server over it (`MCPServer`, stdio); the lifespan opens the knowledge base, after an optional bucket pull |
 | `http_app.py` | the HTTP transport: `/health`, `/ready`, `POST /v1/tools/{tool_name}`, MCP streamable HTTP at `/mcp`; uvicorn |
-| `evaluation.py` | golden-query hit@k and MRR |
+| `evaluation.py` | golden-query hit@k, MRR and forbidden@3, per kind and per family |
 | `streams.py` | `reserved_stdout` |
 | `cli.py` | `strategy-kb` |
 
@@ -137,6 +138,20 @@ indexing (linked ids are stored canonical) and the knowledge base (`get_strategy
 - Added: chunk ranges beyond the raw file, duplicate chunk/finding/strategy ids, variable roles, candidate list
   enums, facets over 170 words, `family_id` missing from `families.json`, sources.json enum and id checks.
 - Validation reads raw JSON dicts, not models, so a bad enum is reported as a problem instead of raising.
+- **Registry `search_terms`** (optional list of non-empty strings) must be non-empty for every member of
+  `SEARCH_TERMS_REQUIRED_FAMILIES` (`soil-chemistry-correction`: pH, salinity, sodicity; `tillage-reduction`:
+  compaction). Those needs are where land managers' words ("sour", "salty", "hardpan") and the facet text
+  disagree most, and the eval sets measured the misses there ("Retrieval").
+- **Text addressed to an AI** (prompt injection) is a *problem*, never a silent drop: a chunk's raw lines,
+  title, summary and keywords; a finding's claim, conditions, magnitude and excerpt; a candidate's or registry
+  strategy's free text, facets, citation excerpts and search terms; a family's name and description; a
+  source's title, summary and publisher. `INSTRUCTION_TEXT_PATTERNS` is deliberately narrow ("ignore previous
+  instructions", "you are an AI", "as an AI language model", an `assistant:` speaker label, chat-template
+  tokens, "new instructions:", "do not tell the user"). `system:` at a line start is *not* flagged: PDF line
+  wraps produce it ("...fit in your\nsystem: planted following..." in the SARE text). Raw source text cannot be
+  edited, so the remedy for a real hit is a skipped range with a reason, or dropping the source.
+- **Source URLs must be https** (`url`, `final_url` in `sources.json`); an `http://` URL is a problem, since
+  every citation the agent shows links there.
 
 ## Materializer
 
@@ -168,6 +183,11 @@ DESIGN section 8 exactly, plus keys the tools need (all scalar):
 - `keywords` (`|`-joined): chunk title + keywords, finding variable names, strategy materials + equipment +
   NRCS code. BM25 indexes them next to the document; dense search does not see them. The strategy **name is not
   a keyword**: every facet document already starts with it, and listing it again made BM25 count it twice.
+- `search_terms` (`|`-joined, strategy facets only): the strategy's family name and description, then its
+  registry `search_terms`. BM25-only, like `keywords`; written at index time from `families.json`, so a family
+  description ("Adjusting soil chemistry with lime, gypsum or elemental sulfur...") is finally searchable. An
+  index built before the key existed simply lacks it: `CollectionView.load` reads it with a default and ranks
+  without it (the published `5e1f53dc...` index serves unchanged, measured below).
 - `phase_<phase>` only when the record carries `wildfire_resilience` (DESIGN section 3).
 - `record_hash` (content hash excluding `corpus_version`) makes re-indexing an unchanged record a no-op;
   `facet_origin` marks a strategy with no authored facets whose summary was indexed as `overview`.
@@ -289,14 +309,60 @@ and `test_a_full_shard_of_hnsw_indexes_stays_queryable`.
 
 Okapi BM25 (`rank_bm25.BM25Okapi`, k1 = 1.5, b = 0.75) is rebuilt in-process on load from `collection.get()`;
 the corpus is small enough that rebuilding beats persisting a second index that could drift. Tokens are
-lower-case alphanumeric runs minus a short stopword list, so `tons/acre` hits `tons` and `acre`; no stemming, so
-BM25 rewards exact terms (the chunk `keywords` exist for exactly that). Only positive scores rank. rank_bm25
-floors negative IDF at `epsilon * average_idf`, which is only safe on corpora larger than a handful of
-documents.
+lower-case alphanumeric runs minus a short stopword list, so `tons/acre` hits `tons` and `acre`. Only positive
+scores rank. rank_bm25 floors negative IDF at `epsilon * average_idf`, which is only safe on corpora larger than
+a handful of documents.
+
+- **Light stemming, BM25 only** (`lexical.stem`, not Porter - a full stemmer is on the do-not-do list):
+  plurals (`-s`, `-es` after a sibilant, `-ies` -> `-y`), `-ing`, `-ed` (not `-eed`), an undoubled final
+  consonant (`cropping` -> `crop`, but `till` keeps its `ll`) and a final `-e`, never leaving a stem under 3
+  letters. `burned` and `burnt` are never stemmed: "burned" names a post-fire site state and "burn" a
+  practice (prescribed burning), and folding them sent burned-ground queries to burn-scheduling strategies.
+  `tokenize` itself stays unstemmed (the test embedder hashes its tokens).
+- **Expansion tokens** (`query_intent.py`) are scored as a second BM25 query and added at
+  `DEFAULT_EXPANSION_WEIGHT` (0.3; BM25 is additive over terms, so this is exact); a token already in the query
+  is not counted twice. They never reach the dense embedding.
 
 ## Retrieval
 
-- Reciprocal-rank fusion (Cormack, Clarke & Buettcher 2009), k = 60, over the dense and BM25 rankings.
+- **Weighted reciprocal-rank fusion** (Cormack, Clarke & Buettcher 2009, with per-list weights), k = 60:
+  dense `DENSE_WEIGHT` = 1.0, BM25 `LEXICAL_WEIGHT` = 0.8, and, when a `context_query` is given, its own dense
+  and BM25 rankings at `CONTEXT_QUERY_WEIGHT` = 0.5 times those. `search_findings` and `search_passages` fuse
+  documents with the same weights.
+- **Collapse before fusing** (`search_strategies`): each facet ranking becomes a strategy ranking (a strategy
+  at its best facet's position) and the strategy rankings are fused. Dense and BM25 then agree at the strategy
+  level even when they matched different facets (dense on the overview, BM25 on how-to), and one strategy's
+  four facets no longer take four rank positions that push every other strategy down. Fusing documents first
+  scored a strategy by its single best facet document, so that cross-facet agreement counted for nothing. The
+  reported `matched_facet` is the facet with the best document-level fused score.
+- **Query intent** adds capped soil-condition boosts and a pH demotion ("Query intent"). A hit boosted by the
+  query's **pH condition** (`acidic`/`alkaline`) is exempt from the family-diversity cap and takes no family
+  slot (lime and its carbon-removal variant share `soil-chemistry-correction` with sulfur; the cap used to hold
+  one back). `Boosts.diversity_exempt_tags` deliberately narrows to the pH condition only (`query_intent.
+  PH_CONDITIONS`), not every query-intent soil condition: a 2026-09-27 review found the unrestricted version
+  exempted all ~40 `erodible`-tagged strategies at once on a bare "washed out" or "gully" mention, defeating
+  family diversity on the erosion path exactly the way a site-profile exemption was already rejected below for.
+  A site-profile soil boost does **not** exempt either: server-filled site facts (`low_organic_matter` from
+  SOC < 1%) would lift the cap on 30-odd cover-crop and compost variants at once.
+- **Measured weights.** Tuned only on the tuning-eligible sets (paraphrases, lay_language, ph_contrast,
+  family_coverage); golden and the held-out agent set are reported, never tuned. MRR per set
+  (paraphrase / lay / contrast / family) at dense 1.0 and expansion 0.3: BM25 0.6 -> .796 / .754 / 1.0 /
+  .926; 0.7 -> .797 / .754 / 1.0 / .926; **0.8 -> .801 / .817 / 1.0 / .921**; 0.9 and 1.0 drop a lay hit
+  (hit@5 .875). Expansion weight at BM25 0.8: 0.2 drops a lay hit, 0.3 = 0.4 on lay, 0.3 best on paraphrases.
+  Fusion alone (no query intent) leaves ph_contrast forbidden@3 at 1.00 and lay MRR at .54: the gains are the
+  intent layer plus the vocabulary, not the weights. `context_query` weight was first swept on a 16-item scratch
+  set (a model-style rewrite, "improve soil chemistry", paired with the user's lay words, "my pasture ground is
+  sour"): hit@5 / MRR / forbidden@3 = .750 / .554 / .00 at 0, .813 / .612 / .00 at 0.25, .938 / .645 / .00 at
+  **0.5**, .938 / .640 / .00 at 1.0, 1.0 / .707 / .25 at 1.5 (with the 0.5 pH demotion); query text alone scores
+  .563 / .406 / .50. Above 0.5 the context's own pH-trap ranking starts to win, and older turns in the context
+  are a reason to keep it below the query. That scratch set was never committed; `eval/context_query.json`
+  (committed 2026-09-27, a 2026-09-27 review's fix for the weight having no committed regression coverage) is
+  the small durable stand-in - the same two directionless queries the golden/held-out sets already use ("improve
+  soil chemistry", "fix soil chemistry") each paired with a lay `context_query` both directions, so a later
+  fusion or intent change cannot silently regress the S3 production path (`context_query=user_question`) while
+  every other eval file stays green.
+- `context_query` is embedded by its **last** `CONTEXT_EMBEDDED_WORDS` (150) words: MiniLM keeps only its first
+  ~256 word pieces, and the latest user turn comes last. BM25 reads all of it (<= 2000 characters).
 - **Fixed candidate pool.** Each retriever contributes at most `STRATEGY_KB_CANDIDATE_POOL` documents (default
   300), whatever page is asked for, so page N and page N + 1 come from one ranking and are disjoint and
   contiguous. When a page reaches past what the pool yields after collapse and diversity *and* the pool did not
@@ -305,12 +371,51 @@ documents.
 - **Boosts are capped.** Each matched soil condition or fire phase adds `0.25 / (k + 1)`, each requested goal the
   record states (not infers) `0.125 / (k + 1)`, and the total is capped at `0.5 / (k + 1)` - half of one first
   place. A boost therefore reorders near-ties and never removes anything, but a record missing from one ranking
-  (at best `1 / (k + 1)` + cap) can never overtake one both rankings put first (`2 / (k + 1)`). `boosted_by`
-  names every key that matched, even past the cap.
-- `strategy_facets` hits collapse to strategies by best fused score over their facets; the matched facet is
-  reported with a 60-word snippet of its raw text.
+  (at best `1 / (k + 1)` + cap) can never overtake one both rankings put first (`1.8 / (k + 1)` with the
+  weights above; a BM25-only record reaches at most `0.8 / (k + 1)` + cap). `boosted_by` names every key that
+  matched, even past the cap; a pH demotion appears as its key prefixed with `-` (`-soil_alkaline`).
+- The matched facet is reported with a 60-word snippet of its raw text.
 - Family diversity (default 2 per family, 0 disables) runs after collapse and before paging; held-back ids are
   returned per family so `get_family` can open them. A strategy without a family is its own family.
+
+## Query intent
+
+`query_intent.py` reads the query plus `context_query` (contract seam S3: the user's verbatim question, which
+agri forwards out of band) and returns `QueryIntent`, echoed as `query_intent` with `context_query_used` on
+`search_strategies` and `search_findings`. It is a data table, not a model: `LAY_VOCABULARY` is keyed by the
+`SoilCondition` enum, each entry holding lay phrases ("sour", "hardpan", "salty", "burnt", "washed out",
+"won't grow") and the corpus words BM25 should also look for. The dense query text is never rewritten
+(server-side query rewriting/HyDE is on the do-not-do list).
+
+- **pH direction** is a weighted vote: an explicit phrase ("raise the pH", "pH is too low", "acidify",
+  "apply lime", "adding sulfur") counts 2; a bare condition word ("acidic", "alkaline") or a lay pH word ("sour",
+  "acid-loving") counts 1; a tie is no direction. "lime"/"sulfur" only count next to an application verb
+  (`apply`, `add`, `use`, `amend`, `spread`, `treat`, `need` ± up to two filler words, or "lime/sulfur
+  application/treatment/amendment") — a 2026-09-27 review found bare mentions false-positive on "lime-induced
+  chlorosis", "free lime" (excess lime is the opposite problem lime treats) and "sulfur deficiency" (a nutrient
+  issue, not a pH amendment); none of those phrasings carry an application verb, so they now score 0. The same
+  review found "getting more acidic" is a symptom lime corrects, not a request to acidify further, so it counts
+  toward raise, not lower; a bare "more acidic" no longer counts either way (too ambiguous). Bare crop names
+  ("blueberries") were dropped as a soil-condition cue entirely: they fire on any mention of the crop regardless
+  of intent (a query about blueberry irrigation is not a pH query). "sour" excludes the produce sense ("sour
+  cherry", "sour orange") via `_SOUR_FALSE_FRIENDS`, so it still means soil taste everywhere else. Raising pH
+  boosts `acidic` (lime targets acidic soil),
+  lowering boosts `alkaline` (sulfur), and the *opposite* condition is demoted by `PH_DEMOTION_WEIGHT` = 0.5
+  unit unless the record also carries the boosted one. The demotion exists because only two strategies carry
+  `alkaline`: a lower-pH query otherwise still ranked lime third on its shared "pH" vocabulary
+  (ph_contrast forbidden@3 stayed .50 with boosts alone). "fix soil chemistry" has no direction and gets none:
+  only the user's own words (context_query) can say which way.
+- **Boosts are capped**: at most `MAXIMUM_INTENT_BOOSTS` = 2 conditions, the pH one first, then table order;
+  each is an ordinary `BOOST_WEIGHT` tag under the same `MAXIMUM_TOTAL_BOOST` ceiling as site-profile boosts.
+  A weak cue ("won't grow") acts only when nothing else was named. Terrain words ("hillside", "steep")
+  expand BM25 but boost nothing: the corpus's `steep_slope` tags sit on erosion structures, and boosting them
+  sent "replant trees on a hillside" and "native grass on a burned hillside" to contour logs (family_coverage
+  MRR .926 -> .884 with the boost). "burned" and "after the fire" are not lay terms: they are the corpus's
+  own words, and boosting `burned_high_severity` on them pulled erosion barriers above snag removal and
+  cheatgrass control on golden queries.
+- **Expansion tokens** (at most 12) go to the query's BM25 ranking only, at `DEFAULT_EXPANSION_WEIGHT`.
+- `search_findings` echoes an empty `soil_condition_boosts` (findings carry no soil tags, as in the
+  site-profile echo) but still uses the expansion tokens and the context ranking.
 
 ## Site profile
 
@@ -338,11 +443,11 @@ reads, so it says what comes back and which tool to call next. A `knowledge_base
 | tool | parameters |
 |---|---|
 | `list_facets` | - |
-| `search_strategies` | query, goals[], land_use[], region[], soil_conditions[], scale[], category[], fire_phase[], site_profile{}, min_evidence, family_diversity=2, limit=10, offset=0 |
+| `search_strategies` | query, goals[], land_use[], region[], soil_conditions[], scale[], category[], fire_phase[], site_profile{}, min_evidence, context_query (<= 2000 chars), family_diversity=2, limit=10, offset=0 |
 | `get_strategy` | ids[] |
 | `get_family` | family_id |
 | `compare_strategies` | ids[] (>= 2, schema `minItems: 2`; an id and its alias count once, so fewer than 2 distinct is an error) |
-| `search_findings` | query, goals[], land_use[], region[], site_profile{}, min_evidence, study_type[], direction, strategy_id, limit, offset |
+| `search_findings` | query, goals[], land_use[], region[], site_profile{}, min_evidence, study_type[], direction, strategy_id, context_query (<= 2000 chars), limit, offset |
 | `search_passages` | query, source_id, content_type[], relevance[], strategy_id, limit, offset |
 | `list_sources` | - |
 
@@ -424,6 +529,27 @@ section C1 (git-ignored, so restated here).
 - `log_config=None`: uvicorn's access and error logs go through the CLI's stderr `basicConfig`.
 - Quirk: `GET /v1/tools/x` is a 404, not a 405, because the MCP app is mounted at the root and matches every path.
 
+## Observability
+
+HTTP mode logs one compact JSON line per request to real stdout (`log_access_event`, `http_app.py`) - never a
+query, a passage or any request/response body, only the outcome, timing and identifiers:
+
+- `mcp_request` for every `/mcp` call: `status`, `ms`, `request_id`.
+- `tool_call` for every `POST /v1/tools/{tool_name}` call, on **every** exit path including a 4xx/5xx and an
+  unhandled exception (`AccessLogMiddleware`/`call_tool`'s `finally`, not just its normal returns - a client
+  disconnect mid-read used to leave no line at all): `tool`, `status` (`ok`, `invalid_arguments`, `not_ready`,
+  `unknown_tool`, `request_too_large`, `internal_error`, or `aborted` for anything that reached the `finally`
+  without a status), `ms`, `corpus_version` (the currently loaded one, or `null` before load), `request_id`.
+  There is no per-tool line on the `/mcp` path - `mcp_request` covers the whole MCP call, not each dispatched
+  tool inside it, because `/mcp` runs through the SDK's own session manager, not `call_tool`.
+- **Request id.** `X-Request-ID` is echoed if the caller sent one; a caller value must match
+  `[A-Za-z0-9._-]{1,128}` or it is replaced with a generated `uuid4().hex` - an unbounded or odd-charset header
+  would otherwise land in every log line for the request's lifetime.
+- **`limit_concurrency`** (`DEFAULT_LIMIT_CONCURRENCY` = 16, env `STRATEGY_KB_LIMIT_CONCURRENCY`, validated to
+  (0, 512]; an invalid or out-of-range value falls back to the default) is uvicorn's own concurrent-request cap:
+  requests past it get a 503 immediately rather than queuing behind a slow tool call. It counts accepted HTTP
+  connections, not tool calls in flight on the worker-thread pool.
+
 ## Deploy (Railway)
 
 Service `plantgeo-strategy-knowledge` in project Aevani, environment production (contract C2): root directory
@@ -484,6 +610,22 @@ chosen, one conflict anywhere stops the whole transfer in that direction: nothin
 order - `raw/`, then chunk plans and findings, then `corpus/strategies/`, and `corpus/sources.json` last - so a
 transfer that dies part-way never publishes a registry naming a raw file or plan that did not arrive; a raw
 file or plan the registry does not list yet is inert (`index` excludes unregistered sources).
+
+**`--corpus-only` and the bare-push guard.** Once a corpus+index has ever been published, `sync push` (no
+`--with-index`) refuses outright when the bucket's published `corpus_version` (read from `index/LATEST`) would
+diverge from the local corpus - normal pushes cannot silently leave the served index stamped for a corpus that
+no longer matches what the bucket holds. `--corpus-only` is the explicit override: it uploads the corpus change
+anyway and accepts that the server refuses to serve (`index_staleness`) until a matching `--with-index` push
+follows. `--with-index` (the atomic publish `command_sync` and the skill's step 8 use) needs no such guard: it
+checks the local index's own freshness and every key's three-way state *before* the first byte moves, then
+uploads in one fixed order - the index archive, the corpus (`sources.json` last), `index/LATEST` last of all -
+so a run that dies part-way never leaves LATEST naming a version whose files did not fully arrive. If the local
+index is unpublishable, or the corpus would diverge (a remote-only/remote-changed key, an unsafe rejected key,
+or a conflict resolved for the remote), or `index/LATEST` itself changed remotely since the last sync, the
+**whole push refuses and uploads nothing** - not just the index: local-changed corpus keys are held back too
+(`BucketSync._push_key`'s `upload_local` flag), so a partial corpus can never sit behind a refused index. Pull,
+re-index and push again; `--force-local`/`--force-remote` settle an ordinary conflict but never override a
+divergence refusal.
 
 Uploads are single-part PUTs so a key's ETag stays its MD5. **Key safety:** a remote key ending in `/`
 (a directory marker) or resolving outside the cache is refused (`rejected_keys`, exit 1) and never written, and
@@ -599,13 +741,65 @@ strategy-kb sync push [--with-index]
 
 ## Evaluation
 
-`strategy-kb eval --golden FILE` runs `[{"query", "filters", "expected_any_of", "k"}]` through
-`search_strategies` (`filters` takes any of its parameters and is validated) and reports hit@k and MRR@k (the
-reciprocal rank of the first expected id within the top k). Expected ids are first resolved through the
-knowledge base's alias map (registry `merged_from`, then matched candidates; "Strategy aliases"), because search
-returns canonical ids only: a golden file written before a registry merge would otherwise score a miss for the
-very strategy that absorbed its id. Each row reports `expected_canonical`. The golden queries are authored by a
-separate lane; `tests/fixtures/golden_example.json` is only a two-query format example.
+`strategy-kb eval --golden FILE` runs a `GoldenQuery` list (`evaluation.py`) through `search_strategies` by
+default, or `search_findings`/`search_passages` when `kind` is `"findings"`/`"passages"` (`filters` takes any of
+that endpoint's own parameters and is validated), and reports hit@k, MRR@k (the reciprocal rank of the first
+expected id within the top k), a `forbidden_at_3` violation rate (an id in `forbidden_at_3` must not rank in the
+top 3 - the raise/lower-pH contrast pairs use this), a per-`kind` breakdown, and per-family coverage. Expected
+and forbidden ids are first resolved through the knowledge base's alias map (registry `merged_from`; "Strategy
+aliases"), because search returns canonical ids only: a golden file written before a registry merge would
+otherwise score a miss for the very strategy that absorbed its id. `expected_any_of` and `forbidden_at_3` may
+never share an id (`GoldenQuery` rejects it at load) - one item cannot be both a right answer and a violation.
+`context_query` forwards onto the request's own field (contract seam S3) once that field exists on the target
+model (`StrategySearch`/`FindingSearch`; never `PassageSearch`), so a golden file written ahead of the retrieval
+change still validates.
+
+`eval/` holds every eval file, one `GoldenQuery` list each, scored the same way; see `eval/README.md` for the
+full catalogue (paraphrases, lay language, pH contrast, family/findings/passages coverage, the committed
+`context_query.json`, and the HELD-OUT `agent_queries_heldout.json`, drawn from real agent transcripts and never
+tuned against). `tests/fixtures/golden_example.json` is only a two-query format example, not a real eval file.
+
+Beyond `golden_queries.json`, `eval/` holds seven more files sharing the same `GoldenQuery` schema
+(`evaluation.py`): `paraphrases.json` (3 reworded variants of each golden query), `lay_language.json` (farmer
+vocabulary: sour, hardpan, hillside, burnt, washed out, salty, "won't grow anything"), `ph_contrast.json`
+(raise- vs lower-pH pairs, lime vs elemental sulfur, both directions), `family_coverage.json` (one query per
+strategy family the original golden set never tested), `findings_coverage.json` / `passages_coverage.json`
+(coverage for `search_findings` / `search_passages`, selected by the item's `kind`), and
+`agent_queries_heldout.json`.
+
+Each `GoldenQuery` also carries: `kind` (golden | paraphrase | lay | contrast | family | agent | findings |
+passages; "findings"/"passages" select that endpoint, everything else scores `search_strategies`);
+`forbidden_at_3` (ids that must NOT rank in the top 3 - the pH contrast pairs use it to catch the
+wrong-direction strategy); and `context_query`, forwarded into the request only once the target request model
+declares that field (seam S3), so a golden file written ahead of the retrieval change still validates and
+records `context_query_sent: false` per row until it lands. `evaluate()` reports hit@k / MRR / forbidden@3
+overall, a `by_kind` breakdown and `family_coverage` (tested/untested families + per-family hit rate), the last
+read off the live searcher's `.strategies` registry (None for a test double with none).
+
+**HELD-OUT - do not tune against it.** `agent_queries_heldout.json` holds the verbatim `query` arguments real
+agent runs sent to `search_environmental_strategies`, labelled against each scenario's hand-authored
+`expected_family_ids` (never the transcript's retrieved ids, which would be circular). It only confirms that a
+retrieval change generalizes past the tuning-eligible sets; see `eval/README.md` and `eval/BASELINE.md`.
+
+Retrieval wave 2 (query intent, strategy-level weighted RRF, family text + registry search terms in BM25, light
+stemming, the sulfur facet rewrite), local corpus `fb95535b...` against the `eval/BASELINE.md` numbers
+(corpus `5e1f53dc...`), hit@5 / MRR / forbidden@3:
+
+| file | baseline | wave 2 |
+|---|---|---|
+| `golden_queries.json` (reported, not tuned) | 1.000 / .833 / .00 | 1.000 / .861 / .00 |
+| `paraphrases.json` | .931 / .739 / .00 | .986 / .801 / .00 |
+| `lay_language.json` | .750 / .750 / .00 | 1.000 / .817 / .00 |
+| `ph_contrast.json` | 1.000 / .875 / **.75** | 1.000 / 1.000 / .00 |
+| `family_coverage.json` | 1.000 / .931 / .00 | 1.000 / .921 / .00 |
+| `findings_coverage.json`, `passages_coverage.json` | 1.000 / 1.000 / .00 | 1.000 / 1.000 / .00 |
+| `agent_queries_heldout.json` (HELD OUT) | 1.000 / .708 / **1.00** | 1.000 / .667 / .50 |
+
+The held-out forbidden@3 left is "fix soil chemistry": no direction exists in that text, and the user's "sour
+pasture" reaches retrieval only as `context_query`. Its MRR moved -.04 on 10 queries (one rank-2 -> rank-3
+change is -.017), mostly broad erosion/cheatgrass scenarios. The new code over the *published* corpus and
+index (`5e1f53dc...`, no search terms, old sulfur facet) serves without error: golden 1.000 / .856, paraphrases
+.931 / .778, lay .875 / .713, ph_contrast 1.000 / 1.000 / .00, held-out 1.000 / .633 / .50.
 
 ## Testing
 
@@ -643,9 +837,6 @@ Per the repo rule, authors do not run the suite; one sweep runs at the join (`uv
 - A partial re-chunk that changes how many agent slices a source has (S1..S3 before, S1..S2 now, same raw file)
   keeps the dropped slice's candidates until a whole-file import; `validate` still passes. Re-chunk a source
   whole, or with the same slices.
-- **Retrieval tuning is the next step** (a reviewer's diagnosis, not yet acted on): BM25 has no stemming, so
-  "burn" does not match "burned"; the corpus lacks some lay vocabulary ("hardpan", "hillside") that land
-  managers type; and plain RRF lets a document BM25 ranks first on a single term and dense search ranks 300th
-  (1/61 + 1/360 = 0.0192) beat a document only dense search ranks first (1/61 = 0.0164). Candidates: weighted RRF (dense weighted above
-  BM25, or BM25 contributing only within a top-N), a light stemmer in `lexical.tokenize`, and a synonym map for
-  lay terms. Re-run the golden eval before and after each change.
+- **Retrieval next steps** (after wave 2, "Retrieval" / "Query intent"): commit the context_query scratch set
+  as an eval file; family_coverage MRR sits .01 under baseline (forest-vulnerability and crop-rotation queries
+  moved rank 2 -> 3); lay vocabulary beyond pH/salinity/compaction has no registry `search_terms` yet.

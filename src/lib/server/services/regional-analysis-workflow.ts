@@ -3,6 +3,7 @@ import {
   LITERATURE_EVIDENCE_DOMAIN,
   REGIONAL_TOOL_EVIDENCE_SOURCES,
   STRATEGY_KNOWLEDGE_EVIDENCE_SOURCE,
+  type ConversationTurn,
   type RegionalAnalysisEvidence,
 } from '@/lib/regional-intelligence';
 import { buildRegionalMeasurementFacts, type RegionalMeasurementFacts } from './regional-measurement-facts';
@@ -14,6 +15,8 @@ import type { RegionalContextPayload, TemporalContext } from './regional-context
 import {
   callRegionalEvidenceTool,
   loadRegionalEvidenceTools,
+  type LiteratureServerContext,
+  type LiteratureSiteFacts,
   type RegionalEvidenceCatalogue,
 } from './regional-evidence-tools';
 
@@ -72,11 +75,18 @@ export function regionalSelectionArguments(
   };
 }
 
+/** Literature arguments the server owns (seam S1); the model's copies never reach the bridge. */
+export const SERVER_OWNED_LITERATURE_ARGUMENTS = ['site_profile', 'region'] as const;
+
 export function bindRegionalEvidenceArguments(
   tool: string, args: Record<string, unknown>, payload: RegionalContextPayload, temporal: TemporalContext,
 ): Record<string, unknown> {
-  // Literature tools are coordinate-free by contract: never inject the request's point or day.
-  if (isStrategyKnowledgeTool(tool)) return { ...args };
+  // Literature arguments stay coordinate-free: the point travels only in `server_context`, from which
+  // the agri bridge derives the region and site facts, so the model's site_profile and region are dropped.
+  if (isStrategyKnowledgeTool(tool)) {
+    return Object.fromEntries(Object.entries(args)
+      .filter(([key]) => !(SERVER_OWNED_LITERATURE_ARGUMENTS as readonly string[]).includes(key)));
+  }
   const source = typeof args.surface_name === 'string' ? regionalSurfaceName(args.surface_name)
     : tool === 'drought_history_at_point' ? 'drought-areas' : tool === 'fire_history_near_point' ? 'burn-severity' : '';
   if (tool === 'surface_evidence_for_selection') {
@@ -358,15 +368,244 @@ export interface RegionalAnalysisWorkflow {
   catalogue: RegionalEvidenceCatalogue | null;
   evidence: RegionalAnalysisEvidence;
   measurementFacts: RegionalMeasurementFacts;
+  /** Read ledger for the literature `server_context` site facts; additional reads append to it. */
+  siteFactObservations: SiteFactObservation[];
   context: string;
 }
+
+/** Tools whose results describe coverage or catalogue metadata, never a value at the point. */
+const METADATA_ONLY_TOOLS = ['observation_coverage_on_day', 'observation_temporal_neighbors', 'list_environmental_layers'];
 
 /** Admit facts only from executed measured reads for a declared concrete source. */
 export function regionalFactsForRead(audit: AuditCall, result: unknown): RegionalMeasurementFacts {
   if (audit.status !== 'observed' || !audit.source || !(REGIONAL_TOOL_EVIDENCE_SOURCES as readonly string[]).includes(audit.source)
     || audit.source === STRATEGY_KNOWLEDGE_EVIDENCE_SOURCE || isStrategyKnowledgeTool(audit.tool)
-    || ['observation_coverage_on_day', 'observation_temporal_neighbors', 'list_environmental_layers'].includes(audit.tool)) return { facts: [], omittedFacts: 0 };
+    || METADATA_ONLY_TOOLS.includes(audit.tool)) return { facts: [], omittedFacts: 0 };
   return buildRegionalMeasurementFacts([{ id: audit.id, source: audit.source, result }]);
+}
+
+/** One measured site value read this request, before the agreement check in `literatureSiteFacts`. */
+export interface SiteFactObservation {
+  fact: keyof LiteratureSiteFacts | 'fire_day' | 'burn_severity_by_day';
+  /** For `burn_severity_by_day`, `${fireDay}|${severity}` -- pairs the class to the fire it was read from. */
+  value: number | string;
+  readId: string;
+}
+
+type NumericSiteFact = 'soil_ph' | 'soil_organic_carbon_pct' | 'sand_pct' | 'clay_pct' | 'electrical_conductivity_ds_m' | 'annual_precip_mm';
+
+/** Plausible bounds after unit conversion; a value outside them is dropped as a unit mismatch. */
+const SITE_FACT_BOUNDS: Record<NumericSiteFact, [number, number]> = {
+  soil_ph: [2, 12], soil_organic_carbon_pct: [0, 60], sand_pct: [0, 100], clay_pct: [0, 100],
+  electrical_conductivity_ds_m: [0, 200], annual_precip_mm: [0, 15_000],
+};
+const PERCENT_UNITS = new Set(['%', 'percent', 'pct']);
+/** MTBS thematic burn-severity classes 2-4 plus their names; classes 1, 5 and 6 carry no severity. */
+const BURN_SEVERITY_CLASSES: Record<string, NonNullable<LiteratureSiteFacts['burn_severity']>> = {
+  '2': 'low', '3': 'moderate', '4': 'high', low: 'low', moderate: 'moderate', high: 'high',
+};
+/** NLCD 2019 Anderson Level II class codes. */
+const NLCD_CLASS_CODES = new Set([11, 12, 21, 22, 23, 24, 31, 41, 42, 43, 51, 52, 71, 72, 73, 74, 81, 82, 90, 95]);
+const SITE_FACT_OBSERVATIONS_PER_READ = 32;
+const MAX_DAYS_SINCE_FIRE = 36_500;
+
+/** Which S1 site fact a metric or surface name reports, by name token; see services/AGENTS.md §literature-server-context. */
+function siteFactForName(name: string): NumericSiteFact | null {
+  const tokens = name.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  if (tokens.includes('ph') || tokens.includes('phh2o')) return 'soil_ph';
+  if (tokens.includes('soc') || (tokens.includes('organic') && tokens.includes('carbon'))) return 'soil_organic_carbon_pct';
+  if (tokens.includes('sand')) return 'sand_pct';
+  if (tokens.includes('clay')) return 'clay_pct';
+  if (tokens.includes('ec') || tokens.includes('conductivity')) return 'electrical_conductivity_ds_m';
+  if (tokens.includes('annual') && tokens.some((token) => token.startsWith('precip'))) return 'annual_precip_mm';
+  return null;
+}
+
+/** Convert one value to its S1 unit, or null when the unit is missing, not understood or implausible. */
+function siteFactValue(fact: NumericSiteFact, value: number, rawUnit: string): number | null {
+  const unit = rawUnit.toLowerCase().replace(/\s+/g, '').replace('µ', 'u').replace('×', 'x');
+  const converted = (() => {
+    switch (fact) {
+      // SoilGrids publishes pH x10 (`phh2o` 62 = pH 6.2).
+      case 'soil_ph': return unit === 'ph' ? value : ['ph*10', 'phx10'].includes(unit) ? value / 10 : null;
+      // SoilGrids SOC is dg/kg; g/kg / 10 = mass percent.
+      case 'soil_organic_carbon_pct': return unit === 'g/kg' ? value / 10 : unit === 'dg/kg' ? value / 100
+        : PERCENT_UNITS.has(unit) ? value : null;
+      // SoilGrids sand and clay are g/kg.
+      case 'sand_pct': case 'clay_pct': return PERCENT_UNITS.has(unit) || unit === 'g/100g' ? value
+        : unit === 'g/kg' ? value / 10 : null;
+      case 'electrical_conductivity_ds_m': return ['ds/m', 'ms/cm'].includes(unit) ? value : unit === 'us/cm' ? value / 1000 : null;
+      // Daily (mm/day) precipitation is never summed into an annual total here.
+      case 'annual_precip_mm': return ['mm/yr', 'mm/year', 'mm/a'].includes(unit) ? value : null;
+    }
+  })();
+  if (converted === null || !Number.isFinite(converted)) return null;
+  const [minimum, maximum] = SITE_FACT_BOUNDS[fact];
+  return converted >= minimum && converted <= maximum ? Math.round(converted * 100) / 100 : null;
+}
+
+function calendarDayOf(value: unknown): string | null {
+  if (isCalendarDay(value)) return value;
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T/.test(value) || !Number.isFinite(Date.parse(value))) return null;
+  const day = value.slice(0, 10);
+  return isCalendarDay(day) ? day : null;
+}
+
+/** Records whose own support contains the selected point, tagged selected-day or sampled history. */
+function pointRecords(result: unknown): Array<{ properties: Record<string, unknown>; selected: boolean }> {
+  const records: Array<{ properties: Record<string, unknown>; selected: boolean }> = [];
+  const visit = (value: unknown, selected: boolean, depth: number) => {
+    const node = object(value);
+    if (!node || depth > 8 || node.error || node.refusal_code) return;
+    for (const [key, entry] of Object.entries(node)) {
+      if ((key === 'features' || key === 'rows') && Array.isArray(entry)) {
+        for (const item of entry) {
+          const row = object(item);
+          if (row?.covers_probe_point === true && row.allowed_client_exposure !== false) {
+            records.push({ properties: object(row.properties) ?? row, selected });
+          }
+        }
+      } else if (key === 'selected') visit(entry, true, depth + 1);
+      else if (key === 'history' && Array.isArray(entry)) entry.forEach((child) => visit(child, false, depth + 1));
+      else if (key === 'lanes' && Array.isArray(entry)) entry.forEach((child) => visit(child, selected, depth + 1));
+    }
+  };
+  visit(result, true, 0);
+  return records;
+}
+
+/** Extract S1 site values from one executed measured read; only records containing the point count. */
+export function siteFactObservationsForRead(audit: AuditCall, result: unknown): SiteFactObservation[] {
+  if (audit.status !== 'observed' || !audit.source || audit.source === STRATEGY_KNOWLEDGE_EVIDENCE_SOURCE
+    || isStrategyKnowledgeTool(audit.tool) || METADATA_ONLY_TOOLS.includes(audit.tool)) return [];
+  const source = audit.source;
+  const observations: SiteFactObservation[] = [];
+  const add = (fact: SiteFactObservation['fact'], value: number | string) => {
+    if (observations.length < SITE_FACT_OBSERVATIONS_PER_READ) observations.push({ fact, value, readId: audit.id });
+  };
+  for (const { properties, selected } of pointRecords(result)) {
+    // A fire's own date: MTBS `ignition_date` (its `observed_day` is the publication day) or the
+    // perimeter's discovery instant. Satellite detections are thermal anomalies, not fire dates.
+    const fireDay = source === 'burn-severity' ? calendarDayOf(properties.ignition_date)
+      : source === 'fire-perimeters' ? calendarDayOf(properties.fire_discovery_at) : null;
+    if (fireDay) add('fire_day', fireDay);
+    // Paired to fireDay, not a bare 'burn_severity' fact: a record's severity is only ever trusted
+    // for ITS OWN fire (wave-2 fix-stage review, `burn_severity_by_day` decoded in `literatureSiteFacts`),
+    // never applied to whichever fire in this read turns out to be newest.
+    if (source === 'burn-severity' && fireDay && (typeof properties.severity_class === 'string' || typeof properties.severity_class === 'number')) {
+      const severity = BURN_SEVERITY_CLASSES[String(properties.severity_class).trim().toLowerCase()];
+      if (severity) add('burn_severity_by_day', `${fireDay}|${severity}`);
+    }
+    if (!selected) continue;
+    for (const [valueKey, unitKey, nameKey] of [
+      ['normalized_value', 'normalized_unit', 'signal_name'], ['metric_value', 'metric_unit', 'metric_name'],
+    ] as const) {
+      const value = properties[valueKey];
+      const unit = properties[unitKey];
+      if (typeof value !== 'number' || typeof unit !== 'string') continue;
+      const name = properties[nameKey];
+      const fact = siteFactForName(typeof name === 'string' ? name : source);
+      const converted = fact ? siteFactValue(fact, value, unit) : null;
+      if (fact && converted !== null) add(fact, converted);
+    }
+    const coverName = [properties.nlcd_class_name, properties.land_cover_class, properties.land_cover]
+      .find((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0 && entry.length <= 80);
+    const coverCode = [properties.nlcd_class, properties.nlcd_code]
+      .find((entry): entry is number => typeof entry === 'number' && NLCD_CLASS_CODES.has(entry));
+    if (coverName) add('land_cover', coverName.trim());
+    else if (coverCode !== undefined) add('land_cover', String(coverCode));
+  }
+  return observations;
+}
+
+/** SoilGrids values already in the assembled payload: `ph` is unscaled pH, `organicCarbon` is g/kg. */
+function payloadSoilObservations(payload: RegionalContextPayload): SiteFactObservation[] {
+  const soil = payload.soilProperties;
+  if (!soil) return [];
+  const readId = 'initial-soilProperties';
+  const ph = siteFactValue('soil_ph', soil.ph, 'pH');
+  const organicCarbon = siteFactValue('soil_organic_carbon_pct', soil.organicCarbon, 'g/kg');
+  return [
+    ...(ph !== null ? [{ fact: 'soil_ph' as const, value: ph, readId }] : []),
+    ...(organicCarbon !== null ? [{ fact: 'soil_organic_carbon_pct' as const, value: organicCarbon, readId }] : []),
+  ];
+}
+
+/** Fold this request's observations into S1 site facts; a fact whose reads disagree is omitted. */
+export function literatureSiteFacts(observations: readonly SiteFactObservation[], serverCurrentDate: string): LiteratureSiteFacts {
+  const values = new Map<Exclude<SiteFactObservation['fact'], 'burn_severity_by_day'>, Set<number | string>>();
+  const severityByDay = new Map<string, Set<NonNullable<LiteratureSiteFacts['burn_severity']>>>();
+  for (const observation of observations) {
+    if (observation.fact === 'burn_severity_by_day') {
+      const [fireDay, severity] = String(observation.value).split('|');
+      const entries = severityByDay.get(fireDay) ?? new Set<NonNullable<LiteratureSiteFacts['burn_severity']>>();
+      entries.add(severity as NonNullable<LiteratureSiteFacts['burn_severity']>);
+      severityByDay.set(fireDay, entries);
+      continue;
+    }
+    const entries = values.get(observation.fact) ?? new Set<number | string>();
+    entries.add(observation.value);
+    values.set(observation.fact, entries);
+  }
+  const facts: LiteratureSiteFacts = {};
+  for (const [fact, entries] of values) {
+    if (fact === 'fire_day' || entries.size !== 1) continue;
+    // Each observation was typed and unit-converted for its own key by `siteFactObservationsForRead`.
+    Object.assign(facts, { [fact]: [...entries][0] });
+  }
+  // The most recent fire containing the point, counted from the server's today.
+  const today = Date.parse(`${serverCurrentDate}T00:00:00Z`);
+  const fireDays = [...(values.get('fire_day') ?? [])]
+    .filter((day): day is string => isCalendarDay(day) && day <= serverCurrentDate).sort();
+  const latestFire = fireDays.at(-1);
+  if (latestFire && Number.isFinite(today)) {
+    const days = Math.round((today - Date.parse(`${latestFire}T00:00:00Z`)) / 86_400_000);
+    if (days >= 0 && days <= MAX_DAYS_SINCE_FIRE) facts.days_since_fire = days;
+    // Same-fire pairing (wave-2 fix-stage review): burn_severity is trusted only for the fire that
+    // sets days_since_fire -- an older or unrelated burn-severity record's class never leaks in.
+    const severityForLatestFire = severityByDay.get(latestFire);
+    if (severityForLatestFire?.size === 1) facts.burn_severity = [...severityForLatestFire][0];
+  }
+  return facts;
+}
+
+const MAX_LITERATURE_QUESTION_CHARACTERS = 2_000;
+/** The marker `conversation-history.ts` prefixes to trimmed replay; not the user's words. */
+const REPLAY_OMISSION_MARKER = /\[Additional saved content omitted[^\]]*\]/g;
+/** The route's no-question filler, saved as a user turn; not the user's words. Exported so `route.ts`'s
+ * `DEFAULT_QUESTION` imports this one literal instead of repeating it (wave-2 fix-stage review). */
+export const SAVED_DEFAULT_QUESTION = 'Analyze this location';
+
+/** The user's own messages this conversation (S1 `user_question`): verbatim, latest last, front-truncated. */
+export function literatureUserQuestion(history: readonly ConversationTurn[], userQuestion?: string): string | undefined {
+  const messages = [...history.filter((turn) => turn.role === 'user').map((turn) => turn.content), ...(userQuestion ? [userQuestion] : [])]
+    .map((message) => message.replace(REPLAY_OMISSION_MARKER, ' ').replace(/[\u0000-\u001F\u007F-\u009F]+/g, ' ').trim())
+    .filter((message) => message.length > 0 && message !== SAVED_DEFAULT_QUESTION);
+  let joined = messages.join('\n');
+  if (joined.length > MAX_LITERATURE_QUESTION_CHARACTERS) {
+    joined = joined.slice(-MAX_LITERATURE_QUESTION_CHARACTERS);
+    // Never start on the second half of a surrogate pair.
+    if (/^[\uDC00-\uDFFF]/.test(joined)) joined = joined.slice(1);
+  }
+  joined = joined.trim();
+  return joined.length > 0 ? joined : undefined;
+}
+
+/** Build the out-of-band literature context (seam S1) from this request's point, words and measured reads. */
+export function buildLiteratureServerContext(
+  payload: RegionalContextPayload, temporal: TemporalContext, history: readonly ConversationTurn[],
+  userQuestion: string | undefined, observations: readonly SiteFactObservation[],
+): LiteratureServerContext {
+  const question = literatureUserQuestion(history, userQuestion);
+  const { lon: longitude, lat: latitude } = payload.location;
+  const point = Number.isFinite(longitude) && Number.isFinite(latitude) && Math.abs(longitude) <= 180 && Math.abs(latitude) <= 90
+    ? { longitude, latitude } : undefined;
+  const siteFacts = literatureSiteFacts([...payloadSoilObservations(payload), ...observations], temporal.serverCurrentDate);
+  return {
+    ...(question ? { user_question: question } : {}),
+    ...(point ? { point } : {}),
+    ...(Object.keys(siteFacts).length > 0 ? { site_facts: siteFacts } : {}),
+  };
 }
 
 /** Derive a stage result from all of its completed and attempted reads. */
@@ -395,11 +634,12 @@ export async function prepareRegionalAnalysis(
   let catalogue: RegionalEvidenceCatalogue | null = null;
   const results: EvidenceRead[] = [];
   const measurementFacts: RegionalMeasurementFacts = { facts: [], omittedFacts: 0 };
+  const siteFactObservations: SiteFactObservation[] = [];
   try { catalogue = await loadRegionalEvidenceTools(signal); }
   catch (error) { if (signal?.aborted) throw error; }
   if (!catalogue) {
     evidence.limitations.push('The environmental tool catalogue could not be loaded. Only the supplied regional context was available; historical and regional comparisons were not performed.');
-    return { catalogue, evidence, measurementFacts, context: JSON.stringify({ evidence, measurementFacts, strategyScreening: STRATEGY_SCREENING }) };
+    return { catalogue, evidence, measurementFacts, siteFactObservations, context: JSON.stringify({ evidence, measurementFacts, strategyScreening: STRATEGY_SCREENING }) };
   }
   evidence.stages[0].status = 'completed';
   const tools = new Set(catalogue.tools.map((tool) => tool.name));
@@ -432,6 +672,7 @@ export async function prepareRegionalAnalysis(
             const readFacts = regionalFactsForRead(audit, result);
             measurementFacts.facts.push(...readFacts.facts);
             measurementFacts.omittedFacts += readFacts.omittedFacts;
+            siteFactObservations.push(...siteFactObservationsForRead(audit, result));
             if (audit.status === 'observed' && readFacts.facts.length === 0 && evidence.limitations.length < 35) {
               evidence.limitations.push(`${audit.source ?? request.tool} [${id}]: returned records contained no renderable measurement facts; inspect the raw source before making a measured-condition claim.`);
             }
@@ -470,7 +711,7 @@ export async function prepareRegionalAnalysis(
   evidence.limitations.push('All catalogue layers remain queryable, including hidden layers. Initial reads prioritize six selected or environmental context layers; use additional reads for other relevant layers and history continuation.');
   if (temporal.viewedDates.length > 1) evidence.limitations.push('This is a mixed-time comparison. Each selected layer retains its own day; unselected layers inherit the latest selected comparison day.');
   return {
-    catalogue, evidence, measurementFacts,
+    catalogue, evidence, measurementFacts, siteFactObservations,
     context: JSON.stringify({ selection: temporal.analysisSelection, availableLayers: catalogue.surfaces, evidence, observations: results, measurementFacts, strategyScreening: STRATEGY_SCREENING }),
   };
 }

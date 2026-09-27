@@ -79,6 +79,23 @@ describe('regional analysis evidence boundary', () => {
     }
   });
 
+  it('persists the literature loop guards as audit entries: a rejection, an unsent repeat and an exhausted cap', () => {
+    const literatureCall = { stage: 'additional', tool: 'search_environmental_strategies', source: 'strategy-knowledge' };
+    const guarded = {
+      version: 1,
+      stages: [{ id: 'additional', label: 'Investigate additional evidence', status: 'partial' }],
+      toolCalls: [
+        { ...literatureCall, id: 'additional-1', status: 'refused', reason: 'invalid arguments: limit: Input should be less than or equal to 10: The literature lookup was refused.' },
+        { ...literatureCall, id: 'additional-2', status: 'not_queried', reason: 'An identical call was already rejected in this request, so it was not sent again.' },
+        { ...literatureCall, id: 'additional-3', status: 'not_queried', reason: 'The strategy-knowledge rejected-call budget was exhausted.' },
+      ],
+      limitations: [],
+    };
+    expect(readRegionalAnalysisEvidence(guarded)).toEqual(guarded);
+    // A guarded call is never an observation and carries no location or dates.
+    expect(guarded.toolCalls.every((call) => !('location' in call) && !('selectedDate' in call))).toBe(true);
+  });
+
   it('retains truthful multi-source provenance for combined evidence reads', () => {
     const combined = { ...evidence, toolCalls: [{
       id: 'fire-history', stage: 'temporal', tool: 'fire_history_near_point',

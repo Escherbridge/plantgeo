@@ -96,7 +96,7 @@ def test_scenario_passes_on_a_family_hit_named_in_the_answer_with_no_hallucinati
     assert not score.hallucinated_ids
     assert not score.forbidden_hit
     assert score.literature_attribution
-    assert not score.unsupported_percentages
+    assert not score.unbound_numbers
     assert score.retrieved_strategy_ids == ("post-fire-straw-mulching",)
     assert score.retrieved_family_ids == ("post-fire-mulching",)
 
@@ -522,7 +522,7 @@ def test_unsupported_percentage_fails_the_scenario() -> None:
     transcript = [_tool_message("search_environmental_strategies", _search_result(POST_FIRE_MULCHING_HIT))]
     final_text = "Research shows post-fire-straw-mulching cuts erosion by 40%, right away."
     score = EVAL.score_transcript(scenario, final_text, transcript)
-    assert score.unsupported_percentages == ("40%",)
+    assert score.unbound_numbers == ("40%",)
     assert not score.passed
 
 
@@ -544,7 +544,7 @@ def test_a_percentage_reported_in_a_tool_result_is_not_flagged() -> None:
     ]
     final_text = "Research shows post-fire-straw-mulching cuts erosion by 40%, matching the reviewed finding."
     score = EVAL.score_transcript(scenario, final_text, transcript)
-    assert score.unsupported_percentages == ()
+    assert score.unbound_numbers == ()
     assert score.passed
 
 
@@ -563,14 +563,17 @@ def test_unsupported_percentage_ignores_schema_or_prompt_boilerplate_numbers() -
         transcript,
         context_text="slope_pct: the slope percentage, e.g. 30, 40, 70, 10, 5, 100",
     )
-    assert score.unsupported_percentages == ("30%",)
+    assert score.unbound_numbers == ("30%",)
     assert not score.passed
 
 
-def test_unsupported_percentage_is_supported_by_a_bare_number_near_a_percent_marker_in_a_tool_result() -> None:
-    """A tool result reporting the magnitude and its percent unit as separate tokens ("40 (percent
-    basis)" rather than one contiguous "40%"/"40 percent" span) still supports the answer's "40%",
-    per the ~40-character proximity rule."""
+def test_percentage_binding_requires_the_records_own_text_to_state_it_as_a_percentage() -> None:
+    """CORRECTED (wave-2 fix-stage review): binding used to search a record's text for the bare
+    magnitude DIGITS alone ("40" inside "40 (percent basis)"), so any digit run the record happened to
+    contain -- formatted as a percentage there or not -- could support an unrelated claim. Binding now
+    requires the record's OWN text to state a real percentage mention with the same magnitude
+    (`_record_percentage_magnitudes`); "40 (percent basis)" has no contiguous "%"/"percent" right after
+    the digit, so it is not one, and no longer supports the answer's "40%" the way it used to."""
     scenario = _scenario()
     finding_payload = {
         "tool": "search_strategy_research_findings",
@@ -588,8 +591,38 @@ def test_unsupported_percentage_is_supported_by_a_bare_number_near_a_percent_mar
     ]
     final_text = "Research shows post-fire-straw-mulching cuts erosion by 40%."
     score = EVAL.score_transcript(scenario, final_text, transcript)
-    assert score.unsupported_percentages == ()
-    assert score.passed
+    assert score.unbound_numbers == ("40%",)
+    assert not score.passed
+
+
+def test_percentage_does_not_bind_to_a_decimal_count_or_year_span_sharing_its_digits() -> None:
+    """Regression (wave-2 fix-stage review, the per-record form of the false pass E3 was built to
+    remove): `_contains_token`'s alphanumeric boundary lets "." and "-" border a match, so the bare
+    magnitude "65" used to bind to a record's "r = 0.65" (a correlation coefficient, not a percentage)
+    purely because both contain the digits "65"; likewise "12" must not bind to "12 sites" (a count)
+    or a "12-year" span. None of these states a real percentage, so none may ground the claim."""
+    scenario = _scenario()
+    finding_payload = {
+        "tool": "search_strategy_research_findings",
+        "results": [
+            {
+                "finding_id": "f4",
+                "claim": (
+                    "No-till showed r = 0.65 between residue cover and infiltration across 12 sites "
+                    "over a 12-year study."
+                ),
+                "linked_strategy_ids": ["post-fire-straw-mulching"],
+            }
+        ],
+    }
+    transcript = [
+        _tool_message("search_environmental_strategies", _search_result(POST_FIRE_MULCHING_HIT)),
+        _tool_message("search_strategy_research_findings", finding_payload),
+    ]
+    final_text = "No-till raised yields by 65%, seen at 12% of sites."
+    score = EVAL.score_transcript(scenario, final_text, transcript)
+    assert score.unbound_numbers == ("65%", "12%")
+    assert not score.passed
 
 
 def test_other_numeric_mentions_are_informational_only() -> None:
@@ -599,7 +632,7 @@ def test_other_numeric_mentions_are_informational_only() -> None:
     final_text = "Research shows post-fire-straw-mulching should be applied within 2 weeks of the fire."
     score = EVAL.score_transcript(scenario, final_text, transcript)
     assert "2" in score.other_numeric_mentions
-    assert not score.unsupported_percentages
+    assert not score.unbound_numbers
     assert score.passed
 
 
@@ -694,7 +727,9 @@ def test_validate_scenarios_against_registry_accepts_real_ids() -> None:
 
 
 def test_the_shipped_scenario_file_validates_against_the_real_corpus() -> None:
-    """The six scenarios this worker wrote must actually name real corpus ids, not just plausible ones."""
+    """The eight scenarios this file carries must actually name real corpus ids, not just plausible
+    ones -- and must number 8-10 with at least one multi-turn conversation (CONTRACT-WAVE2.md seam
+    S5)."""
     registry_dir = EVAL.SERVICE_ROOT.parent / "strategy-knowledge" / ".cache" / "corpus" / "strategies"
     if not (registry_dir / "families.json").exists():
         pytest.skip(f"no strategy-knowledge corpus checked out at {registry_dir}")
@@ -709,4 +744,802 @@ def test_the_shipped_scenario_file_validates_against_the_real_corpus() -> None:
         "palouse-wheat-carbon",
         "treasure-valley-water-cut",
         "control-max-temperature",
+        "palouse-hardpan-compaction",
+        "idaho-was-there-a-fire-here",
     }
+    assert 8 <= len(scenarios) <= 10
+    assert sum(1 for scenario in scenarios if len(scenario.turns) >= 2) >= 1
+
+
+# --- Multi-turn scenarios (E4, CONTRACT-WAVE2.md seam S5) ---------------------------
+
+
+def test_scenario_from_json_defaults_turns_to_the_single_question() -> None:
+    scenario = _scenario(question="What now?")
+    assert scenario.turns == ("What now?",)
+
+
+def test_scenario_from_json_reads_an_explicit_multi_turn_list() -> None:
+    scenario = _scenario(question="First ask", turns=["First ask", "Second ask"])
+    assert scenario.turns == ("First ask", "Second ask")
+    assert scenario.question == "First ask"  # kept for backward compatibility / a human skimming the file
+
+
+# --- Scorer normalisation (E1): JSON decode, NFKC/dash folding, range parsing -------
+
+
+def test_scannable_text_decodes_a_json_string_content_to_its_real_text() -> None:
+    assert EVAL._scannable_text('"plain refusal text"') == "plain refusal text"
+
+
+def test_scannable_text_falls_back_to_the_raw_string_when_not_json() -> None:
+    assert EVAL._scannable_text("not json at all") == "not json at all"
+
+
+def test_scannable_text_round_trips_a_json_escaped_minus_sign_to_the_real_character() -> None:
+    """The FINDINGS.md regression: `json.dumps` escapes U+2212 to the six-character sequence
+    `\\u2212`; decoding first is what makes it comparable to a plain hyphen after normalisation."""
+    content = json.dumps({"magnitude": "−65%"})
+    decoded = EVAL._scannable_text(content)
+    assert "−" in decoded
+    assert "\\u2212" not in decoded
+    assert EVAL._normalise_scanned_text(decoded) == '{"magnitude": "-65%"}'
+
+
+def test_percentage_mentions_parses_a_hyphenated_range() -> None:
+    mentions = EVAL._percentage_mentions("losses fell 20-30% across the trial.")
+    assert mentions == (("20-30%", ("20", "30")),)
+
+
+def test_percentage_mentions_parses_a_worded_range() -> None:
+    mentions = EVAL._percentage_mentions("losses fell 20 to 30 percent across the trial.")
+    assert mentions == (("20 to 30 percent", ("20", "30")),)
+
+
+def test_percentage_mentions_does_not_double_count_a_ranges_own_trailing_number() -> None:
+    """A range like '20-30%' must produce ONE two-magnitude mention, never also a spurious
+    single-magnitude '30%' mention from the same span."""
+    mentions = EVAL._percentage_mentions("losses fell 20-30% in the trial.")
+    assert len(mentions) == 1
+
+
+# --- Negation: OPEN DEFECT fixed (FINDINGS.md "Scorer caveats", 2026-09-27) ---------
+
+
+def test_negation_word_boundary_does_not_match_inside_another_or_notably() -> None:
+    """The old substring check read 'not' inside 'another'/'notably' as a negation marker."""
+    scenario = _scenario(forbidden_strategy_ids=[SULFUR_HIT["strategy_id"]])
+    transcript = [_tool_message("search_environmental_strategies", _search_result(SULFUR_HIT))]
+
+    another = "Another option is elemental-sulfur-soil-acidification for lowering pH quickly."
+    assert EVAL.score_transcript(scenario, another, transcript).forbidden_hit
+
+    notably = "Notably, elemental-sulfur-soil-acidification can lower pH within one season."
+    assert EVAL.score_transcript(scenario, notably, transcript).forbidden_hit
+
+
+def test_negation_word_boundary_still_catches_a_real_do_not_negation() -> None:
+    scenario = _scenario(forbidden_strategy_ids=[SULFUR_HIT["strategy_id"]])
+    transcript = [_tool_message("search_environmental_strategies", _search_result(SULFUR_HIT))]
+    final_text = "Do not till the soil; apply elemental-sulfur-soil-acidification instead."
+    # The negation ("Do not") sits immediately before "till", not before the sulfur mention later in
+    # the same sentence -- the sulfur recommendation itself is NOT negated by it.
+    assert EVAL.score_transcript(scenario, final_text, transcript).forbidden_hit
+
+
+def test_negation_matches_avoid_inflections_and_a_typographic_apostrophe() -> None:
+    """Minor finding (wave-2 fix-stage review): the word-bounded pattern must still catch 'avoiding'/
+    'avoids'/'avoided' (a plain 'avoid' substring caught these for free before the `\\b` fix) and a
+    model's "don’t" written with the typographic right single quote NFKC never folds on its own."""
+    scenario = _scenario(forbidden_strategy_ids=[SULFUR_HIT["strategy_id"]])
+    transcript = [_tool_message("search_environmental_strategies", _search_result(SULFUR_HIT))]
+
+    avoiding = "We recommend avoiding elemental-sulfur-soil-acidification on this soil."
+    assert not EVAL.score_transcript(scenario, avoiding, transcript).forbidden_hit
+
+    curly_dont = "Don’t use elemental-sulfur-soil-acidification here; it will worsen drainage."
+    assert not EVAL.score_transcript(scenario, curly_dont, transcript).forbidden_hit
+
+
+def test_negation_anchors_at_the_real_mention_not_an_earlier_shared_word() -> None:
+    """OPEN DEFECT regression: the old anchor picked the EARLIEST occurrence of any hyphen-split word
+    of the id anywhere in the sentence, so an unrelated earlier "till" mention describing a DIFFERENT
+    forbidden strategy could point the negation window at the wrong place. Two distinct forbidden
+    strategies, only the first ("till") governed by "Do not" -- the second (sulfur) must still hit."""
+    till_hit = {"strategy_id": "conventional-tillage-pass", "family_id": "tillage-x", "name": "Till the soil deeply"}
+    scenario = _scenario(forbidden_strategy_ids=[till_hit["strategy_id"], SULFUR_HIT["strategy_id"]])
+    transcript = [_tool_message("search_environmental_strategies", _search_result(till_hit, SULFUR_HIT))]
+    final_text = "Do not till the soil; apply elemental-sulfur-soil-acidification instead."
+    score = EVAL.score_transcript(scenario, final_text, transcript)
+    assert score.forbidden_hit
+
+
+# --- Clause-headed markers: "instead of"/"rather than"/"without" (major finding, wave-2 fix-stage
+# review) --------------------------------------------------------------------------------------
+
+
+def test_forbidden_hit_fires_when_instead_of_precedes_a_different_recommendation_before_the_mention() -> None:
+    """FIXED (wave-2 fix-stage review): "instead of"/"rather than" negate the noun phrase they
+    directly head, not everything within a fixed word window. "Instead of lime, use <forbidden>"
+    recommends the forbidden strategy -- the marker's own phrase ("lime") ends at the comma, well
+    before the mention -- so this must be a hit. The prior window-scan treated "instead of" as
+    negating anything within reach, including a DIFFERENT recommendation past a comma."""
+    scenario = _scenario(
+        expected_family_ids=["soil-chemistry-correction"],
+        forbidden_strategy_ids=[SULFUR_HIT["strategy_id"]],
+    )
+    transcript = [_tool_message("search_environmental_strategies", _search_result(LIME_HIT, SULFUR_HIT))]
+    final_text = f'Instead of lime, use "{SULFUR_HIT["name"]}".'
+    score = EVAL.score_transcript(scenario, final_text, transcript)
+    assert score.forbidden_hit
+    assert not score.passed
+
+
+def test_forbidden_hit_fires_when_rather_than_precedes_a_different_recommendation_before_the_mention() -> None:
+    scenario = _scenario(
+        expected_family_ids=["soil-chemistry-correction"],
+        forbidden_strategy_ids=[SULFUR_HIT["strategy_id"]],
+    )
+    transcript = [_tool_message("search_environmental_strategies", _search_result(LIME_HIT, SULFUR_HIT))]
+    final_text = f'Rather than lime, apply "{SULFUR_HIT["name"]}".'
+    score = EVAL.score_transcript(scenario, final_text, transcript)
+    assert score.forbidden_hit
+    assert not score.passed
+
+
+def test_forbidden_hit_fires_when_without_precedes_a_different_clause_before_the_mention() -> None:
+    """ "Without X first, apply <forbidden>" behaves the same way: the marker's own clause ends at the
+    comma, so it does not reach into the NEXT clause's recommendation."""
+    scenario = _scenario(
+        expected_family_ids=["soil-chemistry-correction"],
+        forbidden_strategy_ids=[SULFUR_HIT["strategy_id"]],
+    )
+    transcript = [_tool_message("search_environmental_strategies", _search_result(LIME_HIT, SULFUR_HIT))]
+    final_text = f'Without liming first, apply "{SULFUR_HIT["name"]}".'
+    score = EVAL.score_transcript(scenario, final_text, transcript)
+    assert score.forbidden_hit
+    assert not score.passed
+
+
+def test_forbidden_hit_still_excludes_a_genuine_instead_of_negation_directly_before_the_mention() -> None:
+    """The marker still negates when nothing (no comma, no clause verb) sits between it and the
+    mention -- "instead of <forbidden>, use X" is a real negation, the mirror image of the three
+    "Instead of X, use <forbidden>" shapes above."""
+    scenario = _scenario(
+        expected_family_ids=["soil-chemistry-correction"],
+        forbidden_strategy_ids=[SULFUR_HIT["strategy_id"]],
+    )
+    transcript = [_tool_message("search_environmental_strategies", _search_result(LIME_HIT, SULFUR_HIT))]
+    final_text = f'Instead of "{SULFUR_HIT["name"]}", use lime.'
+    score = EVAL.score_transcript(scenario, final_text, transcript)
+    assert not score.forbidden_hit
+
+
+# --- Record-bound grounding (E3, CONTRACT-WAVE2.md seam S5) -------------------------
+
+
+def test_grounding_binds_a_json_escaped_minus_sign_percentage_to_its_finding_record() -> None:
+    """The corrected FINDINGS.md regression: Haiku's '~65%' IS in finding F8101's magnitude, but the
+    real defect was dropping its 'mixed' direction, not fabricating the number."""
+    finding_payload = {
+        "tool": "search_strategy_research_findings",
+        "results": [
+            {
+                "finding_id": "F8101",
+                "claim": "reduced total N losses (relative median change = −65%)",
+                "direction": "mixed",
+                "magnitude": "−65%",
+                "linked_strategy_ids": ["reduced-tillage-no-till"],
+            }
+        ],
+    }
+    transcript = [_tool_message("search_strategy_research_findings", finding_payload)]
+    scenario = _scenario(expected_family_ids=["tillage-reduction"])
+
+    with_qualifier = (
+        "Research found reduced tillage cut nitrogen losses by about ~65%, but the same review found "
+        "a mixed effect: soluble phosphorus losses rose."
+    )
+    grounded_score = EVAL.score_transcript(scenario, with_qualifier, transcript)
+    assert "65%" in grounded_score.grounded_numbers
+    assert not grounded_score.unbound_numbers
+    assert not grounded_score.direction_dropped
+
+    dropped_text = "Research found reduced tillage cut nitrogen losses by about ~65%."
+    dropped_score = EVAL.score_transcript(scenario, dropped_text, transcript)
+    assert "65%" in dropped_score.grounded_numbers
+    assert dropped_score.direction_dropped
+    assert not dropped_score.passed
+    assert any("direction" in reason for reason in dropped_score.reasons)
+
+
+def test_grounding_never_binds_against_anywhere_in_tool_text_only_a_records_own_text() -> None:
+    """A number sitting in one record's text must not ground a DIFFERENT, unrelated number the answer
+    states about a strategy that carries no such figure itself -- the exact "anywhere in this turn's
+    tool text" false-pass FINDINGS.md's 'Scorer caveats' warns against."""
+    finding_payload = {
+        "tool": "search_strategy_research_findings",
+        "results": [
+            {
+                "finding_id": "f-unrelated",
+                "claim": "A separate study found a 12% change in an unrelated crop.",
+                "linked_strategy_ids": ["post-fire-straw-mulching"],
+            }
+        ],
+    }
+    transcript = [
+        _tool_message("search_environmental_strategies", _search_result(POST_FIRE_MULCHING_HIT)),
+        _tool_message("search_strategy_research_findings", finding_payload),
+    ]
+    scenario = _scenario()
+    final_text = "Research shows post-fire-straw-mulching cuts erosion by 40%, right away."
+    score = EVAL.score_transcript(scenario, final_text, transcript)
+    assert score.unbound_numbers == ("40%",)
+    assert "40%" not in score.grounded_numbers
+
+
+def test_grounding_flags_a_literature_number_restated_as_a_site_specific_promise() -> None:
+    finding_payload = {
+        "tool": "search_strategy_research_findings",
+        "results": [
+            {
+                "finding_id": "f-site-promise",
+                "claim": "Straw mulch reduced sediment yield by 40 percent in the treated plots.",
+                "linked_strategy_ids": ["post-fire-straw-mulching"],
+            }
+        ],
+    }
+    transcript = [_tool_message("search_strategy_research_findings", finding_payload)]
+    scenario = _scenario()
+    final_text = "Apply straw mulch -- your field will see a 40% drop in erosion this winter."
+    score = EVAL.score_transcript(scenario, final_text, transcript)
+    assert score.site_promise
+    assert not score.passed
+    assert any("site" in reason for reason in score.reasons)
+
+
+def test_grounding_binds_a_strategy_records_own_summary_text_not_only_findings() -> None:
+    strategy_record = {
+        "strategy_id": "post-fire-straw-mulching",
+        "family_id": "post-fire-mulching",
+        "name": "Post-fire straw mulching",
+        "summary": "Apply straw mulch at 2 tons per acre to cut hillslope erosion by roughly 55 percent.",
+    }
+    transcript = [
+        _tool_message(
+            "get_environmental_strategies", {"tool": "get_environmental_strategies", "strategies": [strategy_record]}
+        )
+    ]
+    scenario = _scenario()
+    final_text = "Research shows post-fire-straw-mulching cuts erosion by 55%, applied right after the fire."
+    score = EVAL.score_transcript(scenario, final_text, transcript)
+    assert "55%" in score.grounded_numbers
+    assert not score.unbound_numbers
+
+
+# --- Budget guard (E4/E5, CONTRACT-WAVE2.md seam S5) --------------------------------
+
+
+def test_budget_error_is_none_within_the_default_budget() -> None:
+    assert EVAL._budget_error(scenario_count=8, model_count=2, samples=1, allow_over_budget=False) is None
+
+
+def test_budget_error_refuses_over_twenty_runs_without_the_override() -> None:
+    error = EVAL._budget_error(scenario_count=8, model_count=2, samples=2, allow_over_budget=False)
+    assert error is not None
+    assert "32 run(s)" in error
+    assert "--allow-over-budget" in error
+
+
+def test_budget_error_is_none_when_the_override_is_passed() -> None:
+    assert EVAL._budget_error(scenario_count=8, model_count=2, samples=2, allow_over_budget=True) is None
+
+
+def test_budget_error_is_none_exactly_at_the_boundary() -> None:
+    assert EVAL._budget_error(scenario_count=10, model_count=2, samples=1, allow_over_budget=False) is None
+
+
+# --- Offline rescore mode (E5) -------------------------------------------------------
+
+
+def test_rescore_flips_a_verdict_that_the_old_scorer_got_wrong(tmp_path: Path) -> None:
+    """A stored transcript scored PASS by an old, more lenient scorer (no grounding at all) must come
+    back FAIL under the current one, with the flip recorded."""
+    stored = {
+        "scenario_id": "boise-foothills-post-fire",
+        "longitude": -116.13,
+        "latitude": 43.66,
+        "question": "How do I stop erosion?",
+        "expect_strategy_tool": True,
+        "expected_family_ids": ["post-fire-mulching"],
+        "forbidden_strategy_ids": [],
+        "final_text": "Research shows post-fire-straw-mulching cuts erosion by 40%, right away.",
+        "transcript": [
+            _tool_message("search_environmental_strategies", _search_result(POST_FIRE_MULCHING_HIT)),
+        ],
+        "provider_error": None,
+        "score": {"passed": True, "reasons": []},  # the OLD (wrong) verdict this round corrects
+    }
+    result_dir = tmp_path / "haiku-4.5"
+    result_dir.mkdir()
+    (result_dir / "boise-foothills-post-fire.json").write_text(json.dumps(stored), encoding="utf-8")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+
+    exit_code = EVAL._run_rescore(result_dir, out_dir, tmp_path / "no-such-registry")
+    assert exit_code == 0
+    report = json.loads((out_dir / EVAL.RESCORE_REPORT_NAME).read_text(encoding="utf-8"))
+    assert report["rescored_turns"] == 1
+    assert report["verdicts_changed"] == 1
+    row = report["rows"][0]
+    assert row["old_passed"] is True
+    assert row["new_passed"] is False
+    assert row["verdict_changed"] is True
+    assert (out_dir / EVAL.RESCORE_MARKDOWN_NAME).exists()
+
+
+def test_rescore_ignores_summary_and_non_result_json_files(tmp_path: Path) -> None:
+    input_dir = tmp_path / "results"
+    input_dir.mkdir()
+    (input_dir / EVAL.SUMMARY_JSON_NAME).write_text(json.dumps({"generated_at": "x"}), encoding="utf-8")
+    (input_dir / "not-a-result.json").write_text(json.dumps({"unrelated": True}), encoding="utf-8")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    exit_code = EVAL._run_rescore(input_dir, out_dir, tmp_path / "no-such-registry")
+    assert exit_code == 0
+    report = json.loads((out_dir / EVAL.RESCORE_REPORT_NAME).read_text(encoding="utf-8"))
+    assert report["rescored_turns"] == 0
+
+
+def test_rescore_handles_the_new_multi_turn_stored_shape(tmp_path: Path) -> None:
+    stored = {
+        "scenario_id": "western-wa-sour-pasture",
+        "longitude": -122.95,
+        "latitude": 46.66,
+        "question": "sour pasture?",
+        "expect_strategy_tool": True,
+        "expected_family_ids": ["soil-chemistry-correction"],
+        "forbidden_strategy_ids": ["elemental-sulfur-soil-acidification"],
+        "passed": False,
+        "turns": [
+            {
+                "final_text": "Apply lime-application-acidic-soils to raise the pH.",
+                "transcript": [_tool_message("search_environmental_strategies", _search_result(LIME_HIT))],
+                "provider_error": None,
+                "score": {"passed": True, "reasons": []},
+            },
+            {
+                "final_text": "A lime rate of 2 tons per acre should work within a season.",
+                "transcript": [_tool_message("search_environmental_strategies", _search_result(LIME_HIT))],
+                "provider_error": None,
+                "score": {"passed": False, "reasons": ["something"]},
+            },
+        ],
+    }
+    input_dir = tmp_path / "results"
+    input_dir.mkdir()
+    (input_dir / "western-wa-sour-pasture.json").write_text(json.dumps(stored), encoding="utf-8")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    EVAL._run_rescore(input_dir, out_dir, tmp_path / "no-such-registry")
+    report = json.loads((out_dir / EVAL.RESCORE_REPORT_NAME).read_text(encoding="utf-8"))
+    assert report["rescored_turns"] == 2
+    assert [row["turn_index"] for row in report["rows"]] == [0, 1]
+
+
+def test_rescore_rebuilds_turns_from_each_stored_turns_own_user_message(tmp_path: Path) -> None:
+    """Major finding (wave-2 fix-stage review): `_write_scenario_result` never writes a top-level
+    `question` field for a new-shape multi-turn result, so reading `payload["question"]` for `turns`
+    always answered "" and silently dropped every real user turn from `known_text` -- manufacturing a
+    hallucination flag out of ordinary tool-schema boilerplate the model actually saw (e.g. the stored
+    `context_text` this fix now persists per turn, containing "(YYYY-MM-DD)")."""
+    stored = {
+        "scenario_id": "control-max-temperature",
+        "longitude": -116.2,
+        "latitude": 43.6,
+        # No top-level "question" -- exactly what `_write_scenario_result` actually writes.
+        "expect_strategy_tool": False,
+        "expected_family_ids": [],
+        "forbidden_strategy_ids": [],
+        "passed": True,
+        "turns": [
+            {
+                "user_message": "What was the maximum air temperature here on the selected day?",
+                "final_text": "The high was 24C, reported (in YYYY-MM-DD format) as 2026-03-14.",
+                # A non-empty transcript: score_transcript treats an empty one as a provider that never
+                # produced a message, which is not what this fixture is testing.
+                "transcript": [
+                    {"role": "assistant", "content": "The high was 24C, reported (in YYYY-MM-DD format) as 2026-03-14."}
+                ],
+                "provider_error": None,
+                "context_text": (
+                    "What was the maximum air temperature here on the selected day?\n"
+                    "as ISO YYYY-MM-DD such as 2026-03-14 (YYYY-MM-DD format)"
+                ),
+                "score": {"passed": True, "reasons": []},
+            }
+        ],
+    }
+    input_dir = tmp_path / "results"
+    input_dir.mkdir()
+    (input_dir / "control-max-temperature.json").write_text(json.dumps(stored), encoding="utf-8")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+
+    EVAL._run_rescore(input_dir, out_dir, tmp_path / "no-such-registry")
+
+    report = json.loads((out_dir / EVAL.RESCORE_REPORT_NAME).read_text(encoding="utf-8"))
+    row = report["rows"][0]
+    # "yyyy-mm-dd" is a real kebab-id-shaped token in the answer; it must be recognised as known
+    # tool-schema boilerplate (via the turn's own persisted context_text) rather than flagged as a
+    # fabricated strategy id.
+    assert row["new_passed"] is True
+    assert not row["new_reasons"]
+
+
+def test_rescore_falls_back_to_a_legacy_schema_snapshot_when_context_text_is_missing(tmp_path: Path) -> None:
+    """A result stored BEFORE this fix persisted `context_text` has none on disk; the fallback
+    snapshot (`_LEGACY_TOOL_SCHEMA_KNOWN_TEXT`) must still cover the one documented false-positive
+    (`(YYYY-MM-DD)`) so re-scoring an old file does not manufacture a new hallucination flag."""
+    stored = {
+        "scenario_id": "control-max-temperature",
+        "longitude": -116.2,
+        "latitude": 43.6,
+        "expect_strategy_tool": False,
+        "expected_family_ids": [],
+        "forbidden_strategy_ids": [],
+        "passed": True,
+        "turns": [
+            {
+                "user_message": "What was the maximum air temperature here on the selected day?",
+                "final_text": "The high was 24C, reported (in YYYY-MM-DD format) as 2026-03-14.",
+                # A non-empty transcript: score_transcript treats an empty one as a provider that never
+                # produced a message, which is not what this fixture is testing.
+                "transcript": [
+                    {"role": "assistant", "content": "The high was 24C, reported (in YYYY-MM-DD format) as 2026-03-14."}
+                ],
+                "provider_error": None,
+                # No "context_text" -- the pre-fix stored shape.
+                "score": {"passed": True, "reasons": []},
+            }
+        ],
+    }
+    input_dir = tmp_path / "results"
+    input_dir.mkdir()
+    (input_dir / "control-max-temperature.json").write_text(json.dumps(stored), encoding="utf-8")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+
+    EVAL._run_rescore(input_dir, out_dir, tmp_path / "no-such-registry")
+
+    report = json.loads((out_dir / EVAL.RESCORE_REPORT_NAME).read_text(encoding="utf-8"))
+    row = report["rows"][0]
+    assert row["new_passed"] is True
+    assert not row["new_reasons"]
+
+
+# --- Budget guard: zero/negative samples (minor finding, wave-2 fix-stage review) ----
+
+
+def test_budget_error_refuses_zero_or_negative_samples_even_with_the_override() -> None:
+    """`--samples 0` (or a negative value) makes `total_runs <= 0`, which would otherwise slip under
+    the budget ceiling, run nothing, and let `all(())` report a vacuous exit code 0 that reads as a
+    passing round."""
+    assert EVAL._budget_error(scenario_count=1, model_count=1, samples=0, allow_over_budget=True) is not None
+    assert EVAL._budget_error(scenario_count=1, model_count=1, samples=-3, allow_over_budget=False) is not None
+    assert "--samples" in EVAL._budget_error(scenario_count=1, model_count=1, samples=0, allow_over_budget=True)
+
+
+# --- Record-bound grounding: core-text priority and sentence-scoped site_promise ----
+# (wave-2 fix-stage review, minor findings)
+
+
+def test_grounding_ignores_a_records_conditions_only_match_when_another_record_has_a_core_match() -> None:
+    """A record's free-form `conditions` text can coincidentally contain an unrelated digit run (a
+    trial length, a year count). Binding tries `claim`/`magnitude`/`excerpt`/`summary` (core text)
+    FIRST across every record; once ANY record binds there, a different record whose only match is a
+    coincidence in `conditions` never joins `bound` at all -- this is the exact double-binding
+    FINDINGS-adjacent wave-2 review flags: '10%' bound to a positive record AND to a mixed record
+    whose conditions coincidentally say '10 year', reporting a false `direction_dropped`."""
+    positive_strategy = {
+        "strategy_id": "cover-cropping-organic-matter-maintenance",
+        "family_id": "cover-cropping",
+        "name": "Cover cropping for organic matter",
+        "summary": "Cover cropping increased infiltration by 10 percent in field trials.",
+    }
+    decoy_finding = {
+        "tool": "search_strategy_research_findings",
+        "results": [
+            {
+                "finding_id": "f-decoy-conditions",
+                "claim": "A separate practice showed no measurable change.",
+                "conditions": "Northern Great Plains, measured over a 10 year rotation study.",
+                "direction": "mixed",
+                "linked_strategy_ids": ["cover-cropping-organic-matter-maintenance"],
+            }
+        ],
+    }
+    transcript = [
+        _tool_message(
+            "get_environmental_strategies", {"tool": "get_environmental_strategies", "strategies": [positive_strategy]}
+        ),
+        _tool_message("search_strategy_research_findings", decoy_finding),
+    ]
+    scenario = _scenario(expected_family_ids=["cover-cropping"])
+    final_text = "Research shows cover cropping increased infiltration by 10 percent."
+    score = EVAL.score_transcript(scenario, final_text, transcript)
+    assert "10%" in score.grounded_numbers
+    assert not score.direction_dropped
+
+
+def test_grounding_direction_dropped_requires_every_bound_record_to_need_a_qualifier() -> None:
+    """A number bound to BOTH an unqualified positive record and a mixed one has a legitimate,
+    unqualified source for stating it plainly -- only flag `direction_dropped` when EVERY record the
+    number bound to needs the qualifier."""
+    positive_strategy = {
+        "strategy_id": "cover-cropping-organic-matter-maintenance",
+        "family_id": "cover-cropping",
+        "name": "Cover cropping for organic matter",
+        "summary": "Cover cropping increased infiltration by 20 percent with no downside reported.",
+    }
+    mixed_finding = {
+        "tool": "search_strategy_research_findings",
+        "results": [
+            {
+                "finding_id": "f-mixed-20",
+                "claim": "A 20 percent gain in one trial came with a mixed effect elsewhere.",
+                "direction": "mixed",
+                "linked_strategy_ids": ["cover-cropping-organic-matter-maintenance"],
+            }
+        ],
+    }
+    transcript = [
+        _tool_message(
+            "get_environmental_strategies", {"tool": "get_environmental_strategies", "strategies": [positive_strategy]}
+        ),
+        _tool_message("search_strategy_research_findings", mixed_finding),
+    ]
+    scenario = _scenario(expected_family_ids=["cover-cropping"])
+    final_text = "Research shows cover cropping increased infiltration by 20 percent."
+    score = EVAL.score_transcript(scenario, final_text, transcript)
+    assert "20%" in score.grounded_numbers
+    assert not score.direction_dropped
+
+
+def test_grounding_site_promise_requires_a_bound_number_in_the_same_sentence() -> None:
+    """The site-promise phrasing alone, with no literature number in the SAME sentence, is not a
+    grounding defect -- only a bound number restated as a promise at the caller's own site is."""
+    finding_payload = {
+        "tool": "search_strategy_research_findings",
+        "results": [
+            {
+                "finding_id": "f-no-number",
+                "claim": "Straw mulch reduced erosion in the treated plots.",
+                "linked_strategy_ids": ["post-fire-straw-mulching"],
+            }
+        ],
+    }
+    transcript = [_tool_message("search_strategy_research_findings", finding_payload)]
+    scenario = _scenario()
+    final_text = "Apply straw mulch now. Your field will thank you for it."
+    score = EVAL.score_transcript(scenario, final_text, transcript)
+    assert not score.site_promise
+
+
+# --- Per-turn scoping of tool-activity counts (minor finding, wave-2 fix-stage review) ----
+
+
+def test_new_messages_scopes_tool_activity_counts_to_this_turns_own_messages() -> None:
+    """Tool-activity COUNTS (`strategy_tool_attempted_count`/`succeeded_count`/
+    `warehouse_tool_call_count`) stay scoped to `new_messages`, never the whole cumulative transcript,
+    so a later turn's own numbers in a failure message are never inflated by an earlier turn's calls.
+
+    CORRECTED (wave-2 fix-stage review): this test used to also assert that `expect_strategy_tool`
+    itself fails outright whenever a turn makes no NEW call, even when an earlier turn's retrieval is
+    reused. That overshot: it failed a legitimate reused-evidence follow-up turn (see the reuse test
+    below) with a misleading "none was made" reason. This turn still fails here, but for the RIGHT
+    reason -- the answer never actually NAMES the reused lime strategy, so `family_hit` is the one
+    that misses."""
+    turn_1_call = _tool_message("search_environmental_strategies", _search_result(LIME_HIT))
+    cumulative_transcript = [
+        {"role": "user", "content": "sour pasture?"},
+        turn_1_call,
+        {"role": "assistant", "content": "Apply lime-application-acidic-soils."},
+        {"role": "user", "content": "how much lime?"},
+        {"role": "assistant", "content": "A rate of 2 tons per acre should work."},
+    ]
+    scenario = _scenario(expected_family_ids=["soil-chemistry-correction"])
+    new_messages = cumulative_transcript[3:]  # only this turn's user question and answer -- no tool call
+
+    score = EVAL.score_transcript(
+        scenario,
+        "A rate of 2 tons per acre should work.",
+        cumulative_transcript,
+        new_messages=new_messages,
+    )
+    assert score.strategy_tool_attempted_count == 0
+    assert score.warehouse_tool_call_count == 0
+    assert not score.strategy_tool_called
+    assert not score.passed
+    assert "family_id is both expected and named in the answer" in score.reasons[0]
+    # Retrieved records stay CUMULATIVE: the earlier turn's lime strategy is still real evidence this
+    # conversation has in hand, so naming it here is not a hallucination.
+    assert "lime-application-acidic-soils" in score.retrieved_strategy_ids
+
+
+def test_a_followup_turn_reusing_an_earlier_successful_retrieval_satisfies_expect_strategy_tool() -> None:
+    """FIXED (wave-2 fix-stage review): a follow-up turn that answers from an EARLIER turn's
+    successful retrieval, actually NAMING that strategy, must not fail with "expected a strategy tool
+    call; none was made" merely because it made no NEW call of its own -- reusing already-retrieved
+    evidence for a natural follow-up ("how much lime?") is legitimate. `family_hit` (also cumulative)
+    still gates that the reused evidence is genuinely what the answer relies on; only the "no call"
+    failure reasons are waived, and only when a call actually succeeded somewhere in the conversation."""
+    turn_1_call = _tool_message("search_environmental_strategies", _search_result(LIME_HIT))
+    cumulative_transcript = [
+        {"role": "user", "content": "sour pasture?"},
+        turn_1_call,
+        {"role": "assistant", "content": "Apply lime-application-acidic-soils, per the literature."},
+        {"role": "user", "content": "how much lime?"},
+        {
+            "role": "assistant",
+            "content": "Apply lime-application-acidic-soils at 2 tons per acre, per the literature.",
+        },
+    ]
+    scenario = _scenario(expected_family_ids=["soil-chemistry-correction"])
+    new_messages = cumulative_transcript[3:]  # only this turn's question and answer -- no NEW tool call
+
+    score = EVAL.score_transcript(
+        scenario,
+        "Apply lime-application-acidic-soils at 2 tons per acre, per the literature.",
+        cumulative_transcript,
+        new_messages=new_messages,
+    )
+    assert score.strategy_tool_attempted_count == 0
+    assert not score.strategy_tool_called
+    assert score.family_hit
+    assert score.passed, score.reasons
+
+
+# --- Live multi-turn orchestration (major finding, wave-2 fix-stage review) ----------
+#
+# `_run_live`'s `run_turn`/`run_conversation` closures had NO test at all before this fix: a fresh
+# `StrategyContext` per turn, `user_question` accumulating over turns, the transcript threading
+# forward, and `ScenarioRunResult.passed` requiring EVERY turn to pass. `OpenAiCompletionsClient.
+# converse` is monkeypatched with a recorder so this runs with no network and no real provider.
+
+
+def _patch_agent_llm_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pydantic import SecretStr  # noqa: PLC0415
+
+    from agri_data_service.config import AgentLlmCredentials, settings  # noqa: PLC0415
+
+    # `require_agent_llm` is a METHOD, not a pydantic field, so it is patched on the CLASS (as
+    # `test_job_run_supersession.py`'s `require_local_source_loader_database_url` patch does) --
+    # `settings` is a frozen-field pydantic model whose `__setattr__` rejects a non-field instance
+    # attribute outright.
+    monkeypatch.setattr(
+        type(settings),
+        "require_agent_llm",
+        lambda _self: AgentLlmCredentials(
+            base_url="https://provider.invalid/api/v1",
+            model="test/model-1",
+            api_key=SecretStr("sk-test-not-a-real-credential"),
+            auth_header="bearer",
+            timeout_seconds=5.0,
+        ),
+    )
+
+
+async def test_run_live_opens_a_fresh_context_per_turn_and_threads_the_transcript(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A fresh `StrategyContext` per user turn, seeded with every turn asked SO FAR; the transcript
+    threaded forward from one turn into the next; and the stored result's own `final_text` per turn."""
+    import argparse  # noqa: PLC0415
+
+    from agri_data_service.agent import strategy_knowledge  # noqa: PLC0415
+    from agri_data_service.agent.llm import OpenAiCompletionsClient  # noqa: PLC0415
+
+    _patch_agent_llm_credentials(monkeypatch)
+    calls: list[dict[str, Any]] = []
+
+    async def fake_converse(
+        _self: Any,
+        messages: list[dict[str, Any]],
+        *,
+        max_iterations: int = 6,  # noqa: ARG001 - matches the real converse() signature
+        max_tokens: int = 16_000,  # noqa: ARG001 - matches the real converse() signature
+    ) -> dict[str, Any]:
+        calls.append({"messages": list(messages), "context": strategy_knowledge.current_strategy_context()})
+        answer = f"answer {len(calls)}"
+        return {
+            "final_text": answer,
+            "iterations": 1,
+            "tool_calls": [],
+            "transcript": [*messages, {"role": "assistant", "content": answer}],
+            "stopped_because": "model_answered",
+        }
+
+    monkeypatch.setattr(OpenAiCompletionsClient, "converse", fake_converse)
+
+    scenario = _scenario(
+        id="two-turn",
+        turns=["first question", "second question"],
+        expect_strategy_tool=False,
+        expected_family_ids=[],
+    )
+    args = argparse.Namespace(
+        out=tmp_path,
+        models=["test/model-1"],
+        samples=1,
+        allow_over_budget=False,
+        max_tokens=None,
+        registry_dir=tmp_path / "no-such-registry",
+        strategy_knowledge_url="http://127.0.0.1:8765",
+    )
+
+    exit_code = await EVAL._run_live([scenario], args)
+
+    assert exit_code == 0
+    assert len(calls) == 2
+    assert calls[0]["context"].user_question == "first question"
+    assert calls[1]["context"].user_question == "first question\nsecond question"
+    # Turn 1's user message carries the coordinate preamble; turn 2's does not (only turn 1 opens it).
+    assert calls[0]["messages"][-1]["content"].endswith(scenario.turns[0])
+    assert calls[1]["messages"][-1] == {"role": "user", "content": scenario.turns[1]}
+    # Turn 2 opens with turn 1's own (threaded) transcript, so it always carries strictly more.
+    assert len(calls[1]["messages"]) > len(calls[0]["messages"])
+
+    stored = json.loads((tmp_path / "test__model-1" / "sample-0" / "two-turn.json").read_text(encoding="utf-8"))
+    assert stored["passed"] is True
+    assert [turn["final_text"] for turn in stored["turns"]] == ["answer 1", "answer 2"]
+
+
+async def test_run_live_fails_the_conversation_when_any_one_turn_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """CONTRACT-WAVE2.md seam S5: 'a conversation passes only if every turn passes' -- a scenario that
+    expects a strategy tool call must fail when NO turn ever makes one, even though every turn
+    otherwise answers cleanly."""
+    import argparse  # noqa: PLC0415
+
+    from agri_data_service.agent.llm import OpenAiCompletionsClient  # noqa: PLC0415
+
+    _patch_agent_llm_credentials(monkeypatch)
+
+    async def fake_converse(
+        _self: Any,
+        messages: list[dict[str, Any]],
+        *,
+        max_iterations: int = 6,  # noqa: ARG001 - matches the real converse() signature
+        max_tokens: int = 16_000,  # noqa: ARG001 - matches the real converse() signature
+    ) -> dict[str, Any]:
+        answer = "a plain answer with no tool call"
+        return {
+            "final_text": answer,
+            "iterations": 1,
+            "tool_calls": [],
+            "transcript": [*messages, {"role": "assistant", "content": answer}],
+            "stopped_because": "model_answered",
+        }
+
+    monkeypatch.setattr(OpenAiCompletionsClient, "converse", fake_converse)
+
+    scenario = _scenario(id="never-calls-the-tool", turns=["what helps here?"], expect_strategy_tool=True)
+    args = argparse.Namespace(
+        out=tmp_path,
+        models=["test/model-1"],
+        samples=1,
+        allow_over_budget=False,
+        max_tokens=None,
+        registry_dir=tmp_path / "no-such-registry",
+        strategy_knowledge_url="http://127.0.0.1:8765",
+    )
+
+    exit_code = await EVAL._run_live([scenario], args)
+
+    assert exit_code == 1
+    stored = json.loads(
+        (tmp_path / "test__model-1" / "sample-0" / "never-calls-the-tool.json").read_text(encoding="utf-8")
+    )
+    assert stored["passed"] is False

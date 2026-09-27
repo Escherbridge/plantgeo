@@ -14,12 +14,18 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import date
 from typing import TYPE_CHECKING, Any
 
 import click
 
 from agri_data_service.agent import tools as warehouse_tools
-from agri_data_service.agent.llm import MAX_OUTPUT_TOKENS, LlmProviderError, OpenAiCompletionsClient
+from agri_data_service.agent.llm import (
+    MAX_OUTPUT_TOKENS,
+    LlmProviderError,
+    OpenAiCompletionsClient,
+    agent_system_message,
+)
 from agri_data_service.agent.mcp_server import reserved_stdout, serve_stdio, tool_descriptors
 from agri_data_service.interface.cli._registry import register_commands
 
@@ -116,8 +122,10 @@ async def _ask(question: str, longitude: float, latitude: float, max_tokens: int
         f"Use the warehouse tools to answer, quote the distances they report, and treat any typed "
         f"refusal as a statement about the lane rather than as an absence of data.\n\n{question}"
     )
+    today = date.today()  # noqa: DTZ011 - the CLI's own wall-clock date, not a stored fact
+    messages = [agent_system_message(today), {"role": "user", "content": prompt}]
     async with warehouse_tools.run_context():
-        return await client.converse([{"role": "user", "content": prompt}], max_tokens=max_tokens)
+        return await client.converse(messages, max_tokens=max_tokens)
 
 
 def _run[T](work: Coroutine[Any, Any, T]) -> T:

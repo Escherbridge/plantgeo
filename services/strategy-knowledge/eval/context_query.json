@@ -1,0 +1,54 @@
+[
+  {
+    "query": "improve soil chemistry",
+    "context_query": "my pasture ground is sour and won't grow anything",
+    "expected_any_of": [
+      "lime-application-acidic-soils",
+      "agricultural-liming-carbon-removal"
+    ],
+    "k": 5,
+    "forbidden_at_3": [
+      "elemental-sulfur-soil-acidification"
+    ],
+    "kind": "contrast"
+  },
+  {
+    "query": "improve soil chemistry",
+    "context_query": "we want to acidify for our blueberries, the bed tests too alkaline",
+    "expected_any_of": [
+      "elemental-sulfur-soil-acidification"
+    ],
+    "k": 5,
+    "forbidden_at_3": [
+      "lime-application-acidic-soils",
+      "agricultural-liming-carbon-removal"
+    ],
+    "kind": "contrast"
+  },
+  {
+    "query": "fix soil chemistry",
+    "context_query": "soil test came back pH 5.2 and hay yields keep dropping",
+    "expected_any_of": [
+      "lime-application-acidic-soils",
+      "agricultural-liming-carbon-removal"
+    ],
+    "k": 5,
+    "forbidden_at_3": [
+      "elemental-sulfur-soil-acidification"
+    ],
+    "kind": "contrast"
+  },
+  {
+    "query": "fix soil chemistry",
+    "context_query": "need it more acidic for our rhododendrons, soil test says pH 7.8",
+    "expected_any_of": [
+      "elemental-sulfur-soil-acidification"
+    ],
+    "k": 5,
+    "forbidden_at_3": [
+      "lime-application-acidic-soils",
+      "agricultural-liming-carbon-removal"
+    ],
+    "kind": "contrast"
+  }
+]

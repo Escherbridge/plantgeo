@@ -66,7 +66,20 @@ describe("Gemini report schema projection", () => {
     expect(literature).toHaveProperty('properties.remediation.items.properties.evidenceOrigin.enum', ['web', 'model_inference', 'literature']);
     expect(literature).toHaveProperty('properties.remediation.items.properties.evidenceSource.enum', ['strategy-knowledge']);
     expect(literature).not.toHaveProperty('properties.remediation.items.properties.evidenceReadIds');
-    expect(projected).toHaveProperty('properties.remediation.items.required', ['strategy', 'title', 'rationale', 'timeframe', 'confidence', 'consultProfessionals', 'evidenceOrigin']);
+    // Record ids are model-supplied and survive the projection; citations and grounding notes are
+    // server-written, so no projection ever offers them to the model.
+    expect(projected).not.toHaveProperty('properties.remediation.items.properties.literatureRecordIds');
+    const citable = geminiReportSchema(reportSchemaForCitations({ payloadSources: [], measurementReads: [] }, [], {
+      literatureAnswered: true, literatureRecordIds: ['sk-finding-F8101', 'reduced-tillage-no-till'],
+    }));
+    expect(citable).toHaveProperty('properties.remediation.items.properties.literatureRecordIds.items.enum', ['sk-finding-F8101', 'reduced-tillage-no-till']);
+    expect(citable).toHaveProperty('properties.remediation.items.properties.literatureRecordIds.description', expect.stringContaining('Maximum item count: 8.'));
+    expect(citable).not.toHaveProperty('properties.remediation.items.properties.literatureRecordIds.maxItems');
+    for (const schema of [projected, literature, citable, geminiReportSchema(REMEDIATION_REPORT_JSON_SCHEMA)]) {
+      expect(JSON.stringify(schema)).not.toContain('literatureCitations');
+      expect(JSON.stringify(schema)).not.toContain('groundingNote');
+    }
+    expect(projected).toHaveProperty('properties.remediation.items.required',['strategy', 'title', 'rationale', 'timeframe', 'confidence', 'consultProfessionals', 'evidenceOrigin']);
     for (const { path, required } of [
       { path: 'properties.observations.items', required: ['statement', 'evidenceOrigin'] },
     ]) {

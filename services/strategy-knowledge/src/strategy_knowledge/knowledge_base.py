@@ -31,19 +31,23 @@ from strategy_knowledge.index import (
     open_client,
 )
 from strategy_knowledge.lexical import LexicalIndex
-from strategy_knowledge.metadata import FACET_TEXT_KEY, LIST_SEPARATOR
+from strategy_knowledge.metadata import FACET_TEXT_KEY, LIST_SEPARATOR, SEARCH_TERMS_KEY
 from strategy_knowledge.models import Family, Finding, RegistryStrategy
 from strategy_knowledge.queries import FindingSearch, PassageSearch, SearchRequest, StrategySearch
+from strategy_knowledge.query_intent import QueryIntent, parse_intent
 from strategy_knowledge.search import (
     Boosts,
+    FusionWeights,
     StrategyHit,
+    WeightedRanking,
     apply_boosts,
-    collapse_to_strategies,
     diversify_families,
+    fuse_strategies,
     page_truncated,
     page_window,
     rank_documents,
-    reciprocal_rank_fusion,
+    strategy_hits,
+    weighted_reciprocal_rank_fusion,
 )
 from strategy_knowledge.site_profile import SiteDerivation, derive
 from strategy_knowledge.vocabulary import (
@@ -61,6 +65,9 @@ from strategy_knowledge.vocabulary import (
 logger = logging.getLogger(__name__)
 
 SNIPPET_WORDS: Final = 60
+#: A context query is embedded by its last this-many words: MiniLM keeps only its first ~256 word pieces, and the
+#: latest user turn comes last (AGENTS.md "Query intent").
+CONTEXT_EMBEDDED_WORDS: Final = 150
 MINIMUM_COMPARED_STRATEGIES: Final = 2
 FIRST_SENTENCE: Final = re.compile(r"^(.+?[.!?])(?:\s|$)", re.DOTALL)
 FILTER_SEMANTICS: Final = (
@@ -103,6 +110,15 @@ class Candidates:
     exhausted: bool
 
 
+@dataclass(frozen=True, slots=True)
+class Retrieval:
+    """The weighted dense and lexical document rankings of a query (and its context), over one fixed pool."""
+
+    rankings: list[WeightedRanking]
+    exhausted: bool
+    context_query_used: bool
+
+
 @dataclass
 class CollectionView:
     """One Chroma collection with its documents and metadata held in memory, plus its BM25 twin."""
@@ -115,7 +131,8 @@ class CollectionView:
 
     @classmethod
     def load(cls, collection: Collection) -> "CollectionView":
-        """Read every record once; BM25 indexes the document plus its display keywords."""
+        """Read every record once; BM25 indexes the document plus its keywords and search terms (an index built
+        before search terms existed has none, and simply ranks without them)."""
         result = collection.get(include=["documents", "metadatas"])
         ids = list(result["ids"])
         stored_documents = list(result["documents"] or [])
@@ -123,7 +140,13 @@ class CollectionView:
         documents = [str(_item_at(stored_documents, index) or "") for index in range(len(ids))]
         metadatas = [dict(_item_at(stored_metadatas, index) or {}) for index in range(len(ids))]
         lexical_texts = [
-            f"{document} {str(metadata.get('keywords', '')).replace(LIST_SEPARATOR, ' ')}"
+            " ".join(
+                (
+                    document,
+                    str(metadata.get("keywords", "")).replace(LIST_SEPARATOR, " "),
+                    str(metadata.get(SEARCH_TERMS_KEY, "")).replace(LIST_SEPARATOR, " "),
+                ),
+            )
             for document, metadata in zip(documents, metadatas, strict=True)
         ]
         return cls(
@@ -186,9 +209,11 @@ class KnowledgeBase:
         embedder: TextEmbedder,
         index: OpenedIndex,
         candidate_pool: int = DEFAULT_CANDIDATE_POOL,
+        fusion_weights: FusionWeights | None = None,
     ) -> None:
         self.store = store
         self.embedder = embedder
+        self.fusion_weights = fusion_weights or FusionWeights()
         self.views = dict(index.views)
         self.index_corpus_version = index.corpus_version
         self.index_partial_since = index.partial_since
@@ -267,25 +292,56 @@ class KnowledgeBase:
             **payload,
         }
 
-    def _candidates(self, view: CollectionView, query: str, expression: FilterExpression | None) -> Candidates:
-        """Dense (Chroma) and lexical (BM25) rankings under one filter, fused by RRF over a fixed pool.
+    def _retrieve(
+        self,
+        view: CollectionView,
+        query: str,
+        expression: FilterExpression | None,
+        intent: QueryIntent | None = None,
+        context_query: str | None = None,
+    ) -> Retrieval:
+        """Dense (Chroma) and lexical (BM25) rankings under one filter over a fixed pool, for the query and, when
+        given, the context query; the intent's expansion tokens reach the query's BM25 ranking only.
 
         The pool never depends on the page asked for, so page N and page N + 1 come from one ranking.
         """
+        context_text = (context_query or "").strip()
         if view.size == 0:
-            return Candidates({}, exhausted=True)
+            return Retrieval([], exhausted=True, context_query_used=bool(context_text))
         pool = min(view.size, self.candidate_pool)
+        texts = [query, " ".join(context_text.split()[-CONTEXT_EMBEDDED_WORDS:])] if context_text else [query]
         result = view.collection.query(
-            query_embeddings=self.embedder.embed([query]),  # type: ignore[arg-type]
+            query_embeddings=self.embedder.embed(texts),  # type: ignore[arg-type]
             n_results=pool,
             where=to_where(expression),
             include=["distances"],
         )
-        dense = list(result["ids"][0]) if result["ids"] else []
-        lexical = view.lexical.search(query, expression, pool)
+        dense = [list(ids) for ids in result["ids"] or []] or [[]]
+        expansion = intent.expansion_tokens if intent is not None else ()
+        lexical = view.lexical.search(query, expression, pool, expansion, self.fusion_weights.expansion)
         # Dense search returns every filter match when fewer than `pool` exist, so the pool then holds them all.
-        exhausted = pool >= view.size or len(dense) < pool
-        return Candidates(reciprocal_rank_fusion([dense, lexical]), exhausted=exhausted)
+        exhausted = pool >= view.size or len(dense[0]) < pool
+        context_rankings = None
+        if context_text:
+            context_dense = dense[1] if len(dense) > 1 else []
+            context_rankings = (context_dense, view.lexical.search(context_text, expression, pool))
+        return Retrieval(
+            self.fusion_weights.weighted((dense[0], lexical), context_rankings),
+            exhausted=exhausted,
+            context_query_used=bool(context_text),
+        )
+
+    def _candidates(
+        self,
+        view: CollectionView,
+        query: str,
+        expression: FilterExpression | None,
+        intent: QueryIntent | None = None,
+        context_query: str | None = None,
+    ) -> Candidates:
+        """Document-level weighted Reciprocal Rank Fusion of `_retrieve`'s rankings (findings and passages)."""
+        retrieval = self._retrieve(view, query, expression, intent, context_query)
+        return Candidates(weighted_reciprocal_rank_fusion(retrieval.rankings), exhausted=retrieval.exhausted)
 
     def _source_card(self, source_id: str) -> dict[str, Any]:
         """The citation facts of one source."""
@@ -410,7 +466,10 @@ class KnowledgeBase:
         )
 
     def search_strategies(self, request: StrategySearch) -> dict[str, Any]:
-        """Hybrid search over strategy facets, collapsed to strategies with a per-family cap."""
+        """Hybrid search over strategy facets: each ranking collapsed to strategies, then weighted Reciprocal Rank
+        Fusion, capped boosts and a per-family cap (AGENTS.md "Retrieval")."""
+        context_query = request.context_query
+        intent = parse_intent(request.query, context_query)
         derivation = derive(request.site_profile)
         filter_request = FilterRequest(
             goals=tuple(request.goals),
@@ -426,16 +485,23 @@ class KnowledgeBase:
             soil_conditions=tuple(dict.fromkeys(derivation.soil_condition_boosts)),
             fire_phase=tuple(derivation.fire_phase_boosts),
             stated_goals=tuple(request.goals),
+            query_intent_soil_conditions=intent.soil_condition_boosts,
+            query_intent_soil_demotions=intent.soil_condition_demotions,
         )
         view = self.views[STRATEGY_FACETS]
-        candidates = self._candidates(view, request.query, build_filter(filter_request))
-        scores, boosted_by = apply_boosts(candidates.scores, view.metadatas, boosts)
-        hits = collapse_to_strategies(scores, view.metadatas, boosted_by)
+        retrieval = self._retrieve(view, request.query, build_filter(filter_request), intent, context_query)
+        fused, best_document = fuse_strategies(retrieval.rankings, view.metadatas)
+        strategy_metadata = {strategy_id: view.metadatas[document] for strategy_id, document in best_document.items()}
+        scores, boosted_by = apply_boosts(fused, strategy_metadata, boosts)
+        hits = strategy_hits(scores, best_document, view.metadatas, boosted_by, boosts.diversity_exempt_tags)
         diversity = diversify_families(hits, request.family_diversity)
         page, next_offset = page_window(diversity.kept, request.offset, request.limit)
+        candidates = Candidates(scores, exhausted=retrieval.exhausted)
         return self._envelope(
             {
                 "query": request.query,
+                "query_intent": intent.as_response(),
+                "context_query_used": retrieval.context_query_used,
                 "applied_filters": describe(filter_request),
                 "boosts": boosts.as_response(),
                 "site_profile": _derivation_echo(request.site_profile, derivation, request.land_use, request.region),
@@ -561,10 +627,13 @@ class KnowledgeBase:
     def search_findings(self, request: FindingSearch) -> dict[str, Any]:
         """Hybrid search over research findings; each result carries its verbatim excerpt and source.
 
-        Findings carry no soil or fire-phase tags, so the site profile's soil/phase boosts are not applied here,
-        and the echo says so rather than listing boosts that did nothing. An unknown strategy_id is reported in
-        `not_found` (like get_strategy) rather than answered with a silent empty page.
+        Findings carry no soil or fire-phase tags, so the site profile's and the query intent's soil/phase boosts are
+        not applied here, and the echoes say so rather than listing boosts that did nothing; the intent's expansion
+        tokens and the context query still shape the ranking. An unknown strategy_id is reported in `not_found`
+        (like get_strategy) rather than answered with a silent empty page.
         """
+        context_query = request.context_query
+        intent = parse_intent(request.query, context_query)
         derivation = derive(request.site_profile)
         filter_request = FilterRequest(
             goals=tuple(request.goals),
@@ -580,7 +649,7 @@ class KnowledgeBase:
             return self._not_found(request, describe(filter_request), not_found)
         view = self.views[FINDINGS]
         boosts = Boosts(stated_goals=tuple(request.goals))
-        candidates = self._candidates(view, request.query, build_filter(filter_request))
+        candidates = self._candidates(view, request.query, build_filter(filter_request), intent, context_query)
         scores, _ = apply_boosts(candidates.scores, view.metadatas, boosts)
         ranked = [(identifier, score) for identifier, score in rank_documents(scores) if identifier in self.findings]
         page, next_offset = page_window(ranked, request.offset, request.limit)
@@ -599,6 +668,8 @@ class KnowledgeBase:
         return self._envelope(
             {
                 "query": request.query,
+                "query_intent": intent.as_response(soil_condition_boosts_applied=False),
+                "context_query_used": bool((context_query or "").strip()),
                 "applied_filters": describe(filter_request),
                 "boosts": boosts.as_response(),
                 "site_profile": _derivation_echo(

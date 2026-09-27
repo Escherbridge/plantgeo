@@ -17,16 +17,24 @@ release cadences. The owner decision (2026-09-26) keeps it private-network only,
 domain. `config.py` therefore accepts `https` anywhere but plaintext `http` only on loopback or a
 `*.railway.internal` host, and never a credential, path, query or fragment.
 
-**Coordinate-free by design.** The service never sees a location. The model reads the warehouse first
-and passes a `site_profile` built only from values it actually read. Field names mirror
-strategy-knowledge `site_profile.py`: soil, slope and burn values boost, while `land_cover` and
-`region` filter. Filters are `Literal` enums copied from strategy-knowledge `vocabulary.py`, so the
-schema publishes every accepted value. `test_agent_strategy_knowledge.py` parses the service's own
-source and fails on drift. An invented value fails validation locally and never reaches the service.
-`search_environmental_strategies` and `search_strategy_research_findings` also take a top-level
-`region: RegionFilter` (distinct from `site_profile.region`), forwarded to the service's own `region`
-filter; `strategy_knowledge._normalize_region_filter` wraps a lone region string into a one-element
-list before `list[Region]` validation, since a live eval sent `region="pnw_westside"` rather than a list.
+**Coordinate-free by design.** The service never sees a coordinate. Since wave 2 (C4 relaxation,
+owner decision 2026-09-27) it may see the one `Region` enum value the server derives FROM the
+coordinate -- a coarse label, never the point -- plus the user's own words as `context_query`; see
+"Server-owned site facts" below. Field names mirror strategy-knowledge `site_profile.py`: soil,
+slope and burn values boost, while `land_cover` and `region` filter. Filters are `Literal` enums
+copied from strategy-knowledge `vocabulary.py`, so the schema publishes every accepted value.
+`test_agent_strategy_knowledge.py` parses the service's own source and fails on drift. An invented
+value fails validation locally and never reaches the service. `search_environmental_strategies` and
+`search_strategy_research_findings` also take a top-level `region: RegionFilter` (distinct from
+`site_profile.region`), forwarded to the service's own `region` filter on the external path.
+
+**A lone string is a one-element list filter.** Every list filter -- `goals`, `land_use`, `region`,
+`fire_phase` and `get_environmental_strategies`' `strategy_ids` -- carries the same
+`BeforeValidator(strategy_knowledge._wrap_lone_string)`. A live eval (gemini-2.5-flash-lite) sent
+`region="pnw_westside"` on every call; Gemini ignores docstrings, so a prompt could not fix the argument
+shape (STRATEGIES.md "Do NOT do"). The wrap runs BEFORE `list[...]` validation, so an invalid lone value
+fails exactly as it would inside a list, and a BeforeValidator adds nothing to the published schema.
+It also covers the live map agent, which validates through the bridge.
 
 **Portable schema.** Pydantic would publish the nested `site_profile` as `$defs`/`$ref`, and each
 optional parameter as `anyOf [X, null]`. No other bridge tool publishes either, and the live map
@@ -38,7 +46,8 @@ runs against the function signature. For the same reason `burn_severity` and `la
 published as strings, coercing numbers; the service's `str | int` fields parse a digit string as an
 MTBS class or NLCD code.
 
-**`site_profile` is advisory, not a filter.** It only boosts or filters the ranking, so one bad hint
+**`site_profile` is advisory, not a filter.** (External path only: with a server context bound the
+model's `site_profile` is discarded whole; see "Server-owned site facts".) It only boosts or filters the ranking, so one bad hint
 must not sink an otherwise-good call: `search_environmental_strategies` and
 `search_strategy_research_findings` type it as a loose dict and `strategy_knowledge.sanitize_site_profile`
 validates each key on its own against `StrategySiteProfile`, dropping an unknown key or an
@@ -66,6 +75,19 @@ results, 1-5 ids and a 500-character query. The
 payload is a bounded projection: identity, summaries, family, goals, evidence strength, actions,
 rates as stated, citation title/URL, finding magnitudes and excerpts, `claim_tier` and
 `corpus_version`. Facet texts, snippets, scores and paging internals are dropped.
+
+**Observability and concurrency.** Every POST carries `X-Request-ID` (a fresh `uuid4().hex`) beside
+`Accept-Encoding: identity`, and every `ask` emits one `literature_call` structlog event
+`{tool, status, ms, result_count, request_id}`: `status` is `answered` or the refusal code,
+`result_count` is null on a refusal, `request_id` null when nothing was sent (not configured). The
+strategy-knowledge side logs the same id, so one agent call is traceable across both services. The
+event is safe on the stdio surfaces: an unconfigured structlog prints through the `sys.stdout` that
+`mcp_server.reserved_stdout` has already pointed at stderr. `ask` holds a `MAX_CONCURRENT_CALLS` (4)
+Semaphore around the exchange, created lazily PER EVENT LOOP (`_call_slot`, keyed by the loop and
+pruned of closed loops): an `asyncio.Semaphore` binds to the loop it first waits on, so one shared
+module-level Semaphore would raise under contention in the eval harness, which runs `asyncio.run` per
+scenario. Above its own uvicorn `limit_concurrency` strategy-knowledge answers a plain 503, which
+`_exchange` maps like any other non-200 to `strategy_knowledge_unavailable`.
 
 **Refusal states.** Each is a payload, never an exception, whose note opens "This is a REFUSAL, not
 an absence". A refusal is a fact about the service, never about the literature.
@@ -119,11 +141,120 @@ and a `progress` event with status `literature_downgraded` lists the claim paths
 - The graph has no correction round, unlike the TypeScript flow, so a rejection would throw away
   the whole report, warehouse observations included, over one labelling mistake.
 
+### Server-owned site facts (wave 2, seams S1/S2)
+
+Owner decision 2026-09-27: site facts are SERVER-OWNED. Evals caught models inventing them (Gemini's
+"slope (50%)" with no slope read) and dropping the user's own words ("sour pasture" became "soil
+chemistry"), and more prompt text is the wrong fix. So the server, out of band, binds a
+`strategy_knowledge.StrategyContext` -- `user_question`, the map point, optional `SiteFacts` -- in a
+ContextVar (`bound_strategy_context` / `current_strategy_context`), and `plan_literature_call` decides
+what each call sends:
+
+| | server context bound | no context (MCP, `agent ask` without the harness, external) |
+|---|---|---|
+| `site_profile` sent | `SiteFacts` + `region=derive_region(point)` when not None | the model's, sanitized field by field (advisory, below) |
+| model `site_profile` / top-level `region` | DISCARDED, named in `site_profile_dropped` (`region(argument)` for the filter) | kept |
+| `context_query` | the verbatim `user_question`, searches only, when non-empty | never |
+| `site_profile_source` | `"server"` | `"caller_asserted"`, or `"none"` when no site_profile was sent |
+
+`get_environmental_strategies` takes no profile and never forwards `context_query`, but carries the
+same labels, so every literature payload in a context-bound run says who owned the site facts. The
+model-facing schemas are unchanged: `context_query`, `server_context` and `point` are never
+parameters, so a model can neither see nor set them. Bound by:
+
+- the graph: `AgentRequest.strategy_context()` for both model passes, via `tools.run_context(strategy_context=...)`;
+- the eval harness (`scripts/agent_strategy_eval.py`, seam S5): a fresh `run_context` per user turn;
+- the bridge: `AgentToolCallRequest.server_context` (the S1 wire shape `ServerContext`, `extra="forbid"`),
+  bound per call with `bound_strategy_context` for the three literature tools ONLY; any other tool
+  ignores it. A malformed `server_context` alone is a 400 `invalid_tool_arguments` whose detail names
+  each field (`server_context.point.longitude: ...`) and never echoes a value.
+
+`user_question` is the user's messages this conversation, joined with newlines, latest last; the model
+strips control characters (newlines kept) and keeps the LAST 2000 characters (strategy-knowledge's
+`context_query` limit), so the newest turn survives truncation. `SiteFacts` is `SiteProfile` minus
+`slope_pct` (no slope surface exists) and `region` (derived); a drift test reads the service source.
+
+**What the graph supplies: `site_facts=None`, deliberately.** Inspected 2026-09-27: the only soil pH /
+SOC reader is the app-owned `soil-phh2o`/`soil-soc` surface behind `/api/v1/map-evidence`, whose
+raster evidence reports `numeric_values_available: false` (no number at all), and whose published
+SoilGrids values are integers scaled by a catalogue `scaleDivisor` (pH is pH x10); the ledger records
+row counts, never values; fire and land-cover reads are model-driven, polymorphic
+`surface_evidence_for_selection` payloads with no single trustworthy "days since fire" or NLCD class.
+Parsing those back out of tool results would reintroduce exactly the invented-fact risk this seam
+removes, so the graph sends the question and the region only. A future reader that returns a measured,
+unit-checked value can fill `SiteFacts` in `AgentRequest.strategy_context`.
+
+### The region table
+
+`strategy_knowledge.derive_region` walks `REGION_BOXES` -- inclusive lon/lat boxes, FIRST MATCH WINS --
+and returns that box's region, or None. Why a hand-written table and not a polygon dataset: 18 coarse
+labels, no new dependency or data file, and a table a reviewer can check line by line. Why it errs to
+None: `site_profile.region` becomes a HARD region filter in strategy-knowledge (it admits the region
+plus `general`, untagged, `global` and, for North America, `north_america_general`), so a wrong label
+hides relevant records, while None merely skips the filter. Hence:
+
+- Ambiguity bands come first and return None: a +-0.1 degree band on the Cascade crest, the Wyoming
+  basins, eastern Utah, Rio Grande and St. Lawrence/Niagara/Rainy River border strips, the Ohio valley
+  and Mid-Atlantic transitions, the Bering Strait, Greenland, the Levant/Arabia, New Guinea.
+- pnw_westside/pnw_inland split at the Cascade crest: -121.3 in Washington (Snoqualmie -121.4,
+  Stevens -121.1), -121.7 in northern Oregon (Hood, Jefferson), -122.1 in southern Oregon (Crater
+  Lake) -- a single -121.3 line would put Sisters and Government Camp on the wrong side.
+- Southern Idaho's Snake River Plain and Owyhee (the Boise eval scenarios) are
+  `great_basin_high_desert`: sagebrush steppe, where the corpus tags post-fire mulching and the
+  cheatgrass/sagebrush strategies; the Palouse and the Idaho panhandle are `pnw_inland`.
+- Never `north_america_general`, `global` or `general`: the filter admits those itself.
+- Open ocean, Hawaii, the Pacific islands and the Ural gap match nothing and return None. Boxes do
+  include adjacent coastal water, and a few border cities on a river boundary can land on the wrong
+  side (Windsor, Ontario reads us_midwest); southern Vancouver Island reads pnw_westside on purpose.
+
+This is the C4 relaxation: strategy-knowledge still never receives a coordinate, only this enum.
+
 **Open item (not implemented): approved-only literature.** The tools pass on every record the service
 returns, whatever its `review_state` (`machine_extracted` included). They label that state but do not
 filter on it. An approved-only filter, like the one `species_information` applies to companion
 evidence, is still owed. It would go either in the service or in the `strategy_knowledge.py`
 projection.
+
+## Loop hardening (`agent/llm.py::OpenAiCompletionsClient.converse`, wave 2 seam S5)
+
+**Identical-rejected-call guard.** A tool call whose canonical name plus canonical-JSON arguments
+(sorted keys, no incidental whitespace, `_canonical_call_key`) equal an earlier call THIS conversation
+that came back rejected is answered with `{"error": "repeated_rejected_call", "detail": "<prior
+detail>; change the arguments"}` instead of being executed again, and the ledger entry carries
+`"skipped": "repeated_rejected_call"` -- a model spinning on the same bad arguments cannot keep
+draining the iteration budget on it. "Rejected" excludes `strategy_knowledge_not_configured` and
+`strategy_knowledge_unavailable` (`_UNGUARDED_REJECTION_ERRORS`): those name a fault in the SERVICE
+(unreachable, unconfigured), not the call's own arguments, so an identical retry can genuinely answer
+differently the second time and must never be suppressed. A schema-shape rejection and every
+deterministic warehouse four-state refusal stay guarded, since both are a pure function of their
+arguments -- **except** `parquet_serving_refused`'s own `serving_at_capacity` and
+`release_read_changed` refusal codes (`_TRANSIENT_SERVING_REFUSAL_CODES`), which are a fact about the
+serving PROCESS at that instant, not the call's day/lane/viewport arguments; every `parquet_serving_
+refused` payload shares that one top-level `error` string regardless of which fault produced it, so
+the guard reads the nested `refusal_code` rather than exempting the outer code wholesale (wave-2
+fix-stage review: a blanket exemption would also un-guard `read_over_budget`/`day_conflict`/etc.,
+which `parquet_ops/faults.py` itself documents as NOT retryable).
+
+**Final no-tools answer turn.** When `max_iterations` chat turns have all come back asking for more
+tools, `converse` does not raise and does not give up with an empty answer. It appends one short user
+nudge and makes ONE further `chat` call that still publishes the tool schemas but forces
+`tool_choice="none"`, rather than omitting `tools` outright: the transcript by then already holds
+`tool_use`/`tool_result` blocks, and both Anthropic and OpenRouter reject a request carrying those with
+no `tools` defined at all. A provider that ignores `tool_choice="none"` and answers with `tool_calls`
+anyway has them stripped from the appended message, so a later turn's request never carries a dangling
+assistant tool-call with no reply; `stopped_because` is `"iteration_budget_exhausted_answered"` only
+when that call actually returned text, else `"iteration_budget_exhausted"` -- the same label the
+graceful-failure path below uses. If even that call is rejected, `converse` falls back to the old
+graceful outcome (empty `final_text`, `stopped_because="iteration_budget_exhausted"`) rather than
+letting `LlmProviderError` escape and discard every tool result already gathered.
+
+**`agent_system_message(today) -> dict`.** Returns `{"role": "system", "content": "Today is <iso
+date>. " + INSTRUCTIONS}`. `INSTRUCTIONS` lives in `llm.py` (`mcp_server.py` imports and re-exports it
+under the same name) so this function needs no `agent.llm` <-> `agent.mcp_server` import cycle --
+`mcp_server.py` already imports several names from `llm.py`, so the dependency can only run one way.
+`converse` does NOT add this message implicitly; `interface/cli/agent.py::_ask` and
+`scripts/agent_strategy_eval.py`'s eval harness both call it explicitly, so the two never carry
+independently drifting copies of the system prompt.
 
 ## Selection evidence and RAG contract (2026-09-20)
 

@@ -1,0 +1,227 @@
+[
+  {
+    "query": "stop hillside erosion",
+    "filters": {},
+    "expected_any_of": [
+      "post-fire-straw-mulching",
+      "post-fire-wood-chip-mulching",
+      "post-fire-hydromulch-application",
+      "post-fire-slash-distribution-erosion-control",
+      "contour-log-erosion-barriers",
+      "contour-straw-wattle-installation",
+      "silt-fence-installation",
+      "straw-bale-check-dam",
+      "contour-sandbag-barrier",
+      "on-site-material-erosion-barriers",
+      "post-fire-grass-reseeding-rocky-mountain",
+      "post-fire-rye-nurse-crop-reseeding-texas",
+      "post-fire-seeding-microsite-establishment",
+      "post-fire-seed-mix-decision-support-tool",
+      "climate-matched-sagebrush-seed-source-post-fire-restoration",
+      "break-hydrophobic-soil-layer"
+    ],
+    "k": 5,
+    "kind": "agent"
+  },
+  {
+    "query": "prevent post-fire debris flow hillside before heavy rain",
+    "filters": {},
+    "expected_any_of": [
+      "post-fire-straw-mulching",
+      "post-fire-wood-chip-mulching",
+      "post-fire-hydromulch-application",
+      "post-fire-slash-distribution-erosion-control",
+      "contour-log-erosion-barriers",
+      "contour-straw-wattle-installation",
+      "silt-fence-installation",
+      "straw-bale-check-dam",
+      "contour-sandbag-barrier",
+      "on-site-material-erosion-barriers",
+      "post-fire-grass-reseeding-rocky-mountain",
+      "post-fire-rye-nurse-crop-reseeding-texas",
+      "post-fire-seeding-microsite-establishment",
+      "post-fire-seed-mix-decision-support-tool",
+      "climate-matched-sagebrush-seed-source-post-fire-restoration",
+      "break-hydrophobic-soil-layer"
+    ],
+    "k": 5,
+    "kind": "agent"
+  },
+  {
+    "query": "restore perennial cover for cheatgrass invasion in rangeland",
+    "filters": {},
+    "expected_any_of": [
+      "till-burn-herbicide-reseed-invasive-annual-grass",
+      "post-fire-grass-reseeding-rocky-mountain",
+      "post-fire-rye-nurse-crop-reseeding-texas",
+      "post-fire-seeding-microsite-establishment",
+      "post-fire-seed-mix-decision-support-tool",
+      "climate-matched-sagebrush-seed-source-post-fire-restoration",
+      "climate-adaptive-plant-species-selection",
+      "weather-centric-rangeland-revegetation-planning",
+      "decommissioned-forest-road-revegetation-organic-amendments"
+    ],
+    "k": 5,
+    "kind": "agent"
+  },
+  {
+    "query": "control cheatgrass fire cycles perennial recovery",
+    "filters": {},
+    "expected_any_of": [
+      "till-burn-herbicide-reseed-invasive-annual-grass",
+      "post-fire-grass-reseeding-rocky-mountain",
+      "post-fire-rye-nurse-crop-reseeding-texas",
+      "post-fire-seeding-microsite-establishment",
+      "post-fire-seed-mix-decision-support-tool",
+      "climate-matched-sagebrush-seed-source-post-fire-restoration",
+      "climate-adaptive-plant-species-selection",
+      "weather-centric-rangeland-revegetation-planning",
+      "decommissioned-forest-road-revegetation-organic-amendments"
+    ],
+    "k": 5,
+    "kind": "agent"
+  },
+  {
+    "query": "practices to build soil carbon and cut erosion on hillsides",
+    "filters": {},
+    "expected_any_of": [
+      "cover-cropping-organic-matter-maintenance",
+      "legume-cover-cropping",
+      "grass-cover-cropping",
+      "brassica-cover-cropping-compaction-relief",
+      "cover-crop-species-mixtures",
+      "roller-crimped-cover-crop-mulch",
+      "cover-crop-juice-extraction-liquid-fertilizer",
+      "buckwheat-summer-cover-cropping",
+      "nematode-suppressive-cover-crop-selection",
+      "orchard-vineyard-perennial-groundcover-management",
+      "living-mulch-intercropping",
+      "taproot-cover-crop-sodic-soil-remediation",
+      "soil-solarization-steaming-nematode-suppression",
+      "reduced-tillage-no-till",
+      "strip-tillage-zone-till",
+      "controlled-traffic-farming-compaction-reduction",
+      "ridge-tillage-and-bedding",
+      "frost-tillage-timing",
+      "strategic-occasional-tillage-in-no-till",
+      "biochar-soil-amendment-cropland",
+      "trench-biochar-vineyard-rows",
+      "biochar-amendment-garden-landscape",
+      "biochar-feedstock-selection-decision-tools",
+      "precision-target-biochar-dryland-hilltops",
+      "post-thinning-forest-biochar-fertilizer-amendment",
+      "biochar-amendment-coarse-soils",
+      "wood-ash-biochar-amendment-post-harvest",
+      "biochar-sandy-soil-water-retention-amendment",
+      "biochar-amendment-nitrous-oxide-methane-mitigation",
+      "diversified-crop-rotation",
+      "winter-camelina-relay-cropping-ghg-reduction"
+    ],
+    "k": 5,
+    "kind": "agent"
+  },
+  {
+    "query": "build soil carbon and reduce erosion on Palouse wheat farms",
+    "filters": {},
+    "expected_any_of": [
+      "cover-cropping-organic-matter-maintenance",
+      "legume-cover-cropping",
+      "grass-cover-cropping",
+      "brassica-cover-cropping-compaction-relief",
+      "cover-crop-species-mixtures",
+      "roller-crimped-cover-crop-mulch",
+      "cover-crop-juice-extraction-liquid-fertilizer",
+      "buckwheat-summer-cover-cropping",
+      "nematode-suppressive-cover-crop-selection",
+      "orchard-vineyard-perennial-groundcover-management",
+      "living-mulch-intercropping",
+      "taproot-cover-crop-sodic-soil-remediation",
+      "soil-solarization-steaming-nematode-suppression",
+      "reduced-tillage-no-till",
+      "strip-tillage-zone-till",
+      "controlled-traffic-farming-compaction-reduction",
+      "ridge-tillage-and-bedding",
+      "frost-tillage-timing",
+      "strategic-occasional-tillage-in-no-till",
+      "biochar-soil-amendment-cropland",
+      "trench-biochar-vineyard-rows",
+      "biochar-amendment-garden-landscape",
+      "biochar-feedstock-selection-decision-tools",
+      "precision-target-biochar-dryland-hilltops",
+      "post-thinning-forest-biochar-fertilizer-amendment",
+      "biochar-amendment-coarse-soils",
+      "wood-ash-biochar-amendment-post-harvest",
+      "biochar-sandy-soil-water-retention-amendment",
+      "biochar-amendment-nitrous-oxide-methane-mitigation",
+      "diversified-crop-rotation",
+      "winter-camelina-relay-cropping-ghg-reduction"
+    ],
+    "k": 5,
+    "kind": "agent"
+  },
+  {
+    "query": "keep crop alive on less water",
+    "filters": {},
+    "expected_any_of": [
+      "deficit-irrigation-blueberry-water-conservation",
+      "subsurface-drip-irrigation-n2o-reduction-cotton",
+      "canopy-temperature-crop-water-stress-irrigation-scheduling",
+      "climate-informed-deficit-irrigation-scheduling-sorghum",
+      "nutrient-tracking-tool-irrigation-management",
+      "organic-mulch-moisture-weed-control",
+      "residue-mulch-retention",
+      "whole-orchard-recycling-soil-incorporation",
+      "post-disturbance-peatland-mulching",
+      "lactobionate-soil-amendment-drought-moisture-retention",
+      "soil-surfactant-application-irrigation-penetration"
+    ],
+    "k": 5,
+    "kind": "agent"
+  },
+  {
+    "query": "irrigation scheduling and water management under reduced irrigation allocation for crops",
+    "filters": {},
+    "expected_any_of": [
+      "deficit-irrigation-blueberry-water-conservation",
+      "subsurface-drip-irrigation-n2o-reduction-cotton",
+      "canopy-temperature-crop-water-stress-irrigation-scheduling",
+      "climate-informed-deficit-irrigation-scheduling-sorghum",
+      "nutrient-tracking-tool-irrigation-management",
+      "organic-mulch-moisture-weed-control",
+      "residue-mulch-retention",
+      "whole-orchard-recycling-soil-incorporation",
+      "post-disturbance-peatland-mulching",
+      "lactobionate-soil-amendment-drought-moisture-retention",
+      "soil-surfactant-application-irrigation-penetration"
+    ],
+    "k": 5,
+    "kind": "agent"
+  },
+  {
+    "query": "fix soil chemistry",
+    "filters": {},
+    "expected_any_of": [
+      "agricultural-liming-carbon-removal",
+      "gypsum-sodic-and-crusting-remediation",
+      "lime-application-acidic-soils",
+      "saline-soil-leaching-and-salt-tolerant-management"
+    ],
+    "k": 5,
+    "kind": "agent"
+  },
+  {
+    "query": "fix acidic sour pasture soil low pH improve forage yields",
+    "filters": {},
+    "expected_any_of": [
+      "agricultural-liming-carbon-removal",
+      "gypsum-sodic-and-crusting-remediation",
+      "lime-application-acidic-soils",
+      "saline-soil-leaching-and-salt-tolerant-management"
+    ],
+    "k": 5,
+    "forbidden_at_3": [
+      "elemental-sulfur-soil-acidification"
+    ],
+    "kind": "agent"
+  }
+]

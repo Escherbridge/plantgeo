@@ -15,6 +15,10 @@ DEFAULT_PREFIX: Final = "strategy-knowledge/"
 PRODUCTION_EMBEDDING_MODEL: Final = "all-MiniLM-L6-v2"
 #: Documents each retriever (dense, BM25) contributes to fusion, whatever page is asked for (AGENTS.md "Retrieval").
 DEFAULT_CANDIDATE_POOL: Final = 300
+#: uvicorn `limit_concurrency` for HTTP mode (AGENTS.md "Observability"): excess concurrent requests fail fast
+#: with a 503 instead of queuing behind a slow tool call.
+DEFAULT_LIMIT_CONCURRENCY: Final = 16
+MAXIMUM_LIMIT_CONCURRENCY: Final = 512
 
 #: Same names as `services/agri-data-service/.env` (DESIGN.md section 12).
 OBJECT_STORE_VARIABLES: Final = (
@@ -52,6 +56,8 @@ class Settings:
     candidate_pool: int = DEFAULT_CANDIDATE_POOL
     #: Host names `/mcp` accepts besides loopback and the Railway service host (AGENTS.md "HTTP transport").
     allowed_hosts: tuple[str, ...] = ()
+    #: HTTP mode only; ignored over stdio (AGENTS.md "Observability").
+    limit_concurrency: int = DEFAULT_LIMIT_CONCURRENCY
 
     def object_store(self) -> ObjectStoreSettings:
         """Return bucket coordinates, or raise naming every unset variable."""
@@ -73,7 +79,8 @@ class Settings:
         return (
             f"Settings(cache_dir={self.cache_dir!s}, prefix={self.prefix!r}, "
             f"embedding_model={self.embedding_model!r}, candidate_pool={self.candidate_pool}, "
-            f"allowed_hosts={list(self.allowed_hosts)}, object_store_variables_set={configured})"
+            f"allowed_hosts={list(self.allowed_hosts)}, limit_concurrency={self.limit_concurrency}, "
+            f"object_store_variables_set={configured})"
         )
 
 
@@ -97,6 +104,7 @@ def load_settings(environment: Mapping[str, str] | None = None, env_file: Path =
     cache_dir = Path(merged.get("STRATEGY_KB_CACHE_DIR") or DEFAULT_CACHE_DIR).expanduser()
     prefix = merged.get("STRATEGY_KB_PREFIX") or DEFAULT_PREFIX
     pool = merged.get("STRATEGY_KB_CANDIDATE_POOL", "").strip()
+    concurrency = merged.get("STRATEGY_KB_LIMIT_CONCURRENCY", "").strip()
     host_values = (merged.get("RAILWAY_PRIVATE_DOMAIN", ""), *merged.get("STRATEGY_KB_ALLOWED_HOSTS", "").split(","))
     return Settings(
         cache_dir=cache_dir,
@@ -105,4 +113,9 @@ def load_settings(environment: Mapping[str, str] | None = None, env_file: Path =
         object_store_values={name: merged[name] for name in OBJECT_STORE_VARIABLES if merged.get(name)},
         candidate_pool=int(pool) if pool.isdigit() and int(pool) > 0 else DEFAULT_CANDIDATE_POOL,
         allowed_hosts=tuple(dict.fromkeys(host.strip() for host in host_values if host.strip())),
+        limit_concurrency=(
+            int(concurrency)
+            if concurrency.isdigit() and 0 < int(concurrency) <= MAXIMUM_LIMIT_CONCURRENCY
+            else DEFAULT_LIMIT_CONCURRENCY
+        ),
     )

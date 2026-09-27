@@ -6,6 +6,9 @@ line-length = 120
 [lint]
 select = ["E", "F", "I", "N", "W", "UP", "ANN", "B", "A", "COM", "C4", "DTZ", "ISC", "PIE", "PT", "RSE", "RET", "SIM", "TID", "TC", "ARG", "ERA", "PL", "PERF", "RUF"]
 ignore = ["ANN401", "COM812", "ISC001"]
+# Curly quotes and a no-break space are DATA here, not typos: `query_intent.py`'s normaliser maps them to their
+# plain equivalents, and its tests feed it exactly these characters to prove that mapping (RUF001).
+allowed-confusables = ["’", "‘", " "]
 
 [lint.isort]
 known-first-party = ["strategy_knowledge"]
@@ -17,4 +20,7 @@ runtime-evaluated-base-classes = ["pydantic.BaseModel"]
 [lint.per-file-ignores]
 # Tool signatures mirror the MCP contract of DESIGN.md section 11: one parameter per filter.
 "src/strategy_knowledge/server.py" = ["PLR0913", "PLR0915"]
+# `call_tool`'s early returns are one per distinct logged outcome (AGENTS.md "Observability"); collapsing them
+# would separate a status code from the `finish(..., status)` call that names it for the access log.
+"src/strategy_knowledge/http_app.py" = ["PLR0911"]
 "tests/**" = ["PLR2004"]

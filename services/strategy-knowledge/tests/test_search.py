@@ -1,21 +1,32 @@
-"""Ranking primitives: reciprocal-rank fusion, boosts, facet collapse, family diversity, paging, BM25."""
+"""Ranking primitives: weighted reciprocal-rank fusion, boosts, facet collapse, family diversity, paging, BM25."""
 
 import pytest
 
 from strategy_knowledge.filters import FilterRequest, build_filter
-from strategy_knowledge.lexical import LexicalIndex, tokenize
+from strategy_knowledge.lexical import LexicalIndex, lexical_terms, stem, tokenize
 from strategy_knowledge.search import (
     BOOST_WEIGHT,
     MAXIMUM_TOTAL_BOOST,
+    PH_DEMOTION_WEIGHT,
     Boosts,
+    FusionWeights,
     StrategyHit,
     apply_boosts,
-    collapse_to_strategies,
+    collapse_ranking,
     diversify_families,
+    fuse_strategies,
     page_window,
     rank_documents,
     reciprocal_rank_fusion,
+    strategy_hits,
+    weighted_reciprocal_rank_fusion,
 )
+
+FACET_METADATA = {
+    "s1::overview": {"strategy_id": "s1", "facet": "overview", "family_id": "f"},
+    "s1::how_to": {"strategy_id": "s1", "facet": "how_to", "family_id": "f"},
+    "s2::fit": {"strategy_id": "s2", "facet": "fit"},
+}
 
 
 def test_reciprocal_rank_fusion_uses_k_60() -> None:
@@ -24,6 +35,21 @@ def test_reciprocal_rank_fusion_uses_k_60() -> None:
     assert fused["b"] == pytest.approx(1 / 62 + 1 / 61)
     assert fused["c"] == pytest.approx(1 / 62)
     assert [identifier for identifier, _ in rank_documents(fused)] == ["b", "a", "c"]
+
+
+def test_weighted_fusion_scales_each_list() -> None:
+    fused = weighted_reciprocal_rank_fusion([(["a", "b"], 1.0), (["b"], 0.5)])
+    assert fused["a"] == pytest.approx(1 / 61)
+    assert fused["b"] == pytest.approx(1 / 62 + 0.5 / 61)
+
+
+def test_fusion_weights_add_the_context_lists_at_a_multiple() -> None:
+    weights = FusionWeights(dense=1.0, lexical=0.8, context_query=0.5)
+    assert weights.weighted((["d"], ["l"])) == [(["d"], 1.0), (["l"], 0.8)]
+    with_context = weights.weighted((["d"], ["l"]), (["cd"], ["cl"]))
+    assert with_context[2] == (["cd"], 0.5)
+    assert with_context[3][0] == ["cl"]
+    assert with_context[3][1] == pytest.approx(0.4)
 
 
 def test_rank_documents_breaks_ties_by_id() -> None:
@@ -64,24 +90,68 @@ def test_a_boosted_irrelevant_record_never_outranks_a_first_place_in_both_rankin
     assert capped["alone"] < 2 / 61
 
 
-def test_collapse_keeps_each_strategys_best_facet() -> None:
-    scores = {"s1::overview": 0.02, "s1::how_to": 0.03, "s2::fit": 0.025}
-    metadata = {
-        "s1::overview": {"strategy_id": "s1", "facet": "overview", "family_id": "f"},
-        "s1::how_to": {"strategy_id": "s1", "facet": "how_to", "family_id": "f"},
-        "s2::fit": {"strategy_id": "s2", "facet": "fit"},
-    }
-    hits = collapse_to_strategies(scores, metadata)
+def test_query_intent_soil_conditions_boost_like_site_profile_ones() -> None:
+    boosts = Boosts(soil_conditions=("acidic",), query_intent_soil_conditions=("acidic", "compacted"))
+    scores, boosted_by = apply_boosts({"lime": 0.01}, {"lime": {"soil_acidic": True}}, boosts)
+    assert scores["lime"] == pytest.approx(0.01 + BOOST_WEIGHT / 61)
+    assert boosted_by["lime"] == ["soil_acidic"]
+    assert boosts.as_response()["query_intent_soil_conditions"] == ["acidic", "compacted"]
+    # Both boost the score (line above); only the pH condition is exempt from the family-diversity cap below.
+    assert boosts.diversity_exempt_tags == ("soil_acidic",)
+
+
+def test_diversity_exemption_is_narrower_than_the_boosted_conditions() -> None:
+    # A non-pH condition ("erodible") can tag dozens of strategies in one family; exempting it too would
+    # defeat family diversity on a bare "washed out" mention (AGENTS.md "Retrieval", 2026-09-27 review).
+    assert Boosts(query_intent_soil_conditions=("erodible",)).diversity_exempt_tags == ()
+    assert Boosts(query_intent_soil_conditions=("erodible", "alkaline")).diversity_exempt_tags == ("soil_alkaline",)
+
+
+def test_the_opposite_ph_condition_is_demoted_unless_the_record_also_matches_the_intent() -> None:
+    boosts = Boosts(query_intent_soil_conditions=("acidic",), query_intent_soil_demotions=("alkaline",))
+    metadata = {"sulfur": {"soil_alkaline": True}, "both": {"soil_alkaline": True, "soil_acidic": True}, "plain": {}}
+    scores, boosted_by = apply_boosts({"sulfur": 0.02, "both": 0.02, "plain": 0.02}, metadata, boosts)
+    assert scores["sulfur"] == pytest.approx(0.02 - PH_DEMOTION_WEIGHT / 61)
+    assert scores["both"] == pytest.approx(0.02 + BOOST_WEIGHT / 61)
+    assert scores["plain"] == pytest.approx(0.02)
+    assert boosted_by["sulfur"] == ["-soil_alkaline"]
+    assert boosts.as_response()["query_intent_soil_demotions"] == ["alkaline"]
+
+
+def test_collapse_ranking_keeps_each_strategy_at_its_best_facet() -> None:
+    ranking = ["s1::how_to", "s2::fit", "s1::overview", "orphan"]
+    assert collapse_ranking(ranking, FACET_METADATA) == ["s1", "s2"]
+
+
+def test_a_strategy_counts_once_per_list_however_many_facets_match() -> None:
+    dense = ["s1::overview", "s1::how_to", "s2::fit"]
+    lexical = ["s2::fit", "s1::how_to"]
+    scores, best = fuse_strategies([(dense, 1.0), (lexical, 1.0)], FACET_METADATA)
+    assert scores["s1"] == pytest.approx(1 / 61 + 1 / 62)
+    assert scores["s2"] == pytest.approx(1 / 62 + 1 / 61)
+    assert best == {"s1": "s1::how_to", "s2": "s2::fit"}
+
+
+def test_strategy_hits_report_the_best_facet_and_family() -> None:
+    hits = strategy_hits({"s1": 0.03, "s2": 0.025}, {"s1": "s1::how_to", "s2": "s2::fit"}, FACET_METADATA)
     assert [(hit.strategy_id, hit.matched_facet, hit.score) for hit in hits] == [
         ("s1", "how_to", 0.03),
         ("s2", "fit", 0.025),
     ]
     assert hits[0].family_id == "f"
     assert hits[1].family_id is None
+    assert not any(hit.exempt_from_diversity for hit in hits)
 
 
-def _hit(strategy_id: str, family_id: str | None, score: float) -> StrategyHit:
-    return StrategyHit(strategy_id, family_id, score, "overview", f"{strategy_id}::overview")
+def _hit(strategy_id: str, family_id: str | None, score: float, *, exempt: bool = False) -> StrategyHit:
+    return StrategyHit(
+        strategy_id,
+        family_id,
+        score,
+        "overview",
+        f"{strategy_id}::overview",
+        exempt_from_diversity=exempt,
+    )
 
 
 def test_family_diversity_caps_members_per_family() -> None:
@@ -91,6 +161,22 @@ def test_family_diversity_caps_members_per_family() -> None:
     assert capped.suppressed == {"f": ["c"]}
     assert [hit.strategy_id for hit in diversify_families(hits, cap=1).kept] == ["a", "d", "e"]
     assert len(diversify_families(hits, cap=0).kept) == len(hits)
+
+
+def test_an_intent_boosted_hit_skips_the_family_cap_and_takes_no_slot() -> None:
+    hits = [_hit("sulfur", "f", 0.03), _hit("other", "f", 0.02), _hit("lime", "f", 0.014, exempt=True)]
+    capped = diversify_families(hits, cap=1)
+    assert [hit.strategy_id for hit in capped.kept] == ["sulfur", "lime"]
+    assert capped.suppressed == {"f": ["other"]}
+
+
+def test_strategy_hits_mark_hits_boosted_by_an_exempt_tag() -> None:
+    boosts = Boosts(query_intent_soil_conditions=("acidic",))
+    scores, boosted_by = apply_boosts({"lime": 0.01, "other": 0.02}, {"lime": {"soil_acidic": True}}, boosts)
+    best = {"lime": "lime::fit", "other": "other::fit"}
+    facets = {"lime::fit": {"strategy_id": "lime", "facet": "fit"}, "other::fit": {"strategy_id": "other"}}
+    hits = strategy_hits(scores, best, facets, boosted_by, boosts.diversity_exempt_tags)
+    assert {hit.strategy_id: hit.exempt_from_diversity for hit in hits} == {"lime": True, "other": False}
 
 
 def test_page_window_reports_next_offset() -> None:
@@ -119,3 +205,55 @@ def test_bm25_applies_the_same_filter() -> None:
 
 def test_bm25_on_an_empty_collection_returns_nothing() -> None:
     assert LexicalIndex([], [], []).search("anything", None, 5) == []
+
+
+@pytest.mark.parametrize(
+    ("word", "expected"),
+    [
+        ("crops", "crop"),
+        ("mulches", "mulch"),
+        ("mulching", "mulch"),
+        ("mulched", "mulch"),
+        ("cropping", "crop"),
+        ("tilling", "till"),
+        ("strategies", "strategy"),
+        ("grasses", "grass"),
+        ("analysis", "analysis"),
+        ("seed", "seed"),
+        ("burned", "burned"),
+        ("burnt", "burnt"),
+        ("burning", "burn"),
+        ("ph", "ph"),
+        ("2024", "2024"),
+    ],
+)
+def test_light_stemming_folds_plurals_and_verb_forms_but_keeps_burned(word: str, expected: str) -> None:
+    assert stem(word) == expected
+
+
+def test_burn_and_burned_stay_distinct_for_bm25() -> None:
+    assert lexical_terms("prescribed burns")[-1] == "burn"
+    assert lexical_terms("burned slopes")[0] == "burned"
+    assert stem("lime") == stem("liming") == stem("limed")
+
+
+def test_bm25_matches_across_plural_and_verb_forms() -> None:
+    index = LexicalIndex(
+        ["mulch-doc", "grazing-doc", "compost-doc", "cover-doc"],
+        ["mulching burned slopes", "grazing cattle", "compost piles", "cover crop rye"],
+        [{}, {}, {}, {}],
+    )
+    assert index.search("mulches on a slope", None, 10) == ["mulch-doc"]
+
+
+def test_expansion_tokens_add_a_weighted_second_query() -> None:
+    index = LexicalIndex(
+        ["lime-doc", "sulfur-doc", "filler-doc"],
+        ["agricultural limestone raises soil ph", "elemental sulfur lowers soil ph", "compost pile turning"],
+        [{}, {}, {}],
+    )
+    assert index.search("sour ground", None, 10) == []
+    assert index.search("sour ground", None, 10, expansion_tokens=("limestone",)) == ["lime-doc"]
+    assert index.search("soil ph", None, 10, expansion_tokens=("limestone",))[0] == "lime-doc"
+    unexpanded = index.search("soil ph", None, 10, expansion_tokens=("limestone",), expansion_weight=0.0)
+    assert set(unexpanded) == {"lime-doc", "sulfur-doc"}

@@ -865,3 +865,437 @@ def _model_fields(module: Path, class_name: str) -> list[str]:
                 if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name)
             ]
     raise AssertionError(f"{class_name} is no longer defined in {module.name}")
+
+
+# --- Server-owned site context (seams S1/S2) -----------------------------------------
+
+WESTERN_WA = (-122.95, 46.66)
+"""`western-wa-sour-pasture` in scripts/agent_strategy_eval_scenarios.json."""
+BOISE_FOOTHILLS = (-116.13, 43.66)
+"""`boise-foothills-post-fire` in scripts/agent_strategy_eval_scenarios.json."""
+PACIFIC_OCEAN = (-130.0, 45.0)
+USER_QUESTION = "my pasture has gone sour\nwhat can I do about it?"
+SERVER_SOIL_PH = 5.2
+EXPECTED_DROPPED = ["slope_pct", "soil_ph", "region(argument)"]
+REQUEST_ID_PATTERN = re.compile(r"[0-9a-f]{32}")
+CONCURRENT_CALLS = 10
+EXCLUDED_SITE_FACT_KEYS = frozenset({"slope_pct", "region"})
+
+
+def _context(
+    point: tuple[float, float] | None = BOISE_FOOTHILLS,
+    *,
+    user_question: str | None = USER_QUESTION,
+    site_facts: dict[str, Any] | None = None,
+) -> strategy_knowledge.StrategyContext:
+    return strategy_knowledge.StrategyContext(
+        user_question=user_question,
+        longitude=point[0] if point else None,
+        latitude=point[1] if point else None,
+        site_facts=strategy_knowledge.SiteFacts.model_validate(site_facts) if site_facts else None,
+    )
+
+
+async def call_with_context(
+    tool: Any, arguments: dict[str, Any], context: strategy_knowledge.StrategyContext
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """`call`, with a server context bound for the run the way the graph and the eval harness bind it."""
+    async with agent_tools.run_context(warehouse_source=FakeAgentWarehouse(), strategy_context=context) as ledger:
+        payload = json.loads(await tool.call(arguments))
+    return payload, ledger
+
+
+@pytest.mark.parametrize(
+    ("point", "region"),
+    [
+        pytest.param(WESTERN_WA, "pnw_westside", id="western-wa-eval-point"),
+        pytest.param(BOISE_FOOTHILLS, "great_basin_high_desert", id="boise-foothills-eval-point"),
+        pytest.param(PACIFIC_OCEAN, None, id="pacific-ocean"),
+        pytest.param((-40.0, 30.0), None, id="atlantic-ocean"),
+        pytest.param((-157.86, 21.31), None, id="honolulu-unlabelled"),
+        pytest.param((-121.3, 47.0), None, id="on-the-cascade-crest"),
+        pytest.param((-115.47, 32.63), None, id="mexicali-border-strip"),
+        pytest.param((-82.5, 45.8), None, id="manitoulin-island-border-strip"),
+        pytest.param((-68.3, 47.37), None, id="st-john-river-border-strip"),
+        pytest.param((-122.33, 47.61), "pnw_westside", id="seattle"),
+        pytest.param((-122.68, 45.52), "pnw_westside", id="portland"),
+        pytest.param((-117.43, 47.66), "pnw_inland", id="spokane"),
+        pytest.param((-117.18, 46.73), "pnw_inland", id="palouse-eval-point"),
+        pytest.param((-121.31, 44.06), "pnw_inland", id="bend"),
+        pytest.param((-116.9, 42.9), "great_basin_high_desert", id="owyhee-eval-point"),
+        pytest.param((-111.89, 40.76), "great_basin_high_desert", id="salt-lake-city"),
+        pytest.param((-114.0, 46.87), "northern_rockies", id="missoula"),
+        pytest.param((-104.99, 39.74), "southern_rockies", id="denver"),
+        pytest.param((-119.79, 36.74), "california", id="fresno"),
+        pytest.param((-112.07, 33.45), "southwest", id="phoenix"),
+        pytest.param((-96.8, 32.78), "great_plains_texas", id="dallas"),
+        pytest.param((-93.6, 41.59), "us_midwest", id="des-moines"),
+        pytest.param((-84.39, 33.75), "us_southeast", id="atlanta"),
+        pytest.param((-74.0, 40.71), "us_northeast", id="new-york"),
+        pytest.param((-149.9, 61.2), "alaska", id="anchorage"),
+        pytest.param((-114.07, 51.05), "canada", id="calgary"),
+        pytest.param((-99.13, 19.43), "latin_america", id="mexico-city"),
+        pytest.param((2.35, 48.86), "europe", id="paris"),
+        pytest.param((36.82, -1.29), "africa", id="nairobi"),
+        pytest.param((151.21, -33.87), "oceania", id="sydney"),
+        pytest.param((116.4, 39.9), "asia", id="beijing"),
+    ],
+)
+def test_the_region_table_labels_a_point_or_declines(point: tuple[float, float], region: str | None) -> None:
+    assert strategy_knowledge.derive_region(*point) == region
+
+
+@pytest.mark.parametrize("point", [(float("nan"), 43.6), (-116.2, float("nan")), (200.0, 43.6), (-116.2, 95.0)])
+def test_a_point_off_the_globe_has_no_region(point: tuple[float, float]) -> None:
+    assert strategy_knowledge.derive_region(*point) is None
+
+
+def test_the_region_table_only_names_specific_published_regions() -> None:
+    """The service's filter already admits the broad values; a box naming one would match everything."""
+    published = set(get_args(strategy_knowledge.Region))
+    named = {box.region for box in strategy_knowledge.REGION_BOXES if box.region is not None}
+    assert named <= published
+    assert not named & {"north_america_general", "global", "general"}
+    for box in strategy_knowledge.REGION_BOXES:
+        assert box.west < box.east, box.area
+        assert box.south < box.north, box.area
+
+
+def test_every_ambiguity_band_precedes_every_labelled_box() -> None:
+    """First match wins, so a band listed after a labelled box it overlaps would never apply."""
+    regions = [box.region for box in strategy_knowledge.REGION_BOXES]
+    first_labelled = next(index for index, region in enumerate(regions) if region is not None)
+    assert all(region is not None for region in regions[first_labelled:])
+
+
+def test_site_facts_mirror_the_service_profile_minus_slope_and_region() -> None:
+    service_fields = _model_fields(STRATEGY_SOURCE / "site_profile.py", "SiteProfile")
+    expected = [field for field in service_fields if field not in EXCLUDED_SITE_FACT_KEYS]
+    assert list(strategy_knowledge.SiteFacts.model_fields) == expected
+
+
+@pytest.mark.parametrize("key", sorted(EXCLUDED_SITE_FACT_KEYS))
+def test_site_facts_refuse_slope_and_region(key: str) -> None:
+    """No slope surface exists, and region is derived from the point, never supplied."""
+    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+        strategy_knowledge.SiteFacts.model_validate({key: "pnw_inland" if key == "region" else 30})
+
+
+def test_the_user_question_is_cleaned_and_front_truncated() -> None:
+    latest = "what now?"
+    padded = "x" * strategy_knowledge.MAX_USER_QUESTION_CHARACTERS + "\n" + latest
+    context = strategy_knowledge.StrategyContext(user_question=padded)
+    assert context.user_question is not None
+    assert len(context.user_question) <= strategy_knowledge.MAX_USER_QUESTION_CHARACTERS
+    assert context.user_question.endswith(latest), "the latest turn is last and must survive truncation"
+    cleaned = strategy_knowledge.StrategyContext(user_question="sour\x00 pasture\x1b\nhelp\t")
+    assert cleaned.user_question == "sour pasture\nhelp"
+    assert strategy_knowledge.StrategyContext(user_question=" \x07 ").user_question is None
+
+
+def test_a_context_point_is_both_halves_or_neither() -> None:
+    with pytest.raises(ValueError, match="longitude and latitude must be given together"):
+        strategy_knowledge.StrategyContext(longitude=-116.2)
+
+
+def test_the_bridge_wire_shape_maps_onto_the_python_context() -> None:
+    wire = strategy_knowledge.ServerContext.model_validate(
+        {
+            "user_question": USER_QUESTION,
+            "point": {"longitude": -116.2, "latitude": 43.6},
+            "site_facts": {"soil_ph": SERVER_SOIL_PH},
+        }
+    )
+    context = wire.strategy_context()
+    assert (context.longitude, context.latitude) == (-116.2, 43.6)
+    assert context.user_question == USER_QUESTION
+    assert context.site_facts == strategy_knowledge.SiteFacts(soil_ph=SERVER_SOIL_PH)
+
+
+@pytest.mark.usefixtures("configured")
+async def test_a_server_context_replaces_the_model_site_profile_and_region() -> None:
+    seen: list[httpx.Request] = []
+    context = _context(site_facts={"soil_ph": SERVER_SOIL_PH, "burn_severity": "high"})
+    with strategy_knowledge.use_transport(httpx.MockTransport(answering(STRATEGY_SEARCH, seen))):
+        payload, ledger = await call_with_context(
+            agent_tools.search_environmental_strategies,
+            {
+                "query": "fix acidic pasture",
+                "region": "pnw_inland",
+                "site_profile": {"slope_pct": 50, "soil_ph": 9.0},
+            },
+            context,
+        )
+
+    [request] = seen
+    body = json.loads(request.content)
+    assert body["site_profile"] == {
+        "soil_ph": SERVER_SOIL_PH,
+        "burn_severity": "high",
+        "region": "great_basin_high_desert",
+    }
+    assert "region" not in body, "the model's top-level region filter is discarded"
+    assert body["context_query"] == USER_QUESTION
+    assert "longitude" not in request.content.decode(), "the service still never sees a coordinate"
+    assert "-116.13" not in request.content.decode()
+    assert payload["site_profile_source"] == "server"
+    assert payload["site_profile_dropped"] == EXPECTED_DROPPED
+    assert "site_profile_ignored" not in payload
+    assert "site_profile_source 'server'" in payload["note"]
+    assert ledger[0]["result_count"] == 1, "the ledger keeps backing the literature gate"
+
+
+@pytest.mark.usefixtures("configured")
+async def test_a_server_context_over_the_ocean_sends_no_site_profile() -> None:
+    seen: list[httpx.Request] = []
+    with strategy_knowledge.use_transport(httpx.MockTransport(answering(FINDING_SEARCH, seen))):
+        payload, _ = await call_with_context(
+            agent_tools.search_strategy_research_findings,
+            {"query": "mulch"},
+            _context(PACIFIC_OCEAN, user_question=None),
+        )
+    [request] = seen
+    body = json.loads(request.content)
+    assert "site_profile" not in body
+    assert "context_query" not in body, "an empty question is never forwarded"
+    assert payload["site_profile_source"] == "server"
+    assert payload["site_profile_dropped"] == []
+
+
+@pytest.mark.usefixtures("configured")
+async def test_findings_search_forwards_the_verbatim_question() -> None:
+    seen: list[httpx.Request] = []
+    with strategy_knowledge.use_transport(httpx.MockTransport(answering(FINDING_SEARCH, seen))):
+        await call_with_context(
+            agent_tools.search_strategy_research_findings, {"query": "lime rate"}, _context(WESTERN_WA)
+        )
+    [request] = seen
+    body = json.loads(request.content)
+    assert body["context_query"] == USER_QUESTION
+    assert body["query"] == "lime rate", "the model's own query is never rewritten"
+    assert body["site_profile"] == {"region": "pnw_westside"}
+
+
+@pytest.mark.usefixtures("configured")
+async def test_get_never_forwards_the_question_but_still_carries_the_labels() -> None:
+    seen: list[httpx.Request] = []
+    with strategy_knowledge.use_transport(httpx.MockTransport(answering(STRATEGY_RECORDS, seen))):
+        payload, _ = await call_with_context(
+            agent_tools.get_environmental_strategies, {"strategy_ids": ["post-fire-straw-mulching"]}, _context()
+        )
+    [request] = seen
+    assert json.loads(request.content) == {"ids": ["post-fire-straw-mulching"]}
+    assert payload["site_profile_source"] == "server"
+    assert payload["site_profile_dropped"] == []
+
+
+@pytest.mark.parametrize(
+    ("arguments", "source"),
+    [
+        pytest.param({"query": "mulch", "site_profile": {"soil_ph": 6.0}}, "caller_asserted", id="asserted"),
+        pytest.param({"query": "mulch"}, "none", id="no-profile"),
+        pytest.param({"query": "mulch", "site_profile": {}}, "none", id="empty-profile"),
+    ],
+)
+@pytest.mark.usefixtures("configured")
+async def test_without_a_server_context_the_model_profile_is_labelled(arguments: dict[str, Any], source: str) -> None:
+    seen: list[httpx.Request] = []
+    with strategy_knowledge.use_transport(httpx.MockTransport(answering(STRATEGY_SEARCH, seen))):
+        payload, _ = await call(agent_tools.search_environmental_strategies, arguments)
+    [request] = seen
+    assert "context_query" not in json.loads(request.content)
+    assert payload["site_profile_source"] == source
+    assert "site_profile_dropped" not in payload
+
+
+@pytest.mark.usefixtures("configured")
+async def test_a_refusal_under_a_server_context_still_carries_the_labels() -> None:
+    body = {"error": "invalid_arguments", "detail": "context_query: extra"}
+    with strategy_knowledge.use_transport(httpx.MockTransport(answering(body, [], status=400))):
+        payload, ledger = await call_with_context(
+            agent_tools.search_environmental_strategies, {"query": "mulch"}, _context()
+        )
+    assert payload["error"] == strategy_knowledge.REJECTED_ARGUMENTS
+    assert payload["site_profile_source"] == "server"
+    assert ledger[0]["state"] == "refused"
+
+
+@pytest.mark.usefixtures("configured")
+async def test_a_zero_record_answer_under_a_server_context_still_backs_nothing() -> None:
+    empty = {**STRATEGY_SEARCH, "results": []}
+    with strategy_knowledge.use_transport(httpx.MockTransport(answering(empty, []))):
+        payload, ledger = await call_with_context(
+            agent_tools.search_environmental_strategies, {"query": "mulch"}, _context()
+        )
+    assert payload["result_count"] == 0
+    assert ledger[0]["result_count"] == 0
+    assert agent_graph.literature_answered(ledger) is False
+
+
+async def test_the_context_is_unbound_after_the_run() -> None:
+    async with agent_tools.run_context(warehouse_source=FakeAgentWarehouse(), strategy_context=_context()):
+        assert strategy_knowledge.current_strategy_context() == _context()
+    assert strategy_knowledge.current_strategy_context() is None
+
+
+def test_the_model_facing_schemas_never_gain_the_server_context() -> None:
+    """S2: the context stays out of band; a model can neither see nor set it."""
+    schemas = {tool.name: tool.to_dict()["input_schema"] for tool in agent_tools.WAREHOUSE_TOOLS}
+    for name in LITERATURE_TOOLS:
+        assert not {"context_query", "server_context", "point", "site_facts"} & _schema_keys(schemas[name]), name
+
+
+# --- Lone-string list filters (B1) -------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "arguments", "field", "expected"),
+    [
+        ("search_environmental_strategies", {"query": "q", "goals": "soil_health"}, "goals", ["soil_health"]),
+        ("search_environmental_strategies", {"query": "q", "land_use": "pasture"}, "land_use", ["pasture"]),
+        (
+            "search_environmental_strategies",
+            {"query": "q", "fire_phase": "post_fire_recovery"},
+            "fire_phase",
+            ["post_fire_recovery"],
+        ),
+        ("search_environmental_strategies", {"query": "q", "region": "pnw_inland"}, "region", ["pnw_inland"]),
+        ("search_strategy_research_findings", {"query": "q", "goals": "erosion_control"}, "goals", ["erosion_control"]),
+        ("get_environmental_strategies", {"strategy_ids": "post-fire-mulching"}, "ids", ["post-fire-mulching"]),
+    ],
+)
+@pytest.mark.usefixtures("configured")
+async def test_every_list_filter_accepts_a_lone_string(
+    tool_name: str, arguments: dict[str, Any], field: str, expected: list[str]
+) -> None:
+    seen: list[httpx.Request] = []
+    tool = next(tool for tool in agent_tools.WAREHOUSE_TOOLS if tool.name == tool_name)
+    with strategy_knowledge.use_transport(httpx.MockTransport(answering(STRATEGY_SEARCH, seen))):
+        await call(tool, arguments)
+    [request] = seen
+    assert json.loads(request.content)[field] == expected
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    [
+        ("search_environmental_strategies", {"query": "q", "goals": "space_lasers"}),
+        ("search_environmental_strategies", {"query": "q", "land_use": "moon"}),
+        ("search_strategy_research_findings", {"query": "q", "goals": "vibes"}),
+        ("get_environmental_strategies", {"strategy_ids": ""}),
+    ],
+)
+@pytest.mark.usefixtures("configured")
+async def test_a_bad_lone_string_is_still_rejected(tool_name: str, arguments: dict[str, Any]) -> None:
+    seen: list[httpx.Request] = []
+    tool = next(tool for tool in agent_tools.WAREHOUSE_TOOLS if tool.name == tool_name)
+    with (
+        strategy_knowledge.use_transport(httpx.MockTransport(answering(STRATEGY_SEARCH, seen))),
+        pytest.raises(ValueError, match="Invalid arguments"),
+    ):
+        await tool.call(arguments)
+    assert seen == []
+
+
+# --- Observability and concurrency (P3, P5) ----------------------------------------
+
+
+class _RecordingLogger:
+    """Stands in for the module's structlog logger; the app caches loggers, so capture_logs is unreliable."""
+
+    def __init__(self) -> None:
+        self.events: list[dict[str, Any]] = []
+
+    def info(self, event: str, **fields: Any) -> None:
+        self.events.append({"event": event, **fields})
+
+
+@pytest.mark.usefixtures("configured")
+async def test_each_call_sends_a_fresh_request_id_and_logs_one_event(monkeypatch: pytest.MonkeyPatch) -> None:
+    recorder = _RecordingLogger()
+    monkeypatch.setattr(strategy_knowledge, "logger", recorder)
+    seen: list[httpx.Request] = []
+    with strategy_knowledge.use_transport(httpx.MockTransport(answering(FINDING_SEARCH, seen))):
+        await call(agent_tools.search_strategy_research_findings, {"query": "mulch"})
+        await call(agent_tools.search_strategy_research_findings, {"query": "mulch"})
+
+    identifiers = [request.headers["x-request-id"] for request in seen]
+    assert all(REQUEST_ID_PATTERN.fullmatch(identifier) for identifier in identifiers)
+    assert len(set(identifiers)) == len(identifiers)
+    assert all(request.headers["accept-encoding"] == "identity" for request in seen)
+    assert [event["request_id"] for event in recorder.events] == identifiers
+    for event in recorder.events:
+        assert event["event"] == "literature_call"
+        assert event["tool"] == "search_strategy_research_findings"
+        assert event["status"] == "answered"
+        assert event["result_count"] == 1
+        assert event["ms"] >= 0
+
+
+async def test_a_refusal_logs_its_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "strategy_knowledge_url", None)
+    recorder = _RecordingLogger()
+    monkeypatch.setattr(strategy_knowledge, "logger", recorder)
+    await call(agent_tools.search_environmental_strategies, {"query": "mulch"})
+    [event] = recorder.events
+    assert event["status"] == strategy_knowledge.NOT_CONFIGURED
+    assert event["request_id"] is None
+    assert event["result_count"] is None
+
+
+@pytest.mark.usefixtures("configured")
+async def test_the_service_concurrency_cap_is_a_typed_unavailable_refusal() -> None:
+    """strategy-knowledge answers a plain-text 503 above its uvicorn `limit_concurrency`."""
+
+    def over_capacity(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, text="Service Unavailable")
+
+    with strategy_knowledge.use_transport(httpx.MockTransport(over_capacity)):
+        payload, ledger = await call(agent_tools.search_environmental_strategies, {"query": "mulch"})
+    assert payload["error"] == strategy_knowledge.UNAVAILABLE
+    assert payload["refusal_detail"] == "HTTP 503"
+    assert ledger[0]["state"] == "refused"
+
+
+def _peak_tracking_transport() -> tuple[httpx.MockTransport, list[int]]:
+    """A slow transport that records how many requests it held at once, per request."""
+    in_flight = [0]
+    peaks: list[int] = []
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        in_flight[0] += 1
+        peaks.append(in_flight[0])
+        await asyncio.sleep(0.01)
+        in_flight[0] -= 1
+        return httpx.Response(200, json=FINDING_SEARCH)
+
+    return httpx.MockTransport(handler), peaks
+
+
+async def _burst() -> list[strategy_knowledge.StrategyAnswer]:
+    return await asyncio.gather(
+        *(
+            strategy_knowledge.ask("search_strategy_research_findings", "search_findings", {"query": "mulch"})
+            for _ in range(CONCURRENT_CALLS)
+        )
+    )
+
+
+@pytest.mark.usefixtures("configured")
+async def test_concurrent_calls_are_capped() -> None:
+    transport, peaks = _peak_tracking_transport()
+    with strategy_knowledge.use_transport(transport):
+        answers = await _burst()
+    assert max(peaks) == strategy_knowledge.MAX_CONCURRENT_CALLS
+    assert all(answer.ledger_detail["state"] == "answered" for answer in answers)
+
+
+@pytest.mark.usefixtures("configured")
+def test_the_concurrency_cap_is_safe_across_event_loops() -> None:
+    """A Semaphore binds to the loop it first waits on; one shared across loops raises under contention."""
+    transport, peaks = _peak_tracking_transport()
+    with strategy_knowledge.use_transport(transport):
+        for _ in range(2):
+            answers = asyncio.run(_burst())
+            assert all(answer.ledger_detail["state"] == "answered" for answer in answers)
+    assert max(peaks) == strategy_knowledge.MAX_CONCURRENT_CALLS

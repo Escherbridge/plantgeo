@@ -62,6 +62,81 @@ describe("regional environmental tool bridge", () => {
     expect(fetchJson.mock.calls[0][2]).toMatchObject({ timeoutMs: 15_000, signal: controller.signal });
   });
 
+  describe("literature server_context (seam S1)", () => {
+    const serverContext = {
+      user_question: "my pasture is sour\nwhat can I do?",
+      point: { longitude: -116.2, latitude: 43.6 },
+      site_facts: { soil_ph: 5.1, days_since_fire: 120 },
+    };
+    const literatureArgs = { query: "sour pasture", limit: 5 };
+
+    it("sends server_context beside the unchanged arguments for every literature tool", async () => {
+      for (const tool of ["search_environmental_strategies", "get_environmental_strategies", "search_strategy_research_findings"]) {
+        fetchJson.mockReset();
+        fetchJson.mockResolvedValue({ tool, result: { evidence_domain: "literature_reference", result_count: 0 } });
+        await callRegionalEvidenceTool(tool, literatureArgs, undefined, serverContext);
+        expect(JSON.parse(fetchJson.mock.calls[0][1].body as string)).toEqual({
+          name: tool, arguments: literatureArgs, server_context: serverContext,
+        });
+      }
+    });
+
+    it("keeps the point out of the literature arguments themselves", async () => {
+      fetchJson.mockResolvedValue({ tool: "search_environmental_strategies", result: { result_count: 0 } });
+      await callRegionalEvidenceTool("search_environmental_strategies", literatureArgs, undefined, serverContext);
+      const body = JSON.parse(fetchJson.mock.calls[0][1].body as string);
+      expect(body.arguments).not.toHaveProperty("longitude");
+      expect(body.arguments).not.toHaveProperty("site_profile");
+      expect(body.server_context.site_facts).not.toHaveProperty("slope_pct");
+    });
+
+    it("never sends server_context with a measured tool, even when one is passed", async () => {
+      const args = { surface_name: "burn-severity", day: "2024-03-14", longitude: -116.2, latitude: 43.6 };
+      fetchJson.mockResolvedValue({ tool: "surface_evidence_for_selection", result: { features: [] } });
+      await callRegionalEvidenceTool("surface_evidence_for_selection", args, undefined, serverContext);
+      expect(JSON.parse(fetchJson.mock.calls[0][1].body as string)).toEqual({ name: "surface_evidence_for_selection", arguments: args });
+    });
+
+    it("omits server_context from a literature call that has none", async () => {
+      fetchJson.mockResolvedValue({ tool: "search_environmental_strategies", result: { result_count: 0 } });
+      await callRegionalEvidenceTool("search_environmental_strategies", literatureArgs);
+      expect(JSON.parse(fetchJson.mock.calls[0][1].body as string)).not.toHaveProperty("server_context");
+    });
+
+    it("retries once without server_context when a not-yet-redeployed bridge rejects the whole request (deploy-skew fallback)", async () => {
+      fetchJson.mockRejectedValueOnce(new UpstreamHttpError(400, JSON.stringify({
+        tool: "", error: "invalid_tool_request", code: "invalid_tool_request",
+      })));
+      fetchJson.mockResolvedValueOnce({ tool: "search_environmental_strategies", result: { evidence_domain: "literature_reference", result_count: 1 } });
+      const result = JSON.parse(await callRegionalEvidenceTool("search_environmental_strategies", literatureArgs, undefined, serverContext));
+      expect(result).toEqual({ evidence_domain: "literature_reference", result_count: 1 });
+      expect(fetchJson).toHaveBeenCalledTimes(2);
+      expect(JSON.parse(fetchJson.mock.calls[0][1].body as string)).toHaveProperty("server_context");
+      expect(JSON.parse(fetchJson.mock.calls[1][1].body as string)).toEqual({
+        name: "search_environmental_strategies", arguments: literatureArgs,
+      });
+    });
+
+    it("does not retry invalid_tool_request when no server_context was sent, and surfaces it as a normal argument refusal", async () => {
+      fetchJson.mockRejectedValueOnce(new UpstreamHttpError(400, JSON.stringify({
+        tool: "", error: "invalid_tool_request", code: "invalid_tool_request",
+      })));
+      await expect(callRegionalEvidenceTool("search_environmental_strategies", literatureArgs))
+        .rejects.toBeInstanceOf(RegionalEvidenceArgumentError);
+      expect(fetchJson).toHaveBeenCalledTimes(1);
+    });
+
+    it("surfaces the fallback attempt's own failure when the retry without server_context also fails", async () => {
+      fetchJson.mockRejectedValueOnce(new UpstreamHttpError(400, JSON.stringify({
+        tool: "", error: "invalid_tool_request", code: "invalid_tool_request",
+      })));
+      fetchJson.mockRejectedValueOnce(new UpstreamHttpError(503));
+      await expect(callRegionalEvidenceTool("search_environmental_strategies", literatureArgs, undefined, serverContext))
+        .rejects.toBeInstanceOf(UpstreamHttpError);
+      expect(fetchJson).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it("rejects mismatched replies and preserves transport failures as failures", async () => {
     fetchJson.mockResolvedValueOnce({ tool: "wrong_tool", result: {} });
     await expect(callRegionalEvidenceTool("surface_value_near_point", {})).rejects.toBeInstanceOf(UpstreamPayloadError);

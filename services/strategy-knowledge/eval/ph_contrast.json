@@ -1,0 +1,54 @@
+[
+  {
+    "query": "how do I raise the pH of my acidic garden soil",
+    "filters": {},
+    "expected_any_of": [
+      "lime-application-acidic-soils",
+      "agricultural-liming-carbon-removal"
+    ],
+    "k": 5,
+    "forbidden_at_3": [
+      "elemental-sulfur-soil-acidification"
+    ],
+    "kind": "contrast"
+  },
+  {
+    "query": "need to lower soil pH for my blueberries, it's too alkaline",
+    "filters": {},
+    "expected_any_of": [
+      "elemental-sulfur-soil-acidification"
+    ],
+    "k": 5,
+    "forbidden_at_3": [
+      "lime-application-acidic-soils",
+      "agricultural-liming-carbon-removal"
+    ],
+    "kind": "contrast"
+  },
+  {
+    "query": "soil is too acidic, need to sweeten it",
+    "filters": {},
+    "expected_any_of": [
+      "lime-application-acidic-soils",
+      "agricultural-liming-carbon-removal"
+    ],
+    "k": 5,
+    "forbidden_at_3": [
+      "elemental-sulfur-soil-acidification"
+    ],
+    "kind": "contrast"
+  },
+  {
+    "query": "want to acidify the soil for acid-loving plants like blueberries",
+    "filters": {},
+    "expected_any_of": [
+      "elemental-sulfur-soil-acidification"
+    ],
+    "k": 5,
+    "forbidden_at_3": [
+      "lime-application-acidic-soils",
+      "agricultural-liming-carbon-removal"
+    ],
+    "kind": "contrast"
+  }
+]

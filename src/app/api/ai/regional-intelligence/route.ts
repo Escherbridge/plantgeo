@@ -16,6 +16,7 @@ import { remediationReportSchema, reportWarehouseEvidenceIssues } from '@/lib/se
 import { readRegionalAnalysisEvidence } from '@/lib/regional-analysis-evidence';
 import type { RegionalAnalysisEvidence } from '@/lib/regional-intelligence';
 import { ANALYSIS_TIME_SCALES, DEFAULT_ANALYSIS_WINDOW } from '@/lib/regional-analysis-selection';
+import { SAVED_DEFAULT_QUESTION } from '@/lib/server/services/regional-analysis-workflow';
 export { remediationReportSchema } from '@/lib/server/services/remediation-report';
 import {
   REGIONAL_INTELLIGENCE_INACTIVE_MESSAGE,
@@ -24,7 +25,9 @@ import {
 } from '@/lib/server/security/regional-intelligence-access';
 
 const MAX_BODY_BYTES = 16 * 1024;
-const DEFAULT_QUESTION = 'Analyze this location';
+// Single source of truth (wave-2 fix-stage review): `regional-analysis-workflow.ts` filters this
+// exact literal back out of the S1 `user_question` seed, so it must never drift from this one here.
+const DEFAULT_QUESTION = SAVED_DEFAULT_QUESTION;
 
 /** Bounded catalogue headroom; see hooks/AGENTS.md for selection propagation. */
 export const MAX_VIEWED_LAYERS = 64;
@@ -239,7 +242,11 @@ export async function POST(request: NextRequest) {
             contextIsEmpty,
             temporalContext,
             conversation.history,
-            question,
+            // The raw trimmed question, never the DEFAULT_QUESTION fallback below: this value also
+            // seeds the S1 `user_question` server_context (buildLiteratureServerContext), which must
+            // carry only the user's own verbatim words, never server-authored filler. `ai-prompt.ts`
+            // `buildUserMessage` supplies its own default text for the model-facing "Question" section.
+            body.question?.trim() || undefined,
             abortController.signal
           )) {
             if (abortController.signal.aborted) break;

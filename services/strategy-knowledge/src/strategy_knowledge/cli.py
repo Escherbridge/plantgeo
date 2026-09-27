@@ -51,11 +51,17 @@ def emit_json(payload: Any) -> None:
 
 
 def command_sync(settings: Settings, arguments: argparse.Namespace) -> int:
-    """Pull from or push to the bucket; non-zero when a conflict was left undecided or a remote key refused."""
+    """Pull from or push to the bucket; non-zero when a conflict was left undecided or a remote key refused.
+
+    `--corpus-only` (push only) is the explicit acknowledgement that a bare push may leave the bucket's
+    published index serving a corpus version older than what was just uploaded (see `BucketSync.push`).
+    """
     sync = BucketSync(settings, CorpusStore(settings.cache_dir))
-    transfer = sync.pull if arguments.direction == "pull" else sync.push
     policy = conflict_policy(force_local=arguments.force_local, force_remote=arguments.force_remote)
-    report = transfer(with_index=arguments.with_index, on_conflict=policy)
+    if arguments.direction == "pull":
+        report = sync.pull(with_index=arguments.with_index, on_conflict=policy)
+    else:
+        report = sync.push(with_index=arguments.with_index, corpus_only=arguments.corpus_only, on_conflict=policy)
     emit_json({"direction": arguments.direction, **report.as_response()})
     if report.conflicts:
         logger.error(
@@ -228,7 +234,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     sync = commands.add_parser("sync", help="mirror raw/ and corpus/ with the bucket (three-way, never overwrites)")
     sync.add_argument("direction", choices=("pull", "push"))
-    sync.add_argument("--with-index", action="store_true", help="also move the prebuilt index (index/LATEST)")
+    scope = sync.add_mutually_exclusive_group()
+    scope.add_argument(
+        "--with-index",
+        action="store_true",
+        help="also move the prebuilt index; on push, an atomic publish (archive, then corpus, then LATEST last)",
+    )
+    scope.add_argument(
+        "--corpus-only",
+        action="store_true",
+        help="push only: acknowledge that the bucket's corpus may diverge from its published index until "
+        "a matching `--with-index` push follows; the server will refuse to serve meanwhile",
+    )
     side = sync.add_mutually_exclusive_group()
     side.add_argument("--force-local", action="store_true", help="settle keys changed on both sides: local wins")
     side.add_argument("--force-remote", action="store_true", help="settle keys changed on both sides: remote wins")

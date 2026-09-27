@@ -167,15 +167,17 @@ async def run_context(
     session_provider: Callable[[], AbstractAsyncContextManager[AsyncSession]] | None = None,
     warehouse_source: AgentWarehouseSource | None = None,
     allowed_species_id: str | None = None,
+    strategy_context: strategy_knowledge.StrategyContext | None = None,
 ) -> AsyncIterator[list[dict[str, Any]]]:
-    """Bind one run's species lookup session and Parquet source, and yield the tool ledger."""
+    """Bind one run's species session, Parquet source and literature context, and yield the tool ledger."""
     ledger: list[dict[str, Any]] = []
     provider_token = _session_provider.set(session_provider or published_reader_session)
     species_token = _allowed_species_id.set(allowed_species_id)
     ledger_token = _tool_ledger.set(ledger)
     source_token = warehouse.set_source(warehouse_source)
     try:
-        yield ledger
+        with strategy_knowledge.bound_strategy_context(strategy_context):
+            yield ledger
     finally:
         warehouse.reset_source(source_token)
         _tool_ledger.reset(ledger_token)
@@ -1480,6 +1482,10 @@ async def observation_coverage_on_day(
     this lane's history begins" from "past what the source could have published" from "a real hole
     in the middle".
 
+    It reports LANE-WIDE publication coverage for the day -- whether the layer published anything,
+    anywhere -- NOT an observation at or near any point. A covered day does not mean the point was
+    observed; read the point itself with surface_evidence_for_selection.
+
     Args:
         surface_name: The map surface to ask about, exactly as the map names it, e.g.
             "vegetation", "fire-detections", "drought-areas", "climate-field-air-temperature".
@@ -1703,31 +1709,37 @@ async def surface_evidence_for_selection(  # noqa: PLR0913 - public selection co
 # exempts all three from the sufficiency gate. See agent/AGENTS.md, "Strategy knowledge (literature) tools".
 
 
+_SERVER_SITE_PROFILE_NOTE: Final = (
+    "site_profile_source 'server': this site_profile came from the service's own measured reads and the "
+    "map point's region; any site_profile or region you sent was discarded (site_profile_dropped). "
+    "Do not send site facts."
+)
+
+
 async def _literature_answer(
     tool_name: str,
     service_tool: strategy_knowledge.ServiceTool,
     arguments: dict[str, Any],
-    *,
-    site_profile_ignored: Sequence[dict[str, str]] = (),
+    plan: strategy_knowledge.LiteratureCallPlan,
 ) -> str:
     """Call the literature service, record a zero-row literature ledger entry, and render the payload.
 
-    `site_profile_ignored` -- the site_profile keys `sanitize_site_profile` dropped, and why -- rides
-    on the envelope and the note beside whatever the service answered or refused, so the model learns
-    which of its own hints were unusable without the call itself failing over them.
+    The plan's provenance labels ride the envelope beside whatever the service answered or refused:
+    `site_profile_source`, the server context's `site_profile_dropped`, and the advisory path's
+    `site_profile_ignored`. See agent/AGENTS.md, "Server-owned site facts".
     """
     answer = await strategy_knowledge.ask(tool_name, service_tool, arguments)
-    payload = answer.payload
-    if site_profile_ignored:
-        payload = {
-            **payload,
-            "site_profile_ignored": list(site_profile_ignored),
-            "note": (
-                f"{payload['note']} site_profile_ignored names each site_profile key this call could "
-                "not use -- an unknown key or a value outside its range -- and why; every other filter "
-                "and every valid site_profile key were still applied."
-            ),
-        }
+    payload: dict[str, Any] = {**answer.payload, "site_profile_source": plan.site_profile_source}
+    if plan.site_profile_dropped is not None:
+        payload["site_profile_dropped"] = list(plan.site_profile_dropped)
+        payload["note"] = f"{payload['note']} {_SERVER_SITE_PROFILE_NOTE}"
+    if plan.site_profile_ignored:
+        payload["site_profile_ignored"] = list(plan.site_profile_ignored)
+        payload["note"] = (
+            f"{payload['note']} site_profile_ignored names each site_profile key this call could "
+            "not use -- an unknown key or a value outside its range -- and why; every other filter "
+            "and every valid site_profile key were still applied."
+        )
     _record(tool_name, 0, answer.ledger_detail)
     return _payload(payload)
 
@@ -1756,11 +1768,13 @@ async def search_environmental_strategies(  # noqa: PLR0913 - the parameter list
 
     Args:
         query: The land need in plain language, e.g. "reduce irrigation water use on cropland in drought".
-        goals: Optional outcomes to keep; published enum values only.
-        land_use: Optional land uses to keep; 'general' and untagged strategies always pass.
+        goals: Optional outcomes to keep; published enum values only. A single value may be a plain string.
+        land_use: Optional land uses to keep; 'general' and untagged strategies always pass. A single
+            value may be a plain string.
         region: Optional geographic regions to keep; published enum values only, e.g. "pnw_westside"
             or ["pnw_westside", "pnw_inland"]. A single value may be given as a plain string.
-        fire_phase: Optional wildfire phases to keep; only wildfire strategies carry a phase.
+        fire_phase: Optional wildfire phases to keep; only wildfire strategies carry a phase. A single
+            value may be a plain string.
         min_evidence: Optional weakest evidence strength to keep, from ai_synthesis_only (weakest) to
             review_or_meta_analysis (strongest).
         site_profile: Optional MEASURED site facts only, using just these keys: slope_pct, soil_ph,
@@ -1769,7 +1783,7 @@ async def search_environmental_strategies(  # noqa: PLR0913 - the parameter list
             a date range or a surface/layer name. Omit the object, or any key, you did not read.
         limit: Strategies to return, 1-10.
     """
-    sanitized = strategy_knowledge.sanitize_site_profile(site_profile)
+    plan = strategy_knowledge.plan_literature_call(site_profile, region)
     return await _literature_answer(
         "search_environmental_strategies",
         "search_strategies",
@@ -1777,13 +1791,14 @@ async def search_environmental_strategies(  # noqa: PLR0913 - the parameter list
             query=query,
             goals=goals,
             land_use=land_use,
-            region=region,
+            region=plan.region,
             fire_phase=fire_phase,
             min_evidence=min_evidence,
-            site_profile=sanitized.profile,
+            site_profile=plan.site_profile,
             limit=limit,
+            context_query=plan.context_query,
         ),
-        site_profile_ignored=sanitized.ignored,
+        plan,
     )
 
 
@@ -1799,12 +1814,15 @@ async def get_environmental_strategies(strategy_ids: strategy_knowledge.Strategy
     and quote rates exactly as reported.
 
     Args:
-        strategy_ids: One to five strategy_id values copied exactly from a search result.
+        strategy_ids: One to five strategy_id values copied exactly from a search result; a single id
+            may be a plain string.
     """
+    # A server context has no site_profile to apply here, but still owns the labels (and never forwards context_query).
     return await _literature_answer(
         "get_environmental_strategies",
         "get_strategy",
         strategy_knowledge.service_arguments(ids=strategy_ids),
+        strategy_knowledge.plan_literature_call(),
     )
 
 
@@ -1831,7 +1849,7 @@ async def search_strategy_research_findings(  # noqa: PLR0913 - the parameter li
 
     Args:
         query: The effect or question in plain language, e.g. "straw mulch effect on post-fire erosion".
-        goals: Optional outcomes to keep; published enum values only.
+        goals: Optional outcomes to keep; published enum values only. A single value may be a plain string.
         region: Optional geographic regions to keep; published enum values only, e.g. "pnw_westside"
             or ["pnw_westside", "pnw_inland"]. A single value may be given as a plain string.
         strategy_id: Optional strategy_id from a strategy result; keeps only findings linked to it.
@@ -1842,20 +1860,21 @@ async def search_strategy_research_findings(  # noqa: PLR0913 - the parameter li
             a date range or a surface/layer name. Omit the object, or any key, you did not read.
         limit: Findings to return, 1-10.
     """
-    sanitized = strategy_knowledge.sanitize_site_profile(site_profile)
+    plan = strategy_knowledge.plan_literature_call(site_profile, region)
     return await _literature_answer(
         "search_strategy_research_findings",
         "search_findings",
         strategy_knowledge.service_arguments(
             query=query,
             goals=goals,
-            region=region,
+            region=plan.region,
             strategy_id=strategy_id,
             min_evidence=min_evidence,
-            site_profile=sanitized.profile,
+            site_profile=plan.site_profile,
             limit=limit,
+            context_query=plan.context_query,
         ),
-        site_profile_ignored=sanitized.ignored,
+        plan,
     )
 
 

@@ -6,6 +6,7 @@ import {
   UpstreamPayloadError,
 } from "@/lib/server/http/bounded-upstream";
 import { callLandContextTool, isLandContextTool, landContextTools } from "@/lib/server/services/land-context-tools";
+import { isStrategyKnowledgeTool } from "@/lib/regional-intelligence";
 import { APP_MAP_SURFACES, isAppMapSurface, readBoundedAppMapEvidence } from "./regional-map-evidence";
 
 export interface RegionalEvidenceTool {
@@ -36,6 +37,26 @@ const catalogueSchema = z.object({
 });
 
 const resultSchema = z.object({ tool: z.string(), result: z.record(z.string(), z.unknown()) });
+
+/** Measured site values for the literature tools: the S1 `site_facts` keys, every one optional. */
+export interface LiteratureSiteFacts {
+  soil_ph?: number;
+  soil_organic_carbon_pct?: number;
+  sand_pct?: number;
+  clay_pct?: number;
+  electrical_conductivity_ds_m?: number;
+  burn_severity?: "low" | "moderate" | "high";
+  days_since_fire?: number;
+  annual_precip_mm?: number;
+  land_cover?: string;
+}
+
+/** Server-owned literature context (seam S1); out of band from the model's arguments. See services/AGENTS.md §literature-server-context. */
+export interface LiteratureServerContext {
+  user_question?: string;
+  point?: { longitude: number; latitude: number };
+  site_facts?: LiteratureSiteFacts;
+}
 
 /**
  * The bridge rejected this call's *arguments* (HTTP 400) and returned a bounded, value-free
@@ -70,6 +91,27 @@ function argumentErrorDetail(error: UpstreamHttpError): string | null {
    
   const stripped = raw.replace(/[\x00-\x1F\x7F]/g, " ").trim();
   return stripped.length > 0 ? stripped.slice(0, MAX_ARGUMENT_ERROR_DETAIL_CHARACTERS) : null;
+}
+
+/**
+ * The whole-request refusal code the bridge returns when a top-level field is unrecognised
+ * (`AgentToolCallRequest(extra="forbid")`) -- distinct from `invalid_tool_arguments`, which names a
+ * broken argument the model can fix. During the wave-2 deploy window agri may still be running the
+ * pre-`server_context` schema; see services/AGENTS.md §literature-server-context.
+ */
+const INVALID_TOOL_REQUEST_CODE = "invalid_tool_request";
+
+function isInvalidToolRequestRefusal(error: UpstreamHttpError): boolean {
+  if (error.status !== 400 || !error.bodyText) return false;
+  let body: unknown;
+  try {
+    body = JSON.parse(error.bodyText);
+  } catch {
+    return false;
+  }
+  if (typeof body !== "object" || body === null) return false;
+  const record = body as Record<string, unknown>;
+  return record.code === INVALID_TOOL_REQUEST_CODE || record.error === INVALID_TOOL_REQUEST_CODE;
 }
 
 function endpoint(path: string): URL {
@@ -128,6 +170,7 @@ export async function callRegionalEvidenceTool(
   name: string,
   args: Record<string, unknown>,
   signal?: AbortSignal,
+  serverContext?: LiteratureServerContext,
 ): Promise<string> {
   // Land-context tools run in-process against this app's own Postgres-backed
   // reader service (see land-context-tools.ts) and never touch the agri
@@ -138,23 +181,46 @@ export async function callRegionalEvidenceTool(
     return JSON.stringify(await readBoundedAppMapEvidence(args, signal));
   }
 
-  const body = JSON.stringify({ name, arguments: args });
-  if (new TextEncoder().encode(body).byteLength > 32 * 1024) {
-    throw new UpstreamPayloadError("Environmental tool request exceeded the byte limit");
-  }
-  let wire: unknown;
-  try {
-    wire = await fetchBoundedJson(endpoint("call"), {
+  const post = async (context: LiteratureServerContext | undefined): Promise<unknown> => {
+    // `server_context` is honoured only by the three literature tools, so it is never sent with any other.
+    const body = JSON.stringify({
+      name, arguments: args,
+      ...(context && isStrategyKnowledgeTool(name) ? { server_context: context } : {}),
+    });
+    if (new TextEncoder().encode(body).byteLength > 32 * 1024) {
+      throw new UpstreamPayloadError("Environmental tool request exceeded the byte limit");
+    }
+    return fetchBoundedJson(endpoint("call"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body,
     }, { maxBytes: 2 * 1024 * 1024 + 1024, timeoutMs: 15_000, signal });
+  };
+  let wire: unknown;
+  try {
+    wire = await post(serverContext);
   } catch (error) {
-    if (error instanceof UpstreamHttpError) {
-      const detail = argumentErrorDetail(error);
-      if (detail) throw new RegionalEvidenceArgumentError(detail);
+    if (error instanceof UpstreamHttpError && serverContext && isInvalidToolRequestRefusal(error)) {
+      // Deploy-skew fallback (wave-2 fix-stage review): a not-yet-redeployed agri bridge rejects the
+      // WHOLE request over the unrecognised `server_context` field. Retry once without it so the
+      // report degrades to `caller_asserted` grounding instead of losing literature entirely for the
+      // life of the skew, and so this never spends the caller's rejected-call budget (ai-prompt.ts).
+      try {
+        wire = await post(undefined);
+      } catch (fallbackError) {
+        if (fallbackError instanceof UpstreamHttpError) {
+          const detail = argumentErrorDetail(fallbackError);
+          if (detail) throw new RegionalEvidenceArgumentError(detail);
+        }
+        throw fallbackError;
+      }
+    } else {
+      if (error instanceof UpstreamHttpError) {
+        const detail = argumentErrorDetail(error);
+        if (detail) throw new RegionalEvidenceArgumentError(detail);
+      }
+      throw error;
     }
-    throw error;
   }
   const parsed = resultSchema.safeParse(wire);
   if (!parsed.success || parsed.data.tool !== name) {

@@ -12,7 +12,11 @@ from strategy_knowledge.vocabulary import CLAIM_TIER
 
 TOOL_CALLS: Final[dict[str, dict[str, Any]]] = {
     "list_facets": {},
-    "search_strategies": {"query": "straw mulch on burned slopes", "site_profile": {"slope_pct": 40}},
+    "search_strategies": {
+        "query": "straw mulch on burned slopes",
+        "site_profile": {"slope_pct": 40},
+        "context_query": "our hillside got burnt last summer",
+    },
     "get_strategy": {"ids": ["post-fire-straw-mulching"]},
     "get_family": {"family_id": "post-fire-mulching"},
     "compare_strategies": {"ids": ["post-fire-straw-mulching", "grass-cover-cropping"]},
@@ -58,6 +62,21 @@ def test_every_tool_answers_over_an_in_memory_session(knowledge_base: KnowledgeB
     strategies = json.loads(outcome["results"]["search_strategies"].content[0].text)
     assert strategies["results"]
     assert strategies["truncated"] is False
+    assert strategies["context_query_used"] is True
+    assert strategies["query_intent"]["lay_terms"] == ["burnt", "hillside"]
+    findings = json.loads(outcome["results"]["search_findings"].content[0].text)
+    assert findings["context_query_used"] is False
+    assert "query_intent" in findings
+
+
+def test_context_query_is_an_optional_bounded_argument_of_both_ranked_searches(knowledge_base: KnowledgeBase) -> None:
+    tools = {tool.name: tool for tool in _exercise(knowledge_base)["tools"]}
+    for name in ("search_strategies", "search_findings"):
+        schema = tools[name].input_schema
+        assert "context_query" not in schema.get("required", [])
+        rendered = json.dumps(schema["properties"]["context_query"])
+        assert '"maxLength": 2000' in rendered
+    assert "context_query" not in tools["search_passages"].input_schema["properties"]
 
 
 def test_compare_needs_two_distinct_strategies(knowledge_base: KnowledgeBase) -> None:

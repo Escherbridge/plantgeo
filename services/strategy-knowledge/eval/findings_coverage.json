@@ -1,0 +1,56 @@
+[
+  {
+    "query": "did no-till farming actually reduce nutrient runoff, and what happened to phosphorus",
+    "filters": {},
+    "expected_any_of": [
+      "16-agriculture-media-doc-usda-20climate-20change-20research-20jan17-20aug19-final-pdf#F8101"
+    ],
+    "k": 5,
+    "kind": "findings"
+  },
+  {
+    "query": "how much gypsum do I need per acre to displace sodium in a sodic soil",
+    "filters": {},
+    "expected_any_of": [
+      "15-sare-wp-content-uploads-building-soils-for-better-crops-pdf#F21398"
+    ],
+    "k": 5,
+    "kind": "findings"
+  },
+  {
+    "query": "five-year California field trial on how a clover cover crop changed topsoil organic matter",
+    "filters": {},
+    "expected_any_of": [
+      "15-sare-wp-content-uploads-building-soils-for-better-crops-pdf#F9458"
+    ],
+    "k": 5,
+    "kind": "findings"
+  },
+  {
+    "query": "survey evidence that planting green into a standing cover crop helps weed control",
+    "filters": {},
+    "expected_any_of": [
+      "15-sare-wp-content-uploads-building-soils-for-better-crops-pdf#F9624"
+    ],
+    "k": 5,
+    "kind": "findings"
+  },
+  {
+    "query": "what slope and drainage conditions do contour wattles work best on after a fire",
+    "filters": {},
+    "expected_any_of": [
+      "05-extension-ecorestore-research-soil-erosion-after-wildfire-guiding-recovery#F81"
+    ],
+    "k": 5,
+    "kind": "findings"
+  },
+  {
+    "query": "synthesis across many studies: do perennials and cover crops improve rainfall infiltration better than anything else",
+    "filters": {},
+    "expected_any_of": [
+      "15-sare-wp-content-uploads-building-soils-for-better-crops-pdf#F8883"
+    ],
+    "k": 5,
+    "kind": "findings"
+  }
+]

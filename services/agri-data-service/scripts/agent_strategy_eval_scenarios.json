@@ -4,6 +4,10 @@
     "longitude": -116.13,
     "latitude": 43.66,
     "question": "A hillside above my property in the Boise foothills burned two weeks ago, and winter rains are coming soon. How do I stop it from eroding down onto the road below before the rain hits?",
+    "turns": [
+      "A hillside above my property in the Boise foothills burned two weeks ago, and winter rains are coming soon. How do I stop it from eroding down onto the road below before the rain hits?",
+      "What does the research actually say, with numbers?"
+    ],
     "expect_strategy_tool": true,
     "expected_family_ids": [
       "post-fire-mulching",
@@ -12,13 +16,17 @@
       "hydrophobic-soil-treatment"
     ],
     "forbidden_strategy_ids": [],
-    "notes": "Post-fire erosion-control window; any one of the four families is a correct retrieval. Real member ids: post-fire-straw-mulching, contour-log-erosion-barriers, post-fire-grass-reseeding-rocky-mountain, break-hydrophobic-soil-layer (strategy_registry.json)."
+    "notes": "Post-fire erosion-control window; any one of the four families is a correct retrieval. Real member ids: post-fire-straw-mulching, contour-log-erosion-barriers, post-fire-grass-reseeding-rocky-mountain, break-hydrophobic-soil-layer (strategy_registry.json). Turn 2 is CONTRACT-WAVE2.md seam S5's grounding probe: every number in the follow-up must bind to a retrieved record, not just repeat turn 1's retrieval."
   },
   {
     "id": "western-wa-sour-pasture",
     "longitude": -122.95,
     "latitude": 46.66,
     "question": "Our pasture soil in western Washington tests sour and forage yields have been sliding for a couple of seasons. What should we do to fix the soil chemistry?",
+    "turns": [
+      "Our pasture soil in western Washington tests sour and forage yields have been sliding for a couple of seasons. What should we do to fix the soil chemistry?",
+      "How much lime should we apply, and how long until we'd see a difference?"
+    ],
     "expect_strategy_tool": true,
     "expected_family_ids": [
       "soil-chemistry-correction"
@@ -26,13 +34,17 @@
     "forbidden_strategy_ids": [
       "elemental-sulfur-soil-acidification"
     ],
-    "notes": "Sour pasture soil is acidic; the correct move raises pH (lime-application-acidic-soils, agricultural-liming-carbon-removal, both family soil-chemistry-correction). elemental-sulfur-soil-acidification LOWERS pH and would make the problem worse -- it is in the same family and must be forbidden by id, not by family."
+    "notes": "Sour pasture soil is acidic; the correct move raises pH (lime-application-acidic-soils, agricultural-liming-carbon-removal, both family soil-chemistry-correction). elemental-sulfur-soil-acidification LOWERS pH and would make the problem worse -- it is in the same family and must be forbidden by id, not by family. The forbidden id stays forbidden across BOTH turns: a follow-up asking for a rate/timeline must not let sulfur back in."
   },
   {
     "id": "owyhee-cheatgrass",
     "longitude": -116.9,
     "latitude": 42.9,
     "question": "Cheatgrass takes over our Owyhee County rangeland after every fire and keeps crowding out the native perennial grasses. How do we restore perennial cover for good?",
+    "turns": [
+      "Cheatgrass takes over our Owyhee County rangeland after every fire and keeps crowding out the native perennial grasses. How do we restore perennial cover for good?",
+      "How long does it typically take before the perennial grasses actually come back after that kind of treatment?"
+    ],
     "expect_strategy_tool": true,
     "expected_family_ids": [
       "invasive-annual-grass-control",
@@ -41,13 +53,17 @@
       "post-fire-weed-control"
     ],
     "forbidden_strategy_ids": [],
-    "notes": "Real member ids: till-burn-herbicide-reseed-invasive-annual-grass, climate-matched-sagebrush-seed-source-post-fire-restoration, weather-centric-rangeland-revegetation-planning, post-fire-noxious-weed-control (family post-fire-weed-control, families.json)."
+    "notes": "Real member ids: till-burn-herbicide-reseed-invasive-annual-grass, climate-matched-sagebrush-seed-source-post-fire-restoration, weather-centric-rangeland-revegetation-planning, post-fire-noxious-weed-control (family post-fire-weed-control, families.json). Turn 2 is CONTRACT-WAVE2.md seam S5's grounding probe: a real time-to-effect figure must bind to a retrieved record, never invented."
   },
   {
     "id": "palouse-wheat-carbon",
     "longitude": -117.18,
     "latitude": 46.73,
     "question": "Our Palouse wheat farm wants to build soil carbon and cut erosion on these hillsides. What practices should we adopt?",
+    "turns": [
+      "Our Palouse wheat farm wants to build soil carbon and cut erosion on these hillsides. What practices should we adopt?",
+      "Would switching to reduced or no-till actually help here, and what does the research say about tradeoffs?"
+    ],
     "expect_strategy_tool": true,
     "expected_family_ids": [
       "cover-cropping",
@@ -56,13 +72,17 @@
       "crop-rotation-diversification"
     ],
     "forbidden_strategy_ids": [],
-    "notes": "Real member ids: cover-cropping-organic-matter-maintenance, reduced-tillage-no-till, biochar-soil-amendment-cropland, diversified-crop-rotation."
+    "notes": "Real member ids: cover-cropping-organic-matter-maintenance, reduced-tillage-no-till, biochar-soil-amendment-cropland, diversified-crop-rotation. Turn 2 targets STRATEGIES.md's mixed-direction reduced-tillage finding (16-agriculture-media-doc-usda...#F8101: direction 'mixed', reduced N losses but increased soluble P losses, Northern Great Plains review) -- a correct answer keeps the tradeoff, not just the favourable half."
   },
   {
     "id": "treasure-valley-water-cut",
     "longitude": -116.56,
     "latitude": 43.58,
     "question": "Our irrigation allocation in the Treasure Valley was cut this summer. What can we do to keep the crop alive on less water?",
+    "turns": [
+      "Our irrigation allocation in the Treasure Valley was cut this summer. What can we do to keep the crop alive on less water?",
+      "Which of those would give us the biggest water savings without hurting yield too much?"
+    ],
     "expect_strategy_tool": true,
     "expected_family_ids": [
       "irrigation-water-management",
@@ -70,16 +90,55 @@
       "soil-water-conditioning-amendments"
     ],
     "forbidden_strategy_ids": [],
-    "notes": "Real member ids: climate-informed-deficit-irrigation-scheduling-sorghum, organic-mulch-moisture-weed-control, soil-surfactant-application-irrigation-penetration."
+    "notes": "Real member ids: climate-informed-deficit-irrigation-scheduling-sorghum, organic-mulch-moisture-weed-control, soil-surfactant-application-irrigation-penetration. Turn 2 probes whether a comparative claim ('biggest savings') stays bound to what a retrieved record actually reports."
   },
   {
     "id": "control-max-temperature",
     "longitude": -116.2,
     "latitude": 43.6,
     "question": "What was the maximum air temperature here on the selected day?",
+    "turns": [
+      "What was the maximum air temperature here on the selected day?",
+      "And what was the minimum temperature that same day?"
+    ],
     "expect_strategy_tool": false,
     "expected_family_ids": [],
     "forbidden_strategy_ids": [],
-    "notes": "Control: a pure warehouse-measurement question with no restoration decision in it anywhere. Any strategy-tool call here is a false positive -- the model reaching for literature when a warehouse read answers the question."
+    "notes": "Control: a pure warehouse-measurement question with no restoration decision in it anywhere, on EITHER turn. Any strategy-tool call on any turn here is a false positive -- the model reaching for literature when a warehouse read answers the question."
+  },
+  {
+    "id": "palouse-hardpan-compaction",
+    "longitude": -117.4,
+    "latitude": 46.9,
+    "question": "There's a hardpan layer about a foot down in our wheat field and water just sits on top after every rain instead of soaking in. What can we do about it?",
+    "turns": [
+      "There's a hardpan layer about a foot down in our wheat field and water just sits on top after every rain instead of soaking in. What can we do about it?",
+      "Would deep ripping the field fix it faster than that, or is this more of a long-term fix?"
+    ],
+    "expect_strategy_tool": true,
+    "expected_family_ids": [
+      "tillage-reduction"
+    ],
+    "forbidden_strategy_ids": [],
+    "notes": "Lay wording ('hardpan') for a compaction question -- correct family member is controlled-traffic-farming-compaction-reduction (family tillage-reduction, families.json description names compaction explicitly). Turn 2 asks for a timeline comparison a correct answer can only ground in a retrieved record's own time_to_effect."
+  },
+  {
+    "id": "idaho-was-there-a-fire-here",
+    "longitude": -115.5,
+    "latitude": 44.05,
+    "question": "Was there a fire here in the past few years? The vegetation on this slope looks different from the surrounding hillside, and if there was a fire, I want to know what to do to help it recover before next winter.",
+    "turns": [
+      "Was there a fire here in the past few years? The vegetation on this slope looks different from the surrounding hillside, and if there was a fire, I want to know what to do to help it recover before next winter.",
+      "Assuming it was fire damage, what's the single fastest thing we can do before winter really sets in?"
+    ],
+    "expect_strategy_tool": true,
+    "expected_family_ids": [
+      "post-fire-mulching",
+      "post-fire-erosion-barriers",
+      "post-fire-reseeding",
+      "hydrophobic-soil-treatment"
+    ],
+    "forbidden_strategy_ids": [],
+    "notes": "STRATEGIES.md lay-wording checklist item: 'was there a fire here?' combined with a remediation ask. Turn 2 is deliberately phrased to keep the SAME scenario-level expect_strategy_tool/expected_family_ids rather than needing a per-turn override: `ScenarioExpectation`'s flat schema has no per-turn expectation field (a fire-history-only turn 1 with a remediation-only turn 2 would need one), so this scenario stays a single expectation applied to both turns by construction -- a decision, not a silent gap. Reuses the boise-foothills post-fire family set; a different coordinate exercises `derive_region` on a second Idaho point."
   }
 ]
