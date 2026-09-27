@@ -344,8 +344,13 @@ def test_writer_contract_matches_contract_c10() -> None:
     assert {"--max-days", "--run-id", "--retry-attempts", "--retry-base-seconds", "--retry-max-seconds"} <= flags
 
 
+def test_every_declared_verb_has_a_handler() -> None:
+    assert tuple(forward.OPERATION_HANDLERS) == forward.OPERATIONS
+
+
 @pytest.mark.parametrize("operation", forward.OPERATIONS)
-async def test_every_unbuilt_verb_refuses_by_name(operation: str) -> None:
+async def test_a_verb_without_a_handler_refuses_by_name(operation: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(forward, "OPERATION_HANDLERS", {})
     options = forward.parser().parse_args([operation])
 
     with pytest.raises(forward.SoilPropertiesOperationNotBuiltError, match=f"`{operation}` is not built yet"):

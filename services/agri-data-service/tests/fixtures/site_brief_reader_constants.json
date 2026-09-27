@@ -1,0 +1,73 @@
+{
+  "fixture_version": "site-brief-reader-constants/1",
+  "contract": ".omc/soil-data-plane-20260927/CONTRACT.md C5.1 (reader constants) and C2 (flags)",
+  "flags": {
+    "soil_reads_variable": "SOIL_PROPERTIES_READS_ENABLED",
+    "site_brief_variable": "SITE_BRIEF_ENABLED",
+    "rule": "on only for the exact value true after trimming whitespace; case-sensitive",
+    "cases": [
+      ["true", true],
+      [" true\n", true],
+      ["TRUE", false],
+      ["True", false],
+      ["1", false],
+      ["yes", false],
+      ["on", false],
+      ["false", false],
+      ["", false],
+      [null, false]
+    ]
+  },
+  "brief_reads": {
+    "deadline_seconds": 3,
+    "concurrency": 2
+  },
+  "fire": {
+    "detection_radius_m": 10000,
+    "detection_window_days": 30,
+    "burn_severity_cases": [
+      ["2", "low"],
+      ["3", "moderate"],
+      ["4", "high"],
+      [4, "high"],
+      ["High", "high"],
+      [" moderate ", "moderate"],
+      ["1", null],
+      ["5", null],
+      ["6", null],
+      [null, null]
+    ]
+  },
+  "weather": {
+    "radius_m": 50000,
+    "days_back": 1
+  },
+  "soil": {
+    "default_radius_m": 1000,
+    "min_radius_m": 50,
+    "max_radius_m": 2000,
+    "cell_degrees": 0.005,
+    "earth_radius_m": 6371008.8,
+    "envelope": { "west": -125, "south": 42, "east": -111, "north": 49 },
+    "coverage_cosine_floor": 0.01,
+    "coverage_cases": [
+      { "name": "boise", "longitude": -116.2, "latitude": 43.6, "radius_m": 1000, "outside": false },
+      { "name": "just_west_within_radius", "longitude": -125.005, "latitude": 45.0, "radius_m": 1000, "outside": false },
+      { "name": "west_beyond_radius_but_within_the_old_bbox_slack", "longitude": -125.016, "latitude": 45.0, "radius_m": 1000, "outside": true },
+      { "name": "north_east_corner_within_radius", "longitude": -110.99, "latitude": 49.005, "radius_m": 1000, "outside": false },
+      { "name": "south_beyond_radius", "longitude": -116.2, "latitude": 41.99, "radius_m": 1000, "outside": true },
+      { "name": "off_the_globe", "longitude": 0.0, "latitude": 95.0, "radius_m": 1000, "outside": true },
+      { "name": "small_radius_inside", "longitude": -116.2, "latitude": 43.6, "radius_m": 50, "outside": false }
+    ]
+  },
+  "web_only": {
+    "brief_cache_ttl_seconds": 2700,
+    "brief_cache_cacheable_unavailable_reasons": [
+      "no_cell_within_radius",
+      "no_observation_within_radius",
+      "not_bound_in_region",
+      "outside_release_coverage",
+      "reads_disabled"
+    ]
+  }
+}

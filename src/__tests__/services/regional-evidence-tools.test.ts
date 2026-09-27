@@ -14,6 +14,7 @@ import {
   callRegionalEvidenceTool,
   loadRegionalEvidenceTools,
   RegionalEvidenceArgumentError,
+  SOIL_PROPERTIES_TOOL_NAME,
 } from "@/lib/server/services/regional-evidence-tools";
 import { APP_MAP_SURFACES } from '@/lib/server/services/regional-map-evidence';
 
@@ -49,6 +50,25 @@ describe("regional environmental tool bridge", () => {
     expect(String(fetchJson.mock.calls[0][0])).toBe("http://agri.internal:8000/api/v1/agent-tools/");
   });
 
+  it("declares the SoilGrids point tool with its model-estimate label rule, exactly once", async () => {
+    fetchJson.mockResolvedValue({
+      tools: [{ type: "function", function: {
+        name: SOIL_PROPERTIES_TOOL_NAME, description: "SoilGrids v2.0 properties near a point.", parameters: { type: "object" },
+      } }],
+      surfaces: [], feature_surfaces: [], value_surfaces: [],
+    });
+    const first = await loadRegionalEvidenceTools();
+    const described = first?.tools.find((tool) => tool.name === "soil_properties_at_point")?.description ?? "";
+    expect(described).toContain("SoilGrids v2.0 250 m model estimate");
+    expect(described).toContain("never call it a measurement");
+    fetchJson.mockResolvedValue({
+      tools: [{ type: "function", function: { name: SOIL_PROPERTIES_TOOL_NAME, description: described, parameters: { type: "object" } } }],
+      surfaces: [], feature_surfaces: [], value_surfaces: [],
+    });
+    const second = await loadRegionalEvidenceTools();
+    expect(second?.tools[0].description).toBe(described);
+  });
+
   it("preserves the selected calendar day, typed refusal and caller cancellation", async () => {
     const controller = new AbortController();
     const args = { surface_name: "soil-field-moisture", day: "2024-03-14", longitude: -116.2, latitude: 43.6 };
@@ -79,6 +99,27 @@ describe("regional environmental tool bridge", () => {
           name: tool, arguments: literatureArgs, server_context: serverContext,
         });
       }
+    });
+
+    it("carries site_facts_provenance and site_brief_query out of band (CONTRACT C3)", async () => {
+      const briefContext = {
+        ...serverContext,
+        site_facts_provenance: {
+          soil_ph: {
+            basis: "model_estimate" as const, source: "SoilGrids v2.0", release_id: "soilgrids-v2.0/2020-06-02",
+            depth: "0-30 cm (thickness-weighted)", resolution_m: 250, distance_m: 140,
+            label: "SoilGrids v2.0 250 m model estimate, 0-30 cm (thickness-weighted), cell centre 140 m away",
+          },
+          days_since_fire: { basis: "measured" as const, source: "fire-perimeters", label: "Mapped fire perimeter, burned 2025-08-11" },
+        },
+        site_brief_query: "moderately acid loam topsoil; high organic carbon",
+      };
+      fetchJson.mockResolvedValue({ tool: "search_strategy_research_findings", result: { result_count: 0 } });
+      await callRegionalEvidenceTool("search_strategy_research_findings", literatureArgs, undefined, briefContext);
+      const body = JSON.parse(fetchJson.mock.calls[0][1].body as string);
+      expect(body.server_context).toEqual(briefContext);
+      expect(body.server_context.user_question).toBe(serverContext.user_question);
+      expect(body.arguments).not.toHaveProperty("site_brief_query");
     });
 
     it("keeps the point out of the literature arguments themselves", async () => {

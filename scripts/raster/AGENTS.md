@@ -3,14 +3,29 @@
 Turns upstream raster products into archives PlantGeo serves itself. Code here carries one-line
 doc-comments; the reasoning, the measured costs and the traps live in this file.
 
-Today this directory publishes one product: **ISRIC SoilGrids v2.0 topsoil (0–5 cm), six
-properties, clipped to the PNW.**
+Today's live catalog carries one product: **ISRIC SoilGrids v2.0 topsoil (0–5 cm), six
+properties, clipped to the PNW.** The scripts themselves are not limited to that: `--depths`
+(default all three: 0-5, 5-15, 15-30 cm, or `all` to spell that out) and `--properties` (default
+all ten: phh2o, soc, nitrogen, bdod, cec, ocd, clay, sand, silt, cfvo) build any subset of the 30
+property-depths, so a release expansion is a rerun, not a rewrite. See
+`.omc/soil-data-plane-20260927/DESIGN.md` §3.
+
+`build-soil-cogs.py --list` prints the planned property-depths and exits -- no network, no files
+written -- so a release-expansion run can be sanity-checked before it downloads anything.
+`--only-new` skips the six property-depths already live at 0-5cm (phh2o, soc, nitrogen, bdod, cec,
+ocd), so `--depths all --only-new` builds exactly the 24 new WS-B products and never re-touches
+the six that are already published. `--capture-dir <dir>` reads a WS-A `soil_properties capture`
+capture manifest (CONTRACT C8) instead of downloading from ISRIC: the manifest's own pinned
+Last-Modified/ETag per file is cross-checked against its `.receipt.json` sidecar, and the file's
+sha256 is re-verified, before anything is read, so a drifted or corrupt capture refuses rather
+than silently building from the wrong bytes. Omitting `--capture-dir` keeps the original
+`/vsicurl` download path exactly as it was.
 
 ## Why bulk COGs and not the REST API
 
 The app already reads SoilGrids per point through `src/lib/server/services/soilgrids.ts`, and
 `scripts/warm-soilgrids.mjs` has filled `public.soil_grid_cache` with the whole
-`sentinel2-ndvi-0p25deg` lattice — 1,573 cells, 1,442 of them measured.
+`sentinel2-ndvi-0p25deg` lattice — 1,573 cells, 1,442 of them with a SoilGrids value.
 
 That cache cannot become a raster. Its lattice step is 0.25° (~28 km) against SoilGrids' native
 250 m, and ISRIC's REST endpoint refuses sustained traffic faster than roughly one request per
@@ -18,19 +33,23 @@ That cache cannot become a raster. Its lattice step is 0.25° (~28 km) against S
 cache to native resolution over the PNW is ~15 M points, which at that pacing is not a schedule.
 
 So the granular data comes from the published VRTs and the point cache is repurposed as the
-**validation set** — 1,437 readings that came down a different pipe, used by
-`verify-soil-cogs.py` to prove the clip describes the same ground the point query does.
+**validation set** — 1,437 readings that came down a different pipe, used to prove the clip
+describes the same ground the point query does (verification now lives in the
+`soil_properties verify` verb, `.omc/soil-data-plane-20260927/DESIGN.md` §2.8, not a script here;
+`verify-soil-cogs.py` was deleted in `fd602901`).
 
-## The three scripts
+## The two scripts
 
 | script | does |
 | --- | --- |
 | `build-soil-cogs.py` | windowed read of the ISRIC VRTs over `/vsicurl`, reproject to EPSG:4326, write COGs + `manifest.json` |
-| `verify-soil-cogs.py` | sample the COGs at every cached REST coordinate; agreement, alignment and a permutation null |
-| `publish-soil-rasters.py` | derive the colour ramp, upload to R2, register a row in `geo.raster_release` |
+| `publish-soil-rasters.py` | derive the colour ramp, upload to R2, register a row in `geo.raster_release`; `build-soil-tiles.py` then cuts PMTiles from the published COGs |
 
-Run order is build → verify → publish. Publish derives the ramp, uploads, then registers, in
+Run order is build → publish → tiles. Publish derives the ramp, uploads, then registers, in
 that order, so a failed upload leaves no catalog row and a row always describes bytes that exist.
+`--dry-run --manifest-out <path>` on publish derives ramps and writes them locally without
+touching R2 or Postgres; `build-soil-tiles.py --releases-file <path>` reads that file back, so
+tiles can be cut for a release that has not been registered in the catalog yet.
 
 Dependencies are not vendored; every script is run through `uv` with the packages named inline,
 e.g. `uv run --with rasterio --with boto3 --with psycopg2-binary --no-project python …`. There is
@@ -39,9 +58,14 @@ no GDAL, `pmtiles`, `tippecanoe` or `aws` binary on the build machine and none i
 ## Measured, 2026-08-10
 
 - Whole build: **4 m 53 s** for six properties, 37–58 s each, over a residential connection.
-- Clip is 4,943 × 3,027 px per property; each is **78.5 %** measured (the remainder is Pacific).
+- Clip is 4,943 × 3,027 px per property in the **source CRS** — the pre-warp window
+  `read_bbox_window` returns before `warp_to_wgs84` reprojects it, not the final COG's own
+  width/height (that varies per depth/property with the reprojected pixel grid). Each pre-warp
+  window is **78.5 %** valid pixels (the remainder is Pacific). The build log says "valid", never
+  "measured": a SoilGrids pixel is a model estimate.
 - Archive sizes: 4.3 MB (phh2o) to 16.0 MB (soc); **~64 MB** for the set.
-- Verification: agreement 97.6–99.9 %, r = 0.994–0.997, permutation null |r| ≤ 0.054.
+- Verification: agreement 97.6–99.9 %, r = 0.994–0.997, permutation null |r| ≤ 0.054 (historical,
+  from the deleted `verify-soil-cogs.py`; the live gates are DESIGN.md §2.8 G-V1..G-V5).
 
 ## §proj-collision — a global `PROJ_LIB` breaks every CRS lookup
 
@@ -70,20 +94,25 @@ Two consequences worth knowing:
 - This is exactly the failure a tolerance-based check cannot catch, which is why
   `verify-soil-cogs.py` carries a permutation null instead of only a tolerance.
 
-## §verification — why three statistics and not one
+## §verification — moved to the `soil_properties` pipeline
 
-A tolerance alone cannot distinguish "correct" from "smooth". The verifier reports:
+Verification against the REST point cache (agreement, a permutation null, a locality check) used
+to live in `verify-soil-cogs.py`; that script is deleted (`fd602901`). The same three-statistic
+reasoning now runs as the `verify` verb's G-V1/G-V3 gates in
+`pipeline/direct/soil_properties/` — see `.omc/soil-data-plane-20260927/DESIGN.md` §2.8 for the
+gate table (G-V1..G-V5) and why a tolerance alone cannot distinguish "correct" from "smooth". That
+verb also checks the COGs built here directly (`--cogs <dir>`: value at pixel centre vs the
+capture, tolerance for bilinear smoothing).
 
-- **agreement** — share of points within `max(absolute, relative)` of the REST reading. The
-  relative term matters: `soc` and `nitrogen` are log-normal (5.7–462 g/kg), and a fixed
-  absolute band rejects the raster for being correctly different between a bog and the ridge
-  250 m away. A reprojected pixel is an *area average*; REST returns a *point*.
-- **r_null** — each sampled pixel paired with someone else's reading. Must sit at zero. A
-  wrong-CRS clip produces plausible values and would pass a loose tolerance; it cannot pass this.
-- **r_shifted** — the same sample taken a quarter-degree away. It stays *high* (0.73–0.83)
-  because soil is autocorrelated at 28 km, so it is a locality diagnostic, not a gate: what it
-  shows is that the true-coordinate correlation is measurably better, i.e. the raster resolves
-  local structure rather than a regional trend.
+## §watermark — a per-file date split is not a refusal
+
+`build-soil-cogs.py::probe_source_metadata` HEADs every VRT it touches (built or skipped) and
+records `sourceLastModified` / `sourceEtag` in `manifest.json`, per property-depth. Three `ocd`
+VRTs are dated 2020-05-26 against 2020-06-02 for the other 27; `release_watermark` takes the MAX
+Last-Modified across all of them rather than refusing on the split — the release's watermark is
+one instant, not a promise that every file shares it. This mirrors the `soil-properties` Parquet
+lane's own drift rule (DESIGN.md §2.1): a file's date/ETag drifting from what was captured is what
+matters, not files disagreeing with each other on day one.
 
 ## §catalog — what a release row means
 

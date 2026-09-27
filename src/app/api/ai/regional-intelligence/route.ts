@@ -176,6 +176,13 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // The base run builds the site brief: the first turn of a conversation (no conversationId yet),
+  // or any turn where the caller typed no question. A follow-up does NOT have the brief in its
+  // history (conversation-history.ts replays only the saved question and report), so it is served
+  // the cached brief with no read, or else only the one soil read; it never repeats the six other
+  // point reads (regional-context.ts::assembleRegionalContext, soil/AGENTS.md §site-brief).
+  const isBaseRun = !body.conversationId || !body.question?.trim();
+
   let capacityHandedToStream = false;
   try {
     let context: Awaited<ReturnType<typeof assembleRegionalContext>>;
@@ -183,7 +190,7 @@ export async function POST(request: NextRequest) {
       context = await assembleRegionalContext(lat, lon, body.viewedLayers ?? [], body.analysisSelection ?? {
         ...DEFAULT_ANALYSIS_WINDOW, zoom: 13,
         layerDays: Object.fromEntries((body.viewedLayers ?? []).map(({ layer, date }) => [layer, date])),
-      });
+      }, isBaseRun);
     } catch (error) {
       console.error('[AI] context assembly failed', error);
       return jsonResponse(

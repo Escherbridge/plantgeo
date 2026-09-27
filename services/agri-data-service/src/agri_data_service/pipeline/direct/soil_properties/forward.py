@@ -1,7 +1,6 @@
 """Capture, prepare, publish, verify, maintain or retract the one ISRIC SoilGrids v2.0 soil-properties release.
 
-Registration shell (WS-A A0): the parser and contract are final; every verb refuses until A1 builds it.
-See `pipeline/direct/soil_properties/AGENTS.md`.
+One positional verb per run; `retract` is the rollback. See `pipeline/direct/soil_properties/AGENTS.md`.
 """
 
 from __future__ import annotations
@@ -9,7 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from agri_data_service.pipeline.direct import (
     IDEMPOTENT_NOOP,
@@ -18,7 +17,17 @@ from agri_data_service.pipeline.direct import (
     NOT_BBOX_BOUNDED,
     DirectWriterContract,
 )
+from agri_data_service.pipeline.direct.soil_properties.capture import run_capture
+from agri_data_service.pipeline.direct.soil_properties.maintain import run_maintain
+from agri_data_service.pipeline.direct.soil_properties.prepare import run_prepare
 from agri_data_service.pipeline.direct.soil_properties.products import RELEASE_ID
+from agri_data_service.pipeline.direct.soil_properties.publish import publish_release
+from agri_data_service.pipeline.direct.soil_properties.retract import run_retract
+from agri_data_service.pipeline.direct.soil_properties.verify import (
+    DEFAULT_REST_POINTS,
+    DEFAULT_SAMPLE_CELLS,
+    run_verify,
+)
 from agri_data_service.pipeline.errors import PipelineOperationError
 from agri_data_service.warehouse.schemas.soil_properties import SOIL_PROPERTIES_STREAM
 
@@ -74,7 +83,7 @@ WRITER_CONTRACT: DirectWriterContract = DirectWriterContract(
 
 
 class SoilPropertiesOperationNotBuiltError(PipelineOperationError):
-    """Raised when an operator verb is declared by the shell but not yet implemented."""
+    """Raised when an operator verb has no handler (kept so a verb added to OPERATIONS alone refuses by name)."""
 
 
 class SoilPropertiesConfigError(PipelineOperationError):
@@ -91,6 +100,10 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--reference-archive", default=None)
     result.add_argument("--cogs", type=Path, default=None)
     result.add_argument("--confirm", default=None)
+    result.add_argument("--force", action="store_true", help="publish: rewrite a ladder already marked complete")
+    result.add_argument("--reference-units", choices=("physical", "mapped"), default="physical")
+    result.add_argument("--rest-points", type=int, default=DEFAULT_REST_POINTS)
+    result.add_argument("--sample-cells", type=int, default=DEFAULT_SAMPLE_CELLS)
     result.add_argument("--time-budget-seconds", type=int, default=DEFAULT_TIME_BUDGET_SECONDS)
     result.add_argument("--retry-attempts", type=int, default=DEFAULT_RETRY_ATTEMPTS)
     result.add_argument("--retry-base-seconds", type=float, default=DEFAULT_RETRY_BASE_SECONDS)
@@ -120,17 +133,24 @@ def _validate(options: argparse.Namespace) -> None:
         )
 
 
-#: Verb -> implementation. Empty in the registration shell; A1 fills it verb by verb.
-OPERATION_HANDLERS: Final[Mapping[str, Callable[[argparse.Namespace], Awaitable[dict[str, object]]]]] = {}
+#: Verb -> implementation, in pipeline order.
+OPERATION_HANDLERS: Final[Mapping[str, Callable[[argparse.Namespace], Awaitable[dict[str, Any]]]]] = {
+    "capture": run_capture,
+    "prepare": run_prepare,
+    "publish": publish_release,
+    "verify": run_verify,
+    "maintain": run_maintain,
+    "retract": run_retract,
+}
 
 
-async def run(options: argparse.Namespace) -> dict[str, object]:
+async def run(options: argparse.Namespace) -> dict[str, Any]:
     """Dispatch one operator verb; a verb with no handler refuses by name."""
     _validate(options)
     handler = OPERATION_HANDLERS.get(options.operation)
     if handler is None:
         raise SoilPropertiesOperationNotBuiltError(
-            f"soil-properties `{options.operation}` is not built yet (registration shell only); "
+            f"soil-properties `{options.operation}` is not built yet (no handler registered); "
             "see pipeline/direct/soil_properties/AGENTS.md",
             code="operation_not_built",
             lane=SOIL_PROPERTIES_STREAM,

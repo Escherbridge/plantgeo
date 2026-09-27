@@ -436,3 +436,78 @@ async def test_concurrent_literature_calls_keep_their_own_strategy_context(monke
         expected = "call A" if which == "a" else "call B"
         assert before == expected, "leaked the other concurrent call's context before the await point"
         assert after == expected, "leaked the other concurrent call's context after an interleaved await"
+
+
+# --- Soil data plane: the widened server_context and the soil tool over the bridge ---------------
+
+BRIEF_SERVER_CONTEXT: dict[str, Any] = {
+    "point": {"longitude": -116.13, "latitude": 43.66},
+    "site_facts": {"soil_ph": 5.8, "land_cover": "Grassland/Pasture"},
+    "site_facts_provenance": {
+        "soil_ph": {
+            "basis": "model_estimate",
+            "source": "SoilGrids v2.0",
+            "release_id": "soilgrids-v2.0/2020-06-02",
+            "depth": "0-30 cm (thickness-weighted)",
+            "resolution_m": 250,
+            "distance_m": 140,
+            "label": "SoilGrids v2.0 250 m model estimate, 0-30 cm (thickness-weighted), cell centre 140 m away",
+        },
+        "land_cover": {
+            "basis": "classified_remote_sensing",
+            "source": "USDA CDL",
+            "label": "USDA CDL 2025 (released 2026-01-30), dominant class of a 3 km cell (61%)",
+        },
+    },
+    "site_brief_query": "moderately acid loam topsoil; grassland/pasture",
+}
+
+
+async def test_bridge_forwards_provenance_and_the_brief_seed_to_a_literature_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "strategy_knowledge_url", PRIVATE_ORIGIN)
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(OK, json=FINDINGS_ANSWER)
+
+    with strategy_knowledge.use_transport(httpx.MockTransport(handler)):
+        response = await route.call_agent_tool(
+            request_with_context("search_strategy_research_findings", {"query": "lime"}, BRIEF_SERVER_CONTEXT)
+        )
+
+    assert response.status == OK
+    [request] = seen
+    body = json.loads(request.content)
+    assert body["context_query"] == BRIEF_SERVER_CONTEXT["site_brief_query"]
+    assert body["site_profile"]["land_cover"] == "Grassland/Pasture"
+    result = json.loads(response.body)["result"]
+    assert result["context_query_source"] == "site_brief"
+    assert result["site_profile_provenance"]["soil_ph"]["basis"] == "model_estimate"
+
+
+async def test_bridge_refuses_a_provenance_basis_outside_the_contract_without_echoing_it() -> None:
+    bad = {
+        **BRIEF_SERVER_CONTEXT,
+        "site_facts_provenance": {"soil_ph": {"basis": "lab_measured_secret", "source": "x", "label": "y"}},
+    }
+    request = request_with_context("search_strategy_research_findings", {"query": "x"}, bad)
+    response = await route.call_agent_tool(request)
+    assert response.status == BAD_REQUEST
+    body = json.loads(response.body)
+    assert body["code"] == "invalid_tool_arguments"
+    assert "lab_measured_secret" not in response.body.decode()
+
+
+async def test_the_soil_tool_is_bridge_callable_and_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SOIL_PROPERTIES_READS_ENABLED", raising=False)
+    source = FakeAgentWarehouse()
+    monkeypatch.setattr(route, "run_context", lambda: tools.run_context(warehouse_source=source))
+    response = await route.call_agent_tool(request_for("soil_properties_at_point", dict(BOISE)))
+    assert response.status == OK
+    result = json.loads(response.body)["result"]
+    assert result["state"] == "unavailable"
+    assert result["reason"] == "reads_disabled"
+    assert source.executed == []

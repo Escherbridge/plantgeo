@@ -5,10 +5,9 @@ C10, C11).
 
 ## Status
 
-**Registration shell (WS-A A0).** The schema, derivation, release identity, pins, watermark,
-parser and writer contract are final. Every operator verb raises
-`SoilPropertiesOperationNotBuiltError` until A1 fills `forward.py::OPERATION_HANDLERS`. The lane
-is registered but never written, the same state `soil-survey` was in before its capture.
+**Built (WS-A A1), not yet run.** All six verbs are wired in `forward.py::OPERATION_HANDLERS`. The
+lane is registered and still never written until the operator's P1 (capture, prepare), P3
+(publish) and P4 (verify). Reads stay behind `SOIL_PROPERTIES_READS_ENABLED` in both services.
 
 ## Source, rights and what the numbers are
 
@@ -93,19 +92,105 @@ is registered but never written, the same state `soil-survey` was in before its 
 - **Coarse label**: "mean of SoilGrids v2.0 estimates over a <pitch> deg cell". No consumer in
   this build reads the coarse rungs; they exist because publication requires all four.
 
-## Verbs (built by A1)
+## Verbs
 
-- `capture`: HEAD the thirty VRTs and refuse on drift. Then read each Homolosine window (region
-  plus a 2 km margin) and write one deflate GeoTIFF per file plus `capture-manifest.json`
-  (CONTRACT C8). It is resumable per file.
-- `prepare`: nearest warp onto the centre grid, apply the row rule, add origins and constants, and
-  sort.
-- `publish`: write base parts at `--rows-per-part`, derive the rungs, and write completion markers
-  last. It runs under the lane-day advisory lock, then archives the capture immutably.
-- `verify`: gates G-V1 to G-V5 (DESIGN section 2.8).
-- `maintain`: re-probe the pins and report `StaticLaneState` plus any drift.
-- `retract`: the rollback. It is a dry run by default; `--confirm soilgrids-v2.0/2020-06-02` acts.
-  It clears the markers first, then z0, z5, z9 and z13.
+`python -m agri_data_service.pipeline.direct.soil_properties <verb> [flags]`; each prints one JSON
+report. Only `publish` reports an `outcome` word (the writer-contract vocabulary); the other verbs
+report `status`, so no undeclared outcome word is ever emitted.
+
+### Capture (`capture.py`)
+- HEAD all thirty VRTs first (`source.py::probe_pins`, retried with the `--retry-*` backoff) and
+  refuse on ANY drift (`SoilPropertiesDriftError`, code `source_drift`). Then read each native
+  Homolosine window over `/vsicurl` and write `<p>_<depth>_mean_homolosine.tif` (deflate,
+  predictor 2, 512 tiles) plus a per-file `.receipt.json`.
+- **Window**: the pinned envelope plus a 2 km margin, sized at the northern edge (the widest degree
+  margin), transformed with 64 densify points, rounded OUTWARD to whole native pixels and clamped.
+  All thirty VRTs share one grid, so the thirty windows must be identical or capture refuses.
+- **Resumable per file**: a GeoTIFF is reused only when its receipt's ETag and Last-Modified equal
+  the pin AND its bytes still hash to the receipt. `--time-budget-seconds` stops before starting a
+  new file and reports `status: incomplete`; rerun the same command to resume.
+- **Manifest** (`capture-manifest.json`, C8): closed only when all thirty files exist;
+  `manifest_sha256` is sha256 over its own canonical JSON (C5.5 rules) without that field.
+  `read_capture_manifest` re-proves the digest, the pins and every file's bytes before any later
+  verb trusts the capture.
+
+### Prepare (`prepare.py`)
+- **The documented source is the capture, not the local 4326 COGs.** `data/raster/soil/*_4326.tif`
+  were warped with `Resampling.bilinear` (`scripts/raster/build-soil-cogs.py::warp_to_wgs84`), so
+  their values are interpolations ISRIC never published; sampling them would break the "each stored
+  number is an ISRIC value" rule, the exact-match gates G-V1/G-V2 and the integer contract. They
+  are used only by `verify --cogs`.
+- Each captured window is reprojected with `Resampling.nearest` onto the 2,800 x 1,400 lattice,
+  whose pixel (column, row) IS the cell keyed by its SW origin; nearest samples each destination
+  pixel at its centre, so a cell takes the native pixel containing its centre. `tolerance=0`
+  forces GDAL's exact transformer: the default approximate one (0.125 px) can pick the neighbouring
+  native pixel near an edge.
+- **Row rule**: a row exists only where all thirty samples are valid (a nodata or off-window cell
+  holds `MISSING_VALUE`, outside int16). Origins are exact thousandths:
+  `(-125000 + 5c) / 1000`, `(49000 - 5(r + 1)) / 1000`. Sort: latitude, then longitude.
+- Writes `prepared/soil-properties-z13.parquet` and `prepared/prepare-report.json` (rows, valid
+  fraction, per-column mapped min/max, wall time, and the Boise/Pullman/Corvallis 1,000 m probe
+  that DESIGN 2.6 asks P1 to re-check). No database or object-store access. Peak RSS is not
+  measured in-process; the operator records it (DESIGN P1).
+
+### Publish (`publish.py`)
+- Requires `--capture-dir` and `--rows-per-part` (no default: P1b's measurement picks it; bounds
+  10,000..4,000,000). Re-proves the manifest, then refuses a prepared table whose columns, manifest
+  sha, release day or row count do not match, or whose values are not integral.
+- **Idempotent**: with all four markers present, the base marker counting exactly these rows and
+  parts, AND the published base built from this capture manifest, it reports `idempotent_noop` unless
+  `--force`. The manifest check (review m2) reads only the first base part's `source_manifest_sha256`
+  (`published_manifest_sha256`), and only once the counts already match: a different capture with
+  equal counts is a republish, never a no-op. The markers carry no manifest hash, so the rows are
+  the only place to read it.
+- **Archive first**: every captured window, then `capture-manifest.json` LAST, to
+  `layer=soil-properties/kind=observed/availability/source-captures/<manifest-sha>/` via
+  `put_immutable` (exact replays are accepted, different bytes refuse).
+- **Write**: `fill_one_lane_day` with the registry lane's adapter replaced by
+  `SoilPropertiesAdapter` (contiguous `--rows-per-part` slices of the sorted table, so each part's
+  latitude statistics prune a point read) and `derive_tiers=derive_and_write_day_tiers(base_table=
+  <the same table>)`, so every coarse rung is the exact mean of its base cells without a read-back.
+  The lane-day lock is `postgres_lane_day_lock` (Postgres is control plane only); the static-lane
+  path brackets the export with two reads of the pure watermark. Completion markers land last.
+- **No availability-index extension** (`extend_availability=False`), as `land_context` publishes:
+  a `static_lookup` lane is served from its physical listing and stays on the census, so there is
+  no index to extend and no publication barrier to take. `publish` then proves all four markers and
+  the base row count, and writes `publish-report.json`.
+
+### Verify (`verify.py`, P4)
+`verify --capture-dir <dir> --reference-archive <local path | object key>` reads the PUBLISHED z13
+and the capture, writes `verification-soilgrids-v2.0.json` beside the manifest and archives a
+timestamped copy under the capture's archive prefix. Gates (DESIGN 2.8):
+
+| gate | check | pass |
+|---|---|---|
+| G-V1 (primary) | `soil_grid_cache` 0-5 cm REST readings vs the captured native pixel containing each point | >= 99% exact per property; every mismatch in the 3 x 3 native neighbourhood |
+| G-V2 | lane vs captured pixel at 10,000 sampled centres (seed 20200602), all thirty columns | 100% |
+| G-V3 | Pearson r, lane cell containing each cached point vs the cached value | >= 0.95 per property |
+| G-V4 | ISRIC REST `properties/query` at 30 latitude-stratified centres, one call per point, 12 s apart | >= 98% exact per column, mismatches in the 3 x 3; an outage, an unexpected answer shape or all-null means is `deferred`, never `fail`; a column REST never answered defers the gate unless another column failed; `--rest-points 0` is `not_run` |
+| G-V5 | sand + silt + clay in 950-1050 g/kg for >= 99% of rows per depth; physical plausibility | as stated |
+
+- `status: pass` needs G-V1, G-V2, G-V3, G-V5 pass and G-V4 pass-or-deferred; a deferred G-V4 is
+  re-run within 7 days. A G-V4 that never ran (`not_run`, `--rest-points 0`) makes the status
+  `incomplete`, never `pass` (review m1): P5 may not proceed on it.
+- **Reference archive**: a tar(.gz) preserve set or one extracted file. The member is found by the
+  name `soil_grid_cache` (or by that name inside a plain-SQL dump's `COPY` block); CSV, TSV, JSON,
+  JSONL and plain-SQL COPY parse. A pg_dump CUSTOM archive refuses with a request to extract CSV
+  (P0.4). `--reference-units physical` (default; docs/schema.dbml: pH, g/kg, kg/dm3, cmol(c)/kg)
+  converts by decimal round-half-up of `physical x divisor`; `mapped` compares as stored.
+- `verify --cogs <dir>` (P2) checks the WS-B 4326 COGs only: a bilinear pixel must lie within the
+  min..max of the captured 3 x 3 neighbourhood at its centre (>= 99% of 2,000 samples per COG). It
+  needs no lane and no reference, and writes a local `verification-cogs-<stamp>.json`.
+- Captured windows are opened lazily, two at a time, so thirty never sit in memory at once.
+
+### Maintain (`maintain.py`) and Retract (`retract.py`)
+- `maintain` HEADs the thirty pins, reads the four markers, and reports `resolve_static_lane`'s
+  verdict (`watermark.py::pinned_source_watermark`) plus `status: pinned | drift_suspected`. It
+  writes nothing.
+- `retract` is a dry run (the per-rung plan) unless `--confirm soilgrids-v2.0/2020-06-02`. Confirmed,
+  under the lane-day lock, it clears ALL FOUR markers first, then empties z0, z5, z9 and z13 in that
+  order (`ObjectStore.retract_partition_tier`); any delete failure is fatal and named. The capture
+  archive is kept. Readers return `lane_never_written`.
 
 ## Writer contract (CONTRACT C10)
 

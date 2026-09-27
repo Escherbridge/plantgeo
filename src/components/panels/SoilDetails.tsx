@@ -334,11 +334,13 @@ export function SoilDetails({
   );
   const soilRasters = trpc.environmental.getPublishedSoilRasters.useQuery().data ?? [];
   const selectedRaster = soilRasters.find((release) => release.property === selectedProperty);
-  // `getSoilProperties` refuses every point with PRECONDITION_FAILED until its source-direct
-  // Parquet lane is published (environmental.ts §getSoilProperties); nothing in src/ calls
-  // ISRIC. That refusal is OUR gap and is named as such below -- any other error is a real
-  // failure of the request and keeps the ordinary try-again wording.
+  // `getSoilProperties` refuses with PRECONDITION_FAILED naming its reason
+  // (environmental.ts §getSoilProperties); nothing in src/ calls ISRIC. A refusal is either OUR
+  // gap (lane off or unpublished) or no estimate near this pin (masked water/urban cells, or
+  // outside the release) -- both named below; any other error keeps the try-again wording.
   const soilPointQueryNotServed = soilQuery.error?.data?.code === "PRECONDITION_FAILED";
+  const soilPointHasNoEstimate = soilPointQueryNotServed
+    && /\b(no_cell_within_radius|outside_release_coverage)\b/.test(soilQuery.error?.message ?? "");
 
   function handlePropertyChange(prop: SoilProperty) {
     setProperty(prop);
@@ -650,15 +652,14 @@ export function SoilDetails({
 
             {/* Queried point data. Capture is armed for as long as this section is mounted --
                 the dock's Soil section owns it -- so the pin mechanics below are always true
-                here, and collapsing the section disarms it and drops the pin. What the pin
-                READS is not promised: the query behind it is refused until its lane publishes,
-                and an instruction that invites a click which then fails is the same false
-                capability claim the About page was just cleared of. */}
+                here. What the pin READS is conditional (the lane read is flag-gated), so the
+                instruction says "where served" rather than promising a value. */}
             {!queryPoint && (
               <p className="text-xs text-[hsl(var(--muted-foreground))]">
-                Click anywhere on the map to drop a query pin. SoilGrids point estimates are
-                not served yet, so the pin reads no values until a lane publishes them. Click
-                the pin again, or press Escape, to clear it.
+                Click anywhere on the map to drop a query pin. Where SoilGrids point estimates
+                are served, the pin reads the SoilGrids v2.0 250 m model estimate of the
+                nearest ~500 m cell; it is a model estimate, not a soil sample. Click the pin
+                again, or press Escape, to clear it.
               </p>
             )}
 
@@ -679,19 +680,29 @@ export function SoilDetails({
               </p>
             )}
 
-            {/* The pin's only reachable outcome today. Previously nothing rendered here at all:
-                the loading line vanished and the pin stood over a silence that read as "no
-                data at this point" -- a claim about the soil, made by a procedure that had
-                refused to look. `role="status"`, not alert: a withheld lane is not an error. */}
-            {queryPoint && soilQuery.isError && soilPointQueryNotServed && (
+            {/* A refusal is never silence: silence under a pin reads as "no data at this point",
+                a claim about the soil. `role="status"`, not alert: a masked cell or a withheld
+                lane is not an error. */}
+            {queryPoint && soilQuery.isError && soilPointHasNoEstimate && (
               <p
                 role="status"
                 aria-live="polite"
                 className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
               >
-                SoilGrids point estimates are not served yet: no lane publishes them, so this
-                pin reads nothing. That is a gap on our side, not a fault at ISRIC and not an
-                absence of soil.
+                No SoilGrids estimate lies within 1 km of this pin: water and dense urban cells
+                are masked, and the release covers the region only. That is an absence of a model
+                estimate here, not an absence of soil.
+              </p>
+            )}
+
+            {queryPoint && soilQuery.isError && soilPointQueryNotServed && !soilPointHasNoEstimate && (
+              <p
+                role="status"
+                aria-live="polite"
+                className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
+              >
+                SoilGrids point estimates are not served yet, so this pin reads nothing. That is
+                a gap on our side, not a fault at ISRIC and not an absence of soil.
               </p>
             )}
 
@@ -712,6 +723,11 @@ export function SoilDetails({
                   </p>
                   <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
                     Showing {SOIL_PROPERTY_LABELS[selectedProperty]}, highlighted below.
+                  </p>
+                  {/* Every SoilGrids number is a model estimate; the label says so beside the values. */}
+                  <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
+                    {soil.label ?? "SoilGrids v2.0 250 m model estimate, 0-5 cm"}. Not a soil sample
+                    or measurement at this point.
                   </p>
                 </div>
                 <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
@@ -741,6 +757,12 @@ export function SoilDetails({
                     );
                   })}
                 </div>
+                {soil.topsoil && (
+                  <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
+                    Topsoil 0-30 cm (thickness-weighted model estimate): {soil.topsoil.texture_class},{" "}
+                    {soil.topsoil.reaction_class}, {soil.topsoil.soc_band}.
+                  </p>
+                )}
               </div>
             )}
         </div>

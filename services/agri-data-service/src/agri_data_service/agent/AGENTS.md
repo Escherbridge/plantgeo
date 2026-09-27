@@ -154,7 +154,9 @@ what each call sends:
 |---|---|---|
 | `site_profile` sent | `SiteFacts` + `region=derive_region(point)` when not None | the model's, sanitized field by field (advisory, below) |
 | model `site_profile` / top-level `region` | DISCARDED, named in `site_profile_dropped` (`region(argument)` for the filter) | kept |
-| `context_query` | the verbatim `user_question`, searches only, when non-empty | never |
+| `context_query` | the verbatim `user_question`, searches only, when non-empty; else the brief's `site_brief_query` | never |
+| `context_query_source` | `"user_question"`, `"site_brief"` or `"none"` (searches only) | omitted |
+| `site_profile_provenance` | `{key: {basis, label}}` for every forwarded key, `region` included | omitted |
 | `site_profile_source` | `"server"` | `"caller_asserted"`, or `"none"` when no site_profile was sent |
 
 `get_environmental_strategies` takes no profile and never forwards `context_query`, but carries the
@@ -174,15 +176,32 @@ strips control characters (newlines kept) and keeps the LAST 2000 characters (st
 `context_query` limit), so the newest turn survives truncation. `SiteFacts` is `SiteProfile` minus
 `slope_pct` (no slope surface exists) and `region` (derived); a drift test reads the service source.
 
-**What the graph supplies: `site_facts=None`, deliberately.** Inspected 2026-09-27: the only soil pH /
-SOC reader is the app-owned `soil-phh2o`/`soil-soc` surface behind `/api/v1/map-evidence`, whose
-raster evidence reports `numeric_values_available: false` (no number at all), and whose published
-SoilGrids values are integers scaled by a catalogue `scaleDivisor` (pH is pH x10); the ledger records
-row counts, never values; fire and land-cover reads are model-driven, polymorphic
-`surface_evidence_for_selection` payloads with no single trustworthy "days since fire" or NLCD class.
-Parsing those back out of tool results would reintroduce exactly the invented-fact risk this seam
-removes, so the graph sends the question and the region only. A future reader that returns a measured,
-unit-checked value can fill `SiteFacts` in `AgentRequest.strategy_context`.
+**What the graph supplies: the site brief's facts (soil data plane, CONTRACT C3/C4).** The earlier
+`site_facts=None` rule stood because no reader returned a trustworthy, unit-checked number and parsing
+tool payloads back would reinvent facts. The `build_site_brief` node now reads them server-side, into
+integers, before the model starts (see "Site brief" below), and `graph.py::brief_literature_context`
+fills `SiteFacts` from the brief exactly as C3 maps it: `soil_ph`, `soil_organic_carbon_pct`,
+`sand_pct`, `clay_pct` from the SoilGrids 0-30 cm topsoil; `days_since_fire` and `burn_severity` from
+the fire section; `land_cover` = the CDL class name. `AgentRequest.strategy_context()` itself still
+returns the question and point only; `GraphContext.strategy_context()` prefers the brief's context.
+
+`site_facts` means "server-read values, each with provenance", no longer "measured only". Each key
+carries a `FactProvenance` (`basis` in `measured | model_estimate | classified |
+classified_remote_sensing | survey_estimate`, `source`, `label` <= 200, optional `release_id`,
+`depth`, `resolution_m`, `distance_m` <= 2,000 for a model estimate). **Provenance-aware drop
+(critic #11):** a caller that sends `site_facts_provenance` loses every `site_facts` key without an
+entry, named `<key>(no_provenance)` in `site_profile_dropped`; a legacy caller (no provenance at all)
+keeps wave-2 behaviour and each forwarded key is echoed with basis `provenance_absent_legacy`. Legacy
+web never sends soil values, so no soil number can ride the legacy path. `site_brief_query` (<= 600
+characters, every control character stripped) is the brief's literature seed and becomes
+`context_query` only when the user typed nothing: `user_question` stays the user's own words, never
+brief text. The strategy-knowledge `SiteProfile` still receives bare values; the label rides beside
+each value in the payload's `site_profile_provenance`, and the prompt tells the model to repeat it.
+
+**S3 echoes pass through verbatim.** `query_intent` and `context_query_used` are forwarded unchanged
+(`strategy_knowledge.py::_PASSTHROUGH_ECHO_KEYS`, outside the bounded projection) whenever the service
+sends them; a live eval found the projection had been dropping them, which hid how the service read the
+query.
 
 ### The region table
 
@@ -367,11 +386,13 @@ botanical evidence, the caller-scoped species lookup, and the three strategy-kno
 ## Topology
 
 ```
-gather_warehouse_evidence ──▶ assess_sufficiency ──┬─(insufficient)─▶ web_evidence ─▶ synthesize_report
-                                                   └─(sufficient)──────────────────▶ synthesize_report
+build_site_brief ─▶ gather_warehouse_evidence ──▶ assess_sufficiency ──┬─(insufficient)─▶ web_evidence ─▶ synthesize_report
+                                                                       └─(sufficient)──────────────────▶ synthesize_report
 ```
 
-Four nodes, declared as frozen dataclasses with typed outputs, walked by `execute_graph()`.
+Five nodes, declared as frozen dataclasses with typed outputs, walked by `execute_graph()`.
+`build_site_brief` is pure Python (no model call); see "Site brief". With `SITE_BRIEF_ENABLED` off it
+returns at once, emitting nothing, so the walk is the wave-2 four-node graph.
 The edges are in `GRAPH_EDGES` as data so the topology can be asserted rather than inferred,
 and `test_agent_graph.py` does assert it.
 
@@ -384,6 +405,10 @@ the web-search tool is not even present in the request until the gate opens it.
 
 The budget rule mirrors `ai-prompt.ts`'s intent, expressed as coverage rather than rounds:
 
+`populated_sources` counts measured layers only: catalogue and coverage metadata, the literature
+tools and model-estimate tools (`_MODEL_ESTIMATE_TOOLS`: `soil_properties_at_point`) never count, so a
+SoilGrids estimate can never close the web gate (review M3).
+
 | Distinct measured surfaces that returned rows | Verdict | Search budget |
 |---|---|---|
 | 0 | insufficient | 3 (`MAX_SEARCHES_PER_REQUEST`) |
@@ -394,6 +419,100 @@ The budget rule mirrors `ai-prompt.ts`'s intent, expressed as coverage rather th
 `gather_warehouse_evidence` seeds the transcript with the replayed history (last
 `MAX_HISTORY_TURNS`, mirroring the TypeScript cap) and the volatile location context. Only
 `synthesize_report` produces user-visible structure; every node before it produces evidence.
+
+## Site brief (`agent/site_brief.py`, soil data plane CONTRACT C5)
+
+A deterministic, bounded JSON (`site-brief/1`) built before the model starts, from reads the server
+runs for this point: soil (SoilGrids lane), fire (MTBS + fire perimeters containing the point, and
+satellite detections within 10 km over 30 days), USDM drought class, the nearest weather-station
+reading (50 km, today else yesterday) and the USDA CDL dominant class of the crop-cover cell. Each
+section is present with a basis and label, or `{"state": "unavailable", "reason": ...}` from the one
+C5.6 vocabulary. The brief never invents a value; weather is context and seeds nothing.
+
+- **Pure builder, twin in TypeScript.** `build_site_brief(inputs)` takes only normalised
+  `SiteBriefInputs` whose soil values are ISRIC mapped **integers**; every derived number is integer
+  arithmetic with round half up by integer division, `(2N + D) // (2D)`, emitted as `k / 10^p`, which
+  has the same shortest round-trip form in Python and JavaScript. `canonical_json` (sorted keys, no
+  spaces, integral floats as integers) is what parity compares; never raw bytes. The golden fixture
+  `tests/fixtures/site_brief_golden.json` (12 cases, owned here, read by `src/__tests__/services/
+  site-brief.test.ts`) pins both builders; case 1 is the CONTRACT's worked example. Change the builder
+  and the fixture together, and tell the web lane.
+- **Algorithms named**: thickness-weighted mean over 0-30 cm (weights 5/10/15), USDA soil texture
+  triangle on normalised tenths (first match wins, C5.2 order), USDA reaction classes on pH tenths,
+  SOC bands.
+- **Flags (review M7).** `site_brief.py::flag_enabled` is the one parser for both switches: only the
+  exact value `true`, whitespace trimmed, case-sensitive (the web parses them identically). With
+  `SITE_BRIEF_ENABLED` and `SOIL_PROPERTIES_READS_ENABLED` both off the graph is wave 2's byte for
+  byte: `build_site_brief` reads and emits nothing, no site facts, provenance or seed reach the
+  literature tools, and `prompts.py::system_prompt()` sends `WAVE_TWO_SYSTEM_PROMPT`, the pre-soil
+  text (its sha256 is pinned in `tests/test_agent_graph.py`). Either flag on sends the labelled
+  `SYSTEM_PROMPT`.
+- **Base run and follow-ups (review M6).** `AgentRequest.is_base_run()` is the first turn or an empty
+  question. A follow-up's history holds only the saved turns, never the brief, so it is not left
+  without soil: it gets the one soil read (`_follow_up`), rendered as a trailing "Soil estimate"
+  section (`prompts.py::build_soil_estimate_section`) and seeded into the literature context as
+  `model_estimate` site facts. It never repeats the other four section reads.
+- **Fail open (review m4).** Building the brief (and its literature context) is wrapped: an unexpected
+  input shape emits `skipped` / `brief_unbuildable` and the graph continues with no brief.
+- **Readers live in `graph.py`**, not here, so this module stays pure and `tools.py` can import its
+  soil-section formatter without a cycle. Each section runs under a 3 s timeout and fails soft to a
+  reason; brief reads run in their own `run_context` and their ledger is discarded (server context,
+  not model evidence, so they never move the sufficiency gate).
+- **Slot cap (review M8).** `read_site_brief_inputs` puts one `asyncio.Semaphore(2)` in the
+  `_BRIEF_READ_SLOTS` context variable; every serving-plane read a section makes goes through
+  `_slotted`, so at most two brief reads hold slots on the 3-slot plane. The fire section's three reads
+  (perimeters, MTBS, detections) run concurrently under that cap; the first failure in lane order
+  names the section's reason.
+- **Reader semantics shared with the web (CONTRACT C5.1; review M9).** The constants are pinned in
+  `tests/fixtures/site_brief_reader_constants.json`, which `tests/test_agent_site_brief_reader_constants.py`
+  and the web's `site-brief-readers.test.ts` both assert:
+  - fire: the newest perimeter or MTBS burn containing the point, dated on or before today; the
+    severity is the MTBS class (codes 2/3/4 or names, `site_brief.py::burn_severity_of`) of that same
+    day's burn when exactly one is recorded, never a WFIGS `severity`; detections within 10 km over
+    30 days, where no published day is 0 and a read that hits its row cap is `read_failed`;
+  - weather: today's published day else yesterday's, nearest station within 50 km, ties to the newest
+    reading; a reading missing temperature or humidity is `read_failed`;
+  - land cover: integer class codes with a finite positive area only; a dominant class without a name
+    is `read_failed`, never its numeric code;
+  - soil: the coverage rule and radii in `soil_properties.py`, the same on the web.
+- **Eval (DESIGN 8)**: `scripts/agent_strategy_eval.py --scenarios-file
+  scripts/agent_site_brief_eval_scenarios.json` runs six base runs (`base_run: true`: no typed
+  question, brief prepended, `user_question` None so the seed drives retrieval) plus the two
+  follow-ups. Every turn records a `soil_labelling` report (unlabelled soil numbers, SoilGrids values
+  called measured, `context_query_source` seen); it is reported beside, never inside, `score.passed`.
+- **Why TS and Python both build it** (DESIGN 5.2): TS already reads fire, drought, weather and crop
+  cover for its payload; rebuilding the brief in agri from the web's base run would re-read them on
+  the 3-slot serving plane. The pure pair costs ~150 lines per language.
+
+## Soil properties (SoilGrids) (`agent/soil_properties.py`, tool `soil_properties_at_point`)
+
+- **What a value is**: an ISRIC SoilGrids v2.0 250 m machine-learning MODEL ESTIMATE, stored as the
+  native pixel containing a 0.005-degree cell centre. It is never a measurement or a soil sample. Every
+  soil value in the brief, the tool and the provenance carries the label "SoilGrids v2.0 250 m model
+  estimate, <depth>", and the prompt tells the model to repeat it and never call it measured.
+- **Kill switch**: `SOIL_PROPERTIES_READS_ENABLED` (only the exact value `true`, trimmed and
+  case-sensitive, enables; `TRUE` no longer does) is read before any read. Off answers `reads_disabled`. This decouples a code push from exposing numbers
+  (DESIGN 7, P5); `docs/env-vars.md` documents it for both services.
+- **Read (CONTRACT C2)**: `warehouse.release_rows(layer="soil-properties", as_of=<server today>)` so
+  a map slider day can never make soil vanish; `point_lane_rows` at radius + 400 m (it measures to
+  the cell ORIGIN), then the nearest CENTRE by haversine on a 6,371,008.8 m sphere, ties to lower
+  latitude then longitude, accepted within the radius (default 1000, 50-2000). Beyond it:
+  `no_cell_within_radius` with `radius_m`, never a silently widened search.
+- **Integer contract**: every z13 value must be integral (|v - round(v)| < 1e-9) and non-negative, or
+  the read is `read_failed` (a corrupt lane), never silently rounded.
+- **Reasons**: `reads_disabled`, `outside_release_coverage` (no cell centre can lie within the radius
+  of the pinned (-125, 42)-(-111, 49) lattice), `lane_never_written`, `not_published`,
+  `no_cell_within_radius`, `serving_at_capacity`, `timeout` (3 s), `read_failed`.
+- **Invalid coordinate (review m5)**: the tool answers in its own C6 shape, `state: "unavailable"`,
+  `reason: "outside_release_coverage"` (the web reader's reason for the same input), `radius_m`,
+  `soilgrids: null`, the note, plus the usual coordinate `error` text.
+- **Why a dedicated tool, not a surface**: `agent/surfaces.py` is peer-owned and keeps `soil-*`
+  refused in `surface_value_near_point`; the dedicated tool returns labelled physical values and never
+  mapped units. Like the literature tools it publishes `strategy_knowledge.portable_schema` (no
+  `anyOf`), because the bridge forwards its schema to Gemini. It performs no region-binding check: `soil-properties` is not bound in the region
+  manifest by design (DESIGN 2.10), so `_region_absence` would refuse it.
+- **Release lookback**: `serving.py::RELEASE_LOOKBACK_YEARS` is 12, so a 2020-06-02 release resolves
+  until 2032; a later reader needs that bound widened or a republish.
 
 ## Why the tool runner inside Sanic, and not Managed Agents
 
@@ -563,8 +682,9 @@ sentence the agent does.
 ## Caching
 
 Render order is `tools` → `system` → `messages`, so the breakpoint on the last (only) system
-block caches the tool definitions and the system prompt together. `SYSTEM_PROMPT` is
-byte-stable by construction: no coordinates, no timestamps, no question. Everything
+block caches the tool definitions and the system prompt together. `system_prompt()` is
+byte-stable by construction: no coordinates, no timestamps, no question; it switches between
+`SYSTEM_PROMPT` and `WAVE_TWO_SYSTEM_PROMPT` only on the soil flags, which change only on redeploy. Everything
 request-specific is built by `build_location_context` into the first *user* message, after
 the breakpoint.
 

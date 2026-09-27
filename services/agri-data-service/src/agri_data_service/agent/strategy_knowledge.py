@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from anthropic.lib.tools import BetaAsyncFunctionTool
 
 __all__ = [
+    "LEGACY_PROVENANCE_BASIS",
     "LITERATURE_EVIDENCE_DOMAIN",
     "LITERATURE_EVIDENCE_ORIGIN",
     "LITERATURE_TOOL_NAMES",
@@ -48,7 +49,11 @@ __all__ = [
     "REJECTED_ARGUMENTS",
     "STRATEGY_KNOWLEDGE_EVIDENCE_SOURCE",
     "UNAVAILABLE",
+    "ContextQuerySource",
+    "FactBasis",
+    "FactProvenance",
     "LiteratureCallPlan",
+    "ProvenancedSiteFacts",
     "RawSiteProfile",
     "RegionBox",
     "SanitizedSiteProfile",
@@ -65,6 +70,7 @@ __all__ = [
     "literature_tool",
     "plan_literature_call",
     "portable_schema",
+    "provenanced_site_facts",
     "sanitize_site_profile",
     "server_site_profile",
     "service_arguments",
@@ -256,7 +262,10 @@ LandCover = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1
 
 
 class StrategySiteProfile(BaseModel):
-    """Measured site facts only, never a day, coordinate, range or surface name; mirrors `SiteProfile`."""
+    """Server-read site facts, each with a basis label; never a day, coordinate, range or surface name.
+
+    Mirrors strategy-knowledge `SiteProfile`.
+    """
 
     model_config = ConfigDict(extra="forbid", coerce_numbers_to_str=True)
 
@@ -372,9 +381,60 @@ UserQuestion = Annotated[
     BeforeValidator(_clean_user_question),
 ]
 
+#: C3: the site brief's literature seed; never the user's words.
+MAX_SITE_BRIEF_QUERY_CHARACTERS: Final = 600
+
+
+def _clean_site_brief_query(value: Any) -> Any:
+    """Strip every control character, trim, and map blank to None (C3)."""
+    if not isinstance(value, str):
+        return value
+    kept = "".join(character for character in value if unicodedata.category(character) != "Cc")
+    return kept.strip() or None
+
+
+SiteBriefQuery = Annotated[
+    Annotated[str, Field(min_length=1, max_length=MAX_SITE_BRIEF_QUERY_CHARACTERS)] | None,
+    BeforeValidator(_clean_site_brief_query),
+]
+
+#: C3 basis vocabulary; `survey_estimate` is reserved and has no producer in this build.
+FactBasis = Literal["measured", "model_estimate", "classified", "classified_remote_sensing", "survey_estimate"]
+#: Echoed for a legacy caller's site facts, which arrive with no provenance at all (C3).
+LEGACY_PROVENANCE_BASIS: Final = "provenance_absent_legacy"
+MAX_SOIL_DISTANCE_METERS: Final = 2_000
+MAX_SECTION_DISTANCE_METERS: Final = 100_000
+#: The region is derived here from the map point, so its provenance is agri's own.
+REGION_PROVENANCE: Final[dict[str, str]] = {
+    "basis": "classified",
+    "label": "Region derived by the agri service from the map point (fixed region box table)",
+}
+
+
+class FactProvenance(BaseModel):
+    """Where one site fact came from and the label the model must repeat beside it (C3)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    basis: FactBasis
+    source: Annotated[str, Field(min_length=1, max_length=80)]
+    label: Annotated[str, Field(min_length=1, max_length=200)]
+    release_id: Annotated[str, Field(min_length=1, max_length=120)] | None = None
+    depth: Annotated[str, Field(min_length=1, max_length=80)] | None = None
+    resolution_m: Annotated[int, Field(ge=1, le=100_000)] | None = None
+    distance_m: Annotated[int, Field(ge=0, le=MAX_SECTION_DISTANCE_METERS)] | None = None
+
+    @model_validator(mode="after")
+    def _soil_distance_is_bounded(self) -> FactProvenance:
+        """A model-estimate (soil) distance is at most the soil read's 2,000 m radius."""
+        too_far = self.distance_m is not None and self.distance_m > MAX_SOIL_DISTANCE_METERS
+        if self.basis == "model_estimate" and too_far:
+            raise ValueError("a model_estimate distance_m must be at most 2000")
+        return self
+
 
 class SiteFacts(BaseModel):
-    """Measured site facts (S1): strategy-knowledge `SiteProfile` minus `slope_pct` and `region`."""
+    """Server-read site facts (S1), each with a basis label: `SiteProfile` minus `slope_pct` and `region`."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, coerce_numbers_to_str=True)
 
@@ -398,6 +458,8 @@ class StrategyContext(BaseModel):
     longitude: Longitude | None = None
     latitude: Latitude | None = None
     site_facts: SiteFacts | None = None
+    site_facts_provenance: dict[str, FactProvenance] | None = None
+    site_brief_query: SiteBriefQuery = None
 
     @model_validator(mode="after")
     def _point_is_whole(self) -> StrategyContext:
@@ -424,6 +486,8 @@ class ServerContext(BaseModel):
     user_question: UserQuestion = None
     point: ServerContextPoint | None = None
     site_facts: SiteFacts | None = None
+    site_facts_provenance: dict[str, FactProvenance] | None = None
+    site_brief_query: SiteBriefQuery = None
 
     def strategy_context(self) -> StrategyContext:
         """The same facts in the S2 shape the tools read."""
@@ -432,6 +496,8 @@ class ServerContext(BaseModel):
             longitude=self.point.longitude if self.point else None,
             latitude=self.point.latitude if self.point else None,
             site_facts=self.site_facts,
+            site_facts_provenance=self.site_facts_provenance,
+            site_brief_query=self.site_brief_query,
         )
 
 
@@ -598,9 +664,29 @@ def current_strategy_context() -> StrategyContext | None:
     return _strategy_context.get()
 
 
-def server_site_profile(context: StrategyContext) -> StrategySiteProfile | None:
-    """The context's measured facts plus the region derived from its point; None when neither exists."""
+class ProvenancedSiteFacts(NamedTuple):
+    """The site facts a literature call may forward, their echoed labels, and the keys dropped (C3)."""
+
+    values: dict[str, Any]
+    provenance: dict[str, dict[str, str]]
+    dropped: list[str]
+
+
+def provenanced_site_facts(context: StrategyContext) -> ProvenancedSiteFacts:
+    """Apply the C3 provenance-aware drop: a new-shape caller loses keys without provenance; legacy is echoed."""
     values: dict[str, Any] = context.site_facts.model_dump(exclude_none=True) if context.site_facts else {}
+    labels = context.site_facts_provenance
+    if labels is None:
+        return ProvenancedSiteFacts(values, {key: {"basis": LEGACY_PROVENANCE_BASIS} for key in values}, [])
+    kept = {key: value for key, value in values.items() if key in labels}
+    dropped = [f"{key}(no_provenance)" for key in values if key not in labels]
+    echoed = {key: {"basis": labels[key].basis, "label": labels[key].label} for key in kept}
+    return ProvenancedSiteFacts(kept, echoed, dropped)
+
+
+def server_site_profile(context: StrategyContext) -> StrategySiteProfile | None:
+    """The context's server-read site facts (each with a basis label) plus the region derived from its point."""
+    values = provenanced_site_facts(context).values
     if context.longitude is not None and context.latitude is not None:
         region = derive_region(context.longitude, context.latitude)
         if region is not None:
@@ -609,6 +695,7 @@ def server_site_profile(context: StrategyContext) -> StrategySiteProfile | None:
 
 
 SiteProfileSource = Literal["server", "caller_asserted", "none"]
+ContextQuerySource = Literal["user_question", "site_brief", "none"]
 #: Named in `site_profile_dropped` when a server context discards the model's top-level region filter.
 REGION_ARGUMENT_DROPPED: Final = "region(argument)"
 
@@ -624,6 +711,10 @@ class LiteratureCallPlan:
     #: None on the external path, where nothing is discarded and the key is omitted.
     site_profile_dropped: tuple[str, ...] | None
     site_profile_ignored: tuple[dict[str, str], ...]
+    #: C4: which text `context_query` carries; None on the external path.
+    context_query_source: ContextQuerySource | None = None
+    #: C4: `{key: {basis, label}}` for every forwarded site_profile key; None on the external path.
+    site_profile_provenance: dict[str, dict[str, str]] | None = None
 
 
 def plan_literature_call(
@@ -649,14 +740,32 @@ def plan_literature_call(
     )
     if region:
         dropped.append(REGION_ARGUMENT_DROPPED)
+    facts = provenanced_site_facts(context)
+    dropped.extend(facts.dropped)
+    profile = server_site_profile(context)
+    provenance = dict(facts.provenance)
+    if profile is not None and profile.region is not None:
+        provenance["region"] = dict(REGION_PROVENANCE)
+    context_query, context_query_source = _context_query(context)
     return LiteratureCallPlan(
-        site_profile=server_site_profile(context),
+        site_profile=profile,
         region=None,
-        context_query=context.user_question,
+        context_query=context_query,
         site_profile_source="server",
         site_profile_dropped=tuple(dropped),
         site_profile_ignored=(),
+        context_query_source=context_query_source,
+        site_profile_provenance=provenance,
     )
+
+
+def _context_query(context: StrategyContext) -> tuple[str | None, ContextQuerySource]:
+    """C4: the user's own words when present, else the site brief's seed, else nothing."""
+    if context.user_question:
+        return context.user_question, "user_question"
+    if context.site_brief_query:
+        return context.site_brief_query, "site_brief"
+    return None, "none"
 
 
 # --- Portable published schema -----------------------------------------------------
@@ -840,6 +949,7 @@ def _answered(tool_name: str, service_tool: ServiceTool, decoded: Mapping[str, A
             "corpus_version": decoded.get("corpus_version"),
             "index_is_stale": decoded.get("index_is_stale"),
             **projected,
+            **{key: decoded[key] for key in _PASSTHROUGH_ECHO_KEYS if key in decoded},
             "result_count": result_count,
             "note": LITERATURE_NOTE,
         },
@@ -995,6 +1105,8 @@ _FINDING_KEYS: Final = (
 )
 _CITATION_KEYS: Final = ("title", "url", "publisher", "year")
 _SEARCH_ECHO_KEYS: Final = ("query", "applied_filters", "site_profile", "ranked_candidates", "not_found")
+#: CONTRACT-WAVE2 S3 echoes, forwarded verbatim whenever the service sends them: how it read the query.
+_PASSTHROUGH_ECHO_KEYS: Final = ("query_intent", "context_query_used")
 
 
 def _bounded(value: Any) -> Any:

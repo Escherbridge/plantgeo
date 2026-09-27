@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { soilPropertyForToggle, SOIL_RASTER_TOGGLE_IDS } from "@/lib/map/soil-raster";
 import type { BoundingBox } from "@/lib/server/security/bbox";
+import { SOILGRIDS_DEPTHS, SOILGRIDS_PROPERTY_OUTPUT } from "./site-brief";
 
 export const APP_MAP_SURFACES = [
   "demand-heatmap",
@@ -90,6 +91,10 @@ function envelope(selection: Selection, selected: Evidence, extra: Evidence = {}
   };
 }
 
+const RASTER_METADATA_NOTE = "The map serves a rendered SoilGrids raster release. Its legend and release bounds are metadata, "
+  + "not a value at the selected coordinate; do not infer values from raster colours or legend limits.";
+
+/** SoilGrids toggles: PMTiles metadata plus lane values labelled `model_estimate`; see soil/AGENTS.md §raster-evidence. */
 async function rasterEvidence(selection: Selection): Promise<Evidence> {
   const { getPublishedSoilRasters } = await import("./raster-catalog");
   const [{ db }, { sql }] = await Promise.all([import("@/lib/server/db"), import("drizzle-orm")]);
@@ -102,13 +107,46 @@ async function rasterEvidence(selection: Selection): Promise<Evidence> {
   const tile = raster ? selectionTile(selection.longitude, selection.latitude, Math.min(selection.zoom, raster.maxZoom)) : null;
   const withinBounds = raster && selection.longitude >= raster.bounds[0] && selection.longitude <= raster.bounds[2]
     && selection.latitude >= raster.bounds[1] && selection.latitude <= raster.bounds[3];
+  const publication = (numericValuesAvailable: boolean) =>
+    raster ? { ...raster, tile, numeric_values_available: numericValuesAvailable } : null;
+  if (!raster || !withinBounds || property === null) {
+    return envelope(selection, {
+      state: !raster ? "raster_release_not_published" : "outside_release_coverage",
+    }, { raster_publication: publication(false), note: RASTER_METADATA_NOTE });
+  }
+  const { getSoilProperties } = await import("./soilgrids");
+  const read = await getSoilProperties(selection.latitude, selection.longitude);
+  if (read.state !== "available") {
+    const noEstimate = read.reason === "no_cell_within_radius";
+    return envelope(selection, {
+      state: noEstimate ? "no_estimate_within_radius" : "numeric_values_unavailable",
+      reason: read.reason,
+      ...(noEstimate && read.radiusM !== undefined ? { radius_m: read.radiusM } : {}),
+    }, {
+      raster_publication: publication(false),
+      note: noEstimate
+        ? `No SoilGrids estimate lies within ${read.radiusM ?? 1000} m of this point (water and dense urban cells are masked). ${RASTER_METADATA_NOTE}`
+        : `Numeric SoilGrids values are not being served (${read.reason}). ${RASTER_METADATA_NOTE}`,
+    });
+  }
+  const soil = read.properties;
+  const { key, unit } = SOILGRIDS_PROPERTY_OUTPUT[property];
+  const values = Object.fromEntries(SOILGRIDS_DEPTHS.map((depth) => [depth, soil.depths[depth][key]]));
   return envelope(selection, {
-    state: !raster ? "raster_release_not_published" : !withinBounds ? "outside_release_coverage" : "numeric_values_unavailable",
+    state: "model_estimate",
+    basis: "model_estimate",
+    property,
+    values,
+    unit,
+    label: `SoilGrids v2.0 250 m model estimate, 0-5/5-15/15-30 cm, cell centre ${soil.distanceM} m away`,
+    release_id: soil.releaseId,
+    distance_m: soil.distanceM,
+    numeric_values_available: true,
   }, {
-    raster_publication: raster ? { ...raster, tile, numeric_values_available: false } : null,
-    note: "The map serves a rendered SoilGrids raster release. Its legend and release bounds are metadata, "
-      + "not a value at the selected coordinate. Numeric source values and historical raster releases are not "
-      + "admitted by the current serving contract; do not infer measurements from raster colours or legend limits.",
+    raster_publication: publication(true),
+    note: "These numbers are SoilGrids v2.0 250 m model estimates for the pixel at the centre of a ~500 m cell, "
+      + "not a soil sample or measurement at this point. The drawn colour comes from a smoothed rendering of the "
+      + "same release and can differ from the number. Always repeat the basis label with a value.",
   });
 }
 

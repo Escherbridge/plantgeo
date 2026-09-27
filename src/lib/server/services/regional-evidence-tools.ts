@@ -8,6 +8,7 @@ import {
 import { callLandContextTool, isLandContextTool, landContextTools } from "@/lib/server/services/land-context-tools";
 import { isStrategyKnowledgeTool } from "@/lib/regional-intelligence";
 import { APP_MAP_SURFACES, isAppMapSurface, readBoundedAppMapEvidence } from "./regional-map-evidence";
+import type { FactProvenance } from "./site-brief";
 
 export interface RegionalEvidenceTool {
   name: string;
@@ -38,7 +39,7 @@ const catalogueSchema = z.object({
 
 const resultSchema = z.object({ tool: z.string(), result: z.record(z.string(), z.unknown()) });
 
-/** Measured site values for the literature tools: the S1 `site_facts` keys, every one optional. */
+/** Server-read site values for the literature tools (S1 `site_facts`, C3); each carries a basis in `site_facts_provenance`. */
 export interface LiteratureSiteFacts {
   soil_ph?: number;
   soil_organic_carbon_pct?: number;
@@ -51,12 +52,23 @@ export interface LiteratureSiteFacts {
   land_cover?: string;
 }
 
-/** Server-owned literature context (seam S1); out of band from the model's arguments. See services/AGENTS.md §literature-server-context. */
+/** Server-owned literature context (seam S1, C3 delta); out of band from the model's arguments. See services/AGENTS.md §literature-server-context. */
 export interface LiteratureServerContext {
   user_question?: string;
   point?: { longitude: number; latitude: number };
   site_facts?: LiteratureSiteFacts;
+  /** C3: one entry per `site_facts` key whose basis the server knows; agri drops keys without one. */
+  site_facts_provenance?: Partial<Record<keyof LiteratureSiteFacts, FactProvenance>>;
+  /** C3/C4: the site brief's literature seed, used as `context_query` when no question was typed. */
+  site_brief_query?: string;
 }
+
+/** The agri SoilGrids point tool (CONTRACT C6); see soil/AGENTS.md §soil-tool. */
+export const SOIL_PROPERTIES_TOOL_NAME = "soil_properties_at_point";
+
+/** Appended to the served description so the label rule travels with the tool, whatever agri says. */
+const SOIL_PROPERTIES_TOOL_LABEL_RULE = " Every value it returns is a SoilGrids v2.0 250 m model estimate: repeat its basis label and depth "
+  + "whenever you cite one, and never call it a measurement or an observation.";
 
 /**
  * The bridge rejected this call's *arguments* (HTTP 400) and returned a bounded, value-free
@@ -137,7 +149,8 @@ export async function loadRegionalEvidenceTools(
   }
   const remoteTools = parsed.data.tools.map(({ function: tool }) => ({
     name: tool.name,
-    description: tool.description,
+    description: tool.name === SOIL_PROPERTIES_TOOL_NAME && !tool.description.includes(SOIL_PROPERTIES_TOOL_LABEL_RULE.trim())
+      ? `${tool.description}${SOIL_PROPERTIES_TOOL_LABEL_RULE}` : tool.description,
     input_schema: tool.parameters,
   }));
   // Land-context tools are registered in-process (see land-context-tools.ts)

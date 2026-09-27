@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
@@ -14,7 +16,6 @@ import pytest
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
-    from pathlib import Path
 
 from agri_data_service.agent import botanical_occurrences as agent_botanical_occurrences
 from agri_data_service.agent import graph as agent_graph
@@ -31,6 +32,7 @@ from agri_data_service.agent.report import (
 )
 from agri_data_service.agent.surfaces import AGENT_SURFACE_NAMES
 from agri_data_service.config import settings
+from agri_data_service.parquet_ops.faults import ServingRefusalError
 from agri_data_service.routes import agent_analysis as agent_route
 from tests.agent_fakes import FakeAgentWarehouse, published_lane
 
@@ -50,6 +52,36 @@ def _warehouse(*, published: Sequence[date] = ()) -> FakeAgentWarehouse:
     for day in published:
         source.listing_store.write_day("soil-field-vpd", "observed", 13, day)
     return source
+
+
+#: The real reader, kept before the autouse stub below replaces it for every graph walk.
+_REAL_READ_SITE_BRIEF_INPUTS = agent_graph.read_site_brief_inputs
+_BRIEF_SECTIONS = ("soil", "fire", "drought", "weather", "land_cover")
+_GOLDEN_BRIEF_CASES = json.loads(
+    (Path(__file__).resolve().parent / "fixtures" / "site_brief_golden.json").read_text(encoding="utf-8")
+)["cases"]
+
+
+def _unavailable_brief_inputs(request: agent_graph.AgentRequest) -> dict[str, Any]:
+    """Brief inputs with every section unavailable, the shape a graph walk sees with reads disabled."""
+    return {
+        "built_on": request.as_of.date().isoformat(),
+        "point": {
+            "longitude_e5": round(request.longitude * 100_000),
+            "latitude_e5": round(request.latitude * 100_000),
+        },
+        **{section: {"state": "unavailable", "reason": "reads_disabled"} for section in _BRIEF_SECTIONS},
+    }
+
+
+@pytest.fixture(autouse=True)
+def _no_live_site_brief_reads(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Graph walks here script the model; the brief node's five lane reads must never reach a bucket."""
+
+    async def unavailable(request: agent_graph.AgentRequest) -> dict[str, Any]:
+        return _unavailable_brief_inputs(request)
+
+    monkeypatch.setattr(agent_graph, "read_site_brief_inputs", unavailable)
 
 
 # --- Database stubs ----------------------------------------------------------------
@@ -274,15 +306,17 @@ def _types(events: list[dict[str, Any]]) -> list[str]:
 
 
 def test_graph_topology_is_declared_and_terminal() -> None:
-    """The declared edges must form the documented four-node walk with one optional branch."""
+    """The declared edges must form the documented five-node walk with one optional branch."""
     edges = agent_graph.GRAPH_EDGES
     assert [source for source, _target, _label in edges] == [
+        "build_site_brief",
         "gather_warehouse_evidence",
         "assess_sufficiency",
         "assess_sufficiency",
         "web_evidence",
     ]
     assert {target for _source, target, _label in edges} == {
+        "gather_warehouse_evidence",
         "assess_sufficiency",
         "web_evidence",
         "synthesize_report",
@@ -1093,10 +1127,501 @@ async def test_live_report_synthesis_returns_the_declared_schema() -> None:
     response = await client.beta.messages.parse(
         model=agent_graph.MODEL,
         max_tokens=agent_graph.MAX_OUTPUT_TOKENS,
-        system=[{"type": "text", "text": agent_graph.SYSTEM_PROMPT}],
+        system=[{"type": "text", "text": agent_graph.system_prompt()}],
         messages=[{"role": "user", "content": "No warehouse evidence resolved. Produce the briefing."}],
         output_format=RemediationReport,
         betas=[agent_graph.SERVER_SIDE_FALLBACK_BETA],
         fallbacks="default",
     )
     assert isinstance(response.parsed_output, RemediationReport)
+
+
+# --- Site brief node (soil data plane, CONTRACT C3/C5) -------------------------------------------
+
+
+async def test_the_brief_node_seeds_the_first_turn_and_the_literature_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SITE_BRIEF_ENABLED", "true")
+    worked = _GOLDEN_BRIEF_CASES[0]
+
+    async def golden_inputs(_request: agent_graph.AgentRequest) -> dict[str, Any]:
+        return worked["inputs"]
+
+    bound: list[strategy_knowledge.StrategyContext | None] = []
+
+    async def record_context(_ctx: agent_graph.GraphContext, **_kwargs: Any) -> bool:
+        bound.append(strategy_knowledge.current_strategy_context())
+        return False
+
+    monkeypatch.setattr(agent_graph, "read_site_brief_inputs", golden_inputs)
+    monkeypatch.setattr(agent_graph, "_run_pass", record_context)
+    context = _context(_client([], _parsed(None)))
+
+    brief = await agent_graph.BUILD_SITE_BRIEF.run(context)
+    await agent_graph.GATHER_WAREHOUSE_EVIDENCE.run(context)
+
+    assert context.site_brief == brief
+    assert brief["literature_seed"] == worked["expected"]["literature_seed"]
+    first_turn = context.messages[0]["content"]
+    assert "## Site brief (server-read, site-brief/1)" in first_turn
+    assert "SoilGrids v2.0 250 m model estimate" in first_turn
+    [literature] = bound
+    assert literature is not None
+    assert literature.user_question is None, "brief text never becomes the user's question"
+    assert literature.site_brief_query == worked["expected"]["literature_seed"]
+    assert literature.site_facts is not None
+    assert literature.site_facts.soil_ph == worked["expected"]["soil"]["topsoil_0_30cm"]["ph"]
+    assert literature.site_facts_provenance is not None
+    assert literature.site_facts_provenance["soil_ph"].basis == "model_estimate"
+    events = _drain(context)
+    completed = next(
+        event for event in events if event.get("node") == "build_site_brief" and event["status"] == "completed"
+    )
+    assert completed["detail"]["sections"] == dict.fromkeys(_BRIEF_SECTIONS, "available")
+
+
+async def test_a_graph_walk_with_every_section_unavailable_still_reports(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SITE_BRIEF_ENABLED", "true")
+    runner = _Runner(
+        [_Stream(_message(_text_block("Reading the warehouse.")))],
+        ledger_entries=[
+            {"tool": "surface_evidence_for_selection", "row_count": 3},
+            {"tool": "drought_history_at_point", "row_count": 12},
+        ],
+    )
+    context = _context(_client([runner], _parsed(_report())))
+
+    outcome = await agent_graph.execute_graph(context)
+
+    assert outcome.report is not None
+    assert context.site_brief is not None
+    assert context.site_brief["descriptors"] == []
+    assert context.strategy_context().site_brief_query is None
+
+
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [
+        pytest.param(agent_graph.SectionUnavailableError("lane_never_written"), "lane_never_written", id="stated"),
+        pytest.param(
+            ServingRefusalError("serving_at_capacity", "busy"), "serving_at_capacity", id="serving-at-capacity"
+        ),
+        pytest.param(ServingRefusalError("read_timed_out", "slow"), "timeout", id="serving-timeout"),
+        pytest.param(AssertionError("unbound warehouse"), "read_failed", id="anything-else"),
+    ],
+)
+async def test_a_failing_section_becomes_an_unavailable_reason(error: Exception, reason: str) -> None:
+    async def failing() -> dict[str, Any]:
+        raise error
+
+    assert await agent_graph._bounded_section("soil", failing) == {"state": "unavailable", "reason": reason}
+
+
+async def test_a_slow_section_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(agent_graph, "SITE_BRIEF_SECTION_TIMEOUT_SECONDS", 0.01)
+
+    async def slow() -> dict[str, Any]:
+        await asyncio.sleep(1)
+        return {"state": "available"}
+
+    assert await agent_graph._bounded_section("weather", slow) == {"state": "unavailable", "reason": "timeout"}
+
+
+async def test_the_real_reader_normalises_the_point_and_isolates_every_section(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def failing(_request: agent_graph.AgentRequest) -> dict[str, Any]:
+        raise agent_graph.SectionUnavailableError("not_published")
+
+    readers = (
+        "read_soil_section",
+        "read_fire_section",
+        "read_drought_section",
+        "read_weather_section",
+        "read_land_cover_section",
+    )
+    for reader in readers:
+        monkeypatch.setattr(agent_graph, reader, failing)
+    request = agent_graph.AgentRequest(longitude=-116.2, latitude=43.6, precision="exact", as_of=_AS_OF)
+
+    inputs = await _REAL_READ_SITE_BRIEF_INPUTS(request)
+
+    assert inputs["built_on"] == _AS_OF.date().isoformat()
+    assert inputs["point"] == {"longitude_e5": -11620000, "latitude_e5": 4360000}
+    assert all(inputs[section] == {"state": "unavailable", "reason": "not_published"} for section in _BRIEF_SECTIONS)
+
+
+async def test_the_drought_section_reads_the_newest_release_class(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def drought(*_args: Any, **_kwargs: Any) -> str:
+        return json.dumps(
+            {"weekly_severity": [{"valid_date": "2026-03-10", "severity_class": 1}, {"valid_date": "2026-03-03"}]}
+        )
+
+    monkeypatch.setattr(agent_graph.warehouse_tools, "query_drought_history_at_point", drought)
+    request = agent_graph.AgentRequest(longitude=-116.2, latitude=43.6, precision="exact", as_of=_AS_OF)
+    assert await agent_graph.read_drought_section(request) == {
+        "state": "available",
+        "usdm_class": "D1",
+        "week_of": "2026-03-10",
+    }
+
+
+@pytest.mark.parametrize(
+    ("payload", "reason"),
+    [
+        ({"error": "parquet_lane_never_written"}, "lane_never_written"),
+        ({"error": "not_available_in_region"}, "not_bound_in_region"),
+        ({"error": "parquet_serving_refused", "refusal_code": "serving_at_capacity"}, "serving_at_capacity"),
+        ({"weekly_severity": []}, "not_published"),
+    ],
+)
+async def test_drought_refusals_map_onto_reasons(
+    monkeypatch: pytest.MonkeyPatch, payload: dict[str, Any], reason: str
+) -> None:
+    async def drought(*_args: Any, **_kwargs: Any) -> str:
+        return json.dumps(payload)
+
+    monkeypatch.setattr(agent_graph.warehouse_tools, "query_drought_history_at_point", drought)
+    request = agent_graph.AgentRequest(longitude=-116.2, latitude=43.6, precision="exact", as_of=_AS_OF)
+    with pytest.raises(agent_graph.SectionUnavailableError) as raised:
+        await agent_graph.read_drought_section(request)
+    assert raised.value.reason == reason
+
+
+def test_the_dominant_cdl_class_breaks_ties_to_the_lower_code() -> None:
+    properties = {
+        "class_areas_json": json.dumps({"176": 450.0, "24": 450.0, "1": 10.0}),
+        "class_names_json": json.dumps({"176": "Grassland/Pasture", "24": "Winter Wheat", "1": "Corn"}),
+    }
+    assert agent_graph._dominant_class(properties) == (24, "Winter Wheat", 450.0)
+
+
+def test_a_perimeter_counts_only_when_it_contains_the_point() -> None:
+    inside = {"covers_probe_point": True, "properties": {"ignition_date": date(2025, 8, 11), "severity_class": "High"}}
+    outside = {**inside, "covers_probe_point": False}
+    assert agent_graph._perimeter_fire("burn-severity", inside) == (date(2025, 8, 11), "high")
+    assert agent_graph._perimeter_fire("burn-severity", outside) is None
+
+
+# --- Review 1 fixes: flags, follow-ups, fail-open, slot cap, reader parity -----------------------
+
+#: sha256 of the wave-2 SYSTEM_PROMPT at HEAD 14abe742: both soil flags off must send it byte for byte.
+_WAVE_TWO_SYSTEM_PROMPT_SHA256 = "d39c4000824058d26e7a59bc0eff84b1fc9290e10224895ce3f02973e17aafef"
+
+
+def _follow_up_context(client: Any) -> agent_graph.GraphContext:
+    return agent_graph.GraphContext(
+        request=agent_graph.AgentRequest(
+            longitude=-116.2,
+            latitude=43.6,
+            precision="approximate",
+            question="What about cover crops?",
+            history=(
+                ConversationTurn(role="user", content="Analyze this location"),
+                ConversationTurn(role="assistant", content="A saved report."),
+            ),
+            as_of=datetime(2026, 8, 8, tzinfo=UTC),
+        ),
+        client=client,
+        events=asyncio.Queue(),
+        session_provider=_session_provider(_Session()),
+    )
+
+
+async def test_both_flags_off_is_the_wave_two_graph_exactly(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review M7: no brief read, no brief event, no site facts, and the wave-2 prompt byte for byte."""
+    monkeypatch.delenv("SITE_BRIEF_ENABLED", raising=False)
+    monkeypatch.delenv("SOIL_PROPERTIES_READS_ENABLED", raising=False)
+    reads: list[str] = []
+
+    async def must_not_read(_request: agent_graph.AgentRequest) -> dict[str, Any]:
+        reads.append("brief")
+        raise AssertionError("no brief read with SITE_BRIEF_ENABLED off")
+
+    async def record_context(_ctx: agent_graph.GraphContext, **_kwargs: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(agent_graph, "read_site_brief_inputs", must_not_read)
+    monkeypatch.setattr(agent_graph, "_run_pass", record_context)
+    context = _context(_client([], _parsed(None)))
+
+    assert await agent_graph.BUILD_SITE_BRIEF.run(context) is None
+    await agent_graph.GATHER_WAREHOUSE_EVIDENCE.run(context)
+
+    assert reads == []
+    assert context.site_brief is None
+    assert context.site_soil is None
+    assert context.strategy_context() == context.request.strategy_context()
+    assert not [event for event in _drain(context) if event.get("node") == "build_site_brief"]
+    request = context.request
+    assert context.messages[-1]["content"] == agent_graph.build_location_context(
+        longitude=request.longitude,
+        latitude=request.latitude,
+        precision=request.precision,
+        as_of=request.as_of,
+        question=request.question,
+        selected_day=request.selected_day,
+        species_id=request.species_id,
+        map_selection=request.map_selection,
+    )
+    system = context.system_blocks()[0]["text"]
+    assert hashlib.sha256(system.encode("utf-8")).hexdigest() == _WAVE_TWO_SYSTEM_PROMPT_SHA256
+    assert "any measured site facts" in system
+    assert "## Site brief and soil model estimates" not in system
+
+
+@pytest.mark.parametrize("flag", ["SITE_BRIEF_ENABLED", "SOIL_PROPERTIES_READS_ENABLED"])
+def test_either_soil_flag_sends_the_labelled_system_prompt(monkeypatch: pytest.MonkeyPatch, flag: str) -> None:
+    monkeypatch.delenv("SITE_BRIEF_ENABLED", raising=False)
+    monkeypatch.delenv("SOIL_PROPERTIES_READS_ENABLED", raising=False)
+    monkeypatch.setenv(flag, "true")
+    system = _context(_client([], _parsed(None))).system_blocks()[0]["text"]
+    assert "each with a basis label" in system
+    assert "## Site brief and soil model estimates" in system
+
+
+async def test_a_follow_up_makes_only_the_soil_read_and_hands_it_to_the_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review M6: history replays no brief, so a follow-up gets the one soil read, labelled."""
+    monkeypatch.setenv("SITE_BRIEF_ENABLED", "true")
+    worked = _GOLDEN_BRIEF_CASES[0]
+    reads: list[str] = []
+
+    async def soil(_request: agent_graph.AgentRequest) -> dict[str, Any]:
+        reads.append("soil")
+        return worked["inputs"]["soil"]
+
+    async def other(_request: agent_graph.AgentRequest) -> dict[str, Any]:
+        reads.append("other")
+        raise AssertionError("a follow-up reads soil only")
+
+    for name in ("read_fire_section", "read_drought_section", "read_weather_section", "read_land_cover_section"):
+        monkeypatch.setattr(agent_graph, name, other)
+    monkeypatch.setattr(agent_graph, "read_site_brief_inputs", other)
+    monkeypatch.setattr(agent_graph, "read_soil_section", soil)
+    bound: list[strategy_knowledge.StrategyContext | None] = []
+
+    async def record_context(_ctx: agent_graph.GraphContext, **_kwargs: Any) -> bool:
+        bound.append(strategy_knowledge.current_strategy_context())
+        return False
+
+    monkeypatch.setattr(agent_graph, "_run_pass", record_context)
+    context = _follow_up_context(_client([], _parsed(None)))
+
+    assert await agent_graph.BUILD_SITE_BRIEF.run(context) is None
+    await agent_graph.GATHER_WAREHOUSE_EVIDENCE.run(context)
+
+    assert reads == ["soil"]
+    assert context.site_brief is None
+    assert context.site_soil == worked["expected"]["soil"]
+    turn = context.messages[-1]["content"]
+    assert "## Soil estimate (server-read, SoilGrids v2.0)" in turn
+    assert "SoilGrids v2.0 250 m model estimate" in turn
+    [literature] = bound
+    assert literature is not None
+    assert literature.user_question is not None
+    assert literature.site_facts is not None
+    assert literature.site_facts.soil_ph == worked["expected"]["soil"]["topsoil_0_30cm"]["ph"]
+    assert literature.site_facts_provenance is not None
+    assert literature.site_facts_provenance["soil_ph"].basis == "model_estimate"
+    assert literature.site_brief_query is None
+    completed = [event for event in _drain(context) if event.get("node") == "build_site_brief"][-1]
+    assert completed["detail"] == {"follow_up": True, "sections": {"soil": "available"}}
+
+
+async def test_an_unbuildable_brief_fails_open_and_the_graph_still_reports(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review m4: an unexpected input shape never kills the graph; the run continues with no brief."""
+    monkeypatch.setenv("SITE_BRIEF_ENABLED", "true")
+
+    async def malformed(request: agent_graph.AgentRequest) -> dict[str, Any]:
+        inputs = _unavailable_brief_inputs(request)
+        inputs["drought"] = {"state": "available", "usdm_class": "D9", "week_of": "2026-08-04"}
+        return inputs
+
+    monkeypatch.setattr(agent_graph, "read_site_brief_inputs", malformed)
+    runner = _Runner(
+        [_Stream(_message(_text_block("Reading the warehouse.")))],
+        ledger_entries=[{"tool": "drought_history_at_point", "row_count": 12}],
+    )
+    context = _context(_client([runner], _parsed(_report())))
+
+    outcome = await agent_graph.execute_graph(context)
+
+    assert outcome.report is not None
+    assert context.site_brief is None
+    assert context.strategy_context() == context.request.strategy_context()
+    skipped = [event for event in _drain(context) if event.get("node") == "build_site_brief"][-1]
+    assert skipped["status"] == "skipped"
+    assert skipped["detail"] == {"reason": "brief_unbuildable"}
+
+
+def test_a_soil_estimate_never_counts_as_a_measured_layer() -> None:
+    """Review M3: soil_properties_at_point is a model estimate, so it cannot raise sufficiency."""
+    ledger = [
+        {"tool": "soil_properties_at_point", "row_count": 1},
+        {"tool": "drought_history_at_point", "row_count": 12},
+    ]
+    assert agent_graph.populated_sources(ledger) == ("drought_history_at_point",)
+    assert agent_graph.populated_sources(ledger[:1]) == ()
+
+
+async def test_brief_reads_hold_at_most_two_serving_slots(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review M8: the five sections gather concurrently, but only two plane reads run at once."""
+    in_flight = 0
+    peak = 0
+
+    async def slotted_read(_request: agent_graph.AgentRequest) -> dict[str, Any]:
+        async def read() -> dict[str, Any]:
+            nonlocal in_flight, peak
+            in_flight += 1
+            peak = max(peak, in_flight)
+            await asyncio.sleep(0.01)
+            in_flight -= 1
+            return {"state": "unavailable", "reason": "not_published"}
+
+        return await agent_graph._slotted(read)
+
+    for name in (
+        "read_soil_section",
+        "read_fire_section",
+        "read_drought_section",
+        "read_weather_section",
+        "read_land_cover_section",
+    ):
+        monkeypatch.setattr(agent_graph, name, slotted_read)
+    request = agent_graph.AgentRequest(longitude=-116.2, latitude=43.6, precision="exact", as_of=_AS_OF)
+
+    inputs = await _REAL_READ_SITE_BRIEF_INPUTS(request)
+
+    assert peak == agent_graph.SITE_BRIEF_READ_CONCURRENCY, "five gathered sections, never more than the cap"
+    assert all(inputs[section]["reason"] == "not_published" for section in _BRIEF_SECTIONS)
+    assert agent_graph._BRIEF_READ_SLOTS.get() is None, "the cap never leaks past one brief"
+
+
+async def test_the_fire_reads_run_concurrently_and_grade_only_the_same_mtbs_fire(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review M8/M9: the three fire reads overlap; severity is the same day's MTBS class, never WFIGS's."""
+    started: list[str] = []
+    release = asyncio.Event()
+
+    async def lane_features(lane: str, _request: Any, **_kwargs: Any) -> dict[str, Any]:
+        started.append(lane)
+        await release.wait()
+        if lane == "burn-severity":
+            features = [
+                {"covers_probe_point": True, "properties": {"ignition_date": "2025-08-11", "severity_class": 4}},
+                {"covers_probe_point": True, "properties": {"ignition_date": "2020-07-01", "severity_class": 2}},
+                {"covers_probe_point": False, "properties": {"ignition_date": "2026-01-01", "severity_class": 3}},
+            ]
+        else:
+            features = [
+                {
+                    "covers_probe_point": True,
+                    "properties": {"fire_discovery_at": "2025-08-11T12:00:00Z", "severity": "Low"},
+                },
+                {"covers_probe_point": True, "properties": {"fire_discovery_at": "2027-01-01T00:00:00Z"}},
+            ]
+        return {"features": features, "day_state": {"state": "published"}}
+
+    async def detections(_request: Any, _today: date) -> int:
+        started.append("fire-detections")
+        await release.wait()
+        return 3
+
+    monkeypatch.setattr(agent_graph, "_lane_features", lane_features)
+    monkeypatch.setattr(agent_graph, "_recent_detections", detections)
+    request = agent_graph.AgentRequest(longitude=-116.2, latitude=43.6, precision="exact", as_of=_AS_OF)
+
+    section = asyncio.create_task(agent_graph.read_fire_section(request))
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert sorted(started) == ["burn-severity", "fire-detections", "fire-perimeters"], "all three in flight"
+    release.set()
+
+    assert await section == {
+        "state": "available",
+        "latest_fire_day": "2025-08-11",
+        "burn_severity": "high",
+        "detections_last_30_days": 3,
+        "source": agent_graph.FIRE_SOURCE_LABEL,
+    }
+
+
+async def test_a_weather_reading_missing_a_number_is_read_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review M9 (CONTRACT C5.1): the brief never invents a value; both languages refuse the reading."""
+
+    async def lane_features(_lane: str, _request: Any, **_kwargs: Any) -> dict[str, Any]:
+        reading = {"observed_at": "2026-03-14T15:00:00Z", "temperature_c": None, "relative_humidity_pct": 38}
+        return {
+            "day_state": {"state": "published"},
+            "features": [{"distance_meters": 1200.0, "properties": reading}],
+        }
+
+    monkeypatch.setattr(agent_graph, "_lane_features", lane_features)
+    request = agent_graph.AgentRequest(longitude=-116.2, latitude=43.6, precision="exact", as_of=_AS_OF)
+    with pytest.raises(agent_graph.SectionUnavailableError) as raised:
+        await agent_graph.read_weather_section(request)
+    assert raised.value.reason == "read_failed"
+
+
+async def test_a_dominant_cdl_class_without_a_name_is_read_failed_not_its_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review M9 (CONTRACT C5.1): a numeric code never becomes a literature seed."""
+    cell = {
+        "class_areas_json": json.dumps({"176": 500.0, "24": -5.0, "x": 900.0}),
+        "class_names_json": json.dumps({"24": "Winter Wheat"}),
+        "cell_area_ha": 900.0,
+        "observed_year": 2025,
+        "release_day": "2026-01-30",
+        "aggregation_cell_m": 3000,
+    }
+
+    async def lane_features(_lane: str, _request: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {"day_state": {"state": "published"}, "features": [{"covers_probe_point": True, "properties": cell}]}
+
+    monkeypatch.setattr(agent_graph, "_lane_features", lane_features)
+    assert agent_graph._dominant_class(cell) == (176, None, 500.0), "non-positive areas and non-integer codes skip"
+    request = agent_graph.AgentRequest(longitude=-116.2, latitude=43.6, precision="exact", as_of=_AS_OF)
+    with pytest.raises(agent_graph.SectionUnavailableError) as raised:
+        await agent_graph.read_land_cover_section(request)
+    assert raised.value.reason == "read_failed"
+
+
+async def test_a_capped_detection_read_is_read_failed_and_no_published_day_is_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review M9: an undercount is not a count; an unpublished window adds nothing, as on the web."""
+
+    class _Window:
+        lane_written = True
+        evidence_source = None
+
+        def __init__(self, days: list[date]) -> None:
+            self.days = days
+
+        def published_days(self, _first: date, _last: date) -> list[date]:
+            return self.days
+
+        def part_keys(self, days: list[date]) -> tuple[str, ...]:
+            return tuple(day.isoformat() for day in days)
+
+    windows = [_Window([]), _Window([_AS_OF.date()])]
+
+    async def lane_window(**_kwargs: Any) -> _Window:
+        return windows.pop(0)
+
+    async def capped_rows(*_args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        return [{"detection_count": 1}] * kwargs["row_limit"]
+
+    monkeypatch.setattr(agent_graph.warehouse, "lane_window", lane_window)
+    monkeypatch.setattr(agent_graph.warehouse_tools, "_lane_rows", capped_rows)
+    request = agent_graph.AgentRequest(longitude=-116.2, latitude=43.6, precision="exact", as_of=_AS_OF)
+
+    assert await agent_graph._recent_detections(request, _AS_OF.date()) == 0
+    with pytest.raises(agent_graph.SectionUnavailableError) as raised:
+        await agent_graph._recent_detections(request, _AS_OF.date())
+    assert raised.value.reason == "read_failed"

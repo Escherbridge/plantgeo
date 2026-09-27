@@ -54,16 +54,19 @@ type SoilPropertiesResult = {
         bulkDensity: number;
         cec: number;
         ocd: number;
+        /** The lane's model-estimate label and topsoil summary; optional like the server type. */
+        label?: string;
+        distanceM?: number;
+        topsoil?: { texture_class: string; reaction_class: string; soc_band: string };
       }
     | undefined;
   isLoading: boolean;
   isError: boolean;
   /**
-   * The tRPC error envelope the panel reads the code off. Optional so every existing case stays
-   * a settled read; only the shape `error.data?.code` is declared because that is all the panel
-   * dereferences (the same way ContributionQueue reads FORBIDDEN/UNAUTHORIZED).
+   * The tRPC error envelope the panel reads the code and the refusal reason off. Optional so every
+   * existing case stays a settled read (the same way ContributionQueue reads FORBIDDEN/UNAUTHORIZED).
    */
-  error?: { data?: { code?: string } | null } | null;
+  error?: { message?: string; data?: { code?: string } | null } | null;
   /**
    * The retention pair. These reads hold the previous answer while the next loads
    * (`keepPreviousData`, see `useViewportProxiedLayers`), which sets `status: "success"` -- so
@@ -983,11 +986,12 @@ describe("SoilDetails queried point", () => {
   // The instruction may describe what a click DOES (drop a pin) but not promise what the pin
   // reads: `environmental.getSoilProperties` refuses every point with PRECONDITION_FAILED until
   // its lane is published, so "click to query soil properties" invited a click that failed.
-  it("tells the user how to pick a point, what it will not read yet, and how to clear it", () => {
+  it("tells the user how to pick a point, that it reads a model estimate where served, and how to clear it", () => {
     renderWithProviders(<SoilDetails bbox={VIEWPORT_BBOX} />);
 
     expect(screen.getByText(/Click anywhere on the map to drop a query pin/)).toBeTruthy();
-    expect(screen.getByText(/not served yet, so the pin reads no values/)).toBeTruthy();
+    expect(screen.getByText(/Where SoilGrids point estimates\s+are served/)).toBeTruthy();
+    expect(screen.getByText(/it is a model estimate, not a soil sample/)).toBeTruthy();
     expect(screen.queryByText(/to query soil properties at that point/)).toBeNull();
     expect(screen.getByText(/press Escape, to clear it/)).toBeTruthy();
     expect(screen.queryByText("Clear queried point")).toBeNull();
@@ -1027,6 +1031,46 @@ describe("SoilDetails queried point", () => {
 
     expect(screen.getByRole("alert").textContent).toContain("could not be loaded for this pin");
     expect(screen.queryByText(/SoilGrids point estimates are not served yet/)).toBeNull();
+  });
+
+  it("names a masked or out-of-release pin as no estimate nearby, not as an unpublished lane", () => {
+    queries.getSoilProperties.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: {
+        message: "Soil properties are unavailable: no_cell_within_radius (no SoilGrids estimate within 1000 m)",
+        data: { code: "PRECONDITION_FAILED" },
+      },
+    });
+
+    renderWithProviders(<SoilDetails bbox={VIEWPORT_BBOX} queryPoint={{ lat: 43.6, lon: -116.2 }} />);
+
+    const note = screen.getByText(/No SoilGrids estimate lies within 1 km of this pin/);
+    expect(note.getAttribute("role")).toBe("status");
+    expect(note.textContent).toContain("not an absence of soil");
+    expect(screen.queryByText(/SoilGrids point estimates are not served yet/)).toBeNull();
+  });
+
+  it("labels served values as a SoilGrids model estimate with the topsoil summary", () => {
+    queries.getSoilProperties.mockReturnValue({
+      data: {
+        ph: 5.7, organicCarbon: 24.3, nitrogen: 1.9, bulkDensity: 1.21, cec: 18.2, ocd: 38,
+        label: "SoilGrids v2.0 250 m model estimate, 0-5 cm, cell centre 140 m away (release soilgrids-v2.0/2020-06-02)",
+        distanceM: 140,
+        topsoil: { texture_class: "loam", reaction_class: "moderately acid", soc_band: "high organic carbon" },
+      },
+      isLoading: false,
+      isError: false,
+    });
+
+    renderWithProviders(<SoilDetails bbox={VIEWPORT_BBOX} queryPoint={{ lat: 43.6, lon: -116.2 }} />);
+
+    expect(screen.getByText(/SoilGrids v2\.0 250 m model estimate, 0-5 cm, cell centre 140 m away/)).toBeTruthy();
+    expect(screen.getByText(/Not a soil sample\s+or measurement at this point/)).toBeTruthy();
+    expect(screen.getByText(/Topsoil 0-30 cm \(thickness-weighted model estimate\): loam/)).toBeTruthy();
+    const card = screen.getByText(/Topsoil 0-30 cm/).parentElement;
+    expect(card?.textContent).not.toMatch(/measured|observed/i);
   });
 
   it("clears the pin through the handler the dock's Soil section supplied", () => {

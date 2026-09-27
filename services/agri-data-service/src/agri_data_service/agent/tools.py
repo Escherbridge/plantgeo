@@ -18,12 +18,12 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from functools import wraps
 from math import cos, radians
-from typing import TYPE_CHECKING, Annotated, Any, Final
+from typing import TYPE_CHECKING, Annotated, Any, Final, Literal
 
 from anthropic import beta_async_tool
 from pydantic import Field
 
-from agri_data_service.agent import parquet_reads, strategy_knowledge, warehouse
+from agri_data_service.agent import parquet_reads, site_brief, soil_properties, strategy_knowledge, warehouse
 from agri_data_service.agent.botanical_occurrences import (
     botanical_occurrence_current_release,
 )
@@ -1604,6 +1604,134 @@ async def surface_value_near_point(  # noqa: PLR0913 - published bounded tool sc
     )
 
 
+# --- Soil properties (SoilGrids model estimates) ------------------------------------
+#
+# A dedicated tool rather than a surface: `surface_value_near_point` stays refused for `soil-*`. Values are
+# SoilGrids v2.0 model estimates, never measurements, and never leave here in ISRIC mapped units. See
+# agent/AGENTS.md, "Soil properties (SoilGrids)".
+
+SoilDepth = Literal["0-5cm", "5-15cm", "15-30cm"]
+SoilProperty = Literal["phh2o", "soc", "nitrogen", "bdod", "cec", "ocd", "clay", "sand", "silt", "cfvo"]
+SOIL_ESTIMATE_NOTE: Final = (
+    "Values are SoilGrids v2.0 250 m model estimates for the pixel at the centre of a ~500 m cell, not a soil "
+    "sample at this point."
+)
+_SOIL_OUTPUT_KEYS: Final = {code: key for code, key, _divisor in site_brief.SOIL_UNITS}
+_SOIL_DEPTH_LABELS: Final = dict(site_brief.SOIL_DEPTHS)
+
+
+def _filtered_soil_section(
+    section: dict[str, Any], depths: Sequence[str] | None, properties: Sequence[str] | None
+) -> dict[str, Any]:
+    """Keep the requested depths and properties; the thickness-weighted topsoil always stays."""
+    wanted_depths = set(depths) if depths else set(_SOIL_DEPTH_LABELS)
+    wanted_keys = {_SOIL_OUTPUT_KEYS[code] for code in properties} if properties else set(_SOIL_OUTPUT_KEYS.values())
+    filtered_depths = {
+        depth: {
+            **{key: value for key, value in values.items() if key in wanted_keys},
+            "label": (
+                f"{site_brief.SOILGRIDS_SOURCE} {site_brief.SOILGRIDS_RESOLUTION_M} m model estimate, "
+                f"{_SOIL_DEPTH_LABELS[depth]}"
+            ),
+        }
+        for depth, values in section["depths"].items()
+        if depth in wanted_depths
+    }
+    return {**section, "depths": filtered_depths}
+
+
+def _soil_coordinate_error(radius: int) -> str:
+    """C6's result shape for an invalid coordinate (review m5): `outside_release_coverage`, as the web reader says."""
+    _record("soil_properties_at_point", 0, {"error": "invalid_coordinate"})
+    return _payload(
+        {
+            "state": "unavailable",
+            "reason": "outside_release_coverage",
+            "radius_m": radius,
+            "soilgrids": None,
+            "error": "longitude must be within -180..180 and latitude within -90..90",
+            "note": f"{SOIL_ESTIMATE_NOTE} No SoilGrids estimate can exist at an invalid coordinate.",
+        }
+    )
+
+
+async def query_soil_properties_at_point(
+    longitude: float,
+    latitude: float,
+    radius_meters: float = soil_properties.DEFAULT_RADIUS_METERS,
+    depths: Sequence[str] | None = None,
+    properties: Sequence[str] | None = None,
+) -> str:
+    """Return the labelled SoilGrids estimate of the nearest lattice cell centre within the radius (C6)."""
+    radius = soil_properties.clamp_radius(radius_meters)
+    if not _valid_coordinate(longitude, latitude):
+        return _soil_coordinate_error(radius)
+    soil = await soil_properties.read_soil_properties(longitude, latitude, radius_meters=radius)
+    if soil["state"] != "available":
+        _record("soil_properties_at_point", 0, {"state": "unavailable", "reason": soil["reason"]})
+        return _payload(
+            {
+                "state": "unavailable",
+                "reason": soil["reason"],
+                "radius_m": radius,
+                "soilgrids": None,
+                "note": (
+                    f"{SOIL_ESTIMATE_NOTE} This is a statement about the soil-properties lane, not about the soil: "
+                    "reads_disabled, lane_never_written, serving_at_capacity and timeout say nothing about this "
+                    "point, and no_cell_within_radius means no SoilGrids estimate lies within radius_m. Never "
+                    "substitute a remembered or typical value."
+                ),
+            }
+        )
+    section = site_brief.build_soil_section(soil)
+    _record("soil_properties_at_point", 1, {"state": "available", "distance_m": soil["distance_m"]})
+    return _payload(
+        {
+            "state": "available",
+            "reason": None,
+            "radius_m": radius,
+            "soilgrids": _filtered_soil_section(section, depths, properties),
+            "note": (
+                f'{SOIL_ESTIMATE_NOTE} Repeat each value\'s label ("SoilGrids v2.0 250 m model estimate, <depth>") '
+                "whenever you cite it, and never call it measured, observed or sampled."
+            ),
+        }
+    )
+
+
+async def _soil_properties_at_point(
+    longitude: float,
+    latitude: float,
+    radius_meters: float = soil_properties.DEFAULT_RADIUS_METERS,
+    depths: list[SoilDepth] | None = None,
+    properties: list[SoilProperty] | None = None,
+) -> str:
+    """Read SoilGrids v2.0 soil property MODEL ESTIMATES at a point: pH, organic carbon, texture and more.
+
+    Returns the nearest ~500 m lattice cell centre within radius_meters (50-2000, default 1000): ten
+    properties at 0-5, 5-15 and 15-30 cm in physical units, plus a thickness-weighted 0-30 cm topsoil with
+    USDA texture class, reaction class and organic-carbon band. Every value is a 250 m machine-learning
+    model estimate, NOT a measurement or soil sample: repeat its label whenever you cite it. A state of
+    "unavailable" carries a reason and says nothing about the soil itself.
+
+    Args:
+        longitude: WGS84 longitude of the point.
+        latitude: WGS84 latitude of the point.
+        radius_meters: Search radius for the nearest cell centre, 50-2000 m; clamped.
+        depths: Optional subset of "0-5cm", "5-15cm", "15-30cm"; the 0-30 cm topsoil is always returned.
+        properties: Optional subset of phh2o, soc, nitrogen, bdod, cec, ocd, clay, sand, silt, cfvo.
+    """
+    return await query_soil_properties_at_point(longitude, latitude, radius_meters, depths, properties)
+
+
+_soil_properties_at_point.__name__ = "soil_properties_at_point"
+#: Published with the literature tools' portable schema (no `anyOf`): the bridge forwards it to Gemini.
+soil_properties_at_point: Final = beta_async_tool(
+    _soil_properties_at_point,
+    input_schema=strategy_knowledge.portable_schema(beta_async_tool(_soil_properties_at_point).input_schema),
+)
+
+
 async def query_surface_evidence_for_selection(  # noqa: PLR0913 - public selection contract
     surface_name: str,
     day: str,
@@ -1710,10 +1838,13 @@ async def surface_evidence_for_selection(  # noqa: PLR0913 - public selection co
 
 
 _SERVER_SITE_PROFILE_NOTE: Final = (
-    "site_profile_source 'server': this site_profile came from the service's own measured reads and the "
-    "map point's region; any site_profile or region you sent was discarded (site_profile_dropped). "
+    "site_profile_source 'server': this site_profile came from server-read site facts and the map point's "
+    "region, each labelled in site_profile_provenance (measured, model_estimate or classified); repeat that "
+    "label whenever you use one. Any site_profile or region you sent was discarded (site_profile_dropped). "
     "Do not send site facts."
 )
+#: C4: only the two searches forward `context_query`, so only they report its source.
+_CONTEXT_QUERY_SERVICE_TOOLS: Final = frozenset({"search_strategies", "search_findings"})
 
 
 async def _literature_answer(
@@ -1730,6 +1861,10 @@ async def _literature_answer(
     """
     answer = await strategy_knowledge.ask(tool_name, service_tool, arguments)
     payload: dict[str, Any] = {**answer.payload, "site_profile_source": plan.site_profile_source}
+    if plan.context_query_source is not None and service_tool in _CONTEXT_QUERY_SERVICE_TOOLS:
+        payload["context_query_source"] = plan.context_query_source
+    if plan.site_profile_provenance is not None:
+        payload["site_profile_provenance"] = plan.site_profile_provenance
     if plan.site_profile_dropped is not None:
         payload["site_profile_dropped"] = list(plan.site_profile_dropped)
         payload["note"] = f"{payload['note']} {_SERVER_SITE_PROFILE_NOTE}"
@@ -1881,6 +2016,7 @@ async def search_strategy_research_findings(  # noqa: PLR0913 - the parameter li
 WAREHOUSE_TOOLS: Final = (
     list_environmental_layers,
     surface_evidence_for_selection,
+    soil_properties_at_point,
     observation_coverage_on_day,
     observation_temporal_neighbors,
     species_information,

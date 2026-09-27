@@ -1,5 +1,5 @@
 import { snapshotMetadata } from "./mtbs-snapshot-fixture";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getPublishedDroughtClassification: vi.fn(),
@@ -14,6 +14,10 @@ const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
   getSoilProperties: vi.fn(),
   getParquetBurnSeverity: vi.fn(),
+  readCropCover: vi.fn(),
+  getParquetLayerDayWindow: vi.fn(),
+  getParquetLatestRelease: vi.fn(),
+  getParquetDrought: vi.fn(),
   // Consumed in call order by the generic `db.select()`/`db.execute()` stand-ins below, so a
   // test that cares can queue exactly what `readCommunityProposals` and a forbidden legacy strategy read
   // will see on their next call. Left empty, every call resolves to `[]`.
@@ -56,9 +60,22 @@ vi.mock("@/lib/server/db", () => ({
 
 vi.mock("@/lib/server/auth", () => ({ getServerSession: mocks.getServerSession }));
 
-// SoilGrids remains external; MTBS uses the mocked governed Parquet reader below.
-vi.mock("@/lib/server/services/soilgrids", () => ({
+// The soil-properties lane reader; MTBS uses the mocked governed Parquet reader below.
+vi.mock("@/lib/server/services/soilgrids", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/server/services/soilgrids")>()),
   getSoilProperties: mocks.getSoilProperties,
+}));
+
+// The site brief's two reads no payload block makes: crop cover and the 30-day detection window.
+vi.mock("@/lib/server/services/land-context/crop-cover", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/server/services/land-context/crop-cover")>()),
+  readCropCover: mocks.readCropCover,
+}));
+
+vi.mock("@/lib/server/services/parquet-plane-client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/server/services/parquet-plane-client")>()),
+  getParquetLayerDayWindow: mocks.getParquetLayerDayWindow,
+  getParquetLatestRelease: mocks.getParquetLatestRelease,
 }));
 
 vi.mock("@/lib/server/services/parquet-day", async (importOriginal) => {
@@ -95,6 +112,7 @@ vi.mock("@/lib/server/services/parquet-trpc-readers", async (importOriginal) => 
     getParquetFireDetections: mocks.getParquetFireDetections,
     getParquetFirePerimeters: mocks.getParquetFirePerimeters,
     getParquetBurnSeverity: mocks.getParquetBurnSeverity,
+    getParquetDrought: mocks.getParquetDrought,
   };
 });
 
@@ -120,12 +138,21 @@ vi.mock("@/lib/server/services/carbon-potential", () => ({
 
 import {
   assembleRegionalContext,
+  resetSiteBriefCacheForTests,
   type TemporalContext,
 } from "@/lib/server/services/regional-context";
-import { buildSystemPrompt, buildTemporalSection } from "@/lib/server/services/ai-prompt";
+import { buildSystemPrompt, buildTemporalSection, buildUserMessage } from "@/lib/server/services/ai-prompt";
+import { soilEstimateFromMapped } from "@/lib/server/services/soilgrids";
 import { MAX_VIEWED_LAYERS, requestSchema } from "@/app/api/ai/regional-intelligence/route";
 
 const SERVER_TODAY = "2026-08-09";
+
+/** CONTRACT C5.1 worked-example mapped integers. */
+const SOIL_MAPPED = {
+  "0-5cm": { phh2o: 57, soc: 243, nitrogen: 190, bdod: 121, cec: 182, ocd: 380, clay: 189, sand: 371, silt: 440, cfvo: 98 },
+  "5-15cm": { phh2o: 57, soc: 210, nitrogen: 160, bdod: 127, cec: 170, ocd: 340, clay: 195, sand: 380, silt: 425, cfvo: 102 },
+  "15-30cm": { phh2o: 58, soc: 180, nitrogen: 130, bdod: 131, cec: 160, ocd: 300, clay: 201, sand: 390, silt: 409, cfvo: 106 },
+};
 
 /**
  * The real fire-detections shape as of 2026-08: a multi-year ingestion hole between an early
@@ -273,6 +300,11 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date(`${SERVER_TODAY}T12:00:00Z`));
   vi.clearAllMocks();
+  // The base-run site-brief LRU (regional-context.ts) is keyed on (0.005 cell, UTC day); every
+  // case in this file reuses the same point and SERVER_TODAY, so a leaked hit would silently
+  // hand a later case an earlier case's mocked reads -- the same class of leak `dbSelectResults`
+  // above already guards against.
+  resetSiteBriefCacheForTests();
   mocks.dbSelectResults.length = 0;
   mocks.dbExecuteResults.length = 0;
   // `clearLayerIdCache()` used to run here: `readPublishedFirePerimeters` resolved its layer id
@@ -295,7 +327,16 @@ beforeEach(() => {
   // Unconfigured by default, same as the pre-2026-08-14 hardcoded nulls this replaced: no test
   // in this file exercises soil/MTBS content unless it explicitly overrides these.
   mocks.getSoilProperties.mockRejectedValue(new Error("No soil fixture configured"));
+  mocks.readCropCover.mockResolvedValue({ geojson: null, servedDay: null, truncated: false, message: "Crop-cover estimates have not been published yet." });
+  mocks.getParquetLayerDayWindow.mockResolvedValue([]);
   mocks.getParquetBurnSeverity.mockResolvedValue({ state: "not_generated", requestedDay: "2026-08-09", reason: "lane_never_written" });
+  mocks.getParquetDrought.mockResolvedValue({ state: "not_generated", requestedDay: "2026-08-09", reason: "lane_never_written" });
+  mocks.getParquetLatestRelease.mockResolvedValue({ state: "lane_never_written", requestedDay: "2026-08-09" });
+});
+
+// SITE_BRIEF_ENABLED / SOIL_PROPERTIES_READS_ENABLED are stubbed per case; both off is the default.
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 afterAll(() => {
@@ -1070,22 +1111,170 @@ describe("the prompt section describing what each layer is showing", () => {
 });
 
 describe("the viewed-layers request contract", () => {
-  it('seeds selected analyses with metadata only and never reads radius or latest observations', async () => {
+  it('seeds selected analyses with metadata only and never reads anything with both soil flags off (review M7)', async () => {
     const selection = { timeScale: 'month' as const, rangeSteps: 1, zoom: 12,
       layerDays: { 'fire-perimeters': '2024-06-01', 'soil-vpd': '2023-06-01' } };
+    mocks.getSoilProperties.mockResolvedValue({ state: 'unavailable', reason: 'reads_disabled' });
     const result = await assembleRegionalContext(43.6, -116.2,
-      [{ layer: 'fire-perimeters', date: '2024-06-01', hasDataOnDate: false }], selection);
-    expect(result.payload).toMatchObject({ firePerimeters: null, fireDetections: null,
+      [{ layer: 'fire-perimeters', date: '2024-06-01', hasDataOnDate: true }], selection);
+    expect(result.payload).toMatchObject({ strategyRecommendations: null, strategyContext: [],
       weather: null, waterScarcity: null, soilProperties: null, communityProposals: [] });
+    // The wave-2 payload exactly: no siteBrief key at all, nothing prefetched.
+    expect(result.payload).not.toHaveProperty('siteBrief');
+    expect(result.dataFreshness).toEqual({});
+    expect(result.contextIsEmpty).toBe(true);
     expect(result.temporalContext).toMatchObject({ analysisSelection: selection,
       selectionEvidenceOnly: true, sourcesServedAsOfLatest: [] });
     for (const reader of [mocks.getParquetFirePerimeters, mocks.getParquetFireDetections,
       mocks.getPublishedStreamflowGauges, mocks.getPublishedWeatherForPoint,
-      mocks.getPublishedWeatherForBbox, mocks.getSoilProperties, mocks.getParquetBurnSeverity,
+      mocks.getPublishedWeatherForBbox, mocks.getParquetBurnSeverity, mocks.getParquetDrought,
+      mocks.getParquetLayerDayWindow, mocks.getParquetLatestRelease,
       mocks.getPublishedDroughtClassification, mocks.dbSelect, mocks.dbExecute]) {
       expect(reader).not.toHaveBeenCalled();
     }
     expect(buildTemporalSection(result.temporalContext)).toContain('No initial source was read as-of-latest');
+    expect(buildTemporalSection(result.temporalContext)).not.toContain('site brief');
+  });
+
+  it('seeds selected analyses with the point-bounded site brief when SITE_BRIEF_ENABLED is on', async () => {
+    vi.stubEnv('SITE_BRIEF_ENABLED', 'true');
+    const selection = { timeScale: 'month' as const, rangeSteps: 1, zoom: 12,
+      layerDays: { 'fire-perimeters': '2024-06-01', 'soil-vpd': '2023-06-01' } };
+    const result = await assembleRegionalContext(43.6, -116.2,
+      [{ layer: 'fire-perimeters', date: '2024-06-01', hasDataOnDate: true }], selection);
+    // No payload block or database read runs on this path; the brief's own reads are point-bounded.
+    for (const reader of [mocks.getParquetFireDetections, mocks.getPublishedStreamflowGauges,
+      mocks.getPublishedWeatherForBbox, mocks.getPublishedWeatherForPoint, mocks.getPublishedDroughtClassification,
+      mocks.dbSelect, mocks.dbExecute]) {
+      expect(reader).not.toHaveBeenCalled();
+    }
+    const [perimeterRequest] = mocks.getParquetFirePerimeters.mock.calls[0];
+    const [west, south, east, north] = perimeterRequest.bbox.split(',').map(Number);
+    expect(east - west).toBeCloseTo(0.02, 6);
+    expect(north - south).toBeCloseTo(0.02, 6);
+    expect(perimeterRequest.date).toBeUndefined();
+    expect(perimeterRequest.signal).toBeInstanceOf(AbortSignal);
+    expect(mocks.getParquetBurnSeverity.mock.calls[0][0].date).toBeUndefined();
+    expect(mocks.getParquetDrought.mock.calls[0][0].date).toBeUndefined();
+    expect(mocks.getSoilProperties).toHaveBeenCalledTimes(1);
+    expect(result.payload.siteBrief).toMatchObject({ brief_version: 'site-brief/1', built_on: SERVER_TODAY,
+      soil: { state: 'unavailable', reason: 'read_failed' } });
+    const section = buildTemporalSection(result.temporalContext);
+    expect(section).toContain('No initial payload block was read as-of-latest');
+    expect(section).toContain('The one exception is the server-built site brief');
+  });
+
+  it('shares one soil read between soilProperties and the brief, and keeps flag-off soil withheld', async () => {
+    vi.stubEnv('SITE_BRIEF_ENABLED', 'true');
+    const selection = { timeScale: 'month' as const, rangeSteps: 1, zoom: 12, layerDays: {} };
+    mocks.getSoilProperties.mockResolvedValue({ state: 'unavailable', reason: 'reads_disabled' });
+    const off = await assembleRegionalContext(43.6, -116.2, [], selection);
+    expect(off.payload.soilProperties).toBeNull();
+    expect(off.dataFreshness).toEqual({});
+    expect(off.contextIsEmpty).toBe(true);
+    expect(off.payload.siteBrief?.soil).toEqual({ state: 'unavailable', reason: 'reads_disabled' });
+
+    mocks.getSoilProperties.mockClear();
+    mocks.getSoilProperties.mockResolvedValue({ state: 'available', properties: soilEstimateFromMapped(SOIL_MAPPED, 'soilgrids-v2.0/2020-06-02', 140) });
+    const on = await assembleRegionalContext(43.6, -116.2, [], selection);
+    expect(mocks.getSoilProperties).toHaveBeenCalledTimes(1);
+    expect(on.payload.soilProperties).toMatchObject({ ph: 5.7, basis: 'model_estimate', distanceM: 140 });
+    expect(on.dataFreshness).toEqual({ soilProperties: 'static_release_untimed' });
+    expect(on.payload.siteBrief?.soil).toMatchObject({ state: 'available', basis: 'model_estimate', distance_m: 140,
+      topsoil_0_30cm: { ph: 5.8, texture_class: 'loam' } });
+    expect(on.payload.siteBrief?.literature_seed).toContain('moderately acid loam topsoil');
+  });
+
+  it('serves soil alone, with no brief read, when only SOIL_PROPERTIES_READS_ENABLED is on', async () => {
+    const selection = { timeScale: 'month' as const, rangeSteps: 1, zoom: 12, layerDays: {} };
+    mocks.getSoilProperties.mockResolvedValue({ state: 'available', properties: soilEstimateFromMapped(SOIL_MAPPED, 'soilgrids-v2.0/2020-06-02', 140) });
+    const result = await assembleRegionalContext(43.6, -116.2, [], selection, false);
+    expect(result.payload.soilProperties).toMatchObject({ ph: 5.7 });
+    expect(result.payload).not.toHaveProperty('siteBrief');
+    for (const reader of [mocks.getParquetFirePerimeters, mocks.getParquetBurnSeverity, mocks.getParquetDrought,
+      mocks.getParquetLayerDayWindow, mocks.getParquetLatestRelease]) {
+      expect(reader).not.toHaveBeenCalled();
+    }
+  });
+
+  it('builds the brief from point-containing fire, drought, weather and crop-cover reads', async () => {
+    vi.stubEnv('SITE_BRIEF_ENABLED', 'true');
+    const selection = { timeScale: 'month' as const, rangeSteps: 1, zoom: 12, layerDays: {} };
+    const square = (west: number, south: number, size: number) => ({ type: 'Polygon' as const,
+      coordinates: [[[west, south], [west + size, south], [west + size, south + size], [west, south + size], [west, south]]] });
+    mocks.getParquetFirePerimeters.mockResolvedValue({ state: 'ready', requestedDay: SERVER_TODAY, servedDay: SERVER_TODAY, truncated: false,
+      data: [{ featureId: 'p1', uniqueFireIdentifier: '2025-IDBOF-000123', snapshotDay: SERVER_TODAY, observedDay: '2025-08-11', severity: null, geometry: square(-116.3, 43.5, 0.2) }] });
+    mocks.getParquetBurnSeverity.mockResolvedValue({ state: 'ready', requestedDay: SERVER_TODAY, servedDay: '2026-01-01', truncated: false,
+      data: [
+        { fireId: 'm1', fireName: 'Same fire', fireYear: 2025, fireType: 'Wildfire', assessmentType: 'Initial', ignitionDate: '2025-08-11', observedDay: '2026-01-01', acres: 900, severityClass: '4', dataAvailableAt: '2026-01-01T00:00:00Z', geometry: square(-116.3, 43.5, 0.2) },
+        { fireId: 'm2', fireName: 'Elsewhere', fireYear: 2026, fireType: 'Wildfire', assessmentType: 'Initial', ignitionDate: '2026-07-01', observedDay: '2026-01-01', acres: 50, severityClass: '2', dataAvailableAt: '2026-01-01T00:00:00Z', geometry: square(-116.0, 43.0, 0.1) },
+      ] });
+    mocks.getParquetLayerDayWindow.mockImplementation(async (request: { layer: string }) => request.layer === 'weather-observations'
+      ? [
+        { state: 'day_not_written', requestedDay: '2026-08-08' },
+        { state: 'published', requestedDay: SERVER_TODAY, servedDay: SERVER_TODAY, truncated: false,
+          rows: [{ latitude: 43.7, longitude: -116.2, observed_at: '2026-08-09T15:00:00Z', temperature_c: 14.25, relative_humidity_pct: 37.5 }] },
+      ]
+      : [
+        { state: 'published', requestedDay: SERVER_TODAY, servedDay: SERVER_TODAY, truncated: false,
+          rows: [{ cell_longitude: -116.2, cell_latitude: 43.6, detection_count: 2 }, { cell_longitude: -116.21, cell_latitude: 43.61, detection_count: 1 }] },
+        { state: 'day_not_written', requestedDay: '2026-08-08' },
+      ]);
+    mocks.getParquetDrought.mockResolvedValue({ state: 'ready', requestedDay: SERVER_TODAY, servedDay: '2026-08-04', truncated: false,
+      data: [{ areaId: 'a', validDate: '2026-08-04', droughtCategory: 2, sourceUrl: 'https://x', ingestedAt: 'x', geometry: square(-117, 43, 1) }] });
+    mocks.getParquetLatestRelease.mockResolvedValue({ state: 'published', requestedDay: SERVER_TODAY, servedDay: '2026-01-30', truncated: false, rows: [{
+      observed_year: 2025, release_day: '2026-01-30', aggregation_cell_m: 3000, cell_area_ha: 900,
+      class_areas_json: JSON.stringify({ '176': 550.8, '24': 200, '121': 100 }),
+      class_names_json: JSON.stringify({ '176': 'Grassland/Pasture', '24': 'Winter Wheat', '121': 'Developed/Open Space' }),
+      geometry_wkb: square(-116.22, 43.58, 0.04),
+    }] });
+    const result = await assembleRegionalContext(43.6, -116.2, [], selection);
+    const brief = result.payload.siteBrief;
+    expect(brief?.fire).toMatchObject({ state: 'available', latest_fire_day: '2025-08-11', burn_severity: 'high',
+      days_since_fire: 363, detections_last_30_days: 3 });
+    expect(brief?.drought).toMatchObject({ state: 'available', usdm_class: 'D2', week_of: '2026-08-04' });
+    expect(brief?.weather).toMatchObject({ state: 'available', temperature_c: 14.3, relative_humidity_pct: 38, distance_m: 11120 }); // the C2 sphere (6,371,008.8 m) for every brief distance
+    expect(brief?.land_cover).toMatchObject({ state: 'available', class_name: 'Grassland/Pasture', class_code: 176, fraction_pct: 61, cell_km: 3 });
+    expect(brief?.literature_seed).toBe('burned 2025, high severity; severe drought; grassland/pasture');
+    const detectionRequest = mocks.getParquetLayerDayWindow.mock.calls.map(([request]) => request)
+      .find((request) => request.layer === 'fire-detections');
+    expect(detectionRequest).toMatchObject({ zoomTier: 13, firstDay: '2026-07-11', lastDay: SERVER_TODAY });
+  });
+
+  it('never turns a failed fire read into an absence of fire', async () => {
+    vi.stubEnv('SITE_BRIEF_ENABLED', 'true');
+    const selection = { timeScale: 'month' as const, rangeSteps: 1, zoom: 12, layerDays: {} };
+    mocks.getParquetLayerDayWindow.mockRejectedValue(new Error('window read failed'));
+    const result = await assembleRegionalContext(43.6, -116.2, [], selection);
+    expect(result.payload.siteBrief?.fire).toEqual({ state: 'unavailable', reason: 'read_failed' });
+    expect(result.payload.siteBrief?.descriptors.some((descriptor) => descriptor.seed.includes('fire'))).toBe(false);
+  });
+
+  it('gives a follow-up the cached brief, or else the one soil read, never the six section reads (review M6)', async () => {
+    vi.stubEnv('SITE_BRIEF_ENABLED', 'true');
+    const selection = { timeScale: 'month' as const, rangeSteps: 1, zoom: 12, layerDays: {} };
+    mocks.getSoilProperties.mockResolvedValue({ state: 'available', properties: soilEstimateFromMapped(SOIL_MAPPED, 'soilgrids-v2.0/2020-06-02', 140) });
+    const uncached = await assembleRegionalContext(43.6, -116.2, [], selection, false);
+    expect(uncached.payload.soilProperties).toMatchObject({ ph: 5.7 });
+    expect(uncached.payload).not.toHaveProperty('siteBrief');
+    for (const reader of [mocks.getParquetFirePerimeters, mocks.getParquetDrought, mocks.getParquetLayerDayWindow]) {
+      expect(reader).not.toHaveBeenCalled();
+    }
+    // A base run whose refusals are plane facts is cached; the follow-up is then served with no read.
+    mocks.getParquetFirePerimeters.mockResolvedValue({ state: 'ready', requestedDay: SERVER_TODAY, servedDay: SERVER_TODAY, truncated: false, data: [] });
+    mocks.getParquetBurnSeverity.mockResolvedValue({ state: 'ready', requestedDay: SERVER_TODAY, servedDay: SERVER_TODAY, truncated: false, data: [] });
+    mocks.getParquetDrought.mockResolvedValue({ state: 'ready', requestedDay: SERVER_TODAY, servedDay: '2026-08-04', truncated: false, data: [] });
+    mocks.getParquetLayerDayWindow.mockImplementation(async (request: { layer: string }) => request.layer === 'weather-observations'
+      ? [{ state: 'published', requestedDay: SERVER_TODAY, servedDay: SERVER_TODAY, truncated: false, rows: [] }] : []);
+    mocks.getParquetLatestRelease.mockResolvedValue({ state: 'published', requestedDay: SERVER_TODAY, servedDay: '2026-01-30', truncated: false, rows: [] });
+    const base = await assembleRegionalContext(43.6, -116.2, [], selection, true);
+    expect(base.payload.siteBrief?.weather).toEqual({ state: 'unavailable', reason: 'no_observation_within_radius' });
+    vi.clearAllMocks();
+    const followUp = await assembleRegionalContext(43.6, -116.2, [], selection, false);
+    expect(followUp.payload.siteBrief).toEqual(base.payload.siteBrief);
+    expect(followUp.payload.soilProperties).toEqual(base.payload.soilProperties);
+    expect(mocks.getSoilProperties).not.toHaveBeenCalled();
+    expect(mocks.getParquetFirePerimeters).not.toHaveBeenCalled();
   });
 
   const validBody = {
@@ -1214,6 +1403,45 @@ describe("community proposals and deferred strategy evidence", () => {
     expect(result.payload.strategyRecommendations).toBeNull();
     expect(result.dataFreshness.strategyRecommendations).toBe("unavailable");
     expect(result.contextIsEmpty).toBe(true);
+  });
+
+  it("serves the one soil read into soilProperties and the brief on the legacy path", async () => {
+    vi.stubEnv("SITE_BRIEF_ENABLED", "true");
+    mocks.getSoilProperties.mockResolvedValue({ state: "available", properties: soilEstimateFromMapped(SOIL_MAPPED, "soilgrids-v2.0/2020-06-02", 140) });
+    const result = await assembleRegionalContext(43.6, -116.2);
+    expect(mocks.getSoilProperties).toHaveBeenCalledTimes(1);
+    expect(mocks.getSoilProperties).toHaveBeenCalledWith(43.6, -116.2, { timeoutMs: 3000 });
+    expect(result.payload.soilProperties).toMatchObject({ ph: 5.7, basis: "model_estimate" });
+    expect(result.dataFreshness.soilProperties).toBe("static_release_untimed");
+    expect(result.payload.siteBrief?.soil).toMatchObject({ state: "available", release_id: "soilgrids-v2.0/2020-06-02" });
+    // One reader semantics on both paths (CONTRACT C5.1): the brief's perimeter read is its own
+    // point-bounded containment box, beside the payload's context-radius read.
+    const boxes = mocks.getParquetFirePerimeters.mock.calls.map(([request]) => {
+      const [west, , east] = request.bbox.split(",").map(Number);
+      return Math.round((east - west) * 1000) / 1000;
+    }).sort();
+    expect(boxes).toEqual([0.02, 0.5]);
+  });
+
+  it("keeps soil withheld when reads are disabled, exactly as before the lane", async () => {
+    vi.stubEnv("SITE_BRIEF_ENABLED", "true");
+    mocks.getSoilProperties.mockResolvedValue({ state: "unavailable", reason: "reads_disabled" });
+    const result = await assembleRegionalContext(43.6, -116.2);
+    expect(result.payload.soilProperties).toBeNull();
+    expect(result.dataFreshness.soilProperties).toBe("unavailable");
+    expect(result.payload.siteBrief?.soil).toEqual({ state: "unavailable", reason: "reads_disabled" });
+  });
+
+  it("reads nothing the wave-2 legacy path did not, with both soil flags off (review M7)", async () => {
+    mocks.getSoilProperties.mockResolvedValue({ state: "unavailable", reason: "reads_disabled" });
+    const result = await assembleRegionalContext(43.6, -116.2);
+    expect(result.payload).not.toHaveProperty("siteBrief");
+    expect(result.payload.soilProperties).toBeNull();
+    expect(result.dataFreshness.soilProperties).toBe("unavailable");
+    expect(mocks.getParquetFirePerimeters).toHaveBeenCalledTimes(1);
+    for (const reader of [mocks.getParquetDrought, mocks.getParquetLayerDayWindow, mocks.getParquetLatestRelease, mocks.readCropCover]) {
+      expect(reader).not.toHaveBeenCalled();
+    }
   });
 
   it("keeps retired soil properties unavailable while wiring governed Parquet MTBS perimeters", async () => {
@@ -1521,12 +1749,75 @@ it("regional MTBS uses the caller-selected day and retains partial-capture prove
 });
 
 it("regional MTBS reports a refused Parquet read as failed rather than absent", async () => {
+  // The real `upstream_unavailable` variant carries `fault: { kind, message }`, not a bare
+  // `requestedDay`/`reason` pair (`parquet-presentation.ts`'s `ParquetBurnSeverityRead` union) --
+  // `siteBriefFireSection`'s `readerRefusalReason` reads `.fault.kind` unconditionally on this state.
   mocks.getParquetBurnSeverity.mockResolvedValue({
-    state: "upstream_unavailable", requestedDay: "2026-08-08", reason: "read_timed_out",
+    state: "upstream_unavailable", fault: { kind: "upstream_error", message: "read timed out" },
   });
   const result = await assembleRegionalContext(43.6, -116.2, [
     { layer: "burn-severity", date: "2026-08-08", hasDataOnDate: true },
   ]);
   expect(result.payload.mtbsPerimeters).toBeNull();
   expect(result.temporalContext.readings[0].outcome).toBe("read_failed");
+});
+
+/** The brief reaches the model with its labels; a base run is organised around its descriptors. */
+describe("the site brief in the base run's prompt", () => {
+  const selection = { timeScale: "month" as const, rangeSteps: 1, zoom: 12, layerDays: {} };
+  beforeEach(() => { vi.stubEnv("SITE_BRIEF_ENABLED", "true"); });
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  it("renders the brief with basis labels and the base-run instruction when no question was typed", async () => {
+    mocks.getSoilProperties.mockResolvedValue({ state: "available", properties: soilEstimateFromMapped(SOIL_MAPPED, "soilgrids-v2.0/2020-06-02", 140) });
+    const result = await assembleRegionalContext(43.6, -116.2, [], selection);
+    const baseRun = buildUserMessage(result.payload, result.dataFreshness, result.contextIsEmpty, result.temporalContext);
+    expect(baseRun).toContain("## Site brief (server-built)");
+    expect(baseRun).toContain("SoilGrids v2.0 250 m model estimate, sampled at the centre of a ~500 m cell 140 m from this point");
+    expect(baseRun).toContain("- moderately acid loam topsoil (pH 5.8, SoilGrids model estimate 0-30 cm)");
+    expect(baseRun).toContain("organise the base analysis around these site descriptors");
+    expect(baseRun.indexOf("## Site brief")).toBeLessThan(baseRun.indexOf("## Warehouse observations"));
+    // The brief is rendered once, as its own section, not again inside the observations JSON.
+    expect(baseRun.split("\"brief_version\"").length - 1).toBe(1);
+
+    const followUp = buildUserMessage(result.payload, result.dataFreshness, result.contextIsEmpty, result.temporalContext, "what's my soil pH?");
+    expect(followUp).toContain("Use these site descriptors as context for the question below.");
+    expect(followUp).not.toContain("organise the base analysis");
+  });
+
+  it("states unavailable sections as gaps, never as site conditions", async () => {
+    mocks.getSoilProperties.mockResolvedValue({ state: "unavailable", reason: "reads_disabled" });
+    const result = await assembleRegionalContext(43.6, -116.2, [], selection);
+    const message = buildUserMessage(result.payload, result.dataFreshness, result.contextIsEmpty, result.temporalContext);
+    expect(message).toContain("soil: not available (reads_disabled)");
+    expect(message).toContain("not a condition of the site");
+  });
+
+  it("tells the model every soil number is a model estimate and the site facts carry basis labels", () => {
+    const system = buildSystemPrompt(false);
+    expect(system).toContain('Every soil number you write must carry the words "model estimate"');
+    expect(system).toContain("The server supplies this site's facts (SoilGrids soil model estimates, mapped burn history, drought class, CDL land cover), each with its basis label");
+    expect(system).not.toContain("this site's measured facts");
+    expect(system).not.toContain("represent SoilGrids predictions at 0–5 cm");
+    vi.stubEnv("SITE_BRIEF_ENABLED", undefined);
+    vi.stubEnv("SOIL_PROPERTIES_READS_ENABLED", "true");
+    expect(buildSystemPrompt(false)).toBe(system);
+  });
+
+  /** Review M7: both flags off, the prompt the model sees is wave 2's, sentence for sentence. */
+  it("sends the wave-2 prompt text with both soil flags off", async () => {
+    vi.stubEnv("SITE_BRIEF_ENABLED", undefined);
+    vi.stubEnv("SOIL_PROPERTIES_READS_ENABLED", undefined);
+    const system = buildSystemPrompt(false);
+    expect(system).toContain("- Soil properties include explicit units and represent SoilGrids predictions at 0–5 cm, not a local soil sample.");
+    expect(system).toContain("The server supplies this site's measured facts (soil, burn history, precipitation, land cover) and its region to those tools itself: send no site_profile and no region argument, and never put site numbers in a literature call.\n");
+    expect(system).not.toContain("model estimate");
+    mocks.getSoilProperties.mockResolvedValue({ state: "unavailable", reason: "reads_disabled" });
+    const result = await assembleRegionalContext(43.6, -116.2, [], selection);
+    const message = buildUserMessage(result.payload, result.dataFreshness, result.contextIsEmpty, result.temporalContext);
+    expect(message).not.toContain("Site brief");
+    expect(message).toContain("No environmental measurement was prefetched outside the selected tile workflow.");
+    expect(message).toContain("The initial payload contains location and selection metadata only.");
+    expect(message).toMatch(/longitude -116\.2000\n\n## Warehouse observations\n/);
+  });
 });

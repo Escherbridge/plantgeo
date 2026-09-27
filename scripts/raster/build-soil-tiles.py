@@ -5,7 +5,9 @@ the COG (whose internal overviews are `average`) and only then run through the r
 rendered pixels instead would be wrong wherever the ramp is non-linear, which is everywhere.
 
 The ramp is read back out of `geo.published_raster` rather than restated here, so the tiles are
-painted with exactly the ramp the catalog advertises to the legend.
+painted with exactly the ramp the catalog advertises to the legend. `--releases-file` reads the
+same shape from a `publish-soil-rasters.py --manifest-out` JSON instead, for property-depths that
+have not been registered in Postgres yet -- a local-only build ahead of the owner's go to publish.
 
     uv run --with rasterio --with pmtiles --with pillow --with psycopg2-binary --no-project \
         python scripts/raster/build-soil-tiles.py
@@ -80,14 +82,41 @@ def load_published_cogs(database_url: str) -> list[dict]:
     with psycopg2.connect(database_url) as connection, connection.cursor() as cursor:
         cursor.execute("SET TRANSACTION READ ONLY")
         cursor.execute(
-            "SELECT property, unit, scale_divisor, color_ramp, object_key, "
+            "SELECT property, depth, unit, scale_divisor, color_ramp, object_key, "
             "       bbox_west, bbox_south, bbox_east, bbox_north "
             "  FROM geo.published_raster "
             " WHERE collection = 'soilgrids' AND archive_format = 'cog' "
-            " ORDER BY property"
+            " ORDER BY property, depth"
         )
         columns = [description[0] for description in cursor.description]
         return [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
+
+
+def load_local_releases(path: Path) -> list[dict]:
+    """The same shape as `load_published_cogs`, sourced from a dry-run publish manifest.
+
+    Lets PMTiles be cut for property-depths that are not yet rows in `geo.raster_release` -- the
+    local build step for a release still pending the owner's go to publish (see AGENTS.md).
+    """
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    releases = []
+    for entry in payload["releases"]:
+        west, south, east, north = entry["bounds"]
+        releases.append(
+            {
+                "property": entry["property"],
+                "depth": entry["depth"],
+                "unit": entry["unit"],
+                "scale_divisor": entry["scaleDivisor"],
+                "color_ramp": entry["colorRamp"],
+                "object_key": entry["objectKey"],
+                "bbox_west": west,
+                "bbox_south": south,
+                "bbox_east": east,
+                "bbox_north": north,
+            }
+        )
+    return releases
 
 
 def tile_window(zoom: int, x: int, y: int) -> Window:
@@ -181,14 +210,14 @@ def render_tile(
     low: float,
     high: float,
 ) -> bytes | None:
-    """Paint one tile, or return None when it holds no measurement at all.
+    """Paint one tile, or return None when it holds no valid pixel at all.
 
     Values are clamped to the ramp span before indexing, so a pixel below the first stop takes
     the first colour and one above the last takes the last -- the ramp is fitted to quantiles,
     so the tails are real data that must still be drawn, just not given their own colours.
     """
-    measured = values != nodata
-    if not measured.any():
+    valid = values != nodata
+    if not valid.any():
         return None
 
     span = high - low if high > low else 1.0
@@ -196,7 +225,7 @@ def render_tile(
     indexed = numpy.clip(
         numpy.rint(scaled * (RAMP_INDEX_COUNT - 1)) + 1, 1, RAMP_INDEX_COUNT
     ).astype("uint8")
-    indexed[~measured] = NODATA_INDEX
+    indexed[~valid] = NODATA_INDEX
 
     image = Image.fromarray(indexed, mode="P")
     image.putpalette(palette)
@@ -208,9 +237,10 @@ def render_tile(
 def build_archive(release: dict, cog_directory: Path, tile_directory: Path) -> dict:
     """Cut one property's whole pyramid and write it as a PMTiles archive."""
     property_name = release["property"]
+    depth = release["depth"]
     cog_path = cog_directory / Path(release["object_key"]).name
     if not cog_path.is_file():
-        raise SystemExit(f"{property_name}: no local COG at {cog_path}")
+        raise SystemExit(f"{property_name} {depth}: no local COG at {cog_path}")
 
     bounds_4326 = (
         release["bbox_west"],
@@ -267,10 +297,10 @@ def build_archive(release: dict, cog_directory: Path, tile_directory: Path) -> d
                         rendered[zxy_to_tileid(zoom, x, y)] = png
 
     if not rendered:
-        raise SystemExit(f"{property_name}: every tile was empty; refusing to write an archive")
+        raise SystemExit(f"{property_name} {depth}: every tile was empty; refusing to write an archive")
 
     tile_directory.mkdir(parents=True, exist_ok=True)
-    archive_path = tile_directory / f"{property_name}_0-5cm_mean.pmtiles"
+    archive_path = tile_directory / f"{property_name}_{depth}_mean.pmtiles"
     west, south, east, north = bounds_4326
 
     with archive_path.open("wb") as handle:
@@ -297,9 +327,9 @@ def build_archive(release: dict, cog_directory: Path, tile_directory: Path) -> d
                 "center_lat_e7": int((south + north) / 2 * 1e7),
             },
             {
-                "name": f"SoilGrids {property_name} 0-5cm mean",
+                "name": f"SoilGrids {property_name} {depth} mean",
                 "description": (
-                    f"ISRIC SoilGrids v2.0 {property_name}, 0-5 cm mean, "
+                    f"ISRIC SoilGrids v2.0 {property_name}, {depth} mean, "
                     f"in {release['unit']}, clipped to the PNW."
                 ),
                 "attribution": "SoilGrids &mdash; ISRIC (CC-BY 4.0)",
@@ -311,10 +341,10 @@ def build_archive(release: dict, cog_directory: Path, tile_directory: Path) -> d
 
     size = archive_path.stat().st_size
     print(
-        f"[soil-tiles] {property_name:9s} {len(rendered):5d} tiles ({empty} empty) "
+        f"[soil-tiles] {property_name:9s} {depth:8s} {len(rendered):5d} tiles ({empty} empty) "
         f"-> {archive_path.name} {size / 1e6:.1f}MB in {time.time() - started_at:.0f}s"
     )
-    return {"property": property_name, "file": archive_path.name, "tiles": len(rendered)}
+    return {"property": property_name, "depth": depth, "file": archive_path.name, "tiles": len(rendered)}
 
 
 def main() -> int:
@@ -322,20 +352,36 @@ def main() -> int:
     parser.add_argument("--cog-dir", type=Path, default=DEFAULT_COG_DIRECTORY)
     parser.add_argument("--tile-dir", type=Path, default=DEFAULT_TILE_DIRECTORY)
     parser.add_argument("--properties", nargs="*")
+    parser.add_argument("--depths", nargs="*")
+    parser.add_argument(
+        "--releases-file",
+        type=Path,
+        help=(
+            "Read releases from a publish-soil-rasters.py --manifest-out JSON instead of "
+            "Postgres (no DATABASE_URL required)."
+        ),
+    )
     arguments = parser.parse_args()
 
-    database_url = read_environment("DATABASE_URL")
-    if not database_url:
-        print("DATABASE_URL is not set", file=sys.stderr)
-        return 2
+    if arguments.releases_file:
+        releases = load_local_releases(arguments.releases_file)
+    else:
+        database_url = read_environment("DATABASE_URL")
+        if not database_url:
+            print("DATABASE_URL is not set", file=sys.stderr)
+            return 2
+        releases = load_published_cogs(database_url)
 
-    releases = load_published_cogs(database_url)
     if arguments.properties:
         wanted = set(arguments.properties)
         releases = [release for release in releases if release["property"] in wanted]
+    if arguments.depths:
+        wanted_depths = set(arguments.depths)
+        releases = [release for release in releases if release["depth"] in wanted_depths]
     if not releases:
         print(
-            "no live COG releases in geo.published_raster; run publish-soil-rasters.py first",
+            "no releases found; run publish-soil-rasters.py first "
+            "(--dry-run --manifest-out for a local-only build)",
             file=sys.stderr,
         )
         return 1

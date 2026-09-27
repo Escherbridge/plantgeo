@@ -9,6 +9,9 @@ object that exists.
         python scripts/raster/publish-soil-rasters.py
 
 `--dry-run` derives ramps and prints what would be published without touching R2 or the database.
+`--manifest-out <path>` additionally writes every derived release (ramp, bounds, checksum, and
+-- in a real publish -- the catalogue row id) as JSON; `build-soil-tiles.py --releases-file` reads
+it back, so PMTiles can be cut for a release that has not been registered in Postgres yet.
 """
 
 from __future__ import annotations
@@ -58,8 +61,8 @@ NATIVE_MAX_ZOOM = 10
 #: full range renders the entire region as one flat colour and hides everything the data says.
 RAMP_QUANTILES = (0.02, 0.15, 0.35, 0.55, 0.75, 0.90, 0.98)
 
-#: Sequential, colour-blind-safe, dark-to-light in the direction the property increases. Six
-#: ramps rather than one, because these are six unrelated measurements sharing only a depth.
+#: Sequential, colour-blind-safe, dark-to-light in the direction the property increases. Ten
+#: ramps rather than one, because these are ten unrelated SoilGrids properties sharing only a depth.
 RAMP_COLORS = {
     # Acid to alkaline, diverging around neutral: pH is the one property whose midpoint means
     # something, so it is the one ramp that is not sequential.
@@ -69,6 +72,12 @@ RAMP_COLORS = {
     "bdod": ("#f7fcfd", "#e0ecf4", "#bfd3e6", "#9ebcda", "#8c96c6", "#8856a7", "#810f7c"),
     "cec": ("#fff7fb", "#ece7f2", "#d0d1e6", "#a6bddb", "#67a9cf", "#1c9099", "#016450"),
     "ocd": ("#ffffe5", "#fff7bc", "#fee391", "#fec44f", "#fe9929", "#d95f0e", "#993404"),
+    # Texture and coarse fragments (WS-B, DESIGN.md §3) -- one ramp per property, shared across
+    # its three depths, since the ramp belongs to the property being mapped, not the depth.
+    "clay": ("#fcfbfd", "#efedf5", "#dadaeb", "#bcbddc", "#9e9ac8", "#756bb1", "#54278f"),
+    "sand": ("#f0f9e8", "#ccebc5", "#a8ddb5", "#7bccc4", "#4eb3d3", "#2b8cbe", "#08589e"),
+    "silt": ("#feebe2", "#fcc5c0", "#fa9fb5", "#f768a1", "#dd3497", "#ae017e", "#7a0177"),
+    "cfvo": ("#f7f7f7", "#d9d9d9", "#bdbdbd", "#969696", "#737373", "#525252", "#252525"),
 }
 
 ENVIRONMENT_LINE = re.compile(r"^\s*(?:export\s+)?([A-Z0-9_]+)\s*=\s*(.*)$")
@@ -116,17 +125,17 @@ def derive_ramp(path: Path, property_name: str) -> tuple[list[dict], float, floa
         nodata = raster.nodata
         values = raster.read(1)
 
-    measured = values[values != nodata].astype("float64") * scale
-    if measured.size == 0:
-        raise SystemExit(f"{path.name} holds no measured pixels")
+    valid_values = values[values != nodata].astype("float64") * scale
+    if valid_values.size == 0:
+        raise SystemExit(f"{path.name} holds no valid (non-nodata) pixels")
 
-    breaks = numpy.quantile(measured, RAMP_QUANTILES)
+    breaks = numpy.quantile(valid_values, RAMP_QUANTILES)
     colors = RAMP_COLORS[property_name]
     ramp = [
         {"value": round(float(value), 4), "color": color}
         for value, color in zip(breaks, colors, strict=True)
     ]
-    return ramp, float(measured.min()), float(measured.max())
+    return ramp, float(valid_values.min()), float(valid_values.max())
 
 
 def upload(session_client, bucket: str, key: str, path: Path) -> None:
@@ -214,11 +223,17 @@ RETURNING id
 """
 
 
-def publish_tile_archives(client, bucket: str, connection, tile_directory: Path) -> int:
-    """Upload each PMTiles archive and register it against its COG release."""
+def publish_tile_archives(client, bucket: str, connection, tile_directory: Path) -> tuple[int, list[dict]]:
+    """Upload each PMTiles archive and register it against its COG release.
+
+    Returns the published count and a manifest-out entry per archive, so a `--manifest-out` on
+    a `--tiles` run carries the object keys and row ids P2's rollback needs alongside the COG run.
+    """
     published = 0
-    for archive in sorted(tile_directory.glob("*_0-5cm_mean.pmtiles")):
-        property_name = archive.name.split("_")[0]
+    manifest_out_entries = []
+    for archive in sorted(tile_directory.glob("*_mean.pmtiles")):
+        # Filename is `{property}_{depth}_mean.pmtiles`; neither part contains an underscore.
+        property_name, depth, _ = archive.stem.split("_")
         object_key = f"{TILE_OBJECT_PREFIX}/{archive.name}"
         digest = hashlib.sha256()
         with archive.open("rb") as handle:
@@ -237,7 +252,7 @@ def publish_tile_archives(client, bucket: str, connection, tile_directory: Path)
                 {
                     "collection": COLLECTION,
                     "property": property_name,
-                    "depth": "0-5cm",
+                    "depth": depth,
                     "statistic": "mean",
                     "object_key": object_key,
                     "checksum": digest.hexdigest(),
@@ -248,11 +263,23 @@ def publish_tile_archives(client, bucket: str, connection, tile_directory: Path)
             )
             registered = cursor.fetchone()
         published += 1
+        manifest_out_entries.append(
+            {
+                "property": property_name,
+                "depth": depth,
+                "statistic": "mean",
+                "archiveFormat": "pmtiles",
+                "objectKey": object_key,
+                "checksumSha256": digest.hexdigest(),
+                "sizeBytes": archive.stat().st_size,
+                "rowId": registered[0] if registered else None,
+            }
+        )
         print(
-            f"[publish] {property_name:9s} {'registered' if registered else 'unchanged'} "
+            f"[publish] {property_name:9s} {depth:8s} {'registered' if registered else 'unchanged'} "
             f"{object_key} ({archive.stat().st_size / 1e6:.1f}MB)"
         )
-    return published
+    return published, manifest_out_entries
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -264,6 +291,15 @@ def parse_arguments() -> argparse.Namespace:
         help="Publish the PMTiles archives instead of the COGs (build-soil-tiles.py first).",
     )
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--manifest-out",
+        type=Path,
+        help=(
+            "Write every derived release (ramp, bounds, checksum, object key, and -- in a real "
+            "publish -- the catalogue row id) as JSON. Works in --dry-run too, as the input "
+            "build-soil-tiles.py --releases-file reads for a local-only build."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -292,14 +328,25 @@ def main() -> int:
         connection = psycopg2.connect(environment["DATABASE_URL"])
 
     if arguments.tiles:
-        count = publish_tile_archives(
+        count, tile_entries = publish_tile_archives(
             client, bucket, connection, arguments.cog_dir / "pmtiles"
         )
         connection.close()
+        if arguments.manifest_out:
+            arguments.manifest_out.parent.mkdir(parents=True, exist_ok=True)
+            arguments.manifest_out.write_text(
+                json.dumps({"dryRun": False, "releases": tile_entries}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            print(
+                f"[publish] manifest-out written to {arguments.manifest_out} "
+                f"({len(tile_entries)} releases)"
+            )
         print(f"[publish] {count} tile archives published to R2 and catalogued")
         return 0
 
     published = 0
+    manifest_out_entries = []
     for artifact in manifest["artifacts"]:
         path = arguments.cog_dir / artifact["file"]
         if not path.is_file():
@@ -312,11 +359,29 @@ def main() -> int:
 
         if arguments.dry_run:
             print(
-                f"[publish] {artifact['property']:9s} DRY {object_key} "
+                f"[publish] {artifact['property']:9s} {artifact['depth']:8s} DRY {object_key} "
                 f"{artifact['sizeBytes'] / 1e6:5.1f}MB "
                 f"range={value_min:.2f}..{value_max:.2f} {artifact['unit']} "
                 f"ramp={[stop['value'] for stop in ramp]}"
             )
+            manifest_out_entries.append(
+                {
+                    "property": artifact["property"],
+                    "depth": artifact["depth"],
+                    "statistic": artifact["statistic"],
+                    "unit": artifact["unit"],
+                    "scaleDivisor": artifact["scaleDivisor"],
+                    "valueMin": value_min,
+                    "valueMax": value_max,
+                    "colorRamp": ramp,
+                    "objectKey": object_key,
+                    "bounds": artifact["bounds"],
+                    "checksumSha256": artifact["checksumSha256"],
+                    "sizeBytes": artifact["sizeBytes"],
+                    "rowId": None,
+                }
+            )
+            published += 1
             continue
 
         upload(client, bucket, object_key, path)
@@ -353,15 +418,47 @@ def main() -> int:
             )
             registered = cursor.fetchone()
         published += 1
+        manifest_out_entries.append(
+            {
+                "property": artifact["property"],
+                "depth": artifact["depth"],
+                "statistic": artifact["statistic"],
+                "unit": artifact["unit"],
+                "scaleDivisor": artifact["scaleDivisor"],
+                "valueMin": value_min,
+                "valueMax": value_max,
+                "colorRamp": ramp,
+                "objectKey": object_key,
+                "bounds": artifact["bounds"],
+                "checksumSha256": artifact["checksumSha256"],
+                "sizeBytes": artifact["sizeBytes"],
+                "rowId": registered[0] if registered else None,
+            }
+        )
         print(
-            f"[publish] {artifact['property']:9s} {'registered' if registered else 'unchanged'} "
+            f"[publish] {artifact['property']:9s} {artifact['depth']:8s} "
+            f"{'registered' if registered else 'unchanged'} "
             f"{object_key} ({artifact['sizeBytes'] / 1e6:.1f}MB, "
             f"{value_min:.2f}..{value_max:.2f} {artifact['unit']})"
         )
 
     if connection is not None:
         connection.close()
-    print(f"[publish] {published} artifacts published to R2 and catalogued")
+
+    if arguments.manifest_out:
+        arguments.manifest_out.parent.mkdir(parents=True, exist_ok=True)
+        arguments.manifest_out.write_text(
+            json.dumps({"dryRun": arguments.dry_run, "releases": manifest_out_entries}, indent=2)
+            + "\n",
+            encoding="utf-8",
+        )
+        print(
+            f"[publish] manifest-out written to {arguments.manifest_out} "
+            f"({len(manifest_out_entries)} releases)"
+        )
+
+    verb = "would publish" if arguments.dry_run else "published"
+    print(f"[publish] {published} artifacts {verb} to R2 and catalogued")
     return 0
 
 

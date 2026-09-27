@@ -2,7 +2,7 @@
 
 Topology (see agent/AGENTS.md for the rationale):
 
-    gather_warehouse_evidence -> assess_sufficiency -> [web_evidence] -> synthesize_report
+    build_site_brief -> gather_warehouse_evidence -> assess_sufficiency -> [web_evidence] -> synthesize_report
 
 The two model-driven nodes run the Anthropic SDK's beta tool runner; the sufficiency gate
 between them is ordinary Python, so whether the request is allowed to touch the public web
@@ -11,20 +11,27 @@ is decided by the service and not by the model.
 
 from __future__ import annotations
 
+import asyncio
+import contextvars
+import functools
+import json
+import math
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Literal
 
 import structlog
 from pydantic import ValidationError
 
-from agri_data_service.agent import strategy_knowledge
+from agri_data_service.agent import soil_properties, strategy_knowledge, warehouse
 from agri_data_service.agent import tools as warehouse_tools
 from agri_data_service.agent.prompts import (
     REPORT_INSTRUCTION,
-    SYSTEM_PROMPT,
     build_location_context,
+    build_site_brief_section,
+    build_soil_estimate_section,
     build_sufficiency_note,
+    system_prompt,
 )
 from agri_data_service.agent.report import (
     ConversationTurn,
@@ -33,10 +40,17 @@ from agri_data_service.agent.report import (
     downgrade_literature_claims,
 )
 from agri_data_service.agent.selection_context import MapSelection, bind_selection_tools
+from agri_data_service.agent.site_brief import (
+    build_site_brief,
+    build_soil_section,
+    burn_severity_of,
+    site_brief_enabled,
+    site_facts_from_brief,
+)
+from agri_data_service.parquet_ops.faults import ServingRefusalError
 
 if TYPE_CHECKING:
-    import asyncio
-    from collections.abc import Callable, Sequence
+    from collections.abc import Awaitable, Callable, Mapping, Sequence
     from contextlib import AbstractAsyncContextManager
 
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -83,6 +97,9 @@ _METADATA_TOOLS: Final = (
     )
     | LITERATURE_TOOLS
 )
+
+#: Tools whose values are model estimates (SoilGrids), never a measured layer: they never raise sufficiency.
+_MODEL_ESTIMATE_TOOLS: Final = frozenset({"soil_properties_at_point"})
 
 _PARTIAL_COVERAGE_SEARCHES: Final = 2
 _QUESTION_ONLY_SEARCHES: Final = 1
@@ -151,6 +168,15 @@ class AgentRequest:
         day = self.selected_day or self.as_of.date()
         return MapSelection(day=day, range_start=day, range_end=day)
 
+    def is_base_run(self) -> bool:
+        """The site brief is built on the first turn or when no question was typed (agent/AGENTS.md, "Site brief").
+
+        Mirrors `regional-context.ts::assembleRegionalContext`'s `isBaseRun`. A follow-up does NOT carry
+        the brief in its history (the saved turns are the questions and answers only), so `BuildSiteBrief`
+        gives it the one soil read instead of the brief's five section reads.
+        """
+        return not self.history or not self.question
+
     def strategy_context(self) -> strategy_knowledge.StrategyContext:
         """Server-owned literature context: the user's own words and the map point, no site_facts.
 
@@ -184,6 +210,16 @@ class GraphContext:
     searches_used: int = 0
     refused: bool = False
     report: RemediationReport | None = None
+    site_brief: dict[str, Any] | None = None
+    """The server-built `site-brief/1`, set by `build_site_brief`; see agent/AGENTS.md, "Site brief"."""
+    literature_context: strategy_knowledge.StrategyContext | None = None
+    """The brief-enriched literature context; None falls back to the request's own."""
+    site_soil: dict[str, Any] | None = None
+    """A follow-up's one soil read (C5.3 soil section), set by `build_site_brief` instead of a brief."""
+
+    def strategy_context(self) -> strategy_knowledge.StrategyContext:
+        """The literature context both model passes bind: brief-enriched when the brief node ran."""
+        return self.literature_context or self.request.strategy_context()
 
     async def emit(self, event: AgentEvent) -> None:
         """Publish one progress event for the route to stream."""
@@ -194,7 +230,7 @@ class GraphContext:
         return [
             {
                 "type": "text",
-                "text": SYSTEM_PROMPT,
+                "text": system_prompt(),
                 "cache_control": {"type": "ephemeral"},
             }
         ]
@@ -213,12 +249,13 @@ class WarehouseEvidence:
 
 
 def populated_sources(ledger: Sequence[dict[str, Any]]) -> tuple[str, ...]:
-    """Count independent measured layers, excluding catalogue and coverage-only metadata."""
+    """Count independent measured layers, excluding catalogue and coverage-only metadata and model estimates."""
     return tuple(
         dict.fromkeys(
             str(entry.get("surface_name") or entry["tool"])
             for entry in ledger
             if entry["tool"] not in _METADATA_TOOLS
+            and entry["tool"] not in _MODEL_ESTIMATE_TOOLS
             and int(entry.get("row_count", 0)) > 0
             and "error" not in entry
             and "refusal_code" not in entry
@@ -360,7 +397,453 @@ async def _run_pass(ctx: GraphContext, *, tool_list: list[Any], max_iterations: 
         logger.info("agent_pause_turn_restart", restarts=restarts, node_tools=len(tool_list))
 
 
+# --- Site brief readers ---------------------------------------------------------------
+#
+# Each section is read independently, bounded in time, and fails soft to a C5.6 reason: one section's
+# failure never sinks the brief, and the brief never invents a value. Normalisation to integers happens
+# here, outside the pure builder. See agent/AGENTS.md, "Site brief".
+
+SITE_BRIEF_SECTION_TIMEOUT_SECONDS: Final = 3.0
+#: At most this many brief reads hold a slot on the 3-slot serving plane at once (CONTRACT C5.1; review M8).
+SITE_BRIEF_READ_CONCURRENCY: Final = 2
+DROUGHT_WEEKS_BACK: Final = 2
+FIRE_DETECTION_WINDOW_DAYS: Final = 30
+FIRE_DETECTION_RADIUS_METERS: Final = 10_000.0
+#: A perimeter must CONTAIN the point; the radius only bounds the candidate box.
+FIRE_PERIMETER_RADIUS_METERS: Final = 100.0
+FIRE_PERIMETER_ROWS: Final = 25
+FIRE_PERIMETER_LANES: Final = ("fire-perimeters", "burn-severity")
+FIRE_SOURCE_LABEL: Final = "fire-perimeters + burn-severity (MTBS)"
+BRIEF_SECTIONS: Final = ("soil", "fire", "drought", "weather", "land_cover")
+WEATHER_RADIUS_METERS: Final = 50_000.0
+#: Today, then this many days back (UTC): the newest published day answers.
+WEATHER_DAYS_BACK: Final = 1
+WEATHER_ROWS: Final = 50
+LAND_COVER_RADIUS_METERS: Final = 100.0
+LAND_COVER_ROWS: Final = 4
+_SERVING_REASONS: Final = {"serving_at_capacity": "serving_at_capacity", "read_timed_out": "timeout"}
+_TOOL_ERROR_REASONS: Final = {
+    "parquet_lane_never_written": "lane_never_written",
+    "not_available_in_region": "not_bound_in_region",
+}
+
+
+#: The brief's read slots, set by `read_site_brief_inputs` for the section tasks it gathers.
+_BRIEF_READ_SLOTS: contextvars.ContextVar[asyncio.Semaphore | None] = contextvars.ContextVar(
+    "site_brief_read_slots", default=None
+)
+
+
+async def _slotted[T](read: Callable[[], Awaitable[T]]) -> T:
+    """Run one serving-plane read inside the brief's slot cap; outside a brief it runs directly."""
+    slots = _BRIEF_READ_SLOTS.get()
+    if slots is None:
+        return await read()
+    async with slots:
+        return await read()
+
+
+class SectionUnavailableError(Exception):
+    """A brief section that cannot be stated, carrying its C5.6 reason."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+def _unavailable(reason: str) -> dict[str, Any]:
+    return {"state": "unavailable", "reason": reason}
+
+
+def _section_reason(error: Exception) -> str:
+    """Map a reader failure onto the one reason vocabulary."""
+    if isinstance(error, SectionUnavailableError):
+        return error.reason
+    if isinstance(error, TimeoutError):
+        return "timeout"
+    if isinstance(error, ServingRefusalError):
+        return _SERVING_REASONS.get(error.code, "read_failed")
+    return "read_failed"
+
+
+async def _bounded_section(name: str, read: Callable[[], Awaitable[dict[str, Any]]]) -> dict[str, Any]:
+    """Run one section reader under its timeout; any failure becomes an unavailable section."""
+    try:
+        async with asyncio.timeout(SITE_BRIEF_SECTION_TIMEOUT_SECONDS):
+            return await read()
+    except Exception as error:  # per-section isolation: one reader's fault must not sink the brief
+        reason = _section_reason(error)
+        logger.info("site_brief_section_unavailable", section=name, reason=reason, error=type(error).__name__)
+        return _unavailable(reason)
+
+
+def _half_up(value: float) -> int:
+    """Round a reader float half up to an integer (C5.1 normalisation)."""
+    return math.floor(value + 0.5)
+
+
+def _ascii(text: object) -> str:
+    """Strip control and non-ASCII characters from a source string (C5.1)."""
+    return "".join(character for character in str(text) if " " <= character <= "~").strip()
+
+
+def _as_date(value: object) -> date | None:
+    """A date from a date, an instant, or an ISO string; None otherwise."""
+    if isinstance(value, datetime):
+        return value.astimezone(UTC).date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str) and value:
+        return date.fromisoformat(value[:10])
+    return None
+
+
+async def _lane_features(lane: str, request: AgentRequest, *, day: date, radius: float, rows: int) -> dict[str, Any]:
+    """One lane's features near the point through the surface helper; a never-written lane refuses."""
+    result = await _slotted(
+        lambda: warehouse_tools._surface_lane_result(  # the tools' own bounded surface read
+            lane,
+            selected_day=day,
+            longitude=request.longitude,
+            latitude=request.latitude,
+            radius_meters=radius,
+            row_limit=rows,
+        )
+    )
+    if result["day_state"].get("state") == "lane_never_written":
+        raise SectionUnavailableError("lane_never_written")
+    return result
+
+
+async def read_drought_section(request: AgentRequest) -> dict[str, Any]:
+    """The newest USDM release's class over the point, through the drought tool."""
+    payload = json.loads(
+        await _slotted(
+            lambda: warehouse_tools.query_drought_history_at_point(
+                request.longitude, request.latitude, weeks_back=DROUGHT_WEEKS_BACK, as_of=request.as_of
+            )
+        )
+    )
+    error = payload.get("error")
+    if error == "parquet_serving_refused":
+        raise SectionUnavailableError(_SERVING_REASONS.get(str(payload.get("refusal_code")), "read_failed"))
+    if error is not None:
+        raise SectionUnavailableError(_TOOL_ERROR_REASONS.get(str(error), "read_failed"))
+    releases = payload.get("weekly_severity") or []
+    if not releases:
+        raise SectionUnavailableError("not_published")
+    newest = releases[0]
+    severity = newest.get("severity_class")
+    return {
+        "state": "available",
+        "usdm_class": "none" if severity is None else f"D{int(severity)}",
+        "week_of": str(newest["valid_date"])[:10],
+    }
+
+
+def _perimeter_fire(lane: str, feature: Mapping[str, Any]) -> tuple[date, str | None] | None:
+    """(fire day, severity) of one perimeter that contains the point.
+
+    Only an MTBS burn carries a severity, mapped by class code or name (CONTRACT C5.1); a WFIGS
+    perimeter dates a fire but never grades it, as on the web.
+    """
+    if not feature.get("covers_probe_point"):
+        return None
+    properties = feature.get("properties") or {}
+    if lane == "burn-severity":
+        day = _as_date(properties.get("ignition_date"))
+        severity = burn_severity_of(properties.get("severity_class"))
+    else:
+        day = _as_date(properties.get("fire_discovery_at")) or _as_date(properties.get("observed_day"))
+        severity = None
+    if day is None:
+        return None
+    return day, severity
+
+
+async def _recent_detections(request: AgentRequest, today: date) -> int:
+    """Satellite fire detections within the radius over the last 30 days, summed by cell."""
+    first_day = today - timedelta(days=FIRE_DETECTION_WINDOW_DAYS - 1)
+    window = await warehouse.lane_window(layer="fire-detections", first_day=first_day, last_day=today)
+    if not window.lane_written:
+        raise SectionUnavailableError("lane_never_written")
+    days = window.published_days(first_day, today)
+    if not days:
+        return 0  # unpublished days add nothing, as on the web
+    rows = await _slotted(
+        lambda: warehouse_tools._lane_rows(  # the tools' own bounded proximity read
+            "fire-detections",
+            part_keys=window.part_keys(days),
+            longitude=request.longitude,
+            latitude=request.latitude,
+            radius_meters=FIRE_DETECTION_RADIUS_METERS,
+            row_limit=warehouse_tools.MAX_FIRE_FEATURE_FANOUT,
+            operation="agent_site_brief_fire_detections",
+            evidence_source=window.evidence_source,
+        )
+    )
+    if len(rows) >= warehouse_tools.MAX_FIRE_FEATURE_FANOUT:
+        # A capped read is an undercount, and an undercount is not a statement about the site.
+        raise SectionUnavailableError("read_failed")
+    return sum(int(row.get("detection_count") or 0) for row in rows)
+
+
+async def read_fire_section(request: AgentRequest) -> dict[str, Any]:
+    """The latest mapped fire containing the point and recent satellite detections nearby.
+
+    The three reads run concurrently (review M8); any failure fails the section, never a zero. The
+    severity is the same fire's MTBS class when exactly one is recorded for that day (CONTRACT C5.1).
+    """
+    today = request.as_of.astimezone(UTC).date()
+    perimeter_lane, burn_lane = FIRE_PERIMETER_LANES
+    perimeters, burns, detections = await asyncio.gather(
+        _lane_features(
+            perimeter_lane, request, day=today, radius=FIRE_PERIMETER_RADIUS_METERS, rows=FIRE_PERIMETER_ROWS
+        ),
+        _lane_features(burn_lane, request, day=today, radius=FIRE_PERIMETER_RADIUS_METERS, rows=FIRE_PERIMETER_ROWS),
+        _recent_detections(request, today),
+        return_exceptions=True,
+    )
+    # Every read settles before the section answers; the first failure, in lane order, names the reason.
+    if isinstance(perimeters, BaseException):
+        raise perimeters
+    if isinstance(burns, BaseException):
+        raise burns
+    if isinstance(detections, BaseException):
+        raise detections
+    fires = [
+        fire
+        for lane, result in ((perimeter_lane, perimeters), (burn_lane, burns))
+        for feature in result["features"]
+        if (fire := _perimeter_fire(lane, feature)) is not None and fire[0] <= today
+    ]
+    latest_day = max((day for day, _severity in fires), default=None)
+    severities = {severity for day, severity in fires if day == latest_day and severity is not None}
+    return {
+        "state": "available",
+        "latest_fire_day": latest_day.isoformat() if latest_day else None,
+        "burn_severity": next(iter(severities)) if len(severities) == 1 else None,
+        "detections_last_30_days": detections,
+        "source": FIRE_SOURCE_LABEL,
+    }
+
+
+async def read_weather_section(request: AgentRequest) -> dict[str, Any]:
+    """The nearest weather-station reading on the newest written of today and yesterday."""
+    today = request.as_of.astimezone(UTC).date()
+    for day in (today - timedelta(days=back) for back in range(WEATHER_DAYS_BACK + 1)):
+        result = await _lane_features(
+            "weather-observations", request, day=day, radius=WEATHER_RADIUS_METERS, rows=WEATHER_ROWS
+        )
+        if result["day_state"].get("state") != "published":
+            continue
+        readings = [feature for feature in result["features"] if feature.get("distance_meters") is not None]
+        if not readings:
+            raise SectionUnavailableError("no_observation_within_radius")
+        nearest = min(readings, key=_weather_rank)
+        properties = nearest["properties"]
+        observed_at = _as_instant(properties.get("observed_at"))
+        temperature = properties.get("temperature_c")
+        humidity = properties.get("relative_humidity_pct")
+        if observed_at is None or temperature is None or humidity is None:
+            # The brief never invents a value: a reading missing either number is unreadable (CONTRACT C5.1).
+            raise SectionUnavailableError("read_failed")
+        return {
+            "state": "available",
+            "observed_at": observed_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "distance_m": _half_up(float(nearest["distance_meters"])),
+            "temperature_tenths_c": _half_up(float(temperature) * 10),
+            "relative_humidity_pct": _half_up(float(humidity)),
+        }
+    raise SectionUnavailableError("not_published")
+
+
+def _weather_rank(feature: Mapping[str, Any]) -> tuple[int, float]:
+    """Nearest station first, then its newest reading."""
+    instant = _as_instant((feature.get("properties") or {}).get("observed_at"))
+    return _half_up(float(feature["distance_meters"])), -instant.timestamp() if instant else 0.0
+
+
+def _as_instant(value: object) -> datetime | None:
+    """A UTC instant from a datetime or an ISO string; None otherwise."""
+    if isinstance(value, datetime):
+        return value.astimezone(UTC)
+    if isinstance(value, str) and value:
+        parsed = datetime.fromisoformat(value)
+        return parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    return None
+
+
+def _class_code(raw: object) -> int | None:
+    """A CDL class code key as an integer, or None for a key that is not one."""
+    try:
+        return int(str(raw))
+    except ValueError:
+        return None
+
+
+def _dominant_class(properties: Mapping[str, Any]) -> tuple[int, str | None, float] | None:
+    """(code, name or None, hectares) of the largest classified CDL class; ties to the lower code.
+
+    Only integer codes with a finite positive area count, as on the web. A dominant class without a
+    name has name None: the caller refuses it rather than seed literature with a bare number.
+    """
+    areas: dict[int, float] = {}
+    for raw_code, raw_area in json.loads(properties["class_areas_json"]).items():
+        code = _class_code(raw_code)
+        area = float(raw_area) if isinstance(raw_area, int | float) and not isinstance(raw_area, bool) else math.nan
+        if code is not None and math.isfinite(area) and area > 0:
+            areas[code] = area
+    names = {
+        code: str(name)
+        for raw_code, name in json.loads(properties.get("class_names_json") or "{}").items()
+        if (code := _class_code(raw_code)) is not None and name is not None
+    }
+    if not areas:
+        return None
+    code = min(areas, key=lambda candidate: (-areas[candidate], candidate))
+    return code, names.get(code), areas[code]
+
+
+async def read_land_cover_section(request: AgentRequest) -> dict[str, Any]:
+    """The dominant USDA CDL class of the crop-cover cell containing the point."""
+    today = request.as_of.astimezone(UTC).date()
+    result = await _lane_features(
+        "crop-cover", request, day=today, radius=LAND_COVER_RADIUS_METERS, rows=LAND_COVER_ROWS
+    )
+    if result["day_state"].get("state") != "published":
+        raise SectionUnavailableError("not_published")
+    covering = [feature for feature in result["features"] if feature.get("covers_probe_point")]
+    if not covering:
+        raise SectionUnavailableError("outside_release_coverage")
+    properties = covering[0]["properties"]
+    dominant = _dominant_class(properties)
+    cell_area = float(properties["cell_area_ha"])
+    if dominant is None or cell_area <= 0:
+        raise SectionUnavailableError("outside_release_coverage")
+    code, name, hectares = dominant
+    class_name = _ascii(name) if name is not None else ""
+    if not class_name:
+        raise SectionUnavailableError("read_failed")
+    release_day = _as_date(properties.get("release_day"))
+    return {
+        "state": "available",
+        "class_name": class_name,
+        "class_code": code,
+        "fraction_permille": _half_up(hectares / cell_area * 1000),
+        "edition_year": int(properties["observed_year"]),
+        "release_day": release_day.isoformat() if release_day else "",
+        "cell_m": int(properties["aggregation_cell_m"]),
+    }
+
+
+async def read_soil_section(request: AgentRequest) -> dict[str, Any]:
+    """The soil-properties lane read; it already fails soft and honours the kill switch."""
+    return await _slotted(
+        lambda: soil_properties.read_soil_properties(
+            request.longitude, request.latitude, as_of=request.as_of.astimezone(UTC).date()
+        )
+    )
+
+
+async def read_site_brief_inputs(request: AgentRequest) -> dict[str, Any]:
+    """Read and normalise all five sections concurrently into `SiteBriefInputs` (C5.1)."""
+    readers: dict[str, Callable[[AgentRequest], Awaitable[dict[str, Any]]]] = {
+        "soil": read_soil_section,
+        "fire": read_fire_section,
+        "drought": read_drought_section,
+        "weather": read_weather_section,
+        "land_cover": read_land_cover_section,
+    }
+    # One slot cap per brief: the gathered section tasks copy this context, so they share it (review M8).
+    token = _BRIEF_READ_SLOTS.set(asyncio.Semaphore(SITE_BRIEF_READ_CONCURRENCY))
+    try:
+        sections = await asyncio.gather(
+            *(_bounded_section(name, functools.partial(reader, request)) for name, reader in readers.items())
+        )
+    finally:
+        _BRIEF_READ_SLOTS.reset(token)
+    return {
+        "built_on": request.as_of.astimezone(UTC).date().isoformat(),
+        "point": {
+            "longitude_e5": _half_up(request.longitude * 100_000),
+            "latitude_e5": _half_up(request.latitude * 100_000),
+        },
+        **dict(zip(readers, sections, strict=True)),
+    }
+
+
+def brief_literature_context(request: AgentRequest, brief: Mapping[str, Any]) -> strategy_knowledge.StrategyContext:
+    """The request's literature context plus the brief's site facts, provenance and seed (C3)."""
+    base = request.strategy_context()
+    facts, provenance, query = site_facts_from_brief(brief)
+    try:
+        return strategy_knowledge.StrategyContext(
+            user_question=base.user_question,
+            longitude=base.longitude,
+            latitude=base.latitude,
+            site_facts=strategy_knowledge.SiteFacts.model_validate(facts) if facts else None,
+            site_facts_provenance={
+                key: strategy_knowledge.FactProvenance.model_validate(label) for key, label in provenance.items()
+            },
+            site_brief_query=query,
+        )
+    except ValidationError:
+        logger.warning("site_brief_context_rejected", keys=sorted(facts))
+        return base
+
+
 # --- Nodes -------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class BuildSiteBrief:
+    """Read the site brief's sections before the model starts; see agent/AGENTS.md, "Site brief"."""
+
+    name: ClassVar[str] = "build_site_brief"
+
+    async def run(self, ctx: GraphContext) -> dict[str, Any] | None:
+        if not site_brief_enabled():
+            # Review M7: flag off is the wave-2 graph -- no read, no progress event, no context.
+            return None
+        await ctx.emit(progress_event(self.name, "started"))
+        if not ctx.request.is_base_run():
+            await self._follow_up(ctx)
+            return None
+        try:
+            # Brief reads are server context, not model evidence: their ledger is discarded on purpose.
+            async with warehouse_tools.run_context(session_provider=ctx.session_provider):
+                inputs = await read_site_brief_inputs(ctx.request)
+            brief = build_site_brief(inputs)
+            literature_context = brief_literature_context(ctx.request, brief)
+        except Exception as error:  # review m4: an unexpected shape fails open to no brief, never kills the graph
+            logger.warning("site_brief_unbuildable", error=type(error).__name__)
+            await ctx.emit(progress_event(self.name, "skipped", {"reason": "brief_unbuildable"}))
+            return None
+        ctx.site_brief = brief
+        ctx.literature_context = literature_context
+        states = {section: brief[section]["state"] for section in BRIEF_SECTIONS}
+        await ctx.emit(
+            progress_event(self.name, "completed", {"sections": states, "descriptors": len(brief["descriptors"])})
+        )
+        return brief
+
+    async def _follow_up(self, ctx: GraphContext) -> None:
+        """A follow-up's history holds only the saved turns, never the brief: the one soil read seeds it (review M6)."""
+        async with warehouse_tools.run_context(session_provider=ctx.session_provider):
+            soil = await _bounded_section("soil", functools.partial(read_soil_section, ctx.request))
+        if soil.get("state") == "available":
+            try:
+                section = build_soil_section(soil)
+                literature_context = brief_literature_context(ctx.request, {"soil": section})
+            except Exception as error:  # review m4: fail open, as the base run does
+                logger.warning("site_soil_unbuildable", error=type(error).__name__)
+            else:
+                ctx.site_soil = section
+                ctx.literature_context = literature_context
+        await ctx.emit(
+            progress_event(self.name, "completed", {"follow_up": True, "sections": {"soil": soil.get("state")}})
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -374,25 +857,23 @@ class GatherWarehouseEvidence:
         ctx.messages.extend(
             {"role": turn.role, "content": turn.content} for turn in ctx.request.history[-MAX_HISTORY_TURNS:]
         )
-        ctx.messages.append(
-            {
-                "role": "user",
-                "content": build_location_context(
-                    longitude=ctx.request.longitude,
-                    latitude=ctx.request.latitude,
-                    precision=ctx.request.precision,
-                    as_of=ctx.request.as_of,
-                    question=ctx.request.question,
-                    selected_day=ctx.request.selected_day,
-                    species_id=ctx.request.species_id,
-                    map_selection=ctx.request.map_selection,
-                ),
-            }
+        location = build_location_context(
+            longitude=ctx.request.longitude,
+            latitude=ctx.request.latitude,
+            precision=ctx.request.precision,
+            as_of=ctx.request.as_of,
+            question=ctx.request.question,
+            selected_day=ctx.request.selected_day,
+            species_id=ctx.request.species_id,
+            map_selection=ctx.request.map_selection,
         )
+        brief = build_site_brief_section(ctx.site_brief) if ctx.site_brief is not None else ""
+        soil = build_soil_estimate_section(ctx.site_soil) if ctx.site_soil is not None else ""
+        ctx.messages.append({"role": "user", "content": location + brief + soil})
         async with warehouse_tools.run_context(
             session_provider=ctx.session_provider,
             allowed_species_id=ctx.request.species_id or "",
-            strategy_context=ctx.request.strategy_context(),
+            strategy_context=ctx.strategy_context(),
         ) as ledger:
             refused = await _run_pass(
                 ctx,
@@ -509,7 +990,7 @@ class GatherWebEvidence:
         async with warehouse_tools.run_context(
             session_provider=ctx.session_provider,
             allowed_species_id=ctx.request.species_id or "",
-            strategy_context=ctx.request.strategy_context(),
+            strategy_context=ctx.strategy_context(),
         ) as ledger:
             refused = await _run_pass(
                 ctx,
@@ -585,6 +1066,7 @@ class SynthesizeReport:
         return ReportOutcome(report=report, refused=False)
 
 
+BUILD_SITE_BRIEF: Final = BuildSiteBrief()
 GATHER_WAREHOUSE_EVIDENCE: Final = GatherWarehouseEvidence()
 ASSESS_SUFFICIENCY: Final = AssessSufficiency()
 GATHER_WEB_EVIDENCE: Final = GatherWebEvidence()
@@ -592,6 +1074,7 @@ SYNTHESIZE_REPORT: Final = SynthesizeReport()
 
 # The topology, declared rather than inferred, so it can be asserted and documented.
 GRAPH_EDGES: Final[tuple[tuple[str, str, str], ...]] = (
+    (BuildSiteBrief.name, GatherWarehouseEvidence.name, "always"),
     (GatherWarehouseEvidence.name, AssessSufficiency.name, "always"),
     (AssessSufficiency.name, GatherWebEvidence.name, "warehouse evidence is insufficient"),
     (AssessSufficiency.name, SynthesizeReport.name, "warehouse evidence is sufficient"),
@@ -604,6 +1087,7 @@ GRAPH_EDGES: Final[tuple[tuple[str, str, str], ...]] = (
 
 async def execute_graph(ctx: GraphContext) -> ReportOutcome:
     """Walk the graph once, emitting progress events and returning the terminal outcome."""
+    await BUILD_SITE_BRIEF.run(ctx)
     evidence = await GATHER_WAREHOUSE_EVIDENCE.run(ctx)
     if evidence.refused:
         await ctx.emit(refusal_event())

@@ -1017,6 +1017,30 @@ def test_grounding_binds_a_strategy_records_own_summary_text_not_only_findings()
     assert not score.unbound_numbers
 
 
+def test_grounding_binds_a_strategy_records_benefits_field_not_only_summary() -> None:
+    """Regression for the live treasure-valley transcript (FINDINGS.md "Wave 2 live round r5"): the
+    biochar strategy's own `benefits` text reads "16.9% to over 26.1%". The word "over" between "to"
+    and the second number keeps `_RANGE_PERCENTAGE_PATTERN` from parsing it as one range mention, so
+    it is two independent percentage mentions in the record's own text -- "16.9%" and "26.1%" -- and
+    an answer citing "26.1%" alone must bind to the second one, not be reported as unsupported."""
+    strategy_record = {
+        "strategy_id": "biochar-soil-amendment",
+        "family_id": "soil-amendment",
+        "name": "Biochar soil amendment",
+        "benefits": "Field trials report yield increases from 16.9% to over 26.1% in amended plots.",
+    }
+    transcript = [
+        _tool_message(
+            "get_environmental_strategies", {"tool": "get_environmental_strategies", "strategies": [strategy_record]}
+        )
+    ]
+    scenario = _scenario()
+    final_text = "Research on biochar-soil-amendment reports yield gains of up to 26.1% in amended plots."
+    score = EVAL.score_transcript(scenario, final_text, transcript)
+    assert "26.1%" in score.grounded_numbers
+    assert not score.unbound_numbers
+
+
 # --- Budget guard (E4/E5, CONTRACT-WAVE2.md seam S5) --------------------------------
 
 
@@ -1543,3 +1567,60 @@ async def test_run_live_fails_the_conversation_when_any_one_turn_fails(
         (tmp_path / "test__model-1" / "sample-0" / "never-calls-the-tool.json").read_text(encoding="utf-8")
     )
     assert stored["passed"] is False
+
+
+# --- Soil data plane: base runs seeded by the site brief (DESIGN section 8) ----------------------
+
+
+def test_a_scenario_is_not_a_base_run_unless_it_says_so() -> None:
+    assert _scenario().base_run is False
+    assert _scenario(base_run=True).base_run is True
+
+
+def test_the_site_brief_scenarios_are_six_base_runs_within_the_run_budget() -> None:
+    scenarios = EVAL.load_scenarios(EVAL.SITE_BRIEF_SCENARIOS_FILE)
+    assert len(scenarios) == 6, "DESIGN section 8: six base runs"
+    assert all(scenario.base_run for scenario in scenarios)
+    assert len(scenarios) * len(EVAL.DEFAULT_MODELS) <= EVAL.MAX_TOTAL_RUNS_WITHOUT_OVERRIDE
+    follow_ups = [turn for scenario in scenarios for turn in scenario.turns[1:]]
+    assert follow_ups == ["What's my soil pH?", "Is that measured?"]
+
+
+def test_the_scenarios_file_flag_selects_the_base_run_file() -> None:
+    args = EVAL._build_parser().parse_args(["--out", "x", "--scenarios-file", str(EVAL.SITE_BRIEF_SCENARIOS_FILE)])
+    assert args.scenarios_file == EVAL.SITE_BRIEF_SCENARIOS_FILE
+
+
+def test_the_base_run_prompt_appends_the_site_brief_section() -> None:
+    scenario = _scenario(base_run=True, question="Assess this location and recommend remediation strategies for it.")
+    prompt = EVAL._build_prompt(scenario, "\n\n## Site brief (server-read, site-brief/1)")
+    assert prompt.endswith("## Site brief (server-read, site-brief/1)")
+    assert EVAL._build_prompt(scenario).endswith("recommend remediation strategies for it.")
+
+
+def test_a_labelled_soil_number_passes_the_soil_labelling_score() -> None:
+    report = EVAL.score_soil_labelling(
+        "The topsoil pH is 5.8 (SoilGrids v2.0 250 m model estimate, 0-30 cm). It is a model estimate, "
+        "not a measurement at this site."
+    )
+    assert report.soil_number_sentences == 1
+    assert report.passed
+
+
+def test_an_unlabelled_soil_number_fails_the_soil_labelling_score() -> None:
+    report = EVAL.score_soil_labelling("Your soil pH is 5.8, so liming is warranted.")
+    assert report.unlabelled_sentences == ("Your soil pH is 5.8, so liming is warranted.",)
+    assert not report.passed
+
+
+def test_calling_a_soilgrids_value_measured_fails_the_soil_labelling_score() -> None:
+    report = EVAL.score_soil_labelling("SoilGrids measured the clay content here as model estimate 19.7%.")
+    assert report.measurement_sentences
+    assert not report.passed
+
+
+def test_the_context_query_source_is_read_from_literature_results() -> None:
+    tool_content = json.dumps({"context_query_source": "site_brief", "results": []})
+    report = EVAL.score_soil_labelling("No soil numbers here.", (tool_content,))
+    assert report.context_query_sources == ("site_brief",)
+    assert report.soil_number_sentences == 0

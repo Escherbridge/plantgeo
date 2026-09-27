@@ -8,11 +8,17 @@ vi.mock("@/lib/server/services/community-activity", () => ({
 }));
 vi.mock("@/lib/server/services/raster-catalog", () => ({ getPublishedSoilRasters: vi.fn() }));
 vi.mock("@/lib/server/services/land-context", () => ({ readBoundedAoiIntersection: vi.fn() }));
+vi.mock("@/lib/server/services/soilgrids", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/server/services/soilgrids")>()),
+  getSoilProperties: vi.fn(),
+}));
 
 import { db } from "@/lib/server/db";
 import { aggregateActivityGrid, activityGridToFeatureCollection } from "@/lib/server/services/community-activity";
 import { getPublishedSoilRasters } from "@/lib/server/services/raster-catalog";
 import { readBoundedAoiIntersection } from "@/lib/server/services/land-context";
+import { getSoilProperties, soilEstimateFromMapped } from "@/lib/server/services/soilgrids";
+import { buildRegionalMeasurementFacts } from "@/lib/server/services/regional-measurement-facts";
 import { readAppMapEvidence, readBoundedAppMapEvidence, selectionTile } from "@/lib/server/services/regional-map-evidence";
 
 const now = new Date("2026-09-20T12:00:00Z");
@@ -21,9 +27,24 @@ const args = {
   day: "2026-09-20", range_start: "2026-08-20", range_end: "2026-10-20", time_scale: "month",
 };
 
+const PH_RASTER = {
+  property: "phh2o" as const, unit: "pH", scaleDivisor: 10, valueMin: 3, valueMax: 9, colorRamp: [],
+  archiveUrl: "https://example.com/soil.pmtiles", minZoom: 0, maxZoom: 10,
+  attribution: "ISRIC", sourceName: "SoilGrids", sourceRelease: "2.0", licenseName: "CC-BY-4.0",
+  bounds: [-180, -85, 180, 85] as [number, number, number, number],
+};
+
+const MAPPED = {
+  "0-5cm": { phh2o: 57, soc: 243, nitrogen: 190, bdod: 121, cec: 182, ocd: 380, clay: 189, sand: 371, silt: 440, cfvo: 98 },
+  "5-15cm": { phh2o: 57, soc: 210, nitrogen: 160, bdod: 127, cec: 170, ocd: 340, clay: 195, sand: 380, silt: 425, cfvo: 102 },
+  "15-30cm": { phh2o: 58, soc: 180, nitrogen: 130, bdod: 131, cec: 160, ocd: 300, clay: 201, sand: 390, silt: 409, cfvo: 106 },
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(db.transaction).mockImplementation(async (callback) => callback(db as never));
+  // The flag-off answer: every pre-P5 deployment sees exactly this.
+  vi.mocked(getSoilProperties).mockResolvedValue({ state: "unavailable", reason: "reads_disabled" });
 });
 
 describe("all application map layers share containing-tile retrieval", () => {
@@ -82,6 +103,54 @@ describe("all application map layers share containing-tile retrieval", () => {
       lanes: [{ selected: { state: "numeric_values_unavailable", features: [], served_day: null } }],
       raster_publication: { sourceRelease: "2.0", numeric_values_available: false, tile: { z: 10 } },
     });
+  });
+
+  it("returns lane values as a labelled model estimate that can never become a measurement fact", async () => {
+    vi.mocked(getPublishedSoilRasters).mockResolvedValue([PH_RASTER]);
+    vi.mocked(getSoilProperties).mockResolvedValue({
+      state: "available", properties: soilEstimateFromMapped(MAPPED, "soilgrids-v2.0/2020-06-02", 140),
+    });
+    const result = await readAppMapEvidence({ ...args, surface_name: "soil-phh2o" }, now);
+    expect(getSoilProperties).toHaveBeenCalledWith(args.latitude, args.longitude);
+    expect(result).toMatchObject({
+      lanes: [{ selected: {
+        state: "model_estimate", basis: "model_estimate", property: "phh2o",
+        values: { "0-5cm": 5.7, "5-15cm": 5.7, "15-30cm": 5.8 }, unit: "pH (water)",
+        release_id: "soilgrids-v2.0/2020-06-02", distance_m: 140, numeric_values_available: true,
+        label: expect.stringContaining("SoilGrids v2.0 250 m model estimate"),
+      } }],
+      raster_publication: { numeric_values_available: true },
+      note: expect.stringContaining("not a soil sample or measurement"),
+    });
+    expect(JSON.stringify(result)).not.toContain('"state":"published"');
+    expect(buildRegionalMeasurementFacts([{ id: "soil-read", source: "soil-phh2o", result }])).toEqual({ facts: [], omittedFacts: 0 });
+  });
+
+  it("says no estimate lies within the radius for a masked cell rather than reporting unavailability", async () => {
+    vi.mocked(getPublishedSoilRasters).mockResolvedValue([PH_RASTER]);
+    vi.mocked(getSoilProperties).mockResolvedValue({ state: "unavailable", reason: "no_cell_within_radius", radiusM: 1000 });
+    expect(await readAppMapEvidence({ ...args, surface_name: "soil-phh2o" }, now)).toMatchObject({
+      lanes: [{ selected: { state: "no_estimate_within_radius", reason: "no_cell_within_radius", radius_m: 1000 } }],
+      raster_publication: { numeric_values_available: false },
+    });
+  });
+
+  it("keeps a flag-off or unwritten lane as numeric_values_unavailable and names the reason", async () => {
+    vi.mocked(getPublishedSoilRasters).mockResolvedValue([PH_RASTER]);
+    for (const reason of ["reads_disabled", "lane_never_written", "serving_at_capacity"] as const) {
+      vi.mocked(getSoilProperties).mockResolvedValueOnce({ state: "unavailable", reason });
+      expect(await readAppMapEvidence({ ...args, surface_name: "soil-phh2o" }, now)).toMatchObject({
+        lanes: [{ selected: { state: "numeric_values_unavailable", reason } }],
+      });
+    }
+  });
+
+  it("does not read the lane for a toggle whose raster release is not published", async () => {
+    vi.mocked(getPublishedSoilRasters).mockResolvedValue([]);
+    expect(await readAppMapEvidence({ ...args, surface_name: "soil-phh2o" }, now)).toMatchObject({
+      lanes: [{ selected: { state: "raster_release_not_published" } }],
+    });
+    expect(getSoilProperties).not.toHaveBeenCalled();
   });
 
   it("rejects a fabricated calendar date or incompatible window before reading", async () => {

@@ -32,6 +32,8 @@ const FACTS_PER_READ = 10;
 const STATEMENT_LENGTH = 500;
 const RECORD_COLLECTIONS = new Set(["features", "rows", "records"]);
 const RECORD_STATES = new Set(["published", "observed", "detail", "aggregate", "ready", "ok", "current"]);
+/** A SoilGrids model estimate is never a measurement fact; see soil/AGENTS.md §measurement-facts. */
+const MODEL_ESTIMATE_BASIS = "model_estimate";
 const METADATA_FIELDS = new Set([
   "allowed_client_exposure", "coverage_fraction", "observation_count", "physical_candidate_count",
   "coordinate_uncertainty_m", "distance_meters", "distance_days", "distance_basis", "spatial_relation",
@@ -137,10 +139,15 @@ function spatialParts(candidate: Candidate, root: RecordValue): string[] {
   return parts.length > 0 ? parts : ["Spatial support not provided"];
 }
 
+function isModelEstimate(value: RecordValue): boolean {
+  return value.basis === MODEL_ESTIMATE_BASIS || object(value.properties)?.basis === MODEL_ESTIMATE_BASIS;
+}
+
 function collectCandidates(root: RecordValue): Candidate[] {
   const candidates: Candidate[] = [];
   const visit = (value: RecordValue, envelope: RecordValue, lane: string, group: string, selected: boolean, depth: number) => {
-    if (depth > 12 || value.error || value.refusal_code || (typeof value.state === "string" && !RECORD_STATES.has(value.state))) return;
+    if (depth > 12 || value.error || value.refusal_code || isModelEstimate(value)
+      || (typeof value.state === "string" && !RECORD_STATES.has(value.state))) return;
     const scope = { ...envelope, ...Object.fromEntries(Object.entries(value).filter(([key]) => DATE_FIELDS.has(key))) };
     const nextLane = typeof value.parquet_lane === "string" ? value.parquet_lane : lane;
     for (const [key, entry] of Object.entries(value)) {
@@ -149,7 +156,7 @@ function collectCandidates(root: RecordValue): Candidate[] {
         if (Array.isArray(entries)) {
           for (const record of entries) {
             const row = object(record);
-            if (row && !row.error && !row.refusal_code && row.allowed_client_exposure !== false
+            if (row && !row.error && !row.refusal_code && !isModelEstimate(row) && row.allowed_client_exposure !== false
               && object(row.properties)?.allowed_client_exposure !== false) {
               candidates.push({ record: row, envelope: scope, lane: nextLane, group, selected, position: candidates.length });
             }

@@ -83,6 +83,8 @@ SERVICE_ROOT: Final = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SERVICE_ROOT / "src"))
 
 SCENARIOS_FILE: Final = Path(__file__).resolve().parent / "agent_strategy_eval_scenarios.json"
+#: Soil data plane DESIGN section 8: base runs with no typed question, seeded by the server-built site brief.
+SITE_BRIEF_SCENARIOS_FILE: Final = Path(__file__).resolve().parent / "agent_site_brief_eval_scenarios.json"
 
 #: Loopback default for a `strategy-kb serve --transport http` this harness expects already running.
 DEFAULT_STRATEGY_KNOWLEDGE_URL: Final = "http://127.0.0.1:8765"
@@ -291,6 +293,9 @@ class ScenarioExpectation:
     expected_family_ids: tuple[str, ...]
     forbidden_strategy_ids: tuple[str, ...]
     notes: str
+    base_run: bool = False
+    """Soil data plane: turn 0 is the base run -- no typed question, the site brief prepended, and
+    `user_question` None so the brief's seed becomes `context_query` (C4)."""
 
 
 def _scenario_from_json(payload: dict[str, Any]) -> ScenarioExpectation:
@@ -309,6 +314,7 @@ def _scenario_from_json(payload: dict[str, Any]) -> ScenarioExpectation:
             expected_family_ids=tuple(payload.get("expected_family_ids", ())),
             forbidden_strategy_ids=tuple(payload.get("forbidden_strategy_ids", ())),
             notes=str(payload.get("notes", "")),
+            base_run=bool(payload.get("base_run", False)),
         )
     except KeyError as error:
         raise ValueError(f"scenario entry missing required field {error}") from error
@@ -989,7 +995,7 @@ class ScenarioScore:
     reasons: tuple[str, ...]
 
 
-def score_transcript(  # noqa: PLR0912, PLR0913, PLR0915 - one branch and one input per scored PASS rule.
+def score_transcript(  # noqa: PLR0912, PLR0913 - one branch and one input per scored PASS rule.
     scenario: ScenarioExpectation,
     final_text: str,
     transcript: Sequence[dict[str, Any]],
@@ -1186,6 +1192,8 @@ class TurnRunResult:
     persisted so `--rescore` can rebuild the SAME `known_text` the live run used; see
     `score_transcript`'s `context_text` docstring and `_rescore_stored_rows`."""
     score: ScenarioScore
+    soil_labelling: SoilLabellingReport | None = None
+    """Soil data plane criteria 1-3; recorded on every turn, never part of `score.passed`."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1205,6 +1213,69 @@ class ScenarioRunResult:
         return bool(self.turns) and all(turn.score.passed for turn in self.turns)
 
 
+# --- Soil labelling (soil data plane DESIGN section 8, criteria 1-3) ---------------------
+
+_SOIL_TERM_PATTERN: Final = re.compile(
+    r"\b(?:soil ph|ph|organic carbon|soc|clay|sand|silt|bulk density|cec|cation exchange|coarse fragments|"
+    r"soilgrids|topsoil)\b",
+    re.IGNORECASE,
+)
+_SOIL_LABEL_PATTERN: Final = re.compile(r"model[- ]estimate", re.IGNORECASE)
+_MEASUREMENT_CLAIM_PATTERN: Final = re.compile(r"\b(?:measured|measurement|sampled|lab[- ]tested)\b", re.IGNORECASE)
+_CONTEXT_QUERY_SOURCE_PATTERN: Final = re.compile(r'"context_query_source"\s*:\s*"([a-z_]+)"')
+
+
+@dataclass(frozen=True, slots=True)
+class SoilLabellingReport:
+    """Whether every soil number carries its model-estimate label and none is called a measurement."""
+
+    soil_number_sentences: int
+    unlabelled_sentences: tuple[str, ...]
+    measurement_sentences: tuple[str, ...]
+    context_query_sources: tuple[str, ...]
+
+    @property
+    def passed(self) -> bool:
+        """Criteria 1 and 2: no unlabelled soil number and no SoilGrids value called measured."""
+        return not self.unlabelled_sentences and not self.measurement_sentences
+
+
+def score_soil_labelling(final_text: str, tool_contents: Sequence[str] = ()) -> SoilLabellingReport:
+    """Scan an answer sentence by sentence for soil numbers without "model estimate" and for measured claims."""
+    unlabelled: list[str] = []
+    measured: list[str] = []
+    soil_numbers = 0
+    for sentence in _sentences(_scannable_text(final_text)):
+        mentions_soil = _SOIL_TERM_PATTERN.search(sentence) is not None
+        if not mentions_soil:
+            continue
+        lowered = sentence.lower()
+        if _NUMERIC_PATTERN.search(sentence):
+            soil_numbers += 1
+            if _SOIL_LABEL_PATTERN.search(sentence) is None:
+                unlabelled.append(sentence)
+        claims = [
+            match
+            for match in _MEASUREMENT_CLAIM_PATTERN.finditer(lowered)
+            if not _mention_is_negated(lowered, match.start())
+        ]
+        if claims and "soilgrids" in lowered:
+            measured.append(sentence)
+    found = (match.group(1) for content in tool_contents for match in _CONTEXT_QUERY_SOURCE_PATTERN.finditer(content))
+    sources = tuple(dict.fromkeys(found))
+    return SoilLabellingReport(
+        soil_number_sentences=soil_numbers,
+        unlabelled_sentences=tuple(unlabelled),
+        measurement_sentences=tuple(measured),
+        context_query_sources=sources,
+    )
+
+
+def _tool_message_contents(messages: Sequence[dict[str, Any]]) -> tuple[str, ...]:
+    """Every tool-result message's text content, in order."""
+    return tuple(str(message.get("content", "")) for message in messages if message.get("role") == "tool")
+
+
 # --- CLI and live orchestration ------------------------------------------------------
 
 
@@ -1212,6 +1283,15 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
         "--out", type=Path, required=True, help="Directory for the per-run JSON, summary.json and summary.md."
+    )
+    parser.add_argument(
+        "--scenarios-file",
+        type=Path,
+        default=None,
+        help=(
+            f"Scenario JSON to load. Default: {SCENARIOS_FILE.name}; the soil data plane's base runs live in "
+            f"{SITE_BRIEF_SCENARIOS_FILE.name}."
+        ),
     )
     parser.add_argument(
         "--scenario",
@@ -1264,7 +1344,7 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _build_prompt(scenario: ScenarioExpectation) -> str:
+def _build_prompt(scenario: ScenarioExpectation, site_brief_section: str = "") -> str:
     """The FIRST user turn's coordinate preamble, matching `interface/cli/agent.py::_ask`'s template.
 
     Duplicated rather than imported -- see the module docstring's "WHY NOT JUST CALL _ask" -- so a
@@ -1277,7 +1357,7 @@ def _build_prompt(scenario: ScenarioExpectation) -> str:
         f"The coordinate is longitude {scenario.longitude}, latitude {scenario.latitude} "
         f"(WGS84 decimal degrees). Use the warehouse tools to answer, quote the distances they "
         f"report, and treat any typed refusal as a statement about the lane rather than as an "
-        f"absence of data.\n\n{scenario.turns[0]}"
+        f"absence of data.\n\n{scenario.turns[0]}{site_brief_section}"
     )
 
 
@@ -1344,6 +1424,11 @@ async def _run_live(scenarios: Sequence[ScenarioExpectation], args: argparse.Nam
     budget the caller never intended.
     """
     from agri_data_service.agent import tools as warehouse_tools  # noqa: PLC0415 - see module docstring
+    from agri_data_service.agent.graph import (  # noqa: PLC0415 - see module docstring
+        AgentRequest,
+        brief_literature_context,
+        read_site_brief_inputs,
+    )
     from agri_data_service.agent.llm import (  # noqa: PLC0415 - see module docstring
         MAX_OUTPUT_TOKENS,
         LlmProviderError,
@@ -1351,6 +1436,8 @@ async def _run_live(scenarios: Sequence[ScenarioExpectation], args: argparse.Nam
         agent_system_message,
         tool_schemas,
     )
+    from agri_data_service.agent.prompts import build_site_brief_section  # noqa: PLC0415 - see module docstring
+    from agri_data_service.agent.site_brief import build_site_brief  # noqa: PLC0415 - see module docstring
     from agri_data_service.agent.strategy_knowledge import StrategyContext  # noqa: PLC0415 - see module docstring
 
     models = tuple(args.models) if args.models else DEFAULT_MODELS
@@ -1385,14 +1472,39 @@ async def _run_live(scenarios: Sequence[ScenarioExpectation], args: argparse.Nam
     # the two never drift, unlike the hand-duplicated coordinate preamble in `_build_prompt`.
     system_message = agent_system_message(date.today())  # noqa: DTZ011 - the eval's own wall-clock date
 
+    def literature_context(
+        scenario: ScenarioExpectation, turn_index: int, brief: dict[str, Any] | None
+    ) -> StrategyContext:
+        """Every user turn so far; a base run's turn 0 is no typed question, so its brief seeds retrieval."""
+        asked = scenario.turns[1 : turn_index + 1] if scenario.base_run else scenario.turns[: turn_index + 1]
+        user_question_so_far = "\n".join(asked) or None
+        if brief is None:
+            return StrategyContext(
+                user_question=user_question_so_far,
+                longitude=scenario.longitude,
+                latitude=scenario.latitude,
+                site_facts=None,
+            )
+        request = AgentRequest(longitude=scenario.longitude, latitude=scenario.latitude, precision="exact")
+        return brief_literature_context(request, brief).model_copy(update={"user_question": user_question_so_far})
+
+    async def read_brief(scenario: ScenarioExpectation) -> dict[str, Any] | None:
+        """A base run's server-built site brief, read live once per conversation."""
+        if not scenario.base_run:
+            return None
+        request = AgentRequest(longitude=scenario.longitude, latitude=scenario.latitude, precision="exact")
+        async with warehouse_tools.run_context():
+            return build_site_brief(await read_site_brief_inputs(request))
+
     async def run_turn(
         client: OpenAiCompletionsClient,
         scenario: ScenarioExpectation,
         transcript_so_far: list[dict[str, Any]],
         turn_index: int,
+        brief: dict[str, Any] | None = None,
     ) -> TurnRunResult:
-        user_question_so_far = "\n".join(scenario.turns[: turn_index + 1])
-        user_message = _build_prompt(scenario) if turn_index == 0 else scenario.turns[turn_index]
+        brief_section = build_site_brief_section(brief) if brief is not None else ""
+        user_message = _build_prompt(scenario, brief_section) if turn_index == 0 else scenario.turns[turn_index]
         messages = [*transcript_so_far, {"role": "user", "content": user_message}]
         provider_error: str | None = None
         outcome: dict[str, Any]
@@ -1401,14 +1513,7 @@ async def _run_live(scenarios: Sequence[ScenarioExpectation], args: argparse.Nam
             # A FRESH context per user turn (seam S5): the strategy_context seeds server-side
             # retrieval with every user turn asked SO FAR, joined verbatim -- never with site_facts,
             # which this harness leaves to the server's own measured reads.
-            async with warehouse_tools.run_context(
-                strategy_context=StrategyContext(
-                    user_question=user_question_so_far,
-                    longitude=scenario.longitude,
-                    latitude=scenario.latitude,
-                    site_facts=None,
-                )
-            ):
+            async with warehouse_tools.run_context(strategy_context=literature_context(scenario, turn_index, brief)):
                 outcome = await client.converse(messages, max_tokens=max_tokens)
         except LlmProviderError as error:
             outcome = {
@@ -1447,6 +1552,7 @@ async def _run_live(scenarios: Sequence[ScenarioExpectation], args: argparse.Nam
                 registry_strategy_ids=registry_strategy_ids,
                 new_messages=new_messages,
             ),
+            soil_labelling=score_soil_labelling(final_text, _tool_message_contents(new_messages)),
         )
 
     async def run_conversation(
@@ -1454,8 +1560,9 @@ async def _run_live(scenarios: Sequence[ScenarioExpectation], args: argparse.Nam
     ) -> ScenarioRunResult:
         transcript: list[dict[str, Any]] = [system_message]
         turns: list[TurnRunResult] = []
+        brief = await read_brief(scenario)
         for turn_index in range(len(scenario.turns)):
-            turn_result = await run_turn(client, scenario, transcript, turn_index)
+            turn_result = await run_turn(client, scenario, transcript, turn_index, brief)
             turns.append(turn_result)
             transcript = list(turn_result.transcript)
         return ScenarioRunResult(
@@ -1502,6 +1609,11 @@ def _write_scenario_result(out: Path, result: ScenarioRunResult) -> None:
                 "tool_calls": list(turn.tool_calls),
                 "transcript": list(turn.transcript),
                 "score": dataclasses.asdict(turn.score),
+                "soil_labelling": (
+                    None
+                    if turn.soil_labelling is None
+                    else {**dataclasses.asdict(turn.soil_labelling), "passed": turn.soil_labelling.passed}
+                ),
             }
             for turn in result.turns
         ],
@@ -1719,7 +1831,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     # MUST happen before any agri_data_service import; see the module docstring.
     os.environ["STRATEGY_KNOWLEDGE_URL"] = args.strategy_knowledge_url
     try:
-        scenarios = load_scenarios(SCENARIOS_FILE, only=args.scenario_ids or None)
+        scenarios = load_scenarios(args.scenarios_file or SCENARIOS_FILE, only=args.scenario_ids or None)
     except (OSError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

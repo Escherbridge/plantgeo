@@ -80,12 +80,21 @@ function literatureFieldsPaired(
   }
 }
 
+/**
+ * Claim sources for the two render paths whose badge ignores the source (strategy chips and the
+ * riskSummary export line): SoilGrids model estimates are excluded until the panel's h7 fix lands,
+ * so no estimate can wear "Observed data". See soil/AGENTS.md §badge-interim-filter.
+ */
+const BADGE_BLIND_CLAIM_EVIDENCE_SOURCES = REGIONAL_CLAIM_EVIDENCE_SOURCES.filter(
+  (source): source is Exclude<RegionalClaimEvidenceSource, 'soilProperties'> => source !== 'soilProperties',
+);
+
 const riskSummarySchema = z.object({
   level: z.enum(['low', 'moderate', 'high', 'critical']),
   headline: z.string().trim().min(1).max(300),
   factors: z.array(z.string().trim().min(1).max(240)).max(8),
   evidenceOrigin: z.enum(EVIDENCE_ORIGINS),
-  evidenceSources: z.array(z.enum(REGIONAL_CLAIM_EVIDENCE_SOURCES)).max(REGIONAL_CLAIM_EVIDENCE_SOURCES.length),
+  evidenceSources: z.array(z.enum(BADGE_BLIND_CLAIM_EVIDENCE_SOURCES)).max(REGIONAL_CLAIM_EVIDENCE_SOURCES.length),
   evidenceReadIds: evidenceReadIdsSchema,
 }).strict().superRefine(warehouseReadIdsOnly);
 
@@ -105,7 +114,7 @@ const remediationRecommendationSchema = z.object({
   confidence: z.enum(['low', 'moderate', 'high']),
   consultProfessionals: z.array(z.enum(PROFESSIONAL_DISCIPLINES)).max(5),
   evidenceOrigin: z.enum(EVIDENCE_ORIGINS),
-  evidenceSource: z.enum(REGIONAL_CLAIM_EVIDENCE_SOURCES).optional(),
+  evidenceSource: z.enum(BADGE_BLIND_CLAIM_EVIDENCE_SOURCES).optional(),
   evidenceReadIds: evidenceReadIdsSchema,
   ...literatureClaimFields,
 }).strict().superRefine(warehouseReadIdsOnly).superRefine(literatureFieldsPaired);
@@ -537,6 +546,66 @@ export function reportWarehouseEvidenceIssues(
         : 'A warehouse claim must name the evidence source supported by an admissible executed read.',
     }];
   })];
+}
+
+/** Appended to a soil-citing statement that quotes a number without its basis; see soil/AGENTS.md §label-append. */
+export const SOIL_MODEL_ESTIMATE_SENTENCE = ' Soil values are SoilGrids v2.0 250 m model estimates, not measurements.';
+/** The short form for the fields too small for the sentence: risk headline and factors. */
+export const SOIL_MODEL_ESTIMATE_SUFFIX = ' (SoilGrids model estimate)';
+const MAX_STATEMENT_CHARACTERS = 500;
+const MAX_RATIONALE_CHARACTERS = 900;
+const MAX_HEADLINE_CHARACTERS = 300;
+const MAX_FACTOR_CHARACTERS = 240;
+/**
+ * Soil property terms a SoilGrids number is quoted under. Bare "soil" is deliberately absent: soil
+ * moisture and soil temperature are other sources, never SoilGrids estimates.
+ */
+const SOIL_PROPERTY_TERM = /\b(?:pH|soil (?:organic|carbon|nitrogen|texture)|organic carbon|SOC|clay|sand|silt|loam|loamy|texture|bulk density|cation exchange|CEC|coarse fragments|topsoil|SoilGrids)\b/i;
+
+export interface SoilLabelOptions {
+  /** Whether any SoilGrids value reached the model this turn (payload, brief soil section or the soil tool). */
+  soilAvailable: boolean;
+}
+
+/** Append `suffix` within `limit` characters, truncating the text with an ellipsis when needed. */
+function appendLabel(text: string, suffix: string, limit: number): string {
+  const room = limit - suffix.length;
+  const kept = text.length <= room ? text : `${text.slice(0, room - 1).trimEnd()}…`;
+  return `${kept}${suffix}`;
+}
+
+/** A soil number without its basis: a digit, a soil property term (or a soilProperties citation), no "model estimate". */
+function needsSoilLabel(text: string, citesSoil: boolean, soilAvailable: boolean): boolean {
+  if (!/\d/.test(text) || /model estimate/i.test(text)) return false;
+  return citesSoil || (soilAvailable && SOIL_PROPERTY_TERM.test(text));
+}
+
+/**
+ * Deterministic, idempotent label rule (review M2). Whenever soil reached the model, ANY statement,
+ * rationale, risk factor or headline that quotes a number beside a soil property term, and any
+ * observation citing `soilProperties`, gets the canonical label unless it already says "model
+ * estimate". It keys on text, not on `evidenceSource`, because the live report shape (measurement
+ * facts on, model_inference statements, riskSummary sources forced to []) never carries a soil
+ * citation. Never an error.
+ */
+export function labelSoilModelEstimates(report: RemediationReport, { soilAvailable }: SoilLabelOptions): RemediationReport {
+  const observations = report.observations.map((observation) =>
+    needsSoilLabel(observation.statement, observation.evidenceSource === 'soilProperties', soilAvailable)
+      ? { ...observation, statement: appendLabel(observation.statement, SOIL_MODEL_ESTIMATE_SENTENCE, MAX_STATEMENT_CHARACTERS) }
+      : observation);
+  const remediation = report.remediation.map((item) =>
+    needsSoilLabel(item.rationale, false, soilAvailable)
+      ? { ...item, rationale: appendLabel(item.rationale, SOIL_MODEL_ESTIMATE_SENTENCE, MAX_RATIONALE_CHARACTERS) }
+      : item);
+  const { headline, factors } = report.riskSummary;
+  const riskSummary = {
+    ...report.riskSummary,
+    headline: needsSoilLabel(headline, false, soilAvailable)
+      ? appendLabel(headline, SOIL_MODEL_ESTIMATE_SUFFIX, MAX_HEADLINE_CHARACTERS) : headline,
+    factors: factors.map((factor) => needsSoilLabel(factor, false, soilAvailable)
+      ? appendLabel(factor, SOIL_MODEL_ESTIMATE_SUFFIX, MAX_FACTOR_CHARACTERS) : factor),
+  };
+  return { ...report, riskSummary, observations, remediation };
 }
 
 // --- Literature claim grounding: see `src/lib/server/services/AGENTS.md` §literature-grounding ---

@@ -1,6 +1,8 @@
 import { and, eq, sql } from "drizzle-orm";
 import { haversineDistance } from "@/lib/map/measurement";
-import type { SoilProperties } from "@/lib/server/services/soilgrids";
+import { getSoilProperties, type SoilProperties } from "@/lib/server/services/soilgrids";
+import type { SiteBrief } from "@/lib/server/services/site-brief";
+import { SITE_BRIEF_READ_DEADLINE_MS, siteBriefForRequest } from "@/lib/server/services/site-brief-readers";
 import type { RegionalAnalysisSelection } from '@/lib/regional-analysis-selection';
 import { db } from "@/lib/server/db";
 import { features, layers } from "@/lib/server/db/schema";
@@ -157,7 +159,13 @@ export interface RegionalContextPayload {
   strategyContext: StrategyContextEntry[];
   /** Nearby unreviewed community intervention proposals. See `readCommunityProposals`. */
   communityProposals: CommunityProposal[];
+  /** SoilGrids v2.0 model estimate from the `soil-properties` lane; null whenever the read refused. */
   soilProperties: SoilProperties | null;
+  /**
+   * The server-built site brief (CONTRACT C5). Present only while SITE_BRIEF_ENABLED is on and a
+   * brief was built (base run) or served from its cache (follow-up); absent, the payload is wave 2's.
+   */
+  siteBrief?: SiteBrief | null;
   waterScarcity: {
     droughtClass: string | null;
     nearestGauge: WaterGauge | null;
@@ -725,6 +733,10 @@ async function readNearestWeather(
   return nearest;
 }
 
+// The server-built site brief's readers, scheduler and cache live in site-brief-readers.ts
+// (soil/AGENTS.md §site-brief-readers). The cache's test seam is re-exported for this module's tests.
+export { resetSiteBriefCacheForTests } from "@/lib/server/services/site-brief-readers";
+
 /** Whether a layer's own coverage record shows a day as published. */
 type CoverageOnDay =
   | { state: "published" }
@@ -876,22 +888,38 @@ interface SourceReadState {
  * live edge and is reported as `served_as_of_latest` so the agent cannot attribute a live
  * value to a day the user is looking at. An omitted or empty list reads exactly as this
  * function always has.
+ *
+ * `isBaseRun` gates the site brief's own point reads (soil plus six section reads), and only
+ * while SITE_BRIEF_ENABLED is on: a base run (first turn, or no typed question) reads and builds
+ * it; a follow-up gets the cached brief with no read, or else the one soil read alone, because
+ * conversation history replays only the saved question and report, never the brief. With both
+ * flags off nothing here reads anything the wave-2 assembler did not. See soil/AGENTS.md §site-brief.
  */
 export async function assembleRegionalContext(
   lat: number,
   lon: number,
   viewedLayers: ViewedLayerRequest[] = [],
   selection?: RegionalAnalysisSelection,
+  isBaseRun = true,
 ): Promise<RegionalContextResult> {
   if (selection) {
+    // Selected analyses read every TIME-BOUND observation through the tile workflow. The two
+    // exceptions are the static SoilGrids estimate (one soil read, SOIL_PROPERTIES_READS_ENABLED)
+    // and the site brief (SITE_BRIEF_ENABLED): point reads at the server's today, each section
+    // dated and labelled. Both flags off: no read at all, the wave-2 payload exactly.
+    const today = serverCurrentDate();
+    const { soil, siteBrief } = await siteBriefForRequest(lat, lon, today, isBaseRun);
+    const soilValue = soil.state === "available" ? soil.properties : null;
     return {
       payload: {
         location: { lat, lon, geohash: `${lat.toFixed(2)}_${lon.toFixed(2)}` },
         strategyRecommendations: null, strategyContext: [], communityProposals: [],
-        soilProperties: null, waterScarcity: null, weather: null, fireDetections: null,
+        soilProperties: soilValue, ...(siteBrief !== null ? { siteBrief } : {}),
+        waterScarcity: null, weather: null, fireDetections: null,
         firePerimeters: null, mtbsPerimeters: null, carbonPotential: null,
       },
-      dataFreshness: {}, contextIsEmpty: true, cacheHit: false,
+      dataFreshness: soilValue !== null ? { soilProperties: "static_release_untimed" } : {},
+      contextIsEmpty: soilValue === null, cacheHit: false,
       temporalContext: {
         serverCurrentDate: serverCurrentDate(), viewedLayersUnreported: viewedLayers.length === 0,
         selectionEvidenceOnly: true, analysisSelection: selection,
@@ -912,6 +940,9 @@ export async function assembleRegionalContext(
   const north = Math.min(90, lat + CONTEXT_RADIUS_DEGREES);
   const bbox = `${west},${south},${east},${north}`;
   const today = serverCurrentDate();
+  // The ONE soil read of this request, shared by `soilProperties` and the site brief. It never
+  // throws; with SOIL_PROPERTIES_READS_ENABLED off it answers `reads_disabled` before any read.
+  const soilRead = getSoilProperties(lat, lon, { timeoutMs: SITE_BRIEF_READ_DEADLINE_MS });
 
   // One day per block, last row wins. Two rows keyed to the same block -- a toggle id and its
   // warehouse alias -- is a client bug, not a reason to run the same warehouse read twice.
@@ -932,6 +963,7 @@ export async function assembleRegionalContext(
     soil,
     mtbs,
     communityProposals,
+    brief,
   ] = await Promise.allSettled([
     getContextDrought(bbox, dateBySource.get("drought")),
     getContextWaterGauges(bbox, dateBySource.get("streamflow")),
@@ -971,11 +1003,12 @@ export async function assembleRegionalContext(
     // absent from this payload and present in the other, so reading the PostgreSQL one described a
     // withheld lane to the agent as published -- the one claim fail-closed exists to prevent.
     getParquetSliderCapabilities(),
-    // SoilGrids' former cache path wrote to PostgreSQL. Until its source-direct Parquet lane is
-    // published, withhold it rather than reintroducing a database read through the agent.
-    Promise.resolve(null),
+    soilRead,
     getParquetBurnSeverity({ bbox, date: dateBySource.get("mtbsPerimeters"), mapZoom: CONTEXT_MAP_ZOOM }),
     readCommunityProposals(lat, lon),
+    // SITE_BRIEF_ENABLED only: its own bounded point reads beside the payload's (one reader
+    // semantics for both paths, CONTRACT C5.1). Off, this is the soil read above and nothing else.
+    siteBriefForRequest(lat, lon, today, isBaseRun, soilRead),
   ]);
 
   const droughtValue = drought.status === "fulfilled" ? drought.value : null;
@@ -984,7 +1017,9 @@ export async function assembleRegionalContext(
   const fireRead = resolveFireRead(fires);
   const perimeterRead = resolveFirePerimeterRead(perimeters);
   const carbonValue = carbon.status === "fulfilled" ? carbon.value : null;
-  const soilValue = soil.status === "fulfilled" ? soil.value : null;
+  const soilValue = soil.status === "fulfilled" && soil.value.state === "available" ? soil.value.properties : null;
+  // A brief that could not be built fails open to none, never to a failed request.
+  const siteBrief = brief.status === "fulfilled" ? brief.value.siteBrief : null;
   const mtbsRead = mtbs.status === "fulfilled" && mtbs.value.state === "ready" ? mtbs.value : null;
   const mtbsCollection = presentParquetBurnSeverity(mtbsRead ?? undefined);
   const communityProposalsValue = settled(
@@ -1016,7 +1051,7 @@ export async function assembleRegionalContext(
         ? `snapshot_captured_${perimeterRead.snapshotDay}`
         : "unavailable",
     strategyRecommendations: "unavailable",
-    // SoilGrids v2.0 is a static, undated raster release (see soilgrids.ts): there is no
+    // SoilGrids v2.0 is a static, undated release (see soilgrids.ts): there is no
     // per-request observation time to report, so this sentinel is deliberately not a parseable
     // date. It still resolves `contextIsEmpty` and the freshness footer correctly to "available
     // data exists" vs "unavailable" -- the one thing it cannot claim is a specific age.
@@ -1034,6 +1069,7 @@ export async function assembleRegionalContext(
     strategyContext: [],
     communityProposals: communityProposalsValue,
     soilProperties: soilValue,
+    ...(siteBrief !== null ? { siteBrief } : {}),
     waterScarcity:
       droughtValue?.availability === "published" || gaugeValues.length > 0
         ? {

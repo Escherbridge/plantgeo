@@ -55,6 +55,7 @@ import {
   type SoilSurveyGranularity,
 } from "@/lib/server/services/soil-survey-contracts";
 import { getPublishedSoilRasters } from "@/lib/server/services/raster-catalog";
+import { getSoilProperties } from "@/lib/server/services/soilgrids";
 import {
   GIBS_NDVI_PRODUCT,
   getEnvironmentalTileTemplate,
@@ -513,12 +514,17 @@ export const environmentalRouter = router({
     .input(z.object({ bbox: bboxSchema, date: observationDateSchema.optional() }))
     .query(() => []),
 
+  /** SoilGrids v2.0 model estimate at the nearest lane cell; every refusal is PRECONDITION_FAILED naming its reason. */
   getSoilProperties: publicProcedure
     .input(pointSchema)
-    .query(() => {
+    .query(async ({ input }) => {
+      const read = await getSoilProperties(input.lat, input.lon);
+      if (read.state === "available") return read.properties;
       throw new TRPCError({
         code: "PRECONDITION_FAILED",
-        message: "Soil properties are unavailable until the source-direct Parquet lane is published",
+        message: read.reason === "no_cell_within_radius"
+          ? `Soil properties are unavailable: no_cell_within_radius (no SoilGrids estimate within ${read.radiusM ?? 1000} m)`
+          : `Soil properties are unavailable: ${read.reason}`,
       });
     }),
 

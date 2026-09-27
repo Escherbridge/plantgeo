@@ -293,6 +293,18 @@ defaults.
 | --- | --- | --- |
 | `STRATEGY_KNOWLEDGE_URL` | `plantgeo-parquet-api` | Origin of the private `plantgeo-strategy-knowledge` service that the agent's three literature tools call (`search_environmental_strategies`, `get_environmental_strategies`, `search_strategy_research_findings`). Production value: `http://${{plantgeo-strategy-knowledge.RAILWAY_PRIVATE_DOMAIN}}:8000`. The service has no public domain. Must be a credential-free origin with no path, query or fragment: `https` anywhere, plaintext `http` only on loopback or a `*.railway.internal` host. Unset, the tools answer the typed `strategy_knowledge_not_configured` refusal and every other tool is unaffected. See `services/agri-data-service/src/agri_data_service/agent/AGENTS.md`, "Strategy knowledge (literature) tools". |
 
+### Soil properties (SoilGrids model estimates) and site brief kill switches
+
+Both flags share one parsing rule in both services: only the exact value `true`, with surrounding
+whitespace trimmed, is on (case-sensitive: `TRUE`, `1` and `yes` are off). With BOTH unset, the web
+and agri agents behave byte-for-byte as they did before the soil build: no extra reads, no prompt
+change, no `site_facts_provenance`, no `site_brief_query`.
+
+| Variable | Service | Policy |
+| --- | --- | --- |
+| `SOIL_PROPERTIES_READS_ENABLED` | `plantgeo-parquet-api` (agri) and `plantgeo-main` (web) | Default unset = OFF. Enables numeric reads of the `soil-properties` Parquet lane (ISRIC SoilGrids v2.0 250 m model estimates, never measurements). Checked BEFORE any cache or read in both services; off, every soil reader answers `unavailable: reads_disabled` (agent tool `soil_properties_at_point`, the site brief's soil section, the web `SoilDetails` card and map evidence). On alone (brief off), the web makes one cached soil read per request and labels its values `model_estimate` in the prompt and in literature site facts. Set it on agri first, then web, only after the lane is published (P3) and verified (P4); roll back by unsetting it on web, then agri, and redeploying. Pushing code with it unset is safe by design. See `services/agri-data-service/src/agri_data_service/agent/AGENTS.md`, "Soil properties (SoilGrids)". |
+| `SITE_BRIEF_ENABLED` | `plantgeo-parquet-api` (agri) and `plantgeo-main` (web) | Default unset = OFF. Enables the server-built site brief (`site-brief/1`): on a base run (first turn or no typed question) the server reads soil, fire, drought, weather and land cover at the point (at most 2 reads in flight, one 3 s deadline), adds a "Site brief" prompt section, and sends `site_facts_provenance` and `site_brief_query` to the literature tools. A follow-up gets the cached brief (web, 45 min) or the one soil read. Off, none of those reads, sections or fields exist. Independent of `SOIL_PROPERTIES_READS_ENABLED`: with soil off, the brief's soil section says `reads_disabled`. Roll back by unsetting it and redeploying; the brief cache is keyed by both flags, so nothing stale is served. See `src/lib/server/services/soil/AGENTS.md` §flags and `services/agri-data-service/src/agri_data_service/agent/AGENTS.md`, "Site brief". |
+
 ## Railway policy
 
 Production private references use exact service names. The web application

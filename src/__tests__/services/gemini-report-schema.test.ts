@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { geminiReportSchema } from "@/lib/server/services/gemini-report-schema";
-import { remediationReportSchema, REMEDIATION_REPORT_JSON_SCHEMA, reportSchemaForCitations } from "@/lib/server/services/remediation-report";
+import { labelSoilModelEstimates, remediationReportSchema, REMEDIATION_REPORT_JSON_SCHEMA, reportSchemaForCitations, SOIL_MODEL_ESTIMATE_SENTENCE, SOIL_MODEL_ESTIMATE_SUFFIX } from "@/lib/server/services/remediation-report";
 import { buildRegionalMeasurementFacts } from '@/lib/server/services/regional-measurement-facts';
 
 describe("Gemini report schema projection", () => {
@@ -99,5 +99,103 @@ describe("Gemini report schema projection", () => {
       expect(projected).toHaveProperty(`${path}.anyOf.1.properties.evidenceOrigin.enum`, ['web', 'model_inference']);
       expect(projected).toHaveProperty(`${path}.anyOf.0.properties.statement.description`, expect.stringContaining('Describe only measurements returned by vegetation'));
     }
+  });
+});
+
+/**
+ * Interim O2 rule (DESIGN §5.7): until the panel's h7 fix lands, `soilProperties` is citable only
+ * where its badge already reads "Published estimate" (observations), never on remediation items or
+ * riskSummary, whose render paths badge by origin alone and would say "Observed data".
+ */
+describe("SoilGrids model estimates in the report contract", () => {
+  const valid = { riskSummary: { level: "low", headline: "Limited evidence", factors: [], evidenceOrigin: "model_inference", evidenceSources: [] }, observations: [], remediation: [], professionalConsultation: "Consult a professional." };
+  const item = {
+    strategy: "cover_cropping", title: "Screen cover crops", rationale: "Soil pH suits several species.",
+    timeframe: "short_term", confidence: "low", consultProfessionals: ["soil_scientist"],
+  };
+
+  it("keeps soilProperties out of the remediation and riskSummary citation enums only", () => {
+    const properties = REMEDIATION_REPORT_JSON_SCHEMA.properties as Record<string, { properties?: Record<string, { enum?: string[]; items?: { enum?: string[]; properties?: Record<string, { enum?: string[] }> } }>; items?: { properties?: Record<string, { enum?: string[] }> } }>;
+    expect(properties.remediation.items?.properties?.evidenceSource.enum).not.toContain("soilProperties");
+    expect(properties.riskSummary.properties?.evidenceSources.items?.enum).not.toContain("soilProperties");
+    expect(properties.observations.items?.properties?.evidenceSource.enum).toContain("soilProperties");
+    expect(remediationReportSchema.safeParse({ ...valid, remediation: [{ ...item, evidenceOrigin: "warehouse", evidenceSource: "soilProperties" }] }).success).toBe(false);
+    expect(remediationReportSchema.safeParse({ ...valid, riskSummary: { ...valid.riskSummary, evidenceOrigin: "warehouse", evidenceSources: ["soilProperties"] } }).success).toBe(false);
+    expect(remediationReportSchema.safeParse({ ...valid, observations: [{ statement: "SoilGrids model estimate pH 5.8.", evidenceOrigin: "warehouse", evidenceSource: "soilProperties" }] }).success).toBe(true);
+  });
+
+  it("appends the model-estimate sentence to an unlabelled soil number, deterministically and once", () => {
+    const report = remediationReportSchema.parse({ ...valid, observations: [
+      { statement: "Topsoil pH is 5.8.", evidenceOrigin: "warehouse", evidenceSource: "soilProperties" },
+      { statement: "Topsoil pH is 5.8, a SoilGrids model estimate.", evidenceOrigin: "warehouse", evidenceSource: "soilProperties" },
+      { statement: "Streamflow was 14 cfs.", evidenceOrigin: "warehouse", evidenceSource: "streamflow" },
+      { statement: "x".repeat(495) + " 5.8", evidenceOrigin: "warehouse", evidenceSource: "soilProperties" },
+    ] });
+    const labelled = labelSoilModelEstimates(report, { soilAvailable: true });
+    expect(labelled.observations[0].statement).toBe(`Topsoil pH is 5.8.${SOIL_MODEL_ESTIMATE_SENTENCE}`);
+    expect(labelled.observations[1].statement).toBe(report.observations[1].statement);
+    expect(labelled.observations[2].statement).toBe("Streamflow was 14 cfs.");
+    expect(labelled.observations[3].statement.length).toBeLessThanOrEqual(500);
+    expect(labelled.observations[3].statement.endsWith(SOIL_MODEL_ESTIMATE_SENTENCE)).toBe(true);
+    expect(labelSoilModelEstimates(labelled, { soilAvailable: true })).toEqual(labelled);
+    expect(remediationReportSchema.safeParse(labelled).success).toBe(true);
+  });
+
+  /**
+   * Review M2: the live path runs with measurement facts on, so the model can never cite
+   * soilProperties -- soil numbers arrive in model_inference statements, rationales, risk factors and
+   * the headline. The rule keys on the text whenever soil reached the model.
+   */
+  it("labels soil numbers in the live report shape, wherever the model put them", () => {
+    const live = remediationReportSchema.parse({
+      riskSummary: {
+        level: "moderate", headline: "Acid topsoil (pH 5.8) under moderate drought",
+        factors: ["topsoil pH 5.8", "D1 drought for 3 weeks", "clay 19.7% loam"],
+        evidenceOrigin: "model_inference", evidenceSources: [],
+      },
+      observations: [
+        { statement: "The loam topsoil has pH 5.8 and 2.0% SOC, which favours acid-tolerant cover crops.", evidenceOrigin: "model_inference" },
+        { statement: "Drought reached D1 in 3 of the last 4 weeks.", evidenceOrigin: "model_inference" },
+        { statement: "Soil moisture was 23% on 2026-09-20.", evidenceOrigin: "model_inference" },
+      ],
+      remediation: [{
+        strategy: "cover_cropping", title: "Acid-tolerant cover", rationale: "At pH 5.8 with 38.4% sand, cereal rye establishes well.",
+        timeframe: "short_term", confidence: "low", consultProfessionals: ["soil_scientist"], evidenceOrigin: "model_inference",
+      }],
+      professionalConsultation: "Consult a soil scientist.",
+    });
+    const labelled = labelSoilModelEstimates(live, { soilAvailable: true });
+    expect(labelled.observations[0].statement.endsWith(SOIL_MODEL_ESTIMATE_SENTENCE)).toBe(true);
+    expect(labelled.observations[1].statement).toBe(live.observations[1].statement);
+    // Soil moisture is not a SoilGrids property: never relabelled as a model estimate.
+    expect(labelled.observations[2].statement).toBe(live.observations[2].statement);
+    expect(labelled.remediation[0].rationale.endsWith(SOIL_MODEL_ESTIMATE_SENTENCE)).toBe(true);
+    expect(labelled.riskSummary.headline).toBe(`Acid topsoil (pH 5.8) under moderate drought${SOIL_MODEL_ESTIMATE_SUFFIX}`);
+    expect(labelled.riskSummary.factors).toEqual([`topsoil pH 5.8${SOIL_MODEL_ESTIMATE_SUFFIX}`, "D1 drought for 3 weeks", `clay 19.7% loam${SOIL_MODEL_ESTIMATE_SUFFIX}`]);
+    expect(remediationReportSchema.safeParse(labelled).success).toBe(true);
+    expect(labelSoilModelEstimates(labelled, { soilAvailable: true })).toEqual(labelled);
+  });
+
+  it("keeps every field within its limit when it appends", () => {
+    const long = remediationReportSchema.parse({
+      riskSummary: { level: "low", headline: `${"x".repeat(292)} pH 5.8`, factors: [`${"y".repeat(232)} pH 5.8`], evidenceOrigin: "model_inference", evidenceSources: [] },
+      observations: [], professionalConsultation: "Consult a professional.",
+      remediation: [{ strategy: "cover_cropping", title: "t", rationale: `${"z".repeat(890)} pH 5.8`, timeframe: "short_term", confidence: "low", consultProfessionals: ["soil_scientist"], evidenceOrigin: "model_inference" }],
+    });
+    const labelled = labelSoilModelEstimates(long, { soilAvailable: true });
+    expect(labelled.riskSummary.headline.length).toBeLessThanOrEqual(300);
+    expect(labelled.riskSummary.factors[0].length).toBeLessThanOrEqual(240);
+    expect(labelled.remediation[0].rationale.length).toBeLessThanOrEqual(900);
+    expect(remediationReportSchema.safeParse(labelled).success).toBe(true);
+  });
+
+  it("leaves soil terms alone when no soil reached the model, but still labels a soilProperties citation", () => {
+    const report = remediationReportSchema.parse({ ...valid, observations: [
+      { statement: "Topsoil pH is 5.8.", evidenceOrigin: "model_inference" },
+      { statement: "Surface pH is 5.7.", evidenceOrigin: "warehouse", evidenceSource: "soilProperties" },
+    ] });
+    const labelled = labelSoilModelEstimates(report, { soilAvailable: false });
+    expect(labelled.observations[0].statement).toBe("Topsoil pH is 5.8.");
+    expect(labelled.observations[1].statement).toBe(`Surface pH is 5.7.${SOIL_MODEL_ESTIMATE_SENTENCE}`);
   });
 });

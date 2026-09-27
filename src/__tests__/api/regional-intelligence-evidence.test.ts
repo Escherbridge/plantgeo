@@ -1,12 +1,12 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 
-const mocks = vi.hoisted(() => ({ stream: vi.fn(), recordExchange: vi.fn(), assemble: vi.fn(), history: [] as { role: 'user' | 'assistant'; content: string }[] }));
+const mocks = vi.hoisted(() => ({ stream: vi.fn(), recordExchange: vi.fn(), assemble: vi.fn(), history: [] as { role: 'user' | 'assistant'; content: string }[], payloadExtra: {} as Record<string, unknown> }));
 vi.mock('@/lib/server/auth', () => ({ getServerSession: async () => ({ user: { id: 'owner' } }) }));
 vi.mock('@/lib/server/services/regional-context', () => ({ assembleRegionalContext: async (...args: unknown[]) => {
   mocks.assemble(...args);
   return {
-  payload: { location: { lat: 44, lon: -116, geohash: '9r' } }, dataFreshness: {}, contextIsEmpty: true, temporalContext: {},
+  payload: { location: { lat: 44, lon: -116, geohash: '9r' }, ...mocks.payloadExtra }, dataFreshness: {}, contextIsEmpty: true, temporalContext: {},
 }; } }));
 vi.mock('@/lib/server/services/ai-prompt', () => ({ streamRegionalIntelligence: mocks.stream }));
 vi.mock('@/lib/server/services/ai-conversations', () => ({
@@ -19,7 +19,7 @@ vi.mock('@/lib/server/security/regional-intelligence-access', () => ({
 
 import { POST } from '@/app/api/ai/regional-intelligence/route';
 
-afterEach(() => { vi.unstubAllEnvs(); vi.clearAllMocks(); mocks.history.splice(0); });
+afterEach(() => { vi.unstubAllEnvs(); vi.clearAllMocks(); mocks.history.splice(0); mocks.payloadExtra = {}; });
 
 it('streams and persists validated server evidence while retaining the last valid audit', async () => {
   vi.stubEnv('OPENROUTER_API_KEY', 'test-key');
@@ -43,7 +43,7 @@ it('streams and persists validated server evidence while retaining the last vali
   expect(JSON.parse(done).analysisEvidence).toEqual(evidence);
   expect(mocks.assemble).toHaveBeenCalledWith(44, -116, [], {
     timeScale: 'month', rangeSteps: 1, zoom: 13, layerDays: {},
-  });
+  }, true); // isBaseRun: no conversationId and no typed question, so this is the first turn.
 });
 
 it('rejects a legacy warehouse citation without its exact assembled payload block', async () => {
@@ -108,4 +108,44 @@ it('hands the agent the verbatim sources of the literature question seed: prior 
     expect.objectContaining({ location: { lat: 44, lon: -116, geohash: '9r' } }), {}, true, {},
     history, 'What can I do about it?', expect.any(AbortSignal),
   );
+});
+
+/** The interim O2 filter at the route boundary: remediation items may not cite a SoilGrids estimate. */
+it('refuses a SoilGrids citation on a remediation item, whose chip badges by origin alone', async () => {
+  vi.stubEnv('OPENROUTER_API_KEY', 'test-key');
+  mocks.payloadExtra = { soilProperties: { ph: 5.7, organicCarbon: 24.3, nitrogen: 1.9, bulkDensity: 1.21, cec: 18.2, ocd: 38, basis: 'model_estimate' } };
+  const report = {
+    riskSummary: { level: 'low', headline: 'Acid topsoil.', factors: [], evidenceOrigin: 'model_inference', evidenceSources: [] },
+    observations: [],
+    remediation: [{ strategy: 'cover_cropping', title: 'Acid-tolerant cover', rationale: 'SoilGrids model estimate pH 5.7.', timeframe: 'short_term', confidence: 'low', consultProfessionals: ['soil_scientist'], evidenceOrigin: 'warehouse', evidenceSource: 'soilProperties' }],
+    professionalConsultation: 'Consult a soil scientist.',
+  };
+  mocks.stream.mockImplementation(async function* () { yield { type: 'report', report }; });
+  const response = await POST(new NextRequest('https://plantgeo.test/api/ai/regional-intelligence', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lat: 44, lon: -116, locationConsent: { precision: 'approximate', confirmed: true } }),
+  }));
+  const text = await response.text();
+  expect(text).toContain('event: error');
+  expect(text).not.toContain('Observed data');
+  expect(mocks.recordExchange).not.toHaveBeenCalled();
+});
+
+it('admits a labelled SoilGrids observation backed by the assembled soil block', async () => {
+  vi.stubEnv('OPENROUTER_API_KEY', 'test-key');
+  mocks.payloadExtra = { soilProperties: { ph: 5.7, organicCarbon: 24.3, nitrogen: 1.9, bulkDensity: 1.21, cec: 18.2, ocd: 38, basis: 'model_estimate' } };
+  const report = {
+    riskSummary: { level: 'low', headline: 'Acid topsoil.', factors: [], evidenceOrigin: 'model_inference', evidenceSources: [] },
+    observations: [{ statement: 'Surface pH is 5.7, a SoilGrids v2.0 250 m model estimate at 0-5 cm.', evidenceOrigin: 'warehouse', evidenceSource: 'soilProperties' }],
+    remediation: [], professionalConsultation: 'Consult a soil scientist.',
+  };
+  mocks.stream.mockImplementation(async function* () { yield { type: 'report', report }; });
+  mocks.recordExchange.mockResolvedValue({ assistantMessageId: 'saved-answer' });
+  const response = await POST(new NextRequest('https://plantgeo.test/api/ai/regional-intelligence', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lat: 44, lon: -116, locationConsent: { precision: 'approximate', confirmed: true } }),
+  }));
+  const text = await response.text();
+  expect(text).toContain('event: done');
+  expect(mocks.recordExchange).toHaveBeenCalled();
 });

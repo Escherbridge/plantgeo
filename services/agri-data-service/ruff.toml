@@ -13,6 +13,7 @@ allowed-confusables = ["−", "‒", "–", "’"]
 known-first-party = ["agri_data_service"]
 
 [lint.per-file-ignores]
+"scripts/agent_strategy_eval.py" = ["PLR0915"]
 "scripts/air_temperature_snapshot_breakdown.py" = ["PLR0912", "PLR0913", "PLR0915"]
 "scripts/breakdown_wind_speed_snapshot.py" = ["PLR0912", "PLR0913", "PLR0915", "PLR2004"]
 "scripts/build_precipitation_from_canonical_snapshot.py" = ["PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR2004"]

@@ -4,9 +4,11 @@ import { incompleteReportDiagnostic, providerErrorDiagnostic, reportValidationDi
 import { geminiReportSchema } from './gemini-report-schema';
 import { reportFlowGroundingIssues } from './report-flow-grounding';
 import { soilAiEvidence } from './soil-ai-evidence';
+import { describeSiteBrief, siteBriefEnabled, withSiteBrief, type SiteBrief } from './site-brief';
+import { soilReadsEnabled } from './soilgrids';
 import { bindRegionalEvidenceArguments, boundedEvidence, buildLiteratureServerContext, prepareRegionalAnalysis, regionalEvidenceAuditCall, regionalEvidenceLimitations, regionalEvidenceStageStatus, regionalFactsForRead, SERVER_OWNED_LITERATURE_ARGUMENTS, siteFactObservationsForRead } from './regional-analysis-workflow';
-import { callRegionalEvidenceTool, RegionalEvidenceArgumentError } from './regional-evidence-tools';
-import { groundLiteratureClaims, literatureRecordsFromResult, remediationReportSchema, REMEDIATION_REPORT_JSON_SCHEMA, normalizeProviderReport, pairLiteratureProvenance, resolveProviderMeasurementReport, reportCitationManifest, reportSchemaForCitations, reportWarehouseEvidenceIssues, strategyKnowledgeAnswered, type LiteratureRecord, type RemediationReport } from './remediation-report';
+import { callRegionalEvidenceTool, RegionalEvidenceArgumentError, SOIL_PROPERTIES_TOOL_NAME } from './regional-evidence-tools';
+import { groundLiteratureClaims, labelSoilModelEstimates, literatureRecordsFromResult, remediationReportSchema, REMEDIATION_REPORT_JSON_SCHEMA, normalizeProviderReport, pairLiteratureProvenance, resolveProviderMeasurementReport, reportCitationManifest, reportSchemaForCitations, reportWarehouseEvidenceIssues, strategyKnowledgeAnswered, type LiteratureRecord, type RemediationReport } from './remediation-report';
 import type {
   RegionalContextPayload,
   TemporalContext,
@@ -157,7 +159,18 @@ const REPORT_TOOL: AgentTool = {
   input_schema: REMEDIATION_REPORT_JSON_SCHEMA,
 };
 
-function buildSystemPrompt(hasWebSearch: boolean): string {
+/** Either soil flag on: the soil and site-fact prompt text carries its basis labels (review M7). */
+function soilContextEnabled(): boolean {
+  return soilReadsEnabled() || siteBriefEnabled();
+}
+
+/** Wave-2 soil sentence, kept byte-identical for the both-flags-off deploy (review M7). */
+const WAVE_TWO_SOIL_GUIDANCE = '- Soil properties include explicit units and represent SoilGrids predictions at 0–5 cm, not a local soil sample. Preserve each value\'s unit. Nitrogen and organicCarbon are g/kg, never percentages with the same numeric value. Prefer the supplied g/kg; if a mass percentage is necessary, divide g/kg by 10 and label the conversion explicitly. Do not convert organic carbon concentration into organic matter or carbon stocks without additional evidence.';
+const LABELLED_SOIL_GUIDANCE = '- Soil properties are SoilGrids v2.0 250 m model estimates for the pixel at the centre of a ~500 m cell, not a local soil sample and never a measurement or an observation. Every soil number you write must carry the words "model estimate" and its depth (for example "pH 5.8, SoilGrids v2.0 250 m model estimate, 0-30 cm"). soilProperties holds the 0–5 cm values with explicit units. Preserve each value\'s unit. Nitrogen and organicCarbon are g/kg, never percentages with the same numeric value. Prefer the supplied g/kg; if a mass percentage is necessary, divide g/kg by 10 and label the conversion explicitly. Do not convert organic carbon concentration into organic matter or carbon stocks without additional evidence.';
+const WAVE_TWO_SITE_FACTS_GUIDANCE = 'The server supplies this site\'s measured facts (soil, burn history, precipitation, land cover) and its region to those tools itself: send no site_profile and no region argument, and never put site numbers in a literature call.';
+const LABELLED_SITE_FACTS_GUIDANCE = 'The server supplies this site\'s facts (SoilGrids soil model estimates, mapped burn history, drought class, CDL land cover), each with its basis label, and its region to those tools itself: send no site_profile and no region argument, and never put site numbers in a literature call. Repeat a fact\'s basis label whenever you cite it.';
+
+function buildSystemPrompt(hasWebSearch: boolean, soilContext: boolean = soilContextEnabled()): string {
   return `You are PlantGeo Regional Intelligence, an AI land-remediation advisor. Your primary job is to recommend remediation strategies for a specific location: what a land manager could do to reduce wildfire, drought, erosion, water-stress, or degradation risk there.
 
 ## Your output is AI-generated advice, and you must say so
@@ -178,7 +191,7 @@ function buildSystemPrompt(hasWebSearch: boolean): string {
 - Confidence should reflect how well the evidence supports the specific recommendation, not how confident you feel in general.
 
 ## What each observation can establish
-- Soil properties include explicit units and represent SoilGrids predictions at 0–5 cm, not a local soil sample. Preserve each value's unit. Nitrogen and organicCarbon are g/kg, never percentages with the same numeric value. Prefer the supplied g/kg; if a mass percentage is necessary, divide g/kg by 10 and label the conversion explicitly. Do not convert organic carbon concentration into organic matter or carbon stocks without additional evidence.
+${soilContext ? LABELLED_SOIL_GUIDANCE : WAVE_TWO_SOIL_GUIDANCE}
 - A single streamflow reading establishes a flow at its own observation time, not a trend. Do not describe flow as stable, rising, declining, normal, low, high, below-normal or above-normal unless a supplied gauge-specific comparator, percentile or condition explicitly supports that comparison (and a supplied trend supports any trend claim). A small absolute cfs value alone is not evidence of low flow. Missing trend/percentile/condition means unmeasured, not stable or normal. You may still discuss drought-based concerns as AI inference without relabelling the measured flow.
 - A gauge's observedDay is its publisher's calendar day; updatedAt is the actual observation instant. Attribute named-day streamflow to observedDay. A late Pacific observation on September 9 can have a September 10 UTC timestamp: this is still September 9 publisher-day evidence. If mentioning the instant, include its timezone; never replace observedDay with the date obtained by converting updatedAt.
 - firePerimeters contains perimeter records, not active satellite detections. Their record dates and snapshot capture day are not ignition dates and do not prove a fire was active or detected on that day. Say "perimeter records dated ..." and keep them distinct from the fireDetections source; a count of perimeter records is not a count of new fires.
@@ -200,7 +213,7 @@ function buildSystemPrompt(hasWebSearch: boolean): string {
 - Silvopasture requires compatible trees, forage, livestock management and water balance; trees or drought alone do not establish its suitability. Biochar requires soil tests, feedstock, production conditions and material quality; carbon or drought alone do not establish its suitability or an application rate. State missing prerequisites and distinguish a conditional feasibility assessment from a recommendation to install a practice.
 - Include a concise account of the most relevant alternatives considered and why they are supported, conditional or unsuitable in observations and recommendation rationales. A strategy is not owed a recommendation merely because it was screened.
 - Ground unfamiliar practices in cited literature and dataset sources rather than an unstated number. Soil texture and drought metrics, when supplied, are useful context for whether a practice is a physical fit for this ground — not material for a causal comparison.
-- For a remediation or "what can we do" question, read the local warehouse evidence first, then call search_environmental_strategies, get_environmental_strategies or search_strategy_research_findings with a query in the user's own words. The server supplies this site's measured facts (soil, burn history, precipitation, land cover) and its region to those tools itself: send no site_profile and no region argument, and never put site numbers in a literature call.
+- For a remediation or "what can we do" question, read the local warehouse evidence first, then call search_environmental_strategies, get_environmental_strategies or search_strategy_research_findings with a query in the user's own words. ${soilContext ? LABELLED_SITE_FACTS_GUIDANCE : WAVE_TWO_SITE_FACTS_GUIDANCE}
 - A remediation item grounded in their output uses evidenceOrigin "literature" and evidenceSource "strategy-knowledge", and cites literatureRecordIds: the finding_id or strategy_id values of the records it relies on, copied from this turn's answered literature results. The server attaches each cited record's title, magnitude, direction and conditions; do not write those fields yourself. An item without a valid cited record is downgraded to model_inference.
 - Never present a literature finding as a measurement taken at this site. Quote a magnitude only as the cited record gives it, together with its direction and conditions (such as the study region, crop, soil or practice), and never as an outcome expected at this site.
 - Up to ${MAX_LITERATURE_CALLS_PER_REQUEST} literature lookups are allowed, separate from the measured-evidence budget. A lookup rejected for its arguments does not use one; fix the arguments instead of repeating the call, because an identical rejected call is not re-sent. Use the literature origin only after one of these tools returns evidenceStatus "answered"; a refused or unavailable lookup supports no literature claim.
@@ -331,10 +344,13 @@ function describeViewedDates(temporalContext: TemporalContext): string {
 }
 
 /** What the payload describes and as of when, row by row. */
-function buildTemporalSection(temporalContext: TemporalContext): string {
+function buildTemporalSection(temporalContext: TemporalContext, soilContext: boolean = soilContextEnabled()): string {
   const heading = `## What each map layer is showing, and as of when\nThe server's today is ${temporalContext.serverCurrentDate}.`;
-  if (temporalContext.selectionEvidenceOnly) {
+  if (temporalContext.selectionEvidenceOnly && !soilContext) {
     return `${heading}\nThe initial payload contains location and selection metadata only. Every environmental observation must come from the selected tile evidence reads below.\nActive selection: ${JSON.stringify(temporalContext.analysisSelection)}\nEach explicitly selected layer retains its own date. An unselected layer inherits the latest selected day, or the server day when no selected date exists. No initial source was read as-of-latest.${describeViewedDates(temporalContext)}`;
+  }
+  if (temporalContext.selectionEvidenceOnly) {
+    return `${heading}\nThe initial payload contains location and selection metadata, plus the static SoilGrids soil estimate when one is served. Every time-bound environmental observation for the selected days must come from the selected tile evidence reads below.\nActive selection: ${JSON.stringify(temporalContext.analysisSelection)}\nEach explicitly selected layer retains its own date. An unselected layer inherits the latest selected day, or the server day when no selected date exists. No initial payload block was read as-of-latest. The one exception is the server-built site brief: its sections are read at the point on the server's today and each carries its own date and basis label, so attribute them to those dates and never to a selected day.${describeViewedDates(temporalContext)}`;
   }
 
   if (temporalContext.viewedLayersUnreported) {
@@ -350,6 +366,19 @@ ${temporalContext.readings.map(describeViewedLayerReading).join('\n')}
 ${describeViewedDates(temporalContext)}${asOfLatest}`;
 }
 
+/**
+ * The server-built site brief (CONTRACT C5) with its basis labels. On a base run (no typed
+ * question) the model is told to organise the analysis around the brief's descriptors.
+ */
+function buildSiteBriefSection(brief: SiteBrief, baseRun: boolean): string {
+  const instruction = baseRun
+    ? 'No question was typed, so organise the base analysis around these site descriptors: say what each one implies for remediation here, and name any section that could not be read.'
+    : 'Use these site descriptors as context for the question below.';
+  return `## Site brief (server-built)
+${describeSiteBrief(brief)}
+${instruction} Repeat each number's basis label whenever you use it: a SoilGrids value is always a "SoilGrids v2.0 250 m model estimate" with its depth, never a measurement; drought is a US Drought Monitor classification; land cover is a USDA CDL classification of satellite imagery. An unavailable section is a gap in what the server read, not a condition of the site.`;
+}
+
 function buildUserMessage(
   payload: RegionalContextPayload,
   dataFreshness: Record<string, string>,
@@ -361,8 +390,10 @@ function buildUserMessage(
     userQuestion ||
     'Assess this location and recommend remediation strategies for it.';
 
-  const coverageNote = temporalContext.selectionEvidenceOnly
+  const coverageNote = temporalContext.selectionEvidenceOnly && !soilContextEnabled()
     ? 'No environmental measurement was prefetched outside the selected tile workflow. The server evidence graph and additional tile reads below establish what is available; empty initial context is not an environmental absence.'
+    : temporalContext.selectionEvidenceOnly
+    ? 'Apart from the server-built site brief and the static SoilGrids estimate, no environmental value was prefetched outside the selected tile workflow. The server evidence graph and additional tile reads below establish what is available; empty initial context is not an environmental absence.'
     : contextIsEmpty
     ? 'No warehouse source resolved in the initial regional snapshot. Check the server evidence graph and later tool results for additional observations before concluding that local evidence is unavailable. Label advice based only on reasoning as model_inference.'
     : 'Sources marked "unavailable" were not observed in the initial regional snapshot. Later graph or tool reads may supply dated evidence. Do not describe an unavailable read as an absent condition.';
@@ -380,11 +411,12 @@ function buildUserMessage(
     }
   }
 
+  const { siteBrief, ...observations } = payload;
   return `## Location (WGS84)
 latitude ${payload.location.lat.toFixed(4)}, longitude ${payload.location.lon.toFixed(4)}
-
+${siteBrief ? `\n${buildSiteBriefSection(siteBrief, !userQuestion)}\n` : ''}
 ## Warehouse observations
-${JSON.stringify({ ...payload, soilProperties: soilAiEvidence(payload.soilProperties) }, null, 2)}
+${JSON.stringify({ ...observations, soilProperties: soilAiEvidence(payload.soilProperties) }, null, 2)}
 
 ${flowGuidance.length ? `## Supplied streamflow evidence limits\n${flowGuidance.join('\n')}` : ''}
 
@@ -410,6 +442,11 @@ function textFromToolResult(results: WebEvidenceResult[]): string {
         `[${index + 1}] ${result.title}\nURL: ${result.url}\n${result.snippet}`
     )
     .join('\n\n');
+}
+
+/** Whether a `soil_properties_at_point` result carried SoilGrids values (CONTRACT C6 `state`). */
+function soilToolAvailable(result: unknown): boolean {
+  return typeof result === 'object' && result !== null && (result as { state?: unknown }).state === 'available';
 }
 
 function readQuery(input: unknown): string | null {
@@ -496,6 +533,9 @@ export async function* streamRegionalIntelligence(
   });
 
   const citations: WebSourceCitation[] = [];
+  // Review M2: the model-estimate label rule runs whenever soil reached the model, whatever its source.
+  const soilAvailable = payload.soilProperties !== null || payload.siteBrief?.soil.state === 'available';
+  let soilToolAnswered = false;
   // Records behind this turn's answered literature calls; grounds a literature claim's ids into
   // server-written citations (seam S4). See remediation-report.ts `groundLiteratureClaims`.
   const literatureRecords: LiteratureRecord[] = [];
@@ -617,7 +657,7 @@ export async function* streamRegionalIntelligence(
         yield { type: 'evidence', evidence: structuredClone(analysis.evidence) };
         if (roundNarration) yield { type: 'text', text: roundNarration };
         if (citations.length) yield { type: 'sources', sources: citations };
-        yield { type: 'report', report: parsed.data };
+        yield { type: 'report', report: labelSoilModelEstimates(parsed.data, { soilAvailable: soilAvailable || soilToolAnswered }) };
         return;
       }
       logIncomplete('report_invalid', reportValidationDiagnostic(validationIssues));
@@ -750,9 +790,13 @@ export async function* streamRegionalIntelligence(
       else evidenceCallsUsed += 1;
       try {
         const content = literature
-          ? await callRegionalEvidenceTool(use.function.name, args, signal, buildLiteratureServerContext(
+          ? await callRegionalEvidenceTool(use.function.name, args, signal, withSiteBrief(buildLiteratureServerContext(
             payload, temporalContext, history, userQuestion, analysis.siteFactObservations,
-          ))
+          ), payload.siteBrief ?? null, {
+            observations: analysis.siteFactObservations,
+            sourceByReadId: new Map(analysis.evidence.toolCalls.flatMap((call) => call.source ? [[call.id, call.source] as const] : [])),
+            soilProperties: payload.soilProperties,
+          }))
           : await callRegionalEvidenceTool(use.function.name, args, signal);
         const result: unknown = JSON.parse(content);
         const audit = regionalEvidenceAuditCall(evidenceId, 'additional', use.function.name, args, result);
@@ -777,12 +821,15 @@ export async function* streamRegionalIntelligence(
               : { reason: audit.reason }),
             ...(droppedArguments.length > 0 ? {
               serverOwnedArgumentsDropped: droppedArguments,
-              serverOwnedArgumentsNote: 'The server supplies this site\'s measured facts and region; send no site_profile or region.',
+              serverOwnedArgumentsNote: soilContextEnabled()
+                ? 'The server supplies this site\'s facts, each with its basis label, and its region; send no site_profile or region.'
+                : 'The server supplies this site\'s measured facts and region; send no site_profile or region.',
             } : {}),
             result: boundedEvidence(result),
           }) });
           return;
         }
+        if (use.function.name === SOIL_PROPERTIES_TOOL_NAME && soilToolAvailable(result)) soilToolAnswered = true;
         analysis.siteFactObservations.push(...siteFactObservationsForRead(audit, result));
         const limitations = regionalEvidenceLimitations(audit, result);
         const measurementFacts = regionalFactsForRead(audit, result);
@@ -895,6 +942,7 @@ export async function* streamRegionalIntelligence(
 
 export {
   AI_GENERATED_DISCLAIMER,
+  buildSiteBriefSection,
   buildSystemPrompt,
   buildTemporalSection,
   buildUserMessage,

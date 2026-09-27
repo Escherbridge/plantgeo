@@ -1,0 +1,102 @@
+[
+  {
+    "id": "boise-urban-base-run",
+    "longitude": -116.21,
+    "latitude": 43.62,
+    "question": "Assess this location and recommend remediation strategies for it.",
+    "base_run": true,
+    "expect_strategy_tool": true,
+    "expected_family_ids": [
+      "irrigation-water-management",
+      "mulch-and-residue-cover",
+      "soil-water-conditioning-amendments",
+      "soil-chemistry-correction"
+    ],
+    "forbidden_strategy_ids": [],
+    "notes": "Soil data plane DESIGN section 8 base run (no typed question): Boise urban edge. Scores the soil labelling report (every soil number says 'model estimate'; no SoilGrids value called measured) and context_query_source == 'site_brief' on literature calls."
+  },
+  {
+    "id": "palouse-base-run",
+    "longitude": -117.18,
+    "latitude": 46.73,
+    "question": "Assess this location and recommend remediation strategies for it.",
+    "base_run": true,
+    "turns": [
+      "Assess this location and recommend remediation strategies for it.",
+      "What's my soil pH?",
+      "Is that measured?"
+    ],
+    "expect_strategy_tool": true,
+    "expected_family_ids": [
+      "cover-cropping",
+      "tillage-reduction",
+      "biochar-soil-application",
+      "crop-rotation-diversification",
+      "soil-chemistry-correction"
+    ],
+    "forbidden_strategy_ids": [],
+    "notes": "Base run plus the two DESIGN section 8 follow-ups. The pH answer must carry 'SoilGrids v2.0 250 m model estimate'; 'Is that measured?' must be answered no (a model estimate, not a sample). The Pullman lattice cell was masked at 0.0025 deg; P1 re-checks it at 0.005."
+  },
+  {
+    "id": "willamette-base-run",
+    "longitude": -123.07,
+    "latitude": 44.63,
+    "question": "Assess this location and recommend remediation strategies for it.",
+    "base_run": true,
+    "expect_strategy_tool": true,
+    "expected_family_ids": [
+      "soil-chemistry-correction",
+      "cover-cropping",
+      "tillage-reduction"
+    ],
+    "forbidden_strategy_ids": [],
+    "notes": "Willamette Valley base run: westside acid soils; the brief's reaction class should seed liming-type retrieval."
+  },
+  {
+    "id": "high-desert-base-run",
+    "longitude": -116.9,
+    "latitude": 42.9,
+    "question": "Assess this location and recommend remediation strategies for it.",
+    "base_run": true,
+    "expect_strategy_tool": true,
+    "expected_family_ids": [
+      "invasive-annual-grass-control",
+      "post-fire-reseeding",
+      "revegetation-and-species-selection",
+      "post-fire-weed-control"
+    ],
+    "forbidden_strategy_ids": [],
+    "notes": "Owyhee high desert base run: alkaline, low-carbon topsoil; drought class and CDL shrubland drive the seed."
+  },
+  {
+    "id": "recent-burn-base-run",
+    "longitude": -116.13,
+    "latitude": 43.66,
+    "question": "Assess this location and recommend remediation strategies for it.",
+    "base_run": true,
+    "expect_strategy_tool": true,
+    "expected_family_ids": [
+      "post-fire-mulching",
+      "post-fire-erosion-barriers",
+      "post-fire-reseeding",
+      "hydrophobic-soil-treatment"
+    ],
+    "forbidden_strategy_ids": [],
+    "notes": "Boise foothills base run: the fire section (mapped perimeter / detections) should seed post-fire retrieval."
+  },
+  {
+    "id": "urban-no-cell-base-run",
+    "longitude": -116.2023,
+    "latitude": 43.6178,
+    "question": "Assess this location and recommend remediation strategies for it.",
+    "base_run": true,
+    "expect_strategy_tool": true,
+    "expected_family_ids": [
+      "irrigation-water-management",
+      "mulch-and-residue-cover",
+      "soil-water-conditioning-amendments"
+    ],
+    "forbidden_strategy_ids": [],
+    "notes": "Downtown Boise, where ~44% of lattice cells are masked: the soil section may be 'no_cell_within_radius'. The answer must say no SoilGrids estimate lies within the radius and must never substitute a typical value."
+  }
+]

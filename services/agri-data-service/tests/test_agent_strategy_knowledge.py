@@ -20,6 +20,7 @@ import httpx
 import pytest
 
 from agri_data_service.agent import graph as agent_graph
+from agri_data_service.agent import prompts as agent_prompts
 from agri_data_service.agent import strategy_knowledge
 from agri_data_service.agent import tools as agent_tools
 from agri_data_service.agent.llm import execute_tool_call
@@ -1299,3 +1300,205 @@ def test_the_concurrency_cap_is_safe_across_event_loops() -> None:
             answers = asyncio.run(_burst())
             assert all(answer.ledger_detail["state"] == "answered" for answer in answers)
     assert max(peaks) == strategy_knowledge.MAX_CONCURRENT_CALLS
+
+
+# --- Soil data plane C3/C4 delta: provenance-aware site facts and the brief seed -----------------
+
+BRIEF_SEED = "moderately acid loam topsoil; high organic carbon; moderate drought; grassland/pasture"
+BRIEF_SOIL_PH = 5.8
+BRIEF_DAYS_SINCE_FIRE = 412
+SOIL_LABEL = "SoilGrids v2.0 250 m model estimate, 0-30 cm (thickness-weighted), cell centre 140 m away"
+SOIL_PROVENANCE: dict[str, Any] = {
+    "basis": "model_estimate",
+    "source": "SoilGrids v2.0",
+    "release_id": "soilgrids-v2.0/2020-06-02",
+    "depth": "0-30 cm (thickness-weighted)",
+    "resolution_m": 250,
+    "distance_m": 140,
+    "label": SOIL_LABEL,
+}
+FIRE_PROVENANCE: dict[str, Any] = {
+    "basis": "measured",
+    "source": "fire-perimeters + burn-severity (MTBS)",
+    "label": "Mapped fire perimeter and MTBS burn severity, burned 2025-08-11",
+}
+QUERY_INTENT: dict[str, Any] = {
+    "lay_terms": ["sour"],
+    "ph_direction": "raise",
+    "soil_condition_boosts": ["acidic"],
+    "expansion_tokens": ["lime"],
+}
+SOIL_DISTANCE_CEILING = 2_000
+
+
+def _brief_context(
+    *,
+    user_question: str | None = None,
+    provenance: dict[str, dict[str, Any]] | None = None,
+    site_brief_query: str | None = BRIEF_SEED,
+) -> strategy_knowledge.StrategyContext:
+    """A new-shape (web brief) context: soil, fire and land cover facts with per-key provenance."""
+    labels = {"soil_ph": SOIL_PROVENANCE, "days_since_fire": FIRE_PROVENANCE} if provenance is None else provenance
+    return strategy_knowledge.StrategyContext(
+        user_question=user_question,
+        longitude=BOISE_FOOTHILLS[0],
+        latitude=BOISE_FOOTHILLS[1],
+        site_facts=strategy_knowledge.SiteFacts(
+            soil_ph=BRIEF_SOIL_PH, days_since_fire=BRIEF_DAYS_SINCE_FIRE, land_cover="Grassland/Pasture"
+        ),
+        site_facts_provenance={key: strategy_knowledge.FactProvenance.model_validate(v) for key, v in labels.items()},
+        site_brief_query=site_brief_query,
+    )
+
+
+@pytest.mark.usefixtures("configured")
+async def test_with_no_typed_question_the_brief_seed_is_the_context_query() -> None:
+    seen: list[httpx.Request] = []
+    with strategy_knowledge.use_transport(httpx.MockTransport(answering(STRATEGY_SEARCH, seen))):
+        payload, _ = await call_with_context(
+            agent_tools.search_environmental_strategies, {"query": "improve pasture"}, _brief_context()
+        )
+    [request] = seen
+    assert json.loads(request.content)["context_query"] == BRIEF_SEED
+    assert payload["context_query_source"] == "site_brief"
+
+
+@pytest.mark.usefixtures("configured")
+async def test_a_typed_question_outranks_the_brief_seed() -> None:
+    seen: list[httpx.Request] = []
+    with strategy_knowledge.use_transport(httpx.MockTransport(answering(FINDING_SEARCH, seen))):
+        payload, _ = await call_with_context(
+            agent_tools.search_strategy_research_findings,
+            {"query": "lime"},
+            _brief_context(user_question=USER_QUESTION),
+        )
+    [request] = seen
+    assert json.loads(request.content)["context_query"] == USER_QUESTION
+    assert payload["context_query_source"] == "user_question"
+
+
+@pytest.mark.usefixtures("configured")
+async def test_with_neither_question_nor_seed_nothing_is_forwarded() -> None:
+    seen: list[httpx.Request] = []
+    with strategy_knowledge.use_transport(httpx.MockTransport(answering(STRATEGY_SEARCH, seen))):
+        payload, _ = await call_with_context(
+            agent_tools.search_environmental_strategies, {"query": "mulch"}, _brief_context(site_brief_query=None)
+        )
+    [request] = seen
+    assert "context_query" not in json.loads(request.content)
+    assert payload["context_query_source"] == "none"
+
+
+@pytest.mark.usefixtures("configured")
+async def test_a_new_shape_caller_loses_every_site_fact_without_provenance() -> None:
+    """C3 critic #11: land_cover arrives without a label, so it is dropped and named, never forwarded."""
+    seen: list[httpx.Request] = []
+    with strategy_knowledge.use_transport(httpx.MockTransport(answering(STRATEGY_SEARCH, seen))):
+        payload, _ = await call_with_context(
+            agent_tools.search_environmental_strategies, {"query": "acid soil"}, _brief_context()
+        )
+    [request] = seen
+    sent = json.loads(request.content)["site_profile"]
+    assert sent == {
+        "soil_ph": BRIEF_SOIL_PH,
+        "days_since_fire": BRIEF_DAYS_SINCE_FIRE,
+        "region": "great_basin_high_desert",
+    }
+    assert payload["site_profile_dropped"] == ["land_cover(no_provenance)"]
+    provenance = payload["site_profile_provenance"]
+    assert provenance["soil_ph"] == {"basis": "model_estimate", "label": SOIL_LABEL}
+    assert provenance["days_since_fire"]["basis"] == "measured"
+    assert provenance["region"] == strategy_knowledge.REGION_PROVENANCE
+    assert "land_cover" not in provenance
+
+
+@pytest.mark.usefixtures("configured")
+async def test_a_legacy_caller_keeps_its_facts_and_each_is_echoed_as_legacy() -> None:
+    seen: list[httpx.Request] = []
+    with strategy_knowledge.use_transport(httpx.MockTransport(answering(STRATEGY_SEARCH, seen))):
+        payload, _ = await call_with_context(
+            agent_tools.search_environmental_strategies,
+            {"query": "acid soil"},
+            _context(site_facts={"soil_ph": SERVER_SOIL_PH, "burn_severity": "high"}),
+        )
+    assert payload["site_profile_dropped"] == []
+    assert payload["site_profile_provenance"]["soil_ph"] == {"basis": strategy_knowledge.LEGACY_PROVENANCE_BASIS}
+    assert payload["site_profile_provenance"]["burn_severity"] == {"basis": strategy_knowledge.LEGACY_PROVENANCE_BASIS}
+    assert payload["context_query_source"] == "user_question"
+
+
+@pytest.mark.usefixtures("configured")
+async def test_reading_records_reports_no_context_query_source() -> None:
+    """C4: only the two searches forward context_query, so only they report its source."""
+    with strategy_knowledge.use_transport(httpx.MockTransport(answering(STRATEGY_RECORDS, []))):
+        payload, _ = await call_with_context(
+            agent_tools.get_environmental_strategies, {"strategy_ids": ["post-fire-straw-mulching"]}, _brief_context()
+        )
+    assert "context_query_source" not in payload
+    assert payload["site_profile_source"] == "server"
+
+
+def test_a_model_estimate_distance_is_bounded_by_the_soil_radius() -> None:
+    too_far = {**SOIL_PROVENANCE, "distance_m": SOIL_DISTANCE_CEILING + 1}
+    with pytest.raises(ValueError, match="model_estimate distance_m"):
+        strategy_knowledge.FactProvenance.model_validate(too_far)
+    measured = {**FIRE_PROVENANCE, "distance_m": 12_400}
+    assert strategy_knowledge.FactProvenance.model_validate(measured).distance_m == measured["distance_m"]
+
+
+def test_a_provenance_basis_outside_the_contract_is_refused() -> None:
+    with pytest.raises(ValueError, match="basis"):
+        strategy_knowledge.FactProvenance.model_validate({**SOIL_PROVENANCE, "basis": "observed"})
+
+
+def test_the_site_brief_query_is_stripped_of_every_control_character() -> None:
+    assert _brief_context(site_brief_query="acid\n loam\x00 topsoil\t").site_brief_query == "acid loam topsoil"
+    assert _brief_context(site_brief_query=" \x07 ").site_brief_query is None
+    with pytest.raises(ValueError, match="600"):
+        _brief_context(site_brief_query="x" * (strategy_knowledge.MAX_SITE_BRIEF_QUERY_CHARACTERS + 1))
+
+
+def test_the_bridge_wire_shape_carries_provenance_and_the_brief_seed() -> None:
+    wire = strategy_knowledge.ServerContext.model_validate(
+        {
+            "point": {"longitude": -116.2, "latitude": 43.6},
+            "site_facts": {"soil_ph": BRIEF_SOIL_PH},
+            "site_facts_provenance": {"soil_ph": SOIL_PROVENANCE},
+            "site_brief_query": BRIEF_SEED,
+        }
+    )
+    context = wire.strategy_context()
+    assert context.site_brief_query == BRIEF_SEED
+    assert context.site_facts_provenance is not None
+    assert context.site_facts_provenance["soil_ph"].basis == "model_estimate"
+    assert context.user_question is None, "brief text never becomes the user's question"
+
+
+def test_site_fact_docstrings_and_the_prompt_no_longer_say_measured_only() -> None:
+    """O2: server-read site facts include model estimates, and every one carries a basis label."""
+    assert "Measured site facts" not in (strategy_knowledge.SiteFacts.__doc__ or "")
+    assert "Measured site facts" not in (strategy_knowledge.StrategySiteProfile.__doc__ or "")
+    assert "any measured site facts" not in agent_prompts.SYSTEM_PROMPT
+    assert "each with a basis label" in agent_prompts.SYSTEM_PROMPT
+
+
+# --- CONTRACT-WAVE2 S3 echoes pass through verbatim ----------------------------------------------
+
+
+@pytest.mark.usefixtures("configured")
+async def test_query_intent_and_context_query_used_pass_through_unchanged() -> None:
+    answered = {**STRATEGY_SEARCH, "query_intent": QUERY_INTENT, "context_query_used": False}
+    with strategy_knowledge.use_transport(httpx.MockTransport(answering(answered, []))):
+        payload, _ = await call_with_context(
+            agent_tools.search_environmental_strategies, {"query": "sour pasture"}, _brief_context()
+        )
+    assert payload["query_intent"] == QUERY_INTENT
+    assert payload["context_query_used"] is False
+
+
+@pytest.mark.usefixtures("configured")
+async def test_the_s3_echoes_are_absent_when_the_service_omits_them() -> None:
+    with strategy_knowledge.use_transport(httpx.MockTransport(answering(FINDING_SEARCH, []))):
+        answer = await strategy_knowledge.ask("search_strategy_research_findings", "search_findings", {"query": "x"})
+    assert "query_intent" not in answer.payload
+    assert "context_query_used" not in answer.payload

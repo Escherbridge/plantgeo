@@ -36,6 +36,11 @@ async def read_soil_properties_source_watermark(
 ) -> SourceWatermark:
     """Return MAX Last-Modified over the thirty pinned VRTs; drift is `maintain`'s job, not this clock's."""
     del session, store
+    return pinned_source_watermark(today=today)
+
+
+def pinned_source_watermark(*, today: date) -> SourceWatermark:
+    """The registry resolver's pure body, callable without a session or store (`maintain`)."""
     newest = latest_pin()
     instant = newest.last_modified
     if instant.date() != RELEASE_DAY:
@@ -55,4 +60,4 @@ async def read_soil_properties_source_watermark(
     )
 
 
-__all__ = ["SoilPropertiesWatermarkError", "read_soil_properties_source_watermark"]
+__all__ = ["SoilPropertiesWatermarkError", "pinned_source_watermark", "read_soil_properties_source_watermark"]

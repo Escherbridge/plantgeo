@@ -180,4 +180,28 @@ describe("server-authored regional measurement facts", () => {
       expect(buildRegionalMeasurementFacts([changed]).facts[0].id).not.toBe(id);
     }
   });
+
+  it("never mints a measurement fact from a SoilGrids model estimate, whatever state carries it", () => {
+    const soilEnvelope = {
+      surface_name: "soil-phh2o", requested_day: DAY,
+      selection: { longitude: -116.2, latitude: 43.6, range_start: BEFORE, range_end: AFTER, tile: { z: 13, x: 1451, y: 2991 } },
+      lanes: [{ selected: {
+        state: "model_estimate", basis: "model_estimate", property: "phh2o", values: { "0-5cm": 5.7, "5-15cm": 5.7, "15-30cm": 5.8 },
+        unit: "pH (water)", release_id: "soilgrids-v2.0/2020-06-02", distance_m: 140, numeric_values_available: true, features: [],
+      }, history: [] as unknown[] }],
+    };
+    // The guard is the basis, not the state name: a SoilGrids envelope relabelled `published` still mints nothing.
+    const relabelled = { ...soilEnvelope, lanes: [{ selected: { ...soilEnvelope.lanes[0].selected, state: "published", features: [feature()] }, history: [] }] };
+    const estimateRow = { ...feature(), basis: "model_estimate" };
+    const estimateProperties = { ...feature(), properties: { ...feature().properties, basis: "model_estimate" } };
+    expect(buildRegionalMeasurementFacts([
+      { id: "soil-1", source: "soil-phh2o", result: soilEnvelope },
+      { id: "soil-2", source: "soil-phh2o", result: relabelled },
+      read([estimateRow], "soil-phh2o", "soil-3"),
+      read([estimateProperties], "soil-phh2o", "soil-4"),
+      { id: "soil-tool", source: "soil_properties_at_point", result: { state: "available", reason: null, soilgrids: { basis: "model_estimate", features: [feature()] } } },
+    ])).toEqual({ facts: [], omittedFacts: 0 });
+    // A measured row beside the estimate still renders.
+    expect(buildRegionalMeasurementFacts([read([estimateRow, feature()])]).facts).toHaveLength(1);
+  });
 });

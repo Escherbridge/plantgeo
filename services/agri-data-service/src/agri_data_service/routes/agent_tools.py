@@ -34,7 +34,10 @@ class AgentToolCallRequest(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     arguments: dict[str, Any]
     server_context: ServerContext | None = None
-    """Seam S1: honoured for the three literature tools only; see agent/AGENTS.md, "Server-owned site facts"."""
+    """Seam S1 (+ soil C3 delta: `site_facts_provenance`, `site_brief_query`); literature tools only.
+
+    See agent/AGENTS.md, "Server-owned site facts".
+    """
 
 
 def environmental_tool_schemas() -> list[dict[str, Any]]:
