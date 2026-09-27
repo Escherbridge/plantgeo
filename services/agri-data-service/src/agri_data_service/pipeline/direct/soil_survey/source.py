@@ -36,6 +36,11 @@ ENDPOINT = "https://sdmdataaccess.nrcs.usda.gov/Tabular/post.rest"
 #: HTTP redirect status range (SEC-2(d)): `raise_for_status()` alone treats none of these as an
 #: error, so `fetch()` checks the range itself before trusting the response body is real data.
 _HTTP_REDIRECT_STATUS_RANGE = range(300, 400)
+#: `fetch()`'s own default socket-read timeout, unchanged from the pre-census-tiling literal
+#: (`AGENTS.md`, "Census tiling"): every one of `capture.py`'s three per-page/per-summary calls
+#: keeps this exact value, since none of them pass `timeout=` explicitly. Only `__main__.py::_areas`
+#: overrides it, per-tile, via its own `--request-timeout-seconds` flag.
+DEFAULT_FETCH_TIMEOUT_SECONDS = 30
 
 
 def query_body(sql: str) -> str:
@@ -160,7 +165,7 @@ def page_keys(payload: bytes, *, after: str, page_size: int) -> tuple[str, ...]:
     return keys
 
 
-async def fetch(client: httpx.AsyncClient, query: str) -> bytes:
+async def fetch(client: httpx.AsyncClient, query: str, *, timeout: float = DEFAULT_FETCH_TIMEOUT_SECONDS) -> bytes:
     """POST one query body to SDA, refusing a decoded response over the capture byte budget.
 
     SEC-2(d): every caller builds `client` with `follow_redirects=False`, but `raise_for_status()`
@@ -168,9 +173,14 @@ async def fetch(client: httpx.AsyncClient, query: str) -> bytes:
     redirect response's body (a redirect page, not `JSON+COLUMNNAME`) would fall through to
     `table_rows()` and fail as an unrelated `json.JSONDecodeError`, not this module's own
     `SoilSurveyError` vocabulary. Refuse it here, explicitly, before that can happen.
+
+    `timeout` is a keyword-only override (`AGENTS.md`, "Census tiling"): every `capture.py` call
+    site omits it and keeps the 30 s default unchanged; only the `areas` verb's per-tile census
+    calls pass a caller-supplied value, since a one-time offline census over a large envelope is not
+    latency-sensitive the way a resumable capture page is.
     """
     async with client.stream(
-        "POST", ENDPOINT, json={"format": "JSON+COLUMNNAME", "query": query}, timeout=30
+        "POST", ENDPOINT, json={"format": "JSON+COLUMNNAME", "query": query}, timeout=timeout
     ) as response:
         if response.status_code in _HTTP_REDIRECT_STATUS_RANGE:
             raise SoilSurveyError(f"SDA responded with an unexpected redirect ({response.status_code})")
@@ -185,6 +195,7 @@ async def fetch(client: httpx.AsyncClient, query: str) -> bytes:
 
 __all__ = [
     "AREA_INVENTORY_COLUMNS",
+    "DEFAULT_FETCH_TIMEOUT_SECONDS",
     "ENDPOINT",
     "KEY_COLUMNS",
     "PAGE_COLUMNS",

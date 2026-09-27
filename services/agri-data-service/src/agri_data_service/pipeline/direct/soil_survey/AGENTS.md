@@ -163,12 +163,87 @@ from a literal hard-coded list.
 command is dry-run unless `--apply` is present and neither reports `serving_published=true`; the
 dry-run report for `areas` also echoes the resolved bbox, region and override flag, so a
 misconfigured `--bbox` is visible before any network call. `areas --root DIR --apply` censuses the
-region envelope once; `capture --root DIR --area ID001 --apply` acquires one bounded slice of one
-area, resumable across invocations and safe to re-run with a smaller `--page-size` after a 16 MiB
-response refusal (each `CapturePage` records its own `page_size`, so a capture with mixed page sizes
-across resumed invocations still validates). `prepare`, `verify-replay`, `validate`, `stage` and
-`release` are a later slice's sequenced addition to this same `__main__.py`; until they land there
-is no path from a local capture to anything served.
+region envelope in a sequential tile grid (see "Census tiling" below), never one untiled call;
+`capture --root DIR --area ID001 --apply` acquires one bounded slice of one area, resumable across
+invocations and safe to re-run with a smaller `--page-size` after a 16 MiB response refusal (each
+`CapturePage` records its own `page_size`, so a capture with mixed page sizes across resumed
+invocations still validates). `prepare`, `verify-replay`, `validate`, `stage` and `release` are a
+later slice's sequenced addition to this same `__main__.py`; until they land there is no path from a
+local capture to anything served.
+
+## Census tiling
+
+**Why.** The Go-1 pilot (`.omc/research/soil-survey-pilot-20260927/GO-1-REPORT.md`, Anomaly 1) ran
+`areas --apply` over the full pnw Region envelope (`[-126, 41, -110, 50]`, ~144 sq deg) and hit
+`httpx.ReadTimeout` 3/3, at 31.5 s, 31.5 s and 32.0 s -- every attempt against `source.py::fetch`'s
+then-hardcoded 30 s timeout. The identical query shape (`ssurgo_area_inventory.sql`'s
+`sapolygon.STIntersects`), at a ~0.04 sq deg diagnostic bbox around Boise, ID, answered in 3.7 s.
+This is a scope-size-dependent server-side cost, not a rate limit or an outage: no 429 or 5xx was
+ever observed, only a hard client-side socket-read timeout.
+
+**Fix.** `__main__.py::_areas` no longer sends one `area_inventory_query` over the whole resolved
+envelope. It splits that envelope into a row-major grid of tiles (`_tile_grid`, default edge
+`DEFAULT_CENSUS_TILE_DEGREES = 2.0`, overridable with `--census-tile-degrees` and validated only
+`> 0` and finite, `_validate_census_tile_degrees`), then queries each tile's own `area_inventory_
+query` SEQUENTIALLY -- one request at a time, the same politeness this CLI already keeps toward SDA
+everywhere else -- and unions the rows across tiles by area symbol. An area whose polygon spans a
+tile boundary can legitimately answer from more than one tile; the union keeps one entry per symbol
+and refuses outright (`SoilSurveyError`, "conflicting vintages across tiles") if two tiles ever
+disagree on that area's `saverest`, rather than silently picking one. The saved `AreaInventory.
+envelope` still records the **whole** resolved envelope, never a single tile -- tiling is an
+acquisition-strategy detail, not a change to what scope was actually censused.
+
+`--census-tile-degrees` has no upper bound (revised from this fix's first push, review finding 2):
+`_axis_edges` (below) already collapses a tile edge at or past the envelope's own longer dimension
+into a single untiled band on its own, so an explicit `<= span` check added nothing and instead
+refused every small `--bbox` -- including the Go-1 pilot's own ~0.4 deg diagnostic bbox -- under the
+default 2.0 deg edge, since 2.0 exceeds a bbox that small. `_axis_edges` itself computes each axis's
+band count from `math.ceil((high - low) / step)`, not from accumulating `cursor += step` in a loop:
+the accumulation could leave `cursor` a hair below `high` from float rounding even when the division
+was exact, adding a spurious hairline-wide extra band at the high edge (review finding 1) -- one real
+enough to send a near-empty `STIntersects` polygon literal that SQL Server can refuse as invalid.
+
+A tile's own `STIntersects` call legitimately answers "zero areas here" for a rectangular grid over
+an irregular envelope, and SDA spells that with its own bare `{}`, which `source.py::table_rows`
+refuses as a `SoilSurveyError` ("SDA returned no rows") by design (F7, this file's own "Bounds,
+resume and missingness"). `_areas` catches exactly that one message per tile and treats it as zero
+rows for that tile, letting the census continue -- the live-run defect this fix's own re-run
+surfaced: an unhandled instance of that same refusal, with no per-tile catch around it, discarded an
+entire 40-tile census at tile 33 of 40, which had zero intersecting survey areas.
+
+`source.py::fetch`'s socket-read timeout is now a keyword-only parameter
+(`DEFAULT_FETCH_TIMEOUT_SECONDS = 30`, unchanged default) instead of the old hardcoded literal.
+`capture.py`'s three call sites (`_summary`, the key-inventory page, the polygon-payload page) all
+omit it and keep the exact 30 s behaviour a resumable capture page already relied on. Only the
+`areas` verb passes a caller-supplied value, via `--request-timeout-seconds` (default 30 s, validated
+`> 0` and `<= MAX_REQUEST_TIMEOUT_SECONDS = 120`, `_validate_request_timeout_seconds`) -- a one-time
+offline census is not latency-sensitive the way a resumable capture page is, so it is the one call
+site allowed to ask for more time per request.
+
+`AreaInventory.response` stays exactly one `Blob` (Freeze 1; `receipts.py` is untouched by this
+fix). With N tile queries there is no single raw payload to point that field at, so it points at a
+small JSON manifest -- each tile's own bbox, its own separately-saved, independently
+checksum-verifiable blob (`save_blob` still runs once per tile, so every raw tile response is still
+an immutable local object), AND its own `query_sha256` -- rather than duplicating the tiles' bytes
+into it a second time. `AreaInventory.query_sha256` commits to `tile_degrees` plus every tile's OWN
+query digest, in tile order (review finding 3, correcting this fix's first push): committing only to
+the tile bboxes let a changed `ssurgo_area_inventory.sql` body produce the identical top-level digest
+as the unchanged query, silently defeating F7's "query bodies are frozen once a capture exists" for
+this one receipt -- an auditor could not tell the census ran different SQL. Per-tile digests, combined
+with `area_inventory_query` being frozen and deterministic per bbox (F7), fully reconstruct every
+query this census actually ran, including which body produced each tile's rows. The `areas --apply`
+report also gains `tiles_queried` (the grid's own tile count) and `max_tile_seconds` (the slowest
+single tile's own wall time), so an operator can see, from the report alone, whether a chosen
+`--census-tile-degrees` is still generous enough relative to SDA's own response times without
+re-reading the pilot's numbers.
+
+**Measured, not assumed (review finding 5).** The default's own live re-run of the full 16x9 deg pnw
+envelope at 2.0 deg tiles reached 33 of 40 tiles (32 non-empty + 1 legitimately empty) before the
+live-run defect above aborted it: per-tile latency was 15.4 s median, 23.7 s max, 11.3 s min, zero
+timeouts and zero 429/5xx. That is the evidence behind `DEFAULT_CENSUS_TILE_DEGREES = 2.0` today --
+the prior comment's "well under the diagnostic bbox's 3.7 s" claim compared a 2x2 deg tile (~100x the
+diagnostic bbox's own ~0.04 sq deg) against that smaller bbox's own latency with no measurement of
+the tile size actually shipped, and was corrected rather than repeated.
 
 ## No shim here
 
