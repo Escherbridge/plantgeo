@@ -26,6 +26,7 @@ from agri_data_service.execution.job_executor_service import (
     LatestRun,
     ProcessStartRelease,
     RepairAuthoringClock,
+    TurnReport,
     scheduled_bucket,
 )
 from agri_data_service.execution.lane_ids import DROUGHT_DIRECT_LANE_ID
@@ -427,3 +428,48 @@ async def test_a_failed_authoring_pass_rolls_back_and_still_advances_the_clock(
     assert summary is None
     assert rolled_back == [rolled_back[0]]
     assert clock.last_authored is not None, "a broken store is not probed again every thirty seconds"
+
+
+async def test_the_authoring_clock_ignores_publication_debt_on_lane_turn_reports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Publication debt lives on `_LANE_TURN_REPORTS`, the per-lane cadence cache -- `_author_due_repairs`
+    reads only Parquet coverage, never that cache, so a lane owing availability publication must author
+    exactly the same repair pass as a clean one. See execution/AGENTS.md, "Publication debt is the second,
+    quieter half of an incomplete turn"."""
+    plan = type("Plan", (), {"authorized": (), "candidates": ()})()
+
+    def read_coverage(*, now: datetime) -> object:
+        del now
+        return object()
+
+    def plan_repairs(*_args: object, **_kwargs: object) -> object:
+        return plan
+
+    async def author(*_args: object, **_kwargs: object) -> tuple:
+        return ()
+
+    async def commit(_session: object) -> None:
+        return None
+
+    monkeypatch.setattr(gap_repair, "read_parquet_coverage", read_coverage)
+    monkeypatch.setattr(gap_repair, "plan_gap_repairs", plan_repairs)
+    monkeypatch.setattr(gap_repair, "author_gap_repairs", author)
+    monkeypatch.setattr(job_executor_service, "_commit_planning_transaction", commit)
+
+    monkeypatch.setattr(job_executor_service, "_LANE_TURN_REPORTS", {})
+    clean = await _author(object(), RepairAuthoringClock(interval_seconds=3600))
+
+    debt_only = TurnReport(
+        outcome="completed",
+        days_unwritten=0,
+        unwritten=(),
+        unwritten_truncated=False,
+        consecutive_incomplete_buckets=4,
+        publication_debt=2,
+        publication_debt_counts={"availability_retry_owed": 2},
+    )
+    monkeypatch.setattr(job_executor_service, "_LANE_TURN_REPORTS", {DROUGHT_DIRECT_LANE_ID: debt_only})
+    with_debt = await _author(object(), RepairAuthoringClock(interval_seconds=3600))
+
+    assert with_debt == clean == {"authorized": [], "verdicts": {}, "receipts": []}

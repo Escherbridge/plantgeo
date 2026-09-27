@@ -1190,10 +1190,13 @@ are one defect: the net was hung, never pulled on.
    unwritten day carries `source_retained` so a permanently lost bucket says so by name. It is not
    an exit-1 refusal: publishing rows already in memory must not be abandoned because their BACKUP
    failed, and exit 1 is this lane's breaker. Its reach is stated rather than overclaimed:
-   `execution/job_executor_service.py::TurnReport.incomplete` reads `days_unwritten`, so retention
-   debt alone reaches the report and the log stream but does not by itself start a lane's
-   `consecutive_incomplete_buckets` streak. Whether it should is `execution/`'s decision about every
-   lane, not this writer's about one.
+   `execution/job_executor_service.py::TurnReport.incomplete` is true for `days_unwritten > 0` OR
+   standing `publication_debt` (the availability-extension ladder, `execution/AGENTS.md`,
+   "Publication debt is the second, quieter half of an incomplete turn") -- retention debt is
+   NEITHER, so it reaches the report and the log stream only as this bucket's own
+   `outcome="incomplete"`, and does not by itself start a lane's `consecutive_incomplete_buckets`
+   streak (`execution/job_executor_service.py::summarize_turn_report`). Whether it should is
+   `execution/`'s decision about every lane, not this writer's about one.
 3. **Five verdicts, not two.** `complete_capture`, `partial_capture`, `no_retained_capture`,
    `probe_budget_exhausted` (added 2026-09-19 with the bound below, since a search that stopped
    early is not evidence of an empty bucket) and `foreign_checkpoint_identity` (see the support witness
@@ -1241,11 +1244,12 @@ carried on the terminal report as `recovery_phase` (days owed, days DEFERRED by 
 verdicts), and a failed or deferred phase costs the turn its `complete` through
 `_bucket_verdict(..., recovery_degraded=...)` and appears on the stderr
 `weather_observations_forward_bucket_incomplete`. Its REACH is retention debt's, no further
-(point 2): `execution/job_executor_service.py:186-187` computes `TurnReport.incomplete` from
-`days_unwritten` alone, so a degraded probe on a turn that wrote every day reaches the report and
-the log stream without starting a `consecutive_incomplete_buckets` streak (`:250`). That is
-deliberate -- the probe not running is not the lane being unable to write. It is not decoration
-either: the probe is the only
+(point 2): `execution/job_executor_service.py::TurnReport.incomplete` is true for `days_unwritten >
+0` or standing `publication_debt`, and a degraded probe touches NEITHER, so it reaches the report
+and the log stream only as this bucket's own `outcome="incomplete"`, without starting a
+`consecutive_incomplete_buckets` streak (`execution/job_executor_service.py::summarize_turn_report`).
+That is deliberate -- the probe not running is not the lane being unable to write. It is not
+decoration either: the probe is the only
 reader of checkpoints THIS turn's retention then overwrites, so a turn that could not probe has
 closed a repair window rather than postponed it, and `--recover-day <deferred day>` is the operator's
 answer while the bodies are still inside `CHECKPOINT_MAX_AGE`.

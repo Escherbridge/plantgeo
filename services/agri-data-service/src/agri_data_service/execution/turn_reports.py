@@ -104,7 +104,9 @@ class ExecutorTickSummary:
 
     @property
     def incomplete_lanes(self) -> tuple[LaneTickResult, ...]:
-        """Every lane that ran this tick, exited 0, and still reported days it could not write."""
+        """Every lane this tick claimed work for whose latest recorded turn report -- attached whatever
+        this attempt's own exit status turned out to be, since `record_turn_report` runs before the
+        exit code is judged -- still owes unwritten days or publication debt."""
         return tuple(lane for lane in self.lanes if lane.turn_report is not None and lane.turn_report.incomplete)
 
     def to_dict(self) -> dict[str, object]:
@@ -119,6 +121,10 @@ class ExecutorTickSummary:
                     "lane_id": lane.lane_id,
                     "days_unwritten": lane.turn_report.days_unwritten,
                     "consecutive_incomplete_buckets": lane.turn_report.consecutive_incomplete_buckets,
+                    # A lane can owe this with `days_unwritten == 0` (every day wrote, nothing serves it);
+                    # without this field that lane would misread as clean here. See execution/AGENTS.md,
+                    # "Publication debt is the second, quieter half of an incomplete turn".
+                    "publication_debt": lane.turn_report.publication_debt,
                 }
                 for lane in self.incomplete_lanes
                 if lane.turn_report is not None

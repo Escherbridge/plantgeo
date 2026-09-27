@@ -358,7 +358,8 @@ when at least one day wrote while reporting `outcome=incomplete` with `days_unwr
 detail, nested per-product `results[].unwritten` folded in) and `run_scheduled_command` writes it to the
 completed checkpoint cursor as `turn_report` and to metrics as `days_unwritten`, whatever the exit
 status. The streak `consecutive_incomplete_buckets` is process-held (`_LANE_TURN_REPORTS`, keyed by the
-OWNING lane so a repair turn counts toward it) and says so; the tick lifts every incomplete lane to
+DEFINITION that ran, so a repair turn counts separately from its owning lane and never taints the
+hourly lane's own streak) and says so; the tick lifts every incomplete lane to
 `ExecutorTickSummary.incomplete_lanes`, one `plantgeo_job_executor_lane_incomplete` WARNING per tick
 that ran it, and the healthy/unhealthy tick line. A day stuck at `status=conflict` is now visible on the
 checkpoint row and in the tick without log archaeology; it is still the lane's own contract that decides
@@ -385,6 +386,22 @@ than derived by subtracting the two settled counters (`availability_extended`,
 `availability_skipped_unchanged`), so a NEW settled counter cannot silently read as debt. This is a
 report reader: it does not open the object store, and a lane that prints no availability summary
 simply carries zero debt rather than an assumed one.
+
+**Owner decision 2026-09-27:** the debt gauges are meant to drive `TurnReport.incomplete` -- that is
+the point of this whole subsection, not a side effect to walk back. The executor logs one
+`plantgeo_job_executor_lane_incomplete` WARNING per incomplete lane per tick, and
+`consecutive_incomplete_buckets` climbs for as long as the gauge stays non-zero, resetting only on a
+clean turn or a process restart. This is reporting only: `ExecutorTickSummary.failed` (and so the
+`--once` exit code) looks solely at `lane.state == "failed"`, never at `incomplete_lanes`; nothing here
+feeds a breaker or `RepairAuthoringClock`, which schedules off measured coverage gaps, not off this
+streak. In executor lanes the two counters that actually stand are `availability_quarantined_standing`
+(a GAUGE restated whole by each retry sweep, `availability_extension.py`'s
+`AvailabilityExtensionTally.quarantined_standing`) and `availability_not_bootstrapped` (owed per written
+day until an operator bootstraps the index). `availability_reindex_owed` cannot fire here: the only
+place that sets it is `pipeline/parquet/gap_fill_progress.py`, and generic `parquet-*` gap-fill and
+drain schedules were removed from the executor catalog on 2026-09-12 (`execution/lane_specs.py`), so it
+is inert for direct writers -- carried in `PUBLICATION_DEBT_COUNTERS` only in case a future lane wires
+it back in.
 
 ## Operator action surface
 

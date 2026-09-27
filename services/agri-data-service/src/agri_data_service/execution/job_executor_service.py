@@ -318,6 +318,27 @@ def record_turn_report(lane_id: str, report: Mapping[str, object] | None) -> Tur
     return kept
 
 
+def _describe_turn_report_debt(turn_report: TurnReport) -> str:
+    """The blocker-detail clause for an incomplete turn, worded for whichever kind of owed work caused it.
+
+    A publication-debt-only turn wrote every day it selected (`days_unwritten == 0`), so the
+    unwritten-days phrasing below would misreport it as "left 0 day(s) unwritten" -- read as nothing
+    owed. See `TurnReport.incomplete` and execution/AGENTS.md, "Publication debt is the second,
+    quieter half of an incomplete turn".
+    """
+    owed = ", ".join(f"{name}={count}" for name, count in sorted(turn_report.publication_debt_counts.items()))
+    streak = f"{turn_report.consecutive_incomplete_buckets} consecutive bucket(s) in this process"
+    if turn_report.days_unwritten > 0:
+        detail = f"left {turn_report.days_unwritten} day(s) unwritten for {streak}"
+        if owed:
+            detail = f"{detail}; owes availability publication ({owed})"
+        return detail
+    detail = f"owes availability publication for {streak}"
+    if owed:
+        detail = f"{detail} ({owed})"
+    return detail
+
+
 async def _try_leader_lock(session: AsyncSession) -> bool:
     row = await fetch_row(session, _TRY_LEADER_LOCK, {"lock_key": EXECUTOR_LEADER_LOCK_KEY})
     return False if row is None else required_column(row, "acquired", bool)
@@ -559,13 +580,7 @@ async def _execute_due_lane(
         detail = f"supersedes run {candidate.superseded_run_id} by {candidate.supersession}; {detail}"
     turn_report = _LANE_TURN_REPORTS.get(candidate.spec.lane_id) if summary.claimed else None
     if turn_report is not None and turn_report.incomplete:
-        owed = ", ".join(f"{name}={count}" for name, count in sorted(turn_report.publication_debt_counts.items()))
-        detail = (
-            f"{detail}; left {turn_report.days_unwritten} day(s) unwritten for "
-            f"{turn_report.consecutive_incomplete_buckets} consecutive bucket(s) in this process"
-        )
-        if owed:
-            detail = f"{detail}; owes availability publication ({owed})"
+        detail = f"{detail}; {_describe_turn_report_debt(turn_report)}"
     return LaneTickResult(
         lane_id=candidate.spec.lane_id,
         state="failed" if failed else "ran",

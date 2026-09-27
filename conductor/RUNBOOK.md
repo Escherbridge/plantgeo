@@ -388,9 +388,11 @@ stale on 2026-09-27, after which only an operator `--day` turn can promote it.
 of the other nine. Nine trees are now preserved as WIP commits on their own branches so a stray
 `git checkout .` cannot erase them. Ported: drought `--target-day` (the config field existed and the
 flag was never wired) and weather-observations source checkpoints written **before** the first write,
-since that lane has no archive to re-read. Held back for review: a turn report that counts publication
-debt rather than only refused days — it can make a lane with a standing quarantine permanently
-incomplete, which is a platform-wide health-signal change. Inventory and disposal list in
+since that lane has no archive to re-read. Landed 2026-09-27 by owner decision: a turn report that
+counts publication debt rather than only refused days — it can make a lane with a standing quarantine
+permanently incomplete, which is a platform-wide health-signal change. See execution/AGENTS.md,
+"Publication debt is the second, quieter half of an incomplete turn", for the standing-source list and
+why this is reporting-only. Inventory and disposal list in
 `.omc/ultrapilot-20260918/WORKTREE-SALVAGE-20260919.md`; nothing was deleted.
 
 **Also landed:** region identity (`region_slug`, `region_display_name`) on the coverage payload as

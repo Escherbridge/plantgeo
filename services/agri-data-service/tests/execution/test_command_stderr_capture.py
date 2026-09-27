@@ -9,6 +9,7 @@ the module so the handler runs a probe command under the real wrapper, drain and
 from __future__ import annotations
 
 import sys
+import uuid
 from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final
@@ -19,18 +20,27 @@ from agri_data_service.execution import job_executor_service
 from agri_data_service.execution.gap_repair_contract import EXECUTOR_REPAIR_WORK_ITEM_KIND, RepairRequest
 from agri_data_service.execution.job_executor_service import (
     COMMAND_STDERR_SUMMARY_CHARS,
+    EXECUTOR_DEFINITION_PREFIX,
     EXECUTOR_WORK_ITEM_KIND,
+    PUBLICATION_DEBT_COUNTERS,
     TURN_REPORT_DETAIL_CHARS,
     ActivationConfig,
     CommandStderrTail,
+    DueLane,
+    ExecutorTickSummary,
     LaneExecutionSpec,
+    LaneTickResult,
+    TurnReport,
+    _describe_turn_report_debt,
+    _execute_due_lane,
     parse_terminal_report,
     run_scheduled_command,
     summarize_turn_report,
 )
 from agri_data_service.execution.lane_ids import VEGETATION_DIRECT_LANE_ID
-from agri_data_service.jobs import JobInvocation
+from agri_data_service.jobs import JobDefinitionRecord, JobInvocation, JobSliceSummary
 from agri_data_service.jobs.lease import FAILURE_SUMMARY_MAX_LENGTH, clamp_summary
+from agri_data_service.pipeline.parquet.availability_extension import AvailabilityExtensionTally
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -65,6 +75,9 @@ INCOMPLETE_SCRIPT: Final = (
     "sys.exit(0)\n"
 )
 COMPLETE_SCRIPT: Final = "import json, sys\nprint(json.dumps({'outcome': 'complete', 'unwritten': []}))\nsys.exit(0)\n"
+#: A2's quiet failure: every day wrote (`days_unwritten` absent), exit 0, yet availability owes a retry.
+DEBT_ONLY_REPORT: Final = {"outcome": "completed", "availability_extended": 1, "availability_retry_owed": 2}
+DEBT_SCRIPT: Final = f"import json, sys\nprint(json.dumps({DEBT_ONLY_REPORT!r}))\nsys.exit(0)\n"
 
 
 def _spec(lane_id: str, script: str) -> LaneExecutionSpec:
@@ -84,6 +97,22 @@ def _spec(lane_id: str, script: str) -> LaneExecutionSpec:
         command=(sys.executable, "-c", script),
         command_timeout_seconds=60,
         description="probe",
+    )
+
+
+def _definition(spec: LaneExecutionSpec) -> JobDefinitionRecord:
+    return JobDefinitionRecord(
+        id=uuid.uuid4(),
+        name=f"{EXECUTOR_DEFINITION_PREFIX}{spec.lane_id}",
+        version="2",
+        handler="plantgeo.executor.command.v1",
+        queue_name="default",
+        concurrency_key=None,
+        max_attempts=5,
+        lease_seconds=spec.command_timeout_seconds + 120,
+        time_budget_seconds=spec.command_timeout_seconds + 30,
+        retry_policy={},
+        parameters={},
     )
 
 
@@ -233,6 +262,41 @@ async def test_an_exit_zero_incomplete_turn_is_persisted_on_the_checkpoint_and_i
     assert clean.metrics["days_unwritten"] == 0
 
 
+@pytest.mark.usefixtures("_pinned")
+async def test_an_exit_zero_debt_only_turn_is_persisted_on_the_checkpoint_and_its_streak_counted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A2's quiet failure end to end: `days_unwritten == 0` must still reach `metrics` and the checkpoint,
+    not just the in-process `TurnReport` that `summarize_turn_report`'s unit tests already cover."""
+    _pin_script(monkeypatch, DEBT_SCRIPT)
+    invocation = _invocation(EXECUTOR_WORK_ITEM_KIND, {"lane_id": PROBE_LANE})
+
+    first = await run_scheduled_command(invocation)
+    second = await run_scheduled_command(invocation)
+
+    assert first.kind == second.kind == "completed"
+    assert first.metrics["days_unwritten"] == 0
+    assert first.metrics["publication_debt"] == 2
+    assert first.cursor is not None
+    report = first.cursor["turn_report"]
+    assert isinstance(report, dict)
+    assert report["outcome"] == "completed"
+    assert report["days_unwritten"] == 0
+    assert report["publication_debt"] == 2
+    assert report["publication_debt_counts"] == {"availability_retry_owed": 2}
+    assert report["consecutive_incomplete_buckets"] == 1
+    assert second.cursor is not None
+    assert second.cursor["turn_report"]["publication_debt"] == 2  # type: ignore[index]
+    assert second.cursor["turn_report"]["consecutive_incomplete_buckets"] == 2  # type: ignore[index]
+
+    _pin_script(monkeypatch, COMPLETE_SCRIPT)
+    clean = await run_scheduled_command(invocation)
+    assert clean.metrics["publication_debt"] == 0
+    assert clean.cursor is not None
+    assert clean.cursor["turn_report"]["publication_debt"] == 0  # type: ignore[index]
+    assert clean.cursor["turn_report"]["consecutive_incomplete_buckets"] == 0  # type: ignore[index]
+
+
 def test_the_terminal_report_is_the_last_json_object_line_and_a_fan_out_report_is_folded() -> None:
     tail = (
         b'{"event":"started"}\nprogress text\n{"outcome":"complete","results":[{"unwritten":[{"day":"2026-09-01"}]}]}\n'
@@ -334,6 +398,20 @@ def test_the_tail_budget_leaves_room_for_the_headline_inside_the_ledger_clamp() 
     assert 0 < COMMAND_STDERR_SUMMARY_CHARS < FAILURE_SUMMARY_MAX_LENGTH
 
 
+def test_publication_debt_counters_are_every_tally_field_except_the_settled_pair() -> None:
+    """Drift guard for the hand-copied list: a name added to `_TALLY_FIELDS` without a matching change
+    here would silently count as zero debt, which is the exact quiet failure this whole feature exists
+    to surface. See execution/AGENTS.md, "Publication debt is the second, quieter half of an incomplete
+    turn"."""
+    settled = {"availability_extended", "availability_skipped_unchanged"}
+    all_fields = set(AvailabilityExtensionTally().to_summary())
+
+    assert not settled & set(PUBLICATION_DEBT_COUNTERS), "the settled pair must never read as owed work"
+    assert set(PUBLICATION_DEBT_COUNTERS) | settled == all_fields, (
+        "every AvailabilityExtensionTally field must be classified as settled or owed, with none dropped"
+    )
+
+
 def test_a_turn_that_wrote_every_day_but_owes_availability_is_still_incomplete() -> None:
     """The quiet failure: four rungs in R2, `outcome=completed`, exit 0, and nothing serving them."""
     report = {
@@ -402,3 +480,113 @@ def test_a_malformed_debt_counter_is_ignored_rather_than_guessed_at() -> None:
 
     assert kept is not None
     assert (kept.publication_debt, kept.publication_debt_counts) == (0, {})
+
+
+def test_debt_only_incomplete_lanes_carry_their_publication_debt_not_a_false_zero() -> None:
+    """`days_unwritten == 0` here must not read as clean: `incomplete_lanes` exists to surface this."""
+    debt_only = summarize_turn_report({"availability_retry_owed": 2}, previous=None)
+    assert debt_only is not None
+    assert debt_only.days_unwritten == 0
+    lane = LaneTickResult(lane_id="climate-direct", state="ran", turn_report=debt_only)
+    summary = ExecutorTickSummary(observed_at=datetime(2026, 9, 27, tzinfo=UTC), leader=True, lanes=(lane,))
+
+    assert summary.incomplete_lanes == (lane,)
+    # The owner-decided boundary this whole subsection exists to hold: standing debt is reporting-only.
+    # It must never flip `state`, and `ExecutorTickSummary.failed` (so the `--once` exit code) must not see it.
+    assert lane.state == "ran"
+    assert summary.failed is False
+    rendered = summary.to_dict()["incomplete_lanes"]
+    assert rendered == [
+        {
+            "lane_id": "climate-direct",
+            "days_unwritten": 0,
+            "consecutive_incomplete_buckets": 1,
+            "publication_debt": 2,
+        }
+    ]
+
+
+def test_the_blocker_detail_is_worded_for_debt_when_no_day_went_unwritten() -> None:
+    """The bug this guards: a debt-only turn must not read as `left 0 day(s) unwritten`."""
+    debt_only = TurnReport(
+        outcome="completed",
+        days_unwritten=0,
+        unwritten=(),
+        unwritten_truncated=False,
+        consecutive_incomplete_buckets=3,
+        publication_debt=2,
+        publication_debt_counts={"availability_retry_owed": 2},
+    )
+
+    detail = _describe_turn_report_debt(debt_only)
+
+    assert "0 day(s) unwritten" not in detail
+    assert detail == (
+        "owes availability publication for 3 consecutive bucket(s) in this process (availability_retry_owed=2)"
+    )
+
+
+def test_the_blocker_detail_still_names_unwritten_days_when_that_is_also_owed() -> None:
+    mixed = TurnReport(
+        outcome="incomplete",
+        days_unwritten=2,
+        unwritten=(),
+        unwritten_truncated=False,
+        consecutive_incomplete_buckets=1,
+        publication_debt=1,
+        publication_debt_counts={"availability_reindex_owed": 1},
+    )
+
+    detail = _describe_turn_report_debt(mixed)
+
+    assert detail == (
+        "left 2 day(s) unwritten for 1 consecutive bucket(s) in this process"
+        "; owes availability publication (availability_reindex_owed=1)"
+    )
+
+
+@pytest.mark.usefixtures("_pinned")
+async def test_execute_due_lane_reports_standing_publication_debt_without_failing_the_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real regression site for `test_debt_only_incomplete_lanes_carry_their_publication_debt_not_a_false_zero`
+    above: that test only ever passed `lane.state` in by hand, so nothing exercised the `failed` computation
+    in `_execute_due_lane` itself that actually decides it. A claimed, non-retried run whose lane owes
+    publication debt must still land as `state="ran"`."""
+    debt_only = TurnReport(
+        outcome="completed",
+        days_unwritten=0,
+        unwritten=(),
+        unwritten_truncated=False,
+        consecutive_incomplete_buckets=1,
+        publication_debt=2,
+        publication_debt_counts={"availability_retry_owed": 2},
+    )
+    job_executor_service._LANE_TURN_REPORTS[PROBE_LANE] = debt_only
+    run_id = uuid.uuid4()
+
+    async def _claimed_zero_retry_summary(*_args: object, **_kwargs: object) -> JobSliceSummary:
+        return JobSliceSummary(
+            definition_name=PROBE_LANE,
+            worker_id="test-worker",
+            job_run_id=run_id,
+            stop_reason="time_budget_exhausted",
+            claimed=1,
+            succeeded=1,
+            run_status="succeeded",
+        )
+
+    monkeypatch.setattr(job_executor_service, "run_job_slice", _claimed_zero_retry_summary)
+    spec = job_executor_service.LANE_SPECS[PROBE_LANE]
+    candidate = DueLane(
+        spec=spec,
+        definition=_definition(spec),
+        scheduled_for=datetime(2026, 9, 27, tzinfo=UTC),
+        existing_run_id=run_id,
+        last_scheduled_for=None,
+    )
+
+    result = await _execute_due_lane(None, candidate, stop=None)  # type: ignore[arg-type]
+
+    assert result.state == "ran", "standing publication debt alone must never flip a claimed run to failed"
+    assert "owes availability publication" in result.detail
