@@ -20,6 +20,9 @@ from agri_data_service.pipeline.direct.soil_survey.source import (
 )
 
 AREA = "ID001"
+#: `source.DEFAULT_FETCH_TIMEOUT_SECONDS`'s own pinned value (review finding 4: named so ruff's
+#: PLR2004 does not flag the comparison below as a magic literal).
+_EXPECTED_DEFAULT_FETCH_TIMEOUT_SECONDS = 30
 
 #: The comment-stripped body SHA of each capture query, pinned so a future body edit is caught as
 #: a deliberate, reviewed change rather than an incidental one (AGENTS.md, "Freeze 1").
@@ -183,3 +186,39 @@ async def test_fetch_refuses_a_response_over_the_capture_byte_budget(monkeypatch
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(SoilSurveyError, match="budget"):
             await fetch(client, "SELECT 1")
+
+
+async def test_fetch_keeps_its_default_30_second_timeout_when_no_caller_overrides_it() -> None:
+    """Census tiling (`AGENTS.md`, "Census tiling"): `capture.py`'s three call sites never pass
+    `timeout=`, so this default must stay exactly what it was before `--request-timeout-seconds`
+    existed -- every `capture` invocation's own behaviour is unchanged by that flag's addition.
+
+    httpx surfaces the timeout it actually used back on the request itself
+    (`request.extensions["timeout"]`), so the fake transport below can assert on the real value
+    `fetch()` passed to `client.stream(...)`, not merely on `fetch`'s own default parameter.
+    """
+    assert source.DEFAULT_FETCH_TIMEOUT_SECONDS == _EXPECTED_DEFAULT_FETCH_TIMEOUT_SECONDS
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["timeout"] = request.extensions.get("timeout")
+        return httpx.Response(200, json={"Table": [["areasymbol", "saverest"]]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        await fetch(client, "SELECT 1")
+
+    assert seen["timeout"] == {"connect": 30, "read": 30, "write": 30, "pool": 30}
+
+
+async def test_fetch_accepts_a_caller_supplied_timeout_override() -> None:
+    """The `areas` verb's `--request-timeout-seconds` flag reaches SDA through exactly this seam."""
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["timeout"] = request.extensions.get("timeout")
+        return httpx.Response(200, json={"Table": [["areasymbol", "saverest"]]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        await fetch(client, "SELECT 1", timeout=90)
+
+    assert seen["timeout"] == {"connect": 90, "read": 90, "write": 90, "pool": 90}

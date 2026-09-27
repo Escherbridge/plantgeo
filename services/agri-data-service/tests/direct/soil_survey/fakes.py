@@ -49,6 +49,19 @@ POLYGONS = (
 _TOP_PATTERN = re.compile(r"TOP (\d+)")
 _AFTER_KEY_PATTERN = re.compile(r"p\.mupolygonkey > (\d+)")
 _REQUESTED_KEYS_PATTERN = re.compile(r"p\.mupolygonkey IN \(([^)]*)\)")
+#: Pulls (west, south, east, north) back out of `ssurgo_area_inventory.sql`'s own
+#: `POLYGON((west south, east south, east north, west north, west south))` literal (`source.py::
+#: area_inventory_query`), so a census-tiling test can script a different answer per tile without
+#: hardcoding this fake to one query shape (`AGENTS.md`, "Census tiling").
+_ENVELOPE_PATTERN = re.compile(r"POLYGON\(\(([-\d.eE]+) ([-\d.eE]+), ([-\d.eE]+) [-\d.eE]+, [-\d.eE]+ ([-\d.eE]+),")
+
+
+def _envelope(query: str) -> tuple[float, float, float, float]:
+    match = _ENVELOPE_PATTERN.search(query)
+    if match is None:
+        raise AssertionError(f"query does not carry an area-inventory envelope literal: {query!r}")
+    west, south, east, north = (float(match.group(index)) for index in (1, 2, 3, 4))
+    return west, south, east, north
 
 
 def row(key: str, *, vintage: str = VINTAGE) -> list[object]:
@@ -87,8 +100,24 @@ class Source:
         #: mid-capture -- while the census still says rows remain -- refuses cleanly rather than
         #: being silently read as completion.
         self.empty_key_page = False
-        #: (area, saverest) rows the area-inventory census answers with; one area by default.
+        #: (area, saverest) rows the area-inventory census answers with; one area by default. Used
+        #: verbatim for every `STIntersects` call unless `inventory_areas_by_tile` is set.
         self.inventory_areas: tuple[tuple[str, str], ...] = ((AREA, self.vintage),)
+        #: Census-tiling override (`AGENTS.md`, "Census tiling"): maps one tile's own (west, south,
+        #: east, north) envelope -- exactly as `__main__.py::_tile_grid` produces it -- to that
+        #: tile's own answer, so a test can prove the union-by-area-symbol logic actually reads a
+        #: different response per tile rather than the same one repeated. `None` (the default)
+        #: keeps every pre-tiling test's behaviour: `inventory_areas` answers every call the same way.
+        self.inventory_areas_by_tile: dict[tuple[float, float, float, float], tuple[tuple[str, str], ...]] | None = None
+        #: Counts `STIntersects` (area-inventory) calls specifically, distinct from `page_calls`
+        #: (the data-page counter below), so a tiling test can assert "one request per tile".
+        self.area_inventory_calls = 0
+        #: Live-run defect regression (`AGENTS.md`, "Census tiling"): tiles in this set answer their
+        #: `STIntersects` call with SDA's own bare `{}` -- distinct from a header-only, zero-row
+        #: table (which `inventory_areas_by_tile`'s own empty tuple already produces) -- so a test
+        #: can prove `__main__.py::_areas` survives the exact payload shape that crashed the Go-2
+        #: live census at tile 33/40, rather than only the header-only shape every other test uses.
+        self.no_rows_tiles: set[tuple[float, float, float, float]] = set()
 
     def response(self, request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
@@ -101,8 +130,7 @@ class Source:
                 200, json={"Table": [["delineation_count", "saverest"], [str(self.count), self.vintage]]}
             )
         if "STIntersects" in query:
-            table = [["areasymbol", "saverest"], *([area, vintage] for area, vintage in self.inventory_areas)]
-            return httpx.Response(200, json={"Table": table})
+            return self._area_inventory_response(query)
         if "STAsText" not in query:
             # The key-inventory page: the only query shape left once summary/area-inventory/page
             # are ruled out above.
@@ -119,6 +147,20 @@ class Source:
                 values[-1] = "POLYGON ((0 0, 2 2, 0 2, 2 0, 0 0))"
             rows_out.append(values)
         return httpx.Response(200, json={"Table": [list(PAGE_COLUMNS), *rows_out]})
+
+    def _area_inventory_response(self, query: str) -> httpx.Response:
+        """One `STIntersects` (area-inventory) call's own answer -- SDA's bare `{}` for a tile in
+        `no_rows_tiles`, this tile's own scripted rows, or `inventory_areas` unscripted."""
+        self.area_inventory_calls += 1
+        tile = _envelope(query)
+        if tile in self.no_rows_tiles:
+            return httpx.Response(200, json={})
+        if self.inventory_areas_by_tile is not None:
+            rows_source = self.inventory_areas_by_tile.get(tile, ())
+        else:
+            rows_source = self.inventory_areas
+        table = [["areasymbol", "saverest"], *([area, vintage] for area, vintage in rows_source)]
+        return httpx.Response(200, json={"Table": table})
 
     def _key_page_response(self, query: str) -> httpx.Response:
         """`self.duplicate` forces the SOURCE ITSELF to keep answering key "1" no matter the
