@@ -1,0 +1,1977 @@
+{
+  "id": "config_driven_ingestion_20260926",
+  "slug": "config_driven_ingestion_20260926",
+  "title": "Config-driven ingestion - one TOML per lane, thin strategies, one runner, cron runtime, LayerService serving",
+  "description": "Cap legacy soil first (G0: 33 logical requests per run, probe-gated frontier, probe faults exit 0, requests/weighted calls/HTTP attempts reported) before the paid Open-Meteo key is set; then replace per-lane forward modules and scattered lane facts with typed lane TOML (shipped by the Dockerfile and digested by the receipt), a strategy Protocol in pipeline/runner/contract.py resolved by import-path convention and one shared runner with a probe-gated forward fan-out and per-mode per-turn caps; unify forward and gap-fill; transforms as persisted input-driven lanes; a session-per-lane work-queue executor with a split breaker (incident rows only); a LayerService registry over parquet_ops via sanic-ext DI; new streams registered through a TOML-checked mirror; climate meteorology re-sourced to Open-Meteo ERA5 (explicit nodes on the manifest's 0.25 deg analysis lattice) plus an IFS tail ending yesterday UTC, solar on NASA POWER UTC re-gridded plus an IFS tail; water gauges moved early to USGS daily values with history to 1990-09-30; the remaining lanes cut over by a reviewed swarm; per-lane production QA and validation; then the legacy path deleted.",
+  "type": "chore",
+  "status": "pending",
+  "created_on": "2026-09-26",
+  "created_at": "2026-09-26T00:00:00+00:00",
+  "revised_at": "2026-09-26",
+  "revision_note": "review loop 1 folded in (spec section 14); review loop 2 and owner decisions O8-O10 folded in (spec sections 3.4, 15); review loop 3 (CHANGES-REQUIRED, G0 NOT READY) and round-3 owner decisions O-R3-1..3 folded in (spec sections 3.5, 16): probe faults exit 0, thin fan-out raise stated, run-level test harness named, G0 accounting, p4-extract import closure, no worktree; next review is a targeted re-check of P1-P9 and the G0 brief",
+  "computed_at_head": "85c4b8f4",
+  "depends_on": [],
+  "related": [
+    "gapless_parquet_publication_20260901",
+    "environmental_parquet_serving_20260912",
+    "parquet_production_acceptance_20260901",
+    "plantgeo_ml_service_20260918",
+    "pnw_land_data_delivery_20260920",
+    "observability_log_capture_20260903"
+  ],
+  "design_documents": [
+    ".omc/research/ingestion-grill-20260926/ROUNDS.md",
+    ".omc/research/ingestion-grill-20260926/executor.md",
+    ".omc/research/ingestion-grill-20260926/climate.md",
+    ".omc/research/ingestion-grill-20260926/water-gauges.md",
+    ".omc/research/ingestion-grill-20260926/soil.md",
+    ".omc/research/ingestion-grill-20260926/other-lanes.md",
+    ".omc/research/ingestion-grill-20260926/critic-track-review-1.md",
+    ".omc/research/ingestion-grill-20260926/critic-track-review-2.md",
+    ".omc/research/ingestion-grill-20260926/critic-track-review-3.md",
+    ".omc/research/open-meteo-pricing-20260926.html"
+  ],
+  "owner_decisions_20260926": {
+    "D1_config": "one TOML per lane under services/agri-data-service/lanes/, type-validated at startup and by a contract test; enabled lives in the file; env kill-switch kept; config = data, strategy = behaviour",
+    "D2_strategy": "thin strategy (plan_requests, fetch, settle -> written|absent|unsettled, rows), fat runner (windows, budget, concurrency, per-unit retries, 429 series, unwritten report, writing + receipts, tiers); runner supplies the neighbour-day census",
+    "D3_one_path": "forward and gap-fill are one code path over different day windows",
+    "D4_transforms": "kind=transform lanes, inputs=[...], persisted, input-driven, may chain",
+    "D5_serving": "LayerService Protocol + default config-driven implementation + keyed registry via sanic-ext app.ext.add_dependency; UI reads layer metadata from the API",
+    "D6_runtime": "parsed cron only; bounded parallelism with per-lane locks; split breaker; runnable printed command; child failure detail in the ledger",
+    "D7_partial_day": "refuse | write_and_recheck per strategy",
+    "D8_climate": "meteorology -> Open-Meteo ERA5 settled + ECMWF IFS provisional + precedence transform on the 0.25 deg lattice; solar stays NASA POWER UTC + IFS tail; POWER soil wetness retired",
+    "D9_water_gauges": "USGS modern Water Data API; retry 503s; per-tile independence",
+    "D10_migration": "framework -> two adversarial loops -> swarm batch cut-over with per-lane reviews -> per-lane production QA + validation -> deprecation"
+  },
+  "owner_decisions_20260926_round2": {
+    "O1_provisional_window": "provisional IFS tail ends yesterday UTC; agri never writes today (observed-only)",
+    "O2_water_gauges": "flip EARLY ahead of the batch to USGS modern Water Data API daily values; serve the daily mean with a real daily-values history re-pull; own gate",
+    "O3_history": "all five Open-Meteo meteorology layers pulled back to 1984 (same weighted cost as dew point alone)",
+    "O4_alerts": "code-error holds alert via an agri.job_incident row only (visible in /admin/jobs); no webhook, no email",
+    "O5_extent": "extent shrink to the 0.25 deg lattice (42.125-48.875N, -124.875..-111.125) accepted",
+    "O6_key": "owner sets OPEN_METEO_API_KEY (empty on the executor today); timing superseded by O8: set only after G0's push and 24 h observation",
+    "O7_dropped": "solar re-grid mandatory; land-context reconcile decided at activation; mtbs-forward deleted (2026-08-03 clean-up-as-you-go); IFS cadence is a one-field change (default one daily turn)"
+  },
+  "owner_decisions_20260926_loop2": {
+    "O8_g0_first": "G0 = legacy soil cap as its own gated push BEFORE G1 and BEFORE OPEN_METEO_API_KEY is set; own adversarial review, own owner deploy go; the owner sets the key only after G0's 24 h observation; no early soil-cap push under G1's go",
+    "O9_third_loop": "a full third adversarial loop reviews the loop-2 revision (done: CHANGES-REQUIRED, spec section 16)",
+    "O10_conservative_weight": "budget Open-Meteo at >= 1.0 call per location per request (fractional counting is stated only above 10 variables / 2 weeks); P5 measures real usage and re-baselines"
+  },
+  "owner_decisions_20260926_round3": {
+    "O-R3-1_probe_faults": "when the edge probe cannot answer (transport failure after retries, refused or non-array body, canonical_location_document ValueError, time budget out) set probe_status=unavailable, gate the probe window, keep walking older owed days, exit 0; a 429 sets probe_status=deferred, same gating, exit 0; test both",
+    "O-R3-2_targeted_recheck": "the next review is a TARGETED re-check, not a full loop 4: a fresh critic verifies only the P1-P9 fixes and the G0 section; disposition table stays one row per id",
+    "O-R3-3_no_worktree": "A17 REJECTED: no worktree for p4-extract; it runs sequentially after G4 in the shared checkout; the clean-tree-gated push rule stays"
+  },
+  "spec_decisions": {
+    "S1": "wind served as 10 m, layer relabelled; no FAO-56 at ingest",
+    "S2": "existing lane ids kept for migrated lanes; new ids for new lanes and for water-gauges-daily (parallel run)",
+    "S3": "provider facts in lanes/_providers/<provider>.toml; this metadata holds the authoritative file list",
+    "S4": "exit codes 0 / 75 upstream / 70 internal / 78 config",
+    "S5": "unwritten reason enum; alarm only for days behind the provider edge",
+    "S6": "optional probe_edge; lag fallback; edge source recorded; required for a settled (partial_day = refuse) lane on a weighted provider whose forward cron fires more than once a day; write_and_recheck lanes (IFS provisional, weather-observations) are exempt",
+    "S7": "one generic precedence transform at pipeline/lanes/transforms/precedence.py, reached only by importlib",
+    "S8": "bad TOML, kill-switch or legacy allow-list typo quarantines, never exits",
+    "S9": "in-house 5-field UTC cron parser",
+    "S10": "explicit ERA5 node per cell (NE corner, integer quarter-degree arithmetic, cell_selection=nearest); IFS at centroids",
+    "S11": "settled rewrite on source-receipt digest change; transform rebuild on input-digest change; strictly-more-units only for partial write_and_recheck days",
+    "S12": "gap-fill crons and provisional pruning ship disabled; enabling is an explicit flip inside a named gate",
+    "S13": "lanes/ added to both Dockerfile COPY stages and to quality_receipt DIGEST_DIRECTORIES (pinned in tests/scripts/test_quality_receipt.py); .dockerignore points at DIGEST_DIRECTORIES; every TOML change needs a sweep and receipt refresh",
+    "S14": "strategy key <layer>.<source> resolves to pipeline.lanes.<layer>.<source>.STRATEGY via pipeline/runner/resolve.py; Protocols and value types live in pipeline/runner/contract.py; nothing shared lives in pipeline/lanes/ (tests/test_layer_import_contract.py treats every module there as a lane)",
+    "S15": "work queue: leader session dispatches without awaiting; session and advisory lock per lane; concurrency default 1 at G1",
+    "S16": "runtime switches DISPATCH=queue|serial, BREAKER_MODE=split|legacy, MAX_CONCURRENT_LANES; _unwritten_entries reads legacy keys and S5",
+    "S17": "quiescent pushes in one shared checkout, no worktrees (O-R3-3): a service-tree commit is made only when the tree's uncommitted changes are exactly that commit's files; p4-extract runs sequentially after G4's push; rollbacks during multi-slice windows use the ledger brake until the next quiescent point",
+    "S18": "new streams get a TOML-checked registration mirror (pipeline/parquet/config_stream_registrations.py data rows spliced into LANE_REGISTRATIONS, LANE_REGISTRY and CALENDAR_HISTORY_FLOOR), not import-time TOML synthesis",
+    "S19": "probe-gated forward fan-out: fan out only when the probe shows a valued day the census still owes, so a probe-unsettled day is never fanned out; a probe that cannot answer gates the window and the turn exits 0 (O-R3-1); a partial fan-out is refused_partial in the runner but raises (exit 1) in legacy G0; per-mode per-turn caps forward_max_weighted_calls and gap_fill_max_weighted_calls"
+  },
+  "provider_files": [
+    "lanes/_providers/open-meteo.toml",
+    "lanes/_providers/nasa-power.toml",
+    "lanes/_providers/usgs-water-data.toml",
+    "lanes/_providers/nws.toml",
+    "lanes/_providers/nasa-firms.toml",
+    "lanes/_providers/earth-search.toml",
+    "lanes/_providers/usdm.toml",
+    "lanes/_providers/oregon-oem.toml",
+    "lanes/_providers/nifc-wfigs.toml",
+    "lanes/_providers/mtbs-edw.toml",
+    "lanes/_providers/usgs-nhdplus.toml",
+    "lanes/_providers/blm.toml",
+    "lanes/_providers/usda-cdl.toml"
+  ],
+  "open_questions": [],
+  "evidence_flags": {
+    "F1": "resolved: solar re-grid mandatory (O7)",
+    "F2": "resolved: explicit ERA5 nodes (S10)",
+    "F3": "resolved: provisional ends yesterday UTC (O1)",
+    "F4": "resolved: daily mean for both windows, new stream (O2)",
+    "F5": "open inference: SYN1deg lag handled by probe_edge, never a constant",
+    "F6": "restated: activation needs sweep + receipt + deploy (S13); ledger pause is the instant brake",
+    "F7": "withdrawn: pruning is consistent with layer-lanes.md section 2"
+  },
+  "budget_headline": {
+    "weight_rule": "locations x models x max(1, days/14) x max(1, variables/10); >= 1.0 per location per request (O10); weighted calls charged once per logical request, HTTP attempts counted separately",
+    "legacy_soil_pre_g0_per_day": "<= 244,608 (forward 24 x 5 x 1,568 + repair 4 x 9 x 1,568); throttled today by the free tier's 10,000/day",
+    "legacy_soil_per_run_after_g0": "<= 33 logical requests, <= 1,602 weighted hard / 1,570 on a clean fan-out (probe 2 + fan-out 1,568; re-check R4), <= 132 fetch attempts (<= 1,584 HTTP requests incl. transport retries and redirect hops) (33 x MAX_FETCH_ATTEMPTS 4)",
+    "interim_ceiling_per_day": "<= 44,856 hard (28 x 1,602; 43,960 clean = 24 x 1,570 forward + 4 x 1,570 repair); realistic 1,616 only once no owed day older than the probe window remains (the G0 hole-count row, taken before the key)",
+    "after_g1_ceiling_per_day": "<= 6,408 hard (4 x 1,602; 6,280 clean); realistic 1,576 with no older backlog",
+    "failure_episode": "<= 24,030 once hard (3 buckets x 5 attempts x 1,602; 23,550 clean)",
+    "steady_state_per_month": "162,720 + W (3.3% + W); <= 210,720 + W with soil gap-fill at its cap",
+    "worst_single_month_stacked": "2,711,727 + W1 + W (54.2% + W1 + W)",
+    "realistic_g7_month": "1,970,688 + W (39.4% + W), no soil backlog"
+  },
+  "owner_go_steps": {
+    "G0": "push the legacy soil cap (SOIL_MAX_DAYS 1, request_budget 33, per-run two-cell edge probe, probe faults exit 0, requests/weighted/HTTP counters) at a quiescent point after its own critic verdict; observe 24 h (deferred expected on the free tier; invalid_repair_request expected for pre-G0 soil repair items); record the soil hole-count row; THEN the owner sets OPEN_METEO_API_KEY on plantgeo-job-executor; P5 usage baseline follows. Any later G0 revert requires the owner to clear OPEN_METEO_API_KEY first; a probe fault gets a probe fix, never a revert",
+    "G1": "push phases 1-2 dark; concurrency 1; FR-8..11 and FR-21 (shortwave dropped from the legacy writer, all 11 legacy climate and all 8 soil streams excluded from legacy repair, climate lag = CLIMATE_METEOROLOGY_PUBLICATION_LAG_DAYS, soil cadence 21,600 s with schedule string 50 */6 * * * on top of G0's cap)",
+    "G2": "OWNER sets USGS_WATER_DATA_API_KEY before G3 if probe P4 requires it",
+    "G3": "enable water-gauges-daily and its daily-values history re-pull to 1990-09-30; legacy water lane keeps serving; CALENDAR_HISTORY_FLOOR moves to 1990-09-30 and the calendar's next version carries the earlier days (A19; a one-off calendar export under this go only if a reader needs them sooner)",
+    "G4": "only after every validation row passes, including history depth (no owed day in [1990-09-30 or the A14-lowered floor, edge]): water serve switch (stream constant + attribution) and legacy water lane paused; Phase 4 (p4-extract) may start only after this push",
+    "G5": "push p4-extract and the swarm dark; CALENDAR_HISTORY_FLOOR moves to 1984-01-01 (A19, as at G3)",
+    "G6": "compare runs (abort on unexplained delta), refresh the soil hole-count row, then the cut-over push: 10 lanes executor=config with gap-fill on (fills vegetation 2026-09-01..05; soil gap-fill capped 1,600/turn daily), 5 climate lanes enabled without gap-fill, provisional pruning on, concurrency 2 only if the G1 RSS evidence supports it",
+    "G7": "climate gap-fill flips: five-layer re-pull to 1984 (~1.75M Open-Meteo calls; split across two months if Phase 0 recorded W1 + W > 250,000/month), POWER solar re-grid, IFS historical-forecast bootstrap",
+    "G8": "climate rebind: stream reads in the web readers, slider capabilities, map layer, agent report and manifest bindings move to meteorology-*/shortwave-*; soil wetness removed from every web list and both region manifests",
+    "G9": "deprecation pushes; retire climate-nasa-power-direct-forward and water-gauges-direct-forward; delete mtbs-forward"
+  },
+  "partitions": {
+    "computed_at": "2026-09-26T00:00:00+00:00",
+    "computed_at_commit": "85c4b8f4",
+    "confidence": "planned",
+    "revised_note": "revised 2026-09-26 for review loops 2 and 3; still computed against 85c4b8f4 (HEAD unchanged); no worktrees (O-R3-3)",
+    "slices": [
+      {
+        "id": "i-coordinator",
+        "task": "integration role across every phase, never launched as an author lane: per phase, collect prediction rows, launch the monitor sweep (Python + web when src/** touched), launch the adversarial reviewer(s), record verdicts in reviews and evidence/phase<N>.md, check quiescence (S17) and stage with explicit pathspecs, and ask the owner for the gate before any push or production run",
+        "owns": [
+          "services/agri-data-service/QUALITY_RECEIPT.json",
+          "conductor/RUNBOOK.md",
+          "conductor/tracks/config_driven_ingestion_20260926/**",
+          "conductor/tracks.md"
+        ],
+        "model": "opus",
+        "depends_on": [],
+        "note": "owns only coordination files; QUALITY_RECEIPT.json is written only by the monitor lane it launches"
+      },
+      {
+        "id": "g0-soil-cap",
+        "task": "Phase 0 G0 (spec FR-24; plan 'G0 task brief'): SOIL_MAX_DAYS 5 -> 1; SOIL_EDGE_PROBE_REQUESTS = 1; request_budget = chunks_per_day * max_days + 1 (33); SOIL_EDGE_PROBE_WINDOW_DAYS = 14; SOIL_EDGE_PROBE_CELL_COUNT = 2; probe cells (lon, lat) (-118.125, 45.375) and (-117.875, 45.375) resolved with support.resolve(longitude, latitude) (lon first) while archive_daily_request takes (lat, lon); SoilEdgeProbe + probe_soil_edge (one request, never raises for upstream/body faults: ok | unavailable | deferred; forward derives invalid | blind per product); probe-gated walk with edge_probe=None meaning ungated; weighted_calls and http_attempts counters (<= 1,602 weighted hard, <= 132 fetch attempts (<= 1,584 HTTP requests incl. transport retries and redirect hops) per run); re-check notes R1 deadline check before charging, R2 settings/from_settings classmethod seam per tests/direct/climate/test_forward_command.py, R3 Decimal arithmetic then float() into resolve, R5 catch SoilProviderDeferredError first, R6 exact null sets, R7 stale source.py comment + request_budget docstring; thin fan-out still raises (exit 1); run-level tests through the named harness seam counting at source.fetch_archive_daily; three soil passages of pipeline/direct/AGENTS.md and soil/AGENTS.md updated",
+        "owns": [
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/soil/forward.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/soil/source.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/soil/AGENTS.md",
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/AGENTS.md",
+            "status": "existing",
+            "note": "only three soil passages: the whole soil '### Entry point' subsection, the soil budget sentence of 'One distinct day per turn', and the weight paragraph of 'One archive request per support chunk-day'"
+          },
+          "services/agri-data-service/tests/direct/soil/test_forward_command.py",
+          {
+            "path": "services/agri-data-service/tests/direct/soil/conftest.py",
+            "status": "existing",
+            "note": "add probe_location and probe_body helpers only"
+          },
+          {
+            "path": "services/agri-data-service/tests/direct/soil/test_edge_probe.py",
+            "status": "future"
+          }
+        ],
+        "reads_only": [
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/soil/products.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/soil/support.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/soil/adapter.py",
+          "services/agri-data-service/src/agri_data_service/execution/open_meteo_lane.py",
+          "services/agri-data-service/src/agri_data_service/ingest/open_meteo.py",
+          "services/agri-data-service/src/agri_data_service/ingest/http.py",
+          "services/agri-data-service/src/agri_data_service/execution/gap_repair_contract.py",
+          "services/agri-data-service/src/agri_data_service/execution/lane_specs.py",
+          "services/agri-data-service/tests/direct/soil/test_adapter.py",
+          "services/agri-data-service/tests/direct/soil/test_lane_registrations.py",
+          "services/agri-data-service/tests/parquet/test_objectstore_writer.py",
+          "services/agri-data-service/tests/parquet/test_availability_index.py"
+        ],
+        "model": "sonnet",
+        "depends_on": [],
+        "note": "own critic verdict (reviews.g0), own sweep + receipt, own owner go; pushed at a quiescent point before any Phase-1 authoring; no repair-binding test (review P4); the owner sets OPEN_METEO_API_KEY only after its 24 h observation and the hole-count row"
+      },
+      {
+        "id": "f1-config",
+        "task": "Phase 1A: lane/provider models (per-mode budget caps, [[streams]]) and lazy loader with per-lane errors; lane-TOML contract test (incl. probe_edge required for settled weighted-provider lanes firing > 1/day, write_and_recheck exempt); C1 image plumbing (COPY lanes/ in both Dockerfile stages, lanes in DIGEST_DIRECTORIES, the pinned tuple in tests/scripts/test_quality_receipt.py, .dockerignore enumeration replaced by a pointer, static test that no .dockerignore pattern excludes a digest input); C2 optional analysis_lattices in the manifest (Python model, pnw.json, pnw.ts, region.ts) with the 1,568-cell parity test; open-meteo and nasa-power provider files",
+        "owns": [
+          {
+            "path": "services/agri-data-service/src/agri_data_service/foundation/lane_config/**",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/lanes/AGENTS.md",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/lanes/_providers/open-meteo.toml",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/lanes/_providers/nasa-power.toml",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/lane_config/**",
+            "status": "future"
+          },
+          "services/agri-data-service/Dockerfile",
+          "services/agri-data-service/.dockerignore",
+          "services/agri-data-service/scripts/quality_receipt.py",
+          "services/agri-data-service/tests/scripts/test_quality_receipt.py",
+          "services/agri-data-service/src/agri_data_service/foundation/region/manifest.py",
+          "services/agri-data-service/src/agri_data_service/foundation/region/pnw.json",
+          "services/agri-data-service/src/agri_data_service/foundation/region/AGENTS.md",
+          "src/lib/region/pnw.ts",
+          "src/lib/region/region.ts",
+          "src/lib/region/AGENTS.md"
+        ],
+        "reads_only": [
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/soil/support.py",
+          "services/agri-data-service/src/agri_data_service/execution/lane_specs.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
+          "services/agri-data-service/src/agri_data_service/foundation/region/kenya_highlands.json",
+          "src/lib/region/kenya_highlands.ts"
+        ],
+        "model": "opus",
+        "depends_on": [
+          "g0-soil-cap"
+        ],
+        "note": "analysis_lattices is optional so kenya_highlands.* stay valid unedited; existing manifest parity tests (grep pnw.json under services/agri-data-service/tests and src/**/*.test.ts) follow these files; verify before launch"
+      },
+      {
+        "id": "f1-runner",
+        "task": "Phase 1B: pipeline/runner/contract.py (Protocols + value types, draft) and pipeline/runner/resolve.py (S14 importlib resolver); nothing shared added under pipeline/lanes/; runner (windows ending yesterday UTC for provisional lanes, the S19 probe gate with its three window tests incl. unavailable/deferred -> gate + exit 0, gap-fill disabled by default, per-unit fetch retries, per-mode per-turn budget caps, full-ladder census, retrieval-instant checkpoints, writer with S11 rewrite rules, S5 report with requests, weighted_calls, http_attempts and probe, S4 exits, --compare that cannot write); precedence transform under pipeline/lanes/transforms/ importing only the contract, pruning off by default; conformance fixtures for five natures",
+        "owns": [
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/AGENTS.md",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/transforms/**",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/runner/**",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/runner/**",
+            "status": "future"
+          }
+        ],
+        "reads_only": [
+          "services/agri-data-service/src/agri_data_service/pipeline/lanes/__init__.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/lanes/calendar.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/**",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/**",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/soil/**",
+          "services/agri-data-service/tests/test_layer_import_contract.py"
+        ],
+        "model": "opus",
+        "depends_on": [
+          "f1-config"
+        ],
+        "note": "tests/test_layer_import_contract.py must pass unedited: SIBLING_MODULE_DIRECTORIES polices pipeline/lanes and _lane_names makes every module there a lane"
+      },
+      {
+        "id": "f1-providers",
+        "task": "Phase 1C: provider client on the open_meteo_endpoint free/customer pattern (required empty key -> named config error; accepts a single-location bare-object body); customer forecast and historical-forecast hosts; status-aware retry helper; legacy callers byte-for-byte unchanged",
+        "owns": [
+          "services/agri-data-service/src/agri_data_service/ingest/open_meteo.py",
+          "services/agri-data-service/src/agri_data_service/ingest/open_meteo_endpoint.py",
+          "services/agri-data-service/src/agri_data_service/ingest/http.py",
+          "services/agri-data-service/src/agri_data_service/ingest/AGENTS.md",
+          {
+            "path": "services/agri-data-service/src/agri_data_service/ingest/provider_client.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/ingest_providers/**",
+            "status": "future"
+          }
+        ],
+        "model": "sonnet",
+        "depends_on": [
+          "f1-config"
+        ]
+      },
+      {
+        "id": "f1-executor",
+        "task": "Phase 1D: cron parser; lane catalogue bridge (legacy id set pinned literally, config id set derived from lanes/); parse_activation and kill-switch quarantine; legacy soil cadence_seconds 21,600 with phase_offset_seconds 3,000 unchanged and schedule string 50 */6 * * * (both pins updated: tests/direct/soil/test_lane_registrations.py EXPECTED_SCHEDULE and tests/test_job_executor_service.py EXPECTED_SCHEDULES); legacy climate _spec lag = CLIMATE_METEOROLOGY_PUBLICATION_LAG_DAYS (pinned in test_lane_cadence.py); session-per-lane work queue with concurrency default 1 and S16 switches (jobs/worker.py, jobs/lease.py); breaker split with one agri.job_incident row per hold (no webhook/email); runnable printed commands; last_error_summary rollup; provider usage SQL; FR-10 gap-repair hotfix with test_gap_repair.py fixtures re-based from climate-field-shortwave-radiation to drought and vegetation and soil rows expecting no_repair_binding (NEW-1); _unwritten_entries reads legacy keys and S5; jobs.ts admin surface; execution/AGENTS.md drift fixes",
+        "owns": [
+          "services/agri-data-service/src/agri_data_service/execution/job_executor_service.py",
+          "services/agri-data-service/src/agri_data_service/execution/lane_scheduling.py",
+          "services/agri-data-service/src/agri_data_service/execution/job_run_supersession.py",
+          "services/agri-data-service/src/agri_data_service/execution/gap_repair.py",
+          "services/agri-data-service/src/agri_data_service/execution/lane_specs.py",
+          "services/agri-data-service/src/agri_data_service/execution/AGENTS.md",
+          "services/agri-data-service/src/agri_data_service/jobs/worker.py",
+          "services/agri-data-service/src/agri_data_service/jobs/lease.py",
+          {
+            "path": "services/agri-data-service/src/agri_data_service/execution/lane_catalogue.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/execution/cron_schedule.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/execution/lane_incidents.py",
+            "status": "future"
+          },
+          "services/agri-data-service/src/agri_data_service/sql/execution/select_latest_run.sql",
+          "services/agri-data-service/src/agri_data_service/sql/jobs/refresh_job_run_rollup.sql",
+          {
+            "path": "services/agri-data-service/src/agri_data_service/sql/execution/select_provider_usage.sql",
+            "status": "future"
+          },
+          "src/lib/server/trpc/routers/jobs.ts",
+          "services/agri-data-service/tests/execution/test_gap_repair.py",
+          "services/agri-data-service/tests/execution/test_self_healing.py",
+          "services/agri-data-service/tests/execution/test_operator_action_surface.py",
+          "services/agri-data-service/tests/execution/test_command_stderr_capture.py",
+          "services/agri-data-service/tests/execution/test_lane_cadence.py",
+          "services/agri-data-service/tests/test_job_executor_service.py",
+          {
+            "path": "services/agri-data-service/tests/direct/soil/test_lane_registrations.py",
+            "status": "existing",
+            "note": "EXPECTED_SCHEDULE -> 50 */6 * * * only (review P4)"
+          },
+          {
+            "path": "services/agri-data-service/tests/execution/test_cron_schedule.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/execution/test_lane_catalogue.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/execution/test_work_queue.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/execution/test_breaker_split.py",
+            "status": "future"
+          }
+        ],
+        "reads_only": [
+          "services/agri-data-service/src/agri_data_service/execution/lane_ids.py",
+          "services/agri-data-service/src/agri_data_service/execution/gap_repair_contract.py",
+          "services/agri-data-service/src/agri_data_service/execution/job_lane_control.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/products.py"
+        ],
+        "model": "opus",
+        "depends_on": [
+          "f1-config"
+        ],
+        "note": "f1-legacy-bridge removes the climate and soil REPAIR_BINDINGS in the same wave; test_gap_repair.py must not reference them"
+      },
+      {
+        "id": "f1-legacy-bridge",
+        "task": "Phase 1E: drop shortwave from the legacy climate writer's turn (product iteration, URL parameters, distinct-clock budget -> 397) while CLIMATE_FIELD_PRODUCTS membership, registration, census and serving stay intact; update pipeline/direct/climate/AGENTS.md and the NASA POWER '### The request budget' subsection of pipeline/direct/AGENTS.md (794 -> 397); REPAIR_BINDINGS drops the CLIMATE_FIELD_PRODUCTS and SOIL_FIELD_PRODUCTS product-binding blocks (all 11 legacy climate and all 8 soil streams -> no_repair_binding); the exclusion tests (19 slugs) live in their own file, never in f1-executor's test_gap_repair.py",
+        "owns": [
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/forward.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/products.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/source.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/AGENTS.md",
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/AGENTS.md",
+            "status": "existing",
+            "note": "only the NASA POWER '### The request budget' subsection (review P9(ii), NEW-9); sequenced after g0-soil-cap"
+          },
+          "services/agri-data-service/src/agri_data_service/execution/gap_repair_contract.py",
+          "services/agri-data-service/tests/direct/climate/**",
+          {
+            "path": "services/agri-data-service/tests/execution/test_legacy_repair_exclusions.py",
+            "status": "future"
+          }
+        ],
+        "model": "sonnet",
+        "depends_on": [
+          "f1-config"
+        ]
+      },
+      {
+        "id": "f1-registry-bridge",
+        "task": "Phase 1F: lane_registry takes lane facts from the TOML when present (literals kept, parity pinned); ceiling and freshness prefer the probed edge and expose which was used; S18 mirror: new config_stream_registrations.py (ConfigStreamRow data rows, initially empty) turned into LaneRegistrations with a refusal adapter naming the owning strategy module and spliced into LANE_REGISTRATIONS, LANE_REGISTRY and CALENDAR_HISTORY_FLOOR (the calendar floor_basis text names the lane that sets the minimum, not fire-detections); parity test against each lane TOML's [[streams]] table; a fixture row is served by authorized_serving and listed by coverage.registered_census_lanes",
+        "owns": [
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_ceiling.py",
+          "services/agri-data-service/src/agri_data_service/parquet_ops/freshness.py",
+          "services/agri-data-service/tests/parquet/test_lane_contract.py",
+          {
+            "path": "services/agri-data-service/tests/parquet/test_calendar_dimension.py",
+            "status": "existing",
+            "note": "only if it pins the calendar floor's value or text"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/config_stream_registrations.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/parquet/test_config_stream_registrations.py",
+            "status": "future"
+          }
+        ],
+        "reads_only": [
+          "services/agri-data-service/src/agri_data_service/parquet_ops/authorized_serving.py",
+          "services/agri-data-service/src/agri_data_service/parquet_ops/coverage.py",
+          "services/agri-data-service/src/agri_data_service/foundation/lane_config/**"
+        ],
+        "model": "opus",
+        "depends_on": [
+          "f1-config"
+        ],
+        "note": "import-time TOML synthesis is not used: LANE_REGISTRY is read at import by lane_specs.py, authorized_serving.py::_LANES and CALENDAR_HISTORY_FLOOR (lazy-loading tripwire)"
+      },
+      {
+        "id": "f1-serving",
+        "task": "Phase 1G: LayerService Protocol and ConfigLayerService delegating to parquet_ops; registry keyed by stream slug; golden responses unchanged; DI with a runtime-import annotation test; GET /layers; web metadata client (not yet consumed)",
+        "owns": [
+          {
+            "path": "services/agri-data-service/src/agri_data_service/planes/layer_service.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/planes/layer_service_registry.py",
+            "status": "future"
+          },
+          "services/agri-data-service/src/agri_data_service/planes/AGENTS.md",
+          "services/agri-data-service/src/agri_data_service/interface/http/parquet_routes.py",
+          "services/agri-data-service/src/agri_data_service/interface/http/AGENTS.md",
+          "services/agri-data-service/src/agri_data_service/app.py",
+          {
+            "path": "services/agri-data-service/src/agri_data_service/parquet_ops/authorized_serving.py",
+            "status": "existing",
+            "note": "edit only if the adapter needs a seam"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/parquet_ops/warehouse_reader.py",
+            "status": "existing",
+            "note": "edit only if the adapter needs a seam"
+          },
+          {
+            "path": "services/agri-data-service/tests/parquet/test_layer_service_registry.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/parquet/test_layers_route.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/parquet/test_parquet_route_annotations.py",
+            "status": "future"
+          },
+          {
+            "path": "src/lib/server/services/parquet-layer-metadata.ts",
+            "status": "future"
+          }
+        ],
+        "reads_only": [
+          "services/agri-data-service/src/agri_data_service/parquet_ops/availability_coverage.py",
+          "services/agri-data-service/src/agri_data_service/parquet_ops/coverage.py",
+          "services/agri-data-service/src/agri_data_service/parquet_ops/serving.py",
+          "services/agri-data-service/src/agri_data_service/planes/**"
+        ],
+        "model": "opus",
+        "depends_on": [
+          "f1-config"
+        ],
+        "note": "planes/signal.py and planes/water_gauges.py have only test importers; they are not wrapped"
+      },
+      {
+        "id": "f2-hardening",
+        "task": "Phase 2: review loops R1 (code-reviewer) and R2 (critic, incl. the probe gate); fix batches write only f1-* files, serially, by one author lane; monitor sweep after each; contract re-frozen from landed code incl. the stream slug list (evidence/contract-freeze.md, coordinator); G1 push at a quiescent point and 24 h observation including single-lane peak RSS and soil requests_spent <= 33",
+        "owns": [],
+        "model": "opus",
+        "depends_on": [
+          "f1-runner",
+          "f1-providers",
+          "f1-executor",
+          "f1-legacy-bridge",
+          "f1-registry-bridge",
+          "f1-serving"
+        ]
+      },
+      {
+        "id": "w3-water-gauges",
+        "task": "Phase 3 early lane: water-gauges-daily on USGS modern Water Data API daily values (00060/00003); per-tile units with 503 retry; named day = publisher_named_day(time) verbatim (no UTC window, no convert-then-truncate); identity monitoring_location_id:time:statistic_id; approval-status digest rewrite; DV history re-pull to 1990-09-30 = lane_registry.py::_MEASURED_COMPLETE_HISTORY_FLOORS['water-gauges'] (gap-fill off until G3; G4 waits for the history-depth row); new stream, schema and S18 mirror row; manifest binding usgs_water_data; web switch prepared behind one stream-name constant (reader, slider parquetLanes, alert source, attribution row, about-page source term) flipped at G4; UI layer key stays water-gauges",
+        "owns": [
+          {
+            "path": "services/agri-data-service/lanes/water-gauges-daily.toml",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/lanes/_providers/usgs-water-data.toml",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/water_gauges/**",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/ingest/usgs_water_data.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/warehouse/schemas/water_gauges_daily.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/config_stream_registrations.py",
+            "status": "future",
+            "note": "created by f1-registry-bridge; append the water-gauges-daily row only"
+          },
+          {
+            "path": "services/agri-data-service/tests/lanes/__init__.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/lanes/water_gauges/**",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/execution/test_lane_catalogue.py",
+            "status": "future",
+            "note": "created by f1-executor; edit only if the derived pin still needs a row"
+          },
+          {
+            "path": "services/agri-data-service/tests/parquet/test_lane_contract.py",
+            "status": "existing",
+            "note": "edit only if an invariant needs an expectation row for the new registration"
+          },
+          {
+            "path": "services/agri-data-service/tests/test_job_executor_service.py",
+            "status": "existing",
+            "note": "edit only if the catalogue pin needs a row"
+          },
+          "docs/lanes/water-gauges.md",
+          "src/lib/server/services/parquet-trpc-readers/water-gauges.ts",
+          {
+            "path": "src/lib/server/services/parquet-trpc-readers/shared.ts",
+            "status": "existing",
+            "note": "the water-gauges attribution row only"
+          },
+          "src/components/panels/WaterDetails.tsx",
+          "src/components/map/layers/WaterLayer.tsx",
+          {
+            "path": "src/lib/server/services/alert-engine.ts",
+            "status": "existing",
+            "note": "checkStreamflowAlerts and its warehouse:water-gauges source only"
+          },
+          {
+            "path": "src/lib/map/hover-fields.ts",
+            "status": "existing",
+            "note": "only if it names the stream"
+          },
+          {
+            "path": "src/lib/server/services/parquet-slider-capabilities.ts",
+            "status": "existing",
+            "note": "the water-gauges parquetLanes entry only"
+          },
+          {
+            "path": "src/app/about/page.tsx",
+            "status": "existing",
+            "note": "the USGS NWIS source term only"
+          },
+          {
+            "path": "src/__tests__/services/parquet-trpc-readers.test.ts",
+            "status": "existing",
+            "note": "water rows only"
+          },
+          {
+            "path": "src/__tests__/services/parquet-slider-capabilities.test.ts",
+            "status": "existing",
+            "note": "water rows only"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/foundation/region/pnw.json",
+            "status": "existing",
+            "note": "additive binding usgs_water_data"
+          },
+          {
+            "path": "src/lib/region/pnw.ts",
+            "status": "existing",
+            "note": "mirror of the pnw.json binding"
+          }
+        ],
+        "reads_only": [
+          "services/agri-data-service/src/agri_data_service/pipeline/validation/water_gauges.py",
+          "services/agri-data-service/src/agri_data_service/ingest/identity.py",
+          "services/agri-data-service/src/agri_data_service/ingest/usgs_nwis.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/water_gauges_forward.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/water_gauges.py",
+          "services/agri-data-service/src/agri_data_service/warehouse/schemas/water_gauges.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/runner/contract.py"
+        ],
+        "model": "opus",
+        "depends_on": [
+          "f2-hardening"
+        ]
+      },
+      {
+        "id": "p4-extract",
+        "task": "Phase 4 start, sequentially AFTER G4's push in the shared checkout (O-R3-3, no worktree): move everything non-lane modules and the shadow strategies import from pipeline/direct into stable homes, WITH THE FULL IMPORT CLOSURE (review P6): product catalogues -> warehouse/field_products; burn-severity source_protocol/mtbs/products, drought source_protocol/usdm/products, evacuation-zones watermark/products/rows/source/support, watersheds watermark/source, merge_sensors_day, crop-cover source_protocol/source/products and land-context source_protocol/source/products -> pipeline/lanes/<layer>/ with each package's __init__.py; re-point the importers incl. pipeline/source_bindings.py; legacy files become re-export shims with unchanged behaviour; legacy tests that monkeypatch a moved attribute are re-pointed; grep at launch that no moved module imports further pipeline/direct code; own sweep, receipt and adversarial review on main",
+        "owns": [
+          "services/agri-data-service/src/agri_data_service/pipeline/source_bindings.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/sensor_absence_correction.py",
+          "services/agri-data-service/src/agri_data_service/parquet_ops/coverage.py",
+          "services/agri-data-service/src/agri_data_service/parquet_ops/snapshot_product_catalog.py",
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
+            "status": "existing",
+            "note": "import lines only"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/products.py",
+            "status": "existing",
+            "note": "becomes a shim"
+          },
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/soil/products.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/vegetation/products.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity/source_protocol.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity/mtbs.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity/products.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/drought/source_protocol.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/drought/usdm.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/drought/products.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/evacuation_zones/watermark.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/evacuation_zones/products.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/evacuation_zones/rows.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/evacuation_zones/source.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/evacuation_zones/support.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/watersheds/watermark.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/watersheds/source.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/sensors/adapter.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/crop_cover/source_protocol.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/crop_cover/source.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/crop_cover/products.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/land_context/source_protocol.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/land_context/source.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/land_context/products.py",
+          {
+            "path": "services/agri-data-service/src/agri_data_service/warehouse/field_products/**",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/burn_severity/__init__.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/burn_severity/source_protocol.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/burn_severity/mtbs.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/burn_severity/products.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/drought/__init__.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/drought/source_protocol.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/drought/usdm.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/drought/products.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/evacuation_zones/__init__.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/evacuation_zones/watermark.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/evacuation_zones/products.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/evacuation_zones/rows.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/evacuation_zones/source.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/evacuation_zones/support.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/watersheds/__init__.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/watersheds/watermark.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/watersheds/source.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/sensors/__init__.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/sensors/merge.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/crop_cover/__init__.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/crop_cover/source_protocol.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/crop_cover/source.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/crop_cover/products.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/land_context/__init__.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/land_context/source_protocol.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/land_context/source.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/land_context/products.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/test_direct_extraction_shims.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/direct/test_burn_severity_direct_*.py",
+            "status": "existing",
+            "note": "only monkeypatch targets that name a moved attribute"
+          },
+          {
+            "path": "services/agri-data-service/tests/direct/test_drought_*.py",
+            "status": "existing",
+            "note": "only monkeypatch targets that name a moved attribute"
+          },
+          {
+            "path": "services/agri-data-service/tests/direct/test_evacuation_zones_direct_*.py",
+            "status": "existing",
+            "note": "only monkeypatch targets that name a moved attribute"
+          },
+          {
+            "path": "services/agri-data-service/tests/direct/test_watersheds_direct_*.py",
+            "status": "existing",
+            "note": "only monkeypatch targets that name a moved attribute"
+          },
+          {
+            "path": "services/agri-data-service/tests/direct/test_sensors_direct_*.py",
+            "status": "existing",
+            "note": "only monkeypatch targets that name a moved attribute"
+          },
+          {
+            "path": "services/agri-data-service/tests/direct/test_crop_cover.py",
+            "status": "existing",
+            "note": "only monkeypatch targets that name a moved attribute"
+          },
+          {
+            "path": "services/agri-data-service/tests/direct/test_land_context_direct.py",
+            "status": "existing",
+            "note": "only monkeypatch targets that name a moved attribute"
+          }
+        ],
+        "model": "opus",
+        "depends_on": [
+          "w3-water-gauges"
+        ],
+        "note": "launch only after G4's push (a gate, not expressible in depends_on); no worktree (O-R3-3); gap_repair_contract.py and lane_specs.py also import pipeline/direct and lose those imports in Phase 7 (d7-legacy-shared), not here; the crop-cover and land-context legacy modules stay (shadow lanes) as shims"
+      },
+      {
+        "id": "p4-contract-freeze",
+        "task": "Phase 4 (after p4-extract): stream-registry and lane-contract test expectations for the frozen lane and stream set; the S18 mirror rows for the 24 climate streams from the FROZEN contract (calendar floor -> 1984-01-01, A19); remaining provider files; additive manifest bindings for meteorology-* and shortwave-*",
+        "owns": [
+          {
+            "path": "services/agri-data-service/tests/parquet/test_stream_schema_registry.py",
+            "status": "existing",
+            "note": "only if a new slug needs an expectation; the test is generic today"
+          },
+          {
+            "path": "services/agri-data-service/tests/parquet/test_lane_contract.py",
+            "status": "existing"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/config_stream_registrations.py",
+            "status": "future",
+            "note": "append the climate stream rows only"
+          },
+          {
+            "path": "services/agri-data-service/lanes/_providers/nws.toml",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/lanes/_providers/nasa-firms.toml",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/lanes/_providers/earth-search.toml",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/lanes/_providers/usdm.toml",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/lanes/_providers/oregon-oem.toml",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/lanes/_providers/nifc-wfigs.toml",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/lanes/_providers/mtbs-edw.toml",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/lanes/_providers/usgs-nhdplus.toml",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/lanes/_providers/blm.toml",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/lanes/_providers/usda-cdl.toml",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/foundation/region/pnw.json",
+            "status": "existing",
+            "note": "additive climate bindings"
+          },
+          {
+            "path": "src/lib/region/pnw.ts",
+            "status": "existing",
+            "note": "mirror of the climate bindings"
+          }
+        ],
+        "model": "sonnet",
+        "depends_on": [
+          "p4-extract"
+        ]
+      },
+      {
+        "id": "s-climate",
+        "task": "Phase 4 swarm: meteorology-era5-settled (S10 nodes by integer arithmetic, five layers to 1984, newest-first re-pull order, probe_edge, per-mode budget caps), meteorology-ifs-provisional (one request, two streams, window ends yesterday UTC, historical-forecast history capability, one daily fire), shortwave-nasa-power-settled (time-standard=UTC, mandatory re-grid, native-cell dedup), transforms meteorology and shortwave (strategy transforms.precedence); new stream schemas; [[streams]] tables matching the mirror rows; no web files",
+        "owns": [
+          {
+            "path": "services/agri-data-service/lanes/meteorology*.toml",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/lanes/shortwave*.toml",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/meteorology/**",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/shortwave/**",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/warehouse/schemas/meteorology_*.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/warehouse/schemas/shortwave_*.py",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/lanes/meteorology/**",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/lanes/shortwave/**",
+            "status": "future"
+          },
+          {
+            "path": "docs/lanes/meteorology.md",
+            "status": "future"
+          },
+          {
+            "path": "docs/lanes/shortwave.md",
+            "status": "future"
+          }
+        ],
+        "reads_only": [
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/**",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/soil/support.py",
+          "services/agri-data-service/src/agri_data_service/ingest/open_meteo.py",
+          "services/agri-data-service/src/agri_data_service/execution/weather_observations/nasa_power.py",
+          "services/agri-data-service/src/agri_data_service/warehouse/schemas/climate_field_*.py",
+          "services/agri-data-service/src/agri_data_service/warehouse/field_products/**",
+          "services/agri-data-service/src/agri_data_service/pipeline/runner/contract.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/config_stream_registrations.py"
+        ],
+        "model": "opus",
+        "depends_on": [
+          "p4-contract-freeze"
+        ]
+      },
+      {
+        "id": "s-soil",
+        "task": "Phase 4 swarm: soil-era5-land-direct-forward (grid analysis-0p25; 0-or-1,470 refuse, partial = refused_partial; mirrored-past via context; probe_edge with the S19 gate incl. unavailable/deferred -> gate + exit 0; forward and gap-fill caps 1,600; deferred_quota)",
+        "owns": [
+          {
+            "path": "services/agri-data-service/lanes/soil-era5-land-direct-forward.toml",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/soil/**",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/lanes/soil/**",
+            "status": "future"
+          }
+        ],
+        "reads_only": [
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/soil/**",
+          "services/agri-data-service/src/agri_data_service/warehouse/field_products/**",
+          "services/agri-data-service/src/agri_data_service/pipeline/runner/contract.py"
+        ],
+        "model": "sonnet",
+        "depends_on": [
+          "p4-contract-freeze"
+        ]
+      },
+      {
+        "id": "s-sensors",
+        "task": "Phase 4 swarm: sensors-direct-forward (NWS; retention 6 d -> retention_exceeded)",
+        "owns": [
+          {
+            "path": "services/agri-data-service/lanes/sensors-direct-forward.toml",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/sensors/**",
+            "status": "future",
+            "note": "includes __init__.py and merge.py landed by p4-extract"
+          },
+          {
+            "path": "services/agri-data-service/tests/lanes/sensors/**",
+            "status": "future"
+          },
+          "docs/lanes/sensors.md"
+        ],
+        "reads_only": [
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/sensors/**",
+          "services/agri-data-service/src/agri_data_service/ingest/sensors.py"
+        ],
+        "model": "sonnet",
+        "depends_on": [
+          "p4-contract-freeze"
+        ]
+      },
+      {
+        "id": "s-weather-observations",
+        "task": "Phase 4 swarm: weather-observations-direct-forward (Open-Meteo current=, customer host after cut-over; lag and floor cited or basis=uncited; weighted calls reported; exempt from the probe_edge rule because it is write_and_recheck)",
+        "owns": [
+          {
+            "path": "services/agri-data-service/lanes/weather-observations-direct-forward.toml",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/weather_observations/**",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/lanes/weather_observations/**",
+            "status": "future"
+          },
+          "docs/lanes/weather-observations.md"
+        ],
+        "reads_only": [
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/**"
+        ],
+        "model": "sonnet",
+        "depends_on": [
+          "p4-contract-freeze"
+        ]
+      },
+      {
+        "id": "s-fire-detections",
+        "task": "Phase 4 swarm: fire-detections-direct-forward (FIRMS; refetch_window_days split from the edge; 10,000-record cap surfaced as unwritten; NASA_FIRMS_KEY by name)",
+        "owns": [
+          {
+            "path": "services/agri-data-service/lanes/fire-detections-direct-forward.toml",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/fire_detections/**",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/lanes/fire_detections/**",
+            "status": "future"
+          },
+          "docs/lanes/fire-detections.md"
+        ],
+        "reads_only": [
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/fire_detections/**",
+          "services/agri-data-service/src/agri_data_service/ingest/firms.py"
+        ],
+        "model": "sonnet",
+        "depends_on": [
+          "p4-contract-freeze"
+        ]
+      },
+      {
+        "id": "s-fire-perimeters",
+        "task": "Phase 4 swarm: fire-perimeters-direct-forward (WFIGS static_lookup, watermark editingInfo.lastEditDate)",
+        "owns": [
+          {
+            "path": "services/agri-data-service/lanes/fire-perimeters-direct-forward.toml",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/fire_perimeters/**",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/lanes/fire_perimeters/**",
+            "status": "future"
+          },
+          "docs/lanes/fire-perimeters.md"
+        ],
+        "reads_only": [
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/fire_perimeters/**",
+          "services/agri-data-service/src/agri_data_service/ingest/wfigs.py"
+        ],
+        "model": "sonnet",
+        "depends_on": [
+          "p4-contract-freeze"
+        ]
+      },
+      {
+        "id": "s-evacuation-zones",
+        "task": "Phase 4 swarm: evacuation-zones-direct-forward (Oregon OEM static_lookup; coverage regional US-OR; watermark dataLastEditDate)",
+        "owns": [
+          {
+            "path": "services/agri-data-service/lanes/evacuation-zones-direct-forward.toml",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/evacuation_zones/**",
+            "status": "future",
+            "note": "includes __init__.py, watermark.py, products.py, rows.py, source.py and support.py landed by p4-extract"
+          },
+          {
+            "path": "services/agri-data-service/tests/lanes/evacuation_zones/**",
+            "status": "future"
+          },
+          "docs/lanes/evacuation-zones.md"
+        ],
+        "reads_only": [
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/evacuation_zones/**",
+          "services/agri-data-service/src/agri_data_service/ingest/evacuation_zones.py"
+        ],
+        "model": "sonnet",
+        "depends_on": [
+          "p4-contract-freeze"
+        ]
+      },
+      {
+        "id": "s-watersheds",
+        "task": "Phase 4 swarm: watersheds-direct-forward (NHDPlus HR static_lookup; lifecycle discontinued; the TOML records the real source although the manifest binds hydrosheds)",
+        "owns": [
+          {
+            "path": "services/agri-data-service/lanes/watersheds-direct-forward.toml",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/watersheds/**",
+            "status": "future",
+            "note": "includes __init__.py, watermark.py and source.py landed by p4-extract"
+          },
+          {
+            "path": "services/agri-data-service/tests/lanes/watersheds/**",
+            "status": "future"
+          },
+          "docs/lanes/watersheds.md"
+        ],
+        "reads_only": [
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/watersheds/**",
+          "services/agri-data-service/src/agri_data_service/ingest/watersheds.py"
+        ],
+        "model": "sonnet",
+        "depends_on": [
+          "p4-contract-freeze"
+        ]
+      },
+      {
+        "id": "s-drought",
+        "task": "Phase 4 swarm: drought-direct-forward (USDM release_series; 404 = unsettled; cron narrowed to the release window)",
+        "owns": [
+          {
+            "path": "services/agri-data-service/lanes/drought-direct-forward.toml",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/drought/**",
+            "status": "future",
+            "note": "includes __init__.py, source_protocol.py, usdm.py and products.py landed by p4-extract"
+          },
+          {
+            "path": "services/agri-data-service/tests/lanes/drought/**",
+            "status": "future"
+          },
+          "docs/lanes/drought.md"
+        ],
+        "reads_only": [
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/drought/**",
+          "services/agri-data-service/src/agri_data_service/ingest/usdm.py",
+          "services/agri-data-service/src/agri_data_service/ingest/usdm_history.py"
+        ],
+        "model": "sonnet",
+        "depends_on": [
+          "p4-contract-freeze"
+        ]
+      },
+      {
+        "id": "s-burn-severity",
+        "task": "Phase 4 swarm: burn-severity-direct-forward (MTBS historical releases + Friday current capture; envelope from the Region)",
+        "owns": [
+          {
+            "path": "services/agri-data-service/lanes/burn-severity-direct-forward.toml",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/burn_severity/**",
+            "status": "future",
+            "note": "includes __init__.py, source_protocol.py, mtbs.py and products.py landed by p4-extract"
+          },
+          {
+            "path": "services/agri-data-service/tests/lanes/burn_severity/**",
+            "status": "future"
+          },
+          "docs/lanes/burn-severity.md"
+        ],
+        "reads_only": [
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity/**",
+          "services/agri-data-service/src/agri_data_service/ingest/mtbs.py"
+        ],
+        "model": "sonnet",
+        "depends_on": [
+          "p4-contract-freeze"
+        ]
+      },
+      {
+        "id": "s-vegetation",
+        "task": "Phase 4 swarm: vegetation-sentinel2-ndvi-direct-forward (partial-day policy derived from the legacy forward; STAC probe as edge; TOML floor includes 2026-09-01..05 so the G6 gap-fill enable fills them) and vegetation-ndvi-governed-plane-promotion as a disabled transform (output target confirmed)",
+        "owns": [
+          {
+            "path": "services/agri-data-service/lanes/vegetation-sentinel2-ndvi-direct-forward.toml",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/lanes/vegetation-ndvi-governed-plane-promotion.toml",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/vegetation/**",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/tests/lanes/vegetation/**",
+            "status": "future"
+          },
+          "docs/lanes/vegetation.md"
+        ],
+        "reads_only": [
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/vegetation/**",
+          "services/agri-data-service/src/agri_data_service/ingest/vegetation.py",
+          "services/agri-data-service/src/agri_data_service/execution/vegetation_partition_promotion.py",
+          "services/agri-data-service/src/agri_data_service/execution/vegetation_ndvi_plane.py"
+        ],
+        "model": "opus",
+        "depends_on": [
+          "p4-contract-freeze"
+        ]
+      },
+      {
+        "id": "s-land-context",
+        "task": "Phase 4 swarm: land-context-blm lanes (disabled; reconcile mapping decided at activation; runner scratch dir; 3,900 s budget as data); imports LandContextSource and BLM_LAND_CONTEXT_SOURCE from pipeline/lanes/land_context/source_protocol.py, never from pipeline/direct",
+        "owns": [
+          {
+            "path": "services/agri-data-service/lanes/land-context-blm*.toml",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/land_context/**",
+            "status": "future",
+            "note": "includes __init__.py, source_protocol.py, source.py and products.py landed by p4-extract"
+          },
+          {
+            "path": "services/agri-data-service/tests/lanes/land_context/**",
+            "status": "future"
+          }
+        ],
+        "reads_only": [
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/land_context/**"
+        ],
+        "model": "sonnet",
+        "depends_on": [
+          "p4-contract-freeze"
+        ]
+      },
+      {
+        "id": "s-crop-cover",
+        "task": "Phase 4 swarm: crop-cover-usda-maintain (disabled; no /tmp literal; runner scratch dir); imports CropCoverSource and USDA_CROP_COVER_SOURCE from pipeline/lanes/crop_cover/source_protocol.py, never from pipeline/direct",
+        "owns": [
+          {
+            "path": "services/agri-data-service/lanes/crop-cover-usda-maintain.toml",
+            "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/crop_cover/**",
+            "status": "future",
+            "note": "includes __init__.py, source_protocol.py, source.py and products.py landed by p4-extract"
+          },
+          {
+            "path": "services/agri-data-service/tests/lanes/crop_cover/**",
+            "status": "future"
+          }
+        ],
+        "reads_only": [
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/crop_cover/**"
+        ],
+        "model": "sonnet",
+        "depends_on": [
+          "p4-contract-freeze"
+        ]
+      },
+      {
+        "id": "p5-cutover",
+        "task": "Phase 5: after G6 compare rows pass and the soil hole-count row is refreshed, one commit (executor=config and gap_fill_enabled on the 10 migrated active lanes, soil gap-fill cap 1,600/turn daily, enabled on the 5 climate lanes with gap-fill off, provisional pruning on); critic review; sweep + receipt; push at a quiescent point. G7 is a second commit flipping the three climate gap-fill fields (re-pull split across two months if Phase 0 recorded it)",
+        "owns": [
+          {
+            "path": "services/agri-data-service/lanes/*.toml",
+            "status": "future",
+            "note": "edits only executor/enabled/gap_fill_enabled/pruning/gap_fill_max_weighted_calls fields"
+          }
+        ],
+        "model": "sonnet",
+        "depends_on": [
+          "s-climate",
+          "s-soil",
+          "s-sensors",
+          "s-weather-observations",
+          "s-fire-detections",
+          "s-fire-perimeters",
+          "s-evacuation-zones",
+          "s-watersheds",
+          "s-drought",
+          "s-burn-severity",
+          "s-vegetation",
+          "s-land-context",
+          "s-crop-cover"
+        ]
+      },
+      {
+        "id": "p6-climate-rebind",
+        "task": "Phase 6 (G8): after climate QA + validation rows, move the stream reads (web readers, slider capability parquetLanes, map layer, climate-field presentation, agent report, manifest bindings) to the meteorology-*/shortwave-* slugs; UI layer keys stay; soil wetness removed from every web list, both region manifests and their tests; wind at 10 m; legacy climate streams stay readable. The owns list is the 85c4b8f4 grep of src/ for climate-field- (31 files) plus the soil-wetness mentions; re-grep before launch",
+        "owns": [
+          {
+            "path": "services/agri-data-service/lanes/meteorology.toml",
+            "status": "future",
+            "note": "serving table only"
+          },
+          {
+            "path": "services/agri-data-service/lanes/shortwave.toml",
+            "status": "future",
+            "note": "serving table only"
+          },
+          "src/lib/server/services/parquet-trpc-readers/climate-field.ts",
+          {
+            "path": "src/lib/server/services/parquet-trpc-readers/signal-plane-rows.ts",
+            "status": "existing",
+            "note": "soil rows must stay byte-identical"
+          },
+          "src/lib/server/services/parquet-climate-field.ts",
+          {
+            "path": "src/lib/server/services/parquet-slider-capabilities.ts",
+            "status": "existing",
+            "note": "climate entries only"
+          },
+          "src/components/map/layers/ClimateFieldLayer.tsx",
+          "src/lib/environmental/climate-field.ts",
+          "src/lib/environmental/AGENTS.md",
+          "src/lib/regional-intelligence.ts",
+          "src/lib/server/services/regional-analysis-workflow.ts",
+          "src/lib/map/layer-region-binding.ts",
+          "src/lib/map/climate-field-layer-ids.ts",
+          {
+            "path": "src/lib/map/hover-fields.ts",
+            "status": "existing",
+            "note": "climate entries only"
+          },
+          "src/components/map/HoverTooltip.tsx",
+          "src/components/map/AGENTS.md",
+          "src/components/panels/RegionalIntelligencePanel.tsx",
+          {
+            "path": "src/components/panels/ClimateDetails.tsx",
+            "status": "existing",
+            "note": "soil-wetness wording only"
+          },
+          {
+            "path": "src/stores/climate-store.ts",
+            "status": "existing",
+            "note": "soil-wetness comment only, if it names a slug"
+          },
+          {
+            "path": "src/types/time-slider.ts",
+            "status": "existing",
+            "note": "only if it names a soil-wetness slug"
+          },
+          {
+            "path": "src/app/about/page.tsx",
+            "status": "existing",
+            "note": "the soil-wetness description only"
+          },
+          "src/lib/region/kenya_highlands.ts",
+          "services/agri-data-service/src/agri_data_service/foundation/region/kenya_highlands.json",
+          {
+            "path": "src/lib/region/pnw.ts",
+            "status": "existing"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/foundation/region/pnw.json",
+            "status": "existing"
+          },
+          "services/agri-data-service/src/agri_data_service/agent/report.py",
+          "src/__tests__/region/second-region-manifest.test.ts",
+          "src/__tests__/region/second-region-catalogue.test.tsx",
+          "src/__tests__/region/layer-region-binding.test.tsx",
+          "src/__tests__/region/get-region.test.ts",
+          "src/__tests__/services/parquet-climate-field.test.ts",
+          "src/__tests__/services/regional-analysis-workflow.test.ts",
+          {
+            "path": "src/__tests__/services/parquet-trpc-readers.test.ts",
+            "status": "existing",
+            "note": "climate rows only"
+          },
+          {
+            "path": "src/__tests__/services/parquet-slider-capabilities.test.ts",
+            "status": "existing",
+            "note": "climate rows only"
+          },
+          "src/__tests__/components/LaneAvailabilityLabel.test.tsx",
+          "src/__tests__/components/ScalarFieldLabels.test.tsx",
+          "src/__tests__/components/RegionalIntelligencePanel.test.tsx",
+          "src/__tests__/components/HoverTooltip.test.tsx",
+          "src/__tests__/components/ClimateFieldLayers.test.tsx",
+          "src/__tests__/components/click-ownership.test.tsx",
+          "src/__tests__/lib/map/hover-fields.test.ts",
+          {
+            "path": "services/agri-data-service/tests/foundation/test_second_region_manifest.py",
+            "status": "existing",
+            "note": "only if it pins kenya soil-wetness layers"
+          },
+          {
+            "path": "services/agri-data-service/tests/foundation/test_region_layer_availability.py",
+            "status": "existing",
+            "note": "only if it pins soil-wetness layers"
+          }
+        ],
+        "model": "sonnet",
+        "depends_on": [
+          "p5-cutover"
+        ]
+      },
+      {
+        "id": "d7-legacy-shared",
+        "task": "Phase 7, FIRST (review N8): remove migrated entries and ids, lane-fact literals and every import of a pipeline/direct/<lane> module from lane_specs.py, gap_repair_contract.py, lane_ids.py, lane_registry.py and job_executor_service.py; remove gap_repair authoring + RepairAuthoringClock + the allow-list parse (kill-switch stays) and mtbs-forward; AGENTS.md updates",
+        "owns": [
+          "services/agri-data-service/src/agri_data_service/execution/lane_specs.py",
+          "services/agri-data-service/src/agri_data_service/execution/lane_ids.py",
+          "services/agri-data-service/src/agri_data_service/execution/gap_repair.py",
+          "services/agri-data-service/src/agri_data_service/execution/gap_repair_contract.py",
+          "services/agri-data-service/src/agri_data_service/execution/job_executor_service.py",
+          "services/agri-data-service/src/agri_data_service/execution/AGENTS.md",
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/AGENTS.md",
+          "services/agri-data-service/tests/execution/test_gap_repair.py",
+          {
+            "path": "services/agri-data-service/tests/execution/test_legacy_repair_exclusions.py",
+            "status": "future",
+            "note": "created by f1-legacy-bridge; deleted with the repair authoring"
+          },
+          {
+            "path": "services/agri-data-service/tests/execution/test_lane_catalogue.py",
+            "status": "future",
+            "note": "created by f1-executor; the legacy literal pin shrinks"
+          },
+          "services/agri-data-service/tests/test_job_executor_service.py",
+          "services/agri-data-service/tests/parquet/test_lane_contract.py"
+        ],
+        "model": "opus",
+        "depends_on": [
+          "p6-climate-rebind"
+        ]
+      },
+      {
+        "id": "d7-legacy-lane-modules",
+        "task": "Phase 7, SECOND: for each lane with both Phase-6 rows, delete its legacy forward package (including p4-extract shims), the legacy water-gauges modules and the legacy tests, after grepping every importer (none may remain outside the deleted files; p4-extract moved the whole import closure); keep the legacy climate-field-*, soil-wetness-* and water-gauges schema modules; keep shadow lanes' legacy modules",
+        "owns": [
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity/**",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/**",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/drought/**",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/evacuation_zones/**",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/fire_detections/**",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/fire_perimeters/**",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/sensors/**",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/soil/**",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/vegetation/**",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/watersheds/**",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/**",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/water_gauges.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/water_gauges_forward.py",
+          "services/agri-data-service/tests/direct/climate/**",
+          "services/agri-data-service/tests/direct/soil/**",
+          "services/agri-data-service/tests/direct/test_burn_severity_direct_*.py",
+          "services/agri-data-service/tests/direct/test_drought_*.py",
+          "services/agri-data-service/tests/direct/test_evacuation_zones_direct_*.py",
+          "services/agri-data-service/tests/direct/test_fire_detections_direct.py",
+          "services/agri-data-service/tests/direct/test_fire_perimeters_direct_*.py",
+          "services/agri-data-service/tests/direct/test_sensors_direct_*.py",
+          "services/agri-data-service/tests/direct/test_water_gauges_direct_*.py",
+          "services/agri-data-service/tests/direct/test_watersheds_direct_*.py",
+          "services/agri-data-service/tests/direct/test_weather_observations_*.py",
+          "services/agri-data-service/tests/direct/test_direct_writer_contract.py",
+          "services/agri-data-service/tests/direct/test_direct_package_registration.py",
+          {
+            "path": "services/agri-data-service/tests/test_direct_extraction_shims.py",
+            "status": "future",
+            "note": "deleted with the shims"
+          }
+        ],
+        "model": "sonnet",
+        "depends_on": [
+          "d7-legacy-shared"
+        ],
+        "note": "a lane without both Phase-6 rows is excluded; the two contract tests and pipeline/direct/water_gauges.py may have non-lane importers (validation, botanical, crop_cover, land_context): edit rather than delete where so"
+      }
+    ],
+    "shared_writes": [
+      {
+        "path": "services/agri-data-service/QUALITY_RECEIPT.json",
+        "owner": "i-coordinator",
+        "reason": "written only by the monitor lane the coordinator launches, on main; digests the whole service tree including lanes/ (S13); one receipt, no worktrees (S17)"
+      },
+      {
+        "path": "conductor/RUNBOOK.md",
+        "owner": "i-coordinator",
+        "reason": "concurrent sessions share it; one lean Outstanding-work row"
+      },
+      {
+        "path": "conductor/tracks/config_driven_ingestion_20260926/**",
+        "owner": "i-coordinator",
+        "reason": "metadata, plan checkboxes, evidence/phase<N>.md tables, contract-freeze.md, review verdicts"
+      },
+      {
+        "path": "conductor/tracks.md",
+        "owner": "i-coordinator",
+        "reason": "status line only"
+      },
+      {
+        "path": "services/agri-data-service/Dockerfile",
+        "owner": "f1-config",
+        "reason": "COPY lanes/ in both stages (C1)"
+      },
+      {
+        "path": "services/agri-data-service/scripts/quality_receipt.py",
+        "owner": "f1-config",
+        "reason": "lanes in DIGEST_DIRECTORIES (C1)"
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/foundation/region/pnw.json",
+        "owner": "f1-config",
+        "reason": "first writer; later owners in sequenced_co_owners"
+      },
+      {
+        "path": "src/lib/region/pnw.ts",
+        "owner": "f1-config",
+        "reason": "first writer; later owners in sequenced_co_owners"
+      },
+      {
+        "path": "src/lib/server/services/parquet-slider-capabilities.ts",
+        "owner": "w3-water-gauges",
+        "reason": "first writer; p6-climate-rebind follows (sequenced_co_owners)"
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
+        "owner": "f1-registry-bridge",
+        "reason": "first writer; p4-extract (imports) and d7-legacy-shared follow (sequenced_co_owners)"
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/config_stream_registrations.py",
+        "owner": "f1-registry-bridge",
+        "reason": "creates it; w3-water-gauges then p4-contract-freeze append rows (sequenced_co_owners)"
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/AGENTS.md",
+        "owner": "g0-soil-cap",
+        "reason": "three soil passages; f1-legacy-bridge (NASA POWER request-budget subsection) and d7-legacy-shared follow (sequenced_co_owners)"
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/warehouse/parquet/schema.py",
+        "owner": "p4-contract-freeze",
+        "reason": "only if a new slug needs a non-default module mapping; default no edit (schema modules autoload by slug)"
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/ingest/open_meteo.py",
+        "owner": "f1-providers",
+        "reason": "read by soil, weather-observations, historical ERA5 and the climate lanes; swarm lanes read only"
+      },
+      {
+        "path": "src/lib/server/trpc/routers/jobs.ts",
+        "owner": "f1-executor",
+        "reason": "admin surface: cron, next fire, open incidents, failure text, provider usage"
+      },
+      {
+        "path": "services/agri-data-service/pyproject.toml",
+        "owner": "f1-config",
+        "reason": "only if a dependency is added; default none (tomllib stdlib, in-house cron)"
+      },
+      {
+        "path": "services/agri-data-service/tests/lanes/__init__.py",
+        "owner": "w3-water-gauges",
+        "reason": "package root for every lane's tests; created by the first lane"
+      }
+    ],
+    "sequenced_co_owners": [
+      {
+        "path": "services/agri-data-service/src/agri_data_service/foundation/region/pnw.json",
+        "owners": [
+          "f1-config",
+          "w3-water-gauges",
+          "p4-contract-freeze",
+          "p6-climate-rebind"
+        ],
+        "proof": "w3 depends_on f2-hardening -> f1-*; p4-contract-freeze -> p4-extract -> w3; p6 -> p5 -> s-* -> p4-contract-freeze"
+      },
+      {
+        "path": "src/lib/region/pnw.ts",
+        "owners": [
+          "f1-config",
+          "w3-water-gauges",
+          "p4-contract-freeze",
+          "p6-climate-rebind"
+        ],
+        "proof": "same chain as pnw.json"
+      },
+      {
+        "path": "src/lib/server/services/parquet-slider-capabilities.ts",
+        "owners": [
+          "w3-water-gauges",
+          "p6-climate-rebind"
+        ],
+        "proof": "p6 -> p5 -> s-* -> p4-contract-freeze -> p4-extract -> w3"
+      },
+      {
+        "path": "src/lib/map/hover-fields.ts",
+        "owners": [
+          "w3-water-gauges",
+          "p6-climate-rebind"
+        ],
+        "proof": "same chain"
+      },
+      {
+        "path": "src/app/about/page.tsx",
+        "owners": [
+          "w3-water-gauges",
+          "p6-climate-rebind"
+        ],
+        "proof": "same chain"
+      },
+      {
+        "path": "src/__tests__/services/parquet-trpc-readers.test.ts",
+        "owners": [
+          "w3-water-gauges",
+          "p6-climate-rebind"
+        ],
+        "proof": "same chain"
+      },
+      {
+        "path": "src/__tests__/services/parquet-slider-capabilities.test.ts",
+        "owners": [
+          "w3-water-gauges",
+          "p6-climate-rebind"
+        ],
+        "proof": "same chain"
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
+        "owners": [
+          "f1-registry-bridge",
+          "p4-extract",
+          "d7-legacy-shared"
+        ],
+        "proof": "p4-extract -> w3 -> f2-hardening -> f1-registry-bridge; d7-legacy-shared -> p6 -> p5 -> s-* -> p4-contract-freeze -> p4-extract"
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/config_stream_registrations.py",
+        "owners": [
+          "f1-registry-bridge",
+          "w3-water-gauges",
+          "p4-contract-freeze"
+        ],
+        "proof": "w3 -> f2-hardening -> f1-registry-bridge; p4-contract-freeze -> p4-extract -> w3"
+      },
+      {
+        "path": "services/agri-data-service/tests/parquet/test_lane_contract.py",
+        "owners": [
+          "f1-registry-bridge",
+          "w3-water-gauges",
+          "p4-contract-freeze",
+          "d7-legacy-shared"
+        ],
+        "proof": "chain as above"
+      },
+      {
+        "path": "services/agri-data-service/tests/execution/test_lane_catalogue.py",
+        "owners": [
+          "f1-executor",
+          "w3-water-gauges",
+          "d7-legacy-shared"
+        ],
+        "proof": "w3 -> f2-hardening -> f1-executor; d7-legacy-shared downstream of w3"
+      },
+      {
+        "path": "services/agri-data-service/tests/test_job_executor_service.py",
+        "owners": [
+          "f1-executor",
+          "w3-water-gauges",
+          "d7-legacy-shared"
+        ],
+        "proof": "same"
+      },
+      {
+        "path": "services/agri-data-service/tests/direct/soil/test_lane_registrations.py",
+        "owners": [
+          "f1-executor",
+          "d7-legacy-lane-modules"
+        ],
+        "proof": "d7 downstream of every f1 slice; g0-soil-cap does not edit this file"
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/products.py",
+        "owners": [
+          "f1-legacy-bridge",
+          "p4-extract",
+          "d7-legacy-lane-modules"
+        ],
+        "proof": "p4-extract -> w3 -> f2-hardening -> f1-legacy-bridge; d7-legacy-lane-modules -> d7-legacy-shared -> ... -> p4-extract"
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/AGENTS.md",
+        "owners": [
+          "f1-legacy-bridge",
+          "d7-legacy-lane-modules"
+        ],
+        "proof": "d7 downstream"
+      },
+      {
+        "path": "services/agri-data-service/tests/direct/climate/**",
+        "owners": [
+          "f1-legacy-bridge",
+          "d7-legacy-lane-modules"
+        ],
+        "proof": "d7 is downstream of every Phase-1 slice"
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/execution/lane_specs.py",
+        "owners": [
+          "f1-executor",
+          "d7-legacy-shared"
+        ],
+        "proof": "d7 downstream"
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/execution/gap_repair.py",
+        "owners": [
+          "f1-executor",
+          "d7-legacy-shared"
+        ],
+        "proof": "d7 downstream"
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/execution/job_executor_service.py",
+        "owners": [
+          "f1-executor",
+          "d7-legacy-shared"
+        ],
+        "proof": "d7 downstream"
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/execution/AGENTS.md",
+        "owners": [
+          "f1-executor",
+          "d7-legacy-shared"
+        ],
+        "proof": "d7 downstream"
+      },
+      {
+        "path": "services/agri-data-service/tests/execution/test_gap_repair.py",
+        "owners": [
+          "f1-executor",
+          "d7-legacy-shared"
+        ],
+        "proof": "d7 downstream"
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/execution/gap_repair_contract.py",
+        "owners": [
+          "f1-legacy-bridge",
+          "d7-legacy-shared"
+        ],
+        "proof": "d7 downstream"
+      },
+      {
+        "path": "services/agri-data-service/tests/execution/test_legacy_repair_exclusions.py",
+        "owners": [
+          "f1-legacy-bridge",
+          "d7-legacy-shared"
+        ],
+        "proof": "d7 downstream"
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/soil/forward.py",
+        "owners": [
+          "g0-soil-cap",
+          "d7-legacy-lane-modules"
+        ],
+        "proof": "f1-config depends_on g0-soil-cap; d7 downstream of every f1 slice"
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/soil/source.py",
+        "owners": [
+          "g0-soil-cap",
+          "d7-legacy-lane-modules"
+        ],
+        "proof": "same"
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/soil/AGENTS.md",
+        "owners": [
+          "g0-soil-cap",
+          "d7-legacy-lane-modules"
+        ],
+        "proof": "same"
+      },
+      {
+        "path": "services/agri-data-service/tests/direct/soil/test_forward_command.py",
+        "owners": [
+          "g0-soil-cap",
+          "d7-legacy-lane-modules"
+        ],
+        "proof": "same"
+      },
+      {
+        "path": "services/agri-data-service/tests/direct/soil/conftest.py",
+        "owners": [
+          "g0-soil-cap",
+          "d7-legacy-lane-modules"
+        ],
+        "proof": "same"
+      },
+      {
+        "path": "services/agri-data-service/tests/direct/soil/test_edge_probe.py",
+        "owners": [
+          "g0-soil-cap",
+          "d7-legacy-lane-modules"
+        ],
+        "proof": "same"
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/soil/products.py",
+        "owners": [
+          "p4-extract",
+          "d7-legacy-lane-modules"
+        ],
+        "proof": "d7 downstream of p4-extract"
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/AGENTS.md",
+        "owners": [
+          "g0-soil-cap",
+          "f1-legacy-bridge",
+          "d7-legacy-shared"
+        ],
+        "proof": "f1-legacy-bridge -> f1-config -> g0-soil-cap; d7 downstream"
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/<layer>/ files landed by p4-extract (burn_severity, drought, evacuation_zones, watersheds, sensors, land_context, crop_cover)",
+        "owners": [
+          "p4-extract",
+          "s-<layer>"
+        ],
+        "proof": "every s-* depends_on p4-contract-freeze -> p4-extract"
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/{burn_severity,drought,evacuation_zones,watersheds,sensors,vegetation}/ files shimmed by p4-extract",
+        "owners": [
+          "p4-extract",
+          "d7-legacy-lane-modules"
+        ],
+        "proof": "d7 downstream"
+      },
+      {
+        "path": "services/agri-data-service/tests/direct/test_{burn_severity_direct,drought,evacuation_zones_direct,watersheds_direct,sensors_direct}_*.py",
+        "owners": [
+          "p4-extract",
+          "d7-legacy-lane-modules"
+        ],
+        "proof": "p4-extract edits monkeypatch targets only; d7 downstream deletes"
+      },
+      {
+        "path": "services/agri-data-service/tests/test_direct_extraction_shims.py",
+        "owners": [
+          "p4-extract",
+          "d7-legacy-lane-modules"
+        ],
+        "proof": "d7 downstream"
+      },
+      {
+        "path": "services/agri-data-service/lanes/*.toml",
+        "owners": [
+          "w3-water-gauges and s-* (each its own files)",
+          "p5-cutover",
+          "p6-climate-rebind (meteorology.toml, shortwave.toml)"
+        ],
+        "proof": "p5 depends_on every s-* (and transitively w3); p6 depends_on p5"
+      }
+    ],
+    "tripwires": [
+      "re-verify before any launch: git rev-parse HEAD vs 85c4b8f4, a real grep of every owns entry, ListAgents for concurrent plantgeo sessions (services/strategy-knowledge/ was untracked at planning time)",
+      "G0 (g0-soil-cap) is pushed and observed before any Phase-1 authoring starts; the owner sets OPEN_METEO_API_KEY only after G0's 24 h observation and the hole-count row; clearing the key is MANDATORY before any G0 revert; a probe fault gets a probe fix, never a revert",
+      "no soil run may report requests_spent > 33, fetch_attempts > 132 or http_requests > 1,584; a soil probe fault exits 0 (unavailable/deferred); the probe adds one exit-1 path (a changed support) and legacy exit-1 paths (thin fan-out, contention timeout, blocked, census conflict, failed ladder verification) are unchanged (re-check R8); no executor build without G0 runs while OPEN_METEO_API_KEY is set, dashboard rollbacks included",
+      "owns overlap exists ONLY along the sequenced depends_on chains listed in partitions.sequenced_co_owners; never run two owners of one path concurrently; waves are derived from depends_on",
+      "quiescent pushes in one shared checkout, no worktrees (S17, O-R3-3): a service-tree commit is made only when git status --porcelain -- services/agri-data-service shows exactly that commit's files; p4-extract launches only after G4's push; p4-contract-freeze and the swarm follow it; OWNER EXCEPTION 2026-09-26: G0 alone was AUTHORED in an isolated throwaway worktree because another session held uncommitted service-tree edits -- never committed or receipted there; its diff is applied to the shared checkout after that session pushes, and the sweep, receipt and push happen there",
+      "every lanes/*.toml change, rollback flips included, needs the monitor sweep and a receipt refresh before the image can build (S13); the ledger pause verb is the only instant brake",
+      "nothing shared lives in pipeline/lanes/: the contract is pipeline/runner/contract.py and the resolver pipeline/runner/resolve.py (S14); tests/test_layer_import_contract.py must pass unedited",
+      "swarm lanes never edit framework or shared files (lane_specs.py, lane_registry.py, config_stream_registrations.py, lane_ids.py, gap_repair*.py, job_executor_service.py, jobs/*.py, ingest/open_meteo*.py, ingest/http.py, Dockerfile, .dockerignore, quality_receipt.py, pnw.json, pnw.ts, parquet_ops/*, planes/*, pipeline/runner/*, warehouse/parquet/schema.py) or another lane's files; needs go to the coordinator",
+      "no module under pipeline/lanes/** imports pipeline/direct/** (p4-extract moves the whole import closure) or another layer's pipeline/lanes/<layer>/; strategies import from foundation, warehouse (incl. field_products), ingest, pipeline/runner/contract.py, pipeline/parquet and their own layer package",
+      "new streams are registered only through the S18 mirror rows (f1-registry-bridge creates, w3 and p4-contract-freeze append); a [[streams]] slug without a registration fails the contract test",
+      "settled (partial_day = refuse) lanes on a weighted provider whose forward cron fires more than once a day implement probe_edge; write_and_recheck lanes are exempt; a forward turn fans out only when the probe shows a valued day the census still owes (S19); per-mode per-turn caps hold",
+      "strategy resolution is by import path (S14); there is no central registry file to edit",
+      "authors run no tests, lint, type-check or build; predictions are rows in evidence/phase<N>.md; one monitor sweep per phase; ruff only in the monitor sweep",
+      "scripts/check.py exits 0 on FAIL rows: judge gate rows; uv sync --locked --all-extras; AGRI_TEST_DATABASE_URL genuinely unset",
+      "commit with an explicit pathspec, flags before --; never git add conductor/ wholesale; cp + rm, never git mv; Bash heredocs containing backticks write nothing",
+      "sanic-ext resolves handler annotations at runtime: the injected LayerServiceRegistry type must be a runtime import (ML-track hotfix b1f02f95)",
+      "executor concurrency stays 1 until the G1 single-lane RSS x 2 fits with margin; DISPATCH=serial and BREAKER_MODE=legacy are the runtime rollback switches",
+      "the provisional lanes never write today (O1); agri stays observed-only",
+      "ERA5 nodes are computed by integer quarter-degree arithmetic from the cell index; never reuse soil's nearest_native_grid_point or support_chunks guard at 0.25 deg (banker's rounding false collisions)",
+      "a one-location Open-Meteo answer is a bare object: legacy execution/open_meteo_lane.py::canonical_location_document refuses it, so legacy probes ask for two locations; the new provider client accepts it",
+      "coordinate order: Era5LandSupport.resolve(longitude, latitude) is lon-first; ingest/open_meteo.py::archive_daily_request coordinates are (lat, lon)",
+      "every NASA POWER URL pins time-standard=UTC",
+      "water-gauges named day is publisher_named_day(time) on the served string verbatim; never a UTC window (the legacy validator's fetch_source_day_from_nwis uses one), never datetime.fromisoformat then convert",
+      "water-gauges-daily history floor is lane_registry.py::_MEASURED_COMPLETE_HISTORY_FLOORS['water-gauges'] = 1990-09-30, not the legacy registration's history_floor 2026-05-24; G4 waits for the history-depth row",
+      "compare mode must be unable to construct a writer",
+      "a lane writes only under its own layer=<slug>/ prefix; new climate lanes write meteorology-*/shortwave-*, never climate-field-*; water gauges writes water-gauges-daily, never water-gauges",
+      "dropping shortwave from the legacy climate writer must not change CLIMATE_FIELD_PRODUCTS membership: lane_registry.py and parquet_ops/coverage.py read it for registration and serving",
+      "after G1, REPAIR_BINDINGS holds no climate-field-*, soil-wetness-*, soil-field-* or soil-temperature-* entry; tests referencing those bindings must be re-based (NEW-1); G0 carries no repair-binding test (review P4)",
+      "writing a partition does not publish it: availability generation + pointer",
+      "classify census days by the full ladder; staleness from the provider frontier, never from today",
+      "retained-body/checkpoint keys include the retrieval instant; eligibility is per parameter",
+      "the TOML loader and region are read by a function at ingress, never a module-level snapshot (why S18 is a checked mirror, not synthesis)",
+      "no literal URL under src/** even in a comment (check:data-boundary)",
+      "TOML holds API-key variable NAMES only; a required empty key must refuse, never degrade to the free tier"
+    ],
+    "integration_slice": "i-coordinator"
+  },
+  "reviews": {
+    "phase0_loop1": {
+      "reviewer": "oh-my-claudecode:critic (opus)",
+      "reviewed_on": "2026-09-26",
+      "verdict": "CHANGES-REQUIRED",
+      "findings": "C1, C2, H1-H6, M1-M6, LOW, flag assessment (F1, F3, F7)",
+      "orchestrator_verified": "C1, C2, H1, F3",
+      "disposition": "all accepted and folded 2026-09-26 (spec section 14); LOW-4 rebutted in part: per-lane adversarial reviews stay (D10), their outputs become table rows",
+      "evidence": ".omc/research/ingestion-grill-20260926/critic-track-review-1.md"
+    },
+    "phase0_loop2": {
+      "reviewer": "oh-my-claudecode:critic (opus, fresh context)",
+      "reviewed_on": "2026-09-26",
+      "verdict": "CHANGES-REQUIRED",
+      "findings": "N1-N4 (HIGH), N5-N8 (MEDIUM), LOW list, partial dispositions of C1/H1/H4/H6/M4/M5, orchestrator note on Open-Meteo pricing, one owner question",
+      "disposition": "all accepted and folded 2026-09-26 (spec section 15); the brief's preferred N2 variant (import-time TOML synthesis) rebutted in favour of a checked mirror (S18); the one-location probe amended to two locations for legacy soil only; owner answered the question with O8 (G0 first); planner added NEW-1..NEW-6; the N4 worktree variant later rejected by the owner (O-R3-3)",
+      "evidence": ".omc/research/ingestion-grill-20260926/critic-track-review-2.md"
+    },
+    "phase0_loop3": {
+      "reviewer": "oh-my-claudecode:critic (opus, fresh context)",
+      "reviewed_on": "2026-09-26",
+      "verdict": "CHANGES-REQUIRED (G0 NOT READY)",
+      "findings": "P1 and P6 (HIGH), P2-P5 and P7 (MEDIUM), P8 and P9(i)-(v) (LOW), one owner question",
+      "disposition": "all accepted and folded 2026-09-26 (spec section 16); P9(iv) moot under O-R3-3; owner answered the question with O-R3-1 (probe faults exit 0); P3 resolved with edge_probe=None as ungated; P6 resolved by moving the import closure; planner added NEW-7..NEW-10; next review is a targeted re-check (O-R3-2)",
+      "evidence": ".omc/research/ingestion-grill-20260926/critic-track-review-3.md"
+    },
+    "phase0_loop3_recheck": {
+      "reviewer": "oh-my-claudecode:critic (opus, fresh context)",
+      "reviewed_on": "2026-09-26",
+      "scope": "targeted (O-R3-2): P1-P9 fixes and the G0 task only",
+      "verdict": "CHANGES-REQUIRED (brief-only); G0 READY-WITH-NOTES",
+      "findings": "R1-R3 (MEDIUM, must be in the brief), R4-R8 (LOW); P3, P5, P9(v) partial until R2, R4, R3; NEW-7 verified (1,568 weighted per soil day is right); rollback path via Railway dashboard UNVERIFIED; plan-tier question flagged out of scope",
+      "disposition": "all accepted and applied to the brief by the coordinator 2026-09-26 (spec section 17); reviewer ruled no further loop needed",
+      "evidence": ".omc/research/ingestion-grill-20260926/critic-track-review-3-recheck.md"
+    },
+    "g0_implementation": {
+      "reviewed_on": "2026-09-26",
+      "reviews": [
+        {
+          "reviewer": "oh-my-claudecode:critic (opus, fresh context)",
+          "verdict": "CHANGES-REQUIRED",
+          "evidence": ".omc/research/ingestion-grill-20260926/g0-critic-review.md",
+          "headline": "G1 http counter missed transport retries; G2 invalid probe stalled the lane; G3-G5 test gaps"
+        },
+        {
+          "reviewer": "/code-review high",
+          "verdict": "10 findings",
+          "evidence": ".omc/research/ingestion-grill-20260926/g0-code-review-high.md",
+          "headline": "base-rung exemption, gate ordering, absence-only outcome, fault detail, docstrings"
+        }
+      ],
+      "fix_batches": "3: batch 1 all findings; batch 2 CRITICAL regression from batch 1 (sync httpx request hook awaited by AsyncClient -> every real send TypeError, exit 1) plus redirect-aware 1,584 ceiling and real-client tests; batch 3 test quality incl. a real-clock time bomb",
+      "sweeps": "worktree: ruff format/check clean, mypy 483 files clean, pytest 4,830 passed 0 failed (PROJ_LIB/GDAL_DATA unset); shared checkout receipt over the combined tree (d24a9c59 + G0): format/lint/mypy/pytest PASS, verify_quality_receipt sha256:032d9b39... over 934 files",
+      "commit": "0df6ac50 (pushed 2026-09-27 00:54Z, owner go)",
+      "deploys": "plantgeo-job-executor, plantgeo-martin, plantgeo-parquet-api, plantgeo-main SUCCESS; plantgeo-ml and plantgeo-strategy-knowledge SKIPPED by watch paths",
+      "key_state": "OPEN_METEO_API_KEY on plantgeo-job-executor length 0 at 2026-09-27 01:00Z; 24 h observation starts with the 01:50Z soil bucket"
+    }
+  }
+}

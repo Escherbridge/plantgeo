@@ -64,3 +64,4 @@ This registry contains planned, active, and blocked work only. Completed impleme
 | [Observability log capture](tracks/observability_log_capture_20260903/plan.md) | blocked |
 
 ## [ ] Track: Publish LANDFIRE Existing Vegetation Type as a governed Parquet static_lookup lane (composition lattice + raster) [vegetation_type_landfire_evt_20260918]
+## [ ] Track: Config-driven ingestion — one TOML per lane, thin strategies + one runner, unified forward/gap-fill, cron runtime, LayerService serving, climate re-source to Open-Meteo, swarm cut-over [config_driven_ingestion_20260926]

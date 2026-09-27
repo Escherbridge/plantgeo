@@ -1,7 +1,7 @@
 ---
 type: runbook
 status: active
-updated_on: 2026-09-20
+updated_on: 2026-09-26
 ---
 
 # Current operating runbook
@@ -73,7 +73,9 @@ Three structural facts that shape any backfill or feature work:
 
 Two lanes publish nothing: `soil-survey` (never published) and `climate-field-shortwave-radiation`
 (withheld `availability_stale` on the NASA POWER provider regression, `ALLSKY_SFC_SW_DWN = -999`
-from 2026-07-01 — probe POWER before touching it).
+from 2026-07-01 — probe POWER before touching it). **CORRECTED 2026-09-26:** not a regression — UTC
+solar is SYN1deg-only and months behind by construction; lag 6 was measured on LST. See
+"2026-09-26 — ingestion grill" below.
 
 Live refresh on 2026-09-20: dense climate/soil families advanced one day and remain gapless. Open
 non-ML debt is RH 56 historical days; vegetation `2026-09-01..05`; sensors 27 days; water 11,594;
@@ -123,6 +125,7 @@ Facts preserved for the lane sessions:
 | Herbaria specimens | [PNW Herbaria admission](tracks/pnw_herbaria_source_admission_20260911/plan.md) | UBC v16.43 live as generation `956c0be7…` and **admitted** by owner decision 2026-09-19. Remaining: field-map reconciliation against the raw `occurrence.txt` row count, and the v16.42/v16.43 native-ID comparison. WTU deferred (one transfer at a time). |
 | Production release | [Production acceptance](tracks/parquet_production_acceptance_20260901/plan.md) | Cross-layer browser, freshness, schedule burn-in, conservation, rollback, and release verdict after upstream gates pass. |
 | ML and Monte Carlo runtime | [PlantGeo ML service](tracks/plantgeo_ml_service_20260918/plan.md) | Phase 1 push: `services/plantgeo-ml-service/` skeleton answers `/ready` on Railway and agri-data-service builds green with no `method/ml`, `method/monte_carlo`, or ML execution lane. ML work is owned by that track and its own `services/plantgeo-ml-service/RUNBOOK.md`; nothing ML-related is recorded here. |
+| Config-driven ingestion + Open-Meteo climate | [Config-driven ingestion](tracks/config_driven_ingestion_20260926/plan.md) | G0 (legacy soil cap) pushed `0df6ac50` 2026-09-27; 24 h observation, then the owner sets the Open-Meteo key. Next: integrate the cleanup-lane and observability-wave designs, then Phase 0 probes. See "2026-09-26 — ingestion grill". |
 | Intervention drawing & draft/proposed overlay | [Intervention drawing visibility](tracks/intervention_drawing_visibility_20260912/plan.md) | Draft/proposed overlay only; "published interventions become visible" is a separate bug gated on the publish-path fix in [Community engagement completion](tracks/community_engagement_completion_20260805/), not on this track. The contribution queue already calls `publishContribution` (sets `status: published`), so revalidate end to end before treating it as unimplemented. |
 
 ## Operating sequence
@@ -188,7 +191,8 @@ membership — `round(lat / base) // cells_per_z5`, never IEEE division) deploye
 
 Carried, still open:
 
-- **Shortwave withheld `availability_stale`** — NASA POWER regressed provider-side 2026-09-18
+- **Shortwave withheld `availability_stale`** — **SUPERSEDED 2026-09-26** (measurement artifact, see
+  "2026-09-26 — ingestion grill" below); original note: NASA POWER regressed provider-side 2026-09-18
   (`ALLSKY_SFC_SW_DWN = -999` from 2026-07-01 on); no lane change owed, probe POWER before touching
   it (memory `plantgeo-power-solar-regressed-2026-09-18`). The repair path refuses to author for a
   withheld lane — recorded design gap. Frontier jitter deeper than lag+1 is a cross-turn follow-up.
@@ -462,6 +466,142 @@ the NDVI allow-list gate is opened.
 agent-tool refusal envelope, whose only dispatch surface is session-gated and returned 401; and the
 region-mismatch refusal path itself, which requires the two region environment variables to disagree.
 
+## 2026-09-26 — ingestion grill → config-driven ingestion track
+
+**Goal.** Owner asked why the weather layers were "stuck on the 21st" and to backfill and make sure jobs run.
+That became a per-lane diagnosis, an owner grilling session, and a new track:
+[Config-driven ingestion](tracks/config_driven_ingestion_20260926/spec.md). The track makes each lane one TOML
+file plus a thin source strategy and one shared runner, runs forward and gap-fill through one code path,
+serves every layer through a keyed `LayerService` registry, moves five meteorology layers to Open-Meteo, and
+migrates every lane. Evidence and the round log: `.omc/research/ingestion-grill-20260926/ROUNDS.md`.
+
+**State — verified this session (code read or live probe):**
+
+- **Five meteorology layers are not stuck.** They publish today−5 by design
+  (`pipeline/direct/climate/products.py::CLIMATE_METEOROLOGY_PUBLICATION_LAG_DAYS`). The POWER UTC edge is
+  today−3/−4, so there was nothing to backfill.
+- **Shortwave is structurally stuck, not waiting on the provider.**
+  - The lane requests POWER `time-standard=UTC`, which comes from SYN1deg only (months behind).
+  - Every capture behind the lag of 6 is `"time_standard":"LST"`, which adds FLASHFLUX. The "2026-09-18 regression" was that mismatch.
+  - The walk only fetches frontier F and F−1 (`forward.py::CLIMATE_UNSETTLED_FRONTIER_SKIPS`). That burns the full 794-request budget, roughly 19k POWER requests a day, and never reaches the 82-day backlog.
+  - The ledger records these turns `completed`.
+- **The executor's incomplete-turn alarm is blind to most lanes.**
+  - `execution/job_executor_service.py::_unwritten_entries` reads `unwritten`, which only sensors, weather-observations and water-gauges emit.
+  - Gap repair keeps only the last authorized candidate per pass: `ensure_lane_definition` ends in `session.rollback()`, which discards the previous uncommitted `open_job_run` inside the `execution/gap_repair.py` loop. Shortwave has been "authored" daily and has never run.
+- **Water gauges had failed its buckets on USGS 503s and timeouts** (legacy WaterServices, decommission Q1 2027).
+  - Causes: a bare `asyncio.gather` over 8 tiles (`ingest/usgs_nwis.py`), and a 503 raised with no retry (`ingest/http.py`).
+  - The breaker was **superseded with owner go**: incident `4454a515-1055-4f8e-a87e-25941b46daa4`, run `935315ff`.
+  - It recovered at 17:25:28Z after one in-bucket retry (5 days, 807 rows). The executor tick reported `failed=False` at 17:25:58Z.
+  - The 2026-09-24/25 hours stay lost: the iv endpoint only returns now, and the dv path has test-only callers.
+- **The sidebar weather layers are NASA POWER, not Open-Meteo** (`src/lib/environmental/climate-field.ts::CLIMATE_FIELD_SOURCE_KEY`).
+  - Open-Meteo ERA5's edge (today−6) is *behind* POWER. Open-Meteo reaches today only by blending forecast-model output.
+  - Same-day values differ by up to ~1 °C.
+- **`OPEN_METEO_API_KEY` on `plantgeo-job-executor` is set but EMPTY** (length 0). The owner's command read nothing, and the executor redeployed at 16:45Z with it empty. Production is still on the free tier, which soil hit that day.
+- **Agent-reported, not re-verified:**
+  - an NDVI 2026-09-01..05 gap at the historical/direct handoff;
+  - NHDPlus HR (watersheds' only source) discontinued by USGS;
+  - `/admin/jobs` error column always null;
+  - shadow `mtbs-forward` duplicates burn-severity without `conflicts_with`;
+  - five lanes log successes on stderr (Railway tags them `level:error`).
+
+**Review ledger (track):**
+
+| Loop | Verdict | Record |
+| --- | --- | --- |
+| Critic loop 1 | CHANGES-REQUIRED (2 critical, 6 high) | `critic-track-review-1.md` → revised |
+| Critic loop 2 | CHANGES-REQUIRED (4 new high: import-contract test, unowned stream registration, soil budget ~5× understated, receipt collision) | `critic-track-review-2.md` → revised (spec §15; the first dispatch never landed and was re-run) |
+| Critic loop 3 (full, owner's choice) | CHANGES-REQUIRED (2 high: probe failure exits 1 into the breaker, p4-extract strands transitive imports; 5 medium); **G0 NOT READY** | `critic-track-review-3.md` → revised (spec §16) |
+| Targeted re-check (owner: not a full loop 4) | CHANGES-REQUIRED, brief-only (R1–R3 medium: deadline check, pydantic settings seam, Decimal trap); **G0 READY-WITH-NOTES**; no further loop | `critic-track-review-3-recheck.md` → applied by the coordinator (spec §17) |
+
+Owner round 3: a probe that can't answer skips its window and exits 0; the next pass is a targeted re-check; A17 rejected (p4-extract runs sequentially after G4, no worktree).
+Owner, later: **G0 alone is authored in an isolated worktree** because plantgeo-c7 holds uncommitted agri edits (its `agent/**` + `config.py` strategy-knowledge work). It is never committed or receipted there; the diff is applied to the shared checkout after c7 pushes (tripwire exception recorded in `metadata.json`).
+
+**G0 PUSHED 2026-09-27 00:54Z as `0df6ac50`** (owner go). The receipt was green over the combined tree (c7's d24a9c59 plus G0) and verified over 934 files. Deploys all `SUCCESS`: plantgeo-job-executor 00:55Z, martin 00:54Z, parquet-api 00:59Z, main 01:00Z (ml and strategy-knowledge were watch-path `SKIPPED`). `OPEN_METEO_API_KEY` on the executor was still length 0 at 01:00Z. **24 h observation starts with the 01:50Z soil bucket.** Read each soil run's report and check:
+- `requests_spent` ≤ 33;
+- `fetch_attempts` ≤ 132 and `http_requests` ≤ 1,584;
+- `probe.status` is `ok`, or `deferred` on the free tier.
+
+**Found while committing, not fixed (owner decision needed):** the repo's LOCAL git config is `Receipt Tests <receipt-tests@example.invalid>`. `tests/scripts/test_update_quality_receipt.py::_git` runs git with the inherited environment. On 2026-09-20 00:16 its fixture `git config` and `commit -qm baseline` hit the real repo; the baseline commits are now unreachable, but **29 real commits since then carry the fake author**, including c7's three. G0 was committed with `-c user.name/-c user.email` from the global identity. Fix: scrub `GIT_*` in that helper (as `test_check_git_plumbing.py` does) and `git config --local --unset user.name/user.email`.
+
+Earlier G0 history, for the record:
+- **Patch:** `.omc/research/ingestion-grill-20260926/g0-final.patch` (7 files, +1,530/−110), still in worktree `.claude/worktrees/agent-a2f7bf18f277ef43f`.
+- **Reviews:**
+  - `g0-critic-review.md`: CHANGES-REQUIRED. G1: the HTTP counter missed transport retries. G2: `invalid` stalled the lane.
+  - `g0-code-review-high.md`: 10 findings, triaged; all are fixed or left by decision (plan G0 brief §10).
+- **Fix batches:**
+  - Batch 1 was fixed.
+  - Batch 2 fixed a CRITICAL regression that batch 1 introduced: the `http_requests` hook was a sync `def` that httpx awaits, so every real send would have exited 1.
+  - Batch 3 fixed test-quality issues, including a real-clock time bomb.
+- **Final sweep, worktree, `PROJ_LIB`/`GDAL_DATA` unset:** ruff format and ruff check clean; mypy clean on 483 files; pytest 4,830 passed and 0 failed; soil 110 passed.
+- **Counters per run:** `requests_spent` ≤ 33; `weighted_calls` ≤ 1,602 (1,570 on a clean fan-out); `fetch_attempts` ≤ 132; `http_requests` ≤ 1,584 (transport retries × redirects).
+- **Next:**
+  1. plantgeo-c7 pushed d24a9c59 and the agri tree is clean. Waiting for c7 and plantgeo-fe to confirm neither is editing `services/agri-data-service/`.
+  2. Apply the patch to the shared checkout, run the receipt sweep, and commit with an explicit pathspec.
+  3. **Owner go**, push, and confirm the deploys.
+  4. Observe for 24 h, then take the hole-count row, then confirm the plan tier, then the **owner sets `OPEN_METEO_API_KEY`**.
+- **Before the key:** confirm the Open-Meteo key's tier covers the archive (Historical) API; the pricing capture says that needs the Professional plan.
+
+**Cross-session:** plantgeo-c7 owns `services/agri-data-service/` (receipt + push) until it messages that its push is on main; its push redeploys every repo-sourced service and adds a strategy-knowledge Railway service.
+
+**Owner requests, 2026-09-26 evening (being designed):**
+1. A **dedicated cleanup lane** that fires once a lane is *verified ready to supersede* its legacy path. Workflow `design-supersession-cleanup-lane` covers inventory, a 3-design panel with a judge, critic loops, then a writer into spec/plan/metadata.
+2. A **dedicated observability + soft-failure wave** with these goals:
+   - one robust logging setup ported to every lane (legacy and config);
+   - graceful soft failure, so no run breaks a lane permanently or breaks other lanes;
+   - logs for efficiency and per-source "not abusing our sources" auditability.
+   Alerting is deferred. Workflow `design-observability-soft-failure-wave` is design-only; the coordinator integrates it into the track after the cleanup-lane writer finishes (single writer on the track docs).
+
+**Decisions (owner, 2026-09-26, settled; full list: track spec §3 and memory `plantgeo-owner-decisions-2026-09-26`):**
+
+- **Five meteorology layers** (air temp mean/max/min, dew point, precipitation, relative humidity, wind): Open-Meteo **ERA5** 0.25° is the settled record, all five to **1984**.
+  - An **IFS** provisional tail ends **yesterday UTC**, which keeps the 2026-09-19 observed-only rule.
+  - Grid: the soil lane's PNW lattice (1,568 cells). The extent shrink was accepted.
+- **Solar stays POWER UTC**, with an IFS shortwave tail; a solar re-grid is mandatory. POWER soil wetness is retired.
+- **Framework shape:**
+  - one TOML per lane, with `enabled` replacing the env allow-list;
+  - a thin strategy and a fat runner; `settle(day, responses, context)` gets cross-day census from the runner;
+  - forward and gap-fill are one path;
+  - transforms are derived fact lanes rebuilt by input;
+  - serving is a .NET-style `LayerService` registry via sanic-ext DI;
+  - cron plus bounded parallelism; a split breaker;
+  - code-error alerts go to an **incident row only**;
+  - partial days are handled by a per-strategy `refuse | write_and_recheck` enum.
+- **Water gauges flip early**, ahead of the batch, to the USGS Water Data API serving a **daily mean** with a real daily-values history.
+- **Migration:** framework → two adversarial fix loops → swarm batch cut-over with a review per lane → per-lane production QA + validation → deprecation.
+- **G0: cap legacy soil first** (per-turn request cap plus probe-gating), as its own gated push, **then** the owner sets the key.
+
+**Assumptions** (highest reversal cost first):
+
+- The runner supplies cross-day census to `settle()`. Default: yes. To reverse: a strategy-interface change after the swarm codes against it, i.e. rework in 14 lanes.
+- IFS past-day values count as observed (model analysis, not projection) under the 2026-09-19 rule. Default: tail to yesterday. To reverse: drop the provisional tier (the provisional lanes, the transform and the UI styling).
+- Soil-wetness retirement is acceptable. Default: retire. To reverse: re-add a POWER GWET lane and its web consumers.
+- Open-Meteo bills at least 1.0 call per location per request below 2 weeks / 10 variables. Default: budget conservatively. To reverse: re-baseline from dashboard usage in Phase 0 (cheap).
+
+**Gotchas:**
+
+- `railway logs` filters structured fields as `@event:<name>`; a filter that begins with `-@` breaks CLI parsing; always pass `--lines` (never stream).
+- `railway ssh --service <svc> "<cmd with 'single-quoted args'>"` works: one double-quoted remote string.
+- `agri-service ops jobs-supersede-run` needs `--evidence`, `--operator` and `--apply` (dry run by default). The command printed in `tick_unhealthy` lacks them.
+- Setting Railway secrets is blocked for agents; the owner sets them.
+- Don't `grep -r` `.omc/` or `services/` (huge / `.venv`).
+- **17 `tests/direct/test_crop_cover.py` failures on this machine are environmental.** `PROJ_LIB`/`GDAL_DATA` point rasterio at PostgreSQL 17's PostGIS 3.5 `proj.db` (layout minor 2, needs ≥ 6), so every EPSG:5070 lookup fails. Sweep with `PROJ_LIB` and `GDAL_DATA` unset; don't count them as regressions. Seen 2026-09-26 in the G0 sweep; the code is unchanged from HEAD.
+- Uncommitted work is split between sessions:
+  - `.mcp.json`, `.claude/skills/add-strategy-source/` and `services/strategy-knowledge/` belong to **another session**; commit this track with an explicit pathspec only.
+  - This session's uncommitted files: `conductor/tracks/config_driven_ingestion_20260926/`, the `conductor/tracks.md` line, and this RUNBOOK section.
+
+**Continuation plan:**
+
+1. Check whether the loop-2 revision landed: `grep -n "Review loop 2 disposition" conductor/tracks/config_driven_ingestion_20260926/spec.md`. If it's absent, re-dispatch a `conductor-okf:planner` (opus) with `.omc/research/ingestion-grill-20260926/planner-brief-loop2.md`, then parse `metadata.json` with Python.
+2. Run **critic loop 3**: a fresh `oh-my-claudecode:critic` (opus) over the track, given review-1, review-2 and the decisions memory. Save the result as `critic-track-review-3.md`. On CHANGES-REQUIRED, have the planner fix it and ask the owner whether a loop 4 is wanted.
+3. **G0** as the track specifies:
+   - a sonnet executor authors the soil cap in `pipeline/direct/soil/`, running no tests;
+   - a separate monitor sweep runs pytest, ruff and a receipt refresh on a clean tree;
+   - `/code-review high` on the diff;
+   - the owner gives the go; push; confirm all four services report `SUCCESS`.
+4. The owner sets `OPEN_METEO_API_KEY` on `plantgeo-job-executor`; the agent verifies the value length is non-zero and that soil turns hit a `customer-*` host.
+5. Track Phase 0: provider probes, measured Open-Meteo usage, contract draft. Then Phase 1, per `plan.md`.
+6. Watch water-gauges. If USGS 503s re-hold it, supersede again with the recipe above (owner go). The early W3 flip is the real fix.
+
 ## Open owner items
 
 - **Object-store credential rotation (2026-09-19).** An operations agent printed
@@ -469,6 +609,10 @@ region-mismatch refusal path itself, which requires the two region environment v
   the botanical pointer advance before switching to an environment-only driver. Nothing left the
   machine. The owner chose to rotate later and asked to be reminded; rotate when no lane is
   mid-publish, then delete this bullet.
+- **`OPEN_METEO_API_KEY` (2026-09-26).** Set on `plantgeo-job-executor` but EMPTY. Set it only
+  after G0 (the legacy soil cap) deploys, or legacy soil can burn the paid 5M/month quota. The value
+  lives in the git-ignored `services/agri-data-service/.env`. It was pasted into a chat transcript on
+  2026-09-26, so consider rotating it; remove this bullet when set and verified.
 - **`OfflinePanel.tsx:52` download box** — a product decision, tracked as a known offender in
   `src/__tests__/region/footprint-literals.test.ts`.
 - **Stale worktrees under `.tmp`** — eleven from earlier sessions hold uncommitted work. Owner asked
