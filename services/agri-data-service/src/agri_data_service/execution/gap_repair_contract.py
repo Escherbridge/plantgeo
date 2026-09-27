@@ -178,6 +178,10 @@ REPAIR_EXCLUSIONS: Final[Mapping[str, str]] = MappingProxyType(
             "crop-cover-usda-maintain detects and repairs missing admitted annual editions; "
             "its bounded source captures cannot be selected by this calendar-day repair command"
         ),
+        "soil-properties": (
+            "static_lookup: one fixed ISRIC SoilGrids v2.0 release; a version stamp has no owed day to repair, "
+            "and a changed source file is a republish (soil_properties maintain reports it), not a gap"
+        ),
         "fire-risk": "forecast-originated: services/plantgeo-ml-service writes this lane, not an agri direct writer",
         "weather-forecast": (
             "forecast-originated: services/plantgeo-ml-service writes this lane, not an agri direct writer"

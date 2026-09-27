@@ -73,8 +73,9 @@ EXPECTED_CENSUS_LIST_WORKERS: Final = 3
 #: All slider registrations after completed snapshot graduation; history is in parquet_ops/AGENTS.md.
 #: Unchanged by the 2026-09-19 `fire-risk`/`weather-forecast` registrations: both are written by
 #: services/plantgeo-ml-service and are excluded in `NON_SLIDER_REGISTERED_LAYERS` until a
-#: `kind=forecast` census exists and that publisher is warm.
-EXPECTED_REGISTERED_CENSUS_LANES: Final = 34
+#: `kind=forecast` census exists and that publisher is warm. 35 since `soil-properties` (a
+#: `static_lookup` SoilGrids release, registered 2026-09-27) joined the census like `watersheds`.
+EXPECTED_REGISTERED_CENSUS_LANES: Final = 35
 
 #: Every registered physical lane must report all four serving rungs.
 EXPECTED_CENSUS_RUNG_ROWS: Final = EXPECTED_REGISTERED_CENSUS_LANES * len(ZOOM_TIERS)

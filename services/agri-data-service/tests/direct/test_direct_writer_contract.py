@@ -79,6 +79,7 @@ WRITER_MODULES: Final[dict[str, str]] = {
     "fire_perimeters": "agri_data_service.pipeline.direct.fire_perimeters.forward",
     "sensors": "agri_data_service.pipeline.direct.sensors.forward",
     "soil": "agri_data_service.pipeline.direct.soil.forward",
+    "soil_properties": "agri_data_service.pipeline.direct.soil_properties.forward",
     "vegetation": "agri_data_service.pipeline.direct.vegetation.forward",
     "watersheds": "agri_data_service.pipeline.direct.watersheds.forward",
     "weather_observations": "agri_data_service.pipeline.direct.weather_observations.forward",

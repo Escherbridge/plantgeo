@@ -65,6 +65,7 @@ from agri_data_service.pipeline.direct.soil.products import (
     ERA5_LAND_ARCHIVE_PUBLICATION_LAG_DAYS,
     SOIL_FIELD_PRODUCTS,
 )
+from agri_data_service.pipeline.direct.soil_properties.watermark import read_soil_properties_source_watermark
 from agri_data_service.pipeline.direct.vegetation.products import VEGETATION_DIRECT_WRITER_START_DAY
 from agri_data_service.pipeline.direct.watersheds.watermark import read_watersheds_source_watermark
 from agri_data_service.pipeline.lanes.calendar import export_calendar_version
@@ -1180,6 +1181,20 @@ _REFERENCE_DATA_REGISTRATIONS: Final = (
         floor_basis=(
             "USDA CDL 2022 first admitted edition, published 2023-01-30; the source-specific "
             "annual release calendar owns capture and repair, not a daily exporter."
+        ),
+    ),
+    LaneRegistration(
+        slug="soil-properties",
+        adapter=_source_direct_refusal("agri_data_service.pipeline.direct.soil_properties"),
+        history_floor=date(2020, 6, 2),
+        publication_lag_days=0,
+        nature="static_lookup",
+        watermark=read_soil_properties_source_watermark,
+        floor_basis=(
+            "ISRIC SoilGrids v2.0 (CC-BY 4.0), one fixed release. The partition day is a VERSION STAMP: the "
+            "latest Last-Modified day across the 30 property-depth VRTs (2020-06-02; the three ocd VRTs are "
+            "2020-05-26), pinned per file in pipeline/direct/soil_properties/products.py. One-off operator "
+            "publication; a changed file is a new release, never an owed day."
         ),
     ),
 )
