@@ -1,10 +1,14 @@
-"""The SSURGO binding of the soil-survey source protocol: United States, and no pull implemented.
+"""The SSURGO binding of the soil-survey source protocol: United States, and no LIVE pull implemented.
 
 SSURGO is what the PNW manifest binds `soil-survey` to, and this module is where that claim now
-lives. The pull itself does NOT exist: the Postgres-era ingest module was retired in the 2026-09
-cleanup and no source-direct SSURGO lane has been admitted since
-(`pipeline/parquet/lane_registry.py` refuses the retired database watermark in as many words).
-See `AGENTS.md` in this directory, section "Why the pull raises".
+lives. The live per-region pull below does NOT exist: the Postgres-era ingest module was retired in
+the 2026-09 cleanup, and `pipeline/parquet/lane_registry.py` still refuses this lane's retired
+database watermark in as many words. As of the 2026-09-27 SSURGO port, `pipeline/direct/
+soil_survey/__main__.py` runs an offline, explicit capture-and-candidate CLI against the same USDA
+source, but that CLI answers no `SoilSurveySource.fetch_release` call and is registered as no lane
+-- it produces local, unpublished receipts an operator stages and admits by hand (`AGENTS.md`, "Why
+the pull raises"). This binding still has nothing to return until a release is admitted and wired
+back into this protocol, which is explicitly out of scope for the acquisition slice.
 """
 
 from __future__ import annotations
@@ -30,7 +34,10 @@ SSURGO_SOURCE_SLUG: Final = "ssurgo"
 #: not this deployment's footprint (`foundation/region/AGENTS.md`, "Source coverage claims").
 SSURGO_COVERAGE: Final = SourceCoverageClaim(coverage="regional", iso_country_codes=("US",))
 
-#: Why every pull path below refuses, quoted wherever the refusal is raised.
+#: Why every pull path below refuses, quoted wherever the refusal is raised. The 2026-09-27 port
+#: added an offline capture CLI against this same source (`__main__.py`), but it is not this
+#: protocol's `fetch_release`, is not registered as a lane, and admits nothing on its own -- so this
+#: reason still holds until an operator-admitted release is wired back into the live pull below.
 SSURGO_PULL_RETIRED_REASON: Final = (
     "the SSURGO ingest module was retired with the Postgres cleanup and no source-direct SSURGO "
     "lane has been admitted; publish one before asking this binding for a release"
@@ -55,7 +62,11 @@ class SsurgoSoilSurveySource:
     coverage = SSURGO_COVERAGE
 
     async def source_vintage_watermark(self) -> date:
-        """Refuse: SSURGO's `sacatalog.saverest` watermark has no producer in this tree today."""
+        """Refuse: this protocol has no LIVE producer for SSURGO's `sacatalog.saverest` watermark.
+
+        The offline capture CLI (`__main__.py`) records a `saverest` per area it captures, but that
+        receipt is not wired back into this per-region method.
+        """
         raise SsurgoPullRetiredError(SSURGO_PULL_RETIRED_REASON)
 
     async def fetch_release(

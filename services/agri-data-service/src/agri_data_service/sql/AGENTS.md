@@ -174,6 +174,25 @@ number, which passes; ratchet the baseline down in the same commit so the ground
 gained is held. It is advisory and ad-hoc (the owner removed build gates); it
 runs under `scripts/check.py`, not as a deploy gate.
 
+## Non-PostgreSQL dialects
+
+Not every file under this tree runs against this service's own PostgreSQL database. The
+2026-09-27 SSURGO native-geometry port added `pipeline/ssurgo_{summary,keys,page,
+area_inventory}.sql`, which are T-SQL and run remotely against USDA Soil Data Access
+(`Tabular/post.rest`), not this service's database at all; a later slice adds a DuckDB-spatial
+pair under `planes/` for serving and another under `pipeline/` for offline preparation. All four
+conventions above still apply regardless of dialect -- one statement per file, the documented
+header, `load_query_sql()` at import time, exactly one call site -- and each such file's header
+carries an explicit `-- Dialect:` line so a reader never assumes PostgreSQL/SQLAlchemy semantics
+where none apply. What does **not** apply across the T-SQL files: they have no bind-parameter path
+into USDA's POST endpoint, so they use validated literal substitution (`str.format`) instead of
+`:name` binds, and their query bodies are hashed into capture receipts with every `--` comment
+line stripped first (`pipeline/direct/soil_survey/source.py::query_body`), so a header can be
+freely rewritten without ever invalidating an existing receipt. `test_no_phantom_bind_params` still
+applies to them exactly as documented above -- a stray colon-word in a walkthrough comment is a
+mistake in prose, not a `.format()` placeholder, and the same "space after the colon" rule keeps
+it safe.
+
 ## Where these queries sit in the lane contract
 
 The observed-day census, the coverage reconciliation and the agent proximity queries are all steps in

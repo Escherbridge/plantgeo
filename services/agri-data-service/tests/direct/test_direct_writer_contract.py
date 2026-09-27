@@ -96,11 +96,16 @@ NON_WRITER_MODULES: Final[dict[str, str]] = {
     "`tables_by_publisher_day` and `merge_water_gauges_day`, which the water-gauges gap-fill lane "
     "calls. It has no `parser()`, no turn, and no bounded run to report an outcome for, so every "
     "field of a DirectWriterContract would be vacuous.",
-    "soil_survey": "the SSURGO source-protocol binding only (`pipeline/direct/soil_survey/"
-    "source_protocol.py`, `ssurgo.py`) -- the Postgres-era SSURGO ingest module was retired in the "
-    "2026-09 cleanup and no source-direct SSURGO forward lane has been admitted since "
-    "(`pipeline/parquet/lane_registry.py` refuses its retired watermark). No `forward.py`, no "
-    "`parser()`, no turn to report an outcome for.",
+    "soil_survey": "the SSURGO source-protocol binding (`pipeline/direct/soil_survey/"
+    "source_protocol.py`, `ssurgo.py`) plus, since the 2026-09-27 native-geometry port, an offline "
+    "capture-and-candidate CLI (`__main__.py`) that acquires a static USDA release outside any "
+    "scheduled turn -- see its AGENTS.md. Neither is a forward writer: the protocol binding has no "
+    "turn to report an outcome for, and the CLI's `areas`/`capture` verbs are dry-run-by-default "
+    "one-off invocations against an explicit `--area`, not a bounded day/bbox lane the "
+    "DirectWriterContract vocabulary describes. `pipeline/parquet/lane_registry.py` still refuses "
+    "this lane's retired database watermark, and nothing registers the CLI as a scheduled lane. Its "
+    "package `__init__.py` re-exports neither module, so `parser()` is unreachable at "
+    "`import agri_data_service.pipeline.direct.soil_survey` exactly as this check requires.",
 }
 
 #: The seven writers whose upstream really is bounded by `INGEST_BBOX`. Derived from each writer's

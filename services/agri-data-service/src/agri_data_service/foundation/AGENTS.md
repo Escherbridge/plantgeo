@@ -24,3 +24,15 @@ overriding the general test for this one package. It also does I/O (`load_region
 `PLANTGEO_REGION` and, lazily, `<slug>.json`), against this directory's own "no I/O" responsibility
 line above -- same ruling. `foundation/region/__init__.py`'s docstring carries the matching note
 rather than asserting conformance it does not have.
+
+## Ruled exception: `foundation/soil_survey/`
+
+`soil_survey` fails criterion 4 the same way `region` does: it names a domain (USDA SSURGO), not a
+mechanism. It sits here anyway because a future `pipeline/lanes/**` strategy must never import
+`pipeline/direct/**` (`spec.md` l.307, S14), and the SSURGO capture/candidate receipts are read by
+`planes/`, `interface/http/`, `pipeline/validation/` and the acquisition CLI alike -- exactly
+criterion 3's "used by two or more layers" -- while importing nothing beyond stdlib and `pydantic`,
+so criteria 1-2 hold without an exception. Ported from
+`archive/freshness-integrated-candidate-20260914` during the 2026-09-27 SSURGO native-geometry
+port; see `pipeline/direct/soil_survey/AGENTS.md` for the acquisition CLI this package's receipts
+back.
