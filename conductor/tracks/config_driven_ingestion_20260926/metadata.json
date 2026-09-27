@@ -4458,6 +4458,27 @@
       "rounds": "round 0: logs-first spine chosen (43 vs minimal-envelope 41 vs ledger-first 39), borrowing from both; round 1: 54 findings, all disposed (revision 1); round 2: 40 findings (1 CRITICAL, 9 HIGH, 18 MEDIUM, 12 LOW), all disposed (revision 2; spec 19.2)",
       "disposition": "written into spec 3.6/4.9/19, plan Phase 0W and 1D, and metadata partitions 2026-09-27 at HEAD d37c202f with the owner answers WQ-1..WQ-7 (WQ-3 folds GL-6 into f1-executor; WQ-4 declines the pools, reserves and the pool brake) and the publication-debt alignment; revision 2 has not been re-reviewed as a whole; its next adversarial passes are the per-push reviews (reviews.phase0_gl1..phase0_gl5) and, for the folded ladder, the Phase-1/2 reviews of f1-executor",
       "evidence": ".omc/research/ingestion-grill-20260926/observability-wave-design.md"
+    },
+    "phase0_gl1": {
+      "reviewed_on": "2026-09-27",
+      "reviews": [
+        {
+          "reviewer": "/code-review high (opus, separate context)",
+          "verdict": "CHANGES-REQUIRED",
+          "evidence": ".omc/research/wave-o-20260927/gl1-code-review-high.json",
+          "headline": "3 HIGH: log call could raise into the caller (processors not fail-open); operator summary on every unarmed exit; sweep red on all four gates"
+        },
+        {
+          "reviewer": "security review (opus, oh-my-claudecode:security-reviewer)",
+          "verdict": "CHANGES-REQUIRED",
+          "evidence": ".omc/research/wave-o-20260927/gl1-security-review.json",
+          "headline": "1 HIGH: Sanic dictConfig handlers bypassed the redacting bridge; MEDIUM: Authorization credential, _-prefixed query params, dict keys, multi-line SQL blocks, key-name set"
+        }
+      ],
+      "fix_batches": "1: every HIGH/MEDIUM applied (.omc/research/wave-o-20260927/gl1-fix-batch.md); skipped with reason: router suffix-level rule (design doc not reachable from the worktree) and the SANIC_DEBUG/echo=True bypass (db/engine.py is outside o1's partition; recorded as a known gap in foundation/observability/AGENTS.md)",
+      "sweep": "on 14abe742: format, lint, mypy, pytest (272 s) PASS; receipt sha256:451f271b over 976 files",
+      "pushed": "f2a27473 at 2026-09-27 20:20Z (owner: 'merge the prs in we want to test things live'; the G0 24 h precondition and the ~500-line seam split were waived by that go; non-test diff 2,900 lines)",
+      "verdict": "LANDED; smoke read row 3 PASS (evidence/phase0.md §GL-1)"
     }
   }
 }

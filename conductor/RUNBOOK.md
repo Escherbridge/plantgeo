@@ -125,7 +125,7 @@ Facts preserved for the lane sessions:
 | Herbaria specimens | [PNW Herbaria admission](tracks/pnw_herbaria_source_admission_20260911/plan.md) | UBC v16.43 live as generation `956c0be7…` and **admitted** by owner decision 2026-09-19. Remaining: field-map reconciliation against the raw `occurrence.txt` row count, and the v16.42/v16.43 native-ID comparison. WTU deferred (one transfer at a time). |
 | Production release | [Production acceptance](tracks/parquet_production_acceptance_20260901/plan.md) | Cross-layer browser, freshness, schedule burn-in, conservation, rollback, and release verdict after upstream gates pass. |
 | ML and Monte Carlo runtime | [PlantGeo ML service](tracks/plantgeo_ml_service_20260918/plan.md) | Phase 1 push: `services/plantgeo-ml-service/` skeleton answers `/ready` on Railway and agri-data-service builds green with no `method/ml`, `method/monte_carlo`, or ML execution lane. ML work is owned by that track and its own `services/plantgeo-ml-service/RUNBOOK.md`; nothing ML-related is recorded here. |
-| Config-driven ingestion + Open-Meteo climate | [Config-driven ingestion](tracks/config_driven_ingestion_20260926/plan.md) | G0 (legacy soil cap) pushed `0df6ac50` 2026-09-27; 24 h observation, then the owner sets the Open-Meteo key. Next: integrate the cleanup-lane and observability-wave designs, then Phase 0 probes. See "2026-09-26 — ingestion grill". |
+| Config-driven ingestion + Open-Meteo climate | [Config-driven ingestion](tracks/config_driven_ingestion_20260926/plan.md) | Executing. G0 is live (`0df6ac50`); the owner sets the Open-Meteo key after 2026-09-28 01:50Z. Wave O GL-1 is live (`f2a27473`); GL-2 is next. Soil-survey port: P1 and the census fix are live; Freeze 2, then P2. See "2026-09-26 — ingestion grill". |
 | Intervention drawing & draft/proposed overlay | [Intervention drawing visibility](tracks/intervention_drawing_visibility_20260912/plan.md) | Draft/proposed overlay only; "published interventions become visible" is a separate bug gated on the publish-path fix in [Community engagement completion](tracks/community_engagement_completion_20260805/), not on this track. The contribution queue already calls `publishContribution` (sets `status: published`), so revalidate end to end before treating it as unimplemented. |
 
 ## Operating sequence
@@ -587,22 +587,19 @@ Earlier G0 history, for the record:
 - Setting Railway secrets is blocked for agents; the owner sets them.
 - Don't `grep -r` `.omc/` or `services/` (huge / `.venv`).
 - **17 `tests/direct/test_crop_cover.py` failures on this machine are environmental.** `PROJ_LIB`/`GDAL_DATA` point rasterio at PostgreSQL 17's PostGIS 3.5 `proj.db` (layout minor 2, needs ≥ 6), so every EPSG:5070 lookup fails. Sweep with `PROJ_LIB` and `GDAL_DATA` unset; don't count them as regressions. Seen 2026-09-26 in the G0 sweep; the code is unchanged from HEAD.
-- Uncommitted work is split between sessions:
-  - `.mcp.json`, `.claude/skills/add-strategy-source/` and `services/strategy-knowledge/` belong to **another session**; commit this track with an explicit pathspec only.
-  - This session's uncommitted files: `conductor/tracks/config_driven_ingestion_20260926/`, the `conductor/tracks.md` line, and this RUNBOOK section.
+**2026-09-27 evening: execution started (owner: "end planning and start executing"; "merge the prs in, we want to test things live").**
+Pushed from isolated worktrees under `.claude/worktrees/`, rebased onto main each time with a fresh receipt:
+- `d060dd2b`: soil-properties registration shell, for the soil data-plane session (owner decision D1).
+- `14abe742`: soil-survey port P1, SSURGO acquisition, dark (PR #12).
+- `f2a27473`: **Wave O GL-1** logging core (PR #11). Row 3 secret probe PASS; lane lines now carry a JSON `level`, so the old `[ERRO]` tags on success lines are gone. Evidence in `evidence/phase0.md`.
+- `e6e8ee40`: soil-survey census tiling. The Go-1 pilot found the full-envelope census times out at SDA's 30 s; it now runs 2° tiles sequentially. Live re-run from the merged code, 20:33Z: 40 tiles, **264 PNW survey areas**, slowest tile 22.6 s, 9 min 13 s wall, `outcome=censused`.
+
+Go-1 pilot (local, read-only, SDA): 2 areas and 11,421 rows captured, 0 invalid geometries, about 8.2 GB estimated for the full region. Report: `.omc/research/soil-survey-pilot-20260927/GO-1-REPORT.md`.
 
 **Continuation plan:**
-
-1. Check whether the loop-2 revision landed: `grep -n "Review loop 2 disposition" conductor/tracks/config_driven_ingestion_20260926/spec.md`. If it's absent, re-dispatch a `conductor-okf:planner` (opus) with `.omc/research/ingestion-grill-20260926/planner-brief-loop2.md`, then parse `metadata.json` with Python.
-2. Run **critic loop 3**: a fresh `oh-my-claudecode:critic` (opus) over the track, given review-1, review-2 and the decisions memory. Save the result as `critic-track-review-3.md`. On CHANGES-REQUIRED, have the planner fix it and ask the owner whether a loop 4 is wanted.
-3. **G0** as the track specifies:
-   - a sonnet executor authors the soil cap in `pipeline/direct/soil/`, running no tests;
-   - a separate monitor sweep runs pytest, ruff and a receipt refresh on a clean tree;
-   - `/code-review high` on the diff;
-   - the owner gives the go; push; confirm all four services report `SUCCESS`.
-4. The owner sets `OPEN_METEO_API_KEY` on `plantgeo-job-executor`; the agent verifies the value length is non-zero and that soil turns hit a `customer-*` host.
-5. Track Phase 0: provider probes, measured Open-Meteo usage, contract draft. Then Phase 1, per `plan.md`.
-6. Watch water-gauges. If USGS 503s re-hold it, supersede again with the recipe above (owner go). The early W3 flip is the real fix.
+1. G0: after 2026-09-28 01:50Z, read the `soil_forward_complete` lines (`requests_spent` ≤ 33, probe ok or deferred) and take the hole-count row. The owner confirms the key's Open-Meteo tier (the Historical API needs Professional), then sets `OPEN_METEO_API_KEY`. The agent checks its length only.
+2. Wave O GL-2 (`o3-ingest-meter`, plan §0W.2), then GL-3 to GL-5. Each is author → one sweep → code and security review → one fix batch → rebase, receipt and push.
+3. Soil-survey: Freeze 2 from the pilot numbers, then P2 (prepare, stage and validate, with the Q4 label-and-serve-always rule), P3 serving, P4 web. Go-3 bucket writes need their own go.
 
 ## Open owner items
 
