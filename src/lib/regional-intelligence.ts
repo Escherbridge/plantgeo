@@ -37,6 +37,7 @@ export const REGIONAL_TOOL_EVIDENCE_SOURCES = [
   "soil-phh2o", "soil-soc", "soil-nitrogen", "soil-bdod", "soil-cec", "soil-ocd",
   "botanical-occurrences", "botanical-richness", "botanical-collection-effort", "gbif-occurrences",
   "demand-heatmap", "strategy-recommendations", "fire-risk", "weather-forecast", "groundwater", "land-context",
+  "strategy-knowledge",
 ] as const;
 
 export const REGIONAL_CLAIM_EVIDENCE_SOURCES = [
@@ -51,10 +52,28 @@ export type RegionalClaimEvidenceSource =
 export const EVIDENCE_ORIGINS = [
   "warehouse",
   "web",
+  "literature",
   "model_inference",
 ] as const;
 
 export type EvidenceOrigin = (typeof EVIDENCE_ORIGINS)[number];
+
+/** Literature tools bridged from agri-data-service; never measured surfaces. See `src/lib/server/services/AGENTS.md` §strategy-knowledge. */
+export const STRATEGY_KNOWLEDGE_TOOLS = [
+  "search_environmental_strategies",
+  "get_environmental_strategies",
+  "search_strategy_research_findings",
+] as const;
+
+/** The one evidenceSource a literature-origin claim carries. */
+export const STRATEGY_KNOWLEDGE_EVIDENCE_SOURCE = "strategy-knowledge";
+
+/** `evidence_domain` stamped on every strategy-knowledge payload, answered or refused. */
+export const LITERATURE_EVIDENCE_DOMAIN = "literature_reference";
+
+export function isStrategyKnowledgeTool(tool: string): boolean {
+  return (STRATEGY_KNOWLEDGE_TOOLS as readonly string[]).includes(tool);
+}
 
 /** Maximum accepted age for a published source before it is rendered as stale. */
 export const REGIONAL_EVIDENCE_MAX_AGE_MS: Record<
@@ -218,7 +237,14 @@ export interface RegionalAnalysisEvidence {
     observedDates?: string[];
     servedDates?: string[];
     location?: { lat: number; lon: number };
-    status: "observed" | "unavailable" | "refused" | "error" | "not_queried" | "governed_absence";
+    /**
+     * `answered`/`answered_no_records` are a strategy-knowledge literature lookup: cited
+     * literature, never a measurement. `answered_no_records` is a real answer with zero matching
+     * records -- not a failure -- but unlike `answered` it must never unlock the literature
+     * evidence origin (see `strategyKnowledgeAnswered`): a lookup that found nothing is not
+     * grounds to cite "published strategy literature".
+     */
+    status: "observed" | "answered" | "answered_no_records" | "unavailable" | "refused" | "error" | "not_queried" | "governed_absence";
     summary?: string;
     reason?: string;
   }[];

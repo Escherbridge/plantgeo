@@ -14,7 +14,10 @@ const mocks = vi.hoisted(() => ({
   loadEvidenceTools: vi.fn().mockResolvedValue(null),
   callEvidenceTool: vi.fn(),
 }));
-vi.mock('@/lib/server/services/regional-evidence-tools', () => ({
+vi.mock('@/lib/server/services/regional-evidence-tools', async (importOriginal) => ({
+  // Real `RegionalEvidenceArgumentError` class: ai-prompt.ts imports it for an `instanceof`
+  // check, which throws a TypeError against `undefined` if this mock drops the export.
+  ...await importOriginal<typeof import('@/lib/server/services/regional-evidence-tools')>(),
   loadRegionalEvidenceTools: mocks.loadEvidenceTools,
   callRegionalEvidenceTool: mocks.callEvidenceTool,
 }));
@@ -409,6 +412,199 @@ describe("generate_remediation_report tool wiring", () => {
     expect(mocks.callEvidenceTool.mock.calls.every((call) => call[1].as_of_day === '2024-01-02')).toBe(true);
   });
 
+  /**
+   * A 400 argument refusal from the bridge is self-correctable -- the model can retry with fixed
+   * arguments -- so it must reach the model as a bounded, fixable "refused" tool result rather
+   * than the generic "Environmental read failed" every other failure gets. See
+   * regional-evidence-tools.ts `RegionalEvidenceArgumentError` and ai-prompt.ts's catch branch.
+   */
+  it('surfaces a bounded 400 argument-error detail as a fixable refusal instead of a generic failure', async () => {
+    const { streamRegionalIntelligence } = await import('@/lib/server/services/ai-prompt');
+    const { RegionalEvidenceArgumentError } = await import('@/lib/server/services/regional-evidence-tools');
+    mocks.loadEvidenceTools.mockResolvedValue({
+      tools: [{ name: 'site_profile', description: 'Site profile', input_schema: { type: 'object' } }],
+      surfaces: [], featureSurfaces: [], valueSurfaces: [],
+    });
+    mocks.callEvidenceTool.mockRejectedValue(
+      new RegionalEvidenceArgumentError('site_profile.day: Extra inputs are not permitted'),
+    );
+    mocks.completionStream
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'bad-call', name: 'site_profile', input: { day: '2024-01-01' } }]))
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'final', name: 'remediation_report', input: validReport }]));
+    const events = [];
+    for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
+    const toolMessage = mocks.completionStream.mock.calls[1][0].messages
+      .find((message: { tool_call_id?: string }) => message.tool_call_id === 'bad-call');
+    expect(JSON.parse(toolMessage.content)).toEqual({
+      evidenceStatus: 'refused',
+      reason: 'invalid arguments: site_profile.day: Extra inputs are not permitted',
+    });
+    const audit = events.filter((event) => event.type === 'evidence').at(-1);
+    expect(audit?.evidence.toolCalls).toEqual(expect.arrayContaining([
+      expect.objectContaining({ stage: 'additional', tool: 'site_profile', status: 'refused' }),
+    ]));
+  });
+
+  /**
+   * google/gemini-2.5-flash-lite (the live map agent's model) sometimes calls a tool under its own
+   * Python calling-convention namespace, e.g. `default_api.surface_value_near_point`. The
+   * dispatcher must strip exactly that prefix -- dispatch, audit trail and budget accounting all
+   * see the canonical name -- rather than treating the whole call as an unknown tool.
+   */
+  it('strips a default_api. prefix before dispatch when the remainder is a known tool', async () => {
+    const { streamRegionalIntelligence } = await import('@/lib/server/services/ai-prompt');
+    mocks.loadEvidenceTools.mockResolvedValue({
+      tools: [{ name: 'surface_value_near_point', description: 'Selected-day values', input_schema: { type: 'object' } }],
+      surfaces: [], featureSurfaces: [], valueSurfaces: [],
+    });
+    const evidenceResult = { features: [{ served_day: '2024-05-01', properties: { cover: 0.25 } }], day_state: { state: 'published' } };
+    mocks.callEvidenceTool.mockResolvedValue(JSON.stringify(evidenceResult));
+    const grounded = factReportFixture(evidenceResult, 'additional-1', 'vegetation');
+    mocks.completionStream
+      .mockReturnValueOnce(fakeCompletionStream([{
+        id: 'prefixed', name: 'default_api.surface_value_near_point',
+        input: { surface_name: 'vegetation', day: '2024-05-01', longitude: -116.2, latitude: 43.6 },
+      }]))
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'final', name: 'remediation_report', input: grounded.transport }]));
+    const events = [];
+    const temporal = { ...minimalTemporalContext(), viewedDates: ['2024-05-01'] };
+    for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, temporal, [])) events.push(event);
+    // Dispatched under the canonical name, not the model's prefixed one.
+    expect(mocks.callEvidenceTool.mock.calls[0][0]).toBe('surface_value_near_point');
+    const audit = events.filter((event) => event.type === 'evidence').at(-1);
+    expect(audit?.evidence.toolCalls).toEqual(expect.arrayContaining([
+      expect.objectContaining({ stage: 'additional', tool: 'surface_value_near_point', status: 'observed' }),
+    ]));
+  });
+
+  it('leaves a default_api.-prefixed call unrecognised when the remainder names no offered tool', async () => {
+    const { streamRegionalIntelligence } = await import('@/lib/server/services/ai-prompt');
+    mocks.loadEvidenceTools.mockResolvedValue({ tools: [], surfaces: [], featureSurfaces: [], valueSurfaces: [] });
+    mocks.completionStream
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'unknown-call', name: 'default_api.totally_unknown_tool', input: {} }]))
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'final', name: 'remediation_report', input: validReport }]));
+    const events = [];
+    for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
+    expect(mocks.callEvidenceTool).not.toHaveBeenCalled();
+    const toolMessage = mocks.completionStream.mock.calls[1][0].messages
+      .find((message: { tool_call_id?: string }) => message.tool_call_id === 'unknown-call');
+    expect(toolMessage.content).toContain('That tool is not available');
+  });
+
+  /** A strategy-knowledge payload shaped like agri-data-service `strategy_knowledge.ask`. */
+  function literaturePayload(tool: string, records: number) {
+    return {
+      tool, evidence_domain: 'literature_reference',
+      cite_as: { evidenceOrigin: 'literature', evidenceSource: 'strategy-knowledge' },
+      claim_tier: 'literature_grounded', corpus_version: 'abc123', index_is_stale: false,
+      results: Array.from({ length: records }, (_, index) => ({ rank: index + 1, finding_id: `finding-${index}`, claim: `Reported effect ${index}.` })),
+      result_count: records, note: 'Literature-grounded strategy knowledge, NOT a measurement at this location.',
+    };
+  }
+  const reportSchemaFor = (round: number) => mocks.completionStream.mock.calls[round][0].tools
+    .find((tool: { function: { name: string } }) => tool.function.name === 'remediation_report').function.parameters;
+
+  it('gives literature lookups their own budget so they never displace measured reads', async () => {
+    const { streamRegionalIntelligence } = await import('@/lib/server/services/ai-prompt');
+    mocks.loadEvidenceTools.mockResolvedValue({ tools: [
+      { name: 'drought_history_at_point', description: 'Dated history', input_schema: { type: 'object' } },
+      { name: 'search_environmental_strategies', description: 'Literature', input_schema: { type: 'object' } },
+    ], surfaces: [], featureSurfaces: [], valueSurfaces: [] });
+    mocks.callEvidenceTool.mockImplementation(async (name: string) => JSON.stringify(name === 'search_environmental_strategies'
+      ? literaturePayload(name, 10) : { weekly_severity: [{ valid_date: '2024-01-01', severity_class: null }] }));
+    mocks.completionStream
+      .mockReturnValueOnce(fakeCompletionStream([
+        ...Array.from({ length: 5 }, (_, index) => ({ id: `literature-${index}`, name: 'search_environmental_strategies', input: { query: 'post-fire erosion', limit: 10 } })),
+        ...Array.from({ length: 13 }, (_, index) => ({ id: `history-${index}`, name: 'drought_history_at_point', input: { longitude: -116.2, latitude: 43.6 } })),
+      ]))
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'final', name: 'remediation_report', input: validReport }]));
+    const events = [];
+    for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, { ...minimalTemporalContext(), viewedDates: ['2024-01-02'] }, [])) events.push(event);
+    const audit = events.filter((event) => event.type === 'evidence').at(-1);
+    const additional = audit?.evidence.toolCalls.filter((call) => call.stage === 'additional') ?? [];
+    const literatureCalls = additional.filter((call) => call.tool === 'search_environmental_strategies');
+    expect(literatureCalls.filter((call) => call.status === 'answered' && call.source === 'strategy-knowledge')).toHaveLength(4);
+    expect(literatureCalls.filter((call) => call.status === 'not_queried')).toEqual([
+      expect.objectContaining({ reason: 'The strategy-knowledge literature budget was exhausted.' }),
+    ]);
+    const measured = additional.filter((call) => call.tool === 'drought_history_at_point');
+    expect(measured.filter((call) => call.status === 'observed')).toHaveLength(12);
+    expect(measured.filter((call) => call.status === 'not_queried')).toHaveLength(1);
+    // Literature is coordinate-free: the server never binds the point or day into it.
+    const literatureArgs = mocks.callEvidenceTool.mock.calls.filter(([name]) => name === 'search_environmental_strategies').map(([, args]) => args);
+    expect(literatureArgs).toHaveLength(4);
+    expect(literatureArgs.every((args) => !('longitude' in args) && !('as_of_day' in args))).toBe(true);
+    // The model receives every requested record, labelled for citation, with no read ID to misuse.
+    const literatureMessage = mocks.completionStream.mock.calls[1][0].messages
+      .find((message: { role: string; tool_call_id?: string }) => message.role === 'tool' && message.tool_call_id === 'literature-0');
+    const content = JSON.parse(literatureMessage.content);
+    expect(content).toMatchObject({ evidenceSource: 'strategy-knowledge', evidenceStatus: 'answered' });
+    expect(content).not.toHaveProperty('evidenceReadId');
+    expect(content.result.results).toHaveLength(10);
+  });
+
+  it('offers and accepts the literature origin only after a strategy-knowledge tool answered, pairing its source server-side', async () => {
+    const { streamRegionalIntelligence } = await import('@/lib/server/services/ai-prompt');
+    mocks.loadEvidenceTools.mockResolvedValue({ tools: [
+      { name: 'search_strategy_research_findings', description: 'Literature findings', input_schema: { type: 'object' } },
+    ], surfaces: [], featureSurfaces: [], valueSurfaces: [] });
+    mocks.callEvidenceTool.mockResolvedValue(JSON.stringify(literaturePayload('search_strategy_research_findings', 2)));
+    // Both pairing slips at once: literature without its source, and the source on an inference claim.
+    const literatureRecommendation = { ...validReport.remediation[0], evidenceOrigin: 'literature' as const };
+    const slipped = { ...validReport, remediation: [literatureRecommendation, { ...validReport.remediation[0], evidenceSource: 'strategy-knowledge' }] };
+    mocks.completionStream
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'findings', name: 'search_strategy_research_findings', input: { query: 'fuel reduction effect on fire severity' } }]))
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'report', name: 'remediation_report', input: slipped }]));
+    const events = [];
+    for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
+    // Accepted without spending the single correction.
+    expect(mocks.completionStream).toHaveBeenCalledTimes(2);
+    expect(events.filter((event) => event.type === 'report')).toEqual([{ type: 'report', report: {
+      ...validReport, remediation: [{ ...literatureRecommendation, evidenceSource: 'strategy-knowledge' }, validReport.remediation[0]],
+    } }]);
+    expect(reportSchemaFor(0)).toHaveProperty('properties.remediation.items.properties.evidenceOrigin.enum', ['web', 'model_inference']);
+    expect(reportSchemaFor(0)).not.toHaveProperty('properties.remediation.items.properties.evidenceSource');
+    expect(reportSchemaFor(1)).toHaveProperty('properties.remediation.items.properties.evidenceOrigin.enum', ['web', 'model_inference', 'literature']);
+    expect(reportSchemaFor(1)).toHaveProperty('properties.remediation.items.properties.evidenceSource.enum', ['strategy-knowledge']);
+    const audit = events.filter((event) => event.type === 'evidence').at(-1);
+    expect(audit?.evidence.toolCalls).toEqual(expect.arrayContaining([expect.objectContaining({
+      stage: 'additional', tool: 'search_strategy_research_findings', source: 'strategy-knowledge', status: 'answered',
+    })]));
+    expect(audit?.evidence.stages.find((stage) => stage.id === 'additional')?.status).toBe('completed');
+  });
+
+  it('rejects a literature claim when the strategy-knowledge lookup was refused', async () => {
+    const { streamRegionalIntelligence } = await import('@/lib/server/services/ai-prompt');
+    mocks.loadEvidenceTools.mockResolvedValue({ tools: [
+      { name: 'search_environmental_strategies', description: 'Literature', input_schema: { type: 'object' } },
+    ], surfaces: [], featureSurfaces: [], valueSurfaces: [] });
+    mocks.callEvidenceTool.mockResolvedValue(JSON.stringify({
+      tool: 'search_environmental_strategies', error: 'strategy_knowledge_not_configured',
+      refusal_detail: 'STRATEGY_KNOWLEDGE_URL is not set on this service', evidence_domain: 'literature_reference',
+      note: 'This is a REFUSAL, not an absence.',
+    }));
+    const literatureReport = { ...validReport, remediation: [{ ...validReport.remediation[0], evidenceOrigin: 'literature', evidenceSource: 'strategy-knowledge' }] };
+    mocks.completionStream
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'strategies', name: 'search_environmental_strategies', input: { query: 'fuel reduction' } }]))
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'literature-report', name: 'remediation_report', input: literatureReport }]))
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'corrected', name: 'remediation_report', input: validReport }]));
+    const events = [];
+    for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
+    expect(mocks.completionStream).toHaveBeenCalledTimes(3);
+    expect(events.filter((event) => event.type === 'report')).toEqual([{ type: 'report', report: validReport }]);
+    expect(reportSchemaFor(1)).toHaveProperty('properties.remediation.items.properties.evidenceOrigin.enum', ['web', 'model_inference']);
+    const messages = mocks.completionStream.mock.calls[2][0].messages;
+    expect(messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: 'tool', tool_call_id: 'literature-report', content: expect.stringContaining('No strategy-knowledge literature tool answered') }),
+    ]));
+    const refusal = JSON.parse(messages.find((message: { role: string; tool_call_id?: string }) => message.role === 'tool' && message.tool_call_id === 'strategies').content);
+    expect(refusal).toMatchObject({ evidenceSource: 'strategy-knowledge', evidenceStatus: 'unavailable', reason: expect.stringContaining('strategy_knowledge_not_configured') });
+    const audit = events.filter((event) => event.type === 'evidence').at(-1);
+    expect(audit?.evidence.toolCalls).toEqual(expect.arrayContaining([expect.objectContaining({
+      tool: 'search_environmental_strategies', source: 'strategy-knowledge', status: 'unavailable',
+    })]));
+  });
+
   it('follows history continuation over multiple model turns and rebinds replayed arguments on a new selection', async () => {
     const { streamRegionalIntelligence } = await import('@/lib/server/services/ai-prompt');
     mocks.loadEvidenceTools.mockResolvedValue({ tools: [{
@@ -695,6 +891,7 @@ describe("generate_remediation_report tool wiring", () => {
     const schema = mocks.completionStream.mock.calls[0][0].tools[0].function.parameters;
     expect(schema).toHaveProperty('properties.riskSummary.properties.evidenceOrigin.enum', ['model_inference']);
     expect(schema).not.toHaveProperty('properties.riskSummary.properties.evidenceReadIds');
+    // No strategy-knowledge tool answered this turn, so the literature origin is not offered.
     expect(schema).toHaveProperty('properties.remediation.items.properties.evidenceOrigin.enum', ['web', 'model_inference']);
     expect(schema).not.toHaveProperty('properties.remediation.items.properties.evidenceSource');
     expect(schema).not.toHaveProperty('properties.remediation.items.properties.evidenceReadIds');

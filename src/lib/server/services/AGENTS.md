@@ -206,6 +206,37 @@ Missing management prerequisites should produce conditional advice or a request 
 assessment, not invented livestock, feedstock, vegetation, land tenure, or soil measurements.
 See `docs/regional-agent-evidence.md` for the scientific screening references and limits.
 
+### strategy-knowledge
+
+`search_environmental_strategies`, `get_environmental_strategies` and
+`search_strategy_research_findings` (`STRATEGY_KNOWLEDGE_TOOLS` in `@/lib/regional-intelligence`)
+reach the live agent through the same bridge catalogue but are literature, not measurement
+(CONTRACT C3/C4 in `.omc/ultrapilot-strategy-integration-20260926/CONTRACT.md`):
+- Audit: an answered payload (`evidence_domain: "literature_reference"`, no `error`) with at least
+  one `result_count` record is status `answered` with source `strategy-knowledge`, and no location,
+  dates or window; a zero-record answer (the service's own `result_count`, falling back to
+  results/strategies/findings length) is `answered_no_records` -- a real, non-failure answer, but
+  never `answered`, so a lookup that found nothing can never unlock the literature evidence origin.
+  The typed refusals `strategy_knowledge_not_configured` / `_unavailable` are `unavailable`; a
+  rejected-arguments or any other error is `refused`; both keep `<code>: <detail>` as the reason.
+  `answered` and `answered_no_records` both count as admissible for stage status, so a literature-only
+  additional read (with or without records) completes the stage.
+- Never measurement: `isMeasurementRead` and `regionalFactsForRead` exclude the tools by name, so
+  literature never enters the citation manifest, measurement facts or warehouse citations.
+- Arguments pass through unbound: the server never injects the request's coordinate or day.
+- Budget: at most four literature calls per request, separate from the twelve measured reads.
+  The context reducer keeps up to ten top-level `results`/`strategies`/`findings` entries of a
+  literature payload (the tools' own `limit` ceiling); every other collection keeps eight.
+- Report gate: the literature origin is offered in the per-round report schema, and accepted by
+  `resolveProviderMeasurementReport`, only when an audit call from one of the three tools is exactly
+  `answered` (`strategyKnowledgeAnswered`) this request -- `answered_no_records` does not count.
+  Unset URL, service down, a zero-record answer, or a failed catalogue therefore leaves only
+  web/model_inference.
+- Pairing: `pairLiteratureProvenance` runs before validation. It fills a missing
+  `strategy-knowledge` source on literature claims and strips it from web/model_inference claims,
+  so a pairing slip never spends the single report correction. It never changes an origin, never
+  touches read IDs, and leaves a conflicting warehouse source for the validator to reject.
+
 ## Region identity on row reads
 
 Style review W9, S4. W9-A put `region_slug`/`region_display_name` on the coverage payload and a

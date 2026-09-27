@@ -7,10 +7,10 @@ const mocks = vi.hoisted(() => ({ load: vi.fn(), call: vi.fn() }));
 vi.mock('@/lib/server/services/regional-evidence-tools', () => ({
   loadRegionalEvidenceTools: mocks.load, callRegionalEvidenceTool: mocks.call,
 }));
-import { bindRegionalEvidenceArguments, boundedEvidence, evidenceResultStatus, prepareRegionalAnalysis, REGIONAL_ANALYSIS_PRIORITY_SURFACES, regionalEvidenceAuditCall, regionalEvidenceDay, regionalEvidenceLimitations, regionalEvidenceStageStatus, STRATEGY_SCREENING } from '@/lib/server/services/regional-analysis-workflow';
+import { bindRegionalEvidenceArguments, boundedEvidence, evidenceResultStatus, MAX_LITERATURE_RESULTS, prepareRegionalAnalysis, REGIONAL_ANALYSIS_PRIORITY_SURFACES, regionalEvidenceAuditCall, regionalEvidenceDay, regionalEvidenceLimitations, regionalEvidenceStageStatus, regionalFactsForRead, STRATEGY_SCREENING } from '@/lib/server/services/regional-analysis-workflow';
 import { analysisDateRange } from '@/lib/regional-analysis-selection';
 import { LAYER_REGISTRY } from '@/lib/map/layer-registry';
-import { REMEDIATION_REPORT_JSON_SCHEMA, normalizeProviderReport, resolveProviderMeasurementReport, remediationReportSchema, reportCitationManifest, reportSchemaForCitations, reportWarehouseEvidenceIssues } from '@/lib/server/services/remediation-report';
+import { REMEDIATION_REPORT_JSON_SCHEMA, normalizeProviderReport, pairLiteratureProvenance, resolveProviderMeasurementReport, remediationReportSchema, reportCitationManifest, reportSchemaForCitations, reportWarehouseEvidenceIssues, strategyKnowledgeAnswered } from '@/lib/server/services/remediation-report';
 import { buildRegionalMeasurementFacts } from '@/lib/server/services/regional-measurement-facts';
 
 const payload: RegionalContextPayload = {
@@ -220,6 +220,104 @@ describe('evidence audit honesty', () => {
     expect(reportWarehouseEvidenceIssues(report, payload, { ...evidence,
       toolCalls: [{ ...evidence.toolCalls[0], status: 'unavailable' }],
     })).not.toEqual([]);
+  });
+
+  it('validates a literature-origin remediation claim grounded in strategy-knowledge and keeps it warehouse-audit free', () => {
+    const literatureRecommendation = {
+      strategy: 'silvopasture' as const, title: 'Screen silvopasture against grazing capacity',
+      rationale: 'Published guidance describes stocking-rate prerequisites for this cover type.',
+      timeframe: 'long_term' as const, confidence: 'moderate' as const, consultProfessionals: ['ecologist' as const],
+      evidenceOrigin: 'literature' as const, evidenceSource: 'strategy-knowledge' as const,
+    };
+    const input = {
+      riskSummary: { level: 'low' as const, headline: 'No measured risk factors are elevated.', factors: [], evidenceOrigin: 'model_inference' as const, evidenceSources: [] },
+      observations: [], remediation: [literatureRecommendation], professionalConsultation: 'Consult an ecologist.',
+    };
+    const report = remediationReportSchema.parse(input);
+    const answered: RegionalAnalysisEvidence = { version: 1, stages: [], limitations: [], toolCalls: [
+      { id: 'additional-1', stage: 'additional', tool: 'search_environmental_strategies', source: 'strategy-knowledge', status: 'answered' },
+    ] };
+    // Never a warehouse claim, so it never enters the warehouse citation audit.
+    expect(reportWarehouseEvidenceIssues(report, payload, answered)).toEqual([]);
+    // evidenceReadIds stay warehouse-only, matching the frozen contract (C4).
+    expect(remediationReportSchema.safeParse({ ...input, remediation: [{ ...literatureRecommendation, evidenceReadIds: ['local-1'] }] }).success).toBe(false);
+    expect(resolveProviderMeasurementReport(input, [], answered).issues).toEqual([]);
+    expect(resolveProviderMeasurementReport({ ...input, remediation: [{ ...literatureRecommendation, evidenceSource: 'vegetation' }] }, [], answered).issues.length).toBeGreaterThan(0);
+  });
+
+  it('rejects the literature origin unless a strategy-knowledge tool answered this turn', () => {
+    const literatureRecommendation = {
+      strategy: 'erosion_control', title: 'Screen straw mulch on burned slopes', rationale: 'Cited studies report reduced post-fire erosion under mulch.',
+      timeframe: 'immediate', confidence: 'low', consultProfessionals: ['soil_scientist'],
+      evidenceOrigin: 'literature', evidenceSource: 'strategy-knowledge',
+    };
+    const input = {
+      riskSummary: { level: 'moderate', headline: 'Interpretation.', factors: [], evidenceOrigin: 'model_inference', evidenceSources: [] },
+      observations: [], remediation: [literatureRecommendation], professionalConsultation: 'Consult a soil scientist.',
+    };
+    const call = (status: RegionalAnalysisEvidence['toolCalls'][number]['status'], tool = 'search_strategy_research_findings'): RegionalAnalysisEvidence => ({
+      version: 1, stages: [], limitations: [], toolCalls: [{ id: 'additional-1', stage: 'additional', tool, source: 'strategy-knowledge', status }],
+    });
+    // No evidence, a refused lookup (URL unset / service down) or a non-literature call: no literature.
+    for (const evidence of [undefined, call('unavailable'), call('refused'), call('not_queried'), call('error'), call('answered', 'surface_evidence_for_selection')]) {
+      expect(strategyKnowledgeAnswered(evidence)).toBe(false);
+      expect(resolveProviderMeasurementReport(input, [], evidence).issues).toEqual([
+        expect.objectContaining({ path: ['remediation', 0, 'evidenceOrigin'], message: expect.stringContaining('No strategy-knowledge literature tool answered') }),
+      ]);
+    }
+    for (const tool of ['search_environmental_strategies', 'get_environmental_strategies', 'search_strategy_research_findings']) {
+      expect(strategyKnowledgeAnswered(call('answered', tool))).toBe(true);
+      expect(resolveProviderMeasurementReport(input, [], call('answered', tool)).issues).toEqual([]);
+    }
+    // Literature observations follow the same gate; risk stays model_inference-only either way.
+    const observation = { statement: 'Cited studies report reduced erosion under straw mulch.', evidenceOrigin: 'literature', evidenceSource: 'strategy-knowledge' };
+    expect(resolveProviderMeasurementReport({ ...input, remediation: [], observations: [observation] }, [], undefined).issues.length).toBeGreaterThan(0);
+    expect(resolveProviderMeasurementReport({ ...input, remediation: [], observations: [observation] }, [], call('answered')).issues).toEqual([]);
+    expect(resolveProviderMeasurementReport({ ...input, riskSummary: { ...input.riskSummary, evidenceOrigin: 'literature' } }, [], call('answered')).issues.length).toBeGreaterThan(0);
+  });
+
+  it('pairs the literature origin with strategy-knowledge before validation without rewriting origins or read IDs', () => {
+    const recommendation = { strategy: 'cover_cropping', title: 'Assess cover crops', rationale: 'Assess suitability.', timeframe: 'short_term', confidence: 'low', consultProfessionals: [] };
+    const input = {
+      riskSummary: { level: 'low', headline: 'Interpretation.', factors: [], evidenceOrigin: 'model_inference', evidenceSources: [] },
+      observations: [
+        { statement: 'Cited literature finding.', evidenceOrigin: 'literature' },
+        { statement: 'General reasoning.', evidenceOrigin: 'model_inference', evidenceSource: 'strategy-knowledge' },
+        { evidenceOrigin: 'warehouse', measurementFactId: 'fact-1' },
+      ],
+      remediation: [
+        { ...recommendation, evidenceOrigin: 'literature' },
+        { ...recommendation, evidenceOrigin: 'literature', evidenceSource: null },
+        { ...recommendation, evidenceOrigin: 'web', evidenceSource: 'strategy-knowledge' },
+        { ...recommendation, evidenceOrigin: 'model_inference', evidenceSource: 'strategy-knowledge', evidenceReadIds: ['local-1'] },
+        { ...recommendation, evidenceOrigin: 'literature', evidenceSource: 'vegetation' },
+      ],
+      professionalConsultation: 'Consult an agronomist.',
+    };
+    const paired = pairLiteratureProvenance(input);
+    expect(paired).toHaveProperty('observations.0.evidenceSource', 'strategy-knowledge');
+    expect(paired).not.toHaveProperty('observations.1.evidenceSource');
+    expect(paired).toHaveProperty('observations.1.evidenceOrigin', 'model_inference');
+    expect(paired).toHaveProperty('observations.2', input.observations[2]);
+    expect(paired).toHaveProperty('remediation.0.evidenceSource', 'strategy-knowledge');
+    expect(paired).toHaveProperty('remediation.1.evidenceSource', 'strategy-knowledge');
+    expect(paired).not.toHaveProperty('remediation.2.evidenceSource');
+    expect(paired).toHaveProperty('remediation.2.evidenceOrigin', 'web');
+    // Read IDs are never deleted here; the validator still rejects them on an interpretation.
+    expect(paired).toHaveProperty('remediation.3.evidenceReadIds', ['local-1']);
+    expect(paired).not.toHaveProperty('remediation.3.evidenceSource');
+    // A conflicting warehouse source is a real inconsistency: left for the validator.
+    expect(paired).toHaveProperty('remediation.4.evidenceSource', 'vegetation');
+    expect(pairLiteratureProvenance(null)).toBeNull();
+    // The two slips the model can make on pairing now validate once literature answered.
+    const answered: RegionalAnalysisEvidence = { version: 1, stages: [], limitations: [], toolCalls: [
+      { id: 'additional-1', stage: 'additional', tool: 'get_environmental_strategies', source: 'strategy-knowledge', status: 'answered' },
+    ] };
+    const slips = { ...input, observations: [], remediation: [input.remediation[0], input.remediation[2]] };
+    expect(resolveProviderMeasurementReport(slips, [], answered).issues.length).toBeGreaterThan(0);
+    const resolved = resolveProviderMeasurementReport(pairLiteratureProvenance(slips), [], answered);
+    expect(resolved.issues).toEqual([]);
+    expect(remediationReportSchema.safeParse(normalizeProviderReport(resolved.report)).success).toBe(true);
   });
 
   it('resolves only current server-authored fact selectors and preserves legacy canonical report parsing', () => {
@@ -512,10 +610,21 @@ describe('evidence audit honesty', () => {
     expect(schema).toHaveProperty('properties.riskSummary.properties.evidenceSources.maxItems', 0);
     expect(schema).not.toHaveProperty('properties.riskSummary.properties.evidenceReadIds');
     expect(schema).toHaveProperty('properties.riskSummary.required', ['level', 'headline', 'factors', 'evidenceOrigin', 'evidenceSources']);
+    // No strategy-knowledge tool answered, so the literature origin is not offered at all.
     expect(schema).toHaveProperty('properties.remediation.items.properties.evidenceOrigin.enum', ['web', 'model_inference']);
     expect(schema).not.toHaveProperty('properties.remediation.items.properties.evidenceSource');
     expect(schema).not.toHaveProperty('properties.remediation.items.properties.evidenceReadIds');
     expect(schema).toHaveProperty('properties.remediation.items.required', ['strategy', 'title', 'rationale', 'timeframe', 'confidence', 'consultProfessionals', 'evidenceOrigin']);
+    const literatureSchema = reportSchemaForCitations(manifest, undefined, { literatureAnswered: true });
+    expect(literatureSchema).toHaveProperty('properties.remediation.items.properties.evidenceOrigin.enum', ['web', 'model_inference', 'literature']);
+    expect(literatureSchema).toHaveProperty('properties.remediation.items.properties.evidenceSource.enum', ['strategy-knowledge']);
+    expect(literatureSchema).not.toHaveProperty('properties.remediation.items.properties.evidenceReadIds');
+    expect(literatureSchema).toHaveProperty('properties.remediation.items.required', ['strategy', 'title', 'rationale', 'timeframe', 'confidence', 'consultProfessionals', 'evidenceOrigin']);
+    expect(literatureSchema).toHaveProperty('properties.riskSummary.properties.evidenceOrigin.enum', ['model_inference']);
+    // The generic nonwarehouse projection follows the same gate.
+    expect(emptySchema).toHaveProperty('properties.observations.items.properties.evidenceOrigin.enum', ['web', 'model_inference']);
+    expect(reportSchemaForCitations(emptyManifest, undefined, { literatureAnswered: true }))
+      .toHaveProperty('properties.observations.items.properties.evidenceOrigin.enum', ['web', 'literature', 'model_inference']);
     expect(schema).toHaveProperty('properties.observations.items.anyOf.0.properties.evidenceSource.enum', ['soil-field-vpd']);
     expect(schema).toHaveProperty('properties.observations.items.anyOf.0.properties.evidenceReadIds.items.enum', ['temporal-vpd']);
     const claimFields = [
@@ -690,5 +799,136 @@ describe('evidence audit honesty', () => {
     ] };
     expect(reportWarehouseEvidenceIssues(report, payload, combined)).toEqual([]);
     expect(reportWarehouseEvidenceIssues(report, payload, { ...combined, toolCalls: [{ ...combined.toolCalls[0], sources: ['interventions', 'fire-detections'] }] }).length).toBeGreaterThan(0);
+  });
+});
+
+describe('strategy-knowledge literature evidence', () => {
+  const literature = (records: number, key: 'results' | 'strategies' = 'results') => ({
+    tool: 'search_environmental_strategies', evidence_domain: 'literature_reference',
+    cite_as: { evidenceOrigin: 'literature', evidenceSource: 'strategy-knowledge' },
+    claim_tier: 'literature_grounded', corpus_version: 'abc123', index_is_stale: false,
+    [key]: Array.from({ length: records }, (_, index) => ({ rank: index + 1, strategy_id: `strategy-${index}`, name: `Strategy ${index}` })),
+    result_count: records, note: 'Literature-grounded strategy knowledge, NOT a measurement at this location.',
+  });
+  const refusal = (code: string) => ({
+    tool: 'search_strategy_research_findings', error: code, refusal_detail: 'STRATEGY_KNOWLEDGE_URL is not set on this service',
+    evidence_domain: 'literature_reference', note: 'This is a REFUSAL, not an absence.',
+  });
+
+  it('classifies an answered literature payload as answered, never observed or unavailable', () => {
+    for (const tool of ['search_environmental_strategies', 'get_environmental_strategies', 'search_strategy_research_findings']) {
+      const status = evidenceResultStatus(literature(3), tool);
+      expect(status.status).toBe('answered');
+      expect(status.summary).toContain('3 strategy-knowledge literature records returned (corpus abc123)');
+      expect(status).not.toHaveProperty('reason');
+    }
+    // Detected by evidence domain alone, and strategies records count like results.
+    expect(evidenceResultStatus(literature(2, 'strategies')).status).toBe('answered');
+    // An empty answer is still an answer -- never a claim that no strategy exists -- but it is
+    // `answered_no_records`, not `answered`: a zero-record lookup must never unlock the literature
+    // evidence origin (strategyKnowledgeAnswered keys on the exact `answered` status).
+    expect(evidenceResultStatus(literature(0), 'search_environmental_strategies')).toEqual({
+      status: 'answered_no_records', summary: expect.stringContaining('not evidence that no strategy exists'),
+    });
+    // Rows-shaped keys never turn a literature payload into a measurement.
+    expect(evidenceResultStatus({ ...literature(1), features: [{ observed_day: '2026-09-01' }] }, 'search_environmental_strategies').status).toBe('answered');
+  });
+
+  it('never lets a zero-record literature answer unlock the literature evidence origin', () => {
+    const zeroRecordAnswer: RegionalAnalysisEvidence = { version: 1, stages: [], limitations: [], toolCalls: [
+      regionalEvidenceAuditCall('additional-1', 'additional', 'search_environmental_strategies', { query: 'x' }, literature(0)),
+    ] };
+    expect(zeroRecordAnswer.toolCalls[0].status).toBe('answered_no_records');
+    expect(strategyKnowledgeAnswered(zeroRecordAnswer)).toBe(false);
+    const literatureRecommendation = {
+      strategy: 'erosion_control' as const, title: 'Screen straw mulch on burned slopes', rationale: 'Cited studies report reduced post-fire erosion under mulch.',
+      timeframe: 'immediate' as const, confidence: 'low' as const, consultProfessionals: ['soil_scientist' as const],
+      evidenceOrigin: 'literature' as const, evidenceSource: 'strategy-knowledge' as const,
+    };
+    const input = {
+      riskSummary: { level: 'moderate' as const, headline: 'Interpretation.', factors: [], evidenceOrigin: 'model_inference' as const, evidenceSources: [] },
+      observations: [], remediation: [literatureRecommendation], professionalConsultation: 'Consult a soil scientist.',
+    };
+    // Rejected by the validator, exactly like an unanswered/refused lookup.
+    expect(resolveProviderMeasurementReport(input, [], zeroRecordAnswer).issues).toEqual([
+      expect.objectContaining({ path: ['remediation', 0, 'evidenceOrigin'], message: expect.stringContaining('No strategy-knowledge literature tool answered') }),
+    ]);
+    // Excluded from the offered schema enum too.
+    const manifest = reportCitationManifest(payload, zeroRecordAnswer);
+    expect(reportSchemaForCitations(manifest, undefined, { literatureAnswered: strategyKnowledgeAnswered(zeroRecordAnswer) }))
+      .toHaveProperty('properties.remediation.items.properties.evidenceOrigin.enum', ['web', 'model_inference']);
+    // A one-record answer on the same shape is allowed.
+    const oneRecordAnswer: RegionalAnalysisEvidence = { version: 1, stages: [], limitations: [], toolCalls: [
+      regionalEvidenceAuditCall('additional-1', 'additional', 'search_environmental_strategies', { query: 'x' }, literature(1)),
+    ] };
+    expect(strategyKnowledgeAnswered(oneRecordAnswer)).toBe(true);
+    expect(resolveProviderMeasurementReport(input, [], oneRecordAnswer).issues).toEqual([]);
+  });
+
+  it('keeps literature refusals unavailable or refused with their reason', () => {
+    for (const code of ['strategy_knowledge_not_configured', 'strategy_knowledge_unavailable']) {
+      const status = evidenceResultStatus(refusal(code), 'search_strategy_research_findings');
+      expect(status.status).toBe('unavailable');
+      expect(status.reason).toBe(`${code}: STRATEGY_KNOWLEDGE_URL is not set on this service`);
+    }
+    expect(evidenceResultStatus(refusal('strategy_knowledge_rejected_arguments'), 'get_environmental_strategies').status).toBe('refused');
+    expect(evidenceResultStatus({ evidence_domain: 'literature_reference', state: 'strategy_knowledge_unavailable', note: 'Service down.' }))
+      .toEqual({ status: 'unavailable', reason: 'strategy_knowledge_unavailable: Service down.' });
+    expect(evidenceResultStatus({ error: 'x'.repeat(400) }, 'search_environmental_strategies').reason?.length).toBeLessThanOrEqual(240);
+  });
+
+  it('audits literature as coordinate-free strategy-knowledge evidence that persists and completes its stage', () => {
+    const args = { query: 'stabilise burned slopes', longitude: -118, latitude: 44, day: '2026-09-01' };
+    const answered = regionalEvidenceAuditCall('additional-1', 'additional', 'search_environmental_strategies', args, literature(2));
+    expect(answered).toEqual({
+      id: 'additional-1', stage: 'additional', tool: 'search_environmental_strategies', source: 'strategy-knowledge',
+      status: 'answered', summary: expect.stringContaining('2 strategy-knowledge literature records'),
+    });
+    const refused = regionalEvidenceAuditCall('additional-2', 'additional', 'search_strategy_research_findings', {}, refusal('strategy_knowledge_not_configured'));
+    expect(refused).toMatchObject({ source: 'strategy-knowledge', status: 'unavailable', reason: expect.stringContaining('strategy_knowledge_not_configured') });
+    expect(readRegionalAnalysisEvidence({ version: 1, stages: [], toolCalls: [answered, refused], limitations: [] })).not.toBeNull();
+    expect(regionalEvidenceStageStatus([answered])).toBe('completed');
+    expect(regionalEvidenceStageStatus([answered, refused])).toBe('partial');
+    expect(regionalEvidenceStageStatus([refused])).toBe('unavailable');
+    // A zero-record literature answer is a completed stage read (not a failure), same as `answered`.
+    const emptyAnswered = regionalEvidenceAuditCall('additional-3', 'additional', 'search_environmental_strategies', args, literature(0));
+    expect(emptyAnswered.status).toBe('answered_no_records');
+    expect(regionalEvidenceStageStatus([emptyAnswered])).toBe('completed');
+    expect(readRegionalAnalysisEvidence({ version: 1, stages: [], toolCalls: [emptyAnswered], limitations: [] })).not.toBeNull();
+  });
+
+  it('never binds the request coordinate or day into a literature call', () => {
+    const args = { query: 'post-fire erosion', site_profile: { slope_pct: 30 }, limit: 10 };
+    for (const tool of ['search_environmental_strategies', 'get_environmental_strategies', 'search_strategy_research_findings']) {
+      expect(bindRegionalEvidenceArguments(tool, args, payload, temporal)).toEqual(args);
+      expect(bindRegionalEvidenceArguments(tool, { ...args, longitude: 1, day: 'x' }, payload, temporal)).toEqual({ ...args, longitude: 1, day: 'x' });
+    }
+  });
+
+  it('keeps literature out of measurement facts and warehouse citations by name', () => {
+    const forged = { id: 'additional-1', stage: 'additional', tool: 'search_strategy_research_findings', source: 'strategy-knowledge', status: 'observed' as const };
+    expect(regionalFactsForRead(forged, { features: [{ observed_day: '2026-09-09', properties: { value: 1, unit: 'kg' } }] })).toEqual({ facts: [], omittedFacts: 0 });
+    const evidence: RegionalAnalysisEvidence = { version: 1, stages: [], limitations: [], toolCalls: [
+      forged,
+      { ...forged, id: 'additional-2', tool: 'search_environmental_strategies', status: 'answered' },
+    ] };
+    expect(reportCitationManifest(payload, evidence).measurementReads).toEqual([]);
+    const warehouseLiterature = {
+      riskSummary: { level: 'low' as const, headline: 'Interpretation.', factors: [], evidenceOrigin: 'model_inference' as const, evidenceSources: [] },
+      observations: [{ statement: 'A literature finding.', evidenceOrigin: 'warehouse' as const, evidenceSource: 'strategy-knowledge' as const, evidenceReadIds: ['additional-1'] }],
+      remediation: [], professionalConsultation: 'Consult an agronomist.',
+    };
+    expect(reportWarehouseEvidenceIssues(warehouseLiterature, payload, evidence).length).toBeGreaterThan(0);
+  });
+
+  it('keeps up to the tools\' own ten literature records while other collections keep eight', () => {
+    expect(MAX_LITERATURE_RESULTS).toBe(10);
+    expect((boundedEvidence(literature(10)) as { results: unknown[] }).results).toHaveLength(10);
+    expect(boundedEvidence(literature(12))).toHaveProperty('results.omittedEntries', 2);
+    expect((boundedEvidence(literature(10, 'strategies')) as { strategies: unknown[] }).strategies).toHaveLength(10);
+    // The same field outside a literature payload, and nested lists inside one, keep the old bound.
+    expect(boundedEvidence({ results: Array.from({ length: 10 }, (_, index) => index) })).toHaveProperty('results.omittedEntries', 2);
+    expect(boundedEvidence({ ...literature(1), results: [{ actions: Array.from({ length: 10 }, (_, index) => index) }] }))
+      .toHaveProperty('results.0.actions.omittedEntries', 2);
   });
 });

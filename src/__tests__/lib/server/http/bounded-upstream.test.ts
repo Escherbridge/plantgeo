@@ -141,6 +141,65 @@ describe("fetchBounded cancellation", () => {
     ).rejects.toBeInstanceOf(UpstreamHttpError);
   });
 
+  /**
+   * `bodyText` lets a caller that recognises the upstream's own error shape (e.g. a 400
+   * argument-validation refusal) read it without a second network round-trip. It must ride along
+   * on a readable non-2xx body, and never appear when the body couldn't actually be read.
+   */
+  it("carries the readable body text on a non-2xx UpstreamHttpError", async () => {
+    mockedFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: "invalid_tool_arguments", detail: "day: bad value" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      })
+    );
+
+    const failure: unknown = await fetchBoundedJson(URL_UNDER_TEST, { method: "GET" }, BOUNDS).catch((error) => error);
+    expect(failure).toBeInstanceOf(UpstreamHttpError);
+    expect((failure as UpstreamHttpError).status).toBe(400);
+    expect((failure as UpstreamHttpError).bodyText).toBe(JSON.stringify({ error: "invalid_tool_arguments", detail: "day: bad value" }));
+  });
+
+  it("omits bodyText when the non-2xx body exceeded the byte cap", async () => {
+    mockedFetch.mockResolvedValue(
+      new Response("x".repeat(BOUNDS.maxBytes + 1), { status: 400, headers: { "content-type": "application/json" } })
+    );
+
+    const failure: unknown = await fetchBoundedJson(URL_UNDER_TEST, { method: "GET" }, BOUNDS).catch((error) => error);
+    expect(failure).toBeInstanceOf(UpstreamHttpError);
+    expect((failure as UpstreamHttpError).bodyText).toBeUndefined();
+  });
+
+  /**
+   * `bodyText` rides on ~15 `fetchBoundedJson` call sites, most of which just do
+   * `console.error(..., err)` on a transport failure -- they never read `.bodyText` themselves.
+   * It must stay off every enumerable-key walk (JSON.stringify, Object.keys, console.error's own
+   * util.inspect) while remaining readable through the named property for the one caller
+   * (`regional-evidence-tools.ts` `argumentErrorDetail`) that actually relays it.
+   */
+  it("hides bodyText from JSON.stringify and Object.keys while the property itself still relays the upstream's own error shape", async () => {
+    const body = JSON.stringify({ error: "invalid_tool_arguments", detail: "day: bad value" });
+    mockedFetch.mockResolvedValue(new Response(body, { status: 400, headers: { "content-type": "application/json" } }));
+
+    const failure: unknown = await fetchBoundedJson(URL_UNDER_TEST, { method: "GET" }, BOUNDS).catch((error) => error);
+    expect(failure).toBeInstanceOf(UpstreamHttpError);
+    const error = failure as UpstreamHttpError;
+    expect(JSON.parse(error.bodyText ?? "")).toEqual({ error: "invalid_tool_arguments", detail: "day: bad value" });
+    expect(Object.keys(error)).not.toContain("bodyText");
+    expect(JSON.stringify(error)).not.toContain("bad value");
+  });
+
+  it("caps the retained bodyText at 4 KiB even when the full body is within the byte bound", async () => {
+    const oversizedBody = "y".repeat(6_000);
+    mockedFetch.mockResolvedValue(new Response(oversizedBody, { status: 400, headers: { "content-type": "application/json" } }));
+
+    const failure: unknown = await fetchBoundedJson(
+      URL_UNDER_TEST, { method: "GET" }, { maxBytes: 10_000, timeoutMs: 5_000 }
+    ).catch((error) => error);
+    expect(failure).toBeInstanceOf(UpstreamHttpError);
+    expect((failure as UpstreamHttpError).bodyText).toHaveLength(4_096);
+  });
+
   it("passes the caller's signal down through fetchBoundedJson too", async () => {
     const controller = new AbortController();
     mockedFetch.mockResolvedValue(jsonResponse({ state: "published" }));

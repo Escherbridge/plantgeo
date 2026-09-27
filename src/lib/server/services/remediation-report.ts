@@ -5,7 +5,9 @@ import {
   PROFESSIONAL_DISCIPLINES,
   REGIONAL_CLAIM_EVIDENCE_SOURCES,
   REGIONAL_EVIDENCE_SOURCES,
+  STRATEGY_KNOWLEDGE_EVIDENCE_SOURCE,
   isRegionalEvidenceSource,
+  isStrategyKnowledgeTool,
   type RegionalAnalysisEvidence,
   type RegionalClaimEvidenceSource,
 } from '@/lib/regional-intelligence';
@@ -13,7 +15,7 @@ import type { RegionalContextPayload } from './regional-context';
 import type { RegionalMeasurementFact } from './regional-measurement-facts';
 
 const evidenceReadIdsSchema = z.array(z.string().trim().min(1).max(100)).max(8).optional()
-  .describe('REQUIRED and nonempty for EVERY warehouse claim citing a tool surface, including local reads. Copy the current manifest IDs matching each exact source. Legacy payload sources alone do not use these IDs. Omit on inference and web claims.');
+  .describe('REQUIRED and nonempty for EVERY warehouse claim citing a tool surface, including local reads. Copy the current manifest IDs matching each exact source. Legacy payload sources alone do not use these IDs. Omit on inference, web and literature claims.');
 
 function warehouseReadIdsOnly(
   value: { evidenceOrigin: string; evidenceReadIds?: string[]; evidenceSource?: string; evidenceSources?: string[] },
@@ -84,9 +86,14 @@ export type RemediationReport = z.infer<typeof remediationReportSchema>;
 type ReportEvidenceIssue = { code: 'custom'; path: (string | number)[]; message: string };
 
 function isMeasurementRead(call: RegionalAnalysisEvidence['toolCalls'][number]): boolean {
-  return call.status === 'observed' && ![
+  return call.status === 'observed' && !isStrategyKnowledgeTool(call.tool) && ![
     'observation_coverage_on_day', 'observation_temporal_neighbors', 'list_environmental_layers',
   ].includes(call.tool);
+}
+
+/** Whether a strategy-knowledge tool answered (not refused) this turn; gates the literature origin. */
+export function strategyKnowledgeAnswered(evidence: RegionalAnalysisEvidence | undefined): boolean {
+  return evidence?.toolCalls.some((call) => isStrategyKnowledgeTool(call.tool) && call.status === 'answered') ?? false;
 }
 
 function auditSources(call: RegionalAnalysisEvidence['toolCalls'][number]): string[] {
@@ -151,8 +158,15 @@ export function reportCitationManifest(
   };
 }
 
-/** Narrow provider choices to this turn's actual evidence without weakening the validator. */
-export function reportSchemaForCitations(manifest: ReturnType<typeof reportCitationManifest>, measurementFacts?: readonly RegionalMeasurementFact[]): Record<string, unknown> {
+/**
+ * Narrow provider choices to this turn's actual evidence without weakening the validator.
+ * `literatureAnswered` (see `strategyKnowledgeAnswered`) is the only way the literature origin is offered.
+ */
+export function reportSchemaForCitations(
+  manifest: ReturnType<typeof reportCitationManifest>,
+  measurementFacts?: readonly RegionalMeasurementFact[],
+  { literatureAnswered = false }: { literatureAnswered?: boolean } = {},
+): Record<string, unknown> {
   const sources = [...new Set([
     ...manifest.payloadSources,
     ...manifest.measurementReads.map((read) => read.evidenceSource),
@@ -169,11 +183,8 @@ export function reportSchemaForCitations(manifest: ReturnType<typeof reportCitat
       properties.observations.description = 'Measurements were returned. Include at least one warehouse observation grounded in an exact current source/read pair. Historical gaps do not erase available measurements.';
     }
     if (properties.evidenceOrigin && sources.length === 0) {
-      properties.evidenceOrigin.enum = EVIDENCE_ORIGINS.filter((origin) => origin !== 'warehouse');
-    }
-    if (properties.evidenceSource) {
-      if (sources.length === 0) delete properties.evidenceSource;
-      else properties.evidenceSource.enum = sources;
+      properties.evidenceOrigin.enum = EVIDENCE_ORIGINS.filter((origin) => origin !== 'warehouse'
+        && (literatureAnswered || origin !== 'literature'));
     }
     if (properties.evidenceSources) {
       properties.evidenceOrigin.enum = ['model_inference'];
@@ -184,12 +195,23 @@ export function reportSchemaForCitations(manifest: ReturnType<typeof reportCitat
       result.required = (Array.isArray(result.required) ? result.required : []).filter((key) => key !== 'evidenceReadIds');
       return result;
     }
+    // Recommendations are model interpretation (web/model_inference), plus literature only when a
+    // strategy-knowledge tool answered this turn; none carries a warehouse read ID. Checked ahead of
+    // the generic evidenceSource narrowing below, which would otherwise drop the literature source.
     if (properties.strategy && properties.rationale && properties.evidenceOrigin) {
-      properties.evidenceOrigin.enum = ['web', 'model_inference'];
-      delete properties.evidenceSource;
+      properties.evidenceOrigin.enum = literatureAnswered ? ['web', 'model_inference', 'literature'] : ['web', 'model_inference'];
+      if (literatureAnswered && properties.evidenceSource) {
+        properties.evidenceSource.enum = [STRATEGY_KNOWLEDGE_EVIDENCE_SOURCE];
+        properties.evidenceSource.description = 'Only with evidenceOrigin "literature"; omit for web and model_inference.';
+      } else delete properties.evidenceSource;
       delete properties.evidenceReadIds;
-      result.required = (Array.isArray(result.required) ? result.required : []).filter((key) => !['evidenceSource', 'evidenceReadIds'].includes(key));
+      result.required = (Array.isArray(result.required) ? result.required : [])
+        .filter((key) => key !== 'evidenceReadIds' && key !== 'evidenceSource');
       return result;
+    }
+    if (properties.evidenceSource) {
+      if (sources.length === 0) delete properties.evidenceSource;
+      else properties.evidenceSource.enum = sources;
     }
     if (measurementFacts !== undefined && properties.statement && properties.evidenceOrigin) {
       const inference = {
@@ -256,19 +278,34 @@ export function reportSchemaForCitations(manifest: ReturnType<typeof reportCitat
   return visit(REMEDIATION_REPORT_JSON_SCHEMA) as Record<string, unknown>;
 }
 
-/** Resolve only exact current fact selectors; supplied warehouse prose is never repaired. */
-export function resolveProviderMeasurementReport(input: Record<string, unknown> | null, facts: readonly RegionalMeasurementFact[]): {
+/**
+ * Resolve only exact current fact selectors; supplied warehouse prose is never repaired.
+ * The literature origin is admitted only when `evidence` records an answered strategy-knowledge call.
+ */
+export function resolveProviderMeasurementReport(
+  input: Record<string, unknown> | null,
+  facts: readonly RegionalMeasurementFact[],
+  evidence?: RegionalAnalysisEvidence,
+): {
   report: Record<string, unknown> | null; issues: ReportEvidenceIssue[];
 } {
   const issues: ReportEvidenceIssue[] = [];
   if (!input || !Array.isArray(input.observations)) return { report: input, issues };
+  const literatureAnswered = strategyKnowledgeAnswered(evidence);
   const validateInterpretation = (claim: unknown, path: (string | number)[], risk = false) => {
     if (!claim || typeof claim !== 'object' || Array.isArray(claim)) return;
     const fields = claim as Record<string, unknown>;
-    const allowed = risk ? ['model_inference'] : ['model_inference', 'web'];
-    if (!allowed.includes(String(fields.evidenceOrigin))) issues.push({ code: 'custom', path: [...path, 'evidenceOrigin'], message: risk ? 'Risk assessment must be model_inference. Select supporting measured facts in observations.' : 'Recommendations and nonwarehouse observations must be model_inference or web; select measured facts separately.' });
-    for (const key of ['evidenceSource', 'evidenceReadIds']) {
-      if (Object.hasOwn(fields, key)) issues.push({ code: 'custom', path: [...path, key], message: 'Interpretations cannot carry warehouse source or read-ID fields. Select supporting measurements separately by measurementFactId.' });
+    const origin = String(fields.evidenceOrigin);
+    // Literature is a nonwarehouse origin too (never a warehouse read ID), but unlike web/
+    // model_inference it names its one fixed evidenceSource; risk stays model_inference-only.
+    const allowed = risk ? ['model_inference'] : ['model_inference', 'web', 'literature'];
+    if (!allowed.includes(origin)) issues.push({ code: 'custom', path: [...path, 'evidenceOrigin'], message: risk ? 'Risk assessment must be model_inference. Select supporting measured facts in observations.' : 'Recommendations and nonwarehouse observations must be model_inference, web or literature; select measured facts separately.' });
+    if (Object.hasOwn(fields, 'evidenceReadIds')) issues.push({ code: 'custom', path: [...path, 'evidenceReadIds'], message: 'Interpretations cannot carry warehouse read-ID fields. Select supporting measurements separately by measurementFactId.' });
+    if (!risk && origin === 'literature') {
+      if (!literatureAnswered) issues.push({ code: 'custom', path: [...path, 'evidenceOrigin'], message: 'No strategy-knowledge literature tool answered in this analysis, so evidenceOrigin "literature" is unsupported. Relabel the claim model_inference or web, or remove it.' });
+      if (fields.evidenceSource !== STRATEGY_KNOWLEDGE_EVIDENCE_SOURCE) issues.push({ code: 'custom', path: [...path, 'evidenceSource'], message: 'A literature-origin claim requires evidenceSource "strategy-knowledge".' });
+    } else if (Object.hasOwn(fields, 'evidenceSource')) {
+      issues.push({ code: 'custom', path: [...path, 'evidenceSource'], message: 'Interpretations cannot carry a warehouse source field. Select supporting measurements separately by measurementFactId.' });
     }
     if (risk && Array.isArray(fields.evidenceSources) && fields.evidenceSources.length > 0) issues.push({ code: 'custom', path: [...path, 'evidenceSources'], message: 'Risk interpretation requires evidenceSources: []; supporting sources belong to selected measurement facts.' });
   };
@@ -310,6 +347,35 @@ export function normalizeProviderReport(input: Record<string, unknown> | null): 
     riskSummary: normalizeClaim(input.riskSummary),
     observations: Array.isArray(input.observations) ? input.observations.map(normalizeClaim) : input.observations,
     remediation: Array.isArray(input.remediation) ? input.remediation.map(normalizeClaim) : input.remediation,
+  };
+}
+
+/**
+ * Pair the literature origin with its one fixed source before validation: fill a missing
+ * "strategy-knowledge" on literature claims and strip it from web/model_inference claims.
+ * Never changes an origin, never touches read IDs, and leaves any other conflicting source for
+ * the validator to reject. Runs ahead of `resolveProviderMeasurementReport`.
+ */
+export function pairLiteratureProvenance(input: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!input) return input;
+  const pair = (claim: unknown): unknown => {
+    if (!claim || typeof claim !== 'object' || Array.isArray(claim)) return claim;
+    const value = claim as Record<string, unknown>;
+    if (value.evidenceOrigin === 'literature' && [undefined, null, ''].includes(value.evidenceSource as string | null | undefined)) {
+      return { ...value, evidenceSource: STRATEGY_KNOWLEDGE_EVIDENCE_SOURCE };
+    }
+    if ((value.evidenceOrigin === 'web' || value.evidenceOrigin === 'model_inference')
+      && value.evidenceSource === STRATEGY_KNOWLEDGE_EVIDENCE_SOURCE) {
+      const paired = { ...value };
+      delete paired.evidenceSource;
+      return paired;
+    }
+    return claim;
+  };
+  return {
+    ...input,
+    observations: Array.isArray(input.observations) ? input.observations.map(pair) : input.observations,
+    remediation: Array.isArray(input.remediation) ? input.remediation.map(pair) : input.remediation,
   };
 }
 

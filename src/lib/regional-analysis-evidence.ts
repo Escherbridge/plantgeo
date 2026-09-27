@@ -29,7 +29,7 @@ export const regionalAnalysisEvidenceSchema = z.object({
     observedDates: z.array(calendarDay).max(128).optional(),
     servedDates: z.array(calendarDay).max(128).optional(),
     location: z.object({ lat: z.number().min(-90).max(90), lon: z.number().min(-180).max(180) }).strict().optional(),
-    status: z.enum(['observed', 'unavailable', 'refused', 'error', 'not_queried', 'governed_absence']),
+    status: z.enum(['observed', 'answered', 'answered_no_records', 'unavailable', 'refused', 'error', 'not_queried', 'governed_absence']),
     summary: z.string().max(2_000).optional(),
     reason: z.string().max(2_000).optional(),
   }).strict()).max(128),

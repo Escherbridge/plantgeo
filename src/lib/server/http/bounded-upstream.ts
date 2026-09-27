@@ -1,8 +1,33 @@
 export class UpstreamConfigurationError extends Error {}
 
+/** `bodyText` is capped to this many characters before retention; see `UpstreamHttpError`. */
+const MAX_RETAINED_BODY_TEXT_CHARACTERS = 4_096;
+
 export class UpstreamHttpError extends Error {
-  constructor(public readonly status: number) {
+  /**
+   * The upstream's raw response body, read through the same byte/time bound as a successful call
+   * and capped to `MAX_RETAINED_BODY_TEXT_CHARACTERS` on the way in -- enough for a structured
+   * argument-refusal body, never enough to flood a log with an upstream's multi-hundred-KB error
+   * page. Present only for `fetchBoundedJson` failures where the body was actually readable
+   * (absent on an oversized/unreadable/empty body) -- callers must not assume it is set just
+   * because the status is non-2xx. Lets a caller that recognises the upstream's own error shape
+   * (e.g. a 400 argument-validation refusal) surface a bounded explanation instead of this
+   * class's generic message, without a second network round-trip.
+   *
+   * Declared as a `get` accessor (own property on the prototype, not the instance) rather than a
+   * constructor-assigned field so it stays non-enumerable: every `console.error(..., err)` /
+   * `JSON.stringify(err)` call site across the ~15 `fetchBoundedJson` callers must not dump this
+   * body into logs just because it rode along on the error object.
+   */
+  get bodyText(): string | undefined {
+    return this.#bodyText;
+  }
+
+  readonly #bodyText?: string;
+
+  constructor(public readonly status: number, bodyText?: string) {
     super(`Upstream request failed with status ${status}`);
+    this.#bodyText = bodyText === undefined ? undefined : bodyText.slice(0, MAX_RETAINED_BODY_TEXT_CHARACTERS);
   }
 }
 
@@ -197,8 +222,9 @@ export async function fetchBoundedJson(
   const result = await fetchBounded(url, { ...init, ...cachePolicyInit(options) }, options);
 
   // Status first: a 429/5xx with an oversized or absent body must still surface
-  // as an UpstreamHttpError so retry/backoff signalling survives.
-  if (!result.ok) throw new UpstreamHttpError(result.status);
+  // as an UpstreamHttpError so retry/backoff signalling survives. The body text rides along
+  // (when it was actually readable) so a caller can inspect a structured error shape of its own.
+  if (!result.ok) throw new UpstreamHttpError(result.status, result.bodyError ? undefined : result.text);
   if (result.bodyError) throw result.bodyError;
   const contentType = result.headers.get("content-type");
   if (contentType && !contentType.toLowerCase().includes("json")) {

@@ -1,4 +1,10 @@
-import { REGIONAL_TOOL_EVIDENCE_SOURCES, type RegionalAnalysisEvidence } from '@/lib/regional-intelligence';
+import {
+  isStrategyKnowledgeTool,
+  LITERATURE_EVIDENCE_DOMAIN,
+  REGIONAL_TOOL_EVIDENCE_SOURCES,
+  STRATEGY_KNOWLEDGE_EVIDENCE_SOURCE,
+  type RegionalAnalysisEvidence,
+} from '@/lib/regional-intelligence';
 import { buildRegionalMeasurementFacts, type RegionalMeasurementFacts } from './regional-measurement-facts';
 import { isLayerToggleId, LAYER_REGISTRY } from '@/lib/map/layer-registry';
 import { analysisDateRange, DEFAULT_ANALYSIS_WINDOW } from '@/lib/regional-analysis-selection';
@@ -69,6 +75,8 @@ export function regionalSelectionArguments(
 export function bindRegionalEvidenceArguments(
   tool: string, args: Record<string, unknown>, payload: RegionalContextPayload, temporal: TemporalContext,
 ): Record<string, unknown> {
+  // Literature tools are coordinate-free by contract: never inject the request's point or day.
+  if (isStrategyKnowledgeTool(tool)) return { ...args };
   const source = typeof args.surface_name === 'string' ? regionalSurfaceName(args.surface_name)
     : tool === 'drought_history_at_point' ? 'drought-areas' : tool === 'fire_history_near_point' ? 'burn-severity' : '';
   if (tool === 'surface_evidence_for_selection') {
@@ -111,10 +119,55 @@ function object(value: unknown): Record<string, unknown> | null {
     ? value as Record<string, unknown> : null;
 }
 
+/** Service-side literature refusals read as unavailable; any other literature error stays a refusal. */
+const LITERATURE_UNAVAILABLE_CODES = new Set(['strategy_knowledge_not_configured', 'strategy_knowledge_unavailable']);
+
+/** Whether a tool result is a strategy-knowledge literature payload, by tool name or its evidence domain. */
+export function isLiteratureEvidence(tool: string | undefined, value: unknown): boolean {
+  return (tool !== undefined && isStrategyKnowledgeTool(tool)) || object(value)?.evidence_domain === LITERATURE_EVIDENCE_DOMAIN;
+}
+
+/**
+ * Literature is answered (with or without records) or refused, never observed: it reports cited
+ * sources, not this site. A zero-record answer is `answered_no_records`, not `answered` --
+ * `strategyKnowledgeAnswered` keys on the exact `answered` status, so a lookup that found nothing
+ * cannot unlock the literature evidence origin while still reading as a real (non-failure) answer.
+ */
+function literatureResultStatus(root: Record<string, unknown>): Pick<AuditCall, 'status' | 'summary' | 'reason'> {
+  const refusalState = typeof root.state === 'string' && (root.state === 'refused' || root.state.startsWith('strategy_knowledge_'))
+    ? root.state : undefined;
+  const code = typeof root.error === 'string' ? root.error
+    : typeof root.refusal_code === 'string' ? root.refusal_code : refusalState;
+  if (code !== undefined || root.error || root.refusal_code) {
+    const detail = typeof root.refusal_detail === 'string' ? root.refusal_detail
+      : typeof root.note === 'string' ? root.note : 'The literature lookup was refused.';
+    return {
+      status: code !== undefined && LITERATURE_UNAVAILABLE_CODES.has(code) ? 'unavailable' : 'refused',
+      reason: `${code ?? 'strategy_knowledge_refused'}: ${detail}`.slice(0, 240),
+    };
+  }
+  // Prefer the service's own `result_count` (agent/strategy_knowledge.py `ask`): it counts every
+  // projection (results/strategies) the same way the service does. Fall back to the array-length
+  // reduce for payloads that omit it (e.g. hand-built test fixtures).
+  const records = typeof root.result_count === 'number' && Number.isFinite(root.result_count)
+    ? root.result_count
+    : ['results', 'strategies', 'findings']
+      .reduce((total, key) => total + (Array.isArray(root[key]) ? (root[key] as unknown[]).length : 0), 0);
+  const corpus = typeof root.corpus_version === 'string' ? ` (corpus ${root.corpus_version.slice(0, 64)})` : '';
+  return records > 0 ? {
+    status: 'answered',
+    summary: `${records} strategy-knowledge literature records returned${corpus}. Cited sources report these; they are not measurements at this location.`,
+  } : {
+    status: 'answered_no_records',
+    summary: `No matching strategy-knowledge literature record${corpus}. This is not evidence that no strategy exists.`,
+  };
+}
+
 /** Classify evidence only from returned rows and explicit serving states. */
-export function evidenceResultStatus(value: unknown): Pick<AuditCall, 'status' | 'summary' | 'reason'> {
+export function evidenceResultStatus(value: unknown, tool?: string): Pick<AuditCall, 'status' | 'summary' | 'reason'> {
   const root = object(value);
   if (!root) return { status: 'error', reason: 'The tool returned an invalid evidence object.' };
+  if (isLiteratureEvidence(tool, root)) return literatureResultStatus(root);
   if (root.error || root.refusal_code) return { status: 'refused', reason: String(root.error ?? root.refusal_code).slice(0, 240) };
   const states: string[] = [];
   let rows = 0;
@@ -147,20 +200,27 @@ const MODEL_OMITTED_STORAGE_LINEAGE = new Set([
   'input_source_row_digest', 'source_manifest_sha256', 'selected_source_release_payload_checksum',
 ]);
 
+/** Matches the strategy-knowledge tools' own `limit` ceiling (1-10), so no requested record is cut. */
+export const MAX_LITERATURE_RESULTS = 10;
+const LITERATURE_RESULT_FIELDS = new Set(['results', 'strategies', 'findings']);
+
 /** Keep measurement provenance while counting omitted rows and opaque storage lineage. */
-export function boundedEvidence(value: unknown, depth = 0, field = ''): unknown {
+export function boundedEvidence(value: unknown, depth = 0, field = '', literatureRoot = false): unknown {
   if (depth > 12) return { omitted: 'Nested detail exceeds the evidence display bound.' };
   if (typeof value === 'string') return value.length > 2_000 ? `${value.slice(0, 2_000)} [text truncated]` : value;
   if (Array.isArray(value)) {
-    const limit = field === 'weekly_severity' ? 120 : ['history', 'sampled_days'].includes(field) ? 31 : 8;
+    const limit = field === 'weekly_severity' ? 120 : ['history', 'sampled_days'].includes(field) ? 31
+      : literatureRoot && LITERATURE_RESULT_FIELDS.has(field) ? MAX_LITERATURE_RESULTS : 8;
     const entries = value.slice(0, limit).map((entry) => boundedEvidence(entry, depth + 1));
     return value.length > limit ? { entries, omittedEntries: value.length - limit } : entries;
   }
   if (object(value)) {
     const entries = Object.entries(value as Record<string, unknown>);
     const retained = entries.filter(([key]) => !MODEL_OMITTED_STORAGE_LINEAGE.has(key));
+    // Only the top-level record arrays of a literature payload get the wider bound.
+    const literature = depth === 0 && isLiteratureEvidence(undefined, value);
     return {
-      ...Object.fromEntries(retained.map(([key, entry]) => [key, boundedEvidence(entry, depth + 1, key)])),
+      ...Object.fromEntries(retained.map(([key, entry]) => [key, boundedEvidence(entry, depth + 1, key, literature)])),
       ...(retained.length < entries.length ? { omittedStorageLineageFields: entries.length - retained.length } : {}),
     };
   }
@@ -202,6 +262,10 @@ function collectProvenanceDays(
 export function regionalEvidenceAuditCall(
   id: string, stage: string, tool: string, args: Record<string, unknown>, result: unknown,
 ): AuditCall {
+  // Literature is coordinate-free and not time-bound (CONTRACT C4): no location, dates or window.
+  if (isLiteratureEvidence(tool, result)) {
+    return { id, stage, tool, source: STRATEGY_KNOWLEDGE_EVIDENCE_SOURCE, ...evidenceResultStatus(result, tool) };
+  }
   const selectedDate = tool === 'read_crop_cover_in_area' ? args.asOfDay : args.day ?? args.as_of_day;
   const validDate = isCalendarDay(selectedDate);
   const provenance = collectProvenanceDays(result);
@@ -239,7 +303,7 @@ export function regionalEvidenceAuditCall(
     ...(typeof args.latitude === 'number' && Number.isFinite(args.latitude) && Math.abs(args.latitude) <= 90
       && typeof args.longitude === 'number' && Number.isFinite(args.longitude) && Math.abs(args.longitude) <= 180
       ? { location: { lat: args.latitude, lon: args.longitude } } : {}),
-    ...evidenceResultStatus(result),
+    ...evidenceResultStatus(result, tool),
   };
 }
 
@@ -300,13 +364,14 @@ export interface RegionalAnalysisWorkflow {
 /** Admit facts only from executed measured reads for a declared concrete source. */
 export function regionalFactsForRead(audit: AuditCall, result: unknown): RegionalMeasurementFacts {
   if (audit.status !== 'observed' || !audit.source || !(REGIONAL_TOOL_EVIDENCE_SOURCES as readonly string[]).includes(audit.source)
+    || audit.source === STRATEGY_KNOWLEDGE_EVIDENCE_SOURCE || isStrategyKnowledgeTool(audit.tool)
     || ['observation_coverage_on_day', 'observation_temporal_neighbors', 'list_environmental_layers'].includes(audit.tool)) return { facts: [], omittedFacts: 0 };
   return buildRegionalMeasurementFacts([{ id: audit.id, source: audit.source, result }]);
 }
 
 /** Derive a stage result from all of its completed and attempted reads. */
 export function regionalEvidenceStageStatus(entries: AuditCall[]): RegionalAnalysisEvidence['stages'][number]['status'] {
-  const admissible = (entry: AuditCall) => ['observed', 'governed_absence'].includes(entry.status);
+  const admissible = (entry: AuditCall) => ['observed', 'answered', 'answered_no_records', 'governed_absence'].includes(entry.status);
   if (entries.length > 0 && entries.every(admissible)) return 'completed';
   if (entries.some(admissible)) return 'partial';
   return 'unavailable';

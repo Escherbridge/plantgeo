@@ -5,8 +5,8 @@ import { geminiReportSchema } from './gemini-report-schema';
 import { reportFlowGroundingIssues } from './report-flow-grounding';
 import { soilAiEvidence } from './soil-ai-evidence';
 import { bindRegionalEvidenceArguments, boundedEvidence, prepareRegionalAnalysis, regionalEvidenceAuditCall, regionalEvidenceLimitations, regionalEvidenceStageStatus, regionalFactsForRead } from './regional-analysis-workflow';
-import { callRegionalEvidenceTool } from './regional-evidence-tools';
-import { remediationReportSchema, REMEDIATION_REPORT_JSON_SCHEMA, normalizeProviderReport, resolveProviderMeasurementReport, reportCitationManifest, reportSchemaForCitations, reportWarehouseEvidenceIssues, type RemediationReport } from './remediation-report';
+import { callRegionalEvidenceTool, RegionalEvidenceArgumentError } from './regional-evidence-tools';
+import { remediationReportSchema, REMEDIATION_REPORT_JSON_SCHEMA, normalizeProviderReport, pairLiteratureProvenance, resolveProviderMeasurementReport, reportCitationManifest, reportSchemaForCitations, reportWarehouseEvidenceIssues, strategyKnowledgeAnswered, type RemediationReport } from './remediation-report';
 import type {
   RegionalContextPayload,
   TemporalContext,
@@ -20,6 +20,8 @@ import {
 } from './web-evidence';
 import {
   AI_GENERATED_DISCLAIMER,
+  isStrategyKnowledgeTool,
+  STRATEGY_KNOWLEDGE_EVIDENCE_SOURCE,
   type ConversationTurn,
   type WebSourceCitation,
   type RegionalAnalysisEvidence,
@@ -38,6 +40,8 @@ const MAX_EVIDENCE_TOOL_ROUNDS = 6;
 const MAX_REPORT_CORRECTIONS = 1;
 const MAX_SEARCHES_PER_REQUEST = 3;
 const MAX_EVIDENCE_CALLS_PER_REQUEST = 12;
+/** Strategy-knowledge literature lookups; a separate budget so they never displace measured reads. */
+const MAX_LITERATURE_CALLS_PER_REQUEST = 4;
 /**
  * Bounded by the report this feature actually emits, and it must stay under the serving model's own
  * completion ceiling -- a provider REJECTS an over-large request rather than clamping it, so a model
@@ -151,7 +155,7 @@ function buildSystemPrompt(hasWebSearch: boolean): string {
 - History continuation is available through page_start. Inspect history.complete and next_page_start and request later pages when a claim needs the full window. Never describe a bounded sample as a complete history. Keep unavailable days and refusals explicit, and do not treat future requested dates as forecasts unless a published forecast is returned.
 - Historical measurements describe the sampled dates only. Without a complete scan, never present sample minimum/maximum values or the first/last sampled dates as the range for the whole requested period. Say "among the sampled dates" and name the measured days; history.complete false means the window remains incomplete.
 - You are given warehouse observations for the location. Say plainly which sources were unavailable rather than implying broader coverage than you had.
-- Label every claim with its origin: "warehouse" for a supplied observation, "web" for something you found by searching, "model_inference" for your own reasoning or general domain knowledge.
+- Label every claim with its origin: "warehouse" for a supplied observation, "web" for something you found by searching, "literature" for a finding returned by a strategy-knowledge tool, "model_inference" for your own reasoning or general domain knowledge.
 - model_inference is legitimate and expected — most remediation reasoning is inference. Label it honestly rather than dressing it up as an observation.
 - Never invent numeric values, dates, or measurements and attribute them to the warehouse.
 - Confidence should reflect how well the evidence supports the specific recommendation, not how confident you feel in general.
@@ -179,26 +183,27 @@ function buildSystemPrompt(hasWebSearch: boolean): string {
 - Silvopasture requires compatible trees, forage, livestock management and water balance; trees or drought alone do not establish its suitability. Biochar requires soil tests, feedstock, production conditions and material quality; carbon or drought alone do not establish its suitability or an application rate. State missing prerequisites and distinguish a conditional feasibility assessment from a recommendation to install a practice.
 - Include a concise account of the most relevant alternatives considered and why they are supported, conditional or unsuitable in observations and recommendation rationales. A strategy is not owed a recommendation merely because it was screened.
 - Ground unfamiliar practices in cited literature and dataset sources rather than an unstated number. Soil texture and drought metrics, when supplied, are useful context for whether a practice is a physical fit for this ground — not material for a causal comparison.
+- For a remediation or "what can we do" question, read the local warehouse evidence first, then call search_environmental_strategies, get_environmental_strategies or search_strategy_research_findings, passing a site_profile you derive from that evidence (slope, soil chemistry and texture, burn history, annual precipitation, land cover, region). A remediation item grounded in their output uses evidenceOrigin "literature" and evidenceSource "strategy-knowledge". Never present a literature finding as a measurement taken at this site, and state any magnitude only exactly as the tool reports it — never restate it as an effect size expected here. Up to ${MAX_LITERATURE_CALLS_PER_REQUEST} literature lookups are allowed, separate from the measured-evidence budget. Use the literature origin only after one of these tools returns evidenceStatus "answered"; a refused or unavailable lookup supports no literature claim.
 - Explain why each strategy fits this place, not why the strategy is good in the abstract.
 - Sequence matters: mark what should happen now versus over years.
 - If the evidence genuinely does not support any recommendation, return an empty remediation array and say why in the risk summary. Never manufacture an action to fill space.
 
 ## Remediation reasoning and unavailable strategy models
 - Strategy-model evidence is unavailable: \`strategyContext\` is empty and \`strategyRecommendations\` is null. Do not claim a trained model ranked or validated a strategy for this location. You may still suggest remediation grounded in the supplied environmental evidence and labelled AI inference.
-- Never state or imply a causal effect size, an expected-benefit percentage, or any other outcome magnitude for a strategy. No validated evidence release supports those claims. If asked for a numeric benefit, say plainly that one is not available rather than estimating one yourself.
+- Never state or imply a causal effect size, an expected-benefit percentage, or any other outcome magnitude for a strategy that you calculated or expect at this site. No validated evidence release supports those claims. If asked for a numeric benefit and no strategy-knowledge finding supplies one, say plainly that one is not available rather than estimating one yourself. A magnitude returned by search_strategy_research_findings or the other strategy-knowledge tools may be reported, labelled literature, but only exactly as that tool stated it for its own study — never rescaled, averaged, or presented as this site's expected outcome.
 - You may also be given \`communityProposals\`: nearby intervention proposals other users have submitted. These are unreviewed and not yet approved — you may mention them as local context (what neighbors are already considering), never as evidence supporting your own recommendation's confidence.
 
 ## Evidence graph and additional environmental tools
 - The server runs source inventory, selected-tile reads, selected-window history and strategy screening before synthesis. The supplied graph is an audit of executed evidence retrieval and explicit gaps, not a validated strategy model.
-- Inspect each stage and its raw dated evidence. A failed, refused, not_queried or unavailable read is not an observation. Catalogue membership only means a tool can be called, not that its lane is published. Do not fill gaps with a zero or infer a trend from publication dates alone.
-- You may retrieve any relevant catalogue layer and continue a history page even when web search is unavailable. Up to ${MAX_EVIDENCE_CALLS_PER_REQUEST} additional calls are allowed. The server binds each surface_evidence_for_selection call to the current map coordinate, zoom, layer day and complete active window. Preserve those returned bounds and use page_start for continuation.
+- Inspect each stage and its raw dated evidence. A failed, refused, not_queried or unavailable read is not an observation. An answered read is a strategy-knowledge literature lookup: what cited sources report, never a measurement at this site. Catalogue membership only means a tool can be called, not that its lane is published. Do not fill gaps with a zero or infer a trend from publication dates alone.
+- You may retrieve any relevant catalogue layer and continue a history page even when web search is unavailable. Up to ${MAX_EVIDENCE_CALLS_PER_REQUEST} additional measured-evidence calls are allowed. The server binds each surface_evidence_for_selection call to the current map coordinate, zoom, layer day and complete active window. Preserve those returned bounds and use page_start for continuation.
 - Regional samples are geographic contrasts, not ecological analogues. Compare measured climate, soil moisture, terrain, land use and management prerequisites before discussing transfer; missing matching factors remain unknown. Nearby or environmentally similar conditions never establish treatment efficacy or a causal effect.
 - In the report, cite the environmental source and observation date for material findings, explain historical and regional comparison limits, and name evidence gaps that change strategy feasibility. Do not expose private deliberation; give concise conclusions and their supporting evidence.
 - Saved warehouse observations retain the exact source, executed read IDs, dates and spatial support from their selected measurement facts. Do not write these fields yourself. A regional comparison is not a measurement at the selected point, and a historical observation is not a current condition.
 - Before reporting, check every numerical comparison against its dated values in both interpretations and recommendation rationales: a positive later-minus-earlier difference is an increase, a negative difference is a decrease. Two sampled dates alone do not establish a stable trend. Select ALL measurement facts supporting the dates discussed in a comparison, including historical facts when selected-day facts contain only the current date.
 - Each warehouse observation cites one exact source and only that source's matching read IDs. Present cross-layer interpretations separately as model_inference, with the supporting measurements in individual observations.
 - The riskSummary is your interpretation of the measurements and gaps: use evidenceOrigin model_inference, evidenceSources [], and omit evidenceReadIds. Put the supporting measured facts with exact source/read citations in observations.
-- Recommendations are management interpretations: use model_inference or web for sourced guidance, and omit evidenceSource and evidenceReadIds. Nonwarehouse observations also omit these fields. Their supporting measurements belong in separate warehouse observations.
+- Recommendations are management interpretations: use model_inference or web for sourced guidance, and omit evidenceSource and evidenceReadIds. Use literature with evidenceSource "strategy-knowledge" only for a claim grounded in a strategy-knowledge tool result, and never attach evidenceReadIds to it. Nonwarehouse, non-literature observations also omit evidenceSource and evidenceReadIds. Their supporting measurements belong in separate warehouse observations.
 - For warehouse observations, select current server-authored measurementFacts using ONLY {evidenceOrigin:"warehouse",measurementFactId:"exact current ID"}. Do not supply statement, evidenceSource or evidenceReadIds; the server supplies those unchanged from the selected fact. Select separate facts for each measured date used in a comparison. State comparisons and interpretations separately as model_inference, without measurement source fields. IDs from previous turns are invalid unless present in the current fact manifest. If the current fact list is empty, use inference or web observations only.
 - Availability limitations are already disclosed in the server-authored evidence.limitations audit. Keep missing dates, refused reads and incomplete history there rather than presenting them as warehouse observations. A source/read pair supports only that source's returned measurements; it cannot support an unavailable-data claim about another layer. Refer to an audit limitation only when explaining a decision constraint, as model_inference without read IDs. Checked dates come from history.sampled_days, never from served dates; all unchecked dates remain unknown, and incomplete sampling cannot establish unavailability across the requested window.
 - Coverage inventories, publication neighbors and nearest reporting-cell metadata help plan reads. They contain no environmental measurement and cannot be used as evidenceReadIds for a measured-condition claim; retrieve actual surface values or measured history first.
@@ -422,6 +427,23 @@ export async function* streamRegionalIntelligence(
   const evidenceToolNames = new Set(evidenceTools.map((tool) => tool.name));
   const maxToolRounds = evidenceTools.length > 0 ? MAX_EVIDENCE_TOOL_ROUNDS : MAX_TOOL_ROUNDS;
 
+  // Gemini-family models (google/gemini-2.5-flash-lite, the live map agent's model) sometimes
+  // call a tool under its own Python calling-convention namespace, e.g.
+  // `default_api.search_environmental_strategies`. Strip exactly that prefix -- and only when the
+  // remainder names a tool this turn actually offers -- before classification, dispatch or
+  // budget/ledger accounting ever see the name, so `evidenceToolNames.has()`, the audit trail and
+  // the tool-result routing all key off the canonical name. A prefixed name whose remainder is not
+  // offered is left untouched and still falls through as unknown.
+  const knownToolNames = new Set([
+    ...evidenceToolNames, REPORT_TOOL.name, GENERATE_REMEDIATION_REPORT_TOOL.name, SEARCH_TOOL.name,
+  ]);
+  const DEFAULT_API_TOOL_PREFIX = 'default_api.';
+  const canonicalToolName = (name: string): string => {
+    if (!name.startsWith(DEFAULT_API_TOOL_PREFIX)) return name;
+    const stripped = name.slice(DEFAULT_API_TOOL_PREFIX.length);
+    return knownToolNames.has(stripped) ? stripped : name;
+  };
+
   // Advertise one report tool; retain the legacy alias only when dispatching older responses.
   const availableTools = (
     searchProvider
@@ -455,6 +477,7 @@ export async function* streamRegionalIntelligence(
   const citations: WebSourceCitation[] = [];
   let searchesUsed = 0;
   let evidenceCallsUsed = 0;
+  let literatureCallsUsed = 0;
   let evidenceCallsAttempted = 0;
   let reportCorrections = 0;
   let correctingReport = false;
@@ -464,7 +487,9 @@ export async function* streamRegionalIntelligence(
     const isFinalRound = correctingReport || round >= maxToolRounds - 1;
     const forceReportTool = (!searchProvider && evidenceTools.length === 0) || isFinalRound;
     const citationManifest = reportCitationManifest(payload, analysis.evidence, dataFreshness);
-    const reportSchema = reportSchemaForCitations(citationManifest, analysis.measurementFacts.facts);
+    const reportSchema = reportSchemaForCitations(citationManifest, analysis.measurementFacts.facts, {
+      literatureAnswered: strategyKnowledgeAnswered(analysis.evidence),
+    });
     const tools = availableTools.map((tool) => {
       if (tool !== REPORT_TOOL && tool !== GENERATE_REMEDIATION_REPORT_TOOL) return asFunctionTool(tool);
       return asFunctionTool({ ...tool, input_schema: GEMINI_REPORT_MODELS.has(model)
@@ -528,7 +553,12 @@ export async function* streamRegionalIntelligence(
       return;
     }
 
-    const toolUses = message.tool_calls ?? [];
+    // Normalized here, once, before anything downstream reads a tool name.
+    const toolUses = (message.tool_calls ?? []).map((use) => (
+      use.type === 'function'
+        ? { ...use, function: { ...use.function, name: canonicalToolName(use.function.name) } }
+        : use
+    ));
 
     const report = toolUses.find(
       (use) =>
@@ -540,7 +570,8 @@ export async function* streamRegionalIntelligence(
       && (evidenceToolNames.has(use.function.name) || (searchProvider && use.function.name === SEARCH_TOOL.name)));
     if (report && report.type === 'function' && !pendingEvidence) {
       const reportInput = readToolArguments(report.function.arguments);
-      const resolved = resolveProviderMeasurementReport(reportInput, analysis.measurementFacts.facts);
+      // Literature source pairing is server-owned, so a pairing slip never spends the one correction.
+      const resolved = resolveProviderMeasurementReport(pairLiteratureProvenance(reportInput), analysis.measurementFacts.facts, analysis.evidence);
       const parsed = remediationReportSchema.safeParse(normalizeProviderReport(resolved.report));
       const validationIssues = parsed.success
         ? [
@@ -644,21 +675,43 @@ export async function* streamRegionalIntelligence(
       const evidenceId = `additional-${++evidenceCallsAttempted}`;
       const proposedArgs = readToolArguments(use.function.arguments);
       const args = proposedArgs ? bindRegionalEvidenceArguments(use.function.name, proposedArgs, payload, temporalContext) : null;
-      if (!args || evidenceCallsUsed >= MAX_EVIDENCE_CALLS_PER_REQUEST) {
-        toolResults.push({ role: 'tool', tool_call_id: use.id, content: args ? 'The additional environmental evidence budget is exhausted. Synthesize the report and state remaining gaps.' : 'Environmental read failed: arguments must be a JSON object.' });
+      const literature = isStrategyKnowledgeTool(use.function.name);
+      const budgetExhausted = literature
+        ? literatureCallsUsed >= MAX_LITERATURE_CALLS_PER_REQUEST
+        : evidenceCallsUsed >= MAX_EVIDENCE_CALLS_PER_REQUEST;
+      if (!args || budgetExhausted) {
+        toolResults.push({ role: 'tool', tool_call_id: use.id, content: !args ? 'Environmental read failed: arguments must be a JSON object.'
+          : literature ? 'The strategy-knowledge literature budget is exhausted. Synthesize the report from the literature already returned.'
+            : 'The additional environmental evidence budget is exhausted. Synthesize the report and state remaining gaps.' });
         if (analysis.evidence.toolCalls.length < 128) analysis.evidence.toolCalls.push({
           ...regionalEvidenceAuditCall(evidenceId, 'additional', use.function.name, args ?? {}, { error: 'invalid_arguments' }),
           status: args ? 'not_queried' : 'refused',
-          reason: args ? 'The additional environmental evidence budget was exhausted.' : 'The tool arguments were not a JSON object.',
+          reason: !args ? 'The tool arguments were not a JSON object.'
+            : literature ? 'The strategy-knowledge literature budget was exhausted.' : 'The additional environmental evidence budget was exhausted.',
         });
         return;
       }
-      evidenceCallsUsed += 1;
+      if (literature) literatureCallsUsed += 1;
+      else evidenceCallsUsed += 1;
       try {
         const content = await callRegionalEvidenceTool(use.function.name, args, signal);
         const result: unknown = JSON.parse(content);
         const audit = regionalEvidenceAuditCall(evidenceId, 'additional', use.function.name, args, result);
         if (analysis.evidence.toolCalls.length < 128) analysis.evidence.toolCalls.push(audit);
+        if (literature) {
+          // Literature carries no read ID, facts or measured citations: nothing to attach to evidenceReadIds.
+          toolResults.push({ role: 'tool', tool_call_id: use.id, content: JSON.stringify({
+            evidenceSource: STRATEGY_KNOWLEDGE_EVIDENCE_SOURCE, evidenceStatus: audit.status,
+            // `answered_no_records` is a real answer (see literatureResultStatus), so it still gets
+            // the citation-format hint even though there is nothing to cite this turn; only a
+            // refusal/failure status carries a reason instead.
+            ...(['answered', 'answered_no_records'].includes(audit.status)
+              ? { citeAs: 'evidenceOrigin "literature" with evidenceSource "strategy-knowledge"; never evidenceReadIds' }
+              : { reason: audit.reason }),
+            result: boundedEvidence(result),
+          }) });
+          return;
+        }
         const limitations = regionalEvidenceLimitations(audit, result);
         const measurementFacts = regionalFactsForRead(audit, result);
         analysis.measurementFacts.facts.push(...measurementFacts.facts);
@@ -674,6 +727,19 @@ export async function* streamRegionalIntelligence(
         }) });
       } catch (error) {
         if (signal?.aborted) throw error;
+        // A 400 argument refusal is self-correctable -- unlike every other failure below, the
+        // model can fix its own next call -- so it gets the bridge's bounded explanation instead
+        // of the generic message. See regional-evidence-tools.ts `RegionalEvidenceArgumentError`.
+        if (error instanceof RegionalEvidenceArgumentError) {
+          const reason = `invalid arguments: ${error.message}`;
+          if (analysis.evidence.toolCalls.length < 128) analysis.evidence.toolCalls.push(
+            regionalEvidenceAuditCall(evidenceId, 'additional', use.function.name, args, { error: reason }),
+          );
+          toolResults.push({ role: 'tool', tool_call_id: use.id, content: JSON.stringify({
+            evidenceStatus: 'refused', reason,
+          }) });
+          return;
+        }
         if (analysis.evidence.toolCalls.length < 128) analysis.evidence.toolCalls.push({
           ...regionalEvidenceAuditCall(evidenceId, 'additional', use.function.name, args, { error: 'read_failed' }),
           status: 'error', reason: 'The additional environmental read failed.',

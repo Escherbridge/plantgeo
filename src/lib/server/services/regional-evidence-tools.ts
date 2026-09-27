@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   fetchBoundedJson,
   providerUrl,
+  UpstreamHttpError,
   UpstreamPayloadError,
 } from "@/lib/server/http/bounded-upstream";
 import { callLandContextTool, isLandContextTool, landContextTools } from "@/lib/server/services/land-context-tools";
@@ -35,6 +36,41 @@ const catalogueSchema = z.object({
 });
 
 const resultSchema = z.object({ tool: z.string(), result: z.record(z.string(), z.unknown()) });
+
+/**
+ * The bridge rejected this call's *arguments* (HTTP 400) and returned a bounded, value-free
+ * explanation of which field broke which rule -- unlike a transport/5xx failure, this is
+ * self-correctable, so the caller can hand it back to the model as a fixable refusal instead of
+ * a generic read failure. See services/agri-data-service/.../agent/llm.py
+ * `argument_error_detail`/`tool_error_payload` and routes/agent_tools.py `_refusal`.
+ */
+export class RegionalEvidenceArgumentError extends Error {}
+
+const MAX_ARGUMENT_ERROR_DETAIL_CHARACTERS = 600;
+
+/**
+ * Pull a renderable explanation out of a 400 refusal body, or null when the body is missing,
+ * oversized, not JSON, or doesn't carry a string `detail`/`error` -- those stay a generic
+ * `UpstreamHttpError` so the caller's existing transport-failure handling still applies.
+ */
+function argumentErrorDetail(error: UpstreamHttpError): string | null {
+  if (error.status !== 400 || !error.bodyText) return null;
+  let body: unknown;
+  try {
+    body = JSON.parse(error.bodyText);
+  } catch {
+    return null;
+  }
+  if (typeof body !== "object" || body === null) return null;
+  const record = body as Record<string, unknown>;
+  const raw = typeof record.detail === "string" ? record.detail
+    : typeof record.error === "string" ? record.error
+      : null;
+  if (!raw) return null;
+   
+  const stripped = raw.replace(/[\x00-\x1F\x7F]/g, " ").trim();
+  return stripped.length > 0 ? stripped.slice(0, MAX_ARGUMENT_ERROR_DETAIL_CHARACTERS) : null;
+}
 
 function endpoint(path: string): URL {
   const url = providerUrl("AGRI_PARQUET_SERVICE_URL", "http://localhost:8000");
@@ -106,11 +142,20 @@ export async function callRegionalEvidenceTool(
   if (new TextEncoder().encode(body).byteLength > 32 * 1024) {
     throw new UpstreamPayloadError("Environmental tool request exceeded the byte limit");
   }
-  const wire = await fetchBoundedJson(endpoint("call"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body,
-  }, { maxBytes: 2 * 1024 * 1024 + 1024, timeoutMs: 15_000, signal });
+  let wire: unknown;
+  try {
+    wire = await fetchBoundedJson(endpoint("call"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    }, { maxBytes: 2 * 1024 * 1024 + 1024, timeoutMs: 15_000, signal });
+  } catch (error) {
+    if (error instanceof UpstreamHttpError) {
+      const detail = argumentErrorDetail(error);
+      if (detail) throw new RegionalEvidenceArgumentError(detail);
+    }
+    throw error;
+  }
   const parsed = resultSchema.safeParse(wire);
   if (!parsed.success || parsed.data.tool !== name) {
     throw new UpstreamPayloadError("Environmental tool response did not match the requested tool");

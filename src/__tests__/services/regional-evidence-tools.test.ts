@@ -13,6 +13,7 @@ import {
 import {
   callRegionalEvidenceTool,
   loadRegionalEvidenceTools,
+  RegionalEvidenceArgumentError,
 } from "@/lib/server/services/regional-evidence-tools";
 import { APP_MAP_SURFACES } from '@/lib/server/services/regional-map-evidence';
 
@@ -66,5 +67,53 @@ describe("regional environmental tool bridge", () => {
     await expect(callRegionalEvidenceTool("surface_value_near_point", {})).rejects.toBeInstanceOf(UpstreamPayloadError);
     fetchJson.mockRejectedValueOnce(new UpstreamHttpError(503));
     await expect(callRegionalEvidenceTool("surface_value_near_point", {})).rejects.toBeInstanceOf(UpstreamHttpError);
+  });
+
+  describe("400 argument-refusal detail", () => {
+    it("surfaces a bounded, control-character-free detail so the caller can retry", async () => {
+      fetchJson.mockRejectedValueOnce(new UpstreamHttpError(400, JSON.stringify({
+        tool: "surface_value_near_point", error: "invalid_tool_arguments", code: "invalid_tool_arguments",
+        detail: "site_profile.day: Extra inputs are not permitted\u0007trailing",
+      })));
+      const failure: unknown = await callRegionalEvidenceTool("surface_value_near_point", {}).catch((error) => error);
+      expect(failure).toBeInstanceOf(RegionalEvidenceArgumentError);
+      // The BEL control character is replaced with a single space, not dropped or echoed raw.
+      expect((failure as Error).message).toBe("site_profile.day: Extra inputs are not permitted trailing");
+    });
+
+    it("falls back to a string `error` field when `detail` is absent", async () => {
+      fetchJson.mockRejectedValueOnce(new UpstreamHttpError(400, JSON.stringify({ error: "unknown_environmental_tool" })));
+      const failure: unknown = await callRegionalEvidenceTool("surface_value_near_point", {}).catch((error) => error);
+      expect(failure).toBeInstanceOf(RegionalEvidenceArgumentError);
+      expect((failure as Error).message).toBe("unknown_environmental_tool");
+    });
+
+    it("caps the surfaced detail at 600 characters", async () => {
+      fetchJson.mockRejectedValueOnce(new UpstreamHttpError(400, JSON.stringify({ detail: "x".repeat(1_000) })));
+      const failure: unknown = await callRegionalEvidenceTool("surface_value_near_point", {}).catch((error) => error);
+      expect(failure).toBeInstanceOf(RegionalEvidenceArgumentError);
+      expect((failure as Error).message).toHaveLength(600);
+    });
+
+    it("keeps a 500 failure generic even with a detail-shaped JSON body", async () => {
+      fetchJson.mockRejectedValueOnce(new UpstreamHttpError(500, JSON.stringify({ detail: "should never surface" })));
+      const failure: unknown = await callRegionalEvidenceTool("surface_value_near_point", {}).catch((error) => error);
+      expect(failure).toBeInstanceOf(UpstreamHttpError);
+      expect(failure).not.toBeInstanceOf(RegionalEvidenceArgumentError);
+    });
+
+    it("keeps an oversized 400 body (no captured bodyText) generic", async () => {
+      fetchJson.mockRejectedValueOnce(new UpstreamHttpError(400));
+      const failure: unknown = await callRegionalEvidenceTool("surface_value_near_point", {}).catch((error) => error);
+      expect(failure).toBeInstanceOf(UpstreamHttpError);
+      expect(failure).not.toBeInstanceOf(RegionalEvidenceArgumentError);
+    });
+
+    it("keeps a non-JSON 400 body generic", async () => {
+      fetchJson.mockRejectedValueOnce(new UpstreamHttpError(400, "<html>not json</html>"));
+      const failure: unknown = await callRegionalEvidenceTool("surface_value_near_point", {}).catch((error) => error);
+      expect(failure).toBeInstanceOf(UpstreamHttpError);
+      expect(failure).not.toBeInstanceOf(RegionalEvidenceArgumentError);
+    });
   });
 });

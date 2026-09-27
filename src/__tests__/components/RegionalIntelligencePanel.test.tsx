@@ -176,6 +176,25 @@ describe("RegionalIntelligencePanel strategy chips", () => {
     expect(markdown).toContain('A nearby region is not an evaluated intervention outcome.');
   });
 
+  it('labels an answered strategy-knowledge lookup as returned literature, not as unavailable', () => {
+    const response = baseResponse([]);
+    response.analysisEvidence = {
+      version: 1,
+      stages: [{ id: 'additional', label: 'Investigate additional evidence', status: 'completed' }],
+      toolCalls: [
+        { id: 'additional-1', stage: 'additional', tool: 'search_environmental_strategies', source: 'strategy-knowledge', status: 'answered', summary: '3 strategy-knowledge literature records returned (corpus abc123).' },
+        { id: 'additional-2', stage: 'additional', tool: 'search_strategy_research_findings', source: 'strategy-knowledge', status: 'unavailable', reason: 'strategy_knowledge_not_configured: STRATEGY_KNOWLEDGE_URL is not set on this service' },
+      ],
+      limitations: [],
+    };
+    mocks.state.messages = [assistantMessage(response)];
+    renderWithProviders(<RegionalIntelligencePanel />);
+    expect(screen.getByText('Evidence checks (2 queried)')).toBeTruthy();
+    expect(screen.getByText('strategy knowledge · Literature returned')).toBeTruthy();
+    expect(screen.getByText('strategy knowledge · Unavailable')).toBeTruthy();
+    expect(reportToMarkdown(response)).toContain('strategy-knowledge: Literature returned');
+  });
+
   it("counts supported sources without advertising deferred model placeholders", () => {
     mocks.state.dataFreshness = {
       drought: "unavailable", streamflow: "unavailable", weatherObservations: "unavailable",
@@ -217,6 +236,22 @@ describe("RegionalIntelligencePanel strategy chips", () => {
     renderWithProviders(<RegionalIntelligencePanel />);
     expect(screen.getByText("Published estimate · soilProperties")).toBeTruthy();
     expect(screen.getByText("Observed data · streamflow")).toBeTruthy();
+  });
+
+  it("labels a strategy-knowledge recommendation as literature and never marks it stale", () => {
+    const response = baseResponse([{
+      strategy: "silvopasture", title: "Screen silvopasture against grazing capacity",
+      rationale: "Published guidance describes stocking-rate prerequisites for this cover type.",
+      timeframe: "long_term", confidence: "moderate", consultProfessionals: ["ecologist"],
+      evidenceOrigin: "literature", evidenceSource: "strategy-knowledge",
+    }]);
+    mocks.state.messages = [assistantMessage(response)];
+    renderWithProviders(<RegionalIntelligencePanel />);
+    expect(screen.getByText("Literature · strategy-knowledge")).toBeTruthy();
+    expect(screen.queryByText(/Stale/)).toBeNull();
+    // A literature claim never opens an "Initial context sources" freshness disclosure: it is not
+    // keyed to a RegionalEvidenceSource and carries no dataFreshness/max-age entry to render.
+    expect(screen.queryByRole("button", { name: /Initial context sources/ })).toBeNull();
   });
 
   it("labels an observation instant with its viewer timezone rather than an ambiguous calendar date", () => {

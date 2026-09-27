@@ -32,7 +32,7 @@ describe("Gemini report schema projection", () => {
     expect(projected).toMatchObject({
       type: "object", additionalProperties: false,
       required: ["riskSummary", "observations", "remediation", "professionalConsultation"],
-      properties: { observations: { type: "array", items: { type: "object", additionalProperties: false, required: ["statement", "evidenceOrigin"], properties: { evidenceOrigin: { enum: ["warehouse", "web", "model_inference"] } } } } },
+      properties: { observations: { type: "array", items: { type: "object", additionalProperties: false, required: ["statement", "evidenceOrigin"], properties: { evidenceOrigin: { enum: ["warehouse", "web", "literature", "model_inference"] } } } } },
     });
   });
 
@@ -61,6 +61,11 @@ describe("Gemini report schema projection", () => {
     expect(projected).toHaveProperty('properties.remediation.items.properties.evidenceOrigin.enum', ['web', 'model_inference']);
     expect(projected).not.toHaveProperty('properties.remediation.items.properties.evidenceSource');
     expect(projected).not.toHaveProperty('properties.remediation.items.properties.evidenceReadIds');
+    // Literature is offered only once a strategy-knowledge tool answered, and survives the projection.
+    const literature = geminiReportSchema(reportSchemaForCitations({ payloadSources: [], measurementReads: [] }, [], { literatureAnswered: true }));
+    expect(literature).toHaveProperty('properties.remediation.items.properties.evidenceOrigin.enum', ['web', 'model_inference', 'literature']);
+    expect(literature).toHaveProperty('properties.remediation.items.properties.evidenceSource.enum', ['strategy-knowledge']);
+    expect(literature).not.toHaveProperty('properties.remediation.items.properties.evidenceReadIds');
     expect(projected).toHaveProperty('properties.remediation.items.required', ['strategy', 'title', 'rationale', 'timeframe', 'confidence', 'consultProfessionals', 'evidenceOrigin']);
     for (const { path, required } of [
       { path: 'properties.observations.items', required: ['statement', 'evidenceOrigin'] },
