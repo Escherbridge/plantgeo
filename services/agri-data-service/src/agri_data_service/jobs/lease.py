@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -14,6 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from agri_data_service.db.sql_queries import load_query_sql
+from agri_data_service.foundation.observability.redaction import redact_strict
 from agri_data_service.jobs.registry import EMPTY_JSON_OBJECT
 
 if TYPE_CHECKING:
@@ -57,19 +57,6 @@ SUPERSEDED_SUMMARY: Final = "this attempt's lease expired and another worker cla
 # the newest checkpoint are counted, so a window that walks a chunk and then yields for the clock -- the
 # normal shape of a multi-tick window -- starts again from zero every tick.
 MAX_CONSECUTIVE_PARKS: Final = 24
-
-REDACTED_PLACEHOLDER: Final = "[redacted]"
-
-# A URL can carry an API key (FIRMS embeds MAP_KEY in the path, not the query) and a DSN carries a
-# password; either one reaching `last_error_summary` publishes it to every operator who reads the
-# ledger. Each alternative substitutes a whole whitespace-delimited token rather than parsing it,
-# because a partial match leaves the secret in the half that survived: scheme-shaped, user@host-shaped,
-# and a bare query tail for a message that names a key without naming its scheme.
-#
-# Kept deliberately identical to ingest/results.py::_SECRET_SHAPED and NOT shared with it: `jobs` is the
-# reusable primitive `ingest` builds on, so importing back the other way would invert the layering.
-# Change both together.
-_SECRET_SHAPED = re.compile(r"[a-z][a-z0-9+.\-]*://\S+|\S+@\S+|\?\S+", re.IGNORECASE)
 
 FailureDisposition = Literal["retry_wait", "dead_letter"]
 
@@ -140,8 +127,13 @@ def clamp_text(value: str, limit: int) -> str:
 
 
 def redact_text(value: str) -> str:
-    """Substitute every URL-shaped, user@host-shaped and query-shaped token, whole, before it is stored."""
-    return _SECRET_SHAPED.sub(REDACTED_PLACEHOLDER, value)
+    """Substitute every URL-shaped, user@host-shaped and query-shaped token, whole, before it is stored.
+
+    Re-exports `foundation.observability.redaction.redact_strict` (GL-1; see its AGENTS.md
+    "Redaction"). Kept as a thin wrapper, not an import-and-drop, so every existing caller and test
+    of this name keeps working unchanged.
+    """
+    return redact_strict(value)
 
 
 def clamp_summary(value: str) -> str:

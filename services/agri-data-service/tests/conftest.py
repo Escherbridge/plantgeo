@@ -10,13 +10,17 @@ this DSN must satisfy.
 
 from __future__ import annotations
 
+import logging
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 import psycopg2
 import pytest
+import structlog
 
 from agri_data_service.app import AgriApp, create_app
+from agri_data_service.foundation.observability import logging as observability_logging
+from agri_data_service.foundation.observability.bootstrap import TURN_CONTEXT_ENV_VARS
 
 # Enables the `pytester` fixture (see test_no_silent_skip_gate_pytester.py), which
 # proves the no-silent-skip sweep gate below actually flips the exit code.
@@ -115,6 +119,58 @@ def agri_db_connection(agri_db_dsn: str) -> Iterator[psycopg2.extensions.connect
 def app() -> AgriApp:
     """Create a test Sanic application."""
     return create_app()
+
+
+# Every logger `configure_logging` sets a level on, kept here (rather than reached for as a private
+# import) the same way `router.py` duplicates `logging.py`'s turn-context table -- see this
+# project's foundation/observability/AGENTS.md for the convention. Restoring only the ROOT logger's
+# handlers/level (as this fixture did before) left `agri_data_service` and every third-party floor
+# logger permanently changed after the FIRST test that called `configure_logging`, which is exactly
+# the test-order-dependent flake class this fixture exists to prevent (security review).
+_OBSERVABILITY_LOGGER_NAMES: Final = (
+    "agri_data_service",
+    "httpx",
+    "httpcore",
+    "sqlalchemy",
+    "asyncpg",
+    "botocore",
+    "boto3",
+    "s3transfer",
+    "urllib3",
+    "rasterio",
+    "asyncio",
+    "sanic",
+)
+
+
+@pytest.fixture(autouse=True)
+def _reset_observability_state() -> Iterator[None]:
+    """Isolate every test from another test's logging configuration and turn-context environment.
+
+    Without this (GL-1; see `foundation/observability/AGENTS.md`), one test's `configure_logging`
+    call or `PLANTGEO_TURN_*`/`PLANTGEO_LANE_ID`/`PLANTGEO_ATTEMPT` environment would leak into the
+    next test's collection, which is exactly the class of test-order-dependent flake this fixture
+    exists to rule out.
+    """
+    for name in TURN_CONTEXT_ENV_VARS:
+        os.environ.pop(name, None)
+    root_logger = logging.getLogger()
+    original_handlers = list(root_logger.handlers)
+    original_level = root_logger.level
+    original_logger_levels = {name: logging.getLogger(name).level for name in _OBSERVABILITY_LOGGER_NAMES}
+    original_long_running = observability_logging.is_long_running_configured()
+    try:
+        yield
+    finally:
+        for name in TURN_CONTEXT_ENV_VARS:
+            os.environ.pop(name, None)
+        structlog.reset_defaults()
+        root_logger.handlers = original_handlers
+        root_logger.setLevel(original_level)
+        for name, level in original_logger_levels.items():
+            logging.getLogger(name).setLevel(level)
+        observability_logging._configuration_state.long_running = original_long_running
+        logging.captureWarnings(False)
 
 
 def pytest_configure(config: pytest.Config) -> None:

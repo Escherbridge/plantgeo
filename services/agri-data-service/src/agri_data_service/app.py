@@ -11,6 +11,7 @@ from sanic.response import BaseHTTPResponse
 
 from agri_data_service.config import settings
 from agri_data_service.db.engine import dispose_combined_local_engine, dispose_service_engines
+from agri_data_service.foundation.observability.logging import configure_logging
 from agri_data_service.foundation.region import (
     assert_region_bindings_are_servable,
     load_region,
@@ -69,18 +70,10 @@ def create_app(_args: object | None = None) -> AgriApp:
     app.config.REQUEST_MAX_SIZE = settings.request_max_size
 
     # --- Structured logging ---
-    structlog.configure(
-        processors=[
-            structlog.contextvars.merge_contextvars,
-            structlog.processors.add_log_level,
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.dev.ConsoleRenderer() if settings.sanic_debug else structlog.processors.JSONRenderer(),
-        ],
-        wrapper_class=structlog.make_filtering_bound_logger(20),
-        context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(),
-        cache_logger_on_first_use=True,
-    )
+    # Ported to `foundation/observability/logging.py::configure_logging` at GL-1 (Wave O): one
+    # redacted JSON-per-line chain shared with the executor and the CLI, instead of this app's own
+    # copy. See that module's AGENTS.md "Logging contract" for the pinned processor order.
+    configure_logging("service", long_running=True, console=settings.sanic_debug)
 
     # --- Lifecycle listeners ---
     @app.before_server_start

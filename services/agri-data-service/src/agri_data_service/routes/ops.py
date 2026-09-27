@@ -20,6 +20,7 @@ from sqlalchemy import ARRAY, Text, bindparam, text
 
 from agri_data_service.db.engine import receiver_writer_session
 from agri_data_service.db.sql_queries import load_query_sql
+from agri_data_service.foundation.observability.redaction import describe_error
 from agri_data_service.ingest.validation.models import DEFAULT_STREAM_DEFINITIONS
 
 if TYPE_CHECKING:
@@ -401,7 +402,7 @@ async def backfill_stream(request: Request) -> None:
         logger.info("ops_backfill_stream_cancelled")
         raise
     except Exception as error:  # a dropped client surfaces here as a failed write
-        logger.info("ops_backfill_stream_closed", error=str(error))
+        logger.info("ops_backfill_stream_closed", error=describe_error(error))
 
 
 @ops_bp.get("/static/datastar.js")
@@ -501,7 +502,7 @@ async def _load_snapshot(throughput_window_hours: int) -> _Snapshot:
         # needed to trigger it: one unreadable agri.job_* relation on a partially migrated or
         # permission-restricted database, or a statement timeout on the 46M-row lane read. Full
         # text goes to the log line above, which is private; only the class is published.
-        logger.warning("ops_backfill_snapshot_failed", error=str(error))
+        logger.warning("ops_backfill_snapshot_failed", error=describe_error(error))
         return _Snapshot(
             generated_at=generated_at,
             throughput_window_hours=throughput_window_hours,
@@ -606,7 +607,7 @@ async def _optional_rows(
     except Exception as error:
         # The full text -- driver message, failing relation, and the entire statement -- goes to
         # the log, which is private. Only the class reaches `panel_errors`, which is not.
-        logger.warning("ops_backfill_panel_read_failed", panel=query.cache_key, error=str(error))
+        logger.warning("ops_backfill_panel_read_failed", panel=query.cache_key, error=describe_error(error))
         panel_errors[query.cache_key] = _panel_error_summary(error)
         return []
 

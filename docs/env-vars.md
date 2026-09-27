@@ -269,6 +269,24 @@ and abuse testing. Large artifacts should move to immutable object storage with
 a checksum-addressed database reference rather than being forced through inline
 publication.
 
+### Observability and logging (Wave O, GL-1)
+
+None of these is required; every one falls back to a documented default. See
+`services/agri-data-service/src/agri_data_service/foundation/observability/AGENTS.md`
+for the full logging contract, and its "Railway logging facts" for why the
+Railway-side `level` mapping, log-rate limit, and line-size limit shaped these
+defaults.
+
+| Variable | Scope | Policy |
+| --- | --- | --- |
+| `PLANTGEO_LOG_LEVEL` | server, optional | Minimum level for first-party (`agri_data_service.*`) loggers only; never lowers the pinned WARNING floor on httpx, httpcore, sqlalchemy, asyncpg, botocore, boto3, s3transfer, urllib3, rasterio, asyncio or sanic. One of `debug`, `info`, `warn`/`warning`, `error`. Unset or unrecognized resolves silently to `info`. |
+| `PLANTGEO_TURN_ID` | server, internal | Set by the executor on a spawned child (`execution/job_executor_service.py::run_scheduled_command`, landing at GL-3); its presence alone is what switches a process onto the `service` logging profile and arms the turn-usage writer. Never set by an operator. |
+| `PLANTGEO_LANE_ID` | server, internal | The lane id for the current turn, bound onto every log line as `lane`. Set alongside `PLANTGEO_TURN_ID`. |
+| `PLANTGEO_TURN_MODE` | server, internal | One of `forward`, `gap-fill`, `repair`, `transform`; bound onto every log line as `mode`. |
+| `PLANTGEO_ATTEMPT` | server, internal | The attempt number for the current turn; bound onto every log line as `attempt`. |
+| `PLANTGEO_TURN_BUCKET` | server, internal | The shard/bucket key for the current turn; bound onto every log line as `shard_key`. |
+| `PLANTGEO_TURN_PROBE` | server, internal | `1` on a single-attempt probe turn (GL-6/f1-executor only; unused before then); bound onto every log line as `probe`. |
+
 ### Agent strategy-knowledge (literature) tools
 
 | Variable | Service | Policy |

@@ -6,17 +6,16 @@ import asyncio
 import json
 import os
 import signal
-import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Literal
 
-import structlog
 from sqlalchemy import text
 
 from agri_data_service.db.sql_queries import load_query_sql
+from agri_data_service.foundation.observability.logging import get_logger
 from agri_data_service.jobs.lease import (
     apply_statement_timeout,
     canonical_json,
@@ -59,10 +58,12 @@ if TYPE_CHECKING:
         JobWorkItemSpec,
     )
 
-# Operational telemetry is bound to stderr, never stdout, for the same reason ingest/commands.py binds
-# it there: a cron container's stdout is a JSON-lines summary stream and nothing else, and structlog's
-# default factory sinks to stdout, which would corrupt every line the cron log parser reads.
-logger = structlog.wrap_logger(structlog.PrintLogger(file=sys.stderr))
+# A deferred logger (`foundation/observability/logging.py::get_logger`, GL-1; see its AGENTS.md
+# "Arming"): it decides, on every call, whether structlog is configured yet. Before arming it falls
+# back to a plain stderr line -- never stdout, for the same reason ingest/commands.py binds
+# operational telemetry there: a cron container's stdout is a JSON-lines summary stream and nothing
+# else. Module import order therefore never freezes this logger onto the pre-configuration branch.
+logger = get_logger(__name__)
 
 BUDGET_YIELD_REASON: Final = "worker time budget exhausted mid-shard"
 
