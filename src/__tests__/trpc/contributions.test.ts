@@ -126,6 +126,14 @@ describe("generic observations cannot bypass data provenance", () => {
     { source: "USGS NWIS" }, { submittedByUserId: "someone-else" },
     { type: "data_collection" }, { type: "data_submission" }, { category: "data" },
     { dataDetails: { lane: "water-gauges", collectionMethod: "Gauge reading" } },
+    // Every invariant `interventions.submitIntervention` enforces (geometry
+    // bound, category/type pairing, review-visibility gating) lives behind
+    // these same keys; letting any of them through this generic endpoint
+    // reopens the bypass, even though it does not run the full schema.
+    { publicationConsent: true }, { kind: "request" }, { id: "spoofed-feature-id" },
+    { status: "published" },
+    { geometry: { type: "Point", coordinates: [-122.6784, 45.5152] } },
+    { category: "land" }, { category: "air" },
   ])("refuses forged provenance and data workflow bypass %#", async (properties) => {
     const h = observationHarness(true);
     await expect(h.caller.submitObservation({ layerId: LAYER, properties })).rejects.toMatchObject({ code: "BAD_REQUEST" });

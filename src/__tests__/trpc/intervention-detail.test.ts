@@ -96,6 +96,13 @@ const POLYGON: GeoJSON.Geometry = {
   ],
 };
 
+const DATA_DETAILS_WITH_URL = {
+  lane: "water-gauges",
+  collectionMethod: "Staff gauge reading",
+  observedOn: "2024-02-29",
+  dataUrl: "https://example.org/readings.csv",
+};
+
 function detailRow(overrides: Row = {}): Row[] {
   return [
     {
@@ -292,6 +299,124 @@ describe("interventions.getInterventionDetail", () => {
         () => expect.unreachable("an invisible row must not resolve"),
         (error: { code?: string }) => expect(error.code).not.toBe("FORBIDDEN")
       );
+  });
+
+  describe("pending evidence link visibility", () => {
+    it("hides a pending submission's evidence link from a merely consenting reader", async () => {
+      const caller = callerWith(
+        [
+          LAYER_ROW,
+          detailRow({
+            type: "data_submission",
+            category: "data",
+            status: "pending_review",
+            submittedByUserId: OWNER_USER_ID,
+            publicationConsent: "true",
+            dataDetails: DATA_DETAILS_WITH_URL,
+          }),
+        ],
+        sessionFor(OTHER_USER_ID)
+      );
+
+      const detail = await caller.getInterventionDetail({ featureId: FEATURE_ID });
+
+      expect(detail.dataDetails).toMatchObject({
+        lane: "water-gauges",
+        collectionMethod: "Staff gauge reading",
+      });
+      expect(detail.dataDetails).not.toHaveProperty("dataUrl");
+    });
+
+    it("reveals the evidence link to the submission's own author", async () => {
+      const caller = callerWith(
+        [
+          LAYER_ROW,
+          detailRow({
+            type: "data_submission",
+            category: "data",
+            status: "pending_review",
+            submittedByUserId: OWNER_USER_ID,
+            publicationConsent: "true",
+            dataDetails: DATA_DETAILS_WITH_URL,
+          }),
+        ],
+        sessionFor(OWNER_USER_ID)
+      );
+
+      const detail = await caller.getInterventionDetail({ featureId: FEATURE_ID });
+
+      expect(detail.dataDetails).toMatchObject(DATA_DETAILS_WITH_URL);
+    });
+
+    it("reveals the evidence link to an expert reader", async () => {
+      const caller = callerWith(
+        [
+          LAYER_ROW,
+          detailRow({
+            type: "data_submission",
+            category: "data",
+            status: "pending_review",
+            submittedByUserId: OWNER_USER_ID,
+            publicationConsent: "true",
+            dataDetails: DATA_DETAILS_WITH_URL,
+          }),
+        ],
+        {
+          expires: "2099-01-01T00:00:00.000Z",
+          user: {
+            id: OTHER_USER_ID,
+            platformRole: "expert",
+          } as NonNullable<Context["session"]>["user"],
+        }
+      );
+
+      const detail = await caller.getInterventionDetail({ featureId: FEATURE_ID });
+
+      expect(detail.dataDetails).toMatchObject(DATA_DETAILS_WITH_URL);
+    });
+
+    it("reveals the evidence link to a fellow workspace member", async () => {
+      const caller = callerWith(
+        [
+          LAYER_ROW,
+          detailRow({
+            type: "data_submission",
+            category: "data",
+            status: "pending_review",
+            submittedByUserId: OWNER_USER_ID,
+            submittedByTeamId: TEAM_ID,
+            publicationConsent: "false",
+            dataDetails: DATA_DETAILS_WITH_URL,
+          }),
+          [{ userId: OTHER_USER_ID }], // isFeatureVisibleTo's own-row membership re-read
+          [{ userId: OTHER_USER_ID }], // canRevealPendingDataUrl's membership re-read
+        ],
+        sessionFor(OTHER_USER_ID)
+      );
+
+      const detail = await caller.getInterventionDetail({ featureId: FEATURE_ID });
+
+      expect(detail.dataDetails).toMatchObject(DATA_DETAILS_WITH_URL);
+    });
+
+    it("keeps the evidence link public on a published row regardless of viewer", async () => {
+      const caller = callerWith(
+        [
+          LAYER_ROW,
+          detailRow({
+            type: "data_submission",
+            category: "data",
+            status: "published",
+            dataDetails: DATA_DETAILS_WITH_URL,
+          }),
+        ],
+        null
+      );
+
+      const detail = await caller.getInterventionDetail({ featureId: FEATURE_ID });
+
+      expect(detail.dataDetails).toMatchObject(DATA_DETAILS_WITH_URL);
+    });
   });
 });
 

@@ -463,3 +463,47 @@ describe("community data intervention submission", () => {
     expect(calls).toHaveLength(0);
   });
 });
+
+describe("interventions.listProposed", () => {
+  /**
+   * Every row this query returns is `pending_review` by construction (the
+   * WHERE clause admits nothing else), so its evidence link is never public
+   * yet -- `getInterventionDetail` is the only read that may reveal it, and
+   * only to the submitter, their team, or an expert.
+   */
+  it("never includes a pending data submission's evidence link", async () => {
+    const caller = callerWith(
+      [
+        [{ id: LAYER_ID }],
+        [
+          {
+            id: "feature-1",
+            name: "Stream gauge readings",
+            type: "data_submission",
+            category: "data",
+            dataDetails: {
+              lane: "water-gauges",
+              collectionMethod: "Staff gauge reading",
+              observedOn: "2024-02-29",
+              dataUrl: "https://example.org/readings.csv",
+            },
+            dataOrigin: "community",
+            description: null,
+            longitude: -122.6784,
+            latitude: 45.5152,
+            createdAt: new Date("2026-09-01T00:00:00.000Z"),
+          },
+        ],
+      ],
+      contributorSession()
+    );
+
+    const [proposal] = await caller.listProposed({});
+
+    expect(proposal.dataDetails).toMatchObject({
+      lane: "water-gauges",
+      collectionMethod: "Staff gauge reading",
+    });
+    expect(proposal.dataDetails).not.toHaveProperty("dataUrl");
+  });
+});

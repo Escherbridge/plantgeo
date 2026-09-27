@@ -53,7 +53,7 @@ export function DataInterventionSummary({
             <div>
               <dt className="font-medium">Dataset or evidence</dt>
               <dd>
-                <a href={details.dataUrl} target="_blank" rel="noopener noreferrer" className="break-all underline">
+                <a href={details.dataUrl} target="_blank" rel="ugc nofollow noopener noreferrer" className="break-all underline">
                   Open dataset or evidence
                 </a>
               </dd>

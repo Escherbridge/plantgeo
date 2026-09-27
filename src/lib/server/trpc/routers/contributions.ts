@@ -6,9 +6,25 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 import { isDataInterventionType } from "@/lib/environmental/data-intervention";
 
 const APPLICATION_CONTRIBUTION_LAYERS = ["interventions"];
-const SERVER_OWNED_CONTRIBUTION_PROPERTIES = [
+/**
+ * Properties this generic endpoint may never accept from the client: origin
+ * and authorship claims (stamped server-side instead), plus every field that
+ * would let a bare `z.record(z.unknown())` row impersonate a validated
+ * `interventions.submitIntervention` / `submitRequest` submission on the same
+ * table and layer -- `geometry` (this path enforces no vertex ceiling or area
+ * cap), `category`/`kind` (misclassifies the row for the readers that key off
+ * them), `publicationConsent` (would expose the row through
+ * `interventions.listProposed` / `getInterventionDetail` before any expert
+ * reviews it), `status` (the moderation state some readers still project
+ * from `properties`, distinct from the `features.status` column this
+ * endpoint always sets to `pending_review`) and `id` (the machine-ingress
+ * upsert key in `intervention-store.ts`; a client-chosen value can capture a
+ * partner feature's future upsert as an UPDATE instead of an INSERT).
+ */
+const RESERVED_CONTRIBUTION_PROPERTIES = [
   "dataOrigin", "provenance", "source", "sourceType", "dataDetails",
   "submittedByUserId", "submittedByTeamId",
+  "geometry", "category", "kind", "publicationConsent", "id", "status",
 ];
 
 /** Canonical pending-only review errors; see src/lib/server/AGENTS.md. */
@@ -23,8 +39,8 @@ export const contributionsRouter = router({
       z.object({
         layerId: z.string().uuid(),
         properties: z.record(z.unknown()).default({}).superRefine((properties, context) => {
-          if (SERVER_OWNED_CONTRIBUTION_PROPERTIES.some((key) => key in properties)) {
-            context.addIssue({ code: z.ZodIssueCode.custom, message: "Contribution origin and authorship are assigned by the server" });
+          if (RESERVED_CONTRIBUTION_PROPERTIES.some((key) => key in properties)) {
+            context.addIssue({ code: z.ZodIssueCode.custom, message: "This property is assigned by the server or reserved for the validated submission forms" });
           }
           if (isDataInterventionType(properties.type) || properties.category === "data") {
             context.addIssue({ code: z.ZodIssueCode.custom, message: "Data interventions must use the validated data submission form" });

@@ -82,12 +82,20 @@ evidence references and are never fetched by this workflow.
 
 The collection or submission site retains the existing 500-acre polygon cap and vertex limits.
 A dataset may describe a larger area; a point can identify its submission or collection site.
-Feed, detail and moderation reads retain lane, evidence and origin so publication cannot hide
-the distinction. Missing historical provenance is not inferred from publication status.
+Feed, detail and moderation reads retain lane and origin so publication cannot hide the
+distinction. The evidence link (`dataUrl`) is withheld while a row is pending: the
+`listProposed` feed never returns it, and `getInterventionDetail` reveals it only to the
+submitter, their team, or an expert/admin (published rows show it to everyone). Missing
+historical provenance is not inferred from publication status.
 
 The legacy `proposeIntervention` flow and machine intervention ingress reject data types; they
 cannot omit the validated data payload. The generic `contributions.submitObservation` procedure
 accepts only the global `interventions` application layer, refuses environmental and team-layer
 targets, rejects provenance/authorship claims and data-workflow payloads, and stamps authenticated
-authorship plus community origin. These restrictions close older arbitrary-property write paths.
-Machine ingress retains its legacy physical-type subset and cannot mint verified-source origin.
+authorship plus community origin. It also refuses `geometry`, `category`, `kind`,
+`publicationConsent`, `id` and `status` outright, since none of `submitIntervention`'s invariants
+(vertex ceiling, area cap, type/category pairing) run on this path -- accepting any of those keys
+would let a client-authored row impersonate a validated intervention or request on the same table
+and layer, or, via a client-chosen `id`, capture a partner feature's next machine-ingress upsert
+(`intervention-store.ts`). Machine ingress retains its legacy physical-type subset and cannot mint
+verified-source origin.

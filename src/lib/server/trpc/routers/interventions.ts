@@ -232,6 +232,65 @@ async function isFeatureVisibleTo(
   );
 }
 
+/**
+ * Strips `dataUrl` from a data intervention's collection/submission details.
+ *
+ * `dataUrl` is the one field in `DataInterventionDetails` a contributor can
+ * populate with an arbitrary link -- including a tokenized share link a
+ * spammer or phisher would rather put in front of the whole signed-in
+ * platform than in front of its actual reviewers. Every other field
+ * (`lane`, `collectionMethod`, `observedOn`) is safe to show unconditionally.
+ */
+function omitDataUrl(
+  details: DataInterventionDetails | null
+): DataInterventionDetails | null {
+  if (!details) return details;
+  const { dataUrl: _dataUrl, ...rest } = details;
+  return rest;
+}
+
+/**
+ * Whether the evidence link in a still-pending data intervention's
+ * `dataDetails` may be shown to this reader.
+ *
+ * A published row's link is already public (`omitDataUrl` is never applied to
+ * one); this only gates the pending window. It reveals the link to the same
+ * readers `isFeatureVisibleTo` already lets see the whole row for a reason
+ * beyond consent -- the submitter and their team -- plus an expert, who
+ * reviews unconsented submissions through `contributions.listPendingReview`
+ * and should not be re-blocked here if a future caller reaches this path
+ * with an expert session. It does NOT extend to a merely consenting
+ * signed-in reader: that is exactly the audience DataInterventionFields.tsx
+ * tells a submitter the link stays hidden from until publication.
+ */
+async function canRevealPendingDataUrl(
+  ctx: Context,
+  row: {
+    status: string | null;
+    submittedByUserId: string | null;
+    submittedByTeamId: string | null;
+  },
+  userId: string | null,
+  isExpertReader: boolean
+): Promise<boolean> {
+  if (row.status === "published") return true;
+  if (isExpertReader) return true;
+  if (!userId) return false;
+  if (row.submittedByUserId === userId) return true;
+  if (!row.submittedByTeamId) return false;
+  const [membership] = await ctx.db
+    .select({ userId: teamMembers.userId })
+    .from(teamMembers)
+    .where(
+      and(
+        eq(teamMembers.teamId, row.submittedByTeamId),
+        eq(teamMembers.userId, userId)
+      )
+    )
+    .limit(1);
+  return Boolean(membership);
+}
+
 /** Resolves the provisioned interventions layer; never creates one. */
 async function resolveInterventionsLayerId(ctx: Context): Promise<string> {
   const [layer] = await ctx.db
@@ -489,7 +548,7 @@ export const interventionsRouter = router({
     .query(async ({ ctx, input }) => {
       const layerId = await resolveInterventionsLayerId(ctx);
 
-      return ctx.db
+      const rows = await ctx.db
         .select({
           id: features.id,
           name: sql<string | null>`${features.properties} ->> 'name'`,
@@ -521,6 +580,18 @@ export const interventionsRouter = router({
         )
         .orderBy(desc(features.createdAt))
         .limit(input.limit);
+
+      // Every row here is still `pending_review` (the WHERE clause above
+      // admits nothing else): its evidence link, if any, is not public yet.
+      // `getInterventionDetail` reveals it to the submitter, their team or an
+      // expert; this bulk feed deliberately omits it for every reader
+      // (experts included) and stays a flat "not here", consistent with
+      // DataInterventionFields.tsx's "approved submissions make this link
+      // public" promise to the submitter.
+      return rows.map((row) => ({
+        ...row,
+        dataDetails: omitDataUrl(row.dataDetails),
+      }));
     }),
 
   /**
@@ -596,12 +667,21 @@ export const interventionsRouter = router({
         throw interventionNotVisible();
       }
 
+      const platformRole = (
+        ctx.session?.user as { platformRole?: string } | undefined
+      )?.platformRole;
+      const isExpertReader = platformRole === "expert" || platformRole === "admin";
+      const dataDetails = readDataInterventionDetails(row.dataDetails);
+      const revealDataUrl = dataDetails
+        ? await canRevealPendingDataUrl(ctx, row, userId, isExpertReader)
+        : true;
+
       return {
         id: row.id,
         name: row.name,
         type: row.type,
         category: row.category,
-        dataDetails: readDataInterventionDetails(row.dataDetails),
+        dataDetails: revealDataUrl ? dataDetails : omitDataUrl(dataDetails),
         dataOrigin: row.dataOrigin ?? null,
         kind: row.kind === REQUEST_KIND ? "request" : "intervention",
         // `unknown`, never a plausible-looking default: a NULL status is a data
