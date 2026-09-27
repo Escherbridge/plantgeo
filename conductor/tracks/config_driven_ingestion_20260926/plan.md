@@ -514,23 +514,23 @@ push's files (S17). No variable is required and no secret is set.
 
 ### 0W.1 GL-1: `o1-logging-core` (sonnet; seam GL-1a everything except the router / GL-1b `router.py` + `usage.py`)
 
-- [ ] Task (TDD): `foundation/observability/logging.py::configure_logging(profile, *, long_running=False, console=False)`
+- [x] Task (TDD): `foundation/observability/logging.py::configure_logging(profile, *, long_running=False, console=False)`
       ported from `app.py::create_app`'s chain and pinned in order (spec §4.9.1); a `StreamSink`
       that resolves `sys.stdout`/`sys.stderr` when it writes; Railway levels; the redacted stdlib
       bridge with pinned WARNING floors; `logging.captureWarnings(True)`; a deferred
       `get_logger(name)`. `app.py`'s configure block and `jobs/worker.py`'s module logger switch to it.
-- [ ] Task (TDD): `foundation/observability/redaction.py` (`redact_strict`, `redact_for_log`,
+- [x] Task (TDD): `foundation/observability/redaction.py` (`redact_strict`, `redact_for_log`,
       `redact_value`, `describe_error`, `register_secret_values`); `jobs/lease.py::redact_text` and
       `ingest/results.py::redact_secrets` become re-exports; the dead `run_isolated_job` /
       `any_job_failed` are deleted; `describe_error` replaces `error=str(error)` at the three
       `routes/ops.py` sites.
-- [ ] Task (TDD): `events.py`; `vocabulary.py`, **frozen at the end of GL-1** (`ExitClass` incl.
+- [x] Task (TDD): `events.py`; `vocabulary.py`, **frozen at the end of GL-1** (`ExitClass` incl.
       `infra`, `TurnOutcome`, incident kinds, metric keys, pool labels, `LANE_LOGICAL_CAPS` from
       `budget_headline` (soil 1,602), log levels; no `POOL_BULK_LANES` and no `pool_saturated`, WQ-4);
       `usage.py` (host → provider and pool label, the Open-Meteo weight table, the usage line);
       `router.py` (`ChildLogRouter`, the module only; wired at GL-3); `bootstrap.py::arm_from_environment`,
       called once and guarded from the package root `__init__.py`.
-- [ ] Task: `interface/cli/root.py::cli` configures `tool` for every group **except `agent`**;
+- [x] Task: `interface/cli/root.py::cli` configures `tool` for every group **except `agent`**;
       `tests/conftest.py` gains one autouse fixture (deletes `PLANTGEO_TURN_*`; after each test
       `structlog.reset_defaults()`, restores the stdlib root's handlers and level,
       `logging.captureWarnings(False)`); `docs/env-vars.md` rows (the coordinator adds them if the
@@ -568,7 +568,7 @@ push's files (S17). No variable is required and no secret is set.
   redaction suite; `test_configure_inside_clirunner_does_not_capture_later_output`;
   `tests/test_layer_import_contract.py` and `tests/interface/test_availability_cli.py` pass **unedited**.
 - Reviews: `/code-review high` + `/security-review` → `reviews.phase0_gl1`.
-- [ ] **GL-1 (owner go): push.** Smoke read (≤ 1 h): row 3 (secret probe) on the executor and the
+- [x] **GL-1 (owner go): push.** (done: `f2a27473`, 2026-09-27 20:20Z; four deploys `SUCCESS`; row 3 PASS, `evidence/phase0.md` §GL-1) Smoke read (≤ 1 h): row 3 (secret probe) on the executor and the
       web services. [checkpoint marker]
 
 ### 0W.2 GL-2: `o3-ingest-meter` (sonnet)
