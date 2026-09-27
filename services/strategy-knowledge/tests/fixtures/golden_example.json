@@ -1,0 +1,28 @@
+[
+ {
+  "query": "keep burned slopes from eroding before the first rains",
+  "filters": {
+   "goals": [
+    "erosion_control"
+   ],
+   "family_diversity": 0
+  },
+  "expected_any_of": [
+   "post-fire-straw-mulching",
+   "post-fire-hydromulch-application"
+  ],
+  "k": 3
+ },
+ {
+  "query": "hold water in sandy soil",
+  "filters": {
+   "site_profile": {
+    "sand_pct": 80
+   }
+  },
+  "expected_any_of": [
+   "biochar-amendment-coarse-soils"
+  ],
+  "k": 3
+ }
+]

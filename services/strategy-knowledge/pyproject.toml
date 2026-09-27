@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "strategy-knowledge"
+version = "0.1.0"
+description = "Retrieval knowledge base and MCP server for literature-grounded environmental enrichment strategies"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "anyio>=4.15.1",
+    "boto3>=1.43.103,<2",
+    "chromadb>=1.5.9,<2",
+    "httpx>=0.28.1,<1",
+    "mcp>=2.2.0,<3",
+    "pydantic>=2.13.5,<3",
+    "pypdf>=6.19.0,<7",
+    "rank-bm25>=0.2.2,<0.3",
+    "starlette>=1.7.0,<2",
+    "trafilatura>=2.2.0,<3",
+    "uvicorn>=0.54.0,<1",
+]
+
+[project.scripts]
+strategy-kb = "strategy_knowledge.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/strategy_knowledge"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.9",
+]

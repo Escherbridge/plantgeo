@@ -1,0 +1,37 @@
+{
+ "families": [
+  {
+   "family_id": "post-fire-mulching",
+   "name": "Post-fire mulching",
+   "description": "Mulch covers for burned ground.",
+   "member_strategy_ids": [
+    "post-fire-straw-mulching",
+    "post-fire-hydromulch-application"
+   ]
+  },
+  {
+   "family_id": "hydrophobicity-treatment",
+   "name": "Hydrophobic soil treatment",
+   "description": "Restoring infiltration through water-repellent layers.",
+   "member_strategy_ids": [
+    "break-hydrophobic-soil-layer"
+   ]
+  },
+  {
+   "family_id": "biochar-soil-amendment",
+   "name": "Biochar soil amendment",
+   "description": "Biochar worked into soils.",
+   "member_strategy_ids": [
+    "biochar-amendment-coarse-soils"
+   ]
+  },
+  {
+   "family_id": "cover-cropping",
+   "name": "Cover cropping",
+   "description": "Living cover between cash crops.",
+   "member_strategy_ids": [
+    "grass-cover-cropping"
+   ]
+  }
+ ]
+}

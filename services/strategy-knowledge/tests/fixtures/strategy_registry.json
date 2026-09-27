@@ -1,0 +1,444 @@
+{
+ "strategies": [
+  {
+   "strategy_id": "break-hydrophobic-soil-layer",
+   "name": "Test and break the post-fire hydrophobic soil layer",
+   "summary": "Severe, slow-moving fires can bake a waxy, water-repellent coating into the soil surface. This strategy tests for that hydrophobic layer with a simple water-drop test and then physically breaks it up (by tillage, raking, or natural freeze-thaw and animal activity) so water can infiltrate and seeds can germinate.",
+   "category": "hydrophobicity_treatment",
+   "secondary_categories": [
+    "post_fire_stabilization"
+   ],
+   "fire_phase": [
+    "post_fire_emergency",
+    "post_fire_recovery"
+   ],
+   "land_use": [
+    "rangeland",
+    "forest",
+    "cropland",
+    "garden_residential",
+    "general"
+   ],
+   "region": [
+    "southern_rockies",
+    "northern_rockies",
+    "great_plains_texas"
+   ],
+   "materials": [],
+   "actions": [
+    "Place a drop of water on the exposed soil surface and observe whether it beads up",
+    "Repeat the test at successive one-inch depths to find the layer's thickness",
+    "Remove or till through the identified hydrophobic layer before seeding",
+    "Rely on freezing/thawing cycles and animal activity to help break up the layer naturally over time"
+   ],
+   "application_rate": null,
+   "timing": "as soon as it is safe to return to the property, before reseeding",
+   "soil_conditions": [
+    "hydrophobic",
+    "burned_high_severity",
+    "sandy_coarse"
+   ],
+   "slope_guidance": null,
+   "scale": [
+    "garden_plot",
+    "field",
+    "farm_ranch"
+   ],
+   "equipment": [
+    "rake",
+    "harrow"
+   ],
+   "cost_level": null,
+   "labor_intensity": null,
+   "time_to_effect": null,
+   "benefits": [
+    "restores water infiltration",
+    "allows seed germination and root water uptake"
+   ],
+   "risks_limitations": [
+    "hydrophobic layer thickness varies by site, so testing must be repeated at depth",
+    "does not form in every fire"
+   ],
+   "nrcs_practice_code": null,
+   "evidence_strength": "expert_guidance",
+   "sources": [
+    {
+     "source_id": "fixture-post-fire-guide",
+     "locator": "Hydrophobic soils after fire",
+     "excerpt": "Breaking this water repellent layer is essential before seeding so that rain can soak"
+    }
+   ],
+   "notes": "04 preserves an OCR typo ('profle' for 'profile') that 06's copy of the same fact sheet does not; both excerpts are kept verbatim per source.",
+   "goals": {
+    "wildfire_resilience": "stated",
+    "water_management": "stated",
+    "erosion_control": "inferred"
+   },
+   "family_id": "hydrophobicity-treatment",
+   "facets": {
+    "overview": "Testing and breaking the post-fire hydrophobic soil layer restores infiltration where a severe fire baked a waxy water-repellent coating into the surface.",
+    "how_to": "To break the hydrophobic layer, drop water on bare soil, repeat at one-inch depths, then rake or harrow through the repellent layer before seeding.",
+    "fit": "Breaking the hydrophobic layer fits small burned areas on rangeland, forest and garden ground after high-severity fire; it is unnecessary where water still soaks in.",
+    "outcomes": "Breaking the hydrophobic layer lets rain soak in and seeds germinate; the layer does not form in every fire, so test before treating."
+   },
+   "merged_from": [],
+   "review_state": null
+  },
+  {
+   "strategy_id": "post-fire-straw-mulching",
+   "name": "Post-fire straw or hay mulching over reseeded ground",
+   "summary": "Certified weed-free straw or hay is spread over seeded burned ground to a controlled depth and coverage density, then anchored, to protect soil and germinating seed from wind and water erosion. Effectiveness depends on maintaining the specified thickness and ground-coverage percentage.",
+   "category": "mulching",
+   "secondary_categories": [
+    "erosion_control",
+    "revegetation"
+   ],
+   "fire_phase": [
+    "post_fire_emergency",
+    "post_fire_recovery"
+   ],
+   "land_use": [
+    "rangeland",
+    "forest",
+    "general"
+   ],
+   "region": [
+    "southern_rockies",
+    "northern_rockies",
+    "southwest",
+    "great_basin_high_desert"
+   ],
+   "materials": [
+    "straw mulch",
+    "certified weed-free straw",
+    "tackifier",
+    "plastic netting"
+   ],
+   "actions": [
+    "Spread certified weed-free straw or hay over the seeded area to a uniform 2-3 inch depth",
+    "Target 60-80% ground coverage, leaving 20-40% soil visible",
+    "Crimp straw into the soil with a spade, punching every 12 inches to about 4 inches deep",
+    "Anchor with plastic netting or a tacking agent where crimping is not possible",
+    "Extend straw coverage into undamaged ground beyond the seeded area to resist wind and water edge loss"
+   ],
+   "application_rate": "uniform depth of two to three inches; one square straw bale (74 lbs) covers about 800 square feet, equivalent to 2 tons per acre",
+   "timing": "immediately after seeding, before wind and rain",
+   "soil_conditions": [
+    "burned_high_severity",
+    "burned_low_moderate_severity",
+    "erodible",
+    "hydrophobic"
+   ],
+   "slope_guidance": "work across the slope when anchoring straw",
+   "scale": [
+    "field",
+    "farm_ranch",
+    "stand_forest_unit"
+   ],
+   "equipment": [
+    "pitchfork",
+    "spading fork",
+    "square-end spade"
+   ],
+   "cost_level": "high",
+   "labor_intensity": null,
+   "time_to_effect": null,
+   "benefits": [
+    "reduces erosion",
+    "protects seed and creates a germination microhabitat"
+   ],
+   "risks_limitations": [
+    "susceptible to being blown away",
+    "expensive over large areas",
+    "can introduce invasive species even when nominally weed-free"
+   ],
+   "nrcs_practice_code": null,
+   "evidence_strength": "review_or_meta_analysis",
+   "sources": [
+    {
+     "source_id": "fixture-post-fire-guide",
+     "locator": "Straw mulching on burned slopes",
+     "excerpt": "Spread certified weed-free straw mulch at 1-2 tons/acre on burned slopes before the first"
+    }
+   ],
+   "notes": "cost_level 'high' is taken from source 05's Table 1 pros/cons entry for straw/hay mulch ('Expensive over large areas').",
+   "goals": {
+    "erosion_control": "stated",
+    "wildfire_resilience": "stated"
+   },
+   "family_id": "post-fire-mulching",
+   "facets": {
+    "overview": "Post-fire straw mulching covers burned slopes with certified weed-free straw to shield bare soil from rain splash and runoff before the first fall rains.",
+    "how_to": "For post-fire straw mulching, spread weed-free straw at 1-2 tons/acre on burned slopes and crimp or tackify it on windy sites.",
+    "fit": "Post-fire straw mulching fits steep burned slopes on rangeland and forest; it adds little on gentle slopes where soil barely moves.",
+    "outcomes": "Post-fire straw mulching reduced sediment yield in the fixture trial; risks include wind loss of straw and weed introduction."
+   },
+   "merged_from": [
+    "post-fire-straw-or-hay-mulching"
+   ],
+   "review_state": null
+  },
+  {
+   "strategy_id": "post-fire-hydromulch-application",
+   "name": "Post-fire hydromulch and tackifier application",
+   "summary": "A wet slurry of water, fiber mulch, and a tackifying agent is sprayed over burned soil to stabilize it, most appropriate around structures or near surface water. It is expensive, breaks down quickly, and tends to concentrate flows on long hillslopes, so it is not commonly used over large areas.",
+   "category": "mulching",
+   "secondary_categories": [
+    "erosion_control"
+   ],
+   "fire_phase": [
+    "post_fire_emergency"
+   ],
+   "land_use": [
+    "garden_residential",
+    "wildland_urban_interface",
+    "riparian",
+    "general"
+   ],
+   "region": [
+    "southwest",
+    "southern_rockies",
+    "great_basin_high_desert"
+   ],
+   "materials": [
+    "hydromulch",
+    "tackifier"
+   ],
+   "actions": [
+    "Mix water, fiber mulch, and a tackifying agent into a wet slurry",
+    "Spray the slurry over the soil surface, prioritizing structures and surface-water-adjacent areas",
+    "Reapply as needed since hydromulch breaks down quickly"
+   ],
+   "application_rate": null,
+   "timing": null,
+   "soil_conditions": [
+    "burned_high_severity",
+    "steep_slope",
+    "erodible"
+   ],
+   "slope_guidance": "not recommended on long hillslopes because it concentrates flows",
+   "scale": [
+    "garden_plot",
+    "field"
+   ],
+   "equipment": [
+    "hydroseeder/sprayer"
+   ],
+   "cost_level": "high",
+   "labor_intensity": null,
+   "time_to_effect": "breaks down quickly after application",
+   "benefits": [
+    "stabilizes soils especially around high-value areas like structures or near surface water"
+   ],
+   "risks_limitations": [
+    "concentrates flows on long hillslopes",
+    "breaks down quickly after application",
+    "expensive",
+    "not commonly used over large areas"
+   ],
+   "nrcs_practice_code": null,
+   "evidence_strength": "review_or_meta_analysis",
+   "sources": [
+    {
+     "source_id": "fixture-post-fire-guide",
+     "locator": "Straw mulching on burned slopes",
+     "excerpt": "Crimp or tackify the straw on windy sites so it stays in place"
+    }
+   ],
+   "notes": null,
+   "goals": {
+    "erosion_control": "stated",
+    "wildfire_resilience": "stated"
+   },
+   "family_id": "post-fire-mulching",
+   "facets": {
+    "overview": "Post-fire hydromulch application sprays a slurry of fiber mulch and tackifier over burned soil near structures and surface water.",
+    "how_to": "For hydromulch application, mix water, fiber mulch and a tackifying agent, then spray the slurry over the priority area.",
+    "fit": "Hydromulch fits small high-value burned areas around structures; it is not recommended on long hillslopes where it concentrates flow.",
+    "outcomes": "Hydromulch stabilises soil quickly but breaks down fast and is expensive over large areas."
+   },
+   "merged_from": [],
+   "review_state": null
+  },
+  {
+   "strategy_id": "biochar-amendment-coarse-soils",
+   "name": "Biochar soil amendment for water/nutrient retention, targeted by soil texture",
+   "summary": "Incorporate biochar into soil as an amendment to increase porosity, water-holding capacity, and soil organic carbon while reducing bulk density. Effects are strongest and most consistent in coarse-textured/sandy, acidic, and low-organic-matter soils, and scale with application rate.",
+   "category": "soil_amendment",
+   "secondary_categories": [
+    "water_management",
+    "nutrient_management"
+   ],
+   "fire_phase": [],
+   "land_use": [
+    "cropland",
+    "general"
+   ],
+   "region": [
+    "global"
+   ],
+   "materials": [
+    "biochar"
+   ],
+   "actions": [
+    "Select biochar type based on the target soil texture, prioritizing coarse-textured/sandy or low-organic-matter soils for the largest gains",
+    "Apply biochar within field-trial rate ranges (roughly 10-30 t ha-1 in the cited studies) and incorporate into the topsoil",
+    "Expect greater porosity, water-holding capacity, and bulk-density reduction on coarse/sandy soils than on fine-textured soils",
+    "Age biochar for at least one year where feasible, since aging improves water-holding capacity and reduces hydrophobicity",
+    "Monitor soil pH and organic carbon after application since effects vary with feedstock and soil type",
+    "Combine with other practices (cover cropping, crop rotation, reduced tillage) as part of a holistic soil-management program"
+   ],
+   "application_rate": "10-30 t ha-1 in cited field/lab trials; biochar generally raises soil water-holding capacity by 10-30% (sandy soil +20%, clay soil +30%)",
+   "timing": "incorporate at amendment/planting; benefits measured in field trials over 2-4 years; aging biochar >=1 year improves performance",
+   "soil_conditions": [
+    "sandy_coarse",
+    "low_organic_matter",
+    "droughty",
+    "compacted",
+    "acidic"
+   ],
+   "slope_guidance": null,
+   "scale": [
+    "field",
+    "farm_ranch"
+   ],
+   "equipment": [],
+   "cost_level": null,
+   "labor_intensity": null,
+   "time_to_effect": "2-4 years for measurable soil organic carbon, porosity, and bulk-density change in cited field trials",
+   "benefits": [
+    "increases soil porosity by roughly 8-70% depending on soil type, feedstock, and rate",
+    "increases water-holding capacity by roughly 10-30%",
+    "increases soil organic carbon",
+    "reduces soil bulk density (up to 31-75% in cited studies), improving root penetration",
+    "raises pH in acidic soils by releasing alkaline compounds",
+    "increases cation exchange capacity and nutrient retention, reducing nitrate/phosphate leaching",
+    "can reduce N2O emissions (~26% average in a cited meta-analysis) and CH4 emissions (up to ~38-80% in cited studies)",
+    "greatest and most consistent effect in coarse-textured/sandy soils"
+   ],
+   "risks_limitations": [
+    "effects are highly dependent on feedstock, pyrolysis temperature, application rate, and soil type",
+    "can lower pH and cause nutrient imbalances if applied to already-alkaline or nutrient-adequate soils",
+    "most supporting studies are short-term (<2 years) and laboratory-scale; economic and logistical feasibility at field scale is not well established",
+    "excessive application or wrong feedstock choice can alter soil microbial community structure"
+   ],
+   "nrcs_practice_code": null,
+   "evidence_strength": "review_or_meta_analysis",
+   "sources": [
+    {
+     "source_id": "fixture-post-fire-guide",
+     "locator": "Biochar for sandy soils",
+     "excerpt": "Biochar made from forest thinning slash can be worked into coarse, sandy soils to hold water."
+    }
+   ],
+   "notes": null,
+   "goals": {
+    "soil_health": "stated",
+    "water_management": "stated",
+    "carbon_sequestration": "inferred",
+    "drought_climate_adaptation": "inferred"
+   },
+   "family_id": "biochar-soil-amendment",
+   "facets": {
+    "overview": "Biochar amendment of coarse soils works charred biomass into sandy ground to raise porosity and water holding capacity.",
+    "how_to": "For biochar amendment, incorporate biochar into the topsoil at the rates field trials used and age it where feasible.",
+    "fit": "Biochar amendment fits sandy, coarse, low organic matter and droughty soils; fine clay soils show little change.",
+    "outcomes": "Biochar amendment raised water holding capacity in greenhouse work; effects depend on feedstock, rate and soil type."
+   },
+   "merged_from": [],
+   "review_state": null
+  },
+  {
+   "strategy_id": "grass-cover-cropping",
+   "name": "Grass/Cereal Cover Cropping for Erosion Control and Nitrogen Scavenging",
+   "summary": "Establish a grass or cereal cover crop (cereal rye, oats, annual ryegrass, triticale, or sorghum-sudangrass) after harvest or between cash crops. Their fibrous, extensive root systems scavenge residual soil nitrogen, add large amounts of surface residue and organic matter, and provide strong erosion control during otherwise bare fallow periods.",
+   "category": "cover_cropping",
+   "secondary_categories": [
+    "erosion_control",
+    "nutrient_management"
+   ],
+   "fire_phase": [
+    "post_fire_recovery",
+    "long_term_resilience"
+   ],
+   "land_use": [
+    "cropland",
+    "general"
+   ],
+   "region": [
+    "general"
+   ],
+   "materials": [
+    "cereal rye seed",
+    "oat seed",
+    "annual ryegrass seed",
+    "triticale seed",
+    "sorghum-sudangrass seed"
+   ],
+   "actions": [
+    "Choose a grass species for winter hardiness (cereal rye/triticale) or summer growth (sorghum-sudangrass)",
+    "Drill or broadcast seed promptly after cash-crop harvest",
+    "Allow fall and/or spring growth to scavenge residual nitrogen and build residue",
+    "Mow, roll-crimp, or allow winterkill (oats) to terminate before the next crop",
+    "Favor deep-rooted species such as sudangrass where compaction relief is also needed"
+   ],
+   "application_rate": null,
+   "timing": "planted immediately after cash-crop harvest in late summer/fall; terminated in spring before the next crop",
+   "soil_conditions": [
+    "erodible",
+    "compacted",
+    "low_organic_matter",
+    "sandy_coarse"
+   ],
+   "slope_guidance": null,
+   "scale": [
+    "field",
+    "farm_ranch"
+   ],
+   "equipment": [
+    "grain drill",
+    "broadcast seeder",
+    "mower",
+    "roller-crimper"
+   ],
+   "cost_level": "low",
+   "labor_intensity": "low",
+   "time_to_effect": "erosion protection within weeks of establishment; organic matter benefits accrue over several seasons",
+   "benefits": [
+    "scavenges residual nitrogen, reducing leaching",
+    "adds large amounts of root and surface residue",
+    "provides very effective erosion control while adding significant quantities of organic matter",
+    "annual ryegrass roots may grow 3-4 feet deep"
+   ],
+   "risks_limitations": [
+    "mature grass residue has a high C:N ratio and can tie up nitrogen for the next crop",
+    "some species (annual ryegrass) can become difficult-to-control weeds if not terminated on time"
+   ],
+   "nrcs_practice_code": null,
+   "evidence_strength": "expert_guidance",
+   "sources": [
+    {
+     "source_id": "fixture-post-fire-guide",
+     "locator": "Cover crops through winter",
+     "excerpt": "Cereal rye planted right after harvest protects bare cropland soil through winter storms."
+    }
+   ],
+   "notes": null,
+   "goals": {
+    "erosion_control": "stated",
+    "nutrient_cycling": "stated",
+    "soil_health": "stated",
+    "wildfire_resilience": "inferred"
+   },
+   "family_id": "cover-cropping",
+   "facets": {
+    "overview": "Grass and cereal cover cropping plants cereal rye or oats after harvest so roots and residue protect bare cropland through winter.",
+    "how_to": "For grass cover cropping, drill or broadcast cereal rye right after harvest and terminate it in spring before the next crop.",
+    "fit": "Grass cover cropping fits cropland fields with erodible, compacted or low organic matter soils.",
+    "outcomes": "Grass cover cropping reduced wind erosion reports in the fixture survey and adds organic matter; residue can tie up nitrogen."
+   },
+   "merged_from": [],
+   "review_state": null
+  }
+ ]
+}

@@ -1,0 +1,10 @@
+# Local corpus cache: raw source text (copyright - never in git), corpus mirror, Chroma index, work dirs.
+.cache/
+# Secrets for the object store.
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/

@@ -1,0 +1,33 @@
+# source_url: https://example.org/guides/post-fire-land-care.pdf
+# final_url: https://example.org/guides/post-fire-land-care.pdf
+# fetched_at: 2026-09-26T00:00:00+00:00
+# kind: pdf
+# title: Fixture guide to land care after wildfire
+
+Hydrophobic soils after fire
+Severe, slow-moving fires can bake a waxy water-repellent coating into the soil surface.
+To test for it, place a drop of water on bare soil and watch whether the drop beads up
+instead of soaking in. Repeat the test at one-inch depths to find how thick the layer is.
+Breaking this water repellent layer is essential before seeding so that rain can soak
+into the soil and seeds can germinate. Rake or harrow through the layer on small areas.
+
+Straw mulching on burned slopes
+Spread certified weed-free straw mulch at 1-2 tons/acre on burned slopes before the first
+fall rains. Crimp or tackify the straw on windy sites so it stays in place.
+In the fixture trial, straw mulch reduced sediment yield by 50-70% during the first winter
+after the fire on slopes steeper than 30 percent.
+Mulch is less useful on gentle slopes where little soil moves.
+
+Biochar for sandy soils
+Biochar made from forest thinning slash can be worked into coarse, sandy soils to hold water.
+In a greenhouse study, biochar applied at 5-10% by volume raised the water holding capacity
+of a sandy loam by roughly one fifth compared with unamended soil.
+Fine clay soils showed little change, so match the amendment to soil texture.
+
+Cover crops through winter
+Cereal rye planted right after harvest protects bare cropland soil through winter storms.
+The roots hold soil in place, and the residue adds organic matter when it is turned in.
+Growers in the fixture survey reported less wind erosion on fields kept covered all winter.
+
+References
+Example, A. (2020). A fixture reference that exists only for tests.

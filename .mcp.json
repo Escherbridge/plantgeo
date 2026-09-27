@@ -7,6 +7,14 @@
       "env": {
         "UV_NO_SYNC": "1"
       }
+    },
+    "strategy-knowledge": {
+      "command": "uv",
+      "args": ["run", "--no-sync", "strategy-kb", "serve"],
+      "cwd": "services/strategy-knowledge",
+      "env": {
+        "UV_NO_SYNC": "1"
+      }
     }
   }
 }

@@ -1,0 +1,366 @@
+{
+ "slice_id": "T1",
+ "sources": [
+  {
+   "source_id": "fixture-post-fire-guide",
+   "source_record": {
+    "url": "https://example.org/guides/post-fire-land-care.pdf",
+    "title": "Fixture guide to land care after wildfire",
+    "publisher": "Fixture Extension",
+    "year": 2026,
+    "source_type": "extension_guidance",
+    "region_focus": [
+     "general"
+    ],
+    "wildfire_relevance": "direct",
+    "summary": "A synthetic test guide.",
+    "goals": {
+     "erosion_control": "stated"
+    }
+   },
+   "chunks": [
+    {
+     "chunk_id": "fixture-post-fire-guide#L7-13",
+     "line_start": 7,
+     "line_end": 13,
+     "section_path": [
+      "Fixture guide",
+      "Hydrophobic soils after fire"
+     ],
+     "title": "Testing and breaking hydrophobic soil after fire",
+     "content_type": "practice_guidance",
+     "relevance": "core",
+     "summary": "Explains how to test for a water-repellent layer after severe fire and break it before seeding.",
+     "goals": {
+      "wildfire_resilience": "stated",
+      "water_management": "stated"
+     },
+     "land_use": [],
+     "region": [],
+     "soil_conditions": [
+      "hydrophobic",
+      "burned_high_severity"
+     ],
+     "keywords": [
+      "hydrophobic",
+      "water drop test",
+      "harrow"
+     ],
+     "linked_strategy_ids": [
+      "break-hydrophobic-soil-layer"
+     ],
+     "linked_finding_ids": []
+    },
+    {
+     "chunk_id": "fixture-post-fire-guide#L14-20",
+     "line_start": 14,
+     "line_end": 20,
+     "section_path": [
+      "Fixture guide",
+      "Straw mulching on burned slopes"
+     ],
+     "title": "Straw mulch rates and effect on burned slopes",
+     "content_type": "research_finding",
+     "relevance": "core",
+     "summary": "Gives a straw mulch rate for burned slopes and reports reduced sediment yield on steep ground.",
+     "goals": {
+      "erosion_control": "stated",
+      "wildfire_resilience": "stated"
+     },
+     "land_use": [
+      "rangeland",
+      "forest"
+     ],
+     "region": [],
+     "soil_conditions": [
+      "steep_slope",
+      "erodible"
+     ],
+     "keywords": [
+      "straw mulch",
+      "tons/acre",
+      "tackify"
+     ],
+     "linked_strategy_ids": [
+      "post-fire-straw-mulching"
+     ],
+     "linked_finding_ids": [
+      "fixture-post-fire-guide#F17"
+     ]
+    },
+    {
+     "chunk_id": "fixture-post-fire-guide#L21-26",
+     "line_start": 21,
+     "line_end": 26,
+     "section_path": [
+      "Fixture guide",
+      "Biochar for sandy soils"
+     ],
+     "title": "Biochar raises water holding in sandy soils",
+     "content_type": "research_finding",
+     "relevance": "core",
+     "summary": "Reports that biochar from thinning slash raised water holding capacity of sandy soil but not of clay.",
+     "goals": {
+      "soil_health": "stated",
+      "water_management": "stated"
+     },
+     "land_use": [],
+     "region": [],
+     "soil_conditions": [
+      "sandy_coarse"
+     ],
+     "keywords": [
+      "biochar",
+      "thinning slash",
+      "sandy loam"
+     ],
+     "linked_strategy_ids": [
+      "biochar-amendment-coarse-soils"
+     ],
+     "linked_finding_ids": [
+      "fixture-post-fire-guide#F23"
+     ]
+    },
+    {
+     "chunk_id": "fixture-post-fire-guide#L27-31",
+     "line_start": 27,
+     "line_end": 31,
+     "section_path": [
+      "Fixture guide",
+      "Cover crops through winter"
+     ],
+     "title": "Cereal rye cover through winter",
+     "content_type": "case_study",
+     "relevance": "supporting",
+     "summary": "Describes cereal rye cover after harvest protecting cropland and growers reporting less wind erosion.",
+     "goals": {
+      "erosion_control": "stated",
+      "soil_health": "inferred"
+     },
+     "land_use": [
+      "cropland"
+     ],
+     "region": [],
+     "soil_conditions": [],
+     "keywords": [
+      "cereal rye",
+      "wind erosion"
+     ],
+     "linked_strategy_ids": [
+      "grass-cover-cropping"
+     ],
+     "linked_finding_ids": [
+      "fixture-post-fire-guide#F30"
+     ]
+    },
+    {
+     "chunk_id": "fixture-post-fire-guide#L32-33",
+     "line_start": 32,
+     "line_end": 33,
+     "section_path": [
+      "Fixture guide",
+      "References"
+     ],
+     "title": "Reference list",
+     "content_type": "references",
+     "relevance": "peripheral",
+     "summary": "Lists the reference cited by the guide.",
+     "goals": {},
+     "land_use": [],
+     "region": [],
+     "soil_conditions": [],
+     "keywords": [],
+     "linked_strategy_ids": [],
+     "linked_finding_ids": []
+    }
+   ],
+   "skipped": [
+    {
+     "line_start": 1,
+     "line_end": 6,
+     "reason": "file header"
+    }
+   ],
+   "findings": [
+    {
+     "finding_id": "fixture-post-fire-guide#F17",
+     "claim": "Straw mulch on steep burned slopes lowered first-winter sediment yield in a trial.",
+     "variables": [
+      {
+       "name": "straw mulch",
+       "role": "driver"
+      },
+      {
+       "name": "sediment yield",
+       "role": "response"
+      }
+     ],
+     "direction": "decrease",
+     "magnitude": "reduced sediment yield by 50-70%",
+     "conditions": "slopes steeper than 30 percent, first winter after fire",
+     "study_type": "field_experiment",
+     "evidence_strength": "field_trial_or_case_study",
+     "goals": {
+      "erosion_control": "stated",
+      "wildfire_resilience": "inferred"
+     },
+     "region": [],
+     "land_use": [
+      "rangeland"
+     ],
+     "linked_strategy_ids": [
+      "post-fire-straw-mulching"
+     ],
+     "excerpt": "straw mulch reduced sediment yield by 50-70% during the first winter after the fire",
+     "line_start": 17,
+     "line_end": 18
+    },
+    {
+     "finding_id": "fixture-post-fire-guide#F23",
+     "claim": "Biochar at moderate volume rates increased the water holding capacity of a sandy loam in a greenhouse.",
+     "variables": [
+      {
+       "name": "biochar rate",
+       "role": "driver"
+      },
+      {
+       "name": "water holding capacity",
+       "role": "response"
+      }
+     ],
+     "direction": "increase",
+     "magnitude": "5-10% by volume",
+     "conditions": "sandy loam, greenhouse",
+     "study_type": "lab_or_greenhouse",
+     "evidence_strength": "peer_reviewed_experiment",
+     "goals": {
+      "soil_health": "stated",
+      "water_management": "stated"
+     },
+     "region": [],
+     "land_use": [],
+     "linked_strategy_ids": [
+      "biochar-amendment-coarse-soils"
+     ],
+     "excerpt": "biochar applied at 5-10% by volume raised the water holding capacity",
+     "line_start": 23,
+     "line_end": 23
+    },
+    {
+     "finding_id": "fixture-post-fire-guide#F30",
+     "claim": "Growers reported less wind erosion on fields kept under winter cover.",
+     "variables": [
+      {
+       "name": "winter cover",
+       "role": "driver"
+      },
+      {
+       "name": "wind erosion",
+       "role": "response"
+      }
+     ],
+     "direction": "decrease",
+     "magnitude": null,
+     "conditions": "cropland fields over winter",
+     "study_type": "survey",
+     "evidence_strength": "anecdotal_or_news",
+     "goals": {
+      "erosion_control": "stated"
+     },
+     "region": [],
+     "land_use": [
+      "cropland"
+     ],
+     "linked_strategy_ids": [
+      "grass-cover-cropping"
+     ],
+     "excerpt": "Growers in the fixture survey reported less wind erosion on fields kept covered all winter",
+     "line_start": 30,
+     "line_end": 30
+    }
+   ],
+   "candidate_strategies": [
+    {
+     "strategy_id": "winter-cereal-rye-cover",
+     "name": "Winter cereal rye cover after harvest",
+     "summary": "Establish a grass or cereal cover crop (cereal rye, oats, annual ryegrass, triticale, or sorghum-sudangrass) after harvest or between cash crops. Their fibrous, extensive root systems scavenge residual soil nitrogen, add large amounts of surface residue and organic matter, and provide strong erosion control during otherwise bare fallow periods.",
+     "category": "cover_cropping",
+     "secondary_categories": [
+      "erosion_control",
+      "nutrient_management"
+     ],
+     "fire_phase": [],
+     "land_use": [
+      "cropland",
+      "general"
+     ],
+     "region": [
+      "general"
+     ],
+     "materials": [
+      "cereal rye seed",
+      "oat seed",
+      "annual ryegrass seed",
+      "triticale seed",
+      "sorghum-sudangrass seed"
+     ],
+     "actions": [
+      "Choose a grass species for winter hardiness (cereal rye/triticale) or summer growth (sorghum-sudangrass)",
+      "Drill or broadcast seed promptly after cash-crop harvest",
+      "Allow fall and/or spring growth to scavenge residual nitrogen and build residue",
+      "Mow, roll-crimp, or allow winterkill (oats) to terminate before the next crop",
+      "Favor deep-rooted species such as sudangrass where compaction relief is also needed"
+     ],
+     "application_rate": null,
+     "timing": "planted immediately after cash-crop harvest in late summer/fall; terminated in spring before the next crop",
+     "soil_conditions": [
+      "erodible",
+      "compacted",
+      "low_organic_matter",
+      "sandy_coarse"
+     ],
+     "slope_guidance": null,
+     "scale": [
+      "field",
+      "farm_ranch"
+     ],
+     "equipment": [
+      "grain drill",
+      "broadcast seeder",
+      "mower",
+      "roller-crimper"
+     ],
+     "cost_level": "low",
+     "labor_intensity": "low",
+     "time_to_effect": "erosion protection within weeks of establishment; organic matter benefits accrue over several seasons",
+     "benefits": [
+      "scavenges residual nitrogen, reducing leaching",
+      "adds large amounts of root and surface residue",
+      "provides very effective erosion control while adding significant quantities of organic matter",
+      "annual ryegrass roots may grow 3-4 feet deep"
+     ],
+     "risks_limitations": [
+      "mature grass residue has a high C:N ratio and can tie up nitrogen for the next crop",
+      "some species (annual ryegrass) can become difficult-to-control weeds if not terminated on time"
+     ],
+     "nrcs_practice_code": null,
+     "evidence_strength": "expert_guidance",
+     "sources": [
+      {
+       "source_id": "fixture-post-fire-guide",
+       "locator": "Cover crops through winter",
+       "excerpt": "Cereal rye planted right after harvest protects bare cropland soil through winter storms."
+      }
+     ],
+     "notes": null,
+     "goals": {
+      "erosion_control": "stated",
+      "soil_health": "inferred"
+     },
+     "matches_existing": "grass-cover-cropping",
+     "proposed_family": "cover-cropping"
+    }
+   ]
+  }
+ ]
+}
