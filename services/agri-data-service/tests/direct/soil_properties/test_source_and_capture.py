@@ -199,6 +199,37 @@ def test_the_capture_bounds_widen_the_lattice_by_the_margin() -> None:
     assert north == pytest.approx(LATTICE_NORTH + MARGIN_DEGREES_LATITUDE)
 
 
+#: West edge of the window both fixture rasters share: -130 + 19 x 0.25, exact in binary.
+SHARED_WINDOW_WEST: Final = -125.25
+
+
+def _capture_window(tmp_path: Path, name: str, *, west: float) -> dict[str, Any]:
+    """Cut one fixed geographic window out of a source raster whose origin is `west`, as capture does."""
+    grid = np.zeros((100, 203), dtype=np.int16)
+    source_raster = write_raster(tmp_path / f"{name}-source.tif", grid, west=west, north=52.0, pixel=0.25)
+    with rasterio.open(source_raster) as dataset:
+        window = capture.native_window(dataset, (-125.05, 45.0, -115.0, 49.05))
+        capture.write_window(dataset, window, tmp_path / f"{name}.tif")
+        return {"path": f"{name}.tif", "col_off": int(window.col_off)}
+
+
+def test_vrts_offset_by_whole_pixels_still_share_one_grid(tmp_path: Path) -> None:
+    # ISRIC's bdod/soc VRTs start three pixels west of the other 24, so one window has two col_offs.
+    shifted = _capture_window(tmp_path, "bdod", west=-130.75)
+    aligned = _capture_window(tmp_path, "phh2o", west=-130.0)
+    assert shifted["col_off"] == aligned["col_off"] + 3
+    grid = capture.shared_grid(tmp_path, [shifted, aligned])
+    assert grid["transform"][2] == SHARED_WINDOW_WEST
+    assert (grid["width"], grid["margin_m"]) == (41, capture.CAPTURE_MARGIN_METERS)
+
+
+def test_windows_on_a_different_lattice_are_refused(tmp_path: Path) -> None:
+    half_pixel = _capture_window(tmp_path, "bdod", west=-130.125)
+    aligned = _capture_window(tmp_path, "phh2o", west=-130.0)
+    with pytest.raises(source.SoilPropertiesPipelineError, match="no longer share one grid"):
+        capture.shared_grid(tmp_path, [half_pixel, aligned])
+
+
 def test_the_native_window_is_rounded_outward_and_clamped(tmp_path: Path) -> None:
     grid = np.zeros((100, 200), dtype=np.int16)
     raster = write_raster(tmp_path / "grid.tif", grid, west=-130.0, north=52.0, pixel=0.1)

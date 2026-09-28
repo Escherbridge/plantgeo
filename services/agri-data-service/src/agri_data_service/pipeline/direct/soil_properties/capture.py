@@ -135,6 +135,30 @@ def write_window(dataset: Any, window: Any, destination: Path) -> None:
     partial.replace(destination)
 
 
+def captured_grid(image: Path) -> dict[str, Any]:
+    """The georeferenced grid one captured GeoTIFF sits on: native CRS, six-term transform and shape."""
+    with rasterio.open(image) as dataset:
+        return {
+            "crs": dataset.crs.to_wkt(),
+            "transform": [float(term) for term in tuple(dataset.transform)[:6]],
+            "width": int(dataset.width),
+            "height": int(dataset.height),
+        }
+
+
+def shared_grid(capture_dir: Path, entries: list[dict[str, Any]]) -> dict[str, Any]:
+    """The one grid all captured windows share (C8 `window`), or refuse.
+
+    Compared on the georeferenced grid, never on `col_off`/`row_off`: those are offsets into each
+    VRT, and ISRIC's bdod and soc VRTs start three pixels west of the others, so one geographic
+    window has two pixel offsets (see AGENTS.md, Capture).
+    """
+    grids = {canonical_json(captured_grid(capture_dir / entry["path"])) for entry in entries}
+    if len(grids) != 1:
+        raise fail("the thirty captured windows differ; the VRTs no longer share one grid", stage="capture")
+    return {**json.loads(grids.pop()), "margin_m": CAPTURE_MARGIN_METERS}
+
+
 def _receipt_path(capture_dir: Path, pin: SourceFilePin) -> Path:
     return capture_dir / f"{capture_file_name(pin)}{_RECEIPT_SUFFIX}"
 
@@ -236,11 +260,8 @@ def capture_release(options: argparse.Namespace, *, client: httpx.Client) -> dic
             }
         capture_one = functools.partial(_capture_one, pin, capture_dir, bounds)
         entries.append(retrying(capture_one, policy, retryable=(RasterioIOError,)))
-    windows = {canonical_json(entry["window"]) for entry in entries}
-    if len(windows) != 1:
-        raise fail("the thirty native windows differ; the VRTs no longer share one grid", stage="capture")
     files = [{key: value for key, value in entry.items() if key != "window"} for entry in entries]
-    manifest = build_manifest(files, entries[0]["window"])
+    manifest = build_manifest(files, shared_grid(capture_dir, files))
     (capture_dir / CAPTURE_MANIFEST_NAME).write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
     return {
         "verb": "capture",
@@ -294,7 +315,9 @@ __all__ = [
     "capture_bounds_degrees",
     "capture_file_name",
     "capture_release",
+    "captured_grid",
     "native_window",
     "read_capture_manifest",
     "run_capture",
+    "shared_grid",
 ]

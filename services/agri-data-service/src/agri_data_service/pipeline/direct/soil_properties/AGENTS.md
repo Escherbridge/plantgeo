@@ -105,7 +105,11 @@ report `status`, so no undeclared outcome word is ever emitted.
   predictor 2, 512 tiles) plus a per-file `.receipt.json`.
 - **Window**: the pinned envelope plus a 2 km margin, sized at the northern edge (the widest degree
   margin), transformed with 64 densify points, rounded OUTWARD to whole native pixels and clamped.
-  All thirty VRTs share one grid, so the thirty windows must be identical or capture refuses.
+  All thirty VRTs share one 250 m lattice, so the thirty CAPTURED GeoTIFFs must have an identical
+  CRS, six-term transform and shape (`capture.py::shared_grid`) or capture refuses. The comparison is
+  never on `col_off`/`row_off`: those index into each VRT, and ISRIC's bdod and soc VRTs start 750 m
+  (three pixels) west of the other 24, so one geographic window has two pixel offsets (found in P1,
+  2026-09-28). The manifest `window` records that shared grid; each receipt keeps its own offsets.
 - **Resumable per file**: a GeoTIFF is reused only when its receipt's ETag and Last-Modified equal
   the pin AND its bytes still hash to the receipt. `--time-budget-seconds` stops before starting a
   new file and reports `status: incomplete`; rerun the same command to resume.
