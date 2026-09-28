@@ -125,7 +125,9 @@ Facts preserved for the lane sessions:
 | Herbaria specimens | [PNW Herbaria admission](tracks/pnw_herbaria_source_admission_20260911/plan.md) | UBC v16.43 live as generation `956c0be7…` and **admitted** by owner decision 2026-09-19. Remaining: field-map reconciliation against the raw `occurrence.txt` row count, and the v16.42/v16.43 native-ID comparison. WTU deferred (one transfer at a time). |
 | Production release | [Production acceptance](tracks/parquet_production_acceptance_20260901/plan.md) | Cross-layer browser, freshness, schedule burn-in, conservation, rollback, and release verdict after upstream gates pass. |
 | ML and Monte Carlo runtime | [PlantGeo ML service](tracks/plantgeo_ml_service_20260918/plan.md) | Phase 1 push: `services/plantgeo-ml-service/` skeleton answers `/ready` on Railway and agri-data-service builds green with no `method/ml`, `method/monte_carlo`, or ML execution lane. ML work is owned by that track and its own `services/plantgeo-ml-service/RUNBOOK.md`; nothing ML-related is recorded here. |
-| Config-driven ingestion + Open-Meteo climate | [Config-driven ingestion](tracks/config_driven_ingestion_20260926/plan.md) | Executing. G0 is live (`0df6ac50`); the owner sets the Open-Meteo key after 2026-09-28 01:50Z. Wave O GL-1 is live (`f2a27473`); GL-2 is next. Soil-survey port: P1 and the census fix are live; Freeze 2, then P2. See "2026-09-26 — ingestion grill". |
+| Config-driven ingestion + Open-Meteo climate | [Config-driven ingestion](tracks/config_driven_ingestion_20260926/plan.md) | Executing, cutover-first (owner 2026-09-28). Wave O GL-1–GL-5 live. Phase 1A `f1-config` is live (`6aae18ff`), and the executor image carries `lanes/`. Phase 1B–1F is in flight in worktree `f1-phase1`. Next: water gauges as the first TOML lane (Phase 3), then the swarm and per-lane cutover. Owner decisions: Phase 2 loops deferred, gap fills ON, M5/N6 deferred. See "2026-09-28 afternoon". |
+| Soil data plane (plantgeo-c7) | Production log `.omc/soil-data-plane-20260927/production/production-log.md` | **Closed 2026-09-28.** P1–P5 live; `SOIL_PROPERTIES_READS_ENABLED` and `SITE_BRIEF_ENABLED` on parquet-api and main. Owner gate: a signed-in base run at Boise, Palouse or Willamette showing the site brief and "model estimate" labels. Follow-ups: map UI for the newly catalogued layers (clay/sand/silt/cfvo, 5–15/15–30 cm; `src/lib/map/soil-raster.ts::SOIL_RASTER_PROPERTIES` lists 6); re-run the 16-run agent eval with site-brief scenarios; SSURGO survey properties (deferred, D3). |
+| SSURGO soil survey | [Config-driven ingestion](tracks/config_driven_ingestion_20260926/plan.md) (soil-survey port) | P1–P4 live and dark. Go-3 done: pilot shard `f25f52d0…` and release `e42a08de…` staged in `plantgeo-parquet-9ymvp7gv` (ID001 + ID683, 262 areas pending). Live needs an owner go to pin `SSURGO_ADMITTED_RELEASE_SHA256` on plantgeo-parquet-api; then the full-region capture (264 areas, about 8.2 GB). |
 | Intervention drawing & draft/proposed overlay | [Intervention drawing visibility](tracks/intervention_drawing_visibility_20260912/plan.md) | Draft/proposed overlay only; "published interventions become visible" is a separate bug gated on the publish-path fix in [Community engagement completion](tracks/community_engagement_completion_20260805/), not on this track. The contribution queue already calls `publishContribution` (sets `status: published`), so revalidate end to end before treating it as unimplemented. |
 
 ## Operating sequence
@@ -625,16 +627,26 @@ Go-1 pilot (local, read-only, SDA): 2 areas and 11,421 rows captured, 0 invalid 
   - Open incidents: 0.
 
 **Follow-ups (not blocking):**
-- Sensors lane: bound the NWS observations request window (`start`), so each run pulls only new observations, not full station histories.
-- `usage.py` provider/pool labels for NWS, ArcGIS, USGS and FIRMS (they read `None`).
 - `upstream_client` needs a `follow_redirects=False` option so the soil-survey CLI (3 raw clients, SEC-2(d)) can be metered, then drop its guard pin.
 - A one-time purge of legacy `getSoilSurvey` IndexedDB entries (4 stale `published` answers from the old stub persist with a 1-year TTL; `requestLayerRefresh` only marks them in memory).
 - A conftest-level `Sanic.test_mode` would remove the duplicate-app-name trap for tests that build the app themselves.
 
-**Continuation plan:**
-1. The owner confirms the Open-Meteo key tier (the Historical API needs Professional) and sets `OPEN_METEO_API_KEY` on **plantgeo-job-executor**. The agent checks its length and that soil moves to the `open-meteo-paid` pool (visible in `jobs-usage-report`).
-2. Wave O GL-5 (incidents plus soft failure) is in flight; then Phase 1 (f1-config first). GL-6 (the probe ladder) is folded into f1-executor.
-3. Soil-survey: **Go-3** (stage the pilot shard to the bucket) needs an owner go. Then pin a release (`SSURGO_ADMITTED_RELEASE_SHA256`) to go live, then the full-region capture (264 areas, about 8.2 GB).
+- The `_SECRET_QUOTED_KV` redaction regex is quadratic: a 16 KiB value takes about 10 s. The router's admit-before-redact cap bounds it on the executor path; other `redact_strict` callers are unbounded.
+- The web build can fail transiently in `next/font/google`. Rebuild the same commit by redeploying the failed deployment id; if it recurs, self-host the fonts.
+
+**2026-09-28 afternoon (release lane, now the lead session across plantgeo sessions).**
+- **Open-Meteo key:** the owner set it on plantgeo-job-executor at 11:50Z. Verified: soil calls `customer-archive-api.open-meteo.com` on pool `open-meteo-paid` (4 of 5,000,000 charged; gap-fill ceiling 3.0M, forward stop 4.75M).
+- **Gap fills:** run by owner go at 12:43Z (`ops jobs-plan-gap-repair --max-candidates 40 --apply`): shortwave (76 POWER days, 5 per turn), 8 soil streams (09-23), vegetation (already open). `deferred_by_budget` in repair plans means the planner's per-pass lane slots (`RepairBudget.max_candidates`), not the Open-Meteo budget.
+- **Live signals from the usage report:**
+  - Free forecast host `api.open-meteo.com` is 6% 429s; it moves to the paid host when its lane goes config.
+  - Legacy `waterservices.usgs.gov` has 26 5xx and 70 transport failures in 169 requests; the Phase 3 water-gauges cutover moves it to the USGS Water Data API.
+- **Railway's GitHub webhook can miss a push entirely** (no deployment rows; seen on `f668a9b1` and `8d535c2d`). After each push, confirm a row per service. Otherwise use `serviceInstanceDeploy(latestCommit: true)`; `redeploy` rebuilds the old commit. plantgeo-parquet-api, drain and ingest-cron stay on `6aae18ff` until the next agri push.
+- **Branch consolidation** (owner goal: one `main`):
+  - GitHub has only `main`. 21 branches were deleted, and the 5 with commits main lacked are kept as `archive/<branch>` tags.
+  - The config-driven forecast lane should reuse `archive/codex/weather-forecast-local-slice` (contract and UI).
+  - Locally, 75 fully merged branches were deleted. 17 unpushed `codex/*` branches are being assessed before they are tagged and deleted.
+  - `.claude/worktrees/soil-capture-fix` is an unregistered leftover with a locked `.venv`; delete it when unlocked.
+
 ## Open owner items
 
 - **Object-store credential rotation (2026-09-19).** An operations agent printed
@@ -642,10 +654,13 @@ Go-1 pilot (local, read-only, SDA): 2 areas and 11,421 rows captured, 0 invalid 
   the botanical pointer advance before switching to an environment-only driver. Nothing left the
   machine. The owner chose to rotate later and asked to be reminded; rotate when no lane is
   mid-publish, then delete this bullet.
-- **`OPEN_METEO_API_KEY` (2026-09-26).** Set on `plantgeo-job-executor` but EMPTY. Set it only
-  after G0 (the legacy soil cap) deploys, or legacy soil can burn the paid 5M/month quota. The value
-  lives in the git-ignored `services/agri-data-service/.env`. It was pasted into a chat transcript on
-  2026-09-26, so consider rotating it; remove this bullet when set and verified.
+- **`OPEN_METEO_API_KEY`:** set on `plantgeo-job-executor` 2026-09-28 11:50Z and verified on the paid
+  pool. It was pasted into a chat transcript on 2026-09-26, so consider rotating it. It is also set on
+  plantgeo-main, which never reads it; it can be removed there.
+- **SSURGO admission:** a go to pin `SSURGO_ADMITTED_RELEASE_SHA256=e42a08de…` on plantgeo-parquet-api
+  makes the 2-area pilot release live.
+- **Soil site brief:** a signed-in base run at Boise, Palouse or Willamette confirms the site brief
+  and "model estimate" labels in the report UI.
 - **`OfflinePanel.tsx:52` download box** — a product decision, tracked as a known offender in
   `src/__tests__/region/footprint-literals.test.ts`.
 - **Stale worktrees under `.tmp`** — eleven from earlier sessions hold uncommitted work. Owner asked
