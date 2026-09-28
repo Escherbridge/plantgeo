@@ -1,7 +1,34 @@
 import { describe, expect, it } from "vitest";
-import { geminiReportSchema } from "@/lib/server/services/gemini-report-schema";
+import { geminiEvidenceSchema, geminiReportSchema } from "@/lib/server/services/gemini-report-schema";
 import { labelSoilModelEstimates, remediationReportSchema, REMEDIATION_REPORT_JSON_SCHEMA, reportSchemaForCitations, SOIL_MODEL_ESTIMATE_SENTENCE, SOIL_MODEL_ESTIMATE_SUFFIX } from "@/lib/server/services/remediation-report";
 import { buildRegionalMeasurementFacts } from '@/lib/server/services/regional-measurement-facts';
+
+describe("Gemini evidence-tool projection (AGENTS.md §gemini-forced-call-states, afternoon)", () => {
+  const flattened = (items: Record<string, unknown>, type: unknown = "array") =>
+    (geminiEvidenceSchema({ type: "object", properties: { pick: { type, items, description: "Pick some." } } }).properties as Record<string, { items: unknown; description: string }>).pick;
+
+  it.each([
+    ["a plain string enum", { type: "string", enum: ["a", "b"] }, "array", { type: "string" }, "Pick some. Allowed values: a, b."],
+    ["an untyped string enum", { enum: ["a", "b"] }, "array", { type: "string" }, "Pick some. Allowed values: a, b."],
+    ["an anyOf of enums", { anyOf: [{ enum: ["a"] }, { enum: ["b"] }] }, "array", { type: "string" }, "Pick some. Allowed values: a, b."],
+    ["a nullable array", { type: "string", enum: ["a"] }, ["array", "null"], { type: "string" }, "Pick some. Allowed values: a."],
+    ["a numeric enum", { type: "integer", enum: [0, 5] }, "array", { type: "integer" }, "Pick some. Allowed values: 0, 5."],
+  ])("drops the enum loop from %s and names its values", (_label, items, type, expectedItems, expectedDescription) => {
+    const pick = flattened(items, type);
+    expect(pick.items).toEqual(expectedItems);
+    expect(pick.description).toBe(expectedDescription);
+  });
+
+  it("leaves arrays of objects, scalar enums and the input schema alone", () => {
+    const schema = { type: "object", properties: {
+      level: { type: "string", enum: ["low", "high"] },
+      rows: { type: "array", items: { type: "object", properties: { kind: { type: "string", enum: ["x"] } } } },
+    } };
+    const before = structuredClone(schema);
+    expect(geminiEvidenceSchema(schema)).toEqual(schema);
+    expect(schema).toEqual(before);
+  });
+});
 
 describe("Gemini report schema projection", () => {
   it('preserves exact fact-ID selection without a free warehouse prose branch', () => {

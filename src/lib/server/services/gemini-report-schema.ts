@@ -5,6 +5,8 @@ const INSTRUCTION_BOUNDS: Readonly<Record<string, string>> = {
   maxItems: "Maximum item count",
 };
 
+const ENUM_CHOICE_KEYS: ReadonlySet<string> = new Set(["enum", "anyOf", "oneOf"]);
+
 const isSchemaObject = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 
@@ -24,13 +26,24 @@ function flattenEnumArrayItems(node: Record<string, unknown>): Record<string, un
     else result[key] = isSchemaObject(value) ? flattenEnumArrayItems(value) : value;
   }
   const items = result.items;
-  if (result.type === "array" && isSchemaObject(items) && Array.isArray(items.enum)) {
-    const { enum: allowed, ...itemsWithoutEnum } = items;
+  const isArray = result.type === "array" || (Array.isArray(result.type) && result.type.includes("array"));
+  const allowed = isArray && isSchemaObject(items) ? enumChoices(items) : null;
+  if (allowed && isSchemaObject(items)) {
+    const itemsWithoutEnum = Object.fromEntries(Object.entries(items).filter(([key]) => !ENUM_CHOICE_KEYS.has(key)));
+    if (!("type" in itemsWithoutEnum) && allowed.every((value) => typeof value === "string")) itemsWithoutEnum.type = "string";
     result.items = itemsWithoutEnum;
-    const allowedValues = `Allowed values: ${(allowed as unknown[]).join(", ")}.`;
+    const allowedValues = `Allowed values: ${allowed.map(String).join(", ")}.`;
     result.description = [typeof result.description === "string" ? result.description : "", allowedValues].filter(Boolean).join(" ");
   }
   return result;
+}
+
+/** An items schema's enum values, whether declared directly or as an anyOf/oneOf of enums; null otherwise. */
+function enumChoices(items: Record<string, unknown>): unknown[] | null {
+  if (Array.isArray(items.enum)) return items.enum;
+  const branches = Array.isArray(items.anyOf) ? items.anyOf : Array.isArray(items.oneOf) ? items.oneOf : null;
+  if (!branches?.length || !branches.every((branch) => isSchemaObject(branch) && Array.isArray(branch.enum))) return null;
+  return branches.flatMap((branch) => (branch as { enum: unknown[] }).enum);
 }
 
 /** Derive a smaller decoding schema while retaining bounds as instructions; see AGENTS.md. */

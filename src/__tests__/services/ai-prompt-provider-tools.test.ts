@@ -162,8 +162,9 @@ function enumArrays(node: unknown, path = '', found: string[] = []): string[] {
     node.forEach((item, index) => enumArrays(item, `${path}.${index}`, found));
   } else if (node !== null && typeof node === 'object') {
     const schema = node as Record<string, unknown>;
-    const items = schema.items as Record<string, unknown> | undefined;
-    if (schema.type === 'array' && items && Array.isArray(items.enum)) found.push(path.replace(/^\./, ''));
+    const isArray = schema.type === 'array' || (Array.isArray(schema.type) && schema.type.includes('array'));
+    // Any enum anywhere inside an array's items counts, so a new shape (anyOf, oneOf) cannot slip past.
+    if (isArray && schema.items && JSON.stringify(schema.items).includes('"enum"')) found.push(path.replace(/^\./, ''));
     for (const [key, value] of Object.entries(schema)) enumArrays(value, `${path}.${key}`, found);
   }
   return found;
