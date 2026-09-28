@@ -269,3 +269,21 @@ after a failed query, while the boundary's source record remains visible.
 The panel selects the stored result metadata before deriving optional coverage notices. Returning
 a newly allocated empty array from a Zustand selector makes an absent-metadata snapshot unstable
 and can loop React updates. The real-store panel tests deliberately retain absent metadata.
+
+## Historical weather transport failures
+
+`WeatherHistoryReport` withholds readings and its map-marking action on a query error, even
+when a failed refetch retains an earlier ready result in the query cache (React Query v5 keeps
+the last successful `data` by default). Its unavailable notice must not accompany cached values.
+
+It also withholds a governed absence whose `servedDay` does not match `requestedDay` -- weather is
+a window-policy reader, so a governed-absence result can describe a wider unpublished window than
+the single day it was requested for, and presenting that as a same-day "confirmed empty" answer
+would misreport a day nobody actually checked. Treated the same as a transport error: retry stays
+offered.
+
+Gate readings on the debounced `settledDate` `useDebouncedLayerDay("weather")` returns, not on a
+second, raw layer-day subscription. The query's `requestDate` is itself derived from `settledDate`,
+so comparing the response to that same value keeps the day label and the data it describes in sync
+through a scrub; comparing against the raw, undebounced selection instead can desync the two for
+the length of the settle window.

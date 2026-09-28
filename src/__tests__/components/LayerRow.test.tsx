@@ -728,3 +728,90 @@ describe("LayerRow publication standings", () => {
     }
   });
 });
+
+/**
+ * `describeCoverageEvidence` (ported from archive/codex/reader-ui-contract-20260912) wired into
+ * this row's caption. The row is the reader-visible seam: the function's own unit tests can check
+ * the sentence in isolation, but only rendering `LayerRow` proves the caption actually reaches the
+ * switched-on layer a person is looking at.
+ */
+describe("LayerRow coverage evidence caption", () => {
+  it("states the coverage authority and source publication ceiling on an active layer", () => {
+    useMapStore.setState({ activeLayers: [...LAYER_TOGGLE_IDS] });
+    useLayerStore.setState({ layerOpacity: {} });
+    useTimeSliderStore.setState({
+      layerDates: {},
+      forecastVariant: "monte_carlo",
+      capabilities: {
+        serverCurrentDate: SERVER_CURRENT_DATE,
+        futureAxisDays: 2,
+        streamsUnavailable: false,
+        layers: [
+          {
+            layerName: "water-gauges",
+            temporalKind: "daily_series",
+            forecastHorizonDays: 0,
+            forecastVariants: [],
+            earliestObservedDate: "2019-02-01",
+            latestObservedDate: "2019-02-25",
+            coverageGaps: [],
+            thinRanges: [],
+            describedFromDay: null,
+            coverageAuthority: "availability",
+            sourceCeilingDay: "2019-03-01",
+          },
+        ],
+      },
+      capabilitiesUnavailable: false,
+    });
+
+    renderRow("water");
+
+    expect(screen.getByTestId("layer-row-water").textContent).toContain(
+      "Coverage from the published availability index."
+    );
+    expect(screen.getByTestId("layer-row-water").textContent).toContain(
+      "Source publication ceiling: 2019-03-01 (6 days behind today)."
+    );
+    expect(screen.getByTestId("layer-row-water").textContent).toContain(
+      "Layer availability ends 2019-02-25, 4 days before the source ceiling."
+    );
+  });
+
+  it("says nothing about coverage evidence for a layer that is switched off", () => {
+    useMapStore.setState({ activeLayers: [] });
+    useLayerStore.setState({ layerOpacity: {} });
+    useTimeSliderStore.setState({
+      layerDates: {},
+      forecastVariant: "monte_carlo",
+      capabilities: {
+        serverCurrentDate: SERVER_CURRENT_DATE,
+        futureAxisDays: 2,
+        streamsUnavailable: false,
+        layers: [
+          {
+            layerName: "water-gauges",
+            temporalKind: "daily_series",
+            forecastHorizonDays: 0,
+            forecastVariants: [],
+            earliestObservedDate: "2019-02-01",
+            latestObservedDate: "2019-02-25",
+            coverageGaps: [],
+            thinRanges: [],
+            describedFromDay: null,
+            coverageAuthority: "availability",
+            sourceCeilingDay: "2019-03-01",
+          },
+        ],
+      },
+      capabilitiesUnavailable: false,
+    });
+
+    renderRow("water");
+
+    // Matches every other caption on this row: a control that isn't drawing anything gets no
+    // running commentary about the record behind it.
+    expect(screen.getByTestId("layer-row-water").textContent).not.toContain("Coverage from");
+    expect(screen.getByTestId("layer-row-water").textContent).not.toContain("publication ceiling");
+  });
+});

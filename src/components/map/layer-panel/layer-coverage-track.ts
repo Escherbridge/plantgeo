@@ -30,6 +30,71 @@ import {
 import type { DayRange, SliderLayerCapability } from "@/types/time-slider";
 
 /**
+ * A layer row's caption evidence: which mechanism found its coverage, and how far behind the
+ * SOURCE (not this warehouse) the row is allowed to be.
+ *
+ * Ported from archive/codex/reader-ui-contract-20260912's `layer-coverage-track.ts` (commit
+ * 3143a227) -- a pure function of the capability fields `coverageAuthority` and `sourceCeilingDay`
+ * this repository's `SliderLayerCapability` already carries, so it needed no adaptation beyond
+ * this doc comment.
+ *
+ * Three independent claims, each appended only when the payload states it, so an older
+ * capability (neither field) speaks about neither and a newer one can carry just one:
+ *
+ * - `coverageAuthority`: whether the gap/thin lists came from the published availability index
+ *   or were discovered by walking the object store directly. A census-derived row is telling the
+ *   reader "nobody has audited this yet", not "this is less true".
+ * - `sourceCeilingDay` holdback: the source's own newest publishable day, against server-today.
+ *   Behind `--destructive` red would say the LAYER is failing; this is the SOURCE lagging, which
+ *   is nothing this deployment can fix by re-ingesting harder.
+ * - `latestObservedDate` against that ceiling: distinguishes "this layer is caught up to what the
+ *   source can currently offer" from "this layer is choosing to serve fewer days than the source
+ *   already published" (a policy window, e.g. `vegetation-window`'s 29-day cap) -- the latter
+ *   must not be misread as a second, worse lag on top of the first.
+ */
+export function describeCoverageEvidence(
+  layer: SliderLayerCapability,
+  serverCurrentDate: string
+): string | null {
+  const captions: string[] = [];
+  if (layer.coverageAuthority === "availability") {
+    captions.push("Coverage from the published availability index.");
+  } else if (layer.coverageAuthority === "census") {
+    captions.push("Coverage discovered from stored files (object-store census).");
+  }
+
+  const ceiling = layer.sourceCeilingDay;
+  if (ceiling && isCalendarDate(ceiling)) {
+    const sourceHoldback = layer.temporalKind !== "snapshot" && isCalendarDate(serverCurrentDate)
+      ? dayOffset(ceiling, serverCurrentDate)
+      : 0;
+    captions.push(
+      sourceHoldback > 0
+        ? `Source publication ceiling: ${ceiling} (${sourceHoldback} ${sourceHoldback === 1 ? "day" : "days"} behind today).`
+        : `Source publication ceiling: ${ceiling}.`
+    );
+
+    const latest = layer.latestObservedDate;
+    if (layer.temporalKind !== "snapshot" && latest && isCalendarDate(latest)) {
+      if (latest < ceiling) {
+        const daysBehind = dayOffset(latest, ceiling);
+        captions.push(
+          `Layer availability ends ${latest}, ${daysBehind} ${daysBehind === 1 ? "day" : "days"} before the source ceiling.`
+        );
+      } else if (latest === ceiling) {
+        captions.push("Layer availability reaches the source ceiling.");
+      } else {
+        captions.push(
+          `Layer availability extends through ${latest} under its time rules; this is not a newer source publication.`
+        );
+      }
+    }
+  }
+
+  return captions.length > 0 ? captions.join(" ") : null;
+}
+
+/**
  * What the record says about a run of days on ONE layer's axis.
  *
  * Four states and not two, because each pair the slider might flatten is a pair of different

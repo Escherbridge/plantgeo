@@ -6,6 +6,7 @@ import { Eye, EyeOff, RefreshCw, Trash2 } from "lucide-react";
 import { LayerIcon } from "@/components/map/layer-panel/layer-icons";
 import { LayerSwatch } from "@/components/map/layer-panel/LayerSwatch";
 import { LayerTimeSlider } from "@/components/map/layer-panel/LayerTimeSlider";
+import { describeCoverageEvidence } from "@/components/map/layer-panel/layer-coverage-track";
 import { LayerOpacitySlider } from "@/components/ui/layer-opacity-slider";
 import {
   layerLegendSpec,
@@ -391,6 +392,19 @@ export function LayerRow({
   const regionAbsenceCaption = useTimeSliderStore((state) =>
     unboundLayerCaption(state.capabilities, layerId)
   );
+  // Publication-ceiling / coverage-provenance captions -- see `describeCoverageEvidence`'s own
+  // doc. Read from the same capability `mountsDayControls` above already found by warehouse name,
+  // so a row with no warehouse stream (and therefore no capability to describe) reads null rather
+  // than reaching for one that cannot exist.
+  const coverageCaption = useTimeSliderStore((state) => {
+    if (warehouseLayerName === null || state.capabilities === null) return null;
+    const capability = state.capabilities.layers.find(
+      (layer) => layer.layerName === warehouseLayerName
+    );
+    return capability
+      ? describeCoverageEvidence(capability, state.capabilities.serverCurrentDate)
+      : null;
+  });
   const withheldReason =
     entry.permanentlyUnavailableReason ?? catalogUnavailableReason ?? null;
   // One disabled switch, two reasons, and the row keeps them apart in the CAPTION rather than
@@ -431,6 +445,7 @@ export function LayerRow({
           withheldReason !== null ? withheldReason : null,
           publicationStanding,
           isActive && publicationStanding === null ? unavailableReason : null,
+          isActive ? coverageCaption : null,
         ].filter((caption): caption is string => caption !== null);
 
   return (

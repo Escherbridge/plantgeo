@@ -3,6 +3,7 @@ import { fireEvent, screen } from "@testing-library/react";
 import { WeatherHistoryReport, windDirectionLabel } from "@/components/panels/WeatherHistoryReport";
 import { useMapStore } from "@/stores/map-store";
 import { useTimeSliderStore } from "@/stores/time-slider-store";
+import { SCRUB_SETTLE_MS } from "@/stores/useMetricAtDate";
 import { renderWithProviders } from "@/test/utils";
 import type {
   ParquetBrowserReaderResult,
@@ -168,6 +169,76 @@ describe("WeatherHistoryReport", () => {
     expect(screen.queryByRole("button", { name: "Mark nearest weather reading on map" })).toBeNull();
   });
 
+  it("clears retained ready readings after a transport error and exposes retry", () => {
+    const data = {
+      state: "ready" as const,
+      requestedDay: DAY,
+      servedDay: DAY,
+      truncated: false,
+      data: [observation],
+    };
+    queries.getWeatherForBbox.mockReturnValue({
+      data,
+      isFetching: false,
+      isPlaceholderData: false,
+      isError: false,
+      refetch: queries.refetch,
+    });
+
+    const rendered = renderWithProviders(<WeatherHistoryReport bbox="-117,43,-115,45" zoom={13} />);
+
+    expect(screen.getAllByText("21.5 °C").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Mark nearest weather reading on map" })).toBeTruthy();
+
+    // React Query v5 keeps the last successful `data` in the cache across a failed refetch by
+    // default -- `data` is unchanged here, only `isError` flips. Without gating on `!isError` the
+    // stale reading would render beside its own "no cached fallback frame" alert.
+    queries.getWeatherForBbox.mockReturnValue({
+      data,
+      isFetching: false,
+      isPlaceholderData: false,
+      isError: true,
+      refetch: queries.refetch,
+    });
+    rendered.rerender(<WeatherHistoryReport bbox="-117,43,-115,45" zoom={13} />);
+
+    expect(screen.getByRole("alert").textContent).toContain(
+      "Historical weather could not be loaded. No cached fallback frame is shown."
+    );
+    expect(screen.queryByText("21.5 °C")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Mark nearest weather reading on map" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Retry weather" }));
+    expect(queries.refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("withholds a governed absence recorded for a different day than requested, and offers retry", () => {
+    queries.getWeatherForBbox.mockReturnValue({
+      data: {
+        state: "absent",
+        requestedDay: DAY,
+        servedDay: "2026-07-28",
+        evidence: {
+          reason: "recorded_absence",
+          upstreamResponse: "no rows",
+          recordedAt: "2026-08-01T00:00:00Z",
+          runId: "weather-test-run",
+        },
+      },
+      isFetching: false,
+      isPlaceholderData: false,
+      isError: false,
+      refetch: queries.refetch,
+    });
+
+    renderWithProviders(<WeatherHistoryReport bbox="-117,43,-115,45" zoom={13} />);
+
+    expect(screen.getByText(
+      `The governed absence for ${DAY} was recorded against 2026-07-28, not one partition day. Nothing is drawn.`
+    )).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Retry weather" }));
+    expect(queries.refetch).toHaveBeenCalledTimes(1);
+  });
+
   it("exposes retry for transport errors and disables it while fetching", () => {
     queries.getWeatherForBbox.mockReturnValue({
       data: undefined,
@@ -266,7 +337,14 @@ describe("WeatherHistoryReport", () => {
     expect(screen.queryByText(/Showing the retained/)).toBeNull();
   });
 
-  it("withholds day A during a delayed day B transition before showing day B", () => {
+  /**
+   * `settledDate` (debounced) rather than the raw immediate selection: picking day B keeps
+   * showing day A's already-verified frame until the SCRUB_SETTLE_MS window actually elapses --
+   * a scrub that never settles on B must not blank the report on every intermediate day it
+   * passes through. Once settled, day A is withheld the moment its response no longer matches
+   * the settled day, same as before.
+   */
+  it("withholds day A during a delayed day B transition before showing day B", async () => {
     const nextDay = "2026-08-02";
     const nextObservation: ParquetBrowserWeatherObservation = {
       ...observation,
@@ -275,36 +353,42 @@ describe("WeatherHistoryReport", () => {
       temperatureC: 24.25,
       support: { ...support, provenance: { ...support.provenance, observedDay: nextDay } },
     };
-    queries.getWeatherForBbox
-      .mockReturnValueOnce({
-        data: { state: "ready", requestedDay: DAY, servedDay: DAY, truncated: false, data: [observation] },
-        isFetching: false,
-        isPlaceholderData: false,
-        isError: false,
-      })
-      .mockReturnValueOnce({
-        data: { state: "ready", requestedDay: DAY, servedDay: DAY, truncated: false, data: [observation] },
-        isFetching: true,
-        isPlaceholderData: true,
-        isError: false,
-      })
-      .mockReturnValueOnce({
-        data: { state: "ready", requestedDay: nextDay, servedDay: nextDay, truncated: false, data: [nextObservation] },
-        isFetching: false,
-        isPlaceholderData: false,
-        isError: false,
-      });
+    queries.getWeatherForBbox.mockReturnValue({
+      data: { state: "ready", requestedDay: DAY, servedDay: DAY, truncated: false, data: [observation] },
+      isFetching: false,
+      isPlaceholderData: false,
+      isError: false,
+    });
 
     const view = renderWithProviders(<WeatherHistoryReport bbox="-117,43,-115,45" zoom={13} />);
     expect(screen.getAllByText("21.5 °C").length).toBeGreaterThan(0);
 
-    useTimeSliderStore.setState({ layerDates: { weather: nextDay } });
+    useTimeSliderStore.getState().setLayerDate("weather", nextDay);
     view.rerender(<WeatherHistoryReport bbox="-117,43,-115,45" zoom={13} />);
 
+    // Day B picked, still settling: day A's verified frame is undisturbed.
+    expect(screen.getAllByText("21.5 °C").length).toBeGreaterThan(0);
+
+    await new Promise((resolve) => setTimeout(resolve, SCRUB_SETTLE_MS + 20));
+    queries.getWeatherForBbox.mockReturnValue({
+      data: { state: "ready", requestedDay: DAY, servedDay: DAY, truncated: false, data: [observation] },
+      isFetching: true,
+      isPlaceholderData: true,
+      isError: false,
+    });
+    view.rerender(<WeatherHistoryReport bbox="-117,43,-115,45" zoom={13} />);
+
+    // Settled onto day B; day A's response no longer matches it, so it is withheld while B loads.
     expect(screen.getByText(`Loading ${nextDay}; no earlier frame is shown.`)).toBeTruthy();
     expect(screen.queryByText("21.5 °C")).toBeNull();
     expect(screen.queryByText("24.3 °C")).toBeNull();
 
+    queries.getWeatherForBbox.mockReturnValue({
+      data: { state: "ready", requestedDay: nextDay, servedDay: nextDay, truncated: false, data: [nextObservation] },
+      isFetching: false,
+      isPlaceholderData: false,
+      isError: false,
+    });
     view.rerender(<WeatherHistoryReport bbox="-117,43,-115,45" zoom={13} />);
     expect(screen.getAllByText("24.3 °C").length).toBeGreaterThan(0);
     expect(screen.queryByText("21.5 °C")).toBeNull();

@@ -3,7 +3,7 @@
 import { keepPreviousData } from "@tanstack/react-query";
 import { CloudRain, Droplets, MapPin, Thermometer, Wind } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
-import { useDebouncedLayerDay, useLayerDay } from "@/lib/map/layer-toggle-context";
+import { useDebouncedLayerDay } from "@/lib/map/layer-toggle-context";
 import type {
   ParquetBrowserReaderResult,
   ParquetBrowserWeatherObservation,
@@ -73,9 +73,20 @@ function SummaryCard({
   );
 }
 
-function weatherStateNotice(result: WeatherResult | undefined, selectedDay: string | null): string | null {
+function weatherStateNotice(result: WeatherResult | undefined): string | null {
   if (result === undefined) return null;
   if (result.state === "absent") {
+    // Weather is a window-policy reader: it requests one day, but a governed absence can cover a
+    // whole unpublished window. A servedDay other than requestedDay means this "no readings"
+    // answer does not actually describe the requested day, so presenting it as a same-day
+    // confirmation would misreport a day that was never itself checked. Ported from the window-
+    // absence-date validation in archive/codex/reader-ui-contract-20260912 (commit ee81a641),
+    // inlined here rather than through that commit's ParquetDayPolicy/useParquetDayContract
+    // abstraction -- weather is the only window-policy reader left, so a one-file check covers
+    // it without reintroducing the generic (superseded) machinery.
+    if (result.servedDay !== result.requestedDay) {
+      return `The governed absence for ${result.requestedDay} was recorded against ${result.servedDay}, not one partition day. Nothing is drawn.`;
+    }
     return `The governed record confirms no weather readings for ${result.servedDay}. Nothing is drawn.`;
   }
   if (result.state === "not_generated") {
@@ -89,16 +100,17 @@ function weatherStateNotice(result: WeatherResult | undefined, selectedDay: stri
   if (result.data.length === 0) {
     return `Weather was published for ${result.servedDay}, but no weather support intersects this view.`;
   }
-  if (selectedDay !== null && result.requestedDay !== selectedDay) {
-    return `Loading weather for ${selectedDay}. The previous day is not shown.`;
-  }
   return null;
 }
 
 /** A weather-forecast-style reading of the selected historical sample day. */
 export function WeatherHistoryReport({ bbox, zoom }: WeatherHistoryReportProps) {
-  const { requestDate } = useDebouncedLayerDay("weather");
-  const selectedDay = useLayerDay("weather").selectedDate;
+  // `settledDate` (debounced) rather than a second, raw `useLayerDay` subscription: `requestDate`
+  // below is itself derived from `settledDate`, so comparing the fetched response against the
+  // SAME settled value keeps the label above and the data below always describing one day. A raw
+  // immediate selection would desync the two mid-scrub -- the label would name the day the user
+  // is dragging toward while the data (or its "Loading" placeholder) still lagged behind it.
+  const { requestDate, settledDate } = useDebouncedLayerDay("weather");
   const queryPoint = useMapStore((state) => state.queryPoint);
   const setQueryPoint = useMapStore((state) => state.setQueryPoint);
   const viewport = useMapStore((state) => state.viewport);
@@ -127,12 +139,16 @@ export function WeatherHistoryReport({ bbox, zoom }: WeatherHistoryReportProps) 
   );
 
   const exactResult = query.data;
-  const resultMatchesSelectedDay =
+  const resultMatchesSettledDay =
     exactResult === undefined ||
     exactResult.state === "upstream_unavailable" ||
-    selectedDay === null ||
-    exactResult.requestedDay === selectedDay;
-  const presentedResult = resultMatchesSelectedDay ? exactResult : undefined;
+    settledDate === null ||
+    exactResult.requestedDay === settledDate;
+  // Gated on `!query.isError` too: React Query v5 retains the last successful `data` across a
+  // failed refetch by default, so without this an errored request would still read as matching
+  // the settled day and the notice below would render next to stale, no-longer-verified rows.
+  const presentedResult =
+    !query.isError && resultMatchesSettledDay ? exactResult : undefined;
   const rows = presentedResult?.state === "ready" ? presentedResult.data : [];
 
   const weatherPoint =
@@ -170,13 +186,20 @@ export function WeatherHistoryReport({ bbox, zoom }: WeatherHistoryReportProps) 
   const wetReadings = rows.filter((row) => Number.isFinite(row.precipitationMm) && row.precipitationMm > 0).length;
   const pointReadingCount = rows.filter((row) => row.support.supportKind === "raw_point").length;
   const aggregateCellCount = rows.length - pointReadingCount;
-  const stateNotice = weatherStateNotice(presentedResult, selectedDay);
+  const stateNotice = weatherStateNotice(presentedResult);
+  // Same lane as `upstream_unavailable`: a governed absence whose servedDay doesn't match the
+  // requested day is a contract violation, not a confirmed empty day, and is just as worth
+  // retrying.
+  const isGovernedAbsenceWindowMismatch =
+    presentedResult?.state === "absent" && presentedResult.servedDay !== presentedResult.requestedDay;
   const canRetry =
-    query.isError || presentedResult?.state === "upstream_unavailable";
-  const staleSelectedDay =
+    query.isError ||
+    presentedResult?.state === "upstream_unavailable" ||
+    isGovernedAbsenceWindowMismatch;
+  const staleSettledDay =
     exactResult !== undefined &&
     exactResult.state !== "upstream_unavailable" &&
-    !resultMatchesSelectedDay;
+    !resultMatchesSettledDay;
 
   return (
     <section aria-labelledby="historical-weather-heading" className="flex flex-col gap-2.5">
@@ -185,13 +208,13 @@ export function WeatherHistoryReport({ bbox, zoom }: WeatherHistoryReportProps) 
           Historical weather
         </p>
         <p className="mt-0.5 text-[10px] leading-relaxed text-[hsl(var(--muted-foreground))]">
-          {selectedDay ?? "Latest published day"} · Open-Meteo historical estimates · SI units
+          {settledDate ?? "Latest published day"} · Open-Meteo historical estimates · SI units
         </p>
       </div>
 
-      {(query.isFetching || staleSelectedDay) && presentedResult === undefined && (
+      {(query.isFetching || staleSettledDay) && presentedResult === undefined && (
         <p role="status" aria-live="polite" className="text-xs text-[hsl(var(--muted-foreground))]">
-          Loading {selectedDay ?? "the latest published weather"}; no earlier frame is shown.
+          Loading {settledDate ?? "the latest published weather"}; no earlier frame is shown.
         </p>
       )}
       {query.isError && (
