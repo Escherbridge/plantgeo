@@ -65,7 +65,9 @@ ALLOWED_SRC_FILE_COUNTS: Final[dict[str, int]] = {
     "pipeline/direct/soil_properties/capture.py": 1,
     "pipeline/direct/soil_properties/maintain.py": 1,
     "pipeline/direct/soil_properties/verify.py": 1,
-    "pipeline/direct/soil_survey/__main__.py": 2,
+    # 3: areas, capture and (S2) validate. They stay raw because SEC-2(d) requires follow_redirects=False,
+    # which upstream_client does not offer yet; follow-up: add that keyword, then meter all three.
+    "pipeline/direct/soil_survey/__main__.py": 3,
 }
 
 # Relative to `services/agri-data-service/scripts/`.

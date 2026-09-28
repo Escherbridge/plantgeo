@@ -19,17 +19,23 @@ with more detail, which is precisely the verdict this module is here to issue tr
 
 from __future__ import annotations
 
+import asyncio
+import io
 import json
 import re
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final, Literal, Protocol
 
 import polars as pl
+import pyarrow.parquet as pq  # type: ignore[import-untyped]
 
 from agri_data_service.foundation.parquet.paths import completed_partition_days, try_parse_partition_path
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
+from agri_data_service.foundation.soil_survey.receipts import SoilSurveyError, verify_blob
+from agri_data_service.foundation.soil_survey.release import NATIVE_RUNG
 from agri_data_service.warehouse.schemas.soil_survey import SOIL_SURVEY_STREAM
 
 if TYPE_CHECKING:
@@ -40,6 +46,8 @@ if TYPE_CHECKING:
 
     from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.foundation.parquet.zoom import ZoomTier
+    from agri_data_service.foundation.soil_survey.release import Candidate, Part
+    from agri_data_service.pipeline.parquet.availability_storage import AvailabilityStorage
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 
 _KIND: Final[PartitionKind] = "observed"
@@ -51,6 +59,9 @@ WRITTEN_ZOOM_TIER: Final[ZoomTier] = ZOOM_TIERS[-1]
 # One network call per requested area; a validator asking for "every survey area" in one pass
 # would be an unbounded scan of the source system, not a bounded reconciliation.
 MAX_VALIDATION_AREAS: Final = 50
+#: Native part bytes one candidate-validation call may read (plan F8); see AGENTS.md.
+MAX_VALIDATION_PART_BYTES: Final = 128 * 1024 * 1024
+_CANDIDATE_VALIDATION_SECONDS: Final = 120
 
 _SDA_TABULAR_ENDPOINT: Final = "https://SDMDataAccess.nrcs.usda.gov/Tabular/post.rest"
 _SDA_REQUEST_TIMEOUT_SECONDS: Final = 30.0
@@ -452,3 +463,146 @@ class HttpxSoilSurveySdaClient:
             saverest=None if raw_saverest is None else _parse_survey_area_vintage(raw_saverest),
             raw_response=json.dumps(row, sort_keys=True),
         )
+
+
+def group_areas_for_validation(area_bytes: Mapping[str, int]) -> tuple[tuple[str, ...], ...]:
+    """Sorted, greedy groups of at most `MAX_VALIDATION_AREAS` areas and `MAX_VALIDATION_PART_BYTES` bytes."""
+    groups: list[tuple[str, ...]] = []
+    current: list[str] = []
+    current_bytes = 0
+    for area in sorted(area_bytes):
+        size = area_bytes[area]
+        if size > MAX_VALIDATION_PART_BYTES:
+            raise SoilSurveyValidationError(
+                f"survey area {area} alone holds {size} native part bytes, over the "
+                f"{MAX_VALIDATION_PART_BYTES}-byte validation read budget"
+            )
+        if current and (len(current) == MAX_VALIDATION_AREAS or current_bytes + size > MAX_VALIDATION_PART_BYTES):
+            groups.append(tuple(current))
+            current = []
+            current_bytes = 0
+        current.append(area)
+        current_bytes += size
+    if current:
+        groups.append(tuple(current))
+    return tuple(groups)
+
+
+def candidate_validation_groups(candidate: Candidate, areas: Sequence[str] = ()) -> tuple[tuple[str, ...], ...]:
+    """Group a shard's declared areas (or the named subset) for bounded `validate` calls."""
+    declared = [capture.opening.area for capture in candidate.areas]
+    selected = list(areas) if areas else declared
+    if unknown := sorted(set(selected) - set(declared)):
+        raise SoilSurveyValidationError(f"survey areas {unknown} are not declared by shard {candidate.shard}")
+    sizes = dict.fromkeys(selected, 0)
+    for part in candidate.parts:
+        if part.rung == NATIVE_RUNG and part.area in sizes:
+            sizes[part.area] += part.blob.byte_count
+    return group_areas_for_validation(sizes)
+
+
+def _read_native_part(storage: AvailabilityStorage, part: Part) -> list[dict[str, object]]:
+    """Read one part through `storage`, verify its checksum, row count and Q4 quality labels."""
+    stored = storage.read(part.blob.key, max_bytes=part.blob.byte_count)
+    payload = verify_blob(part.blob, None if stored is None else stored.payload)
+    rows: list[dict[str, object]] = pq.read_table(io.BytesIO(payload)).to_pylist()
+    if len(rows) != part.row_count:
+        raise SoilSurveyError("native candidate part count differs from its receipt")
+    labels = Counter(row.get("geometry_quality") for row in rows)
+    if None in labels or (labels["repaired"], labels["invalid_unrepaired"]) != (
+        part.repaired_rows,
+        part.labelled_rows,
+    ):
+        raise SoilSurveyError("native candidate part geometry-quality labels differ from its manifest")
+    return rows
+
+
+def _counted(
+    previous: SoilSurveyWrittenAreaSummary | None, area: str, row: Mapping[str, object]
+) -> SoilSurveyWrittenAreaSummary:
+    vintage = row["survey_area_vintage"]
+    hydric = row["hydric_rating"]
+    if not isinstance(vintage, datetime) or (previous is not None and previous.newest_vintage != vintage):
+        raise SoilSurveyError("candidate mixes survey vintages within one area")
+    return SoilSurveyWrittenAreaSummary(
+        area_symbol=area,
+        delineation_count=(0 if previous is None else previous.delineation_count) + 1,
+        newest_vintage=vintage,
+        hydric_true_count=(0 if previous is None else previous.hydric_true_count) + int(hydric is True),
+        hydric_false_count=(0 if previous is None else previous.hydric_false_count) + int(hydric is False),
+        hydric_unknown_count=(0 if previous is None else previous.hydric_unknown_count) + int(hydric is None),
+    )
+
+
+def _written_candidate_areas(
+    candidate: Candidate, storage: AvailabilityStorage, checked: tuple[str, ...]
+) -> dict[str, SoilSurveyWrittenAreaSummary]:
+    parts = [part for part in candidate.parts if part.rung == NATIVE_RUNG and part.area in checked]
+    if sum(part.blob.byte_count for part in parts) > MAX_VALIDATION_PART_BYTES:
+        raise SoilSurveyValidationError(
+            f"candidate validation exceeds the {MAX_VALIDATION_PART_BYTES}-byte physical-read budget"
+        )
+    written: dict[str, SoilSurveyWrittenAreaSummary] = {}
+    seen: set[str] = set()
+    for part in parts:
+        for row in _read_native_part(storage, part):
+            key = str(row["mupolygonkey"])
+            area = str(row["survey_area_symbol"])
+            if key in seen or area != part.area:
+                raise SoilSurveyError("native candidate duplicates a key or crosses its survey scope")
+            seen.add(key)
+            written[area] = _counted(written.get(area), area, row)
+    return written
+
+
+async def validate_soil_survey_candidate(
+    candidate: Candidate,
+    storage: AvailabilityStorage,
+    sda_client: SoilSurveySdaClient,
+    *,
+    survey_area_symbols: Sequence[str],
+) -> SoilSurveyValidationReport:
+    """Reconcile bounded native parts, Q4 labels included, against an independent current USDA census."""
+    checked = tuple(_validated_area_symbol(area) for area in survey_area_symbols)
+    if not checked or len(set(checked)) != len(checked) or len(checked) > MAX_VALIDATION_AREAS:
+        raise SoilSurveyValidationError(f"candidate validation needs 1..{MAX_VALIDATION_AREAS} unique survey areas")
+    written = _written_candidate_areas(candidate, storage, checked)
+    findings: list[SoilSurveyValidationFinding] = []
+    # The 120 s budget covers up to MAX_VALIDATION_AREAS calls made one at a time, not one call. A
+    # single `asyncio.timeout` around the whole loop would cancel every area still in flight and
+    # lose the findings already collected, so the deadline is checked between areas instead: an
+    # area that starts after the deadline is refused outright, and one already in flight gets only
+    # its own remaining share via `asyncio.wait_for`.
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _CANDIDATE_VALIDATION_SECONDS
+    for index, area in enumerate(checked):
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            findings.extend(
+                SoilSurveyValidationFinding(
+                    lane=SOIL_SURVEY_STREAM,
+                    area_symbol=exhausted,
+                    kind="source_query_failed",
+                    detail=f"survey area {exhausted}: candidate validation time budget exhausted",
+                    source_response=None,
+                )
+                for exhausted in checked[index:]
+            )
+            break
+        try:
+            source = await asyncio.wait_for(sda_client.fetch_survey_area_summary(area), timeout=remaining)
+        except Exception as error:  # per-area isolation: one area's fault must not end the run
+            findings.append(
+                SoilSurveyValidationFinding(
+                    lane=SOIL_SURVEY_STREAM,
+                    area_symbol=area,
+                    kind="source_query_failed",
+                    detail=f"survey area {area}: source census failed ({type(error).__name__})",
+                    source_response=None,
+                )
+            )
+            continue
+        findings.extend(_reconcile_area(area, candidate.release_day, written.get(area), source))
+    return SoilSurveyValidationReport(
+        release_day=candidate.release_day, checked_areas=checked, findings=tuple(findings)
+    )

@@ -134,6 +134,12 @@ def _soil_survey_row(
         "release_day": RELEASE_DAY,
         "geometry_wkb": geometry_wkb,
         "producer": "usda-sda",
+        # Port-added columns (bbox + Q4 quality label); null, as on every pre-port release row.
+        "bbox_west": None,
+        "bbox_south": None,
+        "bbox_east": None,
+        "bbox_north": None,
+        "geometry_quality": None,
     }
 
 

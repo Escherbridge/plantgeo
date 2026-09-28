@@ -114,6 +114,50 @@ Their coarse cells sum physical-candidate counts, null selected-row identity, an
 `lineage_sha256` from sorted child digests with one newline per value. The helper registers these
 storage and zoom contracts only; it does not rerun or rewrite the immutable snapshot builders.
 
+## `soil_survey.py`: SSURGO delineations, written only by the offline candidate CLI
+
+The rationale that used to sit in comments inside `soil_survey.py` lives here since the 2026-09-27
+native-geometry port (slice S2).
+
+**Grain.** One row is one SSURGO delineation, keyed on `mupolygonkey`
+(`docs/lanes/soil-survey.md` section 4). It is explicitly not `mukey`: one Boise viewport measured
+683 delineations collapsing onto 98 distinct `mukey` values. `natural_key` is the namespaced
+identity `usda-sda:<mupolygonkey>`; `mukey` is informational only and is never a join or sort key.
+
+**Columns.** The first fifteen columns mirror what the retired Postgres ingest persisted into
+`geo.geometry` and `geo.features`, rendered from the geometry dimension rather than the properties
+JSONB. Points worth keeping:
+- `hydric_rating` is tri-state. SSURGO rates a component Yes or No, or leaves it unranked; unranked
+  stays null and is never coerced to false.
+- `survey_area_vintage` is `sacatalog.saverest` at UTC midnight. The upstream value carries no
+  timezone, so no clock time is fabricated (`docs/lanes/soil-survey.md` section 5, point 5).
+- `release_day` is the day the release represents (the newest vintage in a shard), a constant on
+  every row. It is not the same fact as any one delineation's own vintage, the same distinction
+  `watersheds.py` draws for HUC12 boundaries.
+- `geometry_id` is **nullable** since the port. A source-direct row has no Postgres geometry UUID,
+  so the offline CLI writes null rather than inventing one.
+- `geometry_wkb` is WKB, not GeoJSON, and carries no SRID; readers assume EPSG:4326 out of band like
+  every other geometry column in this warehouse.
+- `producer` is the constant `usda-sda`, kept as a real column so a second SSURGO producer
+  namespace can never blend silently into this one.
+
+**Columns added by the port** (all nullable, so pre-port fixtures and readers keep their shape):
+- `bbox_west`, `bbox_south`, `bbox_east`, `bbox_north`: each row's own coordinate extent, written by
+  `pipeline/direct/soil_survey/prepare.py` and proved against the WKB by
+  `sql/pipeline/ssurgo_part_bounds.sql`. Serving selects rows by these columns, never by a GEOS
+  predicate, because a GEOS predicate rejects the invalid rings owner Q4 says must still be served.
+- `geometry_quality`: `valid`, `repaired` (`ST_MakeValid` stayed polygonal and the repair is what
+  is served) or `invalid_unrepaired` (the original bytes are served with this label). Null appears
+  only on rows written before the port; `prepare.py` always sets it and
+  `pipeline/validation/soil_survey.py::validate_soil_survey_candidate` refuses a candidate part
+  whose labels disagree with its manifest.
+
+**Tiers.** The registered derivation simplifies only: no dissolve, no aggregation, and **no area
+floor**. `min_area_tier_squares=1.0` was tried first and it empties this lane at z0: one z0 grid
+square is 25 square degrees while the whole PNW universe is about 10 x 10 degrees, so every feature
+drops and z0-z4 would be a blank map. The derivation stays registered for the tier machinery, but
+the offline candidate carries rung 13 only (owner Q1); low zoom is a separate artifact (Go-5).
+
 ## `availability_index.py` is publication state, not a lane data schema
 
 The availability index is one canonical standalone Arrow schema shared by every time-bearing lane;

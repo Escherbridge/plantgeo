@@ -1,8 +1,9 @@
 # `pipeline/direct/soil_survey` — the soil-survey layer's source protocol and acquisition CLI
 
 This package holds a live-region contract/binding pair (`source_protocol.py`, `ssurgo.py`) **and**,
-since the 2026-09-27 SSURGO native-geometry port, an offline capture CLI (`source.py`, `capture.py`,
-`__main__.py`) that talks to the same USDA source by a different, explicit path. **Neither is a
+since the 2026-09-27 SSURGO native-geometry port, an offline capture-and-candidate CLI (`source.py`,
+`capture.py`, `prepare.py`, `local_storage.py`, `stage.py`, `__main__.py`) that talks to the same
+USDA source by a different, explicit path. **Neither is a
 writer**: the CLI produces local, unpublished receipts an operator stages and admits by hand, it is
 not reachable through the live protocol above, and it is not registered as a scheduled lane (see
 "Operational entry point" below). This package is deliberately separate from `pipeline/direct/
@@ -167,9 +168,10 @@ region envelope in a sequential tile grid (see "Census tiling" below), never one
 `capture --root DIR --area ID001 --apply` acquires one bounded slice of one area, resumable across
 invocations and safe to re-run with a smaller `--page-size` after a 16 MiB response refusal (each
 `CapturePage` records its own `page_size`, so a capture with mixed page sizes across resumed
-invocations still validates). `prepare`, `verify-replay`, `validate`, `stage` and `release` are a
-later slice's sequenced addition to this same `__main__.py`; until they land there is no path from a
-local capture to anything served.
+invocations still validates). Slice S2 added `prepare`, `verify-replay`, `validate`, `stage` and
+`release`; see "Candidate preparation" and the sections after it. Even with them there is no path
+from a local capture to anything served: nothing reads `soil-survey/candidates/` until slice S3's
+route lands, and that route answers only for a release SHA an operator pins by hand.
 
 ## Census tiling
 
@@ -244,6 +246,178 @@ timeouts and zero 429/5xx. That is the evidence behind `DEFAULT_CENSUS_TILE_DEGR
 the prior comment's "well under the diagnostic bbox's 3.7 s" claim compared a 2x2 deg tile (~100x the
 diagnostic bbox's own ~0.04 sq deg) against that smaller bbox's own latency with no measurement of
 the tile size actually shipped, and was corrected rather than repeated.
+
+## Candidate preparation (slice S2)
+
+The five S2 verbs, in the order an operator runs them for one shard:
+
+| Verb | Network? | Writes | Module |
+|---|---|---|---|
+| `prepare --root DIR --shard WA-1 --area ... --apply` | no | parts + `candidate-<sha>.json` under `DIR` | `prepare.py::prepare_candidate` |
+| `verify-replay --root DIR --manifest <sha> --apply` | no | nothing new (identical parts) | `prepare.py::verify_candidate_replay` |
+| `validate --root DIR --manifest <sha> --apply` | **yes**, one SDA call per area | nothing | `pipeline/validation/soil_survey.py::validate_soil_survey_candidate` |
+| `stage --root DIR --manifest <sha> --bucket B --apply` | bucket | parts, then the shard manifest | `stage.py::publish_candidate` |
+| `release --root DIR --shard-manifest <sha> ... --bucket B --apply` | bucket | one release index | `stage.py::build_release`, `publish_release` |
+
+Every verb is a dry run without `--apply`. The `validate` dry run prints its area groups, the
+`stage` dry run prints the object count and bytes it would write (and how many the journal already
+holds), and the `release` dry run prints the index SHA, shard count and pending-area count.
+
+**Replay.** `prepare` replays every page of every area exactly as the archive did, keeping its
+`_verify_census`, `_verified_page`, `_verified_captures` and `_save_candidate_manifest` (the wave-0
+equivalence verdict). Query identity is recomputed through `source.py`'s builders, which strip
+comments, so a rewritten `.sql` header never breaks a replay (W0 hazard a). Each page's WKT is
+parsed and classified in **one** DuckDB statement (`sql/pipeline/ssurgo_native_geometry.sql`),
+not one statement per row. `build_candidate` writes part blobs but never a manifest;
+`prepare_candidate` adds the manifest. `verify-replay` first re-reads every part the manifest
+names (a changed byte fails the checksum), then re-prepares and compares the canonical manifest
+bytes. This is the archive's in-`stage` determinism check, moved offline so it never spends the
+upload budget. A manifest is always loaded by `load_candidate_manifest`, which demands that the
+file's bytes hash to the SHA in its name and are canonical JSON (W0 hazard h). A filesystem without
+hard links is refused as a `SoilSurveyError` (W0 hazard f); the Q5 capture volume must support them.
+
+## Geometry quality: repair, else label, and always serve (owner Q4)
+
+Owner answer, verbatim: *"repair else quarintine label and serve always"*. For each delineation:
+
+1. **Valid** (`ST_IsValid`): served as captured, `geometry_quality = "valid"`.
+2. **Invalid, repairable**: `ST_MakeValid` output that is non-empty, still a Polygon or
+   MultiPolygon, and itself valid is served instead, `geometry_quality = "repaired"`.
+3. **Invalid, not repairable to a polygon**: the ORIGINAL bytes are served,
+   `geometry_quality = "invalid_unrepaired"`. Nothing is withheld.
+
+Each row's `bbox_*` columns come from the geometry actually served. For a labelled row that is the
+original's coordinate extent (`ST_XMin` and friends read coordinates and never ask GEOS for
+validity), and it may be degenerate (zero width or height), which `release.py::is_wgs84_extent`
+accepts only for labelled rows and parts. **Serving must select rows by these bbox columns, never
+by a GEOS predicate**, because GEOS predicates reject exactly the rings Q4 says to serve; MapLibre
+renders them as they are. `ssurgo_part_bounds.sql` re-decodes every part's WKB and proves the
+stored bbox columns equal the geometry's extent before the part gets a receipt.
+
+The manifest's `quality` ledger records valid, repaired and labelled counts per area, and each
+`Part` records its own repaired and labelled counts. `Candidate` requires valid + repaired +
+labelled = the area census (the ladder counts every row) and the per-part counts to sum to the area
+ledger; `validate` re-reads the `geometry_quality` column and refuses a part whose labels disagree.
+The UI and the agent must surface the label (slices S3/S4).
+
+**Still refused, not labelled:** WKT that does not parse, and a source geometry that is empty or
+is not a Polygon or MultiPolygon at all. Neither has a bbox to select by or bytes a map can draw,
+and `mupolygon` never legitimately carries either, so they indicate a corrupt capture, not an
+invalid ring.
+
+`ST_IsValid`/`ST_MakeValid` are wrapped in DuckDB's `TRY(...)` (`ssurgo_native_geometry.sql`).
+GEOS raises for some rings it cannot even build well enough to check validity (an unclosed ring is
+one such case), and "serve always" means that must fall to `invalid_unrepaired` like any other
+invalid ring, not abort the whole page. `TRY` turns the raise into `NULL`, which
+`prepare.py::_classified`'s `is True` checks already treat the same as `false`.
+
+## Spatial parts: Morton chunks (F4)
+
+The archive wrote one part per capture page, sorted by `mupolygonkey`, so a part's bbox was a
+page's scatter and a z13 viewport touched most of an area's parts. Now, per area, every replayed
+row is sorted by a **Morton (Z-order) key** of its bbox centroid and chunked into consecutive parts
+of at most `MAX_PART_ROWS` (500) rows (`prepare.py::spatial_order`, `spatial_chunks`).
+
+- **Integer quantisation only.** Each bbox edge becomes an integer count of
+  `COORDINATE_STEPS_PER_DEGREE` (10^7, about 1.1 cm) steps by multiplication and `round`; the
+  centroid is `(west + east) // 2` in integers, offset by 180 x 10^7 (longitude) and 90 x 10^7
+  (latitude) so both fit in 32 bits. No float division anywhere, per the Polars frame-length
+  division trap (memory `polars-division-is-frame-length-dependent`).
+- **Ties** break on the integer `mupolygonkey`, so the order, and therefore every part's bytes,
+  depends only on the rows and never on page order or page size.
+- An area yields exactly `ceil(count / 500)` parts (`release.py::part_count_for`, integer ceiling
+  division); `Candidate` refuses anything else. An area with zero delineations keeps its census
+  and has no parts.
+- Parts carry rung 13 only (`REQUIRED_RUNGS = (13,)`, owner Q1). Parquet row order is Morton order.
+
+## Shards and the release index (F1)
+
+One candidate cannot hold the region, so a **shard** is one `Candidate` of at most
+`MAX_SURVEY_AREAS` (50) areas and `MAX_PREPARATION_ROWS` (500,000) rows, named by an
+operator-declared id such as `WA-1`. The **release index** (`release.py::Release`) pins
+1..`MAX_RELEASE_SHARDS` (32) staged shard manifests plus the scope census (`areas.json`'s whole
+`AreaInventory`). It requires:
+
+- areas disjoint across shards, each one in the scope census **at the same `saverest`** (both
+  queries render it with `CONVERT(varchar(33), ..., 126)`, so the strings compare exactly);
+- `pending_areas` = exactly the censused areas no shard serves, so serving can report
+  `declaredAreaCount` and `pendingAreaCount` without guessing;
+- `source_evidence = "staged"` only when every shard's journal records a manifest staged with
+  `--include-source-evidence` to that bucket, otherwise `"capture_volume"` (owner Q2 default).
+
+`release` refuses a shard whose manifest its own journal does not show as staged to `--bucket`,
+and before writing the index it re-reads each shard manifest from the bucket and checks its
+checksum. It writes `soil-survey/candidates/releases/<sha>.json` (plus a local
+`release-<sha>.json`). **Admission is separate:** setting `SSURGO_ADMITTED_RELEASE_SHA256` on the
+reader (slice S3) is an owner step; nothing here touches it.
+
+## Stage: guards, journal, manifest last (F11, F1)
+
+- **Guards.** `stage --apply` and `release --apply` call `stage.py::require_stage_authorised`
+  before any storage object is even constructed: `--bucket` must equal
+  `settings.object_store_bucket`, **and** `SSURGO_STAGE_ALLOWED=1` must be set. A typo'd or
+  inherited bucket and an accidental `--apply` each fail closed.
+- **No re-prepare.** Every local blob is read through `capture.py::read_blob`, which checks it
+  against the SHA the manifest names. The archive re-ran `prepare_candidate` inside the upload
+  budget; that is now `verify-replay`, run before staging.
+- **Resumable, but the journal is a hint, not a proof.** `DIR/stage-<manifest-sha>.jsonl` gets one
+  fsynced line per object written, each naming its bucket **and its `OBJECT_STORE_PREFIX`**
+  (`stage.py::read_journal`): a bucket recorded under one prefix is never mistaken for staged under
+  a different one after the prefix changes. A re-run still skips the PUT for a journaled key, but
+  only after `stage.py::_staged_in_bucket` re-reads it and re-checks its bytes against the blob
+  (`verify_blob`) — a recreated bucket or a lifecycle deletion is caught and the object is
+  re-uploaded, rather than silently believed staged; `--upload-budget-seconds` (default 600) bounds
+  each invocation. A torn last line is ignored, because re-putting an object is idempotent.
+- **Readback before pinning, not just on write.** The manifest is read back once right after its
+  own PUT. `release` (`stage.py::publish_release`) goes further: before it writes the release
+  index, it re-reads and re-verifies every shard's manifest **and every one of its parts**, because
+  a release pins shards for serving and a journal-only check would let a release point at bytes
+  that are no longer there. `validate --from-bucket` re-reads and checksums every part too, when a
+  full readback is wanted outside of staging.
+- **Raw evidence** (census, key-page and payload responses) is uploaded only with
+  `--include-source-evidence`. By default it stays on the capture volume (owner Q2).
+- `stage` never writes a day partition, the availability index or an admission pin, and never
+  calls `compare_and_swap`.
+
+## Freeze 2 constants and their derivations
+
+Frozen after the Go-1 pilot (`.omc/research/soil-survey-pilot-20260927/GO-1-REPORT.md`, gitignored)
+and the owner's pre-freeze answers. Pilot facts used below: 2 areas (`ID001`, `ID683`), 11,421 rows
+in 24 pages, 4,456 B/row of raw SDA JSON (5,121 and 3,641 per area), 0 of 11,421 invalid, row-bbox
+p99 0.0604 deg wide by 0.0369 deg tall, largest page 3.02 MB for 500 rows, 12.7 s per page on
+average, and a tiled full-Region census of **264 areas**.
+
+| Constant (`foundation/soil_survey/release.py`) | Value | Derivation |
+|---|---|---|
+| `REQUIRED_RUNGS` / `NATIVE_RUNG` | `(13,)` / 13 | Owner Q1: GeoJSON serves z13 only; below z13 the route says "zoom in" until the PMTiles artifact (Go-5). |
+| `MAX_SURVEY_AREAS` | 50 per shard | Equals `MAX_VALIDATION_AREAS`, so one shard validates in one bounded call. 264 areas need at least 6 shards. |
+| `MAX_PREPARATION_ROWS` | 500,000 per shard | Pilot mean is 5,710 rows per area, so a typical 50-area shard is about 285,500 rows; 500,000 is about 1.75x that. It is a guard, not a measured throughput limit: prepare time is first measured at Go-2 against R5's 1,200 s target (`DEFAULT_PREPARATION_SECONDS`) under the 1,800 s cap. An outlier area can still exceed it, and then its shard must hold fewer areas. |
+| `MAX_PART_ROWS` | 500 | The plan's chunk size, equal to the capture page size. At about 2.1 KB/row of WKB (WKT at 4,456 B/row carries about 34 characters per vertex against WKB's 16 bytes; *est.*), a part is about 1 MB before zstd. |
+| `MAX_RELEASE_SHARDS` | 32 | Plan value. 264 areas at 50 per shard is 6 shards at minimum; 32 leaves room for per-state shards and re-waves. |
+| `MAX_MANIFEST_BYTES` | 8 MiB | Unchanged. A 50-area shard is about 0.6 MB (*est.*, plan section 3). |
+| `MAX_RELEASE_BYTES` | 1 MiB | The index is about 16 KB of scope census (264 entries) plus at most 32 shard summaries. |
+| `MAX_PARTS_PER_VIEWPORT` | 16 (placeholder kept) | See below. |
+| `MAX_VIEWPORT_BYTES` | 32 MiB (placeholder kept) | 16 parts x about 1.1 MB per part (the 3.02 MB largest WKT page x about 0.47 WKB-to-WKT ratio x about 0.8 zstd; *est.*) is about 18 MB, under 32 MiB. |
+| `MAX_VIEWPORT_ROWS` | 1000 | Unchanged serving cap. |
+| Invalid-geometry planning rate | about 1 in 1.5 M | The pilot's 0 of 11,421 has almost no power (about 0.008 events expected at the prior), so the prior stands. It sizes nothing in code: Q4 serves every row regardless. |
+
+**Why the per-viewport part cap stays at the 16-part placeholder.** The brief asked for the cap
+from "p99 x 2". The pilot measured **row** bboxes, not **part** bboxes (prepare did not exist yet),
+so p99 x 2 (0.1207 deg x 0.0739 deg) is a margin, not a part size. The estimate:
+- A z13 viewport is at most `MAX_SOIL_BBOX_SQUARE_DEGREES` = 0.02 sq deg by the TS reader ceiling,
+  about 0.2 deg x 0.1 deg (R12 notes a full 1920x1080 screen is about 0.04 sq deg, about
+  0.33 x 0.13).
+- Density is about 15,000 to 19,000 delineations per sq deg (`ID001`: 6,292 rows over about
+  0.33 sq deg), so a 500-row part covers about 0.03 sq deg, about 0.18 deg on a side.
+- A part's bbox is its cell plus the row-bbox p99 x 2 margin: about 0.30 x 0.25 deg.
+- Parts touched is about ((0.33 + 0.30) / 0.18) x ((0.13 + 0.25) / 0.18), about 3.5 x 2.1, about
+  7.4. Doubling that for the irregular shape of a Z-order run gives about 15, at a single area's
+  interior.
+
+That is inside 16 but with little margin at a corner where three survey areas meet. So 16 is kept
+as the **placeholder**, to be re-derived at Go-2 from real parts: count the parts touched by z13
+viewports in a dense area and at a survey-area corner. `tests/direct/soil_survey/
+test_prepare.py::test_z13_viewport_touches_at_most_the_part_cap` pins the synthetic version.
 
 ## No shim here
 

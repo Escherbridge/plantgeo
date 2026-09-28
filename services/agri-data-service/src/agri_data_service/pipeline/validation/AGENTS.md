@@ -42,3 +42,30 @@ schema, but relaxed required fields, type drift, or field-order drift fail. The 
 zoom prefix and re-reads canonical rows and marker bodies, so both same-key overwrites and key-set
 changes fail. The JSON contains relative scope/count/hash evidence and redacted exception classes only,
 never a database URL, bucket name, endpoint, access key, secret, or provider error text.
+
+## Soil-survey candidate validation (SSURGO port, slice S2)
+
+`soil_survey.py::validate_soil_survey_candidate` reconciles one prepared shard candidate
+(`foundation/soil_survey/release.py::Candidate`) against a **current** USDA SDA census, the same
+per-area checks `validate_soil_survey_release` runs on a day partition: delineation count on
+`mupolygonkey`, and vintage staleness. It reads the rung-13 parts through any
+`AvailabilityStorage`, so it runs **before** staging against the local capture root
+(`pipeline/direct/soil_survey/local_storage.py::LocalCandidateStorage`, plan finding F8) and can
+re-run against the bucket after staging. Either way every part is checksum-verified.
+
+- **Bounded reads.** One call checks 1..`MAX_VALIDATION_AREAS` (50) areas and reads at most
+  `MAX_VALIDATION_PART_BYTES` (128 MiB) of native parts. `candidate_validation_groups` /
+  `group_areas_for_validation` split a shard's areas greedily, in sorted order, under both caps; an
+  area whose own parts exceed 128 MiB is refused rather than read partially.
+- **Q4 labels are checked, not trusted.** Owner Q4 serves every row, labelling unrepaired invalid
+  geometry `invalid_unrepaired` and repaired geometry `repaired`. Each part's `geometry_quality`
+  column must match the `repaired_rows` and `labelled_rows` its manifest `Part` records, and a null
+  label is refused, so a manifest can never under-report what the bytes serve.
+- **Network step.** Each area costs one SDA call (`HttpxSoilSurveySdaClient`) under a 120 s
+  budget for the whole group, checked between areas rather than wrapped once around the whole
+  loop: cancelling a whole-group `asyncio.timeout` mid-flight would abort the area in progress
+  *and* discard every finding already collected. Instead each call gets its own remaining share
+  via `asyncio.wait_for`, and once the deadline is passed every area not yet reached becomes its
+  own `source_query_failed` finding instead of being silently dropped. One area's transport failure
+  (or its own timeout) becomes a `source_query_failed` finding for that area only, never the end of
+  the run.

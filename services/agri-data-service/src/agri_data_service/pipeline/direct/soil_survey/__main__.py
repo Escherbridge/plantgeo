@@ -1,12 +1,11 @@
-"""Offline SSURGO acquisition commands: region-wide area census, then bounded per-area capture.
+"""Offline SSURGO commands: census, capture, prepare, verify-replay, validate, stage, release.
 
-Ported and narrowed from `archive/freshness-integrated-candidate-20260914`'s `pipeline/direct/
-soil_survey/__main__.py` for slice S1 ("Acquisition"): only `areas` and `capture` are wired here.
-`prepare`, `verify-replay`, `validate`, `stage` and `release` are a later slice's sequenced edit to
-this same file (`AGENTS.md`, "Operational entry point"). Every command is dry-run unless `--apply`
-is given, and neither command here writes to an object store, advances admission, or reports
-`serving_published=true` -- this package is not registered as a scheduled lane
-(`pipeline/parquet/lane_registry.py` still refuses it) and nothing calls it from a cron.
+Ported from `archive/freshness-integrated-candidate-20260914`'s `pipeline/direct/soil_survey/
+__main__.py`: slice S1 wired `areas` and `capture`; slice S2 adds the candidate verbs
+(`AGENTS.md`, "Operational entry point"). Every command is dry-run unless `--apply` is given. Only
+`stage --apply` and `release --apply` write to a bucket, and only behind `require_stage_authorised`;
+nothing here advances admission or reports `serving_published=true`, this package is not a
+registered lane (`pipeline/parquet/lane_registry.py` still refuses it) and no cron calls it.
 """
 
 from __future__ import annotations
@@ -16,14 +15,18 @@ import asyncio
 import itertools
 import json
 import math
+import os
 import sys
 import time
+from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING, Final
 
 import httpx
 from pydantic import ValidationError
 
+from agri_data_service.config import settings
 from agri_data_service.foundation.geography.bounding_box import BoundingBox, inline_bbox_value, parse_bounding_box
 from agri_data_service.foundation.region import load_region
 from agri_data_service.foundation.soil_survey.receipts import (
@@ -32,7 +35,19 @@ from agri_data_service.foundation.soil_survey.receipts import (
     SoilSurveyError,
     digest,
 )
-from agri_data_service.pipeline.direct.soil_survey.capture import capture_area, save_blob, save_checkpoint
+from agri_data_service.pipeline.direct.soil_survey.capture import (
+    DEFAULT_TIME_BUDGET_SECONDS,
+    capture_area,
+    save_blob,
+    save_checkpoint,
+)
+from agri_data_service.pipeline.direct.soil_survey.local_storage import LocalCandidateStorage
+from agri_data_service.pipeline.direct.soil_survey.prepare import (
+    DEFAULT_PREPARATION_SECONDS,
+    load_candidate_manifest,
+    prepare_candidate,
+    verify_candidate_replay,
+)
 from agri_data_service.pipeline.direct.soil_survey.source import (
     AREA_INVENTORY_COLUMNS,
     DEFAULT_FETCH_TIMEOUT_SECONDS,
@@ -40,6 +55,28 @@ from agri_data_service.pipeline.direct.soil_survey.source import (
     fetch,
     table_rows,
 )
+from agri_data_service.pipeline.direct.soil_survey.stage import (
+    DEFAULT_UPLOAD_BUDGET_SECONDS,
+    build_release,
+    publish_candidate,
+    publish_release,
+    read_journal,
+    require_stage_authorised,
+    stage_plan,
+)
+from agri_data_service.pipeline.parquet.availability_storage import BotoAvailabilityStorage
+from agri_data_service.pipeline.validation.soil_survey import (
+    HttpxSoilSurveySdaClient,
+    candidate_validation_groups,
+    validate_soil_survey_candidate,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from agri_data_service.pipeline.parquet.availability_storage import AvailabilityStorage
+
+COMMANDS: Final = ("areas", "capture", "prepare", "verify-replay", "validate", "stage", "release")
 
 #: `--census-tile-degrees`' own default: the Go-2 live re-run over the full pnw envelope (16x9 deg)
 #: at this edge measured 15.4 s median / 23.7 s max / 11.3 s min across 33 tiles reached, zero
@@ -146,9 +183,14 @@ def _validate_request_timeout_seconds(request_timeout_seconds: float) -> None:
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
-    result.add_argument("command", choices=("areas", "capture"))
+    result.add_argument("command", choices=COMMANDS)
     result.add_argument("--root", type=Path, required=True)
-    result.add_argument("--area", action="append", default=[])
+    result.add_argument(
+        "--area",
+        action="append",
+        default=[],
+        help="capture: exactly one area; prepare: the shard's complete area list; validate: an optional subset",
+    )
     result.add_argument(
         "--bbox",
         default=None,
@@ -175,9 +217,49 @@ def parser() -> argparse.ArgumentParser:
     )
     result.add_argument("--max-pages", type=int, default=8)
     result.add_argument("--page-size", type=int, default=500)
-    result.add_argument("--time-budget-seconds", type=float, default=120)
     result.add_argument(
-        "--apply", action="store_true", help="Perform the named action; neither command ever admits a release"
+        "--time-budget-seconds",
+        type=float,
+        default=None,
+        help=f"capture (default {DEFAULT_TIME_BUDGET_SECONDS} s) or prepare/verify-replay "
+        f"(default {DEFAULT_PREPARATION_SECONDS} s)",
+    )
+    result.add_argument("--shard", default=None, help="prepare only: the operator-declared shard id, e.g. WA-1")
+    result.add_argument(
+        "--manifest", default=None, help="verify-replay/validate/stage: the prepared shard manifest's SHA-256"
+    )
+    result.add_argument(
+        "--shard-manifest",
+        action="append",
+        default=[],
+        help="release only: one staged shard manifest SHA-256; repeat once per shard",
+    )
+    result.add_argument(
+        "--bucket",
+        default=None,
+        help="stage/release: must equal OBJECT_STORE_BUCKET; --apply also needs SSURGO_STAGE_ALLOWED=1",
+    )
+    result.add_argument(
+        "--include-source-evidence",
+        action="store_true",
+        help="stage only: also upload raw SDA responses (default: they stay on the capture volume)",
+    )
+    result.add_argument(
+        "--upload-budget-seconds",
+        type=float,
+        default=DEFAULT_UPLOAD_BUDGET_SECONDS,
+        help="stage only: wall-clock budget for this invocation; re-run to resume from the journal",
+    )
+    result.add_argument(
+        "--from-bucket",
+        action="store_true",
+        help="validate only: read parts from the configured bucket instead of --root (reads only)",
+    )
+    result.add_argument(
+        "--apply",
+        action="store_true",
+        help="Perform the named action (validate is a NETWORK step: one USDA SDA call per area); "
+        "no command ever admits a release",
     )
     return result
 
@@ -354,7 +436,9 @@ async def _capture(arguments: argparse.Namespace) -> dict[str, object]:
             area,
             max_pages=arguments.max_pages,
             page_size=arguments.page_size,
-            time_budget_seconds=arguments.time_budget_seconds,
+            time_budget_seconds=(
+                DEFAULT_TIME_BUDGET_SECONDS if arguments.time_budget_seconds is None else arguments.time_budget_seconds
+            ),
         )
     return {
         "outcome": "captured" if capture.closing is not None else "incomplete",
@@ -363,6 +447,163 @@ async def _capture(arguments: argparse.Namespace) -> dict[str, object]:
         "expected_rows": capture.opening.count,
         "serving_published": False,
     }
+
+
+def _preparation_budget(arguments: argparse.Namespace) -> float:
+    budget: float | None = arguments.time_budget_seconds
+    return DEFAULT_PREPARATION_SECONDS if budget is None else budget
+
+
+def _configured_bucket() -> str | None:
+    """The bucket `stage`/`release` must be pointed at explicitly; a seam for tests."""
+    return settings.object_store_bucket
+
+
+def _authorise_bucket_write(arguments: argparse.Namespace) -> None:
+    require_stage_authorised(arguments.bucket, configured_bucket=_configured_bucket(), environ=os.environ)
+
+
+def _prepare(arguments: argparse.Namespace) -> dict[str, object]:
+    candidate, sha = prepare_candidate(
+        arguments.root, arguments.shard, arguments.area, time_budget_seconds=_preparation_budget(arguments)
+    )
+    return {
+        "outcome": "prepared",
+        "shard": candidate.shard,
+        "manifest_sha256": sha,
+        "areas": [capture.opening.area for capture in candidate.areas],
+        "parts": len(candidate.parts),
+        "native_rows": sum(capture.opening.count for capture in candidate.areas),
+        "repaired_rows": sum(quality.repaired_rows for quality in candidate.quality),
+        "labelled_rows": sum(quality.labelled_rows for quality in candidate.quality),
+        "serving_published": False,
+    }
+
+
+def _verify_replay(arguments: argparse.Namespace) -> dict[str, object]:
+    candidate = verify_candidate_replay(
+        arguments.root, arguments.manifest, time_budget_seconds=_preparation_budget(arguments)
+    )
+    return {
+        "outcome": "replayed",
+        "shard": candidate.shard,
+        "manifest_sha256": arguments.manifest,
+        "serving_published": False,
+    }
+
+
+async def _validate(arguments: argparse.Namespace) -> dict[str, object]:
+    """NETWORK step: one USDA SDA census call per area, reading parts locally unless --from-bucket."""
+    candidate, _ = load_candidate_manifest(arguments.root, arguments.manifest)
+    groups = candidate_validation_groups(candidate, arguments.area)
+    storage: AvailabilityStorage = (
+        BotoAvailabilityStorage.from_settings() if arguments.from_bucket else LocalCandidateStorage(arguments.root)
+    )
+    findings: list[dict[str, object]] = []
+    async with httpx.AsyncClient(follow_redirects=False) as client:
+        source = HttpxSoilSurveySdaClient(client=client)
+        for group in groups:
+            report = await validate_soil_survey_candidate(candidate, storage, source, survey_area_symbols=group)
+            findings.extend(asdict(finding) for finding in report.findings)
+    return {
+        "outcome": "findings" if findings else "validated",
+        "shard": candidate.shard,
+        "manifest_sha256": arguments.manifest,
+        "storage": "bucket" if arguments.from_bucket else "local",
+        "groups": [list(group) for group in groups],
+        "findings": findings,
+        "serving_published": False,
+    }
+
+
+def _stage(arguments: argparse.Namespace) -> dict[str, object]:
+    _authorise_bucket_write(arguments)
+    report = publish_candidate(
+        arguments.root,
+        arguments.manifest,
+        BotoAvailabilityStorage.from_settings(),
+        bucket=arguments.bucket,
+        prefix=settings.object_store_prefix,
+        include_source_evidence=arguments.include_source_evidence,
+        upload_budget_seconds=arguments.upload_budget_seconds,
+    )
+    return {"outcome": "candidate_staged", **asdict(report), "admitted": False, "serving_published": False}
+
+
+def _release(arguments: argparse.Namespace) -> dict[str, object]:
+    _authorise_bucket_write(arguments)
+    release, payload = build_release(
+        arguments.root, arguments.shard_manifest, bucket=arguments.bucket, prefix=settings.object_store_prefix
+    )
+    key, sha = publish_release(arguments.root, release, payload, BotoAvailabilityStorage.from_settings())
+    return {
+        "outcome": "release_staged",
+        "release_key": key,
+        "release_sha256": sha,
+        "shards": len(release.shards),
+        "pending_areas": len(release.pending_areas),
+        "source_evidence": release.source_evidence,
+        "admitted": False,
+        "serving_published": False,
+    }
+
+
+def _usage_error(arguments: argparse.Namespace) -> str | None:
+    """The one argument rule a command breaks, or None."""
+    command = arguments.command
+    if command == "capture" and len(arguments.area) != 1:
+        return "capture requires exactly one --area per bounded invocation"
+    if command == "prepare" and (not arguments.area or arguments.shard is None):
+        return "prepare requires --shard and the shard's complete explicit --area list"
+    if command in {"verify-replay", "validate", "stage"} and arguments.manifest is None:
+        return f"{command} requires --manifest <sha256>"
+    if command in {"stage", "release"} and arguments.bucket is None:
+        return f"{command} requires --bucket"
+    if command == "release" and not arguments.shard_manifest:
+        return "release requires at least one --shard-manifest <sha256>"
+    return None
+
+
+def _dry_run_details(arguments: argparse.Namespace) -> dict[str, object]:
+    """What a dry run can say from local files alone: validate groups, stage bytes, release shape."""
+    if arguments.command == "validate":
+        candidate, _ = load_candidate_manifest(arguments.root, arguments.manifest)
+        groups = candidate_validation_groups(candidate, arguments.area)
+        return {"groups": [list(group) for group in groups], "network_calls": sum(len(group) for group in groups)}
+    if arguments.command == "stage":
+        plan = stage_plan(arguments.root, arguments.manifest, include_source_evidence=arguments.include_source_evidence)
+        journaled = read_journal(
+            arguments.root, arguments.manifest, bucket=arguments.bucket, prefix=settings.object_store_prefix
+        ).staged_keys
+        return {
+            "bucket": arguments.bucket,
+            "object_count": plan.object_count,
+            "byte_count": plan.byte_count,
+            "already_journaled": sum(item.key in journaled for item in plan.objects),
+            "include_source_evidence": arguments.include_source_evidence,
+        }
+    if arguments.command == "release":
+        release, payload = build_release(
+            arguments.root, arguments.shard_manifest, bucket=arguments.bucket, prefix=settings.object_store_prefix
+        )
+        return {
+            "release_sha256": digest(payload),
+            "shards": len(release.shards),
+            "pending_areas": len(release.pending_areas),
+            "source_evidence": release.source_evidence,
+        }
+    return {}
+
+
+_APPLY: Final[dict[str, Callable[[argparse.Namespace], dict[str, object]]]] = {
+    "areas": lambda arguments: asyncio.run(_areas(arguments)),
+    "capture": lambda arguments: asyncio.run(_capture(arguments)),
+    "prepare": _prepare,
+    "verify-replay": _verify_replay,
+    "validate": lambda arguments: asyncio.run(_validate(arguments)),
+    "stage": _stage,
+    "release": _release,
+}
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -374,8 +615,8 @@ def main(argv: list[str] | None = None) -> None:
     # region envelope, `default_camera_envelope`, an operator override) has a negative west ordinate.
     raw = list(sys.argv[1:]) if argv is None else argv
     arguments = cli.parse_args(inline_bbox_value(raw))
-    if arguments.command == "capture" and len(arguments.area) != 1:
-        cli.error("capture requires exactly one --area per bounded invocation")
+    if (message := _usage_error(arguments)) is not None:
+        cli.error(message)
     scope: dict[str, object] = {}
     if arguments.command == "areas":
         # Resolved (and, per SEC-1, echoed) before the dry-run gate, so a misconfigured --bbox is
@@ -392,12 +633,15 @@ def main(argv: list[str] | None = None) -> None:
                     "root": str(arguments.root),
                     "serving_published": False,
                     **scope,
+                    **_dry_run_details(arguments),
                 }
             )
         )
         return
-    report = asyncio.run(_areas(arguments)) if arguments.command == "areas" else asyncio.run(_capture(arguments))
+    report = _APPLY[arguments.command](arguments)
     print(json.dumps(report, sort_keys=True))
+    if report.get("outcome") == "findings":
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
