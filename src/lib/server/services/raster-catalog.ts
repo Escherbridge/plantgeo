@@ -93,11 +93,11 @@ export async function getPublishedSoilRasters(database: Pick<typeof db, "execute
      ORDER BY property
   `);
 
-  return rows.map((row) => {
-    if (!isSoilProperty(row.property)) {
-      throw new Error(`Unknown published SoilGrids property: ${row.property}`);
-    }
-    return {
+  // A property this client has no layer for is skipped, not fatal: the catalogue can publish ahead of
+  // the web (the 2026-09-28 texture release did), and one new row must not black out every soil layer.
+  return rows.flatMap((row): PublishedSoilRaster[] => {
+    if (!isSoilProperty(row.property)) return [];
+    return [{
       property: row.property,
       unit: row.unit,
       scaleDivisor: Number(row.scale_divisor),
@@ -117,6 +117,6 @@ export async function getPublishedSoilRasters(database: Pick<typeof db, "execute
         Number(row.bbox_east),
         Number(row.bbox_north),
       ],
-    };
+    }];
   });
 }

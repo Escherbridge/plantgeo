@@ -71,7 +71,22 @@ describe("published SoilGrids raster catalogue", () => {
     expect(() => publicRasterArchiveUrl("raster/soil/soc.pmtiles")).toThrow(/credential-free/);
   });
 
-  it("rejects unknown soil properties and malformed colour ramps", async () => {
+  it("serves the known layers when the catalogue also holds a property this client has no layer for", async () => {
+    const row = {
+      unit: "g/kg", scale_divisor: 10, value_min: 5, value_max: 460,
+      color_ramp: [{ value: 5, color: "#fff7ec" }], min_zoom: 0, max_zoom: 10,
+      attribution: "ISRIC SoilGrids", source_name: "SoilGrids", source_release: "2.0", license_name: "CC-BY 4.0",
+      bbox_west: -125, bbox_south: 42, bbox_east: -111, bbox_north: 49,
+    };
+    mocks.execute.mockResolvedValueOnce([
+      { ...row, property: "clay", object_key: "raster/soil/clay.pmtiles" },
+      { ...row, property: "soc", object_key: "raster/soil/soc.pmtiles" },
+    ]);
+    const published = await getPublishedSoilRasters();
+    expect(published.map((release) => release.property)).toEqual(["soc"]);
+  });
+
+  it("rejects malformed colour ramps", async () => {
     const validRow = {
       property: "soc",
       unit: "g/kg",
@@ -91,9 +106,6 @@ describe("published SoilGrids raster catalogue", () => {
       bbox_east: -111,
       bbox_north: 49,
     };
-
-    mocks.execute.mockResolvedValueOnce([{ ...validRow, property: "clay" }]);
-    await expect(getPublishedSoilRasters()).rejects.toThrow(/Unknown published SoilGrids property/);
 
     mocks.execute.mockResolvedValueOnce([{ ...validRow, color_ramp: [{ value: "5", color: "red" }] }]);
     await expect(getPublishedSoilRasters()).rejects.toThrow(/Invalid color ramp stop/);
