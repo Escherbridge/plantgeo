@@ -8,6 +8,7 @@ the module so the handler runs a probe command under the real wrapper, drain and
 
 from __future__ import annotations
 
+import os
 import sys
 import uuid
 from datetime import UTC, datetime
@@ -38,6 +39,7 @@ from agri_data_service.execution.job_executor_service import (
     summarize_turn_report,
 )
 from agri_data_service.execution.lane_ids import VEGETATION_DIRECT_LANE_ID
+from agri_data_service.foundation.observability import router as observability_router
 from agri_data_service.jobs import JobDefinitionRecord, JobInvocation, JobSliceSummary
 from agri_data_service.jobs.lease import FAILURE_SUMMARY_MAX_LENGTH, clamp_summary
 from agri_data_service.pipeline.parquet.availability_extension import AvailabilityExtensionTally
@@ -135,26 +137,45 @@ def _invocation(kind: str, payload: Mapping[str, object]) -> JobInvocation:
     )
 
 
+#: `run_scheduled_command` (o5a) now tees every child chunk through `ChildLogRouter` in front of the
+#: real sinks (execution/AGENTS.md, "Command stderr reaches the ledger"): the mirror Railway actually
+#: sees is the router's own `_default_stdout_sink`/`_default_stderr_sink`, one JSON payload per routed
+#: line, not job_executor_service's raw byte passthrough. `teed`/`teed_stdout` capture THOSE payloads;
+#: the RAW bounded tail (`_command_failure_reason`, `parse_terminal_report`) is untouched by any of
+#: this and is asserted separately, directly off `outcome`.
+def _rendered_text(records: list[dict[str, object]]) -> str:
+    """Every text-bearing field a routed payload can carry, joined for a substring check."""
+    parts: list[str] = []
+    for payload in records:
+        for key in ("line", "preview", "event"):
+            value = payload.get(key)
+            if isinstance(value, str):
+                parts.append(value)
+    return "\n".join(parts)
+
+
 @pytest.fixture
-def teed() -> list[bytes]:
+def teed() -> list[dict[str, object]]:
     return []
 
 
 @pytest.fixture
-def teed_stdout() -> list[bytes]:
+def teed_stdout() -> list[dict[str, object]]:
     return []
 
 
 @pytest.fixture
-def _pinned(monkeypatch: pytest.MonkeyPatch, teed: list[bytes], teed_stdout: list[bytes]) -> None:
+def _pinned(
+    monkeypatch: pytest.MonkeyPatch, teed: list[dict[str, object]], teed_stdout: list[dict[str, object]]
+) -> None:
     specs = {
         PROBE_LANE: _spec(PROBE_LANE, FAILING_SCRIPT),
         VEGETATION_DIRECT_LANE_ID: _spec(VEGETATION_DIRECT_LANE_ID, ECHO_ARGV_SCRIPT),
     }
     monkeypatch.setattr(job_executor_service, "LANE_SPECS", MappingProxyType(specs))
     monkeypatch.setattr(job_executor_service, "parse_activation", lambda: ActivationConfig(frozenset(specs)))
-    monkeypatch.setattr(job_executor_service, "_default_stderr_sink", teed.append)
-    monkeypatch.setattr(job_executor_service, "_default_stdout_sink", teed_stdout.append)
+    monkeypatch.setattr(observability_router, "_default_stderr_sink", teed.append)
+    monkeypatch.setattr(observability_router, "_default_stdout_sink", teed_stdout.append)
     monkeypatch.setattr(job_executor_service, "_LANE_TURN_REPORTS", {})
 
 
@@ -181,6 +202,33 @@ def test_the_tail_keeps_the_end_and_tees_everything() -> None:
     assert tail.metrics() == {"stderr_bytes": 23, "stderr_truncated": True}
 
 
+def test_a_raising_sink_never_costs_the_tail_or_raises() -> None:
+    def broken_log_stream(_chunk: bytes) -> None:
+        raise BrokenPipeError("the log stream is gone")
+
+    tail = CommandStderrTail(limit=4096, sink=broken_log_stream)
+
+    tail.feed(b"Traceback (most recent call last):\n")
+    tail.feed(b"ValueError: the real cause\n")
+
+    assert tail.summary() == "Traceback (most recent call last): | ValueError: the real cause"
+    assert tail.sink_failures == 2, "every failed forward is counted; the drain keeps reading"
+
+
+def test_the_summary_redacts_each_line_before_the_front_cut() -> None:
+    tail = CommandStderrTail(limit=4096, sink=lambda _chunk: None)
+    tail.feed(b"Authorization: Bearer CANARY-SUMMARY-TOKEN\n")
+    tail.feed(b"dsn=postgresql://svc:CANARY-SUMMARY-PASSWORD@db.example:5432/agri\n")
+    tail.feed(b"ValueError: the real cause\n")
+
+    summary = tail.summary()
+
+    assert summary is not None
+    assert "CANARY-SUMMARY-TOKEN" not in summary
+    assert "CANARY-SUMMARY-PASSWORD" not in summary
+    assert summary.endswith("ValueError: the real cause")
+
+
 def test_the_summary_is_one_line_cut_from_the_front() -> None:
     tail = CommandStderrTail(limit=4096, sink=lambda _chunk: None)
     tail.feed(b"  spaced   out  \n\n\nlast\n")
@@ -190,7 +238,12 @@ def test_the_summary_is_one_line_cut_from_the_front() -> None:
 
 
 @pytest.mark.usefixtures("_pinned")
-async def test_a_failing_command_s_real_exception_reaches_the_failure_reason(teed: list[bytes]) -> None:
+async def test_a_failing_command_s_real_exception_reaches_the_failure_reason(teed: list[dict[str, object]]) -> None:
+    """The RAW bounded tail (never the routed mirror) is what protects the ledger's failure reason:
+    `NOISE_LINES` (200) is chosen to exactly fill the router's own per-attempt error-line ceiling
+    (`_MAX_ERROR_LINES_PER_ATTEMPT`), so the routed mirror below legitimately drops the traceback and
+    the real exception -- and the ledger reason still carries it, because that reads the tail, not the
+    mirror. See execution/AGENTS.md, "Command stderr reaches the ledger"."""
     outcome = await run_scheduled_command(_invocation(EXECUTOR_WORK_ITEM_KIND, {"lane_id": PROBE_LANE}))
 
     assert outcome.kind == "failed"
@@ -204,14 +257,17 @@ async def test_a_failing_command_s_real_exception_reaches_the_failure_reason(tee
     assert "ValueError: the real cause" in stored
     assert outcome.metrics["exit_code"] == EXIT_STATUS
     assert outcome.metrics["stderr_truncated"] is True
-    assert outcome.metrics["stderr_bytes"] == len(b"".join(teed)), "counts only in metrics, never content"
-    assert b"warning: noise before the cause" in b"".join(teed), "the log stream still receives the whole output"
-    assert b"ValueError: the real cause" in b"".join(teed)
+    assert outcome.metrics["exit_class"] == "code"
+    assert outcome.metrics["turn_outcome"] == "code_error"
+    assert "warning: noise before the cause" in _rendered_text(teed), "the routed mirror still carries the noise"
+    assert any(payload.get("event") == "plantgeo_child_log_truncated" for payload in teed), (
+        "the flood past the per-attempt error ceiling is counted and announced, not silently lost"
+    )
 
 
 @pytest.mark.usefixtures("_pinned")
 async def test_a_chatty_success_completes_and_counts_its_stderr(
-    monkeypatch: pytest.MonkeyPatch, teed: list[bytes]
+    monkeypatch: pytest.MonkeyPatch, teed: list[dict[str, object]]
 ) -> None:
     _pin_script(monkeypatch, CHATTY_SUCCESS_SCRIPT)
 
@@ -219,9 +275,11 @@ async def test_a_chatty_success_completes_and_counts_its_stderr(
 
     assert outcome.kind == "completed"
     assert outcome.metrics["exit_code"] == 0
-    # Byte-for-byte what the child wrote, whatever line ending its platform's text mode chose.
-    assert outcome.metrics["stderr_bytes"] == len(b"".join(teed))
-    assert b"just a warning" in b"".join(teed)
+    assert outcome.metrics["exit_class"] == "report_missing", "exit 0, no terminal JSON report on stdout"
+    # Counts only in metrics, never content: the RAW tail's own byte counter, independent of routing.
+    # The child's text-mode stderr writes the platform line ending (`\r\n` on Windows).
+    assert outcome.metrics["stderr_bytes"] == len(("just a warning" + os.linesep).encode())
+    assert "just a warning" in _rendered_text(teed), "well under any ceiling, so the mirror still carries it"
     assert outcome.metrics["stderr_truncated"] is False
     assert outcome.metrics["days_unwritten"] is None, "no terminal report on stdout, nothing claimed"
     assert outcome.cursor is not None
@@ -230,7 +288,7 @@ async def test_a_chatty_success_completes_and_counts_its_stderr(
 
 @pytest.mark.usefixtures("_pinned")
 async def test_an_exit_zero_incomplete_turn_is_persisted_on_the_checkpoint_and_its_streak_counted(
-    monkeypatch: pytest.MonkeyPatch, teed_stdout: list[bytes]
+    monkeypatch: pytest.MonkeyPatch, teed_stdout: list[dict[str, object]]
 ) -> None:
     _pin_script(monkeypatch, INCOMPLETE_SCRIPT)
     invocation = _invocation(EXECUTOR_WORK_ITEM_KIND, {"lane_id": PROBE_LANE})
@@ -252,8 +310,8 @@ async def test_an_exit_zero_incomplete_turn_is_persisted_on_the_checkpoint_and_i
     assert second.cursor is not None
     assert second.cursor["turn_report"]["consecutive_incomplete_buckets"] == 2  # type: ignore[index]
     assert job_executor_service._LANE_TURN_REPORTS[PROBE_LANE].consecutive_incomplete_buckets == 2
-    # The log stream still received every stdout byte the child wrote, including the progress line.
-    assert b"sensors_forward_started" in b"".join(teed_stdout)
+    # The routed mirror still carries the progress line's event name (JSON content survives routing).
+    assert "sensors_forward_started" in _rendered_text(teed_stdout)
 
     _pin_script(monkeypatch, COMPLETE_SCRIPT)
     clean = await run_scheduled_command(invocation)
@@ -316,7 +374,9 @@ def test_the_terminal_report_is_the_last_json_object_line_and_a_fan_out_report_i
 
 
 @pytest.mark.usefixtures("_pinned")
-async def test_a_repair_work_item_runs_the_lane_s_own_command_with_only_the_bounded_knobs(teed: list[bytes]) -> None:
+async def test_a_repair_work_item_runs_the_lane_s_own_command_with_only_the_bounded_knobs(
+    teed: list[dict[str, object]],
+) -> None:
     request = RepairRequest(
         lane_id=VEGETATION_DIRECT_LANE_ID,
         layer="vegetation",
@@ -332,7 +392,9 @@ async def test_a_repair_work_item_runs_the_lane_s_own_command_with_only_the_boun
     outcome = await run_scheduled_command(_invocation(EXECUTOR_REPAIR_WORK_ITEM_KIND, request.to_payload()))
 
     assert outcome.kind == "completed"
-    assert b"".join(teed) == b"--max-days 3", "argv is the registered command plus exactly the request's knobs"
+    # No trailing newline (the script's `stderr.write` never emits one), so the router never sees a
+    # complete line until `flush()` forces the buffered partial out as a `plantgeo_child_output` stub.
+    assert "--max-days 3" in _rendered_text(teed), "argv is the registered command plus exactly the request's knobs"
 
 
 @pytest.mark.usefixtures("_pinned")
@@ -377,14 +439,18 @@ def test_an_unwritten_day_s_detail_is_redacted_before_it_reaches_a_checkpoint() 
 
 
 @pytest.mark.usefixtures("_pinned")
-async def test_a_malformed_repair_payload_is_refused_before_any_process_starts(teed: list[bytes]) -> None:
+async def test_a_malformed_repair_payload_is_refused_before_any_process_starts(
+    teed: list[dict[str, object]],
+) -> None:
     payload = {"lane_id": VEGETATION_DIRECT_LANE_ID, "layer": "vegetation", "max_days": 99, "repair_payload_version": 1}
 
     outcome = await run_scheduled_command(_invocation(EXECUTOR_REPAIR_WORK_ITEM_KIND, payload))
 
     assert outcome.kind == "failed"
     assert outcome.failure_class == "invalid_repair_request"
-    assert teed == [], "nothing ran"
+    assert outcome.metrics["spawned"] is False
+    assert outcome.metrics["exit_class"] == "config"
+    assert teed == [], "nothing ran, so no router was ever fed"
 
 
 @pytest.mark.usefixtures("_pinned")

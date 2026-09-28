@@ -5,15 +5,20 @@ The declarative lane table and cadence-bucket/failed-checkpoint math have their 
 module re-exports their public names so no importer of `job_executor_service` changes, and keeps the
 turn-report cache, subprocess command execution, leader-lock/definition-registration/tick-planning and
 service-loop orchestration together: `tests/execution/test_command_stderr_capture.py` monkeypatches
-`LANE_SPECS`, `parse_activation`, `_default_stderr_sink`, `_default_stdout_sink` and `_LANE_TURN_REPORTS`
-as one unit on this module, so `run_scheduled_command` and the cache it folds into must keep reading
-those same module globals. See execution/AGENTS.md.
+`LANE_SPECS`, `parse_activation` and `_LANE_TURN_REPORTS` as one unit on this module, so
+`run_scheduled_command` and the cache it folds into must keep reading those same module globals.
+`_default_stderr_sink`/`_default_stdout_sink` still exist (the `CommandOutputTail` class default and
+a few standalone callers), but since o5a (Wave O, GL-3) `run_scheduled_command` itself no longer wires
+them directly -- a per-attempt `ChildLogRouter` sits in front, and ITS OWN sinks
+(`foundation.observability.router::_default_stdout_sink`/`_default_stderr_sink`) are what a test now
+patches to see the routed mirror. See execution/AGENTS.md, "Command stderr reaches the ledger".
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import socket
 import sys
@@ -33,6 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 from agri_data_service.config import settings
 from agri_data_service.db.engine import local_source_loader_pool
 from agri_data_service.db.sql_queries import load_query_sql
+from agri_data_service.execution.exit_classes import classify_exit
 from agri_data_service.execution.gap_repair_contract import (
     EXECUTOR_REPAIR_WORK_ITEM_KIND,
     REPAIR_LANE_IDS,
@@ -73,6 +79,9 @@ from agri_data_service.execution.turn_reports import (
     LaneTickState,
     OperatorAction,
 )
+from agri_data_service.foundation.observability import events, redaction
+from agri_data_service.foundation.observability.router import ChildLogRouter
+from agri_data_service.foundation.observability.vocabulary import LANE_LOGICAL_CAPS, ExitClass, TurnOutcome
 from agri_data_service.jobs import (
     JobDefinitionRecord,
     JobHandlerOutcome,
@@ -96,8 +105,10 @@ from agri_data_service.jobs.lease import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Mapping
+    from collections.abc import Callable, Iterable, Iterator, Mapping
     from collections.abc import Set as AbstractSet
+
+    from agri_data_service.foundation.observability.router import Stream
 
 logger = structlog.get_logger(__name__)
 
@@ -152,6 +163,31 @@ TURN_REPORT_UNWRITTEN_MAX: Final = 12
 TURN_REPORT_DETAIL_CHARS: Final = 200
 #: The blocker string prefix `_held_checkpoint_result` writes; the typed `operator_action` carries the same command.
 OPERATOR_SUPERSESSION_BLOCKER_PREFIX: Final = "operator supersession required: "
+
+# --- Turn context (spec Sec 4.9.1/4.9.2; design record Sec 1.2) -----------------------------------
+#: The environment `run_scheduled_command` passes to every spawned child, so `foundation.observability.
+#: bootstrap.arm_from_environment` arms it as an executor child (`PLANTGEO_TURN_ID` is the trigger).
+#: The executor's OWN router is handed the same values directly (`_TurnLogRouter`), never through
+#: this process's environment -- see execution/AGENTS.md, "Command stderr reaches the ledger".
+TURN_ID_ENV_VAR: Final = "PLANTGEO_TURN_ID"
+TURN_MODE_ENV_VAR: Final = "PLANTGEO_TURN_MODE"
+TURN_BUCKET_ENV_VAR: Final = "PLANTGEO_TURN_BUCKET"
+#: `1` only from GL-6 (a probe attempt); this wave never sets it, but the child always sees the key.
+TURN_PROBE_ENV_VAR: Final = "PLANTGEO_TURN_PROBE"
+LANE_ID_ENV_VAR: Final = "PLANTGEO_LANE_ID"
+ATTEMPT_ENV_VAR: Final = "PLANTGEO_ATTEMPT"
+#: `CHARGE_BASIS=metered` is the spec Sec 4.9.2 default "until P5 answers"; `logical` is the one other
+#: recognised value. Anything else reads as the default -- the same fail-safe rule every Wave O switch
+#: follows (`bootstrap.py::parse_switch`'s docstring), even though this is not itself an on/off switch.
+CHARGE_BASIS_VARIABLE: Final = "PLANTGEO_JOB_EXECUTOR_CHARGE_BASIS"
+#: The bootstrap `ready` checkpoint's wall-clock stamp; `start_lag_seconds` is spawn time minus this.
+READY_AT_CURSOR_KEY: Final = "ready_at_epoch"
+#: Two hosts' clocks may disagree by this much before a negative lag reads as unknown, not zero.
+START_LAG_CLOCK_SKEW_SECONDS: Final = 60.0
+#: A `ready` checkpoint older than this is a stale resumed cursor, not head-of-line delay.
+START_LAG_MAX_SECONDS: Final = 7 * 24 * 3600.0
+#: Bound on the redacted stderr tail a non-`ok` `lane_turn` line carries (the ledger keeps the full tail).
+LANE_TURN_STDERR_SUMMARY_CHARS: Final = 1024
 
 
 class ExecutorLeaderUnlockError(RuntimeError):
@@ -249,18 +285,29 @@ _LANE_TURN_REPORTS: dict[str, TurnReport] = {}
 
 
 def parse_terminal_report(stdout_tail: bytes) -> Mapping[str, object] | None:
-    """Return the LAST stdout line that is a JSON object -- the one terminal report a writer prints -- or `None`."""
+    """The one terminal report a turn's stdout carries (design Sec 1.6 point 8, o5a).
+
+    Prefers the LAST `plantgeo_lane_turn_report` line (the future runner's own event name); absent
+    that -- every `pipeline/direct/*` writer today -- falls back to the last JSON object carrying no
+    `level` key at all. A usage line (`plantgeo_turn_usage[_open]`) always carries a `level`, so this
+    never mistakes one for the report even though both can share the same stdout stream.
+    """
+    fallback: Mapping[str, object] | None = None
     for raw in reversed(stdout_tail.decode("utf-8", errors="replace").splitlines()):
         line = raw.strip()
         if not line.startswith("{"):
             continue
         try:
             parsed = json.loads(line)
-        except ValueError:
+        except (ValueError, RecursionError):  # an over-deep line is not the report
             continue
-        if isinstance(parsed, dict):
+        if not isinstance(parsed, dict):
+            continue
+        if parsed.get("event") == events.EVENT_LANE_TURN_REPORT:
             return parsed
-    return None
+        if fallback is None and "level" not in parsed:
+            fallback = parsed
+    return fallback
 
 
 def _unwritten_entries(report: Mapping[str, object]) -> list[Mapping[str, object]]:
@@ -1167,7 +1214,10 @@ async def run_executor_tick(  # noqa: PLR0913 - one operator-tunable knob of the
         raise ExecutorConfigurationError(
             f"max_lanes_per_tick must be at least {MIN_LANES_PER_TICK} to preserve class fairness"
         )
-    logger.info(
+    # Wave O's tick volume bound (design Sec 1.4): these three drop to debug -- an idle executor's
+    # heartbeat is ~24 lines a day, not one line of each per poll. `plantgeo_job_executor_lane_turn`
+    # (per attempt) and the tick SUMMARY (on a change or hourly, `_service_loop`) carry the signal.
+    logger.debug(
         "plantgeo_job_executor_tick_started",
         observed_at=now.isoformat(),
         active_lane_count=len(activation.active_lanes),
@@ -1175,9 +1225,9 @@ async def run_executor_tick(  # noqa: PLR0913 - one operator-tunable knob of the
     await apply_statement_timeout(session)
     if not await _try_leader_lock(session):
         await session.rollback()
-        logger.info("plantgeo_job_executor_leader_not_acquired", observed_at=now.isoformat())
+        logger.debug("plantgeo_job_executor_leader_not_acquired", observed_at=now.isoformat())
         return ExecutorTickSummary(observed_at=now, leader=False, lanes=())
-    logger.info("plantgeo_job_executor_leader_acquired", observed_at=now.isoformat())
+    logger.debug("plantgeo_job_executor_leader_acquired", observed_at=now.isoformat())
     primary_error: BaseException | None = None
     try:
         results, due = await _plan_active_lanes(session, activation, now, breaker_release=breaker_release)
@@ -1327,6 +1377,12 @@ def _write_through(stream: object, chunk: bytes) -> None:
     stream.flush()  # type: ignore[attr-defined]
 
 
+def _warn_fail_open(event: str, error: BaseException, **fields: object) -> None:
+    """One warning for a fail-open fault; never raises, since the log stream itself may be what broke."""
+    with suppress(Exception):
+        logger.warning(event, error_type=type(error).__name__, error=redaction.describe_error(error), **fields)
+
+
 def _default_stderr_sink(chunk: bytes) -> None:
     """Re-emit one chunk of a child's stderr on this process's stderr, so the Railway log stream still carries it."""
     _write_through(sys.stderr, chunk)
@@ -1341,9 +1397,9 @@ class CommandOutputTail:
     """Tee one of a child's output streams through to this process while keeping only its bounded TAIL.
 
     stderr: before this the child inherited it outright, its traceback reached the log stream and nothing
-    else, and `agri.job_attempt.last_error_summary` read only `command exited with status 1`. The tail is
-    what `run_scheduled_command` folds into every failure reason; `jobs.lease.fail_work_item` then redacts
-    and clamps it like any other summary, so a secret printed by a child still never reaches the ledger.
+    else, and `agri.job_attempt.last_error_summary` read only `command exited with status 1`. The tail's
+    redacted `summary()` is what `run_scheduled_command` folds into every failure reason;
+    `jobs.lease.fail_work_item` then redacts and clamps it again like any other summary.
 
     stdout: the one terminal JSON report a writer prints last is parsed out of the tail at exit 0, so an
     `outcome=incomplete` turn is persisted rather than lost with the stream.
@@ -1359,6 +1415,7 @@ class CommandOutputTail:
         self._sink = _default_stderr_sink if sink is None else sink
         self._tail = bytearray()
         self.bytes_seen = 0
+        self.sink_failures = 0
 
     @property
     def tail(self) -> bytes:
@@ -1371,19 +1428,34 @@ class CommandOutputTail:
         return self.bytes_seen > len(self._tail)
 
     def feed(self, chunk: bytes) -> None:
-        """Forward one chunk to the sink and fold it into the bounded tail."""
+        """Fold one chunk into the bounded tail FIRST, then forward it to the sink, fail-open.
+
+        The tail is the ledger's copy (failure reason, terminal report); the sink is only the log
+        mirror. A sink fault is counted and warned about once, never raised: raising here would kill
+        `_drain_stream`, leave the pipe unread and block the child until the monitor calls it a hang.
+        """
         if not chunk:
             return
         self.bytes_seen += len(chunk)
-        self._sink(chunk)
         self._tail.extend(chunk)
         if len(self._tail) > self._limit:
             del self._tail[: len(self._tail) - self._limit]
+        try:
+            self._sink(chunk)
+        except Exception as error:
+            self.sink_failures += 1
+            if self.sink_failures == 1:
+                _warn_fail_open("plantgeo_job_executor_output_sink_failed", error)
 
     def summary(self, *, max_chars: int = COMMAND_STDERR_SUMMARY_CHARS) -> str | None:
-        """One line: the tail's non-blank lines joined with ` | `, cut from the FRONT so the last line survives."""
+        """One line: the tail's non-blank lines, each redacted, joined with ` | `, cut from the FRONT.
+
+        Redacted per line, before joining and cutting, so a front cut can never strip the `Bearer`/
+        `Authorization` word a pattern needs while leaving the credential after it, and a `[SQL: `
+        cut ends with its own line instead of swallowing the exception line that follows.
+        """
         text = self._tail.decode("utf-8", errors="replace")
-        lines = (" ".join(line.split()) for line in text.splitlines())
+        lines = (" ".join(redaction.redact_for_log(line).split()) for line in text.splitlines())
         joined = " | ".join(line for line in lines if line)
         if not joined:
             return None
@@ -1414,7 +1486,13 @@ async def _drain_both(
 ) -> None:
     if process.stdout is None or process.stderr is None:  # pragma: no cover - PIPE always yields readers
         raise RuntimeError("the child's output pipes were not created")
-    await asyncio.gather(_drain_stream(process.stdout, stdout), _drain_stream(process.stderr, stderr))
+    # `return_exceptions=True`: one stream's reader fault must never stop the other stream draining.
+    results = await asyncio.gather(
+        _drain_stream(process.stdout, stdout), _drain_stream(process.stderr, stderr), return_exceptions=True
+    )
+    for result in results:
+        if isinstance(result, Exception):
+            _warn_fail_open("plantgeo_job_executor_stream_drain_failed", result)
 
 
 async def _finish_drain(drain: asyncio.Task[None]) -> None:
@@ -1455,47 +1533,541 @@ def _resolve_command(spec: LaneExecutionSpec, invocation: JobInvocation) -> tupl
     return (*spec.command, *request.command_arguments())
 
 
+# --- Exit classification, turn logging and the usage fold (o5a; spec Sec 4.9.1-4.9.3) -------------
+#
+# Every branch below is OBSERVATIONAL ONLY at GL-3 (FR-33): `exit_class`/`turn_outcome` are stamped
+# into `job_attempt.metrics` and logged, but nothing here holds a lane, opens an incident, or skips a
+# repair -- that is GL-5/GL-6. See execution/AGENTS.md, "Turn reports" and "Command stderr reaches
+# the ledger".
+
+#: Per lane, the newest `ExitClass` a completed handler call classified IN THIS PROCESS. Read by
+#: `announce_operator_actions` so `plantgeo_job_executor_operator_action_required` can name the class
+#: without a database read (o2b's `select_run_final_attempt.sql` is GL-5's job); a restart forgets it,
+#: exactly like `_LANE_TURN_REPORTS` -- deliberately process-local, never the audit record.
+_LANE_EXIT_CLASSES: dict[str, ExitClass] = {}
+
+#: `classify_exit` never returns `"interrupted"` (spec Sec 4.9.3: it is not itself an evidence-driven
+#: exit -- a shutdown yield or an exhausted command budget IS the interruption). `run_scheduled_command`
+#: stamps that class directly for those two returns; every other class comes from `classify_exit`.
+_TURN_OUTCOME_BY_EXIT_CLASS: Final[dict[ExitClass, TurnOutcome]] = {
+    "ok": "completed",
+    "upstream": "upstream_unavailable",
+    "infra": "infra_unavailable",
+    "code": "code_error",
+    "hang": "timeout",
+    "config": "config_error",
+    "interrupted": "interrupted",
+    "lease_lost": "lease_lost",
+    "report_missing": "report_missing",
+}
+
+#: Base `lane_turn` level per class (spec Sec 4.9.3's table); `"ok"` is raised to `warn` at the call
+#: site when the turn owes unwritten days, publication debt or a non-`ok` soil probe (`turn_outcome`
+#: becomes `"incomplete"` there, never a second entry here -- `ExitClass` has no `"incomplete"` member).
+_LANE_TURN_LEVEL: Final[dict[ExitClass, str]] = {
+    "ok": "info",
+    "upstream": "warn",
+    "infra": "warn",
+    "code": "error",
+    "hang": "error",
+    "config": "error",
+    "interrupted": "warn",
+    "lease_lost": "warn",
+    "report_missing": "warn",
+}
+
+#: Level -> structlog method NAME, looked up on `logger` when the line is emitted, never at import:
+#: `agri-service ops jobs-executor` imports this module before the CLI root calls `configure_logging`,
+#: and a method read at import is bound to the unconfigured (non-JSON, unredacted) pipeline.
+_LANE_TURN_LOG_METHODS: Final[dict[str, str]] = {
+    "debug": "debug",
+    "info": "info",
+    "warn": "warning",
+    "error": "error",
+}
+
+#: `ChildLogRouter`'s turn-context field per environment name. Duplicated by hand from
+#: `foundation/observability/router.py::_TURN_ENV_TO_FIELD`, the same sibling-copy rule that module
+#: documents for its own copy of `logging.py`'s table.
+_ROUTER_TURN_FIELDS: Final[dict[str, str]] = {
+    TURN_ID_ENV_VAR: "turn_id",
+    LANE_ID_ENV_VAR: "lane",
+    TURN_MODE_ENV_VAR: "mode",
+    ATTEMPT_ENV_VAR: "attempt",
+    TURN_BUCKET_ENV_VAR: "shard_key",
+    TURN_PROBE_ENV_VAR: "probe",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class _Turn:
+    """One `run_scheduled_command` call's identity, carried by every turn-scoped line and metric."""
+
+    turn_id: uuid.UUID
+    lane_id: str
+    mode: str
+    attempt: int
+
+
+def _turn_mode(kind: str) -> str:
+    """`forward` or `repair`, from the work item kind -- the `mode` field on every turn-scoped log line."""
+    return "forward" if kind == EXECUTOR_WORK_ITEM_KIND else "repair"
+
+
+def _record_lane_exit_class(lane_id: str, exit_class: ExitClass) -> None:
+    _LANE_EXIT_CLASSES[lane_id] = exit_class
+
+
+def _turn_context(turn: _Turn, *, bucket: str | None) -> dict[str, str]:
+    """The turn context design Sec 1.2 lists, keyed by environment name.
+
+    The child receives it as environment (`PLANTGEO_TURN_ID` alone arms `bootstrap.arm_from_environment`,
+    design Sec 1.3); the executor's own `_TurnLogRouter` receives the same values directly.
+    """
+    context = {
+        TURN_ID_ENV_VAR: str(turn.turn_id),
+        LANE_ID_ENV_VAR: turn.lane_id,
+        TURN_MODE_ENV_VAR: turn.mode,
+        ATTEMPT_ENV_VAR: str(turn.attempt),
+        TURN_PROBE_ENV_VAR: "0",  # probing is GL-6; this wave's turns are never probes
+    }
+    if bucket is not None:
+        context[TURN_BUCKET_ENV_VAR] = bucket
+    return context
+
+
+class _TurnLogRouter(ChildLogRouter):
+    """The per-turn `ChildLogRouter`: fail-open, and filled from THIS turn's context.
+
+    See execution/AGENTS.md, "Command stderr reaches the ledger" (the fail-open and turn-context
+    paragraphs).
+    """
+
+    def __init__(self, *, turn: _Turn, context: Mapping[str, str]) -> None:
+        super().__init__(attempt_id=str(turn.turn_id))
+        self._turn = turn
+        self._turn_fields = {
+            _ROUTER_TURN_FIELDS[name]: value for name, value in context.items() if name in _ROUTER_TURN_FIELDS
+        }
+        self.router_faults = 0
+
+    def feed(self, stream: Stream, chunk: bytes) -> None:
+        try:
+            super().feed(stream, chunk)
+        except Exception as error:
+            self._note_fault(error)
+
+    def flush(self) -> None:
+        try:
+            super().flush()
+        except Exception as error:
+            self._note_fault(error)
+
+    def usage_summary(self) -> dict[str, object]:
+        try:
+            return super().usage_summary()
+        except Exception as error:
+            self._note_fault(error)
+            return {"usage_complete": False, "usage_incomplete_pids": [], "last_send_outcome": None}
+
+    def _fill_turn_context(self, parsed: dict[str, object]) -> None:
+        for field_name, value in self._turn_fields.items():
+            if field_name not in parsed and value:
+                parsed[field_name] = value
+
+    def _note_fault(self, error: Exception) -> None:
+        self.router_faults += 1
+        if self.router_faults == 1:
+            _warn_fail_open(
+                "plantgeo_job_executor_log_router_failed",
+                error,
+                lane_id=self._turn.lane_id,
+                turn_id=str(self._turn.turn_id),
+            )
+
+
+def _emit_lane_turn(
+    turn: _Turn,
+    *,
+    spawned: bool,
+    exit_class: ExitClass,
+    turn_outcome: TurnOutcome,
+    extra: Mapping[str, object] | None = None,
+) -> None:
+    """Exactly one `plantgeo_job_executor_lane_turn` line per terminal handler outcome (design Sec 1.4).
+
+    "Terminal" here means `run_scheduled_command` returned `completed`/`failed`/`yielded` -- never the
+    bootstrap `progressed` return that only advances the cursor to `state=ready` and has not attempted
+    anything yet, so it has no class to report (FR-30/FR-33). Fail-open: the audit line's own fault
+    must never fail the turn it describes.
+    """
+    level = _LANE_TURN_LEVEL[exit_class]
+    if exit_class == "ok" and turn_outcome == "incomplete":
+        level = "warn"
+    fields: dict[str, object] = {
+        "lane_id": turn.lane_id,
+        "turn_id": str(turn.turn_id),
+        "spawned": spawned,
+        "exit_class": exit_class,
+        "turn_outcome": turn_outcome,
+        "attempt": turn.attempt,
+        "mode": turn.mode,
+    }
+    if extra:
+        fields.update(extra)
+    with suppress(Exception):
+        getattr(logger, _LANE_TURN_LOG_METHODS[level])(events.EVENT_JOB_EXECUTOR_LANE_TURN, **fields)
+
+
+def _finish_lane_turn(
+    turn: _Turn,
+    *,
+    spawned: bool,
+    exit_class: ExitClass,
+    incomplete: bool = False,
+    extra: Mapping[str, object] | None = None,
+) -> TurnOutcome:
+    """Common tail of every terminal branch: turn_outcome, the process-local cache, the one `lane_turn`
+    line. `incomplete` is the ONE override the exit-class table needs (`ok` still splits into
+    `completed`/`incomplete` by what the turn owes, spec Sec 4.9.3) -- every other class maps to its
+    outcome one-to-one."""
+    turn_outcome: TurnOutcome = (
+        "incomplete" if (exit_class == "ok" and incomplete) else _TURN_OUTCOME_BY_EXIT_CLASS[exit_class]
+    )
+    _record_lane_exit_class(turn.lane_id, exit_class)
+    _emit_lane_turn(turn, spawned=spawned, exit_class=exit_class, turn_outcome=turn_outcome, extra=extra)
+    return turn_outcome
+
+
+def _not_spawned_usage() -> dict[str, object]:
+    """The `usage` block of a return that never spawned, so GL-4's rollup never reads a NULL basis."""
+    return {"hosts": None, "charged_basis": "not_spawned", "charged": 0.0, "suspect": 0.0}
+
+
+def _pre_spawn_failure(turn: _Turn, *, failure_class: str, reason: str) -> JobHandlerOutcome:
+    """One early refusal before `create_subprocess_exec` ever runs (spec Sec 4.9.3's pre-spawn-failure
+    row): always `config`/`config_error`, `spawned=false`, one `lane_turn` line, `failure_class` kept
+    on the line so an operator can tell an invalid lane apart from an invalid repair request."""
+    exit_class = classify_exit(return_code=None, pre_spawn=True)
+    turn_outcome = _finish_lane_turn(turn, spawned=False, exit_class=exit_class, extra={"failure_class": failure_class})
+    return JobHandlerOutcome.failed(
+        failure_class,
+        reason,
+        metrics={
+            "turn_id": str(turn.turn_id),
+            "spawned": False,
+            "exit_class": exit_class,
+            "turn_outcome": turn_outcome,
+            "usage": _not_spawned_usage(),
+        },
+    )
+
+
+def _interrupted_outcome(
+    turn: _Turn,
+    *,
+    spawned: bool,
+    reason: str,
+    resume_from: JobInvocation | None = None,
+    extra_metrics: Mapping[str, object] | None = None,
+) -> JobHandlerOutcome:
+    """A shutdown yield or an exhausted command budget (spec Sec 4.9.3: `interrupted`, not an attempt
+    charge). `classify_exit` never returns this class (its docstring's flags all assume the command
+    either ran or was stopped BY the monitor) -- it is the one class `run_scheduled_command` stamps
+    directly rather than through the classifier. `resume_from` keeps that invocation's own cursor and
+    progress on the yield; without it the yield carries none, exactly as before o5a."""
+    exit_class: ExitClass = "interrupted"
+    turn_outcome = _finish_lane_turn(turn, spawned=spawned, exit_class=exit_class)
+    metrics: dict[str, object] = {
+        "turn_id": str(turn.turn_id),
+        "spawned": spawned,
+        "exit_class": exit_class,
+        "turn_outcome": turn_outcome,
+    }
+    if not spawned:
+        metrics["usage"] = _not_spawned_usage()
+    if extra_metrics:
+        metrics.update(extra_metrics)
+    if resume_from is None:
+        return JobHandlerOutcome.yielded(reason=reason, metrics=metrics)
+    return JobHandlerOutcome.yielded(
+        cursor=resume_from.cursor, progress_fraction=resume_from.progress_fraction, reason=reason, metrics=metrics
+    )
+
+
+def _lane_turn_failure_detail(tail: CommandOutputTail) -> dict[str, object]:
+    """Why a non-`ok` turn failed, on its `lane_turn` line: the bounded, redacted stderr tail.
+
+    The router's per-attempt error ceiling can drop the final traceback from the mirror, and the
+    ledger's failure reason never reaches the log stream, so without this the logs say only THAT a
+    turn failed, never why.
+    """
+    summary = tail.summary(max_chars=LANE_TURN_STDERR_SUMMARY_CHARS)
+    return {} if summary is None else {"stderr_tail": summary}
+
+
+def _start_lag_seconds(ready_at: object, *, now: float) -> float | None:
+    """Wall-clock seconds from the bootstrap `ready` checkpoint to this spawn, or `None` when unknown.
+
+    Wall clock, not monotonic: the cursor is persisted, and the spawn may run in a later process or on
+    another host. A lag more negative than the clock-skew allowance, or older than
+    `START_LAG_MAX_SECONDS`, is not a head-of-line delay; a small negative one is skew and reads as 0.
+    """
+    ready_at_seconds = _finite_number(ready_at)
+    if ready_at_seconds is None:
+        return None
+    lag = now - ready_at_seconds
+    if lag < -START_LAG_CLOCK_SKEW_SECONDS or lag > START_LAG_MAX_SECONDS:
+        return None
+    return round(max(lag, 0.0), 3)
+
+
+def _finite_number(value: object) -> float | int | None:
+    """`value` when it is a real, finite int or float (never a bool), else `None`."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
+
+
+#: Legacy self-reported field names (spec Sec 4.9.2's map): an older writer's report still lands under
+#: the current key. Applied only when the CURRENT name carries no usable value, so a writer that
+#: reports both never has its own current-name value overwritten by a stale legacy one.
+_LEGACY_METRIC_NAME_MAP: Final[dict[str, str]] = {
+    "requests_spent": "requests",
+    "rows": "rows_written",
+    "bytes": "bytes_written",
+    "written_bytes": "bytes_written",
+}
+_REPORT_COUNTER_FIELDS: Final[tuple[str, ...]] = (
+    "requests",
+    "weighted_calls",
+    "fetch_attempts",
+    "rows_written",
+    "bytes_written",
+)
+#: Every `probe_status` a writer emits: `pipeline/direct/soil/source.py`'s probe statuses plus the
+#: two `soil/forward.py::_effective_probe_status` derives. Any other value is not copied to metrics.
+_PROBE_STATUSES: Final[frozenset[str]] = frozenset({"ok", "unavailable", "deferred", "invalid", "blind"})
+
+
+def _report_usage_fields(report: Mapping[str, object] | None) -> dict[str, object]:
+    """The turn's own self-reported counters (spec Sec 4.9.2), legacy names mapped onto current ones.
+
+    `metrics` is stored unredacted, so only typed values cross from a child's report: a finite number
+    per counter, and `probe_status` only from `_PROBE_STATUSES`.
+    """
+    if report is None:
+        return {}
+    fields: dict[str, object] = {}
+    for canonical in _REPORT_COUNTER_FIELDS:
+        legacy_names = [legacy for legacy, target in _LEGACY_METRIC_NAME_MAP.items() if target == canonical]
+        for name in (canonical, *legacy_names):
+            value = _finite_number(report.get(name))
+            if value is not None:
+                fields[canonical] = value
+                break
+    probe_status = report.get("probe_status")
+    if isinstance(probe_status, str) and probe_status in _PROBE_STATUSES:
+        fields["probe_status"] = probe_status
+    return fields
+
+
+def _json_object_lines(output_tail: bytes) -> Iterator[dict[str, object]]:
+    """Every JSON-object line of a raw output tail, oldest first; a malformed or over-deep line is skipped."""
+    for raw in output_tail.decode("utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            parsed = json.loads(line)
+        except (ValueError, RecursionError):
+            continue
+        if isinstance(parsed, dict):
+            yield parsed
+
+
+#: Per-host fields that pair into "the latest send", never summed.
+_HOST_SEND_FIELDS: Final = frozenset({"last_send_outcome", "last_send_at"})
+
+
+def _merge_host_counters(merged: dict[str, object], entry: Mapping[str, object]) -> None:
+    """Fold one process's counters for a host into the turn's: numbers add, the latest send wins,
+    labels (`provider`, `pool`) keep the first non-null value."""
+    for key, value in entry.items():
+        if key in _HOST_SEND_FIELDS:
+            continue
+        number = _finite_number(value)
+        current = _finite_number(merged.get(key))
+        if number is not None:
+            merged[key] = number if current is None else current + number
+        elif merged.get(key) is None:
+            merged[key] = value
+    sent_at = _finite_number(entry.get("last_send_at"))
+    merged_at = _finite_number(merged.get("last_send_at"))
+    outcome = entry.get("last_send_outcome")
+    if outcome is not None and sent_at is not None and (merged_at is None or sent_at >= merged_at):
+        merged["last_send_outcome"] = outcome
+        merged["last_send_at"] = sent_at
+    else:
+        merged.setdefault("last_send_outcome", None)
+        merged.setdefault("last_send_at", None)
+
+
+def _numbers(values: Iterable[object]) -> list[float | int]:
+    return [number for number in (_finite_number(value) for value in values) if number is not None]
+
+
+def _fold_turn_usage(stdout_tail: bytes) -> dict[str, object] | None:
+    """Every `plantgeo_turn_usage` line on the child's raw stdout tail, folded into one; `None` if none.
+
+    A turn is not always one process: `pipeline/direct/burn_severity/daily.py` spawns a
+    `multiprocessing` child that inherits `PLANTGEO_TURN_ID`, arms itself and does the fetching, and
+    the PARENT's own empty-hosts line is written last. So each pid's last line is kept and host
+    counters are summed across pids (`cpu_seconds` and `meter_errors` sum too; `rss_peak_kib` is the
+    largest single process). Reads the SAME raw bytes `parse_terminal_report` does, never the routed
+    copy: `ChildLogRouter.usage_summary()` exposes only its pairing concern, never the per-host
+    breakdown this is the one reader of (spec Sec 4.9.2).
+    """
+    by_pid: dict[object, dict[str, object]] = {}
+    for parsed in _json_object_lines(stdout_tail):
+        if parsed.get("event") == events.EVENT_TURN_USAGE:
+            by_pid[parsed.get("pid")] = parsed
+    if not by_pid:
+        return None
+    lines = list(by_pid.values())
+    hosts: dict[str, dict[str, object]] = {}
+    for line in lines:
+        line_hosts = line.get("hosts")
+        if not isinstance(line_hosts, dict):
+            continue
+        for host, entry in line_hosts.items():
+            if isinstance(host, str) and isinstance(entry, dict):
+                _merge_host_counters(hosts.setdefault(host, {}), entry)
+    rss_peaks = _numbers(line.get("rss_peak_kib") for line in lines)
+    cpu_seconds = _numbers(line.get("cpu_seconds") for line in lines)
+    return {
+        "hosts": hosts,
+        "rss_peak_kib": max(rss_peaks) if rss_peaks else None,
+        "cpu_seconds": sum(cpu_seconds) if cpu_seconds else None,
+        "meter_errors": sum(_numbers(line.get("meter_errors") for line in lines)),
+    }
+
+
+def _weighted_calls_metered_total(hosts: Mapping[str, object] | None) -> float:
+    if not isinstance(hosts, dict):
+        return 0.0
+    total = 0.0
+    for entry in hosts.values():
+        if isinstance(entry, dict):
+            value = _finite_number(entry.get("weighted_calls_metered"))
+            if value is not None:
+                total += float(value)
+    return total
+
+
+def _charging_basis(
+    *,
+    lane_id: str,
+    spawned: bool,
+    usage_reported: bool,
+    report_fields: Mapping[str, object],
+    hosts: Mapping[str, object] | None,
+) -> dict[str, object]:
+    """The per-attempt half of spec Sec 4.9.2's charging table.
+
+    The metering EPOCH and the running/pre-epoch exclusions are read-time concerns o4's SQL rollup
+    applies on top of every attempt's own `usage.charged_basis` -- this fold cannot know them (they
+    depend on every OTHER attempt too), so it only ever answers "what does THIS attempt's own evidence
+    support": `metered` (a usage line closed), `reported` (the report alone states a logical figure),
+    `suspect` (spawned with neither) or `not_spawned`. See execution/AGENTS.md, "The usage fold".
+    """
+    reported_value = _finite_number(report_fields.get("weighted_calls"))
+    reported_logical = None if reported_value is None else float(reported_value)
+    metered_total = _weighted_calls_metered_total(hosts)
+    if not spawned:
+        return {"charged_basis": "not_spawned", "charged": 0.0, "suspect": 0.0}
+    if usage_reported:
+        use_metered = os.environ.get(CHARGE_BASIS_VARIABLE, "metered").strip().casefold() != "logical"
+        if use_metered:
+            charged = max(metered_total, reported_logical or 0.0)
+        else:
+            # A reported 0 is a real figure under `logical`, never "absent" (`is not None`, not `or`).
+            charged = reported_logical if reported_logical is not None else metered_total
+        return {"charged_basis": "metered", "charged": charged, "suspect": 0.0}
+    if reported_logical is not None:
+        return {"charged_basis": "reported", "charged": reported_logical, "suspect": 0.0}
+    return {"charged_basis": "suspect", "charged": 0.0, "suspect": float(LANE_LOGICAL_CAPS.get(lane_id, 0))}
+
+
 @job_handler(EXECUTOR_HANDLER_TOKEN)
-async def run_scheduled_command(  # noqa: PLR0911, PLR0912 - each terminal state maps to a ledger outcome
+async def run_scheduled_command(  # noqa: PLR0911, PLR0912, PLR0915 - each terminal state maps to a ledger outcome
     invocation: JobInvocation,
 ) -> JobHandlerOutcome:
-    """Execute one registry-bound command under the outer work item's fence."""
+    """Execute one registry-bound command under the outer work item's fence.
+
+    A uuid4 `turn_id` is generated FIRST (design Sec 1.2), before any validation, so even a refusal
+    that never reaches a command carries one. `spawned` is `False` on every return before
+    `create_subprocess_exec` has returned and `True` on every return after; every return stamps both
+    into `metrics`.
+    """
+    turn = _Turn(
+        turn_id=uuid.uuid4(), lane_id="unknown", mode=_turn_mode(invocation.kind), attempt=invocation.attempt_number
+    )
     if invocation.kind not in EXECUTOR_WORK_ITEM_KINDS:
-        return JobHandlerOutcome.failed("unknown_work_item_kind", f"unexpected kind {invocation.kind!r}")
+        return _pre_spawn_failure(
+            turn, failure_class="unknown_work_item_kind", reason=f"unexpected kind {invocation.kind!r}"
+        )
     lane_id = invocation.payload.get("lane_id")
     if not isinstance(lane_id, str) or lane_id not in LANE_SPECS:
-        return JobHandlerOutcome.failed("unknown_executor_lane", "work item names no registered executor lane")
+        return _pre_spawn_failure(
+            turn if not isinstance(lane_id, str) else replace(turn, lane_id=lane_id),
+            failure_class="unknown_executor_lane",
+            reason="work item names no registered executor lane",
+        )
+    # `classify_exit`'s R1-R3 evidence rules key on the BASE lane id: a repair shares its owning lane's
+    # evidence shapes, so the `REPAIR_LANE_SUFFIX` that keeps `_LANE_TURN_REPORTS` per-definition is
+    # deliberately NOT applied to the turn's lane.
+    turn = replace(turn, lane_id=lane_id)
     spec = LANE_SPECS[lane_id]
     try:
         activation = parse_activation()
     except ExecutorConfigurationError as error:
-        return JobHandlerOutcome.failed("invalid_ownership_activation", str(error))
+        return _pre_spawn_failure(turn, failure_class="invalid_ownership_activation", reason=str(error))
     if not activation.is_active(lane_id):
-        return JobHandlerOutcome.failed(
-            "ownership_activation_removed",
-            f"lane {lane_id!r} is no longer explicitly activated",
+        return _pre_spawn_failure(
+            turn,
+            failure_class="ownership_activation_removed",
+            reason=f"lane {lane_id!r} is no longer explicitly activated",
         )
     if spec.command is None:
-        return JobHandlerOutcome.failed("source_specific_lane", f"lane {lane_id!r} has no executor command")
+        return _pre_spawn_failure(
+            turn, failure_class="source_specific_lane", reason=f"lane {lane_id!r} has no executor command"
+        )
     try:
         command = _resolve_command(spec, invocation)
     except RepairRequestError as error:
-        return JobHandlerOutcome.failed("invalid_repair_request", f"lane {lane_id!r}: {error}")
+        return _pre_spawn_failure(turn, failure_class="invalid_repair_request", reason=f"lane {lane_id!r}: {error}")
 
     scheduled_for = invocation.payload.get("scheduled_for")
+    bucket = scheduled_for if isinstance(scheduled_for, str) else invocation.shard_key
     if invocation.cursor is None:
+        # NOT a terminal outcome (`JobOutcomeKind.progressed`, not `failed`/`completed`/`yielded`): this
+        # call only advances the cursor to `state=ready` and has validated everything but attempted
+        # nothing yet, so it gets no `exit_class` and no `lane_turn` line (design Sec 1.4's "exactly one
+        # per TERMINAL handler outcome"). `turn_id`/`spawned=false` are still stamped: the worker merges
+        # `{**metrics, **outcome.metrics}` across calls, so a later call's own turn_id simply wins.
         return JobHandlerOutcome.progressed(
-            {
-                "state": "ready",
-                "scheduled_for": scheduled_for if isinstance(scheduled_for, str) else invocation.shard_key,
-            },
+            {"state": "ready", "scheduled_for": bucket, READY_AT_CURSOR_KEY: time.time()},
             progress_fraction=0.01,
-            metrics={"command_started": False},
+            metrics={"command_started": False, "turn_id": str(turn.turn_id), "spawned": False},
         )
     if invocation.cursor.get("state") != "ready":
-        return JobHandlerOutcome.failed(
-            "invalid_executor_checkpoint",
-            f"lane {lane_id!r} cannot resume from its stored command checkpoint",
+        return _pre_spawn_failure(
+            turn,
+            failure_class="invalid_executor_checkpoint",
+            reason=f"lane {lane_id!r} cannot resume from its stored command checkpoint",
         )
 
     timeout = min(
@@ -1503,70 +2075,170 @@ async def run_scheduled_command(  # noqa: PLR0911, PLR0912 - each terminal state
         max(invocation.seconds_remaining - COMMAND_TIMEOUT_RESERVE_SECONDS, 0.0),
     )
     if timeout <= 0:
-        return JobHandlerOutcome.yielded(reason="no command budget remains in this scheduler slice")
+        return _interrupted_outcome(turn, spawned=False, reason="no command budget remains in this scheduler slice")
 
-    tail = CommandOutputTail()
-    stdout = CommandOutputTail(limit=COMMAND_STDOUT_TAIL_BYTES, sink=_default_stdout_sink)
-    # Both streams are piped and teed back through this process chunk by chunk, so the Railway log stream
-    # carries exactly what it did before. stderr's tail is folded into the failure reason; stdout's tail is
-    # where the writer's one terminal JSON report is parsed from, whatever the exit status.
-    process = await asyncio.create_subprocess_exec(
-        *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-    )
+    # The router sits IN FRONT of the log sinks (design Sec 1.1/1.6): every chunk lands in the bounded
+    # RAW tail first (`tail`/`stdout`, read by `_command_failure_reason` and `parse_terminal_report`),
+    # and only then is its copy for Railway routed -- reassembled, bounded, leveled and redacted,
+    # fail-open. See execution/AGENTS.md, "Command stderr reaches the ledger".
+    context = _turn_context(turn, bucket=bucket)
+    router = _TurnLogRouter(turn=turn, context=context)
+    tail = CommandOutputTail(sink=lambda chunk: router.feed("stderr", chunk))
+    stdout = CommandOutputTail(limit=COMMAND_STDOUT_TAIL_BYTES, sink=lambda chunk: router.feed("stdout", chunk))
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env={**os.environ, **context},
+        )
+    except OSError as error:
+        # Observational only: the error still propagates exactly as before (the worker's own failure
+        # path and failure_class are unchanged); the turn just gets its one `lane_turn` line first.
+        _finish_lane_turn(
+            turn,
+            spawned=False,
+            exit_class=classify_exit(return_code=None, pre_spawn=True),
+            extra={"spawn_error": type(error).__name__},
+        )
+        raise
+    start_lag_seconds = _start_lag_seconds(invocation.cursor.get(READY_AT_CURSOR_KEY), now=time.time())
     drain = asyncio.create_task(_drain_both(process, stdout=stdout, stderr=tail))
     started = time.monotonic()
     try:
         monitor_state, return_code = await _monitor_subprocess(process, invocation, timeout=timeout)
     finally:
         await _finish_drain(drain)
+        router.flush()
     elapsed = round(time.monotonic() - started, 3)
     # Keyed by the DEFINITION that ran, not the owning lane: a `--max-days 5` repair turn is legitimately
     # partial and must not count against the hourly lane's incomplete-bucket streak.
     report_key = lane_id if invocation.kind == EXECUTOR_WORK_ITEM_KIND else f"{lane_id}{REPAIR_LANE_SUFFIX}"
-    turn_report = record_turn_report(report_key, parse_terminal_report(stdout.tail))
+    raw_report = parse_terminal_report(stdout.tail)
+    turn_report = record_turn_report(report_key, raw_report)
+
+    router_usage = router.usage_summary()
+    usage = _fold_turn_usage(stdout.tail)
+    hosts = None if usage is None else usage["hosts"]
+    report_fields = _report_usage_fields(raw_report)
+    # Judged off the RAW report so an unrecognised status still reads as "not ok"; metrics get only
+    # the vetted copy in `report_fields`.
+    raw_probe_status = None if raw_report is None else raw_report.get("probe_status")
+    incomplete = (turn_report is not None and turn_report.incomplete) or (
+        isinstance(raw_probe_status, str) and raw_probe_status != "ok"
+    )
+    usage_metrics: dict[str, object] = {
+        "report_present": raw_report is not None,
+        "usage_reported": usage is not None,
+        "usage_complete": router_usage["usage_complete"],
+        "unwritten_known": turn_report is not None,
+        "probe": False,
+        "stdout_bytes": stdout.bytes_seen,
+        "stdout_truncated": stdout.truncated,
+        "start_lag_seconds": start_lag_seconds,
+        "log_lines_dropped": router.log_lines_dropped,
+        "log_router_faults": router.router_faults,
+        "rss_peak_kib": None if usage is None else usage["rss_peak_kib"],
+        "cpu_seconds": None if usage is None else usage["cpu_seconds"],
+        "meter_errors": None if usage is None else usage["meter_errors"],
+        "last_send_outcome": router_usage["last_send_outcome"],
+        "usage": {
+            "hosts": hosts,
+            **_charging_basis(
+                lane_id=lane_id,
+                spawned=True,
+                usage_reported=usage is not None,
+                report_fields=report_fields,
+                hosts=hosts if isinstance(hosts, dict) else None,
+            ),
+        },
+        **report_fields,
+    }
     metrics: dict[str, object] = {
+        "turn_id": str(turn.turn_id),
+        "spawned": True,
         "elapsed_seconds": elapsed,
         **tail.metrics(),
         "days_unwritten": None if turn_report is None else turn_report.days_unwritten,
         "publication_debt": None if turn_report is None else turn_report.publication_debt,
+        **usage_metrics,
     }
     if monitor_state == "shutdown":
-        return JobHandlerOutcome.yielded(
-            cursor=invocation.cursor,
-            progress_fraction=invocation.progress_fraction,
+        return _interrupted_outcome(
+            turn,
+            spawned=True,
             reason=f"lane {lane_id!r} stopped for service shutdown before command completion",
-            metrics=metrics,
+            resume_from=invocation,
+            extra_metrics=metrics,
         )
     if monitor_state == "fence_lost":
+        exit_class = classify_exit(return_code=return_code, fence_lost=True)
+        turn_outcome = _finish_lane_turn(
+            turn, spawned=True, exit_class=exit_class, extra=_lane_turn_failure_detail(tail)
+        )
         return JobHandlerOutcome.failed(
             "executor_lease_lost",
             _command_failure_reason(f"lane {lane_id!r} lost its fenced lease while the command was running", tail),
-            metrics=metrics,
+            metrics={**metrics, "exit_class": exit_class, "turn_outcome": turn_outcome},
         )
     if monitor_state == "timeout":
+        exit_class = classify_exit(return_code=return_code, timed_out=True)
+        turn_outcome = _finish_lane_turn(
+            turn, spawned=True, exit_class=exit_class, extra=_lane_turn_failure_detail(tail)
+        )
         return JobHandlerOutcome.failed(
             "scheduled_command_timeout",
             _command_failure_reason(f"lane {lane_id!r} exceeded its {int(timeout)} second command budget", tail),
-            metrics=metrics,
+            metrics={**metrics, "exit_class": exit_class, "turn_outcome": turn_outcome},
         )
     if return_code is None:  # pragma: no cover - exited always carries Process.wait's integer
-        return JobHandlerOutcome.failed("scheduled_command_exit", f"lane {lane_id!r} returned no exit status")
+        exit_class = classify_exit(return_code=None)
+        turn_outcome = _finish_lane_turn(
+            turn, spawned=True, exit_class=exit_class, extra=_lane_turn_failure_detail(tail)
+        )
+        return JobHandlerOutcome.failed(
+            "scheduled_command_exit",
+            f"lane {lane_id!r} returned no exit status",
+            metrics={**metrics, "exit_class": exit_class, "turn_outcome": turn_outcome},
+        )
     if return_code != 0:
+        winning_outcome = router_usage["last_send_outcome"]
+        exit_class = classify_exit(
+            return_code=return_code,
+            report=raw_report,
+            stderr_tail=tail.tail.decode("utf-8", errors="replace"),
+            last_send_outcome=winning_outcome if isinstance(winning_outcome, str) else None,
+            lane_id=lane_id,
+        )
+        turn_outcome = _finish_lane_turn(
+            turn,
+            spawned=True,
+            exit_class=exit_class,
+            extra={"exit_code": return_code, **_lane_turn_failure_detail(tail)},
+        )
         return JobHandlerOutcome.failed(
             "scheduled_command_exit",
             _command_failure_reason(f"lane {lane_id!r} command exited with status {return_code}", tail),
-            metrics={**metrics, "exit_code": return_code},
+            metrics={**metrics, "exit_code": return_code, "exit_class": exit_class, "turn_outcome": turn_outcome},
         )
+    exit_class = classify_exit(return_code=0, report=raw_report)
+    turn_outcome = _finish_lane_turn(
+        turn,
+        spawned=True,
+        exit_class=exit_class,
+        incomplete=incomplete,
+        extra=None if exit_class == "ok" else _lane_turn_failure_detail(tail),
+    )
     cursor = {
         "state": "completed",
-        "scheduled_for": scheduled_for if isinstance(scheduled_for, str) else invocation.shard_key,
+        "scheduled_for": bucket,
         "completed_at": datetime.now(UTC).isoformat(),
         # The checkpoint row is where an exit-0-but-incomplete turn survives the log stream's retention.
         "turn_report": None if turn_report is None else turn_report.to_dict(),
     }
     return JobHandlerOutcome.completed(
         cursor=cursor,
-        metrics={**metrics, "exit_code": return_code},
+        metrics={**metrics, "exit_code": return_code, "exit_class": exit_class, "turn_outcome": turn_outcome},
     )
 
 
@@ -1614,11 +2286,74 @@ def announce_operator_actions(summary: ExecutorTickSummary, announced: set[tuple
             lane_id=action.lane_id,
             run_id=key[1],
             command=action.command,
+            # o5a, observational: the newest class THIS PROCESS classified for this lane, from
+            # `_LANE_EXIT_CLASSES` (a restart or a fresh-process hold reads `None` here until this
+            # process itself runs one turn for it -- o2b's `select_run_final_attempt.sql` is GL-5's job).
+            exit_class=_LANE_EXIT_CLASSES.get(action.lane_id),
             detail="the clock no longer releases this lane; nothing runs on it until this command is recorded",
         )
     for key in [key for key in announced if key not in current]:
         announced.discard(key)
         logger.info("plantgeo_job_executor_operator_action_cleared", lane_id=key[0], run_id=key[1])
+
+
+def _tick_signature(summary: ExecutorTickSummary) -> tuple[tuple[str, str, str | None], ...]:
+    """(lane_id, state, run_id) per lane -- design Sec 1.4's "the tick summary prints when (lane,
+    state, run) changes, and hourly"."""
+    return tuple(
+        (lane.lane_id, lane.state, None if lane.run_id is None else str(lane.run_id)) for lane in summary.lanes
+    )
+
+
+#: The "hourly" half of the tick-summary gate above.
+TICK_SUMMARY_HEARTBEAT_SECONDS: Final = 3600.0
+
+UnhealthySignature = tuple[frozenset[str], frozenset[str], frozenset[str]]
+
+
+def _unhealthy_signature(summary: ExecutorTickSummary) -> UnhealthySignature:
+    """(failing lanes, incomplete lanes, operator commands) of an unhealthy tick.
+
+    `tick_unhealthy` prints whenever this CHANGES while unhealthy, not only on the healthy->unhealthy
+    edge, so a new failure behind a standing hold is never hidden by the one before it.
+    """
+    return (
+        frozenset(lane.lane_id for lane in summary.lanes if lane.state == "failed"),
+        frozenset(lane.lane_id for lane in summary.incomplete_lanes),
+        frozenset(action.command for action in summary.operator_actions),
+    )
+
+
+class _UnhealthyEdge:
+    """`tick_unhealthy` on a transition (design Sec 1.4), and `tick_healthy` at debug otherwise."""
+
+    def __init__(self) -> None:
+        self._last: UnhealthySignature | None = None
+
+    def report(self, summary: ExecutorTickSummary) -> None:
+        """Log this tick's health line; an unchanged unhealthy set prints nothing again.
+
+        GL-5's own incident rows are the durable record of an ongoing state; this line is only the edge.
+        """
+        if not summary.failed:
+            self._last = None
+            logger.debug(
+                "plantgeo_job_executor_tick_healthy",
+                leader=summary.leader,
+                lane_count=len(summary.lanes),
+                incomplete_lanes=[lane.lane_id for lane in summary.incomplete_lanes],
+            )
+            return
+        unhealthy = _unhealthy_signature(summary)
+        if unhealthy != self._last:
+            failing, incomplete, operator_actions = unhealthy
+            logger.error(
+                "plantgeo_job_executor_tick_unhealthy",
+                failing_lanes=sorted(failing),
+                incomplete_lanes=sorted(incomplete),
+                operator_actions=sorted(operator_actions),
+            )
+        self._last = unhealthy
 
 
 async def _service_loop(
@@ -1633,6 +2368,9 @@ async def _service_loop(
     breaker_release = ProcessStartRelease.from_environment(now=datetime.now(UTC))
     repair_clock = RepairAuthoringClock.from_environment()
     database_url = settings.require_local_source_loader_database_url()
+    last_signature: tuple[tuple[str, str, str | None], ...] | None = None
+    last_echo_monotonic = -TICK_SUMMARY_HEARTBEAT_SECONDS  # forces the very first tick to print
+    health = _UnhealthyEdge()
     async with local_source_loader_pool(database_url) as loader_pool, shutdown_signal() as stop:
         while not stop.requested:
             try:
@@ -1652,7 +2390,12 @@ async def _service_loop(
                         breaker_release=breaker_release,
                         repair_clock=repair_clock,
                     )
-                click.echo(json.dumps(summary.to_dict(), sort_keys=True))
+                signature = _tick_signature(summary)
+                now_monotonic = time.monotonic()
+                if signature != last_signature or now_monotonic - last_echo_monotonic >= TICK_SUMMARY_HEARTBEAT_SECONDS:
+                    click.echo(json.dumps(summary.to_dict(), sort_keys=True))
+                    last_signature = signature
+                    last_echo_monotonic = now_monotonic
                 announce_operator_actions(summary, announced)
                 for lane in summary.incomplete_lanes:
                     if lane.turn_report is not None:
@@ -1665,20 +2408,7 @@ async def _service_loop(
                             publication_debt_counts=dict(lane.turn_report.publication_debt_counts),
                             unwritten=[dict(entry) for entry in lane.turn_report.unwritten],
                         )
-                if summary.failed:
-                    logger.error(
-                        "plantgeo_job_executor_tick_unhealthy",
-                        failing_lanes=[lane.lane_id for lane in summary.lanes if lane.state == "failed"],
-                        incomplete_lanes=[lane.lane_id for lane in summary.incomplete_lanes],
-                        operator_actions=[action.command for action in summary.operator_actions],
-                    )
-                else:
-                    logger.info(
-                        "plantgeo_job_executor_tick_healthy",
-                        leader=summary.leader,
-                        lane_count=len(summary.lanes),
-                        incomplete_lanes=[lane.lane_id for lane in summary.incomplete_lanes],
-                    )
+                health.report(summary)
                 failures = 0
                 if once:
                     return 1 if summary.failed else 0

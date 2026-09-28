@@ -335,39 +335,163 @@ as rollback; remove a lane from the active allow-list or pause its durable defin
 
 ## Command stderr reaches the ledger
 
-`run_scheduled_command` pipes ONLY the child's stderr (`stderr=asyncio.subprocess.PIPE`), drains it
-concurrently through `CommandStderrTail`, re-emits every chunk on this process's stderr so the Railway
-log stream is unchanged, and keeps a bounded TAIL (`COMMAND_STDERR_TAIL_BYTES`). Every failure reason --
-non-zero exit, timeout, fence lost -- carries that tail after the headline, so
-`agri.job_attempt.last_error_summary` states the child's actual exception rather than only
-`command exited with status 1`. The sensors incident of 2026-09-12 needed log archaeology for exactly
-that reason. The tail is content and therefore travels ONLY through `reason`, which
-`jobs.lease.fail_work_item` redacts and clamps; `metrics` carries counts alone (`stderr_bytes`,
-`stderr_truncated`) because metrics are stored unredacted. Stdout stays inherited: a writer's JSON turn
-report is the log stream's, not the wrapper's. The drain is bounded by `COMMAND_STDERR_DRAIN_SECONDS`
-after exit so a grandchild holding the pipe cannot hold the attempt.
+`run_scheduled_command` pipes BOTH the child's stdout and stderr (`stdout=`/`stderr=asyncio.subprocess.PIPE`),
+drains each concurrently through its own `CommandOutputTail` (`CommandStderrTail` is the same class, kept
+under its original name), and keeps a bounded TAIL of each (`COMMAND_STDERR_TAIL_BYTES`,
+`COMMAND_STDOUT_TAIL_BYTES`). Every failure reason -- non-zero exit, timeout, fence lost -- carries the
+STDERR tail after the headline, so `agri.job_attempt.last_error_summary` states the child's actual
+exception rather than only `command exited with status 1`. The sensors incident of 2026-09-12 needed log
+archaeology for exactly that reason. The tail is content and therefore travels ONLY through `reason`,
+which `jobs.lease.fail_work_item` redacts and clamps; `metrics` carries counts alone (`stderr_bytes`,
+`stderr_truncated`, `stdout_bytes`, `stdout_truncated`) because metrics are stored unredacted. The drain
+is bounded by `COMMAND_STDERR_DRAIN_SECONDS` after exit so a grandchild holding the pipe cannot hold the
+attempt.
+
+**o5a (Wave O, GL-3): the `ChildLogRouter` tee sits IN FRONT OF the sinks, not behind them.** Each
+`CommandOutputTail`'s sink is no longer a raw passthrough to this process's own stdout/stderr; it is a
+closure that feeds a per-attempt `foundation.observability.router.ChildLogRouter` (`attempt_id=
+str(turn_id)`), and the router's OWN sinks (`router.py::_default_stdout_sink`/`_default_stderr_sink`) are
+what Railway now actually sees: reassembled, bounded, leveled and redacted JSON, per
+`foundation/observability/AGENTS.md` "Child log router". This is a real, DELIBERATE change from "the
+Railway stream is unchanged" (the pre-Wave-O claim above) -- the whole point of GL-1/GL-3 is that the
+executor's log stream stops being raw child chatter and becomes one first-party JSON line per event
+(FR-30). What protects the ledger from that change:
+- **The raw tail is still raw, and it is fed FIRST.** `CommandOutputTail.feed` extends the bounded tail
+  (read by `_command_failure_reason` and `parse_terminal_report`) before it calls the sink, so a router
+  ceiling drop or a router fault can never cost the ledger the real exception or the report (see
+  `tests/execution/test_command_stderr_capture.py::test_a_failing_command_s_real_exception_reaches_the_failure_reason`,
+  whose `NOISE_LINES=200` is chosen to exactly fill the router's own `_MAX_ERROR_LINES_PER_ATTEMPT`
+  ceiling and still leaves `outcome.reason` intact).
+- **The tee is fail-open end to end** (Wave O GL-3 review H2; owner intent: no run stops permanently
+  or breaks another lane). A sink that raises is counted (`CommandOutputTail.sink_failures`) and warned
+  about once, never raised -- raising would kill `_drain_stream`, leave that pipe unread and block the
+  child until the monitor misreports a `hang`. The router itself is `_TurnLogRouter`, a
+  `ChildLogRouter` whose `feed`/`flush`/`usage_summary` are each guarded: a fault (a broken log stream
+  reached through the router's unguarded 64 KiB stub path, say) is counted into
+  `metrics.log_router_faults` and warned about once (`plantgeo_job_executor_log_router_failed`), and
+  `usage_summary` falls back to "incomplete, no outcome". `_drain_both` gathers with
+  `return_exceptions=True`, so one stream's reader fault never stops the other stream draining; each
+  fault is warned about. The one `lane_turn` log call is guarded too: the audit line's own fault never
+  fails the turn it describes. Pinned by
+  `tests/execution/test_child_log_router_wiring.py::test_a_raising_router_leaves_the_raw_tail_and_report_intact`.
+- After `_finish_drain`, `router.flush()` forces out any still-buffered partial line (no trailing `\n`)
+  as a `plantgeo_child_output` stub before the attempt reads `router.log_lines_dropped`/
+  `router.usage_summary()`.
+- **The failure reason is redacted before it leaves the executor.** `CommandOutputTail.summary()`
+  runs `redaction.redact_for_log` on every line before joining and front-cutting, so a cut can never
+  strip the `Bearer`/`Authorization` word a pattern needs while leaving the credential behind, and a
+  `[SQL: ` cut ends with its own line instead of swallowing the exception after it.
+  `jobs.lease.fail_work_item`'s own `redact_strict` + clamp still runs afterwards; on its own it never
+  caught a bearer token or a dict-repr'd header.
+
+**The router is filled from THIS turn's context** (review M1). `ChildLogRouter._fill_turn_context`
+reads `os.environ`, which in the executor is the EXECUTOR's environment: the turn keys exist only in
+the CHILD's. `_TurnLogRouter` overrides it with the same values `_turn_context` hands the child, so a
+JSON line the child printed without stamping itself (a `pipeline/direct/*` report, an R2
+`emit("<lane>_forward_failed", ...)` line) still carries `turn_id`/`lane`/`mode`/`attempt`/`shard_key`.
+`_ROUTER_TURN_FIELDS` duplicates `router.py::_TURN_ENV_TO_FIELD` under that module's own sibling-copy
+rule. The permanent home is a `turn_context=` constructor argument on `ChildLogRouter` itself
+(`foundation/observability/`, outside this directory); this override is the executor-side stand-in.
+
+**Turn context reaches the child as environment, not argv** (design Sec 1.2): `run_scheduled_command`
+makes a uuid4 `turn_id` its FIRST act -- before any validation, so even a refusal that never spawns a
+process carries one -- and passes `PLANTGEO_TURN_ID`, `PLANTGEO_LANE_ID`, `PLANTGEO_TURN_MODE`
+(`forward`/`repair`), `PLANTGEO_ATTEMPT` and `PLANTGEO_TURN_BUCKET` to the child
+(`_turn_context`); `PLANTGEO_TURN_ID` alone is what arms `foundation.observability.bootstrap
+.arm_from_environment` in the child. A spawn that raises `OSError` still logs its one `config`
+`lane_turn` (`spawned=false`, `spawn_error`) and then re-raises, so the worker's own failure path and
+failure class are unchanged. `metrics.spawned` is `False` on every return before
+`create_subprocess_exec` and `True` immediately after -- a local variable, never inferred from a report,
+because the worker's own merge (`{**metrics, **outcome.metrics}` in `jobs/worker.py::_invoke_handler`)
+means only THIS call's own stamp is trustworthy.
+
+**Exit classification is observational only at GL-3** (spec Sec 4.9.3, FR-33): every terminal return
+(pre-spawn failures, a shutdown/no-budget yield, `fence_lost`, a timeout, and every post-spawn exit code)
+calls `execution.exit_classes.classify_exit` (or, for the two yields, stamps `"interrupted"` directly --
+`classify_exit` has no path to that class) and logs exactly one `plantgeo_job_executor_lane_turn` line
+(`_emit_lane_turn`/`_finish_lane_turn`/`_pre_spawn_failure`/`_interrupted_outcome`). The bootstrap
+`progressed` return (the very first call, which only advances the cursor to `state=ready`) is NOT
+terminal and gets no `exit_class` or `lane_turn` line -- it has validated everything but attempted
+nothing yet. `_LANE_EXIT_CLASSES` remembers the newest class per lane IN THIS PROCESS so
+`announce_operator_actions` can name it on `plantgeo_job_executor_operator_action_required` without a
+database read (o2b's `select_run_final_attempt.sql` is GL-5's job); nothing here holds a lane, skips a
+repair, or opens an incident -- that starts at GL-5/GL-6.
+
+**The `lane_turn` line is emitted through the CONFIGURED pipeline** (review H1). `_emit_lane_turn` looks
+the structlog method up by NAME on `logger` at emit time (`_LANE_TURN_LOG_METHODS`), never through a
+map of bound methods built at import: `agri-service ops jobs-executor` imports this module (via
+`interface/cli/ops.py`) before the CLI root calls `configure_logging`, and a method read at import is
+bound to structlog's unconfigured default -- console text, no `level` field Railway reads, no
+`service`/`deploy` envelope, no redaction. Pinned by
+`tests/execution/test_tick_volume.py::test_a_lane_turn_after_configure_logging_is_json_with_a_level`.
+A non-`ok` post-spawn `lane_turn` also carries `stderr_tail`, the redacted tail summary bounded to
+`LANE_TURN_STDERR_SUMMARY_CHARS` (review L1): the router's error ceiling can drop the final traceback
+from the mirror and the ledger reason never reaches the log stream, so this is where the logs say WHY.
+
+**Tick volume** (design Sec 1.4): `tick_started`/`leader_*`/`tick_healthy` log at debug; the JSON tick
+summary echoes on a `(lane, state, run)` change or hourly (`_tick_signature`,
+`TICK_SUMMARY_HEARTBEAT_SECONDS`); `tick_unhealthy` prints whenever the unhealthy SET -- failing lanes,
+incomplete lanes, operator commands -- changes (`_UnhealthyEdge`, review M2), not only on the
+healthy->unhealthy edge, so a new failure behind a standing hold is never hidden by the one before it.
+
+**The usage fold** (design Sec 2.2, spec Sec 4.9.2) reads EVERY `plantgeo_turn_usage` line back off the
+RAW stdout tail (`_fold_turn_usage` -- `ChildLogRouter.usage_summary()` only exposes its own pairing
+concern, `usage_complete` and the winning `last_send_outcome`, never the per-host `hosts` breakdown),
+keeps each pid's last line, and sums host counters across pids (review M3): a turn is not always one
+process -- `pipeline/direct/burn_severity/daily.py` spawns a `multiprocessing` child that inherits
+`PLANTGEO_TURN_ID` and does the fetching, and the parent's own empty-hosts line is written LAST, so
+"last line wins" charged that turn nothing. `cpu_seconds`/`meter_errors` sum; `rss_peak_kib` is the
+largest single process. The turn's self-reported counters come off the parsed terminal report
+(`_report_usage_fields`, with the legacy `requests_spent`/`rows`/`bytes`/`written_bytes` name map);
+`metrics` is stored unredacted, so only finite numbers and a `probe_status` from `_PROBE_STATUSES`
+cross (review L4) -- an unrecognised status still makes the turn `incomplete`, it is just not copied.
+A return that never spawned (pre-spawn refusal, no-budget yield) carries
+`usage={charged_basis: not_spawned, charged: 0, suspect: 0}` too (review L3), so GL-4's rollup never
+reads a NULL basis for a row that carries `spawned`. `start_lag_seconds` is WALL-clock
+(`READY_AT_CURSOR_KEY` on the bootstrap cursor, review M4): the cursor is persisted and the spawn may
+run in a later process or on another host, so a monotonic stamp compared across processes was
+meaningless. A lag below `-START_LAG_CLOCK_SKEW_SECONDS` or above `START_LAG_MAX_SECONDS` reads as
+`None`; a small negative (clock skew) reads as 0.
+`_charging_basis` computes the PER-ATTEMPT half of the spec's charging table (`metered`/`reported`/
+`suspect`/`not_spawned`) under `usage.charged`/`usage.suspect`/`usage.charged_basis`; the metering EPOCH
+and the running/pre-epoch exclusions are read-time concerns o4's SQL rollup applies on top (this fold
+cannot know them -- they depend on every OTHER attempt too). Under `CHARGE_BASIS=logical` a reported
+`weighted_calls` of 0 is a real figure, never "absent" (review L2). **Stated residuals:** a process
+that dies without running `atexit` (SIGKILL, `os._exit`, a `fork` child) writes no usage line, so its
+sends are missing from `hosts` and `usage_complete` reads false for its pid; the fold reads only the
+64 KiB stdout tail, so a usage line pushed out of it by later output is lost too; and `usage_reported`
+is `True` only when a usage line was actually seen on this attempt's stdout.
 
 ## Turn reports: an exit-0-but-incomplete turn is persisted
 
 Every direct writer prints exactly ONE terminal JSON report on stdout, last, and since 2026-09-18 exits 0
 when at least one day wrote while reporting `outcome=incomplete` with `days_unwritten` and
 `unwritten=[{day, outcome, detail}]`. stdout is therefore piped and teed exactly like stderr
-(`CommandOutputTail`, `_default_stdout_sink`), so the Railway stream is unchanged, and
-`parse_terminal_report` takes the last JSON-object line of the bounded tail (`COMMAND_STDOUT_TAIL_BYTES`).
-`summarize_turn_report` bounds it (`TURN_REPORT_UNWRITTEN_MAX` entries, `TURN_REPORT_DETAIL_CHARS` per
-detail, nested per-product `results[].unwritten` folded in) and `run_scheduled_command` writes it to the
-completed checkpoint cursor as `turn_report` and to metrics as `days_unwritten`, whatever the exit
-status. The streak `consecutive_incomplete_buckets` is process-held (`_LANE_TURN_REPORTS`, keyed by the
-DEFINITION that ran, so a repair turn counts separately from its owning lane and never taints the
-hourly lane's own streak) and says so; the tick lifts every incomplete lane to
-`ExecutorTickSummary.incomplete_lanes`, one `plantgeo_job_executor_lane_incomplete` WARNING per tick
-that ran it, and the healthy/unhealthy tick line. A day stuck at `status=conflict` is now visible on the
-checkpoint row and in the tick without log archaeology; it is still the lane's own contract that decides
-what to do about it. Each `detail` is `redact_text`ed here because the cursor path canonicalises but
-never redacts. Two assumptions worth knowing: the tee forwards 4 KiB chunks, so an executor structlog
-line can interleave INSIDE a child's long JSON line in the Railway stream (the ledger copy is intact);
-and `parse_terminal_report` takes the last `{`-line, which assumes nothing but the writer's own report
-is JSON on stdout -- JSON-rendered structlog on stdout (not the case today) would be mis-parsed.
+(`CommandOutputTail`, routed through `ChildLogRouter` since o5a -- see "Command stderr reaches the
+ledger" above), and `parse_terminal_report` reads the bounded RAW tail (`COMMAND_STDOUT_TAIL_BYTES`),
+never the routed copy. `summarize_turn_report` bounds it (`TURN_REPORT_UNWRITTEN_MAX` entries,
+`TURN_REPORT_DETAIL_CHARS` per detail, nested per-product `results[].unwritten` folded in) and
+`run_scheduled_command` writes it to the completed checkpoint cursor as `turn_report` and to metrics as
+`days_unwritten`, whatever the exit status. The streak `consecutive_incomplete_buckets` is process-held
+(`_LANE_TURN_REPORTS`, keyed by the DEFINITION that ran, so a repair turn counts separately from its
+owning lane and never taints the hourly lane's own streak) and says so; the tick lifts every incomplete
+lane to `ExecutorTickSummary.incomplete_lanes`, one `plantgeo_job_executor_lane_incomplete` WARNING per
+tick that ran it, and the healthy/unhealthy tick line. A day stuck at `status=conflict` is now visible on
+the checkpoint row and in the tick without log archaeology; it is still the lane's own contract that
+decides what to do about it. Each `detail` is `redact_text`ed here because the cursor path canonicalises
+but never redacts.
+
+**o5a's report-parse upgrade** (design Sec 1.6 point 8): `parse_terminal_report` now prefers the LAST
+`plantgeo_lane_turn_report` line (the future runner's own event name, G1); absent that -- every
+`pipeline/direct/*` writer today -- it falls back to the last JSON object carrying no `level` key at
+all, exactly as before. This matters because the runner will ALSO print ordinary leveled log lines on
+the same stdout (through `foundation.observability`), interleaved with its one report: a usage line
+(`plantgeo_turn_usage[_open]`) always carries a `level`, so the old "last JSON object, full stop" rule
+would have needed to change the moment ANY other JSON line reached stdout. Two residual assumptions:
+the drain forwards 4 KiB chunks, so an executor's own routed line can interleave with a child's report
+in whatever the router forwards (the RAW tail copy this parser reads is intact regardless); and a
+legacy writer that ever emitted a SECOND no-`level` JSON object after its report would still be
+misread as the newer one (last-wins), unchanged from before o5a.
 
 ### Publication debt is the second, quieter half of an incomplete turn
 
@@ -409,8 +533,8 @@ A lane held behind a recorded-supersession requirement is still reported on ever
 three places rather than buried in a `blockers` string: `LaneTickResult.operator_action` (typed), the
 tick summary's top-level `operator_actions`, and one `plantgeo_job_executor_operator_action_required`
 ERROR event per held run per process (`announce_operator_actions`), with a matching `_cleared` event
-once the run is superseded. The 30-second `plantgeo_job_executor_tick_unhealthy` line also names the
-commands. This is deliberately NOT an alerting system. The durable surface this state belongs on is an
+once the run is superseded. The `plantgeo_job_executor_tick_unhealthy` line (printed whenever the
+unhealthy set changes, `_UnhealthyEdge`) also names the commands. This is deliberately NOT an alerting system. The durable surface this state belongs on is an
 OPEN `agri.job_incident` row keyed `plantgeo.executor.operator-supersession-required:<run id>`, resolved
 by `jobs-supersede-run`; that needs two runtime SQL files under `sql/execution/` (an upsert and a
 resolve), which this directory does not own. Until they exist the log events are the surface.

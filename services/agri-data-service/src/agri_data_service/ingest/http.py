@@ -246,9 +246,16 @@ def meter_error_count() -> int:
 
 
 def _note_meter_error(error: Exception) -> None:
-    """Count a metering fault and log it once per process (design: 'warn, once per process')."""
+    """Count a metering fault and log it once per process (design: 'warn, once per process').
+
+    Also bumps `usage.record_meter_error()` (o5a's granted extension, GL-2 review MEDIUM #2): THIS
+    module's own `_meter_error_count` only serves its local `meter_error_count()` test seam, and was
+    never read by the usage line that reports `meter_errors` to an operator -- that line is written
+    from `usage.py`, so the count it reads must live there too.
+    """
     global _meter_error_count, _meter_error_logged  # noqa: PLW0603 - the documented per-process fault counter
     _meter_error_count += 1
+    usage.record_meter_error()
     if not _meter_error_logged:
         _meter_error_logged = True
         with contextlib.suppress(Exception):

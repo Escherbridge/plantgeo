@@ -151,6 +151,22 @@ def open_meteo_weight_for_url(url: str) -> float:
 # audit answer, not a reason to skip the line.
 _host_counters: dict[str, dict[str, object]] = {}
 
+# --- Foundation-level meter-error counter (o5a's granted extension; GL-2 review MEDIUM #2) --------
+#
+# `ingest/http.py::_note_meter_error` keeps its OWN per-process counter for its `meter_error_count()`
+# test seam, and ALSO calls `record_meter_error()` here -- the usage line's top-level `meter_errors`
+# is written by THIS module, so hardcoding it to `0` meant a fail-open metering fault never reached
+# the one audit line an operator actually reads. Two counters, one per module, is deliberate: neither
+# module reaches into the other's private state (the same rule `_host_counters` itself follows).
+_meter_errors: int = 0
+
+
+def record_meter_error() -> None:
+    """Count one fail-open metering fault so the usage line's `meter_errors` is never hardcoded."""
+    global _meter_errors  # noqa: PLW0603 - the documented per-process fault counter
+    with contextlib.suppress(Exception):
+        _meter_errors += 1
+
 
 def _bounded_hosts() -> tuple[dict[str, dict[str, object]], dict[str, object]]:
     items = list(_host_counters.items())
@@ -162,6 +178,28 @@ def _bounded_hosts() -> tuple[dict[str, dict[str, object]], dict[str, object]]:
 
 def _weighted_pool_touched(hosts: Mapping[str, dict[str, object]]) -> bool:
     return any(entry.get("pool") in _WEIGHTED_POOLS for entry in hosts.values())
+
+
+def _latest_send_outcome(hosts: Mapping[str, dict[str, object]]) -> tuple[object, float | None]:
+    """The most recent `last_send_outcome`/`last_send_at` pair across every metered host this process.
+
+    Mirrors `router.py::ChildLogRouter.usage_summary`'s own "latest by `last_send_at` wins" rule
+    (design §1.6 point 2), so a turn's OWN process-local usage line agrees with what the router
+    later folds from a child's -- the same tie-break, applied to the same shape, in two places
+    because `foundation` may not import a helper the other reaches for.
+    """
+    winning_outcome: object = None
+    winning_at: float | None = None
+    for entry in hosts.values():
+        outcome = entry.get("last_send_outcome")
+        sent_at = entry.get("last_send_at")
+        sent_at_value = sent_at if isinstance(sent_at, (int, float)) else None
+        if outcome is None or sent_at_value is None:
+            continue
+        if winning_at is None or sent_at_value >= winning_at:
+            winning_outcome = outcome
+            winning_at = sent_at_value
+    return winning_outcome, winning_at
 
 
 def _rss_peak_kib() -> int | None:
@@ -269,6 +307,7 @@ def _write_turn_line(*, pid: int, turn_id: str, opening: bool) -> None:
         )
         return
     hosts, other = _bounded_hosts()
+    outcome, sent_at = _latest_send_outcome(hosts)
     _raw_write(
         1,
         {
@@ -279,9 +318,9 @@ def _write_turn_line(*, pid: int, turn_id: str, opening: bool) -> None:
             "turn_id": turn_id,
             "hosts": hosts,
             "other": other,
-            "meter_errors": 0,
-            "last_send_outcome": None,
-            "last_send_at": None,
+            "meter_errors": _meter_errors,
+            "last_send_outcome": outcome,
+            "last_send_at": sent_at,
             "rss_peak_kib": _rss_peak_kib(),
             "cpu_seconds": _cpu_seconds(),
             "closed_at": time.time(),
@@ -303,7 +342,7 @@ def _write_operator_line(*, pid: int) -> None:
             "entry": _operator_entry(),
             "hosts": hosts,
             "other": other,
-            "meter_errors": 0,
+            "meter_errors": _meter_errors,
             "rss_peak_kib": _rss_peak_kib(),
             "cpu_seconds": _cpu_seconds(),
         },
