@@ -17,7 +17,7 @@ vi.mock('openai', () => ({
 }));
 
 import { DEFAULT_MODEL, providerFunctionTools, REPORT_TOOL, SEARCH_TOOL, streamRegionalIntelligence } from '@/lib/server/services/ai-prompt';
-import { geminiReportSchema } from '@/lib/server/services/gemini-report-schema';
+import { geminiEvidenceSchema, geminiReportSchema } from '@/lib/server/services/gemini-report-schema';
 import { landContextTools } from '@/lib/server/services/land-context-tools';
 import { bindRegionalEvidenceArguments, SERVER_OWNED_LITERATURE_ARGUMENTS } from '@/lib/server/services/regional-analysis-workflow';
 import { groundLiteratureClaims, normalizeProviderReport, pairLiteratureProvenance, remediationReportSchema, reportSchemaForCitations, resolveProviderMeasurementReport } from '@/lib/server/services/remediation-report';
@@ -156,6 +156,19 @@ function maxItemsBounds(node: unknown, found: number[] = []): number[] {
   return found;
 }
 
+/** Paths of every array whose items are an enum. */
+function enumArrays(node: unknown, path = '', found: string[] = []): string[] {
+  if (Array.isArray(node)) {
+    node.forEach((item, index) => enumArrays(item, `${path}.${index}`, found));
+  } else if (node !== null && typeof node === 'object') {
+    const schema = node as Record<string, unknown>;
+    const items = schema.items as Record<string, unknown> | undefined;
+    if (schema.type === 'array' && items && Array.isArray(items.enum)) found.push(path.replace(/^\./, ''));
+    for (const [key, value] of Object.entries(schema)) enumArrays(value, `${path}.${key}`, found);
+  }
+  return found;
+}
+
 describe('Gemini forced-call decoding states (2026-09-28 bisect, AGENTS.md §gemini-forced-call-states)', () => {
   it('offers Gemini no array bound above one item on any tool, the report included', () => {
     const tools = asProviderTools(providerFunctionTools(incidentToolSet(), roundOneReportSchema(), DEFAULT_MODEL));
@@ -166,9 +179,25 @@ describe('Gemini forced-call decoding states (2026-09-28 bisect, AGENTS.md §gem
     expect(goals.description).toContain('Maximum item count: 6.');
   });
 
-  it('keeps the catalogue bounds for a non-Gemini model, so the projection is Gemini-only', () => {
+  it('keeps the catalogue bounds and enums for a non-Gemini model, so the projection is Gemini-only', () => {
     const [offered] = asProviderTools(providerFunctionTools([agriTool('search_environmental_strategies')], {}, 'openai/gpt-4.1-mini'));
     expect(maxItemsBounds(offered.function.parameters)).toContain(6);
+    expect(enumArrays(offered.function.parameters)).toContain('properties.goals');
+  });
+
+  // AI Studio refused the whole round with "too many states" while Vertex accepted it: every enum array
+  // is a repeating choice loop, and the loops summed past the limit once soil_properties_at_point was
+  // published (two more). Flattening every evidence tool's enum arrays was the only variant AI Studio
+  // accepted, at 15 and 60 report facts too; the report keeps its enums because its own validation reads them.
+  it('offers Gemini no enum array on any evidence tool and names the allowed values instead', () => {
+    const tools = asProviderTools(providerFunctionTools(incidentToolSet(), roundOneReportSchema(), DEFAULT_MODEL));
+    const evidence = tools.filter((tool) => tool.function.name !== REPORT_TOOL.name);
+    expect(evidence.flatMap((tool) => enumArrays(tool.function.parameters).map((path) => `${tool.function.name}.${path}`))).toEqual([]);
+    const goals = (evidence.find((tool) => tool.function.name === 'search_environmental_strategies')
+      ?.function.parameters.properties as Record<string, { items?: unknown; description?: string }>).goals;
+    expect(goals.items).toEqual({ type: 'string' });
+    expect(goals.description).toContain('Allowed values: soil_health, water_management,');
+    expect(goals.description).toContain('Maximum item count: 6.');
   });
 });
 
@@ -196,13 +225,13 @@ describe('provider-facing catalogue schemas', () => {
       const parameters = sentByName.get(tool.name);
       // DEFAULT_MODEL is Gemini, so every tool also carries the bounds-as-instructions projection.
       if (!isStrategyKnowledgeTool(tool.name)) {
-        expect(parameters, tool.name).toEqual(geminiReportSchema(tool.parameters));
+        expect(parameters, tool.name).toEqual(geminiEvidenceSchema(tool.parameters));
         continue;
       }
       const catalogueProperties = tool.parameters.properties as Record<string, unknown>;
       const expectedProperties = Object.fromEntries(Object.entries(catalogueProperties)
         .filter(([key]) => !(SERVER_OWNED_LITERATURE_ARGUMENTS as readonly string[]).includes(key)));
-      expect(parameters, tool.name).toEqual(geminiReportSchema({
+      expect(parameters, tool.name).toEqual(geminiEvidenceSchema({
         ...tool.parameters,
         properties: expectedProperties,
         ...(Array.isArray(tool.parameters.required) ? { required: tool.parameters.required.filter((key: unknown) => key !== 'site_profile' && key !== 'region') } : {}),

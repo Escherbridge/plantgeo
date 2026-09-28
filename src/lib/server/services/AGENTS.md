@@ -263,6 +263,24 @@ constraint that has too many states for serving".
     parse is unchanged.
   - Non-Gemini models get the catalogue as published.
   - `ai-prompt-provider-tools.test.ts` pins "no `maxItems` above 1 on any Gemini tool".
+- **Afternoon, the same day: the morning fix was not enough.** Every live report failed again (round 1,
+  90 properties / 134 enum values / 30 constraints) right after `SOIL_PROPERTIES_READS_ENABLED` published
+  `soil_properties_at_point`, which carries two more enum arrays (`depths`, `properties`).
+  - The request was replayed against OpenRouter pinned to each Google provider (scratch harness, not kept):
+    - **Google AI Studio** refused the full round deterministically, with the soil tool removed, and with
+      only the soil arrays flattened.
+    - **Vertex** accepted all of them. OpenRouter balances between the two, so the morning's live check
+      could pass by landing on Vertex.
+  - **Cause:** once `maxItems` is gone, each unbounded enum array is still a repeating choice loop in the
+    forced-call grammar, and the loops sum across every tool offered.
+  - **Fix:** `gemini-report-schema.ts::geminiEvidenceSchema`, used for every evidence tool.
+    - Enum-array items become plain strings, and the allowed values move into the description.
+    - The report keeps its enums, because `resolveProviderMeasurementReport` and the zod parse read them.
+    - Agri's pydantic still rejects an unknown value, and the model sees that as a tool error it can correct.
+    - AI Studio accepted this projection at 0, 15 and 60 report facts.
+  - `ai-prompt-provider-tools.test.ts` pins "no enum array on any Gemini evidence tool".
+  - **Replay lesson:** when you replay a Gemini refusal, pin `provider.order` to `google-ai-studio` with
+    `allow_fallbacks: false`, or the replay can pass by luck.
 
 ### strategy-knowledge
 

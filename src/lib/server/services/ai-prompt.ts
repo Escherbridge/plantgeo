@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import { MAX_REPLAYED_TURNS } from './conversation-history';
 import { incompleteReportDiagnostic, providerErrorDiagnostic, providerToolComplexityDiagnostic, reportValidationDiagnostic } from './ai-provider-diagnostics';
-import { geminiReportSchema } from './gemini-report-schema';
+import { geminiEvidenceSchema, geminiReportSchema } from './gemini-report-schema';
 import { reportFlowGroundingIssues } from './report-flow-grounding';
 import { soilAiEvidence } from './soil-ai-evidence';
 import { describeSiteBrief, siteBriefEnabled, withSiteBrief, type SiteBrief } from './site-brief';
@@ -487,7 +487,7 @@ function providerFunctionTools(
   return tools.map((tool) => {
     if (tool !== REPORT_TOOL && tool !== GENERATE_REMEDIATION_REPORT_TOOL) {
       const evidenceTool = providerEvidenceTool(tool);
-      return asFunctionTool(forGemini ? { ...evidenceTool, input_schema: geminiReportSchema(evidenceTool.input_schema) } : evidenceTool);
+      return asFunctionTool(forGemini ? { ...evidenceTool, input_schema: geminiEvidenceSchema(evidenceTool.input_schema) } : evidenceTool);
     }
     return asFunctionTool({ ...tool, input_schema: forGemini ? geminiReportSchema(reportSchema) : reportSchema });
   });
