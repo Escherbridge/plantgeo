@@ -201,6 +201,24 @@ class Settings(BaseSettings):
     parquet_coverage_authority: CoverageAuthorityPolicy = "census_until_bootstrap"
     parquet_read_telemetry: bool = False
 
+    # SSURGO native-geometry serving admission (soil-survey port, S3): a settings pin on the
+    # RELEASE INDEX's own content address (`foundation/soil_survey/release.py::release_key`), not
+    # a shard manifest and not an area. Unset (the default), `/api/v1/soil-survey/{query,point}`
+    # answers 200 `unavailable`/`soil_survey_release_not_admitted` without opening object storage
+    # (Go-A3). A Railway variable change redeploys the service, so reading it once at process boot
+    # is enough -- admission needs no separate reload path. See `interface/http/soil_survey.py`.
+    ssurgo_admitted_release_sha256: str | None = None
+
+    @field_validator("ssurgo_admitted_release_sha256")
+    @classmethod
+    def require_ssurgo_pin_hex(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        normalized = value.strip().lower()
+        if re.fullmatch(r"[0-9a-f]{64}", normalized) is None:
+            raise ValueError("SSURGO_ADMITTED_RELEASE_SHA256 must be exactly 64 hex characters (any case)")
+        return normalized
+
     @field_validator("object_store_endpoint_url")
     @classmethod
     def require_credential_free_object_store_endpoint(cls, value: str | None) -> str | None:

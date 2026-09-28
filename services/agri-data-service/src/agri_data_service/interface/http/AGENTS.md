@@ -34,6 +34,33 @@ pointer and receipt-bound generation rather than an S3 history listing. Availabi
 faults are HTTP 503 transport/serving refusals and never HTTP 200 content states. Static lookups keep
 their existing listing path, and no GET performs a receipt repair or any other object-store write.
 
+## SSURGO native-geometry route (soil-survey port, S3)
+
+`soil_survey.py` is its own dedicated blueprint (`/api/v1/soil-survey/{query,point}`), not a case
+inside `parquet_routes.py`: it reads `foundation.soil_survey.release`'s sharded `Release` index
+rather than the day-partitioned Parquet layout every other route in this directory serves, so it
+carries its own admission pin (`config.py::ssurgo_admitted_release_sha256`) and its own gates.
+
+**Gate order, cheapest and most storage-free first**, and every gate below runs before object
+storage is ever touched:
+
+1. Request shape (`_parse`) -- malformed bbox/point/zoom is 400 `soil_survey_invalid_request`.
+2. Region binding (`foundation.region.is_layer_bound(load_region(), "soil-survey")`) -- an unbound
+   region answers 200 `unavailable`/`no_source_bound_in_region`.
+3. The admission pin -- unset, 200 `unavailable`/`soil_survey_release_not_admitted` (dark by
+   default: this is the state a fresh deploy of push P3 answers with, per plan Go-A3).
+4. The zoom gate -- below z13 (`SoilSurveyViewport.at_native_rung`), 200
+   `unavailable`/`soil_survey_zoom_in`. There is no coarser rung this port ever publishes; a
+   vector-tile artifact for lower zooms is Go-5, a separate later step.
+
+Only once all four pass does the route open object storage, and even then the object-store reads
+(release index, shard manifests, part bytes) run OFF the event loop (`asyncio.to_thread`) and
+OUTSIDE `parquet_ops.duckdb_session.run_serving_read`'s bounded slot -- see `planes/AGENTS.md`,
+"Admitted release read path" (F10). A read fault at any of those stages (`SoilSurveyError`, a
+digest mismatch, a bounded-cap refusal, `ClientError`/`BotoCoreError`, a DuckDB error, or the read
+timing out) is uniformly HTTP 503 `soil_survey_read_refused` -- transport/serving state, never a
+claim about what the release holds, exactly like every other route's refusal in this file.
+
 ## Transitional botanical authoring lookup
 
 `botanical_species_information.py` is a deliberately temporary nonspatial reader. It accepts only

@@ -17,7 +17,12 @@ from agri_data_service.foundation.region import (
     load_region,
     unverified_binding_slugs,
 )
-from agri_data_service.interface.http import botanical_occurrences_bp, botanical_species_information_bp, parquet_bp
+from agri_data_service.interface.http import (
+    botanical_occurrences_bp,
+    botanical_species_information_bp,
+    parquet_bp,
+    soil_survey_bp,
+)
 from agri_data_service.pipeline.source_bindings import (
     declared_layer_source_contracts,
     declared_source_coverage_claims,
@@ -117,9 +122,12 @@ def create_app(_args: object | None = None) -> AgriApp:
         response.headers["X-Request-ID"] = request.ctx.request_id
 
     # --- Register blueprints ---
-    # `parquet_bp` mounts on the two READ profiles and not on `receiver_writer`: it opens no database
-    # pool at all (it reads object storage), so no profile's DSN is involved, but the write ingress
-    # has no reason to carry a public read surface. See interface/http/AGENTS.md.
+    # `parquet_bp` and `soil_survey_bp` mount on the two READ profiles and not on `receiver_writer`:
+    # neither opens a database pool (both read object storage only), so no profile's DSN is
+    # involved, but the write ingress has no reason to carry a public read surface. See
+    # interface/http/AGENTS.md. `soil_survey_bp` is dark until an operator admits a release
+    # (`config.py::ssurgo_admitted_release_sha256`); mounting it here only registers the routes --
+    # see that route module's own zoom/admission gates for what makes it actually serve.
     profile_blueprints = {
         "combined_local": (
             strategies_bp,
@@ -128,12 +136,19 @@ def create_app(_args: object | None = None) -> AgriApp:
             agent_tools_bp,
             botanical_species_information_bp,
             botanical_occurrences_bp,
+            soil_survey_bp,
         ),
         "receiver_writer": (jobs_bp,),
         # Forecasts are withheld until a source-direct Parquet forecast lane is published.
         # Keeping the PostgreSQL-backed blueprint mounted would violate the environmental
         # cutover even when the Next.js bridge no longer calls it.
-        "published_reader": (parquet_bp, agent_tools_bp, botanical_species_information_bp, botanical_occurrences_bp),
+        "published_reader": (
+            parquet_bp,
+            agent_tools_bp,
+            botanical_species_information_bp,
+            botanical_occurrences_bp,
+            soil_survey_bp,
+        ),
     }[settings.service_profile]
     api_v1 = Blueprint.group(*profile_blueprints, url_prefix="/api/v1")
     app.blueprint(api_v1)

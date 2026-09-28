@@ -115,6 +115,9 @@ KNOWN_OFFENDERS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("parquet_ops/request_params.py", "name-hinted scalar 4.0 assigned to BBOX_COMPONENT_COUNT"),
         # The arity of a bbox tuple, not an ordinate -- `planes/botanical_occurrences.py:108`.
         ("planes/botanical_occurrences.py", "name-hinted scalar 4.0 assigned to _BBOX_ORDINATES"),
+        # The arity of a bbox query-string value (west,south,east,north), not an ordinate --
+        # `interface/http/soil_survey.py:48`.
+        ("interface/http/soil_survey.py", "name-hinted scalar 4.0 assigned to _BBOX_COORDINATE_COUNT"),
     }
 )
 

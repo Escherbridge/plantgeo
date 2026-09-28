@@ -1,4 +1,6 @@
-"""The DuckDB/Polars serving read for `soil-survey`: point lookups over the current release day.
+"""Soil-survey serving: the day-partitioned point-lookup lane below, and the admitted-release
+native-geometry reader appended at the end of this file (port slice S3; see that section's own
+banner and `AGENTS.md` in this directory, "Two soil-survey read paths in one file").
 
 Layer L3: may import foundation, method, warehouse, pipeline; may NOT import interface.
 
@@ -26,24 +28,58 @@ twice against `DEFAULT_MAX_POINT_MATCHES=8`, so the cap silently halves the dist
 
 from __future__ import annotations
 
+import io
+import json
+import math
+import re
 import struct
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final
+from datetime import datetime
+from typing import TYPE_CHECKING, Final, cast
 
 import polars as pl
+import pyarrow as pa  # type: ignore[import-untyped]
+import pyarrow.parquet as pq  # type: ignore[import-untyped]
 
+from agri_data_service.db.sql_queries import load_query_sql
+from agri_data_service.foundation.observability.logging import get_logger
 from agri_data_service.foundation.parquet.paths import completed_partition_days, try_parse_partition_path
-from agri_data_service.foundation.parquet.zoom import serving_zoom_tier
+from agri_data_service.foundation.parquet.zoom import MAX_REQUEST_ZOOM, MIN_REQUEST_ZOOM, serving_zoom_tier
+from agri_data_service.foundation.soil_survey.receipts import (
+    WGS84_MAX_LATITUDE,
+    WGS84_MAX_LONGITUDE,
+    SoilSurveyError,
+    digest,
+    verify_blob,
+)
+from agri_data_service.foundation.soil_survey.release import (
+    MAX_PART_ROWS,
+    MAX_PARTS_PER_VIEWPORT,
+    MAX_RELEASE_BYTES,
+    MAX_VIEWPORT_BYTES,
+    MAX_VIEWPORT_ROWS,
+    NATIVE_RUNG,
+    Candidate,
+    Release,
+    manifest_key,
+    release_key,
+)
 from agri_data_service.warehouse.schemas.soil_survey import SOIL_SURVEY_SCHEMA, SOIL_SURVEY_STREAM
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
     from datetime import date
 
+    from duckdb import DuckDBPyConnection
+
     from agri_data_service.config import ObjectStoreCredentials
     from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.foundation.parquet.zoom import ZoomTier
+    from agri_data_service.foundation.soil_survey.release import Bounds, Part, ShardRef
+    from agri_data_service.pipeline.parquet.availability_storage import AvailabilityStorage
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
+
+logger = get_logger(__name__)
 
 # This lane writes only this one kind; see the module docstring.
 SOIL_SURVEY_KIND: Final[PartitionKind] = "observed"
@@ -352,3 +388,380 @@ def wkb_polygon_contains_point(payload: bytes, *, longitude: float, latitude: fl
             continue
         return True
     return False
+
+
+# --- Admitted release read path (port slice S3, push P3) --------------------------------------
+#
+# Everything below reads `foundation.soil_survey.release`'s `Release` / `ShardRef` / `Candidate` /
+# `Part` types -- content-addressed objects an operator explicitly stages and admits (owner Q3: a
+# settings pin on the release index) -- NOT the day-partitioned `SOIL_SURVEY_STREAM` lane the
+# functions above serve. See `AGENTS.md` in this directory, "Two soil-survey read paths in one
+# file", for why both live here rather than one superseding the other.
+#
+# Q1 (owner, 2026-09-27): this port serves ONE geometry rung, z13 ("native"). A request that
+# resolves below it (`serving_zoom_tier(requested_zoom) != NATIVE_RUNG`) is refused with
+# `soil_survey_zoom_in` before any storage is touched -- there is no coarser rung to fall back to,
+# and claiming one would answer a whole-region viewport with bytes nobody budgeted (`release.py`'s
+# `MAX_PARTS_PER_VIEWPORT`/`MAX_VIEWPORT_BYTES`/`MAX_VIEWPORT_ROWS`). Vector PMTiles below z13 is
+# its own later, separately gated artifact (Go-5).
+#
+# Q4 (owner, 2026-09-27): "repair else quarantine label and serve always" -- every native row this
+# lane ever captured is served, whether its geometry is `valid`, `repaired`, or
+# `invalid_unrepaired`. That decision is why SELECTION here reads ONLY the four `bbox_*` columns
+# every row already carries (never a GEOS predicate such as `ST_Intersects`/`ST_Covers` against
+# `geometry_wkb`, which would silently reject an invalid ring and turn "always serve" into "usually
+# serve") and why every served feature carries its own `geometryQuality` label rather than a
+# candidate-wide summary.
+#
+# F10 (plan §3 step 9, §6 "Part fetches run outside run_serving_read"): object-store reads --
+# loading the release index, each touched shard's manifest, and each touched part's bytes -- all
+# happen in `gather_admitted_soil_survey_viewport` below, a plain function that opens no DuckDB
+# connection. Only `run_admitted_soil_survey_query` (registering the assembled Arrow table and
+# running the SQL) is meant to run inside `parquet_ops.duckdb_session.run_serving_read`'s bounded
+# slot; `interface/http/soil_survey.py` is what wires the two together, so a slot is never held
+# while this module is still doing bucket I/O.
+#
+# `DEFAULT_MAX_POINT_MATCHES` (module top) is shared with the point-lookup lane above: both mean
+# "a sane cap on how many delineations legitimately tie at one point".
+
+_VIEWPORT_SQL: Final = load_query_sql("planes/ssurgo_viewport.sql")
+_POINT_SQL: Final = load_query_sql("planes/ssurgo_point.sql")
+
+#: Structural ceiling on point-query bbox candidates, tied to the caps that already bound how many
+#: rows a gathered table can ever hold (`MAX_PARTS_PER_VIEWPORT` parts x `MAX_PART_ROWS` rows/part) --
+#: NOT the caller's own match cap (`DEFAULT_MAX_POINT_MATCHES`). `ssurgo_point.sql` is only the bbox
+#: prefilter (review finding 2): `_filter_point_candidates_by_ring` below narrows its candidates to
+#: an exact ring test before `DEFAULT_MAX_POINT_MATCHES` truncation ever applies.
+_MAX_POINT_CANDIDATE_ROWS: Final = MAX_PARTS_PER_VIEWPORT * MAX_PART_ROWS
+
+
+@dataclass(frozen=True, slots=True)
+class SoilSurveyViewport:
+    """One validated SSURGO request: its bbox, the requested map zoom, and an optional exact point.
+
+    Validation here is shape-only (finite, ordered, within WGS84, a legal web-map zoom) and never
+    depends on I/O or on the admitted release -- an invalid request is always a 400, regardless of
+    whether a release is admitted. Whether `requested_zoom` actually resolves to the one rung this
+    port publishes is a SEPARATE, later question (`at_native_rung` below): a low zoom is a well
+    formed request that gets a 200 `soil_survey_zoom_in` answer, never a `ValueError`.
+    """
+
+    bbox: Bounds
+    requested_zoom: int
+    point: tuple[float, float] | None = None
+
+    def __post_init__(self) -> None:
+        west, south, east, north = self.bbox
+        if not all(math.isfinite(value) for value in self.bbox):
+            raise ValueError("SSURGO bbox must be finite")
+        if not -WGS84_MAX_LONGITUDE <= west <= east <= WGS84_MAX_LONGITUDE or not (
+            -WGS84_MAX_LATITUDE <= south <= north <= WGS84_MAX_LATITUDE
+        ):
+            raise ValueError("SSURGO bbox must be within WGS84")
+        if self.point is None and (west == east or south == north):
+            raise ValueError("SSURGO viewport must have positive area")
+        if self.point is not None and self.bbox != (*self.point, *self.point):
+            raise ValueError("point request must use its exact degenerate bounds")
+        if not MIN_REQUEST_ZOOM <= self.requested_zoom <= MAX_REQUEST_ZOOM:
+            raise ValueError(f"SSURGO requested zoom must be within {MIN_REQUEST_ZOOM}..{MAX_REQUEST_ZOOM}")
+
+    @property
+    def at_native_rung(self) -> bool:
+        """True once `requested_zoom` resolves to z13, the only rung this port ever publishes."""
+        return serving_zoom_tier(self.requested_zoom) == NATIVE_RUNG
+
+
+def soil_survey_unavailable(reason: str, *, requested_zoom: int) -> dict[str, object]:
+    """The `availability: "unavailable"` envelope: no source bound, no release admitted, or a
+    request that resolves below the native rung. Every case answers HTTP 200 (`interface/http/
+    AGENTS.md`: "a refusal is serving/transport state, never warehouse content") and none of them
+    has opened storage to say so.
+    """
+    return {
+        "type": "FeatureCollection",
+        "features": [],
+        "availability": "unavailable",
+        "reason": reason,
+        "truncated": False,
+        "revision": None,
+        "servedZoom": NATIVE_RUNG,
+        "requestedZoom": requested_zoom,
+        "temporalScope": {"kind": "static_reference", "selectedDaySupported": False},
+        "spatialCoverage": None,
+    }
+
+
+def _bbox_overlaps(candidate: Bounds, request_bbox: Bounds) -> bool:
+    """True when two WGS84 boxes share any area or edge; the ONLY spatial test this read path runs."""
+    west, south, east, north = request_bbox
+    return candidate[2] >= west and candidate[3] >= south and candidate[0] <= east and candidate[1] <= north
+
+
+def _bbox_area(bbox: Bounds) -> float:
+    """Plain WGS84 square-degree area; no projection, just `(east-west) * (north-south)`."""
+    west, south, east, north = bbox
+    return (east - west) * (north - south)
+
+
+#: R12, "z13 detail ceiling" (plan §7 S3 row; review finding 4): unlike
+#: `planes/botanical_occurrences.py`, this lane has NO coarser rung a big request could fall back to
+#: (Q1) -- so its ceiling has to stay generous enough for a legitimate single- or multi-shard read
+#: (the fixture shard in `tests/planes/test_soil_survey_admitted_reader.py` alone spans ~12 square
+#: degrees), not squeezed to that other lane's "exact point" scale. `1600.0` instead matches its
+#: COARSE_SUPPORT ceiling -- this platform's own precedent for "the largest sane single-request
+#: extent," roughly 11x the whole PNW pilot envelope (`REGION_ENVELOPE`, ~144 square degrees) -- so
+#: a legitimate viewport clears it easily while a world- or continent-scale request
+#: (`?bbox=-180,-90,180,90`, ~64800 square degrees) is refused BEFORE any shard is even touched
+#: (`gather_admitted_soil_survey_viewport` checks this first), rather than walking every admitted
+#: shard's manifest just to discover it was always going to be refused by the part/byte cap below.
+MAX_SOIL_SURVEY_VIEWPORT_SQUARE_DEGREES: Final = 1600.0
+
+
+def load_admitted_release(storage: AvailabilityStorage, admitted_sha256: str) -> Release:
+    """Load and verify the pinned release index at its content-addressed key.
+
+    Unlike a `Part` or a `ShardRef.manifest`, the settings pin (`config.py::
+    ssurgo_admitted_release_sha256`) carries only a SHA-256, never a byte count, so this cannot use
+    `verify_blob`'s `Blob` shape -- the check is the same one `verify_blob` runs, spelled out by
+    hand: read no more than `MAX_RELEASE_BYTES`, and refuse anything whose digest disagrees.
+    """
+    if re.fullmatch(r"[0-9a-f]{64}", admitted_sha256) is None:
+        raise SoilSurveyError("SSURGO admission must pin an exact release SHA-256")
+    stored = storage.read(release_key(admitted_sha256), max_bytes=MAX_RELEASE_BYTES)
+    if stored is None or digest(stored.payload) != admitted_sha256:
+        raise SoilSurveyError("admitted SSURGO release index is missing or corrupt")
+    return Release.model_validate_json(stored.payload)
+
+
+def _load_shard_candidate(storage: AvailabilityStorage, shard: ShardRef) -> Candidate:
+    """Load and verify one admitted shard's staged manifest against the release's own pin of it."""
+    stored = storage.read(manifest_key(shard.manifest.sha256), max_bytes=shard.manifest.byte_count)
+    payload = verify_blob(shard.manifest, None if stored is None else stored.payload)
+    return Candidate.model_validate_json(payload)
+
+
+@dataclass(frozen=True, slots=True)
+class GatheredSoilSurveyViewport:
+    """The bytes a viewport read assembled, before any DuckDB session ever opens.
+
+    `table` is `None` for an honest empty answer -- no admitted shard's declared bbox reaches this
+    viewport -- distinct from every other field here, which is populated even then.
+    """
+
+    table: pa.Table | None
+    touched_shard_count: int
+    touched_areas: tuple[str, ...]
+
+
+def gather_admitted_soil_survey_viewport(
+    request: SoilSurveyViewport,
+    *,
+    storage: AvailabilityStorage,
+    release: Release,
+) -> GatheredSoilSurveyViewport:
+    """Prune shards, then parts, by their bbox columns only; fetch and verify what survives.
+
+    Every object read and every digest check happens here, OUTSIDE any DuckDB serving slot (F10).
+    The R12 area ceiling is checked FIRST, before any shard is even touched. The part/byte caps are
+    then checked TWICE, deliberately: once against each part's DECLARED `blob.byte_count` before a
+    single byte is fetched (cheap, from manifests already in hand), and once against the
+    DECOMPRESSED Parquet metadata as each part is actually read (`MAX_VIEWPORT_BYTES` bounds serving
+    memory, not wire bytes, and a compressed part can decompress far larger).
+    """
+    area = _bbox_area(request.bbox)
+    if area > MAX_SOIL_SURVEY_VIEWPORT_SQUARE_DEGREES:
+        raise SoilSurveyError(
+            f"SSURGO viewport spans {area:.2f} square degrees, over the "
+            f"{MAX_SOIL_SURVEY_VIEWPORT_SQUARE_DEGREES}-square-degree z13 detail ceiling (R12); zoom in or narrow it"
+        )
+    touched_shards = [shard for shard in release.shards if _bbox_overlaps(shard.bbox, request.bbox)]
+    matched: list[tuple[str, Part]] = [
+        (shard.shard, part)
+        for shard in touched_shards
+        for part in _load_shard_candidate(storage, shard).parts
+        if part.rung == NATIVE_RUNG and _bbox_overlaps(part.bbox, request.bbox)
+    ]
+    declared_bytes = sum(part.blob.byte_count for _, part in matched)
+    if len(matched) > MAX_PARTS_PER_VIEWPORT or declared_bytes > MAX_VIEWPORT_BYTES:
+        logger.warning(
+            "soil_survey_viewport_over_cap",
+            parts_touched=len(matched),
+            shards_touched=len(touched_shards),
+            declared_bytes=declared_bytes,
+            cap_parts=MAX_PARTS_PER_VIEWPORT,
+            cap_bytes=MAX_VIEWPORT_BYTES,
+        )
+        raise SoilSurveyError(
+            f"SSURGO viewport touches {len(matched)} parts ({declared_bytes} declared bytes), over the "
+            f"{MAX_PARTS_PER_VIEWPORT}-part/{MAX_VIEWPORT_BYTES}-byte budget; narrow the viewport"
+        )
+    tables: list[pa.Table] = []
+    uncompressed_bytes = 0
+    touched_areas: set[str] = set()
+    for _shard_id, part in matched:
+        stored = storage.read(part.blob.key, max_bytes=part.blob.byte_count)
+        payload = verify_blob(part.blob, None if stored is None else stored.payload)
+        parquet_file = pq.ParquetFile(io.BytesIO(payload))
+        uncompressed_bytes += sum(
+            parquet_file.metadata.row_group(index).total_byte_size
+            for index in range(parquet_file.metadata.num_row_groups)
+        )
+        if uncompressed_bytes > MAX_VIEWPORT_BYTES:
+            raise SoilSurveyError("SSURGO viewport exceeds the decompressed Parquet budget; narrow the viewport")
+        table = parquet_file.read()
+        if table.num_rows != part.row_count or not table.schema.equals(
+            SOIL_SURVEY_SCHEMA.arrow_schema, check_metadata=False
+        ):
+            raise SoilSurveyError("admitted SSURGO part differs from its schema or row-count receipt")
+        required_columns = ("geometry_wkb", "bbox_west", "bbox_south", "bbox_east", "bbox_north")
+        if any(table[column].null_count for column in required_columns):
+            raise SoilSurveyError("admitted SSURGO part lacks geometry or spatial bounds")
+        tables.append(table)
+        touched_areas.add(part.area)
+    if not tables:
+        return GatheredSoilSurveyViewport(table=None, touched_shard_count=len(touched_shards), touched_areas=())
+    table = pa.concat_tables(tables)
+    keys = table["mupolygonkey"].to_pylist()
+    if len(set(keys)) != len(keys):
+        raise SoilSurveyError("admitted SSURGO parts duplicate native polygon identities")
+    return GatheredSoilSurveyViewport(
+        table=table, touched_shard_count=len(touched_shards), touched_areas=tuple(sorted(touched_areas))
+    )
+
+
+def _filter_point_candidates_by_ring(
+    candidates: list[dict[str, object]], *, longitude: float, latitude: float
+) -> list[dict[str, object]]:
+    """Narrow bbox candidates to an exact ring test (review finding 2).
+
+    `ssurgo_point.sql` selects by `bbox_*` only, so dense/riparian SSURGO coverage can hand back
+    delineations whose box reaches the point but whose true ring does not. This is the exact-match
+    narrowing pass: it uses `wkb_polygon_contains_point`, the SAME dependency-free ray-cast the
+    day-partitioned lane above already relies on -- never a GEOS predicate, so Q4's "never
+    ST_Intersects/ST_Covers against geometry_wkb" rule still holds.
+
+    Every candidate reaching this function already survived `ST_GeomFromWKB`/`ST_AsGeoJSON` in the
+    SQL above -- DuckDB's spatial parser, not this module's own minimal one -- so a row whose
+    `geometry_wkb` this function's OWN decoder cannot parse (a WKB variant DuckDB accepts and this
+    lane's dependency-free reader does not, e.g. a Z/M dimension or an unsupported geometry type) is
+    KEPT rather than dropped, matching Q4's "always serve, label don't hide" stance: a decode gap in
+    this lane's own reader is not grounds to withhold a delineation DuckDB could already render.
+    """
+    matches: list[dict[str, object]] = []
+    for row in candidates:
+        payload = row.get("geometry_wkb")
+        if not isinstance(payload, (bytes, bytearray)):
+            matches.append(row)
+            continue
+        try:
+            contains = wkb_polygon_contains_point(bytes(payload), longitude=longitude, latitude=latitude)
+        except (SoilSurveyGeometryDecodeError, struct.error):
+            matches.append(row)
+            continue
+        if contains:
+            matches.append(row)
+    return matches
+
+
+def run_admitted_soil_survey_query(
+    connection: DuckDBPyConnection,
+    table: pa.Table,
+    request: SoilSurveyViewport,
+) -> list[dict[str, object]]:
+    """Register the gathered table and run the one bbox-column query this request needs.
+
+    The ONLY function in this read path meant to run inside `run_serving_read`'s bounded slot
+    (F10): it opens no object-store connection and does no digest work -- one DuckDB registration,
+    one parameterised `SELECT`, and (point requests only) the exact ring narrowing above, which is
+    pure Python over already-fetched rows.
+
+    A viewport matching over `MAX_VIEWPORT_ROWS` rows is refused outright (`SoilSurveyError`, mapped
+    to 503 `soil_survey_read_refused` upstream) rather than silently truncated: truncation would
+    serve a spatially arbitrary subset with holes the caller cannot tell from real coverage (review
+    finding 3, disposition F2 "503, not truncation").
+    """
+    connection.register("ssurgo_view", table)
+    try:
+        west, south, east, north = request.bbox
+        if request.point is None:
+            result = connection.execute(_VIEWPORT_SQL, [west, south, east, north, MAX_VIEWPORT_ROWS + 1])
+            rows = cast("list[dict[str, object]]", result.fetch_arrow_table().to_pylist())
+            if len(rows) > MAX_VIEWPORT_ROWS:
+                raise SoilSurveyError(
+                    f"SSURGO viewport matches over the {MAX_VIEWPORT_ROWS}-row serving budget; narrow the viewport"
+                )
+            return rows
+        longitude, latitude = request.point
+        result = connection.execute(_POINT_SQL, [longitude, longitude, latitude, latitude, _MAX_POINT_CANDIDATE_ROWS])
+        candidates = cast("list[dict[str, object]]", result.fetch_arrow_table().to_pylist())
+        return _filter_point_candidates_by_ring(candidates, longitude=longitude, latitude=latitude)
+    finally:
+        connection.unregister("ssurgo_view")
+
+
+def _feature_from_row(row: Mapping[str, object], *, admitted_sha256: str) -> dict[str, object]:
+    drainage = row["drainage_class"]
+    vintage = row["survey_area_vintage"]
+    if not isinstance(vintage, datetime):
+        # `SOIL_SURVEY_SCHEMA` declares this column non-nullable timestamp; a non-datetime here
+        # means the admitted release itself is malformed, so fail closed rather than fabricate a
+        # date (`_READ_FAULTS` in `interface/http/soil_survey.py` maps this to 503).
+        raise SoilSurveyError(f"survey_area_vintage must be a datetime, got {type(vintage).__name__}")
+    return {
+        "type": "Feature",
+        "id": row["natural_key"],
+        "geometry": json.loads(row["geometry_json"]),  # type: ignore[arg-type]
+        "properties": {
+            "mupolygonkey": row["mupolygonkey"],
+            "mukey": row["mukey"],
+            "muname": row["map_unit_name"],
+            "soilSeries": row["soil_series"],
+            "drainageClass": drainage.lower().replace(" ", "-") if isinstance(drainage, str) else None,
+            "hydric": row["hydric_rating"],
+            "landCapabilityClass": row["land_capability_class"],
+            "areaSymbol": row["survey_area_symbol"],
+            "surveyAreaVintage": vintage.date().isoformat(),
+            "geometryQuality": row["geometry_quality"],
+            "geometryRepresentation": "native",
+            "source": "usda-sda",
+            "releaseSha256": admitted_sha256,
+        },
+    }
+
+
+def render_served_soil_survey(
+    rows: Sequence[Mapping[str, object]],
+    *,
+    release: Release,
+    request: SoilSurveyViewport,
+    touched_areas: tuple[str, ...],
+    admitted_sha256: str,
+) -> dict[str, object]:
+    """Build the `availability: "published"` envelope from the SQL result and the release index."""
+    row_limit = MAX_VIEWPORT_ROWS if request.point is None else DEFAULT_MAX_POINT_MATCHES
+    features = [_feature_from_row(row, admitted_sha256=admitted_sha256) for row in rows[:row_limit]]
+    served_areas = {area.area for shard in release.shards for area in shard.areas}
+    logger.info(
+        "soil_survey_viewport_served",
+        rows=len(features),
+        truncated=len(rows) > row_limit,
+        areas_touched=len(touched_areas),
+    )
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+        "availability": "published",
+        "reason": None,
+        "truncated": len(rows) > row_limit,
+        "revision": admitted_sha256,
+        "servedZoom": NATIVE_RUNG,
+        "requestedZoom": request.requested_zoom,
+        "temporalScope": {"kind": "static_reference", "selectedDaySupported": False},
+        "releaseDay": release.release_day.isoformat(),
+        "capturedAt": release.captured_at.isoformat(),
+        "spatialCoverage": {
+            "viewportAreas": list(touched_areas),
+            "declaredAreaCount": len(served_areas),
+            "pendingAreaCount": len(release.pending_areas),
+        },
+    }

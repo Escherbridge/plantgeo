@@ -6,5 +6,6 @@ See `AGENTS.md` in this directory for the wire freeze it implements and the memo
 from agri_data_service.interface.http.botanical_occurrences import botanical_occurrences_bp
 from agri_data_service.interface.http.botanical_species_information import botanical_species_information_bp
 from agri_data_service.interface.http.parquet_routes import parquet_bp
+from agri_data_service.interface.http.soil_survey import soil_survey_bp
 
-__all__ = ["botanical_occurrences_bp", "botanical_species_information_bp", "parquet_bp"]
+__all__ = ["botanical_occurrences_bp", "botanical_species_information_bp", "parquet_bp", "soil_survey_bp"]

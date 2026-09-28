@@ -295,6 +295,12 @@ defaults.
 | --- | --- | --- |
 | `STRATEGY_KNOWLEDGE_URL` | `plantgeo-parquet-api` | Origin of the private `plantgeo-strategy-knowledge` service that the agent's three literature tools call (`search_environmental_strategies`, `get_environmental_strategies`, `search_strategy_research_findings`). Production value: `http://${{plantgeo-strategy-knowledge.RAILWAY_PRIVATE_DOMAIN}}:8000`. The service has no public domain. Must be a credential-free origin with no path, query or fragment: `https` anywhere, plaintext `http` only on loopback or a `*.railway.internal` host. Unset, the tools answer the typed `strategy_knowledge_not_configured` refusal and every other tool is unaffected. See `services/agri-data-service/src/agri_data_service/agent/AGENTS.md`, "Strategy knowledge (literature) tools". |
 
+### Soil survey (SSURGO) admission pin
+
+| Variable | Scope | Policy |
+| --- | --- | --- |
+| `SSURGO_ADMITTED_RELEASE_SHA256` | `plantgeo-parquet-api`, optional | Unset (default): `GET /api/v1/soil-survey/query` and `/point` answer HTTP 200 `availability: "unavailable"`, `reason: "soil_survey_release_not_admitted"`, without opening object storage. Set to the content-addressed SHA-256 of an admitted release index (`services/agri-data-service/src/agri_data_service/foundation/soil_survey/release.py::release_key` — the release index itself, never a shard manifest and never an area) to serve native z13 SSURGO geometry from that pinned release. Must be exactly 64 hex characters; any case is accepted and folded to lowercase on read (the pin stored and compared internally is always lowercase), and anything else fails validation at boot. A Railway variable change redeploys the service, so this is read once at process start with no separate reload path. Below zoom 13 the route always answers `soil_survey_zoom_in` regardless of this pin — the vector-tile artifact for lower zooms is a separate, later gated step (Go-5). Roll back by unsetting it or restoring the previous SHA-256; staged objects are immutable and nothing is deleted. See `services/agri-data-service/src/agri_data_service/interface/http/soil_survey.py` and that directory's `AGENTS.md`. |
+
 ### Soil properties (SoilGrids model estimates) and site brief kill switches
 
 Both flags share one parsing rule in both services: only the exact value `true`, with surrounding
