@@ -11,12 +11,13 @@ path" banner for the wire contract this route serves.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Final
+from typing import Final
 
 import duckdb
 from botocore.exceptions import BotoCoreError, ClientError  # type: ignore[import-untyped]
 from pydantic import ValidationError
 from sanic import Blueprint, Request, json
+from sanic.response import HTTPResponse  # noqa: TC002 - sanic-ext evaluates handler annotations at runtime.
 
 from agri_data_service.config import settings
 from agri_data_service.foundation.observability.logging import get_logger
@@ -38,9 +39,6 @@ from agri_data_service.planes.soil_survey import (
     run_admitted_soil_survey_query,
     soil_survey_unavailable,
 )
-
-if TYPE_CHECKING:
-    from sanic.response import HTTPResponse
 
 logger = get_logger(__name__)
 

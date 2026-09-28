@@ -25,6 +25,14 @@ rendering live in top-level `agri_data_service.parquet_ops`.
 - The private origin and route spelling remain frozen by `tests/contract/wire_contract.py` and the
   TypeScript client contract.
 - Timeouts stay below the caller budgets so the adapter can return the typed reason.
+- Handler annotations must resolve at runtime, because sanic-ext evaluates them while workers start.
+  - Import `HTTPResponse` (and every other annotated type) at module level, with
+    `# noqa: TC002 - sanic-ext evaluates handler annotations at runtime.`, never under
+    `TYPE_CHECKING`.
+  - Route tests call handlers directly and cannot catch this.
+    `tests/interface/test_route_annotations_resolve.py` resolves every registered route's hints.
+  - On 2026-09-28, soil-survey S3 (`f3253639`) broke this rule. Every parquet-api worker died at boot
+    and the deploy failed its healthcheck.
 
 Current MTBS reads inject the existing availability object-store adapter lazily into the common listing. The common resolver owns snapshot evidence and optional `mtbs_snapshot` wire metadata, including empty viewports; the HTTP adapter has no independent release authority.
 

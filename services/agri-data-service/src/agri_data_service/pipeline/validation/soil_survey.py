@@ -555,6 +555,20 @@ def _written_candidate_areas(
     return written
 
 
+def _budget_exhausted_findings(areas: Sequence[str]) -> list[SoilSurveyValidationFinding]:
+    """One `source_query_failed` finding per area the validation budget never reached."""
+    return [
+        SoilSurveyValidationFinding(
+            lane=SOIL_SURVEY_STREAM,
+            area_symbol=area,
+            kind="source_query_failed",
+            detail=f"survey area {area}: candidate validation time budget exhausted",
+            source_response=None,
+        )
+        for area in areas
+    ]
+
+
 async def validate_soil_survey_candidate(
     candidate: Candidate,
     storage: AvailabilityStorage,
@@ -578,19 +592,25 @@ async def validate_soil_survey_candidate(
     for index, area in enumerate(checked):
         remaining = deadline - loop.time()
         if remaining <= 0:
-            findings.extend(
-                SoilSurveyValidationFinding(
-                    lane=SOIL_SURVEY_STREAM,
-                    area_symbol=exhausted,
-                    kind="source_query_failed",
-                    detail=f"survey area {exhausted}: candidate validation time budget exhausted",
-                    source_response=None,
-                )
-                for exhausted in checked[index:]
-            )
+            findings.extend(_budget_exhausted_findings(checked[index:]))
             break
         try:
             source = await asyncio.wait_for(sda_client.fetch_survey_area_summary(area), timeout=remaining)
+        except TimeoutError:
+            # `remaining` was the whole leftover budget, so this timeout means it is spent. Refuse the
+            # later areas now instead of re-reading the clock: asyncio can fire a timer one clock tick
+            # early (about 15.6 ms on Windows), which would start the next area on a sliver of budget.
+            findings.append(
+                SoilSurveyValidationFinding(
+                    lane=SOIL_SURVEY_STREAM,
+                    area_symbol=area,
+                    kind="source_query_failed",
+                    detail=f"survey area {area}: source census failed (TimeoutError)",
+                    source_response=None,
+                )
+            )
+            findings.extend(_budget_exhausted_findings(checked[index + 1 :]))
+            break
         except Exception as error:  # per-area isolation: one area's fault must not end the run
             findings.append(
                 SoilSurveyValidationFinding(
