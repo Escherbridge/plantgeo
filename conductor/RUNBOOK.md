@@ -596,8 +596,18 @@ Pushed from isolated worktrees under `.claude/worktrees/`, rebased onto main eac
 
 Go-1 pilot (local, read-only, SDA): 2 areas and 11,421 rows captured, 0 invalid geometries, about 8.2 GB estimated for the full region. Report: `.omc/research/soil-survey-pilot-20260927/GO-1-REPORT.md`.
 
+**2026-09-28 incident (release lane): web build and live agent, both fixed and verified in production.**
+- **Build:** plantgeo-main failed on 56467bd4 and 14cdea94. `soilgrids.ts` hardcoded the PNW envelope and the Docker `npm test` footprint-literals guard rejected it (the author had swept a test subset). Fixed in `2e2d42ca`: a pinned release constant plus a `KNOWN_OFFENDERS` citation.
+- **Agent:** every regional-intelligence report failed in round 1 with Gemini `400 schema_too_complex`.
+  - A 39-call live bisect against OpenRouter (`.omc/research/incident-20260928/gemini-bisect.md`) showed the trigger: `tool_choice required` plus an enum array with a medium `maxItems` (the agri literature `goals`, `land_use` and `fire_phase` filters: 12 values, max 6).
+  - Fixed in `8177fabf`: every Gemini tool gets the bounds-as-instructions projection.
+  - Verified live on plantgeo.aevani.com: Risk MODERATE, 4 observations, 2 remediations.
+  - c7 separately gated `soil_properties_at_point` behind its flag (`b258a97b`), restoring the flags-off promise.
+- **G0 observation:** closed clean. The 00:53Z publish run used 33 requests, 1,570 weighted calls and 37 HTTP requests; hourly probe-only runs cost 1 request, 2 weighted calls and 1 HTTP request each.
+- **Open-Meteo key:** `OPEN_METEO_API_KEY` was set on **plantgeo-main** (length 16, and the web never reads it). The executor is still at length 0. The owner confirms the tier, then sets it on plantgeo-job-executor.
+
 **Continuation plan:**
-1. G0: after 2026-09-28 01:50Z, read the `soil_forward_complete` lines (`requests_spent` ≤ 33, probe ok or deferred) and take the hole-count row. The owner confirms the key's Open-Meteo tier (the Historical API needs Professional), then sets `OPEN_METEO_API_KEY`. The agent checks its length only.
+1. G0 is observed clean. The owner confirms the key's Open-Meteo tier (the Historical API needs Professional) and sets `OPEN_METEO_API_KEY` on **plantgeo-job-executor**, not on main. The agent checks its length and that soil hits a `customer-*` host.
 2. Wave O GL-2 (`o3-ingest-meter`, plan §0W.2), then GL-3 to GL-5. Each is author → one sweep → code and security review → one fix batch → rebase, receipt and push.
 3. Soil-survey: Freeze 2 from the pilot numbers, then P2 (prepare, stage and validate, with the Q4 label-and-serve-always rule), P3 serving, P4 web. Go-3 bucket writes need their own go.
 
