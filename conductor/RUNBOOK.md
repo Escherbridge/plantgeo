@@ -606,11 +606,35 @@ Go-1 pilot (local, read-only, SDA): 2 areas and 11,421 rows captured, 0 invalid 
 - **G0 observation:** closed clean. The 00:53Z publish run used 33 requests, 1,570 weighted calls and 37 HTTP requests; hourly probe-only runs cost 1 request, 2 weighted calls and 1 HTTP request each.
 - **Open-Meteo key:** `OPEN_METEO_API_KEY` was set on **plantgeo-main** (length 16, and the web never reads it). The executor is still at length 0. The owner confirms the tier, then sets it on plantgeo-job-executor.
 
-**Continuation plan:**
-1. G0 is observed clean. The owner confirms the key's Open-Meteo tier (the Historical API needs Professional) and sets `OPEN_METEO_API_KEY` on **plantgeo-job-executor**, not on main. The agent checks its length and that soil hits a `customer-*` host.
-2. Wave O GL-2 (`o3-ingest-meter`, plan §0W.2), then GL-3 to GL-5. Each is author → one sweep → code and security review → one fix batch → rebase, receipt and push.
-3. Soil-survey: Freeze 2 from the pilot numbers, then P2 (prepare, stage and validate, with the Q4 label-and-serve-always rule), P3 serving, P4 web. Go-3 bucket writes need their own go.
+**2026-09-28 morning (release lane): what landed and what was verified live.**
+- **Wave O:**
+  - GL-2 `756f265c` (per-host meter).
+  - GL-3 `58d85c4e`: `lane_turn` per run with `turn_id`/`exit_class`; child output routed and redacted.
+  - Router levels `33b1085b`: `*_complete`/`*_started` are `[INFO]` and `[ERRO]` means real failures (live: 0 ERRO in 20 min).
+  - GL-4 `589c11db`: `agri-service ops jobs-usage-report` (read-only, from the ledger).
+- **Soil-survey port:**
+  - P2 `e9be6dbc`. Go-2 on the pilot shard: 11,421 rows, 24 parts, validate 0 findings.
+  - P3 `f3253639` failed its parquet-api boot. Hotfix `1a475eda`: `HTTPResponse` import, route-annotation guard test, deflaked validate budget. Go-A3 live: `/api/v1/soil-survey/{query,point}` answer 200 `soil_survey_release_not_admitted`.
+  - P4 web `c556709f`, browser-checked: SSURGO toggle shows NEVER PUBLISHED; `getSoilSurvey` 200 unavailable; no new IndexedDB writes.
+- **plantgeo-fe:** plant-suitability engine `bd75855d` (dark).
+- **First live usage audit** (`jobs-usage-report --days 1 --by host`):
+  - **api.weather.gov served 447 MB in 601 requests (0.74 MB each) to the sensors lane**, the heaviest source by far.
+  - NASA POWER 429 rate 1.7% (27 of 1,615).
+  - USGS: 4 of 5 water-gauges attempts `upstream_unavailable`.
+  - Open-Meteo free pool: 102 weighted calls month to date. Paid pool 0 of 5M (key still unset).
+  - Open incidents: 0.
 
+**Follow-ups (not blocking):**
+- Sensors lane: bound the NWS observations request window (`start`), so each run pulls only new observations, not full station histories.
+- `usage.py` provider/pool labels for NWS, ArcGIS, USGS and FIRMS (they read `None`).
+- `upstream_client` needs a `follow_redirects=False` option so the soil-survey CLI (3 raw clients, SEC-2(d)) can be metered, then drop its guard pin.
+- A one-time purge of legacy `getSoilSurvey` IndexedDB entries (4 stale `published` answers from the old stub persist with a 1-year TTL; `requestLayerRefresh` only marks them in memory).
+- A conftest-level `Sanic.test_mode` would remove the duplicate-app-name trap for tests that build the app themselves.
+
+**Continuation plan:**
+1. The owner confirms the Open-Meteo key tier (the Historical API needs Professional) and sets `OPEN_METEO_API_KEY` on **plantgeo-job-executor**. The agent checks its length and that soil moves to the `open-meteo-paid` pool (visible in `jobs-usage-report`).
+2. Wave O GL-5 (incidents plus soft failure) is in flight; then Phase 1 (f1-config first). GL-6 (the probe ladder) is folded into f1-executor.
+3. Soil-survey: **Go-3** (stage the pilot shard to the bucket) needs an owner go. Then pin a release (`SSURGO_ADMITTED_RELEASE_SHA256`) to go live, then the full-region capture (264 areas, about 8.2 GB).
 ## Open owner items
 
 - **Object-store credential rotation (2026-09-19).** An operations agent printed
