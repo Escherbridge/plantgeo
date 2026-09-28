@@ -10,8 +10,9 @@ from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 
-import httpx
+import httpx  # noqa: TC002 - tests/direct/test_mtbs_*.py patch `capture.httpx.Client`, a runtime attribute
 
+from agri_data_service.ingest.http import upstream_sync_client
 from agri_data_service.ingest.mtbs import MTBS_FEATURE_SERVICE_QUERY_URL, burn_severity_bounding_box
 from agri_data_service.pipeline.direct.burn_severity.current_snapshot import (
     MAX_CAPTURE_ROWS,
@@ -231,7 +232,7 @@ def _capture_snapshot(output: Path) -> dict[str, object]:  # noqa: PLR0912 - seq
     counts: dict[int, int] = {}
     inventories = {}
     source_content = hashlib.sha256()
-    with httpx.Client(follow_redirects=False, trust_env=False) as client:
+    with upstream_sync_client(follow_redirects=False, trust_env=False) as client:
         for year in YEARS:
             counts[year], inventories[year] = _inventory(client, budget, blobs, receipts, year)
         if sum(counts.values()) > MAX_CAPTURE_ROWS:

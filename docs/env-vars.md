@@ -269,7 +269,7 @@ and abuse testing. Large artifacts should move to immutable object storage with
 a checksum-addressed database reference rather than being forced through inline
 publication.
 
-### Observability and logging (Wave O, GL-1)
+### Observability and logging (Wave O, GL-1/GL-2)
 
 None of these is required; every one falls back to a documented default. See
 `services/agri-data-service/src/agri_data_service/foundation/observability/AGENTS.md`
@@ -286,6 +286,8 @@ defaults.
 | `PLANTGEO_ATTEMPT` | server, internal | The attempt number for the current turn; bound onto every log line as `attempt`. |
 | `PLANTGEO_TURN_BUCKET` | server, internal | The shard/bucket key for the current turn; bound onto every log line as `shard_key`. |
 | `PLANTGEO_TURN_PROBE` | server, internal | `1` on a single-attempt probe turn (GL-6/f1-executor only; unused before then); bound onto every log line as `probe`. |
+| `PLANTGEO_UPSTREAM_TELEMETRY` | server, optional | GL-2's source-usage meter (`ingest/http.py`) and its WQ-5 default `User-Agent`. Unset means on; a trimmed, case-insensitive `1`/`true`/`yes`/`on`/`enabled` also means on. Every other value — an off synonym (`0`/`false`/`no`/`off`/`disabled`/`none`) or an unrecognised typo alike — means off and restores the pre-GL-2 client byte for byte: no request/response counters, no default `User-Agent` header, no test-only `transport=` forwarding quirk (a caller's own header is unaffected either way). Read once per `upstream_client`/`upstream_sync_client` call, not per request. |
+| `PLANTGEO_UPSTREAM_CONTACT` | server, optional | Appends `(+<contact>)` to the WQ-5 default `User-Agent` (`plantgeo-agri-data-service/<version>+<sha7>`); omitted when unset. Has no effect when `PLANTGEO_UPSTREAM_TELEMETRY` is off, or on a source that sets its own `User-Agent` header (NWS via `NWS_API_USER_AGENT`; MTBS's own raw client). |
 
 ### Agent strategy-knowledge (literature) tools
 

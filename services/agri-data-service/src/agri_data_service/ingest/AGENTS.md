@@ -89,6 +89,121 @@ A port of `src/lib/server/http/bounded-upstream.ts` and its bounds: a byte cap e
 
 `fetch_bounded` never raises on a non-2xx status and never raises on an unreadable body; it reports the body failure as `payload_error` instead. That ordering matters: `fetch_bounded_json` raises the *status* failure before the *body* failure, so a `429` or a `5xx` that answers with a huge HTML error page still surfaces as an `UpstreamHttpError` and stays reachable for retry and backoff logic, exactly as `bounded-upstream.ts:164-165` does. `UpstreamTransportError`'s message deliberately carries only the exception class name and never the URL, because FIRMS request URLs embed an API key.
 
+## http.py: the GL-2 source-usage meter (`o3-ingest-meter`, Wave O, design §2.1/§2.5)
+
+Every send through `upstream_client`/`upstream_sync_client` now passes through a request and a
+response `event_hooks` pair (async for the first, sync for the second -- httpx requires the hook's
+own sync/async shape to match the client's), which mutate
+`foundation.observability.usage._host_counters`, the module-level accumulator that module's own
+docstring already names as this slice's hook point. **This module is the only writer.** `usage.py`
+itself stays read-only for this partition (`reads_only: foundation/observability/**`); it only reads
+the dict back out through `_bounded_hosts()` when it writes a usage line.
+
+**What is counted, and where.** `http_requests` comes from the REQUEST hook (`_record_request_sent`),
+which fires once per attempted send -- including a redirect hop and a resent request -- before httpx
+even calls the transport, so it counts every send whether or not one ever completes. The five status
+buckets (`http_2xx`/`http_3xx`/`http_4xx`/`http_429`/`http_5xx`) come from the RESPONSE hook
+(`_record_response`) instead, since only a completed send has a status to bucket.
+`transport_failures` comes from `fetch_bounded`'s own existing transport-retry loop (a caught
+`httpx.HTTPError`, no response ever arrives, so the response hook cannot see it); `backoff_seconds`
+from that same loop's sleep duration (before the sleep runs), and separately from
+`upstream_retry.py::retry_upstream`'s own ladder sleep when a caller names a `host=` (USGS's
+per-tile retry does; ArcGIS's `WFIGS_RETRY`/evacuation-zones' policy do not, since no single host is
+a fair charge for a page walk). `bytes_in` comes from `_read_bounded_body`, not from the response
+hook, because the hook fires when headers arrive and `fetch_bounded` streams the body afterward --
+metering the hook would count zero bytes on every streamed response; it is recorded in a
+`try`/`finally` so a mid-stream transport fault still charges whatever crossed the wire before it hit.
+`weighted_calls_metered` accrues only when the host's name contains `open-meteo.com`
+(`_open_meteo_weight_for_send`), via `usage.open_meteo_weight_for_url`, the same function
+`pipeline/direct/soil/source.py::_instrumented`'s `_count_http_request` hook coexists with on G0's own
+client (that hook APPENDS to `client.event_hooks["request"]` rather than replacing it -- see
+`upstream_client`'s docstring -- so G0's counter and this one both run on the same send).
+Every direct metering call in `fetch_bounded`/`_read_bounded_body` (as opposed to the two attached
+hooks, which simply are not there on an unmetered client) is additionally gated on
+`_client_is_metered(client)`, checked once per call against the CLIENT actually passed in rather than
+a fresh environment read -- this is what makes `PLANTGEO_UPSTREAM_TELEMETRY=off` genuinely inert
+mid-call rather than merely quiet at the two hooks.
+
+**Fail-open, all the way down.** Every metering side effect runs through `_meter()`, which catches
+`Exception` and counts it in a process-local `_meter_error_count` (a test seam, `meter_error_count()`)
+rather than letting a metering bug fail the send it instruments -- `test_raising_meter_never_fails_the_send`
+pins this by breaking `_host_entry` itself and asserting the fetch still succeeds. **`meter_errors` is
+NOT tracked per host** -- an earlier revision of this section claimed it lived inside `_host_entry`'s
+dict "faithfully, per host"; it does not, `_host_entry`'s populated fields (above) have no
+`meter_errors` key at all, and `_meter_error_count`/`meter_error_count()` is the ONLY place this
+process's fault count exists, a single process-wide integer with no host attached to it. `last_send_outcome`
+and `last_send_at`, by contrast, genuinely ARE tracked per host inside `_host_entry`'s dict and DO reach
+the written line's `hosts{}` map (`usage._bounded_hosts()` returns those entries verbatim). **Known,
+accepted gap:** `usage.py::_write_turn_line`/`_write_operator_line` hardcode the process-level,
+host-independent `meter_errors`, `last_send_outcome` and `last_send_at` fields of the WRITTEN usage
+line to `0`/`None` literally -- they do not read anything back from this module, and for
+`meter_errors` there is nothing per-host to fall back to reading even if they did. Wiring
+`meter_errors` in particular needs a module-level counter this module already keeps
+(`meter_error_count()`) plumbed into a usage-line field, which needs an edit inside
+`foundation/observability/usage.py`, `reads_only` for this partition (`o3-ingest-meter`'s `note`
+field: "FORBIDDEN: every other ingest/* file and pipeline/** except burn_severity/capture.py" plus
+the reads-only list) -- recorded here, and as a named follow-up for whichever slice next owns
+`usage.py`, rather than worked around by stepping outside this slice's file boundary.
+
+**`PLANTGEO_UPSTREAM_TELEMETRY`** (default on; a trimmed, casefolded value in `1`/`true`/`yes`/`on`/
+`enabled` also means on; every other value -- an off synonym or an unrecognised typo alike -- means
+off, the switch's safe state on a garbled input, design SOF2-10): gates BOTH the `event_hooks`
+attachment and the default `User-Agent` header, so "off" is not merely "the counters stop" -- the
+client `upstream_client`/`upstream_sync_client` construct is `httpx.AsyncClient`/`httpx.Client` with
+neither kwarg (nor `transport=`, when the caller supplied none) passed at all, which is exactly what
+the pre-GL-2 call looked like (`test_telemetry_off_is_byte_for_byte_legacy`). The switch is read at
+CLIENT-CONSTRUCTION time (once per `upstream_client`/`upstream_sync_client` call), not per-request,
+so a long-lived client does not need to be rebuilt for a mid-life flip. Unlike GL-1's own
+`bootstrap.parse_switch`, an unrecognised value here does NOT fall back to the default -- it resolves
+to off specifically, which is why `upstream_telemetry_enabled` tests membership in
+`bootstrap._SWITCH_ON_VALUES` directly rather than calling `parse_switch`.
+
+**WQ-5 identification.** `default_user_agent()` builds
+`plantgeo-agri-data-service/<agri_data_service.__version__>+<RAILWAY_GIT_COMMIT_SHA[:7]>` (falling
+back to the literal string `unknown` when that env var is unset -- development and most test runs),
+plus `(+<contact>)` only when `PLANTGEO_UPSTREAM_CONTACT` is set. The whole build is inside a
+`try`/`except` that falls back to the bare product name and counts a meter error on ANY failure
+(design §2.1: the resolver must never be the reason a send fails), and the contact itself is passed
+through `_sanitize_contact`, which drops everything outside printable ASCII -- an accented contact
+used to raise `UnicodeEncodeError` inside the client constructor, and an embedded CR/LF used to make
+h11 raise `LocalProtocolError` on every send, before this existed. The agent is attached as the
+CLIENT's default `User-Agent` header, which httpx overrides with any per-request `headers=` of the
+same name (case-insensitively) -- so NWS (`ingest/sensors.py::nws_request_headers`) keeps
+identifying itself however it already does, unaffected by this default. **MTBS's own raw client is
+ON the allow-list, not off it** (`ingest/mtbs.py`, `tests/test_no_raw_http_clients.py`) and keeps its
+own separate `USER_AGENT` constant, also unaffected; `pipeline/direct/burn_severity/capture.py`, by
+contrast, now goes through `upstream_sync_client` and DOES send this default (it sets no header of
+its own), which is new as of this slice -- before GL-2 it built a raw client with no identifying
+header at all.
+
+**The 20-per-host log cap** (design §1.8): `_should_log_source_event` lets the first 20
+`plantgeo_source_request_retry`/`plantgeo_source_request_failed` lines per host per process through
+structlog and silently swallows the rest -- the per-host COUNTERS still update every time regardless,
+so the cap only bounds log volume, never the audit.
+
+**`upstream_sync_client`** exists solely because `pipeline/direct/burn_severity/capture.py`'s
+`_capture_snapshot` streams its own per-request timeout inside a plain `with` block, never inside an
+event loop, so it cannot use the async `upstream_client`. It is a thin sync mirror: same telemetry
+gate, same hook pair (sync-shaped), same default User-Agent, and the same test-only `transport=`
+keyword (BUI2-12). Unlike `upstream_client` it does not default `follow_redirects`/pin
+`max_redirects`/set connection `limits`, because burn-severity's own manifest-replay contract needs
+`follow_redirects=False` and `trust_env=False` exactly, and no other caller exists yet to justify a
+second set of opinionated defaults.
+
+**Raw-client guard allow-list is stale against the CURRENT tree, by one slice's worth of drift.**
+`tests/test_no_raw_http_clients.py`'s allow-list is built from design §2.1's list plus four entries
+NOT in that design record: `pipeline/direct/soil_properties/{capture,maintain,verify}.py` and
+`pipeline/direct/soil_survey/__main__.py`, all of which landed in commit `56467bd4` (2026-09-27, the
+day before `o3-ingest-meter`) and all of which construct a raw `httpx.Client()`. None of those four
+files is inside this partition's `owns`/`reads_only` list (`pipeline/**` outside
+`burn_severity/capture.py` is explicitly FORBIDDEN), so they cannot be moved onto
+`upstream_sync_client` here without stepping outside the file boundary. They are allow-listed with a
+comment explaining why, rather than silently dropped from the guard's scope -- the guard would
+otherwise either false-fail on files this slice cannot fix, or (worse) go quiet on them by narrowing
+its own scan. Whoever next owns `pipeline/direct/soil_properties/**`/`soil_survey/**` should either
+wire them through the metered factory or leave the allow-list entry with its own comment explaining
+why not.
+
 ## policy.py
 
 The bounded-ingestion contract from `ingestion-jobs.ts:70-94`: `INGEST_BBOX` is `west,south,east,north`, spans are capped at 30° of longitude and 20° of latitude, and anything malformed or oversized raises. **An unset bbox is `skipped`, not `failed`** — no bbox configured is a deployment that has not been pointed at a region yet, not a broken upstream, and turning it into a failure would make every unconfigured environment's cron run red.
@@ -110,6 +225,30 @@ Ports `getStreamflowGauges` (`usgs-water.ts:163-209`) and `runWaterDroughtIngest
 **`run_water_ingestion_job` reports `details.sentinel_gauges`, and that is the second metric to watch.** `fetch_streamflow_gauges` returns `StreamflowFetch(gauges, sentinel_sites)` rather than a bare list for exactly this reason — nothing counted the drops, which is why six days of corruption went unnoticed. The count is deduped by site, because tiles overlap at their shared edges and a boundary gauge would otherwise be counted once per tile. It sits beside `wall_clock_identities` and answers the opposite half of the same question: how many gauges NWIS named but did not measure. `records_seen` deliberately still counts only gauges that reported a discharge, since that is the number `truncated` and `resolve_max_source_records` are both measured against; a sentinel-only gauge was never a writable record. **No other numeric field on the forward path can carry the sentinel**, and this was checked rather than assumed: `percentile` is a hardcoded `None` on both paths (NWIS instantaneous values never supply one), gauge height is `parameterCd=00065` and the query pins `parameterCd=00060`, and `lat`/`lon` come from `geoLocation.geogLocation` as site metadata rather than as measurements.
 
 Note the narrower guard this sits next to: `build_streamflow_gauge_identity` (`identity.py`) still raises `MissingNativeKeyError` on a genuinely absent `siteNo`. That is not T5 — it is the identity layer refusing to synthesise a key component itself; the *fetcher* here is what supplies the wall-clock fallback explicitly, deliberately, and only for `updatedAt`, never for `siteNo`. `build_gauge_write` catches that error and drops the one gauge rather than propagating it or keying it on an empty prefix — a second, separate deviation from the TypeScript, recorded below.
+
+**The forward per-tile retry (`o3-ingest-meter`, GL-2, design §3.2B point 8).** `_fetch_tile` now
+wraps its single `fetch_bounded_json` call in `retry_upstream` under `USGS_STREAMFLOW_RETRY` (3
+attempts, a 45s wall-clock ceiling, `probe_attempts=1`). The ceiling is deliberately shorter than
+`NWIS_ARCHIVE_BOUNDS`' own 90s per-request timeout would tolerate, which is why the policy wraps
+`_fetch_tile` (forward, `NWIS_BOUNDS` = 25s) and NOT `_fetch_daily_values_tile` (archive): a single
+slow archive request could already exceed 45s on its own, so retrying it under this ceiling would
+either never get a second attempt or would abandon a request that was still legitimately in flight.
+**All-or-nothing is kept exactly as before:** `asyncio.gather` still has no `return_exceptions=True`,
+so one tile exhausting its retries still fails the whole fetch, even when every other tile answered
+cleanly (`test_all_or_nothing_is_kept_when_one_of_two_tiles_fails_permanently`). **The failed tile is
+named, and the ORIGINAL exception type is kept:** `_fetch_tile` catches the broad `UpstreamError`
+(not only `retry_upstream`'s `UpstreamHttpError`/`UpstreamPayloadError` -- `UpstreamTimeoutError`/
+`UpstreamTransportError` reach here too, since `retry_upstream` never catches either and previously
+left them completely unnamed) and calls `error.add_note(f"USGS NWIS tile {tile}")` before a bare
+`raise`. This is `add_note`, not a rebuilt `UpstreamPayloadError(f"... {error}")` (GL-2's original
+shape): a persistent 429/503 keeps its `.status` for a caller that classifies on it, and the tile
+name lives in `error.__notes__`, never in `str(error)` -- a test asserts it with a small
+`_notes_contain` helper, not `pytest.raises(..., match=...)`. `fetch_streamflow_gauges` gained
+matching `probe`/`sleep`/`host` keywords that thread straight through to every `_fetch_tile` call
+(`host=NWIS_HOST` names the retry ladder's own backoff sleep against `waterservices.usgs.gov` --
+design §2.1's third `backoff_seconds` origin, `ingest/http.py::record_backoff_seconds`); `probe`/
+`sleep` mirror the `sleep`/`monotonic` seam `wfigs.py`'s own retry call sites already use for the
+same reason (a test must never sleep for real).
 
 ## Deliberate deviations from the TypeScript
 
@@ -763,6 +902,32 @@ during an upstream outage is the one failure mode it must not have -- so it has 
 evacuation zones) and `MAX_PAGES` (200 vs 20) are unchanged and remain module constants. `MAX_ATTEMPTS` is still each module's own
 name, now bound to its policy's ladder, so the two cannot silently disagree about a budget they were meant to share. A source that
 genuinely needs a narrower budget passes its own `RetryLadder` rather than writing a third loop.
+
+**`probe_attempts` (`o3-ingest-meter`, GL-2, design SOF2-07).** `UpstreamRetryPolicy` gained a fourth
+field, `probe_attempts: int | None = None`, and `retry_upstream` gained a `probe: bool = False`
+keyword: when both are set (`probe=True` AND the policy names a `probe_attempts`), that number
+replaces `ladder.max_attempts` as the loop's budget for this call only -- the ladder's backoff shape
+and wall-clock ceiling are unchanged, only the attempt count shrinks. Every existing policy
+(`WFIGS_RETRY`, `evacuation_zones`'s own) leaves `probe_attempts` unset, so passing `probe=True`
+against them is a no-op by construction (`test_evacuation_zones_policy_keeps_six_attempts_under_probe`)
+-- this is deliberate: GL-6's single-attempt probe turn is a per-source opt-in, not a global behaviour
+change, and a source with no opinion about probing should not have to grow one. USGS's own
+`usgs_nwis.py::USGS_STREAMFLOW_RETRY` is the one policy that sets `probe_attempts=1` today. Neither
+`probe` nor `probe_attempts` does anything yet outside a direct unit-test call: no caller in this Wave
+reads `PLANTGEO_TURN_PROBE` or passes `probe=True` from a real turn, since that wiring is GL-6's job
+(`execution/exit_classes.py` and the planner thread the flag through, per design §3.2B point 2) and
+GL-6 lands only if Q1 or Q2 answers yes. This slice builds the MECHANISM the field needs to exist for,
+observably inert until then -- the same pattern `exit_class` already follows at GL-3 (design §3.1).
+
+**`host` (`o3-ingest-meter`, GL-2, design §2.1's third `backoff_seconds` origin).** `retry_upstream`
+also gained a `host: str | None = None` keyword: when a caller names one, every survived retry's
+sleep is charged to that host's `backoff_seconds` via `ingest/http.py::record_backoff_seconds` (a
+public, fail-open wrapper around the same `_meter`/`_record_backoff` this module's own transport-retry
+loop uses -- `upstream_retry.py` has no reads/owns claim on `http.py`'s private counter state, so this
+is the one seam it calls through). `usgs_nwis.py::_fetch_tile` passes `host=NWIS_HOST`
+(`waterservices.usgs.gov`) for exactly this reason; `wfigs.py`/`evacuation_zones.py`'s page-walk
+retries leave it unset, since a multi-page walk has no one host to blame a sleep on and this loop then
+counts nothing, as it always has.
 
 ## arcgis.py
 

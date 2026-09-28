@@ -9,7 +9,7 @@
         "tests",
         "scripts"
       ],
-      "duration_seconds": 0.081,
+      "duration_seconds": 0.082,
       "name": "format",
       "status": "pass"
     },
@@ -21,7 +21,7 @@
         "tests",
         "scripts"
       ],
-      "duration_seconds": 0.059,
+      "duration_seconds": 0.079,
       "name": "lint",
       "status": "pass"
     },
@@ -31,7 +31,7 @@
         "src",
         "scripts"
       ],
-      "duration_seconds": 3.281,
+      "duration_seconds": 2.301,
       "name": "mypy",
       "status": "pass"
     },
@@ -40,21 +40,21 @@
         "pytest",
         "-q"
       ],
-      "duration_seconds": 212.337,
+      "duration_seconds": 209.044,
       "name": "pytest",
       "status": "pass"
     }
   ],
   "digest_domain": "plantgeo.agri-data-service.quality-receipt.v2",
-  "digest_file_count": 996,
-  "generated_at": "2026-09-28T02:59:10.586144Z",
+  "digest_file_count": 999,
+  "generated_at": "2026-09-28T04:20:58.970152Z",
   "schema_version": 3,
   "tools": {
     "mypy": "mypy 2.3.0 (compiled: yes)",
     "pytest": "pytest 9.1.1",
-    "python": "3.12.10",
+    "python": "3.12.9",
     "ruff": "ruff 0.15.22",
     "uv": "uv 0.9.18 (0cee76417 2025-12-16)"
   },
-  "tree_digest": "sha256:295d7582cb9040888641806a9ee7948ad4272c1b18c7e3ad58a447fa9481402e"
+  "tree_digest": "sha256:597d74fbb99771f852d6a06c648fcfc3941c72307d5faf210e34313c74656335"
 }

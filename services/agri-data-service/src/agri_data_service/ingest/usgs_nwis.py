@@ -9,7 +9,13 @@ from typing import TYPE_CHECKING, Final
 
 import structlog
 
-from agri_data_service.ingest.http import UpstreamBounds, UpstreamPayloadError, fetch_bounded_json, upstream_client
+from agri_data_service.ingest.http import (
+    UpstreamBounds,
+    UpstreamError,
+    UpstreamPayloadError,
+    fetch_bounded_json,
+    upstream_client,
+)
 from agri_data_service.ingest.identity import (
     USGS_NWIS_PRODUCER,
     MissingNativeKeyError,
@@ -31,9 +37,10 @@ from agri_data_service.ingest.source import (
     HistoryCapability,
     HistoryWindow,
 )
+from agri_data_service.ingest.upstream_retry import RetryLadder, UpstreamRetryPolicy, retry_upstream
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Awaitable, Callable, Mapping, Sequence
 
     import httpx
 
@@ -58,6 +65,10 @@ DEFAULT_WATER_GAUGES_LAYER_NAME: Final = WATER_GAUGES_LAYER.default
 STREAMFLOW_QUERY_TEMPLATE: Final = (
     "https://waterservices.usgs.gov/nwis/iv/?format=json&bBox={tile}&parameterCd=00060&siteType=ST&siteStatus=active"
 )
+
+# Named once so the forward tile retry's backoff (design §2.1's third `backoff_seconds` origin) is
+# counted against the same host `ingest/http.py`'s own request meter already resolves from the URL.
+NWIS_HOST: Final = "waterservices.usgs.gov"
 
 USGS_STREAMFLOW_ARCHIVE_SOURCE: Final = "usgs-streamflow-archive"
 
@@ -126,6 +137,25 @@ NWIS_BOUNDS: Final = UpstreamBounds(max_bytes=8 * 1024 * 1024, timeout_seconds=2
 MAX_TILE_DEGREES: Final = 4.0
 MAX_CONCURRENT_TILE_REQUESTS: Final = 4
 NWIS_COORDINATE_DIGITS: Final = 6
+
+# The forward per-tile retry policy (plan 0W.2 GL-2, design §5/§3.2B point 8): a 429/5xx tile answer
+# gets 3 attempts inside a 45s wall-clock ceiling -- shorter than NWIS_BOUNDS' own 25s single-request
+# timeout would allow two full attempts to run, never the archive path's much slower NWIS_ARCHIVE_BOUNDS
+# window, which is why this policy wraps `_fetch_tile` (forward) only, never `_fetch_daily_values_tile`
+# (archive). `probe_attempts=1` is GL-6's single-attempt probe turn budget; observational until then.
+USGS_TILE_RETRY_MAX_ATTEMPTS: Final = 3
+USGS_TILE_RETRY_WALL_CLOCK_CEILING_SECONDS: Final = 45.0
+USGS_TILE_PROBE_ATTEMPTS: Final = 1
+
+USGS_STREAMFLOW_RETRY: Final = UpstreamRetryPolicy(
+    event="usgs_nwis_upstream_retry",
+    exhausted_message="USGS NWIS tile retry loop ended without a response",
+    ladder=RetryLadder(
+        max_attempts=USGS_TILE_RETRY_MAX_ATTEMPTS,
+        wall_clock_ceiling_seconds=USGS_TILE_RETRY_WALL_CLOCK_CEILING_SECONDS,
+    ),
+    probe_attempts=USGS_TILE_PROBE_ATTEMPTS,
+)
 
 ABOVE_NORMAL_PERCENTILE: Final = 75
 NORMAL_PERCENTILE: Final = 25
@@ -354,32 +384,70 @@ def parse_daily_value_series(series: Mapping[str, object]) -> list[dict[str, obj
     return records
 
 
-async def _fetch_tile(client: httpx.AsyncClient, tile: str, gate: asyncio.Semaphore) -> list[object]:
-    """Fetch one tile's NWIS time series; a tile failure propagates rather than yielding partial coverage."""
-    async with gate:
-        payload = await fetch_bounded_json(
-            client,
-            STREAMFLOW_QUERY_TEMPLATE.format(tile=tile),
-            NWIS_BOUNDS,
-            {"Accept": "application/json"},
+async def _fetch_tile(
+    client: httpx.AsyncClient,
+    tile: str,
+    gate: asyncio.Semaphore,
+    *,
+    probe: bool = False,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> list[object]:
+    """Fetch one tile's NWIS time series under the USGS retry policy; a tile failure propagates, NAMED.
+
+    All-or-nothing is kept: a tile that exhausts its retries still raises (through `asyncio.gather`
+    with no `return_exceptions`), so the caller never reports partial coverage as a complete answer --
+    the retry only buys a 429/5xx tile a second chance before that happens, it does not soften the
+    all-or-nothing contract.
+
+    The ORIGINAL exception type is re-raised, with the tile attached as a note rather than folded into
+    a rebuilt `UpstreamPayloadError` message: a persistent 429/503 must keep its `.status` (a caller
+    classifying the failure needs it), and `UpstreamTimeoutError`/`UpstreamTransportError` -- which
+    `retry_upstream` never catches, so they were previously reaching here unnamed -- must be named too.
+    """
+
+    async def attempt_once() -> list[object]:
+        async with gate:
+            payload = await fetch_bounded_json(
+                client,
+                STREAMFLOW_QUERY_TEMPLATE.format(tile=tile),
+                NWIS_BOUNDS,
+                {"Accept": "application/json"},
+            )
+        if not isinstance(payload, dict):
+            return []
+        value = payload.get("value")
+        if not isinstance(value, dict):
+            return []
+        time_series = value.get("timeSeries")
+        return time_series if isinstance(time_series, list) else []
+
+    try:
+        return await retry_upstream(
+            attempt_once,
+            USGS_STREAMFLOW_RETRY,
+            context={"tile": tile},
+            probe=probe,
+            host=NWIS_HOST,
+            sleep=sleep,
         )
-    if not isinstance(payload, dict):
-        return []
-    value = payload.get("value")
-    if not isinstance(value, dict):
-        return []
-    time_series = value.get("timeSeries")
-    return time_series if isinstance(time_series, list) else []
+    except UpstreamError as error:
+        error.add_note(f"USGS NWIS tile {tile}")
+        raise
 
 
 async def fetch_streamflow_gauges(
     client: httpx.AsyncClient,
     bbox: str,
     now: datetime | None = None,
+    *,
+    probe: bool = False,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> StreamflowFetch:
     """Fetch NWIS time series across every tile of a bbox, deduped by site number, as gauge records."""
     gate = asyncio.Semaphore(MAX_CONCURRENT_TILE_REQUESTS)
-    tile_results = await asyncio.gather(*(_fetch_tile(client, tile, gate) for tile in tile_bbox(bbox)))
+    tile_results = await asyncio.gather(
+        *(_fetch_tile(client, tile, gate, probe=probe, sleep=sleep) for tile in tile_bbox(bbox))
+    )
 
     gauges: list[dict[str, object]] = []
     seen_site_numbers: set[str] = set()

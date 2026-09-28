@@ -17,6 +17,7 @@ from agri_data_service.ingest.http import (
     HTTP_TOO_MANY_REQUESTS,
     UpstreamHttpError,
     UpstreamPayloadError,
+    record_backoff_seconds,
 )
 
 if TYPE_CHECKING:
@@ -58,11 +59,23 @@ DEFAULT_RETRY_LADDER: Final = RetryLadder()
 
 @dataclass(frozen=True, slots=True)
 class UpstreamRetryPolicy:
-    """One upstream's retry contract: its operator-facing log event, its exhausted-loop message, and its ladder."""
+    """One upstream's retry contract: its operator-facing log event, its exhausted-loop message, and its ladder.
+
+    `probe_attempts` is a per-policy opt-in (design SOF2-07, §3.2B point 8): `None` (every existing
+    policy) means a probe turn retries exactly as a normal turn does. A source that names a smaller
+    budget for its GL-6 single-attempt probe turns (USGS's `usgs_nwis.py::USGS_STREAMFLOW_RETRY` sets
+    it to 1) sets this field instead of writing a second policy or a second loop.
+    """
 
     event: str
     exhausted_message: str
     ladder: RetryLadder = DEFAULT_RETRY_LADDER
+    probe_attempts: int | None = None
+
+    def __post_init__(self) -> None:
+        """Refuse a `probe_attempts` that could never make a single attempt (design SOF2-07)."""
+        if self.probe_attempts is not None and self.probe_attempts < 1:
+            raise ValueError("probe_attempts must be None or >= 1")
 
 
 def is_retryable_failure(error: Exception) -> bool:
@@ -74,23 +87,35 @@ def is_retryable_failure(error: Exception) -> bool:
     )
 
 
-async def retry_upstream[ResultT](
+async def retry_upstream[ResultT](  # noqa: PLR0913 - attempt, policy, context, probe, host and the two test clocks are distinct
     attempt_once: Callable[[], Awaitable[ResultT]],
     policy: UpstreamRetryPolicy,
     *,
     context: Mapping[str, object] = NO_RETRY_CONTEXT,
+    probe: bool = False,
+    host: str | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> ResultT:
-    """Repeat one bounded upstream attempt, retrying only a busy or transient failure inside the policy's budget."""
+    """Repeat one bounded upstream attempt, retrying only a busy or transient failure inside the policy's budget.
+
+    `probe=True` selects `policy.probe_attempts` in place of `policy.ladder.max_attempts` when the
+    policy names one (design SOF2-07); every policy that leaves `probe_attempts` unset (the default)
+    retries exactly as a normal turn does, probe or not. `host`, when a caller names one, counts this
+    ladder's own sleep against `ingest/http.py`'s per-host `backoff_seconds` (design §2.1 lists this
+    loop as one of that field's three origins, alongside `fetch_bounded`'s transport-retry sleep and
+    the runner's own 429 series) -- a caller with no reasonable single host to blame (context spans
+    several) simply leaves it unset and this loop counts nothing, exactly as it did before.
+    """
     ladder = policy.ladder
+    max_attempts = policy.probe_attempts if probe and policy.probe_attempts is not None else ladder.max_attempts
     started_at = monotonic()
-    for attempt in range(ladder.max_attempts):
+    for attempt in range(max_attempts):
         try:
             return await attempt_once()
         except (UpstreamHttpError, UpstreamPayloadError) as error:
             elapsed_seconds = monotonic() - started_at
-            out_of_attempts = attempt == ladder.max_attempts - 1
+            out_of_attempts = attempt == max_attempts - 1
             out_of_time = elapsed_seconds >= ladder.wall_clock_ceiling_seconds
             if out_of_attempts or out_of_time or not is_retryable_failure(error):
                 raise
@@ -101,5 +126,8 @@ async def retry_upstream[ResultT](
                 error=str(error),
                 elapsed_seconds=round(elapsed_seconds, 2),
             )
-            await sleep(ladder.delay_seconds(attempt))
+            delay = ladder.delay_seconds(attempt)
+            if host is not None:
+                record_backoff_seconds(host, delay)
+            await sleep(delay)
     raise UpstreamPayloadError(policy.exhausted_message)  # pragma: no cover - unreachable.

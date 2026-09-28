@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import pytest
 
+from agri_data_service.foundation.observability import usage
+from agri_data_service.ingest import upstream_retry
 from agri_data_service.ingest.http import UpstreamHttpError, UpstreamPayloadError, UpstreamTimeoutError
 from agri_data_service.ingest.upstream_retry import (
     DEFAULT_RETRY_LADDER,
@@ -123,3 +125,89 @@ async def test_a_source_may_narrow_the_ladder_without_re_inventing_it() -> None:
     with pytest.raises(UpstreamHttpError):
         await retry_upstream(attempt_once, policy, sleep=_no_sleep)
     assert len(attempts) == 2
+
+
+# --- probe_attempts (design SOF2-07, plan 0W.2 GL-2): a per-policy opt-in ---------------------------
+
+
+async def test_evacuation_zones_policy_keeps_six_attempts_under_probe() -> None:
+    """A policy that never sets `probe_attempts` (evacuation-zones'/WFIGS' shape) is unaffected by `probe=True`."""
+    policy = UpstreamRetryPolicy(
+        event="evacuation_zones_upstream_retry",
+        exhausted_message="evacuation zones retry loop ended without a response",
+    )
+    attempts: list[int] = []
+
+    async def attempt_once() -> str:
+        attempts.append(1)
+        raise UpstreamPayloadError("Too many requests.")
+
+    with pytest.raises(UpstreamPayloadError):
+        await retry_upstream(attempt_once, policy, probe=True, sleep=_no_sleep)
+    assert len(attempts) == DEFAULT_RETRY_LADDER.max_attempts
+
+
+async def test_usgs_policy_uses_one_attempt_under_probe() -> None:
+    """A policy with `probe_attempts=1` (USGS's) gives up after one attempt only when `probe=True`."""
+    policy = UpstreamRetryPolicy(
+        event="usgs_nwis_upstream_retry",
+        exhausted_message="USGS NWIS tile retry loop ended without a response",
+        probe_attempts=1,
+    )
+    attempts: list[int] = []
+
+    async def attempt_once() -> str:
+        attempts.append(1)
+        raise UpstreamHttpError(503)
+
+    with pytest.raises(UpstreamHttpError):
+        await retry_upstream(attempt_once, policy, probe=True, sleep=_no_sleep)
+    assert len(attempts) == 1
+
+    # Off probe, the same policy still uses its ladder's ordinary budget.
+    attempts.clear()
+    with pytest.raises(UpstreamHttpError):
+        await retry_upstream(attempt_once, policy, sleep=_no_sleep)
+    assert len(attempts) == DEFAULT_RETRY_LADDER.max_attempts
+
+
+# --- backoff accounting (design §2.1's third `backoff_seconds` origin, plan 0W.2 GL-2) --------------
+
+
+async def test_a_named_hosts_ladder_sleeps_are_counted_as_backoff_seconds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two survived retries against a named host add exactly their two delays to that host's counter."""
+    monkeypatch.setattr(usage, "_host_counters", {})
+    monkeypatch.setattr(upstream_retry.random, "random", lambda: 0.5)  # pins the 0.5-1.5x jitter at 1.0x
+    policy = UpstreamRetryPolicy(
+        event="test_upstream_retry_backoff",
+        exhausted_message="test retry loop ended without a response",
+        ladder=RetryLadder(max_attempts=3, base_delay_seconds=1.0, max_delay_seconds=20.0),
+    )
+    calls = {"n": 0}
+
+    async def attempt_once() -> str:
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise UpstreamHttpError(503)
+        return "ok"
+
+    result = await retry_upstream(attempt_once, policy, sleep=_no_sleep, host="example.test")
+
+    assert result == "ok"
+    # delay_seconds(0) = 1.0 * 2**0 * 1.0 = 1.0; delay_seconds(1) = 1.0 * 2**1 * 1.0 = 2.0.
+    assert usage._host_counters["example.test"]["backoff_seconds"] == pytest.approx(3.0)
+
+
+async def test_a_ladder_with_no_named_host_counts_nothing() -> None:
+    """A caller that never names a host (no reasonable single host to blame) counts no backoff, as before."""
+    policy = UpstreamRetryPolicy(
+        event="test_upstream_retry_backoff",
+        exhausted_message="test retry loop ended without a response",
+        ladder=RetryLadder(max_attempts=2),
+    )
+
+    async def attempt_once() -> str:
+        raise UpstreamHttpError(503)
+
+    with pytest.raises(UpstreamHttpError):
+        await retry_upstream(attempt_once, policy, sleep=_no_sleep)

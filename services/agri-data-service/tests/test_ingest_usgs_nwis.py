@@ -9,19 +9,40 @@ The forward `geo.features` job this file also covered (`run_water_ingestion_job`
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from typing import TYPE_CHECKING
 
+import httpx
 import pytest
 
+from agri_data_service.ingest import http as http_module
+from agri_data_service.ingest.http import (
+    UpstreamBounds,
+    UpstreamHttpError,
+    UpstreamTransportError,
+    upstream_client,
+)
 from agri_data_service.ingest.policy import PACIFIC_NORTHWEST_COVERAGE_BBOX
 from agri_data_service.ingest.usgs_nwis import (
+    USGS_TILE_RETRY_MAX_ATTEMPTS,
     build_gauge_write,
     classify_condition,
+    fetch_streamflow_gauges,
     format_tile_ordinate,
     is_missing_value_sentinel,
     parse_gauge,
     tile_bbox,
 )
 from agri_data_service.pipeline.direct.water_gauges import tables_by_publisher_day
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+_EMPTY_SERIES_PAYLOAD = {"value": {"timeSeries": []}}
+
+
+async def _no_sleep(_delay: float) -> None:
+    """Skip the retry ladder's backoff wait so a tile-retry test runs at full speed."""
+
 
 # Captured 2026-08-03 read-only from production `geo.features` on the `water-gauges` layer.
 RECORDED_GAUGE_EXTERNAL_ID = "05014500:2026-08-02T18:30:00.000-06:00"
@@ -198,3 +219,122 @@ def test_an_earlier_real_reading_is_preferred_over_a_trailing_sentinel_in_the_sa
 # drives the SAME `fetch_streamflow_gauges` (which owns the tiling and the dedupe) and `build_gauge_write`
 # still covered above, so the parsing and identity contract is unchanged and is asserted here; the
 # writer-level behaviour is asserted against the Parquet writer in `tests/parquet/`.
+
+
+# --- the USGS forward per-tile retry policy (plan 0W.2 GL-2) ----------------------------------------
+
+_ONE_TILE_BBOX = "-113,46,-111,48"  # tile_bbox() returns exactly one tile for this span
+_TWO_TILE_BBOX = "-125,42,-117,46"  # tile_bbox() returns exactly two tiles for this span
+
+
+def _sequenced_handler(responses: list[httpx.Response]) -> Callable[[httpx.Request], httpx.Response]:
+    remaining = list(responses)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return remaining.pop(0)
+
+    return handler
+
+
+def _always(status: int) -> Callable[[httpx.Request], httpx.Response]:
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(status)
+
+    return handler
+
+
+_USGS_TEST_BOUNDS = UpstreamBounds(max_bytes=1024 * 1024, timeout_seconds=5.0)
+
+
+def _notes_contain(error: BaseException, text: str) -> bool:
+    """True when `text` appears in one of the exception's own `add_note`d notes (never `str(error)`)."""
+    return any(text in note for note in getattr(error, "__notes__", None) or ())
+
+
+async def test_a_transient_tile_failure_recovers_within_the_usgs_retry_budget() -> None:
+    handler = _sequenced_handler([httpx.Response(503), httpx.Response(200, json=_EMPTY_SERIES_PAYLOAD)])
+    async with upstream_client(_USGS_TEST_BOUNDS, transport=httpx.MockTransport(handler)) as client:
+        result = await fetch_streamflow_gauges(client, _ONE_TILE_BBOX, sleep=_no_sleep)
+    assert result.gauges == []
+
+
+async def test_a_persistent_tile_failure_raises_the_original_type_naming_the_failed_tile() -> None:
+    async with upstream_client(_USGS_TEST_BOUNDS, transport=httpx.MockTransport(_always(503))) as client:
+        with pytest.raises(UpstreamHttpError) as excinfo:
+            await fetch_streamflow_gauges(client, _ONE_TILE_BBOX, sleep=_no_sleep)
+    assert excinfo.value.status == httpx.codes.SERVICE_UNAVAILABLE
+    assert _notes_contain(excinfo.value, _ONE_TILE_BBOX)
+
+
+async def test_a_non_retryable_tile_status_fails_on_the_first_attempt() -> None:
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        calls["n"] += 1
+        return httpx.Response(400)
+
+    async with upstream_client(_USGS_TEST_BOUNDS, transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(UpstreamHttpError) as excinfo:
+            await fetch_streamflow_gauges(client, _ONE_TILE_BBOX, sleep=_no_sleep)
+    assert calls["n"] == 1
+    assert _notes_contain(excinfo.value, _ONE_TILE_BBOX)
+
+
+async def test_probe_mode_gives_a_failing_tile_exactly_one_attempt() -> None:
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        calls["n"] += 1
+        return httpx.Response(503)
+
+    async with upstream_client(_USGS_TEST_BOUNDS, transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(UpstreamHttpError):
+            await fetch_streamflow_gauges(client, _ONE_TILE_BBOX, probe=True, sleep=_no_sleep)
+    assert calls["n"] == 1
+
+
+async def test_a_persistent_tile_failure_uses_the_full_usgs_attempt_budget_outside_probe() -> None:
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        calls["n"] += 1
+        return httpx.Response(503)
+
+    async with upstream_client(_USGS_TEST_BOUNDS, transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(UpstreamHttpError):
+            await fetch_streamflow_gauges(client, _ONE_TILE_BBOX, sleep=_no_sleep)
+    assert calls["n"] == USGS_TILE_RETRY_MAX_ATTEMPTS
+
+
+async def test_all_or_nothing_is_kept_when_one_of_two_tiles_fails_permanently() -> None:
+    """A tile that never recovers still fails the whole gather, even though its sibling tile answers cleanly."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bbox = request.url.params.get("bBox", "")
+        if bbox.startswith("-125,"):
+            return httpx.Response(503)
+        return httpx.Response(200, json=_EMPTY_SERIES_PAYLOAD)
+
+    async with upstream_client(_USGS_TEST_BOUNDS, transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(UpstreamHttpError) as excinfo:
+            await fetch_streamflow_gauges(client, _TWO_TILE_BBOX, sleep=_no_sleep)
+    assert _notes_contain(excinfo.value, "-125,42,-121,46")
+
+
+async def test_a_transport_failure_names_the_failing_tile(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`UpstreamTransportError` is never caught by `retry_upstream`, so the tile note has to survive that path too."""
+    monkeypatch.setattr(http_module, "TRANSPORT_RETRY_BASE_SECONDS", 0.0)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        raise httpx.ConnectError("refused")
+
+    async with upstream_client(_USGS_TEST_BOUNDS, transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(UpstreamTransportError) as excinfo:
+            await fetch_streamflow_gauges(client, _ONE_TILE_BBOX, sleep=_no_sleep)
+    assert _notes_contain(excinfo.value, _ONE_TILE_BBOX)
