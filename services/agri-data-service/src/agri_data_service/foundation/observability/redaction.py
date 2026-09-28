@@ -235,50 +235,75 @@ def _dsn_password(value: str) -> str | None:
 class _SecretCache:
     """Same rationale as `_DotenvCache`: attribute mutation avoids a `global` rebind."""
 
-    __slots__ = ("key", "loaded", "values")
+    __slots__ = ("dotenv_pairs", "environment", "loaded", "longest_first", "registered", "values")
 
     def __init__(self) -> None:
-        self.key: tuple[object, ...] | None = None
+        self.environment: tuple[tuple[str, str], ...] = ()
+        self.dotenv_pairs: dict[str, str] | None = None
+        self.registered: frozenset[str] = frozenset()
         self.values: dict[str, str] = {}
+        self.longest_first: tuple[tuple[str, str], ...] = ()
         self.loaded = False
 
 
 _secret_cache = _SecretCache()
 
 
-def _collected_secret_values() -> dict[str, str]:
-    """Build the name -> value map the exact-value scrub substitutes, memoized until the inputs move.
+def _refreshed_secret_cache() -> _SecretCache:
+    """Rebuild the secret map only when its raw inputs moved (see AGENTS.md "Redaction", the cache).
 
-    The cache key is the (name, value) pairs that actually matter -- the environment's secret-named
-    entries, the `.env` pairs (themselves mtime-cached by `_dotenv_pairs`) and the registered set --
-    so a test's `monkeypatch.setenv` invalidates it exactly the same call it takes effect on, while a
-    chatty steady-state process (dozens of redactions per second) stops re-parsing and re-scanning on
-    every single line.
+    The fingerprint is the raw inputs themselves, compared for equality, never hashed: `os.environ`'s
+    items as one tuple, the `.env` dict `_dotenv_pairs` returns (a new object only when the file's
+    mtime moves) and the registered set.
     """
     dotenv_pairs = _dotenv_pairs()
+    environment = tuple(os.environ.items())
+    registered = frozenset(_registered_secret_values)
+    cache = _secret_cache
+    if (
+        cache.loaded
+        and cache.dotenv_pairs is dotenv_pairs
+        and cache.registered == registered
+        and cache.environment == environment
+    ):
+        return cache
+    collected = _collect_secret_values(environment, dotenv_pairs)
+    cache.values = collected
+    # `sorted` is stable, so equal-length values keep `collected`'s own order, as they always have.
+    cache.longest_first = tuple(sorted(collected.items(), key=lambda item: len(item[1]), reverse=True))
+    cache.environment = environment
+    cache.dotenv_pairs = dotenv_pairs
+    cache.registered = registered
+    cache.loaded = True
+    return cache
+
+
+def _collected_secret_values() -> dict[str, str]:
+    """The name -> value map the exact-value scrub substitutes, memoized until the inputs move.
+
+    A test's `monkeypatch.setenv` still invalidates it on the very call it takes effect on, since the
+    environment's items are part of the fingerprint.
+    """
+    return _refreshed_secret_cache().values
+
+
+def _secret_pairs_longest_first() -> tuple[tuple[str, str], ...]:
+    """`_collected_secret_values`' items, longest value first -- the order the scrub substitutes in."""
+    return _refreshed_secret_cache().longest_first
+
+
+def _collect_secret_values(environment: tuple[tuple[str, str], ...], dotenv_pairs: dict[str, str]) -> dict[str, str]:
+    """The uncached build: name predicates, DSN passwords, `.env` pairs and the registered set."""
     env_items = tuple(
         sorted(
             (name, value)
-            for name, value in os.environ.items()
+            for name, value in environment
             if _is_secret_env_name(name) and len(value) >= _MIN_SECRET_VALUE_LENGTH
         )
     )
     dsn_env_items = tuple(
-        sorted(
-            (name, value)
-            for name, value in os.environ.items()
-            if _is_dsn_shaped_env_name(name) and _dsn_password(value)
-        )
+        sorted((name, value) for name, value in environment if _is_dsn_shaped_env_name(name) and _dsn_password(value))
     )
-    cache_key = (
-        env_items,
-        dsn_env_items,
-        tuple(sorted(dotenv_pairs.items())),
-        tuple(sorted(_registered_secret_values, key=len, reverse=True)),
-    )
-    if _secret_cache.loaded and _secret_cache.key == cache_key:
-        return _secret_cache.values
-
     collected: dict[str, str] = {}
     for name, value in env_items:
         collected[name] = value
@@ -297,10 +322,6 @@ def _collected_secret_values() -> dict[str, str]:
                 collected.setdefault(f"{name}:password", password)
     for index, value in enumerate(sorted(_registered_secret_values, key=len, reverse=True)):
         collected[f"registered:{index}"] = value
-
-    _secret_cache.values = collected
-    _secret_cache.key = cache_key
-    _secret_cache.loaded = True
     return collected
 
 
@@ -313,8 +334,13 @@ def exact_value_scrub(text: str) -> str:
     """
     if not text:
         return text
+    return _scrub_known_values(text, _secret_pairs_longest_first())
+
+
+def _scrub_known_values(text: str, secret_pairs: tuple[tuple[str, str], ...]) -> str:
+    """`exact_value_scrub` over an already-resolved, longest-first secret list."""
     result = text
-    for name, value in sorted(_collected_secret_values().items(), key=lambda item: len(item[1]), reverse=True):
+    for name, value in secret_pairs:
         if value and value in result:
             result = result.replace(value, f"[redacted:{name}]")
     return result
@@ -519,7 +545,13 @@ def _dedupe_key(existing: dict[object, object], key: object) -> object:
     return candidate
 
 
-def redact_value(obj: object, *, _depth: int = 0, leaf_limit: int | None = None) -> object:
+def redact_value(
+    obj: object,
+    *,
+    _depth: int = 0,
+    leaf_limit: int | None = None,
+    _secret_pairs: tuple[tuple[str, str], ...] | None = None,
+) -> object:
     """Recursively redact a JSON-safe structure: matching keys wholesale, every other string leaf.
 
     Non-string, non-container leaves (numbers, booleans, ``None``) pass through unchanged; a value
@@ -529,33 +561,37 @@ def redact_value(obj: object, *, _depth: int = 0, leaf_limit: int | None = None)
     review) -- while a key whose NAME matches `is_redacted_key` keeps its name and has only its value
     replaced, exactly as before. `leaf_limit`, when given, truncates each string leaf (via
     `truncate_leaf`) before the regex scrub, matching the per-leaf structlog pipeline's own 8 KiB
-    bound instead of only the whole-line 64 KiB one (`router.py` passes `LEAF_TRUNCATE_BYTES`).
+    bound instead of only the whole-line 64 KiB one (`router.py` passes `LEAF_TRUNCATE_BYTES`). The
+    live secret list is resolved once per top-level call and shared by every leaf and key below it.
     """
     if _depth > MAX_REDACTION_DEPTH:
         return DEPTH_LIMIT_PLACEHOLDER
+    secret_pairs = _secret_pairs if _secret_pairs is not None else _secret_pairs_longest_first()
     if isinstance(obj, dict):
         result: dict[object, object] = {}
         for key, value in obj.items():
             if is_redacted_key(key):
                 result[key] = REDACTED_PLACEHOLDER
                 continue
-            new_key = _redact_key_text(key, leaf_limit=leaf_limit) if isinstance(key, str) else key
+            new_key = (
+                _redact_string_leaf(key, leaf_limit=leaf_limit, secret_pairs=secret_pairs)
+                if isinstance(key, str)
+                else key
+            )
             new_key = _dedupe_key(result, new_key)
-            result[new_key] = redact_value(value, _depth=_depth + 1, leaf_limit=leaf_limit)
+            result[new_key] = redact_value(value, _depth=_depth + 1, leaf_limit=leaf_limit, _secret_pairs=secret_pairs)
         return result
     if isinstance(obj, list):
-        return [redact_value(item, _depth=_depth + 1, leaf_limit=leaf_limit) for item in obj]
+        return [
+            redact_value(item, _depth=_depth + 1, leaf_limit=leaf_limit, _secret_pairs=secret_pairs) for item in obj
+        ]
     if isinstance(obj, str):
-        return _redact_string_leaf(obj, leaf_limit=leaf_limit)
+        return _redact_string_leaf(obj, leaf_limit=leaf_limit, secret_pairs=secret_pairs)
     return obj
 
 
-def _redact_key_text(key: str, *, leaf_limit: int | None) -> str:
-    return _redact_string_leaf(key, leaf_limit=leaf_limit)
-
-
-def _redact_string_leaf(value: str, *, leaf_limit: int | None) -> str:
-    scrubbed = exact_value_scrub(value)
+def _redact_string_leaf(value: str, *, leaf_limit: int | None, secret_pairs: tuple[tuple[str, str], ...]) -> str:
+    scrubbed = _scrub_known_values(value, secret_pairs) if value else value
     if leaf_limit is not None:
         scrubbed = truncate_leaf(scrubbed, limit=leaf_limit)
     return _regex_scrub(scrubbed)

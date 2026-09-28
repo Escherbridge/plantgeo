@@ -92,9 +92,16 @@ otherwise). `describe_error` gives only the class name for `sqlalchemy`/`asyncpg
 `psycopg2` exceptions (matched by module name, never by `isinstance` -- `foundation` may not import
 any of them) and replaces the three `error=str(error)` sites in `routes/ops.py`. The exact-value
 scrub's own cost is now memoized (`_dotenv_pairs` by the file's mtime, `_collected_secret_values` by
-a cache key over the matching env/`.env`/registered values) rather than re-reading `.env` and
-re-scanning `os.environ` on every single redacted string -- measured at 7 `.env` reads per log line
-before this cache existed.
+a fingerprint of its raw inputs) rather than re-reading `.env` and re-scanning `os.environ` on every
+single redacted string -- measured at 7 `.env` reads per log line before the first cache existed.
+The fingerprint is the raw inputs themselves, compared for equality and never hashed, so a stale hit
+is impossible: `tuple(os.environ.items())`, the `.env` dict's identity (`_dotenv_pairs` returns a
+new object only when the mtime moves) and `frozenset` of the registered set. The first cache keyed on
+the FILTERED secret items, so every call still ran the name predicates, the DSN parse and three sorts
+over the whole environment -- about 0.46 ms a call here, 0.8 ms in production, paid once per string
+leaf. A hit now costs about 0.1 ms: reading `os.environ.items()` is the floor through the public API.
+The longest-first order `exact_value_scrub` substitutes in is cached with it, and `redact_value`
+resolves the list once per top-level call and shares it with every leaf and key below.
 
 ## Vocabulary is frozen
 
@@ -261,6 +268,50 @@ and a bare `[parameters:` line is always replaced regardless of block state. A f
 structured path falls back to line-wise `redact_for_log` over the already-bounded text; a fault in
 that fallback too drops the line and counts it -- redaction itself is never skipped to avoid a
 crash.
+
+### Admission before redaction
+
+The router decides whether a line survives BEFORE it redacts it (`_admit`, then redaction, then
+`_emit`). It used to redact every line first and only then apply the rate bucket and the ceilings,
+so a line the cap dropped still paid the full redaction cost of about 0.8 ms. Every line a lane child
+prints goes through this tee (GL-3), so a 100,000-line child spent over 60 s in the router alone,
+and a lane with a 60 s timeout that printed more than about 75,000 lines was killed as `hang`.
+Measured on a Windows dev machine over a 100,000-line mix of JSON and plain lines: 199 s before,
+1.6 s after (`test_router.py::test_a_100k_line_flood_...` bounds it at 10 s).
+
+- **The verdict uses only pre-redaction facts.** For JSON, the level is the parsed `level`, else
+  `_legacy_level`, else the stream default, and `never_dropped` comes from the unredacted `event`.
+  For non-JSON, the level is the stream default, or `warn` when the third-party prefix matches. The
+  prefix is matched on the text after the SQL-block state, held to the 16 KiB bound by `endpos`.
+- **A dropped line is counted, and it is never redacted or emitted.** It adds to
+  `log_lines_dropped` and triggers the one `plantgeo_child_log_truncated` event. The error, report
+  and `lane_turn` exemptions are unchanged.
+- **The SQL-block state still sees every non-JSON line, in order.** `_apply_sql_block_state` runs
+  before admission, so a dropped line can neither leak into the cut for a later line nor end it.
+  This holds whether that dropped line opens the block, continues it or closes it.
+- **The byte ceiling is checked twice, and charged once with the real size.** Before redaction,
+  `_admit` checks the bytes actually emitted so far plus the line's pre-redaction size (the raw
+  line for JSON, the SQL-cut text capped at 16 KiB for non-JSON). That check is not charged; it is a
+  cheap early reject once the ceiling is full. After redaction, `_emit` checks the real encoded
+  payload and charges that. The pre-redaction size alone is not a safe upper bound: redaction can
+  GROW a line (an 8-character secret becomes `[redacted:OPEN_METEO_API_KEY]`, and JSON re-encoding
+  can escape non-ASCII to 6 bytes a character). So the 1 MiB ceiling stays exact on what is
+  emitted. The one line that passes the pre-check and fails the exact check has been redacted for
+  nothing. It still holds the line-ceiling slot it was charged, so that waste is bounded by the line
+  ceilings too.
+- **Two accounting details changed with the order.** Before this change, a line the rate bucket
+  dropped still charged its redacted size to the byte ceiling. Now only emitted lines charge
+  bytes. The line ceilings still count every line that passes them, whether or not the bucket then
+  drops it, exactly as before.
+- **A fault after admission does not charge the line twice.** `route_line` carries a per-line
+  `_LineInFlight`, and `_fallback_redact` reuses the verdict the structured path already reached.
+  It admits the line itself only when the fault came first. It also redacts the SQL-cut text when
+  the non-JSON path got that far, so a fault inside an open `[SQL:` block falls back to the cut and
+  never to the raw line. The fallback payload now carries the same `event`/`level`/`stream` shape
+  as every other routed line.
+- **Stubs are still always admitted.** That covers a JSON line over 64 KiB and an unterminated
+  buffer over the reassembly cap. They skip every ceiling and are redacted unconditionally, as
+  before.
 
 **Test-name gap, documented rather than silently patched over:** plan 0W.1 and this design record's
 own §6.1 both describe `test_router.py` as "revision 1's eleven tests plus" five newly named ones,

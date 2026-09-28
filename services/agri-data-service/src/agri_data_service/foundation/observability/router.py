@@ -168,6 +168,43 @@ class RoutedLine(NamedTuple):
     payload: dict[str, object]
 
 
+class _Admission(NamedTuple):
+    """One line's verdict, reached from pre-redaction facts before any redaction runs."""
+
+    admitted: bool
+    level: str
+    # False for the never-dropped kinds and the stubs: they skip every ceiling, the byte one included.
+    capped: bool
+
+
+_ALWAYS_ADMITTED_WARN: Final = _Admission(admitted=True, level="warn", capped=False)
+
+
+class _LineInFlight:
+    """What `route_line` has already decided about one line, for `_fallback_redact` to reuse."""
+
+    __slots__ = ("admission", "raw_size", "text")
+
+    def __init__(self, raw_size: int) -> None:
+        self.raw_size = raw_size
+        self.admission: _Admission | None = None
+        # The non-JSON line after `_apply_sql_block_state`, once computed.
+        self.text: str | None = None
+
+
+def _ceiling_bucket(level: str) -> str:
+    if level == "debug":
+        return "debug"
+    return "error" if level == "error" else "non_error"
+
+
+def _encoded_length(payload: dict[str, object]) -> int:
+    try:
+        return len(json.dumps(payload, default=str).encode("utf-8"))
+    except (TypeError, ValueError):
+        return 0
+
+
 class _UsagePidState:
     """One pid's usage-open/usage-close pairing (design §1.6 point 2, last sentence)."""
 
@@ -218,7 +255,7 @@ class ChildLogRouter:
         self.routing_enabled = _routing_enabled_from_environment()
         self.routed: list[RoutedLine] = []
         # Per-attempt ceilings' running counters, and the in-progress SQL-block cut state per stream
-        # (design §1.6/§1.8; security review -- see `_within_ceiling` and `_scrub_non_json_line`).
+        # (design §1.6/§1.8; security review -- see `_admit`, `_emit` and `_apply_sql_block_state`).
         self._level_line_counts: dict[str, int] = {"debug": 0, "error": 0, "non_error": 0}
         self._total_bytes = 0
         self._sql_block_open: dict[Stream, bool] = {"stdout": False, "stderr": False}
@@ -253,27 +290,48 @@ class ChildLogRouter:
         """Process exactly one already-delimited line (the test seam; `feed` calls it per line)."""
         if not raw.strip():
             return
+        line = _LineInFlight(raw_size=len(raw))
         try:
-            self._route_line_unguarded(stream, raw)
+            self._route_line_unguarded(stream, raw, line)
         except Exception:  # a structured-path fault must never drop redaction
-            self._fallback_redact(stream, raw)
+            self._fallback_redact(stream, raw, line)
 
-    def _route_line_unguarded(self, stream: Stream, raw: bytes) -> None:
+    def _route_line_unguarded(self, stream: Stream, raw: bytes, line: _LineInFlight) -> None:
         if len(raw) > _JSON_LINE_MAX_BYTES:
             self._emit_output_stub(stream, raw)
             return
         text = raw.decode("utf-8", errors="replace")
         parsed = self._try_parse_json(text)
         if isinstance(parsed, dict):
-            self._handle_json_object(stream, parsed)
+            self._handle_json_object(stream, parsed, line)
             return
-        self._handle_non_json_line(stream, text)
+        self._handle_non_json_line(stream, text, line)
 
-    def _fallback_redact(self, stream: Stream, raw: bytes) -> None:
+    def _fallback_redact(self, stream: Stream, raw: bytes, line: _LineInFlight) -> None:
         try:
-            text = raw[:_NON_JSON_LINE_TRUNCATE_BYTES].decode("utf-8", errors="replace")
-            redacted = redaction.redact_for_log(text)
-            self._route(stream, _default_level_for_stream(stream), {"line": redacted, "attempt": self._attempt_id})
+            # Reuse a verdict the structured path already charged, so a fault after admission is
+            # never counted twice; admit here only when the fault came first.
+            admission = line.admission
+            if admission is None:
+                size_estimate = min(line.raw_size, _NON_JSON_LINE_TRUNCATE_BYTES)
+                admission = self._admit(
+                    _default_level_for_stream(stream), never_dropped=False, size_estimate=size_estimate
+                )
+            if not admission.admitted:
+                return
+            if line.text is not None:  # the SQL-block cut already ran for this line: honour it
+                bounded = line.text.encode("utf-8")[:_NON_JSON_LINE_TRUNCATE_BYTES]
+            else:
+                bounded = raw[:_NON_JSON_LINE_TRUNCATE_BYTES]
+            redacted = redaction.redact_for_log(bounded.decode("utf-8", errors="replace"))
+            payload: dict[str, object] = {
+                "event": events.EVENT_CHILD_OUTPUT,
+                "level": admission.level,
+                "attempt": self._attempt_id,
+                "stream": stream,
+                "line": redacted,
+            }
+            self._emit(stream, admission, payload)
         except Exception:  # the absolute last resort: drop it, counted
             self.log_lines_dropped += 1
 
@@ -287,7 +345,7 @@ class ChildLogRouter:
 
     # --- JSON objects (design §1.6 point 2) --------------------------------------------------------
 
-    def _handle_json_object(self, stream: Stream, parsed: dict[str, object]) -> None:
+    def _handle_json_object(self, stream: Stream, parsed: dict[str, object], line: _LineInFlight) -> None:
         event = parsed.get("event")
         if event in (events.EVENT_TURN_USAGE_OPEN, events.EVENT_TURN_USAGE):
             self._consume_usage_line(parsed)
@@ -304,6 +362,10 @@ class ChildLogRouter:
             # independent of what any test happens to assert).
             parsed.setdefault("level", _default_level_for_stream(stream))
         level = str(parsed.get("level") or _default_level_for_stream(stream))
+        never_dropped = isinstance(event, str) and event in _NEVER_DROPPED_EVENTS
+        admission = line.admission = self._admit(level, never_dropped=never_dropped, size_estimate=line.raw_size)
+        if not admission.admitted:
+            return
         # `leaf_limit` bounds each JSON string LEAF to the same 8 KiB the per-leaf structlog pipeline
         # uses, before the regex scrub -- previously only the whole 64 KiB LINE was bounded, so a
         # single oversized string leaf still reached the regex scrubs unbounded (security review).
@@ -311,7 +373,7 @@ class ChildLogRouter:
         if not isinstance(redacted, dict):  # pragma: no cover - redact_value(dict) always returns dict
             redacted = parsed
         redacted.setdefault("event", event if event is not None else events.EVENT_CHILD_OUTPUT)
-        self._route(stream, level, redacted)
+        self._emit(stream, admission, redacted)
 
     def _fill_turn_context(self, parsed: dict[str, object]) -> None:
         for env_name, field in _TURN_ENV_TO_FIELD.items():
@@ -385,18 +447,26 @@ class ChildLogRouter:
             return redaction.SQL_REDACTED_PLACEHOLDER
         return text
 
-    def _handle_non_json_line(self, stream: Stream, text: str) -> None:
-        text = self._apply_sql_block_state(stream, text)
+    def _handle_non_json_line(self, stream: Stream, text: str, line: _LineInFlight) -> None:
+        # Every line, dropped or not, passes through the SQL-block state first and in order, so a
+        # dropped line can neither leak into nor end the cut for a later surviving one.
+        text = line.text = self._apply_sql_block_state(stream, text)
+        # Levelled from the unredacted text: the prefix is anchored at the start of the line, and
+        # `endpos` holds the match to the same 16 KiB bound the emitted line is cut to.
+        if self.routing_enabled and _THIRD_PARTY_WARNING_PREFIX.match(text, 0, _NON_JSON_LINE_TRUNCATE_BYTES):
+            level = "warn"
+        else:
+            level = _default_level_for_stream(stream)
+        size_estimate = min(len(text), _NON_JSON_LINE_TRUNCATE_BYTES)
+        admission = line.admission = self._admit(level, never_dropped=False, size_estimate=size_estimate)
+        if not admission.admitted:
+            return
         # Pinned order (design §1.6 point 1): exact-value scrub over the whole line first, so a
         # secret that straddles the 16 KiB cut is already gone before the cut can leave its prefix
         # exposed; then the token-safe truncation; then the remaining regex-based scrubs.
         scrubbed = redaction.exact_value_scrub(text)
         truncated = redaction.truncate_leaf(scrubbed, limit=_NON_JSON_LINE_TRUNCATE_BYTES)
         redacted = redaction.redact_for_log(truncated)
-        if self.routing_enabled and _THIRD_PARTY_WARNING_PREFIX.match(redacted):
-            level = "warn"
-        else:
-            level = _default_level_for_stream(stream)
         # Both streams now carry the same shape (`event`, `stream`) -- a forwarded stderr line
         # previously had no `event` at all, breaking FR-30's envelope (security review).
         payload: dict[str, object] = {
@@ -406,7 +476,7 @@ class ChildLogRouter:
             "stream": stream,
             "line": redacted,
         }
-        self._route(stream, level, payload)
+        self._emit(stream, admission, payload)
 
     def _emit_output_stub(self, stream: Stream, raw: bytes) -> None:
         # Same pinned order as `_handle_non_json_line`: scrub the whole decoded line before slicing
@@ -423,24 +493,35 @@ class ChildLogRouter:
             "stream": stream,
             "preview": preview,
         }
-        self._route(stream, "warn", payload, always_admit=True)
+        self._emit(stream, _ALWAYS_ADMITTED_WARN, payload)
 
-    # --- Rate bucket, per-attempt ceilings and dispatch (design §1.6 point 4/5; §1.8) ---------------
+    # --- Admission, per-attempt ceilings and dispatch (design §1.6 point 4/5; §1.8) -----------------
+    # Admission runs BEFORE redaction, so a dropped line costs no redaction at all; see AGENTS.md
+    # "Child log router", "Admission before redaction".
 
-    def _within_ceiling(self, level: str, payload: dict[str, object]) -> bool:
-        """Enforce the per-attempt line/byte ceilings, independent of (and stricter than) the rate
-        bucket: an `error`-level line is exempt from the RATE bucket but still capped at
-        `_MAX_ERROR_LINES_PER_ATTEMPT` here (security review: unthrottled `error`-defaulted stderr
-        chatter -- a progress bar, GDAL output, a bare traceback with no `level` of its own -- was
-        the exact gap the rate bucket's own error exemption opened).
+    def _admit(self, level: str, *, never_dropped: bool, size_estimate: int) -> _Admission:
+        """Charge the per-attempt ceilings and the rate bucket from pre-redaction facts only.
+
+        Order: the byte ceiling (a pre-check -- the bytes actually emitted so far plus this line's
+        pre-redaction size, charged later in `_emit` with the real size), then the per-level line
+        ceiling (charged), then the rate bucket (charged; `error` is exempt from it). The ceilings are
+        independent of, and stricter than, the rate bucket: an `error`-level line skips the bucket but
+        is still capped at `_MAX_ERROR_LINES_PER_ATTEMPT` (security review: unthrottled
+        `error`-defaulted stderr chatter was the exact gap the bucket's own error exemption opened).
         """
-        try:
-            encoded_len = len(json.dumps(payload, default=str).encode("utf-8"))
-        except (TypeError, ValueError):
-            encoded_len = 0
-        if self._total_bytes + encoded_len > _MAX_TOTAL_BYTES_PER_ATTEMPT:
-            return False
-        bucket = "debug" if level == "debug" else ("error" if level == "error" else "non_error")
+        if never_dropped:
+            return _Admission(admitted=True, level=level, capped=False)
+        admitted = (
+            self._total_bytes + size_estimate <= _MAX_TOTAL_BYTES_PER_ATTEMPT
+            and self._charge_line_ceiling(level)
+            and (level == "error" or self._rate.allow())
+        )
+        if not admitted:
+            self._count_drop()
+        return _Admission(admitted=admitted, level=level, capped=True)
+
+    def _charge_line_ceiling(self, level: str) -> bool:
+        bucket = _ceiling_bucket(level)
         limit = {
             "debug": _MAX_DEBUG_LINES_PER_ATTEMPT,
             "error": _MAX_ERROR_LINES_PER_ATTEMPT,
@@ -449,26 +530,25 @@ class ChildLogRouter:
         if self._level_line_counts[bucket] >= limit:
             return False
         self._level_line_counts[bucket] += 1
-        self._total_bytes += encoded_len
         return True
 
-    def _route(self, stream: Stream, level: str, payload: dict[str, object], *, always_admit: bool = False) -> None:
+    def _emit(self, stream: Stream, admission: _Admission, payload: dict[str, object]) -> None:
+        """Stamp the envelope, enforce the byte ceiling on the REDACTED size, and dispatch."""
         payload.setdefault("timestamp", _iso_timestamp())
         payload.setdefault("service", _service_name())
         payload.setdefault("deploy", os.environ.get("RAILWAY_DEPLOYMENT_ID"))
-        event = payload.get("event")
-        never_dropped = event in _NEVER_DROPPED_EVENTS
-        if not always_admit and not never_dropped and not self._within_ceiling(level, payload):
-            self.log_lines_dropped += 1
-            self._maybe_emit_drop_notice()
-            return
-        exempt = always_admit or level == "error" or never_dropped
-        if not exempt and not self._rate.allow():
-            self.log_lines_dropped += 1
-            self._maybe_emit_drop_notice()
-            return
-        self.routed.append(RoutedLine(stream=stream, level=level, payload=payload))
+        if admission.capped:
+            encoded_len = _encoded_length(payload)
+            if self._total_bytes + encoded_len > _MAX_TOTAL_BYTES_PER_ATTEMPT:
+                self._count_drop()
+                return
+            self._total_bytes += encoded_len
+        self.routed.append(RoutedLine(stream=stream, level=admission.level, payload=payload))
         _dispatch_to_stream(stream, payload)
+
+    def _count_drop(self) -> None:
+        self.log_lines_dropped += 1
+        self._maybe_emit_drop_notice()
 
     def _maybe_emit_drop_notice(self) -> None:
         if self._drop_notice_emitted:

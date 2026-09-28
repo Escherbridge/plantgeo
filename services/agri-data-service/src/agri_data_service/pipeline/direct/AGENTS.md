@@ -1721,11 +1721,12 @@ asserting it here would fail on exactly the rows the merge was correct to drop. 
 shape, so the module was omitted rather than shipped empty, exactly as `weather_observations` argues.
 
 Executor lane `sensors-direct-forward`, **hourly at `:20`**. The writer flagged this as a real trade and the
-join decided it: one run fetches the full 6-day window, which self-heals across a missed tick at no extra
-HTTP cost, so the only thing frequency buys is freshness. Roughly hourly is NWS's own publication cadence, so
-a `:15`/`:30`-style sub-hourly slot would re-transfer the same mostly-unchanged six days several times an
-hour for no new readings, while a slower slot risks a day ageing out of retention unseen -- and that day is
-then unrecoverable. ACTIVE since 2026-09-07, with `parquet-sensors` retired and
+join decided it: since `83a41dff` (2026-09-28) a run asks each station only for the observations that can
+still change a published day (`sensors/watermark.py`, newest published report minus a 3 h overlap; a new
+station or a first run still gets the full 6-day window), which cut ~447 MB/day to an estimated ~85 MB at one
+run a day. A missed tick still self-heals, because an unsettled day widens the window. Roughly hourly is NWS's
+own publication cadence; a slower slot risks a day ageing out of retention unseen -- and that day is then
+unrecoverable. See `sensors/AGENTS.md`, "Fetch only what can still change a published block". ACTIVE since 2026-09-07, with `parquet-sensors` retired and
 `LANE_REGISTRY['sensors'].adapter` swapped to a source-direct refusal in the same wave -- no boundary
 day was ever cited, and none can be: this package ships no `backfill.py` and no
 `*_DIRECT_WRITER_START_DAY`. The gate that argument served has closed rather than been met.

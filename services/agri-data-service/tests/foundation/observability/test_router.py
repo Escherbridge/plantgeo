@@ -11,13 +11,17 @@ described behaviour; see this file's authoring report for that gap.
 from __future__ import annotations
 
 import json
+import time
+from collections import Counter
 from typing import TYPE_CHECKING
 
-from agri_data_service.foundation.observability import events, router
+import pytest
+
+from agri_data_service.foundation.observability import events, redaction, router
 from agri_data_service.foundation.observability.router import ChildLogRouter
 
 if TYPE_CHECKING:
-    import pytest
+    from collections.abc import Callable
 
 
 def _make(attempt_id: str = "attempt-1") -> ChildLogRouter:
@@ -235,3 +239,203 @@ def test_latest_last_send_outcome_wins_across_usage_lines() -> None:
     summary = child.usage_summary()
     assert summary["last_send_outcome"] == "429"
     assert summary["usage_complete"] is True
+
+
+# --- Admission before redaction: a dropped line costs no redaction (AGENTS.md "Child log router") --
+
+FLOOD_LINES = 100_000
+FLOOD_ERROR_EVERY = 1_000
+# Measured at 1.6 s for this flood on a Windows dev machine; the redact-then-cap order took 199 s.
+FLOOD_BUDGET_SECONDS = 10.0
+SECRET = "supersecretvalue123"
+
+
+def _ticking_clock() -> Callable[[], float]:
+    """One second later at every read, so the rate bucket always refills and only the ceilings bite."""
+    now = [0.0]
+
+    def tick() -> float:
+        now[0] += 1.0
+        return now[0]
+
+    return tick
+
+
+@pytest.fixture
+def dispatched(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
+    """Every payload the router hands either sink, in order."""
+    sent: list[dict[str, object]] = []
+    monkeypatch.setattr(router, "_default_stdout_sink", sent.append)
+    monkeypatch.setattr(router, "_default_stderr_sink", sent.append)
+    return sent
+
+
+def _child_output_lines(child: ChildLogRouter) -> list[object]:
+    return [line.payload.get("line") for line in child.routed if line.payload.get("event") == events.EVENT_CHILD_OUTPUT]
+
+
+def _exhaust_rate_bucket(child: ChildLogRouter, *, leave: int = 0) -> None:
+    for index in range(int(router._BURST_CAPACITY) - leave):
+        child.route_line("stdout", f"filler {index}".encode())
+
+
+def _raise(*_args: object, **_kwargs: object) -> None:
+    raise RuntimeError("boom")
+
+
+def test_a_100k_line_flood_is_fast_emits_only_the_ceiling_and_keeps_every_error_line(
+    monkeypatch: pytest.MonkeyPatch, dispatched: list[dict[str, object]]
+) -> None:
+    monkeypatch.setenv("OPEN_METEO_API_KEY", SECRET)
+    child = ChildLogRouter(attempt_id="flood", clock=_ticking_clock())
+    error_indexes = list(range(0, FLOOD_LINES, FLOOD_ERROR_EVERY))
+
+    started = time.perf_counter()
+    for index in range(FLOOD_LINES):
+        if index % FLOOD_ERROR_EVERY == 0:
+            child.route_line("stderr", _line({"event": "flood_step_failed", "level": "error", "index": index}))
+        elif index % 2:
+            child.route_line("stdout", _line({"event": "flood_progress", "index": index}))
+        else:
+            child.route_line("stdout", f"progress {index} of the flood".encode())
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < FLOOD_BUDGET_SECONDS, f"the router took {elapsed:.1f}s over {FLOOD_LINES} lines"
+    levels = Counter(line.level for line in child.routed)
+    assert levels["info"] == router._MAX_NON_ERROR_LINES_PER_ATTEMPT
+    assert [payload["index"] for payload in dispatched if payload.get("level") == "error"] == error_indexes
+    truncations = [payload for payload in dispatched if payload["event"] == events.EVENT_CHILD_LOG_TRUNCATED]
+    assert len(truncations) == 1
+    assert len(dispatched) == len(child.routed) == levels["info"] + len(error_indexes) + 1
+    assert child.log_lines_dropped == FLOOD_LINES - levels["info"] - len(error_indexes)
+
+
+def test_a_secret_on_a_line_past_the_ceiling_is_never_redacted_or_emitted(
+    monkeypatch: pytest.MonkeyPatch, dispatched: list[dict[str, object]]
+) -> None:
+    monkeypatch.setenv("OPEN_METEO_API_KEY", SECRET)
+    child = ChildLogRouter(attempt_id="attempt-1", clock=_ticking_clock())
+    for index in range(router._MAX_NON_ERROR_LINES_PER_ATTEMPT):
+        child.route_line("stdout", f"filler {index}".encode())
+    for index in range(router._MAX_ERROR_LINES_PER_ATTEMPT):
+        child.route_line("stderr", f"error filler {index}".encode())
+    assert child.log_lines_dropped == 0
+
+    redaction_calls: list[str] = []
+    for name in ("exact_value_scrub", "redact_for_log", "redact_value"):
+        original = getattr(redaction, name)
+
+        def spy(
+            *args: object, _name: str = name, _original: Callable[..., object] = original, **kwargs: object
+        ) -> object:
+            redaction_calls.append(_name)
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(redaction, name, spy)
+
+    over_the_ceiling: list[tuple[router.Stream, bytes]] = [
+        ("stdout", f"plain leak {SECRET}".encode()),
+        ("stdout", _line({"event": "x", "level": "info", "detail": SECRET, SECRET: 1})),
+        ("stderr", f"Traceback leak {SECRET}".encode()),
+        ("stderr", _line({"event": "y", "level": "error", "url": f"https://h/?apikey={SECRET}"})),
+    ]
+    for stream, raw in over_the_ceiling:
+        child.route_line(stream, raw)
+
+    assert child.log_lines_dropped == len(over_the_ceiling)
+    assert redaction_calls == [], "a line the ceiling drops is never redacted"
+    assert SECRET not in json.dumps([line.payload for line in child.routed]) + json.dumps(dispatched)
+    assert [payload["event"] for payload in dispatched].count(events.EVENT_CHILD_LOG_TRUNCATED) == 1
+
+
+def test_an_sql_block_carried_across_dropped_lines_still_cuts_the_next_surviving_line(
+    dispatched: list[dict[str, object]],
+) -> None:
+    clock = [0.0]
+    child = ChildLogRouter(attempt_id="attempt-1", clock=lambda: clock[0])
+    _exhaust_rate_bucket(child, leave=1)
+    child.route_line("stdout", b"psycopg.errors.DataError: bad value [SQL: SELECT * FROM t WHERE k = %(k)s")
+    dropped_continuations = [b"  AND owner = 'DROPPED-SQL-BODY-1'", b"  AND api_token = 'DROPPED-SQL-BODY-2'"]
+    for raw in dropped_continuations:
+        child.route_line("stdout", raw)
+    assert child.log_lines_dropped == len(dropped_continuations)
+    clock[0] += 10.0  # the bucket refills; the block is still open
+    child.route_line("stdout", b"  AND password = 'SURVIVING-SQL-BODY-3'")
+    child.route_line("stdout", b"Traceback (most recent call last):")
+    child.route_line("stdout", b"after the block")
+
+    opened, continued, closed, after = _child_output_lines(child)[-4:]
+    assert opened == f"psycopg.errors.DataError: bad value {redaction.SQL_REDACTED_PLACEHOLDER}"
+    assert continued == redaction.SQL_REDACTED_PLACEHOLDER
+    assert (closed, after) == ("Traceback (most recent call last):", "after the block")
+    rendered = json.dumps(dispatched)
+    for marker in ("DROPPED-SQL-BODY-1", "DROPPED-SQL-BODY-2", "SURVIVING-SQL-BODY-3", "SELECT"):
+        assert marker not in rendered
+
+
+def test_an_sql_block_opened_on_a_dropped_line_still_cuts_the_next_surviving_line(
+    dispatched: list[dict[str, object]],
+) -> None:
+    clock = [0.0]
+    child = ChildLogRouter(attempt_id="attempt-1", clock=lambda: clock[0])
+    _exhaust_rate_bucket(child)
+    child.route_line("stdout", b"psycopg.errors.UniqueViolation: duplicate key [SQL: INSERT INTO t VALUES (%(v)s)")
+    assert child.log_lines_dropped == 1
+    clock[0] += 10.0
+    child.route_line("stdout", b"  VALUES ('SURVIVING-AFTER-A-DROPPED-OPEN')")
+
+    assert _child_output_lines(child)[-1] == redaction.SQL_REDACTED_PLACEHOLDER
+    assert "SURVIVING-AFTER-A-DROPPED-OPEN" not in json.dumps(dispatched)
+
+
+def test_the_byte_ceiling_is_charged_with_the_redacted_size_not_the_raw_one(
+    monkeypatch: pytest.MonkeyPatch, dispatched: list[dict[str, object]]
+) -> None:
+    """Redaction can GROW a line -- an 8-character secret becomes `[redacted:OPEN_METEO_API_KEY]` --
+    so the pre-redaction size only pre-checks the ceiling; what is charged is what is emitted."""
+    short_secret = "s3cretv1"
+    monkeypatch.setenv("OPEN_METEO_API_KEY", short_secret)
+    child = ChildLogRouter(attempt_id="attempt-1", clock=_ticking_clock())
+    repeated = " ".join([short_secret] * 4)
+    raw_lines = [
+        _line({"event": "grows", "level": "info", **{f"k{k}": repeated for k in range(300)}}) for _ in range(60)
+    ]
+    assert sum(len(raw) for raw in raw_lines) < router._MAX_TOTAL_BYTES_PER_ATTEMPT, "the raw sizes alone would all fit"
+
+    for raw in raw_lines:
+        child.route_line("stdout", raw)
+
+    emitted_sizes = [
+        len(json.dumps(payload, default=str).encode("utf-8")) for payload in dispatched if payload["event"] == "grows"
+    ]
+    assert sum(emitted_sizes) <= router._MAX_TOTAL_BYTES_PER_ATTEMPT
+    assert sum(emitted_sizes) > router._MAX_TOTAL_BYTES_PER_ATTEMPT - max(emitted_sizes), "filled, not undershot"
+    assert child.log_lines_dropped == len(raw_lines) - len(emitted_sizes)
+    assert short_secret not in json.dumps(dispatched)
+
+
+def test_a_redaction_fault_after_admission_falls_back_without_charging_the_line_twice(
+    monkeypatch: pytest.MonkeyPatch, dispatched: list[dict[str, object]]
+) -> None:
+    monkeypatch.setenv("OPEN_METEO_API_KEY", SECRET)
+    monkeypatch.setattr(router.redaction, "redact_value", _raise)
+    child = ChildLogRouter(attempt_id="attempt-1", clock=_ticking_clock())
+    for index in range(router._MAX_NON_ERROR_LINES_PER_ATTEMPT + 1):
+        child.route_line("stdout", _line({"event": "x", "level": "info", "index": index, "detail": SECRET}))
+
+    fallen_back = [payload for payload in dispatched if "line" in payload]
+    assert len(fallen_back) == router._MAX_NON_ERROR_LINES_PER_ATTEMPT, "each line took exactly one ceiling slot"
+    assert child.log_lines_dropped == 1
+    assert SECRET not in json.dumps(dispatched)
+
+
+def test_a_fault_inside_an_open_sql_block_falls_back_to_the_cut_not_the_raw_line(
+    monkeypatch: pytest.MonkeyPatch, dispatched: list[dict[str, object]]
+) -> None:
+    child = _make()
+    child.route_line("stderr", b"psycopg.errors.DataError: bad value [SQL: SELECT 1")
+    monkeypatch.setattr(router.redaction, "truncate_leaf", _raise)
+    child.route_line("stderr", b"  WHERE owner = 'INSIDE-THE-BLOCK'")
+
+    assert child.routed[-1].payload["line"] == redaction.SQL_REDACTED_PLACEHOLDER
+    assert "INSIDE-THE-BLOCK" not in json.dumps(dispatched)

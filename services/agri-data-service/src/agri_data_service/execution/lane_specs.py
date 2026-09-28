@@ -620,13 +620,13 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
         selection_policy="one rolling-window poll, merge-published into every day bucket it touched, newest first",
         timeout_seconds=int(SENSORS_DEFAULT_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS,
         description=(
-            "Direct NOAA NWS forward writer for sensors. One poll fetches the FULL rolling window every "
-            "run (SENSORS_MAX_DAYS = NWS_OBSERVATION_RETENTION.days + 1, seven buckets), which "
-            "self-heals across a missed tick at no extra HTTP cost: observation_url issues one request "
-            "per station whether a window is asked for or not. HOURLY AT :20 IS A DECIDED TRADE, not a "
-            "default -- roughly hourly is NWS's own publication cadence, so a :15/:30-style sub-hourly "
-            "slot would re-transfer the same mostly-unchanged six days several times an hour for no new "
-            "readings, while a slower slot risks a day ageing out of NWS's rolling retention unseen, "
+            "Direct NOAA NWS forward writer for sensors. One poll merges into up to seven day buckets "
+            "(SENSORS_MAX_DAYS = NWS_OBSERVATION_RETENTION.days + 1), but each station asks NWS only for "
+            "observations that can still change a published day (sensors/watermark.py: newest published "
+            "report minus a 3 h overlap; a new station or first run gets the full window), so a missed "
+            "tick still self-heals. HOURLY AT :20 IS A DECIDED TRADE, not a default -- roughly hourly is "
+            "NWS's own publication cadence, while a slower slot risks a day ageing out of NWS's rolling "
+            "retention unseen, "
             "which loses it from the source forever. Like weather-observations, this package ships no "
             "*_DIRECT_WRITER_START_DAY and no backfill.py, so no writer_floor was guessed without a boundary "
             "day to cite. ACTIVE since 2026-09-07; the adapter became a source-direct refusal once "

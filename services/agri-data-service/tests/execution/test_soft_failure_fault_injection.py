@@ -156,10 +156,9 @@ FAULT_CASES: Final = [
         ),
         id="zero-fetches",
     ),
-    # The parent redacts every line before the router's ceilings drop it (GL-2's env scan, ~0.8 ms a
-    # line on the author's Windows host), so draining 100,000 lines takes over a minute: the budget is
-    # widened so this case measures flood CONTAINMENT, not the host's redaction throughput.
-    pytest.param(FaultCase(GENERIC, FLOOD_SCRIPT, "ok", None, timeout_seconds=900), id="100k-flood-lines"),
+    # The default 60 s budget: the router decides admission before redacting, so the ~99,800 lines
+    # its ceilings drop cost almost nothing (router.py::_admit; 100k lines ~1.6 s, was ~199 s).
+    pytest.param(FaultCase(GENERIC, FLOOD_SCRIPT, "ok", None), id="100k-flood-lines"),
     pytest.param(
         FaultCase(GENERIC, SELF_KILL_SCRIPT, "code", "lane_hold"),
         id="self-sigkill",
