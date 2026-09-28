@@ -535,8 +535,16 @@ async def run(args: argparse.Namespace) -> int:
     fetched_at = datetime.now(UTC)
     run_id = args.run_id or f"sensors-direct-forward-{fetched_at.strftime('%Y%m%dT%H%M%SZ')}"
     availability = AvailabilityExtensionTally()
+    # Opened before the poll, not after: the per-station request windows are read from z13 (see
+    # `watermark.py`), so a run with no object-store credentials configured now fails before it calls
+    # NWS at all. A bucket that IS configured but fails mid-read still surfaces inside the poll (as a
+    # widened, never a skipped, request -- see `watermark.py::read_sensors_fetch_plan`), not here.
+    credentials = settings.require_object_store()
+    store = ObjectStore(BotoObjectStoreBackend.from_credentials(credentials), prefix=settings.object_store_prefix)
     async with upstream_client(OBSERVATION_BOUNDS) as client:
-        poll = await poll_recent_sensor_readings(client, args.bbox, now=fetched_at, max_records=args.max_records)
+        poll = await poll_recent_sensor_readings(
+            client, args.bbox, now=fetched_at, max_records=args.max_records, store=store
+        )
 
     all_tables = direct_sensor_tables(poll.writes)
     tables = _newest_day_buckets(all_tables, max_days=args.max_days)
@@ -545,6 +553,9 @@ async def run(args: argparse.Namespace) -> int:
         run_id=run_id,
         fetched_at=fetched_at.isoformat(),
         stations_polled=poll.stations_polled,
+        stations_watermarked=poll.stations_watermarked,
+        stations_unavailable=poll.stations_unavailable,
+        days_unreadable=poll.days_unreadable,
         records_seen=poll.records_seen,
         writes_selected=len(poll.writes),
         rejected=poll.rejected,
@@ -571,8 +582,6 @@ async def run(args: argparse.Namespace) -> int:
         )
         return 0
 
-    credentials = settings.require_object_store()
-    store = ObjectStore(BotoObjectStoreBackend.from_credentials(credentials), prefix=settings.object_store_prefix)
     availability_storage = BotoAvailabilityStorage.from_settings()
     database_url = settings.require_local_source_loader_database_url()
     results: list[ForwardDayResult] = []
