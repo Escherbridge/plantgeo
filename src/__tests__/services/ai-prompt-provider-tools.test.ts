@@ -143,6 +143,35 @@ describe('provider tool complexity budget (2026-09-28 schema_too_complex inciden
   });
 });
 
+/** Every `maxItems` in a schema tree; the bisect's trigger is a medium bound over an enum array. */
+function maxItemsBounds(node: unknown, found: number[] = []): number[] {
+  if (Array.isArray(node)) {
+    for (const item of node) maxItemsBounds(item, found);
+  } else if (node !== null && typeof node === 'object') {
+    for (const [key, value] of Object.entries(node)) {
+      if (key === 'maxItems' && typeof value === 'number') found.push(value);
+      else maxItemsBounds(value, found);
+    }
+  }
+  return found;
+}
+
+describe('Gemini forced-call decoding states (2026-09-28 bisect, AGENTS.md §gemini-forced-call-states)', () => {
+  it('offers Gemini no array bound above one item on any tool, the report included', () => {
+    const tools = asProviderTools(providerFunctionTools(incidentToolSet(), roundOneReportSchema(), DEFAULT_MODEL));
+    const bounds = tools.flatMap((tool) => maxItemsBounds(tool.function.parameters));
+    expect(bounds.every((bound) => bound <= 1)).toBe(true);
+    const goals = (tools.find((tool) => tool.function.name === 'search_environmental_strategies')
+      ?.function.parameters.properties as Record<string, { description?: string }>).goals;
+    expect(goals.description).toContain('Maximum item count: 6.');
+  });
+
+  it('keeps the catalogue bounds for a non-Gemini model, so the projection is Gemini-only', () => {
+    const [offered] = asProviderTools(providerFunctionTools([agriTool('search_environmental_strategies')], {}, 'openai/gpt-4.1-mini'));
+    expect(maxItemsBounds(offered.function.parameters)).toContain(6);
+  });
+});
+
 describe('provider-facing catalogue schemas', () => {
   it('omits only the server-owned literature arguments from the request the loop actually sends', async () => {
     vi.stubEnv('OPENROUTER_MODEL', '');
@@ -165,18 +194,19 @@ describe('provider-facing catalogue schemas', () => {
     const sentByName = new Map(sent.tools.map((tool) => [tool.function.name, tool.function.parameters]));
     for (const { function: tool } of AGRI_CATALOGUE_56467BD4) {
       const parameters = sentByName.get(tool.name);
+      // DEFAULT_MODEL is Gemini, so every tool also carries the bounds-as-instructions projection.
       if (!isStrategyKnowledgeTool(tool.name)) {
-        expect(parameters, tool.name).toEqual(tool.parameters);
+        expect(parameters, tool.name).toEqual(geminiReportSchema(tool.parameters));
         continue;
       }
       const catalogueProperties = tool.parameters.properties as Record<string, unknown>;
       const expectedProperties = Object.fromEntries(Object.entries(catalogueProperties)
         .filter(([key]) => !(SERVER_OWNED_LITERATURE_ARGUMENTS as readonly string[]).includes(key)));
-      expect(parameters, tool.name).toEqual({
+      expect(parameters, tool.name).toEqual(geminiReportSchema({
         ...tool.parameters,
         properties: expectedProperties,
         ...(Array.isArray(tool.parameters.required) ? { required: tool.parameters.required.filter((key: unknown) => key !== 'site_profile' && key !== 'region') } : {}),
-      });
+      }));
     }
     expect(sentByName.get('search_environmental_strategies')).not.toHaveProperty('properties.site_profile');
     expect(sentByName.get('search_strategy_research_findings')).not.toHaveProperty('properties.region');

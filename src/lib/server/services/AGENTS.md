@@ -242,6 +242,28 @@ now carries `toolComplexity` (`ai-provider-diagnostics.ts::providerToolComplexit
 computed from that round's actual tool list, so a catalogue that regrows past this budget in
 production shows up in the logs immediately rather than only in this frozen fixture.
 
+**Correction (same day):** the "suspected trigger" above was disproven. With `soil_properties_at_point`
+hidden (agri b258a97b) and this budget met (85 properties, 144 enum values, 60 constraints logged
+live), Gemini still refused. See §gemini-forced-call-states. The budget stays useful as a size
+tripwire, but it is not the refusal's cause.
+
+### gemini-forced-call-states
+
+The 2026-09-28 refusal, bisected live against OpenRouter in 39 calls
+(`.omc/research/incident-20260928/gemini-bisect.md`). Gemini's text: "The specified schema produces a
+constraint that has too many states for serving".
+- **Trigger:** `tool_choice: 'required'` plus an enum array bounded by a medium `maxItems`. That is
+  agri's `goals`, `land_use` and `fire_phase` filters on the literature tools: 12 values,
+  `maxItems: 6`.
+- **What does not trigger it:** no bound, `maxItems: 1`, or `tool_choice: 'auto'`. The total enum or
+  constraint count does not matter.
+- **Fix:** `ai-prompt.ts::providerFunctionTools` now gives EVERY tool the `geminiReportSchema`
+  projection for a Gemini model, not only the report. Bounds become description instructions.
+  - Agri's pydantic validation still enforces `max_length=6` on the call, and the report's zod
+    parse is unchanged.
+  - Non-Gemini models get the catalogue as published.
+  - `ai-prompt-provider-tools.test.ts` pins "no `maxItems` above 1 on any Gemini tool".
+
 ### strategy-knowledge
 
 `search_environmental_strategies`, `get_environmental_strategies` and

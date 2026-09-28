@@ -474,14 +474,22 @@ function providerEvidenceTool(tool: AgentTool): AgentTool {
   return { ...tool, input_schema: inputSchema };
 }
 
-/** The `tools` array one completion round sends; pinned by a complexity budget test, see AGENTS.md §provider-tool-budget. */
+/**
+ * The `tools` array one completion round sends; pinned by a complexity budget test, see AGENTS.md
+ * §provider-tool-budget. For Gemini every tool gets the bounds-as-instructions projection, not only
+ * the report: a forced call over an enum array with a medium `maxItems` has too many decoding states
+ * (incident 2026-09-28, AGENTS.md §gemini-forced-call-states).
+ */
 function providerFunctionTools(
   tools: readonly AgentTool[], reportSchema: Record<string, unknown>, model: string,
 ): OpenAI.Chat.Completions.ChatCompletionTool[] {
+  const forGemini = GEMINI_REPORT_MODELS.has(model);
   return tools.map((tool) => {
-    if (tool !== REPORT_TOOL && tool !== GENERATE_REMEDIATION_REPORT_TOOL) return asFunctionTool(providerEvidenceTool(tool));
-    return asFunctionTool({ ...tool, input_schema: GEMINI_REPORT_MODELS.has(model)
-      ? geminiReportSchema(reportSchema) : reportSchema });
+    if (tool !== REPORT_TOOL && tool !== GENERATE_REMEDIATION_REPORT_TOOL) {
+      const evidenceTool = providerEvidenceTool(tool);
+      return asFunctionTool(forGemini ? { ...evidenceTool, input_schema: geminiReportSchema(evidenceTool.input_schema) } : evidenceTool);
+    }
+    return asFunctionTool({ ...tool, input_schema: forGemini ? geminiReportSchema(reportSchema) : reportSchema });
   });
 }
 
