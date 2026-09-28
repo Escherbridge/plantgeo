@@ -377,6 +377,11 @@ export function SoilDetails({
   const soilSurveyUnavailable = soilSurvey?.availability === "unavailable";
   const soilSurveyLaneNotPublished =
     soilSurveyUnavailable && (soilSurvey?.reason ?? "").endsWith("_lane_not_published");
+  // The admitted-release port's own zoom gate (soil-survey S3/S4): the backend serves exactly
+  // one geometry rung, z13, and refuses honestly below it rather than degrading to an average --
+  // see `environmental.ts#getSoilSurvey`. Distinguished from the generic "unavailable" fallback
+  // below so the caption can say "zoom in" instead of naming a feed gap that is not one.
+  const soilSurveyZoomIn = soilSurveyUnavailable && soilSurvey?.reason === "soil_survey_zoom_in";
   const soilSurveyCount = soilSurvey?.features.length ?? 0;
   // Map units SDA did serve whose geometry this reader could not parse. They are dropped
   // rather than drawn at a guessed outline, so the ground under them paints blank -- a
@@ -494,13 +499,27 @@ export function SoilDetails({
             </p>
           )}
 
-          {/* Any other unavailable reason. No producer emits one today -- `getSoilSurvey` is
-              an unconditional stub -- so this is a fallback, not a live branch: it names the
-              reason code rather than a provider, because the copy that used to sit here blamed
-              USDA Soil Data Access for a fault no code path could have asked it to produce.
-              Rendering nothing would paint the view like surveyed-and-empty ground, which is
-              the one reading an unavailable answer must never get. */}
-          {soilSurveyUnavailable && !soilSurveyLaneNotPublished && (
+          {/* Below the one native rung this port ever serves (z13): an honest "zoom in", not a
+              feed gap and not an averaged view -- the admitted-release backend never merges
+              rows, so there is nothing coarser to draw here at all. */}
+          {soilSurveyZoomIn && (
+            <p
+              role="status"
+              aria-live="polite"
+              className="rounded-md border border-sky-500/40 bg-sky-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
+            >
+              Zoom in to see survey map units — the SSURGO release publishes only its native,
+              most-detailed boundaries, and this view is below that zoom.
+            </p>
+          )}
+
+          {/* Any other unavailable reason: an unbound region, a release nobody has admitted
+              yet, or an upstream/transport fault. It names the reason code rather than a
+              provider, because the copy that used to sit here blamed USDA Soil Data Access for
+              a fault no code path could have asked it to produce. Rendering nothing would paint
+              the view like surveyed-and-empty ground, which is the one reading an unavailable
+              answer must never get. */}
+          {soilSurveyUnavailable && !soilSurveyLaneNotPublished && !soilSurveyZoomIn && (
             <p
               role="status"
               aria-live="polite"
@@ -536,20 +555,25 @@ export function SoilDetails({
             </p>
           )}
 
-          {/* Ground the warehouse has never fetched from USDA. The one dishonest-empty
-              case persistence introduced, and the most important note here: without it,
-              un-backfilled ground reads as "USDA reports no surveyed SSURGO map units
-              in this view". */}
+          {/* A survey area the admitted release has not staged. The one dishonest-empty case
+              persistence introduced, and the most important note here: without it, ground
+              behind a pending area reads as "USDA reports no surveyed SSURGO map units in
+              this view". `cells`/`covered` are repurposed from a raster-grid completion count
+              to SURVEY AREAS by `environmental.ts#adaptSoilSurveyCollection` -- see
+              `soil-survey-contracts.ts#SoilSurveyCoverage`. Both counts are RELEASE-WIDE
+              (`declaredAreaCount`/`pendingAreaCount` partition the whole scope census, not this
+              viewport -- see `Release.complete_index` in `foundation/soil_survey/release.py`),
+              so the caption says "in this region", never "for this view". */}
           {!soilSurveyUnavailable && soilSurveyUncoveredCells > 0 && (
             <p
               role="status"
               aria-live="polite"
               className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
             >
-              {soilSurveyUncoveredCells} of {soilSurveyCoverage?.cells} grid cell
-              {soilSurveyCoverage?.cells === 1 ? "" : "s"} in this view have not been
-              loaded from USDA yet, so blank ground there is missing coverage on our
-              side, not an absence of soil.
+              {soilSurveyCoverage?.covered} of {soilSurveyCoverage?.cells} survey area
+              {soilSurveyCoverage?.cells === 1 ? "" : "s"} in this region are staged; the
+              rest have not been admitted yet, so blank ground there may be missing
+              coverage on our side, not an absence of soil.
             </p>
           )}
 

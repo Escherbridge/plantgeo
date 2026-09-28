@@ -100,6 +100,41 @@ served again — and it does that completely. The saturated case is covered by t
 layers already have: `requestLayerRefresh` stamps the layer and turns every older entry into a
 miss. There is a test asserting this limitation by name, so it cannot be quietly assumed away.
 
+## SSURGO release pinning and the excluded `unavailable` answer (soil-survey port S4)
+
+`environmental.getSoilSurvey` reuses the generation-pinning machinery above, but on its OWN field:
+`resolveEntryGeneration` reads `revision` — the admitted release's SHA-256 — instead of
+`releaseSetId` whenever the attributed layer is `soil-survey`, and keeps reading only
+`releaseSetId` for every other layer (F13). A non-soil-survey answer that happens to carry a field
+named `revision` is never pinned on it: the field name is read only after the entry has already
+been attributed to `soil-survey` by its router path, never sniffed off the payload shape.
+
+**Unlike every other allowlisted layer, a SSURGO `availability: "unavailable"` answer is never
+persisted, and a stored one is rejected on read even if it predates this rule.** Every other
+layer's `unavailable`/absence vocabulary is a governed, cacheable fact about a DAY. SSURGO's is
+not: `reason` here names serving/transport state — an unbound region, a viewport below the native
+z13 rung, or a release nobody has admitted yet — never a fact about the warehouse
+(`services/agri-data-service/.../interface/http/AGENTS.md`: "a refusal is serving/transport
+state, never warehouse content"). Caching it would let a stale refusal from before an admission
+outlive the admission that made it wrong — most concretely, the empty `unavailable` answer every
+viewport gets before Go-4 (`soil-survey-port-plan.md` §5) would otherwise survive in IndexedDB
+past the admission and mask the newly published release. `soil-survey` is `static_lookup`, whose
+refresh mode is `manual` — the IndexedDB entry's real lifetime is `MANUAL_TTL_MS` (365 days,
+`layer-cache-policy.ts`), not the 24h `SOIL_SURVEY_STALE_TIME_MS` in `useViewportProxiedLayers.ts`,
+which is react-query's in-memory `staleTime` (whether a remount refetches) and never governs how
+long the IndexedDB row itself lives. `isUnavailableSoilSurveyAnswer` is the one predicate behind
+both the write-path exclusion (`isCacheableResult`) and the read-path rejection.
+
+**The mirror case — an already-cached PUBLISHED answer outliving a release rollback — is the one
+`isUnavailableSoilSurveyAnswer` does not cover on its own**, since it only ever inspects the fresh
+answer being considered for a write, not older entries already on disk for other viewports.
+`isSoilSurveyRollbackAnswer` closes that gap: whenever a fresh answer reports
+`soil_survey_release_not_admitted` or `no_source_bound_in_region`, both the cold-fetch and SWR
+revalidation paths call `requestLayerRefresh("soil-survey")`, stamping the same manual-refetch
+marker a user's own refresh click would — so every other cached soil-survey entry, for every
+other viewport and zoom, becomes a miss the next time it is read (`isSupersededByRefreshRequest`),
+instead of surviving up to a year under `MANUAL_TTL_MS`.
+
 ## Per-layer cache policy
 
 Added 2026-09-07. Before it, one TTL rule, one revalidation rule and one eviction rule governed

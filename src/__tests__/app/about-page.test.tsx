@@ -47,15 +47,22 @@ describe("About page — data attribution claims", () => {
     expect(container.textContent).not.toMatch(/landfire/i);
   });
 
-  it("reports SSURGO as withheld rather than queried on request", () => {
+  it("reports SSURGO as a static, admitted release rather than queried on request", () => {
     const row = renderAttributionRows().get("USDA NRCS SSURGO");
     expect(row).toBeDefined();
-    // `environmental.getSoilSurvey` answers `soil_survey_parquet_lane_not_published` for every
-    // viewport and no code path calls USDA Soil Data Access, so "on request" is not a true note.
-    expect(row?.note).toBe("Withheld");
-    expect(row?.description).not.toMatch(/soil data access/i);
-    expect(row?.description).toMatch(/not served/i);
+    // `environmental.getSoilSurvey` reads a captured, pinned SSURGO release
+    // (`agri-data-service`'s soil-survey route) -- no code path calls USDA Soil Data Access
+    // live on a request, so "on request" is not a true note, and the wording must stay honest
+    // in both states: before ANY release is admitted (unavailable, every viewport) and after.
+    expect(row?.note).toBe("Static release");
+    // NOT asserted: `.not.toMatch(/soil data access/i)`. The honest copy names the real USDA
+    // product the release is captured from -- "a captured, admitted USDA Soil Data Access
+    // release" -- so the forbidden-phrase check was self-contradicting with the very assertions
+    // below it (S4 review finding 3): the phrase is the plan-mandated wording, not a live-query
+    // claim, and "nothing is queried"/"admitted"/"unavailable" are what actually rule that out.
     expect(row?.description).toMatch(/nothing is queried/i);
+    expect(row?.description).toMatch(/admitted/i);
+    expect(row?.description).toMatch(/unavailable/i);
   });
 
   it("scopes NHDPlus HR to the HUC12 boundaries that are actually read", () => {

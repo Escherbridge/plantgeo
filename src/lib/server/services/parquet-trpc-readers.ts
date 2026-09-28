@@ -39,6 +39,11 @@ export {
   type ZoomedSoilFieldCollection,
 } from "./parquet-trpc-readers/soil-field";
 
+export {
+  getParquetSoilSurvey,
+  type ParquetSoilSurveyCollection,
+} from "./parquet-trpc-readers/soil-survey";
+
 export { getParquetDrought, type ParquetDroughtArea } from "./parquet-trpc-readers/drought";
 
 export {

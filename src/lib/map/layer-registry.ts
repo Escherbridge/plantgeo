@@ -401,13 +401,15 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   // from the six SoilGrids property rasters: this one is the vector survey polygons. See
   // soilSurveyLayer in layers.ts.
   //
-  // NOT SERVED YET, and honestly so through two channels rather than a gate here. The
-  // procedure is an unconditional stub answering `soil_survey_parquet_lane_not_published`
-  // for every viewport: no lane publishes the survey and nothing is queried from USDA.
-  // `warehouseLayerName: "soil-survey"` is what lets the capability payload list it under
-  // `withheldParquetCapabilities` as `lane_never_written`, which LayerRow's time-status slot
-  // captions "never published"; and SoilDetails reads the response's reason and says the lane
-  // is not served, never that a provider faulted. The About page states the same.
+  // Served from one captured, pinned USDA Soil Data Access release (soil-survey port S3/S4),
+  // honestly gated through two channels rather than a hard switch here. The route answers
+  // `unavailable` -- an unbound region, a release nobody has admitted yet, or a viewport below
+  // the one native z13 rung this port ever serves -- before any storage is touched; nothing is
+  // ever queried from USDA live on a request. `warehouseLayerName: "soil-survey"` is what lets
+  // the capability payload list it under `withheldParquetCapabilities` as `lane_never_written`
+  // before any release is admitted, which LayerRow's time-status slot captions accordingly; and
+  // SoilDetails reads the response's own reason and captions it -- a feed gap, a "zoom in", or
+  // a provider fault -- rather than assuming one. The About page states the release mechanism.
   //
   // Deliberately no `permanentlyUnavailableReason`, for the reason soil-temperature below
   // gives: that field is a governance gate a publish step would have to remember to reopen,

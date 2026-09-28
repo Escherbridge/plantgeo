@@ -713,6 +713,43 @@ source-direct lineage whose release id is derived from the row's own manifest ch
 base rung carries the selected-release columns -- a coarse row aggregates several source rows and
 must report null there rather than one arbitrary member's provenance.
 
+### soil-survey
+
+`parquet-trpc-readers/soil-survey.ts` is the one reader in this file that does NOT go through the
+day-partitioned governed Parquet plane (`getParquetLatestRelease`/`getParquetLayerDay`,
+`shared.ts`'s `ParquetReaderResult`/`boundedResult`/`mapEnvelope`). SSURGO (soil-survey port S3/S4)
+is a dedicated, static-reference release with its own route on `agri-data-service`
+(`GET /api/v1/soil-survey/query`) and its own availability vocabulary, so it fetches directly with
+`fetchBoundedJson`/`providerUrl`, the same shape `botanical-occurrences-client.ts` and the other
+single-purpose upstream bridges use -- never `date`/`day`, since `temporalScope.
+selectedDaySupported` is `false` on the wire and a caller asking for one gets `ParquetPlaneRequestError`
+before any fetch runs.
+
+The zod schema in that file is a MIRROR of the frozen wire contract in `services/agri-data-service/
+src/agri_data_service/planes/soil_survey.py` (`soil_survey_unavailable`,
+`render_served_soil_survey`), never a design surface of its own -- read that module (and
+`interface/http/soil_survey.py`'s gate order: region binding, then the admission pin, then the
+native z13 zoom gate) before changing a field here. `servedZoom` is always the literal `13`
+(`NATIVE_RUNG`): the backend serves exactly one geometry rung and refuses honestly
+(`soil_survey_zoom_in`) below it rather than degrading to a coarser candidate.
+
+`environmental.ts#adaptSoilSurveyCollection` is the seam between that raw wire shape and
+`ProxiedSoilSurveyCollection`, the contract `SoilDetails.tsx` and `LayerManager.tsx` have always
+read. It is NOT a passthrough: `granularity` becomes request-side only (always `"detail"` once
+published, since nothing is ever aggregated; `resolveSoilSurveyGranularity(zoom)` otherwise, so an
+unavailable answer below z13 reads as non-detail and the panel captions "zoom in"), `coverage` is
+repurposed from a raster-grid completion count to a survey-AREA one
+(`cells`/`covered`/`ingested` ← `declaredAreaCount`/`declaredAreaCount - pendingAreaCount`/
+`viewportAreas.length`), and `unreadableGeometries` is always 0 (Q4, "repair else quarantine label
+and serve always": a captured native row is never dropped, only quarantine-labeled via its own
+`geometryQuality`). Keeping the adapter in the ROUTER rather than folding it into the reader is
+deliberate: the reader's own contract test suite (`parquet-soil-survey.test.ts`) exercises the raw
+wire shape unmodified, and the router's (`trpc/soil-survey.test.ts`) exercises the adaptation.
+
+`query-persister.ts` treats this layer's `availability: "unavailable"` as excluded from
+persistence entirely, unlike every other layer's own cacheable `unavailable` -- see
+`src/lib/cache/AGENTS.md` §"SSURGO release pinning and the excluded unavailable answer".
+
 ## botanical-occurrences: the pointer is decoded once, and it fails closed
 
 `botanical-occurrences-client.ts` stays a deliberate sibling of `parquet-plane-client.ts` (its own

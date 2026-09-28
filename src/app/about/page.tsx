@@ -233,8 +233,8 @@ const attributionIndex = [
   {
     term: "USDA NRCS SSURGO",
     description:
-      "Soil survey map units, the vector polygons behind the Soil Survey toggle. Not served yet: no lane publishes the survey, so the viewport read answers unavailable rather than drawing, and nothing is queried from USDA on request.",
-    note: "Withheld",
+      "Soil survey map units from a captured, admitted USDA Soil Data Access release. Nothing is queried from USDA on request. Until a release is admitted, the map answers unavailable.",
+    note: "Static release",
   },
   {
     term: "USGS NHDPlus HR",

@@ -13,11 +13,13 @@ import {
   getParquetFirePerimeters,
   getParquetSensorStations,
   getParquetSoilField,
+  getParquetSoilSurvey,
   getParquetVegetation,
   getParquetWaterGauges,
   getParquetWatersheds,
   parquetUpstreamFailure,
   rejectAborted,
+  type ParquetSoilSurveyCollection,
 } from "@/lib/server/services/parquet-trpc-readers";
 import {
   AIR_TEMPERATURE_VARIANT_IDS,
@@ -188,6 +190,57 @@ export interface ProxiedSoilSurveyCollection extends ProxiedFeatureCollection {
    * `soil-survey-contracts.ts#SoilSurveyCoverage`.
    */
   coverage: SoilSurveyCoverage;
+}
+
+/**
+ * Adapts the admitted-release SSURGO wire shape (`parquet-trpc-readers/soil-survey.ts`, itself a
+ * mirror of `planes/soil_survey.py`'s frozen contract) onto `ProxiedSoilSurveyCollection`, so
+ * `SoilDetails.tsx` and `LayerManager.tsx` keep reading the one shape they always have.
+ *
+ * `coverage` is repurposed from a raster-grid completion count to a survey-AREA one. `Release`
+ * (`foundation/soil_survey/release.py::complete_index`) proves `pending_areas` is exactly
+ * `scope - served`, i.e. `declaredAreaCount` (served) and `pendingAreaCount` are DISJOINT
+ * partitions of the release's whole scope, not overlapping counts -- so `cells` (the release-wide
+ * total) is their SUM, and `covered` (what has actually been admitted) is `declaredAreaCount`
+ * alone, never a subtraction of the two. `ingested` stays `viewportAreas.length`, so the existing
+ * "N of M survey areas admitted" gap caption keeps its shape with its true unit -- a survey area,
+ * never a raster cell, and the count is release-wide, not viewport-scoped (see
+ * `SoilDetails.tsx`'s caption above `soilSurveyUncoveredCells`).
+ *
+ * `unreadableGeometries` is always 0: Q4 ("repair else quarantine label and serve always",
+ * `planes/soil_survey.py`) means a captured native row is never dropped, only quarantine-labeled
+ * via its own `geometryQuality`, so this port has no unreadable-geometry gap to report.
+ *
+ * `granularity` is unconditionally `"detail"`: the admitted-release backend serves exactly one
+ * geometry rung (z13) and never merges rows into a coarser average (see the function doc above),
+ * so there is no live "regional-average"/"coarse-average" DRAWN state left to claim -- reporting
+ * the request-side zoom tier here would make `SoilDetails.tsx`'s aggregated-averages caption fire
+ * on every zoomed-out answer (including `soil_survey_zoom_in`, which already has its own caption),
+ * claiming averages were drawn when nothing was.
+ */
+function adaptSoilSurveyCollection(
+  raw: ParquetSoilSurveyCollection
+): ProxiedSoilSurveyCollection {
+  const coverage: SoilSurveyCoverage =
+    raw.spatialCoverage === null
+      ? { cells: 0, covered: 0, ingested: 0 }
+      : {
+          cells: raw.spatialCoverage.declaredAreaCount + raw.spatialCoverage.pendingAreaCount,
+          covered: raw.spatialCoverage.declaredAreaCount,
+          ingested: raw.spatialCoverage.viewportAreas.length,
+        };
+  return {
+    type: "FeatureCollection",
+    features: raw.features as unknown as GeoJSON.Feature[],
+    availability: raw.availability,
+    reason: raw.reason,
+    truncated: raw.truncated,
+    unreadableGeometries: 0,
+    observedAt: raw.capturedAt ?? null,
+    revision: raw.revision,
+    granularity: "detail",
+    coverage,
+  };
 }
 
 export const environmentalRouter = router({
@@ -529,13 +582,20 @@ export const environmentalRouter = router({
     }),
 
   /**
-   * SSURGO map-unit polygons are withheld until their source-direct Parquet lane is published.
+   * SSURGO map-unit polygons from one admitted, pinned USDA Soil Data Access release
+   * (soil-survey port S3/S4). Static reference, never a day series: `getParquetSoilSurvey`
+   * bridges to `agri-data-service`'s dedicated route rather than the day-partitioned Parquet
+   * plane, and answers `unavailable` -- honestly, before any storage is touched -- for an
+   * unbound region, a release nobody has admitted yet, or a viewport below the one native z13
+   * rung this port ever serves (`soil_survey_zoom_in`; below that rung there is no coarser
+   * fallback to degrade to, unlike the stale "degrade to `truncated: true`" comment this
+   * replaces once claimed).
    *
    * The area ceiling is zoom-dependent, so it cannot live on the bbox field the way
    * `areaBoundedBbox` puts it: `soilSurveyAreaCeiling` returns the bounded detail ceiling
    * only for the detail tier, which may warm at most a 2x2 patch of cells, and null for the
-   * aggregated tiers, which cap their own cell budget and degrade to `truncated: true`
-   * rather than erroring.
+   * aggregated tiers -- which the backend answers `soil_survey_zoom_in` for regardless, since
+   * it never aggregates.
    */
   getSoilSurvey: publicProcedure
     .input(
@@ -543,8 +603,13 @@ export const environmentalRouter = router({
         .object({
           bbox: bboxSchema,
           /** Viewport zoom; selects render granularity and the ceiling that applies. */
-          zoom: z.number().finite().optional(),
+          zoom: z.number().finite().min(0).max(22).optional(),
         })
+        // `.strict()`: SSURGO's `temporalScope.selectedDaySupported` is always `false`, so a
+        // `date`/`day` field must be REJECTED, not silently stripped by zod and dropped on the
+        // floor -- the exact failure `getParquetSoilSurvey`'s own `"date" in input` guard exists
+        // to catch one layer down, which a lenient schema would never let it see.
+        .strict()
         .superRefine((value, context) => {
           const ceiling = soilSurveyAreaCeiling(value.zoom);
           if (ceiling === null) return;
@@ -558,13 +623,13 @@ export const environmentalRouter = router({
           }
         })
     )
-    .query((): ProxiedSoilSurveyCollection => {
-      const unavailable = unavailableCollection("soil_survey_parquet_lane_not_published");
-      return {
-        ...unavailable,
-        granularity: "detail",
-        coverage: { cells: 0, covered: 0, ingested: 0 },
-      };
+    .query(async ({ input, signal }): Promise<ProxiedSoilSurveyCollection> => {
+      try {
+        const raw = await getParquetSoilSurvey({ bbox: input.bbox, zoom: input.zoom, signal });
+        return adaptSoilSurveyCollection(raw);
+      } catch (error) {
+        rethrowUpstreamFault(error, "The SSURGO soil-survey service");
+      }
     }),
 
   /**

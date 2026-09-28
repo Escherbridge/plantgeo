@@ -320,11 +320,11 @@ describe("SoilDetails SSURGO coverage", () => {
     expect(screen.queryByText(/no surveyed SSURGO map units/)).toBeNull();
   });
 
-  // The answer production has given for every viewport since the Parquet pivot:
-  // `environmental.getSoilSurvey` is an unconditional stub returning this reason, and no code
-  // path in src/ calls Soil Data Access. Rendering it as a provider fault blamed USDA, on every
-  // view, for a lane PlantGeo has not published -- the About page was just cleared of the same
-  // class of claim, and this is the panel's copy of it.
+  // Historical fixture: `environmental.getSoilSurvey` answered this reason for every viewport
+  // before the admitted-release port (S3/S4) landed, and no code path in src/ has ever called
+  // Soil Data Access directly. Kept as regression coverage for the generic
+  // `*_lane_not_published` branch -- the About page was cleared of the same class of claim, and
+  // this is the panel's copy of it.
   it("names an unpublished lane as our gap, not as a USDA fault", () => {
     queries.getSoilSurvey.mockReturnValue({
       data: soilSurveyCollection(0, {
@@ -402,10 +402,11 @@ describe("SoilDetails SSURGO coverage", () => {
     expect(screen.getByText(/1 map unit this reader could not store/)).toBeTruthy();
   });
 
-  it("names ground nobody has fetched as missing coverage, not as an absence of soil", () => {
+  it("names an area the release has not staged as missing coverage, not as an absence of soil", () => {
     // The dishonest-empty case persistence introduced. Without this the response below --
     // no features, nothing truncated, nothing unreadable, availability "published" -- is
-    // byte-identical to a viewport USDA surveyed and found nothing in.
+    // byte-identical to a viewport USDA surveyed and found nothing in. `cells`/`covered` are
+    // survey areas (S4 adapter, `environmental.ts#adaptSoilSurveyCollection`), not grid cells.
     queries.getSoilSurvey.mockReturnValue({
       data: soilSurveyCollection(0, { coverage: { cells: 4, covered: 1, ingested: 0 } }),
       isLoading: false,
@@ -414,7 +415,7 @@ describe("SoilDetails SSURGO coverage", () => {
 
     renderPanel();
 
-    expect(screen.getByText(/3 of 4 grid cells in this view have not been loaded/)).toBeTruthy();
+    expect(screen.getByText(/1 of 4 survey areas in this region are staged/)).toBeTruthy();
   });
 
   it("claims no coverage gap for a fully covered view", () => {
@@ -426,7 +427,7 @@ describe("SoilDetails SSURGO coverage", () => {
 
     renderPanel();
 
-    expect(screen.queryByText(/have not been loaded from USDA/)).toBeNull();
+    expect(screen.queryByText(/survey areas in this region are staged/)).toBeNull();
   });
 
   it("claims no coverage gap for a response that predates persistence", () => {
@@ -439,7 +440,7 @@ describe("SoilDetails SSURGO coverage", () => {
 
     renderPanel();
 
-    expect(screen.queryByText(/have not been loaded from USDA/)).toBeNull();
+    expect(screen.queryByText(/survey areas in this region are staged/)).toBeNull();
   });
 
   it("makes no unreadable-geometry claim when every map unit parsed", () => {
@@ -534,6 +535,44 @@ describe("SoilDetails SSURGO coverage", () => {
 
     expect(screen.getByText(/3 SSURGO map units drawn/)).toBeTruthy();
     expect(screen.queryByText(/drainage-class averages/)).toBeNull();
+  });
+
+  // Soil-survey port S3/S4: the admitted-release backend serves exactly one geometry rung
+  // (z13, "native") and answers `soil_survey_zoom_in` below it rather than degrading to an
+  // average -- distinct from both the generic feed-gap fallback and the lane-not-published one.
+  it("tells the reader to zoom in rather than naming a feed gap, below the native rung", () => {
+    queries.getSoilSurvey.mockReturnValue({
+      data: soilSurveyCollection(0, {
+        availability: "unavailable",
+        reason: "soil_survey_zoom_in",
+      }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderPanel();
+
+    expect(screen.getByText(/Zoom in to see survey map units/)).toBeTruthy();
+    expect(screen.queryByText(/soil survey feed answered unavailable/)).toBeNull();
+    expect(screen.queryByText(/no lane publishes it/)).toBeNull();
+  });
+
+  it("prefers the zoom-in caption over the generic feed-gap fallback for the same reason code", () => {
+    // `soil_survey_zoom_in` does not end in `_lane_not_published`, so this pins that the new
+    // branch is checked, and takes precedence, ahead of the generic unavailable fallback rather
+    // than falling through to it.
+    queries.getSoilSurvey.mockReturnValue({
+      data: soilSurveyCollection(0, {
+        availability: "unavailable",
+        reason: "soil_survey_zoom_in",
+      }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderPanel();
+
+    expect(screen.queryByText(/\(soil_survey_zoom_in\)/)).toBeNull();
   });
 });
 

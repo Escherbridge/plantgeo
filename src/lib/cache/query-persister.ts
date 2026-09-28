@@ -42,6 +42,7 @@ import {
   isSupersededByRefreshRequest,
   layerCachePolicyFor,
   recordLayerFetched,
+  requestLayerRefresh,
 } from "./layer-cache-policy-store";
 import {
   deleteEntries,
@@ -414,7 +415,7 @@ function isEntryFresh(entry: { schemaVersion: number; expiresAt: number }): bool
  * it anyway costs nothing, and this cache must never be the thing that makes a transient
  * failure look like a permanent published answer.
  */
-function isCacheableResult(value: unknown): boolean {
+function isCacheableResult(value: unknown, layerId: LayerToggleId | null = null): boolean {
   if (value === null || value === undefined) return false;
   if (typeof value === "object") {
     const record = value as Record<string, unknown>;
@@ -427,8 +428,40 @@ function isCacheableResult(value: unknown): boolean {
     // read back as a settled answer. It is worth far more now than it was before per-layer
     // policy: a `manual` layer neither expires it for a year nor revalidates it away.
     if (record.state === "upstream_unavailable") return false;
+    // SSURGO-only (soil-survey port S4, plan §1a row 73): every OTHER layer's own
+    // `availability: "unavailable"` is a governed, cacheable fact about a DAY. SSURGO's is pure
+    // serving/transport state instead -- an unbound region, a below-native-rung zoom, or a
+    // release nobody has admitted yet (`interface/http/AGENTS.md`: "a refusal is serving/
+    // transport state, never warehouse content") -- so caching it would let a stale refusal
+    // outlive the admission that made it wrong. See `isUnavailableSoilSurveyAnswer` below.
+    if (isUnavailableSoilSurveyAnswer(layerId, value)) return false;
   }
   return true;
+}
+
+/** See the SSURGO-only note on `isCacheableResult`; shared with the read-path rejection below. */
+function isUnavailableSoilSurveyAnswer(layerId: LayerToggleId | null, value: unknown): boolean {
+  if (layerId !== "soil-survey") return false;
+  if (typeof value !== "object" || value === null) return false;
+  return (value as Record<string, unknown>).availability === "unavailable";
+}
+
+/**
+ * True when a fresh SSURGO answer reports the release itself was withdrawn (its admission pin
+ * unset) or was never bound to this region -- the two reasons that mean an OLDER, already-cached
+ * `published` answer for the same viewport is now wrong, not merely that nothing new arrived.
+ *
+ * `isUnavailableSoilSurveyAnswer` already keeps this fresh answer itself out of the cache; this
+ * is the other half (S4 review finding 4). Without it, an old published entry survives under
+ * `manual` policy (`MANUAL_TTL_MS`, 365 days, no background revalidation -- see
+ * `src/lib/cache/AGENTS.md` §soil-survey) for up to a year after the release that produced it was
+ * rolled back, since neither its TTL nor the generation pin (`resolveEntryGeneration`, which a
+ * revision-less `unavailable` answer never advances) ever invalidates it on their own.
+ */
+function isSoilSurveyRollbackAnswer(layerId: LayerToggleId | null, value: unknown): boolean {
+  if (!isUnavailableSoilSurveyAnswer(layerId, value)) return false;
+  const reason = (value as Record<string, unknown>).reason;
+  return reason === "soil_survey_release_not_admitted" || reason === "no_source_bound_in_region";
 }
 
 /**
@@ -451,13 +484,28 @@ function isCacheableResult(value: unknown): boolean {
  *
  * Returns `null` when the payload names no generation, which is every other layer and also this
  * one's `refused`/`unavailable` members -- those carry no records and so misattribute nothing.
+ *
+ * `layerId` selects WHICH field names the generation. `soil-survey` (soil-survey port S4, plan
+ * §1a row 73) pins on `revision` -- the admitted release's SHA-256, from `environmental.
+ * getSoilSurvey` -- rather than on `releaseSetId`, which that procedure never carries. Every
+ * other layer, including one called with `layerId` omitted, keeps reading only `releaseSetId`
+ * (F13): a `revision` field on some other payload is a coincidence, never a pin, so it is read
+ * only when the caller has already attributed the entry to `soil-survey`.
  */
-export function resolveEntryGeneration(value: unknown): string | null {
+export function resolveEntryGeneration(
+  value: unknown,
+  layerId: LayerToggleId | null = null
+): string | null {
   if (typeof value !== "object" || value === null) return null;
   const record = value as Record<string, unknown>;
   // Guarded as a non-empty string rather than coerced: `String(null)` is `"null"`, and a nullable
   // field compared that way makes two unstamped answers look like the same generation. The same
   // trap AGENTS.md "revalidation policy" records for the revision signal that never shipped.
+  if (layerId === "soil-survey") {
+    return typeof record.revision === "string" && record.revision.length > 0
+      ? record.revision
+      : null;
+  }
   return typeof record.releaseSetId === "string" && record.releaseSetId.length > 0
     ? record.releaseSetId
     : null;
@@ -483,7 +531,7 @@ export function resetGenerationPinsForTests(): void {
 /** Records the generation a freshly-fetched answer belongs to, if it names one. */
 function recordSeenGeneration(layerId: LayerToggleId | null, value: unknown): void {
   if (layerId === null) return;
-  const generation = resolveEntryGeneration(value);
+  const generation = resolveEntryGeneration(value, layerId);
   if (generation !== null) latestSeenGeneration.set(layerId, generation);
 }
 
@@ -501,7 +549,7 @@ function isSupersededGeneration(layerId: LayerToggleId | null, value: unknown): 
   if (layerId === null) return false;
   const current = latestSeenGeneration.get(layerId);
   if (current === undefined) return false;
-  const stored = resolveEntryGeneration(value);
+  const stored = resolveEntryGeneration(value, layerId);
   if (stored === null) return false;
   return stored !== current;
 }
@@ -1221,11 +1269,13 @@ export async function revalidateAgainstDW<TContext>(
   await acquireRevalidationSlot();
   try {
     const result = await queryFn(context);
-    if (isCacheableResult(result)) {
+    // Computed before the cacheability check (moved up from just below it) so a SSURGO
+    // `unavailable` answer can be told from every other layer's own, cacheable `unavailable`.
+    const attribution = attributeQueryKey(queryKey);
+    if (isCacheableResult(result, attribution.layerId)) {
       if (!(await isStillTheSameGeneration(cacheKey, stored))) return stored.value;
       const now = Date.now();
       const approxByteSize = estimateByteSize(result);
-      const attribution = attributeQueryKey(queryKey);
       // Same rule as the cold path: this answer came back through the server's pointer, so it
       // defines the current generation. In practice a `manual` layer never reaches here, but the
       // pin must not depend on that -- a user flipping botanical to `automatic` would otherwise
@@ -1258,6 +1308,12 @@ export async function revalidateAgainstDW<TContext>(
       await persistEntry(cacheKey, updatedEntry, metadata, byteDelta, attribution, false);
       publishToQueryClient(getQueryClient, queryKey, result);
       return result;
+    } else if (isSoilSurveyRollbackAnswer(attribution.layerId, result)) {
+      // The release backing `stored` was just withdrawn or found unbound: stamp a refresh so
+      // every OTHER cached soil-survey entry (other viewports, other zooms) is treated as a
+      // miss the next time it is read, same lazy per-read mechanism a manual refetch click uses.
+      // See the cold-fetch path below and `isSoilSurveyRollbackAnswer`'s doc (S4 review finding 4).
+      requestLayerRefresh("soil-survey");
     }
   } catch {
     // SWR background revalidation failure keeps existing stored value intact
@@ -1311,7 +1367,11 @@ export function createIndexedDbLayerQueryPersister(
         if (
           isEntryFresh(stored) &&
           !isSupersededByRefreshRequest(attribution.layerId, stored.createdAt) &&
-          !isSupersededGeneration(attribution.layerId, stored.value)
+          !isSupersededGeneration(attribution.layerId, stored.value) &&
+          // F9: a stored SSURGO `unavailable` answer is rejected on read even if it predates
+          // this rule (was written under an older build), same asymmetric-safety shape as the
+          // generation check above.
+          !isUnavailableSoilSurveyAnswer(attribution.layerId, stored.value)
         ) {
           // Recency is a metadata-only write, so a cache hit rewrites ~100 bytes rather than
           // re-serializing the payload it just read.
@@ -1348,12 +1408,15 @@ export function createIndexedDbLayerQueryPersister(
     }
 
     const result = await queryFn(context);
+    // Computed before the cacheability check, same reordering as `revalidateAgainstDW`, so a
+    // SSURGO `unavailable` answer can be told from every other layer's own cacheable one.
+    const coldAttribution = attributeQueryKey(queryKey);
 
     try {
-      if (isCacheableResult(result)) {
+      if (isCacheableResult(result, coldAttribution.layerId)) {
         const now = Date.now();
         const approxByteSize = estimateByteSize(result);
-        const attribution = attributeQueryKey(queryKey);
+        const attribution = coldAttribution;
         // A cold fetch went through the server, and therefore through the plane's `/current`
         // pointer, so the generation it carries IS the current one. Learned BEFORE the write, so
         // an entry can never be stored under a pin older than itself.
@@ -1384,6 +1447,10 @@ export function createIndexedDbLayerQueryPersister(
         // Reaching here means the read above missed, so this key is new to the store: the day
         // gains an entry rather than replacing one.
         await persistEntry(cacheKey, entry, metadata, approxByteSize, attribution, true);
+      } else if (isSoilSurveyRollbackAnswer(coldAttribution.layerId, result)) {
+        // Same rollback invalidation as `revalidateAgainstDW`, for the path a fresh page load
+        // or a not-yet-cached viewport takes instead of the SWR background one.
+        requestLayerRefresh("soil-survey");
       }
     } catch {
       // Writing to the cache is best-effort; `result` below is still the real answer.
