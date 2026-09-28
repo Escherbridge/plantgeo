@@ -729,10 +729,11 @@ def test_downgrading_a_report_without_literature_is_a_no_op() -> None:
     assert downgrade_literature_claims(report) == (report, ())
 
 
-def test_coverage_counts_location_tools_only() -> None:
+def test_coverage_counts_location_tools_only(monkeypatch: pytest.MonkeyPatch) -> None:
     """species_information and the three literature tools are never measured coverage."""
+    monkeypatch.delenv("SOIL_PROPERTIES_READS_ENABLED", raising=False)
     verdict = agent_graph.AssessSufficiency.decide(_evidence(), has_question=False)
-    names = {tool.name for tool in agent_tools.WAREHOUSE_TOOLS}
+    names = {tool.name for tool in agent_tools.published_warehouse_tools()}
     assert names >= agent_graph.LITERATURE_TOOLS
     assert verdict.coverage["tools_available"] == len(names - {"species_information"} - agent_graph.LITERATURE_TOOLS)
 

@@ -31,15 +31,32 @@ def request_for(name: str, arguments: dict[str, Any]) -> Any:
     return SimpleNamespace(json=payload, body=json.dumps(payload).encode())
 
 
-async def test_catalogue_covers_every_map_surface_and_omits_authoring() -> None:
+async def test_catalogue_covers_every_map_surface_and_omits_authoring(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SOIL_PROPERTIES_READS_ENABLED", raising=False)
     response = await route.list_agent_tools(SimpleNamespace())
     body = json.loads(response.body)
     assert set(body["surfaces"]) == set(AGENT_SURFACE_NAMES)
     assert set(body["value_surfaces"]) == set(AGENT_SURFACE_NAMES)
     names = {tool["function"]["name"] for tool in body["tools"]}
-    assert names == {tool.name for tool in tools.WAREHOUSE_TOOLS} - {"species_information"}
+    assert names == {tool.name for tool in tools.WAREHOUSE_TOOLS} - {"species_information", "soil_properties_at_point"}
     assert {"surface_evidence_for_selection", "list_environmental_layers"} <= names
     assert not {"signals_near_point", "signal_value_on_day", "signal_neighbors_in_time", "nearest_signal_cells"} & names
+
+
+async def test_catalogue_omits_the_soil_tool_with_the_flag_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Gemini `schema_too_complex` incident: `soil_properties_at_point` must not be unconditionally published."""
+    monkeypatch.delenv("SOIL_PROPERTIES_READS_ENABLED", raising=False)
+    names = {schema["function"]["name"] for schema in route.environmental_tool_schemas()}
+    assert "soil_properties_at_point" not in names
+    # The wave-2 (54e266e3) set exactly: every registered tool except the soil tool and the
+    # caller-bound species lookup, which the catalogue always excludes.
+    assert names == {tool.name for tool in tools.WAREHOUSE_TOOLS} - {"species_information", "soil_properties_at_point"}
+
+
+async def test_catalogue_includes_the_soil_tool_with_the_flag_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SOIL_PROPERTIES_READS_ENABLED", "true")
+    names = {schema["function"]["name"] for schema in route.environmental_tool_schemas()}
+    assert "soil_properties_at_point" in names
 
 
 async def test_bridge_preserves_typed_unbound_region_refusal(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -21,7 +21,7 @@ import httpx
 from pydantic import ValidationError
 
 from agri_data_service.agent.strategy_knowledge import NOT_CONFIGURED, UNAVAILABLE
-from agri_data_service.agent.tools import WAREHOUSE_TOOLS
+from agri_data_service.agent.tools import WAREHOUSE_TOOLS, published_warehouse_tools
 from agri_data_service.config import settings
 
 if TYPE_CHECKING:
@@ -134,11 +134,15 @@ class LlmProviderError(RuntimeError):
 
 
 def tool_schemas() -> list[dict[str, Any]]:
-    """Publish every warehouse tool in the OpenAI `tools` shape, derived from the tool objects.
+    """Publish every CURRENTLY PUBLISHED warehouse tool in the OpenAI `tools` shape.
 
-    Derived and never hand-spelled: `WAREHOUSE_TOOLS` is the one registry, and a second list here
-    would drift the moment a tool gained a parameter. The description is the tool's own docstring,
-    which is where the four-state contract and the caps are already written down for a model.
+    Derived from `tools.published_warehouse_tools()`, never hand-spelled and never
+    `WAREHOUSE_TOOLS` itself: the flag-gated set is re-evaluated on every call (soil-properties
+    C6), which is what keeps `soil_properties_at_point` out of every published catalogue --
+    including this one, `routes/agent_tools.py::environmental_tool_schemas` and
+    `mcp_server.tool_descriptors`, which both derive from this function -- while
+    SOIL_PROPERTIES_READS_ENABLED is unset. The description is the tool's own docstring, which is
+    where the four-state contract and the caps are already written down for a model.
     """
     return [
         {
@@ -149,7 +153,7 @@ def tool_schemas() -> list[dict[str, Any]]:
                 "parameters": json.loads(json.dumps(tool.input_schema)),
             },
         }
-        for tool in WAREHOUSE_TOOLS
+        for tool in published_warehouse_tools()
     ]
 
 
@@ -283,7 +287,7 @@ class OpenAiCompletionsClient:
             "model": self.credentials.model,
             "auth_header": self.credentials.auth_header,
             "timeout_seconds": self.credentials.timeout_seconds,
-            "tools_published": len(WAREHOUSE_TOOLS),
+            "tools_published": len(published_warehouse_tools()),
         }
 
     async def chat(

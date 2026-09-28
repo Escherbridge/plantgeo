@@ -75,6 +75,7 @@ __all__ = [
     "FEATURE_SURFACE_NAMES",
     "STREAM_SURFACE_NAMES",
     "WAREHOUSE_TOOLS",
+    "published_warehouse_tools",
     "run_context",
 ]
 
@@ -2025,3 +2026,27 @@ WAREHOUSE_TOOLS: Final = (
     get_environmental_strategies,
     search_strategy_research_findings,
 )
+
+
+def published_warehouse_tools() -> tuple[Any, ...]:
+    """`WAREHOUSE_TOOLS`, minus `soil_properties_at_point` unless SOIL_PROPERTIES_READS_ENABLED is on.
+
+    Evaluated fresh on every call, never cached at import, so flipping the flag and restarting the
+    process is the only thing a caller has to do (`soil_properties.soil_reads_enabled` reads the
+    variable itself on every call). EVERY surface that PUBLISHES a tool catalogue to a model --
+    `llm.tool_schemas` (and, through it, `routes/agent_tools.py::environmental_tool_schemas` and
+    `mcp_server.tool_descriptors`) and `agent/graph.py`'s warehouse and web passes -- must build its
+    list from THIS function, not from `WAREHOUSE_TOOLS` directly, or an unconditionally published
+    `soil_properties_at_point` blows up Gemini's combined function-declaration complexity
+    (`schema_too_complex`) the way it did in production. With the flag unset this is byte-identical
+    to the wave-2 (54e266e3) tool set.
+
+    `WAREHOUSE_TOOLS` itself stays the full, unconditional registry on purpose: `llm.tool_by_name`
+    still resolves `soil_properties_at_point` with the flag off, so a caller that already has the
+    name (the bridge `/call` route, the MCP `tools/call` method, the CLI `agent ask` loop) reaches
+    `read_soil_properties`'s own `reads_disabled` refusal rather than a generic "unknown tool" error
+    -- the same typed-refusal contract the tool has always had.
+    """
+    if soil_properties.soil_reads_enabled():
+        return WAREHOUSE_TOOLS
+    return tuple(tool for tool in WAREHOUSE_TOOLS if tool.name != "soil_properties_at_point")

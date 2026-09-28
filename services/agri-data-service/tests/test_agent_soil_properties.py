@@ -226,3 +226,40 @@ def test_the_tool_is_registered_with_a_bounded_point_schema() -> None:
     assert {"longitude", "latitude", "radius_meters", "depths", "properties"} == set(properties)
     assert "MODEL ESTIMATES" in definition["description"]
     assert "anyOf" not in json.dumps(definition["input_schema"]), "the bridge forwards this schema to Gemini"
+
+
+# --- Publication gate: the Gemini `schema_too_complex` incident --------------------------------
+#
+# `soil_properties_at_point` (56467bd4) was published UNCONDITIONALLY, which pushed the combined
+# tool catalogue over Gemini's function-declaration complexity ceiling and 400'd every live
+# regional-intelligence report. `tools.published_warehouse_tools()` is the one place this is fixed;
+# every catalogue-publishing surface must derive from it, never from `WAREHOUSE_TOOLS` itself.
+
+
+async def test_the_tool_stays_registered_but_unpublished_with_the_flag_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(soil_properties.READS_ENABLED_VARIABLE, raising=False)
+    assert "soil_properties_at_point" in {tool.name for tool in tools.WAREHOUSE_TOOLS}
+    assert "soil_properties_at_point" not in {tool.name for tool in tools.published_warehouse_tools()}
+
+
+@pytest.mark.usefixtures("enabled")
+def test_the_tool_is_published_with_the_flag_set() -> None:
+    assert "soil_properties_at_point" in {tool.name for tool in tools.published_warehouse_tools()}
+
+
+def test_the_flag_off_published_set_is_the_wave_two_set_exactly(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review M7 rule: with the flag unset, every tool except the soil tool -- wave 2 (54e266e3) exactly."""
+    monkeypatch.delenv(soil_properties.READS_ENABLED_VARIABLE, raising=False)
+    published = {tool.name for tool in tools.published_warehouse_tools()}
+    registered = {tool.name for tool in tools.WAREHOUSE_TOOLS}
+    assert published == registered - {"soil_properties_at_point"}
+
+
+def test_publication_is_evaluated_per_call_not_cached_at_import(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A lazy function, per the fix's own contract: flipping the flag changes the very next call."""
+    monkeypatch.delenv(soil_properties.READS_ENABLED_VARIABLE, raising=False)
+    assert "soil_properties_at_point" not in {tool.name for tool in tools.published_warehouse_tools()}
+    monkeypatch.setenv(soil_properties.READS_ENABLED_VARIABLE, ENABLED)
+    assert "soil_properties_at_point" in {tool.name for tool in tools.published_warehouse_tools()}
+    monkeypatch.delenv(soil_properties.READS_ENABLED_VARIABLE, raising=False)
+    assert "soil_properties_at_point" not in {tool.name for tool in tools.published_warehouse_tools()}

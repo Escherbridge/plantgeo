@@ -577,9 +577,20 @@ travels in `ContextVar`s because a tool function's signature *is* its model-faci
 
 The botanical `species_information` tool is scoped to the warehouse pass. Its exact UUID is bound
 by `tools.run_context`, while the optional web pass runs after that context exits. The graph therefore
-uses `WAREHOUSE_TOOLS_FOR_WEB`, which omits `species_information`, instead of re-exposing a tool
+uses `warehouse_tools_for_web()`, which omits `species_information`, instead of re-exposing a tool
 whose UUID constraint has expired. If a later pass needs botanical access, it must re-enter the same
 context with the caller's UUID and add a regression for mismatched and omitted UUIDs.
+
+`warehouse_tools_for_web()` and the warehouse pass's own tool list are both built from
+`tools.published_warehouse_tools()`, not from `WAREHOUSE_TOOLS` directly: `soil_properties_at_point`
+is excluded from every published catalogue -- this one, `llm.tool_schemas`, the bridge's
+`environmental_tool_schemas`, and `mcp_server.tool_descriptors` -- unless
+`SOIL_PROPERTIES_READS_ENABLED` is exactly `true`, evaluated fresh per call. See
+`agent/soil_properties.py`, "Gated by SOIL_PROPERTIES_READS_ENABLED", for the Gemini
+`schema_too_complex` incident this gate exists to prevent. `WAREHOUSE_TOOLS` itself stays the full,
+unconditional registry: `llm.tool_by_name` still resolves the soil tool by name with the flag off,
+so the bridge `/call` route and the MCP/CLI tool-calling loop both still answer a direct call for it
+with the tool's own `reads_disabled` refusal rather than an unknown-tool error.
 
 ## Reading the Parquet warehouse
 

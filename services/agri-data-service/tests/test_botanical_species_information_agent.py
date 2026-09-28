@@ -24,6 +24,7 @@ def test_species_tool_schema_is_exact_uuid_and_bounded_on_both_surfaces() -> Non
 
 
 async def test_mcp_call_uses_run_context_provider_and_does_not_count_as_location_coverage(monkeypatch: Any) -> None:
+    monkeypatch.delenv("SOIL_PROPERTIES_READS_ENABLED", raising=False)
     marker = object()
 
     @asynccontextmanager
@@ -57,7 +58,7 @@ async def test_mcp_call_uses_run_context_provider_and_does_not_count_as_location
     assert payload["publication_state"] == "not_published"
     assert ledger[0]["row_count"] == 0
     evidence = WarehouseEvidence(tool_calls=tuple(ledger), populated_tools=(), refused=False)
-    expected_location_tools = len(agent_tools.WAREHOUSE_TOOLS) - 1 - len(LITERATURE_TOOLS)
+    expected_location_tools = len(agent_tools.published_warehouse_tools()) - 1 - len(LITERATURE_TOOLS)
     assert AssessSufficiency.decide(evidence, has_question=True).coverage["tools_available"] == expected_location_tools
 
 

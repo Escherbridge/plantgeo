@@ -100,8 +100,12 @@ class McpToolServer:
             self.protocol_version = requested
         return {
             "protocolVersion": self.protocol_version,
-            # `listChanged: false` is the honest answer: the tool registry is a module-level tuple
-            # fixed at import, so this server will never send a tools/list_changed notification.
+            # `listChanged: false` is the honest answer: this server never sends a
+            # tools/list_changed notification. The registry (`tools.WAREHOUSE_TOOLS`) is a
+            # module-level tuple fixed at import; which of its tools `tools/list` actually
+            # publishes can still vary with SOIL_PROPERTIES_READS_ENABLED
+            # (`tools.published_warehouse_tools`, re-evaluated on every call), but only across a
+            # process restart in practice, since nothing here watches the flag mid-session.
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
             "instructions": INSTRUCTIONS,

@@ -14,7 +14,7 @@ from sanic.response import HTTPResponse
 from agri_data_service.agent.llm import argument_error_detail, tool_by_name, tool_schemas
 from agri_data_service.agent.strategy_knowledge import LITERATURE_TOOL_NAMES, ServerContext, bound_strategy_context
 from agri_data_service.agent.surfaces import AGENT_SURFACE_NAMES, FEATURE_SURFACE_NAMES
-from agri_data_service.agent.tools import run_context
+from agri_data_service.agent.tools import WAREHOUSE_TOOLS, run_context
 
 agent_tools_bp = Blueprint("agent_tools", url_prefix="/agent-tools")
 
@@ -41,8 +41,26 @@ class AgentToolCallRequest(BaseModel):
 
 
 def environmental_tool_schemas() -> list[dict[str, Any]]:
-    """Keep canonical species authoring behind its caller-bound route."""
+    """Keep canonical species authoring behind its caller-bound route.
+
+    `tool_schemas()` is already flag-gated (`tools.published_warehouse_tools`), so
+    `soil_properties_at_point` drops out of this list on its own with
+    SOIL_PROPERTIES_READS_ENABLED unset -- this is the catalogue Gemini's function-declaration
+    complexity is measured against.
+    """
     return [schema for schema in tool_schemas() if schema["function"]["name"] != "species_information"]
+
+
+def _callable_tool_names() -> set[str]:
+    """Every tool name `/call` will accept, independent of catalogue publication.
+
+    Deliberately WIDER than `environmental_tool_schemas()`: with SOIL_PROPERTIES_READS_ENABLED
+    unset, `soil_properties_at_point` is unpublished but still a name this service has registered,
+    so a call for it reaches its own typed `reads_disabled` refusal (agent/soil_properties.py)
+    rather than the generic `unknown_environmental_tool` a name nobody registered gets. That keeps
+    this route's contract the one `test_the_soil_tool_is_bridge_callable_and_off_by_default` pins.
+    """
+    return {tool.name for tool in WAREHOUSE_TOOLS} - {"species_information"}
 
 
 @agent_tools_bp.get("/")
@@ -112,7 +130,7 @@ def _parse_call(request: Request, names: set[str]) -> AgentToolCallRequest | HTT
 @agent_tools_bp.post("/call")
 async def call_agent_tool(request: Request) -> HTTPResponse:
     """Execute one schema-validated tool inside the existing Parquet admission boundary."""
-    payload = _parse_call(request, {schema["function"]["name"] for schema in environmental_tool_schemas()})
+    payload = _parse_call(request, _callable_tool_names())
     if isinstance(payload, HTTPResponse):
         return payload
     strategy_context = (

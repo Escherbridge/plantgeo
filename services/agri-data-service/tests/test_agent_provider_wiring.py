@@ -56,6 +56,10 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 WAREHOUSE_TOOL_COUNT = len(agent_tools.WAREHOUSE_TOOLS)
+#: Default (SOIL_PROPERTIES_READS_ENABLED unset) published count: every registered tool except
+#: `soil_properties_at_point`, which stays out of every catalogue until the flag reads exactly
+#: "true" (tools.py::published_warehouse_tools). Tests that rely on this delenv the flag first.
+PUBLISHED_TOOL_COUNT = WAREHOUSE_TOOL_COUNT - 1
 SENTINEL_KEY = "sk-test-not-a-real-credential"
 COVERAGE_TOOL = "observation_coverage_on_day"
 COVERAGE_ARGUMENTS = {"surface_name": "vegetation", "day": "2026-03-14"}
@@ -93,9 +97,10 @@ def completion(message: dict[str, Any], *, model: str = "test/model-1") -> dict[
 UNSCOPED_WAREHOUSE_TOOLS = {"botanical_occurrence_current_release", "list_environmental_layers"}
 
 
-def test_every_warehouse_tool_publishes_a_usable_mcp_descriptor() -> None:
+def test_every_warehouse_tool_publishes_a_usable_mcp_descriptor(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SOIL_PROPERTIES_READS_ENABLED", raising=False)
     descriptors = list(tool_descriptors())
-    assert len(descriptors) == WAREHOUSE_TOOL_COUNT
+    assert len(descriptors) == PUBLISHED_TOOL_COUNT
     for descriptor in descriptors:
         assert descriptor["name"], "a tool with no name cannot be called"
         assert descriptor["description"].strip(), f"{descriptor['name']} publishes an empty description"
@@ -107,7 +112,8 @@ def test_every_warehouse_tool_publishes_a_usable_mcp_descriptor() -> None:
         assert json.loads(json.dumps(descriptor)) == descriptor
 
 
-def test_the_two_surfaces_publish_the_same_tools_from_the_same_objects() -> None:
+def test_the_two_surfaces_publish_the_same_tools_from_the_same_objects(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SOIL_PROPERTIES_READS_ENABLED", raising=False)
     mcp_names = [descriptor["name"] for descriptor in tool_descriptors()]
     openai_names = [schema["function"]["name"] for schema in tool_schemas()]
     assert mcp_names == openai_names
@@ -118,6 +124,19 @@ def test_the_two_surfaces_publish_the_same_tools_from_the_same_objects() -> None
         "surface_evidence_for_selection",
         "list_environmental_layers",
     }
+
+
+def test_tool_schemas_and_mcp_list_omit_the_soil_tool_with_the_flag_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Gemini `schema_too_complex` incident: unconditional publication is the regression this pins."""
+    monkeypatch.delenv("SOIL_PROPERTIES_READS_ENABLED", raising=False)
+    assert "soil_properties_at_point" not in {schema["function"]["name"] for schema in tool_schemas()}
+    assert "soil_properties_at_point" not in {descriptor["name"] for descriptor in tool_descriptors()}
+
+
+def test_tool_schemas_and_mcp_list_include_the_soil_tool_with_the_flag_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SOIL_PROPERTIES_READS_ENABLED", "true")
+    assert "soil_properties_at_point" in {schema["function"]["name"] for schema in tool_schemas()}
+    assert "soil_properties_at_point" in {descriptor["name"] for descriptor in tool_descriptors()}
 
 
 def test_the_spatial_tools_publish_their_coordinate_parameters() -> None:
@@ -131,7 +150,10 @@ def test_the_spatial_tools_publish_their_coordinate_parameters() -> None:
 # --- The credential on the wire ----------------------------------------------------
 
 
-async def test_the_client_sends_the_bearer_credential_and_the_published_tools() -> None:
+async def test_the_client_sends_the_bearer_credential_and_the_published_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("SOIL_PROPERTIES_READS_ENABLED", raising=False)
     seen: dict[str, Any] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -146,7 +168,7 @@ async def test_the_client_sends_the_bearer_credential_and_the_published_tools() 
     assert seen["url"] == "https://provider.invalid/api/v1/chat/completions"
     assert seen["authorization"] == f"Bearer {SENTINEL_KEY}"
     assert seen["body"]["model"] == "test/model-1"
-    assert len(seen["body"]["tools"]) == WAREHOUSE_TOOL_COUNT
+    assert len(seen["body"]["tools"]) == PUBLISHED_TOOL_COUNT
     assert seen["body"]["tool_choice"] == "auto"
 
 
@@ -406,10 +428,11 @@ async def test_the_initialized_notification_is_recorded_and_never_answered() -> 
     assert server.initialized is True
 
 
-async def test_tools_list_publishes_every_warehouse_tool() -> None:
+async def test_tools_list_publishes_every_warehouse_tool(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SOIL_PROPERTIES_READS_ENABLED", raising=False)
     response = await McpToolServer().handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     assert response is not None
-    assert len(response["result"]["tools"]) == WAREHOUSE_TOOL_COUNT
+    assert len(response["result"]["tools"]) == PUBLISHED_TOOL_COUNT
 
 
 async def test_a_typed_refusal_is_successful_content_and_not_an_mcp_error() -> None:
@@ -519,5 +542,5 @@ async def test_the_configured_provider_authenticates() -> None:
     """The only test here that opens a socket. Proves the key, the base URL and the model name."""
     outcome = await OpenAiCompletionsClient.from_settings().probe()
     assert outcome["authenticated"] is True
-    assert outcome["tools_published"] == WAREHOUSE_TOOL_COUNT
+    assert outcome["tools_published"] == PUBLISHED_TOOL_COUNT
     assert SENTINEL_KEY not in json.dumps(outcome, default=str)

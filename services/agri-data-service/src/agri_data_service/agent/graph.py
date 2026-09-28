@@ -66,10 +66,19 @@ MODEL: Final = "claude-opus-5"
 # Adaptive thinking is Claude Opus 5's default, so `thinking` is deliberately never sent.
 SERVER_SIDE_FALLBACK_BETA: Final = "server-side-fallback-2026-07-01"
 WEB_SEARCH_TOOL: Final[dict[str, Any]] = {"type": "web_search_20260209", "name": "web_search"}
+
+
 # The scoped species tool is available only during the warehouse pass.
-WAREHOUSE_TOOLS_FOR_WEB: Final = tuple(
-    tool for tool in warehouse_tools.WAREHOUSE_TOOLS if tool.name != "species_information"
-)
+def warehouse_tools_for_web() -> tuple[Any, ...]:
+    """The web pass's tool set: currently published warehouse tools minus `species_information`.
+
+    A FUNCTION, not a module-level constant: `warehouse_tools.published_warehouse_tools()` reads
+    SOIL_PROPERTIES_READS_ENABLED fresh on every call, and caching this tuple at import would freeze
+    `soil_properties_at_point`'s publication at whatever the flag happened to be when the process
+    started.
+    """
+    return tuple(tool for tool in warehouse_tools.published_warehouse_tools() if tool.name != "species_information")
+
 
 MAX_OUTPUT_TOKENS: Final = 16_000
 MAX_WAREHOUSE_ITERATIONS: Final = 6
@@ -878,7 +887,7 @@ class GatherWarehouseEvidence:
             refused = await _run_pass(
                 ctx,
                 tool_list=bind_selection_tools(
-                    warehouse_tools.WAREHOUSE_TOOLS,
+                    warehouse_tools.published_warehouse_tools(),
                     longitude=ctx.request.longitude,
                     latitude=ctx.request.latitude,
                     selection=ctx.request.active_selection(),
@@ -931,7 +940,7 @@ class AssessSufficiency:
         populated = len(evidence.populated_tools)
         available = sum(
             tool.name != "species_information" and tool.name not in LITERATURE_TOOLS
-            for tool in warehouse_tools.WAREHOUSE_TOOLS
+            for tool in warehouse_tools.published_warehouse_tools()
         )
         coverage = {
             "populated_tools": list(evidence.populated_tools),
@@ -996,7 +1005,7 @@ class GatherWebEvidence:
                 ctx,
                 tool_list=[
                     *bind_selection_tools(
-                        WAREHOUSE_TOOLS_FOR_WEB,
+                        warehouse_tools_for_web(),
                         longitude=ctx.request.longitude,
                         latitude=ctx.request.latitude,
                         selection=ctx.request.active_selection(),

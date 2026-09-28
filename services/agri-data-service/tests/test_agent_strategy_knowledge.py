@@ -600,7 +600,7 @@ def test_the_literature_descriptions_carry_the_calling_rules_without_a_system_pr
 
 def test_the_literature_tools_reach_every_agent_surface() -> None:
     registry = {tool.name for tool in agent_tools.WAREHOUSE_TOOLS}
-    web_pass = {tool.name for tool in agent_graph.WAREHOUSE_TOOLS_FOR_WEB}
+    web_pass = {tool.name for tool in agent_graph.warehouse_tools_for_web()}
     http_bridge = {schema["function"]["name"] for schema in bridge.environmental_tool_schemas()}
     mcp = {descriptor["name"] for descriptor in tool_descriptors()}
     assert set(LITERATURE_TOOLS) <= registry & web_pass & http_bridge & mcp
@@ -633,8 +633,9 @@ def test_numeric_site_codes_are_sent_as_the_strings_the_service_parses() -> None
     assert arguments == {"site_profile": {"burn_severity": "4", "land_cover": "82"}}
 
 
-def test_literature_ledger_rows_never_count_as_measured_surfaces() -> None:
+def test_literature_ledger_rows_never_count_as_measured_surfaces(monkeypatch: pytest.MonkeyPatch) -> None:
     """Metadata-exempt by NAME, so even a non-zero row_count could not open or close the web gate."""
+    monkeypatch.delenv("SOIL_PROPERTIES_READS_ENABLED", raising=False)
     ledger = tuple(
         {"tool": name, "row_count": 3, "evidence_domain": "literature_reference", "state": "answered"}
         for name in LITERATURE_TOOLS
@@ -645,7 +646,10 @@ def test_literature_ledger_rows_never_count_as_measured_surfaces() -> None:
     assert verdict.warehouse_is_sufficient is False
     assert verdict.searches_allowed == agent_graph.MAX_SEARCHES_PER_REQUEST
     assert frozenset(LITERATURE_TOOLS) == agent_graph.LITERATURE_TOOLS
-    location_tools = {tool.name for tool in agent_tools.WAREHOUSE_TOOLS} - {"species_information", *LITERATURE_TOOLS}
+    location_tools = {tool.name for tool in agent_tools.published_warehouse_tools()} - {
+        "species_information",
+        *LITERATURE_TOOLS,
+    }
     assert verdict.coverage["tools_available"] == len(location_tools), "literature is never coverage"
 
 
