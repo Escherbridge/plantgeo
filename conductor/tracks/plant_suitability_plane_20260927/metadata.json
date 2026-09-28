@@ -1,0 +1,489 @@
+{
+  "id": "plant_suitability_plane_20260927",
+  "slug": "plant_suitability_plane_20260927",
+  "title": "Plant-suitability serving plane — the frozen v0 prototype taken to a production GIS plane",
+  "description": "One Parquet row per 0.01 deg cell of WA/OR/ID with three guilds of candidates (greenstrip, post-fire restoration, woody buffer / hedgerow; never a fire claim), consuming the committed soil-properties lane, new climate-normal lanes (USDA PHZM 2023; a regional frost-free bias surface; precipitation only after D-PRISM), a governed region-scale curation dataset, one static plant-reference release set, and a live-DuckDB full-list agent tool behind verified access; validated by independent recompute, transcription review, a rule-derived watch list, LANDFIRE EVT and later community observations.",
+  "type": "feature",
+  "status": "pending",
+  "review_state": "Critic pass 1 returned CHANGES-REQUIRED on 2026-09-27 and was NOT revised, because the owner stopped track planning ('no more track planning only code execution'). The region-scale charter here is unreviewed.",
+  "execution_note": "Execution is pilot-first outside this plan. The rule engine landed as bd75855d (warehouse/plant_suitability, dark). Wiring as a serving lane (three Vegetation toggles, which retire the botanical UI rows) follows the owner decisions of 2026-09-28. Serving waits on the owner's go to stage and pin the release.",
+  "created_on": "2026-09-27",
+  "created_at": "2026-09-27T00:00:00+00:00",
+  "computed_at_head": "56467bd4",
+  "depends_on": [],
+  "external_dependencies": [
+    {
+      "what": "soil-properties lane published (soil data plane operator steps P1 capture/prepare, P3 publish, P4 verify)",
+      "owner": "soil data plane session (.omc/soil-data-plane-20260927/)",
+      "state_at_head": "registered, never written (pipeline/direct/soil_properties/AGENTS.md: 'Built (WS-A A1), not yet run')",
+      "blocks": "PG-7 (plant-suitability publish)"
+    },
+    {
+      "what": "CONTRACT C1 amendment: this track reads the soil-properties z9 (0.01 deg mean) rung; C1 states no consumer reads coarse rungs",
+      "owner": "soil data plane orchestrator",
+      "blocks": "d4-suitability-lane build"
+    },
+    {
+      "what": "SSURGO survey properties per cell (drainage, hydric, restriction depth, EC, CaCO3, horizon pH/texture): soil DESIGN section 4 follow-up F1",
+      "owner": "soil data plane session",
+      "state_at_head": "deferred (DESIGN D3); soil-survey Parquet schema carries drainage_class/hydric_rating per delineation only and is unpublished",
+      "blocks": "PG-7 under the Q1 default (hard dependency)"
+    },
+    {
+      "what": "vegetation_type_landfire_evt_20260918 published",
+      "state_at_head": "no pipeline/direct/vegetation_type package at 56467bd4",
+      "blocks": "Phase 6 EVT validation only"
+    }
+  ],
+  "related": [
+    "botanical_species_profile_lookup_20260911",
+    "botanical_species_source_admission_20260911",
+    "botanical_occurrence_experience_20260911",
+    "gbif_source_admission_20260914",
+    "environmental_parquet_serving_20260912",
+    "multiscale_polygon_surface_20260901",
+    "config_driven_ingestion_20260926",
+    "vegetation_type_landfire_evt_20260918"
+  ],
+  "supersedes": [
+    {
+      "track": "pnw_herbaria_source_admission_20260911",
+      "scope": "as the data path for the platform's 'what grows here' answer (owner decision OD-13); admission packets remain history",
+      "status_flip": "owner's call at PG-10; not edited by this track"
+    }
+  ],
+  "supersedes_in_part": [
+    {
+      "track": "botanical_occurrence_parquet_lane_20260911",
+      "scope": "the specimen serving plane (botanical-cell-taxon-summary; BotanicalRichnessLayer, BotanicalOccurrencesLayer, BotanicalCollectionEffortLayer) stops being the 'what grows here' answer; retirement of any served surface is a separate layer-lane-standard section 13.1 release"
+    },
+    {
+      "track": "botanical_species_recommendation_validation_20260911",
+      "scope": "its recommendation join and API (r1, r3) are replaced by this plane's candidate framing; its abstaining validation protocol is reused in Phase 6"
+    }
+  ],
+  "design_documents": [
+    ".omc/research/plant-suitability-v0-20260926/FROZEN.md",
+    ".omc/research/plant-suitability-v0-20260926/join/GUILD_RULES.md",
+    ".omc/research/plant-suitability-v0-20260926/join/SUMMARY.md",
+    ".omc/research/plant-suitability-v0-20260926/regional_lists/SOURCES_steppe.md",
+    ".omc/research/plant-suitability-v0-20260926/regional_lists/SOURCES_westside.md",
+    ".omc/research/plant-suitability-v0-20260926/site_conditions/climate/QUALITY.md",
+    ".omc/research/plant-suitability-v0-20260926/site_conditions/soil/QUALITY.md",
+    "docs/research/pnw-plant-suitability-2026-09-26/report.md",
+    "docs/layer-lane-standard.md",
+    "conductor/code_styleguides/layer-lanes.md",
+    ".omc/soil-data-plane-20260927/CONTRACT.md",
+    ".omc/soil-data-plane-20260927/DESIGN.md"
+  ],
+  "owner_decisions_20260927": {
+    "OD-1_plane": "GIS serving plane; ONE row per cell; per guild: count, pool size, status, top-3 names, common names, per-pick labels",
+    "OD-2_full_list": "full ranked list = live DuckDB join of the cell's site vector against the species tables, exposed as an agent tool behind VERIFIED access; platform open and non-commercial; AI access gated; aevani.com affiliates get access by default; CC BY-NC records stay out of any affiliate-facing output",
+    "OD-3_guilds": "greenstrip, post_fire_restoration, hedgerow_buffer ('woody buffer / hedgerow candidates', windbreak and pollinator value, NO fire claim); defensible-space landscaping deferred",
+    "OD-4_pools": "species named in regional seed/planting guides only; PLANTS never adds a species",
+    "OD-5_non_natives": "allowed unless state noxious-listed; flagged 'introduced — native alternative preferred (CPS 394)'",
+    "OD-6_fire_label": "USDA PLANTS fire resistance is a LABEL only",
+    "OD-7_wetland": "NWPL 2022 wetland-indicator axis",
+    "OD-8_frost_free": "shortfall within the measured station bias = 'uncertain', not fail",
+    "OD-9_neighbour": "neighbour-region guides stay, flagged, ranked below in-region",
+    "OD-10_eastern_oregon": "'eastern Oregon' in a guide = east of the Cascade crest (in-region for Bend)",
+    "OD-11_rank_order": "in-region ranks ahead of frost-free certainty",
+    "OD-12_framing": "every served guild is 'candidates', never a claim that a plant prevents or reduces wildfire (F0/F4); restoration framed as herbicide + perennial seeding (F1, medium)",
+    "OD-13_supersession": "the suitability plane supersedes the herbaria data"
+  },
+  "spec_decisions": {
+    "S1_grain": "base z13 = 0.01 deg cell origins; rungs z9 0.01 / z5 0.2 / z0 5.0 (tiers.py::TIER_RESOLUTION_DEGREES); 0.05 deg is not a rung",
+    "S2_rows": "wide rows, WA/OR/ID only; ~0.76M planning estimate, 980,000 envelope ceiling; under MAX_DERIVATION_ROWS in one call",
+    "S3_aggregates": "band-safe only: counts max, scored_any any, no_guide_all all, lists/labels null, constants first",
+    "S4_build_bands": "build computed in 0.2 deg latitude bands (35 x <= 28,000 cells)",
+    "S5_rule_engine": "one pure engine in warehouse/plant_suitability/ shared by build and agent tool",
+    "S6_lane_shape": "pipeline/direct/<lane>/ packages mirroring soil_properties (one-off operator publications); migrate in config-driven Phase 4",
+    "S7_reference_release": "species tables are one plant-reference release set (six streams: plant-guide-rows, plant-guide-applicability, plant-species-envelope, plant-wetland-ratings, plant-exclusions, plant-guild-pools)",
+    "S8_soil_input": "soil from soil-properties z9 rung; pH thickness-weighted 0-30 cm and texture triangle per CONTRACT C5.2",
+    "S9_access_seam": "verified-access predicate at src/lib/server/security/regional-intelligence-access.ts::resolveEntitlementPolicy; tool withheld from the catalogue unless verified",
+    "S10_normals_per_source": "one normals lane per source (hardiness, frost-free, precipitation)",
+    "S11_normals_internal": "normals lanes are inputs, not map layers, in v1 (declared deviation)",
+    "S12_precip_gate": "plant-suitability not published until a cleared precipitation normal exists"
+  },
+  "open_questions": {
+    "Q1_ssurgo": {
+      "question": "Six v0 axes and three habitat qualifiers need SSURGO survey properties the soil lane does not supply. Hard dependency, or interim serve?",
+      "default": "hard dependency on the soil track's SSURGO survey-properties follow-up (DESIGN section 4, F1); everything else ships dark",
+      "alternative": "interim v1 with those axes unknown plus fail-closed wetland/habitat rules",
+      "reversal_cost": "interim: one rebuild + label change; hard dependency: calendar delay only"
+    },
+    "Q2_cold_statistic": {
+      "question": "Cold axis: PHZM mean annual extreme minimum, or record minimum from a reanalysis base field?",
+      "default": "PHZM 2023 mean annual extreme minimum (v0 sensitivity run cold_uses_mean_annual_extreme_minimum, strictly more lenient)",
+      "alternative": "record minimum from the 0.1 deg reanalysis frost-free base field (v0 primary)",
+      "reversal_cost": "one axis definition + rebuild"
+    },
+    "Q3_frost_free_source": {
+      "question": "Frost-free base field source and spend?",
+      "default": "Open-Meteo ERA5-Land 0.1 deg daily minimum 1991-2020; ~5.9M weighted calls (~7,570 boxes x 783) at the O10 conservative weight; over one month's 5,000,000 paid cap, split across >= 2 months, metered",
+      "alternatives": [
+        "CDS ERA5-Land (no Open-Meteo spend; volume and terms not checked)",
+        "0.25 deg transform over meteorology-* after config-driven G7 (no new spend; coarser; waits)"
+      ],
+      "reversal_cost": "rebuild the frost-free lane"
+    },
+    "Q4_verified_access": {
+      "question": "Who is 'verified' besides aevani.com affiliates?",
+      "default": "emailVerified AND (email domain aevani.com OR role expert/admin); no self-serve flow in v1",
+      "alternative": "admin-reviewed request-and-grant row",
+      "reversal_cost": "one predicate"
+    }
+  },
+  "owner_answers": {},
+  "assumptions": [
+    {"id": "A1", "text": "the Parquet writer carries plantgeo:* key-value metadata; fallback a one-row companion stream", "reversal_cost": "low"},
+    {"id": "A2", "text": "derive_tier accepts a 0.01 deg base equal to the z9 pitch; FR-17 test proves or refutes; fallback 0.005 deg base", "reversal_cost": "medium (4x compute)"},
+    {"id": "A3", "text": "plant-reference nonspatial streams fit the pipeline/direct/botanical_species_profiles/ publication pattern (exists, not read in depth)", "reversal_cost": "medium (publication shim)"},
+    {"id": "A4", "text": "PHZM terms are attribution + disclaimer (single verifier); re-read verbatim at P0", "reversal_cost": "high if refused"},
+    {"id": "A5", "text": "NCEI 1991-2020 station normals are public domain (not checked)", "reversal_cost": "low"},
+    {"id": "A6", "text": "USDA PLANTS characteristics may be redistributed as a derived table (not checked)", "reversal_cost": "high (envelope stream internal-only)"},
+    {"id": "A7", "text": "centre-sampling PHZM 30 arc-second pixels into 0.01 deg cells (DI); conservative min-over-pixels is the alternative", "reversal_cost": "low (rebuild)"},
+    {"id": "A8", "text": "curated rows live as JSONL inside the plant_reference package; raw documents in the object store", "reversal_cost": "low"},
+    {"id": "A9", "text": "bias surface = per-MLRA median when n >= 3 stations, else state median (DI)", "reversal_cost": "low (rebuild)"},
+    {"id": "A10", "text": "FR-1 band inheritance may draw bands from other documents' rows (DI); alternative: in-region rows only", "reversal_cost": "low (rebuild)"},
+    {"id": "A11", "text": "uploading raw guide documents to the object store is a production mutation (owner go PG-5)", "reversal_cost": "none"}
+  ],
+  "conflicts": [
+    "soil-properties is SoilGrids-only; six v0 axes (salinity, calcareous, root_depth, anaerobic, drought, wetland_indicator) and three habitat qualifiers need SSURGO survey properties that are deferred (soil DESIGN D3) and not in the soil-survey Parquet schema (Q1)",
+    "soil-properties is registered but never written (precondition, soil track)",
+    "soil CONTRACT C1 says no consumer reads coarse rungs; this track reads z9 (needs a C1 amendment by the soil orchestrator)",
+    "report section 2's 'start the pyramid at 0.05 deg' is not a platform rung (TIER_RESOLUTION_DEGREES {9: 0.01, 5: 0.2, 0: 5.0})",
+    "report section 2's seven-guild species_guild vocabulary and 6.86M-row arithmetic superseded by OD-3 and OD-1",
+    "config_driven_ingestion_20260926 not landed (no lanes/*.toml, pipeline/runner, pipeline/lanes at HEAD); new lanes land as pipeline/direct packages its Phase 4 must migrate; its 0.25 deg meteorology cannot supply normals",
+    "botanical_species_profile_lookup_20260911 overlaps on hardiness/precipitation/pH/salinity/drought traits, keeps agri.species (Postgres) as its authoring surface and forbids name-only joins; relation is the owner's call",
+    "environmental_parquet_serving_20260912 non-goals exempt 'approved species reference profiles' from Parquet; this track follows the owner rule (Parquet)",
+    "docs/layer-lane-standard.md section 9.1 cites environmental-read-model.test.ts and pre-aggregation-catalogue.test.ts, neither of which exists at HEAD",
+    "FROZEN.md vs SUMMARY.md: 56 vs 70 unscorable names; ~1,000 vs 305 unflagged not-recorded slots (reconciled in FR-5)",
+    "no verified-access gate, affiliate rule or CC BY-NC agent filter exists at HEAD (resolveEntitlementPolicy resolves every signed-in user to signed_in)"
+  ],
+  "planning_arithmetic": {
+    "envelope_cells_0p01": "1,400 x 700 = 980,000 (-125..-111, 42..49)",
+    "wa_or_id_cells_estimate": "~0.76M = (184,827 + 254,806 + 216,443 km2 total area) / ~0.868 km2 per 0.01 deg cell at 45.5 N; the build reports the real count",
+    "max_derivation_rows": "5,000,000 per call (warehouse/parquet/tiers.py::MAX_DERIVATION_ROWS); wide rows fit one call; 0.005 deg wide (<= 3.92M) also fits",
+    "coarse_rungs": "z5 0.2 deg = 70 x 35 = 2,450 cells; z0 5.0 deg = 3 x 2 = 6 cells",
+    "build_bands": "35 bands of 0.2 deg x <= 28,000 cells; ~11M (cell, taxon) evaluations per band at <= 400 pool taxa (estimate; v0 pools 0-112 per guild)",
+    "phzm_pixels": "14 deg x 120 by 7 deg x 120 = 1,680 x 840 = 1,411,200 pixels in the envelope",
+    "frost_free_open_meteo_weighted_calls": "~7,570 ERA5-Land 0.1 deg boxes over WA/OR/ID x max(1, 10,958/14) = 783 -> ~5.9M (one variable); v0 used 97 boxes"
+  },
+  "owner_go_steps": {
+    "PG-0": "answers to Q1-Q4 (grill once; defaults stand otherwise)",
+    "PG-1": "publish climate-normals-hardiness",
+    "PG-2": "frost-free base-field spend + publish climate-normals-frost-free",
+    "PG-3": "D-PRISM decision + publish climate-normals-precipitation",
+    "PG-4": "publish plant-curation-regions",
+    "PG-5": "upload raw guide documents to the object store (content-addressed)",
+    "PG-6": "publish the plant-reference release",
+    "PG-7": "publish plant-suitability (soil published, Q1 path satisfied, precipitation published, recompute verdict)",
+    "PG-8": "PLANT_SUITABILITY_READS_ENABLED=true on web + agri",
+    "PG-9": "PLANT_CANDIDATES_TOOL_ENABLED=true + live verified-access predicate",
+    "PG-10": "status flips on the superseded tracks"
+  },
+  "reviews": {
+    "phase0": {"reviewer": "oh-my-claudecode:critic (opus)", "verdict": null},
+    "phase1": {"reviewer": "independent recompute (opus) + evidence/transcription (opus)", "verdict": null},
+    "phase2": {"reviewer": "/code-review high per push + document-specialist (terms) + independent station recompute", "verdict": null},
+    "phase3": {"reviewer": "evidence/transcription per batch + oh-my-claudecode:critic (region readings)", "verdict": null},
+    "phase4": {"reviewer": "/code-review high + independent recompute (0 mismatches)", "verdict": null},
+    "phase5": {"reviewer": "/code-review high + /security-review + oh-my-claudecode:qa-tester + agent-honesty reviewer", "verdict": null},
+    "phase6": {"reviewer": "oh-my-claudecode:scientist + oh-my-claudecode:critic", "verdict": null},
+    "phase7": {"reviewer": "oh-my-claudecode:code-reviewer (closure)", "verdict": null}
+  },
+  "partitions": {
+    "computed_at": "2026-09-27T00:00:00+00:00",
+    "computed_at_commit": "56467bd4",
+    "confidence": "planned",
+    "note": "Planned from the track's planning analysis, never verified against the tree. A slice carrying its own \"confidence\": \"none\" overrides the top-level value: its file set could not be grounded by a real grep and must be recomputed at launch. Existing paths below were confirmed present at 56467bd4 by Glob/Grep; future paths follow grounded conventions (pipeline/direct/<lane>/ as soil_properties; warehouse/schemas/<slug>.py autoload; warehouse/<domain>/ as botanical_species_profiles; docs/lanes/<slug>.md).",
+    "slices": [
+      {
+        "id": "i-coordinator",
+        "task": "integration role, never an author lane: per phase collect evidence, launch i-monitor's sweep and the phase reviewer(s), record verdicts in metadata reviews and evidence/reviews.md, check shared-checkout quiescence, stage with explicit pathspecs, ask the owner for each PG-n; Phase 0 probes, terms capture launch, grill, soil C1 amendment request; Phase 7 closure; adds the two flag rows to docs/env-vars.md",
+        "owns": [
+          "conductor/tracks/plant_suitability_plane_20260927/spec.md",
+          "conductor/tracks/plant_suitability_plane_20260927/plan.md",
+          "conductor/tracks/plant_suitability_plane_20260927/metadata.json",
+          {"path": "conductor/tracks/plant_suitability_plane_20260927/evidence/phase0.md", "status": "future"},
+          {"path": "conductor/tracks/plant_suitability_plane_20260927/evidence/phase1.md", "status": "future"},
+          {"path": "conductor/tracks/plant_suitability_plane_20260927/evidence/phase2.md", "status": "future"},
+          {"path": "conductor/tracks/plant_suitability_plane_20260927/evidence/phase3.md", "status": "future"},
+          {"path": "conductor/tracks/plant_suitability_plane_20260927/evidence/reviews.md", "status": "future"},
+          {"path": "conductor/tracks/plant_suitability_plane_20260927/evidence/browser-phase5/**", "status": "future"},
+          {"path": "conductor/RUNBOOK.md", "status": "existing", "note": "one heading only; concurrent sessions write other sections"},
+          {"path": "conductor/tracks.md", "status": "existing", "note": "this track's line only; append-only discipline"},
+          {"path": "docs/env-vars.md", "status": "existing", "note": "PLANT_SUITABILITY_READS_ENABLED and PLANT_CANDIDATES_TOOL_ENABLED rows only; git status first"}
+        ],
+        "model": "opus",
+        "depends_on": []
+      },
+      {
+        "id": "i-monitor",
+        "task": "the single sweep per push (scripts/check.py with PROJ_LIB/PROJ_DATA/GDAL_DATA unset; npm test, typecheck, build, check:data-boundary when src/** changed) and the receipt refresh; judges, never authors",
+        "owns": ["services/agri-data-service/QUALITY_RECEIPT.json"],
+        "model": "sonnet",
+        "depends_on": []
+      },
+      {
+        "id": "a1-rules-of-record",
+        "task": "Phase 1: close FROZEN issues 1-5 and 7 in a v1 oracle copy under .omc (never edit the frozen v0 dir); write docs/lanes/plant-suitability.md section 'Rules of record'; write the stratified golden sample fixture",
+        "owns": [
+          {"path": "docs/lanes/plant-suitability.md", "status": "future", "note": "section 'Rules of record' only; d4 appends 'Lane mechanics' afterwards"},
+          {"path": "services/agri-data-service/tests/fixtures/plant_suitability_golden.json", "status": "future"}
+        ],
+        "reads_only": [".omc/research/plant-suitability-v0-20260926/**"],
+        "model": "opus",
+        "depends_on": ["i-coordinator"]
+      },
+      {
+        "id": "c1-curation-regions",
+        "task": "Phase 2 (C item pulled forward): plant-curation-regions static lane: every 0.01 deg WA/OR/ID cell -> state, mlra, nwpl_region (+ basis), curation_region_id; verbs mirror pipeline/direct/soil_properties",
+        "owns": [
+          {"path": "services/agri-data-service/src/agri_data_service/pipeline/direct/plant_curation_regions/**", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/warehouse/schemas/plant_curation_regions.py", "status": "future"},
+          {"path": "services/agri-data-service/tests/direct/plant_curation_regions/**", "status": "future"},
+          {"path": "docs/lanes/plant-curation-regions.md", "status": "future"}
+        ],
+        "model": "sonnet",
+        "depends_on": ["i-coordinator"]
+      },
+      {
+        "id": "b1-hardiness",
+        "task": "Phase 2: climate-normals-hardiness static lane from USDA PHZM 2023 30 arc-second grid; centre-sampled into 0.01 deg cells; attribution + disclaimer in served metadata",
+        "owns": [
+          {"path": "services/agri-data-service/src/agri_data_service/pipeline/direct/climate_normals_hardiness/**", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/warehouse/schemas/climate_normals_hardiness.py", "status": "future"},
+          {"path": "services/agri-data-service/tests/direct/climate_normals_hardiness/**", "status": "future"},
+          {"path": "docs/lanes/climate-normals-hardiness.md", "status": "future"}
+        ],
+        "model": "sonnet",
+        "depends_on": ["i-coordinator"]
+      },
+      {
+        "id": "b2-frost-free",
+        "task": "Phase 2: climate-normals-frost-free static lane: base field per Q3/D-FROST (bounded, resumable, metered capture), NCEI 1991-2020 station inventory, per-station bias, regional surface (MLRA median n >= 3 else state), per-cell fields",
+        "owns": [
+          {"path": "services/agri-data-service/src/agri_data_service/pipeline/direct/climate_normals_frost_free/**", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/warehouse/schemas/climate_normals_frost_free.py", "status": "future"},
+          {"path": "services/agri-data-service/tests/direct/climate_normals_frost_free/**", "status": "future"},
+          {"path": "docs/lanes/climate-normals-frost-free.md", "status": "future"}
+        ],
+        "model": "opus",
+        "depends_on": ["c1-curation-regions"]
+      },
+      {
+        "id": "b3-precipitation",
+        "task": "Phase 2: climate-normals-precipitation static lane (mean + p20 annual) from the source D-PRISM selects",
+        "confidence": "none",
+        "unpartitioned": "the source is undecided until D-PRISM (FR-8); the capture shape and file set depend on it (PRISM, nClimGrid, Daymet or another), so any owns list now would be a guess",
+        "depends_on": ["c1-curation-regions"]
+      },
+      {
+        "id": "c2-reference-core",
+        "task": "Phase 3: plant-reference schema freeze (six streams, one module), package shell, guide-rows loader, quote check (exact or ordered tokens within 2 x tokens + 10), applicability rows, quote verify verb, port of the 1,458 v0 rows with origin_scope/superseded_by/licence",
+        "owns": [
+          {"path": "services/agri-data-service/src/agri_data_service/warehouse/schemas/plant_reference.py", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/pipeline/direct/plant_reference/__init__.py", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/pipeline/direct/plant_reference/__main__.py", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/pipeline/direct/plant_reference/forward.py", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/pipeline/direct/plant_reference/AGENTS.md", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/pipeline/direct/plant_reference/guide_rows.py", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/pipeline/direct/plant_reference/quote_check.py", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/pipeline/direct/plant_reference/applicability.py", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/pipeline/direct/plant_reference/verify.py", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/pipeline/direct/plant_reference/curation/**", "status": "future", "note": "the v0 port; ownership passes to c3 after c2 lands"},
+          {"path": "services/agri-data-service/tests/direct/plant_reference/test_schema.py", "status": "future"},
+          {"path": "services/agri-data-service/tests/direct/plant_reference/test_guide_rows.py", "status": "future"},
+          {"path": "services/agri-data-service/tests/direct/plant_reference/test_quote_check.py", "status": "future"},
+          {"path": "services/agri-data-service/tests/direct/plant_reference/test_applicability.py", "status": "future"},
+          {"path": "docs/lanes/plant-reference.md", "status": "future"}
+        ],
+        "model": "opus",
+        "depends_on": ["a1-rules-of-record", "c1-curation-regions"]
+      },
+      {
+        "id": "c3-curation-batches",
+        "task": "Phase 3: sequential curation batches, one push each (OR east of crest, ID, OR west, WA east, WA west): logged bounded source search, transcription, applicability, gap statement; west-side greenstrip gap recorded",
+        "owns": [
+          {"path": "services/agri-data-service/src/agri_data_service/pipeline/direct/plant_reference/curation/**", "status": "future", "note": "one JSONL per document; batches are disjoint by document; runs only after c2 lands (serialized shared write)"},
+          {"path": "services/agri-data-service/tests/direct/plant_reference/test_curation_batch_*.py", "status": "future"}
+        ],
+        "model": "sonnet",
+        "depends_on": ["c2-reference-core"]
+      },
+      {
+        "id": "d1-species-tables",
+        "task": "Phase 4: plant-species-envelope (PLANTS characteristics, trait tiers, C1 merge, taxon_key usda-plants:<symbol>), plant-wetland-ratings (NWPL 2022, C3, wetland-genus assertion), plant-exclusions (OR 2025, WA, ID editions; exclusion_match rules)",
+        "owns": [
+          {"path": "services/agri-data-service/src/agri_data_service/pipeline/direct/plant_reference/plants_envelope.py", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/pipeline/direct/plant_reference/wetland_ratings.py", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/pipeline/direct/plant_reference/exclusions.py", "status": "future"},
+          {"path": "services/agri-data-service/tests/direct/plant_reference/test_plants_envelope.py", "status": "future"},
+          {"path": "services/agri-data-service/tests/direct/plant_reference/test_wetland_ratings.py", "status": "future"},
+          {"path": "services/agri-data-service/tests/direct/plant_reference/test_exclusions.py", "status": "future"}
+        ],
+        "model": "sonnet",
+        "depends_on": ["c2-reference-core"]
+      },
+      {
+        "id": "d2-rule-engine",
+        "task": "Phase 4: pure rule engine (13 axes, source_applicability with FR-1, per-cell frost-free fail-soft band, LEADING_KEYS + guild keys + robustness_margin, labels, framing guard) reproducing the golden sample exactly",
+        "owns": [
+          {"path": "services/agri-data-service/src/agri_data_service/warehouse/plant_suitability/**", "status": "future"},
+          {"path": "services/agri-data-service/tests/plant_suitability/**", "status": "future"}
+        ],
+        "model": "opus",
+        "depends_on": ["a1-rules-of-record"]
+      },
+      {
+        "id": "d3-guild-pools-and-release",
+        "task": "Phase 4: plant-guild-pools derivation (C4 origin + FR-2, in-region, carrying rows, fire label greenstrip/restoration only, noxious removal) and the release-set verbs (publish, maintain, retract) binding six streams to one release id; zero-NC assertion",
+        "owns": [
+          {"path": "services/agri-data-service/src/agri_data_service/pipeline/direct/plant_reference/guild_pools.py", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/pipeline/direct/plant_reference/publish.py", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/pipeline/direct/plant_reference/maintain.py", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/pipeline/direct/plant_reference/retract.py", "status": "future"},
+          {"path": "services/agri-data-service/tests/direct/plant_reference/test_guild_pools.py", "status": "future"},
+          {"path": "services/agri-data-service/tests/direct/plant_reference/test_release_verbs.py", "status": "future"}
+        ],
+        "model": "opus",
+        "depends_on": ["c2-reference-core", "d1-species-tables", "d2-rule-engine"]
+      },
+      {
+        "id": "d4-suitability-lane",
+        "task": "Phase 4: plant-suitability schema (band-safe GridAggregation), A2 derive_tier test, banded build reading soil-properties z9 + three normals + plant-curation-regions + plant-reference, metadata (A1), maintain on input_release_ids + rules_version; docs 'Lane mechanics'",
+        "owns": [
+          {"path": "services/agri-data-service/src/agri_data_service/pipeline/direct/plant_suitability/**", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/warehouse/schemas/plant_suitability.py", "status": "future"},
+          {"path": "services/agri-data-service/tests/direct/plant_suitability/**", "status": "future"}
+        ],
+        "model": "opus",
+        "depends_on": ["d2-rule-engine", "d3-guild-pools-and-release", "b1-hardiness", "b2-frost-free", "b3-precipitation", "c1-curation-regions"]
+      },
+      {
+        "id": "d5-registrations",
+        "task": "serialized registration hunks, invoked once per lane push (P2-P5, P17, P19): _REFERENCE_DATA_REGISTRATIONS entry + watermark import, WRITER_MODULES row, gap_repair_contract static_lookup excuse, EXPECTED_REGISTERED_CENSUS_LANES bump; each invocation depends on that lane's slice",
+        "owns": [
+          {"path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py", "status": "existing", "note": "_REFERENCE_DATA_REGISTRATIONS entries and their watermark imports only"},
+          {"path": "services/agri-data-service/tests/direct/test_direct_writer_contract.py", "status": "existing", "note": "WRITER_MODULES rows only"},
+          {"path": "services/agri-data-service/src/agri_data_service/execution/gap_repair_contract.py", "status": "existing", "note": "static_lookup excuse entries only, worded like the soil-properties entry"},
+          {"path": "services/agri-data-service/tests/parquet_ops/test_coverage_census.py", "status": "existing", "note": "EXPECTED_REGISTERED_CENSUS_LANES and its comment only"}
+        ],
+        "model": "sonnet",
+        "depends_on": ["c1-curation-regions"]
+      },
+      {
+        "id": "e1-agri-tool",
+        "task": "Phase 5: agri reader + plant_candidates_at_point (C2 nearest-cell selection on the 0.01 lattice, live DuckDB join via warehouse/plant_suitability, C5.6 refusals, distance_m + release_day, affiliate NC exclusion from forwarded context, PLANT_CANDIDATES_TOOL_ENABLED)",
+        "owns": [
+          {"path": "services/agri-data-service/src/agri_data_service/agent/plant_candidates.py", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/agent/tools.py", "status": "existing", "note": "one tool registration block beside soil_properties_at_point"},
+          {"path": "services/agri-data-service/src/agri_data_service/agent/AGENTS.md", "status": "existing", "note": "one section"},
+          {"path": "services/agri-data-service/tests/test_agent_plant_candidates.py", "status": "future"},
+          {"path": "services/agri-data-service/tests/test_agent_tools_http.py", "status": "existing", "note": "new cases only"}
+        ],
+        "model": "opus",
+        "depends_on": ["d4-suitability-lane"]
+      },
+      {
+        "id": "e3-access-gate",
+        "task": "Phase 5: verified-access predicate (Q4) and tool withholding; affiliate flag forwarded in server_context",
+        "confidence": "none",
+        "unpartitioned": "the per-user enforcement point for an agri tool reached through routes/agent_tools.py::call_agent_tool and declared by src/lib/server/services/regional-evidence-tools.ts was not traced end to end; the likely seam is src/lib/server/security/regional-intelligence-access.ts::resolveEntitlementPolicy (spec S9), but owning files without the trace would be a guess",
+        "depends_on": ["e1-agri-tool"]
+      },
+      {
+        "id": "e4-ts-tool-declaration",
+        "task": "Phase 5: declare plant_candidates_at_point to the TS side and test it",
+        "owns": [
+          {"path": "src/lib/server/services/regional-evidence-tools.ts", "status": "existing", "note": "one tool declaration beside SOIL_PROPERTIES_TOOL_NAME"},
+          {"path": "src/__tests__/services/regional-evidence-tools.test.ts", "status": "existing", "note": "new cases only"}
+        ],
+        "model": "sonnet",
+        "depends_on": ["e1-agri-tool", "e3-access-gate"]
+      },
+      {
+        "id": "e2-ts-serving",
+        "task": "Phase 5: TS reader (soilgrids.ts pattern), tRPC procedure, snapshot slider capability (hand-spelled test), registry entry, legend, renderer, click panel, PLANT_SUITABILITY_READS_ENABLED; two pushes (P22 reader/capability/registry/legend, P23 renderer/panel)",
+        "owns": [
+          {"path": "src/lib/server/services/plant-suitability.ts", "status": "future"},
+          {"path": "src/__tests__/services/plant-suitability-reader.test.ts", "status": "future"},
+          {"path": "src/lib/server/trpc/routers/environmental.ts", "status": "existing", "note": "one procedure"},
+          {"path": "src/lib/server/services/parquet-slider-capabilities.ts", "status": "existing", "note": "one snapshot capability row"},
+          {"path": "src/__tests__/services/parquet-slider-capabilities.test.ts", "status": "existing", "note": "hand-spelled name added"},
+          {"path": "src/types/time-slider.ts", "status": "existing", "note": "SNAPSHOT_SURFACE_LAYER_NAMES entry only"},
+          {"path": "src/lib/map/layer-registry.ts", "status": "existing", "note": "one entry"},
+          {"path": "src/lib/map/layer-legends.ts", "status": "existing", "note": "one legend; order coordinated with botanical layers"},
+          {"path": "src/components/map/LayerManager.tsx", "status": "existing", "note": "mount the renderer only"},
+          {"path": "src/components/map/layers/PlantSuitabilityLayer.tsx", "status": "future"},
+          {"path": "src/components/panels/PlantSuitabilityDetails.tsx", "status": "future"}
+        ],
+        "model": "opus",
+        "depends_on": ["d4-suitability-lane"]
+      },
+      {
+        "id": "f1-validation-evidence",
+        "task": "Phase 6: end-to-end read-back, full evidence pass, plane-wide rule watch list, adopted abstaining protocol; reviewer lane",
+        "owns": [
+          {"path": "conductor/tracks/plant_suitability_plane_20260927/evidence/validation/**", "status": "future"}
+        ],
+        "model": "opus",
+        "depends_on": ["d4-suitability-lane", "e2-ts-serving", "e1-agri-tool"]
+      },
+      {
+        "id": "f2-evt-validation",
+        "task": "Phase 6: compare guild lifeform with LANDFIRE EVT physiognomy per region (report, never a filter)",
+        "confidence": "none",
+        "unpartitioned": "vegetation_type_landfire_evt_20260918 has not landed: no pipeline/direct/vegetation_type or warehouse/schemas/vegetation_type.py at 56467bd4, so its read surface is unknown",
+        "depends_on": ["f1-validation-evidence"]
+      },
+      {
+        "id": "f3-community-validation",
+        "task": "Phase 6: community presence/absence as validation (not training) and excluded-taxon early warning (report section 5.4)",
+        "confidence": "none",
+        "unpartitioned": "no community observation layer exists; the report's section 5.2 record is a proposal",
+        "depends_on": ["f1-validation-evidence"]
+      }
+    ],
+    "shared_writes": [
+      {"path": "docs/lanes/plant-suitability.md", "owner": "a1-rules-of-record", "reason": "a1 writes 'Rules of record' first; d4 appends 'Lane mechanics' only after a1 lands (serialized)"},
+      {"path": "services/agri-data-service/src/agri_data_service/pipeline/direct/plant_reference/forward.py", "owner": "c2-reference-core", "reason": "d3 adds the publish/maintain/retract verbs only after c2 lands (serialized)"},
+      {"path": "services/agri-data-service/src/agri_data_service/pipeline/direct/plant_reference/__main__.py", "owner": "c2-reference-core", "reason": "same as forward.py"},
+      {"path": "services/agri-data-service/src/agri_data_service/pipeline/direct/plant_reference/AGENTS.md", "owner": "c2-reference-core", "reason": "d1 and d3 each add one section after c2 lands (serialized)"},
+      {"path": "services/agri-data-service/src/agri_data_service/pipeline/direct/plant_reference/curation/**", "owner": "c2-reference-core", "reason": "c2 ports v0 rows; ownership passes to c3 for new documents; never concurrent"},
+      {"path": "docs/lanes/plant-reference.md", "owner": "c2-reference-core", "reason": "d3 appends release-set mechanics after c2 lands"},
+      {"path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py", "owner": "d5-registrations", "reason": "every lane registers here; d5 serializes all hunks"},
+      {"path": "services/agri-data-service/tests/direct/test_direct_writer_contract.py", "owner": "d5-registrations", "reason": "WRITER_MODULES rows for every new writer"},
+      {"path": "services/agri-data-service/src/agri_data_service/execution/gap_repair_contract.py", "owner": "d5-registrations", "reason": "static_lookup excuses for every new lane"},
+      {"path": "services/agri-data-service/tests/parquet_ops/test_coverage_census.py", "owner": "d5-registrations", "reason": "EXPECTED_REGISTERED_CENSUS_LANES changes with each registered lane"},
+      {"path": "services/agri-data-service/src/agri_data_service/agent/tools.py", "owner": "e1-agri-tool", "reason": "shared tool registry; botanical_species_recommendation_validation_20260911 r3 and the soil data plane also edit it; serialize after any other open edit"},
+      {"path": "src/lib/server/services/regional-evidence-tools.ts", "owner": "e4-ts-tool-declaration", "reason": "shared TS tool declaration surface (soil tool lives here)"},
+      {"path": "conductor/RUNBOOK.md", "owner": "i-coordinator", "reason": "concurrent sessions share it; one heading; never git add conductor/ wholesale"},
+      {"path": "docs/env-vars.md", "owner": "i-coordinator", "reason": "frequently dirty; coordinator adds the two flag rows after git status"}
+    ],
+    "tripwires": [
+      "re-grep every owns entry at launch; partitions were computed at 56467bd4 and are hypotheses",
+      "soil-properties must be published (soil track P1/P3/P4) before any plant-suitability build; it was never written at 56467bd4",
+      "reading the soil-properties z9 rung makes this track its first coarse-rung consumer: the CONTRACT C1 amendment must be recorded by the soil orchestrator first; never edit .omc/soil-data-plane-20260927/",
+      "0.05 deg is not a platform rung (TIER_RESOLUTION_DEGREES {9: 0.01, 5: 0.2, 0: 5.0}); never declare it",
+      "plant-suitability aggregates must stay inside BAND_SAFE_AGGREGATES {sum, min, max, first, all, any, null}; one how per column across all rungs",
+      "base z13 pitch 0.01 equals z9: prove derive_tier behaviour with a test (A2) before publishing; fallback 0.005 deg",
+      "no served string, label, prompt fragment or fixture text may claim a plant prevents, slows or reduces fire (OD-12); hedgerow_buffer labels carry no fire field",
+      "PLANTS never adds a species; genus-only guide names are never expanded (OD-4)",
+      "frost-free: a shortfall within |regional bias| is unknown/'uncertain', never a fail; in-region ranks before frost-free certainty (OD-8, OD-11)",
+      "no cell's frost-free fail-soft band may come from a three-station constant",
+      "plant-suitability is not published until a cleared precipitation normal exists (S12); never use ERA5 precipitation for axes or bands",
+      "the served plane holds zero non-commercial records; affiliate tool output never returns an NC row (OD-2, NFR-4)",
+      "no reference table goes to Postgres, whatever environmental_parquet_serving_20260912's non-goal wording says",
+      "never run PlantGeo locally; builds are operator one-offs under an owner go; oracle re-runs use the gitignored .omc venv",
+      "Python runs with PROJ_LIB, PROJ_DATA and GDAL_DATA unset",
+      "a bare URL in a src/** comment fails check:data-boundary and the web image build; source URLs live in lane AGENTS.md and docs/lanes",
+      "shared checkout: commit with an explicit pathspec; QUALITY_RECEIPT.json digests the whole service tree; authors never commit",
+      "the frozen v0 directory .omc/research/plant-suitability-v0-20260926/ is read-only; Phase 1 works in a copy",
+      "cite path::symbol, never line numbers; recompute counts at each phase start (FROZEN vs SUMMARY already disagree)"
+    ],
+    "integration_slice": "i-coordinator"
+  }
+}
