@@ -1,0 +1,211 @@
+"""GL-5's sweep proof (plan 0W.5): every fault class a lane can hit is classified, recorded on the right
+incident, and CONTAINED -- a second lane completes unaffected on every tick.
+
+One flow, parametrised over the plan's fault list. A fault lane that already failed two buckets and a
+healthy lane run through two real `run_executor_tick` calls, each turn a REAL child process through the
+real `run_scheduled_command` (`soft_failure_fakes.py` fakes only the ledger rows and the worker loop):
+
+1. tick one runs both lanes; the fault lane's turn is stamped with its `exit_class`;
+2. tick two, an hour later: a failed third bucket is now operator-held, so its `lane_hold` opens with the
+   class read back from that run's final attempt; an exit-0 fault records its own incident instead;
+3. on both ticks the healthy lane ran and completed.
+
+Report shapes are the lanes' own `main()` shapes (`test_exit_classes.py` cites the source lines); the
+R3 drought case carries the meter's usage line on stdout, which is the only place a wrapped status
+survives.
+"""
+
+from __future__ import annotations
+
+import sys
+from dataclasses import dataclass
+from typing import Final
+
+import pytest
+import structlog.testing
+
+from agri_data_service.execution.job_executor_service import SoftFailureState
+from agri_data_service.execution.lane_ids import (
+    CLIMATE_DIRECT_LANE_ID,
+    DROUGHT_DIRECT_LANE_ID,
+    SENSORS_DIRECT_LANE_ID,
+    WATER_GAUGES_DIRECT_LANE_ID,
+)
+from agri_data_service.foundation.observability import events
+from tests.execution.soft_failure_fakes import (
+    COMPLETE_REPORT_SCRIPT,
+    HOUR,
+    KEY_ERROR_SCRIPT,
+    NOW,
+    FakeWorld,
+    build_lane_spec,
+    events_named,
+    exit_script,
+    report_script,
+    states,
+    usage_then_report_script,
+)
+
+HEALTHY: Final = "healthy-probe-lane"
+#: A lane with no evidence rules of its own: the explicit-exit and monitor cases run on it.
+GENERIC: Final = SENSORS_DIRECT_LANE_ID
+DROUGHT_WRAPPER_REPORT: Final = {
+    "status": "failed",
+    "error": "DirectDroughtError: usdm weekly census fetch failed after 3 attempts",
+}
+FLOOD_SCRIPT: Final = (
+    "import json, sys\n"
+    "write = sys.stderr.write\n"
+    "for index in range(100_000):\n"
+    "    write(f'progress line {index}\\n')\n"
+    "sys.stderr.flush()\n"
+    'print(json.dumps({"outcome": "complete", "days_unwritten": 0}))\n'
+)
+SELF_KILL_SCRIPT: Final = "import os, signal\nos.kill(os.getpid(), signal.SIGKILL)\n"
+
+
+@dataclass(frozen=True, slots=True)
+class FaultCase:
+    lane_id: str
+    script: str
+    exit_class: str
+    #: The incident kind open for the fault lane after tick two; `None` when the fault records nothing.
+    incident: str | None
+    timeout_seconds: int = 60
+    raising_read: bool = False
+    incomplete_reason: str | None = None
+
+
+FAULT_CASES: Final = [
+    pytest.param(
+        FaultCase(
+            CLIMATE_DIRECT_LANE_ID,
+            report_script(
+                {
+                    "status": "failed",
+                    "error": (
+                        "DirectClimateFieldError: nasa-power-precipitation 2026-09-27: NASA POWER answered 503 "
+                        "for support-cell-1892 2026-09-27"
+                    ),
+                },
+                exit_code=1,
+            ),
+            "upstream",
+            "lane_hold",
+        ),
+        id="climate-wrapped-503",
+    ),
+    pytest.param(
+        FaultCase(
+            WATER_GAUGES_DIRECT_LANE_ID,
+            report_script(
+                {
+                    "event": "water_gauges_forward_failed",
+                    "error_type": "UpstreamHttpError",
+                    "detail": "upstream request failed with status 503",
+                },
+                exit_code=1,
+            ),
+            "upstream",
+            "lane_hold",
+        ),
+        id="water-gauges-pair",
+    ),
+    pytest.param(
+        FaultCase(
+            DROUGHT_DIRECT_LANE_ID,
+            usage_then_report_script(last_send_outcome="5xx", report=DROUGHT_WRAPPER_REPORT, exit_code=1),
+            "upstream",
+            "lane_hold",
+        ),
+        id="drought-wrapper-after-failed-send",
+    ),
+    pytest.param(
+        FaultCase(
+            DROUGHT_DIRECT_LANE_ID,
+            usage_then_report_script(last_send_outcome="2xx", report=DROUGHT_WRAPPER_REPORT, exit_code=1),
+            "code",
+            "lane_hold",
+        ),
+        id="wrapper-after-200-is-code",
+    ),
+    pytest.param(FaultCase(GENERIC, KEY_ERROR_SCRIPT, "code", "lane_hold"), id="key-error"),
+    pytest.param(FaultCase(GENERIC, exit_script(75), "upstream", "lane_hold"), id="exit-75"),
+    pytest.param(FaultCase(GENERIC, exit_script(70), "code", "lane_hold"), id="exit-70"),
+    pytest.param(FaultCase(GENERIC, exit_script(78), "config", "lane_hold"), id="exit-78"),
+    pytest.param(
+        FaultCase(GENERIC, "import time\ntime.sleep(60)\n", "hang", "lane_hold", timeout_seconds=1), id="hang"
+    ),
+    pytest.param(FaultCase(GENERIC, exit_script(0), "report_missing", "lane_report_missing"), id="exit-0-no-report"),
+    pytest.param(
+        FaultCase(
+            GENERIC,
+            report_script({"outcome": "complete", "days_unwritten": 0, "availability_retry_owed": 2}),
+            "ok",
+            "lane_incomplete",
+            incomplete_reason="publication_debt",
+        ),
+        id="exit-0-publication-debt-is-incomplete",
+    ),
+    pytest.param(
+        FaultCase(
+            GENERIC,
+            report_script({"outcome": "complete", "days_unwritten": 0, "requests": 0, "rows_written": 0}),
+            "ok",
+            None,
+        ),
+        id="zero-fetches",
+    ),
+    # The parent redacts every line before the router's ceilings drop it (GL-2's env scan, ~0.8 ms a
+    # line on the author's Windows host), so draining 100,000 lines takes over a minute: the budget is
+    # widened so this case measures flood CONTAINMENT, not the host's redaction throughput.
+    pytest.param(FaultCase(GENERIC, FLOOD_SCRIPT, "ok", None, timeout_seconds=900), id="100k-flood-lines"),
+    pytest.param(
+        FaultCase(GENERIC, SELF_KILL_SCRIPT, "code", "lane_hold"),
+        id="self-sigkill",
+        marks=pytest.mark.skipif(sys.platform == "win32", reason="SIGKILL is POSIX-only"),
+    ),
+    pytest.param(FaultCase(GENERIC, COMPLETE_REPORT_SCRIPT, "ok", None, raising_read=True), id="raising-incident-read"),
+]
+
+
+@pytest.mark.parametrize("case", FAULT_CASES)
+async def test_a_fault_is_classified_recorded_and_contained(monkeypatch: pytest.MonkeyPatch, case: FaultCase) -> None:
+    world = FakeWorld(
+        {
+            case.lane_id: build_lane_spec(case.lane_id, case.script, timeout_seconds=case.timeout_seconds),
+            HEALTHY: build_lane_spec(HEALTHY, COMPLETE_REPORT_SCRIPT),
+        }
+    ).install(monkeypatch)
+    bucket = NOW.replace(minute=0)
+    for back in (2, 1):  # two failed buckets: a third failure in a row holds the lane for an operator
+        world.seed_run(case.lane_id, bucket - back * HOUR, "failed", exit_class="code")
+    world.incidents.fail_select = case.raising_read
+    state = SoftFailureState()
+
+    with structlog.testing.capture_logs() as logs:
+        first = await world.tick(soft=state)
+        second = await world.tick(now=NOW + HOUR, soft=state)
+
+    # 1. classified: tick one's fault-lane turn carries the case's class.
+    assert world.outcomes[case.lane_id][0].metrics["exit_class"] == case.exit_class
+
+    # 2. contained: the healthy lane ran and completed on both ticks.
+    assert states(first)[HEALTHY] == states(second)[HEALTHY] == "ran"
+    assert [outcome.kind for outcome in world.outcomes[HEALTHY]] == ["completed", "completed"]
+
+    # 3. recorded: the right incident, and nothing else, is open for the fault lane.
+    open_kinds = world.incidents.open_kinds(case.lane_id)
+    assert open_kinds == (set() if case.incident is None else {case.incident})
+    if case.incident == "lane_hold":
+        hold = world.incidents.by_fingerprint(f"lane_hold:{case.lane_id}")
+        assert hold is not None
+        assert hold["detail"]["exit_class"] == case.exit_class  # type: ignore[index]
+        assert states(second)[case.lane_id] == "failed", "held: only a recorded supersession releases it"
+    if case.incident == "lane_incomplete":
+        incomplete = world.incidents.by_fingerprint(f"lane_incomplete:{case.lane_id}")
+        assert incomplete is not None
+        assert incomplete["detail"]["reason"] == case.incomplete_reason  # type: ignore[index]
+    if case.raising_read:
+        assert world.incidents.rows == {}
+        assert len(events_named(logs, events.EVENT_INCIDENT_WRITE_FAILED)) == 1

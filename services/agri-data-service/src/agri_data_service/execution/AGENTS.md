@@ -54,8 +54,9 @@ reconcile_forecast_iteration_actuals` files stayed with it for the same reason.
 ## Lane activation
 
 `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` is the only deployment activation control. An empty value keeps
-all lanes in shadow mode. Every selected identifier must be present in `LANE_SPECS`, executable, and
-free of a declared active-lane conflict. Removed services do not participate in runtime validation
+all lanes in shadow mode. A selected identifier that is not in `LANE_SPECS`, not executable, or on the
+losing side of a declared active-lane conflict is QUARANTINED (`ActivationConfig.quarantined`, GL-5),
+never a startup exit: every other lane runs (see "Soft failure"). Removed services do not participate in runtime validation
 and must not be represented by service IDs, owner constants, or acknowledgement variables.
 
 Lane cadence, phase offset, command, timeout, catch-up policy, and publication contract live in
@@ -595,6 +596,111 @@ What remains (R3): the source-direct historical verbs for the lanes whose gaps l
 writers' reach (`unreachable_by_forward_writer`), for fire-detections and water-gauges, and for
 burn-severity cohorts. Adding a `--repair-from/--through` target to a writer is that writer's contract
 change (`tests/direct/test_direct_writer_contract.py`), not this directory's.
+
+## Soft failure
+
+Wave O GL-5 (`o5b`; spec §4.9.3; plan `config_driven_ingestion_20260926` 0W.5). The owner's rule: "we
+dont want runs to stop in a way that they break permenantly or break other lanes". At GL-5 the
+executor RECORDS every failure streak on one `agri.job_incident` row and ACTS in exactly two ways
+(repair withholding and the repair breaker). A hold is still released only by an operator
+(`jobs-supersede-run`, or `jobs-set-lane-enabled --disabled`) until G1's probe ladder. The row
+helpers, `reconcile` and the breaker ladder are `lane_incidents.py` (`o2b`); the wiring is
+`job_executor_service.py`.
+
+**Nothing malformed stops the process.** `parse_activation` quarantines an unknown, non-executable or
+conflict-losing allow-list id (`ActivationConfig.quarantined`). `ExecutorSettings.from_environment`
+parses every numeric tunable (poll, lanes per tick, repair interval). A garbled value falls back to its
+default with one `config_fallback` warning. A positive lanes-per-tick below the fairness floor clamps to
+it. Each fallback opens `executor_config:<VAR>` on the first leader tick. `lane_quarantined:<lane>` opens
+the same way. Both resolve on the first tick of a deployment without the fault. The remaining startup
+exits are a missing DSN and a `Settings()` validation error (spec §4.9.6).
+
+**The switch.** `PLANTGEO_JOB_EXECUTOR_SOFT_FAILURE` is on when unset or blank. An on-synonym keeps it
+on; an off-synonym or a garbled value is OFF. OFF is HEAD planning byte for byte: no repair withholding
+and no repair breaker. Incidents are still written. `run_executor_tick(soft_failure=None)` is also HEAD's
+tick, and every pre-GL-5 test calls it that way.
+
+**One read, savepoints, and who re-raises.** `_SoftFailureTick.open` reads `select_lane_incidents.sql`
+once per tick. Every write is one `lane_incidents.py` helper, which opens its own
+`session.begin_nested()`. `_SoftFailureTick._guard` catches the `SQLAlchemyError`. The savepoint has
+already rolled back, so HEAD's work in the same transaction survives. `incident_write_failed` logs once
+per transition (`SoftFailureState.failing_statements`). The lane it concerned is marked degraded and
+plans as HEAD. Only `_pinned_connection_invalidated(session)` re-raises: that keeps today's tick-level
+backoff. A failed READ degrades the whole tick to HEAD. Each lane's step ends in its own commit
+(`_isolated`), because HEAD's planning helpers roll the transaction back between lanes.
+
+**Isolation.** `_plan_active_lanes` plans each lane through `_plan_lane` inside its own `try`, and
+`_plan_repair_runs` does the same through `_plan_repair_lane`. A non-SQL exception becomes that lane's
+`failed` result with detail `plan_failed: <ErrorType>` (`_isolate_plan_fault`), and the loop moves on.
+A `SQLAlchemyError` from HEAD's own statements still re-raises, as before. `lane_plan_failed:<lane>` is
+bumped from those results and from degraded lanes; it escalates at 3 ticks and a clean pass resolves it.
+`tick_partial` logs what the tick settled before any re-raise.
+
+**Incidents** (a streak's escalation is the row's severity, so a restart never logs a crossing twice):
+
+| fingerprint | opened by | escalates | resolved by |
+|---|---|---|---|
+| `lane_hold:<lane>` | `_LanePlan.operator_held` with no open row; class from `select_run_final_attempt.sql` | chain over 72 h: error, `hold_chronic` once, and the lane in `chronic_holds` on the hourly heartbeat | `reconcile`: `released_by=operator` or `reconciled` |
+| `lane_report_missing:<lane>` | an exit-0 turn without a report | error at 3 | the next turn with a report, or `lane_inactive` |
+| `lane_incomplete:<lane>` | an `ok`/`incomplete` turn (reason `unwritten`, `publication_debt`, `probe_gated`) | `detail.state` steps at 6 h, 24 h and 72 h | the first complete turn, or `lane_inactive` |
+| `lane_blocked:<lane>` | a `failed` blocked-open-run or prior-version result | none | the state clears, or `lane_inactive` |
+| `executor_lease_lost:<lane>` / `:fleet` | a `lease_lost` turn, or every dispatched lane lost in one tick | error at 3 | a turn that kept its lease; `:<lane>` also `lane_inactive` |
+| `lane_repair_failing:<lane>` | a repair run that SETTLED failed (never `invalid_repair_request`) | the repair breaker | a repair that succeeds, `lane_inactive`, or `repair_quiet` |
+| `executor_repair_authoring` | `_author_due_repairs` returned `None` | error at 2 intervals | the next good pass, or `authoring_disabled` (no repair clock) |
+| `fleet:<exit_class>` | 3 or more lanes opening holds of one class within 1 h | one error | no open hold of that class remains |
+
+**No row is left without an exit** (`_SoftFailureTick._retirable_rows`, run in `after_planning`).
+The lane-scoped kinds in `_INACTIVE_RETIRED_KINDS` clear only when their lane plans or runs a turn, so
+once the lane leaves the allow-list or is quarantined they resolve as `lane_inactive` (a hold is paused
+instead: it stays operator-only). A `lane_repair_failing` row with no settled repair failure for
+`REPAIR_FAILING_QUIET_PERIOD` (7 days) past the point its breaker admits runs again resolves as
+`repair_quiet`: the gaps closed and no repair will come to clear it. With no repair clock
+(`PLANTGEO_JOB_EXECUTOR_REPAIR_INTERVAL_SECONDS` 0), an open `executor_repair_authoring` resolves as
+`authoring_disabled`.
+
+**The hold is recorded and reconciled, never released.** A paused hold (definition disabled, or lane
+outside the allow-list or quarantined) is excluded from escalation. A re-enabled hold returns to
+`held`. A hold whose run changed while nobody watched resolves as `reconciled` and reopens on the new
+run. `detail` follows the design record's shape (`state`, `exit_class`, `class_source`, `rung` 0,
+`chain_first_seen_at`, `episodes_7d`). `select_lane_incidents.sql` extracts only four of those keys, so
+two facts ride elsewhere. The class is re-read from the run's final attempt (memoised per run in
+`SoftFailureState.hold_classes`). The "hold_chronic already logged" marker is `CHRONIC_SUMMARY_SUFFIX`
+on the summary. A hold's class is one of `lane_incidents.HOLD_EXIT_CLASSES` (`upstream`, `infra`,
+`code`, `hang`, `config`); a missing, lost or non-failure stamp (`ok`, `interrupted`, `lease_lost`,
+`report_missing`) reads as `code`, and `class_source` says which.
+
+The rename on resolve is `<fingerprint>:resolved:<id>`, built in `resolve_lane_incident.sql` from three
+separate literals. A backslash-escaped `\:resolved:` literal is NOT unescaped by SQLAlchemy when the
+word is followed by a colon, so the backslash would land in the row and break the flapping count
+(`test_compiled_statement_sends_no_backslash_escape` pins it).
+
+**Announcements are de-duplicated on the row.** Opening a hold logs
+`plantgeo_job_executor_operator_action_required` with the final attempt's class. A hold that opened
+paused (definition disabled) announces on its `resume` transition instead. While the row stays
+open its key is in `SoftFailureState.durable_announcements`, and `announce_operator_actions(durable=…)`
+never repeats it, across restarts too. When the row cannot be written, the per-process
+`SoftFailureState.announced` set is HEAD's fallback.
+
+**Repair withholding and the breaker** act only by narrowing the activation the repair planners see
+(`_without_lanes`). `plan_gap_repairs` and `_plan_repair_runs` both read `active_lanes`, so neither
+changed. A lane is withheld while its hold row is open and its verdict is operator-held, or while its
+breaker is cooling down. Each withheld repair lane shows as a `paused` result. Breaker state lives on
+`lane_repair_failing`: `detail.state` is `counting:<n>` or `cooldown`, and `detail.rung` is the trip
+count. The cooldown is `repair_breaker_cooldown_days(rung)` (1, 2, 4, then 7 days) after the tripping
+upsert. Two consecutive code, hang or config settlements trip it. An upstream, infra or lease-lost
+settlement breaks the run of failures but keeps the trip count. Once a cooldown lifts the lane gets ONE
+run, and a code-class failure re-trips at the next rung.
+
+**R3 lane keys.** `exit_classes.WRAPPER_EVIDENCE` is keyed by short layer names (`drought`), while the
+executor passes lane ids (`drought-direct-forward`). Until GL-5 R3 could never match a production turn.
+`run_scheduled_command` now maps the id through `_WRAPPER_EVIDENCE_KEYS` at the call site.
+
+**No pool brake** (WQ-4): the paid Open-Meteo cap is G1's (`f1-config`, `f1-executor`).
+
+Tests: `tests/execution/test_executor_resilience.py`, `test_hold_record.py`, `test_repair_withholding.py`,
+and the GL-5 sweep proof `test_soft_failure_fault_injection.py`. All of them drive `run_executor_tick`
+and the real handler with real child processes. They go through `tests/execution/soft_failure_fakes.py`,
+an in-memory ledger that answers the four o2b statements with their SQL semantics.
 
 ## The once-per-UTC-day cadence report was a log-reading artefact
 

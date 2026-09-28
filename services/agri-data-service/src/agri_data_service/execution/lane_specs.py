@@ -804,10 +804,11 @@ _LANE_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
 
 LANE_SPECS: Final[Mapping[str, LaneExecutionSpec]] = MappingProxyType({spec.lane_id: spec for spec in _LANE_SPECS})
 
-# Every conflict must name a lane that exists. `parse_activation` intersects `conflicts_with` with the
-# ACTIVE set, so a misspelled or renamed target is not merely unenforced there -- it is invisible: the
-# intersection is empty and the pairing activates. Direct source lanes currently have no conflicts;
-# this assertion remains for any future control-plane mutual exclusion.
+# Every conflict must name a lane that exists. `parse_activation`'s `_conflict_quarantine` intersects
+# `conflicts_with` with the active candidate set, so a misspelled or renamed target is not merely
+# unenforced there -- it is invisible: the intersection is empty and the declaring lane is never
+# quarantined for a conflict that can never be detected. Direct source lanes currently have no
+# conflicts; this assertion remains for any future control-plane mutual exclusion.
 assert not {target for spec in _LANE_SPECS for target in spec.conflicts_with} - LANE_SPECS.keys(), (
     "a lane declares conflicts_with against a lane id that is not in LANE_SPECS"
 )
@@ -815,9 +816,20 @@ assert not {target for spec in _LANE_SPECS for target in spec.conflicts_with} - 
 
 @dataclass(frozen=True, slots=True)
 class ActivationConfig:
-    """The explicit lane allow-list."""
+    """The explicit lane allow-list, with a quarantine side-list `parse_activation` fills.
+
+    `active_lanes` is defined as the environment's parsed ids MINUS `quarantined` (SOF1-12, spec
+    Sec 4.9.3 "Quarantine"), so every existing reader of `active_lanes` -- `plan_gap_repairs`
+    (`gap_repair.py`), `resolve_executor_lane` (`job_run_supersession.py`) and the scheduler's own
+    `is_active` below -- already skips a quarantined id with no edit of its own: quarantine is a
+    property of how this one field is CONSTRUCTED, not a second allow-list every caller must also
+    consult. `quarantined` defaults to empty and the field is added after `active_lanes`, so every
+    existing single-argument construction (`ActivationConfig(frozenset({...}))`, all over this
+    service's tests) stays valid unedited.
+    """
 
     active_lanes: frozenset[str]
+    quarantined: frozenset[str] = frozenset()
 
     def is_active(self, lane_id: str) -> bool:
         return lane_id in self.active_lanes
@@ -827,23 +839,43 @@ def _comma_tokens(value: str) -> tuple[str, ...]:
     return tuple(token.strip() for token in value.split(",") if token.strip())
 
 
+def _conflict_quarantine(candidate: frozenset[str]) -> frozenset[str]:
+    """Which of `candidate` are quarantined for declaring a conflict against another candidate.
+
+    `conflicts_with` is directional: a lane DECLARES it, the lane it names never has to. Reading the
+    declarer as "the newcomer" and the named lane as "the incumbent" (spec Sec 4.9.3: "the incumbent
+    ... lane is kept and only the newcomer is quarantined") needs no separate legacy/config-driven
+    marker on `LaneExecutionSpec` -- a lane that predates a replacement never declares anything, so it
+    is the incumbent by construction, and a lane authored later to retire it is the one that names the
+    conflict. When both candidates in a pair declare a conflict against each other, both are
+    quarantined ("both are quarantined only when both are the same kind"): symmetry IS how "the same
+    kind" is detected here, without a kind field to compare. No lane declares `conflicts_with` at
+    HEAD (the module-level assertion above only proves every declared target exists), so this always
+    returns empty in production today; it exists so a future conflicting pair is quarantined correctly
+    the day one is declared, not the day this function is first exercised.
+    """
+    return frozenset(lane_id for lane_id in candidate if set(LANE_SPECS[lane_id].conflicts_with) & candidate)
+
+
 def parse_activation(environment: Mapping[str, str] | None = None) -> ActivationConfig:
-    """Parse and validate the active lane allow-list, defaulting every lane to shadow."""
+    """Parse the active lane allow-list. Unknown, non-executable and conflict-losing ids are
+    QUARANTINED, never a process exit (spec Sec 4.9.3 "Quarantine"; FR-11, FR-35).
+
+    Quarantine is applied in three passes, each narrowing the candidate set the next pass judges, so
+    a lane can only ever be quarantined for the FIRST reason that actually applies to it: an unknown
+    id is never also judged non-executable (`LANE_SPECS[lane_id]` would raise `KeyError`), and a
+    non-executable id never reaches the conflict pass (it could never open a bucket to conflict over).
+    """
     source = os.environ if environment is None else environment
-    active = frozenset(_comma_tokens(source.get(ACTIVE_LANES_VARIABLE, "")))
-    unknown = sorted(active - LANE_SPECS.keys())
-    if unknown:
-        raise ExecutorConfigurationError(f"unknown active lane(s): {', '.join(unknown)}")
+    parsed = frozenset(_comma_tokens(source.get(ACTIVE_LANES_VARIABLE, "")))
 
-    for lane_id in sorted(active):
-        conflicts = sorted(set(LANE_SPECS[lane_id].conflicts_with) & active)
-        if conflicts:
-            raise ExecutorConfigurationError(f"lane {lane_id!r} conflicts with active lane(s): {', '.join(conflicts)}")
+    unknown = parsed - LANE_SPECS.keys()
+    known = parsed - unknown
 
-    for lane_id in sorted(active):
-        spec = LANE_SPECS[lane_id]
-        if not spec.executable:
-            raise ExecutorConfigurationError(
-                f"lane {lane_id!r} is {spec.migration_disposition} and has no executor command"
-            )
-    return ActivationConfig(active_lanes=active)
+    non_executable = frozenset(lane_id for lane_id in known if not LANE_SPECS[lane_id].executable)
+    executable_candidates = known - non_executable
+
+    conflicting = _conflict_quarantine(executable_candidates)
+    active = executable_candidates - conflicting
+
+    return ActivationConfig(active_lanes=active, quarantined=unknown | non_executable | conflicting)

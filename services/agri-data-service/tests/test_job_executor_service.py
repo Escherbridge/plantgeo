@@ -58,9 +58,15 @@ def test_active_lane_allow_list_activates_selected_lanes() -> None:
     assert activation.active_lanes == selected
 
 
-def test_unknown_lane_is_rejected() -> None:
-    with pytest.raises(ExecutorConfigurationError, match="unknown active lane"):
-        parse_activation({ACTIVE_LANES_VARIABLE: "retired-lane"})
+def test_unknown_lane_is_quarantined() -> None:
+    """Rewritten for quarantine (spec Sec 4.9.3, plan 0W.5): an unknown allow-list id no longer exits
+    the process -- it is quarantined, `active_lanes` never includes it, and every other listed lane
+    still activates normally."""
+    activation = parse_activation({ACTIVE_LANES_VARIABLE: "retired-lane,fire-detections-direct-forward"})
+    assert activation.quarantined == frozenset({"retired-lane"})
+    assert activation.active_lanes == frozenset({"fire-detections-direct-forward"})
+    assert activation.is_active("fire-detections-direct-forward")
+    assert not activation.is_active("retired-lane")
 
 
 def test_inventory_exposes_only_the_allow_list_and_current_lanes() -> None:

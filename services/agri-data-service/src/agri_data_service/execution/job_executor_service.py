@@ -26,7 +26,9 @@ import time
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from functools import partial
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal
 
 import click
@@ -45,6 +47,37 @@ from agri_data_service.execution.gap_repair_contract import (
     REPAIR_LANE_SUFFIX,
     RepairRequest,
     RepairRequestError,
+)
+from agri_data_service.execution.lane_ids import (
+    BURN_SEVERITY_DIRECT_LANE_ID,
+    DROUGHT_DIRECT_LANE_ID,
+    EVACUATION_ZONES_DIRECT_LANE_ID,
+    FIRE_DETECTIONS_DIRECT_LANE_ID,
+    FIRE_PERIMETERS_DIRECT_LANE_ID,
+)
+from agri_data_service.execution.lane_incidents import (
+    CLASS_SOURCE_MISSING_ATTEMPT,
+    FLAPPING_WINDOW,
+    INCIDENT_SEVERITY,
+    REPAIR_BREAKER_TRIP_THRESHOLD,
+    REPAIR_BREAKER_TRIPPING_CLASSES,
+    HoldState,
+    HoldVerdict,
+    LaneIncidentRow,
+    ReconcileOutcome,
+    RepairBreakerState,
+    UpsertedIncident,
+    evaluate_repair_breaker,
+    final_attempt_exit_class,
+    is_chain_chronic,
+    is_chain_flapping,
+    reconcile,
+    repair_breaker_admits,
+    repair_breaker_cooldown_days,
+    resolve_lane_incident,
+    select_lane_incidents,
+    select_run_final_attempt,
+    upsert_lane_incident,
 )
 from agri_data_service.execution.lane_scheduling import (
     SUPERSEDE_RUN_COMMAND,
@@ -81,7 +114,14 @@ from agri_data_service.execution.turn_reports import (
 )
 from agri_data_service.foundation.observability import events, redaction
 from agri_data_service.foundation.observability.router import ChildLogRouter
-from agri_data_service.foundation.observability.vocabulary import LANE_LOGICAL_CAPS, ExitClass, TurnOutcome
+from agri_data_service.foundation.observability.vocabulary import (
+    INCIDENT_KINDS,
+    LANE_LOGICAL_CAPS,
+    ExitClass,
+    IncidentKind,
+    LogLevel,
+    TurnOutcome,
+)
 from agri_data_service.jobs import (
     JobDefinitionRecord,
     JobHandlerOutcome,
@@ -103,9 +143,10 @@ from agri_data_service.jobs.lease import (
     redact_text,
     required_column,
 )
+from agri_data_service.models.jobs import EventSeverity, IncidentState
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator, Mapping
+    from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping
     from collections.abc import Set as AbstractSet
 
     from agri_data_service.foundation.observability.router import Stream
@@ -881,137 +922,205 @@ async def _release_by_process_start(  # noqa: PLR0913 - the held run, its verdic
     return replace(latest, superseded_by_operator=True)
 
 
-async def _plan_active_lanes(  # noqa: PLR0912 - one branch per lane state the planner can find
+#: The `LaneTickResult.detail` prefix a lane whose planning raised carries (spec Sec 4.9.3 "Isolation"):
+#: `_SoftFailureTick.record_plan_failures` reads it back to bump `lane_plan_failed:<lane>`.
+PLAN_FAILED_DETAIL_PREFIX: Final = "plan_failed: "
+
+
+@dataclass(frozen=True, slots=True)
+class _LanePlan:
+    """One active lane's planning outcome, plus the ledger facts the hold record reads (o5b).
+
+    `operator_held` is the same predicate `_held_checkpoint_result` prints a supersession command for:
+    the checkpoint settled without success, the clock no longer releases it, and no supersession is
+    recorded yet. `blocked` is a `failed` blocked-open-run or prior-version result (`lane_blocked`).
+    """
+
+    result: LaneTickResult | None = None
+    due: DueLane | None = None
+    latest: LatestRun | None = None
+    definition_enabled: bool = True
+    operator_held: bool = False
+    blocked: bool = False
+
+
+def _is_operator_held(spec: LaneExecutionSpec, latest: LatestRun | None, now: datetime) -> bool:
+    """True when only a recorded supersession releases this checkpoint (pure; `judge_failed_checkpoint`)."""
+    if latest is None or latest.status not in SETTLED_WITHOUT_SUCCESS or spec.cadence_seconds is None:
+        return False
+    verdict = judge_failed_checkpoint(spec, latest, now)
+    return not verdict.released and verdict.release == "operator" and not latest.superseded_by_operator
+
+
+async def _isolate_plan_fault(session: AsyncSession, lane_id: str, error: Exception) -> LaneTickResult:
+    """One lane's non-SQL planning fault becomes that lane's `plan_failed` result (spec Sec 4.9.3).
+
+    A `SQLAlchemyError` from HEAD's own statements, or a pinned connection that lost its backend,
+    keeps today's tick-level re-raise; anything else rolls back this lane's planning transaction and
+    the loop moves on to the next lane. See execution/AGENTS.md, "Soft failure".
+    """
+    if isinstance(error, SQLAlchemyError) or _pinned_connection_invalidated(session):
+        raise error
+    await _rollback_planning_transaction(session)
+    _warn_fail_open(events.EVENT_LANE_PLAN_FAILED, error, lane_id=lane_id)
+    return LaneTickResult(
+        lane_id=lane_id,
+        state="failed",
+        detail=(
+            f"{PLAN_FAILED_DETAIL_PREFIX}{type(error).__name__}; this lane is skipped this tick and every other "
+            "lane plans as usual"
+        ),
+    )
+
+
+def _inactive_lane_result(spec: LaneExecutionSpec, now: datetime) -> LaneTickResult:
+    state: LaneTickState = "shadow" if spec.executable else "source_specific"
+    current_bucket = scheduled_bucket(spec, now) if spec.executable and spec.cadence_seconds is not None else None
+    blockers = ["lane is not in the active allow-list"]
+    if not spec.executable:
+        blockers.append("no executable command exists in this runtime")
+    return LaneTickResult(
+        lane_id=spec.lane_id,
+        state=state,
+        scheduled_for=current_bucket,
+        command=spec.command,
+        blockers=tuple(blockers),
+        due_prediction=(
+            "would_be_due_if_activated; source watermark parity not evaluated" if spec.executable else "not_executable"
+        ),
+        detail=(
+            "shadow schedule prediction only; no ledger or source watermark parity was read"
+            if spec.executable
+            else f"{spec.migration_disposition}: no command in this runtime"
+        ),
+    )
+
+
+async def _plan_lane(  # noqa: PLR0911 - one return per lane state the planner can find
+    session: AsyncSession,
+    spec: LaneExecutionSpec,
+    now: datetime,
+    *,
+    breaker_release: ProcessStartRelease | None,
+) -> _LanePlan:
+    """Plan one ACTIVE lane exactly as HEAD did; the `_LanePlan` only adds what the hold record reads."""
+    definition = await _load_or_register_definition(session, spec)
+    latest = await read_lane_checkpoint(session, spec)
+    prior_result, prior_due = await _plan_prior_version_run(session, spec, latest)
+    await _rollback_planning_transaction(session)
+    if prior_result is not None:
+        return _LanePlan(result=prior_result, latest=latest, blocked=prior_result.state == "failed")
+    if prior_due is not None:
+        return _LanePlan(due=prior_due, latest=latest)
+    if definition is None:
+        return _LanePlan(
+            result=LaneTickResult(
+                lane_id=spec.lane_id,
+                state="paused",
+                detail="the lane-wide job_definition pause or current-version pause is active",
+            ),
+            latest=latest,
+            definition_enabled=False,
+            operator_held=_is_operator_held(spec, latest, now),
+        )
+    current_bucket = scheduled_bucket(spec, now)
+    if latest is not None and latest.status in SETTLED_WITHOUT_SUCCESS:
+        verdict = judge_failed_checkpoint(spec, latest, now)
+        if (
+            not verdict.released
+            and verdict.release == "operator"
+            and not latest.superseded_by_operator
+            and breaker_release is not None
+            and breaker_release.qualifies(spec, latest)
+        ):
+            released = await _release_by_process_start(session, spec, latest, verdict, now=now, release=breaker_release)
+            if released is not None:
+                latest = released
+                verdict = judge_failed_checkpoint(spec, latest, now)
+        if not verdict.released:
+            return _LanePlan(
+                result=_held_checkpoint_result(spec, latest, verdict),
+                latest=latest,
+                operator_held=verdict.release == "operator" and not latest.superseded_by_operator,
+            )
+        return _LanePlan(
+            due=DueLane(
+                spec=spec,
+                definition=definition,
+                scheduled_for=verdict.next_bucket,
+                existing_run_id=None,
+                last_scheduled_for=latest.scheduled_for,
+                superseded_run_id=latest.run_id,
+                supersession=verdict.release,
+            ),
+            latest=latest,
+        )
+    if latest is not None and latest.open:
+        blocked = _blocked_open_run_result(spec, latest, prior_version=False)
+        if blocked is not None:
+            return _LanePlan(result=blocked, latest=latest, blocked=blocked.state == "failed")
+        return _LanePlan(
+            due=DueLane(
+                spec=spec,
+                definition=definition,
+                scheduled_for=latest.scheduled_for,
+                existing_run_id=latest.run_id,
+                last_scheduled_for=latest.scheduled_for,
+            ),
+            latest=latest,
+        )
+    if latest is not None and latest.scheduled_for >= current_bucket:
+        return _LanePlan(
+            result=LaneTickResult(
+                lane_id=spec.lane_id,
+                state="not_due",
+                scheduled_for=latest.scheduled_for,
+                run_id=latest.run_id,
+                run_status=latest.status,
+                detail=f"current bucket already settled with status {latest.status}",
+            ),
+            latest=latest,
+        )
+    bucket = next_scheduled_bucket(spec, now, None if latest is None else latest.scheduled_for)
+    return _LanePlan(
+        due=DueLane(
+            spec=spec,
+            definition=definition,
+            scheduled_for=bucket,
+            existing_run_id=None,
+            last_scheduled_for=None if latest is None else latest.scheduled_for,
+        ),
+        latest=latest,
+    )
+
+
+async def _plan_active_lanes(
     session: AsyncSession,
     activation: ActivationConfig,
     now: datetime,
     *,
     breaker_release: ProcessStartRelease | None = None,
+    observer: _SoftFailureTick | None = None,
 ) -> tuple[list[LaneTickResult], list[DueLane]]:
+    """Plan every lane, one failure domain each: a lane whose planning raises is reported `plan_failed`
+    and the loop continues (spec Sec 4.9.3 "Isolation"); `observer` records the hold incidents (o5b)."""
     results: list[LaneTickResult] = []
     due: list[DueLane] = []
     for spec in LANE_SPECS.values():
         if not activation.is_active(spec.lane_id):
-            state: LaneTickState = "shadow" if spec.executable else "source_specific"
-            current_bucket = (
-                scheduled_bucket(spec, now) if spec.executable and spec.cadence_seconds is not None else None
-            )
-            blockers = ["lane is not in the active allow-list"]
-            if not spec.executable:
-                blockers.append("no executable command exists in this runtime")
-            results.append(
-                LaneTickResult(
-                    lane_id=spec.lane_id,
-                    state=state,
-                    scheduled_for=current_bucket,
-                    command=spec.command,
-                    blockers=tuple(blockers),
-                    due_prediction=(
-                        "would_be_due_if_activated; source watermark parity not evaluated"
-                        if spec.executable
-                        else "not_executable"
-                    ),
-                    detail=(
-                        "shadow schedule prediction only; no ledger or source watermark parity was read"
-                        if spec.executable
-                        else f"{spec.migration_disposition}: no command in this runtime"
-                    ),
-                )
-            )
+            results.append(_inactive_lane_result(spec, now))
             continue
-
-        definition = await _load_or_register_definition(session, spec)
-        latest = await read_lane_checkpoint(session, spec)
-        prior_result, prior_due = await _plan_prior_version_run(session, spec, latest)
-        await _rollback_planning_transaction(session)
-        if prior_result is not None:
-            results.append(prior_result)
+        try:
+            plan = await _plan_lane(session, spec, now, breaker_release=breaker_release)
+        except Exception as error:  # one lane's fault is that lane's plan_failed, never the tick's
+            results.append(await _isolate_plan_fault(session, spec.lane_id, error))
             continue
-        if prior_due is not None:
-            due.append(prior_due)
-            continue
-        if definition is None:
-            results.append(
-                LaneTickResult(
-                    lane_id=spec.lane_id,
-                    state="paused",
-                    detail="the lane-wide job_definition pause or current-version pause is active",
-                )
-            )
-            continue
-        current_bucket = scheduled_bucket(spec, now)
-        if latest is not None and latest.status in SETTLED_WITHOUT_SUCCESS:
-            verdict = judge_failed_checkpoint(spec, latest, now)
-            if (
-                not verdict.released
-                and verdict.release == "operator"
-                and not latest.superseded_by_operator
-                and breaker_release is not None
-                and breaker_release.qualifies(spec, latest)
-            ):
-                released = await _release_by_process_start(
-                    session, spec, latest, verdict, now=now, release=breaker_release
-                )
-                if released is not None:
-                    latest = released
-                    verdict = judge_failed_checkpoint(spec, latest, now)
-            if not verdict.released:
-                results.append(_held_checkpoint_result(spec, latest, verdict))
-                continue
-            due.append(
-                DueLane(
-                    spec=spec,
-                    definition=definition,
-                    scheduled_for=verdict.next_bucket,
-                    existing_run_id=None,
-                    last_scheduled_for=latest.scheduled_for,
-                    superseded_run_id=latest.run_id,
-                    supersession=verdict.release,
-                )
-            )
-            continue
-        if latest is not None and latest.open:
-            blocked = _blocked_open_run_result(spec, latest, prior_version=False)
-            if blocked is not None:
-                results.append(blocked)
-                continue
-            due.append(
-                DueLane(
-                    spec=spec,
-                    definition=definition,
-                    scheduled_for=latest.scheduled_for,
-                    existing_run_id=latest.run_id,
-                    last_scheduled_for=latest.scheduled_for,
-                )
-            )
-            continue
-        if latest is not None and latest.scheduled_for >= current_bucket:
-            detail = f"current bucket already settled with status {latest.status}"
-            results.append(
-                LaneTickResult(
-                    lane_id=spec.lane_id,
-                    state="not_due",
-                    scheduled_for=latest.scheduled_for,
-                    run_id=latest.run_id,
-                    run_status=latest.status,
-                    detail=detail,
-                )
-            )
-            continue
-        bucket = next_scheduled_bucket(
-            spec,
-            now,
-            None if latest is None else latest.scheduled_for,
-        )
-        due.append(
-            DueLane(
-                spec=spec,
-                definition=definition,
-                scheduled_for=bucket,
-                existing_run_id=None,
-                last_scheduled_for=None if latest is None else latest.scheduled_for,
-            )
-        )
+        if plan.result is not None:
+            results.append(plan.result)
+        if plan.due is not None:
+            due.append(plan.due)
+        if observer is not None:
+            await observer.observe_lane(session, spec, plan)
     return results, due
 
 
@@ -1043,6 +1152,56 @@ async def ensure_lane_definition(session: AsyncSession, spec: LaneExecutionSpec)
     return await _load_or_register_definition(session, spec)
 
 
+async def _plan_repair_lane(
+    session: AsyncSession,
+    spec: LaneExecutionSpec,
+    *,
+    forward_due: AbstractSet[str],
+) -> tuple[LaneTickResult | None, DueLane | None]:
+    """Plan one active lane's already-authored repair run, exactly as HEAD's loop body did."""
+    repair = repair_lane_spec(spec)
+    state = await _definition_state(session, repair)
+    if state is None:
+        await _rollback_planning_transaction(session)
+        return None, None
+    definition = await _load_or_register_definition(session, repair)
+    latest = await read_lane_checkpoint(session, repair)
+    await _rollback_planning_transaction(session)
+    if definition is None:
+        return (
+            LaneTickResult(
+                lane_id=repair.lane_id, state="paused", detail="the repair definition's pause switch is set"
+            ),
+            None,
+        )
+    if latest is None or not latest.open:
+        return None, None
+    if spec.lane_id in forward_due:
+        return (
+            LaneTickResult(
+                lane_id=repair.lane_id,
+                state="deferred_fairness",
+                scheduled_for=latest.scheduled_for,
+                run_id=latest.run_id,
+                detail="the owning lane's forward bucket is due this tick; its repair waits for the next one",
+            ),
+            None,
+        )
+    blocked = _blocked_open_run_result(repair, latest, prior_version=False)
+    if blocked is not None:
+        return blocked, None
+    return (
+        None,
+        DueLane(
+            spec=repair,
+            definition=definition,
+            scheduled_for=latest.scheduled_for,
+            existing_run_id=latest.run_id,
+            last_scheduled_for=latest.scheduled_for,
+        ),
+    )
+
+
 async def _plan_repair_runs(
     session: AsyncSession,
     activation: ActivationConfig,
@@ -1054,7 +1213,9 @@ async def _plan_repair_runs(
     A repair definition that does not exist in the ledger costs one probe and is skipped: the tick must not
     create definitions for work nobody asked for. A repair run that settled is history; the authoring verb
     opens the next one under a new logical key. `forward_due` keeps a lane's forward bucket and its repair
-    out of the same tick, so one turn never doubles that lane's egress.
+    out of the same tick, so one turn never doubles that lane's egress. Each lane is its own failure domain
+    (spec Sec 4.9.3): a non-SQL fault planning one lane's repair is that repair's `plan_failed` result.
+    A lane the soft-failure layer withholds arrives here already removed from `activation`.
     """
     results: list[LaneTickResult] = []
     due: list[DueLane] = []
@@ -1062,49 +1223,15 @@ async def _plan_repair_runs(
         spec = LANE_SPECS.get(lane_id)
         if spec is None or not activation.is_active(lane_id):
             continue
-        repair = repair_lane_spec(spec)
-        state = await _definition_state(session, repair)
-        if state is None:
-            await _rollback_planning_transaction(session)
+        try:
+            result, candidate = await _plan_repair_lane(session, spec, forward_due=forward_due)
+        except Exception as error:  # one repair's fault is that repair's plan_failed only
+            results.append(await _isolate_plan_fault(session, f"{lane_id}{REPAIR_LANE_SUFFIX}", error))
             continue
-        definition = await _load_or_register_definition(session, repair)
-        latest = await read_lane_checkpoint(session, repair)
-        await _rollback_planning_transaction(session)
-        if definition is None:
-            results.append(
-                LaneTickResult(
-                    lane_id=repair.lane_id,
-                    state="paused",
-                    detail="the repair definition's pause switch is set",
-                )
-            )
-            continue
-        if latest is None or not latest.open:
-            continue
-        if lane_id in forward_due:
-            results.append(
-                LaneTickResult(
-                    lane_id=repair.lane_id,
-                    state="deferred_fairness",
-                    scheduled_for=latest.scheduled_for,
-                    run_id=latest.run_id,
-                    detail="the owning lane's forward bucket is due this tick; its repair waits for the next one",
-                )
-            )
-            continue
-        blocked = _blocked_open_run_result(repair, latest, prior_version=False)
-        if blocked is not None:
-            results.append(blocked)
-            continue
-        due.append(
-            DueLane(
-                spec=repair,
-                definition=definition,
-                scheduled_for=latest.scheduled_for,
-                existing_run_id=latest.run_id,
-                last_scheduled_for=latest.scheduled_for,
-            )
-        )
+        if result is not None:
+            results.append(result)
+        if candidate is not None:
+            due.append(candidate)
     return results, due
 
 
@@ -1126,17 +1253,28 @@ class RepairAuthoringClock:
     rotation_seconds: float = DEFAULT_REPAIR_ROTATION_SECONDS
 
     @classmethod
-    def from_environment(cls, environment: Mapping[str, str] | None = None) -> RepairAuthoringClock | None:
+    def from_environment(
+        cls,
+        environment: Mapping[str, str] | None = None,
+        *,
+        faults: list[ConfigFault] | None = None,
+    ) -> RepairAuthoringClock | None:
+        """`0` disables authoring; a garbled or negative value falls back to the default interval with one
+        `config_fallback` warning, appended to `faults` for the `executor_config:<VAR>` incident (spec
+        Sec 4.9.3 "Switches") -- never a startup exit."""
         source = os.environ if environment is None else environment
         raw = source.get(REPAIR_INTERVAL_VARIABLE, "").strip()
         if not raw:
             return cls(interval_seconds=DEFAULT_REPAIR_INTERVAL_SECONDS)
         try:
             interval = float(raw)
-        except ValueError as error:
-            raise ExecutorConfigurationError(f"{REPAIR_INTERVAL_VARIABLE} must be a number") from error
-        if interval < 0:
-            raise ExecutorConfigurationError(f"{REPAIR_INTERVAL_VARIABLE} must not be negative")
+        except ValueError:
+            interval = math.nan
+        if not math.isfinite(interval) or interval < 0:
+            _config_fallback(
+                [] if faults is None else faults, REPAIR_INTERVAL_VARIABLE, raw, DEFAULT_REPAIR_INTERVAL_SECONDS
+            )
+            return cls(interval_seconds=DEFAULT_REPAIR_INTERVAL_SECONDS)
         return None if interval == 0 else cls(interval_seconds=interval)
 
     def due(self, monotonic_now: float) -> bool:
@@ -1199,7 +1337,1263 @@ async def _author_due_repairs(
     return summary
 
 
-async def run_executor_tick(  # noqa: PLR0913 - one operator-tunable knob of the tick per argument
+# --- Soft failure (Wave O GL-5, o5b; spec Sec 4.9.3; design record Sec 3.2A-3.4) --------------------
+#
+# Everything below RECORDS: one `agri.job_incident` row per streak, written through
+# `execution/lane_incidents.py`'s savepoint-wrapped helpers, and it ACTS in only two ways -- repair
+# withholding and the repair breaker, both by narrowing the repair planners' activation. A hold is still
+# released only by an operator (`jobs-supersede-run`, or `jobs-set-lane-enabled --disabled`) until G1's
+# ladder. See execution/AGENTS.md, "Soft failure".
+
+#: `on` unset; any on-synonym keeps it on; an off-synonym OR a garbled value is HEAD planning.
+SOFT_FAILURE_VARIABLE: Final = "PLANTGEO_JOB_EXECUTOR_SOFT_FAILURE"
+#: Sibling copy of `foundation/observability/bootstrap.py`'s switch synonyms (that module keeps its sets
+#: private and reads only `os.environ`; this switch is also read from an explicit mapping in tests).
+_SWITCH_ON_VALUES: Final = frozenset({"1", "true", "yes", "on", "enabled"})
+_SWITCH_OFF_VALUES: Final = frozenset({"0", "false", "no", "off", "disabled", "none"})
+#: `lane_plan_failed`, `lane_report_missing` and `executor_lease_lost` escalate to error at this streak.
+STREAK_ESCALATION_COUNT: Final = 3
+#: `executor_repair_authoring` escalates to error at this many consecutive failed authoring intervals.
+REPAIR_AUTHORING_ESCALATION_COUNT: Final = 2
+#: `fleet:<exit_class>` opens when this many lanes open holds of one class inside `FLEET_WINDOW`.
+FLEET_HOLD_THRESHOLD: Final = 3
+FLEET_WINDOW: Final = timedelta(hours=1)
+#: `lane_incomplete`'s escalation ladder by episode age, newest step first: (state, age, level).
+INCOMPLETE_ESCALATION_STEPS: Final[tuple[tuple[str, timedelta, LogLevel], ...]] = (
+    ("72h", timedelta(hours=72), "error"),
+    ("24h", timedelta(hours=24), "error"),
+    ("6h", timedelta(hours=6), "warn"),
+)
+INCOMPLETE_OPEN_STATE: Final = "open"
+#: Hold classes whose `lane_hold` opens at warn (spec Sec 4.9.3's table); every other class opens at error.
+_WARN_HOLD_CLASSES: Final[frozenset[str]] = frozenset({"upstream", "infra"})
+#: The durable "hold_chronic was logged" marker: a chronic hold's summary ends with it. `select_lane_incidents`
+#: extracts only four `detail` keys, so the summary headline is the one field that carries it back.
+CHRONIC_SUMMARY_SUFFIX: Final = " [chronic: chain over 72 h]"
+LEASE_LOST_FLEET_SUBJECT: Final = "fleet"
+#: `executor_lease_lost:fleet` needs at least this many dispatched lanes, every one of them lease-lost.
+LEASE_LOST_FLEET_MIN_LANES: Final = 2
+INCIDENT_SUMMARY_MAX_CHARS: Final = 500
+_HOLD_PREFIX: Final = "lane_hold:"
+_RESOLVED_MARKER: Final = ":resolved:"
+_COUNTING_STATE_PREFIX: Final = "counting:"
+_COOLDOWN_STATE: Final = "cooldown"
+#: Lane-scoped kinds that resolve only when their lane plans or runs a turn: once the lane leaves the
+#: allow-list (or is quarantined) they retire as `lane_inactive` instead of staying open forever.
+_INACTIVE_RETIRED_KINDS: Final[frozenset[str]] = frozenset(
+    {"lane_incomplete", "lane_report_missing", "executor_lease_lost", "lane_blocked", "lane_repair_failing"}
+)
+#: A `lane_repair_failing` row with no new settled failure this long after its breaker admits runs again
+#: (cooldown lifted, or never tripped) retires: the gaps closed and no repair was authored to prove it.
+REPAIR_FAILING_QUIET_PERIOD: Final = timedelta(days=7)
+RESOLUTION_LANE_INACTIVE: Final = "lane_inactive"
+RESOLUTION_REPAIR_QUIET: Final = "repair_quiet"
+RESOLUTION_AUTHORING_DISABLED: Final = "authoring_disabled"
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigFault:
+    """One numeric tunable that failed to parse and fell back to its default (`executor_config:<VAR>`)."""
+
+    variable: str
+    value: str
+    fallback: float | int
+
+
+def _config_fallback(faults: list[ConfigFault], variable: str, raw: str, fallback: float) -> None:
+    """Record one fallback and log its single `config_fallback` warning; never raises."""
+    faults.append(ConfigFault(variable=variable, value=raw, fallback=fallback))
+    with suppress(Exception):
+        logger.warning(events.EVENT_CONFIG_FALLBACK, variable=variable, value=raw[:64], fallback=fallback)
+
+
+def _tunable_float(source: Mapping[str, str], name: str, fallback: float, faults: list[ConfigFault]) -> float:
+    raw = source.get(name, "").strip()
+    if not raw:
+        return fallback
+    try:
+        value = float(raw)
+    except ValueError:
+        value = math.nan
+    if not math.isfinite(value) or value <= 0:
+        _config_fallback(faults, name, raw, fallback)
+        return fallback
+    return value
+
+
+def _tunable_lanes_per_tick(source: Mapping[str, str], faults: list[ConfigFault]) -> int:
+    """An unparseable or non-positive value is the default; a positive one below the fairness floor clamps."""
+    raw = source.get(MAX_LANES_PER_TICK_VARIABLE, "").strip()
+    if not raw:
+        return DEFAULT_MAX_LANES_PER_TICK
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value <= 0:
+        _config_fallback(faults, MAX_LANES_PER_TICK_VARIABLE, raw, DEFAULT_MAX_LANES_PER_TICK)
+        return DEFAULT_MAX_LANES_PER_TICK
+    if value < MIN_LANES_PER_TICK:
+        _config_fallback(faults, MAX_LANES_PER_TICK_VARIABLE, raw, MIN_LANES_PER_TICK)
+        return MIN_LANES_PER_TICK
+    return value
+
+
+def soft_failure_enabled(environment: Mapping[str, str] | None = None) -> bool:
+    """`PLANTGEO_JOB_EXECUTOR_SOFT_FAILURE`: on when unset or blank; an unrecognised value is OFF (HEAD)."""
+    source = os.environ if environment is None else environment
+    raw = source.get(SOFT_FAILURE_VARIABLE)
+    if raw is None or not raw.strip():
+        return True
+    normalized = raw.strip().casefold()
+    if normalized in _SWITCH_ON_VALUES:
+        return True
+    if normalized not in _SWITCH_OFF_VALUES:
+        with suppress(Exception):
+            logger.warning(events.EVENT_CONFIG_FALLBACK, variable=SOFT_FAILURE_VARIABLE, value=raw[:64], fallback="off")
+    return False
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutorSettings:
+    """Every executor tunable, parsed so that no malformed variable can stop the process (spec Sec 4.9.3)."""
+
+    poll_seconds: float
+    max_lanes_per_tick: int
+    repair_clock: RepairAuthoringClock | None
+    soft_failure_enabled: bool
+    config_faults: tuple[ConfigFault, ...]
+
+    @classmethod
+    def from_environment(cls, environment: Mapping[str, str] | None = None) -> ExecutorSettings:
+        source = os.environ if environment is None else environment
+        faults: list[ConfigFault] = []
+        poll_seconds = _tunable_float(source, POLL_SECONDS_VARIABLE, DEFAULT_POLL_SECONDS, faults)
+        max_lanes = _tunable_lanes_per_tick(source, faults)
+        repair_clock = RepairAuthoringClock.from_environment(source, faults=faults)
+        return cls(
+            poll_seconds=poll_seconds,
+            max_lanes_per_tick=max_lanes,
+            repair_clock=repair_clock,
+            soft_failure_enabled=soft_failure_enabled(source),
+            config_faults=tuple(faults),
+        )
+
+
+def _quarantine_reason(lane_id: str) -> str:
+    spec = LANE_SPECS.get(lane_id)
+    if spec is None:
+        return "unknown"
+    if not spec.executable:
+        return "not_executable"
+    return "conflict"
+
+
+def log_quarantined_lanes(activation: ActivationConfig) -> None:
+    """One `lane_quarantined` warning per quarantined allow-list id at startup; the process keeps running."""
+    for lane_id in sorted(activation.quarantined):
+        with suppress(Exception):
+            logger.warning(
+                events.EVENT_LANE_QUARANTINED,
+                lane_id=lane_id,
+                reason=_quarantine_reason(lane_id),
+                variable=ACTIVE_LANES_VARIABLE,
+            )
+
+
+@dataclass(slots=True)
+class SoftFailureState:
+    """What the soft-failure layer keeps across ticks in ONE process. The durable record is the incident
+    rows; everything here is either a startup fact, a memo, or the per-process fallback that keeps a log
+    line from repeating every tick while its row cannot be written."""
+
+    enabled: bool = True
+    quarantined: frozenset[str] = frozenset()
+    config_faults: tuple[ConfigFault, ...] = ()
+    startup_recorded: bool = False
+    #: Statement keys whose last attempt failed: `incident_write_failed` logs once per transition.
+    failing_statements: set[str] = field(default_factory=set)
+    #: Held run id -> (exit class, class source); a run's final attempt never changes once it is held.
+    hold_classes: dict[uuid.UUID, tuple[ExitClass, str]] = field(default_factory=dict)
+    #: The per-process announcement set (`announce_operator_actions`'s `announced`), shared with the
+    #: hold record so an operator action is logged once whether the row or the process remembers it.
+    announced: set[tuple[str, str | None]] = field(default_factory=set)
+    #: Operator actions whose OPEN hold row already records the announcement (restart-proof).
+    durable_announcements: frozenset[tuple[str, str | None]] = frozenset()
+    #: Other once-per-episode lines whose row could not be written (the process fallback).
+    logged_once: set[str] = field(default_factory=set)
+    repair_withheld: frozenset[str] = frozenset()
+    chronic_lanes: tuple[str, ...] = ()
+    plan_failed_lanes: tuple[str, ...] = ()
+
+    @classmethod
+    def for_process(cls, activation: ActivationConfig, settings_: ExecutorSettings) -> SoftFailureState:
+        return cls(
+            enabled=settings_.soft_failure_enabled,
+            quarantined=activation.quarantined,
+            config_faults=settings_.config_faults,
+        )
+
+
+def _incident_fingerprint(kind: IncidentKind, subject: str | None) -> str:
+    return kind if subject is None else f"{kind}:{subject}"
+
+
+def _incident_subject(row: LaneIncidentRow) -> str:
+    return row.fingerprint[len(row.incident_type) + 1 :]
+
+
+def _hold_state(row: LaneIncidentRow) -> HoldState:
+    return "paused" if row.state == "paused" else "held"
+
+
+def _parse_instant(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.utcoffset() is not None else parsed.replace(tzinfo=UTC)
+
+
+def _parse_count(value: str | None, *, default: int) -> int:
+    try:
+        return int(value) if value is not None else default
+    except ValueError:
+        return default
+
+
+def _level_of(severity: EventSeverity) -> LogLevel:
+    for level, mapped in INCIDENT_SEVERITY.items():
+        if mapped == severity:
+            return level
+    return "error"
+
+
+def _log_at(level: LogLevel, event: str, **fields: object) -> None:
+    with suppress(Exception):
+        getattr(logger, _LANE_TURN_LOG_METHODS[level])(event, **fields)
+
+
+def _repair_breaker_state(row: LaneIncidentRow | None) -> RepairBreakerState:
+    """Rebuild one lane's repair breaker from its `lane_repair_failing` row.
+
+    `detail.state` is `counting:<n>` or `cooldown`; `detail.rung` is the trip count; the cooldown ends
+    `repair_breaker_cooldown_days(rung)` after the tripping upsert's `last_seen_at` (nothing upserts the
+    row while it is withheld). Once the cooldown has lifted the lane gets ONE run: the state reads one
+    failure short of the threshold, so that run's code-class failure re-trips at the next rung.
+    """
+    if row is None:
+        return RepairBreakerState()
+    trip_count = _parse_count(row.rung, default=0)
+    state = row.state or ""
+    if state == _COOLDOWN_STATE and trip_count > 0:
+        cooldown_until = row.last_seen_at + timedelta(days=repair_breaker_cooldown_days(trip_count))
+        return RepairBreakerState(
+            consecutive_failures=REPAIR_BREAKER_TRIP_THRESHOLD - 1,
+            trip_count=trip_count,
+            cooldown_until=cooldown_until,
+        )
+    consecutive = (
+        _parse_count(state[len(_COUNTING_STATE_PREFIX) :], default=0) if state.startswith(_COUNTING_STATE_PREFIX) else 0
+    )
+    return RepairBreakerState(consecutive_failures=consecutive, trip_count=trip_count)
+
+
+def _incomplete_step(age: timedelta) -> tuple[str, LogLevel]:
+    for state, threshold, level in INCOMPLETE_ESCALATION_STEPS:
+        if age >= threshold:
+            return state, level
+    return INCOMPLETE_OPEN_STATE, "warn"
+
+
+class _SoftFailureTick:
+    """One leader tick's soft-failure bookkeeping over ONE incident read (design Sec 3.2A).
+
+    Every statement goes through `_guard`: a `SQLAlchemyError` has already rolled back to its savepoint
+    (`lane_incidents.py` opens one per statement), is logged once per transition as
+    `incident_write_failed`, and degrades only the lane it concerned to HEAD planning; only a pinned
+    connection that lost its backend re-raises. A non-SQL fault in this layer's own interpretation is
+    isolated the same way (`_isolated`). If the one read fails, the whole tick plans as HEAD.
+    """
+
+    def __init__(self, state: SoftFailureState, *, activation: ActivationConfig, now: datetime) -> None:
+        self.state = state
+        self.activation = activation
+        self.now = now
+        self.read_ok = False
+        self.open_rows: dict[str, LaneIncidentRow] = {}
+        self.resolved_holds: list[LaneIncidentRow] = []
+        #: Lane -> why this tick degraded it to HEAD planning (an incident write or interpretation fault).
+        self.degraded: dict[str, str] = {}
+        #: Lanes whose verdict is operator-held AND whose hold row is open: repairs are withheld for them.
+        self.held_lanes: set[str] = set()
+        #: Lane -> held run id for every hold open after this tick's transitions (fleet correlation).
+        self.open_holds: dict[str, uuid.UUID | None] = {}
+        self.opened_this_tick: set[str] = set()
+        self.durable: set[tuple[str, str | None]] = set()
+        self._pending_durable: set[tuple[str, str | None]] = set()
+        self.chronic: set[str] = set()
+        self.dispatched: list[str] = []
+        self.lease_lost: list[str] = []
+
+    # --- statement plumbing ------------------------------------------------------------------------
+
+    async def _guard[ValueT](
+        self,
+        session: AsyncSession,
+        statement_key: str,
+        operation: Callable[[], Awaitable[ValueT]],
+        *,
+        lane: str | None = None,
+    ) -> tuple[bool, ValueT | None]:
+        try:
+            value = await operation()
+        except SQLAlchemyError as error:
+            if _pinned_connection_invalidated(session):
+                raise
+            if statement_key not in self.state.failing_statements:
+                self.state.failing_statements.add(statement_key)
+                with suppress(Exception):
+                    logger.error(
+                        events.EVENT_INCIDENT_WRITE_FAILED,
+                        statement=statement_key,
+                        lane_id=lane,
+                        error_type=type(error).__name__,
+                        detail="rolled back to its savepoint; the lane plans as HEAD until the statement succeeds",
+                    )
+            if lane is not None:
+                self.degraded.setdefault(lane, f"incident_write_failed:{type(error).__name__}")
+            return False, None
+        self.state.failing_statements.discard(statement_key)
+        return True, value
+
+    async def _discard(self, session: AsyncSession) -> None:
+        """Roll the planning transaction back after a fault; only a dead backend escapes."""
+        try:
+            await _rollback_planning_transaction(session)
+        except SQLAlchemyError:
+            if _pinned_connection_invalidated(session):
+                raise
+
+    async def _isolated(
+        self,
+        session: AsyncSession,
+        lane: str | None,
+        body: Callable[[AsyncSession], Awaitable[None]],
+    ) -> None:
+        """Run one lane's (or the tick's) soft-failure step and commit it; a fault degrades only that lane."""
+        self._pending_durable = set()
+        try:
+            await body(session)
+            committed, _ = await self._guard(
+                session,
+                "commit" if lane is None else f"commit:{lane}",
+                lambda: _commit_planning_transaction(session),
+                lane=lane,
+            )
+            if not committed:
+                await self._discard(session)
+                return
+        except SQLAlchemyError:
+            raise  # `_guard` re-raises only for an invalidated pinned connection: today's tick-level rule
+        except Exception as error:  # Wave O's interpretation must never take a lane down
+            await self._discard(session)
+            if lane is not None:
+                self.degraded.setdefault(lane, f"soft_failure_fault:{type(error).__name__}")
+            _warn_fail_open(events.EVENT_LANE_PLAN_FAILED, error, lane_id=lane, phase="soft_failure")
+            return
+        self.durable |= self._pending_durable
+
+    async def _upsert(  # noqa: PLR0913 - one incident fact per keyword
+        self,
+        session: AsyncSession,
+        *,
+        kind: IncidentKind,
+        subject: str | None,
+        level: LogLevel,
+        summary: str,
+        detail: Mapping[str, object],
+        lane: str | None = None,
+        run_id: uuid.UUID | None = None,
+    ) -> UpsertedIncident | None:
+        fingerprint = _incident_fingerprint(kind, subject)
+        ok, upserted = await self._guard(
+            session,
+            fingerprint,
+            lambda: upsert_lane_incident(
+                session,
+                fingerprint=fingerprint,
+                incident_type=kind,
+                severity=INCIDENT_SEVERITY[level],
+                summary=redact_text(summary)[:INCIDENT_SUMMARY_MAX_CHARS],
+                now=self.now,
+                job_run_id=run_id,
+                detail=detail,
+            ),
+            lane=lane,
+        )
+        return upserted if ok else None
+
+    async def _resolve(
+        self,
+        session: AsyncSession,
+        row: LaneIncidentRow,
+        *,
+        detail_patch: Mapping[str, object],
+        lane: str | None = None,
+    ) -> bool:
+        ok, _ = await self._guard(
+            session,
+            row.fingerprint,
+            lambda: resolve_lane_incident(
+                session, fingerprint=row.fingerprint, now=self.now, detail_patch=detail_patch
+            ),
+            lane=lane,
+        )
+        if ok:
+            self.open_rows.pop(row.fingerprint, None)
+        return ok
+
+    def _open_row(self, kind: IncidentKind, subject: str | None) -> LaneIncidentRow | None:
+        return self.open_rows.get(_incident_fingerprint(kind, subject))
+
+    async def _bump_streak(  # noqa: PLR0913 - the streak's identity, its escalation point and its words
+        self,
+        session: AsyncSession,
+        *,
+        kind: IncidentKind,
+        subject: str | None,
+        escalate_at: int,
+        summary: str,
+        detail: Mapping[str, object],
+        lane: str | None = None,
+    ) -> tuple[int, bool] | None:
+        """One more occurrence of a streak incident: `(count, escalated_now)`, or `None` if unwritten.
+
+        The escalation is durable because it IS the row's severity: a restarted process reads `error`
+        back and never logs the crossing twice (`test_escalation_survives_an_executor_restart`).
+        """
+        row = self._open_row(kind, subject)
+        count = (0 if row is None else row.occurrence_count) + 1
+        level: LogLevel = "error" if count >= escalate_at else "warn"
+        upserted = await self._upsert(
+            session,
+            kind=kind,
+            subject=subject,
+            level=level,
+            summary=summary,
+            detail={**detail, "consecutive": count},
+            lane=lane,
+        )
+        if upserted is None:
+            return None
+        escalated_now = level == "error" and (row is None or row.severity != EventSeverity.ERROR)
+        return upserted.occurrence_count, escalated_now
+
+    # --- tick phases -------------------------------------------------------------------------------
+
+    async def open(self, session: AsyncSession) -> None:
+        """The ONE incident read per tick; a failed read plans every lane as HEAD this tick."""
+        ok, rows = await self._guard(
+            session, "select_lane_incidents", lambda: select_lane_incidents(session, now=self.now)
+        )
+        if not ok or rows is None:
+            return
+        self.read_ok = True
+        for row in rows:
+            if row.incident_type not in INCIDENT_KINDS:
+                continue  # supersession receipts and process-start markers share the table
+            if row.status == IncidentState.RESOLVED:
+                if row.incident_type == "lane_hold":
+                    self.resolved_holds.append(row)
+                continue
+            self.open_rows[row.fingerprint] = row
+            if row.incident_type == "lane_hold":
+                self.open_holds[_incident_subject(row)] = row.job_run_id
+        if not self.state.startup_recorded:
+            await self._isolated(session, None, self._record_startup)
+
+    async def _record_startup(self, session: AsyncSession) -> None:
+        """`lane_quarantined:<lane>` and `executor_config:<VAR>` open at startup and resolve on the first
+        tick of a deployment without the fault."""
+        quarantined = {_incident_fingerprint("lane_quarantined", lane): lane for lane in self.state.quarantined}
+        faults = {_incident_fingerprint("executor_config", fault.variable): fault for fault in self.state.config_faults}
+        written = True
+        for fingerprint, lane in sorted(quarantined.items()):
+            if fingerprint in self.open_rows:
+                continue
+            reason = _quarantine_reason(lane)
+            upserted = await self._upsert(
+                session,
+                kind="lane_quarantined",
+                subject=lane,
+                level="warn",
+                summary=f"lane {lane!r} in {ACTIVE_LANES_VARIABLE} is quarantined ({reason}); every other lane runs",
+                detail={"lane_id": lane, "reason": reason},
+            )
+            written = written and upserted is not None
+        for fingerprint, fault in sorted(faults.items()):
+            if fingerprint in self.open_rows:
+                continue
+            upserted = await self._upsert(
+                session,
+                kind="executor_config",
+                subject=fault.variable,
+                level="warn",
+                summary=f"{fault.variable} is not a valid value; the executor uses {fault.fallback}",
+                detail={"variable": fault.variable, "value": redact_text(fault.value)[:64], "fallback": fault.fallback},
+            )
+            written = written and upserted is not None
+        for fingerprint, row in list(self.open_rows.items()):
+            if row.incident_type in ("lane_quarantined", "executor_config") and fingerprint not in {
+                *quarantined,
+                *faults,
+            }:
+                resolved = await self._resolve(
+                    session, row, detail_patch={"resolution_reason": "absent_from_this_deployment"}
+                )
+                written = written and resolved
+        self.state.startup_recorded = written
+
+    async def observe_lane(self, session: AsyncSession, spec: LaneExecutionSpec, plan: _LanePlan) -> None:
+        """Record one planned lane's hold and blocked state (called right after HEAD planned it)."""
+        if not self.read_ok:
+            return
+        lane = spec.lane_id
+
+        async def body(active_session: AsyncSession) -> None:
+            await self._observe_hold(active_session, lane, plan)
+            await self._observe_blocked(active_session, lane, plan)
+
+        await self._isolated(session, lane, body)
+
+    async def _observe_hold(self, session: AsyncSession, lane: str, plan: _LanePlan) -> None:
+        row = self._open_row("lane_hold", lane)
+        latest = plan.latest
+        if plan.operator_held and latest is not None:
+            if row is not None and row.job_run_id is not None and row.job_run_id != latest.run_id:
+                # Another run holds the lane now: the old episode ended while nobody was watching.
+                await self._resolve_hold(session, lane, row, released_by="reconciled", reason="held_run_changed")
+                row = None
+            if row is None:
+                await self._open_hold(session, lane, plan)
+                return
+        elif row is None:
+            return
+        outcome = reconcile(
+            state=_hold_state(row),
+            verdict=HoldVerdict(
+                still_held=plan.operator_held,
+                definition_enabled=plan.definition_enabled,
+                lane_active=True,
+                lane_quarantined=False,
+                superseded_by_operator=latest is not None and latest.superseded_by_operator,
+                superseded_run_id=None if latest is None else latest.run_id,
+            ),
+        )
+        action_run = None if latest is None else latest.run_id
+        command = None if plan.result is None else plan.result.operator_action
+        await self._apply_hold_outcome(
+            session,
+            lane,
+            row,
+            outcome,
+            still_held=plan.operator_held,
+            announce_run=action_run if command is not None else None,
+            command=command,
+        )
+
+    async def _apply_hold_outcome(  # noqa: PLR0913 - the hold, what reconcile decided, and what it withholds
+        self,
+        session: AsyncSession,
+        lane: str,
+        row: LaneIncidentRow,
+        outcome: ReconcileOutcome,
+        *,
+        still_held: bool,
+        announce_run: uuid.UUID | None,
+        command: str | None = None,
+    ) -> None:
+        if outcome.action == "resolve":
+            await self._resolve_hold(
+                session, lane, row, released_by=outcome.released_by or "reconciled", reason="verdict_no_longer_held"
+            )
+            return
+        if outcome.action in ("pause", "resume"):
+            rewritten = await self._rewrite_hold(
+                session,
+                lane,
+                row,
+                state=outcome.state,
+                pause_reason=outcome.pause_reason,
+                level=_level_of(row.severity),
+            )
+            if rewritten is None:
+                return
+            _log_at(
+                "info",
+                events.EVENT_HOLD_RECONCILED,
+                lane_id=lane,
+                action=outcome.action,
+                state=outcome.state,
+                pause_reason=outcome.pause_reason,
+            )
+        if still_held:
+            self.held_lanes.add(lane)
+        if outcome.state != "held":
+            return  # paused: no announcement and no escalation (the silencers, spec Sec 4.9.3)
+        if announce_run is not None:
+            if outcome.action == "resume" and command is not None:
+                # A hold that opened paused never announced; its first held tick is the announcement.
+                classified = await self._hold_class(session, lane, row.job_run_id)
+                if classified is None:
+                    return
+                self._announce(lane, announce_run, command, classified)
+            self._pending_durable.add((lane, str(announce_run)))
+        await self._escalate_chronic(session, lane, row)
+
+    def _announce(self, lane: str, run_id: uuid.UUID, command: str, classified: tuple[ExitClass, str]) -> None:
+        """`operator_action_required` once per (lane, run) per process; the hold row makes it restart-proof."""
+        key = (lane, str(run_id))
+        if key in self.state.announced:
+            return
+        self.state.announced.add(key)
+        _log_at(
+            "error",
+            "plantgeo_job_executor_operator_action_required",
+            lane_id=lane,
+            run_id=key[1],
+            command=command,
+            exit_class=classified[0],
+            class_source=classified[1],
+            detail="the clock no longer releases this lane; nothing runs on it until this command is recorded",
+        )
+
+    async def _escalate_chronic(self, session: AsyncSession, lane: str, row: LaneIncidentRow) -> None:
+        chain_started = _parse_instant(row.chain_first_seen_at) or row.first_seen_at
+        if not is_chain_chronic(chain_started, now=self.now):
+            return
+        self.chronic.add(lane)
+        if row.summary.endswith(CHRONIC_SUMMARY_SUFFIX):
+            return  # already escalated and logged, by this process or an earlier one
+        rewritten = await self._rewrite_hold(
+            session, lane, row, state="held", pause_reason=None, level="error", chronic=True
+        )
+        if rewritten is not None:
+            _log_at(
+                "error",
+                events.EVENT_HOLD_CHRONIC,
+                lane_id=lane,
+                run_id=None if row.job_run_id is None else str(row.job_run_id),
+                chain_first_seen_at=chain_started.isoformat(),
+            )
+
+    async def _hold_class(
+        self, session: AsyncSession, lane: str, run_id: uuid.UUID | None
+    ) -> tuple[ExitClass, str] | None:
+        """The held run's class from its final attempt (missing, unknown or `lost` = `code`); memoized."""
+        if run_id is None:
+            return "code", CLASS_SOURCE_MISSING_ATTEMPT
+        known = self.state.hold_classes.get(run_id)
+        if known is not None:
+            return known
+        ok, attempt = await self._guard(
+            session,
+            f"select_run_final_attempt:{lane}",
+            lambda: select_run_final_attempt(session, job_run_id=run_id),
+            lane=lane,
+        )
+        if not ok:
+            return None
+        classified = final_attempt_exit_class(attempt)
+        self.state.hold_classes[run_id] = classified
+        return classified
+
+    def _hold_detail(  # noqa: PLR0913 - the design record's `detail` shape, one key per argument
+        self,
+        *,
+        lane: str,
+        run_id: uuid.UUID | None,
+        state: HoldState,
+        exit_class: ExitClass,
+        class_source: str,
+        chain_first_seen_at: str,
+        episodes_7d: int,
+        pause_reason: str | None,
+    ) -> dict[str, object]:
+        return {
+            "lane_id": lane,
+            "run_id": None if run_id is None else str(run_id),
+            "state": state,
+            "exit_class": exit_class,
+            "class_source": class_source,
+            "rung": 0,
+            "chain_first_seen_at": chain_first_seen_at,
+            "episodes_7d": episodes_7d,
+            "probes": [],
+            "clean_buckets": 0,
+            "release": "operator",
+            "pause_reason": pause_reason,
+        }
+
+    @staticmethod
+    def _hold_summary(lane: str, exit_class: str, *, chronic: bool) -> str:
+        summary = f"lane {lane!r} is held ({exit_class}); only a recorded supersession releases it until G1"
+        return f"{summary}{CHRONIC_SUMMARY_SUFFIX}" if chronic else summary
+
+    async def _open_hold(self, session: AsyncSession, lane: str, plan: _LanePlan) -> None:
+        latest = plan.latest
+        if latest is None:
+            return
+        classified = await self._hold_class(session, lane, latest.run_id)
+        if classified is None:
+            return
+        exit_class, class_source = classified
+        resolved_prefix = f"{_HOLD_PREFIX}{lane}{_RESOLVED_MARKER}"
+        episodes = 1 + sum(
+            1
+            for row in self.resolved_holds
+            if row.fingerprint.startswith(resolved_prefix)
+            and row.resolved_at is not None
+            and self.now - row.resolved_at <= FLAPPING_WINDOW
+        )
+        state: HoldState = "held" if plan.definition_enabled else "paused"
+        level: LogLevel = "warn" if exit_class in _WARN_HOLD_CLASSES else "error"
+        upserted = await self._upsert(
+            session,
+            kind="lane_hold",
+            subject=lane,
+            level=level,
+            summary=self._hold_summary(lane, exit_class, chronic=False),
+            detail=self._hold_detail(
+                lane=lane,
+                run_id=latest.run_id,
+                state=state,
+                exit_class=exit_class,
+                class_source=class_source,
+                chain_first_seen_at=self.now.isoformat(),
+                episodes_7d=episodes,
+                pause_reason=None if state == "held" else "disabled",
+            ),
+            lane=lane,
+            run_id=latest.run_id,
+        )
+        if upserted is None:
+            return
+        self.held_lanes.add(lane)
+        self.open_holds[lane] = latest.run_id
+        self.opened_this_tick.add(lane)
+        command = None if plan.result is None else plan.result.operator_action
+        fleet_open = self._open_row("fleet", exit_class) is not None
+        _log_at(
+            "warn" if fleet_open else level,
+            events.EVENT_HOLD_OPENED,
+            lane_id=lane,
+            run_id=str(latest.run_id),
+            exit_class=exit_class,
+            class_source=class_source,
+            episodes_7d=episodes,
+            state=state,
+            command=command,
+        )
+        if command is not None and state == "held":
+            self._announce(lane, latest.run_id, command, classified)
+            self._pending_durable.add((lane, str(latest.run_id)))
+        if is_chain_flapping(episodes):
+            _log_at("error", events.EVENT_HOLD_FLAPPING, lane_id=lane, episodes_7d=episodes)
+
+    async def _rewrite_hold(  # noqa: PLR0913 - the hold and the four facts a transition may change
+        self,
+        session: AsyncSession,
+        lane: str,
+        row: LaneIncidentRow,
+        *,
+        state: HoldState,
+        pause_reason: str | None,
+        level: LogLevel,
+        chronic: bool = False,
+    ) -> UpsertedIncident | None:
+        """Re-upsert an open hold with its full `detail` (an upsert replaces `detail` whole)."""
+        classified = await self._hold_class(session, lane, row.job_run_id)
+        if classified is None:
+            return None
+        exit_class, class_source = classified
+        return await self._upsert(
+            session,
+            kind="lane_hold",
+            subject=lane,
+            level=level,
+            summary=self._hold_summary(
+                lane, exit_class, chronic=chronic or row.summary.endswith(CHRONIC_SUMMARY_SUFFIX)
+            ),
+            detail=self._hold_detail(
+                lane=lane,
+                run_id=row.job_run_id,
+                state=state,
+                exit_class=exit_class,
+                class_source=class_source,
+                chain_first_seen_at=row.chain_first_seen_at or row.first_seen_at.isoformat(),
+                episodes_7d=_parse_count(row.episodes_7d, default=1),
+                pause_reason=pause_reason,
+            ),
+            lane=lane,
+            run_id=row.job_run_id,
+        )
+
+    async def _resolve_hold(
+        self, session: AsyncSession, lane: str, row: LaneIncidentRow, *, released_by: str, reason: str
+    ) -> None:
+        resolved = await self._resolve(
+            session,
+            row,
+            detail_patch={"released_by": released_by, "resolution_reason": reason, "resolved_state": row.state},
+            lane=lane,
+        )
+        if not resolved:
+            return
+        self.open_holds.pop(lane, None)
+        _log_at(
+            "info",
+            events.EVENT_HOLD_RELEASED,
+            lane_id=lane,
+            run_id=None if row.job_run_id is None else str(row.job_run_id),
+            released_by=released_by,
+            reason=reason,
+        )
+
+    async def _observe_blocked(self, session: AsyncSession, lane: str, plan: _LanePlan) -> None:
+        row = self._open_row("lane_blocked", lane)
+        result = plan.result
+        if plan.blocked and result is not None:
+            once_key = f"lane_blocked:{lane}:{result.run_id}"
+            if row is None:
+                upserted = await self._upsert(
+                    session,
+                    kind="lane_blocked",
+                    subject=lane,
+                    level="warn",
+                    summary=f"lane {lane!r} is blocked: {result.detail}",
+                    detail={"lane_id": lane, "run_id": None if result.run_id is None else str(result.run_id)},
+                    lane=lane,
+                    run_id=result.run_id,
+                )
+                if upserted is not None and once_key not in self.state.logged_once:
+                    self.state.logged_once.add(once_key)
+                    _log_at(
+                        "warn",
+                        events.EVENT_LANE_BLOCKED,
+                        lane_id=lane,
+                        run_id=None if result.run_id is None else str(result.run_id),
+                        detail=result.detail,
+                    )
+            return
+        if row is not None and await self._resolve(
+            session, row, detail_patch={"resolution_reason": "cleared"}, lane=lane
+        ):
+            prefix = f"lane_blocked:{lane}:"
+            self.state.logged_once = {key for key in self.state.logged_once if not key.startswith(prefix)}
+            _log_at("info", events.EVENT_LANE_UNBLOCKED, lane_id=lane)
+
+    async def after_planning(self, session: AsyncSession) -> None:
+        """Pause the holds of lanes this tick did not plan (inactive or quarantined), retire every other
+        lane-scoped row that no longer has an exit, then correlate fleets."""
+        if not self.read_ok:
+            return
+        holds = sorted(
+            (row for row in self.open_rows.values() if row.incident_type == "lane_hold"),
+            key=lambda row: row.fingerprint,
+        )
+        for row in holds:
+            lane = _incident_subject(row)
+            if not self.activation.is_active(lane):
+                await self._isolated(session, lane, partial(self._pause_inactive, lane=lane, row=row))
+        for row, reason in self._retirable_rows():
+            lane = _incident_subject(row)
+            await self._isolated(session, lane, partial(self._retire, row=row, reason=reason, lane=lane))
+        await self._isolated(session, None, self._correlate_fleet)
+
+    def _retirable_rows(self) -> list[tuple[LaneIncidentRow, str]]:
+        """Open lane-scoped rows whose only exit (a planned lane, a turn, a repair success) can no longer
+        come: the lane left the allow-list or was quarantined, or its repair breaker has been quiet for
+        `REPAIR_FAILING_QUIET_PERIOD` past the point it admits runs again."""
+        retirable: list[tuple[LaneIncidentRow, str]] = []
+        for row in sorted(self.open_rows.values(), key=lambda row: row.fingerprint):
+            if row.incident_type not in _INACTIVE_RETIRED_KINDS:
+                continue
+            lane = _incident_subject(row)
+            if row.incident_type == "executor_lease_lost" and lane == LEASE_LOST_FLEET_SUBJECT:
+                continue
+            if not self.activation.is_active(lane):
+                retirable.append((row, RESOLUTION_LANE_INACTIVE))
+            elif row.incident_type == "lane_repair_failing":
+                breaker = _repair_breaker_state(row)
+                admits_from = breaker.cooldown_until or row.last_seen_at
+                if self.now - admits_from >= REPAIR_FAILING_QUIET_PERIOD:
+                    retirable.append((row, RESOLUTION_REPAIR_QUIET))
+        return retirable
+
+    async def _retire(self, session: AsyncSession, *, row: LaneIncidentRow, reason: str, lane: str | None) -> None:
+        await self._resolve(session, row, detail_patch={"resolution_reason": reason}, lane=lane)
+
+    async def retire_authoring(self, session: AsyncSession) -> None:
+        """Repair authoring is switched off: an open `executor_repair_authoring` streak can never clear."""
+        row = self._open_row("executor_repair_authoring", None)
+        if not self.read_ok or row is None:
+            return
+        await self._isolated(
+            session, None, partial(self._retire, row=row, reason=RESOLUTION_AUTHORING_DISABLED, lane=None)
+        )
+
+    async def _pause_inactive(self, session: AsyncSession, *, lane: str, row: LaneIncidentRow) -> None:
+        """A hold on a lane outside the allow-list (or quarantined) is paused, never escalated."""
+        outcome = reconcile(
+            state=_hold_state(row),
+            verdict=HoldVerdict(
+                still_held=True,
+                definition_enabled=True,
+                lane_active=False,
+                lane_quarantined=lane in self.activation.quarantined,
+                superseded_by_operator=False,
+                superseded_run_id=None,
+            ),
+        )
+        await self._apply_hold_outcome(session, lane, row, outcome, still_held=False, announce_run=None)
+
+    async def _correlate_fleet(self, session: AsyncSession) -> None:
+        """`fleet:<exit_class>`: 3 or more lanes opening holds of one class within an hour log ONE error."""
+        recent: dict[ExitClass, set[str]] = {}
+        classes: dict[str, ExitClass] = {}
+        every_class_known = True
+        for lane, run_id in sorted(self.open_holds.items(), key=lambda item: item[0]):
+            classified = await self._hold_class(session, lane, run_id)
+            if classified is None:
+                every_class_known = False
+                continue
+            classes[lane] = classified[0]
+            row = self._open_row("lane_hold", lane)
+            first_seen = self.now if lane in self.opened_this_tick or row is None else row.first_seen_at
+            if self.now - first_seen <= FLEET_WINDOW:
+                recent.setdefault(classified[0], set()).add(lane)
+        for exit_class, lanes in sorted(recent.items()):
+            if len(lanes) < FLEET_HOLD_THRESHOLD or self._open_row("fleet", exit_class) is not None:
+                continue
+            upserted = await self._upsert(
+                session,
+                kind="fleet",
+                subject=exit_class,
+                level="error",
+                summary=f"{len(lanes)} lanes opened {exit_class} holds within one hour",
+                detail={"exit_class": exit_class, "members": sorted(lanes)},
+            )
+            once_key = f"fleet:{exit_class}"
+            if upserted is not None and once_key not in self.state.logged_once:
+                self.state.logged_once.add(once_key)
+                _log_at("error", events.EVENT_FLEET_CORRELATED, exit_class=exit_class, members=sorted(lanes))
+        for row in [row for row in self.open_rows.values() if row.incident_type == "fleet"]:
+            fleet_class = _incident_subject(row)
+            if every_class_known and fleet_class not in classes.values():
+                await self._resolve(session, row, detail_patch={"resolution_reason": "every_member_resolved"})
+                self.state.logged_once.discard(f"fleet:{fleet_class}")
+
+    def repair_withholding(self) -> dict[str, str]:
+        """Lane -> why its repairs are withheld this tick; empty when the switch is off or the read failed.
+
+        A degraded lane is never withheld: without a trustworthy row it plans repairs as HEAD did.
+        """
+        if not self.read_ok or not self.state.enabled:
+            withheld: dict[str, str] = {}
+        else:
+            withheld = {lane: "lane_hold" for lane in self.held_lanes if lane not in self.degraded}
+            for row in self.open_rows.values():
+                if row.incident_type != "lane_repair_failing":
+                    continue
+                lane = _incident_subject(row)
+                if lane in self.degraded:
+                    continue
+                if not repair_breaker_admits(_repair_breaker_state(row), now=self.now):
+                    withheld.setdefault(lane, "repair_breaker")
+        previous = self.state.repair_withheld
+        for lane in sorted(withheld.keys() - previous):
+            _log_at("info", events.EVENT_REPAIR_WITHHELD, lane_id=lane, withheld=True, reason=withheld[lane])
+        for lane in sorted(previous - withheld.keys()):
+            _log_at("info", events.EVENT_REPAIR_WITHHELD, lane_id=lane, withheld=False)
+        self.state.repair_withheld = frozenset(withheld)
+        return withheld
+
+    def withheld_results(self, withheld: Mapping[str, str]) -> list[LaneTickResult]:
+        return [
+            LaneTickResult(
+                lane_id=f"{lane}{REPAIR_LANE_SUFFIX}",
+                state="paused",
+                detail=(
+                    "repairs withheld while the lane is ledger-held"
+                    if reason == "lane_hold"
+                    else "repairs withheld by the repair breaker until its cooldown lifts"
+                ),
+            )
+            for lane, reason in sorted(withheld.items())
+            if lane in REPAIR_LANE_IDS and self.activation.is_active(lane)
+        ]
+
+    async def observe_authoring(self, session: AsyncSession, *, succeeded: bool) -> None:
+        if not self.read_ok:
+            return
+
+        async def body(active_session: AsyncSession) -> None:
+            row = self._open_row("executor_repair_authoring", None)
+            if succeeded:
+                if row is not None:
+                    await self._resolve(active_session, row, detail_patch={"resolution_reason": "authoring_succeeded"})
+                return
+            bumped = await self._bump_streak(
+                active_session,
+                kind="executor_repair_authoring",
+                subject=None,
+                escalate_at=REPAIR_AUTHORING_ESCALATION_COUNT,
+                summary="the leader's repair authoring pass raised; forward lanes are unaffected",
+                detail={},
+            )
+            if bumped is not None and bumped[1]:
+                _log_at("error", events.EVENT_REPAIR_AUTHORING_FAILED, consecutive_intervals=bumped[0], escalated=True)
+
+        await self._isolated(session, None, body)
+
+    async def record_plan_failures(self, session: AsyncSession, results: Iterable[LaneTickResult]) -> None:
+        """`lane_plan_failed:<lane>` for every lane whose planning raised or degraded; a clean pass resolves."""
+        failed: dict[str, str] = {
+            result.lane_id: (result.detail or "")[len(PLAN_FAILED_DETAIL_PREFIX) :].split(";", 1)[0]
+            for result in results
+            if result.detail is not None and result.detail.startswith(PLAN_FAILED_DETAIL_PREFIX)
+        }
+        for lane, reason in self.degraded.items():
+            failed.setdefault(lane, reason)
+        self.state.plan_failed_lanes = tuple(sorted(failed))
+        if not self.read_ok:
+            return
+
+        async def body(active_session: AsyncSession) -> None:
+            for lane, reason in sorted(failed.items()):
+                bumped = await self._bump_streak(
+                    active_session,
+                    kind="lane_plan_failed",
+                    subject=lane,
+                    escalate_at=STREAK_ESCALATION_COUNT,
+                    summary=f"planning lane {lane!r} raised or degraded ({reason}); every other lane planned",
+                    detail={"lane_id": lane, "reason": reason},
+                )
+                if bumped is not None and bumped[1]:
+                    _log_at(
+                        "error", events.EVENT_LANE_PLAN_FAILED, lane_id=lane, reason=reason, consecutive_ticks=bumped[0]
+                    )
+            for row in [row for row in self.open_rows.values() if row.incident_type == "lane_plan_failed"]:
+                if _incident_subject(row) not in failed:
+                    await self._resolve(active_session, row, detail_patch={"resolution_reason": "clean_planning_pass"})
+
+        await self._isolated(session, None, body)
+
+    async def observe_turn(
+        self,
+        session: AsyncSession,
+        candidate: DueLane,
+        result: LaneTickResult,
+        verdict: _TurnVerdict | None,
+    ) -> None:
+        """Fold one executed turn into its streak incidents (report missing, incomplete, lease lost, repair)."""
+        if verdict is None:
+            return
+        lane_id = candidate.spec.lane_id
+        self.dispatched.append(lane_id)
+        if verdict.exit_class == "lease_lost":
+            self.lease_lost.append(lane_id)
+        if not self.read_ok:
+            return
+        if lane_id.endswith(REPAIR_LANE_SUFFIX):
+            owning = lane_id[: -len(REPAIR_LANE_SUFFIX)]
+
+            async def repair_body(active_session: AsyncSession) -> None:
+                await self._observe_repair_turn(active_session, owning, result, verdict)
+
+            await self._isolated(session, owning, repair_body)
+            return
+
+        async def forward_body(active_session: AsyncSession) -> None:
+            await self._observe_report(active_session, lane_id, verdict)
+            await self._observe_incomplete(active_session, lane_id, verdict)
+            await self._observe_lease(active_session, lane_id, verdict)
+
+        await self._isolated(session, lane_id, forward_body)
+
+    async def _observe_report(self, session: AsyncSession, lane: str, verdict: _TurnVerdict) -> None:
+        if verdict.exit_class == "report_missing":
+            bumped = await self._bump_streak(
+                session,
+                kind="lane_report_missing",
+                subject=lane,
+                escalate_at=STREAK_ESCALATION_COUNT,
+                summary=f"lane {lane!r} exited 0 without a terminal report",
+                detail={"lane_id": lane},
+                lane=lane,
+            )
+            if bumped is not None:
+                count, escalated = bumped
+                _log_at(
+                    "error" if count >= STREAK_ESCALATION_COUNT else "warn",
+                    events.EVENT_LANE_REPORT_MISSING,
+                    lane_id=lane,
+                    consecutive_turns=count,
+                    escalated=escalated,
+                )
+            return
+        row = self._open_row("lane_report_missing", lane)
+        if verdict.report_present and row is not None:
+            await self._resolve(session, row, detail_patch={"resolution_reason": "report_seen"}, lane=lane)
+
+    async def _observe_incomplete(self, session: AsyncSession, lane: str, verdict: _TurnVerdict) -> None:
+        row = self._open_row("lane_incomplete", lane)
+        if verdict.turn_outcome == "incomplete":
+            first_seen = self.now if row is None else row.first_seen_at
+            step, level = _incomplete_step(self.now - first_seen)
+            reason = verdict.incomplete_reason or "inconclusive"
+            upserted = await self._upsert(
+                session,
+                kind="lane_incomplete",
+                subject=lane,
+                level=level,
+                summary=f"lane {lane!r} exited 0 but owes work ({reason})",
+                detail={"lane_id": lane, "reason": reason, "state": step},
+                lane=lane,
+            )
+            if upserted is not None and row is not None and step != (row.state or INCOMPLETE_OPEN_STATE):
+                _log_at(level, events.EVENT_LANE_INCOMPLETE_ESCALATED, lane_id=lane, step=step, reason=reason)
+            return
+        if (
+            verdict.turn_outcome == "completed"
+            and row is not None
+            and await self._resolve(session, row, detail_patch={"resolution_reason": "complete_turn"}, lane=lane)
+        ):
+            _log_at("info", events.EVENT_LANE_INCOMPLETE_CLEARED, lane_id=lane)
+
+    async def _observe_lease(self, session: AsyncSession, lane: str, verdict: _TurnVerdict) -> None:
+        if verdict.exit_class == "lease_lost":
+            bumped = await self._bump_streak(
+                session,
+                kind="executor_lease_lost",
+                subject=lane,
+                escalate_at=STREAK_ESCALATION_COUNT,
+                summary=f"lane {lane!r} lost its fenced lease while its command ran",
+                detail={"lane_id": lane},
+                lane=lane,
+            )
+            if bumped is not None and bumped[1]:
+                _log_at("error", events.EVENT_LEASE_LOST_ESCALATED, lane_id=lane, consecutive=bumped[0])
+            return
+        row = self._open_row("executor_lease_lost", lane)
+        if verdict.exit_class != "interrupted" and row is not None:
+            await self._resolve(session, row, detail_patch={"resolution_reason": "attempt_kept_its_lease"}, lane=lane)
+
+    async def _observe_repair_turn(
+        self, session: AsyncSession, lane: str, result: LaneTickResult, verdict: _TurnVerdict
+    ) -> None:
+        """`lane_repair_failing:<lane>` and the repair breaker (spec Sec 4.9.3; never a `lane_hold`)."""
+        if verdict.failure_class == "invalid_repair_request":
+            return  # a malformed candidate, never a run failure: it never counts for the breaker
+        row = self._open_row("lane_repair_failing", lane)
+        if verdict.exit_class == "ok":
+            tripped_before = row is not None and _repair_breaker_state(row).trip_count > 0
+            if (
+                row is not None
+                and await self._resolve(session, row, detail_patch={"resolution_reason": "repair_succeeded"}, lane=lane)
+                and tripped_before
+            ):
+                _log_at("info", events.EVENT_REPAIR_BREAKER_RELEASED, lane_id=lane)
+            return
+        if result.run_status not in SETTLED_WITHOUT_SUCCESS:
+            return  # an attempt that will be retried is not yet a settled repair failure
+        current = _repair_breaker_state(row)
+        if verdict.exit_class in REPAIR_BREAKER_TRIPPING_CLASSES:
+            folded = evaluate_repair_breaker(current, exit_class=verdict.exit_class, now=self.now)
+            breaker, tripped = folded.state, folded.tripped_this_turn
+        else:  # upstream/infra/lease: still failing, but it breaks a run of code-class failures
+            breaker, tripped = replace(current, consecutive_failures=0, cooldown_until=None), False
+        upserted = await self._upsert(
+            session,
+            kind="lane_repair_failing",
+            subject=lane,
+            level="error" if tripped else "warn",
+            summary=f"repair runs for lane {lane!r} are settling failed ({verdict.exit_class})",
+            detail={
+                "lane_id": lane,
+                "state": _COOLDOWN_STATE if tripped else f"{_COUNTING_STATE_PREFIX}{breaker.consecutive_failures}",
+                "rung": breaker.trip_count,
+                "exit_class": verdict.exit_class,
+                "cooldown_until": None if breaker.cooldown_until is None else breaker.cooldown_until.isoformat(),
+            },
+            lane=lane,
+            run_id=result.run_id,
+        )
+        if upserted is not None and tripped:
+            _log_at(
+                "error",
+                events.EVENT_REPAIR_BREAKER_OPENED,
+                lane_id=lane,
+                trip_count=breaker.trip_count,
+                cooldown_days=repair_breaker_cooldown_days(breaker.trip_count),
+                cooldown_until=None if breaker.cooldown_until is None else breaker.cooldown_until.isoformat(),
+            )
+
+    async def close(self, session: AsyncSession) -> None:
+        """`executor_lease_lost:fleet` (every dispatched lane lost its lease), then publish the tick's memos."""
+        if self.read_ok and len(set(self.dispatched)) >= LEASE_LOST_FLEET_MIN_LANES:
+            everything_lost = set(self.dispatched) <= set(self.lease_lost)
+
+            async def body(active_session: AsyncSession) -> None:
+                row = self._open_row("executor_lease_lost", LEASE_LOST_FLEET_SUBJECT)
+                if everything_lost:
+                    bumped = await self._bump_streak(
+                        active_session,
+                        kind="executor_lease_lost",
+                        subject=LEASE_LOST_FLEET_SUBJECT,
+                        escalate_at=STREAK_ESCALATION_COUNT,
+                        summary="every dispatched lane lost its fenced lease in one tick",
+                        detail={"lanes": sorted(set(self.dispatched))},
+                    )
+                    if bumped is not None and bumped[1]:
+                        _log_at("error", events.EVENT_LEASE_LOST_ESCALATED, lane_id=LEASE_LOST_FLEET_SUBJECT)
+                elif row is not None:
+                    await self._resolve(
+                        active_session, row, detail_patch={"resolution_reason": "a_lane_kept_its_lease"}
+                    )
+
+            await self._isolated(session, None, body)
+        self.state.durable_announcements = frozenset(self.durable)
+        self.state.chronic_lanes = tuple(sorted(self.chronic))
+
+
+def _log_tick_partial(results: list[LaneTickResult], error: BaseException) -> None:
+    """`tick_partial` before any re-raise (spec Sec 4.9.3): what this tick DID settle is never lost with it."""
+    with suppress(Exception):
+        logger.warning(
+            events.EVENT_TICK_PARTIAL,
+            error_type=type(error).__name__,
+            lane_count=len(results),
+            lanes=[{"lane_id": result.lane_id, "state": result.state} for result in results],
+        )
+
+
+def _without_lanes(activation: ActivationConfig, withheld: AbstractSet[str]) -> ActivationConfig:
+    """The repair planners' activation: the same allow-list minus the lanes whose repairs are withheld.
+
+    `plan_gap_repairs` and `_plan_repair_runs` both pass `active_lanes` straight through, so narrowing it
+    here withholds a lane from authoring AND skips its already-open repair run with no edit to either.
+    """
+    if not withheld:
+        return activation
+    return replace(activation, active_lanes=activation.active_lanes - withheld)
+
+
+async def run_executor_tick(  # noqa: PLR0913, PLR0912, PLR0915 - one knob per argument; one branch per phase
     session: AsyncSession,
     *,
     activation: ActivationConfig,
@@ -1208,8 +2602,14 @@ async def run_executor_tick(  # noqa: PLR0913 - one operator-tunable knob of the
     stop: ShutdownSignal | None = None,
     breaker_release: ProcessStartRelease | None = None,
     repair_clock: RepairAuthoringClock | None = None,
+    soft_failure: SoftFailureState | None = None,
 ) -> ExecutorTickSummary:
-    """Run one leader-elected, durable, fairly selected scheduler tick."""
+    """Run one leader-elected, durable, fairly selected scheduler tick.
+
+    `soft_failure` (the service loop always passes one) records every Wave O incident and applies repair
+    withholding and the repair breaker; `None` is HEAD's tick exactly. Either way one lane's planning
+    fault never stops another lane. See execution/AGENTS.md, "Soft failure".
+    """
     if max_lanes_per_tick < MIN_LANES_PER_TICK:
         raise ExecutorConfigurationError(
             f"max_lanes_per_tick must be at least {MIN_LANES_PER_TICK} to preserve class fairness"
@@ -1229,26 +2629,47 @@ async def run_executor_tick(  # noqa: PLR0913 - one operator-tunable knob of the
         return ExecutorTickSummary(observed_at=now, leader=False, lanes=())
     logger.debug("plantgeo_job_executor_leader_acquired", observed_at=now.isoformat())
     primary_error: BaseException | None = None
+    results: list[LaneTickResult] = []
+    tick = None if soft_failure is None else _SoftFailureTick(soft_failure, activation=activation, now=now)
     try:
-        results, due = await _plan_active_lanes(session, activation, now, breaker_release=breaker_release)
+        if tick is not None:
+            await tick.open(session)
+        planned, due = await _plan_active_lanes(
+            session, activation, now, breaker_release=breaker_release, observer=tick
+        )
+        results.extend(planned)
+        repair_activation = activation
+        if tick is not None:
+            await tick.after_planning(session)
+            withheld = tick.repair_withholding()
+            repair_activation = _without_lanes(activation, frozenset(withheld))
+            results.extend(tick.withheld_results(withheld))
         if repair_clock is not None and repair_clock.due(time.monotonic()):
-            await _author_due_repairs(session, activation, now=now, clock=repair_clock)
+            authored = await _author_due_repairs(session, repair_activation, now=now, clock=repair_clock)
+            if tick is not None:
+                await tick.observe_authoring(session, succeeded=authored is not None)
+        elif repair_clock is None and tick is not None:
+            await tick.retire_authoring(session)
         repair_results, repair_due = await _plan_repair_runs(
             session,
-            activation,
+            repair_activation,
             forward_due={candidate.spec.lane_id for candidate in due},
         )
         results.extend(repair_results)
         due.extend(repair_due)
+        if tick is not None:
+            await tick.record_plan_failures(session, results)
         ordered = fair_due_order(due)
         selected = ordered[:max_lanes_per_tick]
         for index, candidate in enumerate(selected):
             if stop is not None and stop.requested:
                 results.extend(_deferred_shutdown_result(deferred) for deferred in selected[index:])
                 break
+            _LANE_TURN_VERDICTS.pop(candidate.spec.lane_id, None)
             try:
-                results.append(await _execute_due_lane(session, candidate, stop=stop))
+                lane_result = await _execute_due_lane(session, candidate, stop=stop)
             except Exception as error:  # isolate lane-local faults only while the pinned backend is intact
+                _LANE_TURN_VERDICTS.pop(candidate.spec.lane_id, None)
                 await session.rollback()
                 if isinstance(error, SQLAlchemyError) or _pinned_connection_invalidated(session):
                     logger.error(
@@ -1272,16 +2693,23 @@ async def run_executor_tick(  # noqa: PLR0913 - one operator-tunable knob of the
                         detail=f"scheduler lane failed ({type(error).__name__})",
                     )
                 )
-        for candidate in ordered[max_lanes_per_tick:]:
-            results.append(
-                LaneTickResult(
-                    lane_id=candidate.spec.lane_id,
-                    state="deferred_fairness",
-                    scheduled_for=candidate.scheduled_for,
-                    run_id=candidate.existing_run_id,
-                    detail="due; another work class received this bounded tick's turn",
-                )
+                continue
+            results.append(lane_result)
+            verdict = _LANE_TURN_VERDICTS.pop(candidate.spec.lane_id, None)
+            if tick is not None:
+                await tick.observe_turn(session, candidate, lane_result, verdict)
+        results.extend(
+            LaneTickResult(
+                lane_id=candidate.spec.lane_id,
+                state="deferred_fairness",
+                scheduled_for=candidate.scheduled_for,
+                run_id=candidate.existing_run_id,
+                detail="due; another work class received this bounded tick's turn",
             )
+            for candidate in ordered[max_lanes_per_tick:]
+        )
+        if tick is not None:
+            await tick.close(session)
         return ExecutorTickSummary(
             observed_at=now,
             leader=True,
@@ -1289,6 +2717,7 @@ async def run_executor_tick(  # noqa: PLR0913 - one operator-tunable knob of the
         )
     except BaseException as error:
         primary_error = error
+        _log_tick_partial(results, error)
         raise
     finally:
         unlock_error: BaseException | None = None
@@ -1607,6 +3036,42 @@ class _Turn:
     lane_id: str
     mode: str
     attempt: int
+    #: The DEFINITION that ran (`lane_id`, or `lane_id` + `REPAIR_LANE_SUFFIX` for a repair turn): the key
+    #: `_LANE_TURN_VERDICTS` is filed under, so the tick reads back the verdict of the candidate it ran.
+    report_key: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _TurnVerdict:
+    """What one terminal handler call decided, for the tick's incident lifecycles (o5b, GL-5).
+
+    Process-local and consumed once: the tick pops the entry before and after it drives a candidate,
+    so a verdict never outlives the turn it describes. `failure_class` is set only for a pre-spawn
+    refusal (`invalid_repair_request` never counts against the repair breaker).
+    """
+
+    exit_class: ExitClass
+    turn_outcome: TurnOutcome
+    report_present: bool = False
+    incomplete_reason: str | None = None
+    failure_class: str | None = None
+
+
+#: Per definition that ran (`_Turn.report_key`), the verdict of its newest terminal handler call.
+_LANE_TURN_VERDICTS: dict[str, _TurnVerdict] = {}
+
+#: `exit_classes.WRAPPER_EVIDENCE` is keyed by the short layer names its R3 rows retire under, the
+#: executor by lane id; without this map R3 could never match a production lane (a GL-3 defect found
+#: by the GL-5 sweep proof). See execution/AGENTS.md, "Soft failure".
+_WRAPPER_EVIDENCE_KEYS: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        DROUGHT_DIRECT_LANE_ID: "drought",
+        FIRE_PERIMETERS_DIRECT_LANE_ID: "fire-perimeters",
+        EVACUATION_ZONES_DIRECT_LANE_ID: "evacuation-zones",
+        BURN_SEVERITY_DIRECT_LANE_ID: "burn-severity",
+        FIRE_DETECTIONS_DIRECT_LANE_ID: "fire-detections",
+    }
+)
 
 
 def _turn_mode(kind: str) -> str:
@@ -1719,15 +3184,18 @@ def _emit_lane_turn(
         getattr(logger, _LANE_TURN_LOG_METHODS[level])(events.EVENT_JOB_EXECUTOR_LANE_TURN, **fields)
 
 
-def _finish_lane_turn(
+def _finish_lane_turn(  # noqa: PLR0913 - the verdict facts the tick's incident lifecycles read
     turn: _Turn,
     *,
     spawned: bool,
     exit_class: ExitClass,
     incomplete: bool = False,
     extra: Mapping[str, object] | None = None,
+    report_present: bool = False,
+    incomplete_reason: str | None = None,
+    failure_class: str | None = None,
 ) -> TurnOutcome:
-    """Common tail of every terminal branch: turn_outcome, the process-local cache, the one `lane_turn`
+    """Common tail of every terminal branch: turn_outcome, the process-local caches, the one `lane_turn`
     line. `incomplete` is the ONE override the exit-class table needs (`ok` still splits into
     `completed`/`incomplete` by what the turn owes, spec Sec 4.9.3) -- every other class maps to its
     outcome one-to-one."""
@@ -1735,6 +3203,13 @@ def _finish_lane_turn(
         "incomplete" if (exit_class == "ok" and incomplete) else _TURN_OUTCOME_BY_EXIT_CLASS[exit_class]
     )
     _record_lane_exit_class(turn.lane_id, exit_class)
+    _LANE_TURN_VERDICTS[turn.report_key or turn.lane_id] = _TurnVerdict(
+        exit_class=exit_class,
+        turn_outcome=turn_outcome,
+        report_present=report_present,
+        incomplete_reason=incomplete_reason if turn_outcome == "incomplete" else None,
+        failure_class=failure_class,
+    )
     _emit_lane_turn(turn, spawned=spawned, exit_class=exit_class, turn_outcome=turn_outcome, extra=extra)
     return turn_outcome
 
@@ -1749,7 +3224,13 @@ def _pre_spawn_failure(turn: _Turn, *, failure_class: str, reason: str) -> JobHa
     row): always `config`/`config_error`, `spawned=false`, one `lane_turn` line, `failure_class` kept
     on the line so an operator can tell an invalid lane apart from an invalid repair request."""
     exit_class = classify_exit(return_code=None, pre_spawn=True)
-    turn_outcome = _finish_lane_turn(turn, spawned=False, exit_class=exit_class, extra={"failure_class": failure_class})
+    turn_outcome = _finish_lane_turn(
+        turn,
+        spawned=False,
+        exit_class=exit_class,
+        extra={"failure_class": failure_class},
+        failure_class=failure_class,
+    )
     return JobHandlerOutcome.failed(
         failure_class,
         reason,
@@ -1793,6 +3274,18 @@ def _interrupted_outcome(
     return JobHandlerOutcome.yielded(
         cursor=resume_from.cursor, progress_fraction=resume_from.progress_fraction, reason=reason, metrics=metrics
     )
+
+
+def _incomplete_reason(turn_report: TurnReport | None, probe_status: object) -> str | None:
+    """`lane_incomplete`'s reason (spec Sec 4.9.3): `unwritten` first, then `publication_debt` (PD), then a
+    soil probe that did not answer `ok` (`probe_gated`); `None` for a turn that owes nothing."""
+    if turn_report is not None and turn_report.days_unwritten > 0:
+        return "unwritten"
+    if turn_report is not None and turn_report.publication_debt > 0:
+        return "publication_debt"
+    if isinstance(probe_status, str) and probe_status != "ok":
+        return "probe_gated"
+    return None
 
 
 def _lane_turn_failure_detail(tail: CommandOutputTail) -> dict[str, object]:
@@ -2028,18 +3521,24 @@ async def run_scheduled_command(  # noqa: PLR0911, PLR0912, PLR0915 - each termi
         )
     # `classify_exit`'s R1-R3 evidence rules key on the BASE lane id: a repair shares its owning lane's
     # evidence shapes, so the `REPAIR_LANE_SUFFIX` that keeps `_LANE_TURN_REPORTS` per-definition is
-    # deliberately NOT applied to the turn's lane.
-    turn = replace(turn, lane_id=lane_id)
+    # deliberately NOT applied to the turn's lane -- only to `report_key`, the definition that ran.
+    report_key = lane_id if invocation.kind == EXECUTOR_WORK_ITEM_KIND else f"{lane_id}{REPAIR_LANE_SUFFIX}"
+    turn = replace(turn, lane_id=lane_id, report_key=report_key)
     spec = LANE_SPECS[lane_id]
     try:
         activation = parse_activation()
     except ExecutorConfigurationError as error:
         return _pre_spawn_failure(turn, failure_class="invalid_ownership_activation", reason=str(error))
     if not activation.is_active(lane_id):
+        quarantined = lane_id in activation.quarantined
         return _pre_spawn_failure(
             turn,
-            failure_class="ownership_activation_removed",
-            reason=f"lane {lane_id!r} is no longer explicitly activated",
+            failure_class="lane_quarantined" if quarantined else "ownership_activation_removed",
+            reason=(
+                f"lane {lane_id!r} is quarantined in the active allow-list"
+                if quarantined
+                else f"lane {lane_id!r} is no longer explicitly activated"
+            ),
         )
     if spec.command is None:
         return _pre_spawn_failure(
@@ -2111,9 +3610,8 @@ async def run_scheduled_command(  # noqa: PLR0911, PLR0912, PLR0915 - each termi
         await _finish_drain(drain)
         router.flush()
     elapsed = round(time.monotonic() - started, 3)
-    # Keyed by the DEFINITION that ran, not the owning lane: a `--max-days 5` repair turn is legitimately
-    # partial and must not count against the hourly lane's incomplete-bucket streak.
-    report_key = lane_id if invocation.kind == EXECUTOR_WORK_ITEM_KIND else f"{lane_id}{REPAIR_LANE_SUFFIX}"
+    # Keyed by the DEFINITION that ran (`report_key`, above), not the owning lane: a `--max-days 5` repair
+    # turn is legitimately partial and must not count against the hourly lane's incomplete-bucket streak.
     raw_report = parse_terminal_report(stdout.tail)
     turn_report = record_turn_report(report_key, raw_report)
 
@@ -2174,7 +3672,11 @@ async def run_scheduled_command(  # noqa: PLR0911, PLR0912, PLR0915 - each termi
     if monitor_state == "fence_lost":
         exit_class = classify_exit(return_code=return_code, fence_lost=True)
         turn_outcome = _finish_lane_turn(
-            turn, spawned=True, exit_class=exit_class, extra=_lane_turn_failure_detail(tail)
+            turn,
+            spawned=True,
+            exit_class=exit_class,
+            extra=_lane_turn_failure_detail(tail),
+            report_present=raw_report is not None,
         )
         return JobHandlerOutcome.failed(
             "executor_lease_lost",
@@ -2184,7 +3686,11 @@ async def run_scheduled_command(  # noqa: PLR0911, PLR0912, PLR0915 - each termi
     if monitor_state == "timeout":
         exit_class = classify_exit(return_code=return_code, timed_out=True)
         turn_outcome = _finish_lane_turn(
-            turn, spawned=True, exit_class=exit_class, extra=_lane_turn_failure_detail(tail)
+            turn,
+            spawned=True,
+            exit_class=exit_class,
+            extra=_lane_turn_failure_detail(tail),
+            report_present=raw_report is not None,
         )
         return JobHandlerOutcome.failed(
             "scheduled_command_timeout",
@@ -2208,13 +3714,14 @@ async def run_scheduled_command(  # noqa: PLR0911, PLR0912, PLR0915 - each termi
             report=raw_report,
             stderr_tail=tail.tail.decode("utf-8", errors="replace"),
             last_send_outcome=winning_outcome if isinstance(winning_outcome, str) else None,
-            lane_id=lane_id,
+            lane_id=_WRAPPER_EVIDENCE_KEYS.get(lane_id, lane_id),
         )
         turn_outcome = _finish_lane_turn(
             turn,
             spawned=True,
             exit_class=exit_class,
             extra={"exit_code": return_code, **_lane_turn_failure_detail(tail)},
+            report_present=raw_report is not None,
         )
         return JobHandlerOutcome.failed(
             "scheduled_command_exit",
@@ -2228,6 +3735,8 @@ async def run_scheduled_command(  # noqa: PLR0911, PLR0912, PLR0915 - each termi
         exit_class=exit_class,
         incomplete=incomplete,
         extra=None if exit_class == "ok" else _lane_turn_failure_detail(tail),
+        report_present=raw_report is not None,
+        incomplete_reason=_incomplete_reason(turn_report, raw_probe_status),
     )
     cursor = {
         "state": "completed",
@@ -2262,13 +3771,20 @@ async def _wait_for_shutdown(stop: ShutdownSignal, delay_seconds: float) -> bool
     return True
 
 
-def announce_operator_actions(summary: ExecutorTickSummary, announced: set[tuple[str, str | None]]) -> None:
-    """Log each held lane's release command ONCE per process while it holds, and once more when it clears.
+def announce_operator_actions(
+    summary: ExecutorTickSummary,
+    announced: set[tuple[str, str | None]],
+    *,
+    durable: AbstractSet[tuple[str, str | None]] = frozenset(),
+) -> None:
+    """Log each held lane's release command ONCE while it holds, and once more when it clears.
 
     The tick already printed the same command inside `blockers` every thirty seconds for a week with nothing
     consuming it; a flood is as invisible as silence. One `error`-severity event per held run, at top level
-    with the exact verb to run, is what a log-based alert or a human skim can actually see. `announced` is
-    the caller's per-process memory; a restart re-announces, which is the right side to err on.
+    with the exact verb to run, is what a log-based alert or a human skim can actually see. `durable` is the
+    set whose OPEN `lane_hold` row already records the announcement (GL-5: de-duplicated on incident rows,
+    so a restart does not re-announce); `announced` is the per-process fallback used when that row could
+    not be written.
     """
     if not summary.leader:
         # A follower sees no lanes at all; treating that as "cleared" would re-announce on every leadership flip.
@@ -2281,6 +3797,8 @@ def announce_operator_actions(summary: ExecutorTickSummary, announced: set[tuple
         if key in announced:
             continue
         announced.add(key)
+        if key in durable:
+            continue  # the hold row carries this announcement; a restart must not repeat it
         logger.error(
             "plantgeo_job_executor_operator_action_required",
             lane_id=action.lane_id,
@@ -2356,17 +3874,17 @@ class _UnhealthyEdge:
         self._last = unhealthy
 
 
-async def _service_loop(
+async def _service_loop(  # noqa: PLR0913 - the process's parsed settings, one per keyword
     *,
     activation: ActivationConfig,
     poll_seconds: float,
     max_lanes_per_tick: int,
     once: bool,
+    repair_clock: RepairAuthoringClock | None,
+    soft_failure: SoftFailureState,
 ) -> int:
     failures = 0
-    announced: set[tuple[str, str | None]] = set()
     breaker_release = ProcessStartRelease.from_environment(now=datetime.now(UTC))
-    repair_clock = RepairAuthoringClock.from_environment()
     database_url = settings.require_local_source_loader_database_url()
     last_signature: tuple[tuple[str, str, str | None], ...] | None = None
     last_echo_monotonic = -TICK_SUMMARY_HEARTBEAT_SECONDS  # forces the very first tick to print
@@ -2389,14 +3907,21 @@ async def _service_loop(
                         stop=stop,
                         breaker_release=breaker_release,
                         repair_clock=repair_clock,
+                        soft_failure=soft_failure,
                     )
                 signature = _tick_signature(summary)
                 now_monotonic = time.monotonic()
                 if signature != last_signature or now_monotonic - last_echo_monotonic >= TICK_SUMMARY_HEARTBEAT_SECONDS:
-                    click.echo(json.dumps(summary.to_dict(), sort_keys=True))
+                    # The hourly heartbeat lists chronic holds and failing planners (spec Sec 4.9.3).
+                    heartbeat = {
+                        **summary.to_dict(),
+                        "chronic_holds": list(soft_failure.chronic_lanes),
+                        "plan_failed_lanes": list(soft_failure.plan_failed_lanes),
+                    }
+                    click.echo(json.dumps(heartbeat, sort_keys=True))
                     last_signature = signature
                     last_echo_monotonic = now_monotonic
-                announce_operator_actions(summary, announced)
+                announce_operator_actions(summary, soft_failure.announced, durable=soft_failure.durable_announcements)
                 for lane in summary.incomplete_lanes:
                     if lane.turn_report is not None:
                         logger.warning(
@@ -2430,55 +3955,32 @@ async def _service_loop(
     return 0
 
 
-def _environment_float(name: str, fallback: float) -> float:
-    raw = os.environ.get(name, "").strip()
-    if not raw:
-        return fallback
-    try:
-        value = float(raw)
-    except ValueError as error:
-        raise ExecutorConfigurationError(f"{name} must be a number") from error
-    if value <= 0:
-        raise ExecutorConfigurationError(f"{name} must be positive")
-    return value
-
-
-def _environment_int(name: str, fallback: int) -> int:
-    raw = os.environ.get(name, "").strip()
-    if not raw:
-        return fallback
-    try:
-        value = int(raw)
-    except ValueError as error:
-        raise ExecutorConfigurationError(f"{name} must be an integer") from error
-    if value <= 0:
-        raise ExecutorConfigurationError(f"{name} must be positive")
-    return value
-
-
 @click.command("jobs-executor")
 @click.option("--once", is_flag=True, help="Run one leader-elected scheduler tick and exit.")
 @click.option("--inventory", "inventory_only", is_flag=True, help="Print the code-owned lane inventory and exit.")
 def jobs_executor(once: bool, inventory_only: bool) -> None:
-    """Run the single continuous PlantGeo ingestion and Parquet job service."""
+    """Run the single continuous PlantGeo ingestion and Parquet job service.
+
+    No malformed executor variable stops it (spec Sec 4.9.3): an unknown or non-executable allow-list id is
+    quarantined, a garbled number falls back to its default with one warning and an `executor_config`
+    incident. The remaining startup exits are a missing DSN and a `Settings()` validation error.
+    """
     try:
         activation = parse_activation()
         inventory = executor_inventory(activation)
         click.echo(json.dumps(inventory, sort_keys=True))
         if inventory_only:
             return
-        poll_seconds = _environment_float(POLL_SECONDS_VARIABLE, DEFAULT_POLL_SECONDS)
-        max_lanes = _environment_int(MAX_LANES_PER_TICK_VARIABLE, DEFAULT_MAX_LANES_PER_TICK)
-        if max_lanes < MIN_LANES_PER_TICK:
-            raise ExecutorConfigurationError(
-                f"{MAX_LANES_PER_TICK_VARIABLE} must be at least {MIN_LANES_PER_TICK} to preserve class fairness"
-            )
+        log_quarantined_lanes(activation)
+        executor_settings = ExecutorSettings.from_environment()
         exit_code = asyncio.run(
             _service_loop(
                 activation=activation,
-                poll_seconds=poll_seconds,
-                max_lanes_per_tick=max_lanes,
+                poll_seconds=executor_settings.poll_seconds,
+                max_lanes_per_tick=executor_settings.max_lanes_per_tick,
                 once=once,
+                repair_clock=executor_settings.repair_clock,
+                soft_failure=SoftFailureState.for_process(activation, executor_settings),
             )
         )
     except ExecutorConfigurationError as error:
@@ -2498,17 +4000,21 @@ __all__ = [
     "FAILURE_STREAK_PROBE_LIMIT",
     "LANE_SPECS",
     "OPERATOR_SUPERSESSION_BLOCKER_PREFIX",
+    "PLAN_FAILED_DETAIL_PREFIX",
     "RUN_SUPERSESSION_FINGERPRINT_PREFIX",
     "RUN_SUPERSESSION_INCIDENT_TYPE",
     "SETTLED_WITHOUT_SUCCESS",
+    "SOFT_FAILURE_VARIABLE",
     "SUPERSEDE_RUN_COMMAND",
     "ActivationConfig",
     "CheckpointVerdict",
     "CommandOutputTail",
     "CommandStderrTail",
+    "ConfigFault",
     "DueLane",
     "ExecutorConfigurationError",
     "ExecutorLeaderUnlockError",
+    "ExecutorSettings",
     "ExecutorTickSummary",
     "LaneExecutionSpec",
     "LaneTickResult",
@@ -2516,6 +4022,7 @@ __all__ = [
     "OperatorAction",
     "ProcessStartRelease",
     "RepairAuthoringClock",
+    "SoftFailureState",
     "TurnReport",
     "announce_operator_actions",
     "bucket_after",
@@ -2524,6 +4031,7 @@ __all__ = [
     "fair_due_order",
     "jobs_executor",
     "judge_failed_checkpoint",
+    "log_quarantined_lanes",
     "next_scheduled_bucket",
     "parse_activation",
     "parse_terminal_report",
@@ -2533,6 +4041,7 @@ __all__ = [
     "run_executor_tick",
     "run_scheduled_command",
     "scheduled_bucket",
+    "soft_failure_enabled",
     "summarize_turn_report",
     "supersession_command",
 ]

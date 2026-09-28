@@ -22,7 +22,7 @@ from agri_data_service.execution.job_executor_service import (
     LANE_SPECS,
     PROCESS_START_RELEASE_OPERATOR,
     ActivationConfig,
-    ExecutorConfigurationError,
+    ConfigFault,
     LatestRun,
     ProcessStartRelease,
     RepairAuthoringClock,
@@ -361,10 +361,20 @@ def test_the_repair_clock_is_due_once_per_interval_and_off_at_zero() -> None:
     assert not clock.due(1000.0 + DEFAULT_REPAIR_INTERVAL_SECONDS - 1)
     assert clock.due(1000.0 + DEFAULT_REPAIR_INTERVAL_SECONDS)
     assert RepairAuthoringClock.from_environment({"PLANTGEO_JOB_EXECUTOR_REPAIR_INTERVAL_SECONDS": "0"}) is None
-    with pytest.raises(ExecutorConfigurationError):
-        RepairAuthoringClock.from_environment({"PLANTGEO_JOB_EXECUTOR_REPAIR_INTERVAL_SECONDS": "soon"})
-    with pytest.raises(ExecutorConfigurationError):
-        RepairAuthoringClock.from_environment({"PLANTGEO_JOB_EXECUTOR_REPAIR_INTERVAL_SECONDS": "-1"})
+    # GL-5 pin (spec Sec 4.9.3 "Switches"): a garbled or negative interval never stops the executor. It
+    # falls back to the default clock and is recorded for the `executor_config:<VAR>` incident.
+    faults: list[ConfigFault] = []
+    garbled = RepairAuthoringClock.from_environment(
+        {"PLANTGEO_JOB_EXECUTOR_REPAIR_INTERVAL_SECONDS": "soon"}, faults=faults
+    )
+    negative = RepairAuthoringClock.from_environment(
+        {"PLANTGEO_JOB_EXECUTOR_REPAIR_INTERVAL_SECONDS": "-1"}, faults=faults
+    )
+    assert garbled == negative == RepairAuthoringClock(interval_seconds=DEFAULT_REPAIR_INTERVAL_SECONDS)
+    assert [(fault.variable, fault.value) for fault in faults] == [
+        ("PLANTGEO_JOB_EXECUTOR_REPAIR_INTERVAL_SECONDS", "soon"),
+        ("PLANTGEO_JOB_EXECUTOR_REPAIR_INTERVAL_SECONDS", "-1"),
+    ]
 
 
 async def test_a_due_clock_reads_coverage_once_plans_and_commits_an_applied_pass(
