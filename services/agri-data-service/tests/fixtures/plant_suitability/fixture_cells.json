@@ -1,0 +1,134 @@
+{
+  "roles": {
+    "boise": {
+      "withheld_cell": "-11596_4359",
+      "burned_cell": "-11596_4345",
+      "saline_cell": "-11623_4358",
+      "leymus_non_saline_cell": "-11596_4345",
+      "soil_failures_cell": "-11623_4358",
+      "restriction_none_recorded_cell": "-11596_4345",
+      "in_region_uncertain_versus_neighbour_cell": "-11596_4346",
+      "licence_cell": "-11596_4345"
+    },
+    "bend": {
+      "withheld_cell": "-12115_4403",
+      "uncertain_frost_free_cell": "-12111_4380",
+      "wet_cell": "-12143_4395",
+      "burned_cell": "-12111_4384",
+      "east_of_cascade_crest_cell": "-12111_4398"
+    },
+    "corvallis": {
+      "withheld_cell": "-12303_4472",
+      "no_regional_guide_cell": "-12301_4430",
+      "wet_cell": "-12301_4433",
+      "missing_ec_cell": "-12301_4468",
+      "red_osier_dogwood_review_cell": "-12333_4455"
+    }
+  },
+  "taxa": {
+    "boise": {
+      "in_region_uncertain_taxa": [
+        "Fallugia paradoxa",
+        "Jamesia americana"
+      ],
+      "confirmed_neighbour_taxa": [
+        "Amelanchier utahensis"
+      ],
+      "licence_dropped_source_id": "pnw5_2005",
+      "licence_dropped_source_only_taxa": [
+        "Elaeagnus angustifolia"
+      ],
+      "licence_kept_source_id": "nrcs_id_tn77_2021",
+      "licence_kept_source_only_taxa": [
+        "Ceanothus velutinus",
+        "Fallugia paradoxa",
+        "Jamesia americana",
+        "Lonicera involucrata"
+      ],
+      "range_wide_only_taxa": [
+        "Baccharis salicifolia",
+        "Fallugia paradoxa",
+        "Jamesia americana",
+        "Prunus americana"
+      ],
+      "state_scoped_native_taxa": [
+        "Penstemon strictus",
+        "Prunus pumila"
+      ],
+      "noxious_binomial_taxon": "Achnatherum hymenoides",
+      "noxious_genus": "Agropyron",
+      "noxious_annotation_taxon": "Achnatherum thurberianum"
+    },
+    "bend": {
+      "east_of_cascade_crest_taxon": "Krascheninnikovia lanata"
+    }
+  },
+  "cells": {
+    "boise": [
+      "-11596_4359",
+      "-11596_4345",
+      "-11623_4358",
+      "-11596_4346",
+      "-11645_4350",
+      "-11605_4360",
+      "-11615_4370",
+      "-11625_4380",
+      "-11635_4390",
+      "-11635_4350",
+      "-11645_4360",
+      "-11605_4370",
+      "-11615_4380",
+      "-11625_4390",
+      "-11625_4350",
+      "-11635_4360",
+      "-11645_4370",
+      "-11605_4380",
+      "-11615_4390",
+      "-11615_4350"
+    ],
+    "corvallis": [
+      "-12303_4472",
+      "-12301_4430",
+      "-12301_4433",
+      "-12301_4468",
+      "-12333_4455",
+      "-12350_4435",
+      "-12310_4445",
+      "-12320_4455",
+      "-12330_4465",
+      "-12340_4475",
+      "-12340_4435",
+      "-12350_4445",
+      "-12310_4455",
+      "-12320_4465",
+      "-12330_4475",
+      "-12330_4435",
+      "-12340_4445",
+      "-12350_4455",
+      "-12310_4465",
+      "-12320_4475"
+    ],
+    "bend": [
+      "-12115_4403",
+      "-12111_4380",
+      "-12143_4395",
+      "-12111_4384",
+      "-12111_4398",
+      "-12160_4385",
+      "-12120_4395",
+      "-12130_4405",
+      "-12140_4415",
+      "-12150_4425",
+      "-12150_4385",
+      "-12160_4395",
+      "-12120_4405",
+      "-12130_4415",
+      "-12140_4425",
+      "-12140_4385",
+      "-12150_4395",
+      "-12160_4405",
+      "-12120_4415",
+      "-12130_4425"
+    ]
+  }
+}
