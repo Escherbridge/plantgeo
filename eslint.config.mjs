@@ -67,6 +67,7 @@ export default defineConfig([
   },
   globalIgnores([
     ".next/**",
+    ".claude/**",
     ".omc/**",
     "**/.mypy_cache/**",
     "**/.agri-local-runs/**",
