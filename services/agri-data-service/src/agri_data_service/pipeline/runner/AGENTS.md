@@ -1,0 +1,264 @@
+# `pipeline/runner/` — the config-lane runner
+
+Track `config_driven_ingestion_20260926`, plan 1B (`f1-runner`), spec §4.2–§4.3, S4–S6, S11, S14,
+S19, FR-3–FR-5, FR-15, FR-38, CA17, CA20. **Dark in Phase 1:** no `lanes/*.toml` exists yet, so
+nothing dispatches this package in production. Code carries the one-line "what"; the "why" is here.
+
+```
+python -m agri_data_service.pipeline.runner --lane <id> --mode forward|gap-fill|transform
+    [--compare] [--republish-current] [--weighted-budget N] [--run-id ID]
+```
+
+| module | what |
+|---|---|
+| `contract.py` | the §4.2 Protocols and value types; the ONLY runner module a strategy imports |
+| `resolve.py` | S14: strategy key -> `pipeline/lanes/<layer>/<source>.py::STRATEGY` |
+| `windows.py` | which days a turn asks about: forward + S19 gate, gap-fill holes, transform dirty days |
+| `budget.py` | per-turn per-mode caps, the ledger, `BudgetedClient`, `select_affordable_days` |
+| `fetch.py` | the per-unit retry ladder and the quota circuit |
+| `checkpoints.py` | source checkpoints over `pipeline/parquet/source_checkpoint.py` |
+| `census.py` | the full-ladder census |
+| `receipts.py` | per stream-day turn receipts (S11 digests, units, input digests, pruned inputs) |
+| `reader.py` / `writer.py` | the read and write ports, and their `pipeline/parquet` bindings |
+| `digests.py` | table and response digests |
+| `turn.py` | `run_turn`: one turn, start to finish |
+| `report.py` | the S5 report and the bounded turn log |
+| `exits.py` | S4 codes and the one error -> code mapping |
+| `binding.py` | production collaborators (bucket, loader session, metered HTTP client) |
+| `__main__.py` | the command |
+
+## The contract
+
+`contract.py` is a DRAFT (plan 1B); the Phase-2 re-freeze fixes it from landed code (spec M1).
+Deviations from the spec §4.2 text, each deliberate:
+
+- `ProviderClient.get(endpoint, parameters, *, probe)` returns a `ProviderResponse` (body bytes, the
+  credential-free URL, the retrieval instant). A strategy names an endpoint from its provider TOML,
+  never a host; the client picks the free or customer host and adds the key.
+- `probe_edge(client, window)` takes the runner's `ProbeWindow` (at most 14 days ending at the
+  candidate edge) so the strategy never re-derives the window. It lives on its own
+  `EdgeProbingStrategy` Protocol so `isinstance` checks S6 without a second registry.
+- `rows(day, responses)` may return one table or a mapping stream slug -> table (a lane may write
+  several streams, spec §6.1). `Derivation.table` takes the same two shapes; a transform may answer
+  a subset of its streams on a day (an output whose inputs have not published yet).
+- `DayContext` adds `output_streams` and `input_streams` (a transform's input lane -> its streams,
+  in precedence order), which the generic precedence transform routes by.
+- `SourceRequest.unit` is unique within a turn: checkpoints, selection and outcomes key on it.
+- `ReleaseCalendarStrategy.release_days(first, last)` is optional: a `release_series` owes only
+  those days.
+
+Typed fetch errors (`SourceThrottledError`, `SourceUnavailableError`, `TurnBudgetExhaustedError`,
+`ProviderConfigurationError`) never reach `settle`; `ingest/http.py`'s own typed errors are
+classified the same way (`fetch.py::classify_fetch_error`).
+
+## Resolution
+
+S14 by `importlib`: `strategy = "soil.open_meteo_era5_land"` imports
+`agri_data_service.pipeline.lanes.soil.open_meteo_era5_land` and reads `STRATEGY`. There is no
+registry to edit, and nothing shared lives beside the lanes in `pipeline/lanes/` except
+`transforms/` and `AGENTS.md`, because `tests/test_layer_import_contract.py::_lane_names` treats
+every module there as a lane. `pipeline/runner/` is not sibling-policed; it sits in the `pipeline`
+layer. A missing module, a missing `STRATEGY`, the wrong shape for the lane's kind, or a settled
+weighted lane firing more than once a day without `probe_edge` (S6) is `StrategyResolutionError`
+(exit 78). `resolve_strategy(package=...)` exists so tests resolve fixture strategies
+(`tests/runner/fixtures/`) the same way.
+
+## Windows
+
+- **Forward** = `[edge - absence_recheck_days + 1, edge]`, edge = `today - publication_lag_days`;
+  a `write_and_recheck` lane never reaches past yesterday UTC (O1). A refuse lane owes its missing
+  and incomplete days; a `write_and_recheck` lane re-asks every window day (the rolling
+  reconcile), and the rewrite rules decide what is written.
+- **A day whose base rung is published but whose coarse rungs are not owes ladder work only**
+  (`census.py::LaneCensus.base_data_days`): it is never fanned out upstream. The turn itself
+  repairs it after the fan-out (`turn.py::_Turn._repair_ladders` -> `writer.py::repair_ladder` ->
+  `pipeline/parquet/gap_fill_repair.py::repair_one_lane_day`: derive the coarse rungs from the
+  published base under the lane-day lock, touching no adapter, then claim the day for the index).
+  There is no other repairer: the generic `parquet-gap-fill` lane that ran `run_gap_fill`'s ladder
+  queue was retired (`execution/lane_specs.py`). Counted as `days_ladder_owed` and
+  `ladder_repairs`; a repair the lock refuses is `contended`, one that fails (or that starts past
+  90 % of `turn_timeout_seconds`) is `ladder_owed`, both behind the edge so the alarm sees them
+  (review H1). Refuse lanes only: a `write_and_recheck` lane re-asks every window day anyway.
+- **The S19 probe gate** (`plan_forward`, G0's `_probe_gate` generalised): with `probe_edge`, the
+  turn spends the probe first. An owed day inside the probe window fans out only when the probe
+  shows it valued. An unvalued day NEWER than the probed edge is `unsettled`
+  (`newer_than_probed_edge`, `behind_edge = false`: not an alarm). An unvalued day OLDER than the
+  edge is also held (a probe null is never fanned out) but counts (`probe_null_behind_edge`).
+  `unavailable` / `deferred` / `blind` gate the whole probe window; days older than the probe
+  window are walked whatever the probe said (O-R3-1). A probe the turn's own cap refused is
+  `deferred`, its gated days `deferred_budget`.
+- **The shortwave livelock** (the reason for all of the above): days past a stuck edge cost
+  nothing, and the cap is spent oldest-first on days the provider can answer.
+- **Gap-fill** = the window before the forward window, back to `[days] floor` (or the source's
+  earliest day), capped at the census's `MAX_GAP_WINDOW_DAYS`. Refused unless
+  `gap_fill_enabled` (S12). Holes older than the source's history are `retention_exceeded`; more
+  than `GAP_FILL_MAX_DAYS_PER_TURN` wait (`deferred_budget`). Oldest first (spec §4.3; the §6.3
+  newest-first re-pull needs an `order` field the schema does not have yet).
+- **Transform** = the forward window's days whose input digests differ from the transform receipt.
+
+## Budget
+
+`mode_cap`: `forward_max_weighted_calls` or `gap_fill_max_weighted_calls`, lowered (never raised)
+by `--weighted-budget` (executor admission, WQ-4, or an operator). On a weighted provider the cap
+counts weighted calls priced by `foundation/observability/usage.py::open_meteo_weight_for_url` —
+the one formula; this package never writes a second one. On an unweighted provider it counts
+logical requests. A logical request is charged once, before it is sent (`BudgetedClient`); a retry
+of the same unit costs a fetch attempt only. The probe and a fan-out unit are two sends even with
+identical parameters, so the probe flag is part of the ledger key. `select_affordable_days` takes a
+day whole or defers it whole: a day's units must all fit, a unit shared with an already-taken day
+is free, and a checkpoint-restored unit is free.
+
+## One retry ladder
+
+Spec D2 gives the per-unit retries and the 429 series to the runner: `fetch.py::UnitFetcher` is the
+ladder (5xx/timeout/transport: 3 attempts, doubling from 2 s with jitter; 429: 20/40/80/160 s, then
+`deferred_quota` and the quota circuit opens for every unit not yet sent). A `Retry-After` replaces
+a series step, clamped to `[step, 2 × step]` through SOFT-8's one Retry-After rule,
+`ingest/upstream_retry.py::clamped_retry_after` (the legacy `retry_upstream` ladder clamps through
+the same helper into `[0, max_delay]`). So the production client (`binding.py`) makes ONE attempt
+per call through `ingest/provider_client.py::send_provider_request` (plus `fetch_bounded`'s own
+transport re-sends) and never retries a status itself; `provider_client.fetch_single_location`'s
+own ladder is for a non-runner caller and is never stacked under the runner. A unit that exhausts
+its ladder never discards its siblings; a configuration error cancels every sibling still sending
+before it propagates. A rejected key (401/403) or an empty required key is
+`ProviderConfigurationError`: the whole turn, exit 78.
+
+## Census
+
+Four rungs per stream-day, folded (`fold_ladder`): `data` only when every rung is `data`; an
+absent base under coarse rows, or a rung with both data and absence, raises (exit 70). Listing is
+by month prefix for a short window and by year for a long (gap-fill) one — forty years are forty
+listings per rung, not four hundred and eighty.
+
+## Checkpoints
+
+Only a unit answer whose every requested parameter carried values is kept (per-parameter
+eligibility); a replay goes back through the strategy's own `fetch` with the ORIGINAL retrieval
+instant, and a held answer the parser now refuses is a miss, never a failure. Keys bind the lane,
+provider, support digest, the unit's days and its credential-free URL
+(`RUNNER_CHECKPOINT_PROVIDER_PREFIX` keeps them apart from the legacy writers'). Compare mode reads
+checkpoints and never writes one. **A checkpoint only finishes an unserved day** (`turn.py::
+_Turn._restorable`): a unit is restored only when every owed day it covers is `missing` or
+`incomplete` for every stream. A served or absent day is re-asked, so a `write_and_recheck` lane's
+rolling reconcile sees upstream revisions instead of replaying its own 7-day-old answer (review M3).
+
+## Turn receipts
+
+`lane-turn-receipts/v1/<stream>/<day>.json` in the availability storage, outside every `layer=`
+prefix so no census or serving walk ever reads one. A receipt holds the source digest (S11), the
+unit counts, a transform's input digests, and the input streams a rebuild pruned — the audit
+outlives the pruned partition (§4.6). A transform lane also keeps one lane-level receipt per day
+under `_lane.<lane id>` (`receipts.py::transform_receipt_stream`; no stream slug starts with `_`),
+written after every answered output (review M5).
+
+## Digests
+
+`digests.py::table_digest` hashes the Arrow IPC stream of `combine_chunks()`, so chunking never
+changes the answer. `reader.canonical_digest` conforms a table to its stream schema first (column
+order, types, grain sort), so a built table and the published copy of the same rows agree. That is
+what S11's written-day digest, compare mode and CA17 compare.
+
+## Writer
+
+`writer.py::decide_rewrite` is the one statement of S11: write a missing/incomplete day; retract a
+disproven absence; rewrite a settled data day when its source digest changed; rewrite a partial
+`write_and_recheck` day only on strictly more units; a data day with no runner receipt (written
+before cut-over) is rewritten once, which is how it gains one; a governed absence never overwrites
+data (fail-closed). `ObjectStoreLaneWriter` writes every day through
+`pipeline/parquet/gap_fill.py::fill_one_lane_day` (lane-day lock, base rung, derived tiers,
+completion marker, availability generation and pointer), then the turn receipt. It cannot be
+constructed with a compare permit. **A lane-day another run holds is `contended`, never exit 70**
+(review M4): `fill_one_lane_day`'s `contended` outcome, a refused prune lock and a refused repair
+lock raise `LaneDayContendedError`; the turn records that stream-day `contended` and writes the
+rest. Any other non-publishing outcome (`blocked`, `raised`) is still `LaneWriteError`, exit 70. **A static lookup's registration keeps its legacy watermark**
+(`LaneRegistration` refuses a static lane without one), so `fill_one_lane_day` brackets the write
+with that watermark read, as the legacy path does. Prune retracts the coarse rungs first and the
+base last, under the lane-day lock.
+
+**Free recheck (S11 for ERA5T):** when a forward fan-out's units answer more days than were owed (a
+14-day request answers 14 days), every published window day all of whose units answered is settled
+too, at no extra cost, and rewritten only on a digest change. Such a day is never reported unwritten.
+
+## The turn
+
+`turn.py::run_turn` validates first (exit 78 before any read or send): mode vs kind; a writing turn
+needs `executor = "config"`, `enabled = true` and a writer; `--compare` must NOT have a writer and
+runs forward or transform only (it is allowed on a `legacy` lane — that is its purpose before G6);
+`--republish-current` is a static_lookup forward option; a static lookup must implement
+`probe_edge` (it reads its watermark there). Then:
+
+1. **CA20:** a forward writing turn retries its streams' owed `availability/pending/` claims first
+   (the legacy `_retry_owed_availability` contract: bounded per stream, a fault logged and never a
+   block on the writes).
+2. Choose the days (`windows.py`), spend the probe, select what the cap affords, restore
+   checkpoints, fetch (80 % of `turn_timeout_seconds`; the rest is kept for writing), `settle`,
+   `rows`, the S11 rules, write or compare.
+3. A strategy fault in `settle`/`rows`/`derive` is that day's `strategy_error`, never the turn's;
+   a fault in `plan_requests` is a code fault (exit 70). `Absent` without a proof is a
+   `strategy_error`; a partial `Written` on a `refuse` lane is `refused_partial`.
+
+**Static lookup:** the probe returns the source watermark as the one valued day; the lane owes a
+snapshot dated there when the served snapshot is older, and nothing when it is current. **CA17
+`--republish-current`:** refetch the served snapshot's day, and only when every stream's canonical
+digest equals the served one, rewrite it through the normal writer with availability (receipt
+outcome `republished`); a mismatch is refused (exit 78, `republish.refused = digest_mismatch`) and
+nothing is written. Each production use needs an owner go (CQ-8). Spec §4.3 step 7 says static
+lookups get no availability extension (other-lanes F6); CA17 (§4.8.9, later) requires "a new
+availability generation", so the runner extends availability for static writes too.
+
+**Transform:** reads the input lanes' published partitions and never imports lane code. Input
+digests come from the inputs' turn receipts, else from the published table. A day whose inputs'
+digests equal the transform receipt is clean; a dirty day whose rebuilt output is digest-equal only
+refreshes its receipt. The transform receipt is the lane-level one when present, else the one every
+output holds: a derivation that answers a subset of its outputs (an output whose inputs have not
+published) is therefore clean until an input changes, and a turn that died between two outputs
+leaves the day dirty because the lane-level receipt is written last. With `[pruning]` on (S12, a gate flip), superseded input stream-days of a
+`write_and_recheck` input lane are retracted after the output is written; the pruned digest stays
+in the receipt, so the day is not dirtied again by its own prune, and a prune that failed is retried
+next turn.
+
+## The S5 report
+
+The last stdout line, event `plantgeo_lane_turn_report`, **no `level`** (the executor's parser
+takes the last such line, else the last JSON object with no `level`). `TurnReportBuilder.to_payload`
+refuses to serialise until the turn states its `unwritten` list (`close_unwritten`) or declares it
+unknown (`mark_unwritten_unknown`, `unwritten_known = false`); `__main__` writes it from `finally`
+on every path. `days_unwritten` counts only days behind the provider edge (S5); `outcome` is
+`completed` / `incomplete` on exit 0. Facts: `requests`, `weighted_calls` (logical), `fetch_attempts`,
+the `probe` block and `probe_status`, `http_*`, `bytes_in`, `backoff_seconds` and
+`weighted_calls_metered` (deltas of `foundation/observability/usage.py`'s per-host meter),
+`retry_backoff_seconds` (this ladder), `rows_written` / `rows_built`, `partitions_written`,
+`bytes_written`, `elapsed_seconds`, `phase_seconds_{census,probe,fetch,settle,write}`,
+`checkpoint_restores`, `log_lines_*`, and the writer's `availability_*` tally (the executor reads it
+as publication debt). `TurnLog` keeps ≤ 200 debug/info/warn lines each per turn (the rest counted
+in `log_lines_suppressed`); errors are never dropped. Nothing here calls `print`.
+
+## Exit codes
+
+S4: `0` completed (unwritten days are in the report), `75` every unit the turn sent ended
+`upstream_unavailable` and none was answered or restored, `70` anything unexpected, `78` a
+configuration fault (`exits.py::exit_code_for`, argument errors included). A probe that cannot
+answer never fails the run (O-R3-1). `deferred_quota` is a reported day, not an exit.
+
+## The command
+
+`__main__.main(argv, *, bind=None)`: `configure_logging("service")` (info to stdout, errors to
+stderr), load `lanes/` for the active region through `foundation/lane_config` (never re-parsed
+here), resolve the strategy, bind the ports, run the turn. `bind` is the seam the command tests use;
+production binds `binding.py::production_ports`.
+
+## Production binding
+
+`binding.py::production_ports`: `ObjectStore` and `BotoAvailabilityStorage` from settings, turn
+receipts and checkpoints in the availability storage, one metered `ingest/http.py::upstream_client`,
+and — unless comparing — one loader session (`LOCAL_SOURCE_LOADER_DATABASE_URL`) for the writer's
+advisory locks. `ConfigProviderClient` delegates to `ingest/provider_client.py` (plan 1C's seam):
+`provider_endpoint_request` resolves the declared endpoint; one with a `customer_host` REQUIRES its
+key (`api_key_env`), sent only inside `KeyedRequestUrl`, so a keyed URL never reaches a log line or
+an exception string; an empty key is a named configuration error (FR-2), never a silent fall-back to
+the free host. `send_provider_request` makes the one attempt, and `binding.py` maps its status onto
+the runner's typed errors. The key's query parameter is known per provider
+(`provider_client.PROVIDER_API_KEY_PARAMETERS`: `open-meteo` -> `apikey`) until the provider schema
+names it. `tests/runner/test_binding.py` drives the real client through `main` over
+`httpx.MockTransport`: the key reaches the customer host and nothing else (report, stderr,
+`request_url`, checkpoints), and an empty or rejected key exits 78.

@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Final, Literal
 
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from agri_data_service.db.sql_queries import load_query_sql
@@ -647,6 +647,61 @@ async def reclaim_expired_leases(
         attempts_closed=len(closed),
         work_item_ids=work_item_ids,
     )
+
+
+#: A per-definition SESSION-level advisory lock namespace: the executor's work queue (S15) drives each lane on
+#: its own session, and this lock is what keeps one definition from ever running twice at once, across every
+#: executor process, for as long as that session holds it. See execution/AGENTS.md, "Work queue".
+DEFINITION_LOCK_PREFIX: Final = "plantgeo:executor-definition:"
+
+
+def definition_lock_key(definition_name: str) -> str:
+    """The advisory lock key one definition's lane session holds while it drives that definition."""
+    return f"{DEFINITION_LOCK_PREFIX}{definition_name}"
+
+
+async def try_definition_lock(session: AsyncSession, definition_name: str) -> bool:
+    """Take the definition's session-level advisory lock without waiting; `False` means another session holds it.
+
+    Session-level, not transaction-level: the lane session commits after every step, and a `pg_try_advisory_xact_lock`
+    would be released by the first of those commits. The caller releases it (`release_definition_lock`) before
+    handing the connection back to its pool.
+    """
+    key = func.hashtextextended(definition_lock_key(definition_name), 0)
+    held = await session.execute(select(func.pg_try_advisory_lock(key)))
+    return bool(held.scalar())
+
+
+async def release_definition_lock(session: AsyncSession, definition_name: str) -> bool:
+    """Release the definition's advisory lock; `False` when this session did not hold it."""
+    key = func.hashtextextended(definition_lock_key(definition_name), 0)
+    released = await session.execute(select(func.pg_advisory_unlock(key)))
+    return bool(released.scalar())
+
+
+#: A per-pool SESSION-level advisory lock namespace (WQ-4): at most one turn spends a capped provider pool at a
+#: time, across every executor process, so two lanes admitted against one month-to-date reading can never both
+#: spend it. See execution/AGENTS.md, "Budget admission".
+PROVIDER_LOCK_PREFIX: Final = "plantgeo:executor-provider:"
+
+
+def provider_lock_key(pool: str) -> str:
+    """The advisory lock key a lane session holds while its turn spends `pool`."""
+    return f"{PROVIDER_LOCK_PREFIX}{pool}"
+
+
+async def try_provider_lock(session: AsyncSession, pool: str) -> bool:
+    """Take the pool's session-level advisory lock without waiting; `False` means another turn spends it now."""
+    key = func.hashtextextended(provider_lock_key(pool), 0)
+    held = await session.execute(select(func.pg_try_advisory_lock(key)))
+    return bool(held.scalar())
+
+
+async def release_provider_lock(session: AsyncSession, pool: str) -> bool:
+    """Release the pool's advisory lock; `False` when this session did not hold it."""
+    key = func.hashtextextended(provider_lock_key(pool), 0)
+    released = await session.execute(select(func.pg_advisory_unlock(key)))
+    return bool(released.scalar())
 
 
 async def find_missing_relations(session: AsyncSession, qualified_names: Sequence[str]) -> tuple[str, ...]:

@@ -19,6 +19,15 @@ service loop. Three new sibling modules hold purely declarative or computational
   Pure functions and dataclasses.
 - `turn_reports.py` (127 lines) — per-tick result containers (`LaneTickState`, `LaneTickResult`,
   `ExecutorTickSummary`, `OperatorAction`). No process-held mutable state.
+- `lane_catalogue.py` (config-driven ingestion, Phase 1) — the catalogue bridge: which definitions run on
+  the legacy path and which on the config path, and the CA12 kill-switch over both. See "Lane catalogue".
+- `cron_schedule.py` (config-driven ingestion, Phase 1) — the next-fire clock over
+  `foundation/lane_config/cron.py::parse_cron`. See "Cron schedule".
+- `provider_budget.py` (Wave O at G1) — WQ-4's paid Open-Meteo admission, before `fair_due_order`. See
+  "Budget admission".
+- `usage_receipt.py` (Wave O at G1) — the monthly `receipts/source-usage/<YYYY-MM>.json`. See "Daily upkeep".
+
+The line counts above are the 2026-09-18 split's; the files have grown since and are not re-counted here.
 
 `run_scheduled_command` stayed in `job_executor_service.py` on purpose: `tests/execution/test_command_stderr_capture.py`
 monkeypatches `job_executor_service` module globals (`LANE_SPECS`, `parse_activation`, `_LANE_TURN_REPORTS`,
@@ -59,9 +68,24 @@ losing side of a declared active-lane conflict is QUARANTINED (`ActivationConfig
 never a startup exit: every other lane runs (see "Soft failure"). Removed services do not participate in runtime validation
 and must not be represented by service IDs, owner constants, or acknowledgement variables.
 
+`PLANTGEO_JOB_EXECUTOR_STOPPED_LANES` is the ONE env kill-switch (CA12), distinct from the allow-list: a lane
+named there never dispatches on either path, and naming `<lane>` also stops its `:gap-fill` and
+`:gap-repair` definitions. It follows the allow-list's rule (S8, H6/FR-11): an id no path knows is
+quarantined with one warning and one `lane_quarantined` incident (`detail.variable` names the variable),
+never an exit, and every other named lane is still stopped. See "Lane catalogue".
+
 Lane cadence, phase offset, command, timeout, catch-up policy, and publication contract live in
 `LANE_SPECS` (see `lane_specs.py`). Keep each current source-direct lane as a separate failure domain.
-New recurring work must be registered there instead of adding a Railway cron.
+New recurring work must be registered there instead of adding a Railway cron -- or, for a lane on the
+config path, in its lane TOML (`lanes/<id>.toml`), which `lane_catalogue.py` turns into definitions.
+
+**Legacy soil runs six-hourly since G1** (O6/FR-21): `cadence_seconds` 21,600 with `phase_offset_seconds`
+3,000 unchanged, so its buckets fall at 00:50, 06:50, 12:50 and 18:50 UTC and its decorative schedule
+string is `"50 */6 * * *"`. This sits ON TOP of G0's per-run cap (`pipeline/direct/soil/forward.py`: one
+day and 33 logical requests per run), so the paid Open-Meteo spend is at most four capped runs a day.
+Both pins move together: `tests/direct/soil/test_lane_registrations.py::EXPECTED_SCHEDULE` and
+`tests/test_job_executor_service.py::EXPECTED_SCHEDULES`; `tests/execution/test_cron_schedule.py` proves
+the string names the buckets the cadence opens.
 
 `VEGETATION_NDVI_PROMOTION_LANE_ID` is registered and deliberately NOT in the deployed allow-list.
 Activating it is a production mutation an owner makes by adding the identifier to that variable on
@@ -315,6 +339,83 @@ receipt is written, and rolls back on a refusal. Both are required together: `ad
 `pg_advisory_xact_lock`, so a refusal that left its transaction open would carry both the poisoned
 transaction and the publication barrier into every remaining day of the turn.
 
+## Lane catalogue
+
+`lane_catalogue.py` (config-driven ingestion spec §4.4 "Catalogue bridge"; CA1-CA3, CA8, CA12, CA13) puts
+every executor definition on exactly ONE path. `LaneCatalogue` is rebuilt from `LANE_SPECS` at call time
+on every tick and every handler call (tests rebind `LANE_SPECS`), over lane TOMLs parsed once per process
+(`load_config_lanes`, cached by directory and region: the directory is baked into the image, S13).
+
+- **Config wins.** A lane TOML with `executor = "config"` takes its id off the legacy path; its legacy
+  spec, if any, is skipped. `executor = "legacy"` leaves the lane where it was, and names a legacy spec or
+  is quarantined. **No id is on both paths**:
+  `tests/execution/test_lane_catalogue.py::test_every_real_lane_toml_puts_its_lane_on_exactly_one_path`
+  pins the legacy id set LITERALLY and DERIVES the config id set from the real `lanes/`, so adding a
+  TOML, disabled or not, needs no test edit.
+- **A config lane's definitions** are built by `config_lane_spec`: the forward definition keeps the lane
+  id, so its definition name and `EXECUTOR_DEFINITION_VERSION` are the legacy lane's own (CA13: a flip
+  resumes the same ledger checkpoint and the same brake; no version bump). A `gap_fill_cron` adds
+  `<lane>:gap-fill` (backlog class, coalesced), declared even while `gap_fill_enabled = false` so the
+  brake can name it. Each runs the runner CLI, `python -m agri_data_service.pipeline.runner --lane <id>
+  --mode forward|gap-fill|transform` (`RUNNER_COMMAND`), with the TOML's `turn_timeout_seconds` plus
+  `COMMAND_CLEANUP_MARGIN_SECONDS` as its command timeout.
+- **Config gates (CA3)**: the TOML's `enabled` (and `gap_fill_enabled`), the catalogue itself and the CA12
+  kill-switch, never `ACTIVE_LANES` and never `LANE_SPECS`. A config lane that declares
+  `conflicts_with` a lane that also dispatches waits (`config_conflict`): the incumbent keeps running.
+- **Registration (CA2)**: a config definition registers through the tick's own
+  `_load_or_register_definition` (`sql/execution/insert_definition.sql`, `ON CONFLICT DO NOTHING`, with
+  `read_lane_pause_state` honoured), never `jobs/worker.py::ensure_job_definition`, whose upsert would
+  un-pause a braked lane. `jobs-set-lane-enabled` (`job_lane_control.py::resolve_definition`) and
+  `jobs-supersede-run` (`job_run_supersession.py::resolve_executor_lane`) resolve through the catalogue,
+  so a config lane and its `:gap-fill` are braked and released like a legacy lane.
+- **Shape sync (review M1).** Because the insert never updates, a same-version spec change (soil's
+  six-hourly schedule; a CA13 cut-over) would never reach the stored row, and `/admin/jobs` computes
+  `nextFireAt` from that row's `schedule`. `_sync_definition_shape`
+  (`sql/execution/update_definition_shape.sql`) therefore rewrites a stored definition's `schedule`,
+  `schedule_timezone` and `parameters` once per process per definition, only when they differ, and never
+  names `enabled`. The runtime limits (`max_attempts`, `lease_seconds`, `time_budget_seconds`,
+  `retry_policy`) are rewritten only for a config lane, whose TOML owns them; a legacy lane keeps its
+  stored limits, since changing those has always meant a new definition version. The executor schedules
+  from its spec, never from the stored `schedule`, so the sync changes what operators see, not when lanes run.
+- **The CA1 marker.** A config work item's payload is `{lane_id: <owning lane>, scheduled_for,
+  executor: "config", mode}` and its run's `target_partitions` carry `executor: "config"`
+  (`LaneExecutionSpec.work_item_payload`, `run_target_partitions`); a legacy row is byte-identical to
+  before. `run_scheduled_command` routes a marked item, or one naming a config lane, to
+  `_resolve_config_turn`; an unmarked item left open across a cut-over names its definition id and is
+  resolved by it.
+- **Quarantine (S8).** A lane TOML that fails its invariants runs on NEITHER path (we cannot know which
+  executor it meant), and a lanes directory that cannot load at all leaves the legacy path running alone
+  with one `plantgeo_job_executor_lane_catalogue_unloaded` error per process. **Except a cut-over lane**
+  (review M2): `lane_catalogue.CUT_OVER_LANE_IDS` lists every legacy id a config TOML has taken over, and on
+  a load failure those run on neither path, so a packaging fault never restarts a retired legacy writer
+  beside its config successor. A CA13 cut-over appends its id in the same diff;
+  `test_the_cut_over_list_names_every_real_config_lane_that_took_a_legacy_id` pins the list to `lanes/`.
+  A static lookup or a transform that declares a `gap_fill_cron` is quarantined too: the runner has no
+  gap-fill turn for it (review L4).
+- **The kill-switch names repairs too (L8).** `<lane>:gap-repair` is a known id: naming it stops that
+  lane's repair driving and leaves its forward running; naming the lane stops both.
+- **Legacy repair stays legacy (CA8)**: see "Bounded gap repair".
+- `--inventory` lists legacy rows, then config definitions with `not_dispatched_because`, then quarantined
+  lane TOMLs; `activation_variables` names both the allow-list and the kill-switch.
+
+A never-run config definition waits for its first cron fire after this process first planned it
+(`_NEVER_RUN_FIRST_SEEN`), instead of opening the fire it was registered after (executor F8c). The map is
+process-held: a restart only makes such a lane wait one more fire, the conservative direction.
+
+## Cron schedule
+
+`cron_schedule.py` (spec S9, D6) is the next-fire clock for config lanes only; legacy lanes keep their
+cadence and phase until they flip. The GRAMMAR is `foundation/lane_config/cron.py::parse_cron`, the one
+parser the loader validates a TOML with, so the loader and the executor can never read a cron
+differently. Due = the latest fire at or before now (`latest_fire_at_or_before`); a replayed lane opens
+the fire after its last bucket (`next_fire_after`); `coalesce_latest` and `replay_oldest` keep their
+meaning through `lane_scheduling.py::next_scheduled_bucket`. The day rule is vixie cron's: when both day
+fields are restricted either may match, and a field starting with `*` (even `*/2`) makes both required.
+Every instant is UTC; a zoned instant is converted, a naive one refused. A grammatical cron that names no
+real minute (`0 0 31 2 *`) raises `CronNeverFiresError` after an eight-year search (it covers the skipped
+2100 leap day), which `lane_scheduling.py::_cron_fire` turns into that one lane's
+`ExecutorConfigurationError`, so it is the lane's `plan_failed`, never a hang or a tick fault.
+
 ## Durable execution
 
 The executor uses the `agri.job_*` tables for definitions, logical runs, work items, attempts,
@@ -324,14 +425,61 @@ to the current bucket and backlog lanes replay their oldest owed bucket.
 
 A failed or partial bucket remains held according to its catch-up policy. Operators release a held
 run with `agri-service ops jobs-supersede-run`; the resulting incident is the durable audit record.
-The `blockers` field in tick output carries activation, executability, and operator-supersession
-requirements.
+Since G1 the hold ladder also re-tries a held lane by itself (see "Holds and probes"). The `blockers`
+field in tick output carries activation, executability, and operator-supersession requirements.
+
+## Work queue
+
+Spec S15/S16, FR-7 (config-driven ingestion Phase 1D, `f1-executor`). `LaneDispatcher` is the work queue:
+the leader tick plans every lane on its own session exactly as before, opens each due lane's run there
+(`_dispatch_due_lanes`), and hands the lane to the queue WITHOUT awaiting it. Each lane then runs as its
+own asyncio task on its OWN `AsyncSession` (`_drive_dispatched_lane`), takes a session-level advisory lock
+on its definition (`jobs/lease.py::try_definition_lock`, key `plantgeo:executor-definition:<name>`) and
+drives `jobs/worker.py::run_job_slice`. The next tick `collect`s what finished and folds each verdict into
+its incidents on the leader session, so every Wave O write still happens on the leader, inside its
+savepoints.
+
+- **A lane never runs twice.** A definition already in flight is reported `running` and not dispatched
+  again; the per-definition lock keeps that true across executor processes, and the fenced lease on the
+  work item is the last line underneath both.
+- **Slots.** At most `PLANTGEO_JOB_EXECUTOR_MAX_CONCURRENT_LANES` lanes run at once (default **1** at G1;
+  raising it is G6's, with the Phase-2 RSS evidence). A due lane with no free slot is
+  `deferred_fairness` and waits for the next tick. Each slot owns one single-connection pool
+  (`_lane_session_slots`), so N lanes hold N connections and never the leader's.
+  `max_lanes_per_tick` is retired from the queue; it bounds only the serial dispatcher.
+- **Backlog gets its turn (review PH1a).** One slot takes only the head of `fair_due_order`, so the queue
+  alternates which class leads (`LaneDispatcher.next_lead`: the class NOT dispatched last). Without it every
+  `:gap-repair` (backlog) waited while any forward was due; the serial dispatcher still leads with
+  `incremental` and runs one of each class per tick. A forward still RUNNING counts as due for its lane's
+  repair planning, so at two or more slots a lane's forward and its repair never run together (review PM3).
+- **Daily upkeep waits for an idle queue (review PH1c).** `job-logs-maintain` holds `ACCESS EXCLUSIVE` on the
+  default job-event partition; the day's pass runs on the first tick with no lane in flight, so a running
+  lane's slice-end event write never queues behind it.
+- **Only leader loss cancels lane tasks (review H4).** A tick that finds another leader, or whose leader lock
+  could not be released (`ExecutorLeaderUnlockError`: a lost backend may still hold it), calls
+  `LaneDispatcher.cancel_all`; the worker hands the shard in hand back
+  (`jobs/worker.py::_release_after_cancellation`) and the child is stopped. Any OTHER tick fault, a planning
+  `SQLAlchemyError` included (a single statement timeout re-raises from `_isolate_plan_fault`), leaves running
+  lanes alone: each holds its own definition lock and fenced lease, and leadership is given up at the end of
+  every tick anyway. Cancelling there would SIGTERM a paid fetch mid-turn and re-spend it.
+  A stopping service drains in-flight lanes for `LANE_DRAIN_SECONDS`, then cancels the rest.
+- **Deviation, stated.** The leader lock is still taken and released per tick on a fresh connection (as
+  at HEAD); a lane task outlives the tick because its own definition lock and the fenced lease, not the
+  leader lock, are what make its turn exclusive. `--once` is always one serial tick, so nothing it
+  starts outlives the process.
+- **S16 switches.** `PLANTGEO_JOB_EXECUTOR_DISPATCH=queue|serial` (unset `queue`; a garbled value is
+  `serial`, HEAD's in-tick await, with one `config_fallback` warning). `run_executor_tick(dispatcher=None)`
+  IS the serial path, byte for byte, so every pre-queue test still runs it.
+
+Tests: `tests/execution/test_work_queue.py` (fake children through the real handler, fake lane sessions).
 
 ## Command lifecycle
 
-Commands run in their own process group with bounded timeouts, heartbeat updates, graceful
-termination, and forced cleanup as the final fallback. Shutdown stops new launches and waits for
-the active command boundary before releasing leadership. Never restore a deleted scheduler service
+Commands run as a direct child (`asyncio.create_subprocess_exec`, no `start_new_session`, so NOT in their
+own process group: `_stop_process` terminates and then kills the child itself, and a grandchild that
+outlives it is not signalled) with bounded timeouts, heartbeat updates, graceful termination, and forced
+cleanup as the final fallback. Shutdown stops new launches and waits for the active command boundary
+before releasing leadership. Never restore a deleted scheduler service
 as rollback; remove a lane from the active allow-list or pause its durable definition instead.
 
 ## Command stderr reaches the ledger
@@ -347,6 +495,13 @@ which `jobs.lease.fail_work_item` redacts and clamps; `metrics` carries counts a
 `stderr_truncated`, `stdout_bytes`, `stdout_truncated`) because metrics are stored unredacted. The drain
 is bounded by `COMMAND_STDERR_DRAIN_SECONDS` after exit so a grandchild holding the pipe cannot hold the
 attempt.
+
+**The run row carries it too** (config-driven ingestion spec §4.4 "Ledger detail"; D6).
+`sql/jobs/refresh_job_run_rollup.sql` writes `job_run.last_error_summary` in the same statement as the
+run's status: the newest `last_error_summary` of a work item that has NOT succeeded, or NULL once every
+errored item recovered. Nothing wrote that column before, so `/admin/jobs` read an always-empty field.
+The text is the work item's, already redacted and clamped by `jobs.lease.fail_work_item`. Rolls back by
+revert (S16: a pure fix).
 
 **o5a (Wave O, GL-3): the `ChildLogRouter` tee sits IN FRONT OF the sinks, not behind them.** Each
 `CommandOutputTail`'s sink is no longer a raw passthrough to this process's own stdout/stderr; it is a
@@ -494,6 +649,16 @@ in whatever the router forwards (the RAW tail copy this parser reads is intact r
 legacy writer that ever emitted a SECOND no-`level` JSON object after its report would still be
 misread as the newer one (last-wins), unchanged from before o5a.
 
+**Two unwritten shapes, one reader (S16).** `_unwritten_entries` reads a direct writer's
+`{day, outcome, detail}` AND the runner's S5 `{day, stream, reason, detail, behind_edge}`
+(`pipeline/runner/report.py::UnwrittenEntry`): an S5 entry keeps its `reason` (and `stream`), and the
+reason stands in for the missing `outcome`, so the tick, the checkpoint and the incident all read one
+word. The runner states `days_unwritten` itself, counting only days behind the provider edge (S5); when a
+report omits it, the fallback counts the entries not marked `behind_edge: false`, so a day newer than the
+edge -- unsettled by design -- never raises the incomplete alarm. A legacy entry is kept exactly as
+before. Pinned both ways by
+`tests/execution/test_command_stderr_capture.py::test_the_legacy_and_the_s5_unwritten_shapes_are_both_read`.
+
 ### Publication debt is the second, quieter half of an incomplete turn
 
 `days_unwritten` only ever sees a day the writer REFUSED. A day whose four rungs landed in R2 but
@@ -529,6 +694,23 @@ is inert for direct writers -- carried in `PUBLICATION_DEBT_COUNTERS` only in ca
 it back in.
 
 ## Operator action surface
+
+**The printed commands run as printed** (D6, executor F5). `lane_scheduling.py::supersession_command`
+prints two complete lines, the dry run (`LaneTickResult.operator_action`, `OperatorAction.command`) and the
+recording (`operator_apply_action`, `apply_command`, the same line plus `--apply`):
+
+    railway ssh --service plantgeo-job-executor -- agri-service ops jobs-supersede-run \
+        --lane <lane> --run-id <run> --evidence reviewed-hold:lane=<lane>,run=<run> --operator "$(whoami)"
+
+The `railway ssh` prefix runs the verb inside the executor, the one place its DSN, allow-list and lane
+TOMLs line up (the verb refused from a laptop whose environment lacked the allow-list). `--evidence` is
+pre-filled with one whitespace-free token, so a remote re-split cannot break it; `--operator` is a command
+substitution the operator's own shell expands. Before this the line carried only `--lane` and `--run-id`
+and failed with click's `Missing option '--evidence'`.
+`tests/execution/test_operator_action_surface.py::test_the_printed_dry_run_and_apply_lines_parse_with_the_verb_s_own_parser`
+parses both lines through the installed `agri-service` root. The verb resolves `--lane` through the lane
+catalogue, so a config lane and its `<lane>:gap-fill` are released the same way (CA2), gated only by its
+TOML and the kill-switch (CA3).
 
 A lane held behind a recorded-supersession requirement is still reported on every tick, but now in
 three places rather than buried in a `blockers` string: `LaneTickResult.operator_action` (typed), the
@@ -567,6 +749,19 @@ deleted 2026-09-12 as the last PostgreSQL reactivation surface, which left a mea
 - `_plan_repair_runs` in the tick drives open repair runs for ACTIVE lanes and nothing else: it never
   authors, never registers a definition that does not exist, never lists an object, and defers a
   repair whose owning lane's forward bucket is due in the same tick.
+- **Every authorized candidate persists** (FR-10, executor F1). `author_gap_repairs` resolves EVERY
+  repair definition first and only then opens the runs. `ensure_lane_definition` ends by rolling the
+  planning transaction back (`_load_or_register_definition`), so resolving the next candidate's
+  definition between two `open_job_run` calls discarded the previous run while its receipt still said
+  `authored`: one logical key got two run ids in one pass (2026-09-26 11:08), and only the last
+  candidate of every pass ever ran. Pinned by
+  `tests/execution/test_gap_repair.py::test_an_applied_pass_persists_every_authorized_candidate`, which
+  drives the REAL `ensure_lane_definition` against a session fake that honours rollback.
+- **Legacy repair never touches a config lane** (CA8). Authoring (the tick's `_author_due_repairs` and
+  the `jobs-plan-gap-repair` verb) reads `LaneCatalogue.legacy_activation`, so a config lane is
+  `lane_inactive`; driving (`_plan_repair_runs`) skips an id outside the catalogue's legacy path even
+  with an open `:gap-repair` run; and `run_scheduled_command` refuses a repair item for a config lane as
+  `invalid_repair_request` (the item is wrong, not the lane, so the repair breaker never counts it).
 
 - **Nobody is at the keyboard after a stall**, so the leader authors the same work itself:
   `RepairAuthoringClock` (`PLANTGEO_JOB_EXECUTOR_REPAIR_INTERVAL_SECONDS`, default 6 h, `0` disables)
@@ -602,13 +797,16 @@ change (`tests/direct/test_direct_writer_contract.py`), not this directory's.
 Wave O GL-5 (`o5b`; spec §4.9.3; plan `config_driven_ingestion_20260926` 0W.5). The owner's rule: "we
 dont want runs to stop in a way that they break permenantly or break other lanes". At GL-5 the
 executor RECORDS every failure streak on one `agri.job_incident` row and ACTS in exactly two ways
-(repair withholding and the repair breaker). A hold is still released only by an operator
-(`jobs-supersede-run`, or `jobs-set-lane-enabled --disabled`) until G1's probe ladder. The row
+(repair withholding and the repair breaker). At GL-5 a hold was released only by an operator
+(`jobs-supersede-run`, or `jobs-set-lane-enabled --disabled`); since G1 the ladder probes it too (see
+"Holds and probes"). The row
 helpers, `reconcile` and the breaker ladder are `lane_incidents.py` (`o2b`); the wiring is
 `job_executor_service.py`.
 
 **Nothing malformed stops the process.** `parse_activation` quarantines an unknown, non-executable or
-conflict-losing allow-list id (`ActivationConfig.quarantined`). `ExecutorSettings.from_environment`
+conflict-losing allow-list id (`ActivationConfig.quarantined`); since Phase 1 a lane TOML that fails its
+invariants and an unknown kill-switch id are quarantined by the same rule (`quarantine_sources`), each
+incident naming its source in `detail.variable`. `ExecutorSettings.from_environment`
 parses every numeric tunable (poll, lanes per tick, repair interval). A garbled value falls back to its
 default with one `config_fallback` warning. A positive lanes-per-tick below the fairness floor clamps to
 it. Each fallback opens `executor_config:<VAR>` on the first leader tick. `lane_quarantined:<lane>` opens
@@ -648,6 +846,8 @@ bumped from those results and from degraded lanes; it escalates at 3 ticks and a
 | `lane_repair_failing:<lane>` | a repair run that SETTLED failed (never `invalid_repair_request`) | the repair breaker | a repair that succeeds, `lane_inactive`, or `repair_quiet` |
 | `executor_repair_authoring` | `_author_due_repairs` returned `None` | error at 2 intervals | the next good pass, or `authoring_disabled` (no repair clock) |
 | `fleet:<exit_class>` | 3 or more lanes opening holds of one class within 1 h | one error | no open hold of that class remains |
+| `budget_deferred:<pool>` (G1) | a lane's first admission refusal of the UTC day | none | a tick that admits a turn on the pool and refuses none |
+| `budget_basis_suspect:<pool>` (G1) | suspect > 10 % of charged month to date | none | the share falls below 10 %, or the UTC month rolls over |
 
 **No row is left without an exit** (`_SoftFailureTick._retirable_rows`, run in `after_planning`).
 The lane-scoped kinds in `_INACTIVE_RETIRED_KINDS` clear only when their lane plans or runs a turn, so
@@ -695,12 +895,172 @@ run, and a code-class failure re-trips at the next rung.
 executor passes lane ids (`drought-direct-forward`). Until GL-5 R3 could never match a production turn.
 `run_scheduled_command` now maps the id through `_WRAPPER_EVIDENCE_KEYS` at the call site.
 
-**No pool brake** (WQ-4): the paid Open-Meteo cap is G1's (`f1-config`, `f1-executor`).
+**No pool brake** (WQ-4): the paid Open-Meteo cap is G1's (`f1-config`, `f1-executor`); see "Budget admission".
+
+**Acknowledged incidents stay quiet** (spec §4.9.3, from G1). An operator acknowledges an OPEN incident in
+`/admin/jobs` (`src/lib/server/trpc/routers/jobs.ts::acknowledgeIncident`); the upsert never resets `status`, so
+the acknowledgement survives every later bump. The executor then logs none of that row's escalation events
+(`_acknowledged`: the streak escalation of `_bump_streak`, `hold_chronic`, the `lane_incomplete` step), while the
+row's severity, the probes and the resolution rules carry on: acknowledging is not releasing.
 
 Tests: `tests/execution/test_executor_resilience.py`, `test_hold_record.py`, `test_repair_withholding.py`,
 and the GL-5 sweep proof `test_soft_failure_fault_injection.py`. All of them drive `run_executor_tick`
 and the real handler with real child processes. They go through `tests/execution/soft_failure_fakes.py`,
 an in-memory ledger that answers the four o2b statements with their SQL semantics.
+
+## Holds and probes
+
+Wave O GL-6, folded into `f1-executor` at G1 (spec §4.4 "Breaker split", §4.9.3 "G1 ladder"; WQ-1, WQ-2,
+WQ-3, WQ-7; FR-8, FR-36). A held lane is re-tried by ONE single-attempt probe at a time, on a bounded
+ladder, and released through probation. The pure rules are `lane_incidents.py` (`HoldLadders`,
+`HoldProgress`, `probe_is_due`, `judge_probe`, `after_probe`, `judge_probation`, `watch_max_attempts`,
+`PROGRESS_EVIDENCE`); the wiring is `_SoftFailureTick` (`ladder_gate`, `start_probe`, `shape_bucket`,
+`_observe_ladder_hold`) plus `_plan_lane`'s `ladder` argument.
+
+- **Ladders, by the hold's class.** `upstream`/`infra` (exit 75, or a legacy exit with R1-R4 evidence):
+  1, 2, 4, 8, 16, 24 h, then daily. `code`/`hang`/`config` (70, 78, a timeout, a legacy exit without
+  evidence): `PLANTGEO_JOB_EXECUTOR_CODE_PROBE_HOURS`, default `6,12,24`, then daily. Empty, or anything
+  that is not a comma list of positive hours, is operator-only (a garbled value warns once and never
+  probes faster than asked). The delay runs from the hold row's `last_seen_at`, the instant of its last
+  transition; a probe needs `verdict.newer_bucket_exists` too, so a daily lane never probes more than
+  daily. The chronic rewrite (once per chain, at 72 h) also bumps `last_seen_at`, so it can delay that
+  rung's probe by up to one rung; stated, not fixed.
+- **A probe** (`start_probe`, the `_release_by_process_start` pattern inside a savepoint): the hold row
+  goes `probing` with the probe appended, the held run is superseded as `executor:probe`
+  (`job_run_supersession.supersede_failed_run`), both commit together, and only then does the planner open
+  the bucket with `max_attempts=1` (`DueLane.max_attempts` -> `_open_scheduled_run` ->
+  `jobs/worker.py::open_job_run(max_attempts=...)`). A crash between the commit and the open re-opens the
+  same probe next tick (`shape_bucket`: a `probing` hold whose target is superseded). The probe flag rides
+  `DueLane.probe` -> `_execute_due_lane` -> the task's `_PROBE_TURN` context -> `_Turn.probe` ->
+  `PLANTGEO_TURN_PROBE=1` in the child and `metrics.probe`. Any refusal or ledger fault rolls both writes
+  back and the lane stays held (`plantgeo_job_executor_hold_probe_refused`).
+- **Outcomes** are judged from the LEDGER on the next planning pass (`_observe_probe`), never from process
+  memory, so a restart judges them the same: a succeeded probe run starts probation; a failed one moves the
+  hold to the next rung on the SAME fingerprint and adopts the probe run's class (positive evidence); a run
+  whose one attempt was lost, fenced out or interrupted is inconclusive: same rung, the class stays
+  sticky (the row keeps its class run), and the fourth in a row counts as failed (`lost_repeatedly`). A
+  probe that loses its fence parks (`yielded`) instead of failing.
+- **Probation**: buckets run with `max_attempts=1` and repairs resume. Two conclusive clean buckets
+  (turn `completed` and `PROGRESS_EVIDENCE` satisfied; `_observe_probation_turn`) resolve the hold
+  `released_by=probe`. 48 h since the last change with no failed bucket resolves it as
+  `probation_expired` and opens `lane_incomplete` with reason `inconclusive`, so a masked failure still
+  escalates. A failed bucket restarts the count and the 48 h; the ledger holding the lane again re-holds
+  it at the next rung. Probation is never chronic. Since G1 `lane_incomplete` clears only on a
+  CONCLUSIVE complete turn (`_TurnVerdict.conclusive`), or the next unproven soil or climate turn would
+  close the very `inconclusive` row expiry just opened; for every lane without a `PROGRESS_EVIDENCE` rule
+  "conclusive" is "a report was present", so their clearing is unchanged.
+- **Watch and chain.** For 24 h after a hold resolves, new buckets open with `max_attempts=2` (1 when the
+  lane has 2 or more episodes in 7 days). A hold re-opened within 7 days inherits the prior episode's rung
+  and `chain_first_seen_at`; the first episode that makes 3 in 7 days logs `hold_flapping` once (error).
+- **Operator vs probe.** In `held` a superseded checkpoint is a person's release (resolve,
+  `released_by=operator`); in `probing` it is the probe's own marker. The marker-aware streak
+  (`select_latest_run.sql`, executor F4) tells them apart in the ledger too: a supersession whose owner
+  starts with `executor:` never resets the failure streak, so a failed probe is operator-held again at
+  once, while a PERSON's release earns a fresh streak (one failure after it does not re-hold).
+- **Why the counters ride on `detail.state`.** `select_lane_incidents.sql` returns only `state`, `rung`,
+  `chain_first_seen_at` and `episodes_7d` from `detail`, so a phase with a counter is written
+  `<phase>:<n>` (`held:2` = two inconclusive probes, `probation:1` = one clean bucket), the repair
+  breaker's `counting:<n>` idiom. The full design shape (`probes[]`, `clean_buckets`,
+  `inconclusive_probes`, `next_probe_at`, `release`) is still written for `/admin/jobs`; `probes[]` is
+  process-held and restarts empty after a restart.
+- **No deploy probe (WQ-7).** `PLANTGEO_JOB_EXECUTOR_PROCESS_START_RELEASES_BREAKER` stays off. When an
+  owner turns it on, the release folds into the ladder: recorded as a probe with `via: deploy`, run with one
+  attempt, then probation.
+- **Switches.** `PLANTGEO_JOB_EXECUTOR_BREAKER_MODE=split|legacy` (unset `split`; garbled `legacy`).
+  `legacy`, `SOFT_FAILURE=off`, or a failed incident read this tick is GL-5's operator-only hold byte for
+  byte (`SoftFailureState.ladders is None`); `legacy` also turns the marker-aware streak off. The two
+  switches are independent (review PH2): `legacy` keeps GL-5's incident layer on, so it restores TODAY's
+  production breaker; `SOFT_FAILURE=off` removes GL-5; both together are the pre-Wave-O executor. (Spec
+  §4.9.3's "`BREAKER_MODE=legacy` subsumes `SOFT_FAILURE=off`" predates GL-5 going live; the coordinator
+  records the amendment.)
+  `SoftFailureState()` constructed bare keeps GL-5 behaviour; `SoftFailureState.for_process` reads the
+  switches.
+- **Native exits (S4).** A config lane's exit is read by `classify_exit(native=True)`: 75/70/78/2 as
+  declared and any other non-zero code `code`, with no legacy evidence rules; a config turn that exits 0
+  without its report fails as `report_missing` (a runner bug, so the code ladder).
+
+Tests: `tests/execution/test_hold_ladder.py` (the pure rules), `test_hold_probes.py` (flows through
+`run_executor_tick` with real children), `test_breaker_split.py`, and the probe cases of
+`test_soft_failure_fault_injection.py`.
+
+## Budget admission
+
+Wave O at G1 (spec §4.9.2 "Quota enforcement", WQ-4, FR-37; `provider_budget.py`). ONE cap is enforced: the
+paid Open-Meteo month, `lanes/_providers/open-meteo.toml [budget]` (5,000,000 weighted calls; gap-fill line
+0.60, forward stop 0.95). Every other pool is metered and reported, never capped (WQ-4 declined the windowed
+pools, reserves and the free-pool brake).
+
+- **Where.** `run_executor_tick(budget=BudgetAdmissionState)` runs `admit_due_lanes` on every due definition
+  AFTER planning and repair planning and BEFORE `fair_due_order`. A refused lane is a `deferred_budget`
+  result that never enters `due`: it opens no run, never takes a `max_lanes_per_tick` selection slot or a
+  queue slot, and never touches `JobHandlerOutcome.deferred` (so `MAX_CONSECUTIVE_PARKS` cannot fire).
+  `budget=None` is HEAD's tick; the service loop always passes one (`--once` too).
+- **The lines** (`judge_admission`, pure). Forward (a config lane's forward or transform turn, legacy soil's
+  bucket) is refused only once CHARGED spend reaches the stop line; suspect spend NEVER stops forward, so
+  G0's capped legacy soil keeps running at any suspect figure below 95 % charged. Gap-fill (a config lane's
+  `:gap-fill`, legacy soil's `:gap-repair`) is admitted while charged + suspect + its own turn cap stays at
+  or under the 60 % line, and is refused outright while suspect exceeds 10 % of charged
+  (`SUSPECT_SHARE_LIMIT`, the `budget_basis_suspect` rule).
+- **Who is charged** (`charge_for`). A config lane charges its source provider's `[budget]` at its TOML's
+  per-mode cap (`[budget] forward_max_weighted_calls` / `gap_fill_max_weighted_calls`, S19). Legacy soil and
+  its repair charge through `LEGACY_CHARGED_LANES` at G0's hard cap (1,602, `vocabulary.LANE_LOGICAL_CAPS`);
+  `c7-quarantine-1` deletes that map with the lane. Either charges ONLY while the provider's key variable
+  (`OPEN_METEO_API_KEY`) is set, the rule that picks the customer host; without it the turn hits the free
+  host and is not admitted against anything.
+- **Spend** is `usage_report.py::month_to_date`, imported, never re-loaded (its SQL has one loader), read once
+  per pool per tick and only when a due lane charges that pool, inside its own savepoint. A failed read
+  ADMITS (one `plantgeo_job_executor_budget_read_failed` error per pool until it reads again): a ledger fault
+  must never stop a lane, and every turn is already bounded by its own cap. Only a pinned connection that
+  lost its backend re-raises.
+- **The numbers** come from the provider file through `budgeted_providers()`; when the lanes directory cannot
+  load, `fallback_paid_budget()` enforces `usage_report.py`'s three constants, which
+  `tests/lane_config/test_provider_hosts.py` pins equal to the file. The report's own budget lines read the
+  same `budget_for_pool`, so the operator report and admission cannot disagree.
+- **Incidents** (on the soft-failure tick's one read; `_SoftFailureTick.observe_budget`). `budget_deferred:<pool>`
+  is bumped on a lane's FIRST refusal of the UTC day (the same gate as its one `plantgeo_job_executor_budget_deferred`
+  warn), or when refusals continue with no open row, and resolves (`admitted_turn`) on a tick that admits a
+  turn on the pool and refuses none -- stricter than "the first admitted turn", because an admitted forward
+  beside a still-refused repair would otherwise close the row while refusals go on. `budget_basis_suspect:<pool>`
+  opens (one warn) while suspect > 10 % of charged and resolves when the share falls
+  (`suspect_share_below_limit`) or the UTC month rolls over (`month_rolled_over`, judged from the row's
+  `first_seen_at`). Neither escalates. The two kinds are `provider_budget.BUDGET_INCIDENT_KINDS`, read back
+  beside `vocabulary.INCIDENT_KINDS` until that vocabulary declares them.
+- **The provider try-lock.** An admitted charging lane carries its pool on `DueLane.provider_pool`; on the work
+  queue its lane session takes `jobs/lease.py::try_provider_lock` (session-level, key
+  `plantgeo:executor-provider:<pool>`) after its definition lock, so one turn spends a capped pool at a time
+  across every executor process. A busy pool never waits: the lane reports `deferred_fairness` and its open run
+  is driven next tick. A lock that cannot be released drops the connection with it. The spec names
+  `db/engine.py::executor_lane_pool`; no such pool exists, so the lock rides the per-slot lane session
+  (`_lane_session_slots`). The serial dispatcher takes no provider lock: it runs one lane at a time under the
+  leader lock.
+- **Manual runs** stay outside admission (spec §4.9.6): each prints its own operator usage line.
+
+Tests: `tests/execution/test_provider_budget.py` (the refused-lanes slot flow, suspect never stopping forward,
+the incident lifecycle, the admission seam and every line at its boundary).
+
+## Daily upkeep: job-event retention and the monthly usage receipt
+
+`DailyMaintenance` runs once per UTC day in the repair-authoring slot of the tick (right after
+`_author_due_repairs`), whatever the repair clock says; the day is process-held and a failed pass waits for the
+next UTC day, never the next tick. `--once` never runs it.
+
+- **`job-logs-maintain`** (COV2-14: `agri.job_event` is the heartbeat channel, never the audit record, and nothing
+  scheduled its retention before G1): `db/maintenance.py::maintain_job_event_partitions` with the CLI's own
+  defaults (30 days kept, 7 created ahead), on its OWN short-lived connection so its partition DDL and
+  `ACCESS EXCLUSIVE` lock on `agri.job_event_default` never ride the leader's transaction; bounded by
+  `JOB_LOGS_MAINTAIN_TIMEOUT_SECONDS`. A busy advisory lock (an operator running the verb) is an info line. The
+  FIRST production pass drains every default-partition row accumulated since the table existed; expect it to
+  take longer than later ones.
+- **The monthly receipt** (WQ-6, FR-34; `usage_receipt.py`): `receipts/source-usage/<YYYY-MM>.json` in the existing
+  object store (the Parquet bucket, under its prefix), written ONCE per closed UTC month and never rewritten
+  (`size_of` first; an existing key is `already_present`). It waits `RECEIPT_SETTLE_DELAY` (one day) into the next
+  month, so a turn still `running` at midnight -- which `month_to_date` excludes -- has settled first. It holds
+  every pool's month-to-date figures for that month (`month_to_date(now=<month start>)`) and the per-lane rollup
+  (`group_usage_rows(by="lane")` over the month's window), so a database rebuild never erases usage history.
+  `c7-verbs` lists `receipts/` as known infrastructure; nothing prunes it. An unconfigured bucket logs once and
+  turns receipts off for the process.
+
+Tests: `tests/execution/test_usage_receipt.py::test_monthly_usage_receipt_is_written_once_per_closed_month`.
 
 ## The once-per-UTC-day cadence report was a log-reading artefact
 

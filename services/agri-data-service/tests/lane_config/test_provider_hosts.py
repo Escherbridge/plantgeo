@@ -127,12 +127,14 @@ def test_the_provider_weight_rule_prices_a_request_like_the_meter(
 
     assert budgeted == usage.open_meteo_request_weight(locations=locations, days=days, variables=variables)
     assert budgeted == usage.open_meteo_weight_for_url(url)
-    # `models` is the one factor the meter does not take (`usage.py`'s two weight functions have no
-    # `models` parameter by design -- foundation/observability/AGENTS.md "the meter"). This only
-    # proves the provider rule's OWN arithmetic doubles correctly; it is not proof that a real
-    # customer-host URL carrying a `models=` item would be charged 2x (review finding 3, f1-config
-    # sweep; lanes/AGENTS.md "Provider files" carries the same caveat).
+    # `open_meteo_request_weight` itself takes no `models` parameter (pinned to G0's soil request
+    # builder, which never sends one); `open_meteo_weight_for_url` instead multiplies by the URL's
+    # own `models=` item count, so a real customer-host URL carrying `models=a,b` now prices exactly
+    # like the rule's own `models=2` (review finding 3, RESOLVED: `lanes/AGENTS.md` "Provider files"
+    # no longer carries the "not yet exercised end to end" caveat).
+    doubled_models_url = f"{url}&models=era5_land,era5"
     assert rule.weight(locations=locations, days=days, variables=variables, models=2) == 2 * budgeted
+    assert usage.open_meteo_weight_for_url(doubled_models_url) == 2 * budgeted
 
 
 def test_nasa_power_is_keyless_uncharged_and_asks_for_utc_days(providers: dict[str, ProviderConfig]) -> None:

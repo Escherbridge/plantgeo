@@ -1,8 +1,9 @@
 """Classify one child's terminal result into the frozen `ExitClass` vocabulary (spec Sec 4.9.3).
 
 Pure and DB-free: no I/O, no subprocess, no session. `classify_exit` is o5a's single call site
-(`job_executor_service.py::run_scheduled_command`) for stamping `metrics.exit_class`; at GL-3 that
-stamp is OBSERVATIONAL ONLY (FR-33) -- nothing here holds a lane or drives a probe.
+(`job_executor_service.py::run_scheduled_command`) for stamping `metrics.exit_class`. The stamp was
+observational at GL-3 (FR-33); from G1 the hold ladder reads it back to pick a lane's probe ladder
+(`lane_incidents.py::HoldLadders`), and nothing here holds a lane itself.
 
 **Evidence rules (R1-R4, spec Sec 4.9.3, design record Sec 3.1.1).** Applied only to a "legacy"
 non-zero exit -- one that is not itself one of the explicit signals (75/70/78/2, a timeout, a lost
@@ -227,8 +228,9 @@ def classify_exit(  # noqa: PLR0911, PLR0913 - one keyword per spec 4.9.3 input,
     stderr_tail: str = "",
     last_send_outcome: str | None = None,
     lane_id: str | None = None,
+    native: bool = False,
 ) -> ExitClass:
-    """Stamp one child's terminal result with its `ExitClass` (spec Sec 4.9.3's table; observational at GL-3).
+    """Stamp one child's terminal result with its `ExitClass` (spec Sec 4.9.3's table; the G1 ladder acts on it).
 
     `return_code` is `None` exactly when the command never started (`pre_spawn`) or the monitor
     stopped it before it could exit (`timed_out`, `fence_lost`); those three flags are checked first
@@ -238,6 +240,9 @@ def classify_exit(  # noqa: PLR0911, PLR0913 - one keyword per spec 4.9.3 input,
     evidence rules in `_matches_infra` -> `_matches_upstream_message` -> `_matches_wrapper` order, R4
     first because an infra failure is never also upstream evidence in practice. Any match a
     `_conflicting_class` also holds falls through to `code`, and so does no match at all.
+
+    `native` is the config runner's S4 contract (spec S4): it speaks 0/75/70/78 itself, so any other
+    non-zero code is `code` and the legacy evidence rules never read its output.
     """
     if pre_spawn:
         return "config"
@@ -255,6 +260,8 @@ def classify_exit(  # noqa: PLR0911, PLR0913 - one keyword per spec 4.9.3 input,
         return "code"
     if return_code in (_EXIT_CODE_CONFIG, _EXIT_CODE_USAGE):
         return "config"
+    if native:
+        return "code"
 
     evidence = _evidence(report, stderr_tail)
     if _matches_infra(evidence) and not _conflicting_class(evidence.text):

@@ -1,7 +1,8 @@
 -- Purpose: select the bounded lane-wide run candidate a versioned executor must settle or continue.
 -- Loaded by: agri_data_service.execution.job_executor_service
 -- Params: name/current_version (text), supersession_fingerprint_prefix (text),
---         failure_streak_limit (integer)
+--         failure_streak_limit (integer), streak_after_marker (boolean),
+--         executor_operator_prefix (text)
 --
 -- The three candidate branches are deliberately index-bounded instead of ranking the complete run
 -- lifetime on every scheduler poll:
@@ -49,6 +50,15 @@
 --     of the run history: the inner query takes the newest N terminal runs, the window function marks
 --     each row whose predecessors (in that newest-first order) all failed too, and the count of marked
 --     rows is the unbroken streak, capped at N.
+--
+--   released_by_person / the marker-aware streak (executor review F4; spec 4.4 "Breaker split")
+--     With streak_after_marker true (the split breaker), a run that a PERSON superseded ends the
+--     streak: only runs created after it count, so a human release earns a fresh streak and one
+--     failure after it does not re-hold the lane. A marker whose owner starts with
+--     executor_operator_prefix was written by the executor itself (a hold-ladder probe or a
+--     process-start release) and does NOT end the streak, so a failed probe is held again at once.
+--     starts_with is used rather than LIKE so no percent sign reaches the driver's paramstyle.
+--     With streak_after_marker false (BREAKER_MODE legacy) the streak is exactly HEAD's.
 WITH prior_version_open AS (
     SELECT run.id,
            run.job_definition_id,
@@ -174,12 +184,27 @@ SELECT run.id,
            WHEN run.status IN ('failed', 'partial') THEN (
                SELECT count(*)
                FROM (
-                   SELECT bool_and(recent.status IN ('failed', 'partial')) OVER (
+                   SELECT bool_and(
+                              recent.status IN ('failed', 'partial')
+                              AND NOT (CAST(:streak_after_marker AS boolean) AND recent.released_by_person)
+                          ) OVER (
                               ORDER BY recent.created_at DESC, recent.id DESC
                               ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
                           ) AS unbroken
                    FROM (
-                       SELECT newest.status, newest.created_at, newest.id
+                       SELECT newest.status,
+                              newest.created_at,
+                              newest.id,
+                              EXISTS (
+                                  SELECT 1
+                                  FROM agri.job_incident AS marker
+                                  WHERE marker.fingerprint
+                                        = CAST(:supersession_fingerprint_prefix AS text) || CAST(newest.id AS text)
+                                    AND NOT starts_with(
+                                            COALESCE(marker.owner, ''),
+                                            CAST(:executor_operator_prefix AS text)
+                                        )
+                              ) AS released_by_person
                        FROM agri.job_run AS newest
                        WHERE newest.job_definition_id = run.job_definition_id
                          AND newest.status NOT IN ('queued', 'running')

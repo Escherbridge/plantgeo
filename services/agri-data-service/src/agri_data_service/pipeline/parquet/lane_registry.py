@@ -24,15 +24,23 @@ publication lag off the calendar; `static_lookup` keys to a SOURCE WATERMARK -- 
 "when did this last change" -- and is otherwise idle. See `foundation/parquet/lane_contract.py`
 for the vocabulary and `AGENTS.md` in this directory for the floor/lag evidence table, which
 floors are declared and which are measured or provisional.
+
+CONFIG-LANE STREAMS JOIN THROUGH THE S18 MIRROR, NEVER THROUGH `lanes/*.toml` AT IMPORT.
+`config_stream_registrations.py` holds one literal row per stream a config lane writes;
+`registrations_with_config_streams` splices them in beside the literals here and derives the calendar
+over both, and `config_stream_mirror_violations` (called by tests, never at import) holds every row,
+and every literal registration a TOML names, to that TOML. See that module's docstring.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, fields, replace
 from datetime import date, timedelta
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Protocol
 
+from agri_data_service.foundation.lane_config.models import STRATEGY_PACKAGE
 from agri_data_service.foundation.parquet.calendar import (
     CALENDAR_REQUIRED_FORWARD_DAYS,
     CALENDAR_STREAM,
@@ -42,6 +50,7 @@ from agri_data_service.foundation.parquet.calendar import (
 from agri_data_service.foundation.parquet.lane_contract import (
     LaneNature,
     SourceWatermark,
+    nature_has_time_axis,
     nature_permits_cadence,
     nature_permits_forecast,
     newest_covered_day,
@@ -69,6 +78,7 @@ from agri_data_service.pipeline.direct.soil_properties.watermark import read_soi
 from agri_data_service.pipeline.direct.vegetation.products import VEGETATION_DIRECT_WRITER_START_DAY
 from agri_data_service.pipeline.direct.watersheds.watermark import read_watersheds_source_watermark
 from agri_data_service.pipeline.lanes.calendar import export_calendar_version
+from agri_data_service.pipeline.parquet.config_stream_registrations import CONFIG_STREAM_ROWS, ConfigStreamRow
 from agri_data_service.pipeline.parquet.objectstore import (
     AbsenceWriteReceipt,
     ParquetWriteReceipt,
@@ -94,6 +104,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from agri_data_service.foundation.lane_config import LaneConfig, LaneConfigSet, LaneStream
     from agri_data_service.pipeline.direct.climate.products import ClimateFieldProduct
     from agri_data_service.pipeline.direct.soil.products import SoilFieldProduct
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
@@ -101,6 +112,10 @@ if TYPE_CHECKING:
 
 class LaneRegistryError(RuntimeError):
     """Raised when a lane's arguments cannot be resolved, or an export reports an impossible shape."""
+
+
+#: The config-driven runner (spec §4.3) a mirror row's refusal sends an operator to.
+CONFIG_RUNNER_MODULE: Final = "agri_data_service.pipeline.runner"
 
 
 @dataclass(frozen=True, slots=True)
@@ -429,22 +444,25 @@ async def _calendar_watermark(
     )
 
 
-async def _fill_calendar(
-    session: AsyncSession,  # noqa: ARG001 - uniform adapter shape; this lane reads NO database
-    store: ObjectStore,
-    *,
-    day: date,
-    run_id: str,  # noqa: ARG001 - uniform adapter shape; this lane records no absence of its own
-) -> LaneRunResult:
-    """Write one version of the conformed calendar dimension, covering every lane's floor forward.
+def _calendar_filler(floor: date) -> LaneAdapter:
+    """Build the calendar adapter bound to the floor its own registration derived (see `_calendar_registration`)."""
 
-    The session is accepted and ignored on purpose: `pipeline/lanes/calendar.py` takes no session,
-    because a date dimension has no source system. The uniform adapter shape absorbs that
-    difference here, in one annotated place, rather than putting a lie in the lane's own signature.
-    """
-    # `CALENDAR_HISTORY_FLOOR` is defined below the registration table because it is DERIVED from
-    # it; a module-level name resolves at call time, so the forward reference is fine.
-    return normalise_export_outcome(export_calendar_version(store, day=day, floor=CALENDAR_HISTORY_FLOOR))
+    async def fill_calendar(
+        session: AsyncSession,  # noqa: ARG001 - uniform adapter shape; this lane reads NO database
+        store: ObjectStore,
+        *,
+        day: date,
+        run_id: str,  # noqa: ARG001 - uniform adapter shape; this lane records no absence of its own
+    ) -> LaneRunResult:
+        """Write one version of the conformed calendar dimension, covering every lane's floor forward.
+
+        The session is accepted and ignored on purpose: `pipeline/lanes/calendar.py` takes no session,
+        because a date dimension has no source system. The uniform adapter shape absorbs that
+        difference here, in one annotated place, rather than putting a lie in the lane's own signature.
+        """
+        return normalise_export_outcome(export_calendar_version(store, day=day, floor=floor))
+
+    return fill_calendar
 
 
 def _source_direct_refusal(writer_module: str) -> LaneAdapter:
@@ -500,6 +518,26 @@ def _foreign_service_refusal(service: str, writer_module: str) -> LaneAdapter:
             f"{day.isoformat()}. It is written by {service} (`{writer_module}`), which deploys "
             "separately; this registration exists so readers, the census and the slider catalogue "
             "can resolve the slug."
+        )
+
+    return refuse
+
+
+def _config_runner_refusal(lane_id: str, strategy_module: str) -> LaneAdapter:
+    """Build the refusing adapter for a config-lane stream (S18), naming the lane and its strategy module."""
+
+    async def refuse(
+        session: AsyncSession,  # noqa: ARG001 - uniform adapter shape; this lane has no query to run
+        store: ObjectStore,  # noqa: ARG001 - uniform adapter shape; the config runner owns the write
+        *,
+        day: date,
+        run_id: str,  # noqa: ARG001 - uniform adapter shape; the refusal is not a run outcome
+    ) -> LaneRunResult:
+        """Refuse a generic export of a config-lane stream, naming the runner command and strategy."""
+        raise LaneRegistryError(
+            f"this stream is written by the config-driven runner, so no generic export may run for "
+            f"{day.isoformat()}. Its days are written by `python -m {CONFIG_RUNNER_MODULE} --lane {lane_id} "
+            f"--mode forward` (or `--mode gap-fill` for older holes) through the strategy `{strategy_module}`."
         )
 
     return refuse
@@ -1199,48 +1237,233 @@ _REFERENCE_DATA_REGISTRATIONS: Final = (
     ),
 )
 
-#
-# The floor is DERIVED, not declared: the union of every source-bearing lane's own floor, so the
-# dimension covers every day any lane can key to it. Deriving it is what stops the calendar and the
-# deepest lane (`fire-detections`, 2000-11-01) drifting apart when a floor is next corrected.
-
-CALENDAR_HISTORY_FLOOR: Final[date] = min(
-    registration.history_floor
-    for registration in (*_HAND_WRITTEN_REGISTRATIONS, *_SOURCE_DIRECT_REGISTRATIONS, *_REFERENCE_DATA_REGISTRATIONS)
+#: Every registration written out in this module, before the S18 mirror and the calendar join them.
+_LITERAL_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
+    *_HAND_WRITTEN_REGISTRATIONS,
+    *_SOURCE_DIRECT_REGISTRATIONS,
+    *_REFERENCE_DATA_REGISTRATIONS,
 )
 
-CALENDAR_REGISTRATION: Final = LaneRegistration(
-    slug=CALENDAR_STREAM,
-    adapter=_fill_calendar,
-    history_floor=CALENDAR_HISTORY_FLOOR,
-    publication_lag_days=0,
-    nature="static_lookup",
-    watermark=_calendar_watermark,
-    floor_basis=(
-        "NATURE static_lookup, WATERMARK-DRIVEN, and the ONE lane with no source system. The floor is DERIVED "
-        f"as min(history_floor) across the thirty-three source-bearing lanes -- {CALENDAR_HISTORY_FLOOR.isoformat()}, "
-        "which is fire-detections' -- so every day any lane can key to the dimension is in it. Each version "
-        f"covers its own day plus {CALENDAR_VERSION_FORWARD_DAYS} days, and must reach today plus "
-        f"{CALENDAR_REQUIRED_FORWARD_DAYS}, so a 30-day horizon from any as-of date always resolves and the "
-        "lane regenerates roughly once a year instead of once a day. Lag 0: pure computation settles instantly."
-    ),
-)
 
-LANE_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = tuple(
-    sorted(
-        (
-            *_HAND_WRITTEN_REGISTRATIONS,
-            *_SOURCE_DIRECT_REGISTRATIONS,
-            *_REFERENCE_DATA_REGISTRATIONS,
-            CALENDAR_REGISTRATION,
-        ),
-        key=lambda entry: entry.slug,
+# --- The S18 config-stream mirror ----------------------------------------------------------------
+
+
+def registration_from_config_stream_row(row: ConfigStreamRow) -> LaneRegistration:
+    """Turn one mirror row into a registration whose adapter refuses and names the lane's strategy module."""
+    if not nature_has_time_axis(row.nature):
+        raise LaneRegistryError(
+            f"mirror row {row.slug!r} is a static_lookup; a version-stamped stream keys to a source watermark, "
+            "which a data row cannot carry, so it is registered by hand"
+        )
+    return LaneRegistration(
+        slug=row.slug,
+        adapter=_config_runner_refusal(row.lane_id, f"{STRATEGY_PACKAGE}.{row.strategy}"),
+        history_floor=row.history_floor,
+        complete_history_floor=row.complete_history_floor,
+        publication_lag_days=row.publication_lag_days,
+        nature=row.nature,
+        floor_basis=row.floor_basis,
     )
-)
+
+
+def _calendar_floor_basis(floor: date, setters: Sequence[str], source_bearing_count: int) -> str:
+    """Cite the derived calendar floor and name every lane that sets it."""
+    return (
+        "NATURE static_lookup, WATERMARK-DRIVEN, and the ONE lane with no source system. The floor is DERIVED "
+        f"as min(history_floor) across the {source_bearing_count} source-bearing lanes, config-stream mirror "
+        f"rows included -- {floor.isoformat()}, set by {', '.join(setters)} -- so every day any lane can key to "
+        f"the dimension is in it. Each version covers its own day plus {CALENDAR_VERSION_FORWARD_DAYS} days, and "
+        f"must reach today plus {CALENDAR_REQUIRED_FORWARD_DAYS}, so a 30-day horizon from any as-of date always "
+        "resolves and the lane regenerates roughly once a year instead of once a day. Lag 0: pure computation "
+        "settles instantly."
+    )
+
+
+def _calendar_registration(
+    source_bearing: Sequence[LaneRegistration], config_lane_of: Mapping[str, str]
+) -> LaneRegistration:
+    """The calendar dimension, its floor DERIVED as the minimum over every source-bearing registration.
+
+    Deriving it is what stops the calendar and the deepest lane drifting apart when a floor is next
+    corrected or a mirror row with an older floor lands (A19: the next version carries those days).
+    """
+    floor = min(registration.history_floor for registration in source_bearing)
+    setters = sorted(
+        registration.slug
+        if registration.slug not in config_lane_of
+        else f"{registration.slug} (config lane {config_lane_of[registration.slug]})"
+        for registration in source_bearing
+        if registration.history_floor == floor
+    )
+    return LaneRegistration(
+        slug=CALENDAR_STREAM,
+        adapter=_calendar_filler(floor),
+        history_floor=floor,
+        publication_lag_days=0,
+        nature="static_lookup",
+        watermark=_calendar_watermark,
+        floor_basis=_calendar_floor_basis(floor, setters, len(source_bearing)),
+    )
+
+
+def registrations_with_config_streams(rows: Sequence[ConfigStreamRow]) -> tuple[LaneRegistration, ...]:
+    """Every registration, sorted by slug: the literal ones, one per mirror row, and the calendar over both.
+
+    Pure: `LANE_REGISTRATIONS` is this applied to the shipped `CONFIG_STREAM_ROWS`, so an empty
+    mirror is exactly today's registry. Refuses a slug registered twice, because a mapping keyed by
+    slug would otherwise keep one registration and silently drop the other.
+    """
+    mirrored = tuple(registration_from_config_stream_row(row) for row in rows)
+    source_bearing = (*_LITERAL_REGISTRATIONS, *mirrored)
+    counts = Counter(registration.slug for registration in source_bearing)
+    duplicated = sorted(slug for slug, count in counts.items() if count > 1 or slug == CALENDAR_STREAM)
+    if duplicated:
+        raise LaneRegistryError(
+            f"stream(s) {', '.join(duplicated)} would be registered twice; every stream has exactly one "
+            "registration (S18), so a mirror row may not repeat a literal registration, another row or the calendar"
+        )
+    calendar = _calendar_registration(source_bearing, {row.slug: row.lane_id for row in rows})
+    return tuple(sorted((*source_bearing, calendar), key=lambda entry: entry.slug))
+
+
+LANE_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = registrations_with_config_streams(CONFIG_STREAM_ROWS)
 
 LANE_REGISTRY: Final[Mapping[str, LaneRegistration]] = MappingProxyType(
     {registration.slug: registration for registration in LANE_REGISTRATIONS}
 )
+
+CALENDAR_REGISTRATION: Final[LaneRegistration] = LANE_REGISTRY[CALENDAR_STREAM]
+
+#: The calendar dimension's floor: the oldest `history_floor` of any source-bearing stream, mirror included.
+CALENDAR_HISTORY_FLOOR: Final[date] = CALENDAR_REGISTRATION.history_floor
+
+
+def expected_config_stream_row(lane: LaneConfig, stream: LaneStream) -> ConfigStreamRow | None:
+    """The mirror row `lanes/<lane.id>.toml` implies for `stream`, or None when it gives the stream no floor.
+
+    The floor is the entry's own `history_floor`, else the lane's `[days] floor`; the lag is the lane's.
+    """
+    days = lane.days
+    floor = stream.history_floor if stream.history_floor is not None else (None if days is None else days.floor)
+    if floor is None:
+        return None
+    return ConfigStreamRow(
+        slug=stream.slug,
+        lane_id=lane.id,
+        strategy=lane.strategy,
+        nature=lane.nature,
+        history_floor=floor,
+        publication_lag_days=0 if days is None else days.publication_lag_days,
+        floor_basis=stream.floor_basis,
+        complete_history_floor=stream.complete_history_floor,
+    )
+
+
+def _as_registered(row: ConfigStreamRow) -> ConfigStreamRow:
+    """The row with `LaneRegistration`'s own normalisation applied: an unset complete floor is the floor."""
+    if row.complete_history_floor is not None:
+        return row
+    return replace(row, complete_history_floor=row.history_floor)
+
+
+def _mirror_row_disagreement(row: ConfigStreamRow, lane: LaneConfig, stream: LaneStream) -> str | None:
+    """Name every field where a mirror row differs from its lane TOML's `[[streams]]` entry.
+
+    Compared as registered: a row spelling `complete_history_floor = history_floor` and one leaving
+    it unset build the same registration, so neither is drift. When neither side sets a complete floor
+    it is only derived from `history_floor`, so a floor drift names `history_floor` alone.
+    """
+    expected = expected_config_stream_row(lane, stream)
+    if expected is None:
+        return (
+            f"lanes/{lane.id}.toml gives stream {stream.slug!r} no history floor ([[streams]] history_floor or "
+            "[days] floor), so no registration can carry it"
+        )
+    registered, implied = _as_registered(row), _as_registered(expected)
+    if registered == implied:
+        return None
+    derived_only = row.complete_history_floor is None and expected.complete_history_floor is None
+    differing = [
+        field.name
+        for field in fields(ConfigStreamRow)
+        if getattr(registered, field.name) != getattr(implied, field.name)
+        and not (derived_only and field.name == "complete_history_floor")
+    ]
+    return f"mirror row {row.slug!r} differs from lanes/{lane.id}.toml in {', '.join(differing)}; expected {expected!r}"
+
+
+def _literal_registration_disagreement(
+    lane: LaneConfig, stream: LaneStream, registration: LaneRegistration
+) -> str | None:
+    """Name every fact a lane TOML declares for a literally registered stream that its registration contradicts.
+
+    The literal's `floor_basis` is not compared: it carries the lane's full citation until cut-over.
+    """
+    compared: dict[str, tuple[object, object]] = {
+        "nature": (lane.nature, registration.nature),
+        "publication_lag_days": (
+            0 if lane.days is None else lane.days.publication_lag_days,
+            registration.publication_lag_days,
+        ),
+    }
+    if stream.history_floor is not None:
+        compared["history_floor"] = (stream.history_floor, registration.history_floor)
+    if stream.complete_history_floor is not None:
+        compared["complete_history_floor"] = (stream.complete_history_floor, registration.claimed_history_floor)
+    differing = [
+        f"{name} {declared!r} vs registered {registered!r}"
+        for name, (declared, registered) in compared.items()
+        if declared != registered
+    ]
+    if not differing:
+        return None
+    return f"lanes/{lane.id}.toml stream {stream.slug!r} contradicts its literal registration: {'; '.join(differing)}"
+
+
+def config_stream_mirror_violations(
+    config: LaneConfigSet, *, rows: Sequence[ConfigStreamRow] = CONFIG_STREAM_ROWS
+) -> tuple[str, ...]:
+    """Every way the loaded lane TOMLs and the registry disagree (S18); empty when they agree.
+
+    Called with an already-loaded set (the FR-1/FR-25 contract tests), never at import. A
+    `[[streams]]` slug must resolve to exactly one registration: a mirror row equal to its TOML
+    entry, or a literal registration whose facts the TOML repeats. A row must name a loaded lane
+    that declares its slug.
+    """
+    try:
+        registry = {registration.slug: registration for registration in registrations_with_config_streams(rows)}
+    except (LaneRegistryError, ValueError) as error:
+        return (str(error),)
+    rows_by_slug = {row.slug: row for row in rows}
+    declared: set[str] = set()
+    violations: list[str] = []
+    for lane in config.lanes.values():
+        for stream in lane.streams:
+            declared.add(stream.slug)
+            registration = registry.get(stream.slug)
+            row = rows_by_slug.get(stream.slug)
+            if registration is None:
+                disagreement: str | None = (
+                    f"lanes/{lane.id}.toml declares stream {stream.slug!r}, which has no registration; append its "
+                    "ConfigStreamRow to pipeline/parquet/config_stream_registrations.py"
+                )
+            elif row is None:
+                disagreement = _literal_registration_disagreement(lane, stream, registration)
+            else:
+                disagreement = _mirror_row_disagreement(row, lane, stream)
+            if disagreement is not None:
+                violations.append(disagreement)
+    for row in rows:
+        if row.slug in declared:
+            continue
+        if row.lane_id in config.quarantined:
+            owner = f"lane {row.lane_id!r}, which is quarantined"
+        elif row.lane_id in config.lanes:
+            owner = f"lane {row.lane_id!r}, which declares no such [[streams]] entry"
+        else:
+            owner = f"lane {row.lane_id!r}, which has no lane file"
+        violations.append(f"mirror row {row.slug!r} names {owner}; a row mirrors a loaded TOML entry or is deleted")
+    return tuple(violations)
 
 
 def registered_lane_slugs() -> tuple[str, ...]:

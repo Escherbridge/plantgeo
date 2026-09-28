@@ -49,10 +49,17 @@ class UpstreamError(Exception):
 class UpstreamHttpError(UpstreamError):
     """Raised for a non-2xx upstream status; carries the status so 404 and 429 stay distinguishable."""
 
-    def __init__(self, status: int) -> None:
-        """Record the status the upstream answered with."""
+    def __init__(self, status: int, *, retry_after_seconds: float | None = None) -> None:
+        """Record the status, and optionally the `Retry-After` delay the upstream named (SOFT-8).
+
+        `retry_after_seconds` is keyword-only and defaults to `None` so every existing
+        `UpstreamHttpError(status)` call site across the codebase is unaffected; only a caller that
+        resolves it from `BoundedResponse.retry_after_seconds` (`ingest/provider_client.py`) sets it,
+        for `upstream_retry.py::retry_upstream`'s Retry-After clamp to read.
+        """
         super().__init__(f"upstream request failed with status {status}")
         self.status = status
+        self.retry_after_seconds = retry_after_seconds
 
 
 class UpstreamPayloadError(UpstreamError):
@@ -123,6 +130,11 @@ class BoundedResponse:
     # so every existing construction (and every test that builds one by hand) still type-checks; the
     # only caller that needs a real number is a paged walk budgeting its own total transfer.
     byte_count: int = 0
+    # The upstream's own `Retry-After` delay (SOFT-8), or `None` when the status does not warrant one
+    # or no header was sent. Defaulted for the same byte-for-byte reason as `byte_count`; only a
+    # caller that builds `UpstreamHttpError(status, retry_after_seconds=...)` from this reads it —
+    # today only `ingest/provider_client.py`.
+    retry_after_seconds: float | None = None
 
     @property
     def ok(self) -> bool:
@@ -584,6 +596,26 @@ async def _read_bounded_body(
     return b"".join(chunks), total_bytes, None
 
 
+def retry_after_seconds_for_response(status: int, headers: Mapping[str, str]) -> float | None:
+    """A status-aware `Retry-After` reader (SOFT-8): only `429`/`5xx` are ever worth honouring.
+
+    Any other status (a `200`, a `404`) returns `None` even if a `Retry-After` header is somehow
+    present -- parsing every status would let an unrelated answer steer a caller's retry ladder, so
+    the STATUS decides whether it is even worth looking at the header, not only the header's own
+    presence. Only the delta-seconds form (all-digit) is parsed; an HTTP-date value is ignored,
+    matching this service's other `Retry-After` readers (`execution/historical_usdm.py::_retry_delay`,
+    `execution/weather_observations/nasa_power.py`, `ingest/mtbs.py`) rather than adding a third date
+    parser.
+    """
+    if status != HTTP_TOO_MANY_REQUESTS and status < HTTP_SERVER_ERROR_MINIMUM:
+        return None
+    raw = headers.get("retry-after")
+    if raw is None:
+        return None
+    stripped = raw.strip()
+    return float(stripped) if stripped.isdigit() else None
+
+
 async def fetch_bounded(
     client: httpx.AsyncClient,
     url: str,
@@ -625,6 +657,7 @@ async def fetch_bounded(
                     text=body.decode("utf-8", errors="replace"),
                     payload_error=payload_error,
                     byte_count=byte_count,
+                    retry_after_seconds=retry_after_seconds_for_response(response.status_code, response.headers),
                 )
         except httpx.HTTPError as error:
             last_error = error

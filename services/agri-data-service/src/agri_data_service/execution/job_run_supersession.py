@@ -43,6 +43,8 @@ from agri_data_service.execution.job_executor_service import (
     parse_activation,
     read_lane_checkpoint,
 )
+from agri_data_service.execution.lane_catalogue import LaneCatalogue, current_lane_catalogue
+from agri_data_service.execution.lane_specs import STOPPED_LANES_VARIABLE
 from agri_data_service.jobs import read_lane_pause_state
 from agri_data_service.jobs.lease import (
     apply_statement_timeout,
@@ -194,13 +196,39 @@ def ledger_target(database_url: str) -> str:
     return f"{url.host or '?'}{port}/{url.database or '?'}"
 
 
-def resolve_executor_lane(lane_id: str, activation: ActivationConfig) -> LaneExecutionSpec:
-    """Return the executor lane this verb may act on: known, executable, and in the active allow-list."""
+def resolve_executor_lane(
+    lane_id: str, activation: ActivationConfig, catalogue: LaneCatalogue | None = None
+) -> LaneExecutionSpec:
+    """Return the executor definition this verb may act on, resolved through the lane catalogue (CA2, CA3).
+
+    A config definition (the lane id, or `<lane>:gap-fill`) is gated only by its TOML's `enabled`, the
+    catalogue and the CA12 kill-switch; a legacy lane must be known, executable and in the allow-list. Either
+    way a lane the scheduler never plans is refused, because a recording for it would never be read.
+    """
+    catalogue = current_lane_catalogue(LANE_SPECS) if catalogue is None else catalogue
+    named = catalogue.spec_named(lane_id)
+    if named is not None and named.is_config:
+        refusal = catalogue.config_gate(named)
+        if refusal is not None:
+            raise SupersessionRefusal(
+                f"config lane {lane_id!r} does not dispatch ({refusal}), so the scheduler never plans it and a "
+                "recording would never be read"
+            )
+        return named
     spec = LANE_SPECS.get(lane_id)
     if spec is None:
         raise SupersessionRefusal(f"unknown lane {lane_id!r}; `agri-service ops jobs-executor --inventory` lists them")
     if not spec.executable:
         raise SupersessionRefusal(f"lane {lane_id!r} is {spec.migration_disposition} and never opens executor buckets")
+    if lane_id in catalogue.quarantined:
+        raise SupersessionRefusal(
+            f"lanes/{lane_id}.toml is quarantined, so lane {lane_id!r} runs on neither path; fix the file first"
+        )
+    if catalogue.kill_switch.stops(lane_id):
+        raise SupersessionRefusal(
+            f"lane {lane_id!r} is named in {STOPPED_LANES_VARIABLE}, so the scheduler never plans it and a "
+            "recording would never be read; lift the stop first"
+        )
     if not activation.is_active(lane_id):
         raise SupersessionRefusal(
             f"lane {lane_id!r} is not in the executor's active allow-list, so the scheduler never plans it and a "
@@ -245,6 +273,10 @@ def _refuse_unless_held(
     if latest.status not in SETTLED_WITHOUT_SUCCESS:
         raise SupersessionRefusal(f"run {run_id} settled {latest.status}; lane {spec.lane_id!r} is not held")
     verdict = judge_failed_checkpoint(spec, latest, now)
+    if latest.superseded_by_operator:
+        # Already recorded: under the marker-aware streak (F4) a person's own recording ends the streak, so
+        # the clock rule below would misread the run as never held. The receipt reads the recording back.
+        return latest, verdict
     if verdict.release == "clock":
         when = "on the next tick" if verdict.newer_bucket_exists else "when the clock reaches it"
         raise SupersessionRefusal(

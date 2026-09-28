@@ -1,6 +1,7 @@
 -- refresh_job_run_rollup
--- Purpose: recompute a run's three counters and its status from its work items and write all of
---          them at once -- the authority that the cheap incremental bumps only approximate.
+-- Purpose: recompute a run's three counters, its status and its failure text from its work items
+--          and write all of them at once -- the authority that the cheap incremental bumps only
+--          approximate.
 -- Loaded by: agri_data_service.jobs.worker
 -- Params: job_run_id (uuid) -- the run being recomputed. It appears twice below, once to scope the
 --         count and once to address the row being written.
@@ -37,6 +38,16 @@
 --     a single pass over the table instead of three separate queries. Rows failing the FILTER are
 --     not counted; they are not dropped.
 --
+--   (array_agg(last_error_summary ORDER BY updated_at DESC, id DESC)
+--        FILTER (WHERE status <> 'succeeded' AND last_error_summary IS NOT NULL))[1]
+--     The run's failure text (config-driven ingestion spec §4.4 "Ledger detail"; D6: child failure
+--     detail in the ledger). array_agg collects every matching item's error into one array, ordered
+--     newest first by its own ORDER BY; FILTER keeps only items that have NOT succeeded and carry an
+--     error; [1] takes the first element (PostgreSQL arrays count from 1). So this is the newest
+--     standing error, or NULL when no unsucceeded item carries one: an item whose retry later
+--     succeeded no longer speaks for the run. The item's summary is already redacted and clamped by
+--     jobs.lease.fail_work_item, so nothing unredacted reaches the run row.
+--
 --   count(*) FILTER (WHERE status IN ('dead_letter', 'cancelled')) AS failed
 --     "Failed" for a run's purposes means "settled without succeeding" -- a spent budget or an
 --     operator cancellation. Note what is NOT here: 'retry_wait' and 'deferred' are still in play
@@ -72,6 +83,10 @@
 --   WHERE run.id = job_run_id
 --     One run, addressed by primary key.
 --
+--   last_error_summary = CASE WHEN total = 0 THEN run.last_error_summary ELSE tally.last_error_summary END
+--     Written in the same statement as the status it explains, so the admin surface never shows a
+--     failed run beside an older run's text. A run with no shards yet keeps whatever it had.
+--
 --   RETURNING run.status, run.total_work_items, run.succeeded_work_items, run.failed_work_items
 --     RETURNING hands back the POST-update values in the same round trip, so the caller reports the
 --     numbers the database actually holds rather than the ones it hoped it wrote.
@@ -91,11 +106,18 @@ SET total_work_items = tally.total,
         WHEN tally.total > 0 AND tally.succeeded + tally.failed = tally.total
             THEN COALESCE(run.completed_at, now())
         ELSE run.completed_at
+    END,
+    last_error_summary = CASE
+        WHEN tally.total = 0 THEN run.last_error_summary
+        ELSE tally.last_error_summary
     END
 FROM (
     SELECT count(*) AS total,
            count(*) FILTER (WHERE status = 'succeeded') AS succeeded,
-           count(*) FILTER (WHERE status IN ('dead_letter', 'cancelled')) AS failed
+           count(*) FILTER (WHERE status IN ('dead_letter', 'cancelled')) AS failed,
+           (array_agg(last_error_summary ORDER BY updated_at DESC, id DESC)
+                FILTER (WHERE status <> 'succeeded' AND last_error_summary IS NOT NULL))[1]
+               AS last_error_summary
     FROM agri.job_work_item
     WHERE job_run_id = :job_run_id
 ) AS tally

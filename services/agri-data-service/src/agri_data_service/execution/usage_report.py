@@ -32,6 +32,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from agri_data_service.db.engine import ingest_session
 from agri_data_service.db.sql_queries import load_query_sql
+from agri_data_service.foundation.observability.usage import METERING_ONLY_POOL_LABELS
 from agri_data_service.foundation.observability.vocabulary import LANE_LOGICAL_CAPS, POOL_LABELS
 from agri_data_service.jobs.lease import canonical_json, fetch_row, fetch_rows
 
@@ -63,14 +64,18 @@ _SET_READ_ONLY: Final = text(f"-- usage_report_read_only\nSET LOCAL transaction_
 # the complete set until a second weighted provider lands (usage.py's own comment says the same).
 WEIGHTED_POOLS: Final[frozenset[str]] = frozenset({"open-meteo-paid", "open-meteo-free"})
 
-# WQ-4 (spec Sec 4.9.2, FR-37): the paid Open-Meteo cap is a fixed monthly figure with two fixed
-# fractions. The TOML-driven, multi-pool windowed-budget machinery (design Sec 2.4) is G1/f1-executor
-# work; GL-4 only ever reports against this one settled number for this one pool.
+# WQ-4 (spec Sec 4.9.2, FR-37): the paid Open-Meteo cap, as the owner settled it. Since G1 the report and
+# admission both read `lanes/_providers/open-meteo.toml [budget]` (`provider_budget.py::budget_for_pool`); these
+# three are the FALLBACK used only when that file cannot load, pinned equal to it by
+# `tests/lane_config/test_provider_hosts.py::test_the_toml_budget_agrees_with_the_hand_copied_usage_report_constants`.
 PAID_MONTHLY_BUDGET: Final = 5_000_000
 GAP_FILL_CEILING_FRACTION: Final = 0.60
 FORWARD_STOP_FRACTION: Final = 0.95
 
 BY_CHOICES: Final = ("pool", "lane", "host", "day")
+#: `--pool` choices: the budget pools the month-to-date section walks, plus the metering-only labels
+#: (`usage.py::METERING_ONLY_POOL_LABELS`) a host of a keyless provider resolves to (review finding 5a, f1-config).
+POOL_CHOICES: Final[tuple[str, ...]] = tuple(sorted(POOL_LABELS | METERING_ONLY_POOL_LABELS))
 FORMAT_CHOICES: Final = ("table", "json")
 _GROUP_COLUMN: Final[dict[str, str]] = {"pool": "pool", "lane": "lane_id", "host": "host", "day": "started_on"}
 DEFAULT_WINDOW_DAYS: Final = 1
@@ -139,10 +144,14 @@ async def month_to_date(session: AsyncSession, *, pool: str, now: datetime) -> d
         }
     budget = None
     if pool in WEIGHTED_POOLS:
+        # The provider file's own `[budget]`, the numbers admission enforces (one source for both).
+        from agri_data_service.execution.provider_budget import budget_for_pool  # noqa: PLC0415 - import cycle
+
+        capped = budget_for_pool(pool)
         budget = {
-            "monthly_cap": PAID_MONTHLY_BUDGET if pool == "open-meteo-paid" else None,
-            "gap_fill_ceiling": PAID_MONTHLY_BUDGET * GAP_FILL_CEILING_FRACTION if pool == "open-meteo-paid" else None,
-            "forward_stop": PAID_MONTHLY_BUDGET * FORWARD_STOP_FRACTION if pool == "open-meteo-paid" else None,
+            "monthly_cap": None if capped is None else capped.weighted_calls,
+            "gap_fill_ceiling": None if capped is None else capped.gap_fill_ceiling_calls,
+            "forward_stop": None if capped is None else capped.forward_stop_calls,
         }
     return {
         "pool": row["pool"],
@@ -470,7 +479,7 @@ def _render_table(report: Mapping[str, object]) -> str:
 @click.option("--since", default=None, help="Window start, YYYY-MM-DD (UTC); requires --until.")
 @click.option("--until", default=None, help="Window end, YYYY-MM-DD (UTC, inclusive); requires --since.")
 @click.option("--lane", "lanes", multiple=True, help="Restrict to one or more lane ids; repeatable.")
-@click.option("--pool", default=None, type=click.Choice(sorted(POOL_LABELS)), help="Restrict to one metering pool.")
+@click.option("--pool", default=None, type=click.Choice(POOL_CHOICES), help="Restrict to one metering pool.")
 @click.option("--by", type=click.Choice(BY_CHOICES), default="lane", show_default=True, help="Section 2's grouping.")
 @click.option("--format", "output_format", type=click.Choice(FORMAT_CHOICES), default="json", show_default=True)
 def jobs_usage_report(  # noqa: PLR0913 - click binds one parameter per CLI option; this verb has seven

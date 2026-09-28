@@ -21,19 +21,46 @@ _STDERR_FD = 2
 # --- Host -> provider/pool resolution --------------------------------------------------------------
 
 
-def test_provider_and_pool_resolve_from_host() -> None:
-    assert usage.provider_for_host("api.open-meteo.com") == usage.HostResolution("open-meteo", "open-meteo-free")
-    assert usage.provider_for_host("archive-api.open-meteo.com") == usage.HostResolution(
-        "open-meteo", "open-meteo-free"
-    )
-    assert usage.provider_for_host("customer-archive-api.open-meteo.com") == usage.HostResolution(
-        "open-meteo", "open-meteo-paid"
-    )
-    assert usage.provider_for_host("firms.modaps.eosdis.nasa.gov") == usage.HostResolution("firms", "firms")
-    assert usage.provider_for_host("waterservices.usgs.gov") == usage.HostResolution(
-        "usgs-water-data", "usgs-water-data"
-    )
-    assert usage.provider_for_host("example.com") is None
+@pytest.mark.parametrize(
+    ("host", "expected"),
+    [
+        pytest.param("api.open-meteo.com", usage.HostResolution("open-meteo", "open-meteo-free"), id="forecast-free"),
+        pytest.param(
+            "archive-api.open-meteo.com", usage.HostResolution("open-meteo", "open-meteo-free"), id="archive-free"
+        ),
+        pytest.param(
+            "customer-archive-api.open-meteo.com",
+            usage.HostResolution("open-meteo", "open-meteo-paid"),
+            id="archive-paid",
+        ),
+        pytest.param("firms.modaps.eosdis.nasa.gov", usage.HostResolution("firms", "firms"), id="firms"),
+        pytest.param(
+            "waterservices.usgs.gov",
+            usage.HostResolution("usgs-water-data", "usgs-water-data"),
+            id="usgs-waterservices",
+        ),
+        # finding 5b: `api.waterdata.usgs.gov` is the modern USGS Water Data API host (D9), distinct
+        # from the legacy `waterservices.usgs.gov` host already covered above; both resolve alike.
+        pytest.param(
+            "api.waterdata.usgs.gov",
+            usage.HostResolution("usgs-water-data", "usgs-water-data"),
+            id="usgs-waterdata-api",
+        ),
+        pytest.param("power.larc.nasa.gov", usage.HostResolution("nasa-power", "nasa-power"), id="nasa-power"),
+        pytest.param("api.weather.gov", usage.HostResolution("nws", "nws"), id="nws"),
+        pytest.param(
+            "services.arcgis.com", usage.HostResolution("arcgis-online", "arcgis-online"), id="arcgis-online-bare"
+        ),
+        pytest.param(
+            "services1.arcgis.com",
+            usage.HostResolution("arcgis-online", "arcgis-online"),
+            id="arcgis-online-numbered",
+        ),
+        pytest.param("example.com", None, id="unrecognised"),
+    ],
+)
+def test_provider_and_pool_resolve_from_host(host: str, expected: usage.HostResolution | None) -> None:
+    assert usage.provider_for_host(host) == expected
 
 
 # --- Open-Meteo weight table (design §2.1's shape table) -------------------------------------------
@@ -67,6 +94,20 @@ def test_provider_and_pool_resolve_from_host() -> None:
         (
             "https://api.open-meteo.com/v1/forecast?latitude=1,2",
             2 * max(1.0, 7 / 14) * max(1.0, 0 / 10),
+        ),
+        # models=a,b -> a 2x multiplier (review finding 3): counts_models = true in
+        # lanes/_providers/open-meteo.toml, so a real two-model archive URL must price like the
+        # provider rule's own `models=2` case.
+        (
+            "https://customer-archive-api.open-meteo.com/v1/archive"
+            "?latitude=1&start_date=2020-01-01&end_date=2020-01-14&daily=a&models=era5_land,era5",
+            2 * 1 * max(1.0, 14 / 14) * max(1.0, 1 / 10),
+        ),
+        # A single model (the ordinary case, e.g. models=era5_land) is a 1x multiplier, unchanged.
+        (
+            "https://customer-archive-api.open-meteo.com/v1/archive"
+            "?latitude=1&start_date=2020-01-01&end_date=2020-01-14&daily=a&models=era5_land",
+            1 * max(1.0, 14 / 14) * max(1.0, 1 / 10),
         ),
     ],
 )

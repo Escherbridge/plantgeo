@@ -58,7 +58,23 @@ OPEN_METEO_CHANNEL: Final = WEATHER_LAYER.channel
 WEATHER_LAYER_VARIABLE: Final = WEATHER_LAYER.variable
 DEFAULT_WEATHER_LAYER_NAME: Final = WEATHER_LAYER.default
 
-OPEN_METEO_BASE_URL: Final = "https://api.open-meteo.com/v1/forecast"
+# A closed set, so a host can be carried through provenance and validated on the way back in --
+# matches `open_meteo_flood.py`'s `OpenMeteoFloodBaseUrl` idiom (see `open_meteo_endpoint.py`).
+OpenMeteoForecastBaseUrl = Literal[
+    "https://api.open-meteo.com/v1/forecast",
+    "https://customer-api.open-meteo.com/v1/forecast",
+]
+
+OPEN_METEO_BASE_URL: Final[OpenMeteoForecastBaseUrl] = "https://api.open-meteo.com/v1/forecast"
+# Plan 1C: the forecast endpoint's paid tier, added alongside the archive endpoint's (below). No
+# legacy caller reads this yet -- `current_weather_url`'s keyless legacy path is untouched.
+# `ingest/provider_client.py` is the first reader; it builds the `OpenMeteoEndpoint` pairing this
+# host with `OPEN_METEO_BASE_URL` -- NOT this module, which must not import `open_meteo_endpoint.py`
+# (that module already imports FROM here; see "open_meteo.py: two endpoints, two contracts" in
+# ingest/AGENTS.md for the one-directional rule this avoids inverting).
+OPEN_METEO_FORECAST_CUSTOMER_BASE_URL: Final[OpenMeteoForecastBaseUrl] = (
+    "https://customer-api.open-meteo.com/v1/forecast"
+)
 OPEN_METEO_BOUNDS: Final = UpstreamBounds(max_bytes=128 * 1024, timeout_seconds=5.0)
 MAX_OBSERVATION_AGE: Final = timedelta(hours=3)
 
@@ -122,6 +138,29 @@ OpenMeteoArchiveModel = Literal["era5_land", "era5"]
 OPEN_METEO_ARCHIVE_CELL_SELECTION: Final = "nearest"
 
 MAX_ARCHIVE_LOCATIONS_PER_REQUEST: Final = 200
+
+
+# --- Historical-forecast endpoint (plan 1C) -------------------------------------------------------
+# A THIRD host pair, distinct from both the rolling forecast endpoint above and the ERA5/ERA5-Land
+# archive endpoint: IFS/ERA5-blended reanalysis for a recent window (the provider's own product,
+# not this service's own reanalysis choice). `ingest/provider_client.py` is its first reader (it
+# builds the `OpenMeteoEndpoint` pairing the two hosts below; see the forecast host's comment above
+# for why that pairing does not live in this module) -- no lane TOML names it yet (framework dark).
+OpenMeteoHistoricalForecastBaseUrl = Literal[
+    "https://historical-forecast-api.open-meteo.com/v1/forecast",
+    "https://customer-historical-forecast-api.open-meteo.com/v1/forecast",
+]
+OPEN_METEO_HISTORICAL_FORECAST_BASE_URL: Final[OpenMeteoHistoricalForecastBaseUrl] = (
+    "https://historical-forecast-api.open-meteo.com/v1/forecast"
+)
+OPEN_METEO_HISTORICAL_FORECAST_CUSTOMER_BASE_URL: Final[OpenMeteoHistoricalForecastBaseUrl] = (
+    "https://customer-historical-forecast-api.open-meteo.com/v1/forecast"
+)
+# A single location's daily series back to ~2016 easily fits in low single-digit megabytes; this
+# stays far below the archive endpoint's 64 MB (which budgets up to 200 LOCATIONS per request, not
+# one) while giving a multi-year single-location pull more headroom than the 128 KB current-weather
+# budget above.
+OPEN_METEO_HISTORICAL_FORECAST_BOUNDS: Final = UpstreamBounds(max_bytes=8 * 1024 * 1024, timeout_seconds=60.0)
 
 
 class OpenMeteoRateLimitError(UpstreamError):

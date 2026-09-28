@@ -1,7 +1,12 @@
-"""A lane held behind a recorded-supersession requirement is visible as a typed action, not a buried string."""
+"""A lane held behind a recorded-supersession requirement is visible as a typed action, not a buried string.
+
+The printed release commands run as printed (D6, executor F5): each is parsed here by the verb's own click
+parser, reached through the `agri-service` root the image installs.
+"""
 
 from __future__ import annotations
 
+import shlex
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -21,7 +26,10 @@ from agri_data_service.execution.job_executor_service import (
     scheduled_bucket,
     supersession_command,
 )
+from agri_data_service.execution.job_run_supersession import jobs_supersede_run
 from agri_data_service.execution.lane_ids import DROUGHT_DIRECT_LANE_ID, FIRE_PERIMETERS_DIRECT_LANE_ID
+from agri_data_service.execution.lane_scheduling import EXECUTOR_SSH_PREFIX
+from agri_data_service.interface.cli import cli
 
 NOW = datetime(2026, 9, 15, 6, tzinfo=UTC)
 RUN_ID = uuid.UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
@@ -67,10 +75,44 @@ def test_the_tick_summary_lifts_every_action_to_the_top_level() -> None:
     summary = ExecutorTickSummary(observed_at=NOW, leader=True, lanes=(quiet, held))
 
     assert summary.operator_actions == (
-        OperatorAction(lane_id=DROUGHT_DIRECT_LANE_ID, run_id=RUN_ID, command=held.operator_action or ""),
+        OperatorAction(
+            lane_id=DROUGHT_DIRECT_LANE_ID,
+            run_id=RUN_ID,
+            command=held.operator_action or "",
+            apply_command=held.operator_apply_action,
+        ),
     )
     rendered = summary.to_dict()["operator_actions"]
-    assert rendered == [{"lane_id": DROUGHT_DIRECT_LANE_ID, "run_id": str(RUN_ID), "command": held.operator_action}]
+    assert rendered == [
+        {
+            "lane_id": DROUGHT_DIRECT_LANE_ID,
+            "run_id": str(RUN_ID),
+            "command": held.operator_action,
+            "apply_command": held.operator_apply_action,
+        }
+    ]
+
+
+def test_the_printed_dry_run_and_apply_lines_parse_with_the_verb_s_own_parser() -> None:
+    """Pasting either line into a shell reaches `jobs-supersede-run` with every required option filled."""
+    held = _held(DROUGHT_DIRECT_LANE_ID, streak=_breaker_streak(DROUGHT_DIRECT_LANE_ID))
+    prefix = shlex.split(EXECUTOR_SSH_PREFIX)
+    for line, applies in ((held.operator_action, False), (held.operator_apply_action, True)):
+        assert line is not None
+        argv = shlex.split(line)
+        assert argv[: len(prefix)] == prefix, "run inside the executor, where its DSN and lane TOMLs are"
+        root, group, verb_name, *arguments = argv[len(prefix) :]
+        assert root == "agri-service"
+        verb = cli.commands[group].commands[verb_name]  # type: ignore[attr-defined]
+        assert verb is jobs_supersede_run
+
+        context = verb.make_context(verb_name, arguments)
+
+        assert context.params["lane_id"] == DROUGHT_DIRECT_LANE_ID
+        assert context.params["run_id"] == RUN_ID
+        assert str(RUN_ID) in context.params["evidence"]
+        assert context.params["operator"] == "$(whoami)", "expanded by the operator's own shell, not by us"
+        assert context.params["apply_changes"] is applies
 
 
 def test_an_action_is_announced_once_per_process_and_cleared_once() -> None:

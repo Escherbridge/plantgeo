@@ -2,7 +2,8 @@
 
 `source_ceiling_day` is written by the publisher and only advances when a day is published, so a
 stalled publisher reports a ceiling that agrees with its own newest day and looks healthy. This
-module derives a second horizon from the lane's REGISTERED publication lag and today's date alone,
+module derives a second horizon from the lane's REGISTERED publication lag and today's date alone
+(or, in `measure_lane_freshness`, from a probed provider edge when the caller holds one, spec S6),
 and states how far publication sits behind it. See `AGENTS.md`, "Independent freshness".
 """
 
@@ -14,7 +15,7 @@ from typing import TYPE_CHECKING, Final
 
 from agri_data_service.foundation.parquet.lane_contract import nature_has_time_axis
 from agri_data_service.parquet_ops.wire import render_day, render_instant
-from agri_data_service.pipeline.parquet.lane_ceiling import allowed_source_ceiling
+from agri_data_service.pipeline.parquet.lane_ceiling import resolve_source_ceiling
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -22,12 +23,14 @@ if TYPE_CHECKING:
 
     from agri_data_service.parquet_ops.coverage import CensusLane
     from agri_data_service.parquet_ops.wire import LaneCoverage, WarehouseCoverage
+    from agri_data_service.pipeline.parquet.lane_ceiling import CeilingEdgeSource
 
 #: The freshness report's own contract version. It is NOT the frozen `/api/v1/parquet` coverage
 #: contract; a consumer that wants these fields on that wire needs the schema bump named in `AGENTS.md`.
 FRESHNESS_SCHEMA_VERSION: Final = 1
 
-#: Where the expected horizon comes from: the lane's registered lag, never the availability pointer.
+#: Where the REPORT's expected horizons come from: the lane's registered lag, never the availability
+#: pointer. A verdict measured against a probed edge says so in `LaneFreshness.horizon_edge_source`.
 EXPECTED_HORIZON_BASIS: Final = "registered_publication_lag"
 
 #: Days a lane may publish behind its expected horizon, on top of one cadence period, before it is
@@ -40,7 +43,8 @@ PUBLICATION_GRACE_DAYS: Final = 3
 class LaneFreshness:
     """How far one lane's publication sits behind the horizon its provider's lag says it should have reached."""
 
-    #: `today - publication_lag_days`; `None` for a lane with no time axis, whose day is a version stamp.
+    #: The probed provider edge when one was given, else `today - publication_lag_days`; `None` for a
+    #: lane with no time axis, whose day is a version stamp.
     expected_horizon_day: date | None
     #: `expected_horizon_day - latest_recorded_day`, floored at zero; `None` when nothing was recorded.
     staleness_days: int | None
@@ -48,10 +52,14 @@ class LaneFreshness:
     behind_provider: bool | None
     #: `cadence_days + PUBLICATION_GRACE_DAYS`: the slack one publication period plus grace allows.
     tolerance_days: int
+    #: Which edge set `expected_horizon_day` (`probe` or `lag_fallback`); `None` exactly when it is `None`.
+    horizon_edge_source: CeilingEdgeSource | None = None
 
 
-def measure_lane_freshness(lane: CensusLane, *, latest_recorded_day: date | None, today: date) -> LaneFreshness:
-    """Judge one lane's newest RECORDED day against the horizon its registered lag predicts for today.
+def measure_lane_freshness(
+    lane: CensusLane, *, latest_recorded_day: date | None, today: date, probed_edge: date | None = None
+) -> LaneFreshness:
+    """Judge one lane's newest RECORDED day against its provider's probed edge, else its registered lag.
 
     The recorded day, never the carried edge: a bounded-carry release lane answers past its ceiling
     by design, and weighing the carry here would report a healthy lane as ahead of its provider.
@@ -61,10 +69,15 @@ def measure_lane_freshness(lane: CensusLane, *, latest_recorded_day: date | None
         return LaneFreshness(
             expected_horizon_day=None, staleness_days=None, behind_provider=None, tolerance_days=tolerance
         )
-    expected = allowed_source_ceiling(lane, today=today)
+    ceiling = resolve_source_ceiling(lane, today=today, probed_edge=probed_edge)
+    expected = ceiling.day
     if latest_recorded_day is None:
         return LaneFreshness(
-            expected_horizon_day=expected, staleness_days=None, behind_provider=None, tolerance_days=tolerance
+            expected_horizon_day=expected,
+            staleness_days=None,
+            behind_provider=None,
+            tolerance_days=tolerance,
+            horizon_edge_source=ceiling.edge_source,
         )
     staleness = max(0, (expected - latest_recorded_day).days)
     if lane.nature == "release_series" and lane.cadence_days == 1 and lane.release_days is None:
@@ -72,18 +85,27 @@ def measure_lane_freshness(lane: CensusLane, *, latest_recorded_day: date | None
         # has no rhythm to be behind; staleness is still stated, but flagging it would keep the
         # operator's short list permanently noisy.
         return LaneFreshness(
-            expected_horizon_day=expected, staleness_days=staleness, behind_provider=None, tolerance_days=tolerance
+            expected_horizon_day=expected,
+            staleness_days=staleness,
+            behind_provider=None,
+            tolerance_days=tolerance,
+            horizon_edge_source=ceiling.edge_source,
         )
     return LaneFreshness(
         expected_horizon_day=expected,
         staleness_days=staleness,
         behind_provider=staleness > tolerance,
         tolerance_days=tolerance,
+        horizon_edge_source=ceiling.edge_source,
     )
 
 
 def with_freshness(row: LaneCoverage, *, lane: CensusLane, today: date) -> LaneCoverage:
-    """Attach the independent verdict and optional registered slider timing policy."""
+    """Attach the lag-judged verdict and optional registered slider timing policy.
+
+    Lag only: a `LaneCoverage` row cannot say which edge judged it, and the report states
+    `EXPECTED_HORIZON_BASIS`, so a probed edge is weighed through `measure_lane_freshness` alone.
+    """
     verdict = measure_lane_freshness(lane, latest_recorded_day=row.latest_recorded_day, today=today)
     return replace(
         row,

@@ -1,5 +1,7 @@
 """GL-5's sweep proof (plan 0W.5): every fault class a lane can hit is classified, recorded on the right
-incident, and CONTAINED -- a second lane completes unaffected on every tick.
+incident, and CONTAINED -- a second lane completes unaffected on every tick. The G1 probe cases (plan 1D,
+GL-6 folded) follow at the end: a probe is single-attempt, a lost one is inconclusive, a clean one starts
+probation, and the healthy lane still runs every tick.
 
 One flow, parametrised over the plan's fault list. A fault lane that already failed two buckets and a
 healthy lane run through two real `run_executor_tick` calls, each turn a REAL child process through the
@@ -24,6 +26,7 @@ from typing import Final
 import pytest
 import structlog.testing
 
+from agri_data_service.execution import job_executor_service
 from agri_data_service.execution.job_executor_service import SoftFailureState
 from agri_data_service.execution.lane_ids import (
     CLIMATE_DIRECT_LANE_ID,
@@ -31,6 +34,7 @@ from agri_data_service.execution.lane_ids import (
     SENSORS_DIRECT_LANE_ID,
     WATER_GAUGES_DIRECT_LANE_ID,
 )
+from agri_data_service.execution.lane_incidents import HoldLadders
 from agri_data_service.foundation.observability import events
 from tests.execution.soft_failure_fakes import (
     COMPLETE_REPORT_SCRIPT,
@@ -45,6 +49,7 @@ from tests.execution.soft_failure_fakes import (
     states,
     usage_then_report_script,
 )
+from tests.execution.test_hold_probes import ProbeWorld
 
 HEALTHY: Final = "healthy-probe-lane"
 #: A lane with no evidence rules of its own: the explicit-exit and monitor cases run on it.
@@ -208,3 +213,50 @@ async def test_a_fault_is_classified_recorded_and_contained(monkeypatch: pytest.
     if case.raising_read:
         assert world.incidents.rows == {}
         assert len(events_named(logs, events.EVENT_INCIDENT_WRITE_FAILED)) == 1
+
+
+# --- G1 probe cases (GL-6 folded into f1-executor, plan 1D): the ladder re-tries a held lane, contained ---
+
+PROBED: Final = "probed-lane"
+PROBE_SLEEPER: Final = "import time\ntime.sleep(30)\n"
+
+
+@dataclass(frozen=True, slots=True)
+class ProbeCase:
+    script: str
+    #: The hold's `detail.state` and rung once the probe has been judged.
+    state: str
+    rung: int
+    fenced_out: bool = False
+
+
+PROBE_CASES: Final = [
+    pytest.param(ProbeCase(exit_script(75), "held", 1), id="single-attempt-probe-fails"),
+    pytest.param(ProbeCase(PROBE_SLEEPER, "held:1", 0, fenced_out=True), id="lost-probe-is-inconclusive"),
+    # The clean probe starts probation, and that tick's first probation bucket is already one clean bucket.
+    pytest.param(ProbeCase(COMPLETE_REPORT_SCRIPT, "probation:1", 0), id="clean-probe-starts-probation"),
+]
+
+
+@pytest.mark.parametrize("case", PROBE_CASES)
+async def test_a_probe_is_single_attempt_and_contained(monkeypatch: pytest.MonkeyPatch, case: ProbeCase) -> None:
+    monkeypatch.setattr(job_executor_service, "COMMAND_HEARTBEAT_SECONDS", 0.05)
+    world = ProbeWorld(
+        {PROBED: build_lane_spec(PROBED, case.script), HEALTHY: build_lane_spec(HEALTHY, COMPLETE_REPORT_SCRIPT)}
+    ).install(monkeypatch)
+    world.seed_hold(PROBED, exit_class="upstream")
+    if case.fenced_out:
+        world.lease_lost_lanes.add(PROBED)
+        world.reap_fenced_out_attempts = True
+    state = SoftFailureState(ladders=HoldLadders())
+
+    summaries = [await world.tick(now=NOW + hours * HOUR, soft=state) for hours in (0, 1, 2)]
+
+    opened_by_the_ladder = [run for run in world.runs_of(PROBED) if run.run_id in world.item_attempts]
+    assert opened_by_the_ladder, "the probe ran"
+    assert {world.item_attempts[run.run_id] for run in opened_by_the_ladder} == {1}, "one attempt, whatever the outcome"
+    hold = world.incidents.by_fingerprint(f"lane_hold:{PROBED}")
+    assert hold is not None
+    assert (hold["detail"]["state"], hold["detail"]["rung"]) == (case.state, case.rung)  # type: ignore[index]
+    assert [states(summary)[HEALTHY] for summary in summaries] == ["ran", "ran", "ran"]
+    assert [outcome.kind for outcome in world.outcomes[HEALTHY]] == ["completed"] * 3

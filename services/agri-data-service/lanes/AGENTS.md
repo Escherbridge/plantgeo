@@ -56,14 +56,15 @@ tree is quarantined.
   pools and reserves were declined; the schema refuses them.
 - The weight rule (`locations × models × max(1, days/14) × max(1, variables/10)`, spec §6.3) prices a
   request the same way `usage.open_meteo_request_weight`/`open_meteo_weight_for_url` do for
-  `locations`, `days` and `variables`; the host test pins that. **The `models` factor is the one
-  known exception**: the meter's two functions take no `models` argument by design
-  (`foundation/observability/AGENTS.md` "the meter" section) and a real customer-host URL carries no
-  `models=` query item today, so `counts_models = true` here is not yet exercised end to end. A lane
-  that actually sends multiple models extends `open_meteo_weight_for_url`'s URL table first — that
-  file is outside this directory's ownership — the host test's `models=2` assertion only proves the
-  provider rule's own arithmetic, not URL-meter agreement for that one factor (review finding 3,
-  f1-config sweep).
+  `locations`, `days` and `variables`; the host test pins that. **The `models` factor** is priced by
+  `open_meteo_weight_for_url` alone: `open_meteo_request_weight` keeps its pinned three-argument
+  signature (it is byte-identical to G0's soil request builder, which never sends more than one
+  model), and `open_meteo_weight_for_url` multiplies that pinned weight by the URL's own `models=`
+  item count instead — so `counts_models = true` here now agrees with the meter end to end,
+  including for a real customer-host URL carrying `models=a,b` (review finding 3, RESOLVED by
+  `f1-providers`; `tests/lane_config/test_provider_hosts.py`'s `models=2` case and
+  `tests/foundation/observability/test_usage.py::test_open_meteo_weight_table`'s `models=` rows both
+  pin it).
 - NASA POWER is asked for UTC days only: an LST day shifts every daily value by the local offset,
   which reads as a data regression that is not one.
 

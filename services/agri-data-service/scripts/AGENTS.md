@@ -409,9 +409,11 @@ refuses to write in four situations, one test apiece in `tests/scripts/test_chec
 
 The receipt records:
 
-- `tree_digest` -- one sha256 over every file under `src/**`, `tests/**`, `scripts/**`,
-  `alembic/**` and `db/**`, plus `pyproject.toml`, `uv.lock`, `mypy.ini`, `ruff.toml` and
-  `alembic.ini`, sorted by POSIX-relative path, with the path and the content each length-prefixed
+- `tree_digest` -- one sha256 over every file under the directories in
+  `quality_receipt.DIGEST_DIRECTORIES` (`src`, `tests`, `scripts`, `alembic`, `db` and, since the
+  config-driven ingestion track's Phase 1A, `lanes` -- the lane and provider TOMLs the images ship),
+  plus the root files in `DIGEST_FILES` (`pyproject.toml`, `uv.lock`, `mypy.ini`, `ruff.toml`,
+  `alembic.ini`); those two tuples are the authority and this list only mirrors them. Sorted by POSIX-relative path, with the path and the content each length-prefixed
   so a rename can never digest the same as an edit. `__pycache__`, `*.pyc/pyo/pyd` and the tool
   cache directories are excluded because they differ between a developer tree and a Docker build
   context. Domain-separated by a constant prefix (`DIGEST_DOMAIN`, currently `v2`). Measured
@@ -499,8 +501,8 @@ stage only, and its runtime deliberately ships no migration machinery.
 
 Editing source without re-running the sweep therefore fails the **build**, not the first request.
 The practical consequence: any change to `pyproject.toml`, `uv.lock`, `mypy.ini`, `ruff.toml`,
-`alembic/**` or `db/**` -- a dependency removal or a new migration, for instance -- must be followed
-by `--write-receipt` or both images stop building.
+`alembic/**`, `db/**` or `lanes/**` -- a dependency removal, a new migration or a lane TOML edit, for
+instance -- must be followed by `--write-receipt` or both images stop building.
 
 This is the 2026-09-01 audit's "locked quality receipt before deployment" row. It is deliberately
 NOT the in-image `checks` stage that the 2026-08-07 owner ruling dropped: it re-runs nothing (a

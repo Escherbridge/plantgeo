@@ -36,3 +36,9 @@ so criteria 1-2 hold without an exception. Ported from
 `archive/freshness-integrated-candidate-20260914` during the 2026-09-27 SSURGO native-geometry
 port; see `pipeline/direct/soil_survey/AGENTS.md` for the acquisition CLI this package's receipts
 back.
+
+## Ruled exception: `foundation/lane_config/`
+
+The lane and provider TOML models, their lazy loader and the cron grammar (config-driven ingestion
+spec S3/S8/S9, plan 1A). A domain package that reads files, admitted for the same reason as `region`:
+the executor, the runner and `pipeline/parquet` all read it. See `foundation/lane_config/AGENTS.md`.

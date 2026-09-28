@@ -1,4 +1,9 @@
-"""One retry ladder for the ArcGIS-family upstreams: what is worth another attempt, how long to wait, when to stop."""
+"""One retry ladder for every bounded upstream: what is worth another attempt, how long to wait, when to stop.
+
+Originally the ArcGIS-family ladder (USGS, WFIGS, evacuation zones); `ingest/provider_client.py`
+(SOFT-8, plan 1C) is the first non-ArcGIS caller, and adds the Retry-After clamp `retry_upstream`'s
+docstring below describes.
+"""
 
 from __future__ import annotations
 
@@ -87,6 +92,18 @@ def is_retryable_failure(error: Exception) -> bool:
     )
 
 
+def clamped_retry_after(error: BaseException, *, floor: float, ceiling: float) -> float | None:
+    """SOFT-8's one Retry-After rule: the server's stated wait clamped into [floor, ceiling]; None when none was named.
+
+    `retry_upstream` clamps into [0, ladder.max_delay_seconds]; the config runner's unit ladder
+    (`pipeline/runner/fetch.py`) clamps into [step, 2 x step] of the 429-series step the hint replaces.
+    """
+    stated = getattr(error, "retry_after_seconds", None)
+    if isinstance(stated, bool) or not isinstance(stated, (int, float)) or stated < 0:
+        return None
+    return min(max(float(stated), floor), ceiling)
+
+
 async def retry_upstream[ResultT](  # noqa: PLR0913 - attempt, policy, context, probe, host and the two test clocks are distinct
     attempt_once: Callable[[], Awaitable[ResultT]],
     policy: UpstreamRetryPolicy,
@@ -106,6 +123,14 @@ async def retry_upstream[ResultT](  # noqa: PLR0913 - attempt, policy, context, 
     loop as one of that field's three origins, alongside `fetch_bounded`'s transport-retry sleep and
     the runner's own 429 series) -- a caller with no reasonable single host to blame (context spans
     several) simply leaves it unset and this loop counts nothing, exactly as it did before.
+
+    **SOFT-8's Retry-After clamp:** when the caught error is an `UpstreamHttpError` carrying a
+    `retry_after_seconds` (from `BoundedResponse.retry_after_seconds`, via
+    `ingest/http.py::retry_after_seconds_for_response`), that value REPLACES the ladder's own
+    exponential delay for this attempt -- clamped to `ladder.max_delay_seconds`, so an upstream that
+    names an hour-long wait never parks a turn that long. An error with no such hint (every other
+    `UpstreamHttpError`, and every `UpstreamPayloadError`) uses the ladder's ordinary doubling delay,
+    unchanged.
     """
     ladder = policy.ladder
     max_attempts = policy.probe_attempts if probe and policy.probe_attempts is not None else ladder.max_attempts
@@ -126,7 +151,8 @@ async def retry_upstream[ResultT](  # noqa: PLR0913 - attempt, policy, context, 
                 error=str(error),
                 elapsed_seconds=round(elapsed_seconds, 2),
             )
-            delay = ladder.delay_seconds(attempt)
+            retry_after = clamped_retry_after(error, floor=0.0, ceiling=ladder.max_delay_seconds)
+            delay = retry_after if retry_after is not None else ladder.delay_seconds(attempt)
             if host is not None:
                 record_backoff_seconds(host, delay)
             await sleep(delay)

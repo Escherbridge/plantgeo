@@ -5,6 +5,9 @@ answer from the test, the activation allow-list and the ledger target are pinned
 `test_jobs_pulse_command.py`'s convention. Real-PostgreSQL proof that the incident insert, the fingerprint
 probe and the failure-streak window in `select_latest_run.sql` and the planner agree is
 `test_job_run_supersession_agri_db.py`.
+
+CA2/CA3 (config-driven ingestion spec §4.8.9): a config lane and its `<lane>:gap-fill` definition resolve
+through the lane catalogue, gated only by the lane TOML and the CA12 kill-switch.
 """
 
 # ruff: noqa: PLR2004
@@ -15,6 +18,7 @@ import json
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 import pytest
@@ -24,6 +28,7 @@ from sqlalchemy.exc import OperationalError
 from agri_data_service.config import settings
 from agri_data_service.execution import job_run_supersession
 from agri_data_service.execution.job_executor_service import (
+    LANE_SPECS,
     RUN_SUPERSESSION_FINGERPRINT_PREFIX,
     RUN_SUPERSESSION_INCIDENT_TYPE,
     ActivationConfig,
@@ -36,11 +41,15 @@ from agri_data_service.execution.job_run_supersession import (
     ledger_target,
     resolve_executor_lane,
 )
+from agri_data_service.execution.lane_specs import STOPPED_LANES_VARIABLE
+from agri_data_service.foundation.lane_config import LANES_DIRECTORY_ENV_VAR
 from agri_data_service.interface.cli.ops import ops
 from agri_data_service.jobs.dispatch import LanePauseState
+from tests.lane_config.builders import settled_soil_lane, write_lane_tree
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence
+    from pathlib import Path
 
     from click.testing import Result
 
@@ -370,6 +379,23 @@ def test_an_already_superseded_run_reports_the_stored_evidence_not_the_supplied_
     assert session.rollbacks == 1
 
 
+def test_a_recording_reads_back_after_the_marker_aware_streak_forgives_its_run(
+    monkeypatch: pytest.MonkeyPatch,
+    session: _FakeSession,
+) -> None:
+    """F4: a person's recording ends the streak, so the recorded run reads as one failure a coalesce lane's
+    clock would release; re-running the verb must still report the recording, never "nothing to record"."""
+    _checkpoint(monkeypatch, _failed_checkpoint(superseded=True, streak=0))
+    session.stored_incident = {"id": _INCIDENT_ID, "summary": _STORED_EVIDENCE, "owner": "first-operator"}
+
+    result = _invoke("--apply", lane=_COALESCE_LANE)
+
+    assert result.exit_code == 0, result.output
+    receipt = json.loads(result.output)
+    assert (receipt["outcome"], receipt["operator"]) == ("already_superseded", "first-operator")
+    assert session.inserts() == []
+
+
 def test_a_conflicting_recording_is_reported_with_the_winning_evidence(
     monkeypatch: pytest.MonkeyPatch,
     session: _FakeSession,
@@ -476,4 +502,89 @@ def test_evidence_must_be_present_and_bounded(session: _FakeSession, evidence: s
 
     assert result.exit_code == 2
     assert "--evidence" in result.output
+    assert session.statements == []
+
+
+# --- CA2/CA3: supersede resolves through the lane catalogue --------------------------------------------------
+
+_CONFIG_LANE = "soil-era5-land-direct-forward"
+_CONFIG_GAP_FILL = f"{_CONFIG_LANE}:gap-fill"
+#: The config lane's hourly `0 * * * *` cron: the fire the lane resumes at once released.
+_CONFIG_CURRENT_FIRE_ISO = "2026-09-03T20:00:00+00:00"
+
+
+def _config_lane_tree(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, enabled: bool = True, gap_fill_enabled: bool = True
+) -> None:
+    """Hand the soil lane to the config path, and take its legacy spec out of the table (CA3)."""
+    lane = settled_soil_lane(
+        _CONFIG_LANE,
+        executor="config",
+        enabled=enabled,
+        schedule={
+            "forward_cron": "0 * * * *",
+            "gap_fill_cron": "0 * * * *",
+            "gap_fill_enabled": gap_fill_enabled,
+            "gap_fill_enabled_at_gate": "G6",
+        },
+    )
+    monkeypatch.setenv(LANES_DIRECTORY_ENV_VAR, str(write_lane_tree(tmp_path, [lane])))
+    without_legacy_spec = {lane_id: spec for lane_id, spec in LANE_SPECS.items() if lane_id != _CONFIG_LANE}
+    monkeypatch.setattr(job_run_supersession, "LANE_SPECS", MappingProxyType(without_legacy_spec))
+
+
+@pytest.mark.parametrize("definition_lane", [_CONFIG_LANE, _CONFIG_GAP_FILL])
+def test_a_held_config_definition_is_superseded_without_a_legacy_spec_or_an_allow_list_token(
+    monkeypatch: pytest.MonkeyPatch, session: _FakeSession, tmp_path: Path, definition_lane: str
+) -> None:
+    _config_lane_tree(monkeypatch, tmp_path)
+    _checkpoint(monkeypatch, _failed_checkpoint(streak=3))
+    assert _CONFIG_LANE not in _ACTIVE.active_lanes
+
+    result = _invoke("--apply", lane=definition_lane)
+
+    assert result.exit_code == 0, result.output
+    receipt = json.loads(result.output)
+    assert receipt["outcome"] == "recorded"
+    assert receipt["lane_id"] == definition_lane
+    assert receipt["opens_no_earlier_than"] == _CONFIG_CURRENT_FIRE_ISO
+    assert len(session.inserts()) == 1
+    assert session.commits == 1
+
+
+@pytest.mark.parametrize(
+    ("enabled", "gap_fill_enabled", "definition_lane", "reason"),
+    [
+        pytest.param(False, True, _CONFIG_LANE, "lane TOML enabled = false", id="lane-disabled"),
+        pytest.param(True, False, _CONFIG_GAP_FILL, "gap_fill_enabled = false", id="gap-fill-off"),
+    ],
+)
+def test_a_config_definition_its_toml_keeps_off_is_refused_before_any_ledger_read(  # noqa: PLR0913 - four cases
+    monkeypatch: pytest.MonkeyPatch,
+    session: _FakeSession,
+    tmp_path: Path,
+    enabled: bool,
+    gap_fill_enabled: bool,
+    definition_lane: str,
+    reason: str,
+) -> None:
+    """A recording for a definition the scheduler never plans would never be read."""
+    _config_lane_tree(monkeypatch, tmp_path, enabled=enabled, gap_fill_enabled=gap_fill_enabled)
+
+    result = _invoke("--apply", lane=definition_lane)
+
+    assert result.exit_code == 1
+    assert reason in result.output
+    assert session.statements == []
+
+
+def test_a_lane_the_kill_switch_stops_is_refused_before_any_ledger_read(
+    monkeypatch: pytest.MonkeyPatch, session: _FakeSession
+) -> None:
+    monkeypatch.setenv(STOPPED_LANES_VARIABLE, _REPLAY_LANE)
+
+    result = _invoke("--apply")
+
+    assert result.exit_code == 1
+    assert STOPPED_LANES_VARIABLE in result.output
     assert session.statements == []

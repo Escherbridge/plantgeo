@@ -1,4 +1,6 @@
-"""Pure cadence-bucket math and failed-checkpoint policy: no DB I/O, no subprocess, no side effects.
+"""Pure bucket math (a legacy lane's phased cadence, a config lane's cron) and failed-checkpoint policy.
+
+No DB I/O, no subprocess, no side effects.
 
 Split out of `job_executor_service.py` (soft size ceiling, `federation.md` §3). The DB-coupled callers
 (leader lock, definition registration, `read_lane_checkpoint`, tick planning) stay in
@@ -8,10 +10,17 @@ Split out of `job_executor_service.py` (soft size ceiling, `federation.md` §3).
 
 from __future__ import annotations
 
+import shlex
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final
 
+from agri_data_service.execution.cron_schedule import (
+    CronNeverFiresError,
+    cron_expression,
+    latest_fire_at_or_before,
+    next_fire_after,
+)
 from agri_data_service.execution.lane_specs import (
     CLOCK_RELEASE_STREAK_LIMIT,
     EXECUTOR_DEFINITION_VERSION,
@@ -23,11 +32,17 @@ from agri_data_service.execution.lane_specs import (
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
+    from agri_data_service.foundation.lane_config import CronExpression
     from agri_data_service.jobs import JobDefinitionRecord
 
 SUPERSEDE_RUN_COMMAND: Final = "agri-service ops jobs-supersede-run"
+#: A printed release command runs inside the executor container (executor review F5).
+EXECUTOR_SSH_PREFIX: Final = "railway ssh --service plantgeo-job-executor --"
+#: `--operator` as printed: a command substitution that bash, zsh and PowerShell all expand locally.
+PRINTED_OPERATOR: Final = '"$(whoami)"'
+APPLY_FLAG: Final = "--apply"
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,10 +74,23 @@ class DueLane:
     #: The failed or partial checkpoint this bucket supersedes, and what released it; None for an ordinary bucket.
     superseded_run_id: uuid.UUID | None = None
     supersession: ReleaseMechanism | None = None
+    #: A hold ladder probe (GL-6): the handler runs it with `PLANTGEO_TURN_PROBE=1` and a lost fence parks it.
+    probe: bool = False
+    #: The failure budget a NEW bucket's work item opens with (`open_job_run(max_attempts=...)`): 1 for a probe
+    #: and a probation bucket, 2 (or 1) in the 24 h watch; `None` keeps the definition's own.
+    max_attempts: int | None = None
+    #: The capped pool this admitted turn spends (`provider_budget.py`, WQ-4); the work queue holds that pool's
+    #: provider try-lock while the turn runs. `None` for a lane that spends nothing WQ-4 caps.
+    provider_pool: str | None = None
 
 
-def fair_due_order(candidates: Sequence[DueLane]) -> tuple[DueLane, ...]:
-    """Interleave work classes while ordering eligible lanes by their oldest cadence checkpoint."""
+def fair_due_order(candidates: Sequence[DueLane], *, lead: LaneWorkClass = "incremental") -> tuple[DueLane, ...]:
+    """Interleave work classes, `lead` first, while ordering eligible lanes by their oldest cadence checkpoint.
+
+    The serial dispatcher always leads with `incremental` and runs two lanes a tick, so each class gets one.
+    The work queue at one slot takes only the head, so it alternates `lead` between dispatches
+    (`LaneDispatcher.next_lead`), or a backlog lane (every `:gap-repair`) would wait while any forward is due.
+    """
     oldest = datetime.min.replace(tzinfo=UTC)
 
     def lane_key(candidate: DueLane) -> tuple[datetime, str]:
@@ -76,19 +104,22 @@ def fair_due_order(candidates: Sequence[DueLane]) -> tuple[DueLane, ...]:
         (candidate for candidate in candidates if candidate.spec.work_class == "backlog"),
         key=lane_key,
     )
+    first, second = (backlog, incremental) if lead == "backlog" else (incremental, backlog)
     ordered: list[DueLane] = []
-    while incremental or backlog:
-        if incremental:
-            ordered.append(incremental.pop(0))
-        if backlog:
-            ordered.append(backlog.pop(0))
+    while first or second:
+        if first:
+            ordered.append(first.pop(0))
+        if second:
+            ordered.append(second.pop(0))
     return tuple(ordered)
 
 
 def scheduled_bucket(spec: LaneExecutionSpec, now: datetime) -> datetime:
-    """Return this lane's current cadence bucket using its declared phase offset."""
+    """Return this lane's current bucket: its phased cadence bucket, or for a config lane its latest cron fire (S9)."""
     if now.utcoffset() is None:
         raise ExecutorConfigurationError("the scheduler clock must include a timezone")
+    if spec.cron is not None:
+        return _cron_fire(spec, latest_fire_at_or_before, now)
     if spec.cadence_seconds is None:
         raise ExecutorConfigurationError(f"lane {spec.lane_id!r} has no recurring cadence")
     epoch_seconds = int(now.timestamp())
@@ -113,10 +144,24 @@ def next_scheduled_bucket(
 
 
 def bucket_after(spec: LaneExecutionSpec, scheduled_for: datetime) -> datetime:
-    """Return the cadence bucket immediately after `scheduled_for`: the one a replayed lane opens next."""
+    """Return the bucket immediately after `scheduled_for`: the one a replayed lane opens next."""
+    if spec.cron is not None:
+        return _cron_fire(spec, next_fire_after, scheduled_for)
     if spec.cadence_seconds is None:
         raise ExecutorConfigurationError(f"lane {spec.lane_id!r} has no recurring cadence")
     return datetime.fromtimestamp(int(scheduled_for.timestamp()) + spec.cadence_seconds, tz=UTC)
+
+
+def _cron_fire(
+    spec: LaneExecutionSpec, clock: Callable[[CronExpression, datetime], datetime], instant: datetime
+) -> datetime:
+    """One cron clock reading for a config lane; a cron that never fires is this lane's configuration error."""
+    if spec.cron is None:  # pragma: no cover - callers branch on `spec.cron` first
+        raise ExecutorConfigurationError(f"lane {spec.lane_id!r} has no cron")
+    try:
+        return clock(cron_expression(spec.cron), instant)
+    except CronNeverFiresError as error:
+        raise ExecutorConfigurationError(f"lane {spec.lane_id!r}: {error}") from error
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,7 +176,9 @@ class CheckpointVerdict:
     release: ReleaseMechanism
     #: Whether the planner opens `next_bucket` on this tick.
     released: bool
-    #: The unbroken run of settled-without-success checkpoints ending in this one, at least 1.
+    #: The unbroken run of settled-without-success checkpoints ending in this one, at least 1. Under the split
+    #: breaker the run an operator superseded ends it (F4): a human release earns a fresh streak, while a
+    #: probe's or a process start's own supersession does not, so a failed probe is held again at once.
     consecutive_failures: int
 
 
@@ -166,12 +213,33 @@ def judge_failed_checkpoint(spec: LaneExecutionSpec, latest: LatestRun, now: dat
     )
 
 
-def supersession_command(spec: LaneExecutionSpec, run_id: uuid.UUID) -> str:
-    return f"{SUPERSEDE_RUN_COMMAND} --lane {spec.lane_id} --run-id {run_id}"
+def supersession_evidence(spec: LaneExecutionSpec, run_id: uuid.UUID) -> str:
+    """The `--evidence` a printed command carries pre-filled: one whitespace-free token naming the hold reviewed.
+
+    Whitespace-free so the line survives a remote re-split by `railway ssh` as well as a local shell.
+    """
+    return f"reviewed-hold:lane={spec.lane_id},run={run_id}"
+
+
+def supersession_command(spec: LaneExecutionSpec, run_id: uuid.UUID, *, apply: bool = False) -> str:
+    """The complete `jobs-supersede-run` line, runnable as printed (D6, executor F5): the dry run, or the recording.
+
+    Prefixed with `railway ssh` into the executor, the one place its DSN, allow-list and lane TOMLs line up;
+    `--evidence` pre-filled, `--operator` expanded by the operator's own shell. See execution/AGENTS.md,
+    "Operator action surface".
+    """
+    arguments = shlex.join(
+        ("--lane", spec.lane_id, "--run-id", str(run_id), "--evidence", supersession_evidence(spec, run_id))
+    )
+    line = f"{EXECUTOR_SSH_PREFIX} {SUPERSEDE_RUN_COMMAND} {arguments} --operator {PRINTED_OPERATOR}"
+    return f"{line} {APPLY_FLAG}" if apply else line
 
 
 # `LaneWorkClass` is re-exported here for `fair_due_order`'s callers that only import lane_scheduling.
 __all__ = [
+    "APPLY_FLAG",
+    "EXECUTOR_SSH_PREFIX",
+    "PRINTED_OPERATOR",
     "SUPERSEDE_RUN_COMMAND",
     "CheckpointVerdict",
     "DueLane",
@@ -183,4 +251,5 @@ __all__ = [
     "next_scheduled_bucket",
     "scheduled_bucket",
     "supersession_command",
+    "supersession_evidence",
 ]

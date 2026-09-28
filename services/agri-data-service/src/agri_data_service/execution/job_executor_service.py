@@ -24,9 +24,10 @@ import socket
 import sys
 import time
 import uuid
-from contextlib import suppress
+from contextlib import AsyncExitStack, asynccontextmanager, suppress
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from functools import partial
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal
@@ -39,6 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 
 from agri_data_service.config import settings
 from agri_data_service.db.engine import local_source_loader_pool
+from agri_data_service.db.maintenance import MaintenanceBusyError, maintain_job_event_partitions
 from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.execution.exit_classes import classify_exit
 from agri_data_service.execution.gap_repair_contract import (
@@ -48,6 +50,12 @@ from agri_data_service.execution.gap_repair_contract import (
     RepairRequest,
     RepairRequestError,
 )
+from agri_data_service.execution.lane_catalogue import (
+    STOPPED_REASON,
+    LaneCatalogue,
+    current_lane_catalogue,
+    owning_lane_id,
+)
 from agri_data_service.execution.lane_ids import (
     BURN_SEVERITY_DIRECT_LANE_ID,
     DROUGHT_DIRECT_LANE_ID,
@@ -56,21 +64,35 @@ from agri_data_service.execution.lane_ids import (
     FIRE_PERIMETERS_DIRECT_LANE_ID,
 )
 from agri_data_service.execution.lane_incidents import (
+    CHAIN_WINDOW,
     CLASS_SOURCE_MISSING_ATTEMPT,
-    FLAPPING_WINDOW,
+    CODE_PROBE_HOURS_VARIABLE,
+    FLAPPING_EPISODE_THRESHOLD,
     INCIDENT_SEVERITY,
+    PROBATION_CLEAN_BUCKETS,
+    PROBE_HISTORY_MAX,
     REPAIR_BREAKER_TRIP_THRESHOLD,
     REPAIR_BREAKER_TRIPPING_CLASSES,
+    FinalAttempt,
+    HoldLadders,
+    HoldProgress,
     HoldState,
     HoldVerdict,
     LaneIncidentRow,
+    ProbeOutcome,
     ReconcileOutcome,
     RepairBreakerState,
     UpsertedIncident,
+    after_probe,
     evaluate_repair_breaker,
     final_attempt_exit_class,
     is_chain_chronic,
     is_chain_flapping,
+    is_conclusive,
+    judge_probation,
+    judge_probe,
+    parse_code_probe_hours,
+    probe_is_due,
     reconcile,
     repair_breaker_admits,
     repair_breaker_cooldown_days,
@@ -78,6 +100,7 @@ from agri_data_service.execution.lane_incidents import (
     select_lane_incidents,
     select_run_final_attempt,
     upsert_lane_incident,
+    watch_max_attempts,
 )
 from agri_data_service.execution.lane_scheduling import (
     SUPERSEDE_RUN_COMMAND,
@@ -94,17 +117,33 @@ from agri_data_service.execution.lane_scheduling import (
 from agri_data_service.execution.lane_specs import (
     ACTIVE_LANES_VARIABLE,
     CLOCK_RELEASE_STREAK_LIMIT,
+    CONFIG_EXECUTOR,
     EXECUTOR_DEFINITION_PREFIX,
     EXECUTOR_DEFINITION_VERSION,
     EXECUTOR_HANDLER_TOKEN,
+    EXECUTOR_PATH_PAYLOAD_KEY,
     EXECUTOR_REQUESTED_BY,
     EXECUTOR_WORK_ITEM_KIND,
     FAILURE_STREAK_PROBE_LIMIT,
     LANE_SPECS,
+    STOPPED_LANES_VARIABLE,
+    TURN_MODE_PAYLOAD_KEY,
     ActivationConfig,
     ExecutorConfigurationError,
     LaneExecutionSpec,
     parse_activation,
+)
+from agri_data_service.execution.provider_budget import (
+    BUDGET_BASIS_SUSPECT_KIND,
+    BUDGET_DEFERRED_KIND,
+    BUDGET_INCIDENT_KINDS,
+    EVENT_BUDGET_BASIS_SUSPECT,
+    AdmissionPass,
+    BudgetAdmissionState,
+    BudgetIncidentKind,
+    PoolAdmission,
+    admit_due_lanes,
+    same_utc_month,
 )
 from agri_data_service.execution.turn_reports import (
     ExecutorTickSummary,
@@ -112,6 +151,7 @@ from agri_data_service.execution.turn_reports import (
     LaneTickState,
     OperatorAction,
 )
+from agri_data_service.execution.usage_receipt import UsageReceiptStore, write_closed_month_receipt
 from agri_data_service.foundation.observability import events, redaction
 from agri_data_service.foundation.observability.router import ChildLogRouter
 from agri_data_service.foundation.observability.vocabulary import (
@@ -141,14 +181,22 @@ from agri_data_service.jobs.lease import (
     canonical_json,
     fetch_row,
     redact_text,
+    release_definition_lock,
+    release_provider_lock,
     required_column,
+    try_definition_lock,
+    try_provider_lock,
 )
 from agri_data_service.models.jobs import EventSeverity, IncidentState
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping
+    from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator, Mapping
     from collections.abc import Set as AbstractSet
+    from contextlib import AbstractAsyncContextManager
 
+    from sqlalchemy.ext.asyncio import AsyncEngine
+
+    from agri_data_service.execution.lane_specs import LaneWorkClass
     from agri_data_service.foundation.observability.router import Stream
 
 logger = structlog.get_logger(__name__)
@@ -177,6 +225,29 @@ DEFAULT_REPAIR_ROTATION_SECONDS: Final = 24 * 3600.0
 PROCESS_START_RELEASE_VARIABLE: Final = "PLANTGEO_JOB_EXECUTOR_PROCESS_START_RELEASES_BREAKER"
 PROCESS_START_RELEASE_OPERATOR: Final = "executor:process-start"
 DEPLOYMENT_ID_VARIABLE: Final = "RAILWAY_DEPLOYMENT_ID"
+#: The hold ladder's own supersession operator. Every operator the executor records under starts with
+#: `EXECUTOR_OPERATOR_PREFIX`, which `select_latest_run.sql` reads to keep such a marker from resetting the
+#: failure streak (F4): only a PERSON's release earns a fresh streak. See execution/AGENTS.md, "Holds and probes".
+PROBE_OPERATOR: Final = "executor:probe"
+EXECUTOR_OPERATOR_PREFIX: Final = "executor:"
+
+# --- S16 runtime switches (spec S15/S16; execution/AGENTS.md, "Work queue") ---------------------------
+#: `queue` (unset) drives each due lane on its own session without the tick awaiting it; `serial` is HEAD's
+#: in-tick await. A garbled value is `serial`, the known-good behaviour.
+DISPATCH_VARIABLE: Final = "PLANTGEO_JOB_EXECUTOR_DISPATCH"
+#: `split` (unset) is the hold ladder and the marker-aware streak; `legacy` turns both off and keeps GL-5's
+#: operator-only hold (today's production). `PLANTGEO_JOB_EXECUTOR_SOFT_FAILURE=off` is its own switch: with
+#: `legacy` it is pre-Wave-O HEAD planning (review PH2). A garbled value is `legacy`.
+BREAKER_MODE_VARIABLE: Final = "PLANTGEO_JOB_EXECUTOR_BREAKER_MODE"
+#: How many lanes the work queue runs at once. 1 at G1; raising it is part of G6 (spec S15).
+MAX_CONCURRENT_LANES_VARIABLE: Final = "PLANTGEO_JOB_EXECUTOR_MAX_CONCURRENT_LANES"
+DEFAULT_MAX_CONCURRENT_LANES: Final = 1
+#: How long a stopping service loop waits for its in-flight lanes to park before cancelling them.
+LANE_DRAIN_SECONDS: Final = 60.0
+DispatchMode = Literal["queue", "serial"]
+BreakerMode = Literal["split", "legacy"]
+_DISPATCH_MODES: Final[frozenset[str]] = frozenset({"queue", "serial"})
+_BREAKER_MODES: Final[frozenset[str]] = frozenset({"split", "legacy"})
 
 DEFAULT_POLL_SECONDS: Final = 30.0
 MIN_LANES_PER_TICK: Final = 2
@@ -229,6 +300,9 @@ START_LAG_CLOCK_SKEW_SECONDS: Final = 60.0
 START_LAG_MAX_SECONDS: Final = 7 * 24 * 3600.0
 #: Bound on the redacted stderr tail a non-`ok` `lane_turn` line carries (the ledger keeps the full tail).
 LANE_TURN_STDERR_SUMMARY_CHARS: Final = 1024
+#: Whether the turn `_execute_due_lane` is driving is a hold-ladder probe: the planner's flag, threaded into
+#: the handler through the task that runs it (a `ContextVar` is per task, so concurrent lanes never share it).
+_PROBE_TURN: ContextVar[bool] = ContextVar("plantgeo_job_executor_probe_turn", default=False)
 
 
 class ExecutorLeaderUnlockError(RuntimeError):
@@ -239,6 +313,9 @@ _TRY_LEADER_LOCK: Final = text("SELECT pg_try_advisory_lock(hashtextextended(:lo
 _RELEASE_LEADER_LOCK: Final = text("SELECT pg_advisory_unlock(hashtextextended(:lock_key, 0)) AS released")
 _SELECT_DEFINITION_STATE: Final = text(load_query_sql("execution/select_definition_state.sql"))
 _INSERT_DEFINITION: Final = text(load_query_sql("execution/insert_definition.sql"))
+_UPDATE_DEFINITION_SHAPE: Final = text(load_query_sql("execution/update_definition_shape.sql"))
+#: Definitions whose stored shape this process already brought in line with its spec (review M1).
+_DEFINITION_SHAPES_SYNCED: set[str] = set()
 _SELECT_LATEST_RUN: Final = text(load_query_sql("execution/select_latest_run.sql"))
 
 
@@ -324,6 +401,10 @@ def _publication_debt_counts(report: Mapping[str, object]) -> dict[str, int]:
 #: Per owning lane, the newest turn report this process ran and its incomplete-bucket streak.
 _LANE_TURN_REPORTS: dict[str, TurnReport] = {}
 
+#: Per config definition with no checkpoint yet, the instant THIS process first planned it. Process-held:
+#: a restart only makes a never-run lane wait for one more fire, the conservative direction.
+_NEVER_RUN_FIRST_SEEN: dict[str, datetime] = {}
+
 
 def parse_terminal_report(stdout_tail: bytes) -> Mapping[str, object] | None:
     """The one terminal report a turn's stdout carries (design Sec 1.6 point 8, o5a).
@@ -352,11 +433,16 @@ def parse_terminal_report(stdout_tail: bytes) -> Mapping[str, object] | None:
 
 
 def _unwritten_entries(report: Mapping[str, object]) -> list[Mapping[str, object]]:
-    """Collect `unwritten` entries from the report and from any per-product `results` it fans out into."""
+    """Collect `unwritten` entries from the report and from any per-product `results` it fans out into.
+
+    Reads both shapes (S16): a legacy direct writer's `{day, outcome, detail}` and the runner's S5
+    `{day, reason, ...}`, where `reason` is the S5 enum. Either way the kept entry's `outcome` is the word
+    an operator reads; an S5 entry also keeps its `reason`. See execution/AGENTS.md, "Turn reports".
+    """
     found: list[Mapping[str, object]] = []
     own = report.get("unwritten")
     if isinstance(own, list):
-        found.extend(entry for entry in own if isinstance(entry, dict))
+        found.extend(_normalised_unwritten(entry) for entry in own if isinstance(entry, dict))
     results = report.get("results")
     if isinstance(results, list):
         for product in results:
@@ -365,13 +451,31 @@ def _unwritten_entries(report: Mapping[str, object]) -> list[Mapping[str, object
     return found
 
 
+def _normalised_unwritten(entry: Mapping[str, object]) -> Mapping[str, object]:
+    """One unwritten entry in the legacy shape, the S5 `reason` standing in for a missing `outcome`."""
+    if "outcome" in entry or "reason" not in entry:
+        return entry
+    return {**entry, "outcome": entry["reason"]}
+
+
+def _counted_unwritten(entries: list[Mapping[str, object]]) -> int:
+    """How many entries the incomplete alarm counts: S5 counts only days behind the provider edge.
+
+    The runner states `days_unwritten` itself; this is the fallback when it does not, and an entry the
+    runner marks `behind_edge: false` (a day newer than the edge, still unsettled by design) is not owed.
+    """
+    return sum(1 for entry in entries if entry.get("behind_edge") is not False)
+
+
 def summarize_turn_report(report: Mapping[str, object] | None, *, previous: TurnReport | None) -> TurnReport | None:
     """Bound one parsed report to what a checkpoint may hold, continuing the lane's incomplete-bucket streak."""
     if report is None:
         return None
     entries = _unwritten_entries(report)
     declared = report.get("days_unwritten")
-    days_unwritten = declared if isinstance(declared, int) and not isinstance(declared, bool) else len(entries)
+    days_unwritten = (
+        declared if isinstance(declared, int) and not isinstance(declared, bool) else _counted_unwritten(entries)
+    )
     # Redacted HERE because the cursor path (`record_checkpoint`) canonicalises but never redacts; a child
     # that echoed a keyed URL into a day's detail must not put it on a durable row.
     kept = tuple(
@@ -379,6 +483,8 @@ def summarize_turn_report(report: Mapping[str, object] | None, *, previous: Turn
             "day": entry.get("day"),
             "outcome": entry.get("outcome"),
             "detail": redact_text(str(entry.get("detail", "")))[:TURN_REPORT_DETAIL_CHARS],
+            **({"reason": entry["reason"]} if isinstance(entry.get("reason"), str) else {}),
+            **({"stream": entry["stream"]} if isinstance(entry.get("stream"), str) else {}),
         }
         for entry in entries[:TURN_REPORT_UNWRITTEN_MAX]
     )
@@ -425,6 +531,11 @@ def _describe_turn_report_debt(turn_report: TurnReport) -> str:
     if owed:
         detail = f"{detail} ({owed})"
     return detail
+
+
+def _tick_catalogue() -> LaneCatalogue:
+    """This module's lane catalogue: `LANE_SPECS` read at call time (tests rebind it), the lane TOMLs, CA12."""
+    return current_lane_catalogue(LANE_SPECS)
 
 
 async def _try_leader_lock(session: AsyncSession) -> bool:
@@ -516,6 +627,7 @@ async def _load_or_register_definition(
         state = await _definition_state(session, spec)
         if state is None:
             raise RuntimeError(f"executor definition {spec.definition_name!r} was neither inserted nor readable")
+    await _sync_definition_shape(session, spec)
     _, enabled = state
     if pause_state.paused or not enabled:
         await _rollback_planning_transaction(session)
@@ -529,8 +641,44 @@ async def _load_or_register_definition(
     return definition
 
 
+async def _sync_definition_shape(session: AsyncSession, spec: LaneExecutionSpec) -> None:
+    """Once per process per definition, rewrite a stored row's shape to its spec's; `enabled` is never touched (M1).
+
+    `insert_definition.sql` never updates, so a same-version spec change (soil's six-hourly schedule, a config
+    lane's CA13 cut-over) would otherwise never reach the row `/admin/jobs` reads. The descriptive columns are
+    rewritten for every lane; the runtime limits only for a config lane, whose TOML owns them.
+    """
+    if spec.definition_name in _DEFINITION_SHAPES_SYNCED:
+        return
+    definition_spec = spec.definition_spec()
+    updated = await fetch_row(
+        session,
+        _UPDATE_DEFINITION_SHAPE,
+        {
+            "name": definition_spec.name,
+            "version": definition_spec.version,
+            "schedule": definition_spec.schedule,
+            "schedule_timezone": definition_spec.schedule_timezone,
+            "parameters": canonical_json(definition_spec.parameters),
+            "runtime_shape": spec.is_config,
+            "max_attempts": definition_spec.max_attempts,
+            "lease_seconds": definition_spec.lease_seconds,
+            "time_budget_seconds": definition_spec.time_budget_seconds,
+            "retry_policy": canonical_json(definition_spec.retry_policy.to_json()),
+        },
+    )
+    if updated is not None:
+        await _commit_planning_transaction(session)
+        logger.info("plantgeo_job_executor_definition_shape_updated", lane_id=spec.lane_id, runtime=spec.is_config)
+    _DEFINITION_SHAPES_SYNCED.add(spec.definition_name)
+
+
 async def read_lane_checkpoint(session: AsyncSession, spec: LaneExecutionSpec) -> LatestRun | None:
-    """Read the lane's scheduler checkpoint: the run a tick plans from, with its supersession and failure streak."""
+    """Read the lane's scheduler checkpoint: the run a tick plans from, with its supersession and failure streak.
+
+    Under the split breaker the streak is marker-aware (F4): a person's supersession ends it. The planner and
+    the `jobs-supersede-run` verb both read the mode from this process's environment, so they always agree.
+    """
     row = await fetch_row(
         session,
         _SELECT_LATEST_RUN,
@@ -539,6 +687,8 @@ async def read_lane_checkpoint(session: AsyncSession, spec: LaneExecutionSpec) -
             "current_version": EXECUTOR_DEFINITION_VERSION,
             "supersession_fingerprint_prefix": RUN_SUPERSESSION_FINGERPRINT_PREFIX,
             "failure_streak_limit": FAILURE_STREAK_PROBE_LIMIT,
+            "streak_after_marker": breaker_mode() == "split",
+            "executor_operator_prefix": EXECUTOR_OPERATOR_PREFIX,
         },
     )
     if row is None:
@@ -583,6 +733,7 @@ def _held_checkpoint_result(spec: LaneExecutionSpec, latest: LatestRun, verdict:
         detail=detail,
         blockers=(f"{OPERATOR_SUPERSESSION_BLOCKER_PREFIX}{command}",) if command is not None else (),
         operator_action=command,
+        operator_apply_action=supersession_command(spec, latest.run_id, apply=True) if needs_operator else None,
     )
 
 
@@ -602,15 +753,18 @@ async def _open_scheduled_run(
         logical_run_key=f"{spec.definition_name}:{scheduled_iso}",
         scheduled_for=candidate.scheduled_for,
         requested_by=EXECUTOR_REQUESTED_BY,
-        target_partitions={"lane_id": spec.lane_id, "scheduled_for": scheduled_iso},
+        target_partitions=spec.run_target_partitions(scheduled_iso),
         work_items=(
             JobWorkItemSpec(
                 shard_key=scheduled_iso,
                 kind=EXECUTOR_WORK_ITEM_KIND,
-                payload={"lane_id": spec.lane_id, "scheduled_for": scheduled_iso},
+                # CA1: a config definition's item carries the config-path marker the ledger can be read by.
+                payload=spec.work_item_payload(scheduled_iso),
                 priority=_work_priority(spec),
             ),
         ),
+        # A probe or probation bucket is single-attempt, a watched one two (GL-6); `None` is the definition's.
+        max_attempts=candidate.max_attempts,
     )
     await _commit_planning_transaction(session)
     return opened.job_run_id
@@ -640,15 +794,20 @@ async def _execute_due_lane(
             bucket=candidate.scheduled_for.isoformat(),
             run_id=str(run_id),
         )
-    summary = await run_job_slice(
-        session,
-        definition_name=candidate.spec.definition_name,
-        version=candidate.definition.version,
-        job_run_id=run_id,
-        worker_id=_worker_id(candidate.spec),
-        budget_seconds=float(candidate.definition.time_budget_seconds),
-        stop=stop,
-    )
+    # The planner's probe flag reaches the handler through this task's context (GL-6), never a payload key.
+    probe_token = _PROBE_TURN.set(candidate.probe)
+    try:
+        summary = await run_job_slice(
+            session,
+            definition_name=candidate.spec.definition_name,
+            version=candidate.definition.version,
+            job_run_id=run_id,
+            worker_id=_worker_id(candidate.spec),
+            budget_seconds=float(candidate.definition.time_budget_seconds),
+            stop=stop,
+        )
+    finally:
+        _PROBE_TURN.reset(probe_token)
     failed = (
         summary.retried > 0
         or summary.dead_lettered > 0
@@ -942,11 +1101,13 @@ class _LanePlan:
     definition_enabled: bool = True
     operator_held: bool = False
     blocked: bool = False
+    #: The hold ladder started a probe while planning this lane (the hold row already reads `probing`).
+    probe_started: bool = False
 
 
 def _is_operator_held(spec: LaneExecutionSpec, latest: LatestRun | None, now: datetime) -> bool:
     """True when only a recorded supersession releases this checkpoint (pure; `judge_failed_checkpoint`)."""
-    if latest is None or latest.status not in SETTLED_WITHOUT_SUCCESS or spec.cadence_seconds is None:
+    if latest is None or latest.status not in SETTLED_WITHOUT_SUCCESS or not spec.executable:
         return False
     verdict = judge_failed_checkpoint(spec, latest, now)
     return not verdict.released and verdict.release == "operator" and not latest.superseded_by_operator
@@ -973,9 +1134,43 @@ async def _isolate_plan_fault(session: AsyncSession, lane_id: str, error: Except
     )
 
 
+def _stopped_lane_result(spec: LaneExecutionSpec) -> LaneTickResult:
+    """A definition the CA12 kill-switch names: planned by nobody, on either path, until the variable drops it."""
+    return LaneTickResult(
+        lane_id=spec.lane_id,
+        state="paused",
+        command=spec.command,
+        blockers=(f"named in {STOPPED_LANES_VARIABLE}",),
+        detail=f"stopped by {STOPPED_LANES_VARIABLE}; no ledger was read and nothing dispatches",
+    )
+
+
+def _undispatched_config_result(spec: LaneExecutionSpec, reason: str, now: datetime) -> LaneTickResult:
+    """A config definition its TOML, the kill-switch or a declared conflict keeps from dispatching (CA3)."""
+    return LaneTickResult(
+        lane_id=spec.lane_id,
+        state="paused" if reason == STOPPED_REASON else "shadow",
+        scheduled_for=scheduled_bucket(spec, now),
+        command=spec.command,
+        blockers=(reason,),
+        due_prediction="would_be_due_if_dispatchable; source watermark parity not evaluated",
+        detail=f"config lane not dispatched: {reason}",
+    )
+
+
+def _quarantined_lane_result(lane_id: str, reasons: tuple[str, ...]) -> LaneTickResult:
+    """A lane whose TOML did not load (S8): it runs on neither path, and every other lane runs."""
+    return LaneTickResult(
+        lane_id=lane_id,
+        state="paused",
+        blockers=tuple(f"lane TOML quarantined: {reason}" for reason in reasons),
+        detail=f"lanes/{lane_id}.toml is quarantined (S8); this lane runs on neither path until it loads",
+    )
+
+
 def _inactive_lane_result(spec: LaneExecutionSpec, now: datetime) -> LaneTickResult:
     state: LaneTickState = "shadow" if spec.executable else "source_specific"
-    current_bucket = scheduled_bucket(spec, now) if spec.executable and spec.cadence_seconds is not None else None
+    current_bucket = scheduled_bucket(spec, now) if spec.executable else None
     blockers = ["lane is not in the active allow-list"]
     if not spec.executable:
         blockers.append("no executable command exists in this runtime")
@@ -996,14 +1191,20 @@ def _inactive_lane_result(spec: LaneExecutionSpec, now: datetime) -> LaneTickRes
     )
 
 
-async def _plan_lane(  # noqa: PLR0911 - one return per lane state the planner can find
+async def _plan_lane(  # noqa: PLR0911, PLR0912 - one return per lane state the planner can find
     session: AsyncSession,
     spec: LaneExecutionSpec,
     now: datetime,
     *,
     breaker_release: ProcessStartRelease | None,
+    ladder: _SoftFailureTick | None = None,
 ) -> _LanePlan:
-    """Plan one ACTIVE lane exactly as HEAD did; the `_LanePlan` only adds what the hold record reads."""
+    """Plan one ACTIVE lane as HEAD did; the `_LanePlan` only adds what the hold record reads.
+
+    `ladder` (the split breaker's tick, GL-6) may start a single-attempt probe of a held lane and shapes each
+    new bucket's failure budget (probe, probation, watch). Without it the plan is HEAD's exactly. See
+    execution/AGENTS.md, "Holds and probes".
+    """
     definition = await _load_or_register_definition(session, spec)
     latest = await read_lane_checkpoint(session, spec)
     prior_result, prior_due = await _plan_prior_version_run(session, spec, latest)
@@ -1037,36 +1238,45 @@ async def _plan_lane(  # noqa: PLR0911 - one return per lane state the planner c
             if released is not None:
                 latest = released
                 verdict = judge_failed_checkpoint(spec, latest, now)
+                if ladder is not None:
+                    # WQ-7 fold: the opt-in deploy release is recorded as a probe, then probation.
+                    await ladder.record_deploy_probe(session, spec, latest, verdict)
         if not verdict.released:
+            if ladder is not None:
+                probe = await ladder.start_probe(session, spec, definition, latest, verdict)
+                if probe is not None:
+                    return _LanePlan(due=probe, latest=latest, probe_started=True)
             return _LanePlan(
                 result=_held_checkpoint_result(spec, latest, verdict),
                 latest=latest,
                 operator_held=verdict.release == "operator" and not latest.superseded_by_operator,
             )
+        released_bucket = DueLane(
+            spec=spec,
+            definition=definition,
+            scheduled_for=verdict.next_bucket,
+            existing_run_id=None,
+            last_scheduled_for=latest.scheduled_for,
+            superseded_run_id=latest.run_id,
+            supersession=verdict.release,
+        )
         return _LanePlan(
-            due=DueLane(
-                spec=spec,
-                definition=definition,
-                scheduled_for=verdict.next_bucket,
-                existing_run_id=None,
-                last_scheduled_for=latest.scheduled_for,
-                superseded_run_id=latest.run_id,
-                supersession=verdict.release,
-            ),
+            due=released_bucket if ladder is None else ladder.shape_bucket(spec, latest, released_bucket),
             latest=latest,
         )
     if latest is not None and latest.open:
         blocked = _blocked_open_run_result(spec, latest, prior_version=False)
         if blocked is not None:
             return _LanePlan(result=blocked, latest=latest, blocked=blocked.state == "failed")
+        open_bucket = DueLane(
+            spec=spec,
+            definition=definition,
+            scheduled_for=latest.scheduled_for,
+            existing_run_id=latest.run_id,
+            last_scheduled_for=latest.scheduled_for,
+        )
         return _LanePlan(
-            due=DueLane(
-                spec=spec,
-                definition=definition,
-                scheduled_for=latest.scheduled_for,
-                existing_run_id=latest.run_id,
-                last_scheduled_for=latest.scheduled_for,
-            ),
+            due=open_bucket if ladder is None else ladder.shape_bucket(spec, latest, open_bucket),
             latest=latest,
         )
     if latest is not None and latest.scheduled_for >= current_bucket:
@@ -1081,47 +1291,96 @@ async def _plan_lane(  # noqa: PLR0911 - one return per lane state the planner c
             ),
             latest=latest,
         )
+    if latest is None and spec.cron is not None:
+        # S9: a never-run config definition waits for its first fire after this process first saw it,
+        # rather than opening the fire it was registered after (executor F8c's immediate first bucket).
+        first_seen = _NEVER_RUN_FIRST_SEEN.setdefault(spec.definition_name, now)
+        if current_bucket <= first_seen:
+            return _LanePlan(
+                result=LaneTickResult(
+                    lane_id=spec.lane_id,
+                    state="not_due",
+                    scheduled_for=bucket_after(spec, first_seen),
+                    detail="a never-run config lane waits for its next cron fire",
+                ),
+                latest=latest,
+            )
     bucket = next_scheduled_bucket(spec, now, None if latest is None else latest.scheduled_for)
+    next_bucket = DueLane(
+        spec=spec,
+        definition=definition,
+        scheduled_for=bucket,
+        existing_run_id=None,
+        last_scheduled_for=None if latest is None else latest.scheduled_for,
+    )
     return _LanePlan(
-        due=DueLane(
-            spec=spec,
-            definition=definition,
-            scheduled_for=bucket,
-            existing_run_id=None,
-            last_scheduled_for=None if latest is None else latest.scheduled_for,
-        ),
+        due=next_bucket if ladder is None else ladder.shape_bucket(spec, latest, next_bucket),
         latest=latest,
     )
 
 
-async def _plan_active_lanes(
+async def _plan_active_lanes(  # noqa: PLR0913 - the session, the clock, the allow-list and three collaborators
     session: AsyncSession,
     activation: ActivationConfig,
     now: datetime,
     *,
     breaker_release: ProcessStartRelease | None = None,
     observer: _SoftFailureTick | None = None,
+    catalogue: LaneCatalogue | None = None,
 ) -> tuple[list[LaneTickResult], list[DueLane]]:
-    """Plan every lane, one failure domain each: a lane whose planning raises is reported `plan_failed`
-    and the loop continues (spec Sec 4.9.3 "Isolation"); `observer` records the hold incidents (o5b)."""
+    """Plan every lane on both paths, one failure domain each: a lane whose planning raises is reported
+    `plan_failed` and the loop continues (spec Sec 4.9.3 "Isolation"); `observer` records the hold
+    incidents (o5b). A legacy lane is gated by the allow-list, a config definition by its TOML (CA3), and
+    both by the CA12 kill-switch. See execution/AGENTS.md, "Lane catalogue"."""
+    catalogue = _tick_catalogue() if catalogue is None else catalogue
+    legacy_activation = catalogue.legacy_activation(activation)
     results: list[LaneTickResult] = []
     due: list[DueLane] = []
-    for spec in LANE_SPECS.values():
+    for spec in catalogue.legacy_specs.values():
+        if catalogue.kill_switch.stops(spec.lane_id):
+            results.append(_stopped_lane_result(spec))
+            continue
         if not activation.is_active(spec.lane_id):
             results.append(_inactive_lane_result(spec, now))
             continue
+        await _plan_and_observe(session, spec, now, results, due, breaker_release=breaker_release, observer=observer)
+    for spec in catalogue.config_specs:
         try:
-            plan = await _plan_lane(session, spec, now, breaker_release=breaker_release)
-        except Exception as error:  # one lane's fault is that lane's plan_failed, never the tick's
+            refusal = catalogue.config_gate(spec) or catalogue.config_conflict(spec, legacy_activation)
+            if refusal is not None:
+                results.append(_undispatched_config_result(spec, refusal, now))
+                continue
+        except Exception as error:  # a config lane's fault is that lane's plan_failed, never the tick's
             results.append(await _isolate_plan_fault(session, spec.lane_id, error))
             continue
-        if plan.result is not None:
-            results.append(plan.result)
-        if plan.due is not None:
-            due.append(plan.due)
-        if observer is not None:
-            await observer.observe_lane(session, spec, plan)
+        await _plan_and_observe(session, spec, now, results, due, breaker_release=breaker_release, observer=observer)
+    results.extend(_quarantined_lane_result(lane_id, reasons) for lane_id, reasons in catalogue.quarantined.items())
     return results, due
+
+
+async def _plan_and_observe(  # noqa: PLR0913 - the lane, the clock, the two accumulators and two collaborators
+    session: AsyncSession,
+    spec: LaneExecutionSpec,
+    now: datetime,
+    results: list[LaneTickResult],
+    due: list[DueLane],
+    *,
+    breaker_release: ProcessStartRelease | None,
+    observer: _SoftFailureTick | None,
+) -> None:
+    """Plan one dispatchable definition and record its hold state, isolating a non-SQL planning fault."""
+    ladder = None if observer is None else observer.ladder_gate(spec.lane_id)
+    try:
+        plan = await _plan_lane(session, spec, now, breaker_release=breaker_release, ladder=ladder)
+    except Exception as error:  # one lane's fault is that lane's plan_failed, never the tick's
+        results.append(await _isolate_plan_fault(session, spec.lane_id, error))
+        return
+    if plan.result is not None:
+        results.append(plan.result)
+    if plan.due is not None:
+        due.append(plan.due)
+    if observer is not None:
+        await observer.observe_lane(session, spec, plan)
 
 
 def repair_lane_spec(spec: LaneExecutionSpec) -> LaneExecutionSpec:
@@ -1183,7 +1442,7 @@ async def _plan_repair_lane(
                 state="deferred_fairness",
                 scheduled_for=latest.scheduled_for,
                 run_id=latest.run_id,
-                detail="the owning lane's forward bucket is due this tick; its repair waits for the next one",
+                detail="the owning lane's forward bucket is due or running; its repair waits for the next tick",
             ),
             None,
         )
@@ -1215,14 +1474,18 @@ async def _plan_repair_runs(
     opens the next one under a new logical key. `forward_due` keeps a lane's forward bucket and its repair
     out of the same tick, so one turn never doubles that lane's egress. Each lane is its own failure domain
     (spec Sec 4.9.3): a non-SQL fault planning one lane's repair is that repair's `plan_failed` result.
-    A lane the soft-failure layer withholds arrives here already removed from `activation`.
+    A lane the soft-failure layer withholds arrives here already removed from `activation`. A lane on the
+    config path is never driven here, even with an open `:gap-repair` run (CA8), nor is a stopped one (CA12).
     """
+    catalogue = _tick_catalogue()
     results: list[LaneTickResult] = []
     due: list[DueLane] = []
     for lane_id in sorted(REPAIR_LANE_IDS):
         spec = LANE_SPECS.get(lane_id)
         if spec is None or not activation.is_active(lane_id):
             continue
+        if lane_id not in catalogue.legacy_specs or catalogue.kill_switch.stops(f"{lane_id}{REPAIR_LANE_SUFFIX}"):
+            continue  # the lane itself, or only its `:gap-repair`, is named in the kill-switch (CA12, L8)
         try:
             result, candidate = await _plan_repair_lane(session, spec, forward_due=forward_due)
         except Exception as error:  # one repair's fault is that repair's plan_failed only
@@ -1337,6 +1600,79 @@ async def _author_due_repairs(
     return summary
 
 
+# --- Daily upkeep in the repair-authoring slot (spec Sec 4.9.2/4.9.3; execution/AGENTS.md "Daily upkeep") ---
+
+#: `job-logs-maintain`'s own CLI defaults: 30 days of `agri.job_event` partitions kept, 7 days created ahead.
+JOB_LOGS_RETENTION_DAYS: Final = 30
+JOB_LOGS_FUTURE_DAYS: Final = 7
+#: Bound on one job-event pass inside the tick: its DDL waits `lock_timeout` (15 s), then moves and drops rows.
+JOB_LOGS_MAINTAIN_TIMEOUT_SECONDS: Final = 300.0
+
+
+@dataclass(slots=True)
+class DailyMaintenance:
+    """The leader's once-per-UTC-day upkeep: `job-logs-maintain` (job-event retention, COV2-14) and the closed
+    month's usage receipt (WQ-6). The day is process-held; a failed pass waits for the next UTC day, so a broken
+    store or a busy partition lock is never retried every tick."""
+
+    #: The executor's DSN; job-event maintenance runs on its own short-lived connection. None skips it.
+    database_url: str | None = None
+    #: Builds the receipt store on first use; None skips receipts.
+    receipt_store_factory: Callable[[], UsageReceiptStore] | None = UsageReceiptStore.from_settings
+    last_day: date | None = None
+    receipt_store: UsageReceiptStore | None = None
+    receipt_store_failed: bool = False
+
+    def due(self, now: datetime) -> bool:
+        return self.last_day != now.astimezone(UTC).date()
+
+    def store(self) -> UsageReceiptStore | None:
+        """The receipt store, built once; an unconfigured bucket logs once and turns receipts off for the process."""
+        if self.receipt_store is None and self.receipt_store_factory is not None and not self.receipt_store_failed:
+            try:
+                self.receipt_store = self.receipt_store_factory()
+            except Exception as error:  # an unconfigured bucket must never fail the tick
+                self.receipt_store_failed = True
+                logger.error("plantgeo_job_executor_usage_receipt_store_unavailable", error_type=type(error).__name__)
+        return self.receipt_store
+
+
+async def _maintain_job_events(database_url: str, now: datetime) -> dict[str, str | int]:
+    """One `job-logs-maintain` pass on its own connection: its partition DDL never rides the leader's transaction."""
+    async with local_source_loader_pool(database_url) as engine, engine.begin() as connection:
+        result = await maintain_job_event_partitions(
+            connection, now=now, retention_days=JOB_LOGS_RETENTION_DAYS, future_days=JOB_LOGS_FUTURE_DAYS
+        )
+    return result.to_dict()
+
+
+async def _run_daily_maintenance(session: AsyncSession, *, now: datetime, maintenance: DailyMaintenance) -> None:
+    """Job-event retention, then the closed month's receipt; each fault is logged and costs nothing but itself."""
+    maintenance.last_day = now.astimezone(UTC).date()
+    if maintenance.database_url is not None:
+        try:
+            summary = await asyncio.wait_for(
+                _maintain_job_events(maintenance.database_url, now), timeout=JOB_LOGS_MAINTAIN_TIMEOUT_SECONDS
+            )
+        except MaintenanceBusyError:
+            logger.info("plantgeo_job_executor_job_logs_maintain_busy")
+        except Exception as error:  # upkeep is best-effort; the lanes never wait on it
+            logger.error("plantgeo_job_executor_job_logs_maintain_failed", error_type=type(error).__name__)
+        else:
+            logger.info("plantgeo_job_executor_job_logs_maintained", **summary)
+    store = maintenance.store()
+    if store is None:
+        return
+    try:
+        outcome, month = await write_closed_month_receipt(session, store=store, now=now)
+    except Exception as error:  # the next UTC day tries again; the month's ledger rows are still there
+        if isinstance(error, SQLAlchemyError) and _pinned_connection_invalidated(session):
+            raise
+        logger.error("plantgeo_job_executor_usage_receipt_failed", error_type=type(error).__name__)
+        return
+    logger.debug("plantgeo_job_executor_usage_receipt_checked", outcome=outcome, month=f"{month:%Y-%m}")
+
+
 # --- Soft failure (Wave O GL-5, o5b; spec Sec 4.9.3; design record Sec 3.2A-3.4) --------------------
 #
 # Everything below RECORDS: one `agri.job_incident` row per streak, written through
@@ -1389,6 +1725,16 @@ REPAIR_FAILING_QUIET_PERIOD: Final = timedelta(days=7)
 RESOLUTION_LANE_INACTIVE: Final = "lane_inactive"
 RESOLUTION_REPAIR_QUIET: Final = "repair_quiet"
 RESOLUTION_AUTHORING_DISABLED: Final = "authoring_disabled"
+#: The G1 ladder's own events (design Sec 1.4); logged on a transition only, never per tick.
+EVENT_HOLD_PROBE: Final = "plantgeo_job_executor_hold_probe"
+EVENT_HOLD_PROBE_FAILED: Final = "plantgeo_job_executor_hold_probe_failed"
+EVENT_HOLD_PROBE_INCONCLUSIVE: Final = "plantgeo_job_executor_hold_probe_inconclusive"
+EVENT_HOLD_PROBE_REFUSED: Final = "plantgeo_job_executor_hold_probe_refused"
+EVENT_HOLD_PROBATION: Final = "plantgeo_job_executor_hold_probation"
+
+
+class _ProbeNotStartedError(RuntimeError):
+    """A probe's hold write, supersession or commit did not land; the probe is rolled back and the hold stays."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1454,15 +1800,84 @@ def soft_failure_enabled(environment: Mapping[str, str] | None = None) -> bool:
     return False
 
 
+def _mode_switch(  # noqa: PLR0913 - the source, the variable and the three words that define a mode switch
+    source: Mapping[str, str], variable: str, *, allowed: frozenset[str], unset: str, garbled: str, warn: bool
+) -> str:
+    """One S16 mode switch: blank is `unset`, a recognised word is itself, anything else is `garbled` (HEAD's)."""
+    raw = source.get(variable)
+    if raw is None or not raw.strip():
+        return unset
+    normalized = raw.strip().casefold()
+    if normalized in allowed:
+        return normalized
+    if warn:
+        with suppress(Exception):
+            logger.warning(events.EVENT_CONFIG_FALLBACK, variable=variable, value=raw[:64], fallback=garbled)
+    return garbled
+
+
+def breaker_mode(environment: Mapping[str, str] | None = None, *, warn: bool = False) -> BreakerMode:
+    """`PLANTGEO_JOB_EXECUTOR_BREAKER_MODE`: `split` unset; a garbled value is `legacy`, HEAD's breaker."""
+    source = os.environ if environment is None else environment
+    mode = _mode_switch(
+        source, BREAKER_MODE_VARIABLE, allowed=_BREAKER_MODES, unset="split", garbled="legacy", warn=warn
+    )
+    return "split" if mode == "split" else "legacy"
+
+
+def dispatch_mode(environment: Mapping[str, str] | None = None, *, warn: bool = False) -> DispatchMode:
+    """`PLANTGEO_JOB_EXECUTOR_DISPATCH`: `queue` unset; a garbled value is `serial`, HEAD's in-tick await."""
+    source = os.environ if environment is None else environment
+    mode = _mode_switch(source, DISPATCH_VARIABLE, allowed=_DISPATCH_MODES, unset="queue", garbled="serial", warn=warn)
+    return "queue" if mode == "queue" else "serial"
+
+
+def _tunable_concurrent_lanes(source: Mapping[str, str], faults: list[ConfigFault]) -> int:
+    """`MAX_CONCURRENT_LANES`: a positive integer, else the default (1) with one `config_fallback` warning."""
+    raw = source.get(MAX_CONCURRENT_LANES_VARIABLE, "").strip()
+    if not raw:
+        return DEFAULT_MAX_CONCURRENT_LANES
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value <= 0:
+        _config_fallback(faults, MAX_CONCURRENT_LANES_VARIABLE, raw, DEFAULT_MAX_CONCURRENT_LANES)
+        return DEFAULT_MAX_CONCURRENT_LANES
+    return value
+
+
+def hold_ladders_from_environment(environment: Mapping[str, str] | None = None) -> HoldLadders:
+    """The probe ladders `CODE_PROBE_HOURS` selects; a garbled value keeps code holds operator-only, warned once."""
+    source = os.environ if environment is None else environment
+    raw = source.get(CODE_PROBE_HOURS_VARIABLE)
+    code_hours, garbled = parse_code_probe_hours(raw)
+    if garbled and raw is not None:
+        with suppress(Exception):
+            logger.warning(
+                events.EVENT_CONFIG_FALLBACK,
+                variable=CODE_PROBE_HOURS_VARIABLE,
+                value=raw[:64],
+                fallback="operator_only",
+            )
+    return HoldLadders(code_probe_hours=code_hours)
+
+
 @dataclass(frozen=True, slots=True)
 class ExecutorSettings:
     """Every executor tunable, parsed so that no malformed variable can stop the process (spec Sec 4.9.3)."""
 
     poll_seconds: float
+    #: The serial dispatcher's per-tick selection bound; retired from the work queue (S15), kept for `serial`.
     max_lanes_per_tick: int
     repair_clock: RepairAuthoringClock | None
     soft_failure_enabled: bool
     config_faults: tuple[ConfigFault, ...]
+    dispatch: DispatchMode = "serial"
+    breaker: BreakerMode = "legacy"
+    max_concurrent_lanes: int = DEFAULT_MAX_CONCURRENT_LANES
+    #: The G1 hold ladder; `None` under `BREAKER_MODE=legacy` (GL-5's operator-only holds) or `SOFT_FAILURE=off`.
+    hold_ladders: HoldLadders | None = None
 
     @classmethod
     def from_environment(cls, environment: Mapping[str, str] | None = None) -> ExecutorSettings:
@@ -1471,12 +1886,21 @@ class ExecutorSettings:
         poll_seconds = _tunable_float(source, POLL_SECONDS_VARIABLE, DEFAULT_POLL_SECONDS, faults)
         max_lanes = _tunable_lanes_per_tick(source, faults)
         repair_clock = RepairAuthoringClock.from_environment(source, faults=faults)
+        concurrent_lanes = _tunable_concurrent_lanes(source, faults)
+        breaker = breaker_mode(source, warn=True)
+        # One switch per shared change (S16): `BREAKER_MODE=legacy` removes the G1 ladder and keeps GL-5's incident
+        # layer; `SOFT_FAILURE=off` removes GL-5. So each can be rolled back alone (review PH2).
+        soft_failure = soft_failure_enabled(source)
         return cls(
             poll_seconds=poll_seconds,
             max_lanes_per_tick=max_lanes,
             repair_clock=repair_clock,
-            soft_failure_enabled=soft_failure_enabled(source),
+            soft_failure_enabled=soft_failure,
             config_faults=tuple(faults),
+            dispatch=dispatch_mode(source, warn=True),
+            breaker=breaker,
+            max_concurrent_lanes=concurrent_lanes,
+            hold_ladders=hold_ladders_from_environment(source) if soft_failure and breaker == "split" else None,
         )
 
 
@@ -1489,16 +1913,26 @@ def _quarantine_reason(lane_id: str) -> str:
     return "conflict"
 
 
-def log_quarantined_lanes(activation: ActivationConfig) -> None:
-    """One `lane_quarantined` warning per quarantined allow-list id at startup; the process keeps running."""
-    for lane_id in sorted(activation.quarantined):
+def quarantine_sources(
+    activation: ActivationConfig, catalogue: LaneCatalogue | None = None
+) -> dict[str, tuple[str, str]]:
+    """Lane id -> (the variable or file that named it, why it is quarantined), over every source.
+
+    The allow-list (GL-5), the lane TOMLs (S8) and the CA12 kill-switch (H6/FR-11) share one rule: an id
+    they cannot honour is quarantined with one warning and one `lane_quarantined` incident, never an exit.
+    """
+    sources = {lane_id: (ACTIVE_LANES_VARIABLE, _quarantine_reason(lane_id)) for lane_id in activation.quarantined}
+    if catalogue is not None:
+        for lane_id, source in catalogue.quarantine_reasons().items():
+            sources.setdefault(lane_id, source)
+    return sources
+
+
+def log_quarantined_lanes(activation: ActivationConfig, catalogue: LaneCatalogue | None = None) -> None:
+    """One `lane_quarantined` warning per quarantined id at startup; the process keeps running."""
+    for lane_id, (variable, reason) in sorted(quarantine_sources(activation, catalogue).items()):
         with suppress(Exception):
-            logger.warning(
-                events.EVENT_LANE_QUARANTINED,
-                lane_id=lane_id,
-                reason=_quarantine_reason(lane_id),
-                variable=ACTIVE_LANES_VARIABLE,
-            )
+            logger.warning(events.EVENT_LANE_QUARANTINED, lane_id=lane_id, reason=reason, variable=variable)
 
 
 @dataclass(slots=True)
@@ -1509,6 +1943,9 @@ class SoftFailureState:
 
     enabled: bool = True
     quarantined: frozenset[str] = frozenset()
+    #: Lane id -> (the variable or file that named it, the reason), for ids quarantined by a source other
+    #: than the allow-list (a lane TOML, the CA12 kill-switch); `quarantine_sources` builds it.
+    quarantine_origins: Mapping[str, tuple[str, str]] = field(default_factory=dict)
     config_faults: tuple[ConfigFault, ...] = ()
     startup_recorded: bool = False
     #: Statement keys whose last attempt failed: `incident_write_failed` logs once per transition.
@@ -1525,17 +1962,30 @@ class SoftFailureState:
     repair_withheld: frozenset[str] = frozenset()
     chronic_lanes: tuple[str, ...] = ()
     plan_failed_lanes: tuple[str, ...] = ()
+    #: The G1 hold ladder (GL-6). `None` -- the default, and `BREAKER_MODE=legacy` or `SOFT_FAILURE=off` in
+    #: production -- keeps GL-5's operator-only hold byte for byte. See execution/AGENTS.md, "Holds and probes".
+    ladders: HoldLadders | None = None
+    #: Settled run id -> its final attempt (a settled run's attempts never change); read to judge a probe.
+    final_attempts: dict[uuid.UUID, FinalAttempt | None] = field(default_factory=dict)
+    #: Lane -> its hold's newest probes, newest last, for `detail.probes`. Process-held: the incident read
+    #: returns no `detail` blob, so a restart starts the list again (the ladder itself rides on the row).
+    hold_probes: dict[str, list[dict[str, object]]] = field(default_factory=dict)
 
     @classmethod
-    def for_process(cls, activation: ActivationConfig, settings_: ExecutorSettings) -> SoftFailureState:
+    def for_process(
+        cls, activation: ActivationConfig, settings_: ExecutorSettings, catalogue: LaneCatalogue | None = None
+    ) -> SoftFailureState:
+        sources = quarantine_sources(activation, catalogue)
         return cls(
             enabled=settings_.soft_failure_enabled,
-            quarantined=activation.quarantined,
+            quarantined=frozenset(sources),
+            quarantine_origins=sources,
             config_faults=settings_.config_faults,
+            ladders=settings_.hold_ladders,
         )
 
 
-def _incident_fingerprint(kind: IncidentKind, subject: str | None) -> str:
+def _incident_fingerprint(kind: IncidentKind | BudgetIncidentKind, subject: str | None) -> str:
     return kind if subject is None else f"{kind}:{subject}"
 
 
@@ -1569,6 +2019,11 @@ def _level_of(severity: EventSeverity) -> LogLevel:
         if mapped == severity:
             return level
     return "error"
+
+
+def _acknowledged(row: LaneIncidentRow | None) -> bool:
+    """An operator acknowledged this open incident in `/admin/jobs`, so its escalation events stay quiet."""
+    return row is not None and row.status == IncidentState.ACKNOWLEDGED
 
 
 def _log_at(level: LogLevel, event: str, **fields: object) -> None:
@@ -1710,7 +2165,7 @@ class _SoftFailureTick:
         self,
         session: AsyncSession,
         *,
-        kind: IncidentKind,
+        kind: IncidentKind | BudgetIncidentKind,
         subject: str | None,
         level: LogLevel,
         summary: str,
@@ -1756,7 +2211,7 @@ class _SoftFailureTick:
             self.open_rows.pop(row.fingerprint, None)
         return ok
 
-    def _open_row(self, kind: IncidentKind, subject: str | None) -> LaneIncidentRow | None:
+    def _open_row(self, kind: IncidentKind | BudgetIncidentKind, subject: str | None) -> LaneIncidentRow | None:
         return self.open_rows.get(_incident_fingerprint(kind, subject))
 
     async def _bump_streak(  # noqa: PLR0913 - the streak's identity, its escalation point and its words
@@ -1789,7 +2244,9 @@ class _SoftFailureTick:
         )
         if upserted is None:
             return None
-        escalated_now = level == "error" and (row is None or row.severity != EventSeverity.ERROR)
+        escalated_now = (
+            level == "error" and (row is None or row.severity != EventSeverity.ERROR) and not _acknowledged(row)
+        )
         return upserted.occurrence_count, escalated_now
 
     # --- tick phases -------------------------------------------------------------------------------
@@ -1803,7 +2260,7 @@ class _SoftFailureTick:
             return
         self.read_ok = True
         for row in rows:
-            if row.incident_type not in INCIDENT_KINDS:
+            if row.incident_type not in INCIDENT_KINDS and row.incident_type not in BUDGET_INCIDENT_KINDS:
                 continue  # supersession receipts and process-start markers share the table
             if row.status == IncidentState.RESOLVED:
                 if row.incident_type == "lane_hold":
@@ -1824,14 +2281,16 @@ class _SoftFailureTick:
         for fingerprint, lane in sorted(quarantined.items()):
             if fingerprint in self.open_rows:
                 continue
-            reason = _quarantine_reason(lane)
+            variable, reason = self.state.quarantine_origins.get(
+                lane, (ACTIVE_LANES_VARIABLE, _quarantine_reason(lane))
+            )
             upserted = await self._upsert(
                 session,
                 kind="lane_quarantined",
                 subject=lane,
                 level="warn",
-                summary=f"lane {lane!r} in {ACTIVE_LANES_VARIABLE} is quarantined ({reason}); every other lane runs",
-                detail={"lane_id": lane, "reason": reason},
+                summary=f"lane {lane!r} in {variable} is quarantined ({reason}); every other lane runs",
+                detail={"lane_id": lane, "reason": reason, "variable": variable},
             )
             written = written and upserted is not None
         for fingerprint, fault in sorted(faults.items()):
@@ -1862,18 +2321,24 @@ class _SoftFailureTick:
         if not self.read_ok:
             return
         lane = spec.lane_id
+        laddered = self.ladder_gate(lane) is not None
 
         async def body(active_session: AsyncSession) -> None:
-            await self._observe_hold(active_session, lane, plan)
+            if laddered:
+                await self._observe_ladder_hold(active_session, lane, plan)
+            else:
+                await self._observe_hold(active_session, lane, plan)
             await self._observe_blocked(active_session, lane, plan)
 
         await self._isolated(session, lane, body)
 
-    async def _observe_hold(self, session: AsyncSession, lane: str, plan: _LanePlan) -> None:
+    async def _observe_hold(self, session: AsyncSession, lane: str, plan: _LanePlan, *, ladder: bool = False) -> None:
+        """GL-5's hold record: open, reconcile, pause and resume. `ladder` keeps an episode whose held run moved
+        (an inconclusive or failed probe) instead of resolving it as `held_run_changed`."""
         row = self._open_row("lane_hold", lane)
         latest = plan.latest
         if plan.operator_held and latest is not None:
-            if row is not None and row.job_run_id is not None and row.job_run_id != latest.run_id:
+            if not ladder and row is not None and row.job_run_id is not None and row.job_run_id != latest.run_id:
                 # Another run holds the lane now: the old episode ended while nobody was watching.
                 await self._resolve_hold(session, lane, row, released_by="reconciled", reason="held_run_changed")
                 row = None
@@ -1952,7 +2417,7 @@ class _SoftFailureTick:
                     return
                 self._announce(lane, announce_run, command, classified)
             self._pending_durable.add((lane, str(announce_run)))
-        await self._escalate_chronic(session, lane, row)
+        await self._escalate_chronic(session, lane, self._open_row("lane_hold", lane) or row)
 
     def _announce(self, lane: str, run_id: uuid.UUID, command: str, classified: tuple[ExitClass, str]) -> None:
         """`operator_action_required` once per (lane, run) per process; the hold row makes it restart-proof."""
@@ -1979,9 +2444,9 @@ class _SoftFailureTick:
         if row.summary.endswith(CHRONIC_SUMMARY_SUFFIX):
             return  # already escalated and logged, by this process or an earlier one
         rewritten = await self._rewrite_hold(
-            session, lane, row, state="held", pause_reason=None, level="error", chronic=True
+            session, lane, row, state=row.state or "held", pause_reason=None, level="error", chronic=True
         )
-        if rewritten is not None:
+        if rewritten is not None and not _acknowledged(row):
             _log_at(
                 "error",
                 events.EVENT_HOLD_CHRONIC,
@@ -2009,6 +2474,7 @@ class _SoftFailureTick:
             return None
         classified = final_attempt_exit_class(attempt)
         self.state.hold_classes[run_id] = classified
+        self.state.final_attempts[run_id] = attempt
         return classified
 
     def _hold_detail(  # noqa: PLR0913 - the design record's `detail` shape, one key per argument
@@ -2016,20 +2482,21 @@ class _SoftFailureTick:
         *,
         lane: str,
         run_id: uuid.UUID | None,
-        state: HoldState,
+        state: str,
         exit_class: ExitClass,
         class_source: str,
         chain_first_seen_at: str,
         episodes_7d: int,
         pause_reason: str | None,
+        rung: int = 0,
     ) -> dict[str, object]:
-        return {
+        detail: dict[str, object] = {
             "lane_id": lane,
             "run_id": None if run_id is None else str(run_id),
             "state": state,
             "exit_class": exit_class,
             "class_source": class_source,
-            "rung": 0,
+            "rung": rung,
             "chain_first_seen_at": chain_first_seen_at,
             "episodes_7d": episodes_7d,
             "probes": [],
@@ -2037,11 +2504,43 @@ class _SoftFailureTick:
             "release": "operator",
             "pause_reason": pause_reason,
         }
+        ladders = self.state.ladders if self.ladder_gate(lane) is not None else None
+        if ladders is None:
+            return detail  # GL-5's shape exactly: the hold is operator-only
+        progress = HoldProgress.parse(state)
+        delay = ladders.probe_delay(exit_class, rung)
+        detail.update(
+            probes=list(self.state.hold_probes.get(lane, ())),
+            clean_buckets=progress.counter if progress.phase == "probation" else 0,
+            inconclusive_probes=progress.counter if progress.phase in ("held", "probing") else 0,
+            release="probe" if delay is not None else "operator",
+            next_probe_at=((self.now + delay).isoformat() if delay is not None and progress.phase == "held" else None),
+        )
+        return detail
 
-    @staticmethod
-    def _hold_summary(lane: str, exit_class: str, *, chronic: bool) -> str:
-        summary = f"lane {lane!r} is held ({exit_class}); only a recorded supersession releases it until G1"
+    def _hold_summary(self, lane: str, exit_class: str, *, chronic: bool, state: str = "held") -> str:
+        ladders = self.state.ladders if self.ladder_gate(lane) is not None else None
+        if ladders is None:
+            summary = f"lane {lane!r} is held ({exit_class}); only a recorded supersession releases it until G1"
+        elif HoldProgress.parse(state).phase == "probation":
+            summary = f"lane {lane!r} is on probation after a clean probe ({exit_class} hold); buckets run once"
+        elif ladders.ladder_for(exit_class) is None:
+            summary = f"lane {lane!r} is held ({exit_class}); code probes are off, so only an operator releases it"
+        else:
+            summary = f"lane {lane!r} is held ({exit_class}); single-attempt probes re-try it on its ladder"
         return f"{summary}{CHRONIC_SUMMARY_SUFFIX}" if chronic else summary
+
+    def _recent_resolved_holds(self, lane: str) -> list[LaneIncidentRow]:
+        """This lane's hold episodes resolved within the chain window, newest first."""
+        resolved_prefix = f"{_HOLD_PREFIX}{lane}{_RESOLVED_MARKER}"
+        recent = [
+            row
+            for row in self.resolved_holds
+            if row.fingerprint.startswith(resolved_prefix)
+            and row.resolved_at is not None
+            and self.now - row.resolved_at <= CHAIN_WINDOW
+        ]
+        return sorted(recent, key=lambda row: row.resolved_at or row.last_seen_at, reverse=True)
 
     async def _open_hold(self, session: AsyncSession, lane: str, plan: _LanePlan) -> None:
         latest = plan.latest
@@ -2051,16 +2550,24 @@ class _SoftFailureTick:
         if classified is None:
             return
         exit_class, class_source = classified
-        resolved_prefix = f"{_HOLD_PREFIX}{lane}{_RESOLVED_MARKER}"
-        episodes = 1 + sum(
-            1
-            for row in self.resolved_holds
-            if row.fingerprint.startswith(resolved_prefix)
-            and row.resolved_at is not None
-            and self.now - row.resolved_at <= FLAPPING_WINDOW
-        )
+        recent = self._recent_resolved_holds(lane)
+        episodes = 1 + len(recent)
         state: HoldState = "held" if plan.definition_enabled else "paused"
         level: LogLevel = "warn" if exit_class in _WARN_HOLD_CLASSES else "error"
+        laddered = self.ladder_gate(lane) is not None
+        # 7-day chaining (GL-6): a re-open inherits the prior episode's rung and chain start.
+        chained = recent[0] if laddered and recent else None
+        rung = 0 if chained is None else _parse_count(chained.rung, default=0)
+        chain_first_seen_at = (
+            chained.chain_first_seen_at if chained is not None and chained.chain_first_seen_at else self.now.isoformat()
+        )
+        first_flapping = is_chain_flapping(episodes) and (
+            not laddered or not recent or _parse_count(recent[0].episodes_7d, default=1) < FLAPPING_EPISODE_THRESHOLD
+        )
+        if laddered:
+            self.state.hold_probes[lane] = []
+            if is_chain_flapping(episodes):
+                level = "error"
         upserted = await self._upsert(
             session,
             kind="lane_hold",
@@ -2073,9 +2580,10 @@ class _SoftFailureTick:
                 state=state,
                 exit_class=exit_class,
                 class_source=class_source,
-                chain_first_seen_at=self.now.isoformat(),
+                chain_first_seen_at=chain_first_seen_at,
                 episodes_7d=episodes,
                 pause_reason=None if state == "held" else "disabled",
+                rung=rung,
             ),
             lane=lane,
             run_id=latest.run_id,
@@ -2097,54 +2605,75 @@ class _SoftFailureTick:
             episodes_7d=episodes,
             state=state,
             command=command,
+            rung=rung,
         )
         if command is not None and state == "held":
             self._announce(lane, latest.run_id, command, classified)
             self._pending_durable.add((lane, str(latest.run_id)))
-        if is_chain_flapping(episodes):
+        if first_flapping:
             _log_at("error", events.EVENT_HOLD_FLAPPING, lane_id=lane, episodes_7d=episodes)
 
-    async def _rewrite_hold(  # noqa: PLR0913 - the hold and the four facts a transition may change
+    async def _rewrite_hold(  # noqa: PLR0913 - the hold and the facts a transition may change
         self,
         session: AsyncSession,
         lane: str,
         row: LaneIncidentRow,
         *,
-        state: HoldState,
+        state: str,
         pause_reason: str | None,
         level: LogLevel,
         chronic: bool = False,
+        rung: int | None = None,
+        run_id: uuid.UUID | None = None,
     ) -> UpsertedIncident | None:
-        """Re-upsert an open hold with its full `detail` (an upsert replaces `detail` whole)."""
-        classified = await self._hold_class(session, lane, row.job_run_id)
+        """Re-upsert an open hold with its full `detail` (an upsert replaces `detail` whole).
+
+        `state` is the encoded `detail.state` (`HoldProgress.encoded`); `rung` and `run_id` default to the
+        row's own. The in-memory row follows the write, so a later step of the same tick reads it.
+        """
+        held_run = row.job_run_id if run_id is None else run_id
+        classified = await self._hold_class(session, lane, held_run)
         if classified is None:
             return None
         exit_class, class_source = classified
-        return await self._upsert(
+        next_rung = _parse_count(row.rung, default=0) if rung is None else rung
+        chronic_marked = chronic or row.summary.endswith(CHRONIC_SUMMARY_SUFFIX)
+        upserted = await self._upsert(
             session,
             kind="lane_hold",
             subject=lane,
             level=level,
-            summary=self._hold_summary(
-                lane, exit_class, chronic=chronic or row.summary.endswith(CHRONIC_SUMMARY_SUFFIX)
-            ),
+            summary=self._hold_summary(lane, exit_class, chronic=chronic_marked, state=state),
             detail=self._hold_detail(
                 lane=lane,
-                run_id=row.job_run_id,
+                run_id=held_run,
                 state=state,
                 exit_class=exit_class,
                 class_source=class_source,
                 chain_first_seen_at=row.chain_first_seen_at or row.first_seen_at.isoformat(),
                 episodes_7d=_parse_count(row.episodes_7d, default=1),
                 pause_reason=pause_reason,
+                rung=next_rung,
             ),
             lane=lane,
-            run_id=row.job_run_id,
+            run_id=held_run,
         )
+        if upserted is not None:
+            self.open_rows[row.fingerprint] = replace(
+                row,
+                state=state,
+                rung=str(next_rung),
+                job_run_id=held_run,
+                severity=INCIDENT_SEVERITY[level],
+                summary=self._hold_summary(lane, exit_class, chronic=chronic_marked, state=state),
+                occurrence_count=upserted.occurrence_count,
+                last_seen_at=upserted.last_seen_at,
+            )
+        return upserted
 
     async def _resolve_hold(
         self, session: AsyncSession, lane: str, row: LaneIncidentRow, *, released_by: str, reason: str
-    ) -> None:
+    ) -> bool:
         resolved = await self._resolve(
             session,
             row,
@@ -2152,7 +2681,7 @@ class _SoftFailureTick:
             lane=lane,
         )
         if not resolved:
-            return
+            return False
         self.open_holds.pop(lane, None)
         _log_at(
             "info",
@@ -2161,6 +2690,417 @@ class _SoftFailureTick:
             run_id=None if row.job_run_id is None else str(row.job_run_id),
             released_by=released_by,
             reason=reason,
+        )
+        return True
+
+    # --- the G1 hold ladder (GL-6 folded into f1-executor; spec Sec 4.9.3; design Sec 3.2B) -----------
+
+    def ladder_gate(self, lane: str) -> _SoftFailureTick | None:
+        """This tick when the hold ladder may act on `lane`; `None` keeps GL-5's operator-only hold.
+
+        Off when the switch is off, the ladder is unset (`BREAKER_MODE=legacy`), the incident read failed, or
+        this lane degraded to HEAD planning this tick.
+        """
+        if not self.read_ok or not self.state.enabled or self.state.ladders is None or lane in self.degraded:
+            return None
+        return self
+
+    def _hold_level(self, exit_class: str, row: LaneIncidentRow, progress: HoldProgress) -> LogLevel:
+        """A hold's severity: its class's level, never lowered below an escalation it already carries."""
+        if progress.phase != "probation" and row.severity == EventSeverity.ERROR:
+            return "error"
+        return "warn" if exit_class in _WARN_HOLD_CLASSES or progress.phase == "probation" else "error"
+
+    def _remember_probe(self, lane: str, record: dict[str, object]) -> None:
+        probes = self.state.hold_probes.setdefault(lane, [])
+        probes.append(record)
+        del probes[:-PROBE_HISTORY_MAX]
+
+    def _settle_remembered_probe(self, lane: str, outcome: str) -> None:
+        probes = self.state.hold_probes.get(lane)
+        if probes and probes[-1].get("outcome") is None:
+            probes[-1]["outcome"] = outcome
+            probes[-1]["conclusive"] = outcome != "inconclusive"
+
+    async def _final_attempt(
+        self, session: AsyncSession, lane: str, run_id: uuid.UUID
+    ) -> tuple[bool, FinalAttempt | None]:
+        """A settled run's final attempt, memoized: `(read_ok, attempt)`."""
+        if run_id in self.state.final_attempts:
+            return True, self.state.final_attempts[run_id]
+        ok, attempt = await self._guard(
+            session,
+            f"select_run_final_attempt:{lane}",
+            lambda: select_run_final_attempt(session, job_run_id=run_id),
+            lane=lane,
+        )
+        if ok:
+            self.state.final_attempts[run_id] = attempt
+        return ok, attempt
+
+    async def start_probe(
+        self,
+        session: AsyncSession,
+        spec: LaneExecutionSpec,
+        definition: JobDefinitionRecord,
+        latest: LatestRun,
+        verdict: CheckpointVerdict,
+    ) -> DueLane | None:
+        """Start one single-attempt probe of a held lane when its rung is due; `None` leaves the lane held.
+
+        The `_release_by_process_start` pattern inside a savepoint: the probe is appended to the hold row
+        (`probing`), the held run is superseded as `executor:probe`, both commit together, and only then does
+        the planner open the bucket (`max_attempts=1`). A crash between that commit and the open re-opens the
+        same probe next tick (`shape_bucket`). Any refusal or ledger fault rolls both back and keeps the hold.
+        """
+        lane = spec.lane_id
+        ladders = self.state.ladders
+        row = self._open_row("lane_hold", lane)
+        if ladders is None or row is None or not verdict.newer_bucket_exists:
+            return None
+        progress = HoldProgress.parse(row.state)
+        if progress.phase != "held":
+            return None
+        classified = await self._hold_class(session, lane, row.job_run_id)
+        if classified is None:
+            return None
+        rung = _parse_count(row.rung, default=0)
+        if not probe_is_due(
+            ladders,
+            exit_class=classified[0],
+            rung=rung,
+            entered_rung_at=row.last_seen_at,
+            now=self.now,
+            newer_bucket_exists=verdict.newer_bucket_exists,
+        ):
+            return None
+        record: dict[str, object] = {
+            "at": self.now.isoformat(),
+            "bucket": verdict.next_bucket.isoformat(),
+            "superseded_run_id": str(latest.run_id),
+            "rung": rung,
+            "via": "ladder",
+            "outcome": None,
+        }
+        if not await self._begin_probe(session, spec, row, progress, latest, record):
+            return None
+        _log_at(
+            "warn",
+            EVENT_HOLD_PROBE,
+            lane_id=lane,
+            superseded_run_id=str(latest.run_id),
+            bucket=verdict.next_bucket.isoformat(),
+            rung=rung,
+            exit_class=classified[0],
+            via="ladder",
+        )
+        return DueLane(
+            spec=spec,
+            definition=definition,
+            scheduled_for=verdict.next_bucket,
+            existing_run_id=None,
+            last_scheduled_for=latest.scheduled_for,
+            superseded_run_id=latest.run_id,
+            supersession="probe",
+            probe=True,
+            max_attempts=1,
+        )
+
+    async def _begin_probe(  # noqa: PLR0913 - the hold, its position, the run it supersedes and the record
+        self,
+        session: AsyncSession,
+        spec: LaneExecutionSpec,
+        row: LaneIncidentRow,
+        progress: HoldProgress,
+        latest: LatestRun,
+        record: dict[str, object],
+    ) -> bool:
+        """Append the probe and supersede the held run in one savepoint, then commit; `False` keeps the hold."""
+        from agri_data_service.execution.job_run_supersession import (  # noqa: PLC0415 - import cycle
+            SupersessionRefusal,
+            supersede_failed_run,
+        )
+
+        lane = spec.lane_id
+        self._remember_probe(lane, record)
+        try:
+            async with session.begin_nested():
+                written = await self._rewrite_hold(
+                    session,
+                    lane,
+                    row,
+                    state=HoldProgress(phase="probing", counter=progress.counter).encoded(),
+                    pause_reason=None,
+                    level=_level_of(row.severity),
+                )
+                if written is None:
+                    raise _ProbeNotStartedError("the hold row could not be written")
+                receipt = await supersede_failed_run(
+                    session,
+                    spec,
+                    latest.run_id,
+                    ledger=_ledger_label(),
+                    evidence=(
+                        f"hold-ladder probe at rung {record['rung']}: one single-attempt bucket re-tries lane "
+                        f"{lane}; a failure re-holds it at the next rung"
+                    ),
+                    operator=PROBE_OPERATOR,
+                    now=self.now,
+                    apply=True,
+                )
+                if receipt.outcome not in {"recorded", "already_superseded"}:
+                    raise _ProbeNotStartedError(f"the supersession came back {receipt.outcome}")
+            committed, _ = await self._guard(
+                session, f"commit:{lane}", lambda: _commit_planning_transaction(session), lane=lane
+            )
+            if not committed:
+                raise _ProbeNotStartedError("the probe could not be committed")
+        except (_ProbeNotStartedError, SupersessionRefusal, SQLAlchemyError) as refusal:
+            if isinstance(refusal, SQLAlchemyError) and _pinned_connection_invalidated(session):
+                raise
+            await self._discard(session)
+            self.open_rows[row.fingerprint] = row
+            probes = self.state.hold_probes.get(lane)
+            if probes and probes[-1] is record:
+                probes.pop()
+            _log_at(
+                "warn",
+                EVENT_HOLD_PROBE_REFUSED,
+                lane_id=lane,
+                run_id=str(latest.run_id),
+                reason=type(refusal).__name__,
+                detail=redact_text(str(refusal))[:INCIDENT_SUMMARY_MAX_CHARS],
+            )
+            return False
+        return True
+
+    async def record_deploy_probe(
+        self, session: AsyncSession, spec: LaneExecutionSpec, latest: LatestRun, verdict: CheckpointVerdict
+    ) -> None:
+        """WQ-7 fold: an opt-in process-start release of a laddered hold is recorded as a probe (`via=deploy`)."""
+        lane = spec.lane_id
+        row = self._open_row("lane_hold", lane)
+        if row is None:
+            return
+        progress = HoldProgress.parse(row.state)
+        if progress.phase != "held":
+            return
+        self._remember_probe(
+            lane,
+            {
+                "at": self.now.isoformat(),
+                "bucket": verdict.next_bucket.isoformat(),
+                "superseded_run_id": str(latest.run_id),
+                "rung": _parse_count(row.rung, default=0),
+                "via": "deploy",
+                "outcome": None,
+            },
+        )
+        written = await self._rewrite_hold(
+            session,
+            lane,
+            row,
+            state=HoldProgress(phase="probing", counter=progress.counter).encoded(),
+            pause_reason=None,
+            level=_level_of(row.severity),
+        )
+        if written is None:
+            return
+        committed, _ = await self._guard(
+            session, f"commit:{lane}", lambda: _commit_planning_transaction(session), lane=lane
+        )
+        if committed:
+            _log_at("warn", EVENT_HOLD_PROBE, lane_id=lane, superseded_run_id=str(latest.run_id), via="deploy")
+        else:
+            self.open_rows[row.fingerprint] = row
+            await self._discard(session)
+
+    def shape_bucket(self, spec: LaneExecutionSpec, latest: LatestRun | None, due: DueLane) -> DueLane:
+        """A bucket's failure budget under the ladder: a probe (re-opened or in flight) and a probation bucket
+        run once; for 24 h after a hold resolves, buckets run twice (once when the chain is flapping)."""
+        lane = spec.lane_id
+        row = self._open_row("lane_hold", lane)
+        if row is not None:
+            phase = HoldProgress.parse(row.state).phase
+            if phase == "probing" and latest is not None and (latest.open or latest.superseded_by_operator):
+                supersession = "probe" if due.superseded_run_id is not None else due.supersession
+                return replace(due, probe=True, max_attempts=1, supersession=supersession)
+            if phase == "probation" or (phase == "probing" and latest is not None and latest.status == "succeeded"):
+                return replace(due, max_attempts=1)
+            return due
+        recent = self._recent_resolved_holds(lane)
+        attempts = watch_max_attempts(
+            None if not recent else recent[0].resolved_at, episodes_7d=len(recent), now=self.now
+        )
+        return due if attempts is None else replace(due, max_attempts=attempts)
+
+    async def _observe_ladder_hold(self, session: AsyncSession, lane: str, plan: _LanePlan) -> None:
+        """One laddered hold per tick: GL-5's record for `held` and `paused`, the ladder for the rest."""
+        row = self._open_row("lane_hold", lane)
+        if row is None:
+            await self._observe_hold(session, lane, plan, ladder=True)
+            return
+        progress = HoldProgress.parse(row.state)
+        if not plan.definition_enabled:
+            if progress.phase != "paused":
+                # Disabled mid-probe or mid-probation: paused like any hold, never resolved by the brake.
+                outcome = ReconcileOutcome(action="pause", state="paused", pause_reason="disabled")
+                await self._apply_hold_outcome(session, lane, row, outcome, still_held=False, announce_run=None)
+            return
+        if progress.phase in ("held", "paused"):
+            await self._observe_hold(session, lane, plan, ladder=True)
+            return
+        if progress.phase == "probing":
+            await self._observe_probe(session, lane, plan, row, progress)
+            return
+        await self._observe_probation(session, lane, plan, row, progress)
+
+    async def _observe_probe(
+        self, session: AsyncSession, lane: str, plan: _LanePlan, row: LaneIncidentRow, progress: HoldProgress
+    ) -> None:
+        """A probe in flight withholds repairs; a settled one moves the ladder (`after_probe`)."""
+        latest = plan.latest
+        in_flight = (
+            plan.probe_started
+            or latest is None
+            or latest.open
+            or (latest.superseded_by_operator and latest.status in SETTLED_WITHOUT_SUCCESS)
+        )
+        if in_flight or latest is None:
+            self.held_lanes.add(lane)
+            await self._escalate_chronic(session, lane, row)
+            return
+        outcome: ProbeOutcome
+        if latest.status == "succeeded":
+            outcome = "passed"
+        else:
+            read, attempt = await self._final_attempt(session, lane, latest.run_id)
+            if not read:
+                return
+            outcome = judge_probe(latest.status, attempt)
+        step = after_probe(outcome, rung=_parse_count(row.rung, default=0), inconclusive_probes=progress.counter)
+        held_run = latest.run_id if step.adopt_probe_class else row.job_run_id
+        classified = await self._hold_class(session, lane, held_run)
+        if classified is None:
+            return
+        self._settle_remembered_probe(lane, outcome)
+        written = await self._rewrite_hold(
+            session,
+            lane,
+            row,
+            state=step.progress.encoded(),
+            pause_reason=None,
+            level=self._hold_level(classified[0], row, step.progress),
+            rung=step.rung,
+            run_id=held_run,
+        )
+        if written is None:
+            return
+        if outcome == "passed":
+            _log_at("info", EVENT_HOLD_PROBATION, lane_id=lane, rung=step.rung, run_id=str(latest.run_id))
+            return
+        self.held_lanes.add(lane)
+        if outcome == "inconclusive" and step.reason is None:
+            _log_at(
+                "warn",
+                EVENT_HOLD_PROBE_INCONCLUSIVE,
+                lane_id=lane,
+                run_id=str(latest.run_id),
+                inconclusive_probes=step.progress.counter,
+                rung=step.rung,
+            )
+            return
+        _log_at(
+            self._hold_level(classified[0], row, step.progress),
+            EVENT_HOLD_PROBE_FAILED,
+            lane_id=lane,
+            run_id=str(latest.run_id),
+            rung=step.rung,
+            exit_class=classified[0],
+            reason=step.reason,
+        )
+
+    async def _observe_probation(
+        self, session: AsyncSession, lane: str, plan: _LanePlan, row: LaneIncidentRow, progress: HoldProgress
+    ) -> None:
+        """Probation re-holds at the next rung when the ledger holds again; otherwise it ends on proof or age."""
+        latest = plan.latest
+        if plan.operator_held and latest is not None:
+            classified = await self._hold_class(session, lane, latest.run_id)
+            if classified is None:
+                return
+            held = HoldProgress(phase="held")
+            written = await self._rewrite_hold(
+                session,
+                lane,
+                row,
+                state=held.encoded(),
+                pause_reason=None,
+                level=self._hold_level(classified[0], row, held),
+                rung=_parse_count(row.rung, default=0) + 1,
+                run_id=latest.run_id,
+            )
+            if written is not None:
+                self.held_lanes.add(lane)
+                _log_at(
+                    "warn",
+                    EVENT_HOLD_PROBE_FAILED,
+                    lane_id=lane,
+                    run_id=str(latest.run_id),
+                    rung=_parse_count(row.rung, default=0) + 1,
+                    exit_class=classified[0],
+                    reason="failed_in_probation",
+                )
+            return
+        verdict = judge_probation(clean_buckets=progress.counter, last_change_at=row.last_seen_at, now=self.now)
+        if verdict == "resolve":
+            await self._resolve_hold(session, lane, row, released_by="probe", reason="probation_clean")
+        elif verdict == "expired" and await self._resolve_hold(
+            session, lane, row, released_by="probe", reason="probation_expired"
+        ):
+            # 48 h without a failure but without proof either: a masked failure must still surface.
+            await self._open_incomplete(session, lane, reason="inconclusive")
+
+    async def _open_incomplete(self, session: AsyncSession, lane: str, *, reason: str) -> None:
+        """Open or bump `lane_incomplete:<lane>` with `reason`, stepping its escalation by episode age."""
+        row = self._open_row("lane_incomplete", lane)
+        first_seen = self.now if row is None else row.first_seen_at
+        step, level = _incomplete_step(self.now - first_seen)
+        await self._upsert(
+            session,
+            kind="lane_incomplete",
+            subject=lane,
+            level=level,
+            summary=f"lane {lane!r} exited 0 but owes work ({reason})",
+            detail={"lane_id": lane, "reason": reason, "state": step},
+            lane=lane,
+        )
+
+    async def _observe_probation_turn(self, session: AsyncSession, lane: str, verdict: _TurnVerdict) -> None:
+        """A probation bucket's turn: a conclusive clean one counts toward release, a failed one restarts it."""
+        row = self._open_row("lane_hold", lane)
+        if self.ladder_gate(lane) is None or row is None:
+            return
+        progress = HoldProgress.parse(row.state)
+        if progress.phase != "probation" or verdict.exit_class in ("interrupted", "lease_lost"):
+            return
+        if verdict.exit_class == "ok":
+            if verdict.turn_outcome != "completed" or not verdict.conclusive:
+                return  # an incomplete or inconclusive bucket neither proves nor fails the lane
+            clean = HoldProgress(phase="probation", counter=progress.counter + 1)
+            if clean.counter >= PROBATION_CLEAN_BUCKETS:
+                await self._resolve_hold(session, lane, row, released_by="probe", reason="probation_clean")
+                return
+            next_progress = clean
+        else:
+            next_progress = HoldProgress(phase="probation")  # a failed bucket restarts the count and the 48 h
+        await self._rewrite_hold(
+            session,
+            lane,
+            row,
+            state=next_progress.encoded(),
+            pause_reason=None,
+            level=_level_of(row.severity),
         )
 
     async def _observe_blocked(self, session: AsyncSession, lane: str, plan: _LanePlan) -> None:
@@ -2337,6 +3277,71 @@ class _SoftFailureTick:
             if lane in REPAIR_LANE_IDS and self.activation.is_active(lane)
         ]
 
+    async def observe_budget(self, session: AsyncSession, admission: AdmissionPass) -> None:
+        """WQ-4's two incidents per capped pool (spec Sec 4.9.3's table; execution/AGENTS.md "Budget admission").
+
+        `budget_deferred:<pool>` is bumped on a lane's first refusal of the UTC day (or when refusals continue
+        with no open row) and resolves on a tick that admits a turn on the pool and refuses none;
+        `budget_basis_suspect:<pool>` is open while suspect exceeds 10 % of charged, and resolves when the
+        share falls or the UTC month rolls over. Neither escalates.
+        """
+        if not self.read_ok or not admission.pools:
+            return
+
+        async def body(active_session: AsyncSession) -> None:
+            for pool, outcome in sorted(admission.pools.items()):
+                await self._observe_budget_deferral(active_session, pool, outcome)
+                await self._observe_budget_basis(active_session, pool, outcome)
+
+        await self._isolated(session, None, body)
+
+    async def _observe_budget_deferral(self, session: AsyncSession, pool: str, outcome: PoolAdmission) -> None:
+        row = self._open_row(BUDGET_DEFERRED_KIND, pool)
+        if outcome.refused and (outcome.newly_warned or row is None):
+            spend = outcome.spend
+            await self._upsert(
+                session,
+                kind=BUDGET_DEFERRED_KIND,
+                subject=pool,
+                level="warn",
+                summary=f"the {pool} cap refused {', '.join(sorted(outcome.refused))}; no run was opened",
+                detail={
+                    "pool": pool,
+                    "refused": dict(sorted(outcome.refused.items())),
+                    "charged": None if spend is None else spend.charged,
+                    "suspect": None if spend is None else spend.suspect,
+                    "gap_fill_ceiling": outcome.budget.gap_fill_ceiling_calls,
+                    "forward_stop": outcome.budget.forward_stop_calls,
+                },
+            )
+        elif row is not None and outcome.admitted and not outcome.refused:
+            await self._resolve(session, row, detail_patch={"resolution_reason": "admitted_turn"})
+
+    async def _observe_budget_basis(self, session: AsyncSession, pool: str, outcome: PoolAdmission) -> None:
+        spend = outcome.spend
+        if spend is None:
+            return  # an unread pool proves nothing either way
+        row = self._open_row(BUDGET_BASIS_SUSPECT_KIND, pool)
+        if row is not None and not same_utc_month(row.first_seen_at, self.now):
+            await self._resolve(session, row, detail_patch={"resolution_reason": "month_rolled_over"})
+            row = None
+        if not spend.basis_suspect:
+            if row is not None:
+                await self._resolve(session, row, detail_patch={"resolution_reason": "suspect_share_below_limit"})
+            return
+        if row is not None:
+            return
+        upserted = await self._upsert(
+            session,
+            kind=BUDGET_BASIS_SUSPECT_KIND,
+            subject=pool,
+            level="warn",
+            summary=f"suspect spend is over 10% of charged spend on {pool}; gap-fill is refused until it falls",
+            detail={"pool": pool, "charged": spend.charged, "suspect": spend.suspect},
+        )
+        if upserted is not None:
+            _log_at("warn", EVENT_BUDGET_BASIS_SUSPECT, pool=pool, charged=spend.charged, suspect=spend.suspect)
+
     async def observe_authoring(self, session: AsyncSession, *, succeeded: bool) -> None:
         if not self.read_ok:
             return
@@ -2422,6 +3427,7 @@ class _SoftFailureTick:
             await self._observe_report(active_session, lane_id, verdict)
             await self._observe_incomplete(active_session, lane_id, verdict)
             await self._observe_lease(active_session, lane_id, verdict)
+            await self._observe_probation_turn(active_session, lane_id, verdict)
 
         await self._isolated(session, lane_id, forward_body)
 
@@ -2465,11 +3471,19 @@ class _SoftFailureTick:
                 detail={"lane_id": lane, "reason": reason, "state": step},
                 lane=lane,
             )
-            if upserted is not None and row is not None and step != (row.state or INCOMPLETE_OPEN_STATE):
+            if (
+                upserted is not None
+                and row is not None
+                and step != (row.state or INCOMPLETE_OPEN_STATE)
+                and not _acknowledged(row)
+            ):
                 _log_at(level, events.EVENT_LANE_INCOMPLETE_ESCALATED, lane_id=lane, step=step, reason=reason)
             return
+        # Only a CONCLUSIVE complete turn clears it (`PROGRESS_EVIDENCE`): a probation that expired unproven opens
+        # this row as `inconclusive`, and another turn that proves nothing must not close it again.
         if (
             verdict.turn_outcome == "completed"
+            and verdict.conclusive
             and row is not None
             and await self._resolve(session, row, detail_patch={"resolution_reason": "complete_turn"}, lane=lane)
         ):
@@ -2593,6 +3607,345 @@ def _without_lanes(activation: ActivationConfig, withheld: AbstractSet[str]) -> 
     return replace(activation, active_lanes=activation.active_lanes - withheld)
 
 
+# --- The S15 work queue (spec S15/S16, FR-7; execution/AGENTS.md, "Work queue") --------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class DispatchedTurn:
+    """One lane turn the work queue finished: what the tick reports and what its incidents fold."""
+
+    candidate: DueLane
+    result: LaneTickResult
+    verdict: _TurnVerdict | None = None
+
+
+async def _invalidate_connection(session: AsyncSession, event: str) -> None:
+    """Drop a pinned connection that could not release its lock, so PostgreSQL frees the lock with it."""
+    bind = getattr(session, "bind", None)
+    if not isinstance(bind, AsyncConnection):
+        return
+    try:
+        await bind.invalidate()
+    except BaseException as error:
+        logger.error(event, error_type=type(error).__name__)
+
+
+async def _release_lane_lock(session: AsyncSession, definition_name: str) -> None:
+    """Release a lane session's definition lock before its connection returns to the pool."""
+    try:
+        await session.rollback()
+        released = await release_definition_lock(session, definition_name)
+        await session.rollback()
+    except Exception as error:  # a lock that cannot be released must never outlive this connection
+        logger.error(
+            "plantgeo_job_executor_lane_unlock_failed", definition=definition_name, error_type=type(error).__name__
+        )
+        await _invalidate_connection(session, "plantgeo_job_executor_lane_connection_invalidate_failed")
+        return
+    if not released:
+        logger.error("plantgeo_job_executor_lane_lock_not_held", definition=definition_name)
+
+
+async def _release_provider_lock(session: AsyncSession, pool: str) -> None:
+    """Release a lane session's provider lock (WQ-4); a lock that cannot be released drops the connection with it."""
+    try:
+        await session.rollback()
+        released = await release_provider_lock(session, pool)
+        await session.rollback()
+    except Exception as error:  # the provider lock must never outlive this connection
+        logger.error("plantgeo_job_executor_provider_unlock_failed", pool=pool, error_type=type(error).__name__)
+        await _invalidate_connection(session, "plantgeo_job_executor_lane_connection_invalidate_failed")
+        return
+    if not released:
+        logger.error("plantgeo_job_executor_provider_lock_not_held", pool=pool)
+
+
+async def _drive_dispatched_lane(
+    candidate: DueLane,
+    *,
+    open_lane_session: Callable[[], AbstractAsyncContextManager[AsyncSession]],
+    stop: ShutdownSignal | None,
+) -> DispatchedTurn:
+    """One queued lane turn on its OWN session: take the definition lock, drive `run_job_slice`, release it.
+
+    The run was already opened by the leader (`_dispatch_due_lanes`), so this only drives it. A lane-local
+    fault is this lane's `failed` result and never reaches the leader; a cancellation (leader loss, shutdown)
+    propagates after the lock is released, and the worker parks the shard in hand on its way out.
+    """
+    spec = candidate.spec
+    async with open_lane_session() as session:
+        await apply_statement_timeout(session)
+        if not await try_definition_lock(session, spec.definition_name):
+            await session.rollback()
+            return DispatchedTurn(
+                candidate,
+                LaneTickResult(
+                    lane_id=spec.lane_id,
+                    state="not_due",
+                    scheduled_for=candidate.scheduled_for,
+                    run_id=candidate.existing_run_id,
+                    detail="another executor session holds this lane's lock; a lane never runs twice",
+                ),
+            )
+        pool = candidate.provider_pool
+        provider_locked = False
+        try:
+            await session.commit()  # the lock is session-level: it outlives this and every later commit
+            if pool is not None:
+                # WQ-4: one turn spends a capped pool at a time, across processes; a busy pool waits, never blocks.
+                if not await try_provider_lock(session, pool):
+                    await session.rollback()
+                    return DispatchedTurn(
+                        candidate,
+                        LaneTickResult(
+                            lane_id=spec.lane_id,
+                            state="deferred_fairness",
+                            scheduled_for=candidate.scheduled_for,
+                            run_id=candidate.existing_run_id,
+                            detail=f"another turn holds the {pool} provider lock; this run waits for the next tick",
+                        ),
+                    )
+                provider_locked = True
+                await session.commit()
+            _LANE_TURN_VERDICTS.pop(spec.lane_id, None)
+            result = await _execute_due_lane(session, candidate, stop=stop)
+            return DispatchedTurn(candidate, result, _LANE_TURN_VERDICTS.pop(spec.lane_id, None))
+        except Exception as error:  # this lane's fault only: its own session, never the leader's
+            _LANE_TURN_VERDICTS.pop(spec.lane_id, None)
+            logger.error("plantgeo_job_executor_lane_failed", lane_id=spec.lane_id, error_type=type(error).__name__)
+            return DispatchedTurn(
+                candidate,
+                LaneTickResult(
+                    lane_id=spec.lane_id,
+                    state="failed",
+                    scheduled_for=candidate.scheduled_for,
+                    run_id=candidate.existing_run_id,
+                    detail=f"scheduler lane failed ({type(error).__name__})",
+                ),
+            )
+        finally:
+            if provider_locked and pool is not None:
+                await _release_provider_lock(session, pool)
+            await _release_lane_lock(session, spec.definition_name)
+
+
+class LaneDispatcher:
+    """S15's work queue: each dispatched lane runs as its own task, on its own session and definition lock.
+
+    The leader tick hands a lane over and returns without awaiting it; a later tick `collect`s what finished
+    and folds each verdict into its incidents on the leader session. At most `max_concurrent_lanes` tasks run
+    at once, and a definition already in flight is never dispatched again (its session-level lock keeps that
+    true across executor processes as well). `cancel_all` is leader loss.
+    """
+
+    def __init__(
+        self,
+        *,
+        open_lane_session: Callable[[], AbstractAsyncContextManager[AsyncSession]],
+        max_concurrent_lanes: int = DEFAULT_MAX_CONCURRENT_LANES,
+        stop: ShutdownSignal | None = None,
+    ) -> None:
+        if max_concurrent_lanes < 1:
+            raise ExecutorConfigurationError("max_concurrent_lanes must be at least 1")
+        self._open_lane_session = open_lane_session
+        self.max_concurrent_lanes = max_concurrent_lanes
+        self._stop = stop
+        self._in_flight: dict[str, tuple[DueLane, asyncio.Task[DispatchedTurn]]] = {}
+        self._finished: list[DispatchedTurn] = []
+        #: The class of the last lane this queue dispatched; `next_lead` hands the other class the head.
+        self._last_dispatched_class: LaneWorkClass | None = None
+
+    @property
+    def next_lead(self) -> LaneWorkClass:
+        """The work class `fair_due_order` puts first: the one NOT dispatched last, so backlog is never starved."""
+        return "backlog" if self._last_dispatched_class == "incremental" else "incremental"
+
+    @property
+    def in_flight(self) -> tuple[str, ...]:
+        """The definitions whose turn is still running, in dispatch order."""
+        self._reap()
+        return tuple(self._in_flight)
+
+    def is_running(self, definition_name: str) -> bool:
+        self._reap()
+        return definition_name in self._in_flight
+
+    def free_slots(self) -> int:
+        self._reap()
+        return self.max_concurrent_lanes - len(self._in_flight)
+
+    def dispatch(self, candidate: DueLane) -> None:
+        """Start one lane's turn without awaiting it; its run must already be open (`existing_run_id`)."""
+        name = candidate.spec.definition_name
+        if candidate.existing_run_id is None:
+            raise ExecutorConfigurationError(f"lane {candidate.spec.lane_id!r} was dispatched before its run opened")
+        if self.is_running(name) or self.free_slots() <= 0:
+            raise ExecutorConfigurationError(f"lane {candidate.spec.lane_id!r} has no free slot or is already running")
+        task = asyncio.create_task(
+            _drive_dispatched_lane(candidate, open_lane_session=self._open_lane_session, stop=self._stop),
+            name=f"plantgeo-executor-lane:{name}",
+        )
+        self._in_flight[name] = (candidate, task)
+        self._last_dispatched_class = candidate.spec.work_class
+
+    def _reap(self) -> None:
+        for name, (candidate, task) in list(self._in_flight.items()):
+            if not task.done():
+                continue
+            del self._in_flight[name]
+            self._finished.append(self._settled(candidate, task))
+
+    @staticmethod
+    def _settled(candidate: DueLane, task: asyncio.Task[DispatchedTurn]) -> DispatchedTurn:
+        if task.cancelled():
+            return DispatchedTurn(
+                candidate,
+                LaneTickResult(
+                    lane_id=candidate.spec.lane_id,
+                    state="deferred_shutdown",
+                    scheduled_for=candidate.scheduled_for,
+                    run_id=candidate.existing_run_id,
+                    detail="this lane's turn was cancelled (leader loss or shutdown); its shard was handed back",
+                ),
+            )
+        error = task.exception()
+        if error is not None:
+            return DispatchedTurn(
+                candidate,
+                LaneTickResult(
+                    lane_id=candidate.spec.lane_id,
+                    state="failed",
+                    scheduled_for=candidate.scheduled_for,
+                    run_id=candidate.existing_run_id,
+                    detail=f"scheduler lane failed ({type(error).__name__})",
+                ),
+            )
+        return task.result()
+
+    def collect(self) -> list[DispatchedTurn]:
+        """Every turn that finished since the last collection, oldest dispatch first."""
+        self._reap()
+        finished, self._finished = self._finished, []
+        return finished
+
+    async def cancel_all(self, *, reason: str) -> list[DispatchedTurn]:
+        """Leader loss: cancel every lane in flight and wait for each to hand its shard back."""
+        tasks = [task for _, task in self._in_flight.values()]
+        if tasks:
+            logger.error("plantgeo_job_executor_lanes_cancelled", reason=reason, lanes=list(self._in_flight))
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        return self.collect()
+
+    async def drain(self, *, timeout_seconds: float) -> list[DispatchedTurn]:
+        """Wait for in-flight lanes to finish (a stop request parks them), then cancel what is left."""
+        tasks = [task for _, task in self._in_flight.values()]
+        if tasks:
+            await asyncio.wait(tasks, timeout=timeout_seconds)
+        return await self.cancel_all(reason="drain_timeout")
+
+
+async def _dispatch_due_lanes(
+    session: AsyncSession,
+    ordered: Iterable[DueLane],
+    *,
+    dispatcher: LaneDispatcher,
+    stop: ShutdownSignal | None,
+) -> list[LaneTickResult]:
+    """Open each due lane's run on the leader session and hand it to the queue, in `fair_due_order`.
+
+    A lane already running is reported `running` (it never runs twice); once every slot is busy the rest
+    wait for the next tick (`deferred_fairness`). Opening a run is HEAD's statement: a SQL fault or a lost
+    pinned connection re-raises exactly as the serial loop does, and any other fault is that lane's alone.
+    """
+    results: list[LaneTickResult] = []
+    for candidate in ordered:
+        lane_id = candidate.spec.lane_id
+        if dispatcher.is_running(candidate.spec.definition_name):
+            results.append(
+                LaneTickResult(
+                    lane_id=lane_id,
+                    state="running",
+                    scheduled_for=candidate.scheduled_for,
+                    run_id=candidate.existing_run_id,
+                    detail="this lane's turn is still running on its own session",
+                )
+            )
+            continue
+        if stop is not None and stop.requested:
+            results.append(_deferred_shutdown_result(candidate))
+            continue
+        if dispatcher.free_slots() <= 0:
+            results.append(
+                LaneTickResult(
+                    lane_id=lane_id,
+                    state="deferred_fairness",
+                    scheduled_for=candidate.scheduled_for,
+                    run_id=candidate.existing_run_id,
+                    detail="due; every lane slot is busy, so it waits for the next free one",
+                )
+            )
+            continue
+        try:
+            run_id = candidate.existing_run_id or await _open_scheduled_run(session, candidate)
+        except Exception as error:  # isolate lane-local faults only while the pinned backend is intact
+            await session.rollback()
+            if isinstance(error, SQLAlchemyError) or _pinned_connection_invalidated(session):
+                logger.error(
+                    "plantgeo_job_executor_pinned_connection_lost", lane_id=lane_id, error_type=type(error).__name__
+                )
+                raise
+            await apply_statement_timeout(session)
+            logger.error("plantgeo_job_executor_lane_failed", lane_id=lane_id, error_type=type(error).__name__)
+            results.append(
+                LaneTickResult(
+                    lane_id=lane_id,
+                    state="failed",
+                    scheduled_for=candidate.scheduled_for,
+                    run_id=candidate.existing_run_id,
+                    detail=f"scheduler lane failed ({type(error).__name__})",
+                )
+            )
+            continue
+        dispatcher.dispatch(replace(candidate, existing_run_id=run_id))
+        results.append(
+            LaneTickResult(
+                lane_id=lane_id,
+                state="dispatched",
+                scheduled_for=candidate.scheduled_for,
+                run_id=run_id,
+                detail="probe turn handed to the work queue" if candidate.probe else "handed to the work queue",
+            )
+        )
+    return results
+
+
+@asynccontextmanager
+async def _lane_session_slots(
+    database_url: str, slots: int
+) -> AsyncIterator[Callable[[], AbstractAsyncContextManager[AsyncSession]]]:
+    """One single-connection pool per queue slot, so N lanes hold N connections and never the leader's."""
+    async with AsyncExitStack() as stack:
+        engines: asyncio.Queue[AsyncEngine] = asyncio.Queue()
+        for _ in range(slots):
+            engines.put_nowait(await stack.enter_async_context(local_source_loader_pool(database_url)))
+
+        @asynccontextmanager
+        async def open_lane_session() -> AsyncIterator[AsyncSession]:
+            engine = await engines.get()
+            try:
+                async with (
+                    engine.connect() as connection,
+                    AsyncSession(bind=connection, expire_on_commit=False) as session,
+                ):
+                    yield session
+            finally:
+                engines.put_nowait(engine)
+
+        yield open_lane_session
+
+
 async def run_executor_tick(  # noqa: PLR0913, PLR0912, PLR0915 - one knob per argument; one branch per phase
     session: AsyncSession,
     *,
@@ -2603,13 +3956,25 @@ async def run_executor_tick(  # noqa: PLR0913, PLR0912, PLR0915 - one knob per a
     breaker_release: ProcessStartRelease | None = None,
     repair_clock: RepairAuthoringClock | None = None,
     soft_failure: SoftFailureState | None = None,
+    catalogue: LaneCatalogue | None = None,
+    dispatcher: LaneDispatcher | None = None,
+    budget: BudgetAdmissionState | None = None,
+    maintenance: DailyMaintenance | None = None,
 ) -> ExecutorTickSummary:
     """Run one leader-elected, durable, fairly selected scheduler tick.
 
     `soft_failure` (the service loop always passes one) records every Wave O incident and applies repair
     withholding and the repair breaker; `None` is HEAD's tick exactly. Either way one lane's planning
-    fault never stops another lane. See execution/AGENTS.md, "Soft failure".
+    fault never stops another lane. See execution/AGENTS.md, "Soft failure". `catalogue` (default: this
+    process's) puts every lane on one path; legacy repair planning sees the legacy path only (CA8).
+    `dispatcher` is the S15 work queue: the tick opens each due lane's run and hands it over without
+    awaiting it, and folds the turns that finished since the last tick first; `None` is S16's `serial`,
+    HEAD's in-tick await under `max_lanes_per_tick`. See execution/AGENTS.md, "Work queue".
+    `budget` is WQ-4's paid-cap admission, run on every due lane before `fair_due_order` (a refused lane is
+    `deferred_budget` and opens no run); `maintenance` is the once-per-UTC-day upkeep in the repair-authoring
+    slot. `None` for either is HEAD's tick. See execution/AGENTS.md, "Budget admission" and "Daily upkeep".
     """
+    catalogue = _tick_catalogue() if catalogue is None else catalogue
     if max_lanes_per_tick < MIN_LANES_PER_TICK:
         raise ExecutorConfigurationError(
             f"max_lanes_per_tick must be at least {MIN_LANES_PER_TICK} to preserve class fairness"
@@ -2630,19 +3995,29 @@ async def run_executor_tick(  # noqa: PLR0913, PLR0912, PLR0915 - one knob per a
     logger.debug("plantgeo_job_executor_leader_acquired", observed_at=now.isoformat())
     primary_error: BaseException | None = None
     results: list[LaneTickResult] = []
-    tick = None if soft_failure is None else _SoftFailureTick(soft_failure, activation=activation, now=now)
+    # The soft-failure layer judges "inactive" against every definition that may dispatch this tick, so a
+    # config lane outside the allow-list is not mistaken for a retired one; repairs stay legacy-only.
+    dispatch_activation = catalogue.dispatch_activation(activation)
+    legacy_activation = catalogue.legacy_activation(activation)
+    tick = None if soft_failure is None else _SoftFailureTick(soft_failure, activation=dispatch_activation, now=now)
     try:
         if tick is not None:
             await tick.open(session)
+        if dispatcher is not None:
+            # Turns the queue finished since the last tick land first, their verdicts on the leader session.
+            for finished in dispatcher.collect():
+                results.append(finished.result)
+                if tick is not None:
+                    await tick.observe_turn(session, finished.candidate, finished.result, finished.verdict)
         planned, due = await _plan_active_lanes(
-            session, activation, now, breaker_release=breaker_release, observer=tick
+            session, activation, now, breaker_release=breaker_release, observer=tick, catalogue=catalogue
         )
         results.extend(planned)
-        repair_activation = activation
+        repair_activation = legacy_activation
         if tick is not None:
             await tick.after_planning(session)
             withheld = tick.repair_withholding()
-            repair_activation = _without_lanes(activation, frozenset(withheld))
+            repair_activation = _without_lanes(legacy_activation, frozenset(withheld))
             results.extend(tick.withheld_results(withheld))
         if repair_clock is not None and repair_clock.due(time.monotonic()):
             authored = await _author_due_repairs(session, repair_activation, now=now, clock=repair_clock)
@@ -2650,16 +4025,34 @@ async def run_executor_tick(  # noqa: PLR0913, PLR0912, PLR0915 - one knob per a
                 await tick.observe_authoring(session, succeeded=authored is not None)
         elif repair_clock is None and tick is not None:
             await tick.retire_authoring(session)
+        if maintenance is not None and maintenance.due(now) and (dispatcher is None or not dispatcher.in_flight):
+            # `job-logs-maintain` holds ACCESS EXCLUSIVE on the default job-event partition, which a queued lane's
+            # slice-end event write would wait behind; the day's pass waits for a tick with no lane in flight.
+            await _run_daily_maintenance(session, now=now, maintenance=maintenance)
+        # A forward still RUNNING on the queue counts as due: at two or more slots its repair would otherwise run
+        # beside it and double that lane's egress (review PM3).
+        running = () if dispatcher is None else dispatcher.in_flight
         repair_results, repair_due = await _plan_repair_runs(
             session,
             repair_activation,
-            forward_due={candidate.spec.lane_id for candidate in due},
+            forward_due={candidate.spec.lane_id for candidate in due}
+            | {name.removeprefix(EXECUTOR_DEFINITION_PREFIX) for name in running},
         )
         results.extend(repair_results)
         due.extend(repair_due)
         if tick is not None:
             await tick.record_plan_failures(session, results)
-        ordered = fair_due_order(due)
+        if budget is not None:
+            # WQ-4: admission BEFORE `fair_due_order`, so a refused lane never takes a selection or queue slot.
+            admission = await admit_due_lanes(session, due, now=now, catalogue=catalogue, state=budget)
+            results.extend(admission.refused)
+            due = list(admission.admitted)
+            if tick is not None:
+                await tick.observe_budget(session, admission)
+        ordered = fair_due_order(due, lead="incremental" if dispatcher is None else dispatcher.next_lead)
+        if dispatcher is not None:
+            results.extend(await _dispatch_due_lanes(session, ordered, dispatcher=dispatcher, stop=stop))
+            ordered = ()
         selected = ordered[:max_lanes_per_tick]
         for index, candidate in enumerate(selected):
             if stop is not None and stop.requested:
@@ -3039,6 +4432,8 @@ class _Turn:
     #: The DEFINITION that ran (`lane_id`, or `lane_id` + `REPAIR_LANE_SUFFIX` for a repair turn): the key
     #: `_LANE_TURN_VERDICTS` is filed under, so the tick reads back the verdict of the candidate it ran.
     report_key: str | None = None
+    #: A hold-ladder probe (GL-6): the child sees `PLANTGEO_TURN_PROBE=1`, and a lost fence parks the item.
+    probe: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -3055,6 +4450,9 @@ class _TurnVerdict:
     report_present: bool = False
     incomplete_reason: str | None = None
     failure_class: str | None = None
+    #: The report is conclusive proof the lane made progress (`lane_incidents.PROGRESS_EVIDENCE`); a probation
+    #: bucket counts toward release only when this holds and the turn completed clean.
+    conclusive: bool = False
 
 
 #: Per definition that ran (`_Turn.report_key`), the verdict of its newest terminal handler call.
@@ -3094,7 +4492,7 @@ def _turn_context(turn: _Turn, *, bucket: str | None) -> dict[str, str]:
         LANE_ID_ENV_VAR: turn.lane_id,
         TURN_MODE_ENV_VAR: turn.mode,
         ATTEMPT_ENV_VAR: str(turn.attempt),
-        TURN_PROBE_ENV_VAR: "0",  # probing is GL-6; this wave's turns are never probes
+        TURN_PROBE_ENV_VAR: "1" if turn.probe else "0",
     }
     if bucket is not None:
         context[TURN_BUCKET_ENV_VAR] = bucket
@@ -3177,6 +4575,7 @@ def _emit_lane_turn(
         "turn_outcome": turn_outcome,
         "attempt": turn.attempt,
         "mode": turn.mode,
+        "probe": turn.probe,
     }
     if extra:
         fields.update(extra)
@@ -3194,6 +4593,7 @@ def _finish_lane_turn(  # noqa: PLR0913 - the verdict facts the tick's incident 
     report_present: bool = False,
     incomplete_reason: str | None = None,
     failure_class: str | None = None,
+    conclusive: bool = False,
 ) -> TurnOutcome:
     """Common tail of every terminal branch: turn_outcome, the process-local caches, the one `lane_turn`
     line. `incomplete` is the ONE override the exit-class table needs (`ok` still splits into
@@ -3209,6 +4609,7 @@ def _finish_lane_turn(  # noqa: PLR0913 - the verdict facts the tick's incident 
         report_present=report_present,
         incomplete_reason=incomplete_reason if turn_outcome == "incomplete" else None,
         failure_class=failure_class,
+        conclusive=conclusive,
     )
     _emit_lane_turn(turn, spawned=spawned, exit_class=exit_class, turn_outcome=turn_outcome, extra=extra)
     return turn_outcome
@@ -3494,24 +4895,14 @@ def _charging_basis(
     return {"charged_basis": "suspect", "charged": 0.0, "suspect": float(LANE_LOGICAL_CAPS.get(lane_id, 0))}
 
 
-@job_handler(EXECUTOR_HANDLER_TOKEN)
-async def run_scheduled_command(  # noqa: PLR0911, PLR0912, PLR0915 - each terminal state maps to a ledger outcome
-    invocation: JobInvocation,
-) -> JobHandlerOutcome:
-    """Execute one registry-bound command under the outer work item's fence.
+#: What a path's gates resolve a work item to: the turn identity, the definition that runs and its argv.
+_ResolvedTurn = tuple[_Turn, LaneExecutionSpec, tuple[str, ...]]
 
-    A uuid4 `turn_id` is generated FIRST (design Sec 1.2), before any validation, so even a refusal
-    that never reaches a command carries one. `spawned` is `False` on every return before
-    `create_subprocess_exec` has returned and `True` on every return after; every return stamps both
-    into `metrics`.
-    """
-    turn = _Turn(
-        turn_id=uuid.uuid4(), lane_id="unknown", mode=_turn_mode(invocation.kind), attempt=invocation.attempt_number
-    )
-    if invocation.kind not in EXECUTOR_WORK_ITEM_KINDS:
-        return _pre_spawn_failure(
-            turn, failure_class="unknown_work_item_kind", reason=f"unexpected kind {invocation.kind!r}"
-        )
+
+def _resolve_legacy_turn(  # noqa: PLR0911 - one refusal per gate HEAD's handler had, plus CA12 and S8
+    turn: _Turn, invocation: JobInvocation, catalogue: LaneCatalogue
+) -> JobHandlerOutcome | _ResolvedTurn:
+    """The legacy path's gates, HEAD's exactly (a registered lane, the allow-list, a command), plus CA12 and S8."""
     lane_id = invocation.payload.get("lane_id")
     if not isinstance(lane_id, str) or lane_id not in LANE_SPECS:
         return _pre_spawn_failure(
@@ -3525,6 +4916,14 @@ async def run_scheduled_command(  # noqa: PLR0911, PLR0912, PLR0915 - each termi
     report_key = lane_id if invocation.kind == EXECUTOR_WORK_ITEM_KIND else f"{lane_id}{REPAIR_LANE_SUFFIX}"
     turn = replace(turn, lane_id=lane_id, report_key=report_key)
     spec = LANE_SPECS[lane_id]
+    if catalogue.kill_switch.stops(report_key):
+        return _pre_spawn_failure(
+            turn, failure_class="lane_stopped", reason=f"lane {lane_id!r} is named in {STOPPED_LANES_VARIABLE}"
+        )
+    if lane_id in catalogue.quarantined:
+        return _pre_spawn_failure(
+            turn, failure_class="lane_quarantined", reason=f"lanes/{lane_id}.toml is quarantined (S8)"
+        )
     try:
         activation = parse_activation()
     except ExecutorConfigurationError as error:
@@ -3548,6 +4947,81 @@ async def run_scheduled_command(  # noqa: PLR0911, PLR0912, PLR0915 - each termi
         command = _resolve_command(spec, invocation)
     except RepairRequestError as error:
         return _pre_spawn_failure(turn, failure_class="invalid_repair_request", reason=f"lane {lane_id!r}: {error}")
+    return turn, spec, command
+
+
+def _resolve_config_turn(
+    turn: _Turn, invocation: JobInvocation, catalogue: LaneCatalogue
+) -> JobHandlerOutcome | _ResolvedTurn:
+    """The config path's gates (CA3): the TOML's `enabled`, the catalogue and the CA12 kill-switch, nothing else.
+
+    Neither `LANE_SPECS` nor the legacy allow-list is consulted. A legacy repair item for a config lane is
+    refused (CA8). A CA1-marked item names its owning lane and its mode; an unmarked scheduled item (one
+    left open across a cut-over) names its definition id, `<lane>` or `<lane>:gap-fill`.
+    """
+    lane_id = invocation.payload.get("lane_id")
+    named = lane_id if isinstance(lane_id, str) else "unknown"
+    owning = owning_lane_id(named)
+    if invocation.kind != EXECUTOR_WORK_ITEM_KIND:
+        # `invalid_repair_request` never counts against the repair breaker: the item, not the lane, is wrong.
+        return _pre_spawn_failure(
+            replace(turn, lane_id=owning, report_key=f"{owning}{REPAIR_LANE_SUFFIX}"),
+            failure_class="invalid_repair_request",
+            reason=f"lane {owning!r} runs on the config path; a legacy repair item is never run for it (CA8)",
+        )
+    mode = invocation.payload.get(TURN_MODE_PAYLOAD_KEY)
+    spec = catalogue.config_spec(owning, mode) if isinstance(mode, str) else catalogue.spec_named(named)
+    if spec is None or not spec.is_config or spec.command is None or spec.config_mode is None:
+        return _pre_spawn_failure(
+            replace(turn, lane_id=owning),
+            failure_class="unknown_executor_lane",
+            reason="work item names no config definition in the lane catalogue",
+        )
+    turn = replace(turn, lane_id=owning, mode=spec.config_mode, report_key=spec.lane_id)
+    refusal = catalogue.config_gate(spec)
+    if refusal is not None:
+        return _pre_spawn_failure(
+            turn,
+            failure_class="lane_stopped" if refusal == STOPPED_REASON else "config_lane_disabled",
+            reason=f"lane {owning!r} ({spec.config_mode}): {refusal}",
+        )
+    return turn, spec, spec.command
+
+
+@job_handler(EXECUTOR_HANDLER_TOKEN)
+async def run_scheduled_command(  # noqa: PLR0911, PLR0912, PLR0915 - each terminal state maps to a ledger outcome
+    invocation: JobInvocation,
+) -> JobHandlerOutcome:
+    """Execute one registry-bound command under the outer work item's fence.
+
+    A uuid4 `turn_id` is generated FIRST (design Sec 1.2), before any validation, so even a refusal
+    that never reaches a command carries one. `spawned` is `False` on every return before
+    `create_subprocess_exec` has returned and `True` on every return after; every return stamps both
+    into `metrics`.
+    """
+    turn = _Turn(
+        turn_id=uuid.uuid4(),
+        lane_id="unknown",
+        mode=_turn_mode(invocation.kind),
+        attempt=invocation.attempt_number,
+        probe=_PROBE_TURN.get(),
+    )
+    if invocation.kind not in EXECUTOR_WORK_ITEM_KINDS:
+        return _pre_spawn_failure(
+            turn, failure_class="unknown_work_item_kind", reason=f"unexpected kind {invocation.kind!r}"
+        )
+    catalogue = _tick_catalogue()
+    named_lane = invocation.payload.get("lane_id")
+    config_marked = invocation.payload.get(EXECUTOR_PATH_PAYLOAD_KEY) == CONFIG_EXECUTOR
+    if config_marked or (isinstance(named_lane, str) and catalogue.is_config_lane(named_lane)):
+        resolved = _resolve_config_turn(turn, invocation, catalogue)
+    else:
+        resolved = _resolve_legacy_turn(turn, invocation, catalogue)
+    if isinstance(resolved, JobHandlerOutcome):
+        return resolved
+    turn, spec, command = resolved
+    lane_id = turn.lane_id
+    report_key = turn.report_key or lane_id
 
     scheduled_for = invocation.payload.get("scheduled_for")
     bucket = scheduled_for if isinstance(scheduled_for, str) else invocation.shard_key
@@ -3630,7 +5104,7 @@ async def run_scheduled_command(  # noqa: PLR0911, PLR0912, PLR0915 - each termi
         "usage_reported": usage is not None,
         "usage_complete": router_usage["usage_complete"],
         "unwritten_known": turn_report is not None,
-        "probe": False,
+        "probe": turn.probe,
         "stdout_bytes": stdout.bytes_seen,
         "stdout_truncated": stdout.truncated,
         "start_lag_seconds": start_lag_seconds,
@@ -3678,6 +5152,12 @@ async def run_scheduled_command(  # noqa: PLR0911, PLR0912, PLR0915 - each termi
             extra=_lane_turn_failure_detail(tail),
             report_present=raw_report is not None,
         )
+        if turn.probe:
+            # GL-6: a probe that lost its fence says nothing about the lane; it parks (inconclusive), never fails.
+            return JobHandlerOutcome.yielded(
+                reason=f"lane {lane_id!r} probe lost its fenced lease; parked as inconclusive",
+                metrics={**metrics, "exit_class": exit_class, "turn_outcome": turn_outcome},
+            )
         return JobHandlerOutcome.failed(
             "executor_lease_lost",
             _command_failure_reason(f"lane {lane_id!r} lost its fenced lease while the command was running", tail),
@@ -3715,6 +5195,7 @@ async def run_scheduled_command(  # noqa: PLR0911, PLR0912, PLR0915 - each termi
             stderr_tail=tail.tail.decode("utf-8", errors="replace"),
             last_send_outcome=winning_outcome if isinstance(winning_outcome, str) else None,
             lane_id=_WRAPPER_EVIDENCE_KEYS.get(lane_id, lane_id),
+            native=spec.is_config,
         )
         turn_outcome = _finish_lane_turn(
             turn,
@@ -3728,7 +5209,7 @@ async def run_scheduled_command(  # noqa: PLR0911, PLR0912, PLR0915 - each termi
             _command_failure_reason(f"lane {lane_id!r} command exited with status {return_code}", tail),
             metrics={**metrics, "exit_code": return_code, "exit_class": exit_class, "turn_outcome": turn_outcome},
         )
-    exit_class = classify_exit(return_code=0, report=raw_report)
+    exit_class = classify_exit(return_code=0, report=raw_report, native=spec.is_config)
     turn_outcome = _finish_lane_turn(
         turn,
         spawned=True,
@@ -3737,7 +5218,16 @@ async def run_scheduled_command(  # noqa: PLR0911, PLR0912, PLR0915 - each termi
         extra=None if exit_class == "ok" else _lane_turn_failure_detail(tail),
         report_present=raw_report is not None,
         incomplete_reason=_incomplete_reason(turn_report, raw_probe_status),
+        conclusive=is_conclusive(lane_id, raw_report),
     )
+    if spec.is_config and exit_class == "report_missing":
+        # The runner prints its S5 report from `finally` (FR-38): exit 0 without one is a runner bug, so a config
+        # turn fails and its hold climbs the code ladder; a legacy writer's missing report stays a completion.
+        return JobHandlerOutcome.failed(
+            "report_missing",
+            _command_failure_reason(f"lane {lane_id!r} runner exited 0 without its terminal report", tail),
+            metrics={**metrics, "exit_code": return_code, "exit_class": exit_class, "turn_outcome": turn_outcome},
+        )
     cursor = {
         "state": "completed",
         "scheduled_for": bucket,
@@ -3751,12 +5241,16 @@ async def run_scheduled_command(  # noqa: PLR0911, PLR0912, PLR0915 - each termi
     )
 
 
-def executor_inventory(activation: ActivationConfig) -> dict[str, object]:
+def executor_inventory(activation: ActivationConfig, catalogue: LaneCatalogue | None = None) -> dict[str, object]:
+    """The `--inventory` document: every definition on both paths, then quarantined lane TOMLs (spec §4.4)."""
+    catalogue = _tick_catalogue() if catalogue is None else catalogue
+    dispatch = catalogue.dispatch_activation(activation)
     return {
         "event": "plantgeo_job_executor_inventory",
-        "mode": "active" if activation.active_lanes else "shadow",
-        "activation_variables": [ACTIVE_LANES_VARIABLE],
-        "lanes": [spec.inventory_row(active=activation.is_active(spec.lane_id)) for spec in LANE_SPECS.values()],
+        "mode": "active" if dispatch.active_lanes else "shadow",
+        "activation_variables": [ACTIVE_LANES_VARIABLE, STOPPED_LANES_VARIABLE],
+        "lanes": catalogue.inventory_rows(activation),
+        "lane_catalogue_error": catalogue.load_error,
     }
 
 
@@ -3882,76 +5376,140 @@ async def _service_loop(  # noqa: PLR0913 - the process's parsed settings, one p
     once: bool,
     repair_clock: RepairAuthoringClock | None,
     soft_failure: SoftFailureState,
+    dispatch: DispatchMode = "serial",
+    max_concurrent_lanes: int = DEFAULT_MAX_CONCURRENT_LANES,
+    budget: BudgetAdmissionState | None = None,
 ) -> int:
+    """The leader loop. Under `dispatch="queue"` (S15) lanes run on their own sessions across ticks; a tick
+    that finds another leader, or loses its own ledger connection, cancels them (leader loss). `--once` is
+    always one serial tick, so nothing it starts outlives it. See execution/AGENTS.md, "Work queue". `--once`
+    never runs the daily upkeep (job-event DDL, the monthly receipt); a continuous service does."""
+    database_url = settings.require_local_source_loader_database_url()
+    queued = dispatch == "queue" and not once
+    maintenance = None if once else DailyMaintenance(database_url=database_url)
+    async with (
+        local_source_loader_pool(database_url) as loader_pool,
+        shutdown_signal() as stop,
+        _lane_session_slots(database_url, max_concurrent_lanes if queued else 0) as open_lane_session,
+    ):
+        dispatcher = (
+            LaneDispatcher(open_lane_session=open_lane_session, max_concurrent_lanes=max_concurrent_lanes, stop=stop)
+            if queued
+            else None
+        )
+        try:
+            return await _run_service_ticks(
+                loader_pool=loader_pool,
+                stop=stop,
+                dispatcher=dispatcher,
+                activation=activation,
+                poll_seconds=poll_seconds,
+                max_lanes_per_tick=max_lanes_per_tick,
+                once=once,
+                repair_clock=repair_clock,
+                soft_failure=soft_failure,
+                budget=budget,
+                maintenance=maintenance,
+            )
+        finally:
+            if dispatcher is not None:
+                await dispatcher.drain(timeout_seconds=LANE_DRAIN_SECONDS)
+
+
+async def _run_service_ticks(  # noqa: PLR0913 - the loop's collaborators, one per keyword
+    *,
+    loader_pool: AsyncEngine,
+    stop: ShutdownSignal,
+    dispatcher: LaneDispatcher | None,
+    activation: ActivationConfig,
+    poll_seconds: float,
+    max_lanes_per_tick: int,
+    once: bool,
+    repair_clock: RepairAuthoringClock | None,
+    soft_failure: SoftFailureState,
+    budget: BudgetAdmissionState | None = None,
+    maintenance: DailyMaintenance | None = None,
+) -> int:
+    """Tick until shutdown: plan and dispatch, echo the summary on a change or hourly, back off on a fault."""
     failures = 0
     breaker_release = ProcessStartRelease.from_environment(now=datetime.now(UTC))
-    database_url = settings.require_local_source_loader_database_url()
     last_signature: tuple[tuple[str, str, str | None], ...] | None = None
     last_echo_monotonic = -TICK_SUMMARY_HEARTBEAT_SECONDS  # forces the very first tick to print
     health = _UnhealthyEdge()
-    async with local_source_loader_pool(database_url) as loader_pool, shutdown_signal() as stop:
-        while not stop.requested:
-            try:
-                async with (
-                    loader_pool.connect() as tick_connection,
-                    AsyncSession(
-                        bind=tick_connection,
-                        expire_on_commit=False,
-                    ) as session,
-                ):
-                    summary = await run_executor_tick(
-                        session,
-                        activation=activation,
-                        now=datetime.now(UTC),
-                        max_lanes_per_tick=max_lanes_per_tick,
-                        stop=stop,
-                        breaker_release=breaker_release,
-                        repair_clock=repair_clock,
-                        soft_failure=soft_failure,
-                    )
-                signature = _tick_signature(summary)
-                now_monotonic = time.monotonic()
-                if signature != last_signature or now_monotonic - last_echo_monotonic >= TICK_SUMMARY_HEARTBEAT_SECONDS:
-                    # The hourly heartbeat lists chronic holds and failing planners (spec Sec 4.9.3).
-                    heartbeat = {
-                        **summary.to_dict(),
-                        "chronic_holds": list(soft_failure.chronic_lanes),
-                        "plan_failed_lanes": list(soft_failure.plan_failed_lanes),
-                    }
-                    click.echo(json.dumps(heartbeat, sort_keys=True))
-                    last_signature = signature
-                    last_echo_monotonic = now_monotonic
-                announce_operator_actions(summary, soft_failure.announced, durable=soft_failure.durable_announcements)
-                for lane in summary.incomplete_lanes:
-                    if lane.turn_report is not None:
-                        logger.warning(
-                            "plantgeo_job_executor_lane_incomplete",
-                            lane_id=lane.lane_id,
-                            days_unwritten=lane.turn_report.days_unwritten,
-                            consecutive_incomplete_buckets=lane.turn_report.consecutive_incomplete_buckets,
-                            publication_debt=lane.turn_report.publication_debt,
-                            publication_debt_counts=dict(lane.turn_report.publication_debt_counts),
-                            unwritten=[dict(entry) for entry in lane.turn_report.unwritten],
-                        )
-                health.report(summary)
-                failures = 0
-                if once:
-                    return 1 if summary.failed else 0
-                if await _wait_for_shutdown(stop, poll_seconds):
-                    break
-            except Exception as error:
-                failures += 1
-                delay = min(poll_seconds * (2 ** (failures - 1)), MAX_LOOP_BACKOFF_SECONDS)
-                logger.error(
-                    "plantgeo_job_executor_tick_failed",
-                    error_type=type(error).__name__,
-                    consecutive_failures=failures,
-                    retry_seconds=delay,
+    while not stop.requested:
+        try:
+            async with (
+                loader_pool.connect() as tick_connection,
+                AsyncSession(
+                    bind=tick_connection,
+                    expire_on_commit=False,
+                ) as session,
+            ):
+                summary = await run_executor_tick(
+                    session,
+                    activation=activation,
+                    now=datetime.now(UTC),
+                    max_lanes_per_tick=max_lanes_per_tick,
+                    stop=stop,
+                    breaker_release=breaker_release,
+                    repair_clock=repair_clock,
+                    soft_failure=soft_failure,
+                    dispatcher=dispatcher,
+                    budget=budget,
+                    maintenance=maintenance,
                 )
-                if once:
-                    return 1
-                if await _wait_for_shutdown(stop, delay):
-                    break
+            if dispatcher is not None and not summary.leader and dispatcher.in_flight:
+                # Leader loss: another process leads now, and its planner owns these lanes' next turns.
+                await dispatcher.cancel_all(reason="leader_lost")
+            signature = _tick_signature(summary)
+            now_monotonic = time.monotonic()
+            if signature != last_signature or now_monotonic - last_echo_monotonic >= TICK_SUMMARY_HEARTBEAT_SECONDS:
+                # The hourly heartbeat lists chronic holds and failing planners (spec Sec 4.9.3).
+                heartbeat = {
+                    **summary.to_dict(),
+                    "chronic_holds": list(soft_failure.chronic_lanes),
+                    "plan_failed_lanes": list(soft_failure.plan_failed_lanes),
+                }
+                click.echo(json.dumps(heartbeat, sort_keys=True))
+                last_signature = signature
+                last_echo_monotonic = now_monotonic
+            announce_operator_actions(summary, soft_failure.announced, durable=soft_failure.durable_announcements)
+            for lane in summary.incomplete_lanes:
+                if lane.turn_report is not None:
+                    logger.warning(
+                        "plantgeo_job_executor_lane_incomplete",
+                        lane_id=lane.lane_id,
+                        days_unwritten=lane.turn_report.days_unwritten,
+                        consecutive_incomplete_buckets=lane.turn_report.consecutive_incomplete_buckets,
+                        publication_debt=lane.turn_report.publication_debt,
+                        publication_debt_counts=dict(lane.turn_report.publication_debt_counts),
+                        unwritten=[dict(entry) for entry in lane.turn_report.unwritten],
+                    )
+            health.report(summary)
+            failures = 0
+            if once:
+                return 1 if summary.failed else 0
+            if await _wait_for_shutdown(stop, poll_seconds):
+                break
+        except Exception as error:
+            failures += 1
+            delay = min(poll_seconds * (2 ** (failures - 1)), MAX_LOOP_BACKOFF_SECONDS)
+            logger.error(
+                "plantgeo_job_executor_tick_failed",
+                error_type=type(error).__name__,
+                consecutive_failures=failures,
+                retry_seconds=delay,
+            )
+            if dispatcher is not None and isinstance(error, ExecutorLeaderUnlockError):
+                # The leader lock may still be held by a backend this process lost: leadership is unproven.
+                # Any OTHER tick fault (a planning statement timeout included) leaves running lanes alone:
+                # each holds its own definition lock and fenced lease on its own session, and leadership is
+                # given up at the end of every tick anyway (review H4).
+                await dispatcher.cancel_all(reason="leader_connection_lost")
+            if once:
+                return 1
+            if await _wait_for_shutdown(stop, delay):
+                break
     return 0
 
 
@@ -3967,12 +5525,24 @@ def jobs_executor(once: bool, inventory_only: bool) -> None:
     """
     try:
         activation = parse_activation()
-        inventory = executor_inventory(activation)
+        catalogue = _tick_catalogue()
+        inventory = executor_inventory(activation, catalogue)
         click.echo(json.dumps(inventory, sort_keys=True))
         if inventory_only:
             return
-        log_quarantined_lanes(activation)
+        log_quarantined_lanes(activation, catalogue)
         executor_settings = ExecutorSettings.from_environment()
+        with suppress(Exception):
+            logger.info(
+                "plantgeo_job_executor_runtime",
+                dispatch=executor_settings.dispatch,
+                breaker=executor_settings.breaker,
+                max_concurrent_lanes=executor_settings.max_concurrent_lanes,
+                soft_failure=executor_settings.soft_failure_enabled,
+                code_probe_hours=(
+                    None if executor_settings.hold_ladders is None else executor_settings.hold_ladders.code_probe_hours
+                ),
+            )
         exit_code = asyncio.run(
             _service_loop(
                 activation=activation,
@@ -3980,7 +5550,10 @@ def jobs_executor(once: bool, inventory_only: bool) -> None:
                 max_lanes_per_tick=executor_settings.max_lanes_per_tick,
                 once=once,
                 repair_clock=executor_settings.repair_clock,
-                soft_failure=SoftFailureState.for_process(activation, executor_settings),
+                soft_failure=SoftFailureState.for_process(activation, executor_settings, catalogue),
+                dispatch=executor_settings.dispatch,
+                max_concurrent_lanes=executor_settings.max_concurrent_lanes,
+                budget=BudgetAdmissionState(),
             )
         )
     except ExecutorConfigurationError as error:
@@ -3991,31 +5564,43 @@ def jobs_executor(once: bool, inventory_only: bool) -> None:
 
 __all__ = [
     "ACTIVE_LANES_VARIABLE",
+    "BREAKER_MODE_VARIABLE",
     "CLOCK_RELEASE_STREAK_LIMIT",
     "COMMAND_STDERR_SUMMARY_CHARS",
     "COMMAND_STDERR_TAIL_BYTES",
+    "DEFAULT_MAX_CONCURRENT_LANES",
+    "DISPATCH_VARIABLE",
     "EXECUTOR_DEFINITION_PREFIX",
     "EXECUTOR_DEFINITION_VERSION",
     "EXECUTOR_WORK_ITEM_KINDS",
     "FAILURE_STREAK_PROBE_LIMIT",
     "LANE_SPECS",
+    "MAX_CONCURRENT_LANES_VARIABLE",
     "OPERATOR_SUPERSESSION_BLOCKER_PREFIX",
     "PLAN_FAILED_DETAIL_PREFIX",
+    "PROBE_OPERATOR",
     "RUN_SUPERSESSION_FINGERPRINT_PREFIX",
     "RUN_SUPERSESSION_INCIDENT_TYPE",
     "SETTLED_WITHOUT_SUCCESS",
     "SOFT_FAILURE_VARIABLE",
+    "STOPPED_LANES_VARIABLE",
     "SUPERSEDE_RUN_COMMAND",
     "ActivationConfig",
+    "BreakerMode",
+    "BudgetAdmissionState",
     "CheckpointVerdict",
     "CommandOutputTail",
     "CommandStderrTail",
     "ConfigFault",
+    "DailyMaintenance",
+    "DispatchMode",
+    "DispatchedTurn",
     "DueLane",
     "ExecutorConfigurationError",
     "ExecutorLeaderUnlockError",
     "ExecutorSettings",
     "ExecutorTickSummary",
+    "LaneDispatcher",
     "LaneExecutionSpec",
     "LaneTickResult",
     "LatestRun",
@@ -4025,10 +5610,13 @@ __all__ = [
     "SoftFailureState",
     "TurnReport",
     "announce_operator_actions",
+    "breaker_mode",
     "bucket_after",
+    "dispatch_mode",
     "ensure_lane_definition",
     "executor_inventory",
     "fair_due_order",
+    "hold_ladders_from_environment",
     "jobs_executor",
     "judge_failed_checkpoint",
     "log_quarantined_lanes",

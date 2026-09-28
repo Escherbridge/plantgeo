@@ -299,7 +299,29 @@ The conformed date dimension. `static_lookup`, `horizon: none`, floor **derived*
 `foundation/parquet/calendar.py` (stdlib only) and its lane module takes **no `AsyncSession`** —
 the registry's `_fill_calendar` absorbs the uniform adapter shape so the lie stays in one annotated
 place. Its watermark comes from the clock and its own listing: a version covers 800 days forward
-and must reach `today + 400`, so it regenerates roughly annually instead of daily.
+and must reach `today + 400`, so it regenerates roughly annually instead of daily. Its
+`floor_basis` names the lane(s) that set the minimum, including any S18 mirror row (plan 1F).
+
+### The S18 mirror: how a config lane's stream is registered (plan 1F, `f1-registry-bridge`)
+`config_stream_registrations.py::CONFIG_STREAM_ROWS` holds one literal `ConfigStreamRow` per Parquet
+stream a config lane writes; `registration_from_config_stream_row` turns each into a
+`LaneRegistration` whose adapter REFUSES a generic export and prints the runnable runner command
+(`python -m agri_data_service.pipeline.runner --lane <id> --mode forward`) and the strategy module.
+The rows are spliced into `LANE_REGISTRATIONS`, `LANE_REGISTRY` and `CALENDAR_HISTORY_FLOOR`, so
+serving (`parquet_ops/authorized_serving.py`) and coverage list the stream like any other.
+- **To register a new stream:** append its row, copied from the lane TOML's `[[streams]]` entry: the
+  entry's own `history_floor` (else the lane's `[days] floor`), the lane's `[days]
+  publication_lag_days`, its `nature`, S14 `strategy` key and `floor_basis`, and
+  `complete_history_floor` only when the entry declares one.
+  `tests/parquet/test_config_stream_registrations.py` holds every row equal to its TOML through
+  `config_stream_mirror_violations`; a drift names each differing field and prints the row the TOML
+  implies, so the fix is a paste. A complete floor neither side declares is not reported as drift.
+- **Rows are literals, never synthesised from `lanes/` at import:** `LANE_REGISTRY` is read at import
+  by `execution/lane_specs.py`, `authorized_serving.py::_LANES` and the calendar floor, and the lane
+  loader must stay lazy.
+- **Literal registrations take lane facts from the TOML when one exists, and parity is pinned**
+  (`_literal_registration_disagreement`): until a lane cuts over, its literal registration stays the
+  served fact and the TOML must agree with it.
 
 ## `gap_fill.py` — the bounded driver the executor invokes
 

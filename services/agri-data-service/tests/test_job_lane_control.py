@@ -1,9 +1,15 @@
-"""Operator pause/resume preserves run/work state and records only committed controls."""
+"""Operator pause/resume preserves run/work state and records only committed controls.
+
+CA2 (config-driven ingestion spec §4.8.9): the brake resolves through the lane catalogue, so a config lane
+and its `<lane>:gap-fill` definition are braked like a legacy lane, and the next tick dispatches neither.
+"""
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
+import sys
 import uuid
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
@@ -13,11 +19,18 @@ import pytest
 from click.testing import CliRunner
 from sqlalchemy.exc import OperationalError
 
+from agri_data_service.execution import job_executor_service, lane_catalogue
 from agri_data_service.execution import job_lane_control as control
+from agri_data_service.execution.job_executor_service import EXECUTOR_DEFINITION_PREFIX
+from agri_data_service.execution.lane_ids import SOIL_DIRECT_LANE_ID
+from agri_data_service.foundation.lane_config import LANES_DIRECTORY_ENV_VAR
 from agri_data_service.interface.cli.ops import ops
+from tests.execution.soft_failure_fakes import COMPLETE_REPORT_SCRIPT, HOUR, NOW, FakeWorld, states
+from tests.lane_config.builders import settled_soil_lane, write_lane_tree
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence
+    from pathlib import Path
 
 NAME = "plantgeo.executor.sensors-direct-forward"
 OTHER = "plantgeo.executor.parquet-signal"
@@ -228,3 +241,76 @@ def test_required_desired_state_and_operator_reason(session: Session) -> None:
             with pytest.raises(click.BadParameter, match="characters"):
                 control._bounded(value, label, limit)
     assert not session.calls
+
+
+# --- CA2: a config lane and its gap-fill are braked through the lane catalogue ----------------------------
+
+CONFIG_LANE = SOIL_DIRECT_LANE_ID
+CONFIG_GAP_FILL = f"{CONFIG_LANE}:gap-fill"
+
+
+def _brake(name: str) -> None:
+    result = CliRunner().invoke(
+        ops,
+        [
+            "jobs-set-lane-enabled",
+            "--definition",
+            name,
+            "--disabled",
+            "--operator",
+            "repair-operator",
+            "--reason",
+            "config-lane rollback drill",
+            "--apply",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["outcome"] == "changed"
+
+
+def test_a_braked_config_lane_and_its_gap_fill_are_not_dispatched_on_the_next_tick(
+    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The brake is a ledger write the planner reads; neither the lane's spec nor an allow-list token is needed."""
+    lane = settled_soil_lane(
+        CONFIG_LANE,
+        executor="config",
+        schedule={
+            "forward_cron": "0 * * * *",
+            "gap_fill_cron": "0 * * * *",
+            "gap_fill_enabled": True,
+            "gap_fill_enabled_at_gate": "G6",
+        },
+    )
+    monkeypatch.setenv(LANES_DIRECTORY_ENV_VAR, str(write_lane_tree(tmp_path, [lane])))
+    monkeypatch.setattr(lane_catalogue, "RUNNER_COMMAND", (sys.executable, "-c", COMPLETE_REPORT_SCRIPT))
+    monkeypatch.setattr(job_executor_service, "_NEVER_RUN_FIRST_SEEN", {})
+    world = FakeWorld({}, active=frozenset()).install(monkeypatch)
+    current_fire = NOW.replace(minute=0, second=0, microsecond=0)
+    for lane_id in (CONFIG_LANE, CONFIG_GAP_FILL):
+        world.seed_run(lane_id, current_fire - HOUR, "succeeded", exit_class="ok")
+
+    unbraked = asyncio.run(world.tick(soft=None))
+    assert states(unbraked) == {CONFIG_LANE: "ran", CONFIG_GAP_FILL: "ran"}, "control: both dispatch unbraked"
+
+    names = [f"{EXECUTOR_DEFINITION_PREFIX}{lane_id}" for lane_id in (CONFIG_LANE, CONFIG_GAP_FILL)]
+    session.rows = [definition("2", True, name) for name in names]
+    for name in names:
+        _brake(name)
+    world.disabled = {
+        str(row["name"]).removeprefix(EXECUTOR_DEFINITION_PREFIX) for row in session.rows if row["enabled"] is False
+    }
+    braked = asyncio.run(world.tick(now=NOW + HOUR, soft=None))
+
+    assert world.disabled == {CONFIG_LANE, CONFIG_GAP_FILL}
+    assert states(braked) == {CONFIG_LANE: "paused", CONFIG_GAP_FILL: "paused"}
+    assert [len(world.runs_of(lane_id)) for lane_id in (CONFIG_LANE, CONFIG_GAP_FILL)] == [2, 2], "no run opened"
+
+
+def test_a_gap_fill_definition_the_catalogue_does_not_hold_is_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Only a definition some path dispatches may be braked; a legacy lane has no `:gap-fill`."""
+    monkeypatch.setenv(LANES_DIRECTORY_ENV_VAR, str(write_lane_tree(tmp_path, [])))
+    with pytest.raises(control.LaneControlRefusal, match="exactly name"):
+        control.resolve_definition(f"{EXECUTOR_DEFINITION_PREFIX}{CONFIG_GAP_FILL}")

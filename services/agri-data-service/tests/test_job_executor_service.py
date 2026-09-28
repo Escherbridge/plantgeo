@@ -9,6 +9,7 @@ import pytest
 from agri_data_service.execution.job_executor_service import (
     ACTIVE_LANES_VARIABLE,
     LANE_SPECS,
+    STOPPED_LANES_VARIABLE,
     ActivationConfig,
     ExecutorConfigurationError,
     executor_inventory,
@@ -22,7 +23,7 @@ EXPECTED_SCHEDULES = {
     "water-gauges-direct-forward": "15 * * * *",
     "mtbs-forward": "55 7 * * 2",
     "climate-nasa-power-direct-forward": "40 * * * *",
-    "soil-era5-land-direct-forward": "50 * * * *",
+    "soil-era5-land-direct-forward": "50 */6 * * *",
     "vegetation-sentinel2-ndvi-direct-forward": "5 * * * *",
     "vegetation-ndvi-governed-plane-promotion": "25 * * * *",
     "weather-observations-direct-forward": "30 * * * *",
@@ -69,12 +70,21 @@ def test_unknown_lane_is_quarantined() -> None:
     assert not activation.is_active("retired-lane")
 
 
-def test_inventory_exposes_only_the_allow_list_and_current_lanes() -> None:
+def test_inventory_exposes_only_the_allow_list_the_kill_switch_and_current_lanes() -> None:
     inventory = executor_inventory(parse_activation({}))
-    assert inventory["activation_variables"] == [ACTIVE_LANES_VARIABLE]
+    assert inventory["activation_variables"] == [ACTIVE_LANES_VARIABLE, STOPPED_LANES_VARIABLE]
     rows = inventory["lanes"]
     assert isinstance(rows, list)
     assert {row["lane_id"] for row in rows} == set(EXPECTED_SCHEDULES)
+
+
+def test_the_soil_lane_opens_four_six_hourly_buckets_a_day_at_its_phase() -> None:
+    """O6/FR-21: legacy soil runs at 00:50, 06:50, 12:50 and 18:50 UTC, on top of G0's per-run cap."""
+    spec = LANE_SPECS["soil-era5-land-direct-forward"]
+    day = datetime(2026, 9, 28, tzinfo=UTC)
+    buckets = sorted({scheduled_bucket(spec, day + timedelta(minutes=minute)) for minute in range(0, 24 * 60, 10)})
+    assert [bucket.strftime("%H:%M") for bucket in buckets] == ["18:50", "00:50", "06:50", "12:50", "18:50"]
+    assert buckets[0].date() == (day - timedelta(days=1)).date(), "before 00:50 the lane is still in yesterday's"
 
 
 def test_scheduled_bucket_uses_the_declared_phase_offset() -> None:

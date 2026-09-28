@@ -514,8 +514,15 @@ async def open_job_run(  # noqa: PLR0913 - one parameter per column the run row 
     scheduled_for: datetime | None = None,
     requested_by: str | None = None,
     target_partitions: Mapping[str, object] = EMPTY_JSON_OBJECT,
+    max_attempts: int | None = None,
 ) -> OpenedJobRun:
-    """Open (or re-open) one logical run and fan its shards out, idempotently on both unique keys."""
+    """Open (or re-open) one logical run and fan its shards out, idempotently on both unique keys.
+
+    `max_attempts` overrides the definition's failure budget for THIS run's new shards only: the executor's
+    single-attempt probe and its probation/watch buckets (see execution/AGENTS.md, "Holds and probes").
+    """
+    if max_attempts is not None and max_attempts < 1:
+        raise JobSpecificationError("max_attempts must be at least 1")
     inserted = await fetch_row(
         session,
         _INSERT_JOB_RUN,
@@ -542,7 +549,7 @@ async def open_job_run(  # noqa: PLR0913 - one parameter per column the run row 
                 _INSERT_JOB_WORK_ITEMS,
                 {
                     "job_run_id": job_run_id,
-                    "max_attempts": definition.max_attempts,
+                    "max_attempts": definition.max_attempts if max_attempts is None else max_attempts,
                     "items": _work_items_json(work_items),
                 },
             )

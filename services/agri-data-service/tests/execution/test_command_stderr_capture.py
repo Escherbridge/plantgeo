@@ -438,6 +438,49 @@ def test_an_unwritten_day_s_detail_is_redacted_before_it_reaches_a_checkpoint() 
     assert "SECRET" not in str(kept.unwritten[0]["detail"])
 
 
+#: The runner's S5 entry shape (`pipeline/runner/report.py::UnwrittenEntry.to_dict`), with no declared count.
+S5_OWED_ENTRY: Final = {
+    "day": "2026-09-20",
+    "stream": "soil-field-vpd",
+    "reason": "deferred_budget",
+    "detail": "the turn's weighted-call cap was reached",
+    "behind_edge": True,
+}
+S5_UNSETTLED_ENTRY: Final = {
+    "day": "2026-09-27",
+    "stream": "soil-field-vpd",
+    "reason": "unsettled",
+    "detail": "newer than the probed edge",
+    "behind_edge": False,
+}
+
+
+def test_the_legacy_and_the_s5_unwritten_shapes_are_both_read() -> None:
+    """S16: a direct writer's `{day, outcome, detail}` and the runner's S5 `{day, stream, reason, behind_edge}`."""
+    legacy = summarize_turn_report(INCOMPLETE_REPORT, previous=None)
+    s5 = summarize_turn_report({"unwritten": [S5_OWED_ENTRY, S5_UNSETTLED_ENTRY]}, previous=None)
+    edge_only = summarize_turn_report({"unwritten": [S5_UNSETTLED_ENTRY]}, previous=None)
+    assert legacy is not None
+    assert s5 is not None
+    assert edge_only is not None
+
+    assert legacy.days_unwritten == 2
+    assert [(entry["day"], entry["outcome"]) for entry in legacy.unwritten] == [
+        ("2026-09-12", "conflict"),
+        ("2026-09-13", "contention"),
+    ]
+    assert not any("reason" in entry for entry in legacy.unwritten), "a legacy entry is kept exactly as before"
+
+    assert s5.days_unwritten == 1, "S5: only a day behind the provider edge is owed"
+    assert s5.incomplete
+    assert [(entry["day"], entry["outcome"], entry["reason"], entry["stream"]) for entry in s5.unwritten] == [
+        ("2026-09-20", "deferred_budget", "deferred_budget", "soil-field-vpd"),
+        ("2026-09-27", "unsettled", "unsettled", "soil-field-vpd"),
+    ]
+    assert edge_only.days_unwritten == 0
+    assert not edge_only.incomplete, "a day newer than the edge is unsettled by design, never an alarm"
+
+
 @pytest.mark.usefixtures("_pinned")
 async def test_a_malformed_repair_payload_is_refused_before_any_process_starts(
     teed: list[dict[str, object]],

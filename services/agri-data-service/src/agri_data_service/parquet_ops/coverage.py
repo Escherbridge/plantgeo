@@ -11,6 +11,7 @@ import threading
 from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Final
 
 from agri_data_service.foundation.parquet.lane_contract import nature_has_time_axis, nature_permits_cadence
@@ -26,13 +27,16 @@ from agri_data_service.parquet_ops.wire import (
     WarehouseCoverage,
     contiguous_ranges,
 )
-from agri_data_service.pipeline.constants import DIRECT_HOURLY_REFRESH_INTERVAL_SECONDS
+from agri_data_service.pipeline.constants import (
+    DIRECT_HOURLY_REFRESH_INTERVAL_SECONDS,
+    SOIL_DIRECT_REFRESH_INTERVAL_SECONDS,
+)
 from agri_data_service.pipeline.direct.climate.products import CLIMATE_FIELD_PRODUCTS
 from agri_data_service.pipeline.direct.soil.products import SOIL_FIELD_PRODUCTS
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRATIONS
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Iterator, Mapping, Sequence
 
     from agri_data_service.foundation.parquet.lane_contract import LaneNature
     from agri_data_service.foundation.parquet.paths import PartitionKind
@@ -53,8 +57,11 @@ MAX_CENSUS_LISTED_KEYS: Final = 600_000
 
 #: Coverage owns no DuckDB connection; this separately bounds its R2 network fan-out on a cold read.
 CENSUS_LIST_WORKERS: Final = 3
-HOURLY_REFRESH_STREAMS: Final = frozenset(product.stream for product in CLIMATE_FIELD_PRODUCTS) | frozenset(
-    product.stream for product in SOIL_FIELD_PRODUCTS
+#: The writer cadence each direct stream's refresh label reports: the climate writer hourly, the legacy
+#: soil writer six-hourly since G1 (O6). Both constants are the ones `execution/lane_specs.py` schedules on.
+DIRECT_REFRESH_INTERVAL_SECONDS: Final[Mapping[str, int]] = MappingProxyType(
+    {product.stream: DIRECT_HOURLY_REFRESH_INTERVAL_SECONDS for product in CLIMATE_FIELD_PRODUCTS}
+    | {product.stream: SOIL_DIRECT_REFRESH_INTERVAL_SECONDS for product in SOIL_FIELD_PRODUCTS}
 )
 
 # Dedicated slider products are physical warehouse prefixes even though they are not direct-ingest
@@ -85,12 +92,10 @@ def census_lane_from_registration(registration: LaneRegistration) -> CensusLane:
             ),
             source_cadence_days=(
                 registration.cadence_days
-                if registration.slug in HOURLY_REFRESH_STREAMS or registration.slug == "drought"
+                if registration.slug in DIRECT_REFRESH_INTERVAL_SECONDS or registration.slug == "drought"
                 else None
             ),
-            refresh_interval_seconds=(
-                DIRECT_HOURLY_REFRESH_INTERVAL_SECONDS if registration.slug in HOURLY_REFRESH_STREAMS else None
-            ),
+            refresh_interval_seconds=DIRECT_REFRESH_INTERVAL_SECONDS.get(registration.slug),
         ),
     )
 

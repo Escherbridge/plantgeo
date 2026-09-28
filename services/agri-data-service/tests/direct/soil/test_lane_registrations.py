@@ -28,7 +28,9 @@ SOIL_LANE_ID = "soil-era5-land-direct-forward"
 CLIMATE_LANE_ID = "climate-nasa-power-direct-forward"
 SOIL_STREAM_COUNT = 8
 EXPECTED_COMMAND = ("python", "-m", "agri_data_service.pipeline.direct.soil")
-EXPECTED_SCHEDULE = "50 * * * *"
+#: Six-hourly since G1 (O6/FR-21), on top of G0's per-run cap: buckets at 00:50, 06:50, 12:50, 18:50 UTC.
+EXPECTED_SCHEDULE = "50 */6 * * *"
+EXPECTED_CADENCE_SECONDS = 21_600
 EXPECTED_PHASE_OFFSET_SECONDS = 3000
 EXPECTED_WRITER_FLOOR = "2026-08-03"
 EXPECTED_CADENCE_DAYS = 1
@@ -126,6 +128,7 @@ def test_the_executor_carries_one_shadow_soil_lane() -> None:
 
     assert spec.command == EXPECTED_COMMAND
     assert spec.schedule == EXPECTED_SCHEDULE
+    assert spec.cadence_seconds == EXPECTED_CADENCE_SECONDS
     assert spec.phase_offset_seconds == EXPECTED_PHASE_OFFSET_SECONDS
     assert spec.phase_offset_seconds != LANE_SPECS[CLIMATE_LANE_ID].phase_offset_seconds
     assert spec.migration_disposition == "source-specific"

@@ -89,6 +89,8 @@ A port of `src/lib/server/http/bounded-upstream.ts` and its bounds: a byte cap e
 
 `fetch_bounded` never raises on a non-2xx status and never raises on an unreadable body; it reports the body failure as `payload_error` instead. That ordering matters: `fetch_bounded_json` raises the *status* failure before the *body* failure, so a `429` or a `5xx` that answers with a huge HTML error page still surfaces as an `UpstreamHttpError` and stays reachable for retry and backoff logic, exactly as `bounded-upstream.ts:164-165` does. `UpstreamTransportError`'s message deliberately carries only the exception class name and never the URL, because FIRMS request URLs embed an API key.
 
+**`retry_after_seconds_for_response` (SOFT-8, `f1-providers`, plan 1C).** A status-aware `Retry-After` reader: only `429` and every `5xx` are even LOOKED at (a `200` or a `404` returns `None` even if a header is somehow present, so an unrelated answer can never steer a caller's retry ladder), and only the delta-seconds (all-digit) form is parsed -- the HTTP-date form is ignored, matching `execution/historical_usdm.py::_retry_delay`, `execution/weather_observations/nasa_power.py` and `ingest/mtbs.py` rather than adding a third date parser. `fetch_bounded` calls it once per response and stores the result on `BoundedResponse.retry_after_seconds` (defaulted `None`, so every existing construction -- and every test that builds one by hand -- still type-checks). `fetch_bounded_json_sized` and every other existing reader of `BoundedResponse` is unaffected: none of them reads the new field. `ingest/provider_client.py` is the one caller that does, threading it into `UpstreamHttpError(status, retry_after_seconds=...)` for `upstream_retry.py::retry_upstream`'s clamp to read (see that module's "SOFT-8's Retry-After clamp" entry).
+
 ## http.py: the GL-2 source-usage meter (`o3-ingest-meter`, Wave O, design §2.1/§2.5)
 
 Every send through `upstream_client`/`upstream_sync_client` now passes through a request and a
@@ -737,6 +739,78 @@ persistable; `open_meteo_product_request` resolves the key once and returns both
 and the URL to send. A product adapter wraps these rather than reimplementing them, so a lane cannot
 accidentally persist a credentialed URL.
 
+## provider_client.py: the Phase-1 config provider client, `KeyedRequestUrl` and SOFT-8 (plan 1C)
+
+**Two halves, one of them the runner's seam.** `provider_endpoint_request` + `send_provider_request`
+are what the config runner actually calls: `pipeline/runner/binding.py::ConfigProviderClient` (the
+concrete `pipeline/runner/contract.py::ProviderClient`) resolves every request through
+`provider_endpoint_request` -- a declared `lanes/_providers/<id>.toml` endpoint, its free host for the
+credential-free `request_url`, its `customer_host` plus the key for the send, the FR-2 rule that a
+keyed endpoint with an empty key is `ProviderConfigError`, and `PROVIDER_API_KEY_PARAMETERS`
+(`open-meteo` -> `apikey`) -- and makes ONE attempt through `send_provider_request`. It never retries
+a status: the runner's unit ladder (`pipeline/runner/fetch.py`, spec D2) owns the retries, and it
+reads a `Retry-After` through the same `upstream_retry.py::clamped_retry_after` rule `retry_upstream`
+uses, so SOFT-8's "one Retry-After rule" holds across both ladders (review H2). The other half,
+`fetch_single_location`, keeps its own SOFT-8 ladder for a NON-runner caller (a single-location probe
+spent outside a turn); no production caller uses it yet, and it is never stacked under the runner.
+Named as free functions rather than a class called bare `ProviderClient`, so this module cannot
+collide with the runner's Protocol name.
+
+**Two new host pairs, added to `open_meteo.py` but PAIRED here, not there.** `open_meteo.py` gains
+`OPEN_METEO_FORECAST_CUSTOMER_BASE_URL` (the existing free forecast host's first paid tier) and a
+wholly new historical-forecast pair (`OPEN_METEO_HISTORICAL_FORECAST_BASE_URL` /
+`_CUSTOMER_BASE_URL`, IFS/ERA5-blended reanalysis for a recent window -- a third product, distinct
+from both the rolling forecast endpoint and the ERA5/ERA5-Land archive endpoint). The `OpenMeteoEndpoint`
+objects pairing each free/customer host (`FORECAST_ENDPOINT`, `HISTORICAL_FORECAST_ENDPOINT`) are
+built in THIS module, not in `open_meteo.py`: `open_meteo_endpoint.py` already imports FROM
+`open_meteo.py` (its 429 classifier, `resolve_open_meteo_api_key` -- see "open_meteo_endpoint.py: one
+transport half, four products" above), so `open_meteo.py` importing `OpenMeteoEndpoint` back would be
+a circular import. `provider_client.py` depends on both and nothing depends on IT yet, so it is the
+one safe place for the pairing. Every existing product module (`open_meteo_flood.py`,
+`open_meteo_air_quality.py`, `open_meteo_ensemble.py`, `open_meteo.py`'s own archive/current-weather
+builders) is untouched -- their behaviour is byte-for-byte pinned, as plan 1C requires.
+
+**The single-location bare-object body (spec NEW-4).** Every existing Open-Meteo product here
+requests MULTIPLE locations (comma-joined coordinates) and expects a JSON ARRAY back, one entry per
+location -- `require_wgs84_request_coordinates`, `open_meteo_endpoint.py`'s whole shared transport
+half. Open-Meteo answers a SINGLE (non-array) location request with a bare JSON OBJECT instead, and
+`execution/open_meteo_lane.py::canonical_location_document` refuses exactly that shape -- which is why
+G0's own edge probe still spends 2 locations rather than 1 even though one would answer the same
+question. `fetch_single_location` is the client that accepts the object shape (`_parse_single_location_body`
+refuses an array, the opposite refusal), so a future caller CAN spend the cheaper 1-location probe.
+
+**`require_customer_host` is a second, DIFFERENT `OPEN_METEO_API_KEY` reader (CA9).**
+`open_meteo.py::resolve_open_meteo_api_key` treats an absent/empty key as "use the free tier" --
+correct there, since an ordinary forward run has no reason to fail just because no key was ever
+configured. `resolve_required_open_meteo_api_key` is the opposite rule for a caller that has already
+committed to the paid tier: an empty or unset key raises `ProviderConfigError` (a named config error)
+rather than silently answering from the free host the caller never asked for. Both functions read the
+SAME environment variable; which one runs is `require_customer_host`, not a different key name.
+
+**`KeyedRequestUrl` (LOG-3): the structural guard, not only the documented one.** Every other keyed
+URL in this package (`open_meteo.py::ArchiveDailyRequest.request_url`,
+`open_meteo_endpoint.py::OpenMeteoProductRequest.request_url`) is a plain `str`, and staying
+unlogged/unraised relies on every caller, forever, remembering to keep it out of an f-string or a log
+call -- a documented rule, not an enforced one. `KeyedRequestUrl` wraps the credentialed value the
+moment `fetch_single_location` resolves it: `__str__`/`__repr__` run it through
+`foundation.observability.redaction.redact_for_log` (the same substitution every other live secret
+already gets, since `OPEN_METEO_API_KEY` is in `redaction.py::_SECRET_ENV_EXACT_NAMES`), so an
+accidental `f"failed: {url}"` publishes the redacted form, never the key. `.reveal()` is the one
+escape hatch, called only at the one place the credentialed string must actually leave the process
+(`fetch_bounded`'s `client.stream(...)` send). It does not replace `open_meteo_product_request`'s
+`OpenMeteoProductRequest.request_url`, which stays a plain `str` -- retyping that dataclass field
+would break every other product module that constructs one, which plan 1C forbids ("legacy callers
+stay byte-for-byte unchanged").
+
+**SOFT-8's retry ladder.** `fetch_single_location` opens no client of its own -- `client` should come
+from `ingest/http.py::upstream_client`/`upstream_sync_client` (metered since GL-2), and is reused
+across every retry attempt rather than rebuilt per attempt, matching every other producer in this
+package. A 429 or 5xx is retried on `PROVIDER_CLIENT_RETRY_POLICY`'s ladder
+(`upstream_retry.py::retry_upstream`; see that module's "SOFT-8's Retry-After clamp" entry for how a
+`Retry-After` header shortens or replaces the wait). `sleep`/`monotonic` are forwarded straight
+through to `retry_upstream`'s own seam rather than re-invented, so a retry-ladder test never sleeps
+for real.
+
 ## open_meteo_flood.py
 
 GloFAS river discharge, daily, from `flood-api.open-meteo.com/v1/flood`. 64 MB / 300 s: a four-year
@@ -928,6 +1002,18 @@ is the one seam it calls through). `usgs_nwis.py::_fetch_tile` passes `host=NWIS
 (`waterservices.usgs.gov`) for exactly this reason; `wfigs.py`/`evacuation_zones.py`'s page-walk
 retries leave it unset, since a multi-page walk has no one host to blame a sleep on and this loop then
 counts nothing, as it always has.
+
+**SOFT-8's Retry-After clamp (`f1-providers`, plan 1C).** When the caught error is an
+`UpstreamHttpError` carrying `retry_after_seconds` (set only by `ingest/provider_client.py`, from
+`http.py::retry_after_seconds_for_response` via `BoundedResponse.retry_after_seconds`), that value
+REPLACES `ladder.delay_seconds(attempt)` outright for this attempt -- clamped to
+`ladder.max_delay_seconds`, so a provider naming an absurd wait (an hour) never parks a turn that
+long. Every OTHER caller (`wfigs.py`, `evacuation_zones.py`, `usgs_nwis.py`, none of which ever set
+`retry_after_seconds`) is unaffected: `error.retry_after_seconds` reads `None` for them and the
+ladder's ordinary doubling delay runs exactly as before. This is additive, not a new knob -- there is
+no switch, because an absent hint is the same as today's behaviour by construction. The clamp itself
+is `clamped_retry_after(error, floor=, ceiling=)`, the one Retry-After rule: `retry_upstream` passes
+`[0, max_delay]`, the config runner's unit ladder `[step, 2 x step]` of the 429-series step it replaces.
 
 ## arcgis.py
 

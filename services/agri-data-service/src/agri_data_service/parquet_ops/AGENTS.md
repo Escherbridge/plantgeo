@@ -126,8 +126,20 @@ Registered census lanes expose an optional `freshness` object with configured
 a healthy verdict. Schema version 3 is retained under the additive/silence-safe rule below.
 The independent operational `staleness_days` and `behind_provider` fields remain off the wire.
 
-Climate and ERA5-Land soil refresh intervals share `pipeline.constants.DIRECT_HOURLY_REFRESH_INTERVAL_SECONDS`
-with the executor's two explicit cadence declarations. The value describes the configured schedule,
+**The probed edge is a capability, not yet fed (plan 1F, review M6).** `freshness.measure_lane_freshness`
+and `pipeline/parquet/lane_ceiling.py::resolve_source_ceiling` accept `probed_edge=` and prefer it over
+`today - publication_lag_days`, exposing which one was used (`edge_source`: `probe` or `lag_fallback`).
+No caller passes it yet: the config runner states its turn's `edge`/`edge_source` in the S5 report but
+nothing persists them where serving reads, so every lane is judged on the lag fallback. A config lane
+whose probed edge sits well behind its lag (POWER's UTC shortwave) will read stale until the edge is
+persisted (for example in the turn receipt) and threaded through `availability_coverage`; that is
+Phase 2's to wire, before the first such lane cuts over.
+
+Climate and ERA5-Land soil refresh intervals come from `pipeline.constants`, the same constants the
+executor's two explicit cadence declarations schedule on: climate `DIRECT_HOURLY_REFRESH_INTERVAL_SECONDS`
+(hourly), soil `SOIL_DIRECT_REFRESH_INTERVAL_SECONDS` (six-hourly since G1, O6/FR-21). The map is
+`coverage.DIRECT_REFRESH_INTERVAL_SECONDS`; `tests/parquet_ops/test_lane_refresh_metadata.py` pins each
+stream's label to `LANE_SPECS[writer].cadence_seconds`. The value describes the configured schedule,
 not activation, last execution, successful publication, or the next guaranteed update. Other
 writers state a null refresh interval until a shared schedule contract exists. Only climate,
 ERA5-Land soil and weekly drought state source cadence; other products state null because their

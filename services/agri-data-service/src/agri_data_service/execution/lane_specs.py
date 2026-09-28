@@ -12,6 +12,7 @@ from datetime import timedelta
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal
 
+from agri_data_service.execution.cron_schedule import cron_expression
 from agri_data_service.execution.lane_ids import (
     BURN_SEVERITY_DIRECT_LANE_ID,
     CLIMATE_DIRECT_LANE_ID,
@@ -36,6 +37,7 @@ from agri_data_service.jobs import JobDefinitionSpec, RetryPolicy
 from agri_data_service.pipeline.constants import (
     DIRECT_HOURLY_REFRESH_INTERVAL_SECONDS,
     FIRE_DETECTIONS_DIRECT_WRITER_START_DAY,
+    SOIL_DIRECT_REFRESH_INTERVAL_SECONDS,
     WATER_GAUGES_DIRECT_WRITER_START_DAY,
 )
 from agri_data_service.pipeline.direct.burn_severity.forward import BURN_SEVERITY_MAX_TIME_BUDGET_SECONDS
@@ -62,6 +64,9 @@ from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from collections.abc import Set as AbstractSet
+
+    from agri_data_service.foundation.lane_config.models import LaneExecutor
 
 EXECUTOR_DEFINITION_PREFIX: Final = "plantgeo.executor."
 EXECUTOR_DEFINITION_VERSION: Final = "2"
@@ -69,6 +74,15 @@ EXECUTOR_HANDLER_TOKEN: Final = "plantgeo.executor.command.v1"
 EXECUTOR_WORK_ITEM_KIND: Final = "scheduled-command"
 EXECUTOR_REQUESTED_BY: Final = "agri-service ops jobs-executor"
 ACTIVE_LANES_VARIABLE: Final = "PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES"
+#: CA12: the one env kill-switch, distinct from the allow-list. A lane id named here never dispatches on
+#: either path, and `<lane>` also stops its `:gap-fill` and `:gap-repair` definitions. See
+#: execution/AGENTS.md, "Lane catalogue".
+STOPPED_LANES_VARIABLE: Final = "PLANTGEO_JOB_EXECUTOR_STOPPED_LANES"
+#: CA1: the work-item payload key and value that mark a config-path dispatch on the ledger.
+EXECUTOR_PATH_PAYLOAD_KEY: Final = "executor"
+CONFIG_EXECUTOR: Final = "config"
+#: The runner `--mode` a config work item dispatches, carried beside the CA1 marker.
+TURN_MODE_PAYLOAD_KEY: Final = "mode"
 #: Margin added to a direct writer's own time budget so the ledger's command timeout always outlives it.
 COMMAND_CLEANUP_MARGIN_SECONDS: Final = 300
 
@@ -78,15 +92,21 @@ class ExecutorConfigurationError(ValueError):
 
 
 LaneWorkClass = Literal["incremental", "backlog"]
+#: The runner `--mode` a config definition dispatches (spec §4.3); a transform lane's forward cron runs `transform`.
+ConfigTurnMode = Literal["forward", "gap-fill", "transform"]
 MigrationDisposition = Literal["consolidatable", "source-specific", "snapshot-only"]
 CatchUpPolicy = Literal["coalesce_latest", "replay_oldest"]
-ReleaseMechanism = Literal["clock", "operator"]
+#: What released a held checkpoint. `judge_failed_checkpoint` rules only `clock` or `operator`; `probe` is the
+#: hold ladder's own single-attempt release (execution/AGENTS.md, "Holds and probes").
+ReleaseMechanism = Literal["clock", "operator", "probe"]
 #: The failure streak at which the clock stops releasing a lane and an operator must record a supersession.
 #: A coalesce_latest lane tolerates two transient failed buckets (the third in a row is a broken lane); a
 #: replay_oldest lane tolerates none, because every one of its buckets is owed.
 CLOCK_RELEASE_STREAK_LIMIT: Final[Mapping[CatchUpPolicy, int]] = MappingProxyType(
     {"coalesce_latest": 3, "replay_oldest": 1}
 )
+#: The legacy soil lane's cadence (O6/FR-21): six hours, so four G0-capped runs a day at most.
+SOIL_CADENCE_SECONDS: Final = SOIL_DIRECT_REFRESH_INTERVAL_SECONDS
 #: How many of a lane's newest terminal runs the checkpoint query inspects for its failure streak. One
 #: bounded backward index probe; no policy below ever needs a longer streak than this.
 FAILURE_STREAK_PROBE_LIMIT: Final = 3
@@ -118,10 +138,27 @@ class LaneExecutionSpec:
     description: str
     writer_floor: str | None = None
     writer_ceiling: str | None = None
+    #: `legacy` for every entry of this table; `config` only for a spec `lane_catalogue.py` builds from a
+    #: lane TOML (spec §4.4 "Catalogue bridge").
+    executor: LaneExecutor = "legacy"
+    #: A config definition's 5-field UTC cron (S9), which replaces cadence and phase; None for legacy.
+    cron: str | None = None
+    #: The lane TOML id a config definition belongs to; its `:gap-fill` definition shares it.
+    config_lane_id: str | None = None
+    #: The runner `--mode` a config definition dispatches.
+    config_mode: ConfigTurnMode | None = None
 
     def __post_init__(self) -> None:
         if not self.lane_id.strip():
             raise ExecutorConfigurationError("lane_id must not be empty")
+        if self.cron is not None and self.cadence_seconds is not None:
+            raise ExecutorConfigurationError(f"{self.lane_id}: a lane runs on a cron or on a cadence, never both")
+        if self.executor == CONFIG_EXECUTOR and None in (self.cron, self.config_lane_id, self.config_mode):
+            raise ExecutorConfigurationError(f"{self.lane_id}: a config spec names its cron, lane TOML id and mode")
+        if self.executor != CONFIG_EXECUTOR and (self.config_lane_id is not None or self.config_mode is not None):
+            raise ExecutorConfigurationError(f"{self.lane_id}: only a config spec names a lane TOML id or a mode")
+        if self.cron is not None:
+            cron_expression(self.cron)
         if self.cadence_seconds is not None and self.cadence_seconds <= 0:
             raise ExecutorConfigurationError(f"{self.lane_id}: cadence_seconds must be positive")
         if self.phase_offset_seconds < 0:
@@ -141,10 +178,51 @@ class LaneExecutionSpec:
 
     @property
     def executable(self) -> bool:
-        return self.command is not None and self.cadence_seconds is not None
+        return self.command is not None and (self.cadence_seconds is not None or self.cron is not None)
+
+    @property
+    def is_config(self) -> bool:
+        """True for a definition the config path dispatches (a lane TOML with `executor = "config"`)."""
+        return self.executor == CONFIG_EXECUTOR
+
+    def work_item_payload(self, scheduled_for: str) -> dict[str, object]:
+        """One scheduled work item's payload; a config item also carries the CA1 config-path marker.
+
+        A config item names its OWNING lane TOML id and its runner mode, as a repair item names its owning
+        lane: the definition that ran is the ledger row, the payload says what to dispatch.
+        """
+        if not self.is_config:
+            return {"lane_id": self.lane_id, "scheduled_for": scheduled_for}
+        return {
+            "lane_id": self.config_lane_id,
+            "scheduled_for": scheduled_for,
+            EXECUTOR_PATH_PAYLOAD_KEY: CONFIG_EXECUTOR,
+            TURN_MODE_PAYLOAD_KEY: self.config_mode,
+        }
+
+    def run_target_partitions(self, scheduled_for: str) -> dict[str, object]:
+        """One scheduled run's `target_partitions`; a config run carries the CA1 marker at run level too."""
+        partitions: dict[str, object] = {"lane_id": self.lane_id, "scheduled_for": scheduled_for}
+        if self.is_config:
+            partitions[EXECUTOR_PATH_PAYLOAD_KEY] = CONFIG_EXECUTOR
+        return partitions
+
+    def _config_parameters(self) -> dict[str, object]:
+        """The definition parameters only a config spec adds; legacy rows stay byte-identical."""
+        if not self.is_config:
+            return {}
+        return {
+            EXECUTOR_PATH_PAYLOAD_KEY: CONFIG_EXECUTOR,
+            "cron": self.cron,
+            "config_lane_id": self.config_lane_id,
+            "config_mode": self.config_mode,
+        }
 
     def definition_spec(self) -> JobDefinitionSpec:
-        """Declare the durable outer command run without changing a stored pause switch."""
+        """Declare the durable outer command run without changing a stored pause switch.
+
+        CA13: a config spec keeps its lane's definition name and `EXECUTOR_DEFINITION_VERSION`.
+        """
         return JobDefinitionSpec(
             name=self.definition_name,
             version=EXECUTOR_DEFINITION_VERSION,
@@ -172,6 +250,7 @@ class LaneExecutionSpec:
                 "catch_up_policy": self.catch_up_policy,
                 "writer_floor": self.writer_floor,
                 "writer_ceiling": self.writer_ceiling,
+                **self._config_parameters(),
             },
         )
 
@@ -201,7 +280,13 @@ class LaneExecutionSpec:
                 "maximum_backoff_seconds": 3600,
             },
             "dead_letter_visibility": "agri.job_work_item status=dead_letter and agri.job_event",
-            "rollback": f"remove lane from {ACTIVE_LANES_VARIABLE}",
+            "rollback": (
+                f"set enabled = false in lanes/{self.config_lane_id}.toml, or name it in {STOPPED_LANES_VARIABLE}"
+                if self.is_config
+                else f"remove lane from {ACTIVE_LANES_VARIABLE}"
+            ),
+            "executor": self.executor,
+            "cron": self.cron,
             "executable": self.executable,
             "description": self.description,
             "writer_floor": self.writer_floor,
@@ -476,14 +561,17 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
     _spec(
         SOIL_DIRECT_LANE_ID,
         command=("python", "-m", "agri_data_service.pipeline.direct.soil"),
-        cadence_seconds=DIRECT_HOURLY_REFRESH_INTERVAL_SECONDS,
+        # Six-hourly since G1 (O6/FR-21), on top of G0's per-run cap (33 requests, one day): at most four
+        # runs and 6,280 weighted calls a day on the paid host. The phase offset is unchanged, so the
+        # buckets fall at 00:50, 06:50, 12:50 and 18:50 UTC.
+        cadence_seconds=SOIL_CADENCE_SECONDS,
         # One shared lag applies: unlike the climate writer's two publication clocks, all eight
         # ERA5-Land streams come off one model on one release schedule. The phase offset is
         # its own so the two direct writers never open their fan-outs in the same minute -- they
         # share no lane, but they do share this container's CPU and egress.
         disposition="source-specific",
         phase_offset_seconds=3000,
-        schedule="50 * * * *",
+        schedule="50 */6 * * *",
         publication_lag_days=ERA5_LAND_ARCHIVE_PUBLICATION_LAG_DAYS,
         publication_cadence_days=1,
         publication_lag_source="pipeline/parquet/lane_registry.py soil-field-*/soil-temperature-* contracts",
@@ -491,7 +579,8 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
         timeout_seconds=int(SOIL_DEFAULT_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS,
         description=(
             "Direct Open-Meteo ERA5-Land forward writer for the three moisture, four temperature and "
-            "one VPD streams. ACTIVE in production, one bucket per hour at :50 (measured 2026-09-15)."
+            "one VPD streams. ACTIVE in production; six-hourly at 00:50/06:50/12:50/18:50 UTC since G1 "
+            "(it ran hourly at :50 until then, measured 2026-09-15)."
         ),
         writer_floor=min(product.history_floor for product in SOIL_FIELD_PRODUCTS).isoformat(),
     ),
@@ -879,3 +968,28 @@ def parse_activation(environment: Mapping[str, str] | None = None) -> Activation
     active = executable_candidates - conflicting
 
     return ActivationConfig(active_lanes=active, quarantined=unknown | non_executable | conflicting)
+
+
+@dataclass(frozen=True, slots=True)
+class KillSwitch:
+    """CA12: what `PLANTGEO_JOB_EXECUTOR_STOPPED_LANES` stops, and the ids it names that nothing knows."""
+
+    stopped: frozenset[str] = frozenset()
+    #: Named ids no catalogue path knows. They stop nothing and are quarantined, never an exit (H6, FR-11).
+    unknown: frozenset[str] = frozenset()
+
+    def stops(self, lane_id: str) -> bool:
+        """True when `lane_id`, or the lane a `:gap-fill`/`:gap-repair` definition belongs to, is named."""
+        return lane_id in self.stopped or lane_id.partition(":")[0] in self.stopped
+
+
+def parse_kill_switch(known_lane_ids: AbstractSet[str], environment: Mapping[str, str] | None = None) -> KillSwitch:
+    """Parse the kill-switch against every id the catalogue knows; an unknown id is quarantined, never fatal.
+
+    The same rule `parse_activation` applies to the allow-list (S8, H6/FR-11): the executor warns and opens
+    a `lane_quarantined` incident for it, and every other named lane is still stopped.
+    """
+    source = os.environ if environment is None else environment
+    named = frozenset(_comma_tokens(source.get(STOPPED_LANES_VARIABLE, "")))
+    unknown = named - known_lane_ids
+    return KillSwitch(stopped=named - unknown, unknown=unknown)

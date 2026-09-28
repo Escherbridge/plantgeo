@@ -1,3 +1,5 @@
+M5 deferred by owner 2026-09-28: shortwave stays in the legacy climate turn (and its repair binding stays) until its config lane replaces it.
+
 # Provider quota handling
 
 A provider quota response and an exhausted per-turn request budget are typed provider deferrals.

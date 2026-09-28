@@ -9,9 +9,11 @@ Upstream acquisition, external API fetching, raw tile/data backfill routines (`i
 
 ## Shared governed source census
 
-`constants.DIRECT_HOURLY_REFRESH_INTERVAL_SECONDS` is the shared configured cadence for the
-climate and ERA5-Land soil writers and their slider timing metadata. It states schedule policy,
-not a successful run or guaranteed publication. Both executor declarations consume it explicitly.
+`constants.DIRECT_HOURLY_REFRESH_INTERVAL_SECONDS` (climate, hourly) and
+`constants.SOIL_DIRECT_REFRESH_INTERVAL_SECONDS` (ERA5-Land soil, six-hourly since G1, O6/FR-21) are the
+configured cadences of the two direct writers and their slider timing metadata. They state schedule
+policy, not a successful run or guaranteed publication. The executor declarations
+(`execution/lane_specs.py`) and the coverage wire (`parquet_ops/coverage.py`) both consume them.
 
 `vegetation_source.py` owns the bounded PostgreSQL cell-day census shared by vegetation writers,
 operators, and validators. Validation modules may re-export that contract for compatibility, but

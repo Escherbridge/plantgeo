@@ -133,7 +133,16 @@ def _resolve_days(params: _DateParams, *, path: str) -> int:
 
 
 def open_meteo_weight_for_url(url: str) -> float:
-    """Parse one Open-Meteo request URL and return its quota weight (design §2.1's shape table)."""
+    """Parse one Open-Meteo request URL and return its quota weight (design §2.1's shape table).
+
+    `models=` is the one factor `open_meteo_request_weight` itself never takes (it is pinned
+    byte-identical to G0's soil request builder, which never sends more than one model -- see that
+    function's docstring). This function multiplies the pinned weight by the URL's own `models` item
+    count instead of changing that signature, matching `lanes/_providers/open-meteo.toml`'s
+    `counts_models = true` and `foundation/lane_config/models.py::ProviderWeightRule.weight`'s
+    `model_factor` (pinned equal by `tests/lane_config/test_provider_hosts.py`'s
+    `test_the_provider_weight_rule_prices_a_request_like_the_meter`, review finding 3).
+    """
     parsed = urlsplit(url)
     params = parse_qs(parsed.query)
 
@@ -151,7 +160,8 @@ def open_meteo_weight_for_url(url: str) -> float:
     )
     days = _resolve_days(date_params, path=parsed.path)
     variables = sum(_comma_item_count(_first(name)) for name in ("hourly", "daily", "current", "minutely_15"))
-    return open_meteo_request_weight(locations=locations, days=days, variables=variables)
+    models = _comma_item_count(_first("models")) or 1
+    return models * open_meteo_request_weight(locations=locations, days=days, variables=variables)
 
 
 # --- Per-process host counters (GL-2's hook point; empty until o3-ingest-meter wires it) ----------

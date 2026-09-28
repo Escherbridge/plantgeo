@@ -4,10 +4,11 @@ design record Sec 3.2A/3.4; GL-5, plan `config_driven_ingestion_20260926` 0W.5).
 This module is the `o2b-incidents` slice: the upsert/resolve/select helpers a lane hold (and every
 other soft-failure incident kind) is recorded and read through, the `INCIDENT_SEVERITY` vocabulary
 mapping, the PURE `reconcile` state machine that decides what a hold does each tick, and the repair
-breaker's 1/2/4/7-day cooldown ladder. It owns no wiring into `job_executor_service.py` -- that is
-`o5b`'s slice, landing in the same GL-5 push -- so every function here is either a self-contained
-database call or a function that touches no I/O at all, callable from a fake in a unit test exactly
-as it will be called from the executor.
+breaker's 1/2/4/7-day cooldown ladder. Since G1 it also holds the hold LADDER (GL-6, folded into
+`f1-executor`): the probe ladders, `HoldProgress`, `after_probe`, probation, the watch and
+`PROGRESS_EVIDENCE`. It owns no wiring into `job_executor_service.py`, so every function here is either
+a self-contained database call or a function that touches no I/O at all, callable from a fake in a unit
+test exactly as it will be called from the executor. See execution/AGENTS.md, "Holds and probes".
 
 **Fingerprints are never reused while an episode is open.** `resolve_lane_incident.sql` renames a
 resolved row's fingerprint (`lane_hold:<lane>` becomes `lane_hold:<lane>:resolved:<id>`) the instant
@@ -28,6 +29,7 @@ savepoint boundary; the surrounding catch-and-continue is the executor's.
 
 from __future__ import annotations
 
+import math
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -37,6 +39,7 @@ from typing import TYPE_CHECKING, Final, Literal
 from sqlalchemy import text
 
 from agri_data_service.db.sql_queries import load_query_sql
+from agri_data_service.execution.lane_ids import CLIMATE_DIRECT_LANE_ID, SOIL_DIRECT_LANE_ID
 from agri_data_service.foundation.observability.vocabulary import EXIT_CLASSES, LOG_LEVELS, ExitClass, LogLevel
 from agri_data_service.jobs.lease import (
     JobLedgerRowError,
@@ -49,7 +52,7 @@ from agri_data_service.jobs.lease import (
 from agri_data_service.models.jobs import EventSeverity, IncidentState
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -297,7 +300,8 @@ def final_attempt_exit_class(attempt: FinalAttempt | None) -> tuple[ExitClass, s
 # --- reconcile: the pure per-tick hold state machine (design Sec 3.2A) -----------------------------
 
 HoldState = Literal["held", "paused"]
-ReleasedBy = Literal["operator", "reconciled"]
+#: Who ended a hold episode: an operator's supersession, reconciliation, or the ladder's own probation.
+ReleasedBy = Literal["operator", "reconciled", "probe"]
 PauseReason = Literal["disabled", "inactive"]
 ReconcileAction = Literal["none", "resolve", "pause", "resume"]
 
@@ -314,9 +318,9 @@ class HoldVerdict:
     """What the caller (`o5b`, every tick) knows right now about the lane one `lane_hold` incident names.
 
     Pure input to `reconcile`; nothing here is read from the database by this module.
-    `probed_run_ids` exists only so this shape does not need to change again for GL-6's probe ladder
-    (design Sec 3.2A's `superseded_run_id ∉ probes[].superseded_run_id` discriminator) -- at GL-5 it
-    is always empty, because no probe has ever run.
+    `probed_run_ids` is design Sec 3.2A's discriminator (`superseded_run_id ∉ probes[].superseded_run_id`):
+    a run the ladder's own probe superseded is never read as an operator's release. The executor passes the
+    probe's target while the hold is `probing` (execution/AGENTS.md, "Holds and probes").
     """
 
     still_held: bool
@@ -371,9 +375,8 @@ def reconcile(*, state: HoldState, verdict: HoldVerdict) -> ReconcileOutcome:
 def is_chain_chronic(chain_first_seen_at: datetime, *, now: datetime) -> bool:
     """True once an unbroken `held`/`paused` chain has run `CHRONIC_CHAIN_AGE` (72 h) or more.
 
-    Excludes probation on purpose (design Sec 3.2A: "Probation is excluded [from chronic]") -- but
-    probation does not exist until GL-6, so at GL-5 every hold this is asked about is already
-    `held` or `paused` and the exclusion has nothing to exclude yet.
+    Excludes probation on purpose (design Sec 3.2A: "Probation is excluded [from chronic]"): the
+    executor never asks this of a hold in `probation` (`HoldProgress.phase`).
     """
     return now - chain_first_seen_at >= CHRONIC_CHAIN_AGE
 
@@ -381,6 +384,245 @@ def is_chain_chronic(chain_first_seen_at: datetime, *, now: datetime) -> bool:
 def is_chain_flapping(episodes_in_window: int) -> bool:
     """True once a chain has reopened `FLAPPING_EPISODE_THRESHOLD` (3) or more times within 7 days."""
     return episodes_in_window >= FLAPPING_EPISODE_THRESHOLD
+
+
+# --- The G1 hold ladder (GL-6 folded into f1-executor; spec Sec 4.9.3 "G1 ladder"; WQ-1, WQ-2, WQ-3) ------
+#
+# Pure: every function below reads its inputs and returns a decision; the executor writes the row. See
+# execution/AGENTS.md, "Holds and probes".
+
+CODE_PROBE_HOURS_VARIABLE: Final = "PLANTGEO_JOB_EXECUTOR_CODE_PROBE_HOURS"
+#: Upstream and infra holds probe at these hours after entering each rung, then daily (FR-8).
+UPSTREAM_LADDER_HOURS: Final[tuple[float, ...]] = (1.0, 2.0, 4.0, 8.0, 16.0, 24.0)
+#: `CODE_PROBE_HOURS` when unset: code, hang and config holds probe at 6, 12 and 24 h, then daily (WQ-1).
+DEFAULT_CODE_PROBE_HOURS: Final[tuple[float, ...]] = (6.0, 12.0, 24.0)
+#: Every rung past the end of a ladder probes once a day.
+DAILY_PROBE_HOURS: Final = 24.0
+UPSTREAM_LADDER_CLASSES: Final[frozenset[str]] = frozenset({"upstream", "infra"})
+CODE_LADDER_CLASSES: Final[frozenset[str]] = frozenset({"code", "hang", "config"})
+#: Probation resolves after this many conclusive clean buckets, or after `PROBATION_MAX_AGE` without a failure.
+PROBATION_CLEAN_BUCKETS: Final = 2
+PROBATION_MAX_AGE: Final = timedelta(hours=48)
+#: For this long after a hold resolves, new buckets open with `WATCH_MAX_ATTEMPTS` (the watch).
+WATCH_WINDOW: Final = timedelta(hours=24)
+WATCH_MAX_ATTEMPTS: Final = 2
+#: A chain with this many episodes in 7 days watches with ONE attempt per bucket instead.
+WATCH_FLAPPING_EPISODES: Final = 2
+WATCH_FLAPPING_MAX_ATTEMPTS: Final = 1
+#: A re-open within this window inherits the prior rung and `chain_first_seen_at` (7-day chaining).
+CHAIN_WINDOW: Final = FLAPPING_WINDOW
+#: Inconclusive probes tolerated at one rung; the next one counts as failed (`lost_repeatedly`).
+INCONCLUSIVE_PROBE_LIMIT: Final = 3
+#: `detail.probes` keeps at most this many of the newest probes.
+PROBE_HISTORY_MAX: Final = 10
+#: Final-attempt classes that say nothing about the lane: the probe is inconclusive, never failed.
+INCONCLUSIVE_PROBE_CLASSES: Final[frozenset[str]] = frozenset({"lease_lost", "interrupted"})
+#: `detail.state` encodes a counter as `<phase>:<n>` (the repair breaker's `counting:<n>` idiom), because
+#: `select_lane_incidents.sql` hands back only four `detail` keys. See AGENTS.md, "Holds and probes".
+_PHASE_COUNTER_SEPARATOR: Final = ":"
+
+HoldPhase = Literal["held", "probing", "probation", "paused"]
+ProbeOutcome = Literal["passed", "failed", "inconclusive"]
+_HOLD_PHASES: Final[frozenset[str]] = frozenset({"held", "probing", "probation", "paused"})
+
+
+@dataclass(frozen=True, slots=True)
+class HoldProgress:
+    """A hold's ladder position as `detail.state` carries it: the phase and its one counter.
+
+    The counter is the consecutive inconclusive probes while `held`, and the conclusive clean buckets while
+    in `probation`; every other phase carries none. Unknown text reads as a plain `held` hold, never an error.
+    """
+
+    phase: HoldPhase = "held"
+    counter: int = 0
+
+    @classmethod
+    def parse(cls, state: str | None) -> HoldProgress:
+        phase, _, raw_counter = (state or "held").partition(_PHASE_COUNTER_SEPARATOR)
+        if phase not in _HOLD_PHASES:
+            return cls()
+        try:
+            counter = max(int(raw_counter), 0) if raw_counter else 0
+        except ValueError:
+            counter = 0
+        return cls(phase=phase, counter=counter)  # type: ignore[arg-type]
+
+    def encoded(self) -> str:
+        """The `detail.state` text: the bare phase, or `<phase>:<n>` while a counter runs."""
+        return self.phase if self.counter == 0 else f"{self.phase}{_PHASE_COUNTER_SEPARATOR}{self.counter}"
+
+
+def parse_code_probe_hours(raw: str | None) -> tuple[tuple[float, ...] | None, bool]:
+    """`CODE_PROBE_HOURS` -> (the code ladder, whether the value was garbled).
+
+    Unset is the default ladder. Empty or blank is operator-only (`None`), as today (WQ-1). Anything that is
+    not a comma list of positive finite hours is ALSO operator-only -- the fail-safe direction, since a
+    garbled value must never make a code hold probe faster than someone asked for -- and is reported garbled
+    so the caller can warn once.
+    """
+    if raw is None:
+        return DEFAULT_CODE_PROBE_HOURS, False
+    if not raw.strip():
+        return None, False
+    hours: list[float] = []
+    for part in raw.split(","):
+        try:
+            value = float(part.strip())
+        except ValueError:
+            return None, True
+        if not math.isfinite(value) or value <= 0:
+            return None, True
+        hours.append(value)
+    return tuple(hours), False
+
+
+@dataclass(frozen=True, slots=True)
+class HoldLadders:
+    """Which probe ladder each hold class climbs; `code_probe_hours=None` keeps code holds operator-only."""
+
+    code_probe_hours: tuple[float, ...] | None = DEFAULT_CODE_PROBE_HOURS
+    upstream_hours: tuple[float, ...] = UPSTREAM_LADDER_HOURS
+
+    def ladder_for(self, exit_class: str) -> tuple[float, ...] | None:
+        """The ladder a hold of `exit_class` probes on, or `None` when only an operator releases it."""
+        if exit_class in UPSTREAM_LADDER_CLASSES:
+            return self.upstream_hours
+        if exit_class in CODE_LADDER_CLASSES:
+            return self.code_probe_hours
+        return None
+
+    def probe_delay(self, exit_class: str, rung: int) -> timedelta | None:
+        """How long after entering `rung` the next probe may fire; the ladder's end repeats daily."""
+        ladder = self.ladder_for(exit_class)
+        if ladder is None:
+            return None
+        hours = ladder[rung] if 0 <= rung < len(ladder) else DAILY_PROBE_HOURS
+        return timedelta(hours=hours)
+
+
+def probe_is_due(  # noqa: PLR0913 - the ladder, the hold's position and the two clocks a probe waits on
+    ladders: HoldLadders,
+    *,
+    exit_class: str,
+    rung: int,
+    entered_rung_at: datetime,
+    now: datetime,
+    newer_bucket_exists: bool,
+) -> bool:
+    """A probe fires only once its rung's delay has passed AND the lane has a newer bucket to run.
+
+    The second condition is what keeps a probe from ever firing more often than the lane's own cadence: a
+    daily lane held at a 1 h rung still probes at most once a day.
+    """
+    delay = ladders.probe_delay(exit_class, rung)
+    return delay is not None and newer_bucket_exists and now >= entered_rung_at + delay
+
+
+def judge_probe(run_status: str, attempt: FinalAttempt | None) -> ProbeOutcome:
+    """A settled probe run's outcome: passed on success; inconclusive when its one attempt was lost, fenced
+    out or interrupted (it says nothing about the lane); failed otherwise."""
+    if run_status == "succeeded":
+        return "passed"
+    if attempt is None or attempt.status == "lost" or attempt.exit_class in INCONCLUSIVE_PROBE_CLASSES:
+        return "inconclusive"
+    return "failed"
+
+
+@dataclass(frozen=True, slots=True)
+class LadderStep:
+    """Where a hold goes after one probe settles."""
+
+    progress: HoldProgress
+    rung: int
+    #: `lost_repeatedly` when an inconclusive probe past the limit is counted as failed.
+    reason: str | None = None
+    #: Whether the settled probe run's class replaces the hold's (positive evidence); an inconclusive
+    #: probe keeps the hold's class sticky, so a lost probe never flips an upstream hold onto the code ladder.
+    adopt_probe_class: bool = False
+
+
+def after_probe(outcome: ProbeOutcome, *, rung: int, inconclusive_probes: int) -> LadderStep:
+    """Advance the ladder by one settled probe (design Sec 3.2B points 3-5)."""
+    if outcome == "passed":
+        return LadderStep(progress=HoldProgress(phase="probation"), rung=rung)
+    if outcome == "inconclusive" and inconclusive_probes < INCONCLUSIVE_PROBE_LIMIT:
+        return LadderStep(progress=HoldProgress(phase="held", counter=inconclusive_probes + 1), rung=rung)
+    return LadderStep(
+        progress=HoldProgress(phase="held"),
+        rung=rung + 1,
+        reason="lost_repeatedly" if outcome == "inconclusive" else None,
+        adopt_probe_class=True,
+    )
+
+
+ProbationVerdict = Literal["continue", "resolve", "expired"]
+
+
+def judge_probation(*, clean_buckets: int, last_change_at: datetime, now: datetime) -> ProbationVerdict:
+    """Probation ends after `PROBATION_CLEAN_BUCKETS` conclusive clean buckets (`resolve`), or after
+    `PROBATION_MAX_AGE` since its last change with neither a failure nor that proof (`expired`)."""
+    if clean_buckets >= PROBATION_CLEAN_BUCKETS:
+        return "resolve"
+    if now - last_change_at >= PROBATION_MAX_AGE:
+        return "expired"
+    return "continue"
+
+
+def watch_max_attempts(resolved_at: datetime | None, *, episodes_7d: int, now: datetime) -> int | None:
+    """The failure budget a new bucket opens with while its lane is watched after a resolve (24 h)."""
+    if resolved_at is None or now - resolved_at >= WATCH_WINDOW:
+        return None
+    return WATCH_FLAPPING_MAX_ATTEMPTS if episodes_7d >= WATCH_FLAPPING_EPISODES else WATCH_MAX_ATTEMPTS
+
+
+# --- PROGRESS_EVIDENCE: is a clean probation bucket conclusive proof the lane works? -----------------
+
+#: `pipeline/direct/__init__.py::SOURCE_UNSETTLED` / `TIME_BUDGET_EXHAUSTED` (spelled out: `execution` does
+#: not import the writers); a climate turn whose every product ended on one of them proved nothing.
+_CLIMATE_INCONCLUSIVE_OUTCOMES: Final[frozenset[str]] = frozenset({"source_unsettled", "time_budget_exhausted"})
+
+
+def _soil_is_conclusive(report: Mapping[str, object]) -> bool:
+    """Soil: its edge probe answered `ok` AND some product wrote a day."""
+    probe = report.get("probe")
+    if not isinstance(probe, dict) or probe.get("status") != "ok":
+        return False
+    results = report.get("results")
+    if not isinstance(results, list):
+        return False
+    return any(
+        isinstance(product, dict)
+        and any(isinstance(day, dict) and day.get("outcome") == "written" for day in product.get("days") or [])
+        for product in results
+    )
+
+
+def _climate_is_conclusive(report: Mapping[str, object]) -> bool:
+    """Climate: not every product ended source-unsettled or out of time."""
+    results = report.get("results")
+    if not isinstance(results, list) or not results:
+        return False
+    outcomes = [product.get("outcome") for product in results if isinstance(product, dict)]
+    return not all(outcome in _CLIMATE_INCONCLUSIVE_OUTCOMES for outcome in outcomes)
+
+
+#: Per-lane proof that a clean bucket actually exercised the lane (design Sec 3.2B point 5). A lane with no
+#: entry is judged by its report: one that states `days_unwritten` is conclusive; otherwise "report present,
+#: not failed" (spec Sec 4.9.6 residual 5: blind lanes). These rows retire with their lanes (Sec 4.9.5).
+PROGRESS_EVIDENCE: Final[Mapping[str, Callable[[Mapping[str, object]], bool]]] = MappingProxyType(
+    {SOIL_DIRECT_LANE_ID: _soil_is_conclusive, CLIMATE_DIRECT_LANE_ID: _climate_is_conclusive}
+)
+
+
+def is_conclusive(lane_id: str, report: Mapping[str, object] | None) -> bool:
+    """Whether a turn's terminal report is conclusive proof of progress for `lane_id` (`PROGRESS_EVIDENCE`)."""
+    if report is None:
+        return False
+    rule = PROGRESS_EVIDENCE.get(lane_id)
+    if rule is not None:
+        return rule(report)
+    return True
 
 
 # --- The repair breaker: 2 consecutive code/hang/config failures trip a 1/2/4/7-day cooldown ladder --
@@ -464,23 +706,46 @@ def repair_breaker_admits(state: RepairBreakerState, *, now: datetime) -> bool:
 
 
 __all__ = [
+    "CHAIN_WINDOW",
     "CHRONIC_CHAIN_AGE",
     "CLASS_SOURCE_LOST_ATTEMPT",
     "CLASS_SOURCE_MISSING_ATTEMPT",
     "CLASS_SOURCE_NOT_A_HOLD_CLASS",
     "CLASS_SOURCE_STAMPED",
     "CLASS_SOURCE_UNRECOGNISED",
+    "CODE_LADDER_CLASSES",
+    "CODE_PROBE_HOURS_VARIABLE",
+    "DAILY_PROBE_HOURS",
+    "DEFAULT_CODE_PROBE_HOURS",
     "FLAPPING_EPISODE_THRESHOLD",
     "FLAPPING_WINDOW",
     "INCIDENT_SEVERITY",
+    "INCONCLUSIVE_PROBE_CLASSES",
+    "INCONCLUSIVE_PROBE_LIMIT",
+    "PROBATION_CLEAN_BUCKETS",
+    "PROBATION_MAX_AGE",
+    "PROBE_HISTORY_MAX",
+    "PROGRESS_EVIDENCE",
     "REPAIR_BREAKER_COOLDOWN_LADDER_DAYS",
     "REPAIR_BREAKER_TRIPPING_CLASSES",
     "REPAIR_BREAKER_TRIP_THRESHOLD",
+    "UPSTREAM_LADDER_CLASSES",
+    "UPSTREAM_LADDER_HOURS",
+    "WATCH_FLAPPING_EPISODES",
+    "WATCH_FLAPPING_MAX_ATTEMPTS",
+    "WATCH_MAX_ATTEMPTS",
+    "WATCH_WINDOW",
     "FinalAttempt",
+    "HoldLadders",
+    "HoldPhase",
+    "HoldProgress",
     "HoldState",
     "HoldVerdict",
+    "LadderStep",
     "LaneIncidentRow",
     "PauseReason",
+    "ProbationVerdict",
+    "ProbeOutcome",
     "ReconcileAction",
     "ReconcileOutcome",
     "ReleasedBy",
@@ -488,10 +753,16 @@ __all__ = [
     "RepairBreakerVerdict",
     "ResolvedIncident",
     "UpsertedIncident",
+    "after_probe",
     "evaluate_repair_breaker",
     "final_attempt_exit_class",
     "is_chain_chronic",
     "is_chain_flapping",
+    "is_conclusive",
+    "judge_probation",
+    "judge_probe",
+    "parse_code_probe_hours",
+    "probe_is_due",
     "reconcile",
     "repair_breaker_admits",
     "repair_breaker_cooldown_days",
@@ -499,4 +770,5 @@ __all__ = [
     "select_lane_incidents",
     "select_run_final_attempt",
     "upsert_lane_incident",
+    "watch_max_attempts",
 ]

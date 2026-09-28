@@ -40,6 +40,7 @@ from agri_data_service.execution.job_executor_service import (
     repair_lane_spec,
 )
 from agri_data_service.execution.job_run_supersession import ledger_target
+from agri_data_service.execution.lane_catalogue import current_lane_catalogue
 from agri_data_service.jobs import JobWorkItemSpec, open_job_run
 from agri_data_service.jobs.lease import apply_statement_timeout
 from agri_data_service.parquet_ops.availability_coverage import (
@@ -59,8 +60,9 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from agri_data_service.execution.gap_repair_contract import RepairRequest
+    from agri_data_service.execution.gap_repair_contract import RepairCandidate, RepairRequest
     from agri_data_service.execution.job_executor_service import LaneExecutionSpec
+    from agri_data_service.jobs import JobDefinitionRecord
 
 PLAN_GAP_REPAIR_COMMAND: Final = "agri-service ops jobs-plan-gap-repair"
 #: Backlog priority, matching `job_executor_service._work_priority` for a backlog lane.
@@ -190,46 +192,38 @@ async def author_gap_repairs(
     A dry run needs no session at all and touches no ledger. An applied pass never commits: the caller
     commits it. `open_job_run` is idempotent on both the logical run key and the shard key, so a second
     applied pass on the same day reports `already_authored`.
+
+    FR-10: every definition is resolved BEFORE the first run is opened, because `ensure_lane_definition`
+    ends by rolling the planning transaction back. See execution/AGENTS.md, "Bounded gap repair".
     """
     if apply and session is None:
         raise RepairRequestError("an applied pass needs a ledger session")
-    receipts: list[RepairAuthoringReceipt] = []
-    for candidate in plan.authorized:
-        request = candidate.request
-        if request is None:  # pragma: no cover - an authorized candidate always carries its request
-            raise RepairRequestError(f"{candidate.layer} is authorized but carries no request")
-        spec = LANE_SPECS[request.lane_id]
-        repair = repair_lane_spec(spec)
-        receipt = RepairAuthoringReceipt(
-            lane_id=spec.lane_id,
-            repair_lane_id=repair.lane_id,
-            layer=request.layer,
-            logical_run_key=repair_logical_run_key(repair, now=now),
-            shard_key=request.shard_key(),
-            request=request,
-            outcome="dry_run",
-        )
-        if not apply or session is None:
-            receipts.append(receipt)
-            continue
+    described = tuple(_describe_candidate(candidate, now=now) for candidate in plan.authorized)
+    if not apply or session is None:
+        return tuple(receipt for receipt, _ in described)
+    definitions: list[JobDefinitionRecord] = []
+    for _, repair in described:
         definition = await ensure_lane_definition(session, repair)
         if definition is None:
             raise RepairAuthoringRefusal(
                 f"{repair.lane_id} is paused in the ledger (agri.job_definition.enabled = false); resume it before "
                 "authoring repair work it would never run"
             )
+        definitions.append(definition)
+    receipts: list[RepairAuthoringReceipt] = []
+    for (receipt, _), definition in zip(described, definitions, strict=True):
         opened = await open_job_run(
             session,
             definition,
             logical_run_key=receipt.logical_run_key,
             scheduled_for=now,
             requested_by=PLAN_GAP_REPAIR_COMMAND,
-            target_partitions={"lane_id": spec.lane_id, "layer": request.layer, "repair": True},
+            target_partitions={"lane_id": receipt.lane_id, "layer": receipt.layer, "repair": True},
             work_items=(
                 JobWorkItemSpec(
                     shard_key=receipt.shard_key,
                     kind=EXECUTOR_REPAIR_WORK_ITEM_KIND,
-                    payload=request.to_payload(),
+                    payload=receipt.request.to_payload(),
                     priority=REPAIR_WORK_ITEM_PRIORITY,
                 ),
             ),
@@ -242,6 +236,27 @@ async def author_gap_repairs(
             )
         )
     return tuple(receipts)
+
+
+def _describe_candidate(
+    candidate: RepairCandidate, *, now: datetime
+) -> tuple[RepairAuthoringReceipt, LaneExecutionSpec]:
+    """One authorized candidate's dry-run receipt and the repair definition its run is filed under."""
+    request = candidate.request
+    if request is None:  # pragma: no cover - an authorized candidate always carries its request
+        raise RepairRequestError(f"{candidate.layer} is authorized but carries no request")
+    spec = LANE_SPECS[request.lane_id]
+    repair = repair_lane_spec(spec)
+    receipt = RepairAuthoringReceipt(
+        lane_id=spec.lane_id,
+        repair_lane_id=repair.lane_id,
+        layer=request.layer,
+        logical_run_key=repair_logical_run_key(repair, now=now),
+        shard_key=request.shard_key(),
+        request=request,
+        outcome="dry_run",
+    )
+    return receipt, repair
 
 
 def _resolve_ledger() -> str:
@@ -261,7 +276,9 @@ async def _plan_process(
 ) -> RepairAuthoringReport:
     """One coverage read, one plan, and -- only with `apply` -- one transaction that opens the authorized runs."""
     now = datetime.now(UTC)
-    activation = parse_activation()
+    # CA8: the verb authors legacy repairs only, so a lane on the config path, or one the CA12 kill-switch
+    # stops, reads `lane_inactive` here exactly as it does in the tick's own authoring pass.
+    activation = current_lane_catalogue(LANE_SPECS).legacy_activation(parse_activation())
     coverage = await asyncio.to_thread(read_parquet_coverage, now=now)
     plan = plan_gap_repairs(coverage, activation=activation, now=now, budget=budget, lane_ids=lane_ids)
     freshness = render_freshness_report(coverage)

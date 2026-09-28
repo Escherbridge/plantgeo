@@ -4,9 +4,13 @@ The nature rules are stdlib-pure: no store, no session, no clock. The driver's u
 pinned in `test_gap_fill.py`; what is pinned here is the rules themselves, because they are what
 decides whether a reference set is "current" or owes a snapshot.
 
-The last section is the one exception and reads the REGISTRY plus the filesystem, because the fact
-it pins -- that a lane claiming a forecaster names a module the ML service actually ships -- exists
-in no single module and had no test at all before 2026-09-19.
+The forecast-module section is the one exception and reads the REGISTRY plus the filesystem, because
+the fact it pins -- that a lane claiming a forecaster names a module the ML service actually ships --
+exists in no single module and had no test at all before 2026-09-19.
+
+The last two sections pin config-driven ingestion's Phase 1 bridge (spec S6, S18): the literal
+registrations and what serving snapshots from them are byte-identical while the mirror adds nothing,
+and the source ceiling and freshness horizon prefer a probed provider edge and say which edge answered.
 
 The sub-day cases below are named for `evacuation-zones` on purpose: that lane is the one where the
 day-resolution answer was a life-safety defect rather than a staleness annoyance.
@@ -14,12 +18,14 @@ day-resolution answer was a life-safety defect rather than a staleness annoyance
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final, get_args
 
 import pytest
 
+from agri_data_service.foundation.parquet.calendar import CALENDAR_STREAM
 from agri_data_service.foundation.parquet.lane_contract import (
     LANE_NATURES,
     LaneContractError,
@@ -38,10 +44,33 @@ from agri_data_service.foundation.parquet.paths import (
     completion_marker_path,
     partition_path,
 )
-from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRATIONS, LANE_REGISTRY
+from agri_data_service.parquet_ops import authorized_serving
+from agri_data_service.parquet_ops.coverage import (
+    NON_SLIDER_REGISTERED_LAYERS,
+    build_lane_coverage,
+    census_lane_from_registration,
+    registered_census_lanes,
+)
+from agri_data_service.parquet_ops.freshness import measure_lane_freshness
+from agri_data_service.pipeline.parquet.config_stream_registrations import CONFIG_STREAM_ROWS
+from agri_data_service.pipeline.parquet.lane_ceiling import (
+    CeilingEdgeSource,
+    allowed_source_ceiling,
+    resolve_source_ceiling,
+)
+from agri_data_service.pipeline.parquet.lane_registry import (
+    CALENDAR_HISTORY_FLOOR,
+    LANE_REGISTRATIONS,
+    LANE_REGISTRY,
+    registered_lane_slugs,
+)
+from agri_data_service.pipeline.runner.contract import EdgeSource
+from tests.parquet_ops.fakes import FakeListing
 
 if TYPE_CHECKING:
     from agri_data_service.foundation.parquet.zoom import ZoomTier
+    from agri_data_service.parquet_ops.coverage import CensusLane
+    from agri_data_service.pipeline.parquet.lane_registry import LaneRegistration
 
 TODAY = date(2026, 8, 22)
 CHANGED_ON = date(2026, 8, 7)
@@ -514,3 +543,176 @@ def test_the_two_lanes_the_ml_service_writes_are_registered_with_the_right_claim
     assert weather_forecast.history_floor == date(2026, 9, 18)
     assert weather_forecast.forecast_module is None
     assert not weather_forecast.forecastable
+
+
+# --- The literal registrations stay byte-identical while the S18 mirror adds nothing -------------
+#
+# Captured at 459498a7, before config-driven ingestion's registry bridge (spec S18) landed, and
+# unchanged by it. One string per literal registration:
+#   nature | writer floor | claimed complete floor | lag | cadence | release-day count |
+#   forecast module | writer ceiling | sha256(floor_basis)[:8] | sha256(claimed floor basis)[:8]
+# A mirror row never appears here, so appending one needs no edit; retiring or re-citing a literal
+# lane does. The calendar is pinned by derivation instead: its floor moves when an older row lands.
+
+LITERAL_REGISTRATION_FACTS: Final[dict[str, str]] = {
+    "burn-severity": "release_series|2020-11-24|2020-11-24|7|1|0|-|-|74e79c91|74e79c91",
+    "climate-field-air-temperature-max": "daily_series|2026-08-07|2022-04-30|5|1|0|-|-|7eed85e6|7ef86218",
+    "climate-field-air-temperature-mean": "daily_series|2026-08-07|2022-04-30|5|1|0|-|-|7eed85e6|7ef86218",
+    "climate-field-air-temperature-min": "daily_series|2026-08-07|2022-04-30|5|1|0|-|-|7eed85e6|7ef86218",
+    "climate-field-dew-point": "daily_series|2026-08-07|1984-01-01|5|1|0|-|-|7eed85e6|1573e0f4",
+    "climate-field-precipitation": "daily_series|2026-08-07|2022-04-30|5|1|0|-|-|7eed85e6|7ef86218",
+    "climate-field-relative-humidity": "daily_series|2026-08-07|2018-01-01|5|1|0|-|-|7eed85e6|95b7ac2b",
+    "climate-field-shortwave-radiation": "daily_series|2026-06-01|2022-04-30|6|1|0|-|-|0792f43b|1f7c4967",
+    "climate-field-wind-speed": "daily_series|2026-08-07|2022-04-30|5|1|0|-|-|7eed85e6|7ef86218",
+    "crop-cover": "release_series|2023-01-30|2023-01-30|0|1|4|-|-|7f428c62|7f428c62",
+    "drought": "release_series|2022-08-09|2022-08-09|4|7|0|-|-|ca654ebc|ca654ebc",
+    "evacuation-zones": "static_lookup|2025-04-14|2025-04-14|0|1|0|-|-|0795f17d|0795f17d",
+    "fire-detections": "daily_series|2000-11-01|2000-11-01|2|1|0|fire_detections|2026-08-24|8693e3f9|8693e3f9",
+    "fire-perimeters": "static_lookup|2025-07-28|2025-07-28|0|1|0|-|-|36593b46|36593b46",
+    "fire-risk": "daily_series|2026-09-19|2026-09-19|0|1|0|fire_risk_daily|-|d3c0ea5a|d3c0ea5a",
+    "land-context-boundaries": "static_lookup|2026-09-20|2026-09-20|0|1|0|-|-|a2026555|a2026555",
+    "land-context-contacts": "static_lookup|2026-09-20|2026-09-20|0|1|0|-|-|a2026555|a2026555",
+    "land-context-offices": "static_lookup|2026-09-20|2026-09-20|0|1|0|-|-|a2026555|a2026555",
+    "sensors": "daily_series|2026-07-29|2026-07-29|1|1|0|sensors|-|4bbc4f2b|4bbc4f2b",
+    "signal": "daily_series|2022-04-30|2022-04-30|9|1|0|signal|-|6121c9d0|6121c9d0",
+    "soil-field-moisture-0-7cm": "daily_series|2026-08-03|2022-04-30|5|1|0|-|-|9f32a3ae|d3696ecb",
+    "soil-field-moisture-28-100cm": "daily_series|2026-08-03|2022-04-30|5|1|0|-|-|9f32a3ae|d3696ecb",
+    "soil-field-moisture-7-28cm": "daily_series|2026-08-03|2022-04-30|5|1|0|-|-|9f32a3ae|d3696ecb",
+    "soil-field-vpd": "daily_series|2026-08-03|2022-04-30|5|1|0|-|-|9f32a3ae|d3696ecb",
+    "soil-properties": "static_lookup|2020-06-02|2020-06-02|0|1|0|-|-|b287ba74|b287ba74",
+    "soil-survey": "static_lookup|2025-08-26|2025-08-26|0|1|0|-|-|d34b8630|d34b8630",
+    "soil-temperature-0-to-7cm": "daily_series|2026-08-03|2022-04-30|5|1|0|-|-|9f32a3ae|d3696ecb",
+    "soil-temperature-100-to-255cm": "daily_series|2026-08-03|2022-04-30|5|1|0|-|-|9f32a3ae|d3696ecb",
+    "soil-temperature-28-to-100cm": "daily_series|2026-08-03|2022-04-30|5|1|0|-|-|9f32a3ae|d3696ecb",
+    "soil-temperature-7-to-28cm": "daily_series|2026-08-03|2022-04-30|5|1|0|-|-|9f32a3ae|d3696ecb",
+    "soil-wetness-profile": "daily_series|2026-08-07|2022-04-30|5|1|0|-|-|7eed85e6|7ef86218",
+    "soil-wetness-root-zone": "daily_series|2026-08-07|2022-04-30|5|1|0|-|-|7eed85e6|7ef86218",
+    "soil-wetness-surface": "daily_series|2026-08-07|2022-04-30|5|1|0|-|-|7eed85e6|7ef86218",
+    "vegetation": "daily_series|2022-08-05|2022-08-05|7|1|0|vegetation_ndvi_forecast|2026-09-05|7f54c7b6|7f54c7b6",
+    "water-gauges": "daily_series|2026-05-24|1990-09-30|2|1|0|water_gauges|2026-09-01|1ea91c8f|0e73d705",
+    "watersheds": "static_lookup|2026-08-07|2026-08-07|0|1|0|-|-|6fffdb1e|6fffdb1e",
+    "weather-forecast": "release_series|2026-09-18|2026-09-18|0|1|0|-|-|94a50fab|94a50fab",
+    "weather-observations": "daily_series|2026-08-01|2018-01-01|2|1|0|-|-|25d1cffc|70a9ca37",
+}
+
+
+def _text_digest(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
+
+
+def _registration_facts(registration: LaneRegistration) -> str:
+    """One registration's contract facts in `LITERAL_REGISTRATION_FACTS`' field order."""
+    return "|".join(
+        (
+            registration.nature,
+            registration.history_floor.isoformat(),
+            registration.claimed_history_floor.isoformat(),
+            str(registration.publication_lag_days),
+            str(registration.cadence_days),
+            str(0 if registration.release_days is None else len(registration.release_days)),
+            registration.forecast_module or "-",
+            "-" if registration.writer_ceiling is None else registration.writer_ceiling.isoformat(),
+            _text_digest(registration.floor_basis),
+            _text_digest(registration.claimed_floor_basis),
+        )
+    )
+
+
+def test_the_literal_registrations_and_what_serving_snapshots_from_them_are_unchanged_by_the_mirror() -> None:
+    """Spec S18's no-op pin: the registry, `_LANES` and the slider census hold today's lanes plus the mirror only."""
+    mirrored = {row.slug for row in CONFIG_STREAM_ROWS}
+    literal = {
+        registration.slug: _registration_facts(registration)
+        for registration in LANE_REGISTRATIONS
+        if registration.slug not in mirrored and registration.slug != CALENDAR_STREAM
+    }
+
+    assert literal == LITERAL_REGISTRATION_FACTS
+    assert list(registered_lane_slugs()) == sorted(registered_lane_slugs())
+    assert set(authorized_serving._LANES) == {*LITERAL_REGISTRATION_FACTS, *mirrored, CALENDAR_STREAM}
+    assert {lane.layer for lane in registered_census_lanes()} == (
+        {*LITERAL_REGISTRATION_FACTS, *mirrored} - NON_SLIDER_REGISTERED_LAYERS
+    )
+    assert (
+        min(registration.history_floor for registration in LANE_REGISTRATIONS if registration.slug != CALENDAR_STREAM)
+        == CALENDAR_HISTORY_FLOOR
+    )
+
+
+# --- The source ceiling and the freshness horizon prefer a probed provider edge (spec S6) ---------
+#
+# NASA POWER's UTC solar edge is the lane that exposed the lag tautology (spec section 2.2): the
+# registered lag says the provider reached `EDGE_TODAY - 6`, while the UTC values it serves are real
+# only through June. A probed edge is preferred in both directions, and the edge that answered is named.
+
+EDGE_TODAY: Final = date(2026, 9, 15)
+POWER_UTC_SOLAR_EDGE: Final = date(2026, 6, 30)
+SHORTWAVE: Final = census_lane_from_registration(LANE_REGISTRY["climate-field-shortwave-radiation"])
+CROP_COVER: Final = census_lane_from_registration(LANE_REGISTRY["crop-cover"])
+WATERSHEDS: Final = census_lane_from_registration(LANE_REGISTRY["watersheds"])
+SHORTWAVE_LAG_EDGE: Final = EDGE_TODAY - timedelta(days=SHORTWAVE.publication_lag_days)
+#: Between the publications of the CDL 2024 and 2025 editions (2025-02-27 and 2026-02-27).
+BETWEEN_CDL_EDITIONS: Final = date(2026, 1, 15)
+CDL_2024_EDITION: Final = date(2025, 2, 27)
+
+
+@pytest.mark.parametrize(
+    ("lane", "probed_edge", "expected_day", "edge_source"),
+    [
+        pytest.param(SHORTWAVE, None, SHORTWAVE_LAG_EDGE, "lag_fallback", id="no-probe-keeps-the-lag"),
+        pytest.param(SHORTWAVE, POWER_UTC_SOLAR_EDGE, POWER_UTC_SOLAR_EDGE, "probe", id="probe-behind-the-lag"),
+        pytest.param(
+            SHORTWAVE, EDGE_TODAY - timedelta(days=2), EDGE_TODAY - timedelta(days=2), "probe", id="probe-ahead"
+        ),
+        pytest.param(SHORTWAVE, EDGE_TODAY + timedelta(days=3), EDGE_TODAY, "probe", id="future-probe-clamped"),
+        pytest.param(CROP_COVER, BETWEEN_CDL_EDITIONS, CDL_2024_EDITION, "probe", id="release-calendar-snaps-probe"),
+        pytest.param(WATERSHEDS, POWER_UTC_SOLAR_EDGE, EDGE_TODAY, "no_time_axis", id="static-lookup-ignores-probe"),
+    ],
+)
+def test_the_source_ceiling_prefers_a_probed_edge_and_names_the_edge_that_answered(
+    lane: CensusLane, probed_edge: date | None, expected_day: date, edge_source: str
+) -> None:
+    ceiling = resolve_source_ceiling(lane, today=EDGE_TODAY, probed_edge=probed_edge)
+
+    assert (ceiling.day, ceiling.edge_source) == (expected_day, edge_source)
+    assert allowed_source_ceiling(lane, today=EDGE_TODAY, probed_edge=probed_edge) == expected_day
+
+
+def test_the_ceiling_speaks_the_runners_edge_source_vocabulary() -> None:
+    """A turn's `ProviderEdge.source` and a ceiling's `edge_source` are one vocabulary (spec S6)."""
+    assert set(get_args(EdgeSource)) <= set(get_args(CeilingEdgeSource))
+
+
+def test_freshness_judged_against_a_probed_edge_clears_a_false_alarm_and_raises_a_hidden_one() -> None:
+    """Both ways the lag lies: a writer level with a slow provider, and one trailing a provider already ahead.
+
+    The census row keeps its lag verdict (the report states `registered_publication_lag`); the probe
+    verdict is measured beside it and names its edge.
+    """
+    listing = FakeListing()
+    for day in (POWER_UTC_SOLAR_EDGE - timedelta(days=1), POWER_UTC_SOLAR_EDGE):
+        listing.write_day(SHORTWAVE.layer, "observed", BASE_TIER, day)
+    lag_judged = build_lane_coverage(listing, lane=SHORTWAVE, tier=BASE_TIER, today=EDGE_TODAY)
+    probe_judged = measure_lane_freshness(
+        SHORTWAVE,
+        latest_recorded_day=lag_judged.latest_recorded_day,
+        today=EDGE_TODAY,
+        probed_edge=POWER_UTC_SOLAR_EDGE,
+    )
+
+    assert lag_judged.latest_recorded_day == POWER_UTC_SOLAR_EDGE
+    assert (lag_judged.expected_horizon_day, lag_judged.behind_provider) == (SHORTWAVE_LAG_EDGE, True)
+    assert (
+        probe_judged.expected_horizon_day,
+        probe_judged.staleness_days,
+        probe_judged.behind_provider,
+        probe_judged.horizon_edge_source,
+    ) == (POWER_UTC_SOLAR_EDGE, 0, False, "probe")
+
+    trailing = SHORTWAVE_LAG_EDGE - timedelta(days=4)
+    by_lag = measure_lane_freshness(SHORTWAVE, latest_recorded_day=trailing, today=EDGE_TODAY)
+    by_probe = measure_lane_freshness(
+        SHORTWAVE, latest_recorded_day=trailing, today=EDGE_TODAY, probed_edge=EDGE_TODAY - timedelta(days=2)
+    )
+    assert (by_lag.behind_provider, by_lag.horizon_edge_source) == (False, "lag_fallback")
+    assert (by_probe.behind_provider, by_probe.horizon_edge_source) == (True, "probe")

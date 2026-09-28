@@ -29,6 +29,11 @@ LaneTickState = Literal[
     "deferred_shutdown",
     "ran",
     "failed",
+    # The S15 work queue: handed to its own session this tick, or still running from an earlier one.
+    "dispatched",
+    "running",
+    # WQ-4: refused by the paid provider cap before `fair_due_order`; no run was opened (provider_budget.py).
+    "deferred_budget",
 ]
 
 
@@ -38,13 +43,17 @@ class OperatorAction:
 
     lane_id: str
     run_id: uuid.UUID | None
+    #: The complete dry-run line, runnable as printed (executor F5).
     command: str
+    #: The same line with `--apply`: the one that records the supersession.
+    apply_command: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
             "lane_id": self.lane_id,
             "run_id": None if self.run_id is None else str(self.run_id),
             "command": self.command,
+            "apply_command": self.apply_command,
         }
 
 
@@ -63,6 +72,8 @@ class LaneTickResult:
     #: The exact `jobs-supersede-run` invocation that releases this lane, when only an operator can. Typed so
     #: a consumer never parses it back out of `blockers`; see execution/AGENTS.md, "Operator action surface".
     operator_action: str | None = None
+    #: `operator_action` with `--apply`: the line that records the supersession once the dry run reads right.
+    operator_apply_action: str | None = None
     #: What the lane's own terminal report said this bucket, when the command ran in this process.
     turn_report: TurnReport | None = None
 
@@ -79,6 +90,7 @@ class LaneTickResult:
             "blockers": list(self.blockers),
             "due_prediction": self.due_prediction,
             "operator_action": self.operator_action,
+            "operator_apply_action": self.operator_apply_action,
             "turn_report": None if self.turn_report is None else self.turn_report.to_dict(),
         }
 
@@ -97,7 +109,12 @@ class ExecutorTickSummary:
     def operator_actions(self) -> tuple[OperatorAction, ...]:
         """Every lane this tick found held behind a recorded-supersession requirement, with its release command."""
         return tuple(
-            OperatorAction(lane_id=lane.lane_id, run_id=lane.run_id, command=lane.operator_action)
+            OperatorAction(
+                lane_id=lane.lane_id,
+                run_id=lane.run_id,
+                command=lane.operator_action,
+                apply_command=lane.operator_apply_action,
+            )
             for lane in self.lanes
             if lane.operator_action is not None
         )

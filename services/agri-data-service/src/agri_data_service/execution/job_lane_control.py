@@ -17,6 +17,7 @@ from agri_data_service.db.engine import ingest_session
 from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.execution.job_executor_service import EXECUTOR_DEFINITION_VERSION, LANE_SPECS
 from agri_data_service.execution.job_run_supersession import ledger_target
+from agri_data_service.execution.lane_catalogue import current_lane_catalogue
 from agri_data_service.jobs.lease import apply_statement_timeout, canonical_json, fetch_row, fetch_rows, required_column
 
 if TYPE_CHECKING:
@@ -60,11 +61,20 @@ class LaneControlRequest:
 
 
 def resolve_definition(name: str) -> str:
-    """Require the full name of exactly one executable, code-registered executor lane."""
-    matches = [spec for spec in LANE_SPECS.values() if spec.definition_name == name and spec.executable]
+    """Require the full name of exactly one executable executor definition, resolved through the lane catalogue.
+
+    CA2: a config lane's forward definition (its legacy name, CA13) and its `<lane>:gap-fill` definition are
+    brakeable exactly like a legacy lane; a legacy table entry stays brakeable while a TOML claims or
+    quarantines its id, so the brake never depends on a lane file loading.
+    """
+    catalogue_spec = current_lane_catalogue(LANE_SPECS).spec_for_definition(name)
+    legacy = [spec for spec in LANE_SPECS.values() if spec.definition_name == name and spec.executable]
+    matches = {spec.definition_name for spec in legacy}
+    if catalogue_spec is not None:
+        matches.add(catalogue_spec.definition_name)
     if len(matches) != 1:
         raise LaneControlRefusal("--definition must exactly name one registered executable executor definition")
-    return matches[0].definition_name
+    return matches.pop()
 
 
 def _bounded(value: str, label: str, limit: int) -> str:

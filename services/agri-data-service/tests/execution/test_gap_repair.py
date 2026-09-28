@@ -53,6 +53,7 @@ from agri_data_service.execution.lane_ids import (
     WEATHER_OBSERVATIONS_DIRECT_LANE_ID,
 )
 from agri_data_service.jobs import JobDefinitionRecord, OpenedJobRun
+from agri_data_service.jobs.dispatch import LanePauseState
 from agri_data_service.parquet_ops.coverage import registered_census_lanes
 from agri_data_service.parquet_ops.wire import DayRange, LaneCoverage, WarehouseCoverage
 from agri_data_service.pipeline.direct.climate import forward as climate_forward
@@ -417,6 +418,82 @@ async def test_an_applied_pass_opens_one_repair_run_and_a_repeat_reports_it_alre
         "--max-days",
         "5",
     )
+
+
+class _NoRows:
+    """A statement result with no row: the statement timeout, or a definition whose stored shape already matches."""
+
+    def mappings(self) -> _NoRows:
+        return self
+
+    def first(self) -> None:
+        return None
+
+
+class _TransactionalLedger:
+    """A session that honours rollback as PostgreSQL does: runs opened since the last commit vanish."""
+
+    def __init__(self) -> None:
+        self.pending: list[str] = []
+        self.committed: list[str] = []
+
+    async def execute(self, _statement: object, _parameters: object = None) -> _NoRows:
+        return _NoRows()
+
+    async def commit(self) -> None:
+        self.committed.extend(self.pending)
+        self.pending.clear()
+
+    async def rollback(self) -> None:
+        self.pending.clear()
+
+
+async def test_an_applied_pass_persists_every_authorized_candidate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """FR-10: the real `ensure_lane_definition` rolls its planning transaction back, so a pass that resolved the
+    second definition between two opens lost the first run and still logged it `authored`."""
+
+    async def registered_and_running(_session: object, _name: str) -> LanePauseState:
+        return LanePauseState(registered=True, paused=False)
+
+    async def enabled_definition(_session: object, _spec: object) -> tuple[uuid.UUID, bool]:
+        return uuid.uuid4(), True
+
+    async def load_definition(_session: object, name: str, *, version: str | None = None) -> JobDefinitionRecord:
+        del version
+        return _definition(name.removeprefix(EXECUTOR_DEFINITION_PREFIX))
+
+    async def open_run(session: _TransactionalLedger, _definition: object, **kwargs: object) -> OpenedJobRun:
+        key = str(kwargs["logical_run_key"])
+        session.pending.append(key)
+        return OpenedJobRun(
+            job_run_id=uuid.uuid4(),
+            logical_run_key=key,
+            created=True,
+            added_work_items=1,
+            total_work_items=1,
+            status="queued",
+        )
+
+    monkeypatch.setattr(job_executor_service, "read_lane_pause_state", registered_and_running)
+    monkeypatch.setattr(job_executor_service, "_definition_state", enabled_definition)
+    monkeypatch.setattr(job_executor_service, "load_job_definition", load_definition)
+    monkeypatch.setattr(gap_repair, "open_job_run", open_run)
+    rows = (
+        *_rows("drought", gaps=[_gap(date(2026, 8, 4), date(2026, 8, 4))], nature="release_series"),
+        *_rows("vegetation", gaps=[_gap(date(2026, 9, 1), date(2026, 9, 5))]),
+    )
+    plan = select_repair_candidates(
+        rows, active_lanes=ACTIVE.active_lanes, now=NOW, budget=RepairBudget(max_candidates=2)
+    )
+    assert {candidate.layer for candidate in plan.authorized} == {"drought", "vegetation"}
+    ledger = _TransactionalLedger()
+
+    receipts = await author_gap_repairs(ledger, plan=plan, now=NOW, apply=True)  # type: ignore[arg-type]
+    await ledger.commit()
+
+    assert [receipt.outcome for receipt in receipts] == ["authored", "authored"]
+    assert sorted(ledger.committed) == sorted(receipt.logical_run_key for receipt in receipts)
+    assert len(set(ledger.committed)) == 2, "one run per lane, both durable"
 
 
 async def test_an_applied_pass_without_a_session_is_refused() -> None:
