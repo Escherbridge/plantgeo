@@ -1,0 +1,44 @@
+# Open-Meteo: the facts every lane on this provider shares (config-driven ingestion spec S3).
+# Data only. Schema: foundation/lane_config/models.py::ProviderConfig. Authoring: lanes/AGENTS.md.
+
+id = "open-meteo"
+display_name = "Open-Meteo"
+# Charged per weighted call, not per HTTP request (spec §6.3).
+weighted = true
+# The NAME of the environment variable that holds the key. The key itself never enters a TOML;
+# the owner sets it. Only the customer hosts below carry it.
+api_key_env = "OPEN_METEO_API_KEY"
+
+# Each endpoint has a free host and a keyed customer host; `foundation/observability/usage.py`
+# meters the free ones to `open-meteo-free` and the customer ones to `open-meteo-paid`.
+[endpoints.archive]
+host = "archive-api.open-meteo.com"
+customer_host = "customer-archive-api.open-meteo.com"
+path = "/v1/archive"
+
+[endpoints.forecast]
+host = "api.open-meteo.com"
+customer_host = "customer-api.open-meteo.com"
+path = "/v1/forecast"
+
+[endpoints.historical-forecast]
+host = "historical-forecast-api.open-meteo.com"
+customer_host = "customer-historical-forecast-api.open-meteo.com"
+path = "/v1/forecast"
+
+# weight = locations x models x max(1, days / 14) x max(1, variables / 10)
+[weight]
+days_per_call = 14
+variables_per_call = 10
+counts_models = true
+basis = "spec 6.3 (O10): the pricing page counts more than 10 variables or 2 weeks per location as multiple calls; below that, 1.0 per location per request is the assumed floor until P5 re-baselines it"
+
+# WQ-4: the ONE enforced cap is the paid monthly quota. No windowed pools, no reserves.
+[budget]
+period = "month"
+weighted_calls = 5_000_000
+# Gap-fill is admitted only while charged + suspect + the turn cap stays at or under 60%.
+ceiling_fraction = 0.60
+# Forward stops once charged spend reaches 95%.
+stop_fraction = 0.95
+charged_pool = "open-meteo-paid"

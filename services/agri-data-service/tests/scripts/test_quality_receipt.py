@@ -109,9 +109,9 @@ def test_pycache_and_pyc_files_are_excluded(tmp_path: Path) -> None:
     assert after_count == before_count == 1
 
 
-def test_the_digest_covers_migrations_and_tool_configuration() -> None:
-    """What the runtime image ships and what a passing sweep even means are both digest inputs."""
-    assert QUALITY_RECEIPT.DIGEST_DIRECTORIES == ("src", "tests", "scripts", "alembic", "db")
+def test_the_digest_covers_migrations_tool_configuration_and_lane_config() -> None:
+    """What the runtime image ships -- lane TOMLs included -- and what a passing sweep means are digest inputs."""
+    assert QUALITY_RECEIPT.DIGEST_DIRECTORIES == ("src", "tests", "scripts", "alembic", "db", "lanes")
     assert QUALITY_RECEIPT.DIGEST_FILES == ("pyproject.toml", "uv.lock", "mypy.ini", "ruff.toml", "alembic.ini")
 
 
@@ -135,6 +135,8 @@ def test_every_declared_digest_input_is_collected(tmp_path: Path) -> None:
         ("tests/conftest.py", True),
         ("alembic/versions/20260912_0000_greenfield.py", True),
         ("db/agri_baseline.sql", True),
+        ("lanes/_providers/open-meteo.toml", True),
+        ("lanes/AGENTS.md", True),
         ("mypy.ini", True),
         ("ruff.toml", True),
         ("README.md", False),

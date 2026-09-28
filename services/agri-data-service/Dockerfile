@@ -15,10 +15,11 @@ WORKDIR /app
 #
 # The 2026-08-07 owner ruling dropped the in-image `checks` STAGE (a Docker build has no disposable
 # PostgreSQL, so pytest could never run here). This is the newer 2026-09-01 audit directive and a
-# different thing: it does not RE-RUN the checks, it verifies that the sha256 over `src/**`,
-# `tests/**`, `scripts/**`, `alembic/**`, `db/**`, `pyproject.toml`, `uv.lock`, `mypy.ini`,
-# `ruff.toml` and `alembic.ini` still equals the digest `scripts/check.py --write-receipt` recorded
-# after its last all-green run. Editing source without re-running the sweep therefore fails the
+# different thing: it does not RE-RUN the checks, it verifies that the sha256 over the digest set
+# (`scripts/quality_receipt.py::DIGEST_DIRECTORIES` and `DIGEST_FILES` -- the one statement of it;
+# every entry must be COPYed into this stage, which `tests/lane_config/test_image_plumbing.py`
+# pins) still equals the digest `scripts/check.py --write-receipt` recorded after its last
+# all-green run. Editing source without re-running the sweep therefore fails the
 # BUILD instead of shipping unjudged code. The migration machinery is in the digest because this
 # image SHIPS it (see `runtime` below), and the two tool configurations are in it because they
 # decide what "mypy pass" and "lint pass" mean at all.
@@ -45,6 +46,7 @@ COPY tests/ tests/
 COPY scripts/ scripts/
 COPY alembic/ alembic/
 COPY db/ db/
+COPY lanes/ lanes/
 RUN python scripts/verify_quality_receipt.py
 
 # --- runtime stage: lean, --no-dev, unchanged from before the gates were added. ---
@@ -63,6 +65,11 @@ COPY alembic/ alembic/
 COPY db/ db/
 COPY alembic.ini ./
 RUN uv sync --locked --no-dev
+
+# Lane and provider TOMLs (config-driven ingestion spec S13), beside `src/` so
+# `foundation/lane_config/loader.py::default_lanes_directory` resolves `/app/lanes` with no setting.
+# After the sync so a TOML flip does not re-run it.
+COPY lanes/ lanes/
 
 # The proof this image's source passed a green sweep, taken from the stage that verified it so the
 # gate cannot be skipped. Kept in the image so a running container can name its own quality receipt.

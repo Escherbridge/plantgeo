@@ -13,7 +13,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections.abc import Mapping  # noqa: TC003 - pydantic resolves this at runtime
+from dataclasses import dataclass
+from decimal import Decimal
 from importlib import resources
 from types import MappingProxyType
 from typing import Final, Literal
@@ -24,7 +27,14 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 REGION_ENV_VAR: Final = "PLANTGEO_REGION"
 
 LatticeOriginRule = Literal["floor_to_cell_origin"]
+#: `half_step`: centroids sit half a pitch inside the lattice envelope's west/south edge.
+AnalysisLatticeOriginRule = Literal["half_step"]
 SourceCoverage = Literal["global", "regional"]
+
+#: A named analysis lattice's key: lowercase alphanumerics joined by single hyphens.
+_ANALYSIS_LATTICE_KEY_PATTERN: Final = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+#: Decimal places a cell key carries per ordinate; soil's keys read `<prefix><lat>:<lon>` at this.
+_CELL_KEY_ORDINATE_PLACES: Final = 4
 
 
 class RegionEnvelope(BaseModel):
@@ -44,6 +54,77 @@ class RegionEnvelope(BaseModel):
         if self.south >= self.north:
             raise ValueError(f"envelope south ({self.south}) must be < north ({self.north})")
         return self
+
+
+@dataclass(frozen=True, slots=True)
+class AnalysisLatticeCell:
+    """One analysis-lattice cell: its region-free key and its centroid."""
+
+    cell_key: str
+    latitude: float
+    longitude: float
+
+
+def _decimal(value: float) -> Decimal:
+    """The shortest decimal that round-trips `value`, so 0.25 is 0.25 and never 0.2500000000000001."""
+    return Decimal(repr(value))
+
+
+class AnalysisLattice(BaseModel):
+    """A named, complete analysis lattice (spec §4.1 C2): a pitch, an origin rule, an envelope, a key prefix.
+
+    Lanes name one by key (`grid = "analysis-0p25"`) instead of restating its numbers. See
+    `AGENTS.md` in this directory, "Named analysis lattices".
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    pitch_degrees: float
+    origin_rule: AnalysisLatticeOriginRule
+    envelope: RegionEnvelope
+    cell_key_prefix: str
+
+    @model_validator(mode="after")
+    def _the_envelope_holds_whole_cells(self) -> AnalysisLattice:
+        if self.pitch_degrees <= 0:
+            raise ValueError(f"pitch_degrees ({self.pitch_degrees}) must be > 0")
+        if not self.cell_key_prefix.endswith(":"):
+            raise ValueError(f"cell_key_prefix {self.cell_key_prefix!r} must end with ':'")
+        pitch = _decimal(self.pitch_degrees)
+        for axis, low, high in (
+            ("west-east", self.envelope.west, self.envelope.east),
+            ("south-north", self.envelope.south, self.envelope.north),
+        ):
+            span = _decimal(high) - _decimal(low)
+            if span % pitch:
+                raise ValueError(
+                    f"the {axis} span {span} is not a whole number of {pitch}-degree cells; a partial "
+                    "edge column would silently drop cells from the lattice"
+                )
+        return self
+
+    def cells(self) -> tuple[AnalysisLatticeCell, ...]:
+        """Every cell, south to north then west to east, keyed `<prefix><lat>:<lon>` at 4 places."""
+        pitch = _decimal(self.pitch_degrees)
+        half_pitch = pitch / 2
+        west = _decimal(self.envelope.west)
+        south = _decimal(self.envelope.south)
+        column_count = int((_decimal(self.envelope.east) - west) / pitch)
+        row_count = int((_decimal(self.envelope.north) - south) / pitch)
+        places = _CELL_KEY_ORDINATE_PLACES
+        cells: list[AnalysisLatticeCell] = []
+        for row in range(row_count):
+            latitude = south + half_pitch + row * pitch
+            for column in range(column_count):
+                longitude = west + half_pitch + column * pitch
+                cell_key = f"{self.cell_key_prefix}{latitude:.{places}f}:{longitude:.{places}f}"
+                cell = AnalysisLatticeCell(cell_key=cell_key, latitude=float(latitude), longitude=float(longitude))
+                cells.append(cell)
+        return tuple(cells)
+
+    def cell_keys(self) -> frozenset[str]:
+        """The set of every cell key this lattice defines."""
+        return frozenset(cell.cell_key for cell in self.cells())
 
 
 class LayerBinding(BaseModel):
@@ -94,6 +175,11 @@ class Region(BaseModel):
     #: those two apart from the manifest alone (STYLE-REVIEW-W5 B1).
     platform_layers: tuple[str, ...]
     enabled_layers: tuple[LayerBinding, ...]
+    #: Named analysis lattices lanes grid onto (spec §4.1 C2). Optional and empty by default, so a
+    #: manifest that declares none (`kenya_highlands.json`) stays valid unedited; a lane naming a
+    #: lattice its region lacks is quarantined by `foundation/lane_config/loader.py`. Immutable for
+    #: the same reason `sub_envelopes` is.
+    analysis_lattices: Mapping[str, AnalysisLattice] = Field(default_factory=lambda: MappingProxyType({}))
 
     @model_validator(mode="after")
     def _every_binding_names_a_platform_layer(self) -> Region:
@@ -109,6 +195,26 @@ class Region(BaseModel):
     @classmethod
     def _sub_envelopes_are_immutable(cls, value: Mapping[str, RegionEnvelope]) -> Mapping[str, RegionEnvelope]:
         return MappingProxyType(dict(value))
+
+    @field_validator("analysis_lattices", mode="after")
+    @classmethod
+    def _analysis_lattices_are_named_and_immutable(
+        cls, value: Mapping[str, AnalysisLattice]
+    ) -> Mapping[str, AnalysisLattice]:
+        unnamed = sorted(key for key in value if not _ANALYSIS_LATTICE_KEY_PATTERN.match(key))
+        if unnamed:
+            raise ValueError(f"analysis lattice keys {unnamed} must be lowercase alphanumerics joined by hyphens")
+        return MappingProxyType(dict(value))
+
+    @model_validator(mode="after")
+    def _every_analysis_lattice_sits_inside_the_envelope(self) -> Region:
+        for key, lattice in self.analysis_lattices.items():
+            inner, outer = lattice.envelope, self.envelope
+            inside_west_east = outer.west <= inner.west and inner.east <= outer.east
+            inside_south_north = outer.south <= inner.south and inner.north <= outer.north
+            if not (inside_west_east and inside_south_north):
+                raise ValueError(f"analysis lattice {key!r} reaches outside this manifest's envelope")
+        return self
 
     @model_validator(mode="after")
     def _lattice_pitch_is_positive(self) -> Region:

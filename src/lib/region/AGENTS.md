@@ -51,6 +51,16 @@ manifest registry (`federation.md` §1: "Region names never appear in symbol nam
 multi-region bucket adds `region=<slug>/` as an outer partition") is where those rows move, not
 this push.
 
+## `analysisLattices` mirrors the service's named lattices
+
+`analysisLattices` is optional in `regionSchema` so `kenya_highlands.ts` stays valid unedited;
+`pnw.ts` declares `analysis-0p25` (pitch 0.25, `half_step`, the default camera envelope, prefix
+`sentinel2-ndvi-0p25deg:`). It is the grid config-driven ingestion lanes name instead of restating
+numbers, and it must equal `pnw.json`'s entry value for value:
+`src/__tests__/region/manifest-parity.test.ts` diffs both the key set and every lattice field. The
+full rationale lives beside the Python manifest (`foundation/region/AGENTS.md`, "Named analysis
+lattices").
+
 ## `getRegion()` is the only sanctioned read
 
 Everything that used to read `FALLBACK_COVERAGE_BBOX` or a named-region literal for the PNW row

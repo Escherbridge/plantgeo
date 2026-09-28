@@ -45,6 +45,21 @@ describe("PNW manifest parity between the service and web trees", () => {
     }
   });
 
+  it("agrees on every named analysis lattice, value for value", () => {
+    // Lanes name a lattice (`grid = "analysis-0p25"`) instead of restating its numbers, so the two
+    // trees disagreeing here would put the web's cell keys on a different lattice from the service's.
+    const typeScriptLattices = pnwTypeScript.analysisLattices;
+    const pythonLattices = pnwPython.analysis_lattices ?? {};
+    expect(Object.keys(typeScriptLattices).sort()).toEqual(Object.keys(pythonLattices).sort());
+    for (const [name, pythonLattice] of Object.entries(pythonLattices)) {
+      const lattice = typeScriptLattices[name as keyof typeof typeScriptLattices];
+      expect(lattice.pitchDegrees).toBe(pythonLattice.pitch_degrees);
+      expect(lattice.originRule).toBe(pythonLattice.origin_rule);
+      expect(lattice.envelope).toEqual(pythonLattice.envelope);
+      expect(lattice.cellKeyPrefix).toBe(pythonLattice.cell_key_prefix);
+    }
+  });
+
   it("agrees on the ISO country and admin codes", () => {
     expect(pnwTypeScript.isoCountryCodes).toEqual(pnwPython.iso_country_codes);
     expect(pnwTypeScript.adminCodes).toEqual(pnwPython.admin_codes);

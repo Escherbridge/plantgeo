@@ -18,7 +18,7 @@ import re
 import sys
 import time
 from datetime import date
-from typing import TYPE_CHECKING, Final, NamedTuple
+from typing import TYPE_CHECKING, Final, Literal, NamedTuple, get_args
 from urllib.parse import parse_qs, urlsplit
 
 from agri_data_service.foundation.observability import events, redaction
@@ -45,20 +45,31 @@ _WEIGHTED_POOLS: Final[frozenset[PoolLabel]] = frozenset({"open-meteo-paid", "op
 # --- Host -> provider/pool resolution (design §2.3) ----------------------------------------------
 
 
+#: Metering-and-report labels for keyless, unbudgeted providers. Deliberately NOT `vocabulary.PoolLabel`:
+#: that set is what the usage report's month-to-date section walks, and WQ-4 enforces no budget on
+#: these, so they label hosts in the per-lane x host section only (and stop it reading `provider None`).
+MeteringOnlyPoolLabel = Literal["nasa-power", "nws", "arcgis-online"]
+METERING_ONLY_POOL_LABELS: Final[frozenset[MeteringOnlyPoolLabel]] = frozenset(get_args(MeteringOnlyPoolLabel))
+
+
 class HostResolution(NamedTuple):
     """One host's provider name and metering pool, as `usage.provider_for_host` resolves it."""
 
     provider: str
-    pool: PoolLabel
+    pool: PoolLabel | MeteringOnlyPoolLabel
 
 
 # Order matters: the `customer-` (paid) rule must be checked before the general Open-Meteo rule, or
 # every paid host would also match the free one. Hosts are matched case-insensitively, stripped.
-_HOST_RULES: Final[tuple[tuple[re.Pattern[str], str, PoolLabel], ...]] = (
+# `tests/lane_config/test_provider_hosts.py` fails when a `lanes/_providers/*.toml` host matches none.
+_HOST_RULES: Final[tuple[tuple[re.Pattern[str], str, PoolLabel | MeteringOnlyPoolLabel], ...]] = (
     (re.compile(r"^customer-[^.]*\.open-meteo\.com$"), "open-meteo", "open-meteo-paid"),
     (re.compile(r"(^|\.)open-meteo\.com$"), "open-meteo", "open-meteo-free"),
     (re.compile(r"^firms\.modaps\.eosdis\.nasa\.gov$"), "firms", "firms"),
-    (re.compile(r"^waterservices\.usgs\.gov$"), "usgs-water-data", "usgs-water-data"),
+    (re.compile(r"^(waterservices|api\.waterdata)\.usgs\.gov$"), "usgs-water-data", "usgs-water-data"),
+    (re.compile(r"^power\.larc\.nasa\.gov$"), "nasa-power", "nasa-power"),
+    (re.compile(r"^api\.weather\.gov$"), "nws", "nws"),
+    (re.compile(r"^services[0-9]*\.arcgis\.com$"), "arcgis-online", "arcgis-online"),
 )
 
 

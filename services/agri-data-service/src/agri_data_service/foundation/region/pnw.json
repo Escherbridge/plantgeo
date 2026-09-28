@@ -36,6 +36,19 @@
   "crs": 4326,
   "lattice_pitch_degrees": 0.01,
   "lattice_origin_rule": "floor_to_cell_origin",
+  "analysis_lattices": {
+    "analysis-0p25": {
+      "pitch_degrees": 0.25,
+      "origin_rule": "half_step",
+      "envelope": {
+        "west": -125.0,
+        "south": 42.0,
+        "east": -111.0,
+        "north": 49.0
+      },
+      "cell_key_prefix": "sentinel2-ndvi-0p25deg:"
+    }
+  },
   "timezone": "America/Los_Angeles",
   "iso_country_codes": [
     "US"

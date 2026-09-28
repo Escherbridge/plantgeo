@@ -26,6 +26,27 @@ export type RegionEnvelope = z.infer<typeof regionEnvelopeSchema>;
 export const latticeOriginRuleSchema = z.literal("floor_to_cell_origin");
 export type LatticeOriginRule = z.infer<typeof latticeOriginRuleSchema>;
 
+/** How a named analysis lattice places its centroids: `half_step` sits them half a pitch inside its edge. */
+export const analysisLatticeOriginRuleSchema = z.literal("half_step");
+export type AnalysisLatticeOriginRule = z.infer<typeof analysisLatticeOriginRuleSchema>;
+
+/**
+ * A named, complete analysis lattice lanes grid onto (config-driven ingestion spec §4.1, C2).
+ *
+ * Mirrors `foundation/region/manifest.py`'s `AnalysisLattice`; cell keys read
+ * `<cellKeyPrefix><lat>:<lon>` at four decimal places, so they stay region-free.
+ */
+export const analysisLatticeSchema = z
+  .object({
+    pitchDegrees: z.number().positive(),
+    originRule: analysisLatticeOriginRuleSchema,
+    envelope: regionEnvelopeSchema,
+    cellKeyPrefix: z.string().endsWith(":"),
+  })
+  .strict();
+
+export type AnalysisLattice = z.infer<typeof analysisLatticeSchema>;
+
 export const sourceCoverageSchema = z.enum(["global", "regional"]);
 export type SourceCoverage = z.infer<typeof sourceCoverageSchema>;
 
@@ -69,6 +90,11 @@ export const regionSchema = z
      */
     platformLayers: z.array(z.string()),
     enabledLayers: z.array(layerBindingSchema),
+    /**
+     * Named analysis lattices, keyed by lattice name (`analysis-0p25`). Optional so a manifest that
+     * declares none (`kenya_highlands.ts`) stays valid unedited; see `src/lib/region/AGENTS.md`.
+     */
+    analysisLattices: z.record(z.string(), analysisLatticeSchema).optional(),
   })
   .strict()
   .refine(

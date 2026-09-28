@@ -96,8 +96,12 @@ DIGEST_DOMAIN: Final = b"plantgeo.agri-data-service.quality-receipt.v2"
 #: mean. `src` and `tests` are what pytest and mypy judge, `scripts` is the operator surface the
 #: extended mypy scope covers, `alembic` and `db` are the migration machinery the runtime image
 #: ships, the lock files fix the tool and library versions, and `mypy.ini`/`ruff.toml` define what
-#: "mypy pass" and "lint pass" mean at all.
-DIGEST_DIRECTORIES: Final[tuple[str, ...]] = ("src", "tests", "scripts", "alembic", "db")
+#: "mypy pass" and "lint pass" mean at all. `lanes` holds the lane and provider TOMLs the runtime
+#: image loads as configuration (config-driven ingestion spec S13), so a TOML flip -- a rollback
+#: included -- is judged by a sweep like any code change. This tuple and `DIGEST_FILES` are the ONE
+#: statement of the digest set: both Dockerfiles and `.dockerignore` point here instead of restating
+#: it, and `tests/lane_config/test_image_plumbing.py` proves every entry reaches both image stages.
+DIGEST_DIRECTORIES: Final[tuple[str, ...]] = ("src", "tests", "scripts", "alembic", "db", "lanes")
 DIGEST_FILES: Final[tuple[str, ...]] = ("pyproject.toml", "uv.lock", "mypy.ini", "ruff.toml", "alembic.ini")
 
 #: Build artifacts that differ between a developer tree and a Docker build context. Including them

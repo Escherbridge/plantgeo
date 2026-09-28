@@ -32,6 +32,16 @@ export const PNW = {
   crs: 4326,
   latticePitchDegrees: 0.01,
   latticeOriginRule: "floor_to_cell_origin",
+  // The named 0.25-degree analysis lattice config-driven lanes grid onto: the default camera
+  // envelope at a half-step origin, keyed exactly like soil's 1,568 `sentinel2-ndvi-0p25deg` cells.
+  analysisLattices: {
+    "analysis-0p25": {
+      pitchDegrees: 0.25,
+      originRule: "half_step",
+      envelope: { west: -125, south: 42, east: -111, north: 49 },
+      cellKeyPrefix: "sentinel2-ndvi-0p25deg:",
+    },
+  },
   timezone: "America/Los_Angeles",
   isoCountryCodes: ["US"],
   // `satisfies` pins the spread to the tuple: writing `[...PNW_ADMIN_CODES, "US-MT"]` here -- a

@@ -1,0 +1,14 @@
+# NASA POWER: the facts every lane on this provider shares (config-driven ingestion spec S3).
+# Data only. Schema: foundation/lane_config/models.py::ProviderConfig. Authoring: lanes/AGENTS.md.
+
+id = "nasa-power"
+display_name = "NASA POWER"
+# Keyless and uncharged: no api_key_env, no [weight], no [budget].
+weighted = false
+# Daily values must be UTC days: an LST day shifts every value by the local offset, which reads as
+# a data regression that is not one (lanes/AGENTS.md "Provider files").
+time_standard = "UTC"
+
+[endpoints.daily-point]
+host = "power.larc.nasa.gov"
+path = "/api/temporal/daily/point"

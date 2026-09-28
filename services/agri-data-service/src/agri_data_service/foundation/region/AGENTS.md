@@ -67,6 +67,29 @@ both should collapse into `envelope` once every caller of the narrower box has b
   of an exact multiple of `r` snapped to that multiple first, so a coordinate that IS a lattice
   edge lands in the same cell on every host and every frame length.
 
+## Named analysis lattices
+
+`analysis_lattices` (optional, empty by default) maps a lattice name to `AnalysisLattice`:
+`pitch_degrees`, `origin_rule`, `envelope` and `cell_key_prefix`. Config-driven lanes name one
+(`grid = "analysis-0p25"`) instead of restating its numbers (config-driven ingestion spec §4.1, C2);
+`foundation/lane_config/loader.py` quarantines a lane whose lattice the active region lacks.
+
+- **Distinct from `lattice_pitch_degrees`.** That field is the Parquet tier ladder's finest derived
+  rung (0.01°, `floor_to_cell_origin`); an analysis lattice is the coarser grid a source is SAMPLED
+  on. Two facts, two fields.
+- **`analysis-0p25` reproduces soil's history exactly.** Pitch 0.25, origin `half_step` (centroids
+  sit half a pitch inside the envelope's west/south edge, so at x.125 and x.375), envelope equal to
+  `default_camera_envelope` (−125..−111, 42..49), prefix `sentinel2-ndvi-0p25deg:`. That yields
+  56 × 28 = 1,568 cells keyed `<prefix><lat>:<lon>` at four decimals — the keys every historical
+  soil day was written against. `tests/lane_config/test_analysis_lattice.py` proves it key for key
+  and centroid for centroid against the soil plan-cell fixture. The key is region-free
+  (`federation.md` §1).
+- **Validators.** The envelope must hold a whole number of cells on both axes (a partial edge column
+  would silently drop cells), and every lattice must sit inside the manifest's own `envelope`.
+  Arithmetic is decimal, so 0.25 stays 0.25.
+- **Optional on purpose.** `kenya_highlands.json` / `kenya_highlands.ts` declare none and stay valid
+  unedited; a lane gridded on `analysis-0p25` is simply quarantined there.
+
 ## Layer bindings, cited
 
 `enabled_layers` lists thirteen bindings. `layer-lanes.md` §1 itself enumerates "thirteen registered

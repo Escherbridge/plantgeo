@@ -20,6 +20,13 @@ export interface PythonLayerBinding {
   coverage: "global" | "regional";
 }
 
+export interface PythonAnalysisLattice {
+  pitch_degrees: number;
+  origin_rule: string;
+  envelope: PythonRegionEnvelope;
+  cell_key_prefix: string;
+}
+
 export interface PythonRegion {
   slug: string;
   display_name: string;
@@ -34,6 +41,8 @@ export interface PythonRegion {
   admin_codes: string[];
   platform_layers: string[];
   enabled_layers: PythonLayerBinding[];
+  /** Optional in both trees: a manifest that declares no analysis lattice omits the key entirely. */
+  analysis_lattices?: Record<string, PythonAnalysisLattice>;
 }
 
 /**
