@@ -61,7 +61,7 @@ import {
   outsideSoilReleaseCoverage,
   soilEstimateFromMapped,
   SOIL_CELL_DEGREES,
-  SOIL_LATTICE_ENVELOPE,
+  soilLatticeEnvelope,
   soilReadsEnabled,
 } from "@/lib/server/services/soilgrids";
 
@@ -164,7 +164,7 @@ describe("the shared reader-constant fixture (CONTRACT C5.1, review M9)", () => 
     expect(SOIL_CELL_DEGREES).toBe(soil.cell_degrees);
     expect(EARTH_RADIUS_METERS).toBe(soil.earth_radius_m);
     expect(COVERAGE_COSINE_FLOOR).toBe(soil.coverage_cosine_floor);
-    expect(SOIL_LATTICE_ENVELOPE).toEqual(soil.envelope);
+    expect(soilLatticeEnvelope()).toEqual(soil.envelope);
   });
 
   it.each(fixture.soil.coverage_cases as { name: string; longitude: number; latitude: number; radius_m: number; outside: boolean }[])(

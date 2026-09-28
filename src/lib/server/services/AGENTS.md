@@ -106,6 +106,7 @@ observed provider behaviors, not a general JSON Schema limitation. The Gemini pr
 preserves small zero/one cardinality constraints while moving large collection and text limits
 into descriptions. Only `remediation_report` is advertised, since offering two identical report
 declarations produced duplicate calls. The legacy alias remains exported and dispatchable.
+Whole-array tool complexity is budgeted separately; see §provider-tool-budget.
 
 For compatibility with earlier provider responses, `normalizeProviderReport` translates only
 an own empty array on a known risk/observation/recommendation claim explicitly labelled inference
@@ -205,6 +206,41 @@ reforestation, and fuel reduction. A screened candidate is not an endorsed recom
 Missing management prerequisites should produce conditional advice or a request for a local
 assessment, not invented livestock, feedstock, vegetation, land tenure, or soil measurements.
 See `docs/regional-agent-evidence.md` for the scientific screening references and limits.
+
+### provider-tool-budget
+
+On 2026-09-28 every live report failed in round 1 with Google AI Studio `400 INVALID_ARGUMENT`
+(`tool_schema`, `schema_too_complex`) on `google/gemini-2.5-flash-lite`. Gemini limits the
+combined complexity of the whole `tools` array, not any one schema. The agri catalogue is
+forwarded with no allowlist, and agri 56467bd4 added `soil_properties_at_point` (published even
+while its read flag is off) with no change to the round-1 web schemas alongside it, so it is the
+**suspected** trigger, not a confirmed one: no OpenRouter probe has been run against either shape
+(the approved probe payloads are `round1-LIVE-web8b4b-agri56467.json` and
+`round1-FIX-stripowned.json`; run them and update this paragraph with the result before treating
+221/208 as settled numbers). `ai-prompt.ts::providerFunctionTools` now builds every round's tools,
+and `providerEvidenceTool` removes the server-owned literature arguments
+(`SERVER_OWNED_LITERATURE_ARGUMENTS`: `site_profile` and `region`) from a copy of the three
+literature schemas. This is behaviour-neutral regardless of the exact trigger:
+`bindRegionalEvidenceArguments` drops both before every call, agri rebuilds them from
+`server_context`, and agri's pydantic validation and the report's zod parse are untouched. Round 1
+falls to 91 properties, 137 enum values and 60 constraints (the diagnosis measurement), a roughly
+60% cut in agri's enum values whatever the real ceiling turns out to be.
+`src/__tests__/services/ai-prompt-provider-tools.test.ts` holds the round-1 set (the agri fixture
+`agri-tool-catalogue-56467bd4.fixture.json`, the land-context tools, and a 20-fact report) to
+d060dd2b's shape, the last one known to have been accepted live: at most 112 properties, 208 enum
+values and 102 constraints. It also shows the incident set breaks that budget -- a fact about the
+frozen fixture, not proof CI would have caught the incident, since 54e266e3 (the commit before
+56467bd4) left the round-1 web schemas byte-identical and would have passed this test too. The real
+ceiling is unpublished and lies somewhere between the two measured shapes, and this budget is a
+**relative** measure (an empty citation list, a fixed 20-fact pool): it says nothing about what a
+production request with a fuller citation list and more facts actually sends. The report's
+`measurementFactId` enum grows by one per fact in the pool, and the fixture only moves when someone
+refreshes it, so a new agri tool leaves web CI green until someone refreshes
+`agri-tool-catalogue-56467bd4.fixture.json` from `agent/llm.py::tool_schemas` -- there is no
+equivalent budget test on the agri side yet. `ai-prompt.ts`'s `[AI] provider request failed` log
+now carries `toolComplexity` (`ai-provider-diagnostics.ts::providerToolComplexityDiagnostic`),
+computed from that round's actual tool list, so a catalogue that regrows past this budget in
+production shows up in the logs immediately rather than only in this frozen fixture.
 
 ### strategy-knowledge
 

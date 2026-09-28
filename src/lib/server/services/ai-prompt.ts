@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { MAX_REPLAYED_TURNS } from './conversation-history';
-import { incompleteReportDiagnostic, providerErrorDiagnostic, reportValidationDiagnostic } from './ai-provider-diagnostics';
+import { incompleteReportDiagnostic, providerErrorDiagnostic, providerToolComplexityDiagnostic, reportValidationDiagnostic } from './ai-provider-diagnostics';
 import { geminiReportSchema } from './gemini-report-schema';
 import { reportFlowGroundingIssues } from './report-flow-grounding';
 import { soilAiEvidence } from './soil-ai-evidence';
@@ -456,6 +456,36 @@ function readQuery(input: unknown): string | null {
 }
 
 /**
+ * Provider-facing view of one catalogue tool: a literature tool loses the arguments the server
+ * owns (`SERVER_OWNED_LITERATURE_ARGUMENTS`), which `bindRegionalEvidenceArguments` drops anyway.
+ * Deep-copied, so the shared catalogue is never mutated. See AGENTS.md §provider-tool-budget.
+ */
+function providerEvidenceTool(tool: AgentTool): AgentTool {
+  if (!isStrategyKnowledgeTool(tool.name)) return tool;
+  const serverOwned: readonly string[] = SERVER_OWNED_LITERATURE_ARGUMENTS;
+  const inputSchema = structuredClone(tool.input_schema);
+  const properties = inputSchema.properties;
+  if (properties !== null && typeof properties === 'object' && !Array.isArray(properties)) {
+    for (const key of serverOwned) delete (properties as Record<string, unknown>)[key];
+  }
+  if (Array.isArray(inputSchema.required)) {
+    inputSchema.required = inputSchema.required.filter((key: unknown) => !serverOwned.includes(String(key)));
+  }
+  return { ...tool, input_schema: inputSchema };
+}
+
+/** The `tools` array one completion round sends; pinned by a complexity budget test, see AGENTS.md §provider-tool-budget. */
+function providerFunctionTools(
+  tools: readonly AgentTool[], reportSchema: Record<string, unknown>, model: string,
+): OpenAI.Chat.Completions.ChatCompletionTool[] {
+  return tools.map((tool) => {
+    if (tool !== REPORT_TOOL && tool !== GENERATE_REMEDIATION_REPORT_TOOL) return asFunctionTool(providerEvidenceTool(tool));
+    return asFunctionTool({ ...tool, input_schema: GEMINI_REPORT_MODELS.has(model)
+      ? geminiReportSchema(reportSchema) : reportSchema });
+  });
+}
+
+/**
  * Runs one bounded agentic turn: the model may search the web, then must
  * deliver a validated report. See AGENTS.md section report-validation for correction bounds.
  */
@@ -560,11 +590,7 @@ export async function* streamRegionalIntelligence(
       literatureAnswered: strategyKnowledgeAnswered(analysis.evidence),
       literatureRecordIds: literatureRecords.map((record) => record.citation.recordId),
     });
-    const tools = availableTools.map((tool) => {
-      if (tool !== REPORT_TOOL && tool !== GENERATE_REMEDIATION_REPORT_TOOL) return asFunctionTool(tool);
-      return asFunctionTool({ ...tool, input_schema: GEMINI_REPORT_MODELS.has(model)
-        ? geminiReportSchema(reportSchema) : reportSchema });
-    });
+    const tools = providerFunctionTools(availableTools, reportSchema, model);
 
     const completionRequest = {
       model,
@@ -601,6 +627,7 @@ export async function* streamRegionalIntelligence(
         correctingReport,
         messageCount: messages.length,
         requestByteCount: Buffer.byteLength(JSON.stringify(completionRequest), 'utf8'),
+        toolComplexity: providerToolComplexityDiagnostic(tools),
         ...providerErrorDiagnostic(error),
       });
       throw error;
@@ -949,6 +976,8 @@ export {
   canonicalJson,
   MAX_LITERATURE_CALLS_PER_REQUEST,
   MAX_REJECTED_LITERATURE_CALLS_PER_REQUEST,
+  DEFAULT_MODEL,
+  providerFunctionTools,
   REPORT_TOOL,
   SEARCH_TOOL,
 };

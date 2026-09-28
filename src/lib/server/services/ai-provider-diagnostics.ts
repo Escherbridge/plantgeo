@@ -1,6 +1,7 @@
 import { remediationReportSchema } from "./remediation-report";
 
 const MAX_RAW_ERROR_BYTES = 16_384;
+const SCHEMA_CONSTRAINT_KEYWORDS = new Set(["minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "minLength", "maxLength", "pattern", "format", "minItems", "maxItems", "multipleOf", "uniqueItems", "const"]);
 const KNOWN_CODES = new Set(["INVALID_ARGUMENT", "RESOURCE_EXHAUSTED", "FAILED_PRECONDITION", "PERMISSION_DENIED", "UNAUTHENTICATED", "NOT_FOUND", "UNAVAILABLE", "INTERNAL", "DEADLINE_EXCEEDED", "invalid_request_error", "invalid_argument", "context_length_exceeded", "rate_limit_exceeded", "rate_limit_error", "authentication_error", "permission_error", "not_found_error", "api_error", "server_error", "insufficient_quota"]);
 const KNOWN_PROVIDERS = new Set(["Google", "Google AI Studio", "Google Vertex", "Google Vertex AI", "OpenAI", "Anthropic", "Amazon Bedrock", "Azure", "Together", "Fireworks", "DeepInfra"]);
 const KNOWN_PARAMS = new Set(["messages", "tools", "tool_choice", "max_tokens", "model", "response_format", "temperature", "stream"]);
@@ -77,6 +78,38 @@ export function reportValidationDiagnostic(issues: ReadonlyArray<{ code: string;
     code: codes.has(issue.code) ? issue.code : "unknown",
     path: issue.path.map((part) => typeof part === "number" ? "[]" : typeof part === "string" && fields.has(part) ? part : "unknown_field").join(".") || "report",
   }));
+}
+
+function addSchemaComplexity(node: unknown, total: { properties: number; enumValues: number; constraints: number }): void {
+  if (Array.isArray(node)) {
+    for (const item of node) addSchemaComplexity(item, total);
+    return;
+  }
+  if (node === null || typeof node !== "object") return;
+  for (const [key, value] of Object.entries(node)) {
+    if (key === "properties" && value !== null && typeof value === "object" && !Array.isArray(value)) {
+      total.properties += Object.keys(value).length;
+      for (const child of Object.values(value)) addSchemaComplexity(child, total);
+      continue;
+    }
+    if (key === "enum" && Array.isArray(value)) total.enumValues += value.length;
+    if (SCHEMA_CONSTRAINT_KEYWORDS.has(key)) total.constraints += 1;
+    if (value !== null && typeof value === "object") addSchemaComplexity(value, total);
+  }
+}
+
+/**
+ * Counts declared properties, enum values and bound schema keywords across one round's tool
+ * list -- shape only, never argument values or descriptions. Logged next to
+ * `providerErrorDiagnostic` (incident-20260928 review finding 1) so a catalogue that regrows past
+ * the budget `ai-prompt-provider-tools.test.ts` pins shows up in the logs immediately, rather than
+ * only failing web CI once someone refreshes that test's frozen agri fixture. See
+ * services/AGENTS.md §provider-tool-budget.
+ */
+export function providerToolComplexityDiagnostic(tools: readonly unknown[]) {
+  const total = { properties: 0, enumValues: 0, constraints: 0 };
+  for (const tool of tools) addSchemaComplexity(tool, total);
+  return total;
 }
 
 /** Describe an incomplete completion without retaining model text or unknown tool names. */

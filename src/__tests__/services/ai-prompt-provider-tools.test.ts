@@ -1,0 +1,233 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { RegionalContextPayload, TemporalContext } from '@/lib/server/services/regional-context';
+import type { RegionalMeasurementFact } from '@/lib/server/services/regional-measurement-facts';
+
+// Provider-facing tool schemas and their complexity budget; see services/AGENTS.md §provider-tool-budget.
+const mocks = vi.hoisted(() => ({ load: vi.fn(), call: vi.fn(), completionStream: vi.fn() }));
+vi.mock('@/lib/server/db', () => ({ db: {} }));
+vi.mock('@/lib/server/services/regional-evidence-tools', async (importOriginal) => ({
+  // Real `RegionalEvidenceArgumentError`: ai-prompt.ts checks it with `instanceof`.
+  ...await importOriginal<typeof import('@/lib/server/services/regional-evidence-tools')>(),
+  loadRegionalEvidenceTools: mocks.load, callRegionalEvidenceTool: mocks.call,
+}));
+vi.mock('openai', () => ({
+  default: class MockOpenAI {
+    chat = { completions: { stream: mocks.completionStream } };
+  },
+}));
+
+import { DEFAULT_MODEL, providerFunctionTools, REPORT_TOOL, SEARCH_TOOL, streamRegionalIntelligence } from '@/lib/server/services/ai-prompt';
+import { geminiReportSchema } from '@/lib/server/services/gemini-report-schema';
+import { landContextTools } from '@/lib/server/services/land-context-tools';
+import { bindRegionalEvidenceArguments, SERVER_OWNED_LITERATURE_ARGUMENTS } from '@/lib/server/services/regional-analysis-workflow';
+import { groundLiteratureClaims, normalizeProviderReport, pairLiteratureProvenance, remediationReportSchema, reportSchemaForCitations, resolveProviderMeasurementReport } from '@/lib/server/services/remediation-report';
+import * as webEvidence from '@/lib/server/services/web-evidence';
+import { isStrategyKnowledgeTool } from '@/lib/regional-intelligence';
+import agriCatalogueFixture from './agri-tool-catalogue-56467bd4.fixture.json';
+
+type CatalogueEntry = { type: 'function'; function: { name: string; description: string; parameters: Record<string, unknown> } };
+type ProviderTool = { type: string; function: { name: string; parameters: Record<string, unknown> } };
+
+/** The SDK types `parameters` as optional; every tool this module sends carries one. */
+const asProviderTools = (tools: unknown): ProviderTool[] => tools as ProviderTool[];
+
+/** The agri catalogue live during the 2026-09-28 incident: `agent/llm.py::tool_schemas` at 56467bd4. */
+const AGRI_CATALOGUE_56467BD4 = agriCatalogueFixture as unknown as CatalogueEntry[];
+
+/**
+ * The round-1 shape of d060dd2b, the last catalogue Gemini accepted: 112 properties, 208 enum
+ * values, 102 constraints with the 20-fact report below. Incident shape (web 8b4b0a88 + agri
+ * 56467bd4) was 117 / 221 / 102 and was rejected `schema_too_complex`.
+ */
+const KNOWN_GOOD_ROUND_ONE_BUDGET = { properties: 112, enumValues: 208, constraints: 102 } as const;
+
+const CONSTRAINT_KEYWORDS = new Set([
+  'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'minLength', 'maxLength', 'pattern',
+  'format', 'minItems', 'maxItems', 'multipleOf', 'uniqueItems', 'const',
+]);
+
+interface SchemaComplexity { properties: number; enumValues: number; constraints: number }
+
+/** Counts declared properties, enum values and bound keywords; the diagnosis's `metrics.py` walk. */
+function addSchemaComplexity(node: unknown, total: SchemaComplexity): SchemaComplexity {
+  if (Array.isArray(node)) {
+    for (const item of node) addSchemaComplexity(item, total);
+    return total;
+  }
+  if (node === null || typeof node !== 'object') return total;
+  for (const [key, value] of Object.entries(node)) {
+    if (key === 'properties' && value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      total.properties += Object.keys(value).length;
+      for (const child of Object.values(value)) addSchemaComplexity(child, total);
+      continue;
+    }
+    if (key === 'enum' && Array.isArray(value)) total.enumValues += value.length;
+    if (CONSTRAINT_KEYWORDS.has(key)) total.constraints += 1;
+    if (value !== null && typeof value === 'object') addSchemaComplexity(value, total);
+  }
+  return total;
+}
+
+function totalComplexity(schemas: readonly unknown[]): SchemaComplexity {
+  const total = { properties: 0, enumValues: 0, constraints: 0 };
+  for (const schema of schemas) addSchemaComplexity(schema, total);
+  return total;
+}
+
+function agriTools() {
+  return AGRI_CATALOGUE_56467BD4.map(({ function: tool }) => ({
+    name: tool.name, description: tool.description, input_schema: structuredClone(tool.parameters),
+  }));
+}
+
+function agriTool(name: string) {
+  const tool = agriTools().find((candidate) => candidate.name === name);
+  if (!tool) throw new Error(`The fixture has no ${name} tool.`);
+  return tool;
+}
+
+function catalogueParameters(name: string): Record<string, unknown> {
+  const entry = AGRI_CATALOGUE_56467BD4.find((tool) => tool.function.name === name);
+  if (!entry) throw new Error(`The fixture has no ${name} tool.`);
+  return entry.function.parameters;
+}
+
+/** Twenty synthetic facts, the pool the diagnosis measured every commit at. */
+const TWENTY_FACTS: RegionalMeasurementFact[] = Array.from({ length: 20 }, (_, index) => ({
+  id: `fact-${String(index).padStart(3, '0')}-abcdef`,
+  source: 'vegetation',
+  statement: `Vegetation cover was 0.${index + 10} on 2026-09-09.`,
+  evidenceReadIds: [`local-${index + 1}`] as [string],
+}));
+
+const roundOneReportSchema = () => reportSchemaForCitations(
+  { payloadSources: [], measurementReads: [] }, TWENTY_FACTS, { literatureAnswered: false, literatureRecordIds: [] },
+);
+
+/** Round 1 as production builds it: web search, the report, then the agri and land-context catalogue. */
+const incidentToolSet = () => [SEARCH_TOOL, REPORT_TOOL, ...agriTools(), ...landContextTools()];
+
+const payload: RegionalContextPayload = {
+  location: { lat: 43.6, lon: -116.2, geohash: '43.60_-116.20' },
+  strategyRecommendations: null, strategyContext: [], communityProposals: [], soilProperties: null,
+  waterScarcity: null, weather: null, fireDetections: null, firePerimeters: null, mtbsPerimeters: null, carbonPotential: null,
+};
+const temporal: TemporalContext = {
+  serverCurrentDate: '2026-09-28', viewedLayersUnreported: true, readings: [], viewedDates: [], sourcesServedAsOfLatest: [],
+};
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  mocks.load.mockReset();
+  mocks.call.mockReset();
+  mocks.completionStream.mockReset();
+});
+
+describe('provider tool complexity budget (2026-09-28 schema_too_complex incident)', () => {
+  it('keeps the round-1 tool set Gemini sees within the last accepted shape', () => {
+    const tools = asProviderTools(providerFunctionTools(incidentToolSet(), roundOneReportSchema(), DEFAULT_MODEL));
+    expect(tools).toHaveLength(20);
+    const total = totalComplexity(tools.map((tool) => tool.function.parameters));
+    expect(total.properties).toBeLessThanOrEqual(KNOWN_GOOD_ROUND_ONE_BUDGET.properties);
+    expect(total.enumValues).toBeLessThanOrEqual(KNOWN_GOOD_ROUND_ONE_BUDGET.enumValues);
+    expect(total.constraints).toBeLessThanOrEqual(KNOWN_GOOD_ROUND_ONE_BUDGET.constraints);
+  });
+
+  it('would have failed on the incident shape, so the budget is a real tripwire', () => {
+    const reportSchema = roundOneReportSchema();
+    const forwardedUnchanged = incidentToolSet().map((tool) => (tool === REPORT_TOOL ? geminiReportSchema(reportSchema) : tool.input_schema));
+    const total = totalComplexity(forwardedUnchanged);
+    expect(total.enumValues).toBeGreaterThan(KNOWN_GOOD_ROUND_ONE_BUDGET.enumValues);
+    expect(total.properties).toBeGreaterThan(KNOWN_GOOD_ROUND_ONE_BUDGET.properties);
+  });
+});
+
+describe('provider-facing catalogue schemas', () => {
+  it('omits only the server-owned literature arguments from the request the loop actually sends', async () => {
+    vi.stubEnv('OPENROUTER_MODEL', '');
+    vi.spyOn(webEvidence, 'getWebEvidenceProvider').mockReturnValue(null);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const catalogueTools = agriTools();
+    mocks.load.mockResolvedValue({ tools: catalogueTools, surfaces: ['vegetation'], featureSurfaces: [], valueSurfaces: ['vegetation'] });
+    mocks.call.mockResolvedValue('{}');
+    mocks.completionStream.mockImplementation(() => {
+      throw new Error('stop after round one');
+    });
+
+    const run = async () => {
+      for await (const event of streamRegionalIntelligence(payload, {}, true, temporal, [])) void event;
+    };
+    await expect(run()).rejects.toThrow('stop after round one');
+
+    const sent = mocks.completionStream.mock.calls[0][0] as { model: string; tools: ProviderTool[] };
+    expect(sent.model).toBe(DEFAULT_MODEL);
+    const sentByName = new Map(sent.tools.map((tool) => [tool.function.name, tool.function.parameters]));
+    for (const { function: tool } of AGRI_CATALOGUE_56467BD4) {
+      const parameters = sentByName.get(tool.name);
+      if (!isStrategyKnowledgeTool(tool.name)) {
+        expect(parameters, tool.name).toEqual(tool.parameters);
+        continue;
+      }
+      const catalogueProperties = tool.parameters.properties as Record<string, unknown>;
+      const expectedProperties = Object.fromEntries(Object.entries(catalogueProperties)
+        .filter(([key]) => !(SERVER_OWNED_LITERATURE_ARGUMENTS as readonly string[]).includes(key)));
+      expect(parameters, tool.name).toEqual({
+        ...tool.parameters,
+        properties: expectedProperties,
+        ...(Array.isArray(tool.parameters.required) ? { required: tool.parameters.required.filter((key: unknown) => key !== 'site_profile' && key !== 'region') } : {}),
+      });
+    }
+    expect(sentByName.get('search_environmental_strategies')).not.toHaveProperty('properties.site_profile');
+    expect(sentByName.get('search_strategy_research_findings')).not.toHaveProperty('properties.region');
+    // The shared catalogue keeps its full schema: the projection is a copy.
+    expect(catalogueTools.find((tool) => tool.name === 'search_environmental_strategies')?.input_schema)
+      .toHaveProperty('properties.site_profile');
+  });
+});
+
+describe('provider schemas round-trip through strict server validation', () => {
+  it('binds a literature call identically whether or not the model still sends server-owned arguments', () => {
+    for (const name of ['search_environmental_strategies', 'search_strategy_research_findings']) {
+      const [offered] = asProviderTools(providerFunctionTools([agriTool(name)], {}, DEFAULT_MODEL));
+      const offeredProperties = offered.function.parameters.properties as Record<string, unknown>;
+      const conforming = { query: 'reduce erosion after a wildfire', goals: ['erosion_control'], limit: 5 };
+      expect(Object.keys(conforming).every((key) => key in offeredProperties)).toBe(true);
+      expect(bindRegionalEvidenceArguments(name, conforming, payload, temporal)).toEqual(conforming);
+      // A model ignoring the offered schema still reaches the agri pydantic validator with the same arguments.
+      const stale = { ...conforming, site_profile: { soil_ph: 4, slope_pct: 50 }, region: ['pnw_inland'] };
+      expect(bindRegionalEvidenceArguments(name, stale, payload, temporal)).toEqual(conforming);
+      expect(catalogueParameters(name)).toHaveProperty('properties.site_profile');
+    }
+  });
+
+  it('accepts a report valid under the Gemini projection and still rejects what the projection no longer bounds', () => {
+    const tools = asProviderTools(providerFunctionTools([REPORT_TOOL], roundOneReportSchema(), DEFAULT_MODEL));
+    const offered = tools[0].function.parameters;
+    expect(offered).toHaveProperty('properties.observations.items.anyOf.0.properties.measurementFactId.enum', TWENTY_FACTS.map((fact) => fact.id));
+    expect(offered).not.toHaveProperty('properties.riskSummary.properties.headline.maxLength');
+
+    const serverValidate = (input: Record<string, unknown>) => {
+      const resolved = resolveProviderMeasurementReport(groundLiteratureClaims(pairLiteratureProvenance(input), []), TWENTY_FACTS);
+      return { issues: resolved.issues, parsed: remediationReportSchema.safeParse(normalizeProviderReport(resolved.report)) };
+    };
+    const valid = {
+      riskSummary: { level: 'moderate', headline: 'Vegetation cover is sparse after the fire.', factors: [], evidenceOrigin: 'model_inference', evidenceSources: [] },
+      observations: [
+        { evidenceOrigin: 'warehouse', measurementFactId: TWENTY_FACTS[0].id },
+        { statement: 'Sparse cover raises short-term erosion exposure.', evidenceOrigin: 'model_inference' },
+      ],
+      remediation: [],
+      professionalConsultation: 'Consult a soil scientist before seeding.',
+    };
+    const accepted = serverValidate(valid);
+    expect(accepted.issues).toEqual([]);
+    expect(accepted.parsed.success).toBe(true);
+    if (accepted.parsed.success) expect(accepted.parsed.data.observations[0]).toMatchObject({ statement: TWENTY_FACTS[0].statement, evidenceSource: 'vegetation' });
+
+    const overLong = serverValidate({ ...valid, riskSummary: { ...valid.riskSummary, headline: 'x'.repeat(301) } });
+    expect(overLong.parsed.success).toBe(false);
+    const unknownFact = serverValidate({ ...valid, observations: [{ evidenceOrigin: 'warehouse', measurementFactId: 'fact-999-stale' }] });
+    expect(unknownFact.issues).toEqual([expect.objectContaining({ path: ['observations', 0, 'measurementFactId'] })]);
+  });
+});

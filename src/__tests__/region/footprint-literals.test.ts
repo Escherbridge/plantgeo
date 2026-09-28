@@ -246,6 +246,11 @@ const KNOWN_OFFENDERS = new Set<string>([
   // pattern matches -- the value after each key is a `||` expression, not a bare number -- so it
   // is not (and should not become) a second entry here.
   "components/panels/OfflinePanel.tsx:footprint literal { west: -125, south: 45, east: -116, north: 49 }",
+  // The SoilGrids release lattice (CONTRACT C1) mirrors agri's `soil_properties.py`
+  // `LATTICE_WEST/SOUTH/EAST/NORTH`, pinned to the data release, not to this region's camera box
+  // (incident-20260928 review finding 2). Reading it from `getRegion().defaultCameraEnvelope`
+  // would tie release coverage to whatever a deployment's opening view happens to be.
+  "lib/server/services/soilgrids.ts:footprint literal { west: -125, south: 42, east: -111, north: 49 }",
 ]);
 
 function offenderKey(offender: FoundOffender): string {

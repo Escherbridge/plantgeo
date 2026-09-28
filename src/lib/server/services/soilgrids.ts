@@ -3,6 +3,7 @@
  * Values are model estimates, never measurements. See src/lib/server/services/soil/AGENTS.md.
  */
 import { z } from "zod";
+import type { RegionEnvelope } from "@/lib/region/region";
 import { UpstreamHttpError, UpstreamTimeoutError } from "@/lib/server/http/bounded-upstream";
 import { getParquetLatestRelease } from "./parquet-plane-client";
 import { serverCurrentDate } from "./parquet-day";
@@ -30,8 +31,21 @@ export const MAX_SOIL_RADIUS_METERS = 2_000;
 export const SOIL_CELL_DEGREES = 0.005;
 const CELL_DEGREES = SOIL_CELL_DEGREES;
 const HALF_CELL_DEGREES = 0.0025;
-/** The pinned lattice envelope of this release (CONTRACT C1: origins aligned to (-125, 42)). */
-export const SOIL_LATTICE_ENVELOPE = { west: -125, south: 42, east: -111, north: 49 } as const;
+/**
+ * The pinned lattice envelope of THIS DATA RELEASE (CONTRACT C1: origins aligned to (-125, 42)),
+ * mirroring agri's `soil_properties.py` `LATTICE_WEST/SOUTH/EAST/NORTH`.
+ *
+ * Deliberately NOT `getRegion().defaultCameraEnvelope` (incident-20260928 review finding 2): a
+ * release lattice must not move with a deployment's camera box, so retuning a region's opening
+ * view, or a future non-pnw region, must never silently move SoilGrids coverage. The
+ * footprint-literal guard (`footprint-literals.test.ts` §1) is satisfied by a `KNOWN_OFFENDERS`
+ * citation instead of a `getRegion()` read, exactly as `coverage-region.ts`'s non-manifest rows
+ * are.
+ */
+const SOIL_RELEASE_ENVELOPE: RegionEnvelope = { west: -125, south: 42, east: -111, north: 49 };
+export function soilLatticeEnvelope(): RegionEnvelope {
+  return SOIL_RELEASE_ENVELOPE;
+}
 /** Haversine sphere radius pinned by CONTRACT C2. */
 export const EARTH_RADIUS_METERS = 6_371_008.8;
 /** CONTRACT C5.1 reader constants: metres per degree and the cosine floor near the poles. */
@@ -121,8 +135,9 @@ export function outsideSoilReleaseCoverage(longitude: number, latitude: number, 
   if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) return true;
   const latitudeMargin = radiusMeters / METERS_PER_DEGREE_LATITUDE;
   const longitudeMargin = radiusMeters / (METERS_PER_DEGREE_LONGITUDE_AT_EQUATOR * cosineOfLatitude(latitude));
-  return !(SOIL_LATTICE_ENVELOPE.west - longitudeMargin <= longitude && longitude <= SOIL_LATTICE_ENVELOPE.east + longitudeMargin
-    && SOIL_LATTICE_ENVELOPE.south - latitudeMargin <= latitude && latitude <= SOIL_LATTICE_ENVELOPE.north + latitudeMargin);
+  const envelope = soilLatticeEnvelope();
+  return !(envelope.west - longitudeMargin <= longitude && longitude <= envelope.east + longitudeMargin
+    && envelope.south - latitudeMargin <= latitude && latitude <= envelope.north + latitudeMargin);
 }
 
 function clampRadius(radiusMeters: number | undefined): number {
