@@ -51,6 +51,17 @@ def test_legacy_event_name_gets_its_override_level() -> None:
     assert child.routed[0].level == "warn"
 
 
+def test_legacy_lane_lines_are_levelled_by_outcome_not_by_stream() -> None:
+    """The shapes the first live GL-3 read (2026-09-28) saw reach Railway as errors."""
+    child = _make()
+    child.route_line("stderr", _line({"event": "soil_forward_complete", "requests_spent": 1}))
+    child.route_line("stderr", _line({"event": "drought_forward_started", "selected_weeks": []}))
+    child.route_line("stderr", _line({"event": "climate_forward_quota_pause", "pause": 1}))
+    child.route_line("stdout", _line({"event": "water_gauges_forward_failed", "error_type": "UpstreamHttpError"}))
+    child.route_line("stdout", _line({"status": "failed", "error": "UpstreamHttpError: 503"}))
+    assert [line.level for line in child.routed] == ["info", "info", "warn", "error", "error"]
+
+
 def test_missing_turn_context_is_filled_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PLANTGEO_LANE_ID", "soil")
     child = _make()

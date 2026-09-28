@@ -65,6 +65,26 @@ LEGACY_LEVEL_OVERRIDES: Final[dict[str, str]] = {
     events.EVENT_REPAIR_AUTHORING_FAILED: "error",
 }
 
+# The suffix rule (design §1.6 point 2) for legacy lane events that carry no `level`. Checked after
+# `LEGACY_LEVEL_OVERRIDES`, before the stream default. Without it, a lane's success line printed to
+# stderr (`soil_forward_complete`, `drought_forward_started`) reaches Railway as an error; that was
+# the first live GL-3 read, 2026-09-28. Longest-first order is not needed: no suffix ends another.
+_LEVEL_BY_EVENT_SUFFIX: Final[tuple[tuple[str, str], ...]] = (
+    ("_failed", "error"),
+    ("_error", "error"),
+    ("_pause", "warn"),
+    ("_deferred", "warn"),
+    ("_refused", "warn"),
+    ("_retry", "warn"),
+    ("_complete", "info"),
+    ("_completed", "info"),
+    ("_started", "info"),
+    ("_finished", "info"),
+    ("_published", "info"),
+    ("_settled", "info"),
+    ("_skipped", "info"),
+)
+
 _THIRD_PARTY_WARNING_PREFIX: Final = re.compile(r"^[\w.]+Warning: |^Warning \d+: ")
 _ROUTING_ENV_VAR: Final = "PLANTGEO_LOG_ROUTING"
 
@@ -85,6 +105,21 @@ _TURN_ENV_TO_FIELD: Final[dict[str, str]] = {
 def _routing_enabled_from_environment() -> bool:
     """`PLANTGEO_LOG_ROUTING=off` disables re-leveling and turn-context rewriting only; redaction stays on."""
     return os.environ.get(_ROUTING_ENV_VAR, "").strip().casefold() != "off"
+
+
+def _legacy_level(parsed: dict[str, object]) -> str | None:
+    """The level a legacy, unlevelled child line earns: override table, suffix rule, `status: failed`."""
+    event = parsed.get("event")
+    if isinstance(event, str):
+        if event in LEGACY_LEVEL_OVERRIDES:
+            return LEGACY_LEVEL_OVERRIDES[event]
+        for suffix, level in _LEVEL_BY_EVENT_SUFFIX:
+            if event.endswith(suffix):
+                return level
+    # Every direct lane's `main()` prints `{"status": "failed", "error": ...}` with no event (R1).
+    if parsed.get("status") == "failed":
+        return "error"
+    return None
 
 
 def _default_level_for_stream(stream: Stream) -> str:
@@ -289,11 +324,7 @@ class ChildLogRouter:
     def _assign_level(self, parsed: dict[str, object], stream: Stream) -> None:
         if parsed.get("level"):
             return
-        event = parsed.get("event")
-        if isinstance(event, str) and event in LEGACY_LEVEL_OVERRIDES:
-            parsed["level"] = LEGACY_LEVEL_OVERRIDES[event]
-            return
-        parsed["level"] = _default_level_for_stream(stream)
+        parsed["level"] = _legacy_level(parsed) or _default_level_for_stream(stream)
 
     def _consume_usage_line(self, parsed: dict[str, object]) -> None:
         pid = parsed.get("pid")
