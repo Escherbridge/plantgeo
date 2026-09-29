@@ -64,6 +64,8 @@ SOILGRIDS_RESOLUTION_M: Final = 250
 SOIL_CELL_DEGREES: Final = 0.005
 TOPSOIL_DEPTH_LABEL: Final = "0-30 cm (thickness-weighted)"
 TOPSOIL_LABEL: Final = f"{SOILGRIDS_SOURCE} {SOILGRIDS_RESOLUTION_M} m model estimate, {TOPSOIL_DEPTH_LABEL}"
+#: CONTRACT C2 default soil radius; a nearest centre beyond it is always labelled so (AGENTS.md, "Soil properties").
+SOIL_DEFAULT_RADIUS_METERS: Final = 1_000
 LAND_COVER_SOURCE: Final = "USDA CDL"
 MAX_LITERATURE_SEED_CHARACTERS: Final = 600
 COORDINATE_SCALE: Final = 100_000
@@ -294,6 +296,33 @@ def _topsoil_integers(mapped: Mapping[str, Mapping[str, int]]) -> dict[str, int]
     return result
 
 
+def soil_estimate_is_nearest_fallback(distance_m: int) -> bool:
+    """Whether the estimate's cell centre lies past the default radius: it describes a nearby site, not this point."""
+    return distance_m > SOIL_DEFAULT_RADIUS_METERS
+
+
+def soil_distance_phrase(distance_m: int) -> str:
+    """The distance clause of every SoilGrids label, classified on the integer `distance_m` (web mirror)."""
+    if not soil_estimate_is_nearest_fallback(distance_m):
+        return f"cell centre {distance_m} m away"
+    return f"nearest cell centre {distance_m:,} m away (none within {SOIL_DEFAULT_RADIUS_METERS:,} m)"
+
+
+def _soil_label(distance: int, release_id: str) -> str:
+    """C5.3 soil label; past the default radius it names the nearest centre's distance instead."""
+    prefix = f"{SOILGRIDS_SOURCE} {SOILGRIDS_RESOLUTION_M} m model estimate"
+    if soil_estimate_is_nearest_fallback(distance):
+        return f"{prefix}, {soil_distance_phrase(distance)} (release {release_id})"
+    return f"{prefix}, sampled at the centre of a ~500 m cell {distance} m from this point (release {release_id})"
+
+
+def _topsoil_label(distance: int) -> str:
+    """The 0-30 cm topsoil label; past the default radius it carries the distance phrase."""
+    if soil_estimate_is_nearest_fallback(distance):
+        return f"{TOPSOIL_LABEL}, {soil_distance_phrase(distance)}"
+    return TOPSOIL_LABEL
+
+
 def build_soil_section(soil: Mapping[str, Any]) -> dict[str, Any]:
     """The C5.3 soil section alone, for `soil_properties_at_point` (C6)."""
     return _soil_section(soil)[0]
@@ -307,10 +336,10 @@ def _soil_section(soil: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[st
     texture_name = UNCLASSIFIED_TEXTURE if texture is None else texture_class(*texture)
     reaction = reaction_class(integers["ph"])
     band = f"{soc_band(integers['soc_pct'])} organic carbon"
-    topsoil: dict[str, Any] = {key: integers[key] / emit for _code, key, _denominator, emit in _TOPSOIL_OUTPUTS}
-    topsoil.update(texture_class=texture_name, reaction_class=reaction, soc_band=band, label=TOPSOIL_LABEL)
     distance = int(soil["distance_m"])
     release_id = str(soil["release_id"])
+    topsoil: dict[str, Any] = {key: integers[key] / emit for _code, key, _denominator, emit in _TOPSOIL_OUTPUTS}
+    topsoil.update(texture_class=texture_name, reaction_class=reaction, soc_band=band, label=_topsoil_label(distance))
     section = {
         "state": "available",
         "basis": "model_estimate",
@@ -319,22 +348,29 @@ def _soil_section(soil: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[st
         "resolution_m": SOILGRIDS_RESOLUTION_M,
         "cell_deg": SOIL_CELL_DEGREES,
         "distance_m": distance,
-        "label": (
-            f"{SOILGRIDS_SOURCE} {SOILGRIDS_RESOLUTION_M} m model estimate, sampled at the centre of a ~500 m cell "
-            f"{distance} m from this point (release {release_id})"
-        ),
+        "label": _soil_label(distance, release_id),
         "depths": _soil_depths(mapped),
         "topsoil_0_30cm": topsoil,
     }
     textured = reaction if texture_name == UNCLASSIFIED_TEXTURE else f"{reaction} {texture_name}"
+    # Past the default radius the estimate describes a nearby cell, not this site: the text names the
+    # distance and the empty seed keeps it out of literature retrieval (AGENTS.md, "Soil properties").
+    fallback = soil_estimate_is_nearest_fallback(distance)
+    distance_suffix = f", {soil_distance_phrase(distance)}" if fallback else ""
     descriptors = [
         {
-            "text": f"{textured} topsoil (pH {_tenths_text(integers['ph'])}, SoilGrids model estimate 0-30 cm)",
-            "seed": f"{textured} topsoil",
+            "text": (
+                f"{textured} topsoil (pH {_tenths_text(integers['ph'])}, SoilGrids model estimate 0-30 cm"
+                f"{distance_suffix})"
+            ),
+            "seed": "" if fallback else f"{textured} topsoil",
         },
         {
-            "text": f"{band} topsoil ({_tenths_text(integers['soc_pct'])}% SOC, SoilGrids model estimate 0-30 cm)",
-            "seed": band,
+            "text": (
+                f"{band} topsoil ({_tenths_text(integers['soc_pct'])}% SOC, SoilGrids model estimate 0-30 cm"
+                f"{distance_suffix})"
+            ),
+            "seed": "" if fallback else band,
         },
     ]
     return section, descriptors
@@ -517,7 +553,7 @@ def _soil_provenance(soil: Mapping[str, Any]) -> dict[str, Any]:
         "depth": TOPSOIL_DEPTH_LABEL,
         "resolution_m": SOILGRIDS_RESOLUTION_M,
         "distance_m": distance,
-        "label": f"{TOPSOIL_LABEL}, cell centre {distance} m away",
+        "label": f"{TOPSOIL_LABEL}, {soil_distance_phrase(distance)}",
     }
 
 
@@ -561,6 +597,7 @@ __all__ = [
     "BRIEF_VERSION",
     "BURN_SEVERITY_CLASSES",
     "SITE_BRIEF_ENABLED_VARIABLE",
+    "SOIL_DEFAULT_RADIUS_METERS",
     "SOIL_DEPTHS",
     "SOIL_PROPERTY_CODES",
     "SOIL_READS_ENABLED_VARIABLE",
@@ -582,5 +619,7 @@ __all__ = [
     "site_facts_from_brief",
     "soc_band",
     "soil_context_enabled",
+    "soil_distance_phrase",
+    "soil_estimate_is_nearest_fallback",
     "texture_class",
 ]

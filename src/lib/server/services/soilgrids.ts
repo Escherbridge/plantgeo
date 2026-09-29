@@ -9,11 +9,13 @@ import { getParquetLatestRelease } from "./parquet-plane-client";
 import { serverCurrentDate } from "./parquet-day";
 import {
   readsFlagEnabled,
+  SOILGRIDS_DEFAULT_RADIUS_M,
   SOILGRIDS_DEPTHS,
   SOILGRIDS_PROPERTIES,
   SOILGRIDS_RESOLUTION_M,
   SOILGRIDS_SOURCE,
   soilDepthValues,
+  soilDistancePhrase,
   topsoilSummary,
   type SiteBriefReason,
   type SoilDepthValues,
@@ -24,7 +26,7 @@ import {
 
 export const SOIL_PROPERTIES_LAYER = "soil-properties";
 export const SOIL_PROPERTIES_READS_FLAG = "SOIL_PROPERTIES_READS_ENABLED";
-export const DEFAULT_SOIL_RADIUS_METERS = 1_000;
+export const DEFAULT_SOIL_RADIUS_METERS = SOILGRIDS_DEFAULT_RADIUS_M;
 export const MIN_SOIL_RADIUS_METERS = 50;
 export const MAX_SOIL_RADIUS_METERS = 2_000;
 /** Lattice pitch and half pitch (CONTRACT C1): keys are SW origins, distance uses the centre. */
@@ -146,6 +148,17 @@ function clampRadius(radiusMeters: number | undefined): number {
   return Math.min(MAX_SOIL_RADIUS_METERS, Math.max(MIN_SOIL_RADIUS_METERS, Math.round(radius)));
 }
 
+/**
+ * The radius a read searches (owner 2026-09-28, "Name the nearest estimate"): the default radius
+ * (omitted or exactly 1,000 m) falls back to the reader maximum, since SoilGrids masks urban pixels;
+ * any other radius is strict. The label names any distance past the default. Mirrors agri
+ * `soil_properties.search_radius`. See soil/AGENTS.md §nearest-estimate.
+ */
+export function soilSearchRadius(radiusMeters: number | undefined): number {
+  const radius = clampRadius(radiusMeters);
+  return radius === DEFAULT_SOIL_RADIUS_METERS ? MAX_SOIL_RADIUS_METERS : radius;
+}
+
 /** Haversine distance on the CONTRACT C2 sphere, in metres. */
 export function haversineMeters(longitudeA: number, latitudeA: number, longitudeB: number, latitudeB: number): number {
   const radians = Math.PI / 180;
@@ -212,12 +225,12 @@ export function soilEstimateFromMapped(mapped: SoilGridsMapped, releaseId: strin
     cec: surface.cec_cmolc_kg,
     ocd: surface.ocd_kg_m3,
     basis: "model_estimate",
-    label: `${SOILGRIDS_SOURCE} ${SOILGRIDS_RESOLUTION_M} m model estimate, 0-5 cm, cell centre ${distanceM} m away (release ${releaseId})`,
+    label: `${SOILGRIDS_SOURCE} ${SOILGRIDS_RESOLUTION_M} m model estimate, 0-5 cm, ${soilDistancePhrase(distanceM)} (release ${releaseId})`,
     releaseId,
     distanceM,
     mapped,
     depths,
-    topsoil: topsoilSummary(mapped),
+    topsoil: topsoilSummary(mapped, distanceM),
   };
 }
 
@@ -236,7 +249,7 @@ interface CachedCell {
 }
 
 /**
- * LRU cache (Map insertion order is recency), keyed by the query point's own 0.005 cell and radius.
+ * LRU cache (Map insertion order is recency), keyed by the query point's own 0.005 cell and SEARCH radius.
  * Review M4: a neighbour cell is right for ONE point only, so an entry holds either the query cell
  * itself (the nearest centre for every point inside it) or, when the query cell is masked, the
  * candidate rows and their bbox, re-ranked per point by `selectNearestCell`. See soil/AGENTS.md §soil-cache.
@@ -381,12 +394,14 @@ function soilReadFrom(selection: Selection): SoilRead {
 }
 
 /**
- * SoilGrids v2.0 model estimate at the nearest lane cell centre within `radiusMeters`.
+ * SoilGrids v2.0 model estimate at the nearest lane cell centre within `soilSearchRadius(radiusMeters)`.
  * Never throws: every refusal is a C5.6 reason. The kill switch is checked before the cache.
+ * ONE read at the search radius, then nearest selection: the cache key and the answer never depend
+ * on whether the chosen centre lies inside the default radius; only the label does.
  */
 export async function getSoilProperties(lat: number, lon: number, options: SoilReadOptions = {}): Promise<SoilRead> {
   if (!soilReadsEnabled()) return { state: "unavailable", reason: "reads_disabled" };
-  const radiusMeters = clampRadius(options.radiusMeters);
+  const radiusMeters = soilSearchRadius(options.radiusMeters);
   if (Math.abs(lat) > 90 || Math.abs(lon) > 180 || outsideSoilReleaseCoverage(lon, lat, radiusMeters)) {
     return { state: "unavailable", reason: "outside_release_coverage" };
   }

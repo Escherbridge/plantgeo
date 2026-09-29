@@ -48,6 +48,22 @@ flag off it answers `reads_disabled` (DESIGN §7 P-push).
   6,371,008.8 m sphere. The minimum wins, ties go to the lower latitude then the lower longitude, and
   the cell is accepted only within `r`. The distance is reported as `floor(d + 0.5)` whole metres.
   Beyond `r` the answer is `no_cell_within_radius` with `radiusM`; it is never widened silently.
+- **§nearest-estimate (owner 2026-09-28, "Name the nearest estimate").** SoilGrids masks urban pixels,
+  so a city click often has no centre within 1,000 m. `soilSearchRadius` makes `r` the search radius:
+  the DEFAULT (omitted, or exactly 1,000 m after clamping; value equality, so a model that fills in
+  the default is not strict) searches 2,000 m; any other radius is strict. It is ONE read at `r`, then
+  nearest selection, so the cache key and the answer never depend on the fallback; only the labels
+  do. `site-brief.ts::soilEstimateIsNearestFallback` classifies on the integer `distance_m` (> 1,000 m),
+  and then every soil string names the distance with `soilDistancePhrase` ("nearest cell centre 1,340 m
+  away (none within 1,000 m)"): the reader's 0-5 cm and topsoil labels, the brief section and topsoil
+  labels, both soil descriptors, the C3 provenance, map evidence, and the `describeSiteBrief` soil line
+  ("soil (nearest SoilGrids cell, NOT this point)"). The value is never presented as being at the
+  point. The two soil descriptor seeds are empty, so a nearby cell's texture never reaches
+  `literature_seed`/`site_brief_query` as this site's soil. Beyond 2,000 m: `no_cell_within_radius`
+  with `radiusM: 2000` (SoilDetails says "within 2 km"). Agri mirrors it (`soil_properties.search_radius`,
+  `site_brief.soil_distance_phrase`); pinned by the reader-constant fixture's `search_radius_cases`
+  (including .5 rounding rows) and `distance_phrase_cases` (the 1000/1001 boundary), and the golden
+  cases `urban_nearest_cell_beyond_default_radius` and `soil_boundary_1001_is_the_nearest_fallback`.
 - **Integer contract (C1).** Every z13 value must be integral (`|v − round(v)| < 1e-9`) and
   non-negative. Anything else is `read_failed`: the lane is corrupt, and a value is never rounded quietly.
 - **Reasons.** `lane_never_written` passes through as is. `day_not_written` and governed absence map to
@@ -55,7 +71,7 @@ flag off it answers `reads_disabled` (DESIGN §7 P-push).
   transport timeout, our own `timeoutMs` and the caller's `signal` (the brief deadline) map to `timeout`.
   Everything else is `read_failed`. `getSoilProperties` never throws.
 - **§soil-cache (review M4).** An LRU of 1,024 entries for 6 h, keyed by the 0.005 cell containing the
-  QUERY point plus `r`. A neighbour cell is right for one point only, so an entry is either:
+  QUERY point plus the search radius `r`. A neighbour cell is right for one point only, so an entry is either:
   - `own_cell`: the chosen cell IS the query cell. It is the nearest centre for every point inside it,
     so a hit re-measures the distance and serves it;
   - `candidates`: the query cell is masked (the chosen cell is a neighbour, or none lies within `r`).

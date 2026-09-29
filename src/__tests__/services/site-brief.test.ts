@@ -218,7 +218,7 @@ describe("golden parity with the Python builder", () => {
       cases: { name: string; inputs: SiteBriefInputs; expected: unknown }[];
     };
     expect(golden.fixture_version).toBe("site-brief-golden/1");
-    expect(golden.cases.length).toBeGreaterThanOrEqual(12);
+    expect(golden.cases.length).toBeGreaterThanOrEqual(14);
     for (const testCase of golden.cases) {
       expect(canonicalJson(buildSiteBrief(testCase.inputs)), testCase.name).toBe(canonicalJson(testCase.expected));
     }
@@ -261,6 +261,23 @@ describe("withSiteBrief (CONTRACT C3)", () => {
       label: "Measured value, read by the server this request from soil-survey (read local-2)",
     });
     expect(context.site_brief_query).toBe("moderately acid loam topsoil; high organic carbon; burned 2025, high severity; moderate drought; grassland/pasture");
+  });
+
+  it.each([1001, 1340])("never presents a %i m nearest-cell estimate as this site's soil (owner 2026-09-28)", (distanceM) => {
+    const inputs = workedInputs();
+    inputs.soil = { ...(inputs.soil as Extract<SiteBriefInputs["soil"], { state: "available" }>), distance_m: distanceM };
+    const brief = buildSiteBrief(inputs);
+    if (brief.soil.state !== "available") throw new Error("soil should be available");
+    const context = withSiteBrief(baseContext, brief);
+    const soilTexts = [
+      brief.soil.label, brief.soil.topsoil_0_30cm.label, ...brief.descriptors.slice(0, 2).map((descriptor) => descriptor.text),
+      ...(["soil_ph", "soil_organic_carbon_pct", "sand_pct", "clay_pct"] as const).map((key) => context.site_facts_provenance?.[key]?.label),
+    ];
+    for (const text of soilTexts) expect(text).toContain("none within 1,000 m");
+    expect(brief.descriptors.slice(0, 2).map((descriptor) => descriptor.seed)).toEqual(["", ""]);
+    expect(brief.literature_seed).toBe("burned 2025, high severity; moderate drought; grassland/pasture");
+    expect(context.site_brief_query).toBe(brief.literature_seed);
+    expect(describeSiteBrief(brief)).toContain("- soil (nearest SoilGrids cell, NOT this point): SoilGrids v2.0 250 m model estimate, nearest cell centre");
   });
 
   it("never lets a severity from another fire ride with the brief's fire", () => {

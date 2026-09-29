@@ -436,7 +436,7 @@
         "soil": {
           "state": "unavailable",
           "reason": "no_cell_within_radius",
-          "radius_m": 1000
+          "radius_m": 2000
         },
         "fire": {
           "state": "available",
@@ -477,7 +477,7 @@
         "soil": {
           "state": "unavailable",
           "reason": "no_cell_within_radius",
-          "radius_m": 1000
+          "radius_m": 2000
         },
         "fire": {
           "state": "available",
@@ -518,6 +518,428 @@
           "label": "USDA CDL 2025 (released 2026-01-30), dominant class of a 3 km cell (61%)"
         },
         "descriptors": [
+          {
+            "text": "burned 2025-08-11, high severity (mapped perimeter and MTBS, measured)",
+            "seed": "burned 2025, high severity"
+          },
+          {
+            "text": "moderate drought D1 (US Drought Monitor, week of 2026-09-22)",
+            "seed": "moderate drought"
+          },
+          {
+            "text": "grassland/pasture, 61% of a 3 km cell (USDA CDL 2025 classified imagery)",
+            "seed": "grassland/pasture"
+          }
+        ],
+        "literature_seed": "burned 2025, high severity; moderate drought; grassland/pasture"
+      }
+    },
+    {
+      "name": "urban_nearest_cell_beyond_default_radius",
+      "inputs": {
+        "built_on": "2026-09-27",
+        "point": {
+          "longitude_e5": -11620000,
+          "latitude_e5": 4360000
+        },
+        "soil": {
+          "state": "available",
+          "release_id": "soilgrids-v2.0/2020-06-02",
+          "distance_m": 1340,
+          "mapped": {
+            "0-5cm": {
+              "phh2o": 57,
+              "soc": 243,
+              "nitrogen": 190,
+              "bdod": 121,
+              "cec": 182,
+              "ocd": 380,
+              "clay": 189,
+              "sand": 371,
+              "silt": 440,
+              "cfvo": 98
+            },
+            "5-15cm": {
+              "phh2o": 57,
+              "soc": 210,
+              "nitrogen": 160,
+              "bdod": 127,
+              "cec": 170,
+              "ocd": 340,
+              "clay": 195,
+              "sand": 380,
+              "silt": 425,
+              "cfvo": 102
+            },
+            "15-30cm": {
+              "phh2o": 58,
+              "soc": 180,
+              "nitrogen": 130,
+              "bdod": 131,
+              "cec": 160,
+              "ocd": 300,
+              "clay": 201,
+              "sand": 390,
+              "silt": 409,
+              "cfvo": 106
+            }
+          }
+        },
+        "fire": {
+          "state": "available",
+          "latest_fire_day": "2025-08-11",
+          "burn_severity": "high",
+          "detections_last_30_days": 0,
+          "source": "fire-perimeters + burn-severity (MTBS)"
+        },
+        "drought": {
+          "state": "available",
+          "usdm_class": "D1",
+          "week_of": "2026-09-22"
+        },
+        "weather": {
+          "state": "available",
+          "observed_at": "2026-09-27T15:00:00Z",
+          "distance_m": 12400,
+          "temperature_tenths_c": 142,
+          "relative_humidity_pct": 38
+        },
+        "land_cover": {
+          "state": "available",
+          "class_name": "Grassland/Pasture",
+          "class_code": 176,
+          "fraction_permille": 612,
+          "edition_year": 2025,
+          "release_day": "2026-01-30",
+          "cell_m": 3000
+        }
+      },
+      "expected": {
+        "brief_version": "site-brief/1",
+        "built_on": "2026-09-27",
+        "point": {
+          "longitude": -116.2,
+          "latitude": 43.6
+        },
+        "soil": {
+          "state": "available",
+          "basis": "model_estimate",
+          "source": "SoilGrids v2.0",
+          "release_id": "soilgrids-v2.0/2020-06-02",
+          "resolution_m": 250,
+          "cell_deg": 0.005,
+          "distance_m": 1340,
+          "label": "SoilGrids v2.0 250 m model estimate, nearest cell centre 1,340 m away (none within 1,000 m) (release soilgrids-v2.0/2020-06-02)",
+          "depths": {
+            "0-5cm": {
+              "ph": 5.7,
+              "soc_g_kg": 24.3,
+              "nitrogen_g_kg": 1.9,
+              "bdod_g_cm3": 1.21,
+              "cec_cmolc_kg": 18.2,
+              "ocd_kg_m3": 38.0,
+              "clay_pct": 18.9,
+              "sand_pct": 37.1,
+              "silt_pct": 44.0,
+              "cfvo_vol_pct": 9.8
+            },
+            "5-15cm": {
+              "ph": 5.7,
+              "soc_g_kg": 21.0,
+              "nitrogen_g_kg": 1.6,
+              "bdod_g_cm3": 1.27,
+              "cec_cmolc_kg": 17.0,
+              "ocd_kg_m3": 34.0,
+              "clay_pct": 19.5,
+              "sand_pct": 38.0,
+              "silt_pct": 42.5,
+              "cfvo_vol_pct": 10.2
+            },
+            "15-30cm": {
+              "ph": 5.8,
+              "soc_g_kg": 18.0,
+              "nitrogen_g_kg": 1.3,
+              "bdod_g_cm3": 1.31,
+              "cec_cmolc_kg": 16.0,
+              "ocd_kg_m3": 30.0,
+              "clay_pct": 20.1,
+              "sand_pct": 39.0,
+              "silt_pct": 40.9,
+              "cfvo_vol_pct": 10.6
+            }
+          },
+          "topsoil_0_30cm": {
+            "ph": 5.8,
+            "soc_pct": 2.0,
+            "clay_pct": 19.7,
+            "sand_pct": 38.4,
+            "silt_pct": 42.0,
+            "cfvo_vol_pct": 10.3,
+            "bdod_g_cm3": 1.28,
+            "texture_class": "loam",
+            "reaction_class": "moderately acid",
+            "soc_band": "high organic carbon",
+            "label": "SoilGrids v2.0 250 m model estimate, 0-30 cm (thickness-weighted), nearest cell centre 1,340 m away (none within 1,000 m)"
+          }
+        },
+        "fire": {
+          "state": "available",
+          "basis": "measured",
+          "days_since_fire": 412,
+          "latest_fire_day": "2025-08-11",
+          "burn_severity": "high",
+          "detections_last_30_days": 0,
+          "source": "fire-perimeters + burn-severity (MTBS)",
+          "label": "Mapped fire perimeter and MTBS burn severity, burned 2025-08-11"
+        },
+        "drought": {
+          "state": "available",
+          "basis": "classified",
+          "usdm_class": "D1",
+          "week_of": "2026-09-22",
+          "label": "US Drought Monitor class, week of 2026-09-22"
+        },
+        "weather": {
+          "state": "available",
+          "basis": "measured",
+          "observed_at": "2026-09-27T15:00:00Z",
+          "distance_m": 12400,
+          "temperature_c": 14.2,
+          "relative_humidity_pct": 38,
+          "label": "Nearest weather-station observation, 2026-09-27T15:00:00Z, 12.4 km away"
+        },
+        "land_cover": {
+          "state": "available",
+          "basis": "classified_remote_sensing",
+          "source": "USDA CDL",
+          "class_name": "Grassland/Pasture",
+          "class_code": 176,
+          "fraction_pct": 61,
+          "edition_year": 2025,
+          "release_day": "2026-01-30",
+          "cell_km": 3.0,
+          "label": "USDA CDL 2025 (released 2026-01-30), dominant class of a 3 km cell (61%)"
+        },
+        "descriptors": [
+          {
+            "text": "moderately acid loam topsoil (pH 5.8, SoilGrids model estimate 0-30 cm, nearest cell centre 1,340 m away (none within 1,000 m))",
+            "seed": ""
+          },
+          {
+            "text": "high organic carbon topsoil (2.0% SOC, SoilGrids model estimate 0-30 cm, nearest cell centre 1,340 m away (none within 1,000 m))",
+            "seed": ""
+          },
+          {
+            "text": "burned 2025-08-11, high severity (mapped perimeter and MTBS, measured)",
+            "seed": "burned 2025, high severity"
+          },
+          {
+            "text": "moderate drought D1 (US Drought Monitor, week of 2026-09-22)",
+            "seed": "moderate drought"
+          },
+          {
+            "text": "grassland/pasture, 61% of a 3 km cell (USDA CDL 2025 classified imagery)",
+            "seed": "grassland/pasture"
+          }
+        ],
+        "literature_seed": "burned 2025, high severity; moderate drought; grassland/pasture"
+      }
+    },
+    {
+      "name": "soil_boundary_1001_is_the_nearest_fallback",
+      "inputs": {
+        "built_on": "2026-09-27",
+        "point": {
+          "longitude_e5": -11620000,
+          "latitude_e5": 4360000
+        },
+        "soil": {
+          "state": "available",
+          "release_id": "soilgrids-v2.0/2020-06-02",
+          "distance_m": 1001,
+          "mapped": {
+            "0-5cm": {
+              "phh2o": 57,
+              "soc": 243,
+              "nitrogen": 190,
+              "bdod": 121,
+              "cec": 182,
+              "ocd": 380,
+              "clay": 189,
+              "sand": 371,
+              "silt": 440,
+              "cfvo": 98
+            },
+            "5-15cm": {
+              "phh2o": 57,
+              "soc": 210,
+              "nitrogen": 160,
+              "bdod": 127,
+              "cec": 170,
+              "ocd": 340,
+              "clay": 195,
+              "sand": 380,
+              "silt": 425,
+              "cfvo": 102
+            },
+            "15-30cm": {
+              "phh2o": 58,
+              "soc": 180,
+              "nitrogen": 130,
+              "bdod": 131,
+              "cec": 160,
+              "ocd": 300,
+              "clay": 201,
+              "sand": 390,
+              "silt": 409,
+              "cfvo": 106
+            }
+          }
+        },
+        "fire": {
+          "state": "available",
+          "latest_fire_day": "2025-08-11",
+          "burn_severity": "high",
+          "detections_last_30_days": 0,
+          "source": "fire-perimeters + burn-severity (MTBS)"
+        },
+        "drought": {
+          "state": "available",
+          "usdm_class": "D1",
+          "week_of": "2026-09-22"
+        },
+        "weather": {
+          "state": "available",
+          "observed_at": "2026-09-27T15:00:00Z",
+          "distance_m": 12400,
+          "temperature_tenths_c": 142,
+          "relative_humidity_pct": 38
+        },
+        "land_cover": {
+          "state": "available",
+          "class_name": "Grassland/Pasture",
+          "class_code": 176,
+          "fraction_permille": 612,
+          "edition_year": 2025,
+          "release_day": "2026-01-30",
+          "cell_m": 3000
+        }
+      },
+      "expected": {
+        "brief_version": "site-brief/1",
+        "built_on": "2026-09-27",
+        "point": {
+          "longitude": -116.2,
+          "latitude": 43.6
+        },
+        "soil": {
+          "state": "available",
+          "basis": "model_estimate",
+          "source": "SoilGrids v2.0",
+          "release_id": "soilgrids-v2.0/2020-06-02",
+          "resolution_m": 250,
+          "cell_deg": 0.005,
+          "distance_m": 1001,
+          "label": "SoilGrids v2.0 250 m model estimate, nearest cell centre 1,001 m away (none within 1,000 m) (release soilgrids-v2.0/2020-06-02)",
+          "depths": {
+            "0-5cm": {
+              "ph": 5.7,
+              "soc_g_kg": 24.3,
+              "nitrogen_g_kg": 1.9,
+              "bdod_g_cm3": 1.21,
+              "cec_cmolc_kg": 18.2,
+              "ocd_kg_m3": 38.0,
+              "clay_pct": 18.9,
+              "sand_pct": 37.1,
+              "silt_pct": 44.0,
+              "cfvo_vol_pct": 9.8
+            },
+            "5-15cm": {
+              "ph": 5.7,
+              "soc_g_kg": 21.0,
+              "nitrogen_g_kg": 1.6,
+              "bdod_g_cm3": 1.27,
+              "cec_cmolc_kg": 17.0,
+              "ocd_kg_m3": 34.0,
+              "clay_pct": 19.5,
+              "sand_pct": 38.0,
+              "silt_pct": 42.5,
+              "cfvo_vol_pct": 10.2
+            },
+            "15-30cm": {
+              "ph": 5.8,
+              "soc_g_kg": 18.0,
+              "nitrogen_g_kg": 1.3,
+              "bdod_g_cm3": 1.31,
+              "cec_cmolc_kg": 16.0,
+              "ocd_kg_m3": 30.0,
+              "clay_pct": 20.1,
+              "sand_pct": 39.0,
+              "silt_pct": 40.9,
+              "cfvo_vol_pct": 10.6
+            }
+          },
+          "topsoil_0_30cm": {
+            "ph": 5.8,
+            "soc_pct": 2.0,
+            "clay_pct": 19.7,
+            "sand_pct": 38.4,
+            "silt_pct": 42.0,
+            "cfvo_vol_pct": 10.3,
+            "bdod_g_cm3": 1.28,
+            "texture_class": "loam",
+            "reaction_class": "moderately acid",
+            "soc_band": "high organic carbon",
+            "label": "SoilGrids v2.0 250 m model estimate, 0-30 cm (thickness-weighted), nearest cell centre 1,001 m away (none within 1,000 m)"
+          }
+        },
+        "fire": {
+          "state": "available",
+          "basis": "measured",
+          "days_since_fire": 412,
+          "latest_fire_day": "2025-08-11",
+          "burn_severity": "high",
+          "detections_last_30_days": 0,
+          "source": "fire-perimeters + burn-severity (MTBS)",
+          "label": "Mapped fire perimeter and MTBS burn severity, burned 2025-08-11"
+        },
+        "drought": {
+          "state": "available",
+          "basis": "classified",
+          "usdm_class": "D1",
+          "week_of": "2026-09-22",
+          "label": "US Drought Monitor class, week of 2026-09-22"
+        },
+        "weather": {
+          "state": "available",
+          "basis": "measured",
+          "observed_at": "2026-09-27T15:00:00Z",
+          "distance_m": 12400,
+          "temperature_c": 14.2,
+          "relative_humidity_pct": 38,
+          "label": "Nearest weather-station observation, 2026-09-27T15:00:00Z, 12.4 km away"
+        },
+        "land_cover": {
+          "state": "available",
+          "basis": "classified_remote_sensing",
+          "source": "USDA CDL",
+          "class_name": "Grassland/Pasture",
+          "class_code": 176,
+          "fraction_pct": 61,
+          "edition_year": 2025,
+          "release_day": "2026-01-30",
+          "cell_km": 3.0,
+          "label": "USDA CDL 2025 (released 2026-01-30), dominant class of a 3 km cell (61%)"
+        },
+        "descriptors": [
+          {
+            "text": "moderately acid loam topsoil (pH 5.8, SoilGrids model estimate 0-30 cm, nearest cell centre 1,001 m away (none within 1,000 m))",
+            "seed": ""
+          },
+          {
+            "text": "high organic carbon topsoil (2.0% SOC, SoilGrids model estimate 0-30 cm, nearest cell centre 1,001 m away (none within 1,000 m))",
+            "seed": ""
+          },
           {
             "text": "burned 2025-08-11, high severity (mapped perimeter and MTBS, measured)",
             "seed": "burned 2025, high severity"

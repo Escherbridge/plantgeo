@@ -79,6 +79,16 @@ def test_the_soil_reader_constants_match() -> None:
     )
 
 
+@pytest.mark.parametrize(("requested", "searched"), FIXTURE["soil"]["search_radius_cases"])
+def test_the_soil_search_radius_rule_matches(requested: float, searched: int) -> None:
+    assert soil_properties.search_radius(requested) == searched
+
+
+@pytest.mark.parametrize(("distance_m", "phrase"), FIXTURE["soil"]["distance_phrase_cases"])
+def test_the_soil_distance_phrase_matches_at_the_boundary(distance_m: int, phrase: str) -> None:
+    assert site_brief.soil_distance_phrase(distance_m) == phrase
+
+
 @pytest.mark.parametrize("case", FIXTURE["soil"]["coverage_cases"], ids=lambda case: case["name"])
 def test_the_soil_coverage_rule_matches(case: dict[str, Any]) -> None:
     outside = soil_properties.outside_release_coverage(case["longitude"], case["latitude"], case["radius_m"])

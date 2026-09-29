@@ -1624,15 +1624,24 @@ _SOIL_DEPTH_LABELS: Final = dict(site_brief.SOIL_DEPTHS)
 def _filtered_soil_section(
     section: dict[str, Any], depths: Sequence[str] | None, properties: Sequence[str] | None
 ) -> dict[str, Any]:
-    """Keep the requested depths and properties; the thickness-weighted topsoil always stays."""
+    """Keep the requested depths and properties; the thickness-weighted topsoil always stays.
+
+    Past the default radius every depth label carries the distance phrase too, never reading as this point.
+    """
     wanted_depths = set(depths) if depths else set(_SOIL_DEPTH_LABELS)
     wanted_keys = {_SOIL_OUTPUT_KEYS[code] for code in properties} if properties else set(_SOIL_OUTPUT_KEYS.values())
+    distance = int(section["distance_m"])
+    distance_suffix = (
+        f", {site_brief.soil_distance_phrase(distance)}"
+        if site_brief.soil_estimate_is_nearest_fallback(distance)
+        else ""
+    )
     filtered_depths = {
         depth: {
             **{key: value for key, value in values.items() if key in wanted_keys},
             "label": (
                 f"{site_brief.SOILGRIDS_SOURCE} {site_brief.SOILGRIDS_RESOLUTION_M} m model estimate, "
-                f"{_SOIL_DEPTH_LABELS[depth]}"
+                f"{_SOIL_DEPTH_LABELS[depth]}{distance_suffix}"
             ),
         }
         for depth, values in section["depths"].items()
@@ -1663,18 +1672,19 @@ async def query_soil_properties_at_point(
     depths: Sequence[str] | None = None,
     properties: Sequence[str] | None = None,
 ) -> str:
-    """Return the labelled SoilGrids estimate of the nearest lattice cell centre within the radius (C6)."""
-    radius = soil_properties.clamp_radius(radius_meters)
+    """Return the labelled SoilGrids estimate of the nearest lattice cell centre within the search radius (C6)."""
+    # Every result reports the radius actually searched: 2,000 m for the default (AGENTS.md, "Soil properties").
+    searched = soil_properties.search_radius(radius_meters)
     if not _valid_coordinate(longitude, latitude):
-        return _soil_coordinate_error(radius)
-    soil = await soil_properties.read_soil_properties(longitude, latitude, radius_meters=radius)
+        return _soil_coordinate_error(searched)
+    soil = await soil_properties.read_soil_properties(longitude, latitude, radius_meters=radius_meters)
     if soil["state"] != "available":
         _record("soil_properties_at_point", 0, {"state": "unavailable", "reason": soil["reason"]})
         return _payload(
             {
                 "state": "unavailable",
                 "reason": soil["reason"],
-                "radius_m": radius,
+                "radius_m": searched,
                 "soilgrids": None,
                 "note": (
                     f"{SOIL_ESTIMATE_NOTE} This is a statement about the soil-properties lane, not about the soil: "
@@ -1690,11 +1700,13 @@ async def query_soil_properties_at_point(
         {
             "state": "available",
             "reason": None,
-            "radius_m": radius,
+            "radius_m": searched,
             "soilgrids": _filtered_soil_section(section, depths, properties),
             "note": (
                 f'{SOIL_ESTIMATE_NOTE} Repeat each value\'s label ("SoilGrids v2.0 250 m model estimate, <depth>") '
-                "whenever you cite it, and never call it measured, observed or sampled."
+                "whenever you cite it, and never call it measured, observed or sampled. Always state distance_m: "
+                "when the label says none lies within 1,000 m, the estimate is for the nearest cell centre that "
+                "far away, never for this point."
             ),
         }
     )
@@ -1709,7 +1721,8 @@ async def _soil_properties_at_point(
 ) -> str:
     """Read SoilGrids v2.0 soil property MODEL ESTIMATES at a point: pH, organic carbon, texture and more.
 
-    Returns the nearest ~500 m lattice cell centre within radius_meters (50-2000, default 1000): ten
+    Returns the nearest ~500 m lattice cell centre within radius_meters (50-2000, default 1000; at the
+    default, when none lies within 1000 m, the nearest within 2000 m, its distance in the label): ten
     properties at 0-5, 5-15 and 15-30 cm in physical units, plus a thickness-weighted 0-30 cm topsoil with
     USDA texture class, reaction class and organic-carbon band. Every value is a 250 m machine-learning
     model estimate, NOT a measurement or soil sample: repeat its label whenever you cite it. A state of

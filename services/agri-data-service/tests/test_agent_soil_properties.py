@@ -24,7 +24,10 @@ RELEASE_DAY: Final = date(2020, 6, 2)
 TODAY: Final = date(2026, 9, 27)
 NEAR_ORIGIN: Final = (-116.205, 43.595)
 FAR_ORIGIN: Final = (-116.21, 43.61)
-DISTANT_ORIGIN: Final = (-116.3, 43.7)
+#: Centres 1,404 m, 2,510 m and 858 m from BOISE.
+FALLBACK_ORIGIN: Final = (-116.205, 43.61)
+BEYOND_FALLBACK_ORIGIN: Final = (-116.205, 43.62)
+BEYOND_500_M_ORIGIN: Final = (-116.205, 43.605)
 PH_MAPPED: Final = 57
 PH_PHYSICAL: Final = 5.7
 TIE_DISTANCE_METERS: Final = 100.0
@@ -98,23 +101,86 @@ async def test_the_nearest_centre_within_the_radius_is_served_as_mapped_integers
 
 
 @pytest.mark.usefixtures("enabled")
-async def test_the_read_widens_the_origin_search_by_the_centre_margin() -> None:
-    """`point_lane_rows` measures to the ORIGIN, so the SQL radius is the answer radius plus 400 m."""
+@pytest.mark.parametrize(
+    ("requested", "searched"),
+    [
+        pytest.param(soil_properties.DEFAULT_RADIUS_METERS, soil_properties.MAX_RADIUS_METERS, id="default-falls-back"),
+        pytest.param(500, 500, id="explicit-is-strict"),
+    ],
+)
+async def test_the_read_widens_the_origin_search_by_the_centre_margin(requested: int, searched: int) -> None:
+    """`point_lane_rows` measures to the ORIGIN, so the SQL radius is the searched radius plus 400 m."""
     source = _published([_row(NEAR_ORIGIN)])
-    await _read(source, radius_meters=soil_properties.DEFAULT_RADIUS_METERS)
+    await _read(source, radius_meters=requested)
     arguments = source.arguments_for("agent_point_lane_rows")
     assert arguments[4:6] == [BOISE[1], BOISE[0]], "the probe binds latitude first"
-    assert arguments[6] == soil_properties.DEFAULT_RADIUS_METERS + soil_properties.ORIGIN_SEARCH_MARGIN_METERS
+    assert arguments[6] == searched + soil_properties.ORIGIN_SEARCH_MARGIN_METERS
 
 
+# Owner 2026-09-28, "Name the nearest estimate": SoilGrids masks urban pixels, so at the DEFAULT radius a
+# point with no centre within 1,000 m is served the nearest centre within 2,000 m, its distance named in the
+# label. An explicit radius stays strict. Distances are from BOISE to each origin's centre.
 @pytest.mark.usefixtures("enabled")
-async def test_no_cell_within_the_radius_is_stated_with_the_radius_never_widened() -> None:
-    soil = await _read(_published([_row(DISTANT_ORIGIN)]))
-    assert soil == {
-        "state": "unavailable",
-        "reason": "no_cell_within_radius",
-        "radius_m": soil_properties.DEFAULT_RADIUS_METERS,
-    }
+@pytest.mark.parametrize(
+    ("origin", "radius_meters", "expected"),
+    [
+        pytest.param(
+            NEAR_ORIGIN,
+            soil_properties.DEFAULT_RADIUS_METERS,
+            {
+                "state": "available",
+                "radius_m": 2000,
+                "label": "SoilGrids v2.0 250 m model estimate, sampled at the centre of a ~500 m cell 343 m "
+                "from this point (release soilgrids-v2.0/2020-06-02)",
+                "topsoil_label": "SoilGrids v2.0 250 m model estimate, 0-30 cm (thickness-weighted)",
+                "depth_label": "SoilGrids v2.0 250 m model estimate, 0-5 cm",
+            },
+            id="within-1-km",
+        ),
+        pytest.param(
+            FALLBACK_ORIGIN,
+            soil_properties.DEFAULT_RADIUS_METERS,
+            {
+                "state": "available",
+                "radius_m": 2000,
+                "label": "SoilGrids v2.0 250 m model estimate, nearest cell centre 1,404 m away "
+                "(none within 1,000 m) (release soilgrids-v2.0/2020-06-02)",
+                "topsoil_label": "SoilGrids v2.0 250 m model estimate, 0-30 cm (thickness-weighted), "
+                "nearest cell centre 1,404 m away (none within 1,000 m)",
+                "depth_label": "SoilGrids v2.0 250 m model estimate, 0-5 cm, nearest cell centre 1,404 m away "
+                "(none within 1,000 m)",
+            },
+            id="default-falls-back-to-1.4-km-and-says-so",
+        ),
+        pytest.param(
+            BEYOND_FALLBACK_ORIGIN,
+            soil_properties.DEFAULT_RADIUS_METERS,
+            {"state": "unavailable", "reason": "no_cell_within_radius", "radius_m": 2000},
+            id="beyond-2-km-is-refused-at-2000",
+        ),
+        pytest.param(
+            BEYOND_500_M_ORIGIN,
+            500,
+            {"state": "unavailable", "reason": "no_cell_within_radius", "radius_m": 500},
+            id="explicit-500-never-falls-back",
+        ),
+    ],
+)
+async def test_the_default_radius_falls_back_to_the_nearest_named_estimate(
+    origin: tuple[float, float], radius_meters: int, expected: dict[str, Any]
+) -> None:
+    source = _published([_row(origin)])
+    async with tools.run_context(warehouse_source=source):
+        payload = json.loads(await tools.query_soil_properties_at_point(*BOISE, radius_meters=radius_meters))
+    observed = {key: payload[key] for key in ("state", "radius_m")}
+    if payload["state"] == "available":
+        soilgrids = payload["soilgrids"]
+        observed["label"] = soilgrids["label"]
+        observed["topsoil_label"] = soilgrids["topsoil_0_30cm"]["label"]
+        observed["depth_label"] = soilgrids["depths"]["0-5cm"]["label"]
+    else:
+        observed["reason"] = payload["reason"]
+    assert observed == expected
 
 
 @pytest.mark.usefixtures("enabled")
@@ -215,7 +281,7 @@ async def test_the_tool_states_a_disabled_lane_as_unavailable(monkeypatch: pytes
     assert payload["state"] == "unavailable"
     assert payload["reason"] == "reads_disabled"
     assert payload["soilgrids"] is None
-    assert payload["radius_m"] == soil_properties.DEFAULT_RADIUS_METERS
+    assert payload["radius_m"] == soil_properties.MAX_RADIUS_METERS, "the default reports the 2,000 m it searches"
     assert ledger[0]["row_count"] == 0
 
 

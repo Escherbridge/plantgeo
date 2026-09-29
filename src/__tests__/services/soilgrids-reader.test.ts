@@ -73,9 +73,10 @@ describe("lane read and nearest-centre selection (CONTRACT C2)", () => {
     const [request] = vi.mocked(getParquetLatestRelease).mock.calls[0];
     expect(request).toMatchObject({ layer: "soil-properties", kind: "observed", zoomTier: 13 });
     expect(request.asOfDay).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    const expected = soilReadBbox(BOISE.lat, BOISE.lon, 1000);
+    // The default radius reads ONCE at the 2,000 m fallback radius (owner 2026-09-28).
+    const expected = soilReadBbox(BOISE.lat, BOISE.lon, 2000);
     expect(request.bbox).toBe(`${expected.west},${expected.south},${expected.east},${expected.north}`);
-    expect(expected.north - BOISE.lat).toBeCloseTo(1000 / 110574 + 0.005, 12);
+    expect(expected.north - BOISE.lat).toBeCloseTo(2000 / 110574 + 0.005, 12);
     expect(read).toMatchObject({
       state: "available",
       properties: {
@@ -97,11 +98,29 @@ describe("lane read and nearest-centre selection (CONTRACT C2)", () => {
     expect(selectNearestCell([east, west], 0.0025, 0, 1000)?.row).toBe(west);
   });
 
-  it("refuses beyond the radius with no_cell_within_radius and never widens it", async () => {
-    // One cell whose centre is ~1.6 km north of the point.
-    vi.mocked(getParquetLatestRelease).mockResolvedValue(published([row(-116.205, 43.615)]));
-    expect(await getSoilProperties(BOISE.lat, BOISE.lon)).toEqual({ state: "unavailable", reason: "no_cell_within_radius", radiusM: 1000 });
-    expect(await getSoilProperties(BOISE.lat, BOISE.lon, { radiusMeters: 2000 })).toMatchObject({ state: "available", properties: { distanceM: 1668 } });
+  /**
+   * Owner 2026-09-28, "Name the nearest estimate": SoilGrids masks urban pixels, so at the DEFAULT radius
+   * (omitted or exactly 1,000 m) a point with no centre within 1,000 m gets the nearest within 2,000 m,
+   * the distance named in the label. An explicit radius stays strict. Distances are from (43.6, -116.2),
+   * the same point and origins as agri's `test_agent_soil_properties.py`.
+   */
+  it.each([
+    { name: "within 1 km", origin: [-116.205, 43.595], radiusMeters: undefined,
+      expected: { state: "available", properties: { distanceM: 343,
+        label: "SoilGrids v2.0 250 m model estimate, 0-5 cm, cell centre 343 m away (release soilgrids-v2.0/2020-06-02)" } } },
+    { name: "the default falls back to 1.4 km and says so", origin: [-116.205, 43.61], radiusMeters: undefined,
+      expected: { state: "available", properties: { distanceM: 1404,
+        label: "SoilGrids v2.0 250 m model estimate, 0-5 cm, nearest cell centre 1,404 m away (none within 1,000 m) (release soilgrids-v2.0/2020-06-02)",
+        topsoil: { label: "SoilGrids v2.0 250 m model estimate, 0-30 cm (thickness-weighted), nearest cell centre 1,404 m away (none within 1,000 m)" } } } },
+    { name: "an explicit 1,000 m is the default", origin: [-116.205, 43.61], radiusMeters: 1000,
+      expected: { state: "available", properties: { distanceM: 1404 } } },
+    { name: "beyond 2 km is refused at 2,000 m", origin: [-116.205, 43.62], radiusMeters: undefined,
+      expected: { state: "unavailable", reason: "no_cell_within_radius", radiusM: 2000 } },
+    { name: "an explicit 500 m never falls back", origin: [-116.205, 43.605], radiusMeters: 500,
+      expected: { state: "unavailable", reason: "no_cell_within_radius", radiusM: 500 } },
+  ])("$name", async ({ origin, radiusMeters, expected }) => {
+    vi.mocked(getParquetLatestRelease).mockResolvedValue(published([row(origin[0], origin[1])]));
+    expect(await getSoilProperties(43.6, -116.2, radiusMeters === undefined ? {} : { radiusMeters })).toMatchObject(expected);
   });
 
   it("treats a non-integral base value as a corrupt lane, never rounding it", async () => {

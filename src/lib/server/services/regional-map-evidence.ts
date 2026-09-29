@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { soilPropertyForToggle, SOIL_RASTER_TOGGLE_IDS } from "@/lib/map/soil-raster";
 import type { BoundingBox } from "@/lib/server/security/bbox";
-import { SOILGRIDS_DEPTHS, SOILGRIDS_PROPERTY_OUTPUT } from "./site-brief";
+import { SOILGRIDS_DEPTHS, SOILGRIDS_PROPERTY_OUTPUT, soilDistancePhrase } from "./site-brief";
 
 export const APP_MAP_SURFACES = [
   "demand-heatmap",
@@ -138,7 +138,7 @@ async function rasterEvidence(selection: Selection): Promise<Evidence> {
     property,
     values,
     unit,
-    label: `SoilGrids v2.0 250 m model estimate, 0-5/5-15/15-30 cm, cell centre ${soil.distanceM} m away`,
+    label: `SoilGrids v2.0 250 m model estimate, 0-5/5-15/15-30 cm, ${soilDistancePhrase(soil.distanceM)}`,
     release_id: soil.releaseId,
     distance_m: soil.distanceM,
     numeric_values_available: true,

@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 from agri_data_service.agent import parquet_reads, warehouse
 from agri_data_service.agent.site_brief import (
+    SOIL_DEFAULT_RADIUS_METERS,
     SOIL_DEPTHS,
     SOIL_PROPERTY_CODES,
     SOIL_READS_ENABLED_VARIABLE,
@@ -33,7 +34,7 @@ if TYPE_CHECKING:
 SOIL_PROPERTIES_LANE: Final = "soil-properties"
 READS_ENABLED_VARIABLE: Final = SOIL_READS_ENABLED_VARIABLE
 
-DEFAULT_RADIUS_METERS: Final = 1_000
+DEFAULT_RADIUS_METERS: Final = SOIL_DEFAULT_RADIUS_METERS
 MIN_RADIUS_METERS: Final = 50
 MAX_RADIUS_METERS: Final = 2_000
 #: `point_lane_rows` measures to the ORIGIN; half a 0.005 cell diagonal is ~340 m at 45 N (C2).
@@ -73,8 +74,18 @@ def soil_reads_enabled() -> bool:
 
 
 def clamp_radius(radius_meters: float) -> int:
-    """Clamp a requested radius into 50..2000 m, as whole metres."""
-    return int(max(MIN_RADIUS_METERS, min(MAX_RADIUS_METERS, round(radius_meters))))
+    """Clamp a requested radius into 50..2000 m, as whole metres rounded half up (JS `Math.round`, not `round`)."""
+    return int(max(MIN_RADIUS_METERS, min(MAX_RADIUS_METERS, math.floor(radius_meters + 0.5))))
+
+
+def search_radius(radius_meters: float) -> int:
+    """The radius a read searches: the default (exactly 1,000 m) falls back to 2,000 m; any other is strict.
+
+    Owner 2026-09-28 ("Name the nearest estimate"): SoilGrids masks urban pixels. The label names any
+    distance past the default (`site_brief.soil_distance_phrase`). Mirrors web `soilSearchRadius`.
+    """
+    radius = clamp_radius(radius_meters)
+    return MAX_RADIUS_METERS if radius == DEFAULT_RADIUS_METERS else radius
 
 
 def haversine_meters(longitude_a: float, latitude_a: float, longitude_b: float, latitude_b: float) -> float:
@@ -192,10 +203,13 @@ async def read_soil_properties(  # noqa: PLR0911 - one named C5.6 reason per gua
     as_of: date | None = None,
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
-    """Return the C5.1 soil section for one point; every failure is a C5.6 reason, never a raise."""
+    """Return the C5.1 soil section for one point; every failure is a C5.6 reason, never a raise.
+
+    ONE read at `search_radius`, then nearest selection; only the label tells a fallback apart.
+    """
     if not soil_reads_enabled():
         return _unavailable("reads_disabled")
-    radius = clamp_radius(radius_meters)
+    radius = search_radius(radius_meters)
     if outside_release_coverage(longitude, latitude, radius):
         return _unavailable("outside_release_coverage")
     served_as_of = as_of or datetime.now(UTC).date()
@@ -244,6 +258,7 @@ __all__ = [
     "mapped_values",
     "outside_release_coverage",
     "read_soil_properties",
+    "search_radius",
     "select_nearest_cell",
     "soil_reads_enabled",
 ]

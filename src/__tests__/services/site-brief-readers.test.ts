@@ -51,7 +51,7 @@ import {
   WEATHER_DAYS_BACK,
   WEATHER_RADIUS_METERS,
 } from "@/lib/server/services/site-brief-readers";
-import { readsFlagEnabled, siteBriefEnabled, type SiteBriefReason } from "@/lib/server/services/site-brief";
+import { readsFlagEnabled, siteBriefEnabled, soilDistancePhrase, type SiteBriefReason } from "@/lib/server/services/site-brief";
 import {
   COVERAGE_COSINE_FLOOR,
   DEFAULT_SOIL_RADIUS_METERS,
@@ -63,6 +63,7 @@ import {
   SOIL_CELL_DEGREES,
   soilLatticeEnvelope,
   soilReadsEnabled,
+  soilSearchRadius,
 } from "@/lib/server/services/soilgrids";
 
 const FIXTURE_PATH = resolve(__dirname, "../../../services/agri-data-service/tests/fixtures/site_brief_reader_constants.json");
@@ -165,6 +166,14 @@ describe("the shared reader-constant fixture (CONTRACT C5.1, review M9)", () => 
     expect(EARTH_RADIUS_METERS).toBe(soil.earth_radius_m);
     expect(COVERAGE_COSINE_FLOOR).toBe(soil.coverage_cosine_floor);
     expect(soilLatticeEnvelope()).toEqual(soil.envelope);
+  });
+
+  it.each(fixture.soil.search_radius_cases as [number, number][])("searches %j m as %j m (the default falls back, owner 2026-09-28)", (requested, searched) => {
+    expect(soilSearchRadius(requested)).toBe(searched);
+  });
+
+  it.each(fixture.soil.distance_phrase_cases as [number, string][])("labels a %j m distance as %j", (distanceM, phrase) => {
+    expect(soilDistancePhrase(distanceM)).toBe(phrase);
   });
 
   it.each(fixture.soil.coverage_cases as { name: string; longitude: number; latitude: number; radius_m: number; outside: boolean }[])(

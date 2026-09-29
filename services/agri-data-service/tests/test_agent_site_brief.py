@@ -35,7 +35,13 @@ from agri_data_service.pipeline.direct.soil_properties.products import PROPERTY_
 GOLDEN_PATH: Final = Path(__file__).resolve().parent / "fixtures" / "site_brief_golden.json"
 GOLDEN: Final[dict[str, Any]] = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
 CASES: Final[list[dict[str, Any]]] = GOLDEN["cases"]
-EXPECTED_CASE_COUNT: Final = 12
+EXPECTED_CASE_COUNT: Final = 14
+#: Golden cases whose estimate lies past the 1,000 m default radius (owner 2026-09-28).
+NEAREST_FALLBACK_CASES: Final = (
+    "urban_nearest_cell_beyond_default_radius",
+    "soil_boundary_1001_is_the_nearest_fallback",
+)
+NONE_WITHIN_DEFAULT: Final = "none within 1,000 m"
 WORKED_EXAMPLE: Final = CASES[0]
 MODEL_ESTIMATE_LABEL: Final = "SoilGrids v2.0 250 m model estimate"
 #: Words C9 forbids for a SoilGrids value ("never call a SoilGrids value a measurement... measured
@@ -54,7 +60,7 @@ def _case(name: str) -> dict[str, Any]:
 # --- Golden parity ---------------------------------------------------------------------
 
 
-def test_the_golden_fixture_pins_twelve_named_cases() -> None:
+def test_the_golden_fixture_pins_fourteen_named_cases() -> None:
     assert GOLDEN["fixture_version"] == "site-brief-golden/1"
     assert len(CASES) == EXPECTED_CASE_COUNT
     assert len({case["name"] for case in CASES}) == EXPECTED_CASE_COUNT
@@ -106,9 +112,35 @@ def test_every_unavailable_section_names_a_reason_from_the_one_vocabulary() -> N
                 assert brief[section]["reason"] in UNAVAILABLE_REASONS, (case["name"], section)
 
 
-def test_a_soil_no_cell_answer_carries_its_radius() -> None:
+def test_a_soil_no_cell_answer_carries_the_fallback_radius_it_searched() -> None:
     soil = build_site_brief(_case("urban_no_cell_within_radius")["inputs"])["soil"]
-    assert soil == {"state": "unavailable", "reason": "no_cell_within_radius", "radius_m": 1000}
+    assert soil == {"state": "unavailable", "reason": "no_cell_within_radius", "radius_m": 2000}
+
+
+@pytest.mark.parametrize("name", NEAREST_FALLBACK_CASES)
+def test_a_nearest_fallback_estimate_never_reads_as_this_sites_soil(name: str) -> None:
+    """Owner 2026-09-28: every soil label, descriptor and provenance names the distance; retrieval never sees it."""
+    brief = build_site_brief(_case(name)["inputs"])
+    soil = brief["soil"]
+    soil_texts = [soil["label"], soil["topsoil_0_30cm"]["label"], *(item["text"] for item in brief["descriptors"][:2])]
+    facts, provenance, query = site_facts_from_brief(brief)
+    soil_texts += [provenance[key]["label"] for key in ("soil_ph", "soil_organic_carbon_pct", "sand_pct", "clay_pct")]
+    assert all(NONE_WITHIN_DEFAULT in text for text in soil_texts), soil_texts
+    assert [item["seed"] for item in brief["descriptors"][:2]] == ["", ""]
+    assert "topsoil" not in brief["literature_seed"]
+    assert "organic carbon" not in brief["literature_seed"]
+    assert query == brief["literature_seed"]
+    assert facts["soil_ph"] == soil["topsoil_0_30cm"]["ph"], "the value stays, labelled with its distance"
+
+
+def test_at_the_default_radius_the_labels_keep_their_rev_two_wording() -> None:
+    brief = build_site_brief(_case("half_up_ties_ph_bdod_distance_fraction")["inputs"])
+    assert brief["soil"]["distance_m"] == 1000  # noqa: PLR2004 - the boundary: 1000 is within the default radius.
+    _facts, provenance, _query = site_facts_from_brief(brief)
+    assert provenance["soil_ph"]["label"] == (
+        "SoilGrids v2.0 250 m model estimate, 0-30 cm (thickness-weighted), cell centre 1000 m away"
+    )
+    assert "topsoil" in brief["literature_seed"]
 
 
 def test_an_unknown_reason_is_refused_rather_than_passed_through() -> None:

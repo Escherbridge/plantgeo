@@ -1078,14 +1078,14 @@ describe("SoilDetails queried point", () => {
       isLoading: false,
       isError: true,
       error: {
-        message: "Soil properties are unavailable: no_cell_within_radius (no SoilGrids estimate within 1000 m)",
+        message: "Soil properties are unavailable: no_cell_within_radius (no SoilGrids estimate within 2000 m)",
         data: { code: "PRECONDITION_FAILED" },
       },
     });
 
     renderWithProviders(<SoilDetails bbox={VIEWPORT_BBOX} queryPoint={{ lat: 43.6, lon: -116.2 }} />);
 
-    const note = screen.getByText(/No SoilGrids estimate lies within 1 km of this pin/);
+    const note = screen.getByText(/No SoilGrids estimate lies within 2 km of this pin/);
     expect(note.getAttribute("role")).toBe("status");
     expect(note.textContent).toContain("not an absence of soil");
     expect(screen.queryByText(/SoilGrids point estimates are not served yet/)).toBeNull();

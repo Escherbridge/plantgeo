@@ -713,7 +713,7 @@ export function SoilDetails({
                 aria-live="polite"
                 className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
               >
-                No SoilGrids estimate lies within 1 km of this pin: water and dense urban cells
+                No SoilGrids estimate lies within 2 km of this pin: water and dense urban cells
                 are masked, and the release covers the region only. That is an absence of a model
                 estimate here, not an absence of soil.
               </p>

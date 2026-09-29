@@ -50,6 +50,32 @@ export const SOILGRIDS_RESOLUTION_M = 250;
 export const SOILGRIDS_CELL_DEGREES = 0.005;
 export const SOILGRIDS_TOPSOIL_DEPTH = "0-30 cm (thickness-weighted)";
 export const SOILGRIDS_TOPSOIL_LABEL = `${SOILGRIDS_SOURCE} ${SOILGRIDS_RESOLUTION_M} m model estimate, 0-30 cm (thickness-weighted)`;
+/** CONTRACT C2 default soil radius; a nearest centre beyond it is always labelled so. See soil/AGENTS.md §nearest-estimate. */
+export const SOILGRIDS_DEFAULT_RADIUS_M = 1_000;
+
+/** Whole metres with comma thousands separators ("1,340"), identical to Python's `f"{n:,}"`. */
+function groupedMetres(metres: number): string {
+  return String(metres).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+/**
+ * The distance clause of every SoilGrids label: "cell centre 140 m away", or past the default radius
+ * "nearest cell centre 1,340 m away (none within 1,000 m)". Classified on the integer `distance_m`.
+ */
+export function soilDistancePhrase(distanceM: number): string {
+  if (!soilEstimateIsNearestFallback(distanceM)) return `cell centre ${distanceM} m away`;
+  return `nearest cell centre ${groupedMetres(distanceM)} m away (none within ${groupedMetres(SOILGRIDS_DEFAULT_RADIUS_M)} m)`;
+}
+
+/** Whether the estimate's cell centre lies past the default radius, so it describes a nearby site, not this point. */
+export function soilEstimateIsNearestFallback(distanceM: number): boolean {
+  return distanceM > SOILGRIDS_DEFAULT_RADIUS_M;
+}
+
+/** The 0-30 cm topsoil label; past the default radius it carries the distance phrase. */
+function soilTopsoilLabel(distanceM: number): string {
+  return soilEstimateIsNearestFallback(distanceM) ? `${SOILGRIDS_TOPSOIL_LABEL}, ${soilDistancePhrase(distanceM)}` : SOILGRIDS_TOPSOIL_LABEL;
+}
 
 export interface SectionUnavailable {
   state: "unavailable";
@@ -323,8 +349,8 @@ function topsoilIntegers(mapped: SoilGridsMapped): TopsoilIntegers {
   };
 }
 
-/** Thickness-weighted 0-30 cm topsoil summary with texture, reaction and SOC classes. */
-export function topsoilSummary(mapped: SoilGridsMapped): SoilTopsoil {
+/** Thickness-weighted 0-30 cm topsoil summary with texture, reaction and SOC classes, labelled for its distance. */
+export function topsoilSummary(mapped: SoilGridsMapped, distanceM: number): SoilTopsoil {
   const integers = topsoilIntegers(mapped);
   return {
     ph: emit(integers.phTenths, 1),
@@ -337,7 +363,7 @@ export function topsoilSummary(mapped: SoilGridsMapped): SoilTopsoil {
     texture_class: textureClassFromTenths(integers.clayTenths, integers.sandTenths, integers.siltTenths),
     reaction_class: reactionClass(integers.phTenths),
     soc_band: socBand(integers.socTenthsPercent),
-    label: SOILGRIDS_TOPSOIL_LABEL,
+    label: soilTopsoilLabel(distanceM),
   };
 }
 
@@ -362,9 +388,11 @@ function soilSection(soil: SiteBriefInputs["soil"]): SiteBrief["soil"] {
     resolution_m: SOILGRIDS_RESOLUTION_M,
     cell_deg: SOILGRIDS_CELL_DEGREES,
     distance_m: soil.distance_m,
-    label: `${SOILGRIDS_SOURCE} ${SOILGRIDS_RESOLUTION_M} m model estimate, sampled at the centre of a ~500 m cell ${soil.distance_m} m from this point (release ${soil.release_id})`,
+    label: soilEstimateIsNearestFallback(soil.distance_m)
+      ? `${SOILGRIDS_SOURCE} ${SOILGRIDS_RESOLUTION_M} m model estimate, ${soilDistancePhrase(soil.distance_m)} (release ${soil.release_id})`
+      : `${SOILGRIDS_SOURCE} ${SOILGRIDS_RESOLUTION_M} m model estimate, sampled at the centre of a ~500 m cell ${soil.distance_m} m from this point (release ${soil.release_id})`,
     depths: soilDepthValues(soil.mapped),
-    topsoil_0_30cm: topsoilSummary(soil.mapped),
+    topsoil_0_30cm: topsoilSummary(soil.mapped, soil.distance_m),
   };
 }
 
@@ -444,14 +472,18 @@ function descriptorsFor(inputs: SiteBriefInputs): SiteBriefDescriptor[] {
     const reaction = reactionClass(integers.phTenths);
     const texture = textureClassFromTenths(integers.clayTenths, integers.sandTenths, integers.siltTenths);
     const soilPhrase = texture === "unclassified" ? `${reaction} topsoil` : `${reaction} ${texture} topsoil`;
+    // Past the default radius the estimate describes a nearby cell, not this site: the text names the
+    // distance and the empty seed keeps it out of literature retrieval (soil/AGENTS.md §nearest-estimate).
+    const fallback = soilEstimateIsNearestFallback(inputs.soil.distance_m);
+    const distanceSuffix = fallback ? `, ${soilDistancePhrase(inputs.soil.distance_m)}` : "";
     descriptors.push({
-      text: `${soilPhrase} (pH ${formatFixedDecimals(integers.phTenths, 1)}, SoilGrids model estimate 0-30 cm)`,
-      seed: soilPhrase,
+      text: `${soilPhrase} (pH ${formatFixedDecimals(integers.phTenths, 1)}, SoilGrids model estimate 0-30 cm${distanceSuffix})`,
+      seed: fallback ? "" : soilPhrase,
     });
     const band = socBand(integers.socTenthsPercent);
     descriptors.push({
-      text: `${band} topsoil (${formatFixedDecimals(integers.socTenthsPercent, 1)}% SOC, SoilGrids model estimate 0-30 cm)`,
-      seed: band,
+      text: `${band} topsoil (${formatFixedDecimals(integers.socTenthsPercent, 1)}% SOC, SoilGrids model estimate 0-30 cm${distanceSuffix})`,
+      seed: fallback ? "" : band,
     });
   }
   if (inputs.fire.state === "available") {
@@ -662,7 +694,7 @@ export function withSiteBrief(
         depth: SOILGRIDS_TOPSOIL_DEPTH,
         resolution_m: SOILGRIDS_RESOLUTION_M,
         distance_m: soil.distance_m,
-        label: `${SOILGRIDS_TOPSOIL_LABEL}, cell centre ${soil.distance_m} m away`,
+        label: `${SOILGRIDS_TOPSOIL_LABEL}, ${soilDistancePhrase(soil.distance_m)}`,
       });
     }
   }
@@ -716,8 +748,9 @@ export function describeSiteBrief(brief: SiteBrief): string {
     value.state === "available"
       ? `- ${name}: ${value.label}`
       : `- ${name}: not available (${value.reason}${value.radius_m !== undefined ? `, no SoilGrids cell centre within ${value.radius_m} m` : ""}). This is a gap in what the server could read, not a condition of the site.`;
+  const nearestSoil = brief.soil.state === "available" && soilEstimateIsNearestFallback(brief.soil.distance_m);
   const lines = [
-    section("soil", brief.soil),
+    section(nearestSoil ? "soil (nearest SoilGrids cell, NOT this point)" : "soil", brief.soil),
     ...(brief.soil.state === "available" ? [`  topsoil: ${brief.soil.topsoil_0_30cm.label}`] : []),
     section("fire", brief.fire),
     section("drought", brief.drought),

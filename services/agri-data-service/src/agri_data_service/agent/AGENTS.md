@@ -496,8 +496,23 @@ C5.6 vocabulary. The brief never invents a value; weather is context and seeds n
 - **Read (CONTRACT C2)**: `warehouse.release_rows(layer="soil-properties", as_of=<server today>)` so
   a map slider day can never make soil vanish; `point_lane_rows` at radius + 400 m (it measures to
   the cell ORIGIN), then the nearest CENTRE by haversine on a 6,371,008.8 m sphere, ties to lower
-  latitude then longitude, accepted within the radius (default 1000, 50-2000). Beyond it:
-  `no_cell_within_radius` with `radius_m`, never a silently widened search.
+  latitude then longitude, accepted within the SEARCH radius (below). Beyond it:
+  `no_cell_within_radius` with the searched `radius_m`; the widening is never silent.
+- **Nearest named estimate (owner 2026-09-28)**: SoilGrids masks urban pixels, so `search_radius`
+  turns the DEFAULT radius (exactly 1,000 m after clamping to whole metres, rounded half up like JS
+  `Math.round`; value equality, so a model that fills in the default is not strict) into a 2,000 m
+  search; any other `radius_meters` (50-2000) stays strict. One read, then nearest selection; only the
+  labels tell the cases apart. `site_brief.soil_estimate_is_nearest_fallback` classifies on the integer
+  `distance_m` (> 1,000 m), and then every soil string names the distance with
+  `soil_distance_phrase` ("nearest cell centre 1,340 m away (none within 1,000 m)"): the section
+  label, the 0-30 cm topsoil label, both soil descriptors, the C3 provenance, and the tool's per-depth
+  labels. The value is never presented as being at the point. The two soil descriptor seeds are
+  empty, so a nearby cell's texture and SOC band never reach `literature_seed`/`site_brief_query` as
+  this site's soil (the site facts still carry the values, labelled with their distance). Beyond
+  2,000 m: `no_cell_within_radius`, `radius_m: 2000`. The tool reports the searched radius as `radius_m`
+  on every result. Web mirror: `soilgrids.ts::soilSearchRadius`, `site-brief.ts::soilDistancePhrase`;
+  pinned by `search_radius_cases` and `distance_phrase_cases` in the reader-constant fixture and the
+  golden cases `urban_nearest_cell_beyond_default_radius` and `soil_boundary_1001_is_the_nearest_fallback`.
 - **Integer contract**: every z13 value must be integral (|v - round(v)| < 1e-9) and non-negative, or
   the read is `read_failed` (a corrupt lane), never silently rounded.
 - **Reasons**: `reads_disabled`, `outside_release_coverage` (no cell centre can lie within the radius
