@@ -7,6 +7,7 @@ import {
   getParquetFireDetections,
 } from "@/lib/server/services/parquet-trpc-readers";
 import { DROUGHT_CATEGORY_LABELS } from "@/lib/server/services/usdm-drought";
+import { WATER_GAUGES_STREAM } from "@/lib/water-gauges-stream";
 
 export type AlertSeverity = "info" | "warning" | "critical";
 
@@ -352,7 +353,7 @@ export async function checkStreamflowAlerts(
       body: `USGS gauge ${nearest.siteName ?? nearest.siteNo} (${Math.round(nearestDist)} km away) is reporting critically low streamflow${nearest.flowCfs !== null ? ` (${nearest.flowCfs?.toFixed(1)} cfs)` : ""}. Drought stress conditions likely.`,
       metadata: {
         watchedLocationId: locationId,
-        source: "warehouse:water-gauges",
+        source: `warehouse:${WATER_GAUGES_STREAM}`,
         siteNo: nearest.siteNo,
         siteName: nearest.siteName,
         flowCfs: nearest.flowCfs,

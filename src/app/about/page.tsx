@@ -17,6 +17,7 @@ import {
   EditorialSection,
   EditorialSubheading,
 } from "@/components/ui/editorial";
+import { WATER_GAUGES_STREAM_FACT } from "@/lib/water-gauges-stream";
 
 export const metadata: Metadata = {
   title: "About - PlantGeo",
@@ -171,11 +172,11 @@ const attributionIndex = [
       "Fire evacuation areas, statewide. Oregon only: no government-run aggregator exists for Washington, Idaho or western Montana, and the one vendor feed that reaches them carries no timestamp we could honestly publish.",
     note: "Hourly",
   },
+  // The served water stream's source (`src/lib/water-gauges-stream.ts`): NWIS until G4.
   {
-    term: "USGS NWIS",
-    description:
-      "Instantaneous streamflow discharge from active stream gauges.",
-    note: "Hourly",
+    term: WATER_GAUGES_STREAM_FACT.sourceTerm,
+    description: WATER_GAUGES_STREAM_FACT.sourceDescription,
+    note: WATER_GAUGES_STREAM_FACT.sourceCadence,
   },
   {
     term: "Open-Meteo",

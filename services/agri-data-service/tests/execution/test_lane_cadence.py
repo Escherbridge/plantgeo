@@ -85,8 +85,12 @@ def _succeeded(bucket: datetime) -> LatestRun:
 
 
 async def _plan(now: datetime) -> tuple[list[str], list[datetime]]:
+    """The climate lane's tick states and due buckets; the lane TOMLs' config definitions tick beside it."""
     results, due = await job_executor_service._plan_active_lanes(object(), ACTIVE, now)  # type: ignore[arg-type]
-    return [result.state for result in results], [candidate.scheduled_for for candidate in due]
+    return (
+        [result.state for result in results if result.lane_id == CLIMATE_DIRECT_LANE_ID],
+        [candidate.scheduled_for for candidate in due if candidate.spec.lane_id == CLIMATE_DIRECT_LANE_ID],
+    )
 
 
 def test_the_climate_lane_is_registered_hourly() -> None:

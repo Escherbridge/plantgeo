@@ -276,3 +276,210 @@ but the recommendation comes with a load-bearing caveat the classification table
   contract could accept), that is on the order of **~29,000 forecast rows per run**; a five-quantile
   ensemble would be on the order of **~143,000**. Treat both only as sizing intuition for the writer,
   not as a spec.
+
+## 8. `water-gauges-daily`: the modern daily-values lane (config-driven ingestion, spec §7a)
+
+Track `config_driven_ingestion_20260926`, plan Phase 3 (`w3-water-gauges`). A new config lane, DARK in
+this push: `services/agri-data-service/lanes/water-gauges-daily.toml` ships `enabled = false` and
+`gap_fill_enabled = false`, so the executor never dispatches it
+(`execution/lane_catalogue.py::LANE_DISABLED_REASON`). The legacy `water-gauges-direct-forward` lane
+(sections 1-7 above) keeps serving `water-gauges`.
+
+| piece | where |
+|---|---|
+| lane TOML | `services/agri-data-service/lanes/water-gauges-daily.toml` |
+| provider TOML | `services/agri-data-service/lanes/_providers/usgs-water-data.toml` |
+| source contract | `ingest/usgs_water_data.py` |
+| strategy (S14) | `pipeline/lanes/water_gauges/usgs_water_data.py::STRATEGY`, notes in `pipeline/lanes/water_gauges/AGENTS.md` |
+| schema | `warehouse/schemas/water_gauges_daily.py` |
+| registration (S18) | `pipeline/parquet/config_stream_registrations.py::CONFIG_STREAM_ROWS` |
+| tests | `services/agri-data-service/tests/lanes/water_gauges/` |
+| web switch | `src/lib/water-gauges-stream.ts::WATER_GAUGES_STREAM` (still `water-gauges`) |
+| agent switch (CA11) | `agent/surfaces.py::WATER_GAUGES_SERVED_STREAM` (still `water-gauges`) |
+
+### 8.1 Source probe (P4, 2026-09-28)
+
+Read-only, 35 requests, no key, against the public API. Raw bodies were kept in the session scratchpad
+only; every fact below is quoted from them. `https://api.waterdata.usgs.gov` is abbreviated `API`.
+
+| # | request | answer |
+|---|---|---|
+| 1 | `API/ogcapi/v0/collections?f=json` | 200. The v0 path still answers, but every link it returns points at `/ogcapi/v1/`, so the lane uses v1. Collections include `daily`, `monitoring-locations`, `time-series-metadata`. |
+| 2 | `API/ogcapi/v1/collections/daily/queryables?f=json` | 200. Daily fields: `time_series_id`, `monitoring_location_id`, `parameter_code`, `statistic_id`, `time`, `value`, `unit_of_measure`, `approval_status`, `qualifier`, `last_modified`, plus location fields usable as filters (`site_type_code`, ...). The feature `id` "is not stable over time". |
+| 3 | `API/ogcapi/v1/collections/daily/items?f=json&bbox=-125,42,-121,46&parameter_code=00060&statistic_id=00003&time=2026-09-20&limit=10000` | 200, 223 features (every site type), 0.9 s, 150 KB. `time` = `"2026-09-20"`, `value` a string, `approval_status` `"Provisional"`, `qualifier` null or `["EQUIP"]`/`["ESTIMATED"]`, one null value, two negative values (reverse flow). No `X-RateLimit-*` headers. |
+| 4 | `API/ogcapi/v1?f=json` | 307 to an `http://` URL. The lane never requests the landing page. |
+| 5 | `API/ogcapi/v1/?f=json` | 200, the landing page (OpenAPI link). |
+| 6 | `API/ogcapi/v1/openapi?f=json` | 200. `limit` maximum 50,000 (default 10). Security schemes `ApiKeyQuery` (`api_key`) and `ApiKeyHeader`: "Providing your API key gives you higher rate limits". A 429 body is `OVER_RATE_LIMIT`. `approval_status` enum: `Provisional`, `Approved`. |
+| 7 | `API/signup/` | 200. The key goes in the `api_key` query parameter or the `X-Api-Key` header; "Different APIs have different limits for use with and without keys". |
+| 8 | `API/docs/ogcapi/` | 200, the API guide (no limit numbers). |
+| 9 | `API/docs/ogcapi/keys/` | 200. Keys are managed by api.data.gov; limits are reported in `X-RateLimit-Limit` / `X-RateLimit-Remaining` response headers. |
+| 10 | `API/docs/ogcapi/efficiency/` | 200. Advises `properties=` to shrink responses. |
+| 11 | `API/ogcapi/v1/collections/daily/items?f=json&limit=1&monitoring_location_id=USGS-14105700&parameter_code=00060&statistic_id=00003&time=2026-09-20`, header `X-Api-Key: DEMO_KEY` (the public demo key) | 200, and still no `X-RateLimit-*` headers. |
+| 12 | `API/ogcapi/v1/collections/time-series-metadata/items?f=json&limit=100&skipGeometry=true&parameter_code=00060&statistic_id=00003&monitoring_location_id=USGS-14105700,USGS-12340500,USGS-13206000,USGS-14211720,USGS-12134500,USGS-14153500,USGS-13317000,USGS-12422500,USGS-14191000,USGS-13213000` | 200, one "Daily Mean" "Primary" series per gauge with `begin`/`end` (table below). |
+| 13 | `API/ogcapi/v1/collections/daily/items?f=json&bbox=-125,42,-121,46&parameter_code=00060&statistic_id=00003&site_type_code=ST&time=2026-09-14/2026-09-28&limit=50000` | 200, 2,895 features over 209 stream sites, 1.9 MB, 2.3 s. The date interval includes both ends. Per day 203-209 values; **2026-09-28 already had 4 values at 00:21 UTC on 09-29 (17:21 PDT on 09-28), while that local day was still running.** |
+| 14 | `API/.../daily/items?f=json&limit=1000&skipGeometry=true&parameter_code=00060&statistic_id=00003&time=1990-09-29/1990-10-01&monitoring_location_id=` (the 10 gauges) | 200, 30 rows, every one `Approved`: all 10 gauges serve the floor day 1990-09-30. |
+| 15 | `API/.../daily/items?f=json&limit=100&skipGeometry=true&parameter_code=00060&statistic_id=00003&time=1878-05-30/1878-06-03&monitoring_location_id=USGS-14105700` | 200, 3 rows from 1878-06-01 (373,000 cfs). |
+| 16-22 | request 13's shape with `time=2026-09-20` for the other seven tiles | 200 each, 0.8-2.5 s (table below). |
+| 23-30 | the same for all eight tiles with `time=1990-09-30` | 200 each, 0.6-4.9 s. |
+| 31 | request 16's shape for tile `-125,42,-121,46` with `limit=100` | 200, 100 features and a `next` link carrying `cursor=...`: paging is by cursor, not offset, and no `numberMatched` is returned. |
+| 32 | `API/.../daily/items?f=json&limit=1000&skipGeometry=true&parameter_code=00060&statistic_id=00003&time=2026-09-20/2026-09-24&monitoring_location_id=` (the 10 gauges) | 200, 50 rows. |
+| 33 | `https://waterservices.usgs.gov/nwis/dv/?format=json&sites=14105700,12340500,13206000,14211720,12134500,14153500,13317000,12422500,14191000,13213000&parameterCd=00060&statCd=00003&startDT=2026-09-20&endDT=2026-09-24` | 200, 50 rows, `dateTime` like `2026-09-20T00:00:00.000`. **Named-day check: 50 of 50 (site, `time` prefix, value) equal request 32.** |
+| 34 | `API/.../daily/items?f=json&bbox=-113,46,-111,49&parameter_code=00060&statistic_id=00003&site_type_code=ST&time=2026-08-20/2026-09-19&limit=50000&properties=time_series_id,monitoring_location_id,parameter_code,statistic_id,time,value,unit_of_measure,approval_status,qualifier` | 200, 1,488 features over 31 days, 903 KB, 6.7 s. `properties=` works and geometry still arrives. |
+| 35 | `API/ogcapi/v1/collections/monitoring-locations/items?f=json&bbox=-113,46,-111,49&site_type_code=ST&limit=50000&skipGeometry=true&properties=monitoring_location_name,time_zone_abbreviation,uses_daylight_savings` | 200, 877 stream sites, 250 KB; feature `id` is the `monitoring_location_id`; every site `MST`, DST `Y`. Every gauge of request 34 is among them. |
+
+**Stream sites (`site_type_code=ST`) per tile**, the 8-tile layout of the region's camera envelope:
+
+| tile | 2026-09-20 | 1990-09-30 |
+|---|---|---|
+| -125,42,-121,46 | 209 | 186 |
+| -121,42,-117,46 | 25 | 51 |
+| -117,42,-113,46 | 109 | 112 |
+| -113,42,-111,46 | 88 | 71 |
+| -125,46,-121,49 | 162 | 125 |
+| -121,46,-117,49 | 70 | 56 |
+| -117,46,-113,49 | 82 | 85 |
+| -113,46,-111,49 | 48 | 29 |
+| total | 793 | 715 |
+
+**Earliest daily mean per probed gauge** (time-series-metadata `begin`):
+
+| gauge | earliest day |
+|---|---|
+| USGS-14105700 Columbia R at The Dalles | 1878-06-01 (request 15 confirms the value) |
+| USGS-12422500 Spokane R at Spokane | 1891-04-01 |
+| USGS-14191000 Willamette R at Salem | 1909-10-01 |
+| USGS-13317000 Salmon R at White Bird | 1910-09-01 |
+| USGS-12134500 Skykomish R near Gold Bar | 1928-10-01 |
+| USGS-12340500 Clark Fork above Missoula | 1929-03-01 |
+| USGS-13206000 Boise R at Glenwood Bridge | 1938-03-23 |
+| USGS-14153500 Coast Fork Willamette R | 1939-01-01 |
+| USGS-13213000 Boise R near Parma | 1971-08-26 |
+| USGS-14211720 Willamette R at Portland | 1972-10-01 |
+
+**Findings.**
+
+- **Endpoint:** `GET /ogcapi/v1/collections/daily/items` with `parameter_code=00060`,
+  `statistic_id=00003`, `site_type_code=ST`, `bbox`, `time=<first>/<last>` (date-only, both ends
+  included), `limit` up to 50,000, optional `properties=`. Names: `/ogcapi/v1/collections/monitoring-locations/items`.
+- **Key:** NOT required. Every probe answered keyless. A key (api.data.gov) only raises the rate limit,
+  on the same host, sent as `api_key` or `X-Api-Key`.
+- **Rate limits:** unpublished for keyless use. No probe, keyless or `DEMO_KEY`, returned
+  `X-RateLimit-*` headers, and 35 requests in about 7 minutes drew no 429. A 429 is the only signal the
+  lane will get.
+- **Paging:** cursor-based `next` link. The lane sizes each unit to fit one page and refuses a `next`
+  link rather than paging (section 8.2).
+- **Time field:** `time` is a date-only `YYYY-MM-DD` in every one of about 9,000 features seen. The
+  named day is that string's prefix, verbatim. Zone: time-series-metadata `begin`/`end` are the UTC
+  instants of the site's local midnight **with daylight saving** (a Pacific site's `begin` in January is
+  `08:00Z`, its `end` in September `07:00Z`). That disagrees with the legacy claim that daily values are
+  computed over the site's standard-time day year-round (`ingest/usgs_nwis.py::site_zone_offset`). P4
+  cannot tell whether the metadata or the computation window differs; the named day does not depend on
+  it.
+- **Approval:** `approval_status` is `Provisional` or `Approved`, verbatim per value. Recent days are
+  provisional; 1990 days are approved.
+- **History:** far deeper than the floor. All 10 gauges serve 1990-09-30; the deepest starts 1878-06-01.
+  715 stream sites report on the floor day. **The 1990-09-30 floor is not lowered** (no A14 row needed).
+- **Named-day acceptance (spec §7a):** the prefix day equals USGS's own day label, and the value equals
+  legacy NWIS `dv`, for 10 gauges x 5 days (requests 32-33).
+- **Publication lag:** a few gauges publish a mean for a local day still in progress, and the last
+  modifications to the previous local day land up to about 13 hours after it ends. The lane's lag is 2
+  UTC days, and every forward fire re-asks 14 days (section 8.2).
+
+### 8.2 The lane
+
+- **Units.** Per tile (the 8 tiles of the region's `default_camera_envelope` at 4 degrees, identical to
+  the legacy NWIS layout): one daily-values unit per run of at most 31 consecutive owed days, plus one
+  monitoring-locations unit per tile for names and time zones. A forward turn is 16 requests plus 16 for
+  its revision block (cap 32); a gap-fill turn of 366 days is 12 x 8 + 8 = 104 (cap 112).
+- **A tile that stays down** is unwritten for its gauges only (spec §7a): a tile is whole when both its
+  units answered, the whole tiles are written as a short day (`present_units` of `expected_units` = the
+  planned tiles), the day's `unwritten` entry names the failed units, the next fuller answer is
+  `more_units`, and a later shorter answer never replaces a fuller day (`fewer_units`). A single feature
+  the contract cannot read is dropped alone and counted (`rows_dropped_by_reason.rejected_feature`); only
+  a `next` link or a body that is no FeatureCollection refuses a tile's page.
+- **Named day:** `ingest/usgs_water_data.py::publisher_named_day(time)` =
+  `date.fromisoformat(time[:10])`, the legacy validator's rule restated (a strategy may not import
+  `pipeline/validation`); a test holds the two equal. Never a UTC window, never convert-then-truncate.
+- **Identity:** `monitoring_location_id:time:statistic_id`, the base rung's grain. A gauge on a tile
+  edge is served by both tiles; identical copies collapse, and two different values under one identity
+  are dropped, logged (`water_gauges_daily_identity_conflict`) and counted in the turn report
+  (`rows_dropped_by_reason.identity_conflict`), never guessed.
+- **Rows:** the legacy stream's fourteen columns (so one web decoder reads both) plus
+  `monitoring_location_id`, `source_time` (verbatim), `statistic_id`, `approval_status`, `qualifier`,
+  `time_series_id`. A served null or the -999999 sentinel drops the row, as the legacy DV walk did.
+  `observed_at` is the named day stamped at the site's standard-time midnight (the legacy DV
+  convention; `PDT`/`MDT` name their zone's standard offset); a site with no names record or an unknown
+  zone takes the offset most of the day's sites name (PNW `-08:00`), never UTC midnight. Nothing
+  derives a day from it.
+- **Rewrites (S11):** the day's source digest covers every row fact except the retrieval instant, so a
+  value or approval change (Provisional to Approved) rewrites the day, and a database refresh (new
+  feature UUIDs) does not. `partial_day = "write_and_recheck"`: every forward fire re-asks its 14 days.
+- **Late approvals (S11):** `[days] revision_window_days = 550`, `revision_days_per_turn = 31`. Every
+  forward fire also re-asks one 31-day block of PUBLISHED days behind its window
+  (`pipeline/runner/windows.py::revision_block`), each block once every 19 fires, so a Provisional day is
+  rewritten Approved within 19 days of USGS approving it, for 18 months after the day.
+- **History re-pull:** the gap-fill, oldest first from `[days] floor = 1990-09-30`
+  (`lane_registry.py::_MEASURED_COMPLETE_HISTORY_FLOORS["water-gauges"]`), 366 days a turn, four fires a
+  UTC day once enabled: about 36 turns, 9 days. Registering the stream moved
+  `CALENDAR_HISTORY_FLOOR` to 1990-09-30 (A19): the calendar's next version carries 1990-09-30 to
+  2000-10-31.
+
+### 8.3 The web switch
+
+`src/lib/water-gauges-stream.ts::WATER_GAUGES_STREAM` is the one constant every served surface reads:
+the reader (`parquet-trpc-readers/water-gauges.ts`), the slider capability entry and its floor
+(`parquet-slider-capabilities.ts`), `layer-registry.ts::PLATFORM_LAYERS.water.warehouseLayerName`
+(CA5), the attribution row (`parquet-trpc-readers/shared.ts::LANE_ATTRIBUTIONS`), the about page's
+source term, `alert-engine.ts::checkStreamflowAlerts`'s `warehouse:<stream>` source, and the gauge
+labels in `WaterDetails.tsx` and `WaterLayer.tsx`. It names `water-gauges` today. The reader already
+decodes the daily stream (`readWaterGaugeStream`), and its current-day read serves the newest published
+daily mean under that mean's own day, because a daily mean for today never exists. `hover-fields.ts`
+names map layer ids, not the stream, so it is unchanged. The UI layer key stays `water-gauges`.
+
+### 8.4 Gates (owner)
+
+- **G2:** no key is needed (8.1). If the owner wants the higher limit for the re-pull, it takes one
+  code change first: `ingest/provider_client.py` sends a key only to a `customer_host` today, and this
+  provider has one host. Send it as the `X-Api-Key` header (never a query parameter, so it cannot reach
+  a logged URL), then declare `api_key_env = "USGS_WATER_DATA_API_KEY"`.
+- **G3:** one commit sets `enabled = true`, `gap_fill_enabled = true` and
+  `gap_fill_enabled_at_gate = "G3"` in the lane TOML and adds `water-gauges-daily` to
+  `tests/lane_config/test_lane_toml_contract.py::GAP_FILL_ENABLED_LANES`; sweep, receipt, push. From
+  then on the forward cron sends 32 keyless requests a day and the gap-fill 104 a fire, four fires a
+  day, until the re-pull reaches the edge (about 9 days).
+- **G4:** after every validation row (history depth included): flip `WATER_GAUGES_STREAM` and
+  `agent/surfaces.py::WATER_GAUGES_SERVED_STREAM` together, move the pinned web test rows (the reader's
+  `layer`/attribution rows and the slider's `water-gauges` rows) with them, re-bind the manifest's
+  `water-gauges` layer from `usgs_nwis` to `usgs_water_data` in both `foundation/region/pnw.json` and
+  `src/lib/region/pnw.ts`, then pause `water-gauges-direct-forward` per CA18.
+
+### 8.5 Known residuals
+
+- **Approvals older than 18 months.** The revision block reaches 550 days behind the edge. A day the
+  gap-fill first writes older than that is written with whatever approval USGS serves then (1990s days
+  are all Approved, P4 request 14); a re-approval of such a day is not picked up.
+- **The low-flow alert has nothing to fire on.** `checkStreamflowAlerts` keys on
+  `condition === "critically_low"`, and neither stream carries a percentile or a condition.
+- **Keyless rate limit unknown.** A gap-fill turn sends 104 requests two at a time; a 429 falls to the
+  runner's 20/40/80/160 s series and then `deferred_quota`.
+- **Coverage shows the new stream empty.** The registration makes `water-gauges-daily` censused, so
+  coverage reports reflect its unfilled 1990-2026 range until G3's re-pull runs.
+- **Other regions.** The lane's source coverage is US-only, so a deployment of this image for a non-US
+  region (`kenya_highlands`) quarantines it at load: one fingerprinted `lane_quarantined` incident there.
+
+### 8.6 Deviations from the plan (Phase 3)
+
+- **The manifest binding is deferred to G4** (plan: "the manifest binding `usgs_water_data`"). A second
+  `water-gauges` binding in `foundation/region/pnw.json` / `src/lib/region/pnw.ts` would break
+  `src/__tests__/region/manifest-parity.test.ts` and make `region_layer_availability` report whichever
+  binding is listed last, a visible change before G4. G4's checklist (8.4) re-binds instead.
+- **`ingest/AGENTS.md` has no `usgs_water_data.py` section.** It is a shared file whose co-owner chain does
+  not include w3; the module's rationale lives in `pipeline/lanes/water_gauges/AGENTS.md`, and the
+  coordinator adds the pointer row.
+- **New file outside the plan's list:** `src/lib/water-gauges-stream.ts`, so the stream constant is
+  importable from client and server code (the reader module is server-only).
+- **Review fixes outside the slice's owns list** (Phase 3 review, 2026-09-28): the runner's partial-day
+  settle, `fewer_units`, the rolling revision and `rows_dropped_by_reason`
+  (`pipeline/runner/{contract,turn,windows,writer}.py`, `foundation/lane_config/models.py`), the derived
+  CA8 repair exclusion for config streams (`execution/gap_repair_contract.py`), and the tests that
+  pinned the pre-lane provider set, census count and tick results.

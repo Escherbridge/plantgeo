@@ -89,6 +89,11 @@ AGENT_SURFACE_NAMES: Final = tuple(
     )
 )
 
+#: CA11 (config-driven ingestion spec §4.8.9): the stream the `water-gauges` surface is served from.
+#: G4 flips it to "water-gauges-daily" in the same commit as the web's one switch,
+#: `src/lib/water-gauges-stream.ts::WATER_GAUGES_STREAM`; until then the legacy stream serves.
+WATER_GAUGES_SERVED_STREAM: Final = "water-gauges"
+
 # --- Which Parquet lanes serve each surface ----------------------------------------
 #
 # MIRRORS `src/lib/server/services/parquet-slider-capabilities.ts`, whose
@@ -115,7 +120,7 @@ SURFACE_PARQUET_LANES: Final[dict[str, tuple[str, ...]]] = {
     "soil-survey": ("soil-survey",),
     "vegetation": ("vegetation",),
     "watersheds": ("watersheds",),
-    "water-gauges": ("water-gauges",),
+    "water-gauges": (WATER_GAUGES_SERVED_STREAM,),
     "weather-observations": ("weather-observations",),
     "fire-risk": ("fire-risk",),
     "weather-forecast": ("weather-forecast",),

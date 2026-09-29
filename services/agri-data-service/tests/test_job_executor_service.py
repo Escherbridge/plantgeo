@@ -17,6 +17,10 @@ from agri_data_service.execution.job_executor_service import (
     parse_activation,
     scheduled_bucket,
 )
+from agri_data_service.execution.lane_catalogue import GAP_FILL_SUFFIX
+from agri_data_service.foundation.lane_config import load_lane_configs
+from agri_data_service.foundation.region import load_region
+from tests.lane_config.builders import REAL_LANES_DIRECTORY
 
 EXPECTED_SCHEDULES = {
     "fire-detections-direct-forward": "15 * * * *",
@@ -70,12 +74,23 @@ def test_unknown_lane_is_quarantined() -> None:
     assert not activation.is_active("retired-lane")
 
 
+def _config_definition_ids() -> set[str]:
+    """Every definition the real `lanes/` tree dispatches: each config lane, and its gap-fill when it declares one.
+
+    Derived from the TOMLs, never pinned, so a disabled lane TOML (spec §4.4) needs no edit here.
+    """
+    lanes = load_lane_configs(REAL_LANES_DIRECTORY, load_region()).lanes.values()
+    config = [lane for lane in lanes if lane.executor == "config"]
+    gap_fills = {f"{lane.id}{GAP_FILL_SUFFIX}" for lane in config if lane.schedule.gap_fill_cron is not None}
+    return {lane.id for lane in config} | gap_fills
+
+
 def test_inventory_exposes_only_the_allow_list_the_kill_switch_and_current_lanes() -> None:
     inventory = executor_inventory(parse_activation({}))
     assert inventory["activation_variables"] == [ACTIVE_LANES_VARIABLE, STOPPED_LANES_VARIABLE]
     rows = inventory["lanes"]
     assert isinstance(rows, list)
-    assert {row["lane_id"] for row in rows} == set(EXPECTED_SCHEDULES)
+    assert {row["lane_id"] for row in rows} == set(EXPECTED_SCHEDULES) | _config_definition_ids()
 
 
 def test_the_soil_lane_opens_four_six_hourly_buckets_a_day_at_its_phase() -> None:

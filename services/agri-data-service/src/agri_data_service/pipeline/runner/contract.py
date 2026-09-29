@@ -163,6 +163,8 @@ class Written:
     #: The day's own source digest (S11). `None` lets the runner digest the day's rows instead; a
     #: strategy whose rows carry a retrieval instant must set it, or every refetch reads as a revision.
     source_digest: str | None = None
+    #: Source rows the strategy dropped for this day, by reason; summed into the S5 `rows_dropped_by_reason`.
+    dropped_rows: Mapping[str, int] = field(default_factory=dict, hash=False)
 
     @property
     def partial(self) -> bool:
@@ -248,6 +250,8 @@ class DayContext:
     output_streams: tuple[str, ...] = ()
     #: A transform's inputs in precedence order (`inputs` order): input lane id -> its streams.
     input_streams: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    #: Every unit the runner planned covering this day, answered or not: the units a partial day is short of.
+    planned_units: tuple[SourceRequest, ...] = ()
 
     def later_published_day(self, stream: str) -> date | None:
         """The mirrored-past proof: the earliest later day this stream already publishes with values."""

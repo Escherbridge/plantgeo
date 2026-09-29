@@ -1558,3 +1558,42 @@ describe("region layer bindings on the capability payload", () => {
     expect(result.layerBindings).toEqual([]);
   });
 });
+
+/**
+ * The web half of the water cut-over is PREPARED behind `src/lib/water-gauges-stream.ts` and still
+ * names the legacy stream (every `water-gauges` row above). This is G4's flip, rehearsed: with the
+ * switch naming the daily stream, the capability, its floor and the registry's stream move together,
+ * and the toggle's manifest binding stays on the UI layer key.
+ */
+describe("the prepared water stream switch (spec 7a, G4)", () => {
+  it("moves the water capability, its floor and the registry's stream together, and keeps the binding", async () => {
+    vi.resetModules();
+    vi.doMock("@/lib/water-gauges-stream", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("@/lib/water-gauges-stream")>();
+      return {
+        ...actual,
+        WATER_GAUGES_STREAM: actual.DAILY_WATER_GAUGES_STREAM,
+        WATER_GAUGES_STREAM_FACT: actual.WATER_GAUGES_STREAM_FACTS[actual.DAILY_WATER_GAUGES_STREAM],
+      };
+    });
+    try {
+      const flipped = await import("@/lib/server/services/parquet-slider-capabilities");
+      const registry = await import("@/lib/map/layer-registry");
+      const binding = await import("@/lib/map/layer-region-binding");
+
+      const water = flipped.PARQUET_CAPABILITY_CONTRACTS.find((contract) =>
+        contract.parquetLanes.some((lane) => lane.startsWith("water-gauges"))
+      );
+      expect(water).toMatchObject({
+        layerName: "water-gauges-daily",
+        parquetLanes: ["water-gauges-daily"],
+        selectableHistoryFloor: "1990-09-30",
+      });
+      expect(registry.LAYER_REGISTRY.water.warehouseLayerName).toBe("water-gauges-daily");
+      expect(binding.regionLayerSlugForToggle("water")).toBe("water-gauges");
+    } finally {
+      vi.doUnmock("@/lib/water-gauges-stream");
+      vi.resetModules();
+    }
+  });
+});

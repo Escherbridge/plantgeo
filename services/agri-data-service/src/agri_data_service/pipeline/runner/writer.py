@@ -59,6 +59,7 @@ RewriteReason = Literal[
     "absent",
     "digest_unchanged",
     "no_more_units",
+    "fewer_units",
     "absence_unchanged",
     "data_never_retracted_by_absence",
 ]
@@ -121,7 +122,8 @@ def decide_rewrite(  # noqa: PLR0911, PLR0913 - one return per S11 row; the cens
 
     A governed absence never overwrites data (fail-closed), and data always retracts a disproven
     absence. A data day with no runner receipt (written before cut-over) is rewritten once, which
-    is how it gains one.
+    is how it gains one. A `write_and_recheck` answer with fewer units than the written day never
+    replaces it: a tile that failed this turn must not erase the gauges it served last turn.
     """
     if isinstance(settlement, Absent):
         if status == "data":
@@ -140,6 +142,8 @@ def decide_rewrite(  # noqa: PLR0911, PLR0913 - one return per S11 row; the cens
     if partial_day == "write_and_recheck" and _is_partial(receipt):
         previous = receipt.present_units or 0
         return RewriteDecision("more_units" if settlement.present_units > previous else "no_more_units")
+    if partial_day == "write_and_recheck" and settlement.present_units < (receipt.present_units or 0):
+        return RewriteDecision("fewer_units")
     return RewriteDecision("digest_changed" if source_digest != receipt.source_digest else "digest_unchanged")
 
 

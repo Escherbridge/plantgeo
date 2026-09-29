@@ -126,13 +126,17 @@ def ledger(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
 
 
 async def _plan(release: ProcessStartRelease | None) -> tuple[list[object], list[object]]:
+    """The drought lane's tick results and due buckets; the lane TOMLs' config definitions tick beside it."""
     results, due = await job_executor_service._plan_active_lanes(
         object(),  # type: ignore[arg-type]
         ACTIVE,
         NOW,
         breaker_release=release,
     )
-    return list(results), list(due)
+    return (
+        [result for result in results if result.lane_id == DROUGHT_DIRECT_LANE_ID],
+        [candidate for candidate in due if candidate.spec.lane_id == DROUGHT_DIRECT_LANE_ID],
+    )
 
 
 # --- breaker release on process start -------------------------------------------------------------

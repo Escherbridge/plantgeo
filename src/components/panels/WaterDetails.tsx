@@ -19,6 +19,7 @@ import {
   presentParquetWater,
   type ParquetBrowserReaderResult,
 } from "@/lib/environmental/parquet-presentation";
+import { WATER_GAUGES_STREAM_FACT } from "@/lib/water-gauges-stream";
 
 interface WaterDetailsProps {
   /** The map's viewport, from the one `useViewportBounds()` derivation LayerManager reads. */
@@ -27,7 +28,8 @@ interface WaterDetailsProps {
   zoom: number;
 }
 
-// The gauge layer's geo.layers name lives in the layer registry ("water" -> "water-gauges").
+// The gauge layer's served stream lives in the layer registry ("water" -> WATER_GAUGES_STREAM,
+// `src/lib/water-gauges-stream.ts`); the UI key stays "water".
 // Drought has no geo.layers row, so the registry gives it none and it makes no claim.
 
 /** Rows rendered in the watershed list; the header states the full count beside it. */
@@ -318,9 +320,11 @@ export function WaterDetails({ bbox, zoom }: WaterDetailsProps) {
                         <span className="text-[hsl(var(--foreground))] truncate flex-1">
                           {g.siteName || `USGS ${g.siteNo}`}
                         </span>
-                        {/* The discharge NWIS reported, which is the one number this feed
-                            actually carries. The chip that stood here read "Unknown" on every
-                            gauge in every view, forever -- see GAUGE_READING_COLORS. */}
+                        {/* The discharge the served stream reports (an instantaneous reading or a
+                            daily mean; `WATER_GAUGES_STREAM_FACT.readingUnit` says which), the one
+                            number this feed actually carries. The chip that stood here read
+                            "Unknown" on every gauge in every view, forever -- see
+                            GAUGE_READING_COLORS. */}
                         <span
                           className={`shrink-0 tabular-nums ${
                             g.flowCfs === null
@@ -328,7 +332,9 @@ export function WaterDetails({ bbox, zoom }: WaterDetailsProps) {
                               : "text-[hsl(var(--foreground))] font-medium"
                           }`}
                         >
-                          {g.flowCfs === null ? "not reported" : `${formatCfs(g.flowCfs)} cfs`}
+                          {g.flowCfs === null
+                            ? "not reported"
+                            : `${formatCfs(g.flowCfs)} ${WATER_GAUGES_STREAM_FACT.readingUnit}`}
                         </span>
                       </div>
                     ))}

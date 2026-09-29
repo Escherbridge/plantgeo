@@ -168,6 +168,6 @@ def test_a_provider_file_breaking_its_contract_fails_to_load_and_quarantines_its
 
     config = load_lane_configs(directory, load_region("pnw"))
 
-    assert set(config.providers) == {"open-meteo"}
+    assert set(config.providers) == {"open-meteo", "usgs-water-data"}
     assert reason_fragment in " | ".join(config.provider_failures["nasa-power"].reasons)
     assert set(config.quarantined) == {"climate-nasa-power-direct-forward"}

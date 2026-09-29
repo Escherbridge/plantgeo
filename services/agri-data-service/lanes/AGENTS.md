@@ -14,8 +14,9 @@ the strategy module a lane names holds BEHAVIOUR. Schema and loader:
 | `AGENTS.md` | this file; not loaded | — |
 
 Only top-level `*.toml` files are lanes. `_providers/` holds `open-meteo.toml` (archive, forecast and
-historical-forecast, each with a keyed customer host; weighted; the paid monthly budget) and
-`nasa-power.toml` (keyless, unweighted, `time_standard = "UTC"`).
+historical-forecast, each with a keyed customer host; weighted; the paid monthly budget),
+`nasa-power.toml` (keyless, unweighted, `time_standard = "UTC"`) and `usgs-water-data.toml` (keyless,
+unweighted; the `daily` and `monitoring-locations` collections; `water-gauges-daily`, spec §7a).
 
 ## Rules a lane file must satisfy
 
@@ -32,6 +33,10 @@ tree is quarantined.
   when regional) must contain the region. No bbox, envelope or lat/lon anywhere in a lane file —
   footprints live in the region manifest.
 - `absence_recheck_days > publication_lag_days`.
+- `revision_window_days` (optional) `> absence_recheck_days`: each forward turn also re-asks one
+  `revision_days_per_turn` block of published days that far behind the edge, for revisions that land
+  after the forward window (USGS approvals). Cost: one more set of units per forward turn, so size
+  `forward_max_weighted_calls` for both. See `pipeline/runner/AGENTS.md` "Windows".
 - **Gap-fill and pruning ship off (S12).** Turning one on is a flip inside a named owner gate: set
   `gap_fill_enabled = true` with `gap_fill_enabled_at_gate = "G6"` (or `[pruning] enabled` with
   `enabled_at_gate`), and add the lane id to the pinned set in the contract test in the same commit.

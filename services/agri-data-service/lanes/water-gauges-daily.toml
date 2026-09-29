@@ -1,0 +1,69 @@
+# Water gauges, early lane (spec 7a; plan Phase 3): USGS Water Data daily MEAN discharge, parameter
+# 00060 statistic 00003, one row per gauge-day on the day the source names. Data only; behaviour is
+# pipeline/lanes/water_gauges/usgs_water_data.py. Authoring: lanes/AGENTS.md. Source facts:
+# docs/lanes/water-gauges.md "Source probe" (P4).
+#
+# DARK. enabled = false, so the executor never dispatches this lane (execution/lane_catalogue.py
+# LANE_DISABLED_REASON); the legacy water-gauges-direct-forward lane keeps serving. G3 (owner go)
+# flips enabled and gap_fill_enabled together, with gap_fill_enabled_at_gate = "G3" and the lane id
+# added to tests/lane_config/test_lane_toml_contract.py::GAP_FILL_ENABLED_LANES in the same commit.
+
+id = "water-gauges-daily"
+kind = "ingest"
+nature = "daily_series"
+enabled = false
+# A new id (S2 exception: it runs in parallel with the legacy lane), so it has no legacy spec.
+executor = "config"
+strategy = "water_gauges.usgs_water_data"
+
+[source]
+provider = "usgs-water-data"
+endpoint = "daily"
+coverage = "regional"
+iso_country_codes = ["US"]
+# P4: USGS-14105700 (Columbia River at The Dalles) serves a daily mean on 1878-06-01.
+history = { capability = "archive", earliest = "1878-06-01" }
+lifecycle = "active"
+
+[schedule]
+# Once a UTC day: a daily mean changes at most daily, and every fire re-asks the whole window.
+forward_cron = "20 13 * * *"
+# The DV re-pull to the floor runs as this lane's gap-fill, four fires a UTC day once G3 enables it.
+gap_fill_cron = "50 */6 * * *"
+gap_fill_enabled = false
+catch_up = "coalesce_latest"
+
+[days]
+floor = "1990-09-30"
+floor_basis = "lane_registry.py::_MEASURED_COMPLETE_HISTORY_FLOORS['water-gauges'] (spec 7a, N5); P4 2026-09-28: all 10 probed gauges serve 1990-09-30"
+# P4: the served day is the site-local day, and a few gauges publish a mean while that day is still
+# running; two UTC days back is a day every PNW site has finished.
+publication_lag_days = 2
+# write_and_recheck re-asks every window day each fire: provisional values and late gauges are
+# rewritten on a source-digest change (S11).
+absence_recheck_days = 14
+# A tile that stays down is unwritten for its gauges only: the whole tiles are written as a short
+# day (present/expected tiles), rewritten when more tiles answer, never replaced by fewer (S11).
+partial_day = "write_and_recheck"
+# S11 for late approvals: USGS approves a water year months after it ends, long after the 14-day
+# window. Every forward fire also re-asks one 31-day block of PUBLISHED days up to 550 days behind
+# the edge, each block once every 19 fires (pipeline/runner/windows.py::revision_block), and
+# rewrites a day on a digest change (Provisional -> Approved). Holes stay gap-fill's.
+revision_window_days = 550
+revision_days_per_turn = 31
+
+[budget]
+# Logical requests (unweighted provider): 8 tiles x (1 daily-values chunk + 1 monitoring-locations)
+# for the forward window, and the same again for the revision block.
+forward_max_weighted_calls = 32
+# 366 days = 12 chunks of 31 days x 8 tiles + 8 monitoring-locations units = 104.
+gap_fill_max_weighted_calls = 112
+# Gentle on an unpublished keyless rate limit (P4).
+max_concurrency = 2
+turn_timeout_seconds = 1800
+
+[[streams]]
+slug = "water-gauges-daily"
+history_floor = "1990-09-30"
+complete_history_floor = "1990-09-30"
+floor_basis = "lane_registry.py::_MEASURED_COMPLETE_HISTORY_FLOORS['water-gauges'] (spec 7a, N5); P4 2026-09-28: all 10 probed gauges serve 1990-09-30"

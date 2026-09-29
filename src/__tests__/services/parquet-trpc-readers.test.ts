@@ -45,6 +45,8 @@ import {
   getParquetWatersheds,
   getParquetWeatherObservations,
 } from "@/lib/server/services/parquet-trpc-readers";
+import { readWaterGaugeStream } from "@/lib/server/services/parquet-trpc-readers/water-gauges";
+import { DAILY_WATER_GAUGES_STREAM } from "@/lib/water-gauges-stream";
 
 const mockedDay = vi.mocked(getParquetLayerDay);
 const mockedWindow = vi.mocked(getParquetLayerDayWindow);
@@ -107,6 +109,30 @@ function waterRow() {
     geometry_linked: true,
     data_available_at: "2026-08-20T18:30:00Z",
     ingested_at: "2026-08-20T18:31:00Z",
+  };
+}
+
+/** A `water-gauges-daily` row: the legacy columns plus the daily-values ones, stamped at MST midnight. */
+function dailyWaterRow(day = "2026-08-19", flowCfs = 410) {
+  return {
+    ...waterRow(),
+    site_number: "13206000",
+    observed_at: `${day}T07:00:00Z`,
+    observed_day: day,
+    site_name: "BOISE RIVER AT GLENWOOD BRIDGE NR BOISE ID",
+    flow_cfs: flowCfs,
+    percentile: null,
+    condition: null,
+    trend: null,
+    source: "USGS Water Data",
+    geometry_linked: false,
+    data_available_at: null,
+    monitoring_location_id: "USGS-13206000",
+    source_time: day,
+    statistic_id: "00003",
+    approval_status: "Provisional",
+    qualifier: null,
+    time_series_id: "328c364edc1f45338d62574e452e1c26",
   };
 }
 
@@ -1006,6 +1032,63 @@ describe("lane day and release semantics", () => {
       requestedDay: "2026-08-20",
       servedDay: "2026-08-19",
       data: [{ observedDay: "2026-08-19" }],
+    });
+  });
+
+  /**
+   * The web switch is PREPARED behind `src/lib/water-gauges-stream.ts` and still names the legacy
+   * stream (the rows above). These two drive the stream G4 flips to through the same reader.
+   */
+  it("reads the prepared daily stream's extra columns under that stream's own attribution", async () => {
+    mockedDay.mockResolvedValue(published("2026-08-19", [dailyWaterRow()]));
+
+    const result = await readWaterGaugeStream(DAILY_WATER_GAUGES_STREAM, {
+      bbox: "-125,42,-111,49",
+      date: "2026-08-19",
+      mapZoom: 13,
+      nowMs: Date.parse("2026-08-20T20:00:00Z"),
+    });
+
+    expect(mockedDay).toHaveBeenCalledWith(
+      expect.objectContaining({ layer: "water-gauges-daily", day: "2026-08-19", zoomTier: 13 })
+    );
+    expect(result).toMatchObject({
+      state: "ready",
+      servedDay: "2026-08-19",
+      data: [{ siteNumber: "13206000", flowCfs: 410, observedDay: "2026-08-19" }],
+    });
+    expect(readyData(result)[0].support.provenance).toMatchObject({
+      sourceLayer: "water-gauges-daily",
+      attribution: "U.S. Geological Survey Water Data daily values",
+    });
+  });
+
+  it("serves the daily stream's newest published mean for today, labelled with that mean's own day", async () => {
+    mockedWindow.mockResolvedValue([
+      published("2026-08-17", [dailyWaterRow("2026-08-17", 400)]),
+      published("2026-08-18", [dailyWaterRow("2026-08-18", 420)]),
+      { state: "day_not_written", requestedDay: "2026-08-19" },
+      { state: "day_not_written", requestedDay: "2026-08-20" },
+    ]);
+
+    const result = await readWaterGaugeStream(DAILY_WATER_GAUGES_STREAM, {
+      bbox: "-125,42,-111,49",
+      mapZoom: 13,
+      nowMs: Date.parse("2026-08-20T20:00:00Z"),
+    });
+
+    expect(mockedWindow).toHaveBeenCalledWith({
+      layer: "water-gauges-daily",
+      firstDay: "2026-08-17",
+      lastDay: "2026-08-20",
+      zoomTier: 13,
+      bbox: "-125,42,-111,49",
+    });
+    expect(result).toMatchObject({
+      state: "ready",
+      requestedDay: "2026-08-20",
+      servedDay: "2026-08-18",
+      data: [{ flowCfs: 420, observedDay: "2026-08-18" }],
     });
   });
 

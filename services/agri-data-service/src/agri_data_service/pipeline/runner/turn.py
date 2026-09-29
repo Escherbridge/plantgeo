@@ -69,6 +69,7 @@ from agri_data_service.pipeline.runner.windows import (
     plan_forward,
     plan_gap_fill,
     probe_window,
+    revision_block,
     transform_dirty_days,
 )
 from agri_data_service.pipeline.runner.writer import (
@@ -114,6 +115,8 @@ _FAILURE_PRECEDENCE: Final[tuple[UnwrittenReason, ...]] = (
     "deferred_quota",
     "deferred_budget",
 )
+#: A partial `write_and_recheck` day's `unwritten` detail names at most this many of its unanswered units.
+_DETAIL_UNIT_LIMIT: Final = 4
 #: S19 + O-R3-1: the S5 reason an owed day held by the probe gate is reported under.
 _GATE_REASON: Final[Mapping[str, UnwrittenReason]] = {
     "newer_than_probed_edge": "unsettled",
@@ -209,10 +212,14 @@ class _TurnTally:
     units_planned: int = 0
     units_sent: int = 0
     days_rechecked: int = 0
+    #: Published days the rolling revision re-asked (S11: late approvals and revisions).
+    days_revised: int = 0
     pruned_stream_days: int = 0
     availability_retried: int = 0
     streams_written: Counter[str] = field(default_factory=Counter)
     rewrite_reasons: Counter[str] = field(default_factory=Counter)
+    #: Source rows strategies dropped, by reason (`Written.dropped_rows`).
+    rows_dropped_by_reason: Counter[str] = field(default_factory=Counter)
     fetch: FetchTally = field(default_factory=FetchTally)
 
     def add_write(self, stream: str, result: WriteResult) -> None:
@@ -304,6 +311,8 @@ class _Turn:
     edge: date | None = None
     edge_source: str | None = None
     window: DayRange | None = None
+    #: The published block this forward turn re-asked for S11 (`revision_block`), when the lane has one.
+    revision: DayRange | None = None
     checkpoint_restores: int = 0
     checkpoints_retained: int = 0
     republish: dict[str, object] | None = None
@@ -390,6 +399,10 @@ class _Turn:
             "days_ladder_owed": self.tally.days_ladder_owed,
             "ladder_repairs": self.tally.ladder_repairs,
             "days_rechecked": self.tally.days_rechecked,
+            "days_revised": self.tally.days_revised,
+            "revision_first": None if self.revision is None else self.revision.first.isoformat(),
+            "revision_last": None if self.revision is None else self.revision.last.isoformat(),
+            "rows_dropped_by_reason": dict(sorted(self.tally.rows_dropped_by_reason.items())),
             "rows_written": self.tally.rows_written,
             "rows_built": self.tally.rows_built,
             "partitions_written": self.tally.partitions_written,
@@ -551,8 +564,27 @@ class _Turn:
         self.tally.days_unchanged += len(plan.unchanged_absences)
         recheck_within = None if self.spec.compare else window
         exit_code = await self._fan_out_and_publish(plan.fan_out, census, recheck_within=recheck_within)
+        if exit_code == EXIT_COMPLETED:
+            await self._revise(window)
         await self._repair_ladders(census)
         return exit_code
+
+    async def _revise(self, window: DayRange) -> None:
+        """S11 rolling revision: re-ask one block of published days behind the forward window (`revision_block`).
+
+        Only days every stream publishes are re-asked (holes are gap-fill's); a digest change rewrites one.
+        It spends what the forward fan-out left of the cap, and never reports a day unwritten.
+        """
+        days = self.spec.lane.days
+        if days is None or self.spec.compare:
+            return
+        block = revision_block(days, window, today=self._today)
+        if block is None:
+            return
+        self.revision = block
+        census = self._census(self.streams, block)
+        settled = await self._fan_out(census.lane_data_days(), census, probe=None, revise=True)
+        await self._publish(settled, census, force=False)
 
     async def _gap_fill(self) -> int:
         """D3: the census holes before the forward window, oldest first, capped (S12: disabled by default)."""
@@ -605,9 +637,7 @@ class _Turn:
         self.window = DayRange(first=day, last=day)
         self.edge, self.edge_source = day, "probe"
         census = self._census(self.streams, self.window)
-        settled = await self._fan_out(
-            (day,), census, requests=None, probe=ProviderEdge(status="ok", window=ProbeWindow(day, day))
-        )
+        settled = await self._fan_out((day,), census, probe=ProviderEdge(status="ok", window=ProbeWindow(day, day)))
         if not settled or not isinstance(settled[0].settlement, Written):
             self.republish = {"refused": "source_did_not_answer_the_served_day", "day": day.isoformat()}
             return EXIT_CONFIGURATION_ERROR
@@ -663,8 +693,10 @@ class _Turn:
         self.probe = probe
         return probe
 
-    def _context(self, day: date, census: LaneCensus, probe: ProviderEdge | None) -> DayContext:
-        """What `settle` may know about `day`: the census the turn paid for, the receipts, the probe."""
+    def _context(
+        self, day: date, census: LaneCensus, probe: ProviderEdge | None, *, planned: Sequence[SourceRequest] = ()
+    ) -> DayContext:
+        """What `settle` may know about `day`: the census the turn paid for, the receipts, the probe, its units."""
         states: dict[str, StreamDayState] = {}
         for stream in self.streams:
             status = census.status(stream, day)
@@ -685,6 +717,7 @@ class _Turn:
             edge=probe,
             retention_floor=None if source is None else source.history.earliest,
             output_streams=self.streams,
+            planned_units=tuple(planned),
         )
 
     def _census_days(self, census: LaneCensus) -> tuple[Mapping[str, tuple[date, ...]], Mapping[str, tuple[date, ...]]]:
@@ -709,7 +742,7 @@ class _Turn:
         self, days: Sequence[date], census: LaneCensus, *, recheck_within: DayRange | None = None
     ) -> int:
         """Fan out `days`, settle them, write (or compare) the answers, and decide the exit."""
-        settled = await self._fan_out(days, census, requests=None, probe=self.probe, recheck_within=recheck_within)
+        settled = await self._fan_out(days, census, probe=self.probe, recheck_within=recheck_within)
         await self._publish(settled, census, force=False)
         fetch = self.tally.fetch
         answered_nothing = not fetch.units_fetched and not self.checkpoint_restores
@@ -722,26 +755,27 @@ class _Turn:
         days: Sequence[date],
         census: LaneCensus,
         *,
-        requests: Sequence[SourceRequest] | None,
         probe: ProviderEdge | None,
         recheck_within: DayRange | None = None,
+        revise: bool = False,
     ) -> list[_SettledDay]:
         """Plan units, restore checkpoints, take what the cap affords, fetch, and settle each day in order.
 
         With `recheck_within`, every published day a fetched unit also answered (a 14-day request
         answers 14 days) is settled too, at no extra cost: the S11 digest rewrite of ERA5T revisions.
-        Such a day is already written, so nothing about it is ever reported unwritten.
+        Such a day is already written, so nothing about it is ever reported unwritten. With `revise`,
+        every day is such a published day (`_revise`), and one short of any unit is left as written.
         """
         strategy = self.ports.strategy
         if not days or not isinstance(strategy, IngestStrategy) or self.client is None or self.spec.provider is None:
             return []
         ordered = sorted(set(days))
-        self.tally.days_fanned_out += len(ordered)
-        planned = (
-            tuple(requests)
-            if requests is not None
-            else tuple(strategy.plan_requests(ordered, self.spec.lane, self.spec.region))
-        )
+        owe: _Owe = _record_nothing if revise else self.unwritten
+        if revise:
+            self.tally.days_revised += len(ordered)
+        else:
+            self.tally.days_fanned_out += len(ordered)
+        planned = tuple(strategy.plan_requests(ordered, self.spec.lane, self.spec.region))
         self.tally.units_planned += len(planned)
         units_by_day = {day: [request for request in planned if day in request.days] for day in ordered}
         plannable: list[date] = []
@@ -749,7 +783,7 @@ class _Turn:
             if units_by_day[day]:
                 plannable.append(day)
             else:
-                self.unwritten(day, "strategy_error", "plan_requests planned no unit covering this day")
+                owe(day, "strategy_error", "plan_requests planned no unit covering this day")
         checkpoints = TurnCheckpoints(
             store=self.ports.checkpoint_store,
             lane_id=self.spec.lane.id,
@@ -767,7 +801,7 @@ class _Turn:
                     restored[request.unit] = response
             selection = select_affordable_days(plannable, units_by_day, self.budget, free_units=frozenset(restored))
             for day in selection.deferred:
-                self.unwritten(day, "deferred_budget", f"the turn's {self.budget.cap} {self.budget.basis} cap")
+                owe(day, "deferred_budget", f"the turn's {self.budget.cap} {self.budget.basis} cap")
             fetcher = UnitFetcher(
                 strategy=strategy,
                 client=self.client,
@@ -788,22 +822,40 @@ class _Turn:
         self.checkpoints_retained += checkpoints.retained
         revisions = self._free_rechecks(planned, outcomes, census, recheck_within, exclude=set(ordered))
         units_by_day.update(revisions)
-        owed_days = dict.fromkeys(selection.selected, True) | dict.fromkeys(revisions, False)
-        settled: list[_SettledDay] = []
+        owed_days = dict.fromkeys(selection.selected, not revise) | dict.fromkeys(revisions, False)
         with self.phase("settle"):
-            for day, owed in sorted(owed_days.items()):
-                day_outcomes = [outcomes[request.unit] for request in units_by_day[day]]
-                failed = [outcome for outcome in day_outcomes if outcome.response is None]
-                if failed:
-                    worst = min(
-                        failed, key=lambda outcome: _FAILURE_PRECEDENCE.index(outcome.reason or "strategy_error")
-                    )
-                    self.unwritten(day, worst.reason or "strategy_error", worst.detail or "")
+            return self._settle_answered(owed_days, units_by_day, outcomes, census, probe)
+
+    def _settle_answered(
+        self,
+        owed_days: Mapping[date, bool],
+        units_by_day: Mapping[date, Sequence[SourceRequest]],
+        outcomes: Mapping[str, UnitOutcome],
+        census: LaneCensus,
+        probe: ProviderEdge | None,
+    ) -> list[_SettledDay]:
+        """Settle each fanned-out day in order; a day short of a unit is held, or settled partial (spec §7a).
+
+        A `write_and_recheck` owed day one of whose units failed settles from the units that answered; the
+        failed units are its `unwritten` entry (a tile that stays down is unwritten for its gauges only).
+        """
+        settled: list[_SettledDay] = []
+        for day, owed in sorted(owed_days.items()):
+            day_units = units_by_day[day]
+            day_outcomes = [outcomes[request.unit] for request in day_units]
+            failed = [outcome for outcome in day_outcomes if outcome.response is None]
+            responses = [outcome.response for outcome in day_outcomes if outcome.response is not None]
+            if failed:
+                worst = min(failed, key=lambda outcome: _FAILURE_PRECEDENCE.index(outcome.reason or "strategy_error"))
+                reason, detail = worst.reason or "strategy_error", worst.detail or ""
+                if not owed or not responses or self.partial_day != "write_and_recheck":
+                    if owed:
+                        self.unwritten(day, reason, detail)
                     continue
-                responses = [outcome.response for outcome in day_outcomes if outcome.response is not None]
-                answered = self._settle(day, responses, self._context(day, census, probe), owed=owed)
-                if answered is not None:
-                    settled.append(answered)
+                self.unwritten(day, reason, _short_day_detail(failed, planned=len(day_outcomes), detail=detail))
+            answered = self._settle(day, responses, self._context(day, census, probe, planned=day_units), owed=owed)
+            if answered is not None:
+                settled.append(answered)
         return settled
 
     def _restorable(self, request: SourceRequest, census: LaneCensus, owed: frozenset[date]) -> bool:
@@ -873,6 +925,7 @@ class _Turn:
         if settlement.partial and self.partial_day == "refuse":
             owe(day, "refused_partial", f"{settlement.present_units} of {settlement.expected_units} units present")
             return None
+        self.tally.rows_dropped_by_reason.update(settlement.dropped_rows)
         try:
             produced = strategy.rows(day, responses)
         except Exception as error:
@@ -1273,6 +1326,13 @@ class _Owe(Protocol):
     """Records one day the turn owes, or (for a free recheck) records nothing."""
 
     def __call__(self, day: date, reason: UnwrittenReason, detail: str = "") -> None: ...
+
+
+def _short_day_detail(failed: Sequence[UnitOutcome], *, planned: int, detail: str) -> str:
+    """A partial `write_and_recheck` day's S5 detail: which of its units did not answer, and the worst why."""
+    units = sorted(outcome.request.unit for outcome in failed)
+    named = ", ".join(units[:_DETAIL_UNIT_LIMIT]) + (" ..." if len(units) > _DETAIL_UNIT_LIMIT else "")
+    return f"{len(failed)} of {planned} units unanswered, the rest settled ({named}): {detail}"
 
 
 def _record_nothing(day: date, reason: UnwrittenReason, detail: str = "") -> None:

@@ -72,6 +72,8 @@ PARTIAL = DayReceipt(
         ("data", FULL, Written(4, 4), "revised", "refuse", "digest_changed"),
         ("data", PARTIAL, Written(4, 3), "revised", "write_and_recheck", "more_units"),
         ("data", PARTIAL, Written(4, 2), "revised", "write_and_recheck", "no_more_units"),
+        ("data", FULL, Written(4, 3), "revised", "write_and_recheck", "fewer_units"),
+        ("data", FULL, Written(4, 4), "revised", "write_and_recheck", "digest_changed"),
         ("data", FULL, Absent("no_values", "later day published"), "x", "refuse", "data_never_retracted_by_absence"),
         ("missing", None, Absent("no_values", "later day published"), "x", "refuse", "absent"),
         ("absent", None, Absent("no_values", "later day published"), "x", "refuse", "absence_unchanged"),

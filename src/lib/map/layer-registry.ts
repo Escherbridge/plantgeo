@@ -13,6 +13,7 @@ import {
 } from "@/lib/environmental/climate-field";
 import { SLIDER_STREAM_LAYER_NAMES, SNAPSHOT_SURFACE_LAYER_NAMES } from "@/types/time-slider";
 import type { PanelId } from "@/stores/panel-store";
+import { WATER_GAUGES_STREAM } from "@/lib/water-gauges-stream";
 import {
   SOIL_PROPERTY_LABELS,
   SOIL_RASTER_PROPERTIES,
@@ -222,7 +223,11 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     icon: "droplets",
     renderKind: "component",
     styleLayerIds: [],
-    warehouseLayerName: "water-gauges",
+    // CA5: the served stream, from the one switch (`src/lib/water-gauges-stream.ts`).
+    warehouseLayerName: WATER_GAUGES_STREAM,
+    // The manifest layer stays `water-gauges` when G4 moves the stream to `water-gauges-daily`,
+    // which `REGION_LAYER_SLUG_BY_WAREHOUSE_NAME` does not name; binding must not ride on the stream.
+    regionLayerSlug: "water-gauges",
     panelId: "water",
     permanentlyUnavailableReason: null,
   },

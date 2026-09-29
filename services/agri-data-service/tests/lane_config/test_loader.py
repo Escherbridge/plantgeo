@@ -56,7 +56,7 @@ def test_a_healthy_tree_loads_every_lane_against_its_provider_and_lattice(tmp_pa
     assert dict(config.quarantined) == {}
     assert dict(config.provider_failures) == {}
     assert set(config.lanes) == {SOIL, WEATHER, "soil-vpd-precedence"}
-    assert set(config.providers) == {"open-meteo", "nasa-power"}
+    assert set(config.providers) == {"open-meteo", "nasa-power", "usgs-water-data"}
     soil = config.lanes[SOIL]
     provider = config.provider_of(soil)
     assert provider is not None
@@ -87,6 +87,7 @@ def test_one_broken_lane_is_quarantined_and_never_stops_its_siblings(tmp_path: P
     ("overrides", "reason_fragment"),
     [
         pytest.param({"days": {"absence_recheck_days": 5}}, "absence_recheck_days", id="recheck-not-after-lag"),
+        pytest.param({"days": {"revision_window_days": 14}}, "revision_window_days", id="revision-inside-recheck"),
         pytest.param(
             {"schedule": {"gap_fill_enabled": True}}, "gap_fill_enabled_at_gate", id="gap-fill-enabled-without-gate"
         ),

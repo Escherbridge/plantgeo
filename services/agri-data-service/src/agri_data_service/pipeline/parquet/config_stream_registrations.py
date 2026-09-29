@@ -19,11 +19,10 @@ Appending a row is the whole registration step for a new stream: `w3-water-gauge
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
-    from datetime import date
-
     from agri_data_service.foundation.parquet.lane_contract import LaneNature
 
 
@@ -46,8 +45,26 @@ class ConfigStreamRow:
     complete_history_floor: date | None = None
 
 
-#: The shipped mirror. Empty until the first config lane that writes a new stream lands (Phase 3).
-CONFIG_STREAM_ROWS: Final[tuple[ConfigStreamRow, ...]] = ()
+#: `water-gauges-daily`'s floor: `lane_registry.py::_MEASURED_COMPLETE_HISTORY_FLOORS["water-gauges"]` (spec §7a).
+_WATER_GAUGES_DAILY_FLOOR: Final = date(1990, 9, 30)
+
+#: The shipped mirror, one row per `[[streams]]` entry of a config lane TOML.
+CONFIG_STREAM_ROWS: Final[tuple[ConfigStreamRow, ...]] = (
+    # lanes/water-gauges-daily.toml (w3-water-gauges). Its 1990 floor moves CALENDAR_HISTORY_FLOOR (A19).
+    ConfigStreamRow(
+        slug="water-gauges-daily",
+        lane_id="water-gauges-daily",
+        strategy="water_gauges.usgs_water_data",
+        nature="daily_series",
+        history_floor=_WATER_GAUGES_DAILY_FLOOR,
+        publication_lag_days=2,
+        floor_basis=(
+            "lane_registry.py::_MEASURED_COMPLETE_HISTORY_FLOORS['water-gauges'] (spec 7a, N5); "
+            "P4 2026-09-28: all 10 probed gauges serve 1990-09-30"
+        ),
+        complete_history_floor=_WATER_GAUGES_DAILY_FLOOR,
+    ),
+)
 
 
 __all__ = ["CONFIG_STREAM_ROWS", "ConfigStreamRow"]

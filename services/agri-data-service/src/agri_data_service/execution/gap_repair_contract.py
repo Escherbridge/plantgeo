@@ -32,6 +32,7 @@ from agri_data_service.pipeline.direct.soil.forward import SOIL_BACKLOG_SCAN_DAY
 from agri_data_service.pipeline.direct.soil.products import SOIL_FIELD_PRODUCTS
 from agri_data_service.pipeline.direct.vegetation.forward import VEGETATION_BACKLOG_SCAN_DAYS, VEGETATION_MAX_DAYS
 from agri_data_service.pipeline.direct.weather_observations.forward import WEATHER_OBSERVATIONS_MAX_DAYS
+from agri_data_service.pipeline.parquet.config_stream_registrations import CONFIG_STREAM_ROWS
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -152,9 +153,16 @@ REPAIR_BINDINGS: Final[Mapping[str, RepairBinding]] = MappingProxyType(
     }
 )
 
+#: CA8: a config lane's stream is repaired by the lane's own TOML gap-fill (S12), never by a legacy repair run.
+CONFIG_STREAM_EXCLUSION: Final = (
+    "config lane: its TOML gap-fill (S12) repairs its census holes; CA8 keeps legacy repair off config lanes"
+)
+
 #: Layers whose gaps the census CAN measure and this path deliberately does not send anywhere, with the reason.
+#: Every S18 config stream row joins by derivation, so a new config lane needs no row here.
 REPAIR_EXCLUSIONS: Final[Mapping[str, str]] = MappingProxyType(
     {
+        **{row.slug: CONFIG_STREAM_EXCLUSION for row in CONFIG_STREAM_ROWS},
         "fire-detections": (
             f"{FIRE_DETECTIONS_DIRECT_LANE_ID} exposes no --max-days; its five-day NRT window self-heals and "
             "older days need the R3 source-direct historical verb"
@@ -613,6 +621,7 @@ def _optional_day(payload: Mapping[str, object], key: str) -> date | None:
 
 __all__ = [
     "AUTHORIZING_VERDICTS",
+    "CONFIG_STREAM_EXCLUSION",
     "EXECUTOR_REPAIR_WORK_ITEM_KIND",
     "REPAIR_BINDINGS",
     "REPAIR_DEFAULT_MAX_CANDIDATES",

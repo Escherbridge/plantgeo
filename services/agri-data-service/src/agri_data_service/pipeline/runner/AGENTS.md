@@ -46,6 +46,13 @@ Deviations from the spec §4.2 text, each deliberate:
 - `SourceRequest.unit` is unique within a turn: checkpoints, selection and outcomes key on it.
 - `ReleaseCalendarStrategy.release_days(first, last)` is optional: a `release_series` owes only
   those days.
+- `DayContext.planned_units` (w3 review H1): every unit the runner planned covering the day,
+  answered or not, so a `write_and_recheck` strategy states `expected_units` from what was planned
+  rather than from what answered.
+- `Written.dropped_rows` (w3 review H1/M1): source rows the strategy dropped for the day, by reason
+  (a feature its page contract refused, an identity two copies disagree on). The runner sums them
+  into the S5 fact `rows_dropped_by_reason`, so a drop is counted where the executor reads, not only
+  logged.
 
 Typed fetch errors (`SourceThrottledError`, `SourceUnavailableError`, `TurnBudgetExhaustedError`,
 `ProviderConfigurationError`) never reach `settle`; `ingest/http.py`'s own typed errors are
@@ -95,6 +102,18 @@ weighted lane firing more than once a day without `probe_edge` (S6) is `Strategy
   than `GAP_FILL_MAX_DAYS_PER_TURN` wait (`deferred_budget`). Oldest first (spec §4.3; the §6.3
   newest-first re-pull needs an `order` field the schema does not have yet).
 - **Transform** = the forward window's days whose input digests differ from the transform receipt.
+- **Rolling revision** (S11 for late revisions; `revision_block`, w3 review H2): a lane with
+  `[days] revision_window_days` re-asks, on every forward turn after the forward fan-out, one block
+  of `revision_days_per_turn` PUBLISHED days in `[edge - revision_window_days + 1, window.first - 1]`.
+  Blocks are anchored to the day ordinal (a block keeps its days as the window slides) and block `b`
+  is the turn's when `b = today (mod revision_rotation_days)`, so every block is re-asked exactly
+  once per rotation (19 turns for 550/14/31). Only lane-data days are re-asked (holes are
+  gap-fill's); a digest change rewrites one, and nothing about a revised day is ever reported
+  unwritten. It spends what the forward fan-out left of the cap, re-buys its own per-unit support
+  (water: the names units), is skipped by `--compare` and after an exit-75 fan-out, and is reported
+  as `days_revised`, `revision_first`, `revision_last`. This is the "monthly 90-day revision sweep"
+  of spec §6.2 as a rotation rather than a mode: no new cron, no executor definition, a bounded
+  per-turn cost.
 
 ## Budget
 
@@ -164,7 +183,9 @@ what S11's written-day digest, compare mode and CA17 compare.
 disproven absence; rewrite a settled data day when its source digest changed; rewrite a partial
 `write_and_recheck` day only on strictly more units; a data day with no runner receipt (written
 before cut-over) is rewritten once, which is how it gains one; a governed absence never overwrites
-data (fail-closed). `ObjectStoreLaneWriter` writes every day through
+data (fail-closed); and a `write_and_recheck` answer with FEWER units than the written day is
+`fewer_units`, never written, so a tile that failed this turn cannot erase the gauges it served
+last turn (the counterpart of "strictly more units"). `ObjectStoreLaneWriter` writes every day through
 `pipeline/parquet/gap_fill.py::fill_one_lane_day` (lane-day lock, base rung, derived tiers,
 completion marker, availability generation and pointer), then the turn receipt. It cannot be
 constructed with a compare permit. **A lane-day another run holds is `contended`, never exit 70**
@@ -196,6 +217,13 @@ runs forward or transform only (it is allowed on a `legacy` lane — that is its
 3. A strategy fault in `settle`/`rows`/`derive` is that day's `strategy_error`, never the turn's;
    a fault in `plan_requests` is a code fault (exit 70). `Absent` without a proof is a
    `strategy_error`; a partial `Written` on a `refuse` lane is `refused_partial`.
+4. **A unit that stays down.** On a `refuse` lane, and for any day none of whose units answered, the
+   day is held and reported with its worst unit's reason. On a `write_and_recheck` lane an owed day
+   with SOME units answered is settled from those (spec §7a: "a tile that stays down is reported
+   as unwritten for its gauges"); the day also gets one `unwritten` entry naming the unanswered
+   units (`_short_day_detail`). The strategy's `Written` is then partial (present < planned), the
+   receipt keeps the counts, the next turn's fuller answer is `more_units`, and a later shorter one
+   is `fewer_units`. A free recheck or a revised day is only ever settled whole.
 
 **Static lookup:** the probe returns the source watermark as the one valued day; the lane owes a
 snapshot dated there when the served snapshot is older, and nothing when it is current. **CA17
@@ -229,7 +257,8 @@ the `probe` block and `probe_status`, `http_*`, `bytes_in`, `backoff_seconds` an
 `weighted_calls_metered` (deltas of `foundation/observability/usage.py`'s per-host meter),
 `retry_backoff_seconds` (this ladder), `rows_written` / `rows_built`, `partitions_written`,
 `bytes_written`, `elapsed_seconds`, `phase_seconds_{census,probe,fetch,settle,write}`,
-`checkpoint_restores`, `log_lines_*`, and the writer's `availability_*` tally (the executor reads it
+`checkpoint_restores`, `days_revised`, `revision_first`/`revision_last`, `rows_dropped_by_reason`,
+`log_lines_*`, and the writer's `availability_*` tally (the executor reads it
 as publication debt). `TurnLog` keeps ≤ 200 debug/info/warn lines each per turn (the rest counted
 in `log_lines_suppressed`); errors are never dropped. Nothing here calls `print`.
 

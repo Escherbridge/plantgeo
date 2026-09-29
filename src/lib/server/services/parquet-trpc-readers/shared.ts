@@ -3,6 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { CLIMATE_FIELD_ATTRIBUTION } from "@/lib/environmental/climate-field";
 import { SOIL_FIELD_ATTRIBUTION } from "@/lib/environmental/soil-field";
+import { WATER_GAUGES_STREAM_FACT } from "@/lib/water-gauges-stream";
 import type {
   AggregateEnvelopeSupport,
   AggregationMethod,
@@ -41,7 +42,8 @@ export const DAY_MS = 86_400_000;
 /** Attribution that must be shown wherever each lane's values are drawn; see services/AGENTS.md §lane-attributions. */
 export const LANE_ATTRIBUTIONS = {
   "fire-detections": "NASA FIRMS (LANCE/ESDIS)",
-  "water-gauges": "U.S. Geological Survey NWIS",
+  // The served stream's attribution: NWIS until G4 flips `src/lib/water-gauges-stream.ts`.
+  "water-gauges": WATER_GAUGES_STREAM_FACT.attribution,
   "weather-observations": "Open-Meteo",
   vegetation: "Copernicus Sentinel-2 surface reflectance",
   "climate-field": CLIMATE_FIELD_ATTRIBUTION,

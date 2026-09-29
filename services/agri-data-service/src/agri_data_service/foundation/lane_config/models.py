@@ -268,6 +268,11 @@ class LaneDays(_FrozenModel):
     absence_recheck_days: int = Field(ge=0)
     partial_day: PartialDayPolicy
     expected_value_units: int | None = Field(default=None, gt=0)
+    #: S11 rolling revision: each forward turn also re-asks one block of published days up to this many
+    #: days behind the edge (late approvals); `None` re-asks the forward window only.
+    revision_window_days: int | None = Field(default=None, gt=0)
+    #: The block one forward turn re-asks: one request unit's span on the lane's source.
+    revision_days_per_turn: int = Field(default=31, gt=0)
 
     @model_validator(mode="after")
     def _recheck_outlasts_the_lag(self) -> LaneDays:
@@ -275,6 +280,11 @@ class LaneDays(_FrozenModel):
             raise ValueError(
                 f"absence_recheck_days ({self.absence_recheck_days}) must exceed publication_lag_days "
                 f"({self.publication_lag_days}), or a day is judged absent before it could have published"
+            )
+        if self.revision_window_days is not None and self.revision_window_days <= self.absence_recheck_days:
+            raise ValueError(
+                f"revision_window_days ({self.revision_window_days}) must exceed absence_recheck_days "
+                f"({self.absence_recheck_days}): the forward window already re-asks those days"
             )
         return self
 

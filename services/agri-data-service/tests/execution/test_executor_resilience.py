@@ -197,7 +197,9 @@ async def test_leader_fault_logs_partial_tick_before_reraise(monkeypatch: pytest
         await world.tick(soft=SoftFailureState())
 
     (partial,) = events_named(logs, events.EVENT_TICK_PARTIAL)
-    assert partial["lanes"] == [{"lane_id": first, "state": "ran"}], "the lane that ran is on the record"
+    # The lane TOMLs' config definitions tick beside these two; only the two lanes under test are asserted.
+    under_test = [lane for lane in partial["lanes"] if lane["lane_id"] in {first, second}]
+    assert under_test == [{"lane_id": first, "state": "ran"}], "the lane that ran is on the record"
     assert partial["error_type"] == "OperationalError"
     assert [outcome.kind for outcome in world.outcomes[first]] == ["completed"]
 

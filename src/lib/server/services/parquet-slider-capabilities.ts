@@ -25,6 +25,7 @@ import {
   type ClimateFieldSignalId,
 } from "@/lib/environmental/climate-field";
 import { regionIdentityVerdict } from "@/lib/region/region";
+import { WATER_GAUGES_STREAM, WATER_GAUGES_STREAM_FACT } from "@/lib/water-gauges-stream";
 import type { ZoomTier } from "@/lib/map/zoom-tiers";
 import {
   SLIDER_STREAM_LAYER_NAMES,
@@ -145,13 +146,15 @@ const DIRECT_PARQUET_CAPABILITIES = [
   { layerName: SLIDER_STREAM_LAYER_NAMES.drought, temporalKind: "daily_series", parquetNature: "release_series", servingReader: "parquet", parquetLanes: ["drought"] },
   { layerName: "fire-detections", temporalKind: "event", parquetNature: "daily_series", servingReader: "parquet", parquetLanes: ["fire-detections"] },
   { layerName: "fire-perimeters", temporalKind: "event", parquetNature: "static_lookup", servingReader: "parquet", parquetLanes: ["fire-perimeters"] },
+  // The one water stream switch (`src/lib/water-gauges-stream.ts`); `layer-registry.ts` names the same
+  // stream as the layer's `warehouseLayerName` (CA5), so the two always meet.
   {
-    layerName: "water-gauges",
+    layerName: WATER_GAUGES_STREAM,
     temporalKind: "daily_series",
     parquetNature: "daily_series",
     servingReader: "parquet",
-    parquetLanes: ["water-gauges"],
-    selectableHistoryFloor: "2022-08-05",
+    parquetLanes: [WATER_GAUGES_STREAM],
+    selectableHistoryFloor: WATER_GAUGES_STREAM_FACT.selectableHistoryFloor,
   },
   { layerName: "weather-observations", temporalKind: "daily_series", parquetNature: "daily_series", servingReader: "parquet", parquetLanes: ["weather-observations"] },
   // Sensors, watersheds and evacuation zones are read from their governed Parquet lanes. Their

@@ -732,6 +732,8 @@ deleted 2026-09-12 as the last PostgreSQL reactivation surface, which left a mea
 - `gap_repair_contract.py` (leaf) binds each census layer to the executor lane whose source-direct
   writer owns it (`REPAIR_BINDINGS`), with that writer's own `--max-days` cap and backlog reach; the
   layers with no bounded knob or no time axis are listed in `REPAIR_EXCLUSIONS` with the reason.
+  Every S18 config stream (`pipeline/parquet/config_stream_registrations.py::CONFIG_STREAM_ROWS`) joins
+  it by derivation (`CONFIG_STREAM_EXCLUSION`): its lane's own TOML gap-fill repairs it (CA8).
   `select_repair_candidates` turns coverage rows into one verdict per lane; only `repair_authorized`
   carries a `RepairRequest`, and a request is refused at construction when it exceeds the writer's cap.
 - `gap_repair.py` is the operator verb `jobs-plan-gap-repair`. It reads coverage under the

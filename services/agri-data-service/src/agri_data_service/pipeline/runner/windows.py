@@ -109,6 +109,45 @@ def forward_window(days: LaneDays, *, today: date) -> DayRange | None:
     return None if first > last else DayRange(first=first, last=last)
 
 
+def _rotation(revision_window_days: int, absence_recheck_days: int, block_days: int) -> int:
+    """The most `block_days` blocks the revision span behind the forward window can touch."""
+    return -(-(revision_window_days - absence_recheck_days) // block_days) + 1
+
+
+def revision_rotation_days(days: LaneDays) -> int | None:
+    """How many forward turns a full revision rotation takes, or `None` for a lane with no revision window."""
+    if days.revision_window_days is None:
+        return None
+    return _rotation(days.revision_window_days, days.absence_recheck_days, days.revision_days_per_turn)
+
+
+def revision_block(days: LaneDays, window: DayRange, *, today: date) -> DayRange | None:
+    """S11 rolling revision: today's block of `[edge - revision_window_days + 1, window.first - 1]`, or `None`.
+
+    Blocks of `revision_days_per_turn` days are anchored to the day ordinal, so a block keeps its days as
+    the window slides. Block `b` is today's when `b = today (mod rotation)`, so every block is re-asked
+    exactly once every `revision_rotation_days` turns; a day whose residue matches no block revises nothing.
+    """
+    window_days = days.revision_window_days
+    if window_days is None:
+        return None
+    rotation = _rotation(window_days, days.absence_recheck_days, days.revision_days_per_turn)
+    last = window.first - timedelta(days=1)
+    first = window.last - timedelta(days=window_days - 1)
+    if days.floor is not None:
+        first = max(first, days.floor)
+    if first > last:
+        return None
+    size = days.revision_days_per_turn
+    first_block = first.toordinal() // size
+    block = first_block + (today.toordinal() - first_block) % rotation
+    if block > last.toordinal() // size:
+        return None
+    return DayRange(
+        first=max(first, date.fromordinal(block * size)), last=min(last, date.fromordinal(block * size + size - 1))
+    )
+
+
 def probe_window(window: DayRange) -> ProbeWindow:
     """The newest `PROBE_WINDOW_MAX_DAYS` days of the forward window."""
     first = max(window.first, window.last - timedelta(days=PROBE_WINDOW_MAX_DAYS - 1))
@@ -293,5 +332,7 @@ __all__ = [
     "plan_forward",
     "plan_gap_fill",
     "probe_window",
+    "revision_block",
+    "revision_rotation_days",
     "transform_dirty_days",
 ]
