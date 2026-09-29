@@ -83,6 +83,7 @@ _LEVEL_BY_EVENT_SUFFIX: Final[tuple[tuple[str, str], ...]] = (
     ("_published", "info"),
     ("_settled", "info"),
     ("_skipped", "info"),
+    ("_unchanged", "info"),
 )
 
 _THIRD_PARTY_WARNING_PREFIX: Final = re.compile(r"^[\w.]+Warning: |^Warning \d+: ")

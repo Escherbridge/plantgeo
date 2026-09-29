@@ -63,7 +63,9 @@ def test_legacy_lane_lines_are_levelled_by_outcome_not_by_stream() -> None:
     child.route_line("stderr", _line({"event": "climate_forward_quota_pause", "pause": 1}))
     child.route_line("stdout", _line({"event": "water_gauges_forward_failed", "error_type": "UpstreamHttpError"}))
     child.route_line("stdout", _line({"status": "failed", "error": "UpstreamHttpError: 503"}))
-    assert [line.level for line in child.routed] == ["info", "info", "warn", "error", "error"]
+    # Seen live as [ERRO] on the first Phase-1 serial ticks (2026-09-29): a successful no-change turn.
+    child.route_line("stderr", _line({"event": "evacuation_zones_forward_unchanged", "status": "completed"}))
+    assert [line.level for line in child.routed] == ["info", "info", "warn", "error", "error", "info"]
 
 
 def test_missing_turn_context_is_filled_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
