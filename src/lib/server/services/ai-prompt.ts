@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { MAX_REPLAYED_TURNS } from './conversation-history';
-import { incompleteReportDiagnostic, providerErrorDiagnostic, providerToolComplexityDiagnostic, reportValidationDiagnostic } from './ai-provider-diagnostics';
+import { incompleteReportDiagnostic, priorToolCallDiagnostic, providerErrorDiagnostic, providerToolComplexityDiagnostic, reportValidationDiagnostic } from './ai-provider-diagnostics';
 import { geminiEvidenceSchema, geminiReportSchema } from './gemini-report-schema';
 import { reportFlowGroundingIssues } from './report-flow-grounding';
 import { soilAiEvidence } from './soil-ai-evidence';
@@ -636,6 +636,7 @@ export async function* streamRegionalIntelligence(
         messageCount: messages.length,
         requestByteCount: Buffer.byteLength(JSON.stringify(completionRequest), 'utf8'),
         toolComplexity: providerToolComplexityDiagnostic(tools),
+        priorToolCalls: priorToolCallDiagnostic(messages),
         ...providerErrorDiagnostic(error),
       });
       throw error;

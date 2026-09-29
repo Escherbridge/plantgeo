@@ -112,6 +112,55 @@ export function providerToolComplexityDiagnostic(tools: readonly unknown[]) {
   return total;
 }
 
+const IDENTIFIER = /^[a-z][a-z0-9_]{0,63}$/;
+
+function jsonKind(content: unknown): "object" | "array" | "string" | "invalid" | "not_text" {
+  if (typeof content !== "string") return "not_text";
+  try {
+    const parsed: unknown = JSON.parse(content);
+    if (Array.isArray(parsed)) return "array";
+    return parsed !== null && typeof parsed === "object" ? "object" : "string";
+  } catch {
+    return "invalid";
+  }
+}
+
+/**
+ * Shape of every tool call already in the conversation and its result: tool name, argument KEYS,
+ * result byte size and JSON kind. Never argument values, result content or free text (line-24 rule);
+ * a name or key that is not a plain identifier is logged as "unrecognized".
+ */
+export function priorToolCallDiagnostic(messages: readonly unknown[]) {
+  const results = new Map<unknown, unknown>();
+  for (const message of messages) {
+    if (field(message, "role") === "tool") results.set(field(message, "tool_call_id"), field(message, "content"));
+  }
+  const calls: { name: string; argumentKeys: string[]; resultBytes: number | null; resultKind: string }[] = [];
+  for (const message of messages) {
+    const toolCalls = field(message, "tool_calls");
+    if (field(message, "role") !== "assistant" || !Array.isArray(toolCalls)) continue;
+    for (const call of toolCalls) {
+      const fn = field(call, "function");
+      const name = field(fn, "name");
+      let argumentKeys: string[] = [];
+      try {
+        const parsed: unknown = JSON.parse(String(field(fn, "arguments") ?? "{}"));
+        if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+          argumentKeys = Object.keys(parsed).slice(0, 16).map((key) => IDENTIFIER.test(key) ? key : "unrecognized");
+        }
+      } catch { /* keys stay empty */ }
+      const content = results.get(field(call, "id"));
+      calls.push({
+        name: typeof name === "string" && IDENTIFIER.test(name) ? name : "unrecognized",
+        argumentKeys,
+        resultBytes: typeof content === "string" ? Buffer.byteLength(content, "utf8") : null,
+        resultKind: content === undefined ? "missing" : jsonKind(content),
+      });
+    }
+  }
+  return calls.slice(0, 24);
+}
+
 /** Describe an incomplete completion without retaining model text or unknown tool names. */
 export function incompleteReportDiagnostic(message: unknown, finishReason: unknown, usage: unknown) {
   const content = field(message, "content");

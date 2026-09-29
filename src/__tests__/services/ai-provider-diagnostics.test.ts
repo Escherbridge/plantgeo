@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { incompleteReportDiagnostic, providerErrorDiagnostic, reportValidationDiagnostic } from "@/lib/server/services/ai-provider-diagnostics";
+import { incompleteReportDiagnostic, priorToolCallDiagnostic, providerErrorDiagnostic, reportValidationDiagnostic } from "@/lib/server/services/ai-provider-diagnostics";
 
 function failure(message: string) {
   return {
@@ -67,5 +67,27 @@ describe("safe AI provider diagnostics", () => {
     error.error.metadata.raw = "x".repeat(16_385);
     expect(providerErrorDiagnostic(error)).toMatchObject({ rawErrorAvailable: true, rawErrorOversized: true, reasons: ["unclassified_provider_error"] });
     expect(() => providerErrorDiagnostic({ get error() { throw new Error("Do not inspect"); } })).not.toThrow();
+  });
+
+  it("describes prior tool calls by shape only: names, argument keys, result size and JSON kind", () => {
+    const secretQuery = "my farm at 12 Private Lane";
+    const messages = [
+      { role: "user", content: "Assess this location." },
+      { role: "assistant", content: null, tool_calls: [
+        { id: "a", type: "function", function: { name: "soil_properties_at_point", arguments: JSON.stringify({ longitude: -117.18, latitude: 46.9 }) } },
+        { id: "b", type: "function", function: { name: "search_environmental_strategies", arguments: JSON.stringify({ query: secretQuery, "Bad Key!": 1 }) } },
+        { id: "c", type: "function", function: { name: "Not A Tool Name", arguments: "not json" } },
+      ] },
+      { role: "tool", tool_call_id: "a", content: JSON.stringify({ result: { ph: 5.9 } }) },
+      { role: "tool", tool_call_id: "b", content: "[1,2]" },
+    ];
+    const diagnostic = priorToolCallDiagnostic(messages);
+    expect(diagnostic).toEqual([
+      { name: "soil_properties_at_point", argumentKeys: ["longitude", "latitude"], resultBytes: 21, resultKind: "object" },
+      { name: "search_environmental_strategies", argumentKeys: ["query", "unrecognized"], resultBytes: 5, resultKind: "array" },
+      { name: "unrecognized", argumentKeys: [], resultBytes: null, resultKind: "missing" },
+    ]);
+    expect(JSON.stringify(diagnostic)).not.toContain("Private Lane");
+    expect(JSON.stringify(diagnostic)).not.toContain("5.9");
   });
 });
