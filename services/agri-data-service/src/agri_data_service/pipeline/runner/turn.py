@@ -39,6 +39,7 @@ from agri_data_service.pipeline.runner.contract import (
     ProbeWindow,
     ProviderEdge,
     ReleaseCalendarStrategy,
+    SourceCoverageStrategy,
     StreamDayState,
     TransformStrategy,
     Unsettled,
@@ -204,6 +205,7 @@ class _TurnTally:
     days_absent: int = 0
     days_unchanged: int = 0
     days_ladder_owed: int = 0
+    days_source_owed: int = 0
     ladder_repairs: int = 0
     rows_written: int = 0
     rows_built: int = 0
@@ -397,6 +399,7 @@ class _Turn:
             "days_absent": self.tally.days_absent,
             "days_unchanged": self.tally.days_unchanged,
             "days_ladder_owed": self.tally.days_ladder_owed,
+            "days_source_owed": self.tally.days_source_owed,
             "ladder_repairs": self.tally.ladder_repairs,
             "days_rechecked": self.tally.days_rechecked,
             "days_revised": self.tally.days_revised,
@@ -484,7 +487,13 @@ class _Turn:
 
     def _census(self, streams: Sequence[str], window: DayRange) -> LaneCensus:
         with self.phase("census"):
-            return self.ports.reader.census(streams, window.first, window.last)
+            strategy = self.ports.strategy
+            expected = (
+                strategy.source_unit_ids(self.spec.lane, self.spec.region)
+                if isinstance(strategy, SourceCoverageStrategy) and tuple(streams) == self.streams
+                else None
+            )
+            return self.ports.reader.census(streams, window.first, window.last, expected_unit_ids=expected)
 
     def _release_filter(self, days: Sequence[date], window: DayRange) -> list[date]:
         """A `release_series` owes only its release days; any other lane owes every day."""
@@ -495,8 +504,10 @@ class _Turn:
         return [day for day in days if day in releases]
 
     def _owed_days(self, census: LaneCensus, window: DayRange) -> list[date]:
-        """The days a turn asks upstream about; a day whose base rung is published owes only ladder work (H1)."""
-        ladder_only = census.base_data_days() & set(census.owed_days())
+        """Upstream days, excluding published bases whose source support is proven complete (ladder-only debt)."""
+        source_owed = census.source_owed_days()
+        self.tally.days_source_owed = len(source_owed)
+        ladder_only = (census.base_data_days() & set(census.owed_days())) - source_owed
         self.tally.days_ladder_owed = len(ladder_only)
         self.ladder_days = tuple(sorted(ladder_only))
         return self._release_filter([day for day in census.owed_days() if day not in ladder_only], window)
@@ -509,12 +520,17 @@ class _Turn:
         """
         if not self.ladder_days or self.spec.compare or self.ports.writer is None:
             return
+        census = self._census(self.streams, DayRange(first=min(self.ladder_days), last=max(self.ladder_days)))
         writer = self._writer()
         deadline = self.started + self.spec.lane.budget.turn_timeout_seconds * REPAIR_SHARE_OF_TURN_TIMEOUT
         with self.phase("write"):
             for day in self.ladder_days:
                 for stream in self.streams:
-                    if census.status(stream, day) != "incomplete":
+                    if (
+                        census.status(stream, day) != "incomplete"
+                        or day in census.source_owed.get(stream, ())
+                        or census.base.get(stream, {}).get(day) != "data"
+                    ):
                         continue
                     if self.ports.clock.monotonic() >= deadline:
                         self.unwritten(day, "ladder_owed", "the turn's time ran out before its repair", stream=stream)
@@ -540,10 +556,11 @@ class _Turn:
         if window is None:
             return EXIT_COMPLETED
         census = self._census(self.streams, window)
+        missing = self._owed_days(census, window)
         if self.spec.compare or days.partial_day == "write_and_recheck":
             owed = self._release_filter(window.days(), window)
         else:
-            owed = self._owed_days(census, window)
+            owed = missing
         rechecks = self._release_filter(census.absent_days(), window)
         self.tally.days_candidate = len(set(owed) | set(rechecks))
         probe = None
@@ -861,7 +878,7 @@ class _Turn:
     def _restorable(self, request: SourceRequest, census: LaneCensus, owed: frozenset[date]) -> bool:
         """M3: a checkpoint may finish an unserved day, never stand in for a recheck of a served or absent one."""
         return all(
-            census.status(stream, day) in _RESTORABLE_STATUSES
+            census.status(stream, day) in _RESTORABLE_STATUSES and day not in census.source_owed.get(stream, ())
             for day in request.days
             if day in owed
             for stream in self.streams
@@ -906,6 +923,10 @@ class _Turn:
         owe: _Owe = self.unwritten if owed else _record_nothing
         try:
             settlement: Settlement = strategy.settle(day, responses, context)
+            if isinstance(settlement, Written) and isinstance(strategy, SourceCoverageStrategy):
+                expected = strategy.source_unit_ids(self.spec.lane, self.spec.region)
+                if settlement.expected_unit_ids != expected:
+                    raise ValueError("settlement coverage differs from the strategy's declared support")
         except Exception as error:
             self.log.warn("plantgeo_lane_turn_settle_failed", day=day.isoformat(), error=describe_error(error))
             owe(day, "strategy_error", describe_error(error))
@@ -986,6 +1007,8 @@ class _Turn:
         wrote_any = False
         for stream, table in answered.tables.items():
             status = census.status(stream, answered.day)
+            if census.base.get(stream, {}).get(answered.day) == "data":
+                status = "data"
             receipt = self._receipt(stream, answered.day) if status == "data" else None
             digest = written.source_digest or reader.canonical_digest(stream, table)
             decision = decide_rewrite(
@@ -995,9 +1018,12 @@ class _Turn:
                 source_digest=digest,
                 partial_day=self.partial_day,
                 force=force,
+                source_owed=answered.day in census.source_owed.get(stream, ()),
             )
             self.tally.rewrite_reasons[decision.reason] += 1
             if not decision.writes:
+                if decision.reason in {"coverage_unproven", "coverage_lost"}:
+                    self.unwritten(answered.day, "refused_partial", decision.reason, stream=stream)
                 continue
             try:
                 result = await writer.write_day(
@@ -1012,6 +1038,8 @@ class _Turn:
                         source_digest=digest,
                         present_units=written.present_units,
                         expected_units=written.expected_units,
+                        expected_unit_ids=written.expected_unit_ids,
+                        present_unit_ids=written.present_unit_ids,
                         run_id=self.spec.run_id,
                         recorded_at=self.ports.clock.now(),
                     ),

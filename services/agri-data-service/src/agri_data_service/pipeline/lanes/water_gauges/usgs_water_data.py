@@ -256,6 +256,11 @@ class UsgsWaterDataDailyStrategy:
     max_tile_degrees: float = MAX_TILE_DEGREES
     max_days_per_request: int = MAX_DAYS_PER_REQUEST
 
+    def source_unit_ids(self, lane: LaneConfig, region: Region) -> frozenset[str]:
+        """The tile bboxes whose complete answers settle each historical day."""
+        del lane
+        return frozenset(tile.bbox for tile in tile_boxes(region.default_camera_envelope, self.max_tile_degrees))
+
     def plan_requests(self, days: Sequence[date], lane: LaneConfig, region: Region) -> list[SourceRequest]:  # noqa: ARG002 - the Protocol's lane
         """Per tile: one monitoring-locations unit over every asked day, and one daily-values unit per chunk."""
         asked = tuple(sorted(set(days)))
@@ -329,6 +334,8 @@ class UsgsWaterDataDailyStrategy:
             present_units=len(view.present_tiles),
             source_digest=day_source_digest(view.gauge_days),
             dropped_rows=view.dropped,
+            expected_unit_ids=expected,
+            present_unit_ids=view.present_tiles,
         )
 
     def rows(self, day: date, responses: Sequence[SourceResponse]) -> pa.Table:

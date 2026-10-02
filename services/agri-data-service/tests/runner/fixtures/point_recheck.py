@@ -80,7 +80,12 @@ class PointRecheckStrategy:
         present = len(_readings(day, responses))
         if not present:
             return Unsettled("unsettled", "no station has reported")
-        return Written(expected_units=len(STATIONS), present_units=present)
+        return Written(
+            expected_units=len(STATIONS),
+            present_units=present,
+            expected_unit_ids=frozenset(STATIONS),
+            present_unit_ids=frozenset(_readings(day, responses)),
+        )
 
     def rows(self, day: date, responses: Sequence[SourceResponse]) -> pa.Table:
         """One row per reporting station."""

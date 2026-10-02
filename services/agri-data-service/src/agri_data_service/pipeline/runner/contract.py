@@ -165,6 +165,21 @@ class Written:
     source_digest: str | None = None
     #: Source rows the strategy dropped for this day, by reason; summed into the S5 `rows_dropped_by_reason`.
     dropped_rows: Mapping[str, int] = field(default_factory=dict, hash=False)
+    expected_unit_ids: frozenset[str] | None = None
+    present_unit_ids: frozenset[str] | None = None
+
+    def __post_init__(self) -> None:
+        if self.expected_unit_ids is None and self.present_unit_ids is None:
+            return
+        if (
+            self.expected_unit_ids is None
+            or self.present_unit_ids is None
+            or len(self.expected_unit_ids) != self.expected_units
+            or len(self.present_unit_ids) != self.present_units
+            or not self.present_unit_ids <= self.expected_unit_ids
+            or any(not unit for unit in self.expected_unit_ids)
+        ):
+            raise ValueError("settlement coverage identities disagree with its unit counts")
 
     @property
     def partial(self) -> bool:
@@ -296,6 +311,13 @@ class IngestStrategy(Protocol):
 
 
 @runtime_checkable
+class SourceCoverageStrategy(Protocol):
+    """Optional stable identities for source completeness across differently chunked turns."""
+
+    def source_unit_ids(self, lane: LaneConfig, region: Region) -> frozenset[str]: ...
+
+
+@runtime_checkable
 class EdgeProbingStrategy(Protocol):
     """Optional (S6); required for a settled weighted-provider lane firing more than once a day (S19)."""
 
@@ -334,6 +356,7 @@ __all__ = [
     "ProviderResponse",
     "ReleaseCalendarStrategy",
     "Settlement",
+    "SourceCoverageStrategy",
     "SourceFetchError",
     "SourceRequest",
     "SourceResponse",

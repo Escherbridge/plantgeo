@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
-from typing import TYPE_CHECKING, Final, Protocol
+from typing import TYPE_CHECKING, Final, Literal, Protocol
 
 from agri_data_service.foundation.canonical import canonical_json
 
@@ -45,11 +45,30 @@ class DayReceipt:
     source_digest: str | None = None
     present_units: int | None = None
     expected_units: int | None = None
+    expected_unit_ids: frozenset[str] | None = None
+    present_unit_ids: frozenset[str] | None = None
     input_digests: Mapping[str, str] = field(default_factory=dict)
     #: Input streams a transform's rebuild superseded and pruned; kept so the audit outlives the partition.
     pruned_inputs: Mapping[str, str] = field(default_factory=dict)
     run_id: str = ""
     recorded_at: datetime | None = None
+    publication_state: Literal["pending", "complete"] = "complete"
+
+    def __post_init__(self) -> None:
+        if self.publication_state not in {"pending", "complete"}:
+            raise TurnReceiptError("turn receipt has an unknown publication state")
+        expected, present = self.expected_unit_ids, self.present_unit_ids
+        if expected is None and present is None:
+            return
+        if (
+            not expected
+            or present is None
+            or not present <= expected
+            or len(expected) != self.expected_units
+            or len(present) != self.present_units
+            or any(not unit for unit in expected)
+        ):
+            raise TurnReceiptError("turn receipt coverage identities disagree with its unit counts")
 
     def to_payload(self) -> bytes:
         """Canonical JSON bytes, bounded."""
@@ -63,10 +82,13 @@ class DayReceipt:
             "source_digest": self.source_digest,
             "present_units": self.present_units,
             "expected_units": self.expected_units,
+            "expected_unit_ids": None if self.expected_unit_ids is None else sorted(self.expected_unit_ids),
+            "present_unit_ids": None if self.present_unit_ids is None else sorted(self.present_unit_ids),
             "input_digests": dict(sorted(self.input_digests.items())),
             "pruned_inputs": dict(sorted(self.pruned_inputs.items())),
             "run_id": self.run_id,
             "recorded_at": recorded_at.astimezone(UTC).isoformat(),
+            "publication_state": self.publication_state,
         }
         payload = canonical_json(value).encode("utf-8")
         if len(payload) > TURN_RECEIPT_MAX_BYTES:
@@ -91,11 +113,24 @@ class DayReceipt:
             source_digest=value.get("source_digest"),
             present_units=value.get("present_units"),
             expected_units=value.get("expected_units"),
+            expected_unit_ids=_unit_ids(value.get("expected_unit_ids")),
+            present_unit_ids=_unit_ids(value.get("present_unit_ids")),
             input_digests=dict(value.get("input_digests") or {}),
             pruned_inputs=dict(value.get("pruned_inputs") or {}),
             run_id=str(value.get("run_id", "")),
             recorded_at=datetime.fromisoformat(recorded_at) if isinstance(recorded_at, str) else None,
+            publication_state=value.get("publication_state", "complete"),
         )
+
+
+def _unit_ids(value: object) -> frozenset[str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list) or any(not isinstance(unit, str) or not unit for unit in value):
+        raise TurnReceiptError("turn receipt has invalid coverage identities")
+    if len(set(value)) != len(value):
+        raise TurnReceiptError("turn receipt has duplicate coverage identities")
+    return frozenset(value)
 
 
 #: A transform lane's own per-day receipt lives under this prefix plus the lane id; no stream slug starts with `_`.

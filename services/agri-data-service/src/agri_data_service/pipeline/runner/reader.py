@@ -6,13 +6,14 @@ a `--compare` turn gets exactly this and no writer. See `pipeline/runner/AGENTS.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Protocol
 
 from agri_data_service.foundation.parquet.lane_contract import newest_data_day
 from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.objectstore import PartitionNotWrittenError, conform_to_stream_schema
 from agri_data_service.pipeline.runner.census import CONFIG_LANE_KIND, read_census
+from agri_data_service.pipeline.runner.completeness import SourceCompleteness
 from agri_data_service.pipeline.runner.digests import table_digest
 from agri_data_service.warehouse.parquet.schema import get_stream_schema
 
@@ -30,7 +31,9 @@ if TYPE_CHECKING:
 class LaneReader(Protocol):
     """The turn's read port."""
 
-    def census(self, streams: Sequence[str], first: date, last: date) -> LaneCensus: ...
+    def census(
+        self, streams: Sequence[str], first: date, last: date, *, expected_unit_ids: frozenset[str] | None = None
+    ) -> LaneCensus: ...
 
     def receipt(self, stream: str, day: date) -> DayReceipt | None: ...
 
@@ -48,9 +51,21 @@ class ObjectStoreLaneReader:
     store: ObjectStore
     receipts: TurnReceipts
 
-    def census(self, streams: Sequence[str], first: date, last: date) -> LaneCensus:
+    def census(
+        self, streams: Sequence[str], first: date, last: date, *, expected_unit_ids: frozenset[str] | None = None
+    ) -> LaneCensus:
         """The full-ladder census over `[first, last]`."""
-        return read_census(self.store, streams, first, last)
+        census = read_census(self.store, streams, first, last)
+        if expected_unit_ids is None:
+            return census
+        completeness = SourceCompleteness(self.receipts.storage)
+        source_owed = {}
+        for stream in streams:
+            complete = completeness.complete_days(stream, first, last, expected_unit_ids)
+            source_owed[stream] = frozenset(
+                day for day, status in census.base[stream].items() if status == "data" and day not in complete
+            )
+        return replace(census, source_owed=source_owed)
 
     def receipt(self, stream: str, day: date) -> DayReceipt | None:
         """The stream-day's turn receipt, or `None`."""

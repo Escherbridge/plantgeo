@@ -194,13 +194,23 @@ export async function fetchBounded(
   try {
     bytes = await readBoundedBytes(response, options.maxBytes);
   } catch (error) {
-    // The body streams after the response head resolves, so an abort can land here too --
-    // where a raw rethrow would escape the taxonomy as a bare DOMException.
+    // Normalize post-header interruptions too; see ../AGENTS.md section upstream body failures.
     if (options.signal?.aborted === true) {
       throw new UpstreamAbortedError("Upstream request was cancelled by its caller");
     }
-    if (!(error instanceof UpstreamPayloadError)) throw error;
-    bodyError = error;
+    if (
+      error instanceof DOMException &&
+      (error.name === "AbortError" || error.name === "TimeoutError")
+    ) {
+      throw new UpstreamTimeoutError("Upstream response body timed out");
+    }
+    if (error instanceof TypeError && (error.message === "terminated" || error.message === "fetch failed")) {
+      bodyError = new UpstreamPayloadError("Upstream response body transport failed");
+    } else if (error instanceof UpstreamPayloadError) {
+      bodyError = error;
+    } else {
+      throw error;
+    }
   }
 
   return {

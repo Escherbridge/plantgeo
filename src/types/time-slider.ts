@@ -275,6 +275,15 @@ export interface SliderLayerCapability {
    * A label for what was proved, never a gate the client re-applies.
    */
   requiredRungs?: readonly number[];
+  /** Verified static release evidence, independent of observed-day ranges. */
+  staticPublication?: {
+    revision: string;
+    releaseDay: string;
+    capturedAt: string;
+    declaredAreaCount: number;
+    publishedAreaCount: number;
+    pendingAreaCount: number;
+  };
 }
 
 /**

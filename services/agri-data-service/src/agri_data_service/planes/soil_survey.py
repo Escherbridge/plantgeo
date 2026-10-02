@@ -533,6 +533,29 @@ def load_admitted_release(storage: AvailabilityStorage, admitted_sha256: str) ->
     return Release.model_validate_json(stored.payload)
 
 
+def render_soil_survey_status(
+    *, region_slug: str, release: Release | None = None, admitted_sha256: str | None = None, reason: str | None = None
+) -> dict[str, object]:
+    """Describe a verified static release index without claiming viewport or temporal coverage."""
+    return {
+        "availability": "published" if release is not None else "unavailable",
+        "reason": reason,
+        "regionSlug": region_slug,
+        "temporalScope": {"kind": "static_reference", "selectedDaySupported": False},
+        "requiredRungs": [NATIVE_RUNG],
+        "publication": None
+        if release is None
+        else {
+            "revision": admitted_sha256,
+            "releaseDay": release.release_day.isoformat(),
+            "capturedAt": release.captured_at.isoformat(),
+            "declaredAreaCount": len(release.scope.areas),
+            "publishedAreaCount": sum(len(shard.areas) for shard in release.shards),
+            "pendingAreaCount": len(release.pending_areas),
+        },
+    }
+
+
 def _load_shard_candidate(storage: AvailabilityStorage, shard: ShardRef) -> Candidate:
     """Load and verify one admitted shard's staged manifest against the release's own pin of it."""
     stored = storage.read(manifest_key(shard.manifest.sha256), max_bytes=shard.manifest.byte_count)

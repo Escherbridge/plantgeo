@@ -10,7 +10,8 @@ import {
   CLIMATE_FIELD_SIGNAL_IDS,
   climateFieldStreamName,
 } from "@/lib/environmental/climate-field";
-import { UpstreamHttpError } from "@/lib/server/http/bounded-upstream";
+import { UpstreamHttpError, UpstreamPayloadError, UpstreamTimeoutError } from "@/lib/server/http/bounded-upstream";
+import { ParquetPlaneContractError } from "@/lib/server/services/parquet-plane-client";
 import type {
   ParquetLaneCoverage,
   ParquetRegionLayerBinding,
@@ -18,7 +19,12 @@ import type {
 
 const mocks = vi.hoisted(() => ({
   getParquetWarehouseCoverage: vi.fn(),
+  getParquetSoilSurveyStatus: vi.fn(),
   getGeoFeatureSliderCapabilities: vi.fn(),
+}));
+
+vi.mock("@/lib/server/services/parquet-trpc-readers/soil-survey", () => ({
+  getParquetSoilSurveyStatus: mocks.getParquetSoilSurveyStatus,
 }));
 
 vi.mock("@/lib/server/services/parquet-plane-client", async (importOriginal) => {
@@ -53,12 +59,23 @@ import {
 import {
   isDayDescribed,
   isWithinGovernedAbsence,
+  sliderDomain,
   type SliderDomain,
 } from "@/stores/time-slider-store";
+import { resolveLayerTimeState } from "@/components/map/layer-panel/layer-time-state";
 
 const ZOOM_TIERS = [0, 5, 9, 13] as const satisfies readonly ZoomTier[];
 const FIRST_DAY = "2022-08-05";
 const LAST_DAY = "2026-08-20";
+const SOIL_PUBLICATION = {
+  revision: "a".repeat(64), releaseDay: "2025-08-27", capturedAt: "2026-08-25T12:00:00Z",
+  declaredAreaCount: 3, publishedAreaCount: 2, pendingAreaCount: 1,
+};
+const SOIL_STATUS = {
+  regionSlug: "pnw", availability: "published", reason: null,
+  temporalScope: { kind: "static_reference", selectedDaySupported: false },
+  requiredRungs: [13], publication: SOIL_PUBLICATION,
+};
 
 it("offers data activities for environmental streams and non-slider source surfaces", () => {
   const offered = DATA_INTERVENTION_LANES.map(({ id }) => id);
@@ -187,6 +204,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-08-28T12:00:00Z"));
   setCoverage(completeCoverage());
+  mocks.getParquetSoilSurveyStatus.mockResolvedValue(SOIL_STATUS);
   mocks.getGeoFeatureSliderCapabilities.mockResolvedValue({
     serverCurrentDate: "2026-08-28",
     futureAxisDays: 30,
@@ -203,6 +221,66 @@ afterEach(() => {
 });
 
 describe("getParquetSliderCapabilities", () => {
+  it("publishes SSURGO from its verified release even when every legacy rung is empty", async () => {
+    setCoverage(withLane(completeCoverage(), "soil-survey", {
+      earliestDay: null, latestDay: null, latestRecordedDay: null, publishedRanges: [],
+    }));
+    const result = await getParquetSliderCapabilities();
+    expect(result.layers.find((layer) => layer.layerName === "soil-survey")).toMatchObject({
+      temporalKind: "snapshot", earliestObservedDate: null, latestObservedDate: null,
+      observedDayCount: 0, requiredRungs: [13], staticPublication: SOIL_PUBLICATION,
+    });
+    expect(result.withheldParquetCapabilities.some((layer) => layer.layerName === "soil-survey")).toBe(false);
+    expect(sliderDomain(result, "soil-survey")).toBeNull();
+    expect(resolveLayerTimeState({
+      warehouseLayerName: "soil-survey", capabilities: result, capabilitiesUnavailable: false,
+    })).toMatchObject({ kind: "no_time_axis", badge: "Published reference", reason: null });
+  });
+
+  it("keeps no admission separate from never-written legacy metadata", async () => {
+    mocks.getParquetSoilSurveyStatus.mockResolvedValue({
+      ...SOIL_STATUS, availability: "unavailable", reason: "soil_survey_release_not_admitted", publication: null,
+    });
+    const result = await getParquetSliderCapabilities();
+    expect(result.layers.some((layer) => layer.layerName === "soil-survey")).toBe(false);
+    expect(result.withheldParquetCapabilities).toContainEqual({
+      layerName: "soil-survey", parquetLanes: ["soil-survey"],
+      reason: "soil_survey_release_not_admitted", missingEvidence: [],
+    });
+    expect(resolveLayerTimeState({
+      warehouseLayerName: "soil-survey", capabilities: result, capabilitiesUnavailable: false,
+    })).toMatchObject({ badge: "Awaiting release", isSettling: false });
+  });
+
+  it.each([
+    new UpstreamHttpError(503), new UpstreamTimeoutError(),
+    new UpstreamPayloadError("Upstream response body transport failed"),
+    new ParquetPlaneContractError("malformed release metadata"),
+  ])("isolates a refused or unreadable SSURGO status from every other capability (%s)", async (error) => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.getParquetSoilSurveyStatus.mockRejectedValue(error);
+    const result = await getParquetSliderCapabilities();
+    expect(result.layers).toHaveLength(PARQUET_CAPABILITY_CONTRACTS.length - 1);
+    expect(result.withheldParquetCapabilities).toEqual([{
+      layerName: "soil-survey", parquetLanes: ["soil-survey"],
+      reason: "soil_survey_status_unavailable", missingEvidence: [],
+    }]);
+    expect(resolveLayerTimeState({
+      warehouseLayerName: "soil-survey", capabilities: result, capabilitiesUnavailable: false,
+    })).toMatchObject({ badge: "Retrying", isSettling: true });
+    expect(result.parquetCoverageUnavailable).toBe(false);
+    errorSpy.mockRestore();
+  });
+
+  it("withholds a status for another region even when the day census is healthy", async () => {
+    mocks.getParquetSoilSurveyStatus.mockResolvedValue({ ...SOIL_STATUS, regionSlug: "wrong-region" });
+    const result = await getParquetSliderCapabilities();
+    expect(result.withheldParquetCapabilities).toContainEqual({
+      layerName: "soil-survey", parquetLanes: ["soil-survey"],
+      reason: "region_identity_mismatch", missingEvidence: [],
+    });
+  });
+
   it("carries agreed lane timing and withholds conflicting rung timing", async () => {
     const freshness = {
       publicationLagDays: 5, sourceCadenceDays: 1,
@@ -248,7 +326,7 @@ describe("getParquetSliderCapabilities", () => {
     });
     const result = await getParquetSliderCapabilities();
     expect(result.serverCurrentDate).toBe("2026-08-29");
-    expect(result.layers).toEqual([]);
+    expect(result.layers.map((layer) => layer.layerName)).toEqual(["soil-survey"]);
     expect(result.withheldParquetCapabilities.every((entry) => entry.reason === "coverage_not_current")).toBe(true);
   });
   it("owns every catalogue row but publishes only end-to-end Parquet readers with exact evidence", async () => {
@@ -368,7 +446,16 @@ describe("getParquetSliderCapabilities", () => {
       earliestObservedDateRule: "full_history",
       minimumDailyObservationCount: null,
     });
-    for (const layerName of parquetReaders.filter((name) => name !== "burn-severity")) {
+    expect(result.layers.find((layer) => layer.layerName === "soil-survey")).toMatchObject({
+      temporalKind: "snapshot",
+      earliestObservedDate: null,
+      latestObservedDate: null,
+      earliestObservedDateRule: "no_observations",
+      observedDayCount: 0,
+      requiredRungs: [13],
+      staticPublication: SOIL_PUBLICATION,
+    });
+    for (const layerName of parquetReaders.filter((name) => name !== "burn-severity" && name !== "soil-survey")) {
       expect(result.layers.find((layer) => layer.layerName === layerName)).toMatchObject({
         earliestObservedDate: FIRST_DAY,
         latestObservedDate: LAST_DAY,
@@ -953,11 +1040,11 @@ describe("getParquetSliderCapabilities", () => {
 
     // burn-severity is gone too, deliberately: its pixels are Parquet, so retaining a PostgreSQL
     // axis for it exactly when the warehouse cannot answer is the inversion this module refuses.
-    expect(result.layers.map((layer) => layer.layerName)).toEqual([]);
+    expect(result.layers.map((layer) => layer.layerName)).toEqual(["soil-survey"]);
     expect(result.parquetCoverageUnavailable).toBe(true);
     expect(result.parquetCoverageGeneratedAt).toBeNull();
     expect(result.parquetCoverageEvaluatedThroughDay).toBeNull();
-    expect(result.withheldParquetCapabilities).toHaveLength(PARQUET_CAPABILITY_CONTRACTS.length);
+    expect(result.withheldParquetCapabilities).toHaveLength(PARQUET_CAPABILITY_CONTRACTS.length - 1);
     expect(
       result.withheldParquetCapabilities.map((entry) => entry.layerName)
     ).toContain("burn-severity");
@@ -978,7 +1065,7 @@ describe("getParquetSliderCapabilities", () => {
     expect(mocks.getGeoFeatureSliderCapabilities).not.toHaveBeenCalled();
   });
 
-  it("withholds every Parquet-owned row when coverage predates the server current day", async () => {
+  it("withholds day-census rows while preserving independent static proof when coverage predates today", async () => {
     mocks.getParquetWarehouseCoverage.mockResolvedValue({
       coverageSchemaVersion: 2,
       generatedAt: "2026-08-27T23:59:59Z",
@@ -989,8 +1076,8 @@ describe("getParquetSliderCapabilities", () => {
 
     const result = await getParquetSliderCapabilities();
 
-    expect(result.layers.map((layer) => layer.layerName)).toEqual([]);
-    expect(result.withheldParquetCapabilities).toHaveLength(PARQUET_CAPABILITY_CONTRACTS.length);
+    expect(result.layers.map((layer) => layer.layerName)).toEqual(["soil-survey"]);
+    expect(result.withheldParquetCapabilities).toHaveLength(PARQUET_CAPABILITY_CONTRACTS.length - 1);
     expect(result.withheldParquetCapabilities.every((entry) => entry.reason === "coverage_not_current")).toBe(
       true
     );

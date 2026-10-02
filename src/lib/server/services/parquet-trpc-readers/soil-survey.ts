@@ -136,6 +136,47 @@ const collection = z
 
 export type ParquetSoilSurveyCollection = z.infer<typeof collection>;
 
+const publication = z.object({
+  revision: z.string().regex(/^[0-9a-f]{64}$/),
+  releaseDay: z.string().date(),
+  capturedAt: z.string().datetime({ offset: true }),
+  declaredAreaCount: z.number().int().positive(),
+  publishedAreaCount: z.number().int().positive(),
+  pendingAreaCount: z.number().int().nonnegative(),
+}).refine((value) => value.publishedAreaCount + value.pendingAreaCount === value.declaredAreaCount);
+
+const releaseStatus = z.object({
+  regionSlug: z.string().min(1),
+  temporalScope,
+  requiredRungs: z.tuple([z.literal(NATIVE_SERVED_ZOOM)]),
+}).and(z.discriminatedUnion("availability", [
+  z.object({ availability: z.literal("published"), reason: z.null(), publication }),
+  z.object({
+    availability: z.literal("unavailable"),
+    reason: z.enum(["soil_survey_release_not_admitted", "no_source_bound_in_region"]),
+    publication: z.null(),
+  }),
+]));
+
+export type ParquetSoilSurveyStatus = z.infer<typeof releaseStatus>;
+
+/** Read verified release-index metadata; viewport reads still prove their own geometry objects. */
+export async function getParquetSoilSurveyStatus(signal?: AbortSignal): Promise<ParquetSoilSurveyStatus> {
+  const url = providerUrl("AGRI_PARQUET_SERVICE_URL", "http://localhost:8000");
+  url.pathname = `${url.pathname.replace(/\/$/, "")}/api/v1/soil-survey/status`;
+  url.search = "";
+  const payload = await fetchBoundedJson(
+    url,
+    { method: "GET", headers: { Accept: "application/json" } },
+    { timeoutMs: 15_000, maxBytes: 16 * 1024, ...(signal === undefined ? {} : { signal }) }
+  );
+  const parsed = releaseStatus.safeParse(payload);
+  if (!parsed.success) {
+    throw new ParquetPlaneContractError("SSURGO status violates the admitted release contract");
+  }
+  return parsed.data;
+}
+
 /**
  * Read one admitted, static SSURGO release for a viewport; source acquisition never runs in this
  * request -- the release was captured, staged and admitted entirely offline (Go-3/Go-4,

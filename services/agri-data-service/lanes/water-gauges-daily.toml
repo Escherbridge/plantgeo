@@ -3,15 +3,13 @@
 # pipeline/lanes/water_gauges/usgs_water_data.py. Authoring: lanes/AGENTS.md. Source facts:
 # docs/lanes/water-gauges.md "Source probe" (P4).
 #
-# DARK. enabled = false, so the executor never dispatches this lane (execution/lane_catalogue.py
-# LANE_DISABLED_REASON); the legacy water-gauges-direct-forward lane keeps serving. G3 (owner go)
-# flips enabled and gap_fill_enabled together, with gap_fill_enabled_at_gate = "G3" and the lane id
-# added to tests/lane_config/test_lane_toml_contract.py::GAP_FILL_ENABLED_LANES in the same commit.
+# Prepared G3 activation: local changes only until the owner's production go and reviewed push.
+# The legacy water-gauges-direct-forward lane continues serving through the separate G4 gate.
 
 id = "water-gauges-daily"
 kind = "ingest"
 nature = "daily_series"
-enabled = false
+enabled = true
 # A new id (S2 exception: it runs in parallel with the legacy lane), so it has no legacy spec.
 executor = "config"
 strategy = "water_gauges.usgs_water_data"
@@ -30,7 +28,8 @@ lifecycle = "active"
 forward_cron = "20 13 * * *"
 # The DV re-pull to the floor runs as this lane's gap-fill, four fires a UTC day once G3 enables it.
 gap_fill_cron = "50 */6 * * *"
-gap_fill_enabled = false
+gap_fill_enabled = true
+gap_fill_enabled_at_gate = "G3"
 catch_up = "coalesce_latest"
 
 [days]

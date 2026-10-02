@@ -7,6 +7,7 @@ S11 is proven three ways (plan 1B): a same-count digest change on a settled day,
 from __future__ import annotations
 
 import contextlib
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -20,7 +21,7 @@ from agri_data_service.pipeline.parquet.gap_fill import no_derived_tiers, unlock
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from agri_data_service.pipeline.runner.contract import Absent, Written
 from agri_data_service.pipeline.runner.reader import ObjectStoreLaneReader
-from agri_data_service.pipeline.runner.receipts import DayReceipt, TurnReceipts
+from agri_data_service.pipeline.runner.receipts import DayReceipt, TurnReceiptError, TurnReceipts
 from agri_data_service.pipeline.runner.writer import (
     CompareModeWriteError,
     LaneDayContendedError,
@@ -70,8 +71,9 @@ PARTIAL = DayReceipt(
         ("data", None, Written(4, 4), "new", "refuse", "no_receipt"),
         ("data", FULL, Written(4, 4), "old", "refuse", "digest_unchanged"),
         ("data", FULL, Written(4, 4), "revised", "refuse", "digest_changed"),
-        ("data", PARTIAL, Written(4, 3), "revised", "write_and_recheck", "more_units"),
-        ("data", PARTIAL, Written(4, 2), "revised", "write_and_recheck", "no_more_units"),
+        ("data", PARTIAL, Written(4, 3), "revised", "write_and_recheck", "coverage_unproven"),
+        ("data", PARTIAL, Written(4, 2), "revised", "write_and_recheck", "coverage_unproven"),
+        ("data", PARTIAL, Written(4, 4), "revised", "write_and_recheck", "more_units"),
         ("data", FULL, Written(4, 3), "revised", "write_and_recheck", "fewer_units"),
         ("data", FULL, Written(4, 4), "revised", "write_and_recheck", "digest_changed"),
         ("data", FULL, Absent("no_values", "later day published"), "x", "refuse", "data_never_retracted_by_absence"),
@@ -88,6 +90,33 @@ def test_the_s11_rewrite_rules(  # noqa: PLR0913 - one parameter per column of t
     )
 
     assert decision.reason == reason
+
+
+def test_a_missing_completeness_proof_requires_republication_even_with_an_equal_receipt_digest() -> None:
+    decision = decide_rewrite(
+        status="data",
+        receipt=FULL,
+        settlement=Written(4, 4),
+        source_digest="old",
+        partial_day="write_and_recheck",
+        source_owed=True,
+    )
+
+    assert decision.reason == "source_completed"
+    assert decision.writes
+
+
+def test_a_pending_receipt_never_satisfies_an_equal_digest() -> None:
+    decision = decide_rewrite(
+        status="data",
+        receipt=replace(FULL, publication_state="pending"),
+        settlement=Written(4, 4),
+        source_digest="old",
+        partial_day="write_and_recheck",
+    )
+
+    assert decision.reason == "source_completed"
+    assert decision.writes
 
 
 async def test_a_settled_day_is_rewritten_when_its_source_digest_changes_at_the_same_unit_count() -> None:
@@ -216,6 +245,196 @@ async def test_the_production_writer_publishes_the_whole_ladder_and_its_turn_rec
     assert published is not None
     assert reader.canonical_digest(SIGNAL, published) == reader.canonical_digest(SIGNAL, table)
     assert reader.newest_data_day(SIGNAL) == JULY_FOURTH
+
+
+async def test_production_source_debt_survives_restart_until_every_unit_is_proven() -> None:
+    store, availability = ObjectStore(RecordingBackend()), MemoryAvailabilityStorage()
+    expected = frozenset({"west", "east"})
+    partial = DayReceipt(
+        stream=SIGNAL,
+        day=JULY_FOURTH,
+        lane="fixture",
+        outcome="written",
+        source_digest="partial",
+        present_units=1,
+        expected_units=len(expected),
+        expected_unit_ids=expected,
+        present_unit_ids=frozenset({"west"}),
+    )
+    await _production_writer(store, availability).write_day(
+        SIGNAL,
+        JULY_FOURTH,
+        signal_rows(),
+        partial,
+        availability=False,
+    )
+    restarted = ObjectStoreLaneReader(store=store, receipts=TurnReceipts(availability))
+    census = restarted.census([SIGNAL], JULY_FOURTH, JULY_FOURTH, expected_unit_ids=expected)
+    assert census.status(SIGNAL, JULY_FOURTH) == "data"
+    assert census.owed_days() == (JULY_FOURTH,)
+    assert census.source_owed_days() == frozenset({JULY_FOURTH})
+    full = replace(partial, present_units=len(expected), present_unit_ids=expected, source_digest="full")
+
+    await _production_writer(store, availability).write_day(
+        SIGNAL,
+        JULY_FOURTH,
+        signal_rows(),
+        full,
+        availability=False,
+    )
+    restarted = ObjectStoreLaneReader(store=store, receipts=TurnReceipts(availability))
+    assert restarted.census([SIGNAL], JULY_FOURTH, JULY_FOURTH, expected_unit_ids=expected).owed_days() == ()
+    assert restarted.census(
+        [SIGNAL],
+        JULY_FOURTH,
+        JULY_FOURTH,
+        expected_unit_ids=expected | {"north"},
+    ).owed_days() == (JULY_FOURTH,)
+
+
+async def test_a_failed_receipt_write_leaves_the_mutated_day_source_owed(monkeypatch: pytest.MonkeyPatch) -> None:
+    store, availability = ObjectStore(RecordingBackend()), MemoryAvailabilityStorage()
+    expected = frozenset({"west", "east"})
+    full = DayReceipt(
+        stream=SIGNAL,
+        day=JULY_FOURTH,
+        lane="fixture",
+        outcome="written",
+        present_units=len(expected),
+        expected_units=len(expected),
+        expected_unit_ids=expected,
+        present_unit_ids=expected,
+    )
+    await _production_writer(store, availability).write_day(
+        SIGNAL,
+        JULY_FOURTH,
+        signal_rows(),
+        full,
+        availability=False,
+    )
+    write_receipt = TurnReceipts.write
+
+    def interrupted(receipts: TurnReceipts, receipt: DayReceipt) -> None:
+        if receipt.publication_state == "complete":
+            raise TurnReceiptError("receipt publication interrupted")
+        write_receipt(receipts, receipt)
+
+    monkeypatch.setattr(TurnReceipts, "write", interrupted)
+    with pytest.raises(TurnReceiptError, match="interrupted"):
+        await _production_writer(store, availability).write_day(
+            SIGNAL,
+            JULY_FOURTH,
+            signal_rows(),
+            full,
+            availability=False,
+        )
+
+    restarted = ObjectStoreLaneReader(store=store, receipts=TurnReceipts(availability))
+    pending = restarted.receipt(SIGNAL, JULY_FOURTH)
+    assert pending is not None
+    assert pending.publication_state == "pending"
+    census = restarted.census([SIGNAL], JULY_FOURTH, JULY_FOURTH, expected_unit_ids=expected)
+    assert census.owed_days() == (JULY_FOURTH,)
+
+
+async def test_an_interrupted_eight_unit_write_cannot_be_replaced_using_its_old_six_unit_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Six durable units, eight physical units and an interrupted receipt must never lose the eighth."""
+    store, availability = ObjectStore(RecordingBackend()), MemoryAvailabilityStorage()
+    expected = frozenset("ABCDEFGH")
+    six = frozenset("ABCDEF")
+    seven = frozenset("ABCDEFG")
+    receipt = DayReceipt(
+        stream=SIGNAL,
+        day=JULY_FOURTH,
+        lane="fixture",
+        outcome="written",
+        source_digest="six",
+        present_units=len(six),
+        expected_units=len(expected),
+        expected_unit_ids=expected,
+        present_unit_ids=six,
+    )
+    await _production_writer(store, availability).write_day(
+        SIGNAL,
+        JULY_FOURTH,
+        signal_rows(cell_ids=tuple(sorted(six))),
+        receipt,
+        availability=True,
+    )
+    full = replace(receipt, source_digest="eight", present_units=len(expected), present_unit_ids=expected)
+    write_receipt = TurnReceipts.write
+
+    def interrupted(receipts: TurnReceipts, proposed: DayReceipt) -> None:
+        if proposed.publication_state == "complete":
+            raise TurnReceiptError("completion receipt interrupted after data publication")
+        write_receipt(receipts, proposed)
+
+    with monkeypatch.context() as context:
+        context.setattr(TurnReceipts, "write", interrupted)
+        with pytest.raises(TurnReceiptError, match="completion receipt interrupted"):
+            await _production_writer(store, availability).write_day(
+                SIGNAL,
+                JULY_FOURTH,
+                signal_rows(cell_ids=tuple(sorted(expected))),
+                full,
+                availability=True,
+            )
+    restarted = ObjectStoreLaneReader(store=store, receipts=TurnReceipts(availability))
+    pending = restarted.receipt(SIGNAL, JULY_FOURTH)
+    assert pending is not None
+    assert (pending.publication_state, pending.present_unit_ids) == ("pending", expected)
+    shorter = replace(full, source_digest="seven", present_units=len(seven), present_unit_ids=seven)
+    for _attempt in range(2):
+        with pytest.raises(LaneDayContendedError, match="coverage changed"):
+            await _production_writer(store, availability).write_day(
+                SIGNAL,
+                JULY_FOURTH,
+                signal_rows(cell_ids=tuple(sorted(seven))),
+                shorter,
+                availability=True,
+            )
+        rows = restarted.read_published(SIGNAL, JULY_FOURTH)
+        assert rows is not None
+        assert set(rows.column("cell_id").to_pylist()) == expected
+        assert restarted.receipt(SIGNAL, JULY_FOURTH) == pending
+
+    await _production_writer(store, availability).write_day(
+        SIGNAL,
+        JULY_FOURTH,
+        signal_rows(cell_ids=tuple(sorted(expected))),
+        full,
+        availability=True,
+    )
+    completed = restarted.receipt(SIGNAL, JULY_FOURTH)
+    assert completed is not None
+    assert completed.publication_state == "complete"
+    assert restarted.census([SIGNAL], JULY_FOURTH, JULY_FOURTH, expected_unit_ids=expected).owed_days() == ()
+
+
+async def test_the_write_lock_rechecks_coverage_before_a_stale_partial_answer_can_replace_it() -> None:
+    store, availability = ObjectStore(RecordingBackend()), MemoryAvailabilityStorage()
+    expected = frozenset({"west", "east"})
+    full = DayReceipt(
+        stream=SIGNAL,
+        day=JULY_FOURTH,
+        lane="fixture",
+        outcome="written",
+        present_units=len(expected),
+        expected_units=len(expected),
+        expected_unit_ids=expected,
+        present_unit_ids=expected,
+    )
+    writer = _production_writer(store, availability)
+    await writer.write_day(SIGNAL, JULY_FOURTH, signal_rows(), full, availability=False)
+    partial = replace(full, present_units=1, present_unit_ids=frozenset({"west"}))
+
+    with pytest.raises(LaneDayContendedError, match="coverage changed"):
+        await writer.write_day(SIGNAL, JULY_FOURTH, signal_rows(), partial, availability=False)
+
+    restarted = ObjectStoreLaneReader(store=store, receipts=TurnReceipts(availability))
+    assert restarted.census([SIGNAL], JULY_FOURTH, JULY_FOURTH, expected_unit_ids=expected).owed_days() == ()
 
 
 async def test_a_pruned_stream_day_is_retracted_at_every_rung() -> None:

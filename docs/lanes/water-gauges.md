@@ -279,10 +279,10 @@ but the recommendation comes with a load-bearing caveat the classification table
 
 ## 8. `water-gauges-daily`: the modern daily-values lane (config-driven ingestion, spec §7a)
 
-Track `config_driven_ingestion_20260926`, plan Phase 3 (`w3-water-gauges`). A new config lane, DARK in
-this push: `services/agri-data-service/lanes/water-gauges-daily.toml` ships `enabled = false` and
-`gap_fill_enabled = false`, so the executor never dispatches it
-(`execution/lane_catalogue.py::LANE_DISABLED_REASON`). The legacy `water-gauges-direct-forward` lane
+Track `config_driven_ingestion_20260926`, plan Phase 3 (`w3-water-gauges`). The original dark deployment
+keeps the new lane disabled. The current local G3 preparation sets `enabled = true`,
+`gap_fill_enabled = true`, and `gap_fill_enabled_at_gate = "G3"`; this is a reviewable activation diff,
+not evidence that the owner has authorized a production push or that G3 has run. The legacy `water-gauges-direct-forward` lane
 (sections 1-7 above) keeps serving `water-gauges`.
 
 | piece | where |
@@ -447,6 +447,11 @@ names map layer ids, not the stream, so it is unchanged. The UI layer key stays 
   `tests/lane_config/test_lane_toml_contract.py::GAP_FILL_ENABLED_LANES`; sweep, receipt, push. From
   then on the forward cron sends 32 keyless requests a day and the gap-fill 104 a fire, four fires a
   day, until the re-pull reaches the edge (about 9 days).
+  These fields and the contract pin are prepared locally; the production go, integrated receipt,
+  reviewed push and live verification remain distinct gate evidence. Historical partial days now
+  retain source-unit debt in the runner's support-aware census across restarts. G4 history validation
+  must require that debt to clear as well as every zoom ladder to exist; shifted partial tile answers
+  cannot replace previously served tiles merely because their tile count is larger.
 - **G4:** after every validation row (history depth included): flip `WATER_GAUGES_STREAM` and
   `agent/surfaces.py::WATER_GAUGES_SERVED_STREAM` together, move the pinned web test rows (the reader's
   `layer`/attribution rows and the slider's `water-gauges` rows) with them, re-bind the manifest's

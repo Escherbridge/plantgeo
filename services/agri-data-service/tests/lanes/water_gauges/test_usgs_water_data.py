@@ -7,8 +7,9 @@ Only the process edges are faked: the USGS API (`usgs_world.py`, behind `httpx.M
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Literal
 
 import httpx
 import pytest
@@ -31,6 +32,7 @@ from agri_data_service.pipeline.parquet.lane_registry import (
 )
 from agri_data_service.pipeline.runner.binding import ConfigProviderClient
 from agri_data_service.pipeline.runner.exits import TurnConfigurationError
+from agri_data_service.pipeline.runner.receipts import DayReceipt
 from agri_data_service.pipeline.runner.resolve import resolve_strategy
 from agri_data_service.pipeline.runner.windows import revision_rotation_days
 from agri_data_service.pipeline.validation import water_gauges as legacy_validation
@@ -94,14 +96,15 @@ async def _turn(
     world: UsgsWaterDataWorld,
     store: MemoryLaneStore,
     *,
-    mode: TurnMode = "forward",
+    mode: TurnMode | Literal["compare"] = "forward",
     now: datetime = NOW,
 ) -> tuple[int, dict[str, object]]:
     """One turn with the real `ConfigProviderClient` sending to the fake API through the real provider file."""
-    spec = spec_for(lane, mode=mode)
+    compare = mode == "compare"
+    spec = spec_for(lane, mode="forward" if mode == "compare" else mode, compare=compare)
     clock = ManualClock(now)
     async with httpx.AsyncClient(transport=httpx.MockTransport(world.handler)) as http:
-        ports = ports_for(resolve_strategy(lane), store, clock=clock)
+        ports = ports_for(resolve_strategy(lane), store, clock=clock, compare=compare)
         assert spec.provider is not None
         ports.client = ConfigProviderClient(provider=spec.provider, http=http, clock=clock)
         return await run(spec, ports)
@@ -233,6 +236,29 @@ async def test_an_approval_change_rewrites_its_day_and_a_database_refresh_does_n
     assert changed == {PROBED_DAY}
 
 
+async def test_an_unchanged_complete_forward_day_repairs_its_missing_coarse_rung() -> None:
+    """A digest-equal recheck still schedules ladder repair inside the current forward window."""
+    world = UsgsWaterDataWorld(gauges=[DALLES, BOISE], reading_for=_daily_flow)
+    store = MemoryLaneStore()
+    first_exit, first = await _turn(_enabled(), world, store)
+    assert first_exit == 0, first
+    store.ladder_incomplete.add((STREAM, PROBED_DAY))
+    receipt = store.receipts[(STREAM, PROBED_DAY)]
+    writes = len(store.writes())
+
+    exit_code, payload = await _turn(_enabled(), world, store)
+
+    assert exit_code == 0, payload
+    assert payload["days_source_owed"] == 0
+    assert payload["days_ladder_owed"] == 1
+    assert payload["ladder_repairs"] == 1
+    assert len(store.writes()) == writes
+    assert store.receipts[(STREAM, PROBED_DAY)] == receipt
+    assert store.status(STREAM, PROBED_DAY) == "data"
+    assert f"repair:{STREAM}:{PROBED_DAY.isoformat()}" in store.journal
+    assert _unwritten(payload) == []
+
+
 async def test_a_late_approval_behind_the_forward_window_is_rewritten_by_the_rolling_revision() -> None:
     """S11 for USGS approvals: a day written Provisional months ago is re-asked by a forward turn's revision
     block and rewritten Approved within one rotation (every block once per `revision_rotation_days` turns)."""
@@ -340,22 +366,114 @@ async def test_gap_fill_walks_up_from_the_floor_in_31_day_tile_units_inside_the_
     assert (written[0], written[-1], len(written)) == (floor, floor + timedelta(days=365), 366)
 
 
-# --- dark by construction, registered at the measured floor ---------------------------------------
+async def test_gap_fill_recovers_a_historical_partial_day_after_a_process_restart() -> None:
+    """A 1990 tile outage stays source-owed even when every zoom rung was published."""
+    lane = _enabled(gap_fill=True)
+    world = UsgsWaterDataWorld(gauges=[DALLES, BOISE], reading_for=_daily_flow, failing_tiles={BOISE_TILE})
+    store = MemoryLaneStore()
+    first_exit, first = await _turn(lane, world, store, mode="gap-fill")
+    assert first_exit == 0, first
+    floor = _MEASURED_COMPLETE_HISTORY_FLOORS["water-gauges"]
+    assert _gauges_on(store, floor) == {DALLES.monitoring_location_id}
+    restarted = MemoryLaneStore(
+        statuses=dict(store.statuses),
+        tables=dict(store.tables),
+        receipts={key: DayReceipt.from_payload(receipt.to_payload()) for key, receipt in store.receipts.items()},
+    )
+    restarted.ladder_incomplete.add((STREAM, floor))
+    before = restarted.census([STREAM], floor, floor, expected_unit_ids=frozenset(TILES))
+    assert before.owed_days() == (floor,)
+    assert before.source_owed_days() == frozenset({floor})
+    world.failing_tiles.clear()
+    world.requests.clear()
+
+    second_exit, second = await _turn(lane, world, restarted, mode="gap-fill")
+
+    assert second_exit == 0, second
+    assert second["days_source_owed"] == len(store.tables)
+    assert second["days_ladder_owed"] == 0
+    assert _gauges_on(restarted, floor) == {DALLES.monitoring_location_id, BOISE.monitoring_location_id}
+    assert any(request.url.params["time"].startswith(floor.isoformat()) for request in world.daily_requests())
+    after = restarted.census([STREAM], floor, floor, expected_unit_ids=frozenset(TILES))
+    assert after.owed_days() == ()
+    assert after.source_owed_days() == frozenset()
 
 
-async def test_the_shipped_lane_is_dark_the_executor_never_dispatches_it_and_a_writing_turn_refuses() -> None:
-    """G3 is a later owner gate: the catalogue withholds both definitions and the runner refuses (exit 78) unsent."""
+async def test_a_shifted_seven_tile_answer_cannot_erase_a_previous_six_tile_answer() -> None:
+    """A larger count proves no superset when a different tile fails on the next turn."""
+    world = UsgsWaterDataWorld(
+        gauges=[DALLES, BOISE],
+        reading_for=_daily_flow,
+        failing_tiles={BOISE_TILE, SECOND_WESTERN_TILE},
+    )
+    store = MemoryLaneStore()
+    first_exit, first = await _turn(_enabled(), world, store)
+    assert first_exit == 0, first
+    original = store.receipts[(STREAM, PROBED_DAY)]
+    assert original.present_units == len(TILES) - len(world.failing_tiles)
+    world.failing_tiles = {WESTERN_TILE}
+
+    second_exit, second = await _turn(_enabled(), world, store)
+
+    assert second_exit == 0, second
+    assert second["rewrite_reasons"] == {"coverage_lost": len(WINDOW)}
+    assert store.receipts[(STREAM, PROBED_DAY)] == original
+    assert _gauges_on(store, PROBED_DAY) == {DALLES.monitoring_location_id}
+    assert store.census([STREAM], PROBED_DAY, PROBED_DAY, expected_unit_ids=frozenset(TILES)).owed_days() == (
+        PROBED_DAY,
+    )
+    world.failing_tiles.clear()
+    third_exit, third = await _turn(_enabled(), world, store)
+    assert third_exit == 0, third
+    assert _gauges_on(store, PROBED_DAY) == {DALLES.monitoring_location_id, BOISE.monitoring_location_id}
+
+
+async def test_compare_reports_existing_source_debt_without_publishing_a_recovery() -> None:
+    world = UsgsWaterDataWorld(gauges=[DALLES, BOISE], reading_for=_daily_flow, failing_tiles={BOISE_TILE})
+    store = MemoryLaneStore()
+    first_exit, first = await _turn(_enabled(), world, store)
+    assert first_exit == 0, first
+    receipts = dict(store.receipts)
+    journal = list(store.journal)
+    world.failing_tiles.clear()
+
+    exit_code, payload = await _turn(_enabled(), world, store, mode="compare")
+
+    assert exit_code == 0, payload
+    assert payload["days_source_owed"] == len(WINDOW)
+    assert store.receipts == receipts
+    assert store.journal == journal
+    assert _gauges_on(store, PROBED_DAY) == {DALLES.monitoring_location_id}
+
+
+# --- G3 admission and the retained disabled-lane brake ----------------------------------------------
+
+
+def test_the_prepared_g3_lane_admits_both_definitions_and_keeps_legacy_water() -> None:
+    """The reviewed G3 diff enables ingestion beside the unchanged legacy serving lane."""
     configs = load_lane_configs(REAL_LANES_DIRECTORY, load_region("pnw"))
     catalogue = build_lane_catalogue(legacy_specs=LANE_SPECS, configs=configs, environment={})
     forward, gap_fill = catalogue.spec_named(LANE_ID), catalogue.spec_named(f"{LANE_ID}:gap-fill")
     assert forward is not None
     assert gap_fill is not None
-    assert catalogue.config_gate(forward) == catalogue.config_gate(gap_fill) == LANE_DISABLED_REASON
+    assert catalogue.config_gate(forward) is None
+    assert catalogue.config_gate(gap_fill) is None
+    assert configs.lanes[LANE_ID].schedule.gap_fill_enabled_at_gate == "G3"
     assert "water-gauges-direct-forward" in catalogue.legacy_specs
 
+
+async def test_a_disabled_lane_still_refuses_both_definitions_and_any_writing_turn() -> None:
+    configs = load_lane_configs(REAL_LANES_DIRECTORY, load_region("pnw"))
+    disabled = _shipped_lane().model_copy(update={"enabled": False})
+    configs = replace(configs, lanes={**configs.lanes, LANE_ID: disabled})
+    catalogue = build_lane_catalogue(legacy_specs=LANE_SPECS, configs=configs, environment={})
+    forward, gap_fill = catalogue.spec_named(LANE_ID), catalogue.spec_named(f"{LANE_ID}:gap-fill")
+    assert forward is not None
+    assert gap_fill is not None
+    assert catalogue.config_gate(forward) == catalogue.config_gate(gap_fill) == LANE_DISABLED_REASON
     world = UsgsWaterDataWorld(gauges=[DALLES], reading_for=_daily_flow)
     with pytest.raises(TurnConfigurationError, match="enabled = false"):
-        await _turn(_shipped_lane(), world, MemoryLaneStore())
+        await _turn(disabled, world, MemoryLaneStore())
 
     assert world.requests == []
 

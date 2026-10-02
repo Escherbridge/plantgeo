@@ -68,6 +68,27 @@ def test_the_unwritten_list_is_bounded_behind_edge_first_and_says_it_was_cut() -
     assert payload["unwritten_by_reason"] == {"unsettled": REPORT_UNWRITTEN_ENTRY_LIMIT + 5, "upstream_unavailable": 1}
 
 
+@pytest.mark.parametrize("reverse", [False, True])
+def test_a_day_with_lane_and_stream_debt_keeps_both_reasons_in_a_stable_report(reverse: bool) -> None:
+    """A tile outage and a stream coverage refusal can name the same day with different scopes."""
+    entries = [
+        UnwrittenEntry(day=DAY, reason="upstream_unavailable", detail="one tile stayed unavailable"),
+        UnwrittenEntry(day=DAY, stream="water-gauges-daily", reason="refused_partial", detail="coverage_lost"),
+    ]
+    builder = _builder()
+    for entry in reversed(entries) if reverse else entries:
+        builder.add_unwritten(entry)
+    builder.close_unwritten()
+
+    payload = builder.to_payload(exit_code=0)
+
+    assert payload["unwritten"] == [entry.to_dict() for entry in entries]
+    assert payload["unwritten_by_reason"] == {"upstream_unavailable": 1, "refused_partial": 1}
+    assert payload["days_unwritten"] == payload["days_unwritten_total"] == 1
+    assert payload["outcome"] == "incomplete"
+    assert payload["unwritten_truncated"] is False
+
+
 def test_the_turn_log_caps_info_lines_and_counts_what_it_dropped_but_never_drops_an_error() -> None:
     """FR-38: at most 200 info lines per turn; the report's `log_lines_*` say what happened."""
     log = TurnLog(lane="fixture-lane", mode="forward")

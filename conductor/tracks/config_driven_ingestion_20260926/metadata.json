@@ -4,7 +4,7 @@
   "title": "Config-driven ingestion - one TOML per lane, thin strategies, one runner, cron runtime, LayerService serving",
   "description": "Cap legacy soil first (G0: 33 logical requests per run, probe-gated frontier, probe faults exit 0, requests/weighted calls/HTTP attempts reported) before the paid Open-Meteo key is set; then an observability and soft-failure wave (Wave O, GL-1..GL-5 small pushes before Phase 1: one redacted logging contract, metered and turn-attributed upstream sends, a read-only source-usage report, failures recorded on incident rows without failing a tick or another lane; self-probing holds, the paid Open-Meteo cap and a monthly usage receipt at G1); then replace per-lane forward modules and scattered lane facts with typed lane TOML (shipped by the Dockerfile and digested by the receipt), a strategy Protocol in pipeline/runner/contract.py resolved by import-path convention and one shared runner with a probe-gated forward fan-out and per-mode per-turn caps; unify forward and gap-fill; transforms as persisted input-driven lanes; a session-per-lane work-queue executor with a split breaker (incident rows only); a LayerService registry over parquet_ops via sanic-ext DI; new streams registered through a TOML-checked mirror; climate meteorology re-sourced to Open-Meteo ERA5 (explicit nodes on the manifest's 0.25 deg analysis lattice) plus an IFS tail ending yesterday UTC, solar on NASA POWER UTC re-gridded plus an IFS tail; water gauges moved early to USGS daily values with history to 1990-09-30; the remaining lanes cut over by a reviewed swarm; per-lane production QA and validation; then the legacy path retired by a dedicated supersession cleanup lane that fires only on verified readiness (quarantine, observe, delete code; no data deleted).",
   "type": "chore",
-  "status": "pending",
+  "status": "in_progress",
   "created_on": "2026-09-26",
   "created_at": "2026-09-26T00:00:00+00:00",
   "revised_at": "2026-09-27",
@@ -4388,6 +4388,35 @@
     "integration_slice": "i-coordinator"
   },
   "reviews": {
+    "phase3_recovery_20261001": {
+      "reviewed_on": "2026-10-01",
+      "reviewer": "Codex independent water_phase3_audit agent (read-only)",
+      "verdict": "CHANGES-REQUIRED",
+      "evidence": "evidence/phase3.md",
+      "headline": "Historical partial source tiles disappear from gap-fill debt; larger partial tile counts can erase previously answered coverage",
+      "disposition": "Recovery batch in progress; G3 and G4 remain unexecuted. The source 10-gauge x 5-day comparison passed 50/50 on 2026-10-02 UTC; persisted-stream validation and live-forward observation remain open."
+    },
+    "water_recovery_20261001": {
+      "reviewed_on": "2026-10-01",
+      "reviewer": "Codex independent water_recovery_review agent",
+      "verdict": "APPROVED; full integrated sweep PASS 2026-10-02 UTC",
+      "evidence": "evidence/phase3.md",
+      "disposition": "Historical source debt and shifted coverage are addressed. Both recovery findings were fixed and independently re-reviewed: pending intended coverage is durable before partition mutation, and forward ladder repair is independent of changed source data. Full-answer recovery and exact interruption/unchanged-source regressions are authored. The owner authorized push and production verification; the final full Python/web sweep and fresh receipt passed. G3 deployment evidence pending."
+    },
+    "soil_status_recovery_20261001": {
+      "reviewed_on": "2026-10-01",
+      "reviewer": "Codex independent soil_status_review agent",
+      "verdict": "APPROVED; full integrated sweep PASS 2026-10-02 UTC",
+      "evidence": "evidence/phase3.md",
+      "disposition": "Verified admitted-release metadata, static null dates and native rung 13. Initial body-phase timeout/transport fault-isolation finding fixed and independently re-reviewed; controlled-stream tests passed in the final full web sweep. No production deployment or viewport-completeness claim."
+    },
+    "shortwave_recovery_20261001": {
+      "reviewed_on": "2026-10-01",
+      "reviewer": "Codex independent shortwave_review agent",
+      "verdict": "APPROVED; full integrated sweep PASS 2026-10-02 UTC",
+      "evidence": "evidence/phase3.md",
+      "disposition": "UTC edge gating and budget handling pass source inspection. The leading all-fill livelock was fixed with a full-fetch publication anchor and a four-process regression, independently re-reviewed. Recent UTC solar and the full declared history remain outside this interim repair; the final full Python/web sweep and fresh receipt passed."
+    },
     "phase0_loop1": {
       "reviewer": "oh-my-claudecode:critic (opus)",
       "reviewed_on": "2026-09-26",

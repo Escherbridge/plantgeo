@@ -37,7 +37,81 @@ Cross-turn cooldowns and expired-object cleanup remain unresolved operational wo
 pause above is the only quota handling there is, and `ingest/http.py::BoundedResponse` exposes no
 `Retry-After`, so the pause series is fixed rather than read off POWER's answer.
 
+# Shortwave measures the UTC edge before walking its backlog
+
+`edge.py` gates legacy shortwave with three bounded time-series requests on the actual pinned
+support: its first, middle and last ordered cells. Each request names `time-standard=UTC` and
+only `ALLSKY_SFC_SW_DWN`, covers the census window (at most 400 days), and reuses the point parser
+for every requested date. The response must echo UTC and the exact support centroid and include
+every requested date. The newest valued day in the union of the three responses is a scheduling
+ceiling only. No point sample establishes whole-support data, absence, or a publication receipt.
+
+The original lag-6 inference was based on LST responses. The config-driven ingestion spec already
+identified this mismatch in section 2.2 / FR-5. October 2, 2026 probes found UTC solar values only
+through June 30 while the corresponding LST series reached September 27. The old newest-first
+walk spent both 397-request fan-outs on September fill values every hour; a cross-turn cache of
+refusals would still waste tens of thousands of calls establishing what three probes can measure.
+Evidence: `.omc/research/receipt-investigation-20261001/source-edge/time-standard-comparison.json`.
+The historical September edge readings below do not justify a UTC lag or a time-standard change.
+
+Shortwave normally walks genuinely owed days at or below the measured edge oldest-first. If the
+oldest gap has no probe value and no later published day, the turn first full-fetches the newest
+probe-valued candidate. Only that candidate's successful four-rung publication can supply the
+anchor needed to settle older all-fill days in later turns. Without this bootstrap, an empty
+bucket with June 1 and 2 all-fill but June 3-30 valued would re-fetch the two null days every turn
+and never establish the later publication needed for an absence. The probe itself supplies no
+absence evidence, and the two old days remain unmarked until each full-support fetch completes.
+Completed partial-day and absence rechecks retain their existing rotation behind real gaps. Dates
+above the edge stay owed and are counted in `probe_gated_days`; `backlog_days` still counts the
+entire census. A new process resumes from the completed partition census, so a newly arriving
+calendar day cannot restart a refused frontier. The edge is re-probed each hourly turn, including
+after UTC midnight; the next real upstream release can become eligible without a restart.
+This is progress within the moving, at-most-400-day census only. Days older than its floor fall
+outside this legacy operator; a drained visible census is not proof of whole-history completion.
+
+The default request allowance is 797 when selecting shortwave or all products: the existing
+794 fan-out allowance plus three explicitly charged probes. Other product selections keep their
+previous cap. Probe requests count in both `requests_spent` and `probe_requests_spent`, have the
+existing byte/transport bounds, and share the turn deadline. A 429 stops the probe immediately,
+sets the existing turn-wide quota circuit and reports `probe_status=deferred`. A malformed body,
+wrong point, missing day or LST response reports `invalid`; transport/HTTP failure or exhausted
+time/budget reports `unavailable`. None authorizes fan-out. A valid all-fill probe reports `ok`
+with no edge and likewise starts no fan-out. The report distinguishes these from publication
+and from an idempotent no-op; the top-level legacy outcome stays `source_unsettled` unless a
+request/time budget explicitly stopped it.
+
+Full-support fetches still use the existing lane-day lock, four-rung finalizer and availability
+extension. An interior all-fill day still needs a later fully published day for an absence proof;
+the probe never supplies that proof. An old measured UTC edge cannot make the availability index
+fresh under a lag-6 serving policy. This repair prevents waste and drains eligible history; it
+does not claim that current UTC solar data exists or relax the serving freshness contract.
+
+Each product retries its owed availability ledger before selecting source days, including when
+the probe subsequently gates every source request. Generic climate writers are inactive, and a
+completed day is absent from the owed source census, so only this explicit retry can recover a
+terminal day whose availability extension failed previously.
+
+The three-point, 400-day probe is a bounded interim repair for the retained legacy lattice,
+not the config runner's S19 2-point/14-day weighted-provider probe policy. Retire it with this
+legacy writer when the config shortwave successor completes its cutover; do not add a second
+scheduler or operational frontier store. `tests/direct/climate/test_edge.py` covers a roughly
+90-day source/calendar mismatch, fresh runner caches and moving days, four-rung oldest-first
+progress, a valued-day bootstrap before two leading all-fill gaps, source refusal distinctions,
+strict UTC, point/date identity, and no manufactured absence.
+
+# Requested-parameter parsing
+
+`source.parse_climate_point_body` verifies the exact support point, requested date and every
+requested parameter. Ordinary full-support fetches use the default eleven-parameter contract.
+The shortwave edge probe passes its one requested solar parameter, so every date is checked
+against the actual smaller request. The frozen eight-parameter capture from September 2, 2026
+also names its historical request subset in tests because it predates the soil-wetness parameters.
+Neither caller may omit a parameter that its corresponding request actually asked POWER to return.
+
 # An unsettled frontier is stepped past, not retaken
+
+This remains the meteorology fallback walk. The account below records the pre-probe shortwave
+failure and proposed recovery; the measured-edge implementation above supersedes that proposal.
 
 `forward._publish_product` walks the owed backlog newest first and lets `--max-days` (1) count the
 days that TOOK A SLOT. A day the source refuses as `source_unsettled` -- every support cell a fill,
@@ -86,7 +160,7 @@ that flag and takes no skip, so the walk never re-asks a provider that just thro
 day is `published`, a budget stop is the budget's word, and only a turn whose every day was
 unsettled reads `source_unsettled`. `source_unsettled_days` still counts the frontier.
 
-# Solar edge measurement record
+# Historical solar edge measurement record (LST; not UTC evidence)
 
 `CLIMATE_SHORTWAVE_RADIATION_PUBLICATION_LAG_DAYS` is 6 (`products.py`, measured 2026-09-15; see
 `pipeline/direct/AGENTS.md`, "Lags and floors, both measured"). The edge is not a constant:

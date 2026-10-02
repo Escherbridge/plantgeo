@@ -26,6 +26,7 @@ import {
 } from "@/lib/environmental/climate-field";
 import { regionIdentityVerdict } from "@/lib/region/region";
 import { WATER_GAUGES_STREAM, WATER_GAUGES_STREAM_FACT } from "@/lib/water-gauges-stream";
+import { getParquetSoilSurveyStatus } from "@/lib/server/services/parquet-trpc-readers/soil-survey";
 import type { ZoomTier } from "@/lib/map/zoom-tiers";
 import {
   SLIDER_STREAM_LAYER_NAMES,
@@ -49,6 +50,8 @@ export type WithheldParquetCapabilityReason =
   | "coverage_not_current"
   | "lane_not_registered"
   | "lane_never_written"
+  | "soil_survey_release_not_admitted"
+  | "soil_survey_status_unavailable"
   | "rung_not_reported"
   | "rung_never_written"
   | "lane_nature_mismatch"
@@ -107,9 +110,9 @@ export interface ParquetSliderCapabilities extends ResolvedSliderCapabilities {
   servedRegionSlug: string | null;
 }
 
-/** Every Parquet-owned row withheld for one whole-payload reason, with no evidence to name. */
+/** Withhold the day-census rows without making a claim about separate static release evidence. */
 function withholdEveryCapability(reason: WithheldParquetCapabilityReason): WithheldParquetCapability[] {
-  return PARQUET_CAPABILITY_CONTRACTS.map((contract) => ({
+  return DAY_PARTITIONED_CAPABILITY_CONTRACTS.map((contract) => ({
     layerName: contract.layerName,
     parquetLanes: [...contract.parquetLanes],
     reason,
@@ -140,6 +143,11 @@ interface ParquetCapabilityContract {
   selectableHistoryFloor?: string;
 }
 
+const SOIL_SURVEY_CONTRACT = {
+  layerName: "soil-survey", temporalKind: "snapshot", parquetNature: "static_lookup",
+  servingReader: "parquet", parquetLanes: ["soil-survey"],
+} as const satisfies ParquetCapabilityContract;
+
 const DIRECT_PARQUET_CAPABILITIES = [
   { layerName: SLIDER_STREAM_LAYER_NAMES.cropCover, temporalKind: "event", parquetNature: "release_series", servingReader: "parquet", parquetLanes: ["crop-cover"] },
   { layerName: "land-context-boundaries", temporalKind: "snapshot", parquetNature: "static_lookup", servingReader: "parquet", parquetLanes: ["land-context-boundaries"] },
@@ -168,9 +176,8 @@ const DIRECT_PARQUET_CAPABILITIES = [
   { layerName: "sensors", temporalKind: "snapshot", parquetNature: "daily_series", servingReader: "parquet", parquetLanes: ["sensors"] },
   { layerName: "watersheds", temporalKind: "snapshot", parquetNature: "static_lookup", servingReader: "parquet", parquetLanes: ["watersheds"] },
   { layerName: "vegetation", temporalKind: "daily_series", parquetNature: "daily_series", servingReader: "parquet", parquetLanes: ["vegetation"] },
-  // Soil-survey is a declared Parquet static lookup. It remains withheld until its lane publishes
-  // a validated object; an empty lane never reopens the retired PostgreSQL reader.
-  { layerName: "soil-survey", temporalKind: "snapshot", parquetNature: "static_lookup", servingReader: "parquet", parquetLanes: ["soil-survey"] },
+  // SSURGO is proved separately against its admitted release index; see AGENTS.md §soil-survey.
+  SOIL_SURVEY_CONTRACT,
   { layerName: "evacuation-zones", temporalKind: "snapshot", parquetNature: "static_lookup", servingReader: "parquet", parquetLanes: ["evacuation-zones"] },
   // burn-severity flipped to "parquet" on 2026-09-07: the last row in this table whose axis and
   // pixels disagreed, and the only one that ran the inversion in the direction `servingReader`
@@ -253,6 +260,10 @@ export const PARQUET_CAPABILITY_CONTRACTS = [
   ...DIRECT_PARQUET_CAPABILITIES,
   ...SIGNAL_PARQUET_CAPABILITIES,
 ] as const satisfies readonly ParquetCapabilityContract[];
+
+const DAY_PARTITIONED_CAPABILITY_CONTRACTS = PARQUET_CAPABILITY_CONTRACTS.filter(
+  (contract) => contract.layerName !== "soil-survey"
+);
 
 function isCoverageBoundaryFault(error: unknown): boolean {
   return (
@@ -946,7 +957,7 @@ function proveCapability(
 }
 
 /** Builds the public slider census solely from Parquet; see AGENTS.md section slider-bootstrap. */
-export async function getParquetSliderCapabilities(): Promise<ParquetSliderCapabilities> {
+async function getDayPartitionedCapabilities(): Promise<ParquetSliderCapabilities> {
   let coverage;
   try {
     coverage = await getParquetWarehouseCoverage();
@@ -1000,7 +1011,7 @@ export async function getParquetSliderCapabilities(): Promise<ParquetSliderCapab
   }
   const evidence = buildEvidenceIndex(coverage.lanes);
   const withheldLanes = availabilityWithheldLanes(coverage.lanes);
-  const proofs = PARQUET_CAPABILITY_CONTRACTS.map((contract) => {
+  const proofs = DAY_PARTITIONED_CAPABILITY_CONTRACTS.map((contract) => {
     const withheld = availabilityWithholding(contract, withheldLanes);
     if (withheld !== null) return withheld;
     return coverage.evaluatedThroughDay === serverCurrentDate
@@ -1022,6 +1033,77 @@ export async function getParquetSliderCapabilities(): Promise<ParquetSliderCapab
     layerBindings: toSliderLayerBindings(coverage.layerBindings),
     servedRegionSlug: coverage.regionSlug ?? null,
   };
+}
+
+/** Prove SSURGO publication without converting source vintages into observed days. */
+async function soilSurveyCapabilityProof(): Promise<CapabilityProof> {
+  let status;
+  try {
+    status = await getParquetSoilSurveyStatus();
+  } catch (error) {
+    if (!isCoverageBoundaryFault(error)) throw error;
+    console.error("SSURGO publication status unavailable", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return missing(SOIL_SURVEY_CONTRACT, "soil_survey_status_unavailable", []);
+  }
+  if (regionIdentityVerdict(status.regionSlug).kind === "mismatch") {
+    return missing(SOIL_SURVEY_CONTRACT, "region_identity_mismatch", []);
+  }
+  if (status.availability === "unavailable") {
+    return missing(
+      SOIL_SURVEY_CONTRACT,
+      status.reason === "no_source_bound_in_region" ? "lane_not_registered" : status.reason,
+      []
+    );
+  }
+  return {
+    withheld: null,
+    capability: {
+      layerName: "soil-survey",
+      temporalKind: "snapshot",
+      forecastHorizonDays: 0,
+      forecastVariants: [],
+      earliestObservedDate: null,
+      latestObservedDate: null,
+      coverageGaps: [],
+      governedAbsenceRanges: [],
+      thinRanges: [],
+      describedFromDay: null,
+      describedThroughDay: null,
+      coverageGapsTruncated: false,
+      coverageGapsDescribedFromDay: null,
+      thinRangesTruncated: false,
+      thinRangesDescribedFromDay: null,
+      earliestObservedDateRule: "no_observations",
+      earliestRecordedObservationDate: null,
+      earliestContinuousObservationDate: null,
+      latestRecordedObservationDate: null,
+      observedDayCount: 0,
+      excludedObservedDayCount: 0,
+      gapExcludedObservedDayCount: 0,
+      densityExcludedObservedDayCount: 0,
+      minimumDailyObservationCount: null,
+      requiredRungs: status.requiredRungs,
+      staticPublication: status.publication,
+    },
+  };
+}
+
+/** Combine independent day-census and admitted-release evidence without sharing failure states. */
+export async function getParquetSliderCapabilities(): Promise<ParquetSliderCapabilities> {
+  const [census, soilProof] = await Promise.all([
+    getDayPartitionedCapabilities(),
+    soilSurveyCapabilityProof(),
+  ]);
+  const proof = regionIdentityVerdict(census.servedRegionSlug).kind === "mismatch"
+    ? missing(SOIL_SURVEY_CONTRACT, "region_identity_mismatch", [])
+    : soilProof;
+  if (proof.capability !== null) census.layers.push(proof.capability);
+  if (proof.withheld !== null) census.withheldParquetCapabilities.push(proof.withheld);
+  const order = new Map(PARQUET_CAPABILITY_CONTRACTS.map((contract, index) => [contract.layerName, index]));
+  census.layers.sort((left, right) => order.get(left.layerName)! - order.get(right.layerName)!);
+  return census;
 }
 
 /** Physical lanes this adapter owns, exported for reference-scan tests and cutover reporting. */

@@ -172,7 +172,10 @@ class TurnReportBuilder:
         by_reason: dict[str, int] = {}
         for entry in ordered:
             by_reason[entry.reason] = by_reason.get(entry.reason, 0) + 1
-        behind = sorted({(entry.day, entry.stream) for entry in ordered if entry.behind_edge})
+        behind = sorted(
+            {(entry.day, entry.stream) for entry in ordered if entry.behind_edge},
+            key=lambda identity: (identity[0], identity[1] is not None, identity[1] or ""),
+        )
         meter_now = meter_snapshot()
         meter = {name: meter_now[name] - self.meter_at_start.get(name, 0.0) for name in _METER_COUNTERS}
         payload: dict[str, object] = {

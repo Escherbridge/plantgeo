@@ -53,6 +53,12 @@ one (see the next section). A future migration to the platform's `static_lookup`
 (`.omc/research/merge-20260927/soil-survey-port-plan.md` §4) is expected to retire the old lane
 outright rather than reconcile the two schemas.
 
+`render_soil_survey_status` describes an already verified admitted index independently of the
+old lane census. It reports the actual source vintage, capture clock and published/pending
+survey-area counts, preserving partial release coverage. These fields authorize a static
+publication label, not an observed-day range, complete regional coverage, or successful reads
+of every geometry object. Viewport reads retain their own manifest and part verification.
+
 ## Point lookups: bbox in SQL, exact ring in Python (owner Q4, 2026-09-27; revised, review finding 2)
 
 The admitted-release path never runs a GEOS predicate (`ST_Intersects`, `ST_Covers`) against

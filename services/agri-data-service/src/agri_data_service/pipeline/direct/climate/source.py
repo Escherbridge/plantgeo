@@ -428,16 +428,7 @@ def parse_climate_point_body(  # noqa: PLR0913 - the cell, day, body, url and cl
     retrieved_at: datetime,
     required_parameters: Sequence[str] = CLIMATE_SOURCE_PARAMETERS,
 ) -> ClimateCellDayResponse:
-    """Narrow one untrusted point body to this cell's day, refusing a body that answers another point.
-
-    Bound to a real captured response: `.omc/research/nasa-power-point-response-2026-09-02.json`.
-
-    `required_parameters` exists for ONE caller and it is a test: that capture was taken with an
-    eight-parameter request, months before the three soil-wetness depths joined the product table,
-    so parsing it against today's eleven would refuse the only real response in the tree. Production
-    never passes it -- `_fetch_cell_day` takes the default, and a live response that omits a
-    requested parameter must still refuse.
-    """
+    """Require the exact point, day and requested parameters; see AGENTS.md for probe and fixture subsets."""
     decoded = _decoded(body, cell=cell, day=day)
     _require_echoed_point(decoded, cell=cell, day=day)
     try:

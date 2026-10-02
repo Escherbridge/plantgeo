@@ -54,8 +54,9 @@ class LaneCensus:
     first: date
     last: date
     streams: Mapping[str, Mapping[date, PartitionDayStatus]]
-    #: The base rung alone, per stream: a day whose base is `data` owes only ladder work, never an upstream question.
+    #: Base-rung status; published data owes only ladder work when its source support is also proven complete.
     base: Mapping[str, Mapping[date, PartitionDayStatus]] = field(default_factory=dict)
+    source_owed: Mapping[str, frozenset[date]] = field(default_factory=dict)
 
     def days(self) -> tuple[date, ...]:
         """Every day of the window, ascending."""
@@ -70,8 +71,15 @@ class LaneCensus:
         return tuple(
             day
             for day in self.days()
-            if any(self.status(stream, day) in {"missing", "incomplete"} for stream in self.streams)
+            if any(
+                self.status(stream, day) in {"missing", "incomplete"} or day in self.source_owed.get(stream, ())
+                for stream in self.streams
+            )
         )
+
+    def source_owed_days(self) -> frozenset[date]:
+        """Published base days whose current source support has no full receipt proof."""
+        return frozenset(day for days in self.source_owed.values() for day in days)
 
     def absent_days(self) -> tuple[date, ...]:
         """Days every stream governs as absent, ascending: the absence-recheck candidates."""
@@ -95,7 +103,12 @@ class LaneCensus:
         """Days every stream publishes with values, ascending."""
         if not self.streams:
             return ()
-        return tuple(day for day in self.days() if all(self.status(stream, day) == "data" for stream in self.streams))
+        source_owed = self.source_owed_days()
+        return tuple(
+            day
+            for day in self.days()
+            if day not in source_owed and all(self.status(stream, day) == "data" for stream in self.streams)
+        )
 
 
 def fold_ladder(day: date, rungs: Mapping[ZoomTier, PartitionDayStatus], *, stream: str) -> PartitionDayStatus:

@@ -468,9 +468,13 @@ day nothing revisits.
 ### The request budget
 
 `ClimateForwardConfig.request_budget` is `397 x --max-days x CLIMATE_DISTINCT_PUBLICATION_CLOCKS`,
+plus three edge-probe requests when selecting shortwave or all products. Those probes are charged
+before shortwave fan-out and gate its oldest-first backlog to the measured UTC solar edge;
+see `climate/AGENTS.md`, "Shortwave measures the UTC edge before walking its backlog".
 where the clock count (2) is derived from the distinct `publication_lag_days` across the eight
 products -- the meteorology lag of 5 and the solar lag of 6 -- because that is how many distinct
-settled edges a turn can select days at. At the defaults that is 794 requests, roughly 1 MB, and about
+settled edges a turn can select days at. The default fan-out allowance remains 794 requests, plus
+three shortwave probes (797 total), roughly 1 MB of fan-out bytes, and about
 two minutes at concurrency 4. `_publish_product` checks `cache.can_afford(support, day)` BEFORE it
 starts a day and reports `request_budget_exhausted` for that day rather than beginning a fan-out it
 cannot finish; `fill_cell_day_cache` refuses as a backstop if it is reached anyway.
@@ -616,7 +620,11 @@ The floor needs no correction of its own. With the lag at 6 the settled ceiling 
 2026-09-15, `CLIMATE_BACKLOG_SCAN_DAYS` (400) reaches far past 2026-06-01, so ONE census sees the
 whole 101-day backlog (`tests/direct/climate/test_forward_command.py` drives `_publish_product` at
 that date and reads `backlog_days` 101 off the turn). Draining it is the slow part, and the
-arithmetic depends on the executor cadence:
+historical arithmetic below depended on the executor cadence. It also incorrectly treated an LST
+solar measurement as the UTC edge. Since the October 2, 2026 repair the shortwave turn probes UTC
+first and drains only eligible gaps oldest-first. The remaining calendar backlog may stay owed
+without full-support requests; `probe_edge`, `probe_status` and `probe_gated_days` make that
+distinction explicit. The historical estimates below are not current UTC completion promises:
 
 - **Hourly turns, as scheduled.** `CLIMATE_DEFAULT_MAX_DAYS` is 1, so a turn drains one owed day
   -- and one owed day EVEN WHEN THE FRONTIER IS UNSETTLED: an all-fill newest day is stepped past

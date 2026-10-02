@@ -18,6 +18,7 @@ from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct.climate import forward
 from agri_data_service.pipeline.direct.climate.adapter import CLIMATE_DIRECT_KIND, DirectClimateFieldAdapter
+from agri_data_service.pipeline.direct.climate.edge import SHORTWAVE_PROBE_REQUESTS
 from agri_data_service.pipeline.direct.climate.products import (
     CLIMATE_DISTINCT_PUBLICATION_CLOCKS,
     CLIMATE_FIELD_PRODUCTS,
@@ -220,19 +221,10 @@ def test_the_clock_count_is_derived_from_the_products_and_reads_two_while_the_so
 
 
 @pytest.mark.asyncio
-async def test_one_turn_censuses_the_whole_owed_solar_tail_and_takes_only_its_newest_day(
+async def test_the_whole_owed_solar_tail_remains_visible_when_the_probe_budget_is_empty(
     support: NasaPowerSupport,
 ) -> None:
-    """The floor needs no correction: one turn's census reaches 2026-06-01, so the walk owns the whole tail.
-
-    Driven through `_publish_product` on the measurement day over an empty bucket, with a request
-    budget of zero so no socket opens: the census is real, the selection is real, and the one
-    selected day is stopped at the budget check. Under the old 75 the ceiling sat at 2026-07-02 and
-    most of the tail was not eligible. What this turn reports is also the operational cost: at the
-    default `--max-days` of 1 a turn takes ONE owed day, so `backlog_days` is the number of drain
-    turns owed, on top of the one turn a day the advancing ceiling takes -- IF the executor runs
-    the lane hourly. Once a day, as observed in production on 2026-09-15/16, the number never falls.
-    """
+    """The source gate leaves the complete census owed and never opens an unbudgeted request."""
     shortwave = product_for(SHORTWAVE_STREAM)
 
     result = await forward._publish_product(
@@ -255,8 +247,9 @@ async def test_one_turn_censuses_the_whole_owed_solar_tail_and_takes_only_its_ne
     assert result["partial_day_rechecks"] == 0
     days = result["days"]
     assert isinstance(days, list)
-    assert [day["day"] for day in days] == ["2026-09-09"], "one owed day per turn, newest first"
-    assert days[0]["outcome"] == forward.CLIMATE_REQUEST_BUDGET_OUTCOME
+    assert days == [], "a turn that cannot measure the source edge starts no full-support fetch"
+    assert result["probe_status"] == "unavailable"
+    assert result["probe_gated_days"] == EXPECTED_CATCH_UP_DAYS
     assert result["outcome"] == forward.CLIMATE_REQUEST_BUDGET_OUTCOME, "a turn that wrote nothing says so"
 
 
@@ -400,11 +393,13 @@ def test_the_lane_takes_no_bbox_because_the_pinned_support_is_its_extent() -> No
         forward.parse_args(["--bbox=-125,42,-111,49"])
 
 
-def test_the_request_budget_is_the_support_times_the_days_times_the_two_publication_clocks() -> None:
-    """397 points per day, and one turn can select days at two distinct settled edges, never more."""
+def test_the_request_budget_reserves_three_probes_only_when_shortwave_is_selected() -> None:
+    """The existing fan-out allowance plus three explicitly charged edge probes remains bounded."""
     assert CLIMATE_DISTINCT_PUBLICATION_CLOCKS == EXPECTED_DISTINCT_CLOCKS
-    assert bounded_config(max_days=1).request_budget == NASA_POWER_SUPPORT_CELL_COUNT * EXPECTED_DISTINCT_CLOCKS
-    assert bounded_config(max_days=3).request_budget == NASA_POWER_SUPPORT_CELL_COUNT * 3 * EXPECTED_DISTINCT_CLOCKS
+    fan_out_budget = NASA_POWER_SUPPORT_CELL_COUNT * EXPECTED_DISTINCT_CLOCKS
+    assert bounded_config(max_days=1).request_budget == fan_out_budget + SHORTWAVE_PROBE_REQUESTS
+    assert bounded_config(max_days=3).request_budget == fan_out_budget * 3 + SHORTWAVE_PROBE_REQUESTS
+    assert bounded_config(product_id="air-temperature").request_budget == fan_out_budget
 
 
 @pytest.mark.asyncio
@@ -1071,7 +1066,7 @@ async def frontier_turn(  # noqa: PLR0913 - the staged days, the budget and the 
     store: ObjectStore | None = None,
     provider_throttled: bool = False,
 ) -> tuple[dict[str, object], list[date]]:
-    """Take shortwave's turn on the measurement day over an empty bucket, answering each fetch from `staged`.
+    """Exercise the meteorology fallback walk, answering each fetch from `staged`.
 
     Every fake fetch is charged a full 397-cell fan-out against the turn cache, so `can_afford` prices
     the next day exactly as production would; the lock is always granted and the write is the REAL
@@ -1094,12 +1089,12 @@ async def frontier_turn(  # noqa: PLR0913 - the staged days, the budget and the 
     result = await forward._publish_product(
         SessionDouble(),
         store if store is not None else ObjectStore(RecordingBackend()),
-        product_for(SHORTWAVE_STREAM),
+        product_for(PLANE_STREAM),
         support=support,
         cache=cache,
-        today=MEASUREMENT_DAY,
+        today=FRONTIER + timedelta(days=CLIMATE_METEOROLOGY_PUBLICATION_LAG_DAYS),
         run_id="frontier-run",
-        config=bounded_config(product_id="shortwave-radiation"),
+        config=bounded_config(product_id="air-temperature"),
         deadline=time.monotonic() + 60,
         availability_storage=None,
         availability=AvailabilityExtensionTally(),
@@ -1112,13 +1107,7 @@ async def test_an_unsettled_frontier_is_stepped_past_and_the_next_older_day_is_w
     support: NasaPowerSupport,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """DO NOT DELETE. The 2026-09-18 13:40Z production shape: frontier all-fill, 100 owed days under it, one selected.
-
-    Newest-first with `--max-days` 1 selected the same unsettled frontier every hour and nothing beneath
-    it ever drained. The refusal is correct -- an all-fill newest day has nothing to mirror against and
-    must never be governed absent -- so the fix is in the walk: the frontier does not spend the turn's
-    one slot, the next older owed day is fetched under the same budget, and the turn is `published`.
-    """
+    """Meteorology keeps its bounded newest-first fallback while shortwave uses its UTC probe gate."""
     store = ObjectStore(RecordingBackend())
     staged = {FRONTIER: all_fill_day(support, FRONTIER), NEXT_OLDER: filled_cache(support, day=NEXT_OLDER)}
 
@@ -1136,8 +1125,8 @@ async def test_an_unsettled_frontier_is_stepped_past_and_the_next_older_day_is_w
     assert result["outcome"] == "published", "a turn that wrote the older day is a publication"
     assert result["unsettled_frontier_days"] == [FRONTIER.isoformat()], "the skip is visible in the report"
     assert result["source_unsettled_days"] == 1
-    assert result["backlog_days"] == EXPECTED_CATCH_UP_DAYS, "the census is the same 101 days; one of them drained"
-    rungs = forward._tier_status_day(store, product_for(SHORTWAVE_STREAM), NEXT_OLDER)
+    assert result["backlog_days"] == (FRONTIER - product_for(PLANE_STREAM).history_floor).days + 1
+    rungs = forward._tier_status_day(store, product_for(PLANE_STREAM), NEXT_OLDER)
     assert all(status == "data" for status in rungs.values()), "the older day stands at every rung"
 
 

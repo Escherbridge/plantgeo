@@ -43,7 +43,7 @@ if TYPE_CHECKING:
 
 #: S12: gap-fill crons and provisional pruning ship disabled. Enabling one is an explicit TOML flip
 #: inside a named owner gate, and that gate's commit adds the lane id here in the same diff.
-GAP_FILL_ENABLED_LANES: Final[frozenset[str]] = frozenset()
+GAP_FILL_ENABLED_LANES: Final[frozenset[str]] = frozenset({"water-gauges-daily"})
 PRUNING_ENABLED_LANES: Final[frozenset[str]] = frozenset()
 
 _INGEST_METHODS: Final = ("plan_requests", "fetch", "settle", "rows")

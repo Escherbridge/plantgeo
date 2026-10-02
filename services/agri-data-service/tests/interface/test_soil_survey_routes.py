@@ -16,8 +16,10 @@ from typing import NoReturn
 import pytest
 from sanic.request.parameters import RequestParameters
 
+from agri_data_service.foundation.soil_survey.receipts import digest
 from agri_data_service.foundation.soil_survey.release import NATIVE_RUNG
-from agri_data_service.interface.http.soil_survey import point_soil_survey, query_soil_survey
+from agri_data_service.interface.http.soil_survey import point_soil_survey, query_soil_survey, status_soil_survey
+from agri_data_service.pipeline.parquet.availability_storage import StoredAvailabilityObject
 
 
 def _refuse(*arguments: object, **keywords: object) -> NoReturn:
@@ -115,3 +117,146 @@ async def test_an_unconfigured_object_store_answers_a_clean_refusal(monkeypatch:
     response = await query_soil_survey(_request({"bbox": ["0,0,1,1"], "zoom": ["13"]}))
     assert response.status == HTTPStatus.SERVICE_UNAVAILABLE
     assert json.loads(response.body) == {"error": "soil_survey_read_refused"}
+
+
+def _release_payload(*, region: str = "pnw") -> bytes:
+    stamp = "2026-09-28T12:00:00+00:00"
+    vintage = "2025-08-27"
+    blob = {"sha256": "b" * 64, "byte_count": 2}
+    return json.dumps(
+        {
+            "scope": {
+                "response": blob,
+                "query_sha256": "c" * 64,
+                "checked_at": stamp,
+                "areas": [{"area": "ID001", "saverest": vintage}, {"area": "ID002", "saverest": vintage}],
+                "envelope": [0, 0, 1, 1],
+                "region": region,
+            },
+            "shards": [
+                {
+                    "shard": "ID-1",
+                    "manifest": blob,
+                    "release_day": vintage,
+                    "captured_at": stamp,
+                    "areas": [
+                        {
+                            "area": "ID001",
+                            "saverest": vintage,
+                            "native_rows": 2,
+                            "repaired_rows": 0,
+                            "labelled_rows": 0,
+                        }
+                    ],
+                    "bbox": [0, 0, 1, 1],
+                }
+            ],
+            "pending_areas": ["ID002"],
+            "source_evidence": "staged",
+            "release_day": vintage,
+            "captured_at": stamp,
+        }
+    ).encode()
+
+
+class _StatusStorage:
+    def __init__(self, payload: bytes | None, error: Exception | None = None) -> None:
+        self.payload = payload
+        self.error = error
+        self.reads: list[str] = []
+
+    def read(self, key: str, *, max_bytes: int) -> StoredAvailabilityObject | None:
+        self.reads.append(key)
+        if self.error is not None:
+            raise self.error
+        if self.payload is None:
+            return None
+        assert len(self.payload) <= max_bytes
+        return StoredAvailabilityObject(payload=self.payload, etag=digest(self.payload))
+
+
+def _configure_status(monkeypatch: pytest.MonkeyPatch, storage: _StatusStorage, pin: str) -> None:
+    module = "agri_data_service.interface.http.soil_survey"
+    monkeypatch.setattr(f"{module}.load_region", lambda: SimpleNamespace(slug="pnw"))
+    monkeypatch.setattr(f"{module}.is_layer_bound", lambda _region, _slug: True)
+    monkeypatch.setattr(
+        f"{module}.settings",
+        SimpleNamespace(ssurgo_admitted_release_sha256=pin, require_object_store=object, object_store_prefix="test"),
+    )
+    monkeypatch.setattr(f"{module}.BotoAvailabilityStorage.from_credentials", lambda *_args, **_kwargs: storage)
+    monkeypatch.setattr(f"{module}.gather_admitted_soil_survey_viewport", _refuse)
+    monkeypatch.setattr(f"{module}.run_serving_read", _refuse)
+
+
+async def test_status_verifies_only_the_pinned_index_and_retains_static_partial_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _release_payload()
+    storage = _StatusStorage(payload)
+    pin = digest(payload)
+    _configure_status(monkeypatch, storage, pin)
+
+    response = await status_soil_survey(_request({}))
+    result = json.loads(response.body)
+
+    assert response.status == HTTPStatus.OK
+    assert response.headers["Cache-Control"] == "no-store"
+    assert len(storage.reads) == 1
+    assert result == {
+        "availability": "published",
+        "reason": None,
+        "regionSlug": "pnw",
+        "requiredRungs": [13],
+        "temporalScope": {"kind": "static_reference", "selectedDaySupported": False},
+        "publication": {
+            "revision": pin,
+            "releaseDay": "2025-08-27",
+            "capturedAt": "2026-09-28T12:00:00+00:00",
+            "declaredAreaCount": 2,
+            "publishedAreaCount": 1,
+            "pendingAreaCount": 1,
+        },
+    }
+
+
+@pytest.mark.parametrize("bound", [False, True])
+async def test_status_unbound_or_unadmitted_never_opens_storage(
+    monkeypatch: pytest.MonkeyPatch, *, bound: bool
+) -> None:
+    module = "agri_data_service.interface.http.soil_survey"
+    monkeypatch.setattr(f"{module}.load_region", lambda: SimpleNamespace(slug="pnw"))
+    monkeypatch.setattr(f"{module}.is_layer_bound", lambda _region, _slug: bound)
+    monkeypatch.setattr(
+        f"{module}.settings", SimpleNamespace(ssurgo_admitted_release_sha256=None, require_object_store=_refuse)
+    )
+    response = await status_soil_survey(_request({}))
+    result = json.loads(response.body)
+    assert response.status == HTTPStatus.OK
+    assert result["availability"] == "unavailable"
+    assert result["publication"] is None
+    assert result["reason"] == ("soil_survey_release_not_admitted" if bound else "no_source_bound_in_region")
+
+
+@pytest.mark.parametrize("fault", ["missing", "corrupt", "malformed", "transport", "foreign_region"])
+async def test_status_index_fault_is_a_serving_refusal_not_an_absent_publication(
+    monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    payload = _release_payload(region="other-region" if fault == "foreign_region" else "pnw")
+    if fault == "malformed":
+        payload = b"{}"
+    pin = digest(payload)
+    stored_payload = None if fault == "missing" else b"tampered" if fault == "corrupt" else payload
+    storage = _StatusStorage(stored_payload, TimeoutError() if fault == "transport" else None)
+    _configure_status(monkeypatch, storage, pin)
+    response = await status_soil_survey(_request({}))
+    assert response.status == HTTPStatus.SERVICE_UNAVAILABLE
+    assert json.loads(response.body) == {"error": "soil_survey_read_refused"}
+
+
+@pytest.mark.parametrize("parameter", ["day", "date", "zoom", "bbox"])
+async def test_status_rejects_viewport_and_day_parameters_before_loading_a_region(
+    monkeypatch: pytest.MonkeyPatch, parameter: str
+) -> None:
+    monkeypatch.setattr("agri_data_service.interface.http.soil_survey.load_region", _refuse)
+    response = await status_soil_survey(_request({parameter: ["2026-09-28"]}))
+    assert response.status == HTTPStatus.BAD_REQUEST

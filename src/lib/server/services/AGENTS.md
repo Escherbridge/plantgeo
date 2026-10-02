@@ -733,6 +733,22 @@ must report null there rather than one arbitrary member's provenance.
 
 ### soil-survey
 
+The slider catalogue now proves this static surface through `GET /api/v1/soil-survey/status`,
+using the same bounded upstream client as its viewport reader. The endpoint verifies the
+admitted content-addressed release index and reports its revision, capture timestamp, source
+vintage, actual published/pending survey-area counts and sole native rung 13. This is metadata
+proof; each viewport read still verifies its own shard manifests and geometry objects.
+
+The old day-partitioned `soil-survey` census is not evidence about that release. In particular,
+four empty legacy rungs do not mean the admitted release has never been published. Its
+capability is a snapshot with null observed-day bounds and zero observed days, retaining release
+evidence under `staticPublication`. Source vintage and capture time never become slider days.
+No admission and failed status verification remain separate omissions. The static status and
+day census resolve independently, so one failing authority does not erase the other's proof;
+a stated region mismatch still withholds the affected rows. Status reads use no-store semantics
+and existing bounded deadlines, so admission removal or read faults are not hidden by stale
+positive status. The map's capability polling supplies retries without another per-layer poller.
+
 `parquet-trpc-readers/soil-survey.ts` is the one reader in this file that does NOT go through the
 day-partitioned governed Parquet plane (`getParquetLatestRelease`/`getParquetLayerDay`,
 `shared.ts`'s `ParquetReaderResult`/`boundedResult`/`mapEnvelope`). SSURGO (soil-survey port S3/S4)

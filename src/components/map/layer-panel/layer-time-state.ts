@@ -29,6 +29,8 @@ export const LAYER_WITHHOLDING_REASONS = [
   "coverage_not_current",
   "lane_not_registered",
   "lane_never_written",
+  "soil_survey_release_not_admitted",
+  "soil_survey_status_unavailable",
   "rung_not_reported",
   "rung_never_written",
   "lane_nature_mismatch",
@@ -223,6 +225,15 @@ const WITHHOLDING_WORDING: Record<LayerWithholdingReason, ReasonWording> = {
   lane_never_written: {
     badge: "Never published",
     detail: "This source has never published anything to show here.",
+  },
+  soil_survey_release_not_admitted: {
+    badge: "Awaiting release",
+    detail: "A soil survey release has not been approved for this map yet.",
+  },
+  soil_survey_status_unavailable: {
+    badge: "Retrying",
+    detail: "Soil survey publication could not be verified just now. Retrying.",
+    isSettling: true,
   },
   lane_not_registered: {
     badge: "No source",
@@ -419,7 +430,13 @@ export function resolveLayerTimeState({
     return capabilities.streamsUnavailable ? STREAMS_UNAVAILABLE_STATE : NOT_PUBLISHED_STATE;
   }
 
-  if (capability.temporalKind === "snapshot") return SNAPSHOT_STATE;
+  if (capability.temporalKind === "snapshot") {
+    return capability.staticPublication === undefined ? SNAPSHOT_STATE : {
+      ...SNAPSHOT_STATE,
+      badge: "Published reference",
+      detail: "This published soil survey has no date history. Zoom in to see native survey polygons.",
+    };
+  }
   if (sliderDomain(capabilities, warehouseLayerName) !== null) return READY_STATE;
   return describeUnusableAxis(capability, capabilities.serverCurrentDate);
 }

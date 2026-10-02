@@ -38,6 +38,11 @@ from agri_data_service.pipeline.direct.climate.adapter import (
     DirectClimateFieldError,
     refuse_immutable_day,
 )
+from agri_data_service.pipeline.direct.climate.edge import (
+    SHORTWAVE_PROBE_MAX_DAYS,
+    SHORTWAVE_PROBE_REQUESTS,
+    probe_shortwave_edge,
+)
 from agri_data_service.pipeline.direct.climate.products import (
     CLIMATE_DEFAULT_TIME_BUDGET_SECONDS,
     CLIMATE_DISTINCT_PUBLICATION_CLOCKS,
@@ -77,6 +82,7 @@ if TYPE_CHECKING:
     from agri_data_service.pipeline.direct.climate.products import ClimateFieldProduct
     from agri_data_service.pipeline.direct.climate.support import NasaPowerSupport
     from agri_data_service.pipeline.parquet.availability_index import AvailabilityStorage
+    from agri_data_service.pipeline.runner.contract import ProviderEdge
 
 CLIMATE_DIRECT_ALL_TIERS: Final[tuple[ZoomTier, ...]] = (LANE_BASE_ZOOM_TIER, *DERIVED_ZOOM_TIERS)
 CLIMATE_DIRECT_RUN_ID_PREFIX: Final = "climate-nasa-power-forward:"
@@ -95,7 +101,7 @@ CLIMATE_STATEMENT_TIMEOUT_SECONDS: Final = 120
 CLIMATE_MIN_DELAY_SECONDS: Final = 0.1
 #: How far back one turn is willing to look for an unfilled day before reporting a backlog. The
 #: whole owed window is bounded by the history floor, but a single turn must stay bounded too.
-CLIMATE_BACKLOG_SCAN_DAYS: Final = 400
+CLIMATE_BACKLOG_SCAN_DAYS: Final = SHORTWAVE_PROBE_MAX_DAYS
 #: How far back a turn re-examines a day it has ALREADY settled, in either of two shapes. An ABSENT
 #: day: POWER revises a fill-value day into real values once its inputs land, and
 #: `adapter._retract_disproven_absence` is the only thing that undoes such a marker -- it runs only on
@@ -118,20 +124,7 @@ CLIMATE_REQUEST_BUDGET_OUTCOME: Final = REQUEST_BUDGET_EXHAUSTED
 #: The two day outcomes that mean the writer settled the day: values written, or an absence governed
 #: with a proof. Every other word `_publish_locked_day` can return is a day left owed.
 CLIMATE_DAY_WROTE_OUTCOMES: Final[frozenset[str]] = frozenset({"written", "absent"})
-#: How many `source_unsettled` days a turn may step PAST, on to the next older owed day, before it
-#: stops. The newest owed day is the frontier: an all-fill answer there can never be governed as
-#: absent (nothing later is published to mirror against), so it is refused every turn until POWER
-#: publishes it. With `--max-days` 1 and a newest-first backlog, a turn that stopped at that refusal
-#: selected the SAME day every hour and the days beneath it never drained -- the 2026-09-18 13:40Z
-#: production turn (`shortwave-radiation`, `settled_through` 2026-09-12, `backlog_days` 101) is the
-#: measured shape. ONE skip covers an edge up to lag+1 (F unsettled, F-1 written, one day drained
-#: per turn as a settled frontier would). It does NOT cover deeper jitter: at edge >= lag+2 the turn
-#: asks F (skip) then F-1 (slot), both unsettled, writes nothing, and re-asks the same two days next
-#: hour at 794 requests instead of 397. A larger constant cannot cure that -- the 794 budget is
-#: exactly two 397-cell fan-outs, so `can_afford` refuses a third whatever this says. The cure for
-#: deeper jitter is a CROSS-TURN skip (persist the refused frontier so the next turn starts a day
-#: deeper); named as the follow-up in `climate/AGENTS.md`, not implemented here. A 429 deferral is
-#: NOT a frontier (`_steps_past_unsettled_frontier`), so no skip re-asks a provider that throttled us.
+#: Extra complete all-fill fetches per turn; shortwave's measured-edge gate lives in `edge.py`.
 CLIMATE_UNSETTLED_FRONTIER_SKIPS: Final = 1
 
 #: What this writer promises about its own failure policy, CLI surface and reported words; see
@@ -191,7 +184,8 @@ class ClimateForwardConfig:
     @property
     def request_budget(self) -> int:
         """Cap this turn's upstream point requests. See `pipeline/direct/AGENTS.md`, "The request budget"."""
-        return NASA_POWER_SUPPORT_CELL_COUNT * self.max_days * CLIMATE_DISTINCT_PUBLICATION_CLOCKS
+        probes = SHORTWAVE_PROBE_REQUESTS if self.product_id in {"all", "shortwave-radiation"} else 0
+        return NASA_POWER_SUPPORT_CELL_COUNT * self.max_days * CLIMATE_DISTINCT_PUBLICATION_CLOCKS + probes
 
 
 class ClimateForwardConfigError(ValueError):
@@ -280,18 +274,7 @@ async def _publish_product(  # noqa: PLR0913 - the store, product, support, cach
     availability_storage: AvailabilityStorage,
     availability: AvailabilityExtensionTally,
 ) -> dict[str, object]:
-    """Take one product's turn: census its owed window, then publish at most `max_days` days.
-
-    A day the source refuses as unsettled does not count against `max_days`; the walk steps past it
-    to the next older owed day, at most `CLIMATE_UNSETTLED_FRONTIER_SKIPS` times per turn, and names
-    every such day in `unsettled_frontier_days`.
-
-    THE OWED LEDGER IS DRAINED FIRST, once per product per run. Nothing else retries these claims:
-    `retry_pending_availability` is otherwise called only from `run_gap_fill`, and activating
-    `climate-nasa-power-direct-forward` deactivates the eight generic lanes through `conflicts_with`
-    -- so a climate day whose pointer read failed writes a claim that no driver in this service would
-    ever come back for, and the base-tier census never revisits a completed day.
-    """
+    """Drain availability claims, census owed dates and publish a bounded product turn; see AGENTS.md."""
     ceiling = settled_through(product, today=today)
     if ceiling < product.history_floor:
         return _skipped(product, today=today, outcome="not_yet_settled")
@@ -308,13 +291,25 @@ async def _publish_product(  # noqa: PLR0913 - the store, product, support, cach
     partial_days = await asyncio.to_thread(_partial_days_in_recheck_window, store, product, statuses)
     rotation = config.recheck_rotation if config.recheck_rotation is not None else _clock_recheck_rotation()
     backlog = _pending_days(product, statuses, partial_days=partial_days, recheck_rotation=rotation)
+    scheduled = backlog
+    edge_probe = None
+    probe_requests_spent = 0
+    if product.product_id == "shortwave-radiation" and backlog:
+        before_probe = cache.requests_spent
+        edge_probe = await probe_shortwave_edge(
+            product,
+            support=support,
+            cache=cache,
+            first_day=first_day,
+            last_day=ceiling,
+            deadline=deadline,
+        )
+        probe_requests_spent = cache.requests_spent - before_probe
+        scheduled = _shortwave_pending_days(backlog, statuses, edge_probe)
     published: list[dict[str, object]] = []
-    # THE FRONTIER IS STEPPED PAST, NOT RETAKEN. `max_days` counts the days that took a slot; a day
-    # the source refused as unsettled is stepped past instead, at most CLIMATE_UNSETTLED_FRONTIER_SKIPS
-    # times per turn, so the next older owed day is fetched in the same turn -- under the same
-    # `can_afford` and deadline checks every day passes.
+    # Frontier skips share the existing fan-out and deadline bounds.
     unsettled_frontier_days: list[date] = []
-    for day in backlog:
+    for day in scheduled:
         if len(published) - len(unsettled_frontier_days) >= config.max_days:
             break
         if time.monotonic() >= deadline:
@@ -355,7 +350,7 @@ async def _publish_product(  # noqa: PLR0913 - the store, product, support, cach
     return {
         "layer": product.stream,
         "product": product.product_id,
-        "outcome": _product_outcome(backlog, published),
+        "outcome": _probed_product_outcome(backlog, published, edge_probe),
         "source_unsettled_days": sum(1 for day in published if day["outcome"] == CLIMATE_SOURCE_UNSETTLED_OUTCOME),
         "unsettled_frontier_days": [day.isoformat() for day in unsettled_frontier_days],
         "history_floor": product.history_floor.isoformat(),
@@ -364,9 +359,54 @@ async def _publish_product(  # noqa: PLR0913 - the store, product, support, cach
         "scan_first_day": first_day.isoformat(),
         "backlog_days": len(backlog),
         "partial_day_rechecks": len(partial_days),
+        "probe_status": None if edge_probe is None else edge_probe.status,
+        "probe_detail": None if edge_probe is None else edge_probe.detail,
+        "probe_edge": None if edge_probe is None or edge_probe.edge is None else edge_probe.edge.isoformat(),
+        "probe_requests_spent": probe_requests_spent,
+        "probe_gated_days": len(backlog) - len(scheduled),
         "availability_retried_days": retried,
         "days": published,
     }
+
+
+def _shortwave_pending_days(
+    backlog: Sequence[date],
+    statuses: Mapping[ZoomTier, Mapping[date, PartitionDayStatus]],
+    probe: ProviderEdge,
+) -> tuple[date, ...]:
+    """Seed a missing publication anchor, then drain measured-edge gaps oldest-first; see AGENTS.md."""
+    edge = probe.edge
+    if probe.status != "ok" or edge is None:
+        return ()
+    gaps: list[date] = []
+    rechecks: list[date] = []
+    for day in backlog:
+        if day > edge:
+            continue
+        if statuses[LANE_BASE_ZOOM_TIER][day] == "absent" or all(
+            statuses[tier][day] == "data" for tier in CLIMATE_DIRECT_ALL_TIERS
+        ):
+            rechecks.append(day)
+        else:
+            gaps.append(day)
+    gaps.sort()
+    if gaps and gaps[0] not in probe.valued_days and _mirrored_past_day(statuses, gaps[0]) is None:
+        anchor = next((day for day in reversed(gaps) if day in probe.valued_days), None)
+        if anchor is not None:
+            gaps.remove(anchor)
+            gaps.insert(0, anchor)
+    return (*gaps, *rechecks)
+
+
+def _probed_product_outcome(
+    backlog: Sequence[date], published: Sequence[Mapping[str, object]], probe: ProviderEdge | None
+) -> str:
+    """Keep a gated owed window distinct from an idempotent no-op or a publication."""
+    if backlog and not published and probe is not None:
+        if probe.detail in {CLIMATE_REQUEST_BUDGET_OUTCOME, CLIMATE_TIME_BUDGET_OUTCOME}:
+            return str(probe.detail)
+        return CLIMATE_SOURCE_UNSETTLED_OUTCOME
+    return _product_outcome(backlog, published)
 
 
 def _product_outcome(backlog: Sequence[date], published: Sequence[Mapping[str, object]]) -> str:

@@ -15,6 +15,17 @@ unavailable until a publication or validation job repairs it.
 Keep cross-cutting rationale in this file and code comments short. Run all edits before the final
 type, lint, boundary, and test sweep.
 
+## Upstream body failures
+
+`http/bounded-upstream.ts` keeps the same interruption vocabulary after response headers arrive.
+Caller cancellation, including a custom abort reason, takes precedence and stays
+`UpstreamAbortedError`. Uncancelled DOM `AbortError`/`TimeoutError` during streaming becomes
+`UpstreamTimeoutError`. The recognized fetch body transport failures `TypeError: terminated`
+and `TypeError: fetch failed` become an unreadable-body `UpstreamPayloadError`; a non-2xx
+response still retains its HTTP status. Other exceptions propagate as programming faults.
+This boundary lets independent readers withhold only their failed evidence instead of losing
+healthy sibling results to an unclassified body-stream exception.
+
 ## Registration and sign-in
 
 `lib/auth/registration.ts` owns the browser-safe registration schema and generic acknowledgement.

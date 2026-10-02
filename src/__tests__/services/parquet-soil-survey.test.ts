@@ -10,7 +10,7 @@ vi.mock("@/lib/server/http/bounded-upstream", async (importOriginal) => {
 });
 
 import { fetchBoundedJson, UpstreamTimeoutError } from "@/lib/server/http/bounded-upstream";
-import { getParquetSoilSurvey } from "@/lib/server/services/parquet-trpc-readers/soil-survey";
+import { getParquetSoilSurvey, getParquetSoilSurveyStatus } from "@/lib/server/services/parquet-trpc-readers/soil-survey";
 import {
   ParquetPlaneContractError,
   ParquetPlaneRequestError,
@@ -36,6 +36,56 @@ const unavailable = {
   temporalScope: { kind: "static_reference" as const, selectedDaySupported: false as const },
   spatialCoverage: null,
 };
+
+const publishedStatus = {
+  availability: "published", reason: null, regionSlug: "pnw",
+  temporalScope: { kind: "static_reference", selectedDaySupported: false }, requiredRungs: [13],
+  publication: {
+    revision: "a".repeat(64), releaseDay: "2025-08-27", capturedAt: "2026-09-28T12:00:00+00:00",
+    declaredAreaCount: 3, publishedAreaCount: 2, pendingAreaCount: 1,
+  },
+};
+
+describe("SSURGO publication status", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("uses a bounded metadata read with no viewport or requested day and preserves cancellation", async () => {
+    fetch.mockResolvedValue(publishedStatus);
+    const signal = new AbortController().signal;
+    const result = await getParquetSoilSurveyStatus(signal);
+    expect(result).toEqual(publishedStatus);
+    const url = fetch.mock.calls[0]?.[0] as URL;
+    expect(url.pathname).toBe("/api/v1/soil-survey/status");
+    expect(url.search).toBe("");
+    expect(fetch.mock.calls[0]?.[2]).toMatchObject({ maxBytes: 16 * 1024, timeoutMs: 15_000, signal });
+  });
+
+  it.each(["soil_survey_release_not_admitted", "no_source_bound_in_region"])(
+    "retains the explicit %s state without fabricating a publication", async (reason) => {
+      fetch.mockResolvedValue({ ...publishedStatus, availability: "unavailable", reason, publication: null });
+      expect(await getParquetSoilSurveyStatus()).toMatchObject({ availability: "unavailable", reason, publication: null });
+    }
+  );
+
+  it.each([
+    { publication: null },
+    { reason: "soil_survey_zoom_in" },
+    { requiredRungs: [0, 5, 9, 13] },
+    { temporalScope: { kind: "static_reference", selectedDaySupported: true } },
+    { publication: { ...publishedStatus.publication, publishedAreaCount: 4 } },
+    { publication: { ...publishedStatus.publication, releaseDay: "2026-02-30" } },
+    { publication: { ...publishedStatus.publication, revision: "unverified" } },
+  ])("rejects malformed publication evidence: %j", async (patch) => {
+    fetch.mockResolvedValue({ ...publishedStatus, ...patch });
+    await expect(getParquetSoilSurveyStatus()).rejects.toBeInstanceOf(ParquetPlaneContractError);
+  });
+
+  it("does not turn transport failure into a content absence", async () => {
+    const error = new UpstreamTimeoutError();
+    fetch.mockRejectedValue(error);
+    await expect(getParquetSoilSurveyStatus()).rejects.toBe(error);
+  });
+});
 
 describe("admitted-release SSURGO bridge", () => {
   beforeEach(() => vi.clearAllMocks());

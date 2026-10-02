@@ -44,7 +44,7 @@ their existing listing path, and no GET performs a receipt repair or any other o
 
 ## SSURGO native-geometry route (soil-survey port, S3)
 
-`soil_survey.py` is its own dedicated blueprint (`/api/v1/soil-survey/{query,point}`), not a case
+`soil_survey.py` is its own dedicated blueprint (`/api/v1/soil-survey/{query,point,status}`), not a case
 inside `parquet_routes.py`: it reads `foundation.soil_survey.release`'s sharded `Release` index
 rather than the day-partitioned Parquet layout every other route in this directory serves, so it
 carries its own admission pin (`config.py::ssurgo_admitted_release_sha256`) and its own gates.
@@ -68,6 +68,15 @@ OUTSIDE `parquet_ops.duckdb_session.run_serving_read`'s bounded slot -- see `pla
 digest mismatch, a bounded-cap refusal, `ClientError`/`BotoCoreError`, a DuckDB error, or the read
 timing out) is uniformly HTTP 503 `soil_survey_read_refused` -- transport/serving state, never a
 claim about what the release holds, exactly like every other route's refusal in this file.
+
+The metadata-only `/status` route accepts no query parameters. It follows the binding and
+admission gates, then loads the exact same bounded, checksummed release index as a viewport
+request, checks its region, and renders only static publication metadata. It uses the existing
+gather semaphore and fourteen-second deadline without acquiring a DuckDB slot, walking shards,
+or checking geometry. Every answer uses `Cache-Control: no-store`; pin removal, a missing or
+corrupt object, and transport faults must not be concealed by a prior positive response.
+No pin is a content state (`soil_survey_release_not_admitted`); failed index verification is
+HTTP 503. Its only declared rung is 13; viewport `/query` keeps its separate low-zoom gate.
 
 ## Transitional botanical authoring lookup
 

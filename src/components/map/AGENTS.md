@@ -1153,18 +1153,25 @@ for up to eight and a half seconds "still loading" and "this layer has no dates"
 empty row -- the report that started this work, filed against `fire-detections`, whose axis is in
 fact withheld as `availability_unpublished` while its index builds.
 
+SSURGO's separately verified `staticPublication` renders as `Published reference` with no date
+axis. Release vintage and capture time are evidence about its static source, never selectable
+days. An unadmitted release says `Awaiting release`; failed metadata verification says
+`Retrying` under the normal capability poll. Neither is called `Never published`. Geometry
+requests keep their separate zoom-in response below native zoom 13 and their own read failures;
+successful metadata verification does not promise a successful viewport query.
+
 **Uniform is a claim about SHAPE, not about words.** Every non-`ready` state renders the identical
 three parts in the identical order -- chip, placeholder track at the real track's height, one
 sentence -- so the states differ in what they SAY and never in whether they say anything. The
 words must differ: `availability_unpublished` means the data is written and its index is being
 built, `lane_never_written` means the source has never produced a byte, and a caption that told a
-user to come back later would be right about one and wrong about the other. Fifteen withheld
-reasons, fifteen distinct sentences; `layer-time-state.test.ts` pins that they stay distinct.
+user to come back later would be right about one and wrong about the other. Each withheld
+reason has a distinct sentence; `layer-time-state.test.ts` pins that they stay distinct.
 
 **A withheld layer is not an error and must not read like one.** No reason sentence says "error"
-or "failed to". Only two states pulse (`isSettling`): a first load in flight, and the two reasons
-something is genuinely working on -- `availability_unpublished` (a build that is running) and
-`coverage_unavailable` (the loader's own 30s retry). A settled refusal that animated would promise
+or "failed to". A first load in flight and retry/build states pulse (`isSettling`):
+`availability_unpublished` (a build that is running), `coverage_unavailable` (the loader's own 30s
+retry), and `soil_survey_status_unavailable` (the normal capability poll). A settled refusal that animated would promise
 an arrival that is not on its way.
 
 **The loading block is deferred in CSS, not in JavaScript.** `.layer-time-status-deferred` holds

@@ -158,14 +158,30 @@ class MemoryLaneStore:
 
     # --- LaneReader ---------------------------------------------------------------------------
 
-    def census(self, streams: Sequence[str], first: date, last: date) -> LaneCensus:
+    def census(
+        self, streams: Sequence[str], first: date, last: date, *, expected_unit_ids: frozenset[str] | None = None
+    ) -> LaneCensus:
         days = days_between(first, last)
         folded = {stream: {day: self.status(stream, day) for day in days} for stream in streams}
         base = {
             stream: {day: "data" if (stream, day) in self.ladder_incomplete else folded[stream][day] for day in days}
             for stream in streams
         }
-        return LaneCensus(first=first, last=last, streams=folded, base=base)
+        source_owed = {}
+        if expected_unit_ids is not None:
+            for stream in streams:
+                source_owed[stream] = frozenset(
+                    day
+                    for day in days
+                    if base[stream][day] == "data"
+                    and (
+                        (receipt := self.receipt(stream, day)) is None
+                        or receipt.publication_state != "complete"
+                        or receipt.expected_unit_ids != expected_unit_ids
+                        or receipt.present_unit_ids != expected_unit_ids
+                    )
+                )
+        return LaneCensus(first=first, last=last, streams=folded, base=base, source_owed=source_owed)
 
     def receipt(self, stream: str, day: date) -> DayReceipt | None:
         return self.receipts.get((stream, day))

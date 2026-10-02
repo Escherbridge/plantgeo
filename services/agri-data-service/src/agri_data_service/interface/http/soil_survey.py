@@ -36,6 +36,7 @@ from agri_data_service.planes.soil_survey import (
     gather_admitted_soil_survey_viewport,
     load_admitted_release,
     render_served_soil_survey,
+    render_soil_survey_status,
     run_admitted_soil_survey_query,
     soil_survey_unavailable,
 )
@@ -157,3 +158,36 @@ async def query_soil_survey(request: Request) -> HTTPResponse:
 async def point_soil_survey(request: Request) -> HTTPResponse:
     """Every delineation whose bbox contains one exact point (see `planes` module, "ssurgo_point.sql")."""
     return await _answer(request, point=True)
+
+
+@soil_survey_bp.get("/status")
+async def status_soil_survey(request: Request) -> HTTPResponse:
+    """Verify the admitted release index for static publication metadata; see AGENTS.md."""
+    if request.args:
+        return json({"error": "soil_survey_invalid_request"}, status=400)
+    region = load_region()
+    if not is_layer_bound(region, _LAYER_SLUG):
+        return json(
+            render_soil_survey_status(region_slug=region.slug, reason=UNBOUND_REASON_NO_SOURCE),
+            headers={"Cache-Control": "no-store"},
+        )
+    admitted = settings.ssurgo_admitted_release_sha256
+    if not admitted:
+        return json(
+            render_soil_survey_status(region_slug=region.slug, reason="soil_survey_release_not_admitted"),
+            headers={"Cache-Control": "no-store"},
+        )
+    try:
+        credentials = settings.require_object_store()
+        storage = BotoAvailabilityStorage.from_credentials(credentials, prefix=settings.object_store_prefix)
+        async with asyncio.timeout(_READ_DEADLINE_SECONDS), _GATHER_SLOT:
+            release = await asyncio.to_thread(load_admitted_release, storage, admitted)
+        if release.scope.region != region.slug:
+            raise SoilSurveyError("admitted SSURGO release belongs to another region")
+        return json(
+            render_soil_survey_status(region_slug=region.slug, release=release, admitted_sha256=admitted),
+            headers={"Cache-Control": "no-store"},
+        )
+    except _READ_FAULTS as error:
+        logger.warning("soil_survey_status_refused", error_type=type(error).__name__)
+        return json({"error": "soil_survey_read_refused"}, status=503, headers={"Cache-Control": "no-store"})

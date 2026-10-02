@@ -26,10 +26,12 @@ from agri_data_service.pipeline.parquet.gap_fill import (
     fill_one_lane_day,
     postgres_lane_day_lock,
     repair_one_lane_day,
+    unlocked_lane_day,
 )
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY, normalise_export_outcome
 from agri_data_service.pipeline.runner.census import CONFIG_LANE_KIND, FULL_LADDER_TIERS
 from agri_data_service.pipeline.runner.clock import utc_today
+from agri_data_service.pipeline.runner.completeness import SourceCompleteness
 from agri_data_service.pipeline.runner.contract import Absent, Written
 
 if TYPE_CHECKING:
@@ -60,11 +62,23 @@ RewriteReason = Literal[
     "digest_unchanged",
     "no_more_units",
     "fewer_units",
+    "coverage_unproven",
+    "coverage_lost",
+    "source_completed",
     "absence_unchanged",
     "data_never_retracted_by_absence",
 ]
 _WRITING_REASONS: Final[frozenset[RewriteReason]] = frozenset(
-    {"new", "retract_disproven_absence", "digest_changed", "more_units", "no_receipt", "republish", "absent"}
+    {
+        "new",
+        "retract_disproven_absence",
+        "digest_changed",
+        "more_units",
+        "no_receipt",
+        "republish",
+        "absent",
+        "source_completed",
+    }
 )
 
 
@@ -109,6 +123,21 @@ def _is_partial(receipt: DayReceipt | None) -> bool:
     )
 
 
+def _coverage_refusal(receipt: DayReceipt | None, settlement: Written) -> RewriteDecision | None:
+    if receipt is not None and receipt.publication_state == "pending" and settlement.partial:
+        return RewriteDecision("coverage_unproven")
+    if receipt is not None and settlement.present_units < (receipt.present_units or 0):
+        return RewriteDecision("fewer_units")
+    previous_ids = None if receipt is None else receipt.present_unit_ids
+    current_ids = settlement.present_unit_ids
+    if previous_ids is not None:
+        if current_ids is None or not previous_ids <= current_ids:
+            return RewriteDecision("coverage_lost")
+    elif settlement.partial:
+        return RewriteDecision("coverage_unproven")
+    return None
+
+
 def decide_rewrite(  # noqa: PLR0911, PLR0913 - one return per S11 row; the census, receipt, answer and policy are distinct
     *,
     status: PartitionDayStatus,
@@ -117,6 +146,7 @@ def decide_rewrite(  # noqa: PLR0911, PLR0913 - one return per S11 row; the cens
     source_digest: str | None,
     partial_day: PartialDayPolicy,
     force: bool = False,
+    source_owed: bool = False,
 ) -> RewriteDecision:
     """S11: write an unwritten day; rewrite a settled day on a digest change, a partial recheck day only on more units.
 
@@ -137,13 +167,19 @@ def decide_rewrite(  # noqa: PLR0911, PLR0913 - one return per S11 row; the cens
         return RewriteDecision("retract_disproven_absence")
     if force:
         return RewriteDecision("republish")
+    if partial_day == "write_and_recheck":
+        refusal = _coverage_refusal(receipt, settlement)
+        if refusal is not None:
+            return refusal
     if receipt is None:
         return RewriteDecision("no_receipt")
+    if receipt.publication_state == "pending":
+        return RewriteDecision("coverage_unproven" if settlement.partial else "source_completed")
     if partial_day == "write_and_recheck" and _is_partial(receipt):
         previous = receipt.present_units or 0
         return RewriteDecision("more_units" if settlement.present_units > previous else "no_more_units")
-    if partial_day == "write_and_recheck" and settlement.present_units < (receipt.present_units or 0):
-        return RewriteDecision("fewer_units")
+    if source_owed and not settlement.partial:
+        return RewriteDecision("source_completed")
     return RewriteDecision("digest_changed" if source_digest != receipt.source_digest else "digest_unchanged")
 
 
@@ -280,11 +316,38 @@ class ObjectStoreLaneWriter:
         self, stream: str, day: date, table: pa.Table, receipt: DayReceipt, *, availability: bool
     ) -> WriteResult:
         """Write one stream-day's base rung, tiers and marker under its lock, then its turn receipt."""
-        result = await self._fill(
-            stream, day, _TableAdapter(stream=stream, day=day, table=table), availability=availability
-        )
-        await asyncio.to_thread(self.receipts.write, receipt)
-        return result
+        if (receipt.stream, receipt.day) != (stream, day):
+            raise LaneWriteError("the turn receipt does not name the stream-day being written")
+        registration = self._registration(stream)
+        async with self.lane_day_lock(self.session, _lane_day_lock_key(registration, day)) as granted:
+            if not granted:
+                raise LaneDayContendedError(f"{stream} {day.isoformat()}: another run holds this lane-day")
+            if receipt.expected_unit_ids is not None and receipt.present_unit_ids is not None:
+                current = await asyncio.to_thread(self.receipts.read, stream, day)
+                answer = Written(
+                    expected_units=len(receipt.expected_unit_ids),
+                    present_units=len(receipt.present_unit_ids),
+                    expected_unit_ids=receipt.expected_unit_ids,
+                    present_unit_ids=receipt.present_unit_ids,
+                )
+                if current is not None and _coverage_refusal(current, answer) is not None:
+                    raise LaneDayContendedError(
+                        f"{stream} {day.isoformat()}: published coverage changed before the lock"
+                    )
+            completeness = SourceCompleteness(self.receipts.storage)
+            await asyncio.to_thread(completeness.invalidate, stream, day)
+            await asyncio.to_thread(self.receipts.write, replace(receipt, publication_state="pending"))
+            result = await self._fill(
+                stream,
+                day,
+                _TableAdapter(stream=stream, day=day, table=table),
+                availability=availability,
+                already_locked=True,
+            )
+            completed = replace(receipt, publication_state="complete")
+            await asyncio.to_thread(self.receipts.write, completed)
+            await asyncio.to_thread(completeness.confirm, completed)
+            return result
 
     async def write_absence(self, stream: str, day: date, absence: Absent, receipt: DayReceipt) -> WriteResult:
         """Govern one stream-day as absent across the ladder, citing its proof, then write its receipt."""
@@ -361,7 +424,9 @@ class ObjectStoreLaneWriter:
             )
         return registration
 
-    async def _fill(self, stream: str, day: date, adapter: LaneAdapter, *, availability: bool) -> WriteResult:
+    async def _fill(
+        self, stream: str, day: date, adapter: LaneAdapter, *, availability: bool, already_locked: bool = False
+    ) -> WriteResult:
         registration = self._registration(stream)
         outcome, parts, rows, written_bytes, detail = await fill_one_lane_day(
             self.session,
@@ -371,7 +436,7 @@ class ObjectStoreLaneWriter:
             run_id=self.run_id,
             now=self.clock.now,
             today=utc_today(self.clock),
-            lane_day_lock=self.lane_day_lock,
+            lane_day_lock=unlocked_lane_day if already_locked else self.lane_day_lock,
             derive_tiers=self.derive_tiers,
             availability_storage=self.availability_storage if availability else None,
             availability_tally=self.tally,

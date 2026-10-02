@@ -4,6 +4,7 @@ import {
   fetchBoundedJson,
   UpstreamAbortedError,
   UpstreamHttpError,
+  UpstreamPayloadError,
   UpstreamTimeoutError,
 } from "@/lib/server/http/bounded-upstream";
 
@@ -35,6 +36,17 @@ function abortError(): DOMException {
 function passedSignal(callIndex = 0): AbortSignal {
   const init = mockedFetch.mock.calls[callIndex][1] as RequestInit;
   return init.signal as AbortSignal;
+}
+
+/** Leave the response body pending until a test interrupts it after fetch returns its headers. */
+function pendingBody(status = 200): { response: Response; fail: (error: unknown) => void } {
+  let fail!: (error: unknown) => void;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      fail = (error) => controller.error(error);
+    },
+  });
+  return { response: new Response(body, { status, headers: { "content-type": "application/json" } }), fail };
 }
 
 beforeEach(() => {
@@ -140,6 +152,55 @@ describe("fetchBounded cancellation", () => {
       fetchBoundedJson(URL_UNDER_TEST, { method: "GET" }, BOUNDS)
     ).rejects.toBeInstanceOf(UpstreamHttpError);
   });
+
+  it.each(["AbortError", "TimeoutError"])("normalizes a post-header %s as an upstream timeout", async (name) => {
+    const body = pendingBody();
+    mockedFetch.mockResolvedValue(body.response);
+    const pending = fetchBoundedJson(URL_UNDER_TEST, { method: "GET" }, BOUNDS);
+    await Promise.resolve();
+    body.fail(new DOMException("stream interrupted", name));
+    await expect(pending).rejects.toBeInstanceOf(UpstreamTimeoutError);
+  });
+
+  it.each(["terminated", "fetch failed"])("normalizes a dropped body (%s) as unreadable payload", async (message) => {
+    const body = pendingBody();
+    mockedFetch.mockResolvedValue(body.response);
+    const pending = fetchBoundedJson(URL_UNDER_TEST, { method: "GET" }, BOUNDS);
+    await Promise.resolve();
+    body.fail(new TypeError(message));
+    await expect(pending).rejects.toBeInstanceOf(UpstreamPayloadError);
+  });
+
+  it("preserves the HTTP status when an error response body drops", async () => {
+    const body = pendingBody(503);
+    mockedFetch.mockResolvedValue(body.response);
+    const pending = fetchBoundedJson(URL_UNDER_TEST, { method: "GET" }, BOUNDS);
+    await Promise.resolve();
+    body.fail(new TypeError("terminated"));
+    await expect(pending).rejects.toMatchObject({ status: 503, bodyText: undefined });
+  });
+
+  it("keeps a custom caller cancellation during the body read separate from upstream faults", async () => {
+    const caller = new AbortController();
+    const body = pendingBody();
+    mockedFetch.mockResolvedValue(body.response);
+    const pending = fetchBoundedJson(URL_UNDER_TEST, { method: "GET" }, { ...BOUNDS, signal: caller.signal });
+    await Promise.resolve();
+    caller.abort(new Error("superseded viewport"));
+    body.fail(caller.signal.reason);
+    await expect(pending).rejects.toBeInstanceOf(UpstreamAbortedError);
+  });
+
+  it.each([new TypeError("invalid reader state"), new Error("unexpected body bug")])(
+    "does not hide an unrelated body exception (%s)", async (error) => {
+      const body = pendingBody();
+      mockedFetch.mockResolvedValue(body.response);
+      const pending = fetchBoundedJson(URL_UNDER_TEST, { method: "GET" }, BOUNDS);
+      await Promise.resolve();
+      body.fail(error);
+      await expect(pending).rejects.toBe(error);
+    }
+  );
 
   /**
    * `bodyText` lets a caller that recognises the upstream's own error shape (e.g. a 400

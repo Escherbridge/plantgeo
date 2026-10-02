@@ -1,8 +1,9 @@
 # `pipeline/lanes/water_gauges/` — the `water-gauges-daily` strategy
 
 Track `config_driven_ingestion_20260926`, spec §7a, plan Phase 3 (`w3-water-gauges`). One lane
-(`lanes/water-gauges-daily.toml`, strategy key `water_gauges.usgs_water_data`), DARK until the owner's
-G3: `enabled = false`, `gap_fill_enabled = false`. The source probe (P4) every rule below rests on is
+(`lanes/water-gauges-daily.toml`, strategy key `water_gauges.usgs_water_data`). The local G3 preparation
+sets `enabled = true` and `gap_fill_enabled = true`; production activation still requires the owner's
+go and reviewed deployment. G4 serving remains separate. The source probe (P4) every rule below rests on is
 `docs/lanes/water-gauges.md` §8.1; the gates are §8.4.
 
 | module | what |
@@ -28,6 +29,15 @@ returns `Written(expected_units=len(planned_tiles(context.planned_units)), prese
 short day is written, reported `unwritten` with the failed units named, rewritten when more tiles answer
 (`more_units`), and never replaced by a shorter answer (`fewer_units`). A names unit that fails holds its
 tile for every day of the turn, because its site names and zones cover them all.
+
+The stable source-unit identities are tile bboxes, independent of request date chunks. They are
+persisted in the runner receipt and its yearly completeness proof. A partial historical day stays
+in gap-fill's source backlog across restarts, including before the rolling-revision horizon; a
+complete zoom ladder alone never proves the re-pull finished. A later partial answer may replace
+an earlier one only when it contains every previously answered tile. Six tiles followed by seven
+different tiles does not meet that condition. G4 history validation must pass the strategy's
+`source_unit_ids` into the runner reader's census and require no source debt as well as no missing
+ladder days. See `pipeline/runner/AGENTS.md` "Census" for the publication proof and crash ordering.
 
 **One page per unit, one bad feature alone.** `limit` is the collection's maximum, 50,000; the densest tile
 has about 250 stream sites, so 31 days is about 7,750 features. A `next` link means the sizing assumption

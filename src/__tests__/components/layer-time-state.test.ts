@@ -341,15 +341,17 @@ describe("resolveLayerTimeState: a withheld layer is not an error", () => {
     }
   });
 
-  it("only pulses the two withheld reasons something is actually retrying", () => {
+  it("only pulses withheld reasons whose evidence is being built or retried", () => {
     const settling = LAYER_WITHHOLDING_REASONS.filter(
       (reason) => describeWithholdingReason(reason).isSettling === true
     );
 
     // `coverage_unavailable` is the loader's own 30s retry (a cold census that exhausted the 8s
-    // timeout), and `availability_unpublished` is an index build that is running. Everything else
-    // is a settled decision that will not move while the reader watches.
-    expect([...settling].sort()).toEqual(["availability_unpublished", "coverage_unavailable"]);
+    // timeout), `availability_unpublished` is an index build, and SSURGO metadata is retried by
+    // the same capability poll. The remaining reasons are settled decisions.
+    expect([...settling].sort()).toEqual([
+      "availability_unpublished", "coverage_unavailable", "soil_survey_status_unavailable",
+    ]);
   });
 });
 

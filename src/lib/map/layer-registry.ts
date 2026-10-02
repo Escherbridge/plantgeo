@@ -411,8 +411,8 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   // `unavailable` -- an unbound region, a release nobody has admitted yet, or a viewport below
   // the one native z13 rung this port ever serves -- before any storage is touched; nothing is
   // ever queried from USDA live on a request. `warehouseLayerName: "soil-survey"` is what lets
-  // the capability payload list it under `withheldParquetCapabilities` as `lane_never_written`
-  // before any release is admitted, which LayerRow's time-status slot captions accordingly; and
+  // capability payload describe the admitted static release or its explicit admission/refusal
+  // state, which LayerRow's time-status slot captions accordingly; and
   // SoilDetails reads the response's own reason and captions it -- a feed gap, a "zoom in", or
   // a provider fault -- rather than assuming one. The About page states the release mechanism.
   //

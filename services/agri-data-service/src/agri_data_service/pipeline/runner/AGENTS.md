@@ -19,6 +19,7 @@ python -m agri_data_service.pipeline.runner --lane <id> --mode forward|gap-fill|
 | `checkpoints.py` | source checkpoints over `pipeline/parquet/source_checkpoint.py` |
 | `census.py` | the full-ladder census |
 | `receipts.py` | per stream-day turn receipts (S11 digests, units, input digests, pruned inputs) |
+| `completeness.py` | bounded yearly proofs of complete source support; absent proof remains source debt |
 | `reader.py` / `writer.py` | the read and write ports, and their `pipeline/parquet` bindings |
 | `digests.py` | table and response digests |
 | `turn.py` | `run_turn`: one turn, start to finish |
@@ -148,6 +149,46 @@ Four rungs per stream-day, folded (`fold_ladder`): `data` only when every rung i
 absent base under coarse rows, or a rung with both data and absence, raises (exit 70). Listing is
 by month prefix for a short window and by year for a long (gap-fill) one — forty years are forty
 listings per rung, not four hundred and eighty.
+
+Source coverage and zoom-ladder completion are separate. A strategy implementing
+`SourceCoverageStrategy.source_unit_ids(lane, region)` declares the stable source support expected
+for every day; `Written.expected_unit_ids` must match it, and `present_unit_ids` identifies the
+subset that answered. The runner passes that support into `LaneReader.census` as
+`expected_unit_ids`. The returned `source_owed` mapping includes every published base day without
+a matching full-support proof, even when all zoom tiers are present. `owed_days()` includes this
+debt; only a base day with no source debt is repairable as ladder-only work. The report separates
+`days_source_owed` from `days_ladder_owed`. A history-depth audit must use this support-aware census,
+not the partition-only `read_census` function. Source-owed days never restore old checkpoints.
+
+Proofs live at the managed infrastructure namespace
+`lane-source-completeness/v1/<stream>/<year>.json`; this is runner evidence, not a data stream and
+not disposable scratch. Each strict versioned document binds its stream and year and contains at
+most 366 complete dates, each bound to a digest of the expected unit identities. Missing dates,
+missing documents and changed support mean owed work; corrupt or unreadable documents fail the
+turn rather than clearing debt. A 36-year re-pull needs 37 small proof reads instead of one GET
+for every historical receipt. CAS retries merge independent day updates within the same year.
+
+The writer holds the existing session-scoped lane-day lock while invalidating the prior proof,
+writing the intended receipt with `publication_state = "pending"`, publishing data, replacing that
+receipt with `publication_state = "complete"`, and finally confirming full source support. The
+pending receipt is durable before any partition mutation and preserves the maximum intended
+coverage when the final receipt write fails. While it is pending, every partial replacement is
+refused; only a fully answered publication can resolve the uncertain relationship between stored
+rows and their receipt. Pending is never an equal-digest or source-completeness proof. Recovery
+retires the pending state by replacing the same receipt after successful publication, so no extra
+journal namespace or cleanup job is introduced. Receipts without this additive field decode as
+complete for backward compatibility. A crash between these operations leaves source debt. Receipt
+equality alone cannot repair a missing proof: the next fully answered turn republishes the day.
+Compare mode only reads these documents. Counts-only old receipts remain decodable, but cannot
+establish support identity or authorize an intermediate partial replacement. A fully answered
+replacement upgrades them. For identified coverage, a partial rewrite needs a superset of the
+previously published identities; a larger count with a different missing tile is refused and
+reported, preserving previously served gauges until a coverage-preserving answer arrives.
+
+Forward turns discover ladder debt independently of the decision to re-ask their full recent
+window. Repair candidates are censused again after publication: an unchanged digest cannot hide
+a missing coarse rung, an already rewritten ladder is not derived twice, and a source-incomplete
+base is never treated as sufficient input for ladder-only repair.
 
 ## Checkpoints
 
