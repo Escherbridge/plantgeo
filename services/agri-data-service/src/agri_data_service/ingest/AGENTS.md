@@ -760,6 +760,17 @@ accidentally persist a credentialed URL.
 
 ## provider_client.py: the Phase-1 config provider client, `KeyedRequestUrl` and SOFT-8 (plan 1C)
 
+**Optional same-host keys.** An endpoint's `optional_api_key` opt-in uses the provider's declared
+`api_key_env` and `api_key_parameter`. USGS declares `api_key` for its daily and monitoring-location
+collections; missing or blank environment values preserve anonymous requests. Keys are added only
+to `send_url`, wrapped in `KeyedRequestUrl`; `request_url` stays identical across key rotation and
+anonymous access, preserving cache/checkpoint identity. Caller-supplied `apikey`/`api_key` fields
+are rejected before URL construction. Only existing redacted parameter spellings are accepted.
+Optional keyed requests disable redirects through `fetch_bounded(follow_redirects=False)` so even
+a Location URL reflecting the key cannot forward it to another host. A redirect becomes an upstream
+HTTP error. Anonymous requests and existing paid customer-host behavior retain client redirect
+settings. No request headers or client-wide credentials are installed.
+
 **Two halves, one of them the runner's seam.** `provider_endpoint_request` + `send_provider_request`
 are what the config runner actually calls: `pipeline/runner/binding.py::ConfigProviderClient` (the
 concrete `pipeline/runner/contract.py::ProviderClient`) resolves every request through

@@ -4388,12 +4388,26 @@
     "integration_slice": "i-coordinator"
   },
   "reviews": {
+    "usgs_optional_key_20261002": {
+      "reviewed_on": "2026-10-02",
+      "reviewer": "Codex independent water_recovery_review agent",
+      "verdict": "Source/security APPROVED; full Python sweep and separate receipt verifier PASS",
+      "evidence": "evidence/phase3.md",
+      "disposition": "Live anonymous historical ingestion encountered HTTP 429. Provider wiring previously could not use USGS_WATER_DATA_API_KEY. Reviewed declarative optional-key transport preserves blank/unset anonymous behavior, required customer-host semantics, redacted credential-bearing sends and credential-free checkpoint identity; optional keyed redirects are refused. Exact typed scanner exemptions and focused regressions passed the first full Python sweep. Fresh receipt 97e98a42df00d800496411635b8be1bae23a319657bd65c815a1a7aa97797a39 over 1165 inputs independently verified. The owner has not provisioned a key; no increased production throughput is claimed."
+    },
+    "water_production_validation_20261002": {
+      "reviewed_on": "2026-10-02",
+      "reviewer": "Codex independent water_recovery_review and production_verifier agents; root reviewed operator scripts",
+      "verdict": "Corrected data and exact availability candidate APPROVED; deployed public API acceptance PASS; G4 remains open",
+      "evidence": "evidence/phase3.md",
+      "disposition": "211fc101 is SUCCESS on four expected services; public acceptance passed six requests/twelve assertions. Recent repair passed 50/50 gauge-day parity and 3972-row overlap equality; reviewed bootstrap applied successfully. One historical turn wrote 341 dates and 242707 rows: 310 new dates fully sourced, 31 source-partial, 341 ambiguous gauge-day identities excluded. Canonical index verifies 355 dates/1420 digested rows; source-aware census retains 12826 owed dates. Forward recovery retired eight initial claims and a reviewed zero-request pass retired the final six; final inventory has zero owed/quarantined publication claims. G4 remains open for history, ambiguity disposition, 72-hour scheduled observation and legacy transition requirements."
+    },
     "water_stream_family_20261002": {
       "reviewed_on": "2026-10-02",
       "reviewer": "Codex independent water_recovery_review agent",
       "verdict": "APPROVED; full Python sweep and independent receipt verifier PASS 2026-10-02 UTC",
       "evidence": "evidence/phase3.md",
-      "disposition": "Production persisted comparison found 45/50 rows: exact ST filtering omitted the tidal-stream Portland gauge. Official endpoint probes confirm the family predicate restores the five rows. Reviewed fix expands both queries and adds per-tile subtype support alongside original bbox IDs, making old proofs owed while preserving partial-write and pending-receipt safeguards. Corrected fake-source filtering and migration regressions passed the full Python sweep. One initial RUF005 style finding was corrected and independently re-reviewed; fresh receipt 0955e659a1b75f58705bc19c5c9812c59e057853437c398dac900eb47f07d7c8 independently verified. Production repair, persisted 50/50 parity, availability bootstrap and G4 remain open."
+      "disposition": "Production persisted comparison found 45/50 rows: exact ST filtering omitted the tidal-stream Portland gauge. Official endpoint probes confirm the family predicate restores the five rows. Reviewed fix expands both queries and adds per-tile subtype support alongside original bbox IDs, making old proofs owed while preserving partial-write and pending-receipt safeguards. Corrected fake-source filtering and migration regressions passed the full Python sweep. One initial RUF005 style finding was corrected and independently re-reviewed; fresh receipt 0955e659a1b75f58705bc19c5c9812c59e057853437c398dac900eb47f07d7c8 independently verified. Subsequent production repair, 50/50 parity and availability publication are recorded in water_production_validation_20261002; G4 remains open."
     },
     "phase3_recovery_20261001": {
       "reviewed_on": "2026-10-01",

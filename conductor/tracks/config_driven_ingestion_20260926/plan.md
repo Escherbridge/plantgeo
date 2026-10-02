@@ -1149,11 +1149,14 @@ authors in the service tree until G4's push (O-R3-3).
       calendar floor moves to 1990-09-30; its next version carries the earlier days (plus a one-off
       calendar export under this go only if A19's check found a reader that needs them).
       **Executed October 2, 2026:** no key was required by the successful source probes;
-      owner-authorized G3 commit `696f1ae5` is live on all four expected services. Both modern
+      owner-authorized G3 commit `696f1ae5` was deployed on all four expected services. Both modern
       water schedules are active and legacy serving remains unchanged. The bounded manual
-      forward validation exposed a stream-subtype selection defect and pending initial
-      availability publication; follow-up repair and all open G4 rows are recorded in
-      `evidence/phase3.md`.
+      forward validation exposed a stream-subtype selection defect. Follow-up `211fc101`
+      repaired it in production: fourteen days have complete source support and all physical
+      rungs, fifty gauge/day comparisons pass, and the five-day forward/historical overlap
+      agrees. The initial modern-stream availability index is published and verified.
+      Historical completeness, scheduled observation and all other open G4 rows remain in
+      `evidence/phase3.md`; no serving switch is implied.
 - [ ] Task: **Validation rows** (there is no row compare across APIs):
   - 10 gauges × 5 days against the modern daily values, and against legacy `dv` while it exists;
   - forward/gap-fill equality on overlapping days;

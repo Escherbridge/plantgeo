@@ -28,6 +28,12 @@ does I/O (the loader reads files), and is a ruled exception on the same grounds.
 
 ## Loader
 
+Provider endpoints may declare `optional_api_key` only without a customer host, with both
+`api_key_env` and `api_key_parameter` on the provider. The parameter is restricted to the existing
+redactor's `apikey` and `api_key` spellings. This makes optional same-host authentication explicit
+without weakening the required customer-host key rule. The endpoint opt-in scopes credential use;
+other endpoints on the provider remain anonymous.
+
 Lazy by construction: nothing reads a file until it is called (the manifest-moves-must-be-lazy
 rule; `LANE_REGISTRY` and friends are read at import, so nothing there may call this at import).
 

@@ -120,6 +120,14 @@ def _walk(node: object, path: str) -> list[tuple[str, str, object]]:
     return found
 
 
+def _safe_provider_key_metadata(path: Path, where: str, value: object) -> bool:
+    if path.parent.name != "_providers":
+        return False
+    if where == "api_key_parameter":
+        return value in ("apikey", "api_key")
+    return bool(re.fullmatch(r"endpoints\.[a-z0-9-]+\.optional_api_key", where)) and isinstance(value, bool)
+
+
 def raw_file_violations(path: Path) -> list[str]:
     """Footprint literals and key-shaped values in one TOML file: parsed values, then raw text/comments."""
     text = path.read_text(encoding="utf-8")
@@ -129,7 +137,12 @@ def raw_file_violations(path: Path) -> list[str]:
             violations.append(f"{path.name}:{where}: footprint-shaped key {key!r}")
         if isinstance(value, list) and len(value) == _BBOX_ARITY and all(isinstance(v, (int, float)) for v in value):
             violations.append(f"{path.name}:{where}: a 4-number array reads as a bbox")
-        if key and _SECRET_KEY_NAME.search(key) and key not in _ALLOWED_SECRET_KEY_NAMES:
+        if (
+            key
+            and _SECRET_KEY_NAME.search(key)
+            and key not in _ALLOWED_SECRET_KEY_NAMES
+            and not _safe_provider_key_metadata(path, where, value)
+        ):
             violations.append(f"{path.name}:{where}: secret-shaped key {key!r}")
         if not isinstance(value, str):
             continue
@@ -300,3 +313,24 @@ def test_the_raw_file_scan_passes_a_real_shaped_lane(tmp_path: Path) -> None:
     lane.write_text(to_toml(settled_soil_lane()), encoding="utf-8")
 
     assert raw_file_violations(lane) == []
+
+
+@pytest.mark.parametrize(
+    ("provider_file", "snippet"),
+    [
+        (False, 'api_key_parameter = "api_key"\n'),
+        (False, "[endpoints.daily]\noptional_api_key = true\n"),
+        (True, '[nested]\napi_key_parameter = "api_key"\n'),
+        (True, "optional_api_key = true\n"),
+        (True, 'api_key_parameter = "secret-value"\n'),
+        (True, '[endpoints.daily]\noptional_api_key = "secret-value"\n'),
+    ],
+)
+def test_auth_metadata_exemptions_require_exact_provider_paths_and_values(
+    tmp_path: Path, provider_file: bool, snippet: str
+) -> None:
+    directory = tmp_path / "_providers" if provider_file else tmp_path
+    directory.mkdir(exist_ok=True)
+    planted = directory / "planted.toml"
+    planted.write_text(snippet, encoding="utf-8")
+    assert "secret-shaped key" in " | ".join(raw_file_violations(planted))

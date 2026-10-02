@@ -15,7 +15,7 @@ the strategy module a lane names holds BEHAVIOUR. Schema and loader:
 
 Only top-level `*.toml` files are lanes. `_providers/` holds `open-meteo.toml` (archive, forecast and
 historical-forecast, each with a keyed customer host; weighted; the paid monthly budget),
-`nasa-power.toml` (keyless, unweighted, `time_standard = "UTC"`) and `usgs-water-data.toml` (keyless,
+`nasa-power.toml` (keyless, unweighted, `time_standard = "UTC"`) and `usgs-water-data.toml` (optional key,
 unweighted; the `daily` and `monitoring-locations` collections; `water-gauges-daily`, spec §7a).
 
 ## Rules a lane file must satisfy
@@ -52,6 +52,11 @@ tree is quarantined.
 
 - `api_key_env` holds the NAME of an environment variable ending in `_KEY`, never a key. The owner
   sets the variable; a customer host is only declared on a provider that names one.
+- `api_key_parameter` names an already-redacted query spelling (`apikey` or `api_key`). An endpoint
+  opts into an optional same-host key with `optional_api_key = true`, requiring both declarations.
+  Missing or blank keys remain anonymous; customer hosts still require their key and cannot opt in.
+  USGS reads `USGS_WATER_DATA_API_KEY` for both collections. The owner supplies its value; no key is
+  provisioned by this change. Official contract: https://api.waterdata.usgs.gov/docs/ogcapi/keys/.
 - Every host must resolve in `foundation/observability/usage.py::provider_for_host`, or the usage
   report shows `provider None` for it; `tests/lane_config/test_provider_hosts.py` enforces this. Add
   the host rule in the same commit as the provider file.

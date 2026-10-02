@@ -273,3 +273,177 @@ Both site-type attempts are preserved under
 `.omc/research/receipt-investigation-20261001/quality/site-types/`, with the final run in
 `final/`. All implementation bytes were frozen before the passing sweep. The approved
 follow-up is ready for the owner-authorized push and corrected production validation.
+
+### Corrected deployment and production data validation
+
+The approved follow-up was committed and pushed as `211fc1019592153d0c5fa4e2b47bdb094e17a65c`
+on October 2 UTC. Railway deployed that exact commit successfully on all four expected services:
+
+| service | deployment | result |
+| --- | --- | --- |
+| main | `fa2630c3-c8b9-4a5a-a40e-41d016934e35` | SUCCESS; live at 04:09:44 UTC |
+| Parquet API | `51df4298-f5da-44a2-a7ca-96094f27dba3` | SUCCESS |
+| executor | `063f6cae-9414-4a36-b63e-a321c79cc232` | SUCCESS |
+| Martin | `88d928fe-be65-4c9e-bd02-704fe6c75057` | SUCCESS |
+
+ML and strategy-knowledge were skipped by their watch paths. Independent public acceptance at
+04:11 UTC passed all six HTTP requests and twelve assertions. Readiness, the static soil
+release, both soil zoom behaviors, the selected-day legacy water sample and the temperature
+sample retained their earlier successful results. Shortwave remains `availability_stale`.
+No connected browser was available for visual UI verification; these are API observations.
+
+Before repair, a read-only census on the new deployment correctly classified all fourteen old
+eight-unit days as source-owed under the sixteen-unit contract. Physical completion markers
+alone did not let the old narrower source selection pass.
+
+The coordinator then ran `python -m agri_data_service.pipeline.runner --lane water-gauges-daily
+--mode forward --run-id lane-runner:g3-repair-211fc101`. It started at 04:09:31 UTC and completed
+in 25.683 seconds with exit 0. All fourteen September 17–30 days were repaired: 11,083 rows,
+16 requests of the configured 32, all HTTP 2xx, zero failed units and zero dropped rows.
+The report's fourteen `days_source_owed` counts the repair work admitted at the start; the
+separate post-turn census proves remaining source debt is zero.
+
+| corrected production validation | result |
+| --- | --- |
+| full source support and physical resolutions | Fourteen days complete under sixteen support identities, with rungs 0, 5, 9 and 13; zero source or ladder-only debt. |
+| five physical samples, September 20–24 | Stable complete receipts; no duplicate identities, wrong named days or wrong source/statistic; all required completion markers present. |
+| ten gauges × five days | **50/50 exact matches** against modern daily values and legacy daily values, including the restored Portland tidal-stream gauge. Values, named days and modern approval match. |
+| forward/historical overlap | All 3,972 rows across September 20–24 agree between fourteen-day requests, thirty-one-day requests and persisted base rows. Every conformed field except `ingested_at` is compared. Receipt source digests agree. |
+| overlap cost and limitations | 24 requests, all HTTP 2xx, 25,994,428 bytes, 8.416 seconds; no errors or backoff. Shared location metadata holds names constant. This is request-window equality, not a scheduled historical turn. |
+| history census before backfill | 13,136 missing historical days remain in the 13,150-day declared window; G4 is not approved. |
+
+The independent water reviewer recomputed the fifty comparisons, checked evidence hashes and
+the separate overlap/census receipt links, and approved these results. Raw evidence is under
+`.omc/research/receipt-investigation-20261001/water-validation/`: `g3-forward-211fc101.log`,
+`g4-readonly-expanded-contract.json`, `g4-readonly-repaired.json`,
+`persisted-parity-repaired.json`, and `overlap/overlap-repaired.json`.
+
+### Initial modern-water availability publication
+
+After the corrected physical data was written, the coordinator regenerated the canonical
+bootstrap candidate. Independent review approved the repaired data and this exact candidate
+before apply. The earlier narrower candidate was preserved and never applied. The new input SHA-256 is
+`b93fed93ab10e3315d894622ef8ac54f7ceb24d0ee5c0da0d693e565f486bd47`.
+It binds fourteen dates, September 17–30, fifty-six digested rung/day rows, 789,576 hashed
+physical bytes and seventy-one immutable evidence objects totaling 89,018 bytes. It contains
+no excluded days or manifest-trusted rows. The availability head and bootstrap marker were
+absent at compilation.
+
+The independently reviewed installer verified the exact input, compiler and installer hashes,
+the complete immutable evidence graph and the absent live boundary. Its offline preview
+passed. Under the owner's production authorization, it then delegated publication to the
+installed canonical `agri-service data availability-bootstrap` command, retaining physical
+byte revalidation, the publication lock and compare-and-swap. Apply succeeded on one attempt,
+publishing fifty-six rows with initial generation
+`b5b84cbaf06a465cbcc9e5b1bc7658b99f87742691aeb0786a71e6d564fa1d4b`.
+
+An ordinary forward turn, `lane-runner:g3-claim-drain-211fc101`, completed in 14.956 seconds:
+sixteen successful requests, all fourteen source digests unchanged, zero physical bytes or
+partitions rewritten. The bounded retry pass retired eight pending claims. The independent
+post-turn claim inventory found six remaining, September 25–30. The report's zero newly owed
+claims is not interpreted as an empty standing inventory.
+
+At 04:15:40 UTC, a separately authored, coordinator-reviewed GET-only observer passed twelve
+checks using the deployed canonical availability reader and bootstrap receipt verifier. The
+stable current generation was
+`621d3462873b2b35ba5c688df2d681c985bdd7de8b57786c16144788dfcfac50`;
+all fourteen dates were selectable at all four required rungs. Pointer, generation, canonical
+bootstrap receipt and reviewed input bindings passed. The observation used seven GETs and
+28,563 bytes in 0.748 seconds. It verifies the modern stream's governed index; the public
+water layer still selects the legacy stream until G4.
+
+Evidence is under `water-validation/bootstrap/` and
+`production-verification/modern-availability-211fc101.json` in the same ignored research root.
+`g4-readonly-post-bootstrap.json` records the physical samples and six standing claims. No
+source configuration, secret, legacy pause or serving switch was part of the bootstrap.
+
+### Optional USGS key transport
+
+The bounded historical turn encountered repeated HTTP 429 responses. A presence-only executor
+check returned `usgs_api_key_configured: false`; no credential value was printed. Current
+[official USGS key documentation](https://api.waterdata.usgs.gov/docs/ogcapi/keys/) confirms that
+keys raise hourly limits and supports `api_key` query transport. No effective numerical quota
+was measured from this turn, and throttling does not prove anonymous backfill cannot progress.
+
+Inspection also found that setting `USGS_WATER_DATA_API_KEY` alone would not authenticate the
+existing lane: its provider declared no key variable and the shared client only supported
+required customer-host credentials. The follow-up adds declarative optional endpoint opt-in
+and a constrained provider key-parameter name. Both USGS endpoints declare the optional
+variable and `api_key`; missing or blank values retain anonymous access. Required customer-host
+selection and missing-key errors retain their existing behavior.
+
+The credential enters only the redacted send URL. Public request URLs and durable checkpoint
+identities are unchanged. Optional authenticated requests disable redirects to prevent a
+credential-bearing redirect from reaching another host. Auth metadata exemptions in the TOML
+secret scanner are restricted to the exact provider paths and supported literal values.
+
+The independent reviewer approved the frozen nine-file source/security batch. Added regressions
+cover both endpoints, missing/blank/present values, endpoint scope, invalid schema declarations,
+wrong-path scanner exemptions, injected key parameters, durable checkpoint identity, redacted
+errors and redirect refusal. Authors and reviewer ran no tests. The separate monitor ran
+the full Python receipt sweep described below. No rate-limit budget or schedule was changed.
+
+The first full sweep passed: format 0.147 seconds, lint 0.100 seconds, mypy 7.525 seconds and
+full pytest 369.467 seconds. The fresh receipt was generated at
+`2026-10-02T04:40:08.467723Z`, covers 1,165 files and has digest
+`sha256:97e98a42df00d800496411635b8be1bae23a319657bd65c815a1a7aa97797a39`.
+The separate receipt verifier passed in 0.688 seconds. Inputs remained unchanged during the
+sweep and matched the index. No individual passing-test count is inferred from the wrapper.
+No web source changed; the prior full local web results remain the evidence and the Docker
+release gates still apply. Logs and the consolidated report are under
+`.omc/research/receipt-investigation-20261001/quality/usgs-key/initial/`.
+This proves the code batch, not a provisioned key or increased production throughput.
+
+### Bounded historical execution and final claim recovery
+
+The coordinator ran one historical turn on `211fc101`, using the configured logical-request
+cap of 112, concurrency two and at most 366 admitted dates. Run ID
+`lane-runner:g3-history-211fc101` started at 04:16:09 UTC and finished at approximately
+04:37:57 UTC, after 1,307.749 seconds. It exited 0 with `status: completed` and
+**`outcome: incomplete`**. The turn retained the configured fetch/retry limits; the direct
+CLI invocation is not evidence of the scheduler's outer subprocess timeout.
+
+| historical turn measure | observed result |
+| --- | --- |
+| written interval | 341 dates, September 30, 1990 through September 5, 1991 |
+| rows written | 242,707 |
+| source calls | 96 logical requests charged; 104 HTTP attempts, comprising 94 successful responses and 10 HTTP 429 responses; quota circuit opened |
+| source-complete new dates | 310 |
+| source-partial new dates | 31, August 6 through September 5, 1991; these remain owed |
+| physical/availability publication | All 341 written dates have all four physical rungs and were added to the governed index |
+| identity-conflict omissions | 341 gauge/day identities deliberately excluded; separate residual below |
+| whole-window census afterward | 355 physical full-ladder dates, of which 324 have complete source support; 12,795 dates missing; 12,826 total owed = missing plus 31 source-partial dates; no ladder-only debt |
+
+The report's reason counts overlap for some dates and are not summed as distinct owed days.
+The independent reviewer checked the report against the completed source-aware census. A
+canonical GET-only observation at 04:40:12 UTC passed all twelve checks: exactly 355 selectable
+dates and 1,420 digested published rows, with stable generation
+`35d5a1f8b81a6e736c46e7281ed4a325278cd15fbc64732fd3e8a1fc1071dfcc`.
+This proves publication, not complete source coverage for the 31 partial dates.
+
+The ambiguity residual is `USGS-12010000`, September 30, 1990 through September 5, 1991:
+341 distinct daily identities have two time-series IDs. The 682 warning events are duplicate
+logging by settlement and row construction; the authoritative report count is **341**, not
+682. The logs do not establish different numeric flows: differing time-series IDs alone can
+trigger the conflict because they participate in the source fact digest. An explicit
+source-series decision and targeted recovery or other approved disposition is needed before
+G4. The 310 fully supported old dates leave ordinary gap-fill debt, and they are outside the
+550-day forward revision window, so their omitted identities will not automatically be retried.
+
+The historical mode does not perform the forward availability retry pass, leaving the earlier
+six recent claims intact. After independent source review, the coordinator ran
+`lane-runner:g3-claim-drain-zero-211fc101` in forward mode with `--weighted-budget 0`.
+It retried and retired all six claims in 12.945 seconds, with **zero logical or HTTP requests**
+and no source refresh. Its fourteen deferred source rechecks and `outcome: incomplete` are
+intentional consequences of the zero cap. The final independent inventory has **zero owed
+availability claims and zero quarantined claims**; all five recent physical samples still pass.
+
+Evidence: `water-validation/g3-history-211fc101.log`, `g4-readonly-post-gapfill.json`,
+`g3-claim-drain-zero-211fc101.log`, `g4-readonly-final.json`, and
+`production-verification/modern-availability-post-history-211fc101.json` under the same
+ignored research root. The earlier interim census is retained as non-atomic progress evidence.
+
+G4 remains open for 12,826 owed dates, the ambiguity disposition, at least 72 hours of
+scheduled forward observation, and the legacy claim-drain/serving-switch requirements.
+Legacy public serving remains active. No further anonymous provider turn was started after
+the observed quota exhaustion.

@@ -621,6 +621,8 @@ async def fetch_bounded(
     url: str,
     bounds: UpstreamBounds,
     headers: Mapping[str, str] | None = None,
+    *,
+    follow_redirects: bool | None = None,
 ) -> BoundedResponse:
     """Fetch a URL under a byte cap and timeout, never raising on a non-2xx status or an unreadable body.
 
@@ -649,6 +651,7 @@ async def fetch_bounded(
                 headers=dict(headers or {}),
                 timeout=bounds.timeout_seconds,
                 extensions={_ATTEMPT_EXTENSION_KEY: attempt},
+                follow_redirects=client.follow_redirects if follow_redirects is None else follow_redirects,
             ) as response:
                 body, byte_count, payload_error = await _read_bounded_body(response, bounds, metered=metered)
                 return BoundedResponse(

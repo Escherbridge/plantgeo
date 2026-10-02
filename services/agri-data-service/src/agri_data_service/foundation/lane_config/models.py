@@ -89,6 +89,13 @@ class ProviderEndpoint(_FrozenModel):
     host: HostName
     customer_host: HostName | None = None
     path: UrlPath
+    optional_api_key: bool = Field(default=False, strict=True)
+
+    @model_validator(mode="after")
+    def _optional_key_uses_the_public_host(self) -> ProviderEndpoint:
+        if self.optional_api_key and self.customer_host is not None:
+            raise ValueError("optional_api_key cannot weaken a customer_host's required key")
+        return self
 
 
 class ProviderWeightRule(_FrozenModel):
@@ -152,6 +159,7 @@ class ProviderConfig(_FrozenModel):
     display_name: str = Field(min_length=1)
     weighted: bool
     api_key_env: ApiKeyEnvironmentName | None = None
+    api_key_parameter: Literal["apikey", "api_key"] | None = None
     #: NASA POWER's `time-standard`; only UTC is accepted (daily values must be UTC days).
     time_standard: Literal["UTC"] | None = None
     endpoints: Mapping[KebabIdentifier, ProviderEndpoint]
@@ -169,6 +177,11 @@ class ProviderConfig(_FrozenModel):
         keyed = sorted(name for name, endpoint in self.endpoints.items() if endpoint.customer_host is not None)
         if keyed and self.api_key_env is None:
             raise ValueError(f"endpoints {keyed} declare a customer_host, which needs api_key_env")
+        optional = any(endpoint.optional_api_key for endpoint in self.endpoints.values())
+        if optional and (self.api_key_env is None or self.api_key_parameter is None):
+            raise ValueError("optional_api_key needs api_key_env and api_key_parameter")
+        if self.api_key_parameter is not None and self.api_key_env is None:
+            raise ValueError("api_key_parameter needs api_key_env")
         return self
 
     @field_validator("endpoints", mode="after")

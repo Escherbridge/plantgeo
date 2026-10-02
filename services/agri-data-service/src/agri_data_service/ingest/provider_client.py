@@ -235,8 +235,9 @@ class ProviderEndpointRequest:
 
     #: The free host's URL with the caller's parameters and no key: what reports, checkpoints and logs see.
     request_url: str
-    #: What is actually sent: the customer host plus the key when the endpoint sells one, else `request_url`.
+    #: The actual send URL, including an optional same-host key or required customer-host key.
     send_url: KeyedRequestUrl
+    allow_redirects: bool = True
 
 
 def provider_endpoint_request(
@@ -246,29 +247,29 @@ def provider_endpoint_request(
     *,
     environment: Mapping[str, str] | None = None,
 ) -> ProviderEndpointRequest:
-    """Resolve one request to a `lanes/_providers/<id>.toml` endpoint; a keyed endpoint REQUIRES its key (FR-2).
-
-    A provider endpoint with a `customer_host` is always sent there with the key, and an empty key is
-    `ProviderConfigError`, never a silent fall-back to the free host. An undeclared endpoint, or a keyed
-    provider whose key parameter is unknown here, is `ProviderConfigError` too.
-    """
+    """Resolve declared endpoint credentials; see `ingest/AGENTS.md`, Optional same-host keys."""
     declared = provider.endpoints.get(endpoint)
     if declared is None:
         raise ProviderConfigError(f"endpoint {endpoint!r} is not declared by provider {provider.id!r}")
+    key_parameter = provider.api_key_parameter or PROVIDER_API_KEY_PARAMETERS.get(provider.id)
+    if any(name.lower() in {"apikey", "api_key"} for name in parameters):
+        raise ProviderConfigError("API keys must come from the provider environment, not request parameters")
     credential_free = f"https://{declared.host}{declared.path}?{urlencode(sorted(parameters.items()))}"
-    if declared.customer_host is None or provider.api_key_env is None:
+    if (declared.customer_host is None and not declared.optional_api_key) or provider.api_key_env is None:
         return ProviderEndpointRequest(request_url=credential_free, send_url=KeyedRequestUrl(credential_free))
     source = os.environ if environment is None else environment
     key = source.get(provider.api_key_env, "").strip()
     if not key:
+        if declared.optional_api_key:
+            return ProviderEndpointRequest(request_url=credential_free, send_url=KeyedRequestUrl(credential_free))
         raise ProviderConfigError(f"{provider.api_key_env} is empty; lanes on {provider.id} need it (FR-2)")
-    key_parameter = PROVIDER_API_KEY_PARAMETERS.get(provider.id)
     if key_parameter is None:
         raise ProviderConfigError(f"provider {provider.id!r} names api_key_env but no key parameter is known")
     keyed = urlencode([*parameters.items(), (key_parameter, key)])
     return ProviderEndpointRequest(
         request_url=credential_free,
-        send_url=KeyedRequestUrl(f"https://{declared.customer_host}{declared.path}?{keyed}"),
+        send_url=KeyedRequestUrl(f"https://{declared.customer_host or declared.host}{declared.path}?{keyed}"),
+        allow_redirects=not declared.optional_api_key,
     )
 
 
@@ -276,6 +277,8 @@ async def send_provider_request(
     client: httpx.AsyncClient, request: ProviderEndpointRequest, bounds: UpstreamBounds
 ) -> BoundedResponse:
     """ONE bounded attempt (plus `fetch_bounded`'s own transport re-sends); the caller's ladder owns every status."""
+    if not request.allow_redirects:
+        return await fetch_bounded(client, request.send_url.reveal(), bounds, follow_redirects=False)
     return await fetch_bounded(client, request.send_url.reveal(), bounds)
 
 

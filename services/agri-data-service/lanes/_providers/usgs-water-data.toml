@@ -6,15 +6,15 @@ id = "usgs-water-data"
 display_name = "USGS Water Data APIs"
 # Uncharged: no [weight], no [budget]. A turn is capped in logical requests.
 weighted = false
-# No api_key_env. P4: every request answered keyless. A key (api.data.gov, sent as the X-Api-Key
-# header or the api_key query parameter) only raises the rate limit, on the SAME host, and
-# ingest/provider_client.py sends a key only to a customer_host today. Declaring the variable here
-# would read as "the key is sent" when it is not; G2 adds both halves together if the owner wants it.
+api_key_env = "USGS_WATER_DATA_API_KEY"
+api_key_parameter = "api_key"
 
 [endpoints.daily]
 host = "api.waterdata.usgs.gov"
 path = "/ogcapi/v1/collections/daily/items"
+optional_api_key = true
 
 [endpoints.monitoring-locations]
 host = "api.waterdata.usgs.gov"
 path = "/ogcapi/v1/collections/monitoring-locations/items"
+optional_api_key = true
