@@ -447,3 +447,43 @@ G4 remains open for 12,826 owed dates, the ambiguity disposition, at least 72 ho
 scheduled forward observation, and the legacy claim-drain/serving-switch requirements.
 Legacy public serving remains active. No further anonymous provider turn was started after
 the observed quota exhaustion.
+
+### Final optional-key rollout verification
+
+Commit `7bae49448ba3efea00dd2b2dc3aa8c1fb6f596a7` was pushed on October 2 at approximately
+04:46 UTC with the independently verified receipt and reviewed recovery evidence.
+
+| service | exact-commit deployment | result |
+| --- | --- | --- |
+| main | `67207904-fb26-4041-9d67-474986958dce` | SUCCESS at 04:51:02 UTC |
+| Parquet API | `9c61fdf8-da0e-4b1d-b744-06c9e1eb88ae` | SUCCESS |
+| executor | `e71f74f5-4f77-47b3-8b41-75f11a1be9a6` | SUCCESS |
+| Martin | `1a881bd7-2fce-4d23-8e32-caf60eea5286` | SUCCESS |
+
+ML and strategy-knowledge were skipped by their watch paths. Independent public acceptance
+completed at 04:52:07 UTC: all six HTTP requests returned 200 and all twelve assertions passed.
+The readiness checks are healthy; the twenty-four-layer catalogue reports the static soil
+release correctly; the detail viewport has twenty-two finite closed polygons and the zoom-8
+sample explicitly requests a closer zoom. The selected-day samples return twenty legacy
+water readings for October 1 and four temperature cells for September 26. Shortwave remains
+withheld as `availability_stale`, consistent with its unresolved UTC-source edge.
+
+A separately authored, coordinator-reviewed runtime observer loaded the installed provider
+configuration and request constructor on the exact executor commit. All fifty-two boolean
+checks passed, including both endpoints with missing, blank and synthetic-present credentials,
+credential-free source identity, redacted representations and optional-key redirect refusal.
+It sent no provider requests and supplied no real credential to request construction. Existing
+redaction may inspect the environment internally; no credential values were exported, and
+the environment was not changed. This is deployed request-construction proof, not a live authenticated USGS response.
+
+Executor startup at 04:46:55 UTC reported no lane-catalogue error and retained active modern
+forward/gap-fill schedules plus legacy water. The first modern scheduled fires remain
+October 2 at 06:50 UTC for gap-fill and 13:20 UTC for forward. Manual turns do not count as
+these scheduled observations. No key was provisioned by this session; the owner was asked to
+configure `USGS_WATER_DATA_API_KEY` on the production executor under working rule 5. Higher
+authenticated throughput remains unverified until a real key is configured and exercised.
+
+Captures: `production-verification/acceptance-7bae4944.json`, the matching HTTP receipts,
+`production-verification/usgs-key-construction-7bae4944.json`, and
+`executor-7bae4944-startup.json` under the ignored research root. G4 and the later phases
+remain open with the limitations recorded above.

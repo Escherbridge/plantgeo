@@ -4391,9 +4391,9 @@
     "usgs_optional_key_20261002": {
       "reviewed_on": "2026-10-02",
       "reviewer": "Codex independent water_recovery_review agent",
-      "verdict": "Source/security APPROVED; full Python sweep and separate receipt verifier PASS",
+      "verdict": "Source/security APPROVED; full Python receipt PASS; 7bae4944 production deployment/public acceptance/runtime construction PASS",
       "evidence": "evidence/phase3.md",
-      "disposition": "Live anonymous historical ingestion encountered HTTP 429. Provider wiring previously could not use USGS_WATER_DATA_API_KEY. Reviewed declarative optional-key transport preserves blank/unset anonymous behavior, required customer-host semantics, redacted credential-bearing sends and credential-free checkpoint identity; optional keyed redirects are refused. Exact typed scanner exemptions and focused regressions passed the first full Python sweep. Fresh receipt 97e98a42df00d800496411635b8be1bae23a319657bd65c815a1a7aa97797a39 over 1165 inputs independently verified. The owner has not provisioned a key; no increased production throughput is claimed."
+      "disposition": "Live anonymous historical ingestion encountered HTTP 429. Provider wiring previously could not use USGS_WATER_DATA_API_KEY. Reviewed optional-key transport preserves anonymous and required customer-host behavior, redacted sends and credential-free checkpoint identity; optional keyed redirects are refused. Full Python receipt 97e98a42df00d800496411635b8be1bae23a319657bd65c815a1a7aa97797a39 over 1165 inputs independently verified. Commit 7bae4944 is SUCCESS on four expected services; independent public acceptance passed six HTTP requests/twelve assertions at 04:52:07 UTC, and deployed construction-only checks passed all 52 booleans without provider sends or a real credential. The session did not provision a key; authenticated throughput remains unverified."
     },
     "water_production_validation_20261002": {
       "reviewed_on": "2026-10-02",
