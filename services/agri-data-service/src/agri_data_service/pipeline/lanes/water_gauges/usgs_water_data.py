@@ -147,6 +147,11 @@ def planned_tiles(planned_units: Iterable[SourceRequest]) -> frozenset[str]:
     return frozenset(_tile_of(request) for request in planned_units if request.endpoint == DAILY_VALUES_ENDPOINT)
 
 
+def _coverage_units(tiles: Iterable[str]) -> frozenset[str]:
+    """Each tile proves primary streams and their subtypes; see AGENTS.md, Units."""
+    return frozenset(unit for tile in tiles for unit in (tile, f"stream-subtypes:{tile}"))
+
+
 def regional_offset(locations: Iterable[MonitoringLocation]) -> str:
     """The standard offset most sites name (ties to the lowest string), else `FALLBACK_UTC_OFFSET` (review M2)."""
     counts = Counter(offset for location in locations if (offset := location.standard_utc_offset) is not None)
@@ -257,9 +262,9 @@ class UsgsWaterDataDailyStrategy:
     max_days_per_request: int = MAX_DAYS_PER_REQUEST
 
     def source_unit_ids(self, lane: LaneConfig, region: Region) -> frozenset[str]:
-        """The tile bboxes whose complete answers settle each historical day."""
+        """The tile/category support whose complete answers settle each historical day."""
         del lane
-        return frozenset(tile.bbox for tile in tile_boxes(region.default_camera_envelope, self.max_tile_degrees))
+        return _coverage_units(tile.bbox for tile in tile_boxes(region.default_camera_envelope, self.max_tile_degrees))
 
     def plan_requests(self, days: Sequence[date], lane: LaneConfig, region: Region) -> list[SourceRequest]:  # noqa: ARG002 - the Protocol's lane
         """Per tile: one monitoring-locations unit over every asked day, and one daily-values unit per chunk."""
@@ -328,14 +333,15 @@ class UsgsWaterDataDailyStrategy:
             return Unsettled("upstream_unavailable", "no tile answered both its daily values and its gauge names")
         if not view.gauge_days:
             return Unsettled("unsettled", "no gauge in any answered tile served a daily mean for this day yet")
-        expected = planned_tiles(context.planned_units) | view.present_tiles
+        expected = _coverage_units(planned_tiles(context.planned_units) | view.present_tiles)
+        present = _coverage_units(view.present_tiles)
         return Written(
             expected_units=len(expected),
-            present_units=len(view.present_tiles),
+            present_units=len(present),
             source_digest=day_source_digest(view.gauge_days),
             dropped_rows=view.dropped,
             expected_unit_ids=expected,
-            present_unit_ids=view.present_tiles,
+            present_unit_ids=present,
         )
 
     def rows(self, day: date, responses: Sequence[SourceResponse]) -> pa.Table:

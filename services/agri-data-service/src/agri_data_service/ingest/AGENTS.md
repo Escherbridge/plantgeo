@@ -1,5 +1,24 @@
 # Ingest modules
 
+## USGS modern stream-site hierarchy
+
+`usgs_water_data.py` asks both `daily` and `monitoring-locations` for
+`filter=site_type_code = 'ST' OR site_type_code LIKE 'ST-%'`. The modern API's simple
+`site_type_code=ST` is exact: it excludes secondary stream types. Legacy NWIS's
+`siteType=ST` included them. The official USGS `site-types` collection declares primary `ST`
+and secondary `ST-CA` (canal), `ST-DCH` (ditch), and `ST-TS` (tidal stream). The category
+predicate keeps that hierarchy without maintaining a local list of secondary codes.
+
+On 2026-10-02 UTC (October 1 in America/Denver), bounded official API probes returned zero Portland Willamette gauge
+(`USGS-14211720`, `ST-TS`) values for exact `ST`, versus all five September 20-24 values
+with the category predicate. The matching locations probe returned zero versus one named
+site. Both collection operations expose the CQL text `filter` in their OpenAPI contract.
+Evidence and source links: `docs/lanes/water-gauges.md` section 8.1.1.
+
+Request URLs include the filter, so the runner checkpoint identity cannot reuse an earlier
+exact-ST response. The strategy separately expands its durable support proof to include
+stream subtypes; see `pipeline/lanes/water_gauges/AGENTS.md`, Units.
+
 ## 2026-09-06 — five PostgreSQL producers were DELETED. Read this before trusting anything below.
 
 Owner directive: *"the ingestion should be going to parquet, remove the code for ingestion into the

@@ -4388,27 +4388,34 @@
     "integration_slice": "i-coordinator"
   },
   "reviews": {
+    "water_stream_family_20261002": {
+      "reviewed_on": "2026-10-02",
+      "reviewer": "Codex independent water_recovery_review agent",
+      "verdict": "APPROVED; full Python sweep and independent receipt verifier PASS 2026-10-02 UTC",
+      "evidence": "evidence/phase3.md",
+      "disposition": "Production persisted comparison found 45/50 rows: exact ST filtering omitted the tidal-stream Portland gauge. Official endpoint probes confirm the family predicate restores the five rows. Reviewed fix expands both queries and adds per-tile subtype support alongside original bbox IDs, making old proofs owed while preserving partial-write and pending-receipt safeguards. Corrected fake-source filtering and migration regressions passed the full Python sweep. One initial RUF005 style finding was corrected and independently re-reviewed; fresh receipt 0955e659a1b75f58705bc19c5c9812c59e057853437c398dac900eb47f07d7c8 independently verified. Production repair, persisted 50/50 parity, availability bootstrap and G4 remain open."
+    },
     "phase3_recovery_20261001": {
       "reviewed_on": "2026-10-01",
       "reviewer": "Codex independent water_phase3_audit agent (read-only)",
       "verdict": "CHANGES-REQUIRED",
       "evidence": "evidence/phase3.md",
       "headline": "Historical partial source tiles disappear from gap-fill debt; larger partial tile counts can erase previously answered coverage",
-      "disposition": "Recovery batch in progress; G3 and G4 remain unexecuted. The source 10-gauge x 5-day comparison passed 50/50 on 2026-10-02 UTC; persisted-stream validation and live-forward observation remain open."
+      "disposition": "Historical baseline findings resolved by the separately reviewed recovery batch. G3 deployed as 696f1ae5 on 2026-10-02; G4 remains unexecuted. The source 10-gauge x 5-day comparison passed 50/50; persisted-stream validation, availability bootstrap, full history and live-forward observation remain open."
     },
     "water_recovery_20261001": {
       "reviewed_on": "2026-10-01",
       "reviewer": "Codex independent water_recovery_review agent",
       "verdict": "APPROVED; full integrated sweep PASS 2026-10-02 UTC",
       "evidence": "evidence/phase3.md",
-      "disposition": "Historical source debt and shifted coverage are addressed. Both recovery findings were fixed and independently re-reviewed: pending intended coverage is durable before partition mutation, and forward ladder repair is independent of changed source data. Full-answer recovery and exact interruption/unchanged-source regressions are authored. The owner authorized push and production verification; the final full Python/web sweep and fresh receipt passed. G3 deployment evidence pending."
+      "disposition": "Historical source debt and shifted coverage are addressed. Pending intended coverage is durable before partition mutation, and forward ladder repair is independent of changed source data. Exact regressions passed the final full Python/web sweep with a fresh verified receipt. Owner-authorized G3 deployed as 696f1ae5; both modern water schedules are active and legacy serving is retained. One bounded manual forward turn wrote 14 days and 10812 rows with 16 requests and exit 0; its 14 availability claims await bootstrap. G4 remains open."
     },
     "soil_status_recovery_20261001": {
       "reviewed_on": "2026-10-01",
       "reviewer": "Codex independent soil_status_review agent",
       "verdict": "APPROVED; full integrated sweep PASS 2026-10-02 UTC",
       "evidence": "evidence/phase3.md",
-      "disposition": "Verified admitted-release metadata, static null dates and native rung 13. Initial body-phase timeout/transport fault-isolation finding fixed and independently re-reviewed; controlled-stream tests passed in the final full web sweep. No production deployment or viewport-completeness claim."
+      "disposition": "Verified admitted-release metadata, static null dates and native rung 13. Body-phase timeout/transport fault isolation was fixed, independently re-reviewed and passed controlled-stream tests. Production 696f1ae5 independently verified: static release status 264 published areas, matching release revision and 22 valid polygons in the sampled detail viewport. No whole-release geometry completeness claim."
     },
     "shortwave_recovery_20261001": {
       "reviewed_on": "2026-10-01",

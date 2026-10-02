@@ -2,7 +2,7 @@
 type: evidence
 track: config_driven_ingestion_20260926
 phase: 3
-updated_on: 2026-10-01
+updated_on: 2026-10-02
 ---
 
 # Phase 3 evidence
@@ -135,3 +135,141 @@ Final logs and result records are in
 `.omc/research/receipt-investigation-20261001/quality/final/`. The owner-authorized commit and
 push follow this verified state. Production deployment identity, serving probes and G3 runtime
 evidence are still to be recorded; the green local sweep does not close those rows.
+
+## G3 deployment and production verification, October 2
+
+The owner-authorized release is `696f1ae557fff992d5e9a924c4227d065d343749`, pushed to
+`main` after the final integrated sweep. All four expected Railway deployments succeeded at
+that exact commit. ML and strategy knowledge were correctly skipped.
+
+| service | deployment | result |
+| --- | --- | --- |
+| web | `f03afb97-5469-4797-a8b9-525a03a0d0c8` | SUCCESS, October 2 03:20:47 UTC |
+| Parquet API | `46c34f4e-22aa-4d22-a121-7a5359ff3603` | SUCCESS |
+| executor | `a9d59fad-e88b-4c0f-8f82-48c65b16f75e` | SUCCESS |
+| Martin | `49023622-011b-4167-8fab-59f72b31c24a` | SUCCESS |
+
+An independent production verifier checked six public requests and twelve response assertions
+at 03:21–03:22 UTC; every request returned HTTP 200 and every assertion passed.
+
+| production assertion | observed result |
+| --- | --- |
+| readiness | Configuration, database and Redis healthy. |
+| soil capability | Static snapshot; null observation dates; zero observed days; required rung 13. Release `ee50154349e0e1371c80c39d543220a706fdbb1dfd23410ab149f631d49186d7`, release day August 5, captured September 28; 264 declared / 264 published / 0 pending areas. No soil withholding. |
+| soil geometry | Detail viewport returns 22 finite, closed polygons at zoom 13, no truncation or unreadable geometry, and the same revision as the capability. Zoom 8 returns `soil_survey_zoom_in`. This is bounded viewport evidence, not proof of every geometry in the release. |
+| legacy water serving | Requested and served day October 1; 20 finite readings. |
+| air temperature | Requested and observed day September 26; four finite published cells. Capability latest date September 27. |
+| shortwave | Still withheld as `availability_stale`; current UTC-source limitation remains open. |
+| executor inventory | Catalogue error null; modern water forward and gap-fill active; legacy water remains active. First natural fires are October 2 06:50 UTC for gap-fill and 13:20 UTC for forward. |
+
+Raw deployment responses, HTTP receipts and the independent acceptance report are under
+`.omc/research/receipt-investigation-20261001/production-verification/`. Inventory and initial
+executor logs are captured in the parent directory.
+
+### Bounded manual forward validation
+
+Because both first cron fires fall after the owner's continued-session window, the coordinator
+ran one forward turn through the deployed runner, retaining the configured 32-request cap,
+1,800-second timeout and existing lane-day locks. The independent water reviewer found no
+concrete operational objection. This is an operator turn, not evidence of a scheduled fire or
+of 72 hours of clean operation.
+
+Command arguments: `python -m agri_data_service.pipeline.runner --lane water-gauges-daily
+--mode forward --run-id lane-runner:g3-validation-696f1ae5`.
+
+The turn started at 03:23:08 UTC and finished in 21.727 seconds with exit 0. Its S5 report
+records 14 days, September 17–30, 10,812 rows, 16 requests of the 32-request cap, 16 HTTP 200s,
+zero failed units, zero dropped rows, no source debt and no ladder debt for the turn.
+`availability_retry_owed = 14` and `availability_extended = 0`: these are physical writes
+with pending publication claims, not yet verified availability. The extension path requires
+an initial verified generation for a new stream; bootstrap preparation and independent
+persisted-data checks follow. No G4 serving switch has occurred.
+
+Evidence: `.omc/research/receipt-investigation-20261001/water-validation/g3-forward-696f1ae5.log`.
+
+### Persisted comparison finding and availability hold
+
+The independent read-only census at 03:29:52–03:29:58 UTC found all 14 written days at all
+four rungs, with matching complete source receipts under the deployed eight-tile contract.
+It also found **13,136 missing historical days** in the declared 13,150-day window. The five
+sampled days have no duplicate identities, wrong source/statistic, or named-day mismatches.
+
+The stronger ten-gauge comparison exposed a source-selection defect: only **45 of 50**
+expected persisted gauge-day rows exist. All 45 present values match both captured upstream
+sources exactly, including named day and modern approval status. USGS-14211720, Willamette
+River at Portland, is missing on all five days. Captured legacy metadata classifies it as
+`ST-TS`, a tidal stream, and its coordinates are inside the footprint. The new API's exact
+`site_type_code=ST` filter excludes that subtype, while the unfiltered modern source capture
+contains its readings. Full tile response coverage therefore did not prove the intended
+stream-site selection contract.
+
+The follow-up repair preserves ordinary-stream bbox support identities and adds explicit
+subtype support per tile. This makes the earlier narrower completeness proof become source
+debt without bypassing the monotonic coverage guard. Both endpoint predicates and the fake
+source's filtering behavior require regressions. Checkpoints already bind exact request
+parameters, so a changed predicate invalidates their old request identity. Authoring, separate
+review and a fresh integrated Python receipt are required before the next push.
+
+The existing bootstrap compiler produced a read-only candidate containing exactly 14 days,
+56 fully digested rung-day rows, and zero exclusions. **That candidate must not be applied**:
+its rows precede the source-selection correction. No availability head or bootstrap marker
+exists, no bootstrap has been applied, and historical backfill is held until this defect is
+fixed and the repaired data is verified. A new bootstrap candidate must then be compiled from
+the corrected bytes.
+
+Evidence: `water-validation/g4-readonly-initial.json`, `water-validation/persisted-parity-initial.json`,
+`water-validation/persisted-parity-initial.md`, and `water-validation/bootstrap/HANDOFF.md`, under
+the same ignored research root. No G4 row is waived by the successful physical writes or by
+the read-only bootstrap compilation.
+
+### Stream-family repair review and first live shortwave turn
+
+The independent reviewer approved the seven-file water follow-up with no blocking findings.
+Both daily and monitoring-location queries now use the official CQL predicate
+`site_type_code = 'ST' OR site_type_code LIKE 'ST-%'` through the existing query encoder.
+Direct USGS probes at 03:33–03:35 UTC returned zero Portland rows under exact `ST`, five daily
+rows under the family predicate, and the corresponding `ST-TS` location record. The official
+catalogue identifies `ST` as primary and the stream subtypes as secondary; the implementation
+does not maintain a hardcoded subtype list.
+
+Expected coverage becomes 16 units over eight tiles: each prior bbox identity plus its
+`stream-subtypes:<bbox>` identity. Complete replacements preserve all older identities, while
+partial replacements missing a previously answered tile are still refused. Pending receipts
+still require a full answer. Authored regressions cover subtype inclusion and names, nonstream
+exclusion, both query predicates, checkpoint invalidation, old complete/pending receipts,
+seven-tile refusal, full repair, unchanged-digest repair and proof rebinding. The corrected fake
+upstream now applies the filters. A separate monitor started the full Python four-gate receipt
+sweep after authoring and independent review; results remain pending here.
+
+At 03:40 UTC, the scheduled legacy climate turn on `696f1ae5` completed successfully. The
+shortwave probe reported `ok`, measured edge **June 30**, spent **three requests**, and gated
+all **88** later owed days. It performed no shortwave full-region fan-out and reported
+`source_unsettled`, preserving the upstream limitation. Other products needed no fetch in
+that turn; total requests were three of the configured 797. There were no availability debts
+created by the turn. Executor classified it `ok` / `completed` and settled its scheduled run.
+This proves the bounded edge behavior in production; it does not restore recent UTC solar
+data or close the later settled/provisional successor work.
+
+Evidence: `.omc/research/receipt-investigation-20261001/climate-696f1ae5-0340-logs.json` and
+`water-validation/site-types/README.md` under the same research root.
+
+### Stream-family follow-up verification
+
+The first full Python sweep passed format, mypy and the complete test suite, but Ruff found
+one RUF005 tuple-construction style issue in the new checkpoint-identity regression. The
+receipt writer correctly refused that sweep. The author made only the equivalent iterable-
+unpacking correction; the independent reviewer approved it before a new full sweep.
+
+The final nonauthor sweep passed all four gates: format 0.08 seconds, lint 0.07 seconds,
+mypy 2.87 seconds, and full pytest 417.27 seconds. Its fresh quality receipt was generated at
+`2026-10-02T04:02:42.924128Z`, covers 1,164 input files, and has digest
+`sha256:0955e659a1b75f58705bc19c5c9812c59e057853437c398dac900eb47f07d7c8`.
+The separate receipt verifier passed. The wrapper does not report individual passing-test
+totals; no count is inferred.
+
+No web source changed in this follow-up, so the earlier complete web sweep remains the
+local evidence; it was not repeated. The Railway Docker build retains its release gates.
+Both site-type attempts are preserved under
+`.omc/research/receipt-investigation-20261001/quality/site-types/`, with the final run in
+`final/`. All implementation bytes were frozen before the passing sweep. The approved
+follow-up is ready for the owner-authorized push and corrected production validation.

@@ -31,6 +31,8 @@ from agri_data_service.pipeline.parquet.lane_registry import (
     LANE_REGISTRY,
 )
 from agri_data_service.pipeline.runner.binding import ConfigProviderClient
+from agri_data_service.pipeline.runner.checkpoints import TurnCheckpoints
+from agri_data_service.pipeline.runner.completeness import SourceCompleteness
 from agri_data_service.pipeline.runner.exits import TurnConfigurationError
 from agri_data_service.pipeline.runner.receipts import DayReceipt
 from agri_data_service.pipeline.runner.resolve import resolve_strategy
@@ -38,6 +40,7 @@ from agri_data_service.pipeline.runner.windows import revision_rotation_days
 from agri_data_service.pipeline.validation import water_gauges as legacy_validation
 from tests.lane_config.builders import REAL_LANES_DIRECTORY
 from tests.lanes.water_gauges.usgs_world import BOISE, DALLES, MERIDIAN, Gauge, Reading, UsgsWaterDataWorld
+from tests.parquet.availability_documents import MemoryAvailabilityStorage
 from tests.runner.fakes import NOW, ManualClock, MemoryLaneStore, days_between, ports_for, run, spec_for
 
 if TYPE_CHECKING:
@@ -50,6 +53,7 @@ STREAM: Final = "water-gauges-daily"
 WINDOW: Final = days_between(date(2026, 9, 5), date(2026, 9, 18))
 PROBED_DAY: Final = date(2026, 9, 10)
 TILES: Final = tuple(tile.bbox for tile in tile_boxes(load_region("pnw").default_camera_envelope))
+SUPPORT_IDS: Final = frozenset(TILES) | frozenset(f"stream-subtypes:{tile}" for tile in TILES)
 #: The Dalles' tile, and Boise's.
 WESTERN_TILE: Final = "-125,42,-121,46"
 BOISE_TILE: Final = "-117,42,-113,46"
@@ -58,7 +62,7 @@ SECOND_WESTERN_TILE: Final = "-121,42,-117,46"
 SENTINEL_GAUGE: Final = Gauge("USGS-13200000", "SENTINEL GAUGE", -118.5, 44.5, "PST")
 SILENT_GAUGE: Final = Gauge("USGS-12340500", "CLARK FORK ABOVE MISSOULA MT", -113.9, 46.87, "MST")
 #: A second gauge in the Dalles' tile, a site whose record names daylight time, and one with no site record.
-WILLAMETTE: Final = Gauge("USGS-14211720", "WILLAMETTE RIVER AT PORTLAND, OR", -122.6687, 45.5176, "PST")
+WILLAMETTE: Final = Gauge("USGS-14211720", "WILLAMETTE RIVER AT PORTLAND, OR", -122.6687, 45.5176, "PST", "ST-TS")
 DAYLIGHT_GAUGE: Final = Gauge("USGS-14144700", "COLUMBIA RIVER AT VANCOUVER, WA", -122.6664, 45.6242, "PDT")
 UNNAMED_GAUGE: Final = Gauge("USGS-14128870", "COLUMBIA RIVER BELOW BONNEVILLE DAM", -121.9406, 45.6285, "PST")
 #: A 366-day gap-fill turn: 12 runs of at most 31 days x 8 tiles, plus one names unit per tile.
@@ -154,7 +158,97 @@ async def test_a_forward_turn_writes_every_named_day_from_all_eight_tiles() -> N
     assert boise["observed_at"] == datetime(2026, 9, 10, 7, tzinfo=UTC)
     assert {row["observed_day"] for row in rows.values()} == {PROBED_DAY}
     receipt = store.receipts[(STREAM, PROBED_DAY)]
-    assert (receipt.present_units, receipt.expected_units) == (len(TILES), len(TILES))
+    assert (receipt.present_units, receipt.expected_units) == (len(SUPPORT_IDS), len(SUPPORT_IDS))
+
+
+@pytest.mark.parametrize("site_type", ["ST-TS", "ST-CA", "ST-DCH"])
+async def test_stream_subtypes_keep_their_values_and_names_while_nonstreams_are_excluded(site_type: str) -> None:
+    subtype = replace(WILLAMETTE, site_type=site_type)
+    nonstream = replace(BOISE, site_type="LK")
+    world = UsgsWaterDataWorld(gauges=[DALLES, subtype, nonstream], reading_for=_daily_flow)
+    store = MemoryLaneStore()
+
+    exit_code, payload = await _turn(_enabled(), world, store)
+
+    assert exit_code == 0, payload
+    assert _gauges_on(store, PROBED_DAY) == {DALLES.monitoring_location_id, subtype.monitoring_location_id}
+    [row] = [row for row in _rows(store, PROBED_DAY) if row["monitoring_location_id"] == subtype.monitoring_location_id]
+    assert (row["site_name"], row["flow_cfs"]) == (subtype.name, 55.5)
+    assert all("site_type_code" not in request.url.params for request in world.requests)
+    assert all(
+        request.url.params["filter"] == "site_type_code = 'ST' OR site_type_code LIKE 'ST-%'"
+        for request in world.requests
+    )
+
+
+def test_stream_family_queries_cannot_restore_an_exact_stream_checkpoint() -> None:
+    lane = _enabled()
+    spec = spec_for(lane)
+    assert spec.provider is not None
+    checkpoints = TurnCheckpoints(None, LANE_ID, spec.provider)
+    for request in resolve_strategy(lane).plan_requests([PROBED_DAY], lane, load_region("pnw")):
+        exact = replace(
+            request,
+            parameters=(
+                *((key, value) for key, value in request.parameters if key != "filter"),
+                ("site_type_code", "ST"),
+            ),
+        )
+        assert checkpoints.identity(request) != checkpoints.identity(exact)
+
+
+@pytest.mark.parametrize("publication_state", ["complete", "pending"])
+@pytest.mark.parametrize("add_subtype", [False, True])
+async def test_exact_stream_proofs_require_a_monotonic_full_family_repair(
+    publication_state: Literal["complete", "pending"], add_subtype: bool
+) -> None:
+    world = UsgsWaterDataWorld(gauges=[DALLES, BOISE], reading_for=_daily_flow)
+    store = MemoryLaneStore()
+    first_exit, first = await _turn(_enabled(), world, store)
+    assert first_exit == 0, first
+    store.receipts = {
+        key: replace(
+            receipt,
+            expected_units=len(TILES),
+            present_units=len(TILES),
+            expected_unit_ids=frozenset(TILES),
+            present_unit_ids=frozenset(TILES),
+            publication_state=publication_state,
+        )
+        for key, receipt in store.receipts.items()
+    }
+    original = store.receipts[(STREAM, PROBED_DAY)]
+    storage = MemoryAvailabilityStorage()
+    SourceCompleteness(storage).confirm(replace(original, publication_state="complete"))
+    assert SourceCompleteness(storage).complete_days(STREAM, PROBED_DAY, PROBED_DAY, frozenset(TILES)) == frozenset(
+        {PROBED_DAY}
+    )
+    assert SourceCompleteness(storage).complete_days(STREAM, PROBED_DAY, PROBED_DAY, SUPPORT_IDS) == frozenset()
+    if add_subtype:
+        world.gauges.append(WILLAMETTE)
+    world.failing_tiles = {BOISE_TILE}
+
+    partial_exit, partial = await _turn(_enabled(), world, store)
+
+    assert partial_exit == 0, partial
+    refusal = "coverage_unproven" if publication_state == "pending" else "coverage_lost"
+    assert partial["rewrite_reasons"] == {refusal: len(WINDOW)}
+    assert store.receipts[(STREAM, PROBED_DAY)] == original
+    assert _gauges_on(store, PROBED_DAY) == {DALLES.monitoring_location_id, BOISE.monitoring_location_id}
+    world.failing_tiles.clear()
+
+    full_exit, full = await _turn(_enabled(), world, store)
+
+    assert full_exit == 0, full
+    assert full["rewrite_reasons"] == {"source_completed": len(WINDOW)}
+    repaired = store.receipts[(STREAM, PROBED_DAY)]
+    assert repaired.expected_unit_ids == repaired.present_unit_ids == SUPPORT_IDS
+    assert repaired.publication_state == "complete"
+    assert (repaired.source_digest != original.source_digest) is add_subtype
+    SourceCompleteness(storage).confirm(repaired)
+    assert SourceCompleteness(storage).complete_days(STREAM, PROBED_DAY, PROBED_DAY, SUPPORT_IDS) == frozenset(
+        {PROBED_DAY}
+    )
 
 
 async def test_the_named_day_is_the_served_time_prefix_never_a_utc_conversion() -> None:
@@ -196,7 +290,7 @@ async def test_a_tile_that_stays_down_is_unwritten_for_its_gauges_and_never_eras
     assert first_exit == 0, first
     assert _gauges_on(store, PROBED_DAY) == {DALLES.monitoring_location_id}
     receipt = store.receipts[(STREAM, PROBED_DAY)]
-    assert (receipt.present_units, receipt.expected_units) == (len(TILES) - 1, len(TILES))
+    assert (receipt.present_units, receipt.expected_units) == (len(SUPPORT_IDS) - 2, len(SUPPORT_IDS))
     assert set(_unwritten_reasons(first).items()) == {(day.isoformat(), "upstream_unavailable") for day in WINDOW}
     assert all(BOISE_TILE in str(entry["detail"]) for entry in _unwritten(first))
 
@@ -319,7 +413,7 @@ async def test_one_unreadable_feature_is_dropped_and_counted_while_its_tile_stil
         gauge.monitoring_location_id for gauge in (DALLES, WILLAMETTE, BOISE)
     }
     receipt = store.receipts[(STREAM, PROBED_DAY)]
-    assert (receipt.present_units, receipt.expected_units) == (len(TILES), len(TILES))
+    assert (receipt.present_units, receipt.expected_units) == (len(SUPPORT_IDS), len(SUPPORT_IDS))
     assert payload["rows_dropped_by_reason"] == {"rejected_feature": 1}
 
 
@@ -381,7 +475,7 @@ async def test_gap_fill_recovers_a_historical_partial_day_after_a_process_restar
         receipts={key: DayReceipt.from_payload(receipt.to_payload()) for key, receipt in store.receipts.items()},
     )
     restarted.ladder_incomplete.add((STREAM, floor))
-    before = restarted.census([STREAM], floor, floor, expected_unit_ids=frozenset(TILES))
+    before = restarted.census([STREAM], floor, floor, expected_unit_ids=SUPPORT_IDS)
     assert before.owed_days() == (floor,)
     assert before.source_owed_days() == frozenset({floor})
     world.failing_tiles.clear()
@@ -394,7 +488,7 @@ async def test_gap_fill_recovers_a_historical_partial_day_after_a_process_restar
     assert second["days_ladder_owed"] == 0
     assert _gauges_on(restarted, floor) == {DALLES.monitoring_location_id, BOISE.monitoring_location_id}
     assert any(request.url.params["time"].startswith(floor.isoformat()) for request in world.daily_requests())
-    after = restarted.census([STREAM], floor, floor, expected_unit_ids=frozenset(TILES))
+    after = restarted.census([STREAM], floor, floor, expected_unit_ids=SUPPORT_IDS)
     assert after.owed_days() == ()
     assert after.source_owed_days() == frozenset()
 
@@ -410,7 +504,7 @@ async def test_a_shifted_seven_tile_answer_cannot_erase_a_previous_six_tile_answ
     first_exit, first = await _turn(_enabled(), world, store)
     assert first_exit == 0, first
     original = store.receipts[(STREAM, PROBED_DAY)]
-    assert original.present_units == len(TILES) - len(world.failing_tiles)
+    assert original.present_units == len(SUPPORT_IDS) - 2 * len(world.failing_tiles)
     world.failing_tiles = {WESTERN_TILE}
 
     second_exit, second = await _turn(_enabled(), world, store)
@@ -419,9 +513,7 @@ async def test_a_shifted_seven_tile_answer_cannot_erase_a_previous_six_tile_answ
     assert second["rewrite_reasons"] == {"coverage_lost": len(WINDOW)}
     assert store.receipts[(STREAM, PROBED_DAY)] == original
     assert _gauges_on(store, PROBED_DAY) == {DALLES.monitoring_location_id}
-    assert store.census([STREAM], PROBED_DAY, PROBED_DAY, expected_unit_ids=frozenset(TILES)).owed_days() == (
-        PROBED_DAY,
-    )
+    assert store.census([STREAM], PROBED_DAY, PROBED_DAY, expected_unit_ids=SUPPORT_IDS).owed_days() == (PROBED_DAY,)
     world.failing_tiles.clear()
     third_exit, third = await _turn(_enabled(), world, store)
     assert third_exit == 0, third

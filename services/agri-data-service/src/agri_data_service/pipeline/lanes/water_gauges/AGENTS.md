@@ -25,19 +25,31 @@ and time zones) over every asked day.
 **A tile is whole for a day when both its units answered** (`day_view`); nothing from a partial tile is read.
 The runner hands a `write_and_recheck` day the units that answered (`pipeline/runner/AGENTS.md` "The turn",
 step 4), so one tile's 503 costs that tile's gauges only, never the other seven (review H1). `settle`
-returns `Written(expected_units=len(planned_tiles(context.planned_units)), present_units=whole tiles)`: a
+returns two coverage units per expected or whole tile (primary streams and stream subtypes): a
 short day is written, reported `unwritten` with the failed units named, rewritten when more tiles answer
 (`more_units`), and never replaced by a shorter answer (`fewer_units`). A names unit that fails holds its
 tile for every day of the turn, because its site names and zones cover them all.
 
-The stable source-unit identities are tile bboxes, independent of request date chunks. They are
-persisted in the runner receipt and its yearly completeness proof. A partial historical day stays
+The stable source-unit identities are the primary-stream tile bbox and
+`stream-subtypes:<bbox>` for each tile, independent of request date chunks. Thus eight tiles
+have sixteen coverage units, with the same sixteen HTTP requests per forward window as before.
+One paired tile answer proves both categories, including a category with no rows in that tile.
+They are persisted in the runner receipt and its yearly completeness proof. A partial historical day stays
 in gap-fill's source backlog across restarts, including before the rolling-revision horizon; a
 complete zoom ladder alone never proves the re-pull finished. A later partial answer may replace
 an earlier one only when it contains every previously answered tile. Six tiles followed by seven
 different tiles does not meet that condition. G4 history validation must pass the strategy's
 `source_unit_ids` into the runner reader's census and require no source debt as well as no missing
 ladder days. See `pipeline/runner/AGENTS.md` "Census" for the publication proof and crash ordering.
+
+The subtype IDs were added on 2026-10-02 UTC (October 1 in America/Denver) when production validation found exact
+`site_type_code=ST` omitted tidal streams that legacy NWIS included. The expanded CQL predicate
+is defined in `ingest/usgs_water_data.py`. Retaining the original bbox IDs makes an old full
+eight-unit receipt a subset of a corrected full sixteen-unit answer, while the expanded proof
+digest makes every old exact-ST day source-owed even outside the revision window. A partial
+answer missing a previously answered tile still fails the writer's coverage-superset check;
+a pending receipt still requires a full answer. Even unchanged row values must be republished
+to earn the new proof. No receipts, checkpoints, or annual proof documents are deleted to migrate.
 
 **One page per unit, one bad feature alone.** `limit` is the collection's maximum, 50,000; the densest tile
 has about 250 stream sites, so 31 days is about 7,750 features. A `next` link means the sizing assumption

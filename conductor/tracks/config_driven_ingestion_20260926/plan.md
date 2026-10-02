@@ -1143,11 +1143,17 @@ authors in the service tree until G4's push (O-R3-3).
       the digest-rewrite of approval changes, history depth, the registration, and whether any
       reader joins the calendar for pre-2000 days (A19). Fix batch, monitor sweep, and the verdict
       in `reviews.phase3`.
-- [ ] Task: **G2 (owner):** set `USGS_WATER_DATA_API_KEY` if P4 requires it.
+- [x] Task: **G2 (owner):** set `USGS_WATER_DATA_API_KEY` if P4 requires it.
       **G3 (owner go):** a commit enabling `water-gauges-daily` and its gap-fill, with sweep and
       receipt refresh, then push at a quiescent point. The legacy IV lane keeps serving. The
       calendar floor moves to 1990-09-30; its next version carries the earlier days (plus a one-off
       calendar export under this go only if A19's check found a reader that needs them).
+      **Executed October 2, 2026:** no key was required by the successful source probes;
+      owner-authorized G3 commit `696f1ae5` is live on all four expected services. Both modern
+      water schedules are active and legacy serving remains unchanged. The bounded manual
+      forward validation exposed a stream-subtype selection defect and pending initial
+      availability publication; follow-up repair and all open G4 rows are recorded in
+      `evidence/phase3.md`.
 - [ ] Task: **Validation rows** (there is no row compare across APIs):
   - 10 gauges × 5 days against the modern daily values, and against legacy `dv` while it exists;
   - forward/gap-fill equality on overlapping days;

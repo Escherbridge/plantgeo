@@ -359,7 +359,7 @@ only; every fact below is quoted from them. `https://api.waterdata.usgs.gov` is 
 **Findings.**
 
 - **Endpoint:** `GET /ogcapi/v1/collections/daily/items` with `parameter_code=00060`,
-  `statistic_id=00003`, `site_type_code=ST`, `bbox`, `time=<first>/<last>` (date-only, both ends
+  `statistic_id=00003`, the stream-family `filter` in section 8.1.1, `bbox`, `time=<first>/<last>` (date-only, both ends
   included), `limit` up to 50,000, optional `properties=`. Names: `/ogcapi/v1/collections/monitoring-locations/items`.
 - **Key:** NOT required. Every probe answered keyless. A key (api.data.gov) only raises the rate limit,
   on the same host, sent as `api_key` or `X-Api-Key`.
@@ -385,6 +385,31 @@ only; every fact below is quoted from them. `https://api.waterdata.usgs.gov` is 
   modifications to the previous local day land up to about 13 hours after it ends. The lane's lag is 2
   UTC days, and every forward fire re-asks 14 days (section 8.2).
 
+#### 8.1.1 Stream subtype correction (2026-10-02 UTC; October 1 in America/Denver)
+
+The P4 `site_type_code=ST` requests above recorded exact primary streams, not the full
+legacy NWIS stream category. Production validation found `USGS-14211720` (Willamette River
+at Portland) missing on all five September 20-24 days despite modern daily values being
+present. Its type is `ST-TS`. USGS's [site-type catalogue](https://api.waterdata.usgs.gov/ogcapi/v1/collections/site-types/items?f=json)
+declares `ST` primary and `ST-CA`, `ST-DCH`, and `ST-TS` secondary stream types.
+
+Both query builders now use `filter=site_type_code = 'ST' OR site_type_code LIKE 'ST-%'`.
+The [official OpenAPI contract](https://api.waterdata.usgs.gov/ogcapi/v1/openapi?f=json)
+exposes CQL text filtering for both collections. Bounded read-only probes with that exact
+predicate returned all five daily values and the named monitoring location; exact `ST`
+returned zero of each. The predicate retains future secondary stream codes without a local
+enumeration and excludes non-stream primary categories.
+
+Captured bodies and request manifest are under
+`.omc/research/receipt-investigation-20261001/water-validation/site-types/`.
+Changing the query invalidates old source response checkpoints through their URL identity.
+Support proofs now retain each primary-stream bbox ID and add `stream-subtypes:<bbox>`:
+sixteen coverage units for eight tiles, with no extra HTTP requests. Old eight-unit proofs
+remain source-owed until a complete, monotonic repair republishes them, even when the row
+digest did not change. Existing partial-answer and interrupted-publication safeguards remain
+in force. These source probes establish the fix's semantics; persisted production repair and
+G4 validation still require their separate evidence.
+
 ### 8.2 The lane
 
 - **Units.** Per tile (the 8 tiles of the region's `default_camera_envelope` at 4 degrees, identical to
@@ -393,7 +418,7 @@ only; every fact below is quoted from them. `https://api.waterdata.usgs.gov` is 
   its revision block (cap 32); a gap-fill turn of 366 days is 12 x 8 + 8 = 104 (cap 112).
 - **A tile that stays down** is unwritten for its gauges only (spec §7a): a tile is whole when both its
   units answered, the whole tiles are written as a short day (`present_units` of `expected_units` = the
-  planned tiles), the day's `unwritten` entry names the failed units, the next fuller answer is
+  planned tiles times two categories), the day's `unwritten` entry names the failed units, the next fuller answer is
   `more_units`, and a later shorter answer never replaces a fuller day (`fewer_units`). A single feature
   the contract cannot read is dropped alone and counted (`rows_dropped_by_reason.rejected_feature`); only
   a `next` link or a body that is no FeatureCollection refuses a tile's page.

@@ -33,6 +33,7 @@ class Gauge:
     longitude: float
     latitude: float
     time_zone: str = "PST"
+    site_type: str = "ST"
 
 
 @dataclass(frozen=True)
@@ -61,6 +62,16 @@ def _inside(gauge: Gauge, bbox: str) -> bool:
 def _asked_days(interval: str) -> tuple[date, date]:
     first, last = interval.split("/")
     return date.fromisoformat(first), date.fromisoformat(last)
+
+
+def _matches_site_type(gauge: Gauge, params: httpx.QueryParams) -> bool:
+    """Model the verified USGS exact-type and CQL stream-family query semantics."""
+    if "site_type_code" in params and gauge.site_type != params["site_type_code"]:
+        return False
+    if "filter" in params:
+        assert params["filter"] == "site_type_code = 'ST' OR site_type_code LIKE 'ST-%'"
+        return gauge.site_type == "ST" or gauge.site_type.startswith("ST-")
+    return True
 
 
 @dataclass
@@ -94,15 +105,16 @@ class UsgsWaterDataWorld:
         if request.url.path == DAILY_PATH:
             if params["bbox"] in self.failing_tiles:
                 return httpx.Response(503, content=b"Service Unavailable", headers={"content-type": "text/plain"})
-            return self._json(self._daily(params["bbox"], *_asked_days(params["time"])))
+            return self._json(self._daily(params, *_asked_days(params["time"])))
         if request.url.path == LOCATIONS_PATH:
-            return self._json(self._locations(params["bbox"]))
+            return self._json(self._locations(params))
         return httpx.Response(404, content=b"{}", headers={"content-type": "application/json"})
 
-    def _daily(self, bbox: str, first: date, last: date) -> dict[str, object]:
+    def _daily(self, params: httpx.QueryParams, first: date, last: date) -> dict[str, object]:
+        bbox = params["bbox"]
         features: list[dict[str, object]] = []
         for gauge in self.gauges:
-            if not _inside(gauge, bbox):
+            if not _inside(gauge, bbox) or not _matches_site_type(gauge, params):
                 continue
             day = first
             while day <= last:
@@ -113,7 +125,7 @@ class UsgsWaterDataWorld:
                 day += timedelta(days=1)
         return {"type": "FeatureCollection", "features": features, "numberReturned": len(features), "links": []}
 
-    def _locations(self, bbox: str) -> dict[str, object]:
+    def _locations(self, params: httpx.QueryParams) -> dict[str, object]:
         features = [
             {
                 "type": "Feature",
@@ -122,7 +134,9 @@ class UsgsWaterDataWorld:
                 "geometry": None,
             }
             for gauge in self.gauges
-            if _inside(gauge, bbox) and gauge.monitoring_location_id not in self.unnamed
+            if _inside(gauge, params["bbox"])
+            and _matches_site_type(gauge, params)
+            and gauge.monitoring_location_id not in self.unnamed
         ]
         return {"type": "FeatureCollection", "features": features, "numberReturned": len(features), "links": []}
 

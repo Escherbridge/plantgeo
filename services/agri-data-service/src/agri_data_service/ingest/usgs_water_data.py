@@ -35,8 +35,8 @@ USGS_WATER_DATA_SOURCE_SLUG: Final = "usgs_water_data"
 
 DISCHARGE_PARAMETER_CODE: Final = "00060"
 DAILY_MEAN_STATISTIC_ID: Final = "00003"
-#: Stream sites only, as the legacy NWIS lane asked (`siteType=ST`).
-STREAM_SITE_TYPE_CODE: Final = "ST"
+#: The primary stream category and its secondary types; see ingest/AGENTS.md.
+STREAM_SITE_TYPE_FILTER: Final = "site_type_code = 'ST' OR site_type_code LIKE 'ST-%'"
 #: The unit parameter 00060 is defined in; any other unit is a contract break, never converted.
 DISCHARGE_UNIT: Final = "ft^3/s"
 #: The collection's own `limit` maximum (OpenAPI `limit.maximum`); one unit is sized to fit one page.
@@ -140,7 +140,7 @@ def daily_values_query(tile: TileBox, first: date, last: date) -> tuple[tuple[st
         ("bbox", tile.bbox),
         ("parameter_code", DISCHARGE_PARAMETER_CODE),
         ("statistic_id", DAILY_MEAN_STATISTIC_ID),
-        ("site_type_code", STREAM_SITE_TYPE_CODE),
+        ("filter", STREAM_SITE_TYPE_FILTER),
         ("time", f"{first.isoformat()}/{last.isoformat()}"),
         ("limit", str(MAX_ITEMS_PER_PAGE)),
         ("properties", ",".join(DAILY_VALUE_PROPERTIES)),
@@ -152,7 +152,7 @@ def monitoring_locations_query(tile: TileBox) -> tuple[tuple[str, str], ...]:
     return (
         ("f", "json"),
         ("bbox", tile.bbox),
-        ("site_type_code", STREAM_SITE_TYPE_CODE),
+        ("filter", STREAM_SITE_TYPE_FILTER),
         ("limit", str(MAX_ITEMS_PER_PAGE)),
         ("skipGeometry", "true"),
         ("properties", ",".join(MONITORING_LOCATION_PROPERTIES)),
@@ -386,7 +386,7 @@ __all__ = [
     "MONITORING_LOCATIONS_ENDPOINT",
     "MONITORING_LOCATION_PROPERTIES",
     "STANDARD_UTC_OFFSETS",
-    "STREAM_SITE_TYPE_CODE",
+    "STREAM_SITE_TYPE_FILTER",
     "USGS_WATER_DATA_PROVIDER",
     "USGS_WATER_DATA_SOURCE_SLUG",
     "DailyValue",
