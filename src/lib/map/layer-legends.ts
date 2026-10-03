@@ -35,12 +35,6 @@ import {
   WIND_SPEED_CLASSES,
 } from "@/components/map/layers/WeatherLayer";
 import { DEMAND_DENSITY_COLOR_STOPS } from "@/components/map/layers/DemandHeatmapLayer";
-import { BOTANICAL_OCCURRENCE_LEGEND } from "@/components/map/layers/BotanicalOccurrencesLayer";
-import { BOTANICAL_RICHNESS_LEGEND } from "@/components/map/layers/BotanicalRichnessLayer";
-import {
-  BOTANICAL_EFFORT_MEASURE_LABELS,
-  EFFORT_RAMP,
-} from "@/components/map/layers/BotanicalCollectionEffortLayer";
 import { NDVI_COLOR_RAMP } from "@/lib/vegetation";
 import {
   DEFAULT_SOIL_FIELD_DEPTHS,
@@ -446,61 +440,6 @@ const STATIC_LAYER_LEGENDS: Partial<Record<LayerToggleId, LayerLegendSpec>> = {
         text:
           "Zoomed out, one dot per grid cell instead of surveyed outlines: its colour is " +
           "the cell's most common drainage class and its size the map units counted in it.",
-      },
-    ],
-  },
-  // The three herbarium rows. Each legends the constants its own renderer paints with --
-  // the layer files export them for exactly that, per rule 1 above.
-  "botanical-occurrences": {
-    title: "Botanical specimen occurrences",
-    blocks: [
-      {
-        kind: "classes",
-        shape: "dot",
-        caption: "Coordinate support and determination",
-        classes: BOTANICAL_OCCURRENCE_LEGEND.map(({ color, label }) => ({ color, label })),
-      },
-      {
-        kind: "note",
-        text:
-          "Individual specimens draw only when zoomed in past the detail floor; below it the " +
-          "richness and effort cells take over.",
-      },
-    ],
-  },
-  "botanical-richness": {
-    title: "Herbarium specimen richness",
-    blocks: [
-      {
-        kind: "classes",
-        shape: "swatch",
-        caption: "Cell evaluation",
-        classes: BOTANICAL_RICHNESS_LEGEND.map(({ color, label }) => ({ color, label })),
-      },
-      {
-        kind: "note",
-        text:
-          "Distinct taxa with georeferenced UBC vascular herbarium specimens per cell. This " +
-          "tracks collecting effort, not biodiversity: 92 % of the release has no coordinates, " +
-          "and the georeferenced cluster sits around Vancouver, outside the platform's " +
-          "-125,42,-111,49 envelope, so an unvisited cell and a genuinely species-poor one are " +
-          "different states and are coloured differently.",
-      },
-    ],
-  },
-  "botanical-collection-effort": {
-    title: "Collection evidence & effort",
-    blocks: [
-      {
-        kind: "ramp",
-        caption: "Collecting effort per cell (lighter = more)",
-        stops: EFFORT_RAMP.map(([value, color]) => ({ color, label: String(value) })),
-      },
-      {
-        kind: "note",
-        text: `Context for the specimen richness layer, not an abundance surface. Measures offered: ${Object.values(
-          BOTANICAL_EFFORT_MEASURE_LABELS
-        ).join("; ")}.`,
       },
     ],
   },

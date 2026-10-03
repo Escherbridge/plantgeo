@@ -250,12 +250,6 @@ const attributionIndex = [
     note: "Rebuilt on demand",
   },
   {
-    term: "UBC Herbarium, via Canadensys IPT",
-    description:
-      "Vascular plant specimen records feeding the botanical layers: the University of British Columbia Herbarium's own vascular-specimen release, v16.43, taken from the Canadensys IPT archive under CC0 1.0. UBC is a member of the Consortium of Pacific Northwest Herbaria, but the consortium portal was not the source of what is served. The release is live; it is not yet formally admitted — reconciliation against the herbarium's own field map, and a stability check against the prior release, are still open.",
-    note: "Serving, admission pending",
-  },
-  {
     term: "NASA GIBS",
     description:
       "MODIS/Terra NDVI raster overlay, proxied first-party so attribution and caching stay ours.",

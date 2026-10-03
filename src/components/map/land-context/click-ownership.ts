@@ -18,10 +18,7 @@ import { isScalarFieldInspectionAllowed } from "@/lib/map/scalar-field-inspectio
  *     not inspection-suppressed:
  *     - `DEDICATED_CLICK_LAYER_IDS` on every pointer: the six `FireLayer`/`WaterLayer` popup
  *       layers (`hover-fields.ts` `LAYER_IDS_WITH_A_DEDICATED_CLICK_POPUP`, derived here as
- *       `HOVERABLE_LAYER_IDS` minus `TOOLTIP_TAP_LAYER_IDS` because that set is not exported) plus
- *       the two GBIF occurrence layers (`GbifOccurrencesLayer.tsx` registers `map.on("click", id)`
- *       on both; they are deliberately NOT in `HOVERABLE_LAYER_IDS`, which has no GBIF hover
- *       formatter);
+ *       `HOVERABLE_LAYER_IDS` minus `TOOLTIP_TAP_LAYER_IDS` because that set is not exported);
  *     - `TOOLTIP_TAP_LAYER_IDS` only on a coarse pointer, mirroring `HoverTooltip.handleClick`'s
  *       own `if (!isCoarsePointer()) return;` gate: on a mouse those thirteen fills (drought,
  *       watersheds, weather -- most of the PNW when on) do nothing with a click, so owning it
@@ -35,33 +32,13 @@ import { isScalarFieldInspectionAllowed } from "@/lib/map/scalar-field-inspectio
  * vertex click still reaches every bare handler. See `land-context/AGENTS.md` "Residual gap".
  */
 
-/**
- * Layers that register their own `map.on("click", id, …)` but are not in `hover-fields.ts`'s
- * private dedicated six: GBIF (`GbifOccurrencesLayer.tsx:204-205`, absent from
- * `HOVERABLE_LAYER_IDS` entirely) and the three botanical point layers
- * (`BotanicalOccurrencesLayer.tsx:263-265`, hoverable, so the registry derivation would
- * otherwise file them as tap-only). The richness/collection-effort fills are hover-only and stay
- * tap-only. Proper home: `LAYER_IDS_WITH_A_DEDICATED_CLICK_POPUP` in `hover-fields.ts` (out of
- * this partition) -- see `land-context/AGENTS.md`.
- */
-export const CLICK_HANDLER_IDS_OUTSIDE_THE_SIX: readonly string[] = [
-  "gbif-occurrences-exact",
-  "gbif-occurrences-generalized",
-  "botanical-occurrences-exact",
-  "botanical-occurrences-generalized",
-  "botanical-occurrences-possible",
-];
-const CLICK_HANDLER_IDS_OUTSIDE_THE_SIX_SET: ReadonlySet<string> = new Set(CLICK_HANDLER_IDS_OUTSIDE_THE_SIX);
+// Tap-only = the tooltip's tap set. (The GBIF and herbarium point layers that once registered
+// their own click handlers outside it were retired 2026-10-03; see map/AGENTS.md §Retired layers.)
+const TAP_ONLY_LAYER_IDS: ReadonlySet<string> = new Set(TOOLTIP_TAP_LAYER_IDS);
 
-// Tap-only = the tooltip's tap set minus anything that turns out to have its own click handler.
-const TAP_ONLY_LAYER_IDS: ReadonlySet<string> = new Set(
-  TOOLTIP_TAP_LAYER_IDS.filter((id) => !CLICK_HANDLER_IDS_OUTSIDE_THE_SIX_SET.has(id))
+export const DEDICATED_CLICK_LAYER_IDS: ReadonlySet<string> = new Set(
+  HOVERABLE_LAYER_IDS.filter((id) => !TAP_ONLY_LAYER_IDS.has(id))
 );
-
-export const DEDICATED_CLICK_LAYER_IDS: ReadonlySet<string> = new Set([
-  ...HOVERABLE_LAYER_IDS.filter((id) => !TAP_ONLY_LAYER_IDS.has(id)),
-  ...CLICK_HANDLER_IDS_OUTSIDE_THE_SIX,
-]);
 
 /** Every layer arm 3 can own on SOME pointer: the dedicated-popup set plus the tap-only set. */
 export const CLICK_OWNING_LAYER_IDS: ReadonlySet<string> = new Set([

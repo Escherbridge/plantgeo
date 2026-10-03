@@ -72,7 +72,6 @@ EXPECTED_GLOBAL_BINDINGS = {
     "soil-field-moisture": "era5_land",
     "soil-field-temperature": "era5_land",
     "soil-field-vpd": "era5_land",
-    "botanical-occurrences": "gbif",
 }
 
 #: The four layers the task of this proof names explicitly: every one has a US-scoped source in the

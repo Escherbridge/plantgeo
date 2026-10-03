@@ -89,11 +89,11 @@ describe("server-authored regional measurement facts", () => {
     expect(facts[0].statement).not.toMatch(/normal|low flow|no flood/);
   });
 
-  it("supports botanical event intervals without fabricating a daily observation", () => {
+  it("supports event intervals without fabricating a daily observation", () => {
     const sample = read([{
       observed_interval: { start: "1995-01-01", end: "1995-12-31" },
       properties: { scientific_name: "Quercus garryana", basis_of_record: "PRESERVED_SPECIMEN", occurrence_id: "opaque-occurrence" },
-    }], "botanical-occurrences");
+    }], "another-map-layer");
     const envelope = sample.result.lanes[0].selected as Record<string, unknown>;
     envelope.served_day = null;
     envelope.published_at = "2026-09-01T12:00:00Z";

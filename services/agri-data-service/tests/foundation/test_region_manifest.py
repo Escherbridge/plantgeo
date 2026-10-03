@@ -22,7 +22,7 @@ from agri_data_service.foundation.region.manifest import REGION_ENV_VAR
 
 EXPECTED_LATTICE_PITCH_DEGREES = 0.01  # TIER_RESOLUTION_DEGREES[9], warehouse/parquet/tiers.py
 #: Each climate and soil product has its own source binding.
-EXPECTED_ENABLED_LAYER_COUNT = 26
+EXPECTED_ENABLED_LAYER_COUNT = 25
 
 
 def test_pnw_manifest_loads_with_the_documented_values() -> None:
@@ -31,7 +31,7 @@ def test_pnw_manifest_loads_with_the_documented_values() -> None:
     assert pnw.envelope == RegionEnvelope(west=-126.0, south=41.0, east=-110.0, north=50.0)
     assert pnw.default_camera_envelope == RegionEnvelope(west=-125.0, south=42.0, east=-111.0, north=49.0)
     assert pnw.sub_envelopes["burn_severity"] == RegionEnvelope(west=-125.0, south=42.0, east=-111.0, north=49.0)
-    assert pnw.sub_envelopes["botanical_seed"] == RegionEnvelope(west=-125.0, south=41.0, east=-110.0, north=50.0)
+    assert set(pnw.sub_envelopes) == {"crop_cover", "burn_severity"}
     assert pnw.lattice_pitch_degrees == EXPECTED_LATTICE_PITCH_DEGREES
     assert pnw.lattice_origin_rule == "floor_to_cell_origin"
     assert pnw.timezone == "America/Los_Angeles"
@@ -69,7 +69,6 @@ def test_pnw_manifest_sub_envelopes_cannot_be_mutated_in_place() -> None:
         ("drought", "usdm", "regional"),
         ("climate-field-air-temperature", "nasa_power", "global"),
         ("soil-field-vpd", "era5_land", "global"),
-        ("botanical-occurrences", "gbif", "global"),
     ],
 )
 def test_a_sample_of_layer_bindings_match_the_grepped_source(layer_slug: str, source_slug: str, coverage: str) -> None:

@@ -30,8 +30,7 @@ concrete by the TypeScript, Python, SQL and layer-lane guides.
   list of **enabled layers with their source binding** (§2).
 - **A literal latitude, longitude, envelope, state code or region name outside
   the manifest is a violation.** Today's offenders are the migration list, not
-  precedent: `PACIFIC_NORTHWEST_BBOX` (`ingest/mtbs.py:76`), `SEED_ENVELOPE`
-  (`foundation/botanical_occurrences/coordinates.py:22`), `PNW_STATE_CODES`
+  precedent: `PNW_STATE_CODES`
   and `PnwStateCode` (`src/lib/server/db/schema/land-context/shared.ts`),
   `PNW_COARSE_NODES`, the `NAMED_COVERAGE_REGIONS` table and
   `FALLBACK_COVERAGE_BBOX` (the opening camera when `NEXT_PUBLIC_INGEST_BBOX`
@@ -39,9 +38,12 @@ concrete by the TypeScript, Python, SQL and layer-lane guides.
   envelope restated in `pipeline/direct/burn_severity/{capture,current_snapshot,
   stage}.py` and defaulted as `SUPPORTED_BURN_SNAPSHOT_SCOPE` in the
   `parquet-trpc-readers/burn-severity.ts` reader (found by the 2026-09-18
-  readability swarm). Each moves into (or reads from) the manifest in its own
-  small commit; call sites take the value as a parameter or read the manifest,
-  never re-declare it.
+  readability swarm). `PACIFIC_NORTHWEST_BBOX` (formerly `ingest/mtbs.py:76`) is
+  DONE, not an offender: `ingest/mtbs.py` now reads
+  `load_region().sub_envelopes["burn_severity"]` (`foundation/region/manifest.py`),
+  the pattern the rest of this list should follow. Each remaining offender
+  moves into (or reads from) the manifest in its own small commit; call sites
+  take the value as a parameter or read the manifest, never re-declare it.
 - **Permitted literal coordinates** are the world envelope (`-180,-90,180,90`
   as the explicit "no viewport" sentinel), test fixtures that state the region
   they model in their name, and source-system constants that are genuinely
@@ -60,7 +62,7 @@ concrete by the TypeScript, Python, SQL and layer-lane guides.
 
 Layers are the platform's vocabulary (soil, drought, burn severity, fire
 detections, vegetation, water gauges, weather, watersheds, evacuation zones,
-sensors, botanical occurrences). Sources are how one region fills them
+sensors). Sources are how one region fills them
 (SSURGO, USDM, MTBS, FIRMS, MODIS, USGS NWIS, Open-Meteo, HydroSHEDS...). The
 pilot binds US sources; another region binds its own.
 
@@ -71,7 +73,7 @@ pilot binds US sources; another region binds its own.
   implementation, named `<layer>/<source>.py` (`pipeline/lanes/soil/ssurgo.py`),
   never `<source>.py` at the layer root.
 - **Every source declares `coverage`**: `global` (FIRMS, MODIS, ERA5, POWER,
-  Open-Meteo, HydroSHEDS, GBIF) or `regional` with the ISO codes it serves.
+  Open-Meteo, HydroSHEDS) or `regional` with the ISO codes it serves.
   The manifest may only bind a source whose coverage contains the region's
   envelope; a binding that does not is a startup error, not a runtime surprise.
 - **Layer logic is source-agnostic.** The Monte Carlo method, the Parquet
@@ -144,8 +146,9 @@ Do these as separate small pushes, each reviewed once:
 
 1. Land the `Region` type and the PNW manifest; point `coverage-region.ts` and
    the service at it. No behaviour change.
-2. Move `PACIFIC_NORTHWEST_BBOX`, `SEED_ENVELOPE`, `PNW_STATE_CODES`,
-   `PNW_COARSE_NODES` into or behind the manifest, one per push.
+2. Move `SEED_ENVELOPE`, `PNW_STATE_CODES`, `PNW_COARSE_NODES` into or behind
+   the manifest, one per push (`PACIFIC_NORTHWEST_BBOX` is already done --
+   `ingest/mtbs.py` reads `load_region().sub_envelopes["burn_severity"]`).
 3. Introduce the soil, drought and burn-severity source protocols and rename
    the SSURGO, USDM and MTBS lanes to `<layer>/<source>` files.
 4. Add the boot-with-global-lanes-only test and the stray-literal test.

@@ -47,21 +47,8 @@ const LANE_BACKED_TOGGLE_IDS: LayerToggleId[] = [
   "climate-soil-wetness-profile",
   "evacuation-zones",
   "burn-severity",
-  // The three herbarium rows. Backed by a real published upstream -- the agri-data-service's
-  // `botanical-occurrences` plane, read through `environmental.getBotanicalOccurrences` -- so
-  // they are lane-backed in the sense this list means: something fills them. They are NOT a
-  // Parquet lane and carry no `warehouseLayerName`, because a collecting-event interval is not a
-  // day the environmental slider can scrub; that absence is about the time axis, not about
-  // whether the surface has a producer. A standing here would caption a working layer with an
-  // excuse, which is exactly what the next case forbids.
-  "botanical-occurrences",
-  "botanical-richness",
-  "botanical-collection-effort",
-  // Same plane and same reasoning as the three rows above -- a separate collection_key, not a
-  // separate producer.
-  "gbif-occurrences",
   // Static SoilGrids PMTiles releases are filled by the published raster catalogue rather than
-  // a Parquet lane. Like the botanical rows, they are working producers with no daily axis.
+  // a Parquet lane: working producers with no daily axis.
   "soil-phh2o",
   "soil-soc",
   "soil-nitrogen",

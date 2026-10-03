@@ -158,29 +158,14 @@ and request outcomes. Every event still checks the active AbortController, so op
 a saved conversation or starting another chat cannot receive an abandoned request's
 late response or activity update. Report payloads and source metadata remain unchanged.
 
-## Two botanical read hooks, and why that is not a duplicate
+## Retired botanical read hooks (2026-10-03)
 
-`useBotanicalOccurrencesQuery` (in `useViewportProxiedLayers.ts`) and `useBotanicalOccurrences`
-(its own file) read the same plane through the same server client and are kept apart on purpose.
+`useBotanicalOccurrencesQuery` (tRPC aggregate lane) and `useBotanicalOccurrences` (the
+`/api/botanical-occurrences` proxy detail lane) were deleted with the four herbarium/GBIF map rows
+(retired platform-wide 2026-10-03; see `src/components/map/AGENTS.md` §Retired herbaria layers). Their
+lessons live on in the sections below: the retained-frame liveness gate was first learned on that
+lane, and a superseded plain-fetch answer must be discarded by sequence check as well as abort.
 
-The react-query one exists because a map layer and the panel describing it must issue the SAME
-cache entry — that is the whole subject of this directory's proxied-viewport section, and splitting
-it would let the drawing and the caption disagree about which generation they describe. The
-plain-fetch one is the standalone lane: one abortable request per viewport, nothing to key, and the
-semantic states (`idle` / `loading` / `success` / `empty` / `error`, plus `isStale` and `isPartial`)
-a layer needs to caption itself. Neither can reach the plane with inputs the other would refuse,
-because both bottom out in `botanical-occurrences-client.ts`.
-
-**Superseded answers are discarded twice** — the in-flight request is aborted AND every response is
-checked against a monotonic sequence before it becomes state. Abort alone is not enough: a response
-can already be queued as a microtask when the abort lands, and applying it draws a viewport the
-reader has already left. The react-query hook gets this structurally from its query key; a hand-
-rolled fetch does not, and the second check is what replaces it.
-
-**`empty` is a positive answer and `error` is the absence of one.** They are separate phases so a
-caption can say which happened; collapsing them is how "this release holds nothing here" starts
-reading as an outage. A stale answer is retained across a PENDING request and dropped on a FAILURE,
-matching the `keepPreviousData` rule stated for the proxied-viewport queries.
 ## land-context-viewport
 
 `useLandContextViewport` reads automatically without replacing the explicit click selection.
@@ -204,9 +189,9 @@ request in hand, and `isError` / `isFetching` / `isLoading` / `isSuccess` /
 `isShowingRetainedAnswer` — every one of them gated on that same liveness, because a flag read off
 a disabled observer describes the request that observer last ran.
 
-**All five viewport queries in the file return one**, as of the 2026-09-19 sweep:
-`useWatershedsQuery`, `useSoilSurveyQuery`, `useSoilFieldQuery`, `useClimateFieldQuery` and
-`useBotanicalOccurrencesQuery`. `liveViewportRead` (`:216-236`) is the only admission point, and
+**All four viewport queries in the file return one**, as of the 2026-09-19 sweep (a fifth, the
+retired botanical query, went 2026-10-03): `useWatershedsQuery`, `useSoilSurveyQuery`,
+`useSoilFieldQuery` and `useClimateFieldQuery`. `liveViewportRead` is the only admission point, and
 `drawnDayReadState` (`:245-252`) is the only translation into the drawn-day registry's vocabulary,
 so no call site reassembles that mapping from a raw observer either.
 
@@ -226,70 +211,20 @@ it through, so a conjunct added to the enablement propagates without any consume
 A NEW hook here cannot quietly hand one back **once it carries the return annotation**, and the half
 that enforces that is the TYPE, not the lint rule. An unannotated new hook in the house idiom escapes
 both halves — `tsc` clean, lint silent — so **write the annotation first**; nothing in the build
-checks that you did. Each of the five is annotated `LiveViewportRead<EnvironmentalAnswers[...]>`
-(`useViewportProxiedLayers.ts:144-154` for the answer types; the annotations at `:262`, `:303`,
-`:354`, `:444`, `:535`), and a react-query result has neither `answer` nor `isAnswerLive`, so all
+checks that you did. Each of the four is annotated `LiveViewportRead<EnvironmentalAnswers[...]>`
+(`useViewportProxiedLayers.ts::EnvironmentalAnswers` for the answer types), and a react-query
+result has neither `answer` nor `isAnswerLive`, so all
 four ways of leaking one — `return trpc….useQuery(…)`, `const query = …; return query;`,
 `return { ...query };`, `return query.data;` — are assignment errors under `npm run type-check`.
 
 **The eslint ban is a second signal and is narrower than it looks.** The `no-restricted-syntax`
 block in `eslint.config.mjs` scoped to this path matches the literal
 `return <…>.useQuery(...)` shape ONLY. It does not catch a result assigned to a local and then
-returned — which is the idiom the file now uses on every one of the five screens — nor a spread of
+returned — which is the idiom the file now uses on every one of the four screens — nor a spread of
 one, nor its `data`. It is kept because `npm run lint` is a stage of the Docker build
 (`Dockerfile:67`) and fails in seconds with a message naming the fix, not because it is the
 guarantee. Neither half covers a hook placed in some OTHER file, and neither survives someone
 deleting it.
-
-Nor does any of this speak for lanes that are not react-query observers —
-`useBotanicalOccurrences` (below) resets to `IDLE` when disabled (`useBotanicalOccurrences.ts:161-162`),
-so it retains nothing and needs no gate.
-
-## useBotanicalOccurrences: the proxy detail lane
-
-Mounted in `LayerManager.tsx` as of 2026-09-18, feeding `BotanicalOccurrencesLayer`'s geojson and
-its `readPhase`, with `describeBotanicalOccurrencesState` as the one caption wording.
-
-**One botanical lane per band since 2026-09-18 (W8-D).** This hook (the proxy route) is the ONLY
-read at the detail band: the UBC points, GBIF's toggle, the release-set pin and the store the
-filters and details panels read all come off its one answer. `useBotanicalOccurrencesQuery` (tRPC)
-serves the two aggregate layers and nothing else. The earlier note here -- that both lanes run at a
-detail zoom -- described the state this replaced.
-
-Which lane speaks is decided by the BAND, and whether it is speaking NOW by the read's own
-published liveness -- never by which answer is in hand, and never by a predicate the consumer
-assembles for itself. This query keeps `placeholderData: KEEP_PREVIOUS_WHILE_PANNING`, and a
-DISABLED observer still serves the previous key's answer, so the raw `data` stays populated after a
-zoom out of the aggregate band, after both aggregate toggles go off WITHIN it, and after the map
-container collapses to zero size with every toggle still on.
-
-Three consumer-side gates were written for that retained frame in three consecutive waves --
-presence, then the band (W8 B3), then the caller's toggle gate (W9 S1) -- and each missed a
-conjunct of an enablement it could not see. The third miss was `requested !== null`
-(`useViewportProxiedLayers.ts:454`), which is DYNAMIC: `viewportBbox` returns null for a zero-size
-or hidden container (`src/lib/map/viewport-bbox.ts:57-67`), and this repo has a named memory for
-exactly that class of state (`plantgeo-hidden-tab-blank-map`).
-
-So the gate moved to the definition (style review W10, B1). `useBotanicalOccurrencesQuery` returns
-a `LiveViewportRead` (`useViewportProxiedLayers.ts:174-203`), not the react-query result: the
-enablement is composed once at `useViewportProxiedLayers.ts:452-462`, passed to the observer as
-`enabled` at `:481` and to `liveViewportRead` at `:489` unchanged, and the answer is withheld
-whenever it does not hold (`:216-236`). The raw result is not exported, so a consumer has nothing
-to re-derive a gate from, and a conjunct added to that expression reaches every consumer without
-any consumer changing. See `src/components/map/AGENTS.md` section "The pin names the lane that drew
-the cells" for the pin this corrupted three times.
-
-**A refusal is not a failure.** The route answers governed 400/503 refusals with
-`kind: "governed_refusal"` and their own `detail`; everything else is `transport_fault`.
-`describeBotanicalOccurrencesState` quotes the former verbatim and keeps "could not be loaded" for
-the latter -- see `src/components/map/AGENTS.md` section "Governed refusals read as refusals".
-
-**The rung is selected, not assumed.** `servingBand` is the rung that actually answered -- the
-route's `servingRung` once an answer lands, the hook's own selection before that, and null only
-when no rung admits the viewport (the one case still refused client-side, without a round trip).
-`describeBotanicalOccurrencesState` says so out loud whenever the served rung is not the one the
-zoom asked for: a coarser rung is a SUBSTITUTION OF EVIDENCE, and a reader who is not told has no
-way to know the drawing changed meaning.
 
 ## Regional selection windows
 

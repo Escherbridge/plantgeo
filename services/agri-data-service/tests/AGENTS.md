@@ -16,7 +16,7 @@ Northwest 0.25-degree vegetation lattice..."`) all mention the region by name wi
 its footprint. Restricting the walk to `Assign`/`AnnAssign` targets excludes bare-string docstrings
 (they are `Expr` statements) and call-keyword-argument dicts (they are not assignments) for free,
 while still catching every named constant federation.md §1 lists as an offender
-(the former `PACIFIC_NORTHWEST_BBOX` and `SEED_ENVELOPE`, now manifest-reading functions, plus
+(the former `PACIFIC_NORTHWEST_BBOX`, now a manifest-reading function, plus
 `PNW_STATE_CODES` and `PNW_COARSE_NODES`).
 
 **Numeric 4-tuples are hemisphere-neutral, filtered by shape and by name/span instead** (2026-09-18,
@@ -35,10 +35,9 @@ degrees each axis, narrower than a state, wider than a neighbourhood).
 review) so a long citation sentence that happens to
 mention "PNW" (`pipeline/parquet/lane_registry.py`'s `_climate_floor_basis` rationale, "...MEASURED
 against POWER's live solar edge on 2026-09-15 at five PNW points...") doesn't count as a declared
-region-name literal; a real offender (`GBIF_COLLECTION_KEY = "gbif:pnw:vascular"`,
-`_PILOT_REGION_SLUG = "pnw"`) is short. This also relies on `PNW`/`Pacific Northwest` being an
-exact-case match — `"gbif:pnw:vascular"`'s lowercase `pnw` is a GBIF collection-key convention
-(a source-system identifier, federation.md §1's named exception), not this region's name.
+region-name literal; a real offender (`_PILOT_REGION_SLUG = "pnw"`) is short. This also relies on
+`PNW`/`Pacific Northwest` being an exact-case match — a lowercase `pnw` inside a source-system
+identifier (federation.md §1's named exception) is not this region's name.
 
 `KNOWN_OFFENDERS` is the debt list: empty as of the 2026-09-18 push (wave 2 already pointed every
 literal this walk can see at `load_region()`). A new offender fails the test; removing an entry

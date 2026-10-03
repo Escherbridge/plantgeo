@@ -291,13 +291,8 @@ describe("LandContextLayer breaks the selection deadlock", () => {
     act(() => fixture.fire("click", CLICK));
     expect(useLandContextStore.getState().selection).toBeNull();
 
-    // A dedicated-popup layer (fire/water/GBIF) owns its click on any pointer.
-    fixture.setForeignHits([EARTH, { layer: { id: "gbif-occurrences-exact" } }]);
-    act(() => fixture.fire("click", CLICK));
-    expect(useLandContextStore.getState().selection).toBeNull();
-
-    // A botanical point has its own click handler too (fine pointer here: jsdom has no matchMedia).
-    fixture.setForeignHits([EARTH, { layer: { id: "botanical-occurrences-possible" } }]);
+    // A dedicated-popup layer (fire/water) owns its click on any pointer.
+    fixture.setForeignHits([EARTH, { layer: { id: "published-fire-circles" } }]);
     act(() => fixture.fire("click", CLICK));
     expect(useLandContextStore.getState().selection).toBeNull();
   });

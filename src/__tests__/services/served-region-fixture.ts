@@ -4,8 +4,8 @@ import { getRegion } from "@/lib/region/region";
 /**
  * Priming the served region identity every row read now consults (style review W9, S4).
  *
- * `assertServedRegionMatchesBundle()` runs ahead of every Parquet row read and ahead of the
- * botanical plane's own read. It compares the region the NEWEST decoded census stated with the one
+ * `assertServedRegionMatchesBundle()` runs ahead of every Parquet row read. It compares the region
+ * the NEWEST decoded census stated with the one
  * this bundle compiled for, and when this process has never decoded a census it reads one first.
  * That first read is the problem for any suite that stubs `fetchBoundedJson` with a queue: the
  * census read would consume the row answer the test queued, and the test would fail describing

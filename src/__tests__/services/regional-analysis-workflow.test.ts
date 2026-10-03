@@ -452,7 +452,7 @@ describe('evidence audit honesty', () => {
   });
 
   it('does not infer calendar scans or completeness for event intervals and unsupported snapshot history', () => {
-    const args = { surface_name: 'botanical-occurrences', day: '2026-09-09' };
+    const args = { surface_name: 'interventions', day: '2026-09-09' };
     const result = { history: { complete: false, next_page_start: null },
       lanes: [{ selected: { requested_day: args.day, state: 'published', features: [{ observed_interval: ['2020-01-01', '2021-01-01'] }] }, history: [] }],
     };

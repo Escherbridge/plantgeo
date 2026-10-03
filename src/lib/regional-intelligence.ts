@@ -35,14 +35,19 @@ export const REGIONAL_TOOL_EVIDENCE_SOURCES = [
   "climate-field-soil-wetness-surface", "climate-field-wind-speed", "drought-areas",
   "soil-field-moisture", "soil-field-temperature", "soil-field-vpd",
   "soil-phh2o", "soil-soc", "soil-nitrogen", "soil-bdod", "soil-cec", "soil-ocd",
-  "botanical-occurrences", "botanical-richness", "botanical-collection-effort", "gbif-occurrences",
   "demand-heatmap", "strategy-recommendations", "fire-risk", "weather-forecast", "groundwater", "land-context",
   "strategy-knowledge",
+] as const;
+
+/** Tool surfaces retired on 2026-10-03 (herbaria); claim-valid only so saved reports citing them still parse. */
+export const RETIRED_REGIONAL_TOOL_EVIDENCE_SOURCES = [
+  "botanical-occurrences", "botanical-richness", "botanical-collection-effort", "gbif-occurrences",
 ] as const;
 
 export const REGIONAL_CLAIM_EVIDENCE_SOURCES = [
   ...REGIONAL_EVIDENCE_SOURCES,
   ...REGIONAL_TOOL_EVIDENCE_SOURCES,
+  ...RETIRED_REGIONAL_TOOL_EVIDENCE_SOURCES,
 ] as const;
 
 export type RegionalClaimEvidenceSource =

@@ -31,16 +31,6 @@ function setPointer(coarse: boolean) {
 const POINT: [number, number] = [10, 10];
 const EARTH = { layer: { id: "earth" } };
 const WATER = { layer: { id: "water" } };
-// Registrants of their own `map.on("click", id)` outside hover-fields' private dedicated six:
-// GBIF (`GbifOccurrencesLayer.tsx:204-205`) and botanical points (`BotanicalOccurrencesLayer.tsx:263-265`).
-const CLICK_HANDLER_IDS_OUTSIDE_THE_SIX = [
-  "gbif-occurrences-exact",
-  "gbif-occurrences-generalized",
-  "botanical-occurrences-exact",
-  "botanical-occurrences-generalized",
-  "botanical-occurrences-possible",
-];
-const GBIF_IDS = CLICK_HANDLER_IDS_OUTSIDE_THE_SIX.filter((id) => id.startsWith("gbif-"));
 
 beforeEach(() => {
   useMapStore.setState({ isCapturingQueryPoint: false });
@@ -81,21 +71,15 @@ describe("isClickOwnedByAnotherSurface", () => {
     expect(isClickOwnedByAnotherSurface(map, POINT)).toBe(true);
   });
 
-  it("the owning set is the hover registry plus the click-handler ids outside the six, and nothing else", () => {
-    expect([...CLICK_OWNING_LAYER_IDS].sort()).toEqual([...HOVERABLE_LAYER_IDS, ...GBIF_IDS].sort());
-    // Dedicated = the registry minus the tap set, plus every layer with its own click handler.
+  it("the owning set is the hover registry, and nothing else", () => {
+    expect([...CLICK_OWNING_LAYER_IDS].sort()).toEqual([...HOVERABLE_LAYER_IDS].sort());
+    // Dedicated = the registry minus the tap set.
     expect([...DEDICATED_CLICK_LAYER_IDS].sort()).toEqual(
-      [
-        ...HOVERABLE_LAYER_IDS.filter((id) => !TOOLTIP_TAP_LAYER_IDS.includes(id)),
-        ...CLICK_HANDLER_IDS_OUTSIDE_THE_SIX,
-      ].sort()
+      HOVERABLE_LAYER_IDS.filter((id) => !TOOLTIP_TAP_LAYER_IDS.includes(id)).sort()
     );
-    // Hover-only botanical fills stay tap-only.
-    expect(DEDICATED_CLICK_LAYER_IDS.has("botanical-richness-fill")).toBe(false);
-    expect(DEDICATED_CLICK_LAYER_IDS.has("botanical-collection-effort-fill")).toBe(false);
   });
 
-  it.each([false, true])("dedicated-popup layers (fire/water/GBIF) own the click with coarse pointer = %s", (coarse) => {
+  it.each([false, true])("dedicated-popup layers (fire/water) own the click with coarse pointer = %s", (coarse) => {
     setPointer(coarse);
     for (const layerId of DEDICATED_CLICK_LAYER_IDS) {
       expect(isClickOwnedByAnotherSurface(mapWith([EARTH, { layer: { id: layerId } }]), POINT)).toBe(true);
@@ -104,11 +88,10 @@ describe("isClickOwnedByAnotherSurface", () => {
 
   it("tap-only layers (drought, watersheds, weather...) do NOT own a fine-pointer click", () => {
     setPointer(false);
-    // Two exclusions from the tooltip's tap set: `interventions`/`interventions-points` are
-    // intervention ids (arm 2 owns them on every pointer), and the botanical points register
-    // their own click handler (dedicated owners, listed in CLICK_HANDLER_IDS_OUTSIDE_THE_SIX).
+    // One exclusion from the tooltip's tap set: `interventions`/`interventions-points` are
+    // intervention ids (arm 2 owns them on every pointer).
     const tapOnlyNonIntervention = TOOLTIP_TAP_LAYER_IDS.filter(
-      (id) => !INTERVENTION_STYLE_LAYER_IDS.includes(id) && !CLICK_HANDLER_IDS_OUTSIDE_THE_SIX.includes(id)
+      (id) => !INTERVENTION_STYLE_LAYER_IDS.includes(id)
     );
     expect(tapOnlyNonIntervention.length).toBeGreaterThan(0);
     for (const layerId of tapOnlyNonIntervention) {

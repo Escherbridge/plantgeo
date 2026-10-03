@@ -1,11 +1,9 @@
 /**
  * The SSURGO admitted-release port's local-first caching (soil-survey S4, plan §1a row 73).
  *
- * SSURGO is `static_reference`, not `release_series` like the botanical plane
- * (`botanical-generation-pin.test.ts`), but shares its shape: `environmental.getSoilSurvey`
- * carries its generation as `revision` -- the admitted release's SHA-256 -- ON THE PAYLOAD rather
- * than in the query key, since two viewports either side of an admission share nothing that would
- * otherwise tell them apart. What is unique to this layer, and NOT shared with botanical, is that
+ * `environmental.getSoilSurvey` carries its generation as `revision` -- the admitted release's
+ * SHA-256 -- ON THE PAYLOAD rather than in the query key, since two viewports either side of an
+ * admission share nothing that would otherwise tell them apart. What is unique to this layer is that
  * its OWN `availability: "unavailable"` must never be persisted: every other layer's `unavailable`
  * is a governed, cacheable fact about a day; SSURGO's is pure serving/transport state -- an unbound
  * region, a below-native-rung zoom, or a release nobody has admitted yet -- and caching it would
@@ -101,8 +99,13 @@ describe("SSURGO release pin: revision, not releaseSetId", () => {
   // F13: a payload can carry a field NAMED `revision` for reasons that have nothing to do with
   // this layer. The field is read only once the caller has already attributed the entry to
   // soil-survey; it is never sniffed off the payload shape alone.
-  it("does not pin a non-soil-survey layer on a coincidental `revision` field", () => {
-    const lookalike = { availability: "published", features: [], revision: "c".repeat(64) };
+  it("does not pin a non-soil-survey layer on a coincidental `revision` or `releaseSetId` field", () => {
+    const lookalike = {
+      availability: "published",
+      features: [],
+      revision: "c".repeat(64),
+      releaseSetId: "d".repeat(64),
+    };
     expect(resolveEntryGeneration(lookalike)).toBeNull(); // layerId omitted, same as `null`
     expect(resolveEntryGeneration(lookalike, "drought")).toBeNull();
     expect(resolveEntryGeneration(lookalike, "soil-survey")).toBe("c".repeat(64));

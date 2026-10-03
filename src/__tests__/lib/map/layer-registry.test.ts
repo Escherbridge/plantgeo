@@ -134,17 +134,9 @@ describe('layer registry derivations', () => {
       'sensors',
       'watersheds',
     ])
-    // The three herbarium rows file under Vegetation rather than under a botanical section of
-    // their own: a new PanelId is a new dock section WITH A REPORT (`DETAILS_LABELS` and
-    // `DETAILS_BODIES` are both exhaustive over `DockDetailsId`), and specimen occurrences are
-    // plant observations the Vegetation section already has the vocabulary for.
-    expect(getLayersForPanel('vegetation')).toEqual([
-      'vegetation',
-      'botanical-occurrences',
-      'botanical-richness',
-      'botanical-collection-effort',
-      'gbif-occurrences',
-    ])
+    // The four herbarium/GBIF rows that also filed here were retired 2026-10-03
+    // (src/components/map/AGENTS.md §Retired herbaria layers).
+    expect(getLayersForPanel('vegetation')).toEqual(['vegetation'])
     expect(getLayersForPanel('soil')).toEqual([
       'soil-survey',
       'soil-moisture',
@@ -257,16 +249,6 @@ describe('layer registry derivations', () => {
       sensors: 'Sensor Stations',
       watersheds: 'Watershed Boundaries',
       vegetation: 'Vegetation (NDVI)',
-      // The three herbarium rows. These have no <LayerToggle> predecessor: they were built as
-      // unmounted components and reached the map on 2026-09-13.
-      'botanical-occurrences': 'Botanical Specimen Occurrences',
-      // Renamed from "Documented Taxon Richness" on 2026-09-18: a herbarium richness surface
-      // measures collecting effort, and the old name read as biodiversity.
-      'botanical-richness': 'Herbarium Specimen Richness',
-      'botanical-collection-effort': 'Collection Evidence & Effort',
-      // A separate source from the three UBC rows above, not a fourth herbarium row -- see
-      // layer-registry.ts's own comment on this entry for why it is a sibling toggle.
-      'gbif-occurrences': 'GBIF Specimen Occurrences',
       'soil-survey': 'Drainage & Map Units (SSURGO)',
       // Read off SOIL_FIELD_MEASURES rather than restated, which is why the soil section
       // could drop its `label={definition.layerLabel}` without changing a single caption.
@@ -298,21 +280,6 @@ describe('layer registry derivations', () => {
       'evacuation-zones': 'Evacuation Zones',
       'burn-severity': 'Burn History (MTBS)',
     })
-  })
-
-  /**
-   * Owner decision 2026-09-18: UBC v16.43 keeps serving, acquisition stops, and the richness
-   * row must not be read as biodiversity. 92 % of the release has no coordinates and the
-   * georeferenced cluster is a map of where botanists collected, so the description has to
-   * name the source, say what the number is, and carry the sampling-effort caveat.
-   */
-  it('frames herbarium specimen richness as collecting effort, not biodiversity', () => {
-    const { label, description } = LAYER_REGISTRY['botanical-richness']
-    expect(label).not.toMatch(/taxon richness/i)
-    expect(description).toContain('UBC vascular herbarium')
-    expect(description).toContain('georeferenced')
-    expect(description).toContain('92 % of the release has no coordinates')
-    expect(description).toContain('Not a biodiversity estimate')
   })
 
   /**

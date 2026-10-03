@@ -1,7 +1,7 @@
-"""Per-station NWS fetch starts, read back from what this lane already published to z13.
+"""Which ended days a sensors turn still owes NWS a question about, read back from this lane's own z13.
 
-See this package's `AGENTS.md`, "Fetch only what can still change a published block", for the
-evidence (447 MB/day from api.weather.gov) and the correctness argument this module implements.
+See this package's `AGENTS.md`, "Ask once per day, after the day has ended", for the production evidence
+(2026-10-03: 14,400 requests and 4.39 GB a day) and the correctness argument this module implements.
 """
 
 from __future__ import annotations
@@ -11,70 +11,63 @@ from datetime import UTC, date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Final
 
 from agri_data_service.foundation.parquet.paths import partition_day_statuses
-from agri_data_service.ingest.source import HistoryWindow
 from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct.sensors.adapter import SENSORS_DIRECT_KIND
 from agri_data_service.warehouse.schemas.sensors import SENSORS_STREAM
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterable, Mapping
 
+    from agri_data_service.ingest.source import HistoryWindow
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 
-#: Covers NWS's own ingest lag plus the gap between a run's fetch and its z13 completion marker
-#: (time budget <= 900 s plus the per-day retry tail). See `AGENTS.md` before shrinking it. This is
-#: the per-station re-fetch floor (`window_for`); it is NOT the day-settle bound -- see
-#: `SENSORS_SETTLE_OVERSCAN` below for why those two had to be split.
-SENSORS_WATERMARK_OVERLAP: Final = timedelta(hours=3)
+#: How long after a UTC day ends before the turn asks NWS for it. Covers a report observed before
+#: midnight that reaches NWS late (the 23:53 case in the flow tests). A day is done once a write of it
+#: completed at least this long after it ended. See `AGENTS.md` before shrinking it.
+SENSORS_LATE_REPORT_ALLOWANCE: Final = timedelta(hours=3)
 
-#: How long after a day's UTC midnight-to-midnight span ends a run still re-fetches it, even once a
-#: completion marker exists. Deliberately much larger than `SENSORS_WATERMARK_OVERLAP`: that overlap
-#: only has to cover NWS's in-order publication lag for a report that hasn't landed yet, but settling
-#: a day also has to cover (a) a correction or quality-flag update NWS applies to a report that has
-#: ALREADY landed and already won its day, and (b) `rows.py`'s own admission that NWS's `observedAt`
-#: "IS NOT PROVABLY A UTC DATE" -- `_day_start`/`_window_days` here assume UTC midnight, so a day
-#: could in principle end as much as one UTC offset early or late. 12 h comfortably covers both: it
-#: is larger than any corrections window this lane has observed and larger than the largest US UTC
-#: offset (UTC-10, Aleutian). See `AGENTS.md`, "What this does not cover".
-SENSORS_SETTLE_OVERSCAN: Final = timedelta(hours=12)
+#: One UTC calendar day; named so the day arithmetic below reads as days, not as a bare literal.
+_ONE_DAY: Final = timedelta(days=1)
 
 
-@dataclass(frozen=True, slots=True)
-class SensorsFetchPlan:
-    """The rolling window, the lane-wide frontier inside it, and each published station's newest report."""
-
-    window: HistoryWindow
-    lane_frontier: datetime
-    station_newest: Mapping[str, datetime] = field(default_factory=dict)
-    #: Window days whose z13 read raised (corrupt part, transient bucket error that outlived retries).
-    #: Each one is folded in as reopened rather than aborting the whole plan -- see
-    #: `read_sensors_fetch_plan`.
-    days_unreadable: int = 0
-
-    def window_for(self, station_identifier: str) -> HistoryWindow:
-        """Return one station's request window: the full rolling window unless this lane already holds it."""
-        newest = self.station_newest.get(station_identifier)
-        if newest is None:
-            return self.window
-        latest_start = self.window.end - SENSORS_WATERMARK_OVERLAP
-        start = min(self.lane_frontier, newest - SENSORS_WATERMARK_OVERLAP, latest_start)
-        return HistoryWindow(start=max(self.window.start, start), end=self.window.end)
+def day_start(day: date) -> datetime:
+    """Midnight UTC opening one calendar day."""
+    return datetime.combine(day, time.min, tzinfo=UTC)
 
 
-def unwatermarked_plan(window: HistoryWindow) -> SensorsFetchPlan:
-    """A plan that asks every station for the whole rolling window -- the pre-2026-09-28 request shape."""
-    return SensorsFetchPlan(window=window, lane_frontier=window.start)
+def day_end(day: date) -> datetime:
+    """Midnight UTC closing one calendar day (exclusive)."""
+    return day_start(day) + _ONE_DAY
 
 
-def _window_days(window: HistoryWindow) -> list[date]:
+def window_days(window: HistoryWindow) -> list[date]:
     """Every UTC calendar day the half-open rolling window touches, oldest first."""
     first, last = window.start.astimezone(UTC).date(), window.end.astimezone(UTC).date()
     return [first + timedelta(days=offset) for offset in range((last - first).days + 1)]
 
 
-def _day_start(day: date) -> datetime:
-    """Midnight UTC opening one calendar day."""
-    return datetime.combine(day, time.min, tzinfo=UTC)
+@dataclass(frozen=True, slots=True)
+class SensorsDayPlan:
+    """Every window day sorted by what a turn owes it. Built from z13 listings and markers alone."""
+
+    window: HistoryWindow
+    #: Ended, past the late-report allowance, and not done: the turn must ask NWS for these, oldest first.
+    due_days: tuple[date, ...]
+    #: Written by a run that finished at least the allowance after the day ended. Never re-asked.
+    done_days: tuple[date, ...] = ()
+    #: Parts AND an absence marker: the adapter refuses them, so asking NWS would only burn requests.
+    blocked_days: tuple[date, ...] = ()
+    #: Today, or a day that ended less than the allowance ago. Asked on a later turn.
+    waiting_days: tuple[date, ...] = ()
+    #: Every window day whose base rung holds a completed part, whatever its class above.
+    published_days: tuple[date, ...] = ()
+    #: Days whose completion marker read raised; each is counted and treated as owed, never as done.
+    days_unreadable: int = 0
+
+    @property
+    def nothing_due(self) -> bool:
+        """True when this turn has no question to ask NWS -- the hourly no-op."""
+        return not self.due_days
 
 
 def _z13_statuses(store: ObjectStore, days: list[date]) -> Mapping[date, str]:
@@ -94,94 +87,121 @@ def _z13_statuses(store: ObjectStore, days: list[date]) -> Mapping[date, str]:
     )
 
 
-def _day_frontier(store: ObjectStore, day: date, status: str, *, now: datetime) -> datetime | None:
-    """The earliest instant this day can still gain a newer report from, or None once it is settled.
+def _is_done(store: ObjectStore, day: date, *, now: datetime) -> bool:
+    """True once a write of `day` completed at least the late-report allowance after the day ended.
 
-    Settled means the z13 completion marker was written more than `SENSORS_SETTLE_OVERSCAN` after the
-    day ended, so the run that last wrote it already saw the whole day plus room for a late correction
-    or a UTC-offset misjudgment of where the day actually ends (see that constant's docstring).
-    Anything else -- no parts, an absence, an incomplete write, a marker without a zone -- re-opens the
-    day from its own midnight. A marker stamped in the future (clock skew on the writing host) is
-    clamped to `now` before either comparison, so a fast clock cannot settle a day early.
+    A marker stamped in the future (a fast writer clock) is clamped to `now` first, so it cannot make a
+    day done early. A marker with no zone is not trusted.
     """
-    reopened = _day_start(day) - SENSORS_WATERMARK_OVERLAP
-    if status != "data":
-        return reopened
     completion = store.read_completion_marker(SENSORS_STREAM, SENSORS_DIRECT_KIND, LANE_BASE_ZOOM_TIER, day)
     if completion is None or completion.completed_at.utcoffset() is None:
-        return reopened
-    completed_at = min(completion.completed_at, now)
-    settled_at = _day_start(day) + timedelta(days=1) + SENSORS_SETTLE_OVERSCAN
-    if completed_at >= settled_at:
-        return None
-    return completed_at - SENSORS_WATERMARK_OVERLAP
+        return False
+    return min(completion.completed_at, now) >= day_end(day) + SENSORS_LATE_REPORT_ALLOWANCE
 
 
-def _fold_station_newest(store: ObjectStore, day: date, newest: dict[str, datetime]) -> None:
-    """Raise each station's newest published `observed_at` with the reports one published day holds."""
-    table = store.read_partition(SENSORS_STREAM, SENSORS_DIRECT_KIND, LANE_BASE_ZOOM_TIER, day)
-    for sensor_id, observed_at in zip(
-        table.column("sensor_id").to_pylist(), table.column("observed_at").to_pylist(), strict=True
-    ):
-        if not isinstance(sensor_id, str) or not isinstance(observed_at, datetime):
-            continue
-        if observed_at.utcoffset() is None:
-            continue
-        current = newest.get(sensor_id)
-        if current is None or observed_at > current:
-            newest[sensor_id] = observed_at
+def read_sensors_day_plan(store: ObjectStore, window: HistoryWindow, *, now: datetime) -> SensorsDayPlan:
+    """Sort every window day into due, done, blocked or waiting from z13 listings and markers.
 
-
-def read_sensors_fetch_plan(
-    store: ObjectStore, window: HistoryWindow, *, now: datetime | None = None
-) -> SensorsFetchPlan:
-    """Read the lane frontier and every station's newest published report from z13 inside `window`.
-
-    An empty bucket holds no station watermark, so a first run (and any station new to the roster)
-    asks for the whole window, exactly as before this module existed.
-
-    A day whose z13 read raises (a corrupt part, a bucket error that outlived its own retries) is
-    folded in as reopened from its own midnight rather than letting the exception escape: before this
-    function existed, one bad day only failed that one day's publish in `forward.py::_publish_day`,
-    and every other day still wrote; a plan-building exception here must not regress that to "the
-    whole lane exits 1 for up to `NWS_OBSERVATION_RETENTION` until the bad day ages out of the
-    window". Treating it as reopened -- never as settled -- means this can only widen a station's
-    request, never cause a skip.
+    Reads no partition: the hourly no-op decision costs one listing per month and one marker per day.
+    A marker read that raises is counted in `days_unreadable` and the day is owed, never done, so a bad
+    object can only make the turn ask NWS, never skip a day.
     """
-    resolved_now = now if now is not None else datetime.now(UTC)
-    days = _window_days(window)
+    days = window_days(window)
     statuses = _z13_statuses(store, days)
-    frontier_candidates: list[datetime] = []
-    newest: dict[str, datetime] = {}
-    days_unreadable = 0
+    due: list[date] = []
+    done: list[date] = []
+    blocked: list[date] = []
+    waiting: list[date] = []
+    published: list[date] = []
+    unreadable = 0
     for day in days:
-        status = statuses[day]
-        try:
-            frontier = _day_frontier(store, day, status, now=resolved_now)
-        except Exception:  # a bad day must widen the request, never abort the plan
-            days_unreadable += 1
-            frontier_candidates.append(_day_start(day) - SENSORS_WATERMARK_OVERLAP)
+        if statuses[day] == "data":
+            published.append(day)
+        if now < day_end(day) + SENSORS_LATE_REPORT_ALLOWANCE:
+            waiting.append(day)
             continue
-        if frontier is not None:
-            frontier_candidates.append(frontier)
+        status = statuses[day]
+        if status == "conflict":
+            blocked.append(day)
+            continue
+        finished = False
         if status == "data":
             try:
-                _fold_station_newest(store, day, newest)
-            except Exception:  # a bad day's stations simply keep their older watermark
-                days_unreadable += 1
-    lane_frontier = min(frontier_candidates, default=window.end - SENSORS_WATERMARK_OVERLAP)
-    return SensorsFetchPlan(
+                finished = _is_done(store, day, now=now)
+            except Exception:  # a bad marker must widen the turn, never abort the plan
+                unreadable += 1
+        (done if finished else due).append(day)
+    return SensorsDayPlan(
         window=window,
-        lane_frontier=max(window.start, lane_frontier),
-        station_newest=newest,
-        days_unreadable=days_unreadable,
+        due_days=tuple(due),
+        done_days=tuple(done),
+        blocked_days=tuple(blocked),
+        waiting_days=tuple(waiting),
+        published_days=tuple(published),
+        days_unreadable=unreadable,
     )
 
 
+def owed_day_plan(window: HistoryWindow, *, now: datetime) -> SensorsDayPlan:
+    """With no bucket to read, every ended window day past the allowance is due."""
+    days = window_days(window)
+    due = tuple(day for day in days if now >= day_end(day) + SENSORS_LATE_REPORT_ALLOWANCE)
+    return SensorsDayPlan(window=window, due_days=due, waiting_days=tuple(day for day in days if day not in due))
+
+
+@dataclass(frozen=True, slots=True)
+class StationFrontiers:
+    """Each station's published winning report per day, read from z13 -- the per-station frontier."""
+
+    by_day: Mapping[date, Mapping[str, datetime]] = field(default_factory=dict)
+    #: Days whose partition read raised. Their stations simply look unpublished there (a wider ask).
+    days_unreadable: int = 0
+
+    def on_day(self, station_identifier: str, day: date) -> datetime | None:
+        """The report this lane published for one station-day, or None."""
+        return self.by_day.get(day, {}).get(station_identifier)
+
+    def newest_day(self, station_identifier: str) -> date | None:
+        """The newest day this lane holds any report for this station, or None for an unknown station."""
+        held = [day for day, stations in self.by_day.items() if station_identifier in stations]
+        return max(held, default=None)
+
+
+def _published_winners(store: ObjectStore, day: date) -> dict[str, datetime]:
+    """Every station's published `observed_at` on one z13 day."""
+    table = store.read_partition(SENSORS_STREAM, SENSORS_DIRECT_KIND, LANE_BASE_ZOOM_TIER, day)
+    winners: dict[str, datetime] = {}
+    for sensor_id, observed_at in zip(
+        table.column("sensor_id").to_pylist(), table.column("observed_at").to_pylist(), strict=True
+    ):
+        if not isinstance(sensor_id, str) or not isinstance(observed_at, datetime) or observed_at.utcoffset() is None:
+            continue
+        current = winners.get(sensor_id)
+        if current is None or observed_at > current:
+            winners[sensor_id] = observed_at
+    return winners
+
+
+def read_station_frontiers(store: ObjectStore, days: Iterable[date]) -> StationFrontiers:
+    """Read the published winners of every `data` day given. Only a turn that will ask NWS pays for this."""
+    by_day: dict[date, dict[str, datetime]] = {}
+    unreadable = 0
+    for day in days:
+        try:
+            by_day[day] = _published_winners(store, day)
+        except Exception:  # a bad day's stations look unpublished there: a wider ask, never a skip
+            unreadable += 1
+    return StationFrontiers(by_day=by_day, days_unreadable=unreadable)
+
+
 __all__ = [
-    "SENSORS_SETTLE_OVERSCAN",
-    "SENSORS_WATERMARK_OVERLAP",
-    "SensorsFetchPlan",
-    "read_sensors_fetch_plan",
-    "unwatermarked_plan",
+    "SENSORS_LATE_REPORT_ALLOWANCE",
+    "SensorsDayPlan",
+    "StationFrontiers",
+    "day_end",
+    "day_start",
+    "owed_day_plan",
+    "read_sensors_day_plan",
+    "read_station_frontiers",
+    "window_days",
 ]

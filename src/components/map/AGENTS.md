@@ -16,35 +16,47 @@ it, in the same sentence. Every blocker of that run was preceded by exactly such
 sentence, refuted by a file the author did not have open; writing the citation is what makes the
 author open it. The same rule is stated in `src/hooks/AGENTS.md` and applies to both directories.
 
-## GBIF feedback
+## Retired herbaria layers
 
-`LayerManager` uses the shared occurrence query's established banners for refusal,
-unavailable publication, and request failures. GBIF additionally names its detail zoom floor
-and a settled empty GBIF slice. The empty notice describes returned points for the current
-viewport and filters, never source ingestion history or ecological absence. A truncated
-shared result cannot establish complete GBIF coverage, and says so explicitly. Loading,
-placeholder, and errored responses cannot support a current-view empty claim. The GBIF
-toggle controls these notices without changing the shared query or its source partition.
+**Retired platform-wide 2026-10-03** (owner decision 2026-09-28 for PNW, extended the same day to
+every region: "remove the herbaria dataset serving lanes and so on generally"). The four
+herbarium/GBIF rows — `botanical-occurrences`, `botanical-richness`, `botanical-collection-effort`
+and `gbif-occurrences` — are gone from the map, the agent and agri. The reason: the herbarium corpus
+is a record of where botanists collected, not of what grows where (UBC v16.43 is 92 % nonspatial and
+its mappable cluster sits near Vancouver, outside the PNW envelope), so it was never the
+vegetation-type path. Plant suitability (soil + climate) and LANDFIRE EVT are.
 
-As of 2026-09-18 the "settled" half of that gate is expressed through `gbifReadPhase`, the same
-read-state vocabulary `describeBotanicalOccurrencesState` speaks, so the two botanical lanes on
-this component cannot disagree about when a read has landed. The MESSAGE stays authored in
-`LayerManager` because it is a statement about the GBIF SLICE of a shared answer, which the
-lane-wide vocabulary has no sentence for -- and `LayerManager.test.tsx` pins it verbatim.
+What went (web): the four `LAYER_REGISTRY` rows and their legends, render-contract and cache-policy
+entries; `BotanicalOccurrencesLayer`, `BotanicalRichnessLayer`, `BotanicalCollectionEffortLayer`,
+`GbifOccurrencesLayer`; `BotanicalFilters` / `BotanicalOccurrenceDetails` in the Vegetation dock
+section; `useBotanicalViewportLanes`, `useBotanicalOccurrences`, `useBotanicalOccurrencesQuery`,
+`botanical-occurrence-store`; the `environmental.getBotanicalOccurrences` tRPC procedure, the
+`/api/botanical-occurrences` proxy route and `botanical-occurrences-client.ts` (with the
+`decodeLaneCurrentPointer` §4a decoder that only it used); the botanical hover formatters and
+click-owner ids; the botanical fault-stack entries; the UBC row on the About page; the
+`botanical-occurrences` slug from `platformLayers` in both region manifests (it is no longer a
+federated layer at all, so `UNTOGGLED_PLATFORM_LAYER_SLUGS` went too); the four slugs from
+`REGIONAL_TOOL_EVIDENCE_SOURCES`. Agri side (routes, agent tools, reader, GBIF/UBC ingestion lane,
+`botanical_seed` envelope): `services/agri-data-service/src/agri_data_service/agent/AGENTS.md`
+§Herbaria surfaces are retired, which also lists the stored-object prefixes still awaiting a
+separate owner go for deletion.
 
-## The botanical detail layer reads the proxy route
+What stays, on purpose: `botanical-occurrences` as a community data-activity lane
+(`src/lib/environmental/data-intervention.ts`) — community submissions, not herbaria, and stored
+rows must keep validating; the four slugs in `RETIRED_REGIONAL_TOOL_EVIDENCE_SOURCES`
+(`src/lib/regional-intelligence.ts`) so saved reports that cited them still parse and still label
+as published data; `species_information` and the botanical species profile planes (the
+plant-suitability reference, not herbaria).
 
-`BotanicalOccurrencesLayer` is fed by `useBotanicalOccurrences` (the `/api/botanical-occurrences`
-proxy), not by the shared tRPC occurrence query, and takes its `readPhase` from the same hook.
-That is what puts the UBC points behind the zoom-AND-bbox rung selection of the 2026-09-18 owner
-decision: a viewport too wide for its zoom's own rung is answered from the next rung out rather
-than refused, and `botanical-viewport-read` is the notice that says which rung answered. The
-aggregate layers, GBIF and the botanical store stay on the tRPC query -- see
-`src/hooks/AGENTS.md` "useBotanicalOccurrences: the proxy detail lane" for why both lanes run and
-what it costs.
+**Re-enabling.** Everything is recoverable from git at `b1745b0f` (the last commit carrying the full
+web + agri serving and ingestion path; `git log --diff-filter=D -- src/lib/botanical-occurrences.ts`
+finds the web deletion). A community layer should be designed fresh against the plant-suitability
+direction rather than resurrected wholesale: re-add the slug to `platformLayers` and a binding in
+both manifests (`pnw.ts` / `pnw.json`, parity-tested), a registry row whose `regionLayerSlug` is the
+slug, and the cache generation pin's release-id arm (`src/lib/cache/AGENTS.md` §Generation pinning)
+for any release-pinned layer.
 
-Clicks are resolved against BOTH lanes' features, because both draw: searching only one would
-make a click on the other lane's dot clear the details panel instead of opening it.
+## Render forms, and the agent location boundary
 
 Which spatial form a layer may be drawn in is frozen in `src/lib/map/AGENTS.md` §The layer render contract.
 
@@ -357,8 +369,8 @@ persistent style.load listener. Weather had already adopted `useStyleReady` befo
 correction and now leaves that hook; recommending another hook adoption would not address
 the source-only sequence. That weather-only batch left eight component consumers
 unchanged. The subsequent Fire/Water correction applies the same local admission contract
-to those two native renderers. SoilField, ClimateField, Vegetation, Gbif and Botanical
-had the same source-only admission gap on source inspection and are corrected in the
+to those two native renderers. SoilField, ClimateField, Vegetation, Gbif and Botanical (the
+last two retired 2026-10-03) had the same source-only admission gap on source inspection and are corrected in the
 September 15 completion section at the end of this file, each with its own renderer,
 form/rung, zoom and selection behavior preserved and asserted. SoilSurvey's
 existing data effect already admits a missing source against a parsed style, so it is
@@ -1379,6 +1391,10 @@ separate from this bounded code-level lifecycle regression.
 
 ## Scalar, vegetation and occurrence parsed-style admission (September 15 completion)
 
+(The two occurrence renderers named below, `GbifOccurrencesLayer` and `BotanicalOccurrencesLayer`,
+were deleted 2026-10-03 with the retired botanical layers; their paragraphs are kept as the record of
+why the admission contract has no cleanup on its draw effect.)
+
 This batch applies the same public parsed-style admission contract to the five consumers the
 Fire/Water correction left open: SoilFieldLayer, ClimateFieldLayer, VegetationLayer,
 GbifOccurrencesLayer and BotanicalOccurrencesLayer. None of them uses `useStyleReady` now.
@@ -1444,11 +1460,12 @@ These are bounded code-level lifecycle regressions. Scientific rendering, servin
 legends, accessibility, agent parity and production first-enable evidence remain separate
 obligations and are not established here.
 
-## LayerManager's three extracted seams (2026-09-18)
+## LayerManager's extracted seams (2026-09-18)
 
 `LayerManager.tsx` was 1,727 lines against `federation.md` §3's ~600-line ceiling, and style
 review W3 (S12) made the next change touching it responsible for the split. Three seams moved
-out whole, into `src/components/map/layer-manager/`. Nothing about the behaviour changed; the
+out whole, into `src/components/map/layer-manager/`; the botanical one was deleted with those
+layers on 2026-10-03, leaving two. Nothing about the behaviour changed; the
 comments moved with the code they explain, so the rationale for each lane still sits beside it.
 
 ### The fault and notice stack
@@ -1463,139 +1480,12 @@ the caption layer, because there is nothing in scope to fetch with.
 Entry order is load-bearing and is preserved exactly: the banner renders the array in order, so
 reordering the entries reorders the pills a reader sees.
 
-### The botanical viewport lanes
+### The botanical viewport lanes (retired 2026-10-03)
 
-`useBotanicalViewportLanes.ts` holds both occurrence lanes, the band exclusivity, the two store
-writes and the click resolution. `LayerManager` now reads six fields off it and passes them to
-four layer components.
-
-**One upstream read at the detail band, not two (W8-D, 2026-09-18).** Through W3-A/W5-D both
-lanes ran together whenever the UBC toggle was on: the tRPC lane (`useBotanicalOccurrencesQuery`)
-for the release-set pin and the filters-panel state, the proxy lane (`useBotanicalOccurrences`)
-for the checksum-bound pointer and `servingRung`. That was two round trips for one screen. The
-proxy answer turned out to be a strict superset of what the tRPC detail answer added --
-`buildRequestUrl` already echoes every filter the store holds, and the answer already carries
-`releaseSetId` alongside `servingRung`/the §4a pointer -- so the fix collapses onto the proxy
-lane rather than the tRPC one: it is additive, not a narrowing. Concretely:
-
-- The tRPC query is REQUESTED ONLY at the aggregate band (`isAggregateReadRequested`,
-  `useBotanicalViewportLanes.ts:115`), for the richness and collection-effort layers, which have no
-  proxy-served rung yet (the follow-up W3-A flagged). Requested is not the same as live: the read
-  composes the rest of its own enablement and reports the result — see "The pin names the lane that
-  drew the cells" below.
-- The proxy lane's `enabled` gate grew `gbifVisible`, so GBIF's own toggle now shares the UBC
-  layer's one detail-band request instead of running its own through tRPC. `gbifFeatures` /
-  `gbifGeoJSON` are filtered off the proxy's feature list by `collection_key`, the same seam that
-  used to split the tRPC list.
-- `gbifReadPhase` is the proxy lane's `phase` verbatim -- one read-state vocabulary to consult,
-  not a hand-built mapping off `botanicalQuery`'s flags.
-- The release-set-pin effect (`setBotanicalResponse`/`setBotanicalReleaseSetId`) is keyed on the
-  BAND, not on which answer happens to be in hand. See "The pin names the lane that drew the
-  cells" below -- the original fallback ordering was wrong and was fixed on 2026-09-18.
-- `withheldCount` moved off the tRPC answer onto the proxy's, and the `botanical-withheld` fault
-  entry in `parquet-layer-faults.ts` dropped its tRPC-lane gate accordingly (that gate,
-  `isAggregateReadLive`, means "the tRPC read is serving the current request", which is false at
-  the detail band where withheld counts live).
-
-The `gbif-empty` and `botanical-viewport-read` fault entries changed WHICH lane's fields feed
-their conditions, never their message text -- `LayerManager.test.tsx`'s `toBe` pin on the GBIF
-message holds unchanged. `botanical-refused` / `botanical-unavailable` / `botanical-truncated`'s
-"detail" wording branch are now aggregate-band-only, since they are still sourced from the tRPC
-answer and it no longer runs at the detail band; the proxy lane's own caption
-(`describeBotanicalOccurrencesState`, surfaced as `botanical-viewport-read`) already covers a
-detail-band refusal or truncation, in different words.
-
-#### The pin names the lane that drew the cells
-
-Style review W8, B3. The bullet above originally read "prefers the tRPC answer when one is in hand,
-falls back to the proxy's detail answer", justified by "the two lanes never answer the same band at
-once". That justification was false, and the mechanism that made it false lives one file away:
-`useBotanicalOccurrencesQuery` is configured `placeholderData: KEEP_PREVIOUS_WHILE_PANNING`
-(`useViewportProxiedLayers.ts`, `keepPreviousData`), and a react-query observer that has been
-DISABLED still serves the previous key's answer. So a reader sitting at zoom 6 with an aggregate
-answer cached and then zooming to 11 left `botanicalQuery.data` defined at the detail band, the
-"prefer tRPC" arm won, and the filters panel pinned and displayed the AGGREGATE read's
-`releaseSetId` — a generation the specimen points on screen were never read from. If the pointer
-had advanced between the two reads the pin was simply wrong, silently, which is the opposite of
-what its own comment promised.
-
-**The band alone was not enough** (style review W9, S1). The first fix scoped the retained answer by
-band, which closed the detail case and left the identical one at the AGGREGATE band: the caller's
-toggle gate is `band === "detail" ? false : richnessVisible || effortVisible`, so a reader at zoom 6
-with only the UBC occurrences toggle on has a DISABLED observer there too, still holding its
-retained frame — and nothing botanical is drawn at all, because the occurrences layer is band-gated
-off below the detail floor. The pin named a generation for a map showing no botanical cells.
-
-**The caller's toggle gate was not enough either** (style review W10, B1). It was documented here as
-"the whole predicate", and it is not: it is ONE conjunct of an enablement composed in the producing
-hook (`src/hooks/useViewportProxiedLayers.ts:452-462`), alongside `requested !== null` and the
-three-way governance conjunction. `requested !== null` is DYNAMIC — `viewportBbox` returns null for
-a zero-size or hidden container (`src/lib/map/viewport-bbox.ts:57-67`) — so collapsing the map at
-zoom 6 with richness on disabled the observer while every consumer-side gate stayed true, and the
-cells, both choropleths and the pin all published for a viewport that did not exist.
-
-**So the gate now lives at the definition, not at the call site.** Three waves of guarding
-`botanicalQuery.data` at the consumer failed for one structural reason: the predicate lives in a
-file the consumer cannot see, and each fix was derived from the reported symptom rather than from
-that predicate. `useBotanicalOccurrencesQuery` returns a `LiveViewportRead`
-(`src/hooks/useViewportProxiedLayers.ts:174-203`) rather than the react-query result — the answer,
-whether that answer is live for the current request, and the error, with the raw result not
-exported.
-
-Three rules now hold:
-
-1. `aggregateBandAnswer` is `botanicalRead.answer`, already withheld by `liveViewportRead`
-   (`src/hooks/useViewportProxiedLayers.ts:216-236`) whenever the read is not live. Every
-   tRPC-sourced value below it — `botanicalAggregate`, the cells, the two choropleth GeoJSONs,
-   `aggregateReleaseSetId`, the store publication, the pin, and the lane report's `resultState` /
-   `resultNote` / `truncated` — reads that one binding, so a retained answer cannot speak for a
-   request it was not served for. `isError` is reported beside the answer by the same gate, because
-   an error has no answer to carry it. A conjunct added to the enablement expression therefore
-   reaches every one of those consumers without this file changing, which is the property the three
-   previous fixes lacked. The answer's own `state === "aggregate"` discriminant is still checked
-   separately: liveness says a read is being served, the discriminant says the answer in hand is
-   this band's.
-2. The store publication and `servedBotanicalReleaseSetId` both branch on `band` first: proxy at
-   `detail`, tRPC above it. This is a partition, not a preference order.
-3. While the band's own lane has no answer, the pin is CLEARED (`setReleaseSetId(null)`,
-   `setLastResponse(null)`) rather than left holding the other band's. An absent provenance claim
-   is honest; a stale one is not (`engineering-principles.md` §4). `release_set_id` shapes no
-   request on either lane, so clearing it cannot feed back into a refetch, and `setReleaseSetId`
-   returns the state object unchanged when nothing moved so the repeated write costs no renders.
-
-The fault entries follow: `botanical-truncated` lost its `band === "detail"` message arm (that arm
-required the tRPC read to be live, and the caller passes `enabled: false` at the detail band —
-`useBotanicalViewportLanes.ts:115` — so it was unreachable), and
-`botanical-request-failed` stopped naming GBIF, which reads the proxy lane now. The remaining
-tRPC-gated entries (`botanical-refused`, `botanical-unavailable`, `botanical-request-failed`,
-`botanical-truncated`) are NOT dead: they are the aggregate band's own vocabulary, reachable
-whenever the richness or collection-effort toggle is on below the detail floor.
-
-#### Governed refusals read as refusals
-
-Style review W8, S4. Collapsing the detail band onto the proxy lane changed how a governed refusal
-arrives. On the tRPC lane it was a landed answer with `state: "refused" | "unavailable"` and a
-service-authored `note` that `parquet-layer-faults.ts` quoted verbatim as a `notice`. On the proxy
-lane the route maps those to HTTP 400/503, so they reach the hook as `phase: "error"` — the same
-phase a dead socket produces — and the caption said "Specimen records could not be loaded
-(<reason>)" and dropped `error.detail`, which is exactly where the plane's own explanation now
-lives. A reader was told the read broke when the plane had answered and explained itself.
-
-The discriminator is a WIRE FIELD, `kind: "governed_refusal" | "transport_fault"`
-(`botanical-proxy-contract.ts`), stamped by every `failure()` in
-`app/api/botanical-occurrences/route.ts` and by the hook's own client-side errors. It is not a
-status-code or reason-string inference, because the plane's refusal reasons are passed through
-unchanged and no client-side enumeration of them could stay complete — and because status alone
-cannot separate a §4a pointer failure from `upstream_not_configured`, which are both 503 and are
-opposite claims. It defaults to `transport_fault` when absent, so a body from an older deployment
-degrades to the wording that claims less.
-
-Two consequences: `describeReadFailure` renders a governed refusal as `"<the route's sentence>:
-<detail>"` and keeps "could not be loaded" for transport faults only; and
-`botanical-viewport-read`'s tone is now `fault` only when the error is a transport fault, so a
-governed refusal is a `notice` again, matching the tone `botanical-refused` / `botanical-unavailable`
-still carry on the aggregate band. `invalid_request` is deliberately a `transport_fault`: its detail
-is zod issue text about a malformed query, not a statement the plane made about its coverage.
+`useBotanicalViewportLanes.ts` and its two lanes were deleted with the retired botanical layers;
+see §Retired herbaria layers above. Its hard-won lesson — a disabled `keepPreviousData` observer
+still serves its previous answer, so liveness must be published by the read itself — lives on in
+`src/hooks/AGENTS.md` §Live viewport reads.
 
 ### The land-context viewport lane
 

@@ -71,19 +71,12 @@ APP_SURFACE_NAMES: Final = (
     "fire-risk",
     "weather-forecast",
 )
-BOTANICAL_SURFACE_NAMES: Final = (
-    "botanical-occurrences",
-    "botanical-richness",
-    "botanical-collection-effort",
-    "gbif-occurrences",
-)
 AGENT_SURFACE_NAMES: Final = tuple(
     sorted(
         set(
             FEATURE_SURFACE_NAMES
             + STREAM_SURFACE_NAMES
             + APP_SURFACE_NAMES
-            + BOTANICAL_SURFACE_NAMES
             + ("fire-risk", "weather-forecast", "land-context")
         )
     )
@@ -188,10 +181,6 @@ SURFACE_REGION_LAYER_SLUGS: Final[dict[str, str]] = {
     "fire-risk": "fire-risk",
     "weather-forecast": "weather-forecast",
     "land-context": "land-context",
-    "botanical-occurrences": "botanical-occurrences",
-    "botanical-richness": "botanical-occurrences",
-    "botanical-collection-effort": "botanical-occurrences",
-    "gbif-occurrences": "botanical-occurrences",
     "drought-areas": "drought",
     "climate-field-air-temperature": "climate-field-air-temperature",
     "climate-field-dew-point": "climate-field-dew-point",

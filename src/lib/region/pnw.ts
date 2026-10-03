@@ -8,7 +8,7 @@ import type { Region } from "@/lib/region/region";
  * them. Values must match
  * `services/agri-data-service/src/agri_data_service/foundation/region/pnw.json` field for field;
  * `src/__tests__/region/manifest-parity.test.ts` diffs the two, and `src/lib/region/AGENTS.md`
- * explains why `envelope` and `subEnvelopes` carry three different-looking PNW boxes on purpose.
+ * explains why `envelope` and `subEnvelopes` carry different-looking PNW boxes on purpose.
  */
 /**
  * The pilot's admin codes as a literal tuple, declared once so both the union type
@@ -27,7 +27,6 @@ export const PNW = {
   subEnvelopes: {
     crop_cover: { west: -125, south: 42, east: -111, north: 49 },
     burn_severity: { west: -125, south: 42, east: -111, north: 49 },
-    botanical_seed: { west: -125, south: 41, east: -110, north: 50 },
   },
   crs: 4326,
   latticePitchDegrees: 0.01,
@@ -55,7 +54,6 @@ export const PNW = {
   // `foundation/region/layer_availability.py`'s `PLATFORM_LAYER_SLUGS` (STYLE-REVIEW-W5 B1).
   // Land and crop source bindings still require published coverage before the dock offers a switch.
   platformLayers: [
-    "botanical-occurrences",
     "burn-severity",
     "crop-cover",
     "drought",
@@ -110,6 +108,5 @@ export const PNW = {
     { layerSlug: "soil-field-moisture", sourceSlug: "era5_land", coverage: "global" },
     { layerSlug: "soil-field-temperature", sourceSlug: "era5_land", coverage: "global" },
     { layerSlug: "soil-field-vpd", sourceSlug: "era5_land", coverage: "global" },
-    { layerSlug: "botanical-occurrences", sourceSlug: "gbif", coverage: "global" },
   ],
 } satisfies Region;

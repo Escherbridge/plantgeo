@@ -710,10 +710,10 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
         timeout_seconds=int(SENSORS_DEFAULT_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS,
         description=(
             "Direct NOAA NWS forward writer for sensors. One poll merges into up to seven day buckets "
-            "(SENSORS_MAX_DAYS = NWS_OBSERVATION_RETENTION.days + 1), but each station asks NWS only for "
-            "observations that can still change a published day (sensors/watermark.py: newest published "
-            "report minus a 3 h overlap; a new station or first run gets the full window), so a missed "
-            "tick still self-heals. HOURLY AT :20 IS A DECIDED TRADE, not a default -- roughly hourly is "
+            "(SENSORS_MAX_DAYS = NWS_OBSERVATION_RETENTION.days + 1). A day is fetched once, after it has "
+            "ended plus a 3 h late-report allowance (sensors/watermark.py), with one limit=1 request per "
+            "station-day under a per-turn budget; a tick with nothing due is a no-op that calls nothing, so "
+            "a missed tick still self-heals. HOURLY AT :20 IS A DECIDED TRADE, not a default -- roughly hourly is "
             "NWS's own publication cadence, while a slower slot risks a day ageing out of NWS's rolling "
             "retention unseen, "
             "which loses it from the source forever. Like weather-observations, this package ships no "

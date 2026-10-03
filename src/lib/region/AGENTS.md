@@ -29,6 +29,15 @@ apart offline and answered the second case from an omission (STYLE-REVIEW-W5 B1)
 refuses a manifest whose `enabledLayers` names a slug its own `platformLayers` omits, and the parity
 test diffs the list against `pnw.json` order for order.
 
+## Retired herbaria binding
+
+The herbaria `botanical-occurrences` layer left both manifests in both trees on 2026-10-03 (owner
+directive retiring the herbaria serving and ingestion lanes platform-wide): out of `platformLayers`,
+out of `kenya_highlands`' `enabledLayers` (its `gbif` binding), and PNW's `subEnvelopes.botanical_seed`
+went with the ingestion classifier that read it. It is no longer a federated layer, so no region
+reports it as a governed absence. Re-enabling starts from git history at `b1745b0f`; see
+`src/components/map/AGENTS.md` §Retired herbaria layers.
+
 ## Why `envelope`, `defaultCameraEnvelope` and `subEnvelopes` differ
 
 See `foundation/region/AGENTS.md`'s "`default_camera_envelope`" and "Why `envelope` and

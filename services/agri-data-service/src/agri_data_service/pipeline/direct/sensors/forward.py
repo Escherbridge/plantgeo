@@ -2,10 +2,9 @@
 
 THE CLI SHAPE FOLLOWS `climate/forward.py` / `soil/forward.py` / `weather_observations/forward.py` --
 `--max-days`, `--time-budget-seconds`, `--run-id`, the bounded retry and contention knobs -- because
-that is the contract a reviewer expects of every lane under this track. What `--max-days` MEANS
-follows `weather_observations`, not `climate`/`soil`: there is no settled-day backlog to walk by
-date (see `source.py`'s module docstring for why the floor is rolling, not fixed), so it caps how
-many of the day buckets ONE poll produced are actually published, never a backlog depth.
+that is the contract a reviewer expects of every lane under this track. `--max-days` caps how many
+DUE days one turn sweeps, OLDEST first (the oldest due day is the next to age out of NWS retention),
+and how many day buckets it publishes; a due day past the cap is reported unwritten and stays due.
 
 `SENSORS_MAX_DAYS = NWS_OBSERVATION_RETENTION.days + 1` -- SEVEN, not a guessed round number. A
 half-open `[now - 6 days, now)` window can straddle at most seven distinct calendar dates (six full
@@ -13,10 +12,9 @@ days plus the partial day at either end), so that is the most days one poll coul
 publish; the `+ 1` is derived from the SAME constant `source.py` builds the fetch window from, so the
 two can never silently drift apart. The default equals the ceiling, matching
 `weather_observations`' own reasoning: a day that ages out of NWS's rolling retention before the
-next poll runs is gone from the source forever (`ingest/sensors.py:94-96`), and unlike a settled
-archive fetch, asking for the whole window here costs no extra HTTP requests -- `observation_url`
-issues ONE request per station whether `window` is `None` or set, so there is no per-day request
-budget to protect by publishing fewer days.
+next poll runs is gone from the source forever (`ingest/sensors.py:94-96`). A day `--max-days` leaves
+out is not lost: it was never written, so it stays due and the next turn asks for it again. What a
+turn may ASK is bounded separately, by `source.py::SensorsFetchBudget`.
 
 THE PUBLISH LOOP FOLLOWS `pipeline/parquet/water_gauges_forward.py` / `weather_observations/forward.py`
 -- merge, verify, retry, emit -- because this lane's incremental-accumulation shape is theirs, not
@@ -44,6 +42,16 @@ AT ALL -- 0 when at least one day published, 1 only when none did. A partial buc
 can neither pass for a clean success nor spend the lane's run on a degradation the next hourly poll
 will re-attempt from the same rolling window. The breaker exists for a lane that cannot write; a lane
 writing some of its days is degraded, visibly, not broken.
+
+A TURN THAT ADVANCED A SWEEP IT COULD NOT FINISH EXITS 0. Its saved progress (`progress.py`) is
+`sweep_in_progress` on the fetch and complete records, the day is `unwritten` with its budget word, and
+the next due turn asks only the stations left -- so a slow NWS costs turns, never the breaker.
+
+A TURN WITH NOTHING DUE IS AN `idempotent_noop` AT EXIT 0. The executor runs this lane hourly, but the
+product is one report per station-day, so a turn only asks NWS once a day has ended and its late-report
+allowance has passed (`watermark.py`). The other turns read z13 listings and markers, emit the fetch
+and complete records with zero requests, and exit. See `AGENTS.md`, "Ask once per day, after the day
+has ended".
 
 THE STDOUT REPORT NOW HAS A CONSUMER.
     As of 2026-09-18 the executor (`execution/job_executor_service.py`) parses the last JSON line of
@@ -74,24 +82,35 @@ from agri_data_service.foundation.geography.bounding_box import inline_bbox_valu
 from agri_data_service.foundation.parquet.paths import partition_day_statuses
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.ingest.http import upstream_client
-from agri_data_service.ingest.sensors import NWS_OBSERVATION_RETENTION, OBSERVATION_BOUNDS
+from agri_data_service.ingest.sensors import NWS_OBSERVATION_RETENTION
 from agri_data_service.pipeline.direct import (
     COMPLETE,
+    IDEMPOTENT_NOOP,
     INCOMPLETE,
     LANE_DAY_OUTCOMES,
     NO_SUCH_DEFECT,
     NO_WRITABLE_OBSERVATIONS,
     REFUSE_UNCONFIGURED_BBOX,
+    REQUEST_BUDGET_EXHAUSTED,
     SKIP_AND_COUNT,
     TIME_BUDGET_EXHAUSTED,
     DirectWriterContract,
 )
-from agri_data_service.pipeline.direct.sensors.adapter import SENSORS_DIRECT_KIND, DirectSensorsForwardAdapter
+from agri_data_service.pipeline.direct.sensors.adapter import (
+    SENSORS_DIRECT_KIND,
+    DirectSensorsForwardAdapter,
+    merge_sensors_day,
+)
+from agri_data_service.pipeline.direct.sensors.progress import SWEEP_PROGRESS_ROOT, SweepProgressStore
 from agri_data_service.pipeline.direct.sensors.rows import direct_sensor_tables
 from agri_data_service.pipeline.direct.sensors.source import (
+    BUDGET_TIME,
     SENSORS_DEFAULT_MAX_RECORDS,
+    SENSORS_FETCH_TIME_SHARE,
     SENSORS_MAX_MAX_RECORDS,
     SENSORS_MIN_MAX_RECORDS,
+    SENSORS_OBSERVATION_BOUNDS,
+    SensorsFetchBudget,
     poll_recent_sensor_readings,
 )
 from agri_data_service.pipeline.parquet.availability_extension import AvailabilityExtensionTally
@@ -102,11 +121,12 @@ from agri_data_service.pipeline.parquet.objectstore import BotoObjectStoreBacken
 from agri_data_service.warehouse.schemas.sensors import SENSORS_SCHEMA, SENSORS_STREAM
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from agri_data_service.pipeline.direct.sensors.adapter import OverturnedAbsence
+    from agri_data_service.pipeline.direct.sensors.source import SensorsPollResult
     from agri_data_service.pipeline.parquet.availability_index import AvailabilityStorage
     from agri_data_service.pipeline.parquet.lane_registry import LaneAdapter
 
@@ -131,7 +151,15 @@ WRITER_CONTRACT: Final = DirectWriterContract(
     identity_defect=SKIP_AND_COUNT,
     geometry_defect=NO_SUCH_DEFECT,
     unconfigured_bbox=REFUSE_UNCONFIGURED_BBOX,
-    turn_outcomes=LANE_DAY_OUTCOMES | {TIME_BUDGET_EXHAUSTED, NO_WRITABLE_OBSERVATIONS, COMPLETE, INCOMPLETE},
+    turn_outcomes=LANE_DAY_OUTCOMES
+    | {
+        TIME_BUDGET_EXHAUSTED,
+        REQUEST_BUDGET_EXHAUSTED,
+        NO_WRITABLE_OBSERVATIONS,
+        IDEMPOTENT_NOOP,
+        COMPLETE,
+        INCOMPLETE,
+    },
     flags_absent_on_purpose={
         "--product": "one stream; a station reading is one series per station rather than a fan-out "
         "of several products over one fetch, so there is no second product a selector could name.",
@@ -193,6 +221,13 @@ class ForwardDayResult:
     #: The governed absence this day's poll overturned, when it did; carried on failures too, since the
     #: marker is already gone by the time a later write can fail (`adapter.py`).
     absence_overturned: OverturnedAbsence | None = None
+    #: True for a day that actually reached the publish loop (a real `_publish_day` write attempt, or a
+    #: `time_budget_exhausted` abandoned mid-publish-loop); False for a day `_due_days_not_published`
+    #: reports without ever building a table to write. A non-written result with this True is a PUBLISH
+    #: FAULT -- a day the fetch phase handed over cleanly but the write path itself could not settle --
+    #: and `_bucket_verdict` must never let `progressed` (a healthy FETCH-phase sweep advancing) paper
+    #: over it.
+    publish_attempted: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,13 +246,28 @@ class ForwardBucketVerdict:
         return len(self.unwritten)
 
 
-def _bucket_verdict(results: Sequence[ForwardDayResult]) -> ForwardBucketVerdict:
-    """Exit 1 only when NO day wrote; some written and some not is `incomplete` at exit 0 -- see module docstring."""
+def _bucket_verdict(
+    results: Sequence[ForwardDayResult], *, progressed: bool = False, excused: frozenset[date] = frozenset()
+) -> ForwardBucketVerdict:
+    """Exit 1 only when NO day wrote, no sweep advanced, and some unwritten day is not `excused`.
+
+    `excused` days were not a failure to write: NWS had nothing writable, or `--max-days` deferred them.
+    Some written and some not is `incomplete` at exit 0 -- see module docstring.
+
+    `progressed` excuses only the FETCH phase's own stall (a sweep that advanced and saved but could not
+    finish this turn); it must never excuse a PUBLISH FAULT (`ForwardDayResult.publish_attempted`), a day
+    the fetch phase handed over cleanly that then failed to write (raised, contended past its timeout, or
+    ran out of time budget mid-publish-loop). Review 2026-10-03: before this, a turn that both advanced an
+    unrelated day's sweep AND failed to publish a different, already-fetched day exited 0 on the publish
+    fault alone.
+    """
     unwritten = tuple(result for result in results if result.outcome != "written")
     days_written = len(results) - len(unwritten)
+    stuck = any(result.day not in excused for result in unwritten)
+    publish_faulted = any(result.publish_attempted for result in unwritten)
     return ForwardBucketVerdict(
         outcome=COMPLETE if results and not unwritten else INCOMPLETE,
-        exit_code=0 if days_written else 1,
+        exit_code=0 if days_written or (not publish_faulted and (progressed or not stuck)) else 1,
         days_written=days_written,
         unwritten=unwritten,
         absences_overturned=tuple(result.day for result in results if result.absence_overturned is not None),
@@ -262,10 +312,15 @@ def emit(event: str, **fields: object) -> None:
     print(json.dumps({"event": event, **fields}, separators=(",", ":"), sort_keys=True), flush=True)
 
 
-def _newest_day_buckets(tables: Mapping[date, pa.Table], *, max_days: int) -> dict[date, pa.Table]:
-    """Keep the newest `max_days` day buckets a poll produced, newest first like every other lane."""
-    newest_first = sorted(tables, reverse=True)[:max_days]
-    return {day: tables[day] for day in newest_first}
+def _publication_order(
+    tables: Mapping[date, pa.Table], *, swept: frozenset[date], max_days: int
+) -> dict[date, pa.Table]:
+    """Swept due days first, then gap-walked done days, each oldest first, capped at `max_days`.
+
+    A due day has nothing published yet; a gap-walked day already serves every other station.
+    """
+    ordered = sorted(tables, key=lambda day: (day not in swept, day))[:max_days]
+    return {day: tables[day] for day in ordered}
 
 
 def parser() -> argparse.ArgumentParser:
@@ -398,6 +453,7 @@ def _result_after_failure(  # noqa: PLR0913 - one caller-supplied coordinate per
         written_bytes=written_bytes,
         detail=detail,
         absence_overturned=adapter.absence_overturned,
+        publish_attempted=True,
     )
 
 
@@ -414,6 +470,7 @@ async def _publish_day(  # noqa: PLR0913 - one bounded lane-day state machine
     contention_timeout_seconds: float,
     availability_storage: AvailabilityStorage | None = None,
     availability: AvailabilityExtensionTally | None = None,
+    clock: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> ForwardDayResult:
     """Publish one day through the shared lock/finalizer and verify its physical z13 content."""
     adapter = DirectSensorsForwardAdapter(table)
@@ -430,8 +487,8 @@ async def _publish_day(  # noqa: PLR0913 - one bounded lane-day state machine
                 lane,
                 day=day,
                 run_id=run_id,
-                now=lambda: datetime.now(UTC),
-                today=datetime.now(UTC).date(),
+                now=clock,
+                today=clock().date(),
                 lane_day_lock=postgres_lane_day_lock,
                 statement_timeout_seconds=STATEMENT_TIMEOUT_SECONDS,
                 availability_storage=availability_storage,
@@ -490,6 +547,7 @@ async def _publish_day(  # noqa: PLR0913 - one bounded lane-day state machine
                 written_bytes=written_bytes,
                 detail=detail,
                 absence_overturned=adapter.absence_overturned,
+                publish_attempted=True,
             )
         if outcome == "contended":
             waited = time.monotonic() - contention_started
@@ -527,137 +585,287 @@ async def _publish_day(  # noqa: PLR0913 - one bounded lane-day state machine
         )
 
 
-async def run(args: argparse.Namespace) -> int:
-    """Fetch one rolling-window poll and durably merge every day it touched, bounded by the time budget."""
-    _validate_args(args)
-    deadline = time.monotonic() + args.time_budget_seconds
+def _unwritten_day(day: date, *, outcome: str, detail: str) -> ForwardDayResult:
+    """A due day this turn did not attempt, with every write counter zeroed."""
+    return ForwardDayResult(
+        day=day,
+        outcome=outcome,
+        attempts=0,
+        incoming_rows=0,
+        existing_rows=0,
+        added_rows=0,
+        updated_rows=0,
+        stale_rows=0,
+        merged_rows=0,
+        actual_z13_rows=0,
+        merged_rows_verified=0,
+        parts=0,
+        rows=0,
+        written_bytes=0,
+        detail=detail,
+    )
 
-    fetched_at = datetime.now(UTC)
-    run_id = args.run_id or f"sensors-direct-forward-{fetched_at.strftime('%Y%m%dT%H%M%SZ')}"
-    availability = AvailabilityExtensionTally()
-    # Opened before the poll, not after: the per-station request windows are read from z13 (see
-    # `watermark.py`), so a run with no object-store credentials configured now fails before it calls
-    # NWS at all. A bucket that IS configured but fails mid-read still surfaces inside the poll (as a
-    # widened, never a skipped, request -- see `watermark.py::read_sensors_fetch_plan`), not here.
-    credentials = settings.require_object_store()
-    store = ObjectStore(BotoObjectStoreBackend.from_credentials(credentials), prefix=settings.object_store_prefix)
-    async with upstream_client(OBSERVATION_BOUNDS) as client:
-        poll = await poll_recent_sensor_readings(
-            client, args.bbox, now=fetched_at, max_records=args.max_records, store=store
+
+def _due_days_not_published(
+    poll: SensorsPollResult, *, selected: frozenset[date], max_days: int
+) -> list[ForwardDayResult]:
+    """Every due day this turn will not publish, named by why, so no due day vanishes from the turn report."""
+    budget_word = TIME_BUDGET_EXHAUSTED if poll.budget_exhausted == BUDGET_TIME else REQUEST_BUDGET_EXHAUSTED
+    saved = {entry.day: entry for entry in poll.sweep_in_progress}
+    results: list[ForwardDayResult] = []
+    for day in poll.days_unswept:
+        entry = saved.get(day)
+        asked = (
+            "no new station was asked for it this turn"
+            if entry is None
+            else f"{entry.stations_asked} of {entry.stations_total} stations asked and saved; the next due turn "
+            "asks only the rest"
         )
+        results.append(
+            _unwritten_day(
+                day,
+                outcome=budget_word,
+                detail=f"the turn's {poll.budget_exhausted} budget ran out before every station was asked for this "
+                f"day ({asked}); nothing was written and the day stays due",
+            )
+        )
+    results.extend(
+        _unwritten_day(
+            day,
+            # `--max-days` bounds the turn's request quota in whole days (one request per roster station).
+            outcome=REQUEST_BUDGET_EXHAUSTED,
+            detail=f"--max-days {max_days} let this turn sweep only the {max_days} oldest due day(s); this day "
+            "was not asked and stays due",
+        )
+        for day in poll.days_deferred
+    )
+    results.extend(
+        _unwritten_day(
+            day,
+            outcome=NO_WRITABLE_OBSERVATIONS,
+            detail="every roster station was asked; NWS returned no writable report for this day, so nothing was "
+            "written and the day stays due",
+        )
+        for day in poll.days_swept
+        if day not in selected
+    )
+    return sorted(results, key=lambda result: result.day)
 
-    all_tables = direct_sensor_tables(poll.writes)
-    tables = _newest_day_buckets(all_tables, max_days=args.max_days)
+
+def _unchanged_on_z13(store: ObjectStore, *, day: date, table: pa.Table) -> bool:
+    """True when merging `table` into a done day would leave z13 exactly as it is, so it is not re-published.
+
+    A read or merge that raises answers False: the ordinary publish path then surfaces the same fault
+    with its retry and its per-day report, rather than this check hiding it.
+    """
+    try:
+        existing = store.read_partition(SENSORS_STREAM, SENSORS_DIRECT_KIND, ZOOM_TIERS[-1], day)
+        merged = merge_sensors_day(existing, table, day=day)
+    except Exception:
+        return False
+    return bool(merged.table.equals(existing))
+
+
+def _emit_fetch(
+    run_id: str,
+    poll: SensorsPollResult,
+    *,
+    seen: Sequence[date],
+    selected: Sequence[date],
+    unchanged: Sequence[date],
+) -> None:
+    """Report what this turn asked NWS and what it will publish, before any day is written."""
+    plan = poll.plan
     emit(
         "sensors_forward_fetch",
         run_id=run_id,
-        fetched_at=fetched_at.isoformat(),
-        stations_polled=poll.stations_polled,
-        stations_watermarked=poll.stations_watermarked,
-        stations_unavailable=poll.stations_unavailable,
+        fetched_at=poll.fetched_at.isoformat(),
+        gate="nothing_due" if plan.nothing_due else "due",
+        days_due=[day.isoformat() for day in plan.due_days],
+        days_done=len(plan.done_days),
+        days_waiting=[day.isoformat() for day in plan.waiting_days],
+        days_blocked=[day.isoformat() for day in plan.blocked_days],
+        days_swept=[day.isoformat() for day in poll.days_swept],
+        days_unswept=[day.isoformat() for day in poll.days_unswept],
+        days_deferred=[day.isoformat() for day in poll.days_deferred],
+        days_resumed=[day.isoformat() for day in poll.days_resumed],
+        sweep_in_progress=[entry.as_event() for entry in poll.sweep_in_progress],
+        progress_discarded=[{"day": day.isoformat(), "reason": reason} for day, reason in poll.progress_discarded],
+        days_backfilled=[day.isoformat() for day in poll.days_backfilled],
+        days_unchanged=[day.isoformat() for day in unchanged],
         days_unreadable=poll.days_unreadable,
+        stations_polled=poll.stations_polled,
+        stations_gap_walked=poll.stations_gap_walked,
+        stations_deferred=poll.stations_deferred,
+        stations_unavailable=poll.stations_unavailable,
+        roster_states_unavailable=list(poll.roster_states_unavailable),
+        requests=poll.requests,
+        bytes_in=poll.bytes_in,
+        budget_exhausted=poll.budget_exhausted,
         records_seen=poll.records_seen,
         writes_selected=len(poll.writes),
         rejected=poll.rejected,
         dropped=poll.dropped,
-        days_seen=[day.isoformat() for day in all_tables],
-        days_selected=[day.isoformat() for day in tables],
+        days_seen=[day.isoformat() for day in seen],
+        days_selected=[day.isoformat() for day in selected],
     )
-    if not tables:
-        emit(
-            "sensors_forward_complete",
-            run_id=run_id,
-            outcome="no_writable_observations",
-            days=0,
-            rows_added=0,
-            rows_updated=0,
-            rows_stale=0,
-            bytes=0,
-            exit_code=0,
-            days_written=0,
-            days_unwritten=0,
-            unwritten=[],
-            absences_overturned=[],
-            **availability.to_summary(),
+
+
+def _emit_nothing_written(run_id: str, *, outcome: str, availability: AvailabilityExtensionTally) -> None:
+    """The terminal record of a turn that wrote nothing and owes nothing: exit 0."""
+    emit(
+        "sensors_forward_complete",
+        run_id=run_id,
+        outcome=outcome,
+        days=0,
+        rows_added=0,
+        rows_updated=0,
+        rows_stale=0,
+        bytes=0,
+        exit_code=0,
+        days_written=0,
+        days_unwritten=0,
+        unwritten=[],
+        absences_overturned=[],
+        **availability.to_summary(),
+    )
+
+
+async def run(args: argparse.Namespace, *, clock: Callable[[], datetime] | None = None) -> int:
+    """Ask NWS only for the days this turn owes, then durably merge them, bounded by the time budget.
+
+    `clock` is the turn's wall clock (UTC); tests pass a fixed one. Monotonic budgets stay real.
+    """
+    _validate_args(args)
+    now_of = clock if clock is not None else (lambda: datetime.now(UTC))
+    started = time.monotonic()
+    deadline = started + args.time_budget_seconds
+
+    fetched_at = now_of()
+    run_id = args.run_id or f"sensors-direct-forward-{fetched_at.strftime('%Y%m%dT%H%M%SZ')}"
+    availability = AvailabilityExtensionTally()
+    # Opened before the poll: the day plan is read from z13 (`watermark.py`), so a run with no
+    # object-store credentials fails before it calls NWS at all.
+    credentials = settings.require_object_store()
+    backend = BotoObjectStoreBackend.from_credentials(credentials)
+    store = ObjectStore(backend, prefix=settings.object_store_prefix)
+    progress = SweepProgressStore(backend, root_key=store.key_for(SWEEP_PROGRESS_ROOT))
+    budget = SensorsFetchBudget(deadline=started + args.time_budget_seconds * SENSORS_FETCH_TIME_SHARE)
+    async with upstream_client(SENSORS_OBSERVATION_BOUNDS) as client:
+        poll = await poll_recent_sensor_readings(
+            client,
+            args.bbox,
+            now=fetched_at,
+            max_records=args.max_records,
+            store=store,
+            budget=budget,
+            progress=progress,
+            max_days=args.max_days,
         )
+
+    all_tables = direct_sensor_tables(poll.writes)
+    publishable = {day: table for day, table in all_tables.items() if day in poll.publishable_days}
+    swept = frozenset(poll.days_swept)
+    backfilled_only = frozenset(poll.days_backfilled) - swept
+    unchanged = sorted(
+        day
+        for day, table in publishable.items()
+        if day in backfilled_only and _unchanged_on_z13(store, day=day, table=table)
+    )
+    tables = _publication_order(
+        {day: table for day, table in publishable.items() if day not in unchanged}, swept=swept, max_days=args.max_days
+    )
+    _emit_fetch(run_id, poll, seen=list(all_tables), selected=list(tables), unchanged=unchanged)
+    if poll.plan.nothing_due:
+        _emit_nothing_written(run_id, outcome=IDEMPOTENT_NOOP, availability=availability)
         return 0
 
-    availability_storage = BotoAvailabilityStorage.from_settings()
-    database_url = settings.require_local_source_loader_database_url()
-    results: list[ForwardDayResult] = []
-    async with local_source_loader_session(database_url) as session:
-        for day, table in tables.items():
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
+    results = _due_days_not_published(poll, selected=frozenset(tables), max_days=args.max_days)
+
+    if tables:
+        availability_storage = BotoAvailabilityStorage.from_settings()
+        database_url = settings.require_local_source_loader_database_url()
+        async with local_source_loader_session(database_url) as session:
+            for day, table in tables.items():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    emit(
+                        "sensors_forward_checkpoint",
+                        run_id=run_id,
+                        day=day.isoformat(),
+                        outcome="time_budget_exhausted",
+                        detail=f"{args.time_budget_seconds:g}s time budget spent before this day was attempted",
+                    )
+                    results.append(
+                        ForwardDayResult(
+                            day=day,
+                            outcome="time_budget_exhausted",
+                            attempts=0,
+                            incoming_rows=table.num_rows,
+                            existing_rows=0,
+                            added_rows=0,
+                            updated_rows=0,
+                            stale_rows=0,
+                            merged_rows=0,
+                            actual_z13_rows=0,
+                            merged_rows_verified=0,
+                            parts=0,
+                            rows=0,
+                            written_bytes=0,
+                            detail="time budget exhausted before this day was attempted",
+                            publish_attempted=True,
+                        )
+                    )
+                    continue
+                result = await _publish_day(
+                    session,
+                    store,
+                    day=day,
+                    table=table,
+                    run_id=run_id,
+                    max_day_attempts=args.retry_attempts,
+                    retry_base_seconds=args.retry_base_seconds,
+                    retry_max_seconds=args.retry_max_seconds,
+                    contention_timeout_seconds=min(args.contention_timeout_seconds, max(remaining, 0.0)),
+                    availability_storage=availability_storage,
+                    availability=availability,
+                    clock=now_of,
+                )
+                results.append(result)
+                if result.outcome == "written" and day in swept:
+                    progress.clear(day)
                 emit(
                     "sensors_forward_checkpoint",
                     run_id=run_id,
+                    namespace=f"layer={SENSORS_STREAM}/kind={SENSORS_DIRECT_KIND}",
                     day=day.isoformat(),
-                    outcome="time_budget_exhausted",
-                    detail=f"{args.time_budget_seconds:g}s time budget spent before this day was attempted",
+                    outcome=result.outcome,
+                    attempts=result.attempts,
+                    incoming_rows=result.incoming_rows,
+                    existing_rows=result.existing_rows,
+                    added_rows=result.added_rows,
+                    updated_rows=result.updated_rows,
+                    stale_rows=result.stale_rows,
+                    merged_rows=result.merged_rows,
+                    actual_z13_rows=result.actual_z13_rows,
+                    merged_rows_verified=result.merged_rows_verified,
+                    parts=result.parts,
+                    rows=result.rows,
+                    bytes=result.written_bytes,
+                    detail=result.detail,
+                    absence_overturned=None
+                    if result.absence_overturned is None
+                    else result.absence_overturned.as_event(),
                 )
-                results.append(
-                    ForwardDayResult(
-                        day=day,
-                        outcome="time_budget_exhausted",
-                        attempts=0,
-                        incoming_rows=table.num_rows,
-                        existing_rows=0,
-                        added_rows=0,
-                        updated_rows=0,
-                        stale_rows=0,
-                        merged_rows=0,
-                        actual_z13_rows=0,
-                        merged_rows_verified=0,
-                        parts=0,
-                        rows=0,
-                        written_bytes=0,
-                        detail="time budget exhausted before this day was attempted",
-                    )
-                )
-                continue
-            result = await _publish_day(
-                session,
-                store,
-                day=day,
-                table=table,
-                run_id=run_id,
-                max_day_attempts=args.retry_attempts,
-                retry_base_seconds=args.retry_base_seconds,
-                retry_max_seconds=args.retry_max_seconds,
-                contention_timeout_seconds=min(args.contention_timeout_seconds, max(remaining, 0.0)),
-                availability_storage=availability_storage,
-                availability=availability,
-            )
-            results.append(result)
-            emit(
-                "sensors_forward_checkpoint",
-                run_id=run_id,
-                namespace=f"layer={SENSORS_STREAM}/kind={SENSORS_DIRECT_KIND}",
-                day=day.isoformat(),
-                outcome=result.outcome,
-                attempts=result.attempts,
-                incoming_rows=result.incoming_rows,
-                existing_rows=result.existing_rows,
-                added_rows=result.added_rows,
-                updated_rows=result.updated_rows,
-                stale_rows=result.stale_rows,
-                merged_rows=result.merged_rows,
-                actual_z13_rows=result.actual_z13_rows,
-                merged_rows_verified=result.merged_rows_verified,
-                parts=result.parts,
-                rows=result.rows,
-                bytes=result.written_bytes,
-                detail=result.detail,
-                absence_overturned=None if result.absence_overturned is None else result.absence_overturned.as_event(),
-            )
 
     outcomes = Counter(result.outcome for result in results)
-    verdict = _bucket_verdict(results)
+    excused = frozenset(poll.days_deferred) | (frozenset(poll.days_swept) - frozenset(tables))
+    verdict = _bucket_verdict(results, progressed=bool(poll.sweep_in_progress), excused=excused)
     emit(
         "sensors_forward_complete",
         run_id=run_id,
         outcome=verdict.outcome,
+        sweep_in_progress=[entry.as_event() for entry in poll.sweep_in_progress],
         days=len(results),
         outcomes=dict(sorted(outcomes.items())),
         incoming_rows=sum(result.incoming_rows for result in results),

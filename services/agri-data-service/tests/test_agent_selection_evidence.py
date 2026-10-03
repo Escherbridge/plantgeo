@@ -23,9 +23,10 @@ from agri_data_service.agent.selection_scope import (
     history_page_days,
     support_lattice,
 )
+from agri_data_service.foundation.region.manifest import REGION_ENV_VAR
 from agri_data_service.parquet_ops.duckdb_session import open_guarded_connection
 from agri_data_service.warehouse.parquet.schema import get_stream_schema
-from tests.agent_fakes import FakeAgentWarehouse, RefusingWarehouse
+from tests.agent_fakes import FakeAgentWarehouse
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -268,8 +269,6 @@ def test_catalogue_exposes_all_map_families_without_retired_reader() -> None:
     assert {
         "vegetation",
         "soil-field-vpd",
-        "botanical-richness",
-        "gbif-occurrences",
         "strategy-recommendations",
         "demand-heatmap",
         "soil-phh2o",
@@ -294,9 +293,6 @@ def test_catalogue_exposes_all_map_families_without_retired_reader() -> None:
             "nearest_signal_cells",
             "surface_value_near_point",
             "feature_value_near_point",
-            "botanical_occurrences_in_region",
-            "botanical_occurrence_spatial_neighbours",
-            "botanical_occurrence_temporal_neighbours",
         }
         & exposed
     )
@@ -321,73 +317,30 @@ def test_sparse_history_prioritizes_real_published_days_on_both_sides() -> None:
     assert len(ordered) == len(set(ordered)) == (last - first).days + 1
 
 
-async def test_dense_single_day_botanical_history_can_continue(monkeypatch: pytest.MonkeyPatch) -> None:
-    requests = []
-    monkeypatch.setattr(
-        selection_evidence,
-        "read_current_botanical_release",
-        lambda: {"state": "current", "release_set_id": "fixture-release"},
-    )
-
-    def read(request: Any) -> dict[str, Any]:
-        requests.append(request)
-        row = {
-            "collection_key": "gbif:pnw:vascular",
-            "longitude": -116.49,
-            "latitude": 43.49,
-            "event_interval": {"start": DAY.isoformat(), "end": DAY.isoformat(), "precision": "day"},
-        }
-        return {
-            "state": "detail",
-            "release_set_id": "fixture-release",
-            "published_at": "2026-09-20T00:00:00Z",
-            "features": [row],
-            "truncated": request.offset == 0,
-        }
-
-    monkeypatch.setattr(selection_evidence, "read_botanical_occurrences", read)
-    arguments: dict[str, Any] = {
-        "surface_name": "gbif-occurrences",
-        "day": DAY.isoformat(),
-        "longitude": -116.49,
-        "latitude": 43.49,
-        "range_start": DAY.isoformat(),
-        "range_end": DAY.isoformat(),
-    }
-    async with tools.run_context(warehouse_source=RefusingWarehouse()):
-        first = json.loads(await tools.query_surface_evidence_for_selection(**arguments))
-        next_offset = first["history"]["next_page_start"]
-        second = json.loads(await tools.query_surface_evidence_for_selection(**arguments, page_start=next_offset))
-    assert next_offset == 12
-    assert second["history"]["next_page_start"] is None
-    assert requests[-1].offset == 12
-    assert all(request.collection_key == "gbif:pnw:vascular" for request in requests)
-    assert second["lanes"][0]["history"][0]["features"][0]["properties"]["collection_key"] == "gbif:pnw:vascular"
-    assert second["lanes"][0]["history"][0]["features"][0]["observed_day"] == DAY.isoformat()
-    assert "served_day" not in second["lanes"][0]["history"][0]["features"][0]
+#: Herbaria surfaces and tools retired platform-wide 2026-10-03; agent/AGENTS.md "Herbaria surfaces are retired".
+RETIRED_HERBARIA_SURFACES = (
+    "botanical-occurrences",
+    "botanical-richness",
+    "botanical-collection-effort",
+    "gbif-occurrences",
+)
+RETIRED_HERBARIA_TOOLS = {
+    "botanical_occurrence_current_release",
+    "botanical_occurrences_in_region",
+    "botanical_occurrence_spatial_neighbours",
+    "botanical_occurrence_temporal_neighbours",
+}
 
 
-async def test_botanical_aggregates_never_claim_date_filtered_richness(monkeypatch: pytest.MonkeyPatch) -> None:
-    requests = []
-    monkeypatch.setattr(
-        selection_evidence,
-        "read_current_botanical_release",
-        lambda: {"state": "current", "release_set_id": "fixture-release"},
-    )
-
-    def read(request: Any) -> dict[str, Any]:
-        requests.append(request)
-        return {
-            "state": "aggregate",
-            "cells": [{"documented_taxa": 8, "record_count": 19}],
-            "published_at": "2026-09-20T00:00:00Z",
-        }
-
-    monkeypatch.setattr(selection_evidence, "read_botanical_occurrences", read)
-    result = await read_surface(LocalWarehouse(), "botanical-richness")
-    lane = result["lanes"][0]
-    assert lane["selected"]["refusal_code"] == "historical_publication_unsupported"
-    assert lane["selected"]["features"] == []
-    assert lane["snapshot_context"]["cells"][0]["documented_taxa"] == 8
-    assert requests[0].event_start is None
-    assert requests[0].event_end is None
+@pytest.mark.parametrize("region", ["pnw", "kenya-highlands"])
+async def test_retired_herbaria_surfaces_are_absent_in_every_region(
+    monkeypatch: pytest.MonkeyPatch, region: str
+) -> None:
+    """No region advertises, registers or reads a herbaria surface; a named one is an unknown surface."""
+    monkeypatch.setenv(REGION_ENV_VAR, region)
+    offered = {row["surface_name"] for row in selection_evidence.catalogue()["layers"]}
+    assert not offered & set(RETIRED_HERBARIA_SURFACES)
+    assert not RETIRED_HERBARIA_TOOLS & {tool.name for tool in tools.WAREHOUSE_TOOLS}
+    for surface in RETIRED_HERBARIA_SURFACES:
+        refused = await read_surface(LocalWarehouse(), surface)
+        assert refused["refusal_code"] == "unknown_surface", surface

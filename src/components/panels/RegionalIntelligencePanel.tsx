@@ -23,6 +23,7 @@ import {
   AI_GENERATED_DISCLAIMER,
   AI_GENERATED_LABEL,
   REGIONAL_TOOL_EVIDENCE_SOURCES,
+  RETIRED_REGIONAL_TOOL_EVIDENCE_SOURCES,
   isRegionalEvidenceSource,
   regionalEvidenceFreshnessState,
   regionalEvidenceSnapshotDay,
@@ -58,7 +59,8 @@ function humanize(value: string): string {
 function originLabel(origin: EvidenceOrigin, source?: string): string {
   if (origin === 'warehouse') {
     if (source === 'soilProperties' || source?.startsWith('climate-field-') || source?.startsWith('soil-field-')) return 'Published estimate';
-    if (source && (REGIONAL_TOOL_EVIDENCE_SOURCES as readonly string[]).includes(source)) return 'Published data';
+    const publishedSources: readonly string[] = [...REGIONAL_TOOL_EVIDENCE_SOURCES, ...RETIRED_REGIONAL_TOOL_EVIDENCE_SOURCES];
+    if (source && publishedSources.includes(source)) return 'Published data';
   }
   return ORIGIN_LABELS[origin];
 }

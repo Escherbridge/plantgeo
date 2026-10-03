@@ -58,27 +58,28 @@ Never add anything user-scoped, authenticated, or mutation-shaped to the allowli
 `persister` option only ever applies to `defaultOptions.queries`, so mutations are structurally
 excluded already; the allowlist is the second layer of defense for queries.
 
-## Generation pinning (the botanical plane, added 2026-09-13)
+## Generation pinning (added 2026-09-13; soil-survey is the one pinned layer since 2026-10-03)
 
-`environmental.getBotanicalOccurrences` joined the allowlist on 2026-09-13 and is the first entry
-on it whose **generation is not in its query key**. Every other allowlisted layer puts everything
-identifying its answer into the key — a day, a bbox, a measure, a signal. This one resolves
-`release_set_id` SERVER-side from the plane's own `/current` pointer
-(`getCurrentBotanicalReleaseSetId`, `botanical-occurrences-client.ts:459`), deliberately, so that
-concurrent readers pin one generation instead of each resolving a slightly different "current".
+Generation pinning exists for an allowlisted path whose **generation is not in its query key**.
+Every other allowlisted layer puts everything identifying its answer into the key — a day, a bbox,
+a measure, a signal. It was built for `environmental.getBotanicalOccurrences`, which resolved a
+herbarium `release_set_id` server-side from the plane's `/current` pointer; that procedure and its
+four map rows were retired platform-wide on 2026-10-03 (see
+`src/components/map/AGENTS.md` §Retired herbaria layers) and the `releaseSetId` arm went with it.
+Today `soil-survey` is the only pinned layer (next section).
 
-The consequence here is that **two reads taken either side of a publication produce the same
-`queryHash` and different provenance.** The key cannot tell them apart, and these are governed
-records: attribution, rights and the provisional-collection status ride on the release. Worse, the
-layer is `release_series` → `manual`, so its TTL is `MANUAL_TTL_MS` (365 days) and background
-revalidation — the correction path every other layer leans on — is switched off. Without a pin, a
-generation superseded this morning would be served as current for a year.
+The hazard is the same for any such layer: **two reads taken either side of a publication produce
+the same `queryHash` and different provenance.** The key cannot tell them apart, and a `manual`
+layer's TTL is `MANUAL_TTL_MS` (365 days) with background revalidation — the correction path every
+other layer leans on — switched off. Without a pin, a generation superseded this morning would be
+served as current for a year.
 
-`resolveEntryGeneration` reads `releaseSetId` off the payload (guarded as a non-empty string, never
+`resolveEntryGeneration` reads the generation off the payload (guarded as a non-empty string, never
 coerced — `String(null)` is `"null"`, the exact trap "revalidation policy" below records for the
-revision signal that never shipped). Every answer that comes back from the server — which by
-construction went through `/current` — records that generation per layer in module state, and a
-later cache HIT is refused if it holds a different one.
+revision signal that never shipped). Every answer that comes back from the server records that
+generation per layer in module state, and a later cache HIT is refused if it holds a different one.
+A future release-pinned layer (for example a community botanical layer) re-adds its own field arm
+there, attributed by layer id, never sniffed off the payload shape.
 
 **The check is deliberately asymmetric, and the asymmetry is the safety argument.** An entry is
 refused only on POSITIVE evidence that a different generation is current. An entry naming no
@@ -102,12 +103,12 @@ miss. There is a test asserting this limitation by name, so it cannot be quietly
 
 ## SSURGO release pinning and the excluded `unavailable` answer (soil-survey port S4)
 
-`environmental.getSoilSurvey` reuses the generation-pinning machinery above, but on its OWN field:
-`resolveEntryGeneration` reads `revision` — the admitted release's SHA-256 — instead of
-`releaseSetId` whenever the attributed layer is `soil-survey`, and keeps reading only
-`releaseSetId` for every other layer (F13). A non-soil-survey answer that happens to carry a field
-named `revision` is never pinned on it: the field name is read only after the entry has already
-been attributed to `soil-survey` by its router path, never sniffed off the payload shape.
+`environmental.getSoilSurvey` uses the generation-pinning machinery above on its own field:
+`resolveEntryGeneration` reads `revision` — the admitted release's SHA-256 — whenever the
+attributed layer is `soil-survey`, and answers `null` for every other layer (F13). A
+non-soil-survey answer that happens to carry a field named `revision` is never pinned on it: the
+field name is read only after the entry has already been attributed to `soil-survey` by its router
+path, never sniffed off the payload shape.
 
 **Unlike every other allowlisted layer, a SSURGO `availability: "unavailable"` answer is never
 persisted, and a stored one is rejected on read even if it predates this rule.** Every other

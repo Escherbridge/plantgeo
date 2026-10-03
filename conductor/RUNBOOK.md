@@ -122,7 +122,7 @@ Facts preserved for the lane sessions:
 | Weather observations | [Platform QA](tracks/platform_experience_qa_20260911/plan.md) | Reconcile the incomplete selected day against availability, then capture populated desktop and mobile behavior. |
 | Weather forecast | **Moved to the ML service 2026-09-19** ([PlantGeo ML service](tracks/plantgeo_ml_service_20260918/plan.md)) | Owner decision: projections leave agri. The `weather-forecast` slug, the partition-kind question and the NWP product are the ML service's; agri lanes stay observed-only and admit no provider projection. Design survives at `.omc/ultrapilot-20260918/W8-E-PLAN.md` and the probe captures at `.omc/research/forecast-s3-probe-20260919/`; the deleted code is in the tree at `c922509d` (landed as `e66dbc36`, `c9c5256c`). The two forecast tracks here are stale and belong to that session to retire or re-point. |
 | Botanical profiles | [Species profile lookup](tracks/botanical_species_profile_lookup_20260911/plan.md) | Inspect the authorized Railway lookup, admit provenance-bound growth and plant-composition sources, publish immutable profiles, and validate agent/API/MCP use. |
-| Herbaria specimens | [PNW Herbaria admission](tracks/pnw_herbaria_source_admission_20260911/plan.md) | UBC v16.43 live as generation `956c0be7…` and **admitted** by owner decision 2026-09-19. Remaining: field-map reconciliation against the raw `occurrence.txt` row count, and the v16.42/v16.43 native-ID comparison. WTU deferred (one transfer at a time). |
+| Herbaria specimens | **Retired platform-wide 2026-10-03** ([PNW Herbaria admission](tracks/pnw_herbaria_source_admission_20260911/plan.md), closed) | Owner directive: herbaria serving, agent surfaces and GBIF/UBC ingestion removed in every region. Open: deleting the stored `botanical-occurrences/` object prefix (generation `956c0be7…`) and the local quarantine needs a separate owner go; exact prefixes in `services/agri-data-service/src/agri_data_service/agent/AGENTS.md` §Herbaria surfaces are retired. |
 | Production release | [Production acceptance](tracks/parquet_production_acceptance_20260901/plan.md) | Cross-layer browser, freshness, schedule burn-in, conservation, rollback, and release verdict after upstream gates pass. |
 | ML and Monte Carlo runtime | [PlantGeo ML service](tracks/plantgeo_ml_service_20260918/plan.md) | Phase 1 push: `services/plantgeo-ml-service/` skeleton answers `/ready` on Railway and agri-data-service builds green with no `method/ml`, `method/monte_carlo`, or ML execution lane. ML work is owned by that track and its own `services/plantgeo-ml-service/RUNBOOK.md`; nothing ML-related is recorded here. |
 | Config-driven ingestion + Open-Meteo climate | [Config-driven ingestion](tracks/config_driven_ingestion_20260926/plan.md) | Executing, cutover-first (owner 2026-09-28). **Phase 1 (1A–1F) live**: `6aae18ff` and `e605b1fe`. The executor runs `PLANTGEO_JOB_EXECUTOR_DISPATCH=serial` (owner: serial first, then flip to `queue` after clean ticks). O6 soil 6-hourly is live. Phase 3, water gauges as the first TOML lane, is in flight in worktree `w3-water`; it ships dark (`enabled = false`), then G3 enable and G4 flip, each on an owner go. Owner decisions: Phase 2 loops deferred, gap fills ON, M5/N6 deferred. See "2026-09-28 afternoon" and "2026-09-29 overnight". |
@@ -262,7 +262,8 @@ swarm logs `.omc/swarm-readability-20260918/`. Owner rulings in memory
   **required** response field — an old route answering a new bundle is `contract_mismatch`), Next.js
   proxy `botanical-occurrences-client.ts`, `LayerManager` mounts the lanes; served through the
   **legacy `current.json` bridge** (`pointer_kind = legacy_current_json`, generation `956c0be7…`)
-  until the `_LATEST.json` pointer advance lands.
+  until the `_LATEST.json` pointer advance lands. (Retired 2026-10-03: herbaria serving, agent
+  surfaces and GBIF/UBC ingestion removed platform-wide — see the Herbaria specimens row above.)
 - NDVI governed-plane promotion: `execution/vegetation_partition_promotion.py` keyed per day-partition
   content SHA, consults the availability index first, `PartitionNotWrittenError` vs
   `ConcurrentPrunePartitionError`, statuses `completed` (exit 0) / `waiting_for_writer` (exit 0, logs
@@ -302,24 +303,17 @@ the two `source.py` shims; the `layer_bindings` schema-version yes/no from a rev
 `map-view-workspace.test.tsx` (`scrollIntoView` in `RegionalIntelligencePanel.tsx:687`) failed once,
 flaky until twice. ~30 stale worktrees from earlier sessions remain under `.claude/worktrees` and `.tmp`.
 
-## Botanical occurrences — open items
+## Botanical occurrences — retired
 
-Live: UBC v16.43 (Canadensys IPT, not the consortium portal) published as generation `956c0be7…`
-after the name-join fix (UBC declares no `dwc:scientificName`; the joined-name fallback never invents
-a species); route, proxy, four agent tools and the map mount are live and independently reviewed;
-`identifications` is a valid zero-row file (receipt shows `extension_row_counts: {}`), closed.
-The data API has no public domain since 2026-09-27 (owner: private-only). Probe it with
-`docs/runbooks/private-service-probes.md` (`railway ssh` into plantgeo-main, private hostname).
+Retired platform-wide 2026-10-03 (owner directive; code recoverable at `b1745b0f`). The only open
+item is the owner go to delete the stored `botanical-occurrences/` prefix and the local quarantine
+`C:/Users/atooz/plantgeo-quarantine/botanical_occurrences/` (prefix list: agri `agent/AGENTS.md`
+§Herbaria surfaces are retired).
 
-Admitted by owner decision 2026-09-19 (`evidence/owner-admission-decision-20260919.md`; the ledger
-cites that decision, not the 2026-09-13 acquisition one, and names what is still unchecked). The map
-keeps its provisional caveat because that text is still true of the data — removing a user-facing
-consent notice is a separate owner call. Open, engineering: field-map reconciliation against the raw
-`occurrence.txt` row count; v16.42 vs v16.43 native-ID comparison (plan A2); unwired `limit`/`cursor`
-pagination; publish-time rights-URI guard. Local
-quarantine of the raw archive: `C:/Users/atooz/plantgeo-quarantine/botanical_occurrences/ubc-vascular-v16.43.zip`.
-`railway run --service <name> -- <cmd>` executes locally with env injected, so `*.railway.internal`
-never resolves through it.
+Kept from the old open-items list because they are not herbaria-specific: the data API has no public
+domain since 2026-09-27 (owner: private-only); probe it with `docs/runbooks/private-service-probes.md`
+(`railway ssh` into plantgeo-main, private hostname). `railway run --service <name> -- <cmd>`
+executes locally with env injected, so `*.railway.internal` never resolves through it.
 
 ## Session 22 wave 9 — review fixes, region leak closed, NDVI blocker found (2026-09-19)
 

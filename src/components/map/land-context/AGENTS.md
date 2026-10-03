@@ -27,15 +27,13 @@ Meaning 1 is tried first, so a drawn land-context feature always wins. Only then
 `isClickOwnedByAnotherSurface` (`click-ownership.ts`): the soil query-point capture flag, a rendered
 intervention feature (unconditionally), or a rendered feature of a layer that answers the click on the
 CURRENT pointer and is not inspection-suppressed. "Answers the click" mirrors the surfaces that actually
-register one: `DEDICATED_CLICK_LAYER_IDS` (the six fire/water popup layers from `hover-fields.ts` plus the
-two GBIF occurrence layers, which register their own `map.on("click", id)` and are deliberately absent from
-`HOVERABLE_LAYER_IDS`) own it on every pointer; `TOOLTIP_TAP_LAYER_IDS` (drought, watersheds, weather --
-most of the PNW when on) own it only on a coarse pointer, exactly as `HoverTooltip.handleClick` gates
-itself, because on a mouse they do nothing with a click and owning it would be a dead zone.
-`CLICK_HANDLER_IDS_OUTSIDE_THE_SIX` (GBIF and the three botanical point layers) are dedicated owners
-although `hover-fields.ts` does not list them so; their proper home is
-`LAYER_IDS_WITH_A_DEDICATED_CLICK_POPUP` there (out of this partition -- and until they move,
-`HoverTooltip` double-owns the botanical points on touch: tap-pin AND the layer's own select).
+register one: `DEDICATED_CLICK_LAYER_IDS` (the six fire/water popup layers from `hover-fields.ts`) own it
+on every pointer; `TOOLTIP_TAP_LAYER_IDS` (drought, watersheds, weather -- most of the PNW when on) own it
+only on a coarse pointer, exactly as `HoverTooltip.handleClick` gates itself, because on a mouse they do
+nothing with a click and owning it would be a dead zone. (Until 2026-10-03 a
+`CLICK_HANDLER_IDS_OUTSIDE_THE_SIX` list added the GBIF and herbarium point layers, which registered their
+own click handlers; those layers were retired -- see `src/components/map/AGENTS.md` §Retired herbaria
+layers -- and the list went with them.)
 **Membership first, suppression second**: `isScalarFieldInspectionAllowed` is only "not suppressed",
 true for the basemap's `earth`/`water` fills under every land pixel, so applied to any rendered feature it
 would own every click and reinstate the deadlock. That predicate is the same one `MapView`'s agent-popup

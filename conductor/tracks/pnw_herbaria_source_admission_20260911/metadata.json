@@ -2,7 +2,8 @@
   "slug": "pnw_herbaria_source_admission_20260911",
   "title": "PNW Herbaria source admission and release governance",
   "type": "data-governance",
-  "status": "active",
+  "status": "retired",
+  "note": "RETIRED 2026-10-03 (owner directive): herbaria serving, agent surfaces and GBIF/UBC ingestion removed platform-wide. See conductor/RUNBOOK.md, Herbaria specimens row.",
   "created_on": "2026-09-11",
   "depends_on": [],
   "research_source": {

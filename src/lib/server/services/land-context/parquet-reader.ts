@@ -47,8 +47,8 @@ export const LAND_CONTEXT_PRODUCT_LAYERS = {
 /**
  * Largest bbox, in square degrees, each rung of the ladder will answer for.
  *
- * Mirrors the shape of `MAX_BBOX_SQUARE_DEGREES` in `planes/botanical_occurrences.py` and exists
- * for the reason the 2026-09-14 handoff recorded against that plane: a rung whose budget is too
+ * Mirrors the shape of `MAX_BBOX_SQUARE_DEGREES` in the retired herbaria occurrence plane (git
+ * history at b1745b0f) and exists for the reason the 2026-09-14 handoff recorded against that plane: a rung whose budget is too
  * tight for a viewport that legitimately wants regional coverage refuses the read at exactly the
  * zooms a reader cares about. Selecting the rung from zoom AND bbox size, rather than zoom alone,
  * is what keeps a wide viewport on a coarse rung instead of refusing it on a fine one.
@@ -121,16 +121,16 @@ export function bboxSquareDegrees(bbox: BboxDegrees): number {
 /**
  * The finest published rung whose own ceiling admits this bbox, as a discriminated result (S8, W3
  * review). This call site never sets `finestAllowed`, so `rung_not_on_ladder` is structurally
- * unreachable here -- callers still switch on `kind` because the type is shared with the botanical
- * plane's call, which DOES set it, and a caller that only checked `=== null` is exactly how the
- * two refusal kinds collapsed into one sentence in the first place.
+ * unreachable here -- callers still switch on `kind` because the type is shared with
+ * `useLandContextViewport`'s call, which DOES set it, and a caller that only checked `=== null` is
+ * exactly how the two refusal kinds collapsed into one sentence in the first place.
  *
  * Finest-that-fits, walking the ladder from z13 down: a caller that asks for a small area gets
  * the most detailed rung published for it, and a caller that asks for a regional one is moved
  * DOWN the ladder rather than refused -- the third of the three fix directions the 2026-09-14
- * handoff left undecided for the botanical plane, and since the owner decision of 2026-09-18 the
- * rule on that plane too. The walk itself lives in `@/lib/map/rung-selection` so the two lanes
- * cannot drift into two selection rules; only the ladder and its ceilings are local.
+ * handoff left undecided for the (since retired) botanical plane, and the owner decision of
+ * 2026-09-18. The walk itself lives in `@/lib/map/rung-selection` so the lanes cannot drift into
+ * two selection rules; only the ladder and its ceilings are local.
  */
 export function selectServingRung(
   publishedTiers: readonly ZoomTier[],

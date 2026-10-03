@@ -1166,6 +1166,43 @@ are committed. Re-exporting IDENTICAL bytes is a no-op reported as `already_pres
 `ExpertLabelExportRefusal` naming the flag, rather than the store's bare `ValueError` two layers
 down — and it refuses in a dry run too, which would otherwise never reach the store at all.
 
+## Lane audit
+
+`lane_audit.py` is `agri-service ops lane-audit [--days N] [--lane ID ...] [--format table|json]`: a
+read-only walk of every forward definition the catalogue dispatches (legacy and config), joining
+evidence that already exists and adding only the judgement. Standing instructions for an agent that
+runs it and fixes what it finds: `docs/lane-audit/BASE_PROMPT.md` (skill `.claude/skills/lane-audit`).
+
+- **Declared limits** come from `current_lane_catalogue(LANE_SPECS)`: a legacy spec's cadence, schedule,
+  timeout and publication lag; a config lane's cron, `[days]`, `[budget]` and its provider file (hosts,
+  budget, and whether the key env var is SET -- presence only, the value is never read out).
+- **Coverage** is `gap_repair.read_parquet_coverage` (the `jobs-plan-gap-repair` read), folded per layer
+  by `gap_repair_contract.measure_lane_gaps`. A layer joins its lanes through `REPAIR_BINDINGS`, config
+  `[[streams]]`, then `lane_audit._DIRECT_WRITER_LAYERS`; a layer none of them names is `unowned_layers`.
+- **Ledger** is `usage_report`'s three loaders in its read-only, 30 s transaction and its per-section
+  savepoints. The last forward turn is the newest row of the lane's FORWARD definition in the same usage
+  feed (a `:gap-repair`/`:gap-fill` turn counts toward usage but never hides a stalled forward), so no SQL
+  file is loaded twice. Incidents attach by fingerprint (`<kind>:<lane>`).
+
+Every threshold is a named constant at the top of the module (error rate 5 % warn / 50 % critical over
+at least 20 requests per host; 50 MB in per metered run, `GEOMETRY_CAPTURE_LANES` exempt; stale after
+2 cadence periods; behind-horizon critical past 14 days). Coverage and the three ledger sections fail
+independently, and a status is a claim about evidence: `lane_audit._status` keeps the worst flag only when
+no read that could have raised a WORSE flag is missing, else the lane reads `unknown` and lists the gap in
+`evidence_missing`. A failed `open_incidents` read could hide a `lane_hold` (critical), so every lane
+below critical goes `unknown`; a failed `month_to_date` read only touches lanes whose usage names a pool;
+unjudged turn staleness can at worst have raised a warning, so it only stops a flag-free (or info-only)
+lane from reading `ok`. Before 2026-10-03's review only the usage feed counted, so a lane under an
+unreadable hold read `ok`. Turn staleness is judged per-lane only when this process's env has SOMETHING
+active (`AuditEvidence.active_lane_count`, counted over the whole catalogue, never the `--lane` filter);
+the verb means most on `plantgeo-job-executor`, and off it (`active_lane_count == 0`) nothing reads `ok`.
+A lane that is itself merely inactive, on a host where something else is active, is a different fact and
+reads `ok` normally once every other read answers -- a second 2026-10-03 fix, since `missing_evidence` used
+to mark staleness missing for ANY inactive lane and misread all nine deliberately-inactive prod lanes as
+`unknown`. Not wired:
+`days_unwritten` is in `job_attempt.metrics` but not in `select_provider_usage.sql`, so an incomplete turn
+is read from `turn_outcome` and `publication_debt` only.
+
 ## Quality receipt
 
 Changes in this directory affect the Python quality fingerprint. Regenerate

@@ -62,9 +62,10 @@ describe("getRegion", () => {
       "soil-field-moisture",
       "soil-field-temperature",
       "soil-field-vpd",
-      "botanical-occurrences",
     ]);
     expect(slugs).not.toContain("interventions");
+    // Herbaria retired platform-wide 2026-10-03: not a federated layer in any region.
+    expect(getRegion().platformLayers).not.toContain("botanical-occurrences");
     expect(getRegion().enabledLayers.find((binding) => binding.layerSlug === "land-context")?.sourceSlug).toBe("blm_surface_management");
     expect(getRegion().enabledLayers.find((binding) => binding.layerSlug === "crop-cover")?.sourceSlug).toBe("usda_cdl");
   });

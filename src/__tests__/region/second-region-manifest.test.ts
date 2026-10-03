@@ -45,7 +45,6 @@ const EXPECTED_GLOBAL_BINDINGS: Readonly<Record<string, string>> = {
   "soil-field-moisture": "era5_land",
   "soil-field-temperature": "era5_land",
   "soil-field-vpd": "era5_land",
-  "botanical-occurrences": "gbif",
 };
 
 afterEach(() => {

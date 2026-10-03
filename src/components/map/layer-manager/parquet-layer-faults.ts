@@ -14,8 +14,6 @@
  */
 
 import type { ParquetLayerFault } from "@/components/map/ParquetLayerFaultBanner";
-import type { BotanicalOccurrencesPhase } from "@/hooks/useBotanicalOccurrences";
-import type { BotanicalProxyErrorKind } from "@/lib/environmental/botanical-proxy-contract";
 
 /** One wave-C Parquet lane's drawn state, reduced to what the stack asks about it. */
 export interface ParquetLaneReport {
@@ -48,67 +46,6 @@ export interface FireLaneReport {
   isLaneNeverWritten: boolean;
 }
 
-/**
- * Everything the occurrence plane's two lanes say, flattened.
- *
- * SINCE W8-D (2026-09-18) the two lanes are no longer symmetric at the detail band: the tRPC
- * lane only ever runs there for backward-compatible fields (it is disabled, so `resultState`
- * etc. are simply absent), and every field that is actually POPULATED at the detail band --
- * `withheldCount`, `hasDetailAnswer`, `detailTruncated`, `gbifReadPhase`, `gbifFeatureCount` --
- * is sourced from the proxy lane's answer instead. At the aggregate band the tRPC lane is still
- * the only one that runs, so `resultState`/`resultNote`/`isError`/`truncated` still describe it.
- */
-export interface BotanicalLaneReport {
-  /**
-   * Whether the tRPC read is currently SERVING the request in hand -- the gate the tRPC-only
-   * entries below share.
-   *
-   * Reported by the read itself (`LiveViewportRead.isAnswerLive`,
-   * `src/hooks/useViewportProxiedLayers.ts:174-203`) rather than re-derived here: `keepPreviousData`
-   * leaves a disabled observer holding its last answer, so "there is an answer" and "this answer
-   * describes the current request" are different questions. False at the detail band, false while
-   * both aggregate toggles are off, and false whenever the viewport cannot be measured.
-   */
-  isAggregateReadLive: boolean;
-  band: string;
-  /** False when the viewport could not be measured; `gbif-empty` may not speak without one. */
-  hasViewportBbox: boolean;
-  /**
-   * The tRPC answer's own state: `detail`, `aggregate`, `refused` or `unavailable`.
-   *
-   * Undefined whenever the read is not live, including at the detail band, because it is read off
-   * an answer the read itself withholds in that case (`liveViewportRead`,
-   * `src/hooks/useViewportProxiedLayers.ts:216-236`) -- so a retained answer cannot speak for a
-   * request it was not served for.
-   */
-  resultState: string | undefined;
-  /** The service-authored note, quoted verbatim by the refusal and unavailable entries. */
-  resultNote: string | null;
-  /** The tRPC lane's transport failure, already scoped to the band that lane runs in. */
-  isError: boolean;
-  /** The tRPC aggregate answer's own cap; the proxy lane's detail-band cap is `detailTruncated`. */
-  truncated: boolean;
-  /** From the proxy lane's detail answer, independent of `isAggregateReadLive`. */
-  withheldCount: number;
-  occurrencesVisible: boolean;
-  gbifVisible: boolean;
-  /** The proxy lane's own read phase, since GBIF now shares its detail-band request. */
-  gbifReadPhase: BotanicalOccurrencesPhase;
-  gbifFeatureCount: number;
-  /** True when the proxy lane's `detail` answer is in hand; `gbif-empty` is a statement about one. */
-  hasDetailAnswer: boolean;
-  /** That detail answer's own cap, which picks between the two `gbif-empty` sentences. */
-  detailTruncated: boolean;
-  /** `describeBotanicalOccurrencesState`'s sentence for the proxy lane, or null when quiet. */
-  viewportCaption: string | null;
-  viewportPhase: BotanicalOccurrencesPhase;
-  /**
-   * Why the proxy lane's `error` phase happened, or null when it is not in one. A governed refusal
-   * is a `notice`, a transport fault is a `fault` -- see the tone rule at `botanical-viewport-read`.
-   */
-  viewportErrorKind: BotanicalProxyErrorKind | null;
-}
-
 export interface ParquetLayerFaultInput {
   burnSeverityEnabled: boolean;
   burnSnapshot: BurnSeverityCaptureSnapshot | undefined;
@@ -118,15 +55,12 @@ export interface ParquetLayerFaultInput {
   weatherEnabled: boolean;
   weatherUnavailable: boolean;
   fire: FireLaneReport;
-  botanical: BotanicalLaneReport;
-  /** The minimum zoom individual specimen points draw at, named in both floor sentences. */
-  botanicalDetailMinZoom: number;
   /** The land-context viewport lane's single caption; see `useLandContextViewportBoundaries`. */
   landContextFault: ParquetLayerFault | null;
 }
 
 export function buildParquetLayerFaults(input: ParquetLayerFaultInput): ParquetLayerFault[] {
-  const { fire, botanical } = input;
+  const { fire } = input;
   return [
     input.burnSeverityEnabled && input.burnSnapshot
       ? {
@@ -230,143 +164,6 @@ export function buildParquetLayerFaults(input: ParquetLayerFaultInput): ParquetL
           message: fire.isLaneNeverWritten
             ? "The fire lane has never been written, so no detections can be drawn for any day."
             : "This day has not been written for the fire lane, so no detections can be drawn for it.",
-        }
-      : null,
-    // The occurrence plane's own two non-answers, surfaced because an empty canvas beside a lit
-    // switch reads as "no specimens were ever collected here" -- which is the one thing a
-    // collection-bias layer must never imply.
-    //
-    // Both are a `notice`, not a `fault`, and the split is the same one the fire lane makes: the
-    // service ANSWERED in both cases. `refused` is a governed refusal (a request the plane
-    // declines to serve -- too wide a bbox, a filter combination it will not honour) and
-    // `unavailable` is the plane reporting that no generation is published. Neither is an
-    // outage, so neither is dressed as one. The service-authored `note` is quoted verbatim for
-    // the same reason the fire lane quotes its evidence: the plane's own words are what a reader
-    // can act on, and paraphrasing them would put this component in the business of explaining a
-    // refusal it did not make. A genuine transport fault throws in the procedure instead and
-    // reaches the map as a failed query, not as a state here.
-    botanical.isAggregateReadLive && botanical.resultState === "refused"
-      ? {
-          layerId: "botanical-refused",
-          tone: "notice" as const,
-          message: `The specimen occurrence plane declined this request: ${botanical.resultNote}`,
-        }
-      : null,
-    botanical.isAggregateReadLive && botanical.resultState === "unavailable"
-      ? {
-          layerId: "botanical-unavailable",
-          tone: "notice" as const,
-          message: `Specimen occurrences are not published: ${botanical.resultNote}`,
-        }
-      : null,
-    // The AGGREGATE lane's transport failure, and only that one: GBIF and the UBC specimen layer
-    // both read the proxy lane now (W8-D), whose own failure is `botanical-viewport-read` below.
-    // Naming GBIF here would credit this sentence to a read it no longer covers.
-    botanical.isAggregateReadLive && botanical.isError
-      ? {
-          layerId: "botanical-request-failed",
-          tone: "fault" as const,
-          message:
-            "The specimen richness and collection-effort request failed. Current viewport results could not be verified.",
-        }
-      : null,
-    // A `notice` for the same reason every other lane's is: the records drawn are real, they
-    // just stop short of the viewport. Saying so is what keeps a capped read from looking like
-    // a collecting gap -- which, for this plane specifically, is a claim about where botanists
-    // have and have not been.
-    //
-    // Cell wording unconditionally (style review W8, N2): `isAggregateReadLive` is false at the
-    // detail band, because the caller passes `enabled: false` there
-    // (`useBotanicalViewportLanes.ts:115`) and that is one conjunct of the read's enablement
-    // (`useViewportProxiedLayers.ts:452-462`), so the specimen-row sentence this used to pick
-    // between was unreachable. The proxy lane's own cap is said by `botanical-viewport-read`.
-    botanical.isAggregateReadLive && botanical.truncated
-      ? {
-          layerId: "botanical-truncated",
-          tone: "notice" as const,
-          message:
-            "The cell budget was reached. The support cells drawn are a subset of this viewport.",
-        }
-      : null,
-    // Withheld records are a POSITIVE fact the plane reports and the map cannot show: a specimen
-    // whose locality is protected has no dot, and without this line its absence is
-    // indistinguishable from it never having been collected.
-    //
-    // NOT gated on `isAggregateReadLive` (the tRPC-lane gate): withheld counts are sourced from the
-    // PROXY answer (W8-D, 2026-09-18), which runs at the detail band while the tRPC lane does
-    // not. `withheldCount` is already zero whenever neither lane has answered, so the count alone
-    // is the correct gate.
-    botanical.withheldCount > 0
-      ? {
-          layerId: "botanical-withheld",
-          tone: "notice" as const,
-          message: `${botanical.withheldCount} specimen records in this release have their locality withheld by the publisher and cannot be drawn anywhere.`,
-        }
-      : null,
-    // The Occurrences toggle is switched on but the map is below the detail floor, so nothing is
-    // drawn and nothing was even fetched (`isAggregateReadLive` is false in that case, since the
-    // caller requests the read only for the two aggregate toggles,
-    // `useBotanicalViewportLanes.ts:115`). Without this line a reader who turned the toggle on
-    // at a continental zoom sees an empty map and no explanation -- indistinguishable from the
-    // layer being broken.
-    botanical.occurrencesVisible && botanical.band !== "detail"
-      ? {
-          layerId: "botanical-below-detail-floor",
-          tone: "notice" as const,
-          message: `Individual specimen points draw at zoom ${input.botanicalDetailMinZoom} and above. Zoom in to see them, or turn on Herbarium Specimen Richness / Collection Evidence & Effort for this zoom.`,
-        }
-      : null,
-    botanical.gbifVisible && botanical.band !== "detail"
-      ? {
-          layerId: "gbif-below-detail-floor",
-          tone: "notice" as const,
-          message: `GBIF occurrence points draw at zoom ${input.botanicalDetailMinZoom} and above. Zoom in to see published records.`,
-        }
-      : null,
-    // Only the settled returned slice supports an empty notice; see AGENTS.md §GBIF feedback.
-    // "Settled" is decided by `gbifReadPhase`, which is now the PROXY lane's own phase verbatim
-    // (W8-D, 2026-09-18: GBIF reads the same detail-band request the UBC layer does), so this
-    // entry and `botanical-viewport-read` below can never disagree about when a read has landed.
-    // The message itself stays authored here: it is a statement about the GBIF SLICE of a shared
-    // answer, which the lane-wide vocabulary has no sentence for.
-    botanical.gbifVisible &&
-    botanical.band === "detail" &&
-    botanical.hasViewportBbox &&
-    (botanical.gbifReadPhase === "success" || botanical.gbifReadPhase === "empty") &&
-    botanical.hasDetailAnswer &&
-    botanical.gbifFeatureCount === 0
-      ? {
-          layerId: "gbif-empty",
-          tone: "notice" as const,
-          message: botanical.detailTruncated
-            ? "No GBIF occurrence points appear in this limited result. The row limit prevents a complete assessment of this viewport and its current filters."
-            : "No GBIF occurrence points were returned for this viewport and current filters.",
-        }
-      : null,
-    // What the proxy lane reports, in the one wording `describeBotanicalOccurrencesState` owns --
-    // including "a coarser rung answered than this zoom asked for", which is the visible half of
-    // the 2026-09-18 rung-select decision. A `notice`: a rung substitution and a stale frame are
-    // both real answers, not outages.
-    //
-    // Gated on EITHER toggle, not just `occurrencesVisible` (W8-D, 2026-09-18): GBIF now reads
-    // this same lane, so a GBIF-only viewer must also be told when it errors or substitutes a
-    // rung -- without this a reader with only GBIF on and a failed proxy read would see silence
-    // instead of a fault, since `gbif-empty` only speaks about a SETTLED (success/empty) read.
-    (botanical.occurrencesVisible || botanical.gbifVisible) &&
-    // TONE FOLLOWS THE REFUSAL KIND, not the phase (style review W8, S4). The proxy lane reports a
-    // governed 400/503 refusal in the same `error` phase a dead socket produces, and dressing the
-    // former as a `fault` told a reader the read broke when the plane had answered and explained
-    // itself -- the very split `botanical-refused`/`botanical-unavailable` kept on the tRPC lane.
-    botanical.band === "detail" &&
-    botanical.viewportCaption !== null
-      ? {
-          layerId: "botanical-viewport-read",
-          tone:
-            botanical.viewportPhase === "error" &&
-            botanical.viewportErrorKind !== "governed_refusal"
-              ? ("fault" as const)
-              : ("notice" as const),
-          message: botanical.viewportCaption,
         }
       : null,
     // The land-context viewport lane's caption, built where that lane is read so every one of its

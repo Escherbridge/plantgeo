@@ -503,8 +503,8 @@ def _bbox_area(bbox: Bounds) -> float:
     return (east - west) * (north - south)
 
 
-#: R12, "z13 detail ceiling" (plan §7 S3 row; review finding 4): unlike
-#: `planes/botanical_occurrences.py`, this lane has NO coarser rung a big request could fall back to
+#: R12, "z13 detail ceiling" (plan §7 S3 row; review finding 4): unlike the occurrence plane
+#: retired 2026-10-03 (git history at b1745b0f), this lane has NO coarser rung a big request could fall back to
 #: (Q1) -- so its ceiling has to stay generous enough for a legitimate single- or multi-shard read
 #: (the fixture shard in `tests/planes/test_soil_survey_admitted_reader.py` alone spans ~12 square
 #: degrees), not squeezed to that other lane's "exact point" scale. `1600.0` instead matches its

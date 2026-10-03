@@ -76,20 +76,6 @@ describe("About page — data attribution claims", () => {
     expect(row?.note).toBe("Daily check, list on request");
   });
 
-  it("attributes the botanical layers to UBC's own Canadensys release, not the consortium portal", () => {
-    const rows = renderAttributionRows();
-    // conductor/tracks/pnw_herbaria_source_admission_20260911/evidence/ubc-permission-manifest.json:
-    // url data.canadensys.net/ipt/archive.do?r=ubc-vascular-specimens&v=16.43, CC0 1.0. The
-    // CPNWH portal URLs in that evidence are all for the deferred WTU collection.
-    expect(rows.has("Consortium of Pacific Northwest Herbaria")).toBe(false);
-    const row = rows.get("UBC Herbarium, via Canadensys IPT");
-    expect(row).toBeDefined();
-    expect(row?.description).toMatch(/v16\.43/);
-    expect(row?.description).toMatch(/CC0 1\.0/);
-    expect(row?.description).toMatch(/consortium portal was not the source/i);
-    expect(row?.note).toBe("Serving, admission pending");
-  });
-
   it("describes the Open-Meteo point reading as a published sample near the view centre", () => {
     const row = renderAttributionRows().get("Open-Meteo");
     // wildfire.getWeatherForPoint reads the nearest PUBLISHED warehouse observation and

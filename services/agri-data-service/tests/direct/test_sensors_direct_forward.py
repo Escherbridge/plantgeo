@@ -40,6 +40,7 @@ def _result(
     *,
     detail: str | None = None,
     absence_overturned: OverturnedAbsence | None = None,
+    publish_attempted: bool = False,
 ) -> forward.ForwardDayResult:
     """One day's publication outcome with the counters a verdict does not read zeroed."""
     return forward.ForwardDayResult(
@@ -59,6 +60,7 @@ def _result(
         written_bytes=0,
         detail=detail,
         absence_overturned=absence_overturned,
+        publish_attempted=publish_attempted,
     )
 
 
@@ -163,30 +165,36 @@ class TestValidateArgs:
             forward._validate_args(_args(max_records=10_000_000))
 
 
-class TestNewestDayBuckets:
-    def test_keeps_only_the_newest_max_days_buckets(self) -> None:
+class TestPublicationOrder:
+    """Swept due days before gap-walked done days, each oldest first: the oldest day ages out of NWS next."""
+
+    @pytest.mark.parametrize(
+        ("days", "swept", "max_days", "expected"),
+        [
+            ((DAY_ONE, DAY_TWO, DAY_THREE), {DAY_ONE, DAY_TWO, DAY_THREE}, 2, [DAY_ONE, DAY_TWO]),
+            # A due day outranks an older done day a gap walk merely added a station to.
+            ((DAY_ONE, DAY_TWO, DAY_THREE), {DAY_THREE}, 2, [DAY_THREE, DAY_ONE]),
+            ((DAY_ONE, DAY_TWO), {DAY_TWO}, 1, [DAY_TWO]),
+        ],
+    )
+    def test_the_cap_keeps_due_days_first_then_the_oldest(
+        self, days: tuple[date, ...], swept: set[date], max_days: int, expected: list[date]
+    ) -> None:
         empty = pa.table({"x": [1]})
-        tables = {DAY_ONE: empty, DAY_TWO: empty, DAY_THREE: empty}
 
-        kept = forward._newest_day_buckets(tables, max_days=2)
+        kept = forward._publication_order(dict.fromkeys(days, empty), swept=frozenset(swept), max_days=max_days)
 
-        assert sorted(kept) == [DAY_TWO, DAY_THREE]
-
-    def test_max_days_one_keeps_only_the_newest_bucket(self) -> None:
-        empty = pa.table({"x": [1]})
-        tables = {DAY_ONE: empty, DAY_TWO: empty}
-
-        kept = forward._newest_day_buckets(tables, max_days=1)
-
-        assert list(kept) == [DAY_TWO]
+        assert list(kept) == expected
 
     def test_a_full_seven_day_span_is_never_truncated_at_the_default_ceiling(self) -> None:
         empty = pa.table({"x": [1]})
         seven_days = {DAY_ONE + timedelta(days=offset): empty for offset in range(7)}
 
-        kept = forward._newest_day_buckets(seven_days, max_days=forward.SENSORS_DEFAULT_MAX_DAYS)
+        kept = forward._publication_order(
+            seven_days, swept=frozenset(seven_days), max_days=forward.SENSORS_DEFAULT_MAX_DAYS
+        )
 
-        assert sorted(kept) == sorted(seven_days)
+        assert list(kept) == sorted(seven_days)
 
 
 class TestBucketVerdict:
@@ -248,6 +256,27 @@ class TestBucketVerdict:
         assert verdict.outcome == "incomplete"
         assert verdict.exit_code == 0
         assert [result.outcome for result in verdict.unwritten] == ["contended", "time_budget_exhausted"]
+
+    def test_a_publish_fault_keeps_its_failing_exit_even_when_an_unrelated_sweep_progressed(self) -> None:
+        """Review 2026-10-03 fix 5: `progressed=True` is a healthy FETCH-phase sweep advancing on a
+        day that never reached publish; it must never excuse a DIFFERENT day that reached the publish
+        loop and faulted there (`ForwardDayResult.publish_attempted`). Before this fix, a turn that both
+        advanced an unrelated sweep and failed to publish a fetched day exited 0 on the fault alone."""
+        results = [_result(DAY_ONE, "raised", detail=REFUSAL, publish_attempted=True)]
+
+        verdict = forward._bucket_verdict(results, progressed=True)
+
+        assert verdict.exit_code == 1, "a publish fault must fail the turn even though its sweep progressed"
+        assert verdict.days_written == 0
+
+    def test_progressed_still_excuses_a_pure_fetch_phase_stall_that_never_reached_publish(self) -> None:
+        """The control for the fix above: a day the budget cut short before fetch even finished
+        (`publish_attempted=False`) is exactly what `progressed` exists to excuse."""
+        results = [_result(DAY_ONE, "request_budget_exhausted", detail="budget ran out")]
+
+        verdict = forward._bucket_verdict(results, progressed=True)
+
+        assert verdict.exit_code == 0
 
     def test_a_mixed_bucket_is_announced_on_stderr_and_a_clean_bucket_is_not(
         self, capsys: pytest.CaptureFixture[str]

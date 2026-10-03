@@ -204,10 +204,6 @@ def test_the_agent_catalogue_is_the_map_catalogue_hand_spelled() -> None:
         "soil-bdod",
         "soil-cec",
         "soil-ocd",
-        "botanical-occurrences",
-        "botanical-richness",
-        "botanical-collection-effort",
-        "gbif-occurrences",
         # The 9 climate-field streams (CLIMATE_FIELD_SIGNAL_IDS, src/lib/environmental/climate-field.ts).
         "climate-field-air-temperature",
         "climate-field-dew-point",

@@ -75,7 +75,7 @@ export function landContextRungForViewport(
     if (error instanceof ZoomTierResolutionError) return null;
     throw error;
   }
-  // The walk is shared with the botanical plane and the server-side reader; see
+  // The walk is shared with the server-side reader; see
   // `@/lib/map/rung-selection`. Only the ladder, its ceilings and the zoom gate are local.
   return selectFinestAdmittingRung({
     coarsestFirst: ZOOM_TIERS,

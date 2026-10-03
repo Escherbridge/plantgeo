@@ -40,11 +40,7 @@ export type LayerToggleId =
   | "interventions"
   | "strategy-recommendations"
   | "evacuation-zones"
-  | "burn-severity"
-  | "botanical-occurrences"
-  | "botanical-richness"
-  | "botanical-collection-effort"
-  | "gbif-occurrences";
+  | "burn-severity";
 
 /** How a toggle reaches the map: a React-mounted layer component, or baked style layers. */
 export type LayerRenderKind = "component" | "style";
@@ -115,12 +111,9 @@ export interface LayerRegistryEntry {
    * (`@/lib/map/layer-region-binding`). Optional and undefined for every ordinary row: binding
    * normally rides on the warehouse name, and giving every entry an explicit copy of the same
    * fact would be the same drift risk `REGION_LAYER_SLUG_BY_WAREHOUSE_NAME`'s own header warns
-   * against. It exists for a toggle whose federation binding and slider day-axis are genuinely
-   * two different questions -- `botanical-occurrences`/`botanical-richness`/
-   * `botanical-collection-effort` (N40): the layer has no daily grain to scrub, so
-   * `warehouseLayerName` stays null on purpose, but the layer IS in `platformLayers` and needs a
-   * manifest slug for `layerBindingInRegion` to answer "not available in this region" rather than
-   * the `not_federated` a null `warehouseLayerName` would otherwise force.
+   * against. It exists for a toggle whose federation binding and served stream are genuinely
+   * two different questions -- `water` (N40), whose served stream is switchable
+   * (`WATER_GAUGES_STREAM`) while its manifest layer stays `water-gauges`.
    */
   regionLayerSlug?: string;
   /**
@@ -311,97 +304,8 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     panelId: "vegetation",
     permanentlyUnavailableReason: null,
   },
-  // The three herbarium specimen rows, read through environmental.getBotanicalOccurrences.
-  //
-  // `panelId: "vegetation"` rather than a "botanical" section of their own. The pending
-  // shared-registration.patch that this slice implements proposed a new PanelId, but a PanelId
-  // is a DOCK SECTION WITH A REPORT: `DETAILS_LABELS` and `DETAILS_BODIES` are both exhaustive
-  // over `DockDetailsId`, so an eighth member is a compile error in two more files until it has
-  // a title and a whole details body nobody has specified. Specimen occurrences are plant
-  // observations and the Vegetation section already owns that vocabulary, so they file under it
-  // until someone actually wants a botanical report.
-  //
-  // `warehouseLayerName: null` for all three, and this is the deliberate answer to the patch's
-  // open question 1. A stream name is what gives a row a DAY AXIS, and a collecting-event
-  // interval is not a day the environmental slider can scrub: these records span two centuries,
-  // carry `year`/`month`/`interval` precisions, and the plane filters them by
-  // `event_start`/`event_end` rather than by an observation day. A name here would put a
-  // daily slider on a row whose data has no daily grain. The §9 LEFT JOIN warning above is
-  // about a name that resolves to nothing; null is the honest absence, not a dropped name.
-  //
-  // Three toggles over ONE query: all three read the same viewport/zoom answer, and the zoom
-  // band decides which of them can draw at all (see LayerManager's botanical block). Separate
-  // switches because a reader may want richness without the effort context under it.
-  //
-  // Owner decision 2026-09-18: UBC v16.43 keeps serving and acquisition stops. The richness row
-  // was renamed from "Documented Taxon Richness" because a herbarium richness surface is a
-  // COLLECTING-EFFORT surface -- the release has 192,948 records, 15,220 with usable coordinates
-  // (92 % nonspatial), and the mappable cluster sits near Vancouver (~49.26 °N), OUTSIDE the
-  // platform envelope `-125,42,-111,49` (agri_data_service/ingest/policy.py:17); Boise is a true
-  // zero. Label/description/legend say so; ids, source ids and paint are unchanged (a live
-  // harness pins them).
-  "botanical-occurrences": {
-    toggleId: "botanical-occurrences",
-    label: "Botanical Specimen Occurrences",
-    description:
-      "Individual herbarium specimen records, drawn at high zoom only. A specimen documents a collection event; it does not prove current occupancy or absence.",
-    icon: "leaf",
-    renderKind: "component",
-    styleLayerIds: [],
-    warehouseLayerName: null,
-    // N40: gives `layerBindingInRegion` a manifest slug to answer against, without wiring this
-    // no-daily-grain row into the slider (`regionLayerSlug` doc comment above).
-    regionLayerSlug: "botanical-occurrences",
-    panelId: "vegetation",
-    permanentlyUnavailableReason: null,
-  },
-  "botanical-richness": {
-    toggleId: "botanical-richness",
-    label: "Herbarium Specimen Richness",
-    description:
-      "Distinct taxa with georeferenced UBC vascular herbarium specimens per cell, at regional and coarse zoom. Tracks where botanists collected (roads, campuses, trailheads), and 92 % of the release has no coordinates at all. Not a biodiversity estimate.",
-    icon: "layers",
-    renderKind: "component",
-    styleLayerIds: [],
-    warehouseLayerName: null,
-    // Same underlying query/binding as `botanical-occurrences` above (N40).
-    regionLayerSlug: "botanical-occurrences",
-    panelId: "vegetation",
-    permanentlyUnavailableReason: null,
-  },
-  "botanical-collection-effort": {
-    toggleId: "botanical-collection-effort",
-    label: "Collection Evidence & Effort",
-    description:
-      "Where UBC collecting effort has concentrated, as context for the specimen richness layer above. A context layer, not an abundance heatmap.",
-    icon: "users",
-    renderKind: "component",
-    styleLayerIds: [],
-    warehouseLayerName: null,
-    // Same underlying query/binding as `botanical-occurrences` above (N40).
-    regionLayerSlug: "botanical-occurrences",
-    panelId: "vegetation",
-    permanentlyUnavailableReason: null,
-  },
-  // A SEPARATE toggle from `botanical-occurrences`, not a mode of it, because it needs to be
-  // switched independently: a reader may want UBC-only, GBIF-only, or both drawn together, and
-  // one switch cannot hold two positions. GBIF rows land in the SAME plane/query/response as UBC
-  // (collection_key is the only thing that distinguishes them; see
-  // `GbifOccurrencesLayer.tsx`), so this is a rendering-side split only -- no second query, no
-  // second warehouse concept. `warehouseLayerName: null` for the same reason as the three rows
-  // above: no daily grain to scrub.
-  "gbif-occurrences": {
-    toggleId: "gbif-occurrences",
-    label: "GBIF Specimen Occurrences",
-    description:
-      "Herbarium and citizen-science (iNaturalist research-grade) occurrence records aggregated by GBIF, drawn at high zoom only. Distinct per-record licensing (CC0 / CC-BY / CC-BY-NC) applies -- see the attribution shown on hover.",
-    icon: "leaf",
-    renderKind: "component",
-    styleLayerIds: [],
-    warehouseLayerName: null,
-    panelId: "vegetation",
-    permanentlyUnavailableReason: null,
-  },
+  // The four herbarium / GBIF specimen rows were retired platform-wide on 2026-10-03; see
+  // src/components/map/AGENTS.md §Retired herbaria layers.
   // USDA SSURGO map units, read per viewport through environmental.getSoilSurvey. Distinct
   // from the six SoilGrids property rasters: this one is the vector survey polygons. See
   // soilSurveyLayer in layers.ts.

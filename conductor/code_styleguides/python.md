@@ -151,10 +151,11 @@ it does not replace them. It inherits `engineering-principles.md`.
   globals as one unit.
 - **The region is a value, not a constant.** `foundation/region/` owns the
   frozen `Region` model and the one PNW manifest; lanes, planes and agent tools
-  take a `Region` parameter. `PACIFIC_NORTHWEST_BBOX` (`ingest/mtbs.py`) and
-  `SEED_ENVELOPE` (`foundation/botanical_occurrences/coordinates.py`) are the
-  migration list. A new literal latitude, longitude, envelope or state code
-  outside the manifest fails review (`federation.md` §1).
+  take a `Region` parameter. `PACIFIC_NORTHWEST_BBOX` is already migrated --
+  `ingest/mtbs.py` reads `load_region().sub_envelopes["burn_severity"]`; the
+  remaining federation offenders are `federation.md`'s migration list. A new
+  literal latitude, longitude, envelope or state code outside the manifest
+  fails review (`federation.md` §1).
 - **Sources implement a layer protocol and declare coverage.** A regional
   source (SSURGO, USDM, MTBS) lives at `<layer>/<source>.py` and implements the
   layer's `Protocol`; layer logic (schema, Monte Carlo, plane, agent tool) never

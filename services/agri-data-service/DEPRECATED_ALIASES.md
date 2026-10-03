@@ -43,7 +43,7 @@ disabled. Two facts decided it, and both were checked rather than assumed:
 | `PACIFIC_NORTHWEST_BBOX` | `agri_data_service.ingest.mtbs` | `agri_data_service.ingest.mtbs.burn_severity_bounding_box()` |
 | `inline_bbox_value` | `agri_data_service.ingest.mtbs` | `agri_data_service.foundation.geography.bounding_box.format_bounding_box_inline()` |
 | `parse_bounding_box` | `agri_data_service.ingest.mtbs` | `agri_data_service.foundation.geography.bounding_box.parse_bounding_box()` |
-| `SEED_ENVELOPE` | `agri_data_service.foundation.botanical_occurrences.coordinates` | `botanical_seed_envelope()` |
+| `SEED_ENVELOPE` | `agri_data_service.foundation.botanical_occurrences.coordinates` | nothing: the module and its `botanical_seed` envelope were retired with the herbaria lanes on 2026-10-03 (`agent/AGENTS.md`, "Herbaria surfaces are retired") |
 | `BBOX` | `agri_data_service.pipeline.direct.burn_severity.current_snapshot` | `agri_data_service.ingest.mtbs.burn_severity_bounding_box()` |
 
 `foundation/geography/bounding_box.py`'s `inline_bbox_value` is NOT in that list and is not

@@ -277,8 +277,8 @@ independently drifting copies of the system prompt.
 
 ## Selection evidence and RAG contract (2026-09-20)
 
-`list_environmental_layers` discovers every map surface, including non-slider botanical,
-community and soil-raster variants. `surface_evidence_for_selection` is the numeric retrieval
+`list_environmental_layers` discovers every map surface, including community and soil-raster
+variants. `surface_evidence_for_selection` is the numeric retrieval
 entry point shared by MCP, the HTTP tool bridge and both agent workflows. Older radius tools
 remain internal compatibility helpers where needed; they are not model-facing choices.
 
@@ -312,13 +312,7 @@ An incomplete page supports a sampled comparison, never a complete trend or abse
 days. Up to 36,600 calendar days may be requested without silently narrowing to newest data.
 
 App-owned community and raster surfaces use the bounded `/api/v1/map-evidence` proxy only when
-`AGENT_MAP_APP_URL` is configured. Missing configuration is a typed refusal. Botanical occurrence
-evidence pins one published generation and distinguishes collection-event time from publication
-time. Exact collection dates use `observed_day`; imprecise dates retain `observed_interval`, while
-the current release retains its actual `published_at`. Collection dates never become a synthetic
-`served_day`. Richness and collecting-effort layers expose the actual current aggregate under
-`snapshot_context` and explicitly refuse historical publication claims rather than pretending
-that precomputed current cells were filtered to the selected date.
+`AGENT_MAP_APP_URL` is configured. Missing configuration is a typed refusal.
 
 Regional climate and soil gates bind their concrete surface names to NASA POWER and
 ERA5-Land respectively, so availability never depends on a retired generic layer binding.
@@ -381,7 +375,8 @@ and disclose when their data is current-only or cannot answer that day.
 The retired generic agent tool vocabulary and its deletion evidence are recorded in
 `conductor/tracks/repository_conformity_hardening_20260901/signal-tool-retirement.md`.
 The single `WAREHOUSE_TOOLS` registry exposes catalogue discovery, selection evidence, metadata,
-botanical evidence, the caller-scoped species lookup, and the three strategy-knowledge literature tools.
+the caller-scoped species lookup, and the three strategy-knowledge literature tools (herbaria
+evidence was retired 2026-10-03; see "Herbaria surfaces are retired").
 
 ## Topology
 
@@ -704,6 +699,43 @@ name to `nasa_power` or `era5_land`. No product inherits a generic environmental
 The web half of the same fact rides `/api/v1/parquet/coverage` as `layer_bindings`
 (`parquet_ops/wire.py::LayerBindingCoverage`), so the slider catalogue and the legends say the same
 sentence the agent does.
+
+### Herbaria surfaces are retired
+
+Retired platform-wide on 2026-10-03 (owner directive "remove the herbaria dataset serving lanes and
+so on generally", extending the 2026-09-28 PNW-only retirement): herbaria record where botanists
+collected, not what grows where, so they are not the vegetation-type path (plant suitability and
+LANDFIRE EVT are). Removed in every region, with no gate left behind:
+
+- surfaces `botanical-occurrences`, `botanical-richness`, `botanical-collection-effort`,
+  `gbif-occurrences` (from `AGENT_SURFACE_NAMES`, `SURFACE_REGION_LAYER_SLUGS` and the report's
+  `RegionalToolEvidenceSource`, parity-pinned to `REGIONAL_TOOL_EVIDENCE_SOURCES` in
+  `src/lib/regional-intelligence.ts`); a named one now answers `unknown_surface`;
+- the `botanical_occurrence_current_release` tool and its siblings (`agent/botanical_occurrences.py`);
+- the reader `planes/botanical_occurrences.py` and the `/api/v1/botanical-occurrences` routes;
+- the producer `pipeline/direct/botanical_occurrences/` (GBIF / UBC / PNW Herbaria DwC-A
+  quarantine, fetch and publish), `foundation/botanical_occurrences/`, the stream schema, and the
+  `botanical_seed` sub-envelope plus the `botanical-occurrences` layer in both region manifests.
+  The lane was never in `LANE_REGISTRATIONS`, a cron, the execution ledger or a migration, so no
+  historic row names it and no retired-slug tolerance is needed on this side. The web keeps one:
+  saved reports may cite the four slugs, so `RETIRED_REGIONAL_TOOL_EVIDENCE_SOURCES` still validates
+  them in `REGIONAL_CLAIM_EVIDENCE_SOURCES` (`src/lib/server/services/AGENTS.md`).
+
+`species_information` (and the `botanical_species_*` profile/reference planes) stay: they are the
+canonical species reference, the plant-suitability direction, not herbarium evidence.
+
+**Stored data is NOT deleted** (needs a separate owner go). Under the agri object-store root
+(bucket + `OBJECT_STORE_PREFIX`), the whole `botanical-occurrences/` prefix: the pointer
+`botanical-occurrences/availability/_LATEST.json`, any legacy `botanical-occurrences/current.json`,
+and every generation `botanical-occurrences/<release_set_id>/` (`manifest.json`, `_COMPLETE`,
+`releases/`, `raw/`, `identifications/`, `occurrences/`, `nonspatial/`, `associations/`,
+`support/<support_id>/cells.parquet`); the live one is UBC v16.43, generation `956c0be7…`. Off-bucket:
+the local quarantine `C:/Users/atooz/plantgeo-quarantine/botanical_occurrences/`.
+
+**Re-enabling** (e.g. as a community layer): restore the deleted modules and tests from git history
+at `b1745b0f` (the last commit with the full serving + ingestion path; the web map side is in
+`src/components/map/AGENTS.md` §Retired herbaria layers), then re-add the layer slug and a binding to
+both manifests in both trees (parity-tested).
 
 ## Caching
 

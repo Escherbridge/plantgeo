@@ -40,7 +40,6 @@ UNBOUND_REASON_NO_SOURCE: Final = "no_source_bound_in_region"
 #: PNW binds admitted BLM and crop sources; publication remains a separate reader gate.
 #: Unpublished ML sources remain unbound; see this directory's AGENTS.md.
 PLATFORM_LAYER_SLUGS: Final[tuple[str, ...]] = (
-    "botanical-occurrences",
     "burn-severity",
     "crop-cover",
     "drought",

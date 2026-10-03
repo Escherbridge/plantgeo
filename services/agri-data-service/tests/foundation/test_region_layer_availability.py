@@ -61,7 +61,6 @@ GLOBAL_LAYER_BINDINGS = (
     LayerBinding(layer_slug="soil-field-moisture", source_slug="era5_land", coverage="global"),
     LayerBinding(layer_slug="soil-field-temperature", source_slug="era5_land", coverage="global"),
     LayerBinding(layer_slug="soil-field-vpd", source_slug="era5_land", coverage="global"),
-    LayerBinding(layer_slug="botanical-occurrences", source_slug="gbif", coverage="global"),
 )
 
 #: The platform layers the fabricated region binds nothing for -- every regionally-sourced layer in

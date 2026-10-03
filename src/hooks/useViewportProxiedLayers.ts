@@ -11,7 +11,7 @@
  * a layer must never key its read differently from the map drawing it.
  *
  * NO HOOK HERE RETURNS A RAW REACT-QUERY RESULT, and the enforcing half is the TYPE: each of the
- * five is annotated `LiveViewportRead<EnvironmentalAnswers[...]>` (`:144-154`), so returning the
+ * four is annotated `LiveViewportRead<EnvironmentalAnswers[...]>` (`:144-154`), so returning the
  * observer's result, a spread of it, or its `data` are all assignment errors. The
  * `no-restricted-syntax` ban in `eslint.config.mjs` scoped to this path is a fast second signal
  * and catches only the literal `return <...>.useQuery(...)` shape. See `src/hooks/AGENTS.md`
@@ -37,9 +37,6 @@ import type { QueryReadState } from "@/stores/useMetricAtDate";
 // allows exactly one browser module to name `@/lib/server/trpc/router`, and it is `trpc/client.ts`.
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "@/lib/trpc/client";
-// The detail floor is the PLANE's own (`DETAIL_ZOOM_FLOOR = 11` server-side), not a rung on the
-// `ZOOM_TIERS` ladder; imported rather than restated so the two cannot drift.
-import { BOTANICAL_DETAIL_MIN_ZOOM } from "@/lib/botanical-occurrences";
 import {
   soilFieldMeasureDefinition,
   type SoilFieldDepth,
@@ -366,127 +363,6 @@ export function useSoilFieldQuery(
       placeholderData: KEEP_PREVIOUS_WHILE_PANNING,
     }
   );
-  return liveViewportRead(isAnswerLive, query);
-}
-
-/**
- * Herbarium specimens: the plane is pinned to a `release_set_id` its own `/current` pointer
- * resolves, and a generation never changes once published, so a pan back is a local read. The
- * hour matches the other release-pinned lanes rather than the 15-minute observation feeds; a
- * republish becomes visible through the client's own 120-second `/current` revalidate window
- * plus this stale time, not sooner.
- */
-const BOTANICAL_OCCURRENCES_STALE_TIME_MS = 60 * 60 * 1000;
-
-/** The service's own row/cell ceiling (`MAX_LIMIT` in `botanical_occurrences.py`), requested
- * outright rather than left to its 500-row default. */
-const BOTANICAL_OCCURRENCES_MAX_LIMIT = 2000;
-
-/** Which of the plane's two answers a given map zoom will get back. */
-export type BotanicalBand = "detail" | "aggregate";
-
-/**
- * The band a zoom selects, mirroring the service's own `zoom >= DETAIL_ZOOM_FLOOR` test.
- *
- * Deliberately a bare comparison against a raw integer rather than a `ZoomTier` resolution.
- * The ladder's rungs are 0/5/9/13 and this floor is 11, so rounding a zoom-11 or zoom-12
- * request onto the ladder lands on z9 -- the aggregate rung -- and the map would draw grid
- * cells at the exact zooms a reader asked for specimens. The zoom sent upstream is the raw one
- * for the same reason; the service does its own `int()` coercion.
- */
-export function botanicalBandForZoom(zoom: number): BotanicalBand {
-  return zoom >= BOTANICAL_DETAIL_MIN_ZOOM ? "detail" : "aggregate";
-}
-
-/**
- * Herbarium specimen occurrences for the viewport, at whichever band the zoom selects.
- *
- * ONE query for all three botanical toggles. The plane answers `detail` or `aggregate` from the
- * same route on the same inputs, so splitting it per toggle would key three cache entries for
- * one upstream answer and let the richness and effort layers disagree about the generation they
- * are drawing. `enabled` is therefore "any botanical layer that can draw at this band is on",
- * computed by the caller -- it is a gate, never part of the key, exactly as
- * `ProxiedQueryOptions` documents.
- *
- * `zoom` IS in the key, like `useClimateFieldQuery`'s and unlike `useSoilFieldQuery`'s optional
- * one: it selects which of two shapes comes back, so two zooms are two different answers rather
- * than two aggregations of one.
- *
- * Retained while panning, like every other query the MAP draws: the cells and points in hand are
- * still true where they are. Note the band-switch caveat -- see `useBotanicalOccurrences`'s
- * consumer in `LayerManager`, which reads the RETURNED `state` rather than the requested band, so
- * a retained aggregate frame is never fed to the detail layer during a zoom across the floor.
- *
- * Returns a `LiveViewportRead`, not the react-query result: the retained frame is reachable only
- * through `answer`, which `liveViewportRead` withholds whenever the observer is not live. The
- * raw result is deliberately not exported, so there is nothing for a consumer to re-derive a gate
- * from.
- */
-export function useBotanicalOccurrencesQuery(
-  bbox: string | null | undefined,
-  {
-    enabled,
-    zoom,
-    taxonConceptId,
-    family,
-    collectionKey,
-    eventStart,
-    eventEnd,
-    spatialQuality,
-  }: ProxiedQueryOptions & {
-    zoom: number;
-    taxonConceptId?: string;
-    family?: string;
-    collectionKey?: string;
-    eventStart?: string;
-    eventEnd?: string;
-    spatialQuality?: "confirmed" | "possible" | "all";
-  }
-): LiveViewportRead<EnvironmentalAnswers["getBotanicalOccurrences"]> {
-  const requested = bbox ?? null;
-  // Composed ONCE, here, and used twice at the same call site: as the observer's `enabled` and as
-  // the gate on the answer it hands back. Every conjunct that can disable this read lives in this
-  // expression -- the caller's toggle gate, a measurable viewport, and the governance
-  // conjunction -- and `requested !== null` is the dynamic one a collapsed or hidden map
-  // container trips (`viewportBbox` returns null for a zero-size container,
-  // `src/lib/map/viewport-bbox.ts:57-67`).
-  const isAnswerLive =
-    enabled &&
-    requested !== null &&
-    // All three toggles share this one read, so the governance gate is the conjunction: the
-    // query is withheld only when EVERY botanical row is, which is the same thing as none of
-    // them being drawable.
-    !(
-      isWithheld("botanical-occurrences") &&
-      isWithheld("botanical-richness") &&
-      isWithheld("botanical-collection-effort")
-    );
-  const query = trpc.environmental.getBotanicalOccurrences.useQuery(
-    {
-      bbox: requested ?? NO_VIEWPORT_BBOX,
-      zoom,
-      taxonConceptId,
-      family,
-      collectionKey,
-      eventStart,
-      eventEnd,
-      spatialQuality,
-      // The service's own ceiling (`MAX_LIMIT` in botanical_occurrences.py), not the 500-row
-      // default it falls back to when a caller omits `limit` entirely. The aggregate band's
-      // cells are sorted densest-first server-side, so raising this widens how much of a wide
-      // viewport's real coverage fits in one page before truncation -- the earlier default left
-      // 1500 rows of budget unused on every request.
-      limit: BOTANICAL_OCCURRENCES_MAX_LIMIT,
-    },
-    {
-      enabled: isAnswerLive,
-      staleTime: BOTANICAL_OCCURRENCES_STALE_TIME_MS,
-      retry: PROXIED_RETRY_COUNT,
-      placeholderData: KEEP_PREVIOUS_WHILE_PANNING,
-    }
-  );
-  // The answer type is stated rather than inferred: `query` is react-query's discriminated union
-  // over its own states, and inference from a union argument is not worth depending on here.
   return liveViewportRead(isAnswerLive, query);
 }
 

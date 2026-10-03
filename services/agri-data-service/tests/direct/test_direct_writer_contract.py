@@ -70,7 +70,6 @@ DIRECT_ROOT = _SOURCE_ROOT / "pipeline" / "direct"
 WRITER_MODULES: Final[dict[str, str]] = {
     "crop_cover": "agri_data_service.pipeline.direct.crop_cover.forward",
     "land_context": "agri_data_service.pipeline.direct.land_context.forward",
-    "botanical_occurrences": "agri_data_service.pipeline.direct.botanical_occurrences.forward",
     "burn_severity": "agri_data_service.pipeline.direct.burn_severity.forward",
     "climate": "agri_data_service.pipeline.direct.climate.forward",
     "drought": "agri_data_service.pipeline.direct.drought.forward",
@@ -557,15 +556,9 @@ def test_fire_detections_is_still_the_lone_identity_refuser_and_says_so() -> Non
     declared it instead of changing it. The assertion is two-sided: the outlier must still BE an
     outlier, and its own declaration must still name the tension, so nobody flips it without reading
     the argument first.
-
-    `botanical_occurrences` joined the counting side 2026-09-12: an unkeyable core row (no
-    `occurrenceID`/`catalogNumber`) is still a documented specimen, so it is counted and published
-    under a locator-derived key rather than dropped -- the same argument `sensors`/`watersheds`/
-    `fire_perimeters` already made, not a new one. See `WRITER_CONTRACT.policy_basis` in
-    `pipeline/direct/botanical_occurrences/forward.py`.
     """
     counters = {package for package in PACKAGES if _contract(package).identity_defect == SKIP_AND_COUNT}
-    assert counters == {"botanical_occurrences", "fire_perimeters", "sensors", "watersheds"}, (
+    assert counters == {"fire_perimeters", "sensors", "watersheds"}, (
         "the set of writers that COUNT an identity defect changed; if a writer joined or left, "
         "pipeline/direct/__init__.py's 'the one real outlier' paragraph is now wrong"
     )
@@ -595,9 +588,9 @@ def test_the_four_lattice_and_national_lanes_still_refuse_a_bbox() -> None:
 
 
 def test_writers_without_retry_series_declare_their_alternative_recovery() -> None:
-    """Only documented archive replay and scheduled complete-capture recovery omit retry controls."""
+    """Only documented restart and scheduled complete-capture recovery omit retry controls."""
     without_retries = {package for package in PACKAGES if "--retry-attempts" not in _flags(package)}
-    assert without_retries == {"botanical_occurrences", "watersheds", "crop_cover", "land_context"}, (
+    assert without_retries == {"watersheds", "crop_cover", "land_context"}, (
         f"the set of writers with no retry series changed to {sorted(without_retries)}; "
         "every omitted retry series requires a documented recovery contract"
     )

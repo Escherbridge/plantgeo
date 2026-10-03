@@ -100,7 +100,6 @@ _METADATA_TOOLS: Final = (
             "list_environmental_layers",
             "observation_coverage_on_day",
             "observation_temporal_neighbors",
-            "botanical_occurrence_current_release",
             "species_information",
         }
     )
@@ -167,7 +166,7 @@ class AgentRequest:
     selected_day: date | None = None
     """The day the map is showing. None means the caller did not send one; see agent/AGENTS.md."""
     species_id: str | None = None
-    """Canonical authoring UUID supplied by the caller; absent disables model botanical reads."""
+    """Canonical authoring UUID supplied by the caller; absent disables model species-information reads."""
     map_selection: MapSelection | None = None
 
     def active_selection(self) -> MapSelection:

@@ -26,8 +26,8 @@ export const KENYA_HIGHLANDS = {
   displayName: "Kenya Highlands",
   envelope: { west: 34, south: -5, east: 42, north: 5 },
   defaultCameraEnvelope: { west: 35.5, south: -1.5, east: 38.5, north: 1.5 },
-  // Empty on purpose: a sub-envelope exists for a lane that reads it, and the two lanes that do
-  // (burn severity, the botanical seed classifier) bind no source in this region.
+  // Empty on purpose: a sub-envelope exists for a lane that reads it, and the lanes that do
+  // (burn severity, crop cover) bind no source in this region.
   subEnvelopes: {},
   // No projected work is declared for this region yet, and inventing a UTM zone for it would be a
   // manifest author's decision rather than one the work asked for. `null` is the honest value.
@@ -42,7 +42,6 @@ export const KENYA_HIGHLANDS = {
   // layer at all. `second-region-manifest.test.ts` pins this list to the pilot's, character for
   // character, because the vocabulary is platform-wide and only the bindings are per region.
   platformLayers: [
-    "botanical-occurrences",
     "burn-severity",
     "crop-cover",
     "drought",
@@ -92,6 +91,5 @@ export const KENYA_HIGHLANDS = {
     { layerSlug: "soil-field-moisture", sourceSlug: "era5_land", coverage: "global" },
     { layerSlug: "soil-field-temperature", sourceSlug: "era5_land", coverage: "global" },
     { layerSlug: "soil-field-vpd", sourceSlug: "era5_land", coverage: "global" },
-    { layerSlug: "botanical-occurrences", sourceSlug: "gbif", coverage: "global" },
   ],
 } satisfies Region;

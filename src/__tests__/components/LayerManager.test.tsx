@@ -18,8 +18,6 @@ import { renderWithProviders } from "@/test/utils";
 import { MapProvider } from "@/lib/map/map-context";
 import { useLayerStore } from "@/stores/layer-store";
 import { useMapStore } from "@/stores/map-store";
-import { useBotanicalOccurrenceStore } from "@/stores/botanical-occurrence-store";
-import { GBIF_COLLECTION_KEY } from "@/lib/environmental/botanical-governance-status";
 import { useSoilStore } from "@/stores/soil-store";
 import { useTimeSliderStore } from "@/stores/time-slider-store";
 import { SCRUB_SETTLE_MS, useDrawnLayerDayStore } from "@/stores/useMetricAtDate";
@@ -173,9 +171,6 @@ const viewportQueries = vi.hoisted(() => ({
   getBurnSeverity: vi.fn((): ViewportQueryResult => ({ data: undefined })),
   getWatershedBoundaries: vi.fn((): ViewportQueryResult => ({ data: undefined })),
   getFirePerimeters: vi.fn((): ViewportQueryResult => ({ data: undefined })),
-  // The three herbarium rows over ONE read: the plane answers detail or aggregate from the same
-  // route on the same inputs, so there is one mock here for three toggles.
-  getBotanicalOccurrences: vi.fn((): ViewportQueryResult => ({ data: undefined })),
 }));
 
 vi.mock("@/lib/trpc/client", () => ({
@@ -195,7 +190,6 @@ vi.mock("@/lib/trpc/client", () => ({
       getPublishedSoilRasters: { useQuery: viewportQueries.getPublishedSoilRasters },
       getClimateField: { useQuery: viewportQueries.getClimateField },
       getVegetationIndex: { useQuery: viewportQueries.getVegetationIndex },
-      getBotanicalOccurrences: { useQuery: viewportQueries.getBotanicalOccurrences },
     },
     wildfire: {
       getWeatherForBbox: { useQuery: viewportQueries.getWeatherForBbox },
@@ -212,95 +206,10 @@ vi.mock("@/lib/trpc/client", () => ({
 }));
 
 /**
- * The two hooks LayerManager mounted in the 2026-09-18 wave-3 pass, stubbed at their own
- * boundary. Neither is a tRPC read the `trpc` mock above could answer: `useBotanicalOccurrences`
- * issues a plain `fetch` at the proxy route, and `useLandContextViewport` queries the
- * `landContext` router, which this file's mock does not carry. Both default to their quiet state
- * so every case that is not about them is unaffected.
+ * `useLandContextViewport`, mounted in the 2026-09-18 wave-3 pass and stubbed at its own
+ * boundary: it queries the `landContext` router, which this file's `trpc` mock does not carry.
+ * It defaults to its quiet state so every case that is not about it is unaffected.
  */
-const botanicalProxyLane = vi.hoisted(() => ({
-  snapshot: {
-    phase: "idle",
-    answer: null,
-    error: null,
-    isStale: false,
-    isPartial: false,
-    band: "grid-0.25",
-    servingBand: "grid-0.25",
-  } as Record<string, unknown>,
-  /** The options each render passed, newest last -- this is where the `enabled` gate is read. */
-  calls: [] as Record<string, unknown>[],
-}));
-
-vi.mock("@/hooks/useBotanicalOccurrences", () => ({
-  useBotanicalOccurrences: (options: Record<string, unknown>) => {
-    botanicalProxyLane.calls.push(options);
-    return botanicalProxyLane.snapshot;
-  },
-}));
-
-/**
- * One decoded proxy answer in the camelCase vocabulary the contract publishes (W8-D,
- * 2026-09-18: both the UBC and GBIF layers now read this lane at the detail band, so this
- * builder is shared by both describe blocks below rather than living inside just one).
- */
-function proxyDetailAnswer(
-  collectionKeys: string[],
-  { servingRung = "detail", truncated = false, withheld = 0 } = {}
-) {
-  return {
-    state: "detail",
-    servingRung,
-    releaseSetId: "published-release",
-    publishedAt: "2026-09-13T00:00:00Z",
-    taxonomyRecipeVersion: "taxonomy-v1",
-    qcPolicyVersion: "qc-v1",
-    truncated,
-    nextCursor: truncated ? "next-page" : null,
-    counts: {
-      returned: collectionKeys.length,
-      matched: collectionKeys.length,
-      withheld,
-      nonspatial: 0,
-      excludedByQc: 0,
-    },
-    features: collectionKeys.map((collectionKey, index) => ({
-      occurrenceId: `proxy-occurrence-${index}`,
-      collectionKey,
-      sourceRecordKey: `proxy-source-${index}`,
-      taxonConceptId: "taxon-1",
-      resolutionState: "resolved",
-      scientificName: "Acer macrophyllum",
-      family: "Sapindaceae",
-      eventInterval: { start: "2025-06-01", end: "2025-06-01", precision: "day" },
-      longitude: -123.1,
-      latitude: 49.2,
-      coordinateUncertaintyMeters: 10,
-      spatialClass: "exact",
-      membership: "confirmed",
-      catalogNumber: null,
-      recordedBy: null,
-      basisOfRecord: "PRESERVED_SPECIMEN",
-      rightsUri: null,
-      attributionText: null,
-    })),
-  };
-}
-
-/** Overwrites the proxy lane's mocked snapshot, defaulting every field a case does not name. */
-function setProxySnapshot(snapshot: Record<string, unknown>): void {
-  botanicalProxyLane.snapshot = {
-    phase: "success",
-    answer: null,
-    error: null,
-    isStale: false,
-    isPartial: false,
-    band: "detail",
-    servingBand: "detail",
-    ...snapshot,
-  };
-}
-
 const landContextLane = vi.hoisted(() => ({ state: "no_group_enabled" as string }));
 
 vi.mock("@/hooks/useLandContextViewport", () => ({
@@ -644,7 +553,6 @@ beforeEach(() => {
   // collection would otherwise keep handing one to every case after it, since `clearAllMocks`
   // clears calls and not implementations.
   viewportQueries.getFirePerimeters.mockReturnValue({ data: undefined });
-  viewportQueries.getBotanicalOccurrences.mockReturnValue({ data: undefined });
 });
 
 afterEach(() => {
@@ -2564,181 +2472,6 @@ describe("LayerManager holds the previous day while the next one loads", () => {
   });
 });
 
-describe("GBIF occurrence feedback", () => {
-  const emptyNotice = "parquet-layer-unavailable-gbif-empty";
-  const floorNotice = "parquet-layer-unavailable-gbif-below-detail-floor";
-  const readNotice = "parquet-layer-unavailable-botanical-viewport-read";
-
-  /**
-   * SINCE W8-D (2026-09-18) GBIF reads the PROXY lane, not the tRPC one: the UBC layer and GBIF
-   * now share the one detail-band request, so every case below drives `botanicalProxyLane`
-   * (`setProxySnapshot`/`proxyDetailAnswer`, declared at module scope beside the mock) instead of
-   * `viewportQueries.getBotanicalOccurrences`. The tRPC mock stays untouched by this block: it is
-   * never enabled at the detail band any more, GBIF-only or not.
-   */
-  beforeEach(() => {
-    useBotanicalOccurrenceStore.getState().resetFilters();
-    useBotanicalOccurrenceStore.getState().setLastResponse(null);
-    botanicalProxyLane.calls.length = 0;
-    setProxySnapshot({ phase: "idle" });
-    useMapStore.setState({
-      activeLayers: ["gbif-occurrences"],
-      viewport: { ...INITIAL_MAP_STATE.viewport, zoom: 11, widthPx: 1024, heightPx: 768 },
-    });
-  });
-
-  afterEach(() => {
-    useBotanicalOccurrenceStore.getState().resetFilters();
-    useBotanicalOccurrenceStore.getState().setLastResponse(null);
-  });
-
-  it("explains the GBIF detail floor and keeps its query disabled below it", () => {
-    useMapStore.setState({ viewport: { ...useMapStore.getState().viewport, zoom: 10.9 } });
-    const rendered = renderLayerManager(createFakeMap());
-    expect(rendered.getByTestId(floorNotice).textContent).toContain("GBIF occurrence points draw at zoom 11");
-    // Below the floor the band is `aggregate`, so the proxy lane's gate
-    // (`(occurrencesVisible || gbifVisible) && band === "detail"`) is false regardless of which
-    // toggle is on -- this is now the ONE gate governing both the UBC layer and GBIF.
-    expect(botanicalProxyLane.calls.at(-1)?.enabled).toBe(false);
-    expect(lastRenderOf("GbifOccurrencesLayer")?.visible).toBe(false);
-    expect(rendered.queryByTestId(emptyNotice)).toBeNull();
-  });
-
-  it.each([{ collections: [] }, { collections: ["ubc:herbarium"] }])("explains an empty GBIF slice when the response contains $collections", ({ collections }) => {
-    setProxySnapshot({
-      phase: collections.length === 0 ? "empty" : "success",
-      answer: proxyDetailAnswer(collections),
-    });
-    const rendered = renderLayerManager(createFakeMap());
-    expect(rendered.getByTestId(emptyNotice).textContent).toBe(
-      "No GBIF occurrence points were returned for this viewport and current filters."
-    );
-    expect(rendered.queryByTestId(floorNotice)).toBeNull();
-    expect(botanicalProxyLane.calls.at(-1)?.enabled).toBe(true);
-  });
-
-  it("qualifies the empty GBIF slice when the shared result hits its row limit", () => {
-    setProxySnapshot({
-      phase: "success",
-      answer: proxyDetailAnswer(["ubc:herbarium"], { truncated: true }),
-    });
-    const rendered = renderLayerManager(createFakeMap());
-    expect(rendered.getByTestId(emptyNotice).textContent).toContain("limited result");
-    expect(rendered.getByTestId(emptyNotice).textContent).toContain("prevents a complete assessment");
-    // `botanical-truncated` is now unreachable here: it is sourced from the tRPC aggregate
-    // answer, which never runs at the detail band (W8-D). The proxy lane's OWN truncation still
-    // reaches a reader through `gbif-empty`'s qualified wording above, which this test already
-    // pins -- so the coverage is not lost, only relocated to the one assertion that can see it.
-    expect(rendered.queryByTestId("parquet-layer-unavailable-botanical-truncated")).toBeNull();
-  });
-
-  it("keeps the active collection filter in the request and qualifies the empty result", () => {
-    useBotanicalOccurrenceStore.getState().setFilters({ collection_key: "ubc:herbarium" });
-    setProxySnapshot({ phase: "success", answer: proxyDetailAnswer(["ubc:herbarium"]) });
-    const rendered = renderLayerManager(createFakeMap());
-    expect(botanicalProxyLane.calls.at(-1)).toMatchObject({ collectionKey: "ubc:herbarium" });
-    expect(rendered.getByTestId(emptyNotice).textContent).toContain("current filters");
-  });
-
-  it("removes the empty notice when GBIF points arrive", () => {
-    setProxySnapshot({ phase: "empty", answer: proxyDetailAnswer([]) });
-    const fakeMap = createFakeMap();
-    const rendered = renderLayerManager(fakeMap);
-    expect(rendered.getByTestId(emptyNotice)).toBeTruthy();
-    setProxySnapshot({ phase: "success", answer: proxyDetailAnswer([GBIF_COLLECTION_KEY]) });
-    rerenderLayerManager(rendered, fakeMap);
-    expect(rendered.queryByTestId(emptyNotice)).toBeNull();
-    expect(lastRenderOf("GbifOccurrencesLayer")?.geojson).toMatchObject({ features: [{ properties: { collection_key: GBIF_COLLECTION_KEY } }] });
-  });
-
-  it.each(["pending", "placeholder", "refreshing", "error", "aggregate"])("does not turn a %s response into a current-view empty claim", (state) => {
-    if (state === "pending") {
-      setProxySnapshot({ phase: "loading", answer: null, isStale: false });
-    } else if (state === "placeholder") {
-      // A retained frame from a previous viewport, loading its replacement -- `isStale` is what
-      // separates this from a landed answer even though `answer` is non-null.
-      setProxySnapshot({ phase: "loading", answer: proxyDetailAnswer([]), isStale: true });
-    } else if (state === "refreshing") {
-      setProxySnapshot({ phase: "loading", answer: proxyDetailAnswer([]), isStale: true });
-    } else if (state === "error") {
-      // An answer alongside `isError` never happens in the real hook (a failure clears `answer`),
-      // but the intent this case guards is the same as the tRPC-era one: a non-settled phase must
-      // never read as a confirmed empty, whatever else is in hand.
-      setProxySnapshot({
-        phase: "error",
-        answer: proxyDetailAnswer([]),
-        error: { error: "unreachable", reason: "request_failed", kind: "transport_fault" },
-      });
-    } else {
-      // A landed AGGREGATE answer: `botanicalViewportDetail` is null because the discriminant is
-      // not `"detail"`, so `hasDetailAnswer` is false regardless of phase -- the same reason the
-      // tRPC-era case blocked the notice.
-      setProxySnapshot({
-        phase: "success",
-        answer: { state: "aggregate", supportId: "grid-0.25", cells: [], counts: { returned: 0, matched: 0 } },
-      });
-    }
-    const rendered = renderLayerManager(createFakeMap());
-    expect(rendered.queryByTestId(emptyNotice)).toBeNull();
-  });
-
-  it.each(["refused", "unavailable"] as const)("keeps the shared %s reason visible with only GBIF enabled", (state) => {
-    // The tRPC lane's `refused`/`unavailable` discriminant has no proxy-lane equivalent (the
-    // proxy expresses a refusal as an HTTP error, never as a landed answer with a `note`), and
-    // `botanical-refused`/`botanical-unavailable` are gated on the tRPC-only `isAggregateReadLive`,
-    // which is never true at the detail band any more (W8-D). The reason still reaches a GBIF-only
-    // reader, through `botanical-viewport-read` -- its gate grew `gbifVisible` in this same pass
-    // precisely so a GBIF-only viewer is not left silent about an errored shared read. The test
-    // name is kept from the tRPC-era version; the mechanism it proves is now this one.
-    //
-    // Style review W8, S4: a governed refusal carries `kind: "governed_refusal"` and the plane's
-    // own `detail`, and BOTH have to survive to the reader -- the wording quotes the explanation
-    // instead of saying the read failed, and the tone stays a notice, which is the tone
-    // `botanical-refused`/`botanical-unavailable` carried before this lane moved.
-    setProxySnapshot({
-      phase: "error",
-      answer: null,
-      error: {
-        error: "The specimen occurrence plane declined this request",
-        reason: state,
-        detail: `the plane answered ${state} for this viewport`,
-        kind: "governed_refusal",
-      },
-    });
-    const rendered = renderLayerManager(createFakeMap());
-    const notice = rendered.getByTestId(readNotice);
-    expect(notice.textContent).toContain(`the plane answered ${state} for this viewport`);
-    expect(notice.textContent).not.toContain("could not be loaded");
-    expect(rendered.queryByTestId(emptyNotice)).toBeNull();
-  });
-
-  it("surfaces a transport failure with only GBIF enabled", () => {
-    setProxySnapshot({
-      phase: "error",
-      answer: null,
-      error: { error: "unreachable", reason: "request_failed", kind: "transport_fault" },
-    });
-    const rendered = renderLayerManager(createFakeMap());
-    // `botanical-request-failed` (the tRPC-lane fault) is unreachable here for the same reason as
-    // the `refused`/`unavailable` case above; `botanical-viewport-read` is the proxy lane's own
-    // transport-failure caption and carries a `fault` tone for the same phase, matching the
-    // severity the old assertion checked.
-    const notice = rendered.getByTestId(readNotice);
-    expect(notice.textContent).toContain("could not be loaded");
-    expect(notice.textContent).toContain("request_failed");
-    expect(rendered.queryByTestId(emptyNotice)).toBeNull();
-  });
-
-  it("removes GBIF feedback when its toggle turns off", () => {
-    setProxySnapshot({ phase: "empty", answer: proxyDetailAnswer([]) });
-    const rendered = renderLayerManager(createFakeMap());
-    expect(rendered.getByTestId(emptyNotice)).toBeTruthy();
-    act(() => useMapStore.setState({ activeLayers: [] }));
-    expect(rendered.queryByTestId(emptyNotice)).toBeNull();
-    expect(rendered.queryByTestId(floorNotice)).toBeNull();
-  });
-});
-
 it("shows MTBS capture, availability and partial mapping separately from row truncation", () => {
   useMapStore.setState({ activeLayers: ["burn-severity"] });
   viewportQueries.getBurnSeverity.mockReturnValue(landed({ state: "ready", requestedDay: "2026-09-11",
@@ -2754,91 +2487,15 @@ it("shows MTBS capture, availability and partial mapping separately from row tru
 });
 
 /**
- * The two mounts of the 2026-09-18 wave-3 pass. Both hooks are stubbed above, so these cases are
- * about what LayerManager DOES with what they report -- which layer is fed, which caption is
- * raised, and which state is allowed to look like a fault.
+ * The land-context viewport mount of the 2026-09-18 wave-3 pass. The hook is stubbed above, so
+ * these cases are about what LayerManager DOES with what it reports -- which caption is raised,
+ * and which state is allowed to look like a fault.
  */
-describe("botanical proxy lane and land-context viewport mounts", () => {
-  const readNotice = "parquet-layer-unavailable-botanical-viewport-read";
+describe("land-context viewport mount", () => {
   const budgetNotice = "parquet-layer-unavailable-land-context-area-over-budget";
 
   beforeEach(() => {
-    botanicalProxyLane.calls.length = 0;
-    setProxySnapshot({ phase: "idle", band: "grid-0.25", servingBand: "grid-0.25" });
     landContextLane.state = "no_group_enabled";
-    useMapStore.setState({
-      activeLayers: ["botanical-occurrences"],
-      viewport: { ...INITIAL_MAP_STATE.viewport, zoom: 12, widthPx: 1024, heightPx: 768 },
-    });
-  });
-
-  it("draws the detail layer from the proxy lane and hands it that lane's read phase", () => {
-    setProxySnapshot({ phase: "success", answer: proxyDetailAnswer(["ubc:herbarium"]) });
-
-    const rendered = renderLayerManager(createFakeMap());
-
-    const props = lastRenderOf("BotanicalOccurrencesLayer");
-    expect(props?.readPhase).toBe("success");
-    expect(props?.geojson).toMatchObject({
-      features: [{ properties: { occurrence_id: "proxy-occurrence-0" } }],
-    });
-    // The tRPC lane answered nothing here, so the points can only have come from the proxy lane.
-    expect(rendered.queryByTestId("parquet-layer-unavailable-botanical-request-failed")).toBeNull();
-  });
-
-  it("keeps GBIF's own points out of the UBC collection the proxy lane feeds", () => {
-    setProxySnapshot({
-      phase: "success",
-      answer: proxyDetailAnswer([GBIF_COLLECTION_KEY, "ubc:herbarium"]),
-    });
-
-    renderLayerManager(createFakeMap());
-
-    const geojson = lastRenderOf("BotanicalOccurrencesLayer")?.geojson as GeoJSON.FeatureCollection;
-    expect(geojson.features).toHaveLength(1);
-    expect(geojson.features[0].properties?.collection_key).toBe("ubc:herbarium");
-  });
-
-  it("asks the proxy lane for nothing when the occurrence toggle is off", () => {
-    act(() => useMapStore.setState({ activeLayers: [] }));
-    renderLayerManager(createFakeMap());
-
-    expect(botanicalProxyLane.calls.at(-1)?.enabled).toBe(false);
-  });
-
-  it("says which rung answered when it is not the one this zoom asked for", () => {
-    setProxySnapshot({
-      phase: "success",
-      answer: proxyDetailAnswer(["ubc:herbarium"], { servingRung: "grid-0.25" }),
-      band: "detail",
-      servingBand: "grid-0.25",
-    });
-
-    const rendered = renderLayerManager(createFakeMap());
-
-    const caption = rendered.getByTestId(readNotice).textContent;
-    expect(caption).toContain("grid-0.25 support rung");
-    expect(caption).toContain("wider than individual specimen points");
-  });
-
-  it("stays silent when the rung the zoom asked for is the rung that answered", () => {
-    setProxySnapshot({ phase: "success", answer: proxyDetailAnswer(["ubc:herbarium"]) });
-
-    const rendered = renderLayerManager(createFakeMap());
-
-    expect(rendered.queryByTestId(readNotice)).toBeNull();
-  });
-
-  it("reports a failed proxy read as a fault, not as an empty view", () => {
-    setProxySnapshot({
-      phase: "error",
-      error: { error: "unreachable", reason: "request_failed", kind: "transport_fault" },
-    });
-
-    const rendered = renderLayerManager(createFakeMap());
-
-    expect(rendered.getByTestId(readNotice).textContent).toContain("request_failed");
-    expect(lastRenderOf("BotanicalOccurrencesLayer")?.readPhase).toBe("error");
   });
 
   it("captions an over-budget land-context viewport instead of refusing it", () => {

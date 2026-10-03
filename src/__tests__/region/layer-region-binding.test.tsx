@@ -10,8 +10,8 @@
  * `services/agri-data-service/tests/foundation/test_region_layer_availability.py`.
  *
  * The payload here is shaped like the one that service emits for a region binding only
- * `coverage: global` sources: `signal`, `fire-detections`, `vegetation`, `weather-observations`,
- * `watersheds` and `botanical-occurrences` bound, every US-sourced layer unbound.
+ * `coverage: global` sources: `signal`, `fire-detections`, `vegetation`, `weather-observations`
+ * and `watersheds` bound, every US-sourced layer unbound.
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -43,7 +43,6 @@ vi.mock("@/stores/sync-index-store", () => ({
 const SERVER_CURRENT_DATE = "2026-09-18";
 
 const BOUND_GLOBAL_LAYER_SLUGS = [
-  "botanical-occurrences",
   "fire-detections",
   "climate-field-air-temperature",
   "climate-field-dew-point",

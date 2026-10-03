@@ -191,15 +191,6 @@ export const CACHEABLE_LAYER_QUERIES: readonly string[] = [
   // `isPersistableQueryKey` unchanged; `zoom` and `dayRange` ride in the queryHash, so a
   // different aggregation tier is a different entry rather than a stale hit.
   "wildfire.getFireDetections",
-  // Added 2026-09-13, and the first allowlisted path whose GENERATION is not in its query key:
-  // `getBotanicalOccurrences` resolves `release_set_id` server-side from the plane's own
-  // `/current` pointer, so two reads a publication apart are the SAME key with different
-  // provenance. `resolveEntryGeneration` below is what keeps that honest -- see "generation
-  // pinning" in AGENTS.md. Its input carries `bbox` (and no `date`, which is correct: the plane
-  // is pinned to a release, not to a day), so `isPersistableQueryKey` is satisfied unchanged, and
-  // `zoom`/the five filters ride in the queryHash so a different band or filter is a different
-  // entry rather than a stale hit.
-  "environmental.getBotanicalOccurrences",
 ];
 
 /**
@@ -234,12 +225,6 @@ const TOGGLE_ID_BY_ROUTER_PATH: Readonly<Record<string, LayerToggleId>> = {
   // The detections lane, whose toggle is `fire` -- distinct from `fire-perimeters` above, which
   // is a different lane of a different nature (a `static_lookup` snapshot, not a day series).
   "wildfire.getFireDetections": "fire",
-  // ONE read serves all three herbarium toggles -- occurrences, richness and collection-effort
-  // are three renderings of the same `detail`/`aggregate` answer, not three lanes -- so they
-  // attribute to one track on exactly the rule the water pair above states. `botanical-occurrences`
-  // is the row that names the lane; a reset of it clears the bytes all three draw from, which is
-  // the truth, since there is only one stored answer between them.
-  "environmental.getBotanicalOccurrences": "botanical-occurrences",
 };
 
 /**
@@ -468,46 +453,26 @@ function isSoilSurveyRollbackAnswer(layerId: LayerToggleId | null, value: unknow
  * The warehouse generation a cached ANSWER belongs to, when the answer names one itself.
  *
  * Every other allowlisted layer puts everything that identifies its answer into the query key: a
- * day, a bbox, a measure. `environmental.getBotanicalOccurrences` does not, and cannot -- it
- * resolves `release_set_id` SERVER-side from the plane's `/current` pointer
- * (`getCurrentBotanicalReleaseSetId`, botanical-occurrences-client.ts:459), precisely so that
- * concurrent readers pin one generation instead of each resolving a slightly different "current".
- * The consequence for this cache is that two reads taken either side of a publication produce the
- * SAME `queryHash` and different provenance, so the key alone cannot tell them apart.
+ * day, a bbox, a measure. `soil-survey` (soil-survey port S4, plan §1a row 73) does not: two
+ * viewports either side of an admission share a key, so the admitted release's SHA-256 rides on
+ * the payload as `revision` (from `environmental.getSoilSurvey`) and pins the entry. See
+ * `src/lib/cache/AGENTS.md` §Generation pinning.
  *
- * That matters more here than it would for a weather tile. These are governed, provenance-carrying
- * herbarium records: attribution, rights and the provisional-collection status ride on the release,
- * and `botanical-occurrences` is `release_series` (layer-cache-policy.ts:132), which resolves to
- * `manual` -- MANUAL_TTL_MS is 365 days and background revalidation is off. Without a pin, a
- * generation superseded this morning would keep being served as current for a year, and the one
- * correction path every other layer relies on is switched off for this one.
- *
- * Returns `null` when the payload names no generation, which is every other layer and also this
- * one's `refused`/`unavailable` members -- those carry no records and so misattribute nothing.
- *
- * `layerId` selects WHICH field names the generation. `soil-survey` (soil-survey port S4, plan
- * §1a row 73) pins on `revision` -- the admitted release's SHA-256, from `environmental.
- * getSoilSurvey` -- rather than on `releaseSetId`, which that procedure never carries. Every
- * other layer, including one called with `layerId` omitted, keeps reading only `releaseSetId`
- * (F13): a `revision` field on some other payload is a coincidence, never a pin, so it is read
- * only when the caller has already attributed the entry to `soil-survey`.
+ * Returns `null` for every other layer, and for a soil-survey answer that carries no revision.
+ * F13: a `revision` field on some other payload is a coincidence, never a pin, so it is read only
+ * when the caller has already attributed the entry to `soil-survey`.
  */
 export function resolveEntryGeneration(
   value: unknown,
   layerId: LayerToggleId | null = null
 ): string | null {
-  if (typeof value !== "object" || value === null) return null;
+  if (layerId !== "soil-survey" || typeof value !== "object" || value === null) return null;
   const record = value as Record<string, unknown>;
   // Guarded as a non-empty string rather than coerced: `String(null)` is `"null"`, and a nullable
   // field compared that way makes two unstamped answers look like the same generation. The same
   // trap AGENTS.md "revalidation policy" records for the revision signal that never shipped.
-  if (layerId === "soil-survey") {
-    return typeof record.revision === "string" && record.revision.length > 0
-      ? record.revision
-      : null;
-  }
-  return typeof record.releaseSetId === "string" && record.releaseSetId.length > 0
-    ? record.releaseSetId
+  return typeof record.revision === "string" && record.revision.length > 0
+    ? record.revision
     : null;
 }
 
@@ -1278,8 +1243,8 @@ export async function revalidateAgainstDW<TContext>(
       const approxByteSize = estimateByteSize(result);
       // Same rule as the cold path: this answer came back through the server's pointer, so it
       // defines the current generation. In practice a `manual` layer never reaches here, but the
-      // pin must not depend on that -- a user flipping botanical to `automatic` would otherwise
-      // refresh the entries while leaving the pin they are checked against behind.
+      // pin must not depend on that -- a user flipping a pinned layer to `automatic` would
+      // otherwise refresh the entries while leaving the pin they are checked against behind.
       recordSeenGeneration(attribution.layerId, result);
       const expiresAt = now + resolveCacheTtlMs(queryKey);
       const byteDelta = approxByteSize - stored.approxByteSize;

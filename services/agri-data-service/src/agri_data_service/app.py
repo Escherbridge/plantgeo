@@ -18,7 +18,6 @@ from agri_data_service.foundation.region import (
     unverified_binding_slugs,
 )
 from agri_data_service.interface.http import (
-    botanical_occurrences_bp,
     botanical_species_information_bp,
     parquet_bp,
     soil_survey_bp,
@@ -135,7 +134,6 @@ def create_app(_args: object | None = None) -> AgriApp:
             parquet_bp,
             agent_tools_bp,
             botanical_species_information_bp,
-            botanical_occurrences_bp,
             soil_survey_bp,
         ),
         "receiver_writer": (jobs_bp,),
@@ -146,7 +144,6 @@ def create_app(_args: object | None = None) -> AgriApp:
             parquet_bp,
             agent_tools_bp,
             botanical_species_information_bp,
-            botanical_occurrences_bp,
             soil_survey_bp,
         ),
     }[settings.service_profile]

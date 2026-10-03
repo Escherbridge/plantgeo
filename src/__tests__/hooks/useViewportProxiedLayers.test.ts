@@ -5,8 +5,8 @@ import { cleanup, renderHook } from "@testing-library/react";
  * Every viewport read in `useViewportProxiedLayers.ts` publishes its own liveness, and that
  * liveness IS the enablement it gave its own observer.
  *
- * The botanical lane's version of this is in `useBotanicalOccurrences.test.ts`; this file covers
- * the other four, which were converted in the same sweep (style review W10, B1 residue 1 --
+ * This file covers all four (a fifth, the retired botanical lane, went 2026-10-03). They were
+ * converted in one sweep (style review W10, B1 residue 1 --
  * each one retained frames under `keepPreviousData` and had the same dynamic `requested !== null`
  * conjunct, so each was the same defect waiting for a consumer to trust `data`).
  *

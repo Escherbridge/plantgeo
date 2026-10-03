@@ -25,12 +25,6 @@
       "south": 42.0,
       "east": -111.0,
       "north": 49.0
-    },
-    "botanical_seed": {
-      "west": -125.0,
-      "south": 41.0,
-      "east": -110.0,
-      "north": 50.0
     }
   },
   "crs": 4326,
@@ -59,7 +53,6 @@
     "US-ID"
   ],
   "platform_layers": [
-    "botanical-occurrences",
     "burn-severity",
     "crop-cover",
     "drought",
@@ -212,11 +205,6 @@
     {
       "layer_slug": "soil-field-vpd",
       "source_slug": "era5_land",
-      "coverage": "global"
-    },
-    {
-      "layer_slug": "botanical-occurrences",
-      "source_slug": "gbif",
       "coverage": "global"
     }
   ]

@@ -40,16 +40,15 @@ before this package did, and they are genuinely different claims:
   also the current `FALLBACK_COVERAGE_BBOX` value in `coverage-region.ts` — a coincidence of which
   literal someone reached for, not a rule that the fallback camera and the burn envelope must
   match.
-- `sub_envelopes.botanical_seed` = `(-125, 41, -110, 50)` — read by `botanical_seed_envelope()`
-  (`foundation/botanical_occurrences/coordinates.py`).
+- The third, `sub_envelopes.botanical_seed` = `(-125, 41, -110, 50)`, was the herbaria occurrence
+  classifier's admitted-coverage envelope; it left both manifests with that lane on 2026-10-03
+  ("Retired herbaria binding" below).
 
-None of the three is wrong; they describe three different things (the platform's named footprint,
-MTBS's admitted bbox, and the botanical-occurrence classifier's admitted-coverage envelope) that
-happened to be typed as three separate near-identical tuples. `sub_envelopes` gives step 2 a place
-for `burn_severity_bounding_box()` and `botanical_seed_envelope()` to read instead of restating them
-a fourth time (the two old constant names, `PACIFIC_NORTHWEST_BBOX` and `SEED_ENVELOPE`, were
-deleted on 2026-09-18 rather than kept as warning aliases -- `services/agri-data-service/DEPRECATED_ALIASES.md`
-records why);
+Neither remaining box is wrong; they describe different things (the platform's named footprint and
+MTBS's admitted bbox) that happened to be typed as separate near-identical tuples. `sub_envelopes`
+gives step 2 a place for `burn_severity_bounding_box()` to read instead of restating it (the old
+constant names `PACIFIC_NORTHWEST_BBOX` and `SEED_ENVELOPE` were deleted on 2026-09-18 rather than
+kept as warning aliases -- `services/agri-data-service/DEPRECATED_ALIASES.md` records why);
 it is not itself in `federation.md` §1's required-fields list, and a later step may decide one or
 both should collapse into `envelope` once every caller of the narrower box has been reviewed.
 
@@ -96,10 +95,9 @@ both should collapse into `envelope` once every caller of the narrower box has b
 streams" as the eleven original `geo.layers` slugs plus `signal` and `drought` plus `calendar`
 (§1a) — **this manifest's thirteen are not that same set**: `calendar` is a control-plane
 dimension with no source binding of its own (every lane reads it, it reads nothing), so it stays out
-of `enabled_layers` the same way `interventions` (below) stays out; `botanical-occurrences` is a
-served plane (`planes/botanical_occurrences.py`, `foundation/botanical_occurrences/`) that
-`layer-lanes.md` §1 never enumerates at all, added here because it is a real layer a region binds a
-source for, per `federation.md` §1's "enabled layers with their source binding". The count agreeing
+of `enabled_layers` the same way `interventions` (below) stays out; the herbaria
+`botanical-occurrences` plane, which `layer-lanes.md` §1 never enumerated, was retired from the
+vocabulary and both manifests on 2026-10-03 ("Retired herbaria binding" below). The count agreeing
 with "thirteen" is what STYLE-REVIEW-W1.md B1 asked to fix — the earlier text claimed the eleven
 original slugs matched that citation, which `layer-lanes.md` never said; this text does not repeat
 that mistake by implying the two thirteens are the same list.
@@ -120,10 +118,17 @@ state's own portal, so `regional` despite not being one of the styleguide's exam
 `era5_land_and_nasa_power`: `pipeline/parquet/lane_registry.py`'s `SIGNAL_PLANE_STREAM` registration
 names both producers by lag ("Lag 9 is ERA5-Land's measured PUBLICATION_LAG_DAYS ...; NASA POWER's
 is 5") and neither alone accounts for the plane, so the binding names the blend rather than picking
-one and hiding the other. `botanical-occurrences` binds `gbif`:
-`pipeline/direct/botanical_occurrences/fetch.py` pulls from `api.gbif.org` (GBIF's Download API) as
-well as the PNW Herbaria and Canadensys IPT endpoints GBIF itself aggregates, and GBIF is the
-publisher-facing name the occurrence identity and rights review already use.
+one and hiding the other.
+
+### Retired herbaria binding
+
+The herbaria `botanical-occurrences` layer (GBIF / UBC / PNW Herbaria specimen records) is retired
+platform-wide since 2026-10-03 (owner directive, extending the 2026-09-28 PNW retirement): the slug
+left `PLATFORM_LAYER_SLUGS`, both manifests' `platform_layers`, Kenya's `gbif` binding and PNW's
+`sub_envelopes.botanical_seed`, in both trees. It is no longer a federated layer anywhere, so no
+region reports it as a governed absence. Serving, agent and ingestion code went with it; see
+`agent/AGENTS.md`, "Herbaria surfaces are retired", for the re-enable path (git history at
+`b1745b0f`) and the stored-object prefixes awaiting a separate owner go for deletion.
 
 `interventions` binds NO source here: it has no Parquet lane at all and stays in Postgres per
 RUNBOOK §0.26.1, so it is a governed absence (`federation.md` §2 — "the platform must run with a
@@ -137,8 +142,8 @@ unbound-but-wanted one, that is a `SourceCoverage` schema change made deliberate
 commit, not a value invented to fit the existing enum.
 
 Coverage: MTBS, SSURGO, WFIGS, USGS NWIS, NOAA NWS, USDM and the Oregon OEM feed are US-specific
-(`regional`); FIRMS, Sentinel-2, Open-Meteo, HydroSHEDS, the ERA5-Land/NASA POWER blend and GBIF
-serve outside the US too (`global`).
+(`regional`); FIRMS, Sentinel-2, Open-Meteo, HydroSHEDS and the ERA5-Land/NASA POWER blend serve
+outside the US too (`global`).
 
 ## Source coverage claims, and why they are checked on ISO codes
 
@@ -291,7 +296,7 @@ the manifest carrying `platform_layers` separately from `enabled_layers`.
 
 **`crs` is null and `sub_envelopes` is empty, on purpose.** The pilot declares `crs: 4326` and two
 narrower boxes because two US-source lanes still read their own envelopes from the manifest
-(`burn_severity_bounding_box()`, `botanical_seed_envelope()`). Neither lane is bound here, so a
+(`burn_severity_bounding_box()`, `pipeline/direct/crop_cover/products.py`). Neither lane is bound here, so a
 sub-envelope for it would be a footprint claim nothing reads. `crs` is optional in the model for
 this case: no projected work is declared for this region yet, and inventing a UTM zone for it
 would be a decision made by a manifest author rather than by the work that needs it.

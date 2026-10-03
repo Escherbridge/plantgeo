@@ -1644,7 +1644,7 @@ carried an obligation.
 
 ### The turn's shape, and why the fetch comes first
 
-    fetch -> conform -> read the ladder -> read the watermark -> resolve -> publish?
+    fetch -> conform -> read the ladder -> read the watermark -> resolve -> drain owed availability -> publish?
 
 The fetch is FIRST because this lane's version day is derived from the fetched population, not from the
 calendar: there is no day to lock on until the source has answered. That inverts `drought/forward.py`,
@@ -1669,6 +1669,46 @@ dimension entries across every producer ever reached a second WFIGS version, and
 known silent-freeze failure mode). The history this lane has is the 45 partition days the retired
 `daily_series` shape already wrote; nothing here adds to it and nothing can.
 
+### A standing availability claim never drains itself
+
+Fixed 2026-10-03, production incident `lane_incomplete: fire-perimeters-direct-forward ... publication_debt`
+(`execution/job_executor_service.py::_incomplete_reason` names that reason exactly when
+`days_unwritten == 0` and `turn_report.publication_debt > 0` -- `execution/AGENTS.md`, "Publication debt
+is the second, quieter half of an incomplete turn"). The lane kept exiting 0 every hourly tick -- its
+Parquet object writes were landing and verifying across all four tiers -- while an availability retry
+claim from one past publish's `extend_availability_for_lane_day` hiccup (`pipeline/parquet/
+availability_extension.py`) stood forever.
+
+**Root cause: this module never called `retry_pending_availability` at all.** Every sibling direct
+writer (`vegetation/forward.py`, `soil/forward.py`, `climate/forward.py`,
+`pipeline/parquet/water_gauges_forward.py`) carries a `_retry_owed_availability` helper that drains a
+bounded batch of owed claims every turn, before deciding what else to do. `fire_perimeters/forward.py`
+had no such call anywhere, and worse: the session that would have been able to run one was opened ONLY
+when `resolve_static_lane` found a new version to publish (`if verdict.version_day is not None:`). Once
+a version's own `fill_one_lane_day` call wrote a `retry_owed` claim (any transient read fault against the
+availability head counts -- `_read_failure`, `_index_claimed_day`'s publish-failure branch), the lane sat
+at `current` on every following tick -- WFIGS kept answering with content already captured -- and the
+claim was never revisited, because nothing ever asked for it back. A `static_lookup` lane can stay
+`current` for as long as the source does not change, so this is not a transient window: it is a claim
+that drains only by luck, on whichever tick happens to publish the next version.
+
+**The fix drains every turn, unconditionally.** `run_fire_perimeters_forward` now always opens the
+`local_source_loader_session` and calls the new `_retry_owed_availability` as the first thing inside it,
+before checking whether `verdict.version_day` is `None` -- exactly where `water_gauges_forward.py` and
+`climate/forward.py` run their own drains. Publication proceeds afterward, in the same session, only
+when a version is actually owed. A drain fault is caught and logged
+(`fire_perimeters_forward_availability_retry_failed`) and never blocks the turn's own publication,
+matching every sibling's contract.
+
+**Operator action in production, if the incident is already open:** none beyond deploying this fix and
+letting the next hourly tick run. The claim is self-describing (receipts only, no re-fetch) and the
+drain reads it back from object storage the first time this code runs; no manual retry, backfill or
+Parquet rewrite is needed. If the drain itself reports `retry_claim_failed` or a quarantined claim after
+deploying (meaning the claim bytes themselves are unreadable, not merely untried), that is a SEPARATE,
+rarer failure mode an operator resolves by hand per `pipeline/parquet/AGENTS.md`, "A malformed claim can
+never be retried" -- distinguish it from this incident by reading the drain's own
+`fire_perimeters_forward_availability_retry` event `state` field on the first post-deploy tick.
+
 ### Entry point
 
 `python -m agri_data_service.pipeline.direct.fire_perimeters`, with `--max-days` (validated to be exactly
@@ -1686,21 +1726,23 @@ runtime -- and belongs in the same push that drops `geo.features` for this layer
 
 ## Sensors
 
-`sensors/` polls NOAA NWS ground stations once and durably merges every day the rolling window touched.
-The acquisition model is `weather_observations`' shape, not `climate`'s: NWS keeps only a ROLLING ~6-day
-window, recomputed relative to the run clock, never a fixed archive floor (`source.py`).
+`sensors/` asks NOAA NWS, once per ended day, for each station's newest report of that day, and durably
+merges it. NWS keeps only a ROLLING ~6-day window, recomputed relative to the run clock, never a fixed
+archive floor (`source.py`). Which days a turn owes comes from z13 (`sensors/watermark.py`); a turn that
+owes none makes no NWS request.
 
 ### `--max-days` is a publish cap, not a backlog depth
 
 The CLI shape follows `climate`/`soil`/`weather_observations` because that is the contract a reviewer
 expects of every lane here, but the MEANING follows `weather_observations`: there is no settled-day backlog
-to walk by date, so `--max-days` caps how many of the day buckets ONE poll produced are actually published.
+to walk by date, so `--max-days` caps how many of the day buckets ONE turn produced are actually published.
 `SENSORS_MAX_DAYS = NWS_OBSERVATION_RETENTION.days + 1` -- SEVEN, derived rather than guessed: a half-open
 `[now - 6 days, now)` window can straddle at most seven distinct calendar dates, and the `+ 1` comes off the
 SAME constant `source.py` builds the fetch window from, so the two cannot silently drift. The default equals
 the ceiling for `weather_observations`' reasoning: a day that ages out of NWS's rolling retention before the
-next poll is gone from the source forever (`ingest/sensors.py:94-96`), and asking for the whole window costs
-no extra HTTP -- `observation_url` issues ONE request per station whether `window` is set or not.
+next poll is gone from the source forever (`ingest/sensors.py:94-96`). A day `--max-days` leaves out is not
+lost: it was never written, so it stays due. What a turn may ASK is a separate, hard budget
+(`sensors/source.py::SensorsFetchBudget`: requests, bytes, wall clock).
 
 ### The merge unit is a whole station-day block, not one grain
 
@@ -1728,13 +1770,15 @@ asserting it here would fail on exactly the rows the merge was correct to drop. 
 `--run-id` and the bounded retry/contention knobs. No `products.py`: this lane exports one stream at one row
 shape, so the module was omitted rather than shipped empty, exactly as `weather_observations` argues.
 
-Executor lane `sensors-direct-forward`, **hourly at `:20`**. The writer flagged this as a real trade and the
-join decided it: since `83a41dff` (2026-09-28) a run asks each station only for the observations that can
-still change a published day (`sensors/watermark.py`, newest published report minus a 3 h overlap; a new
-station or a first run still gets the full 6-day window), which cut ~447 MB/day to an estimated ~85 MB at one
-run a day. A missed tick still self-heals, because an unsettled day widens the window. Roughly hourly is NWS's
-own publication cadence; a slower slot risks a day ageing out of retention unseen -- and that day is then
-unrecoverable. See `sensors/AGENTS.md`, "Fetch only what can still change a published block". ACTIVE since 2026-09-07, with `parquet-sensors` retired and
+Executor lane `sensors-direct-forward`, **hourly at `:20`**, but since 2026-10-03 only the first turn
+after a day's 3 h late-report allowance asks NWS anything (about 03:20 UTC); the other 23 exit 0 as
+`idempotent_noop`. The `83a41dff` (2026-09-28) per-station window had grown, by production evidence, to
+14,400 requests and 4.39 GB a day: ~106 five-minute stations whose full window exceeded the 1 MiB cap never
+published, so they asked for six days every hour. A turn now asks one `limit=1` request per station per due
+day, plus a one-request-per-day gap walk for stations it holds nothing for, under a hard budget; expected
+about 600 requests and 10-13 MB a day. The hourly slot is kept as the retry cadence: a missed or
+budget-cut day stays due and the next turn takes it, long before NWS's six-day retention drops it. See
+`sensors/AGENTS.md`, "Ask once per day, after the day has ended". ACTIVE since 2026-09-07, with `parquet-sensors` retired and
 `LANE_REGISTRY['sensors'].adapter` swapped to a source-direct refusal in the same wave -- no boundary
 day was ever cited, and none can be: this package ships no `backfill.py` and no
 `*_DIRECT_WRITER_START_DAY`. The gate that argument served has closed rather than been met.

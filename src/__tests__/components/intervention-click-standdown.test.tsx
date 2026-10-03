@@ -237,16 +237,9 @@ describe("MapView stands down over intervention features", () => {
     delete window.matchMedia;
   });
 
-  it("stands down for a botanical occurrence dot on a fine pointer, which has its own click handler", () => {
+  it("stands down for a fire detection circle on a fine pointer, which has its own click popup", () => {
     render(<MapView />);
-    fakeMap.features = [{ layer: { id: "earth" } }, { layer: { id: "botanical-occurrences-exact" } }];
-    clickMap();
-    expect(screen.queryByTestId("agent-popup")).toBeNull();
-  });
-
-  it("stands down for a GBIF occurrence dot, which has its own click handler", () => {
-    render(<MapView />);
-    fakeMap.features = [{ layer: { id: "earth" } }, { layer: { id: "gbif-occurrences-generalized" } }];
+    fakeMap.features = [{ layer: { id: "earth" } }, { layer: { id: "published-fire-circles" } }];
     clickMap();
     expect(screen.queryByTestId("agent-popup")).toBeNull();
   });

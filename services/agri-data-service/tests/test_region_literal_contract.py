@@ -83,26 +83,22 @@ _ALLOWED_RELATIVE_PATHS: Final[frozenset[str]] = frozenset(
 #: receive; a new offender anywhere else fails this test rather than growing this set.
 #:
 #: The 2026-09-18 waves already replaced every Python-side footprint constant this guard can see
-#: with a manifest-reading function (`burn_severity_bounding_box()` in `ingest/mtbs.py`,
-#: `botanical_seed_envelope()` in `foundation/botanical_occurrences/coordinates.py`), so there is no
-#: module-level TUPLE left for this walk to see as an offender.
+#: with a manifest-reading function (`burn_severity_bounding_box()` in `ingest/mtbs.py`), so there
+#: is no module-level TUPLE left for this walk to see as an offender.
 #:
-#: The nine entries below are the scalar branch's own predicate widening: normalising underscores
+#: The eight entries below are the scalar branch's own predicate widening: normalising underscores
 #: before the name-hint match (S1, wave 5 review) makes `\bbbox\b`/`\blat\b` finally reach into
 #: `SCREAMING_SNAKE_CASE` names like `BBOX_ORDINATE_COUNT`, which is the bug S1 fixed -- but the
 #: scalar branch (unlike the tuple branch) has no zoom-ladder/colour-tuple/plausible-span exclusion,
 #: so a hinted name whose value is a COUNT, MARGIN, SPAN CEILING or COSINE FLOOR (never itself a
 #: coordinate) now also matches "in range for a lat/lon component". Verified individually by
-#: reading each definition: none of the nine is a footprint value.
+#: reading each definition: none of the eight is a footprint value.
 KNOWN_OFFENDERS: Final[frozenset[tuple[str, str]]] = frozenset(
     {
         # `cos(radians(lat))` floor, not a latitude -- `agent/tools.py:258`.
         ("agent/tools.py", "name-hinted scalar 0.01 assigned to _MIN_LATITUDE_COSINE"),
         # A unitless multiplier on a computed degree-radius, not a coordinate -- `agent/tools.py:255`.
         ("agent/tools.py", "name-hinted scalar 1.05 assigned to _BBOX_SAFETY_MARGIN"),
-        # A padding amount added to an envelope, not the envelope itself --
-        # `foundation/botanical_occurrences/coordinates.py:41`.
-        ("foundation/botanical_occurrences/coordinates.py", "name-hinted scalar 0.25 assigned to ENVELOPE_PAD_DEGREES"),
         # The arity of a bbox tuple (always 4), not an ordinate --
         # `foundation/geography/bounding_box.py:23`, `ingest/policy.py:19`.
         ("foundation/geography/bounding_box.py", "name-hinted scalar 4.0 assigned to BBOX_ORDINATE_COUNT"),
@@ -113,8 +109,6 @@ KNOWN_OFFENDERS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("ingest/policy.py", "name-hinted scalar 30.0 assigned to MAX_LONGITUDE_SPAN"),
         # The arity of a bbox tuple, not an ordinate -- `parquet_ops/request_params.py:37`.
         ("parquet_ops/request_params.py", "name-hinted scalar 4.0 assigned to BBOX_COMPONENT_COUNT"),
-        # The arity of a bbox tuple, not an ordinate -- `planes/botanical_occurrences.py:108`.
-        ("planes/botanical_occurrences.py", "name-hinted scalar 4.0 assigned to _BBOX_ORDINATES"),
         # The arity of a bbox query-string value (west,south,east,north), not an ordinate --
         # `interface/http/soil_survey.py:48`.
         ("interface/http/soil_survey.py", "name-hinted scalar 4.0 assigned to _BBOX_COORDINATE_COUNT"),
@@ -247,9 +241,9 @@ def test_no_stray_footprint_literal_outside_known_offenders() -> None:
     """A new footprint/admin-code/region-name literal outside the manifest must fail this test.
 
     Passes today because `KNOWN_OFFENDERS` is empty and the live walk also finds nothing --
-    `ingest/mtbs.py` and `foundation/botanical_occurrences/coordinates.py` already read their
-    envelopes off `load_region()`. Removing an entry from `KNOWN_OFFENDERS` once it moves into the
-    manifest is the only edit this test's contract allows to that set.
+    `ingest/mtbs.py` already reads its envelope off `load_region()`. Removing an entry from
+    `KNOWN_OFFENDERS` once it moves into the manifest is the only edit this test's contract allows
+    to that set.
     """
     raw_found = _find_offenders()
     # Keyed by (path, description) -- NOT line -- so an unrelated edit above a known offender

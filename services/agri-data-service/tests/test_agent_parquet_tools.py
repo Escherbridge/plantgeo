@@ -360,7 +360,7 @@ async def test_the_fire_summary_reports_whole_lane_history_as_a_discriminated_sh
 
 
 def test_every_catalogue_surface_is_mapped_or_explicitly_refused() -> None:
-    """Every surface declares a Parquet lane, an app reader, a botanical reader, or explicit absence."""
+    """Every surface declares a Parquet lane, an app reader, or explicit absence."""
     mapped = set(SURFACE_PARQUET_LANES)
     assert mapped <= set(AGENT_SURFACE_NAMES)
     assert set(AGENT_SURFACE_NAMES) - mapped == {
@@ -374,10 +374,6 @@ def test_every_catalogue_surface_is_mapped_or_explicitly_refused() -> None:
         "soil-bdod",
         "soil-cec",
         "soil-ocd",
-        "botanical-occurrences",
-        "botanical-richness",
-        "botanical-collection-effort",
-        "gbif-occurrences",
     }
 
 

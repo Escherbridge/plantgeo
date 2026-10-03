@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ZoomTier } from "@/lib/map/zoom-tiers";
 import { DATA_INTERVENTION_LANES } from "@/lib/environmental/data-intervention";
 import { SOIL_RASTER_TOGGLE_IDS } from "@/lib/map/soil-raster";
-import { LAYER_REGISTRY } from "@/lib/map/layer-registry";
 import { LAND_CONTEXT_REGION_LAYER_SLUG } from "@/lib/map/layer-region-binding";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -87,7 +86,9 @@ it("offers data activities for environmental streams and non-slider source surfa
   expect(new Set(offered).size).toBe(offered.length);
   expect([...offered].sort()).toEqual([
     ...PARQUET_CAPABILITY_LANES, "fire-risk", "weather-forecast",
-    LAYER_REGISTRY["botanical-occurrences"].regionLayerSlug,
+    // No map row or plane since 2026-10-03 (herbaria retired), but still a community data-activity
+    // target so stored submissions keep validating (src/components/map/AGENTS.md §Retired herbaria layers).
+    "botanical-occurrences",
     LAND_CONTEXT_REGION_LAYER_SLUG, profileStream, ...SOIL_RASTER_TOGGLE_IDS,
   ].sort());
 });

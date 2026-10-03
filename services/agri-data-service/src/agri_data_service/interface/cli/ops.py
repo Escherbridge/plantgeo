@@ -7,6 +7,7 @@ from agri_data_service.execution.gap_repair import jobs_plan_gap_repair
 from agri_data_service.execution.job_executor_service import jobs_executor
 from agri_data_service.execution.job_lane_control import jobs_set_lane_enabled
 from agri_data_service.execution.job_run_supersession import jobs_supersede_run
+from agri_data_service.execution.lane_audit import lane_audit
 from agri_data_service.execution.usage_report import jobs_usage_report
 from agri_data_service.interface.cli import commands
 from agri_data_service.interface.cli._registry import register_commands
@@ -31,6 +32,8 @@ register_commands(
         # The source-usage audit: month-to-date spend, per-lane x host rates, open incidents
         # (spec Sec 4.9.2, GL-4). Read-only; see execution/usage_report.py.
         ("jobs-usage-report", jobs_usage_report),
+        # Read-only per-lane audit: declared limits, coverage, last turn, usage, incidents (execution/lane_audit.py).
+        ("lane-audit", lane_audit),
         # The one-time export of the 28-row reviewed label plane to the ML service's bucket
         # prefix (track `plantgeo_ml_service_20260918`, FR-7). An operational verb rather than a
         # lane: it has no schedule, no cursor and no gap census, and it runs when an owner says so.

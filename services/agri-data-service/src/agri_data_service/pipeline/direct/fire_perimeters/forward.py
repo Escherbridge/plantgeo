@@ -14,7 +14,8 @@ day ever carried an obligation.
 
 THE TURN'S SHAPE, and why the order is this order:
 
-    fetch  ->  conform  ->  read the ladder  ->  read the watermark  ->  resolve  ->  publish?
+    fetch  ->  conform  ->  read the ladder  ->  read the watermark  ->  resolve  ->
+    drain owed availability  ->  publish?
 
 The fetch comes FIRST because this lane's version day is derived from the fetched population, not
 from the calendar -- there is no day to lock on until the source has answered. That inverts
@@ -23,6 +24,16 @@ the population is captured OUTSIDE the lane-day lock, and it is deliberately NOT
 it: a refetch would move the content out from under the version day already derived from it. Two
 concurrent turns are still safe, because the lock is taken before anything is written and the loser
 finds the winner's version already published on its next tick.
+
+THE DRAIN RUNS EVERY TURN, WHETHER OR NOT A NEW VERSION PUBLISHES -- unlike every sibling direct
+writer (`vegetation`, `soil`, `climate`, `water_gauges`), this module used to call
+`retry_pending_availability` nowhere at all. A `static_lookup` lane can sit at `current` for however
+long WFIGS keeps answering the same population, so a retry claim one PAST publish wrote (its own
+availability-extension step failing once, `extend_availability_for_lane_day`) was never revisited:
+nothing else here ever asked for it back. The symptom was a lane that exits 0 every tick forever while
+`publication_debt` stands -- `execution/job_executor_service.py::_incomplete_reason` reports exactly
+that reason when `days_unwritten == 0` and `publication_debt > 0`. See `AGENTS.md`, "Fire perimeters",
+"A standing availability claim never drains itself".
 """
 
 from __future__ import annotations
@@ -71,7 +82,10 @@ from agri_data_service.pipeline.direct.fire_perimeters.watermark import (
     read_direct_watermark,
     read_published_ladder,
 )
-from agri_data_service.pipeline.parquet.availability_extension import AvailabilityExtensionTally
+from agri_data_service.pipeline.parquet.availability_extension import (
+    AvailabilityExtensionTally,
+    retry_pending_availability,
+)
 from agri_data_service.pipeline.parquet.availability_index import BotoAvailabilityStorage
 from agri_data_service.pipeline.parquet.gap_fill import (
     _lane_day_lock_key,
@@ -232,7 +246,7 @@ def emit(payload: Mapping[str, object]) -> None:
 
 
 async def run_fire_perimeters_forward(config: FirePerimetersForwardConfig) -> dict[str, object]:
-    """Fetch WFIGS once, decide what version is owed, and publish it if one is."""
+    """Fetch WFIGS once, drain owed availability claims, decide what version is owed, and publish it."""
     _validate_config(config)
     run_id = config.run_id or f"{FIRE_PERIMETERS_FORWARD_RUN_ID_PREFIX}{uuid.uuid4()}"
     deadline = time.monotonic() + config.time_budget_seconds
@@ -300,45 +314,47 @@ async def run_fire_perimeters_forward(config: FirePerimetersForwardConfig) -> di
         }
     )
 
-    if verdict.version_day is None:
-        # `current`, `source_empty` or `watermark_unread`: no version is owed, so nothing is written
-        # and the turn is a success. This is the ordinary outcome of most ticks.
-        return _report(
-            run_id,
-            lane=lane,
-            today=today,
-            source_fetched_at=source.fetched_at,
-            population=population,
-            reading=reading,
-            ladder=ladder,
-            verdict_state=verdict.state,
-            verdict_detail=verdict.detail,
-            availability=AvailabilityExtensionTally(),
-            result=None,
-        )
-
+    # ALWAYS DRAINED, WHETHER OR NOT A NEW VERSION PUBLISHES THIS TURN. `current` is the ordinary
+    # outcome of most ticks, and a retry claim a PAST publish wrote (its own availability-extension
+    # step failing once) is otherwise never revisited: nothing else calls `retry_pending_availability`
+    # for this lane, so an owed day stayed owed for as long as no NEW version happened to publish --
+    # which, on a `static_lookup` lane, can be indefinitely. See the module docstring and AGENTS.md,
+    # "Fire perimeters", "A standing availability claim never drains itself".
     availability = AvailabilityExtensionTally()
     availability_storage = BotoAvailabilityStorage.from_settings()
-    adapter = DirectFirePerimetersAdapter(population=population)
-    # BOTH are substituted. Routing only the adapter would leave `_fill_static_day` bracketing the
-    # export with the REGISTERED watermark, which reads `geo.features` -- the table this writer
-    # exists to stop depending on, and one that is empty or absent by the time this lane matters.
-    direct_lane = replace(lane, adapter=adapter, watermark=MemoizedDirectWatermark(watermark=reading.watermark))
     loader_database_url = settings.require_local_source_loader_database_url()
+    result: dict[str, object] | None = None
     async with local_source_loader_session(loader_database_url) as session:
-        result = await _publish_version_with_retries(
+        await _retry_owed_availability(
             session,
             store,
-            direct_lane,
-            verdict.version_day,
-            today=today,
+            lane_slug=lane.slug,
             run_id=run_id,
-            config=config,
             deadline=deadline,
             availability_storage=availability_storage,
             availability=availability,
         )
-    emit({"event": "fire_perimeters_forward_version_complete", "run_id": run_id, **result})
+        if verdict.version_day is not None:
+            adapter = DirectFirePerimetersAdapter(population=population)
+            # BOTH are substituted. Routing only the adapter would leave `_fill_static_day` bracketing
+            # the export with the REGISTERED watermark, which reads `geo.features` -- the table this
+            # writer exists to stop depending on, and one that is empty or absent by the time this
+            # lane matters.
+            direct_lane = replace(lane, adapter=adapter, watermark=MemoizedDirectWatermark(watermark=reading.watermark))
+            result = await _publish_version_with_retries(
+                session,
+                store,
+                direct_lane,
+                verdict.version_day,
+                today=today,
+                run_id=run_id,
+                config=config,
+                deadline=deadline,
+                availability_storage=availability_storage,
+                availability=availability,
+            )
+    if result is not None:
+        emit({"event": "fire_perimeters_forward_version_complete", "run_id": run_id, **result})
     return _report(
         run_id,
         lane=lane,
@@ -352,6 +368,60 @@ async def run_fire_perimeters_forward(config: FirePerimetersForwardConfig) -> di
         availability=availability,
         result=result,
     )
+
+
+async def _retry_owed_availability(  # noqa: PLR0913 - one caller-supplied coordinate per arg
+    session: AsyncSession,
+    store: ObjectStore,
+    *,
+    lane_slug: str,
+    run_id: str,
+    deadline: float,
+    availability_storage: AvailabilityStorage,
+    availability: AvailabilityExtensionTally,
+) -> int:
+    """Drain this lane's owed availability claims once, inside the turn's budget. Never raises.
+
+    Mirrors `vegetation/forward.py::_retry_owed_availability`, `climate/forward.py`'s and
+    `water_gauges_forward.py`'s siblings of the same name -- the one step this module was missing
+    entirely. A drain fault must never block the turn's own publication: an owed day stays owed and
+    the next turn's drain tries again.
+    """
+    if time.monotonic() >= deadline:
+        return 0
+    try:
+        outcomes = await retry_pending_availability(
+            session,
+            store,
+            lane=lane_slug,
+            kind=FIRE_PERIMETERS_DIRECT_KIND,
+            availability=availability_storage,
+            now=lambda: datetime.now(UTC),
+        )
+    except Exception as error:  # an owed index entry may never stop this lane from publishing
+        # A failed statement aborts the transaction; without this the publish's first lock query
+        # on the SAME session raises InFailedSQLTransaction and the version never publishes.
+        with suppress(Exception):
+            await session.rollback()
+        emit(
+            {
+                "event": "fire_perimeters_forward_availability_retry_failed",
+                "run_id": run_id,
+                "detail": f"{type(error).__name__}: {error}",
+            }
+        )
+        return 0
+    for outcome in outcomes:
+        availability.record(outcome)
+        emit(
+            {
+                "event": "fire_perimeters_forward_availability_retry",
+                "run_id": run_id,
+                "state": outcome.state,
+                "detail": outcome.note,
+            }
+        )
+    return len(outcomes)
 
 
 async def _publish_version_with_retries(  # noqa: PLR0913 - one caller-supplied coordinate per arg

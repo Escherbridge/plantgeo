@@ -17,7 +17,6 @@ import pytest
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
 
-from agri_data_service.agent import botanical_occurrences as agent_botanical_occurrences
 from agri_data_service.agent import graph as agent_graph
 from agri_data_service.agent import strategy_knowledge
 from agri_data_service.agent import tools as agent_tools
@@ -397,7 +396,7 @@ async def test_graph_happy_path_skips_web_and_emits_a_report() -> None:
 
 
 async def test_graph_runs_the_web_pass_when_the_warehouse_is_empty() -> None:
-    """An empty warehouse opens web search without re-exposing scoped botanical access."""
+    """An empty warehouse opens web search without re-exposing scoped species-information access."""
     warehouse_runner = _Runner([_Stream(_message(_text_block("Nothing stored here.")))])
     web_message = _message(
         SimpleNamespace(
@@ -863,7 +862,7 @@ async def test_the_fire_tool_prefilters_on_a_degree_box_before_the_exact_geodesi
     assert "ST_MakeEnvelope(?, ?, ?, ?)" in source.statement_for("agent_geometry_lane_rows")
 
 
-async def test_every_tool_statement_is_read_only(tmp_path: Path) -> None:
+async def test_every_tool_statement_is_read_only() -> None:
     """Published selection reads and retained product readers never mutate the warehouse."""
     selected_day = "2026-03-14"
     session = _Session([])
@@ -895,32 +894,6 @@ async def test_every_tool_statement_is_read_only(tmp_path: Path) -> None:
             range_end=selected_day,
         )
         await agent_tools.list_environmental_layers.call({})
-        # Botanical occurrence tools read Parquet, not the SQL warehouse; pinning an empty local
-        # root keeps them off the real bucket while still exercising each one's read path.
-        agent_botanical_occurrences.use_generation_root(str(tmp_path))
-        try:
-            await agent_tools.botanical_occurrence_current_release()
-            await agent_botanical_occurrences.botanical_occurrences_in_region(
-                release_set_id="test0000",
-                minimum_longitude=-116.3,
-                minimum_latitude=43.5,
-                maximum_longitude=-116.1,
-                maximum_latitude=43.7,
-            )
-            await agent_botanical_occurrences.botanical_occurrence_spatial_neighbours(
-                release_set_id="test0000", longitude=-116.2, latitude=43.6
-            )
-            await agent_botanical_occurrences.botanical_occurrence_temporal_neighbours(
-                release_set_id="test0000",
-                minimum_longitude=-116.3,
-                minimum_latitude=43.5,
-                maximum_longitude=-116.1,
-                maximum_latitude=43.7,
-                window_start=selected_day,
-                window_end=selected_day,
-            )
-        finally:
-            agent_botanical_occurrences.use_generation_root(None)
     # Both generic discovery and selection reads are exercised alongside the product readers.
     assert {"surface_evidence_for_selection", "list_environmental_layers"} <= {
         tool.name for tool in agent_tools.WAREHOUSE_TOOLS
@@ -942,13 +915,12 @@ def test_tool_schemas_publish_bounded_arguments() -> None:
     The three strategy-knowledge tools are coordinate-free by design -- the literature service never
     sees a location -- and are keyed instead by a length-capped query or one to five strategy ids,
     with a result cap of ten. Every tool is still keyed by SOMETHING the service validates, so none of
-    them can be handed an unbounded question. `botanical_occurrence_current_release` is the one genuine
-    exception: "what generation is current" has no spatial or surface scope to bound at all, by
-    construction -- see `read_current_botanical_release` in `planes/botanical_occurrences.py`.
+    them can be handed an unbounded question. `list_environmental_layers` is the one genuine
+    exception: the catalogue has no spatial or surface scope to bound at all, by construction.
     """
     surface_only = {"observation_coverage_on_day", "observation_temporal_neighbors"}
-    # Answers a global pointer question, not a spatial one -- no bbox, no coordinate, no surface.
-    unscoped = {"botanical_occurrence_current_release", "list_environmental_layers"}
+    # Answers a catalogue question, not a spatial one -- no bbox, no coordinate, no surface.
+    unscoped = {"list_environmental_layers"}
     literature_searches = {"search_environmental_strategies", "search_strategy_research_findings"}
     for tool in agent_tools.WAREHOUSE_TOOLS:
         definition = tool.to_dict()

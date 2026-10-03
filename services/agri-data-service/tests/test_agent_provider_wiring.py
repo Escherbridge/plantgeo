@@ -91,10 +91,8 @@ def completion(message: dict[str, Any], *, model: str = "test/model-1") -> dict[
 # --- The published schemas ---------------------------------------------------------
 
 
-# Answers a global pointer question ("what generation is current") with genuinely nothing to
-# bound it by -- no coordinate, no surface, no region. See `botanical_occurrence_current_release`
-# and `read_current_botanical_release` in `planes/botanical_occurrences.py`.
-UNSCOPED_WAREHOUSE_TOOLS = {"botanical_occurrence_current_release", "list_environmental_layers"}
+# Answers a catalogue question with genuinely nothing to bound it by -- no coordinate, no surface.
+UNSCOPED_WAREHOUSE_TOOLS = {"list_environmental_layers"}
 
 
 def test_every_warehouse_tool_publishes_a_usable_mcp_descriptor(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -24,9 +24,6 @@ from anthropic import beta_async_tool
 from pydantic import Field
 
 from agri_data_service.agent import parquet_reads, site_brief, soil_properties, strategy_knowledge, warehouse
-from agri_data_service.agent.botanical_occurrences import (
-    botanical_occurrence_current_release,
-)
 from agri_data_service.agent.selection_evidence import catalogue, parse_selection, retrieve
 from agri_data_service.agent.surfaces import (
     AGENT_SURFACE_NAMES,
@@ -2034,7 +2031,6 @@ WAREHOUSE_TOOLS: Final = (
     observation_coverage_on_day,
     observation_temporal_neighbors,
     species_information,
-    botanical_occurrence_current_release,
     search_environmental_strategies,
     get_environmental_strategies,
     search_strategy_research_findings,
@@ -2051,8 +2047,9 @@ def published_warehouse_tools() -> tuple[Any, ...]:
     `mcp_server.tool_descriptors`) and `agent/graph.py`'s warehouse and web passes -- must build its
     list from THIS function, not from `WAREHOUSE_TOOLS` directly, or an unconditionally published
     `soil_properties_at_point` blows up Gemini's combined function-declaration complexity
-    (`schema_too_complex`) the way it did in production. With the flag unset this is byte-identical
-    to the wave-2 (54e266e3) tool set.
+    (`schema_too_complex`) the way it did in production. With the flag unset this is the wave-2
+    (54e266e3) tool set minus `botanical_occurrence_current_release`, retired with the herbaria
+    plane (agent/AGENTS.md "Herbaria surfaces are retired").
 
     `WAREHOUSE_TOOLS` itself stays the full, unconditional registry on purpose: `llm.tool_by_name`
     still resolves `soil_properties_at_point` with the flag off, so a caller that already has the

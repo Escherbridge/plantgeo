@@ -562,16 +562,15 @@ same bbox agree closely enough that the second can be instant rather than animat
 ## rung-selection.ts
 
 `selectFinestAdmittingRung` is the ONE walk that decides which published rung answers a viewport,
-shared by three call sites that each own a different ladder:
+shared by the call sites that each own a ladder (a third, the botanical plane's
+`botanicalServingBandForViewport`, was deleted with the retired botanical layers on 2026-10-03):
 
-- `botanicalServingBandForViewport` (`src/lib/botanical-occurrences.ts`) over
-  `detail` / `grid-0.05` / `grid-0.25`;
 - `selectServingRung` (`src/lib/server/services/land-context/parquet-reader.ts`) over `ZOOM_TIERS`,
   gated by what the census proved published;
 - `landContextRungForViewport` (`src/hooks/useLandContextViewport.ts`), the client's label for the
   same selection.
 
-It lives in `src/lib/map/` because that is the one directory all three may import: the reader is
+It lives in `src/lib/map/` because that is the one directory both may import: the reader is
 server-only and the hook may not reach into `@/lib/server/**`
 (`scripts/check-client-server-imports.mjs`), so a helper in either of their own trees could not be
 shared without a boundary violation. The module holds no ladder and no ceiling of its own --
@@ -635,8 +634,9 @@ sound for a newer manifest's layer and unsound for a typo, and the slugs reachin
 vocabulary at all, so one character would have routed a federated layer to `not_federated` =
 available with its caption suppressed, permanently and silently. Two things close it:
 `layer-region-binding.test.tsx` diffs that table's VALUES against `platformLayers` in both
-directions (its two documented exceptions are `land-context`, which has no toggle, and
-`botanical-occurrences`, whose three toggles carry `warehouseLayerName: null` — BACKLOG N40), and
+directions (`land-context` and `water-gauges` reach it through dedicated controls or
+`regionLayerSlug` — BACKLOG N40; every platform layer has a toggle path since the herbaria
+`botanical-occurrences` slug left the vocabulary on 2026-10-03), and
 `layerBindingInRegion` answers `unbound` with a logged contract error, never `not_federated`, for
 any slug a compiled-in caller names (`TOGGLE_REACHABLE_REGION_LAYER_SLUGS` or
 `LAND_CONTEXT_REGION_LAYER_SLUG`). Only a slug this build never mentions can fail open.
@@ -661,8 +661,8 @@ published rung answers a bbox wider than..." sentence for either, so a ladder/ba
 reported as a wide viewport at every zoom, forever. `selectFinestAdmittingRungResult` is the
 preferred entry point for a new caller: it returns
 `{ kind: "selected", rung } | { kind: "no_rung_admits_area" } | { kind: "rung_not_on_ladder", rung }`
-so the two refusals stay distinguishable. `botanicalServingBandForViewport` and `selectServingRung`
-both moved onto it; `selectFinestAdmittingRung` itself keeps its original `TRung | null` signature
+so the two refusals stay distinguishable. `selectServingRung` moved onto it (as did the since-retired
+`botanicalServingBandForViewport`); `selectFinestAdmittingRung` itself keeps its original `TRung | null` signature
 because `landContextRungForViewport` (`src/hooks/useLandContextViewport.ts`) still calls it
 directly and migrating that hook is a separate change.
 

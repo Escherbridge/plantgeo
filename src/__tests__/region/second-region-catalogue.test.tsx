@@ -41,7 +41,6 @@ const REGIONALLY_SOURCED_UNBOUND_SLUGS = ["burn-severity", "drought", "soil-surv
 
 /** The six layers a global source fills anywhere on the planet, including here. */
 const GLOBALLY_BOUND_SLUGS = [
-  "botanical-occurrences",
   "fire-detections",
   "climate-field-air-temperature",
   "climate-field-dew-point",

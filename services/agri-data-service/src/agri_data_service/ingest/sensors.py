@@ -309,7 +309,26 @@ async def fetch_state_stations(
     return stations
 
 
-async def fetch_station_roster(client: httpx.AsyncClient, bbox: str) -> list[SensorStation]:
+@dataclass(frozen=True, slots=True)
+class StationRoster:
+    """One drained, capped roster, plus which configured states this call could not reach.
+
+    `unavailable_states` is the minimal signal a caller needs to tell "this roster is smaller because
+    a state's request failed" from "this roster is smaller because the operator narrowed
+    `SENSOR_STATION_STATES`": the latter is a deliberate, stable change a progress store should treat
+    as a real roster change; the former is a transient gap that must not be mistaken for one
+    (`pipeline/direct/sensors/progress.py::SweepProgressStore.resume`).
+    """
+
+    stations: list[SensorStation]
+    unavailable_states: tuple[str, ...] = ()
+
+    @property
+    def degraded(self) -> bool:
+        return bool(self.unavailable_states)
+
+
+async def fetch_station_roster(client: httpx.AsyncClient, bbox: str) -> StationRoster:
     """Drain every configured state's roster concurrently and return one deterministic, capped station list."""
     states = resolve_station_states()
     networks = resolve_station_networks()
@@ -332,7 +351,7 @@ async def fetch_station_roster(client: httpx.AsyncClient, bbox: str) -> list[Sen
     # Sorted before it is capped, so every run polls the same stations rather than whichever state
     # resolved first. A re-run therefore revisits the same readings and mints no new rows.
     ordered = sorted(by_identifier.values(), key=lambda station: station.station_identifier)
-    return ordered[: resolve_max_stations()]
+    return StationRoster(stations=ordered[: resolve_max_stations()], unavailable_states=tuple(unavailable_states))
 
 
 def observation_url(station_identifier: str, window: HistoryWindow | None = None) -> str:
@@ -568,10 +587,10 @@ async def _poll_configured_roster(
     window: HistoryWindow | None,
 ) -> list[dict[str, object]]:
     """Resolve the roster and poll it; an empty roster yields no records rather than an invented one."""
-    stations = await fetch_station_roster(client, bbox)
-    if not stations:
+    roster = await fetch_station_roster(client, bbox)
+    if not roster.stations:
         return []
-    return await collect_sensor_records(client, stations, window)
+    return await collect_sensor_records(client, roster.stations, window)
 
 
 async def _fetch_sensor_records(request: FetchRequest, window: HistoryWindow | None) -> list[dict[str, object]]:

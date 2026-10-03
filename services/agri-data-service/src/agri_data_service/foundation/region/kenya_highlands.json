@@ -28,7 +28,6 @@
     "KE-36"
   ],
   "platform_layers": [
-    "botanical-occurrences",
     "burn-severity",
     "crop-cover",
     "drought",
@@ -136,11 +135,6 @@
     {
       "layer_slug": "soil-field-vpd",
       "source_slug": "era5_land",
-      "coverage": "global"
-    },
-    {
-      "layer_slug": "botanical-occurrences",
-      "source_slug": "gbif",
       "coverage": "global"
     }
   ]

@@ -150,23 +150,6 @@ It separates capture instants, calendar availability, covered fire years and sti
 The optional metadata on ready Parquet results also survives empty viewports. It does not establish
 authority by itself; the serving reader validates its immutable publication evidence.
 
-## `botanical-proxy-contract.ts` is a duplicate that the compiler checks
-
-It declares the response shape of `GET /api/botanical-occurrences` in zod, and it necessarily
-restates what `src/lib/server/services/botanical-occurrences-client.ts` already decodes. That
-duplication is deliberate and is the cheaper of two bad options: the hook may NOT import from
-`src/lib/server/**` (typescript.md, "Boundaries and validation"), and a type-only import of a module
-that reads server environment variables stops being type-only after one careless refactor.
-
-What makes the copy safe is that it is CHECKED. `route.ts` assigns its answer to
-`BotanicalProxyAnswer` before responding, so a drift between the server client's decoded shape and
-this schema fails the typecheck rather than reaching a hook as a field it cannot find. And the hook
-parses the body through the schema at its own boundary, so a version skew between a deployed route
-and a cached page surfaces as an error state rather than as a layer drawing `undefined`.
-
-Vocabulary: this contract is CAMELCASE — the decoded server vocabulary — while the layer components
-speak the plane's snake_case. `botanical-presentation.ts` remains the one seam between the two.
-
 ## Community data interventions
 
 `data-intervention.ts` defines collection plans and submitted dataset references for the `data`
@@ -177,6 +160,11 @@ catalogue, map source identities and the botanical profile schema. Calendar and 
 combined signal plane are excluded. Botanical richness and effort are views of occurrences,
 not additional submission lanes. A target in this list does not claim that source coverage is
 available in the selected region or that community records enter its publication namespace.
+`botanical-occurrences` stays a target although the herbaria map rows, plane and ingestion lane were
+retired platform-wide on 2026-10-03: it names community submissions, not the herbaria dataset, it is
+the natural lane for a future community botanical layer, and removing it would make stored
+data-activity rows fail `DataInterventionDetailsSchema` (see `src/components/map/AGENTS.md`
+§Retired herbaria layers).
 
 Collection plans require a lane and a collection method. Dataset submissions additionally
 require a real, nonfuture observation date and an HTTP(S) dataset or evidence link. Optional

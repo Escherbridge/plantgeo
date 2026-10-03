@@ -10,8 +10,8 @@ import { useInterventionDetailStore } from "@/stores/intervention-detail-store";
 /**
  * Click-to-inspect for the merged intervention layer, in ONE place.
  *
- * All six style layers are bound here, per-layer, the way `WaterLayer.tsx` and
- * `BotanicalOccurrencesLayer.tsx` already bind theirs -- rather than scattered
+ * All six style layers are bound here, per-layer, the way `WaterLayer.tsx` already
+ * binds its own -- rather than scattered
  * across the two components that happen to own each source -- because the two
  * origins resolve differently and the difference is the whole point:
  *

@@ -60,16 +60,14 @@ import {
   PARQUET_FEATURE_SOURCE_IDS,
   type ParquetFeatureSourceId,
 } from "@/lib/map/sources";
-// The three orchestration seams this component composes rather than inlines (style review W3,
-// S12). Each is a plain module with no MapLibre dependency, so all three are static imports
+// The orchestration seams this component composes rather than inlines (style review W3,
+// S12). Each is a plain module with no MapLibre dependency, so both are static imports
 // while the layer COMPONENTS below stay dynamic.
-import { useBotanicalViewportLanes } from "@/components/map/layer-manager/useBotanicalViewportLanes";
 import { useLandContextViewportBoundaries } from "@/components/map/layer-manager/useLandContextViewportBoundaries";
 import {
   buildParquetLayerFaults,
   type ParquetLaneReport,
 } from "@/components/map/layer-manager/parquet-layer-faults";
-import { BOTANICAL_DETAIL_MIN_ZOOM } from "@/lib/botanical-occurrences";
 import { ParquetLayerFaultBanner } from "@/components/map/ParquetLayerFaultBanner";
 import { WORLD_EXTENT_BBOX } from "@/lib/map/world-extent";
 import { soilRasterToggleId } from "@/lib/map/soil-raster";
@@ -188,34 +186,6 @@ const DemandHeatmapLayer = dynamic(
 );
 const WeatherLayer = dynamic(
   () => import("@/components/map/layers/WeatherLayer").then((m) => ({ default: m.WeatherLayer })),
-  { ssr: false }
-);
-const BotanicalOccurrencesLayer = dynamic(
-  () =>
-    import("@/components/map/layers/BotanicalOccurrencesLayer").then((m) => ({
-      default: m.BotanicalOccurrencesLayer,
-    })),
-  { ssr: false }
-);
-const BotanicalRichnessLayer = dynamic(
-  () =>
-    import("@/components/map/layers/BotanicalRichnessLayer").then((m) => ({
-      default: m.BotanicalRichnessLayer,
-    })),
-  { ssr: false }
-);
-const GbifOccurrencesLayer = dynamic(
-  () =>
-    import("@/components/map/layers/GbifOccurrencesLayer").then((m) => ({
-      default: m.GbifOccurrencesLayer,
-    })),
-  { ssr: false }
-);
-const BotanicalCollectionEffortLayer = dynamic(
-  () =>
-    import("@/components/map/layers/BotanicalCollectionEffortLayer").then((m) => ({
-      default: m.BotanicalCollectionEffortLayer,
-    })),
   { ssr: false }
 );
 const QueryPointLayer = dynamic(
@@ -495,22 +465,6 @@ export default function LayerManager() {
   // SoilDetails instead, from this same query key. See src/lib/server/AGENTS.md §soil-survey.
   const soilSurveyGeoJSON = soilSurveyRead.answer ?? EMPTY_FEATURE_COLLECTION;
 
-  // The three herbarium rows and the two lanes that feed them; see
-  // `src/components/map/layer-manager/useBotanicalViewportLanes.ts` for why there are two.
-  const botanicalOccurrencesVisible = layerVisibility["botanical-occurrences"];
-  const botanicalRichnessVisible = layerVisibility["botanical-richness"];
-  const botanicalEffortVisible = layerVisibility["botanical-collection-effort"];
-  const gbifOccurrencesVisible = layerVisibility["gbif-occurrences"];
-  const botanical = useBotanicalViewportLanes({
-    bbox,
-    zoom,
-    occurrencesVisible: botanicalOccurrencesVisible,
-    richnessVisible: botanicalRichnessVisible,
-    effortVisible: botanicalEffortVisible,
-    gbifVisible: gbifOccurrencesVisible,
-  });
-  const botanicalBand = botanical.band;
-
   // The three ERA5-Land soil fields. `zoom` is not a hint here -- it selects the server-side
   // aggregation tier, so zooming out makes the answer SMALLER (isobands over a coarse
   // lattice) rather than shipping 1,568 squares. Each takes ITS OWN row's settled day, like
@@ -675,8 +629,6 @@ export default function LayerManager() {
       isLaneNeverWritten:
         fire.result?.state === "not_generated" && fire.result.reason === "lane_never_written",
     },
-    botanical: botanical.laneReport,
-    botanicalDetailMinZoom: BOTANICAL_DETAIL_MIN_ZOOM,
     landContextFault: landContextViewport.fault,
   });
   if (cropCover.enabled) {
@@ -1256,69 +1208,6 @@ export default function LayerManager() {
         geojson={soilVpdGeoJSON}
         opacityScale={layerOpacity["soil-vpd"]}
         visible={soilVpdVisible}
-      />
-      {/* The three herbarium rows off ONE read. Zoom-band exclusivity is enforced here, in the
-          container, which is where `BotanicalOccurrencesLayer`'s docstring says it belongs --
-          the component draws unconditionally once handed geojson.
-
-          `visible` is gated on the RETURNED state rather than on the requested band: each layer
-          is handed null geojson whenever the answer in hand is the other shape, so a retained
-          aggregate frame cannot be drawn as specimens (or the reverse) while a zoom across the
-          floor is in flight. Passing the band alone would draw the previous answer in the new
-          band's layer for one round trip. The detail component ALSO re-checks the floor itself,
-          which is belt-and-braces rather than duplication: it removes its layers below zoom 11
-          whatever it was handed. */}
-      <BotanicalOccurrencesLayer
-        map={map}
-        geojson={botanical.occurrencesGeoJSON}
-        zoom={zoom}
-        visible={botanicalOccurrencesVisible && botanicalBand === "detail"}
-        onSelectFeature={botanical.onSelectOccurrence}
-        // Takes the layers down on a FAILED read rather than retaining a collection that no
-        // longer describes the viewport; a pending read keeps drawing. See the prop's docstring.
-        readPhase={botanical.occurrencesReadPhase}
-      />
-      {/* GBIF's own toggle over the SAME one query, filtered above to GBIF's collection_key --
-          see `useBotanicalViewportLanes`'s `gbifGeoJSON` for why the split happens in that hook
-          rather than inside either map component. Independently switchable from the UBC layer
-          just above: a reader can have UBC-only, GBIF-only, both, or neither on at once. */}
-      <GbifOccurrencesLayer
-        map={map}
-        geojson={botanical.gbifGeoJSON}
-        zoom={zoom}
-        visible={gbifOccurrencesVisible && botanicalBand === "detail"}
-        onSelectFeature={botanical.onSelectOccurrence}
-      />
-      {/* Richness is the primary aggregate read -- "how many taxa are documented here" -- and
-          effort is the context layer UNDER it that says how hard anyone looked. They are two
-          toggles over one response rather than one layer with a mode, because a reader
-          interpreting a richness cell needs to be able to put the effort cell beside it; that
-          is the whole point of shipping a collection-bias layer at all. Both draw across the
-          entire aggregate band (every zoom below the detail floor) rather than splitting it
-          between them: the plane returns ONE `aggregate` answer per viewport with both measures
-          on the same cells, so there is no sub-band where one has data and the other does not,
-          and inventing a split would hide the bias layer at exactly the coarse zooms where
-          collecting bias is most visible.
-
-          The opacity multiplier is a plain multiply rather than `scaleOpacityValue`: that helper
-          returns `unknown` because it may emit a MapLibre `["*", ...]` expression for a
-          style-authored base, and both of these components take a `number` prop and fold it into
-          their own authored base themselves. Same rule as every other component-mounted layer --
-          one writer per (layer, paint property) -- reached through the arithmetic these props
-          allow. */}
-      <BotanicalRichnessLayer
-        map={map}
-        geojson={botanical.richnessGeoJSON}
-        releaseSetId={botanical.aggregateReleaseSetId}
-        visible={botanicalRichnessVisible && botanicalBand === "aggregate"}
-        opacity={0.75 * layerOpacity["botanical-richness"]}
-      />
-      <BotanicalCollectionEffortLayer
-        map={map}
-        geojson={botanical.effortGeoJSON}
-        measure={botanical.effortMeasure}
-        visible={botanicalEffortVisible && botanicalBand === "aggregate"}
-        opacity={0.55 * layerOpacity["botanical-collection-effort"]}
       />
       {/* Nine instances, one per signal, each on its own row's day and in its own form. The
           ERA5-Land fields above get one instance per measure for the same reason: these are

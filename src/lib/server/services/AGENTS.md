@@ -486,9 +486,10 @@ Both axes now consult the one verdict. `assertServedRegionMatchesBundle()`
 `getParquetLatestRelease` — which is every Parquet row read in the tree, since each tRPC reader and
 `land-context/parquet-reader.ts` goes through one of those three — and throws
 `ParquetRegionIdentityError`, carrying the SAME typed `region_identity_mismatch` reason the slider
-withholds under. `botanical-occurrences-client.ts` speaks its own wire contract to its own routes,
-so it calls the shared guard explicitly rather than inheriting it, before the pointer read: a
-generation resolved from another region's warehouse is not a pin this deployment may hold.
+withholds under. A reader that speaks its own wire contract to its own routes (the retired
+botanical client was the one) must call the shared guard explicitly rather than inheriting it,
+before any pointer read: a generation resolved from another region's warehouse is not a pin this
+deployment may hold.
 
 FIVE CHOICES WORTH THE WORDS:
 
@@ -774,8 +775,7 @@ day-partitioned governed Parquet plane (`getParquetLatestRelease`/`getParquetLay
 `shared.ts`'s `ParquetReaderResult`/`boundedResult`/`mapEnvelope`). SSURGO (soil-survey port S3/S4)
 is a dedicated, static-reference release with its own route on `agri-data-service`
 (`GET /api/v1/soil-survey/query`) and its own availability vocabulary, so it fetches directly with
-`fetchBoundedJson`/`providerUrl`, the same shape `botanical-occurrences-client.ts` and the other
-single-purpose upstream bridges use -- never `date`/`day`, since `temporalScope.
+`fetchBoundedJson`/`providerUrl`, the same shape the other single-purpose upstream bridges use -- never `date`/`day`, since `temporalScope.
 selectedDaySupported` is `false` on the wire and a caller asking for one gets `ParquetPlaneRequestError`
 before any fetch runs.
 
@@ -804,39 +804,24 @@ wire shape unmodified, and the router's (`trpc/soil-survey.test.ts`) exercises t
 persistence entirely, unlike every other layer's own cacheable `unavailable` -- see
 `src/lib/cache/AGENTS.md` §"SSURGO release pinning and the excluded unavailable answer".
 
-## botanical-occurrences: the pointer is decoded once, and it fails closed
+## botanical-occurrences client (retired 2026-10-03)
 
-`botanical-occurrences-client.ts` stays a deliberate sibling of `parquet-plane-client.ts` (its own
-module docstring says why: the `WIRE` block there is frozen and dual-tested, and this plane has no
-paired Python fixture). The ONE thing it does not keep to itself is current-pointer decoding.
+`botanical-occurrences-client.ts`, and the `decodeLaneCurrentPointer` §4a pointer decoder at the
+bottom of `parquet-plane-client.ts` that only it used, were deleted with the retired botanical map
+layers (retired platform-wide 2026-10-03; `src/components/map/AGENTS.md` §Retired herbaria layers). The
+rule they encoded still binds any future per-lane `/current` reader: decode the checksum-bound
+pointer once, fail closed on an unparseable body (a deploy mismatch, never an absence), keep the
+failure vocabulary a closed enum, require `pointerKind` with no default, and refuse an answer whose
+release id is not the pinned generation.
 
-`decodeLaneCurrentPointer` lives at the BOTTOM of `parquet-plane-client.ts`, outside that frozen
-`WIRE` block, because a lane's `/current` answer is not lane-specific: layer-lanes §4a gives every
-lane the same checksum-bound pointer shape, so a second decoder per lane would be a second place
-for the same rule to rot. Adding it there renames nothing the freeze covers — the Python contract
-test parses only `const WIRE = { ... } as const;`.
+## Retired evidence sources (herbaria, 2026-10-03)
 
-The decode has no lenient branch. A pointer body that does not parse throws
-`LanePointerContractError` (surfaced here as `BotanicalOccurrencesContractError`) instead of
-degrading to "unavailable": an unparseable pointer is a deploy mismatch, and reporting it as an
-absence would make a version skew look like a lane nobody has published to. The five declared
-failures — `pointer_missing`, `pointer_malformed`, `pointer_stale`, `pointer_checksum_invalid`,
-`transport_unavailable` — are a closed enum for the same reason: a caller choosing between retry,
-alarm and "nothing published yet" cannot branch on prose.
-
-`getBotanicalOccurrences` attaches the resolved pointer to every `detail`/`aggregate` answer and
-refuses one whose `release_set_id` is not the pinned generation. That check can only fire if the
-pin is being ignored, which is exactly why it throws rather than draws: the alternative is a map
-whose every provenance line names a generation the rows did not come from.
-
-### `pointerKind` is required, and the legacy bridge is retired
-
-`LaneCurrentPointer` carries `pointerKind: "latest_v1"`, required with no default. The `current.json`
-bridge (owner's bridge-then-cut pattern, repoint decisions 2026-08-25) was cut on 2026-09-18: the
-Python serving side (`planes/botanical_occurrences.py::read_current_botanical_release`) no longer
-resolves through `current.json` at all, so `legacy_current_json` can never legitimately reach this
-decoder again. `LANE_POINTER_KINDS`/`botanicalProxyPointerSchema` enforce that at the schema level —
-a legacy value is now a `contract_mismatch`, not a weaker-but-valid answer to pass through.
-
-Defaulting the field would still decide on the serving side's behalf which guarantee an answer
-carries; kept required for that reason even with one member.
+`botanical-occurrences`, `botanical-richness`, `botanical-collection-effort` and `gbif-occurrences`
+left `REGIONAL_TOOL_EVIDENCE_SOURCES` (parity-pinned to agri's `RegionalToolEvidenceSource`) with the
+herbaria plane, so no tool call can produce them and no per-turn report schema offers them. They
+live on in `RETIRED_REGIONAL_TOOL_EVIDENCE_SOURCES`, spread into `REGIONAL_CLAIM_EVIDENCE_SOURCES`,
+for one reason: `readSavedReport` validates history with `remediationReportSchema`, and a saved
+report that cited one would otherwise fail to parse and vanish from the conversation. A live turn
+cannot emit one: `regionalFactsForRead` admits facts only for `REGIONAL_TOOL_EVIDENCE_SOURCES`, and
+`reportSchemaForCitations` offers only sources actually read. Drop the list only once no stored
+report can carry the slugs.
