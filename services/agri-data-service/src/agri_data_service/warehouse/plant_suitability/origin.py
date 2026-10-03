@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 import polars as pl
 
@@ -26,6 +26,37 @@ class OriginRecord(TypedDict):
     origin_category: str
     origin_label: str
     introduced_flag: bool
+
+
+@dataclass(frozen=True)
+class PoolTaxon:
+    """The facts origin reads about one kept pool taxon."""
+
+    plant_id: int
+    plant_binomial: str
+    native_status_l48: str | None
+    present_in_state: bool
+
+
+@dataclass(frozen=True)
+class DocumentStatement:
+    """What one document says about one binomial anywhere in it, and whether it is an in-region guide here."""
+
+    source_short_name: str
+    in_region: bool
+    says_native_regionally: bool
+    says_native_range_wide: bool
+    says_introduced: bool
+    introduced_marked_conflict: bool
+
+
+@dataclass(frozen=True)
+class DocumentVerdict:
+    """One document's verdict on a taxon (native, introduced or silent) and the note it adds to the label."""
+
+    document: DocumentStatement
+    verdict: str | None
+    note: str | None
 
 
 @dataclass
@@ -57,21 +88,21 @@ def document_statements(matched_all: pl.DataFrame, config: RuleConfig) -> pl.Dat
     )
 
 
-def document_verdict(
-    document: dict[str, Any], *, present: bool, l48: str | None, state: str
-) -> tuple[str | None, str | None]:
-    """(verdict, note): native if the document says native anywhere; a curator-marked conflict falls to PLANTS."""
-    name = document["source_short_name"]
-    if document["says_native_regionally"] or document["says_native_range_wide"]:
-        note = f"{name} prints it both native and introduced, counted native" if document["says_introduced"] else None
-        return "native", note
-    if not document["says_introduced"]:
-        return None, None
-    if not document["introduced_marked_conflict"]:
-        return "introduced", None
+def document_verdict(document: DocumentStatement, *, present: bool, l48: str | None, state: str) -> DocumentVerdict:
+    """Native if the document says native anywhere; a curator-marked conflicting 'introduced' falls to PLANTS."""
+    name = document.source_short_name
+    if document.says_native_regionally or document.says_native_range_wide:
+        note = f"{name} prints it both native and introduced, counted native" if document.says_introduced else None
+        return DocumentVerdict(document, "native", note)
+    if not document.says_introduced:
+        return DocumentVerdict(document, None, None)
+    if not document.introduced_marked_conflict:
+        return DocumentVerdict(document, "introduced", None)
     if present and plants_codes(l48) & PLANTS_NATIVE_CODES:
-        return "native", f"origin disputed: {name} says introduced, PLANTS L48 {l48} and recorded in {state}"
-    return "introduced", f"origin disputed: {name} says introduced, PLANTS L48 {l48}, not recorded in {state}"
+        note = f"origin disputed: {name} says introduced, PLANTS L48 {l48} and recorded in {state}"
+        return DocumentVerdict(document, "native", note)
+    note = f"origin disputed: {name} says introduced, PLANTS L48 {l48}, not recorded in {state}"
+    return DocumentVerdict(document, "introduced", note)
 
 
 def plants_fallback(l48: str | None, *, present: bool, state: str) -> OriginDecision:
@@ -89,13 +120,13 @@ def plants_fallback(l48: str | None, *, present: bool, state: str) -> OriginDeci
     return OriginDecision("unknown", "origin unknown (sources silent; no PLANTS L48 status)", introduced_flag=False)
 
 
-def document_vote(verdicts: list[dict[str, Any]], *, present: bool, l48: str | None, state: str) -> OriginDecision:
+def document_vote(verdicts: list[DocumentVerdict], *, present: bool, l48: str | None, state: str) -> OriginDecision:
     """In-region documents vote first (one vote each); a tie is broken by PLANTS state presence."""
-    in_region_votes = [verdict for verdict in verdicts if verdict["verdict"] and verdict["in_region"]]
-    tier = in_region_votes or [verdict for verdict in verdicts if verdict["verdict"] and not verdict["in_region"]]
+    in_region_votes = [verdict for verdict in verdicts if verdict.verdict and verdict.document.in_region]
+    tier = in_region_votes or [verdict for verdict in verdicts if verdict.verdict and not verdict.document.in_region]
     tier_label = "in-region" if in_region_votes else "neighbouring"
-    native_by = sorted({verdict["source_short_name"] for verdict in tier if verdict["verdict"] == "native"})
-    introduced_by = sorted({verdict["source_short_name"] for verdict in tier if verdict["verdict"] == "introduced"})
+    native_by = sorted({verdict.document.source_short_name for verdict in tier if verdict.verdict == "native"})
+    introduced_by = sorted({verdict.document.source_short_name for verdict in tier if verdict.verdict == "introduced"})
     if not (native_by or introduced_by):
         return plants_fallback(l48, present=present, state=state)
     notes: list[str] = []
@@ -117,24 +148,24 @@ def document_vote(verdicts: list[dict[str, Any]], *, present: bool, l48: str | N
 
 
 def state_check(
-    decision: OriginDecision, verdicts: list[dict[str, Any]], *, l48: str | None, state: str
+    decision: OriginDecision, verdicts: list[DocumentVerdict], *, l48: str | None, state: str
 ) -> OriginDecision:
     """Flag a taxon PLANTS does not record in the state unless an in-region, state-scoped source calls it native."""
     if decision.category == "introduced":
         decision.label += f" (not recorded in {state}, PLANTS)"
         return decision
     state_claims = [
-        verdict["source_short_name"]
+        verdict.document.source_short_name
         for verdict in verdicts
-        if verdict["in_region"] and verdict["verdict"] == "native" and verdict["says_native_regionally"]
+        if verdict.document.in_region and verdict.verdict == "native" and verdict.document.says_native_regionally
     ]
     if state_claims:
         decision.notes.append(f"PLANTS does not record it in {state}; native per in-region {', '.join(state_claims)}")
         return decision
-    natives = [verdict for verdict in verdicts if verdict["verdict"] == "native"]
-    range_wide = sorted({verdict["source_short_name"] for verdict in natives if not verdict["says_native_regionally"]})
-    regional = [verdict for verdict in natives if verdict["says_native_regionally"] and not verdict["in_region"]]
-    neighbours = sorted({verdict["source_short_name"] for verdict in regional})
+    natives = [verdict.document for verdict in verdicts if verdict.verdict == "native"]
+    range_wide = sorted({document.source_short_name for document in natives if not document.says_native_regionally})
+    regional = [document for document in natives if document.says_native_regionally and not document.in_region]
+    neighbours = sorted({document.source_short_name for document in regional})
     basis: list[str] = []
     if range_wide:
         basis.append(f"native per {', '.join(range_wide)} is a range-wide statement")
@@ -146,22 +177,19 @@ def state_check(
     return OriginDecision("not_recorded_in_state", label, introduced_flag=True, notes=decision.notes)
 
 
-def decide_origin(taxon: dict[str, Any], documents: list[dict[str, Any]], state: str) -> OriginRecord:
+def decide_origin(taxon: PoolTaxon, documents: list[DocumentStatement], state: str) -> OriginRecord:
     """Origin of one (region, taxon) from one verdict per document naming its binomial."""
-    present, l48 = bool(taxon["present_in_state"]), taxon["native_status_l48"]
-    verdicts: list[dict[str, Any]] = []
-    for document in documents:
-        verdict, note = document_verdict(document, present=present, l48=l48, state=state)
-        verdicts.append({**document, "verdict": verdict, "note": note})
+    present, l48 = taxon.present_in_state, taxon.native_status_l48
+    verdicts = [document_verdict(document, present=present, l48=l48, state=state) for document in documents]
     decision = document_vote(verdicts, present=present, l48=l48, state=state)
-    decision.notes = [verdict["note"] for verdict in verdicts if verdict["note"]] + decision.notes
+    decision.notes = [verdict.note for verdict in verdicts if verdict.note] + decision.notes
     if not present:
         decision = state_check(decision, verdicts, l48=l48, state=state)
     label = decision.label
     if decision.notes:
         label += " — " + " / ".join(dict.fromkeys(decision.notes))
     return {
-        "plant_id": taxon["plant_id"],
+        "plant_id": taxon.plant_id,
         "origin_category": decision.category,
         "origin_label": label,
         "introduced_flag": decision.introduced_flag,
@@ -178,13 +206,27 @@ def decide_origins(
         .join(documents, on=["source_short_name", "plant_binomial"], how="left")
         .sort("source_short_name")
     )
-    by_binomial: dict[str, list[dict[str, Any]]] = {}
+    by_binomial: dict[str, list[DocumentStatement]] = {}
     for row in rows.iter_rows(named=True):
-        by_binomial.setdefault(row["plant_binomial"], []).append(row)
-    records = [
-        decide_origin(taxon, by_binomial.get(taxon["plant_binomial"], []), state)
-        for taxon in kept_taxa.unique(subset="plant_id", keep="first", maintain_order=True).iter_rows(named=True)
+        statement = DocumentStatement(
+            source_short_name=row["source_short_name"],
+            in_region=bool(row["in_region"]),
+            says_native_regionally=bool(row["says_native_regionally"]),
+            says_native_range_wide=bool(row["says_native_range_wide"]),
+            says_introduced=bool(row["says_introduced"]),
+            introduced_marked_conflict=bool(row["introduced_marked_conflict"]),
+        )
+        by_binomial.setdefault(row["plant_binomial"], []).append(statement)
+    taxa = [
+        PoolTaxon(
+            plant_id=row["plant_id"],
+            plant_binomial=row["plant_binomial"],
+            native_status_l48=row["native_status_l48"],
+            present_in_state=bool(row["present_in_state"]),
+        )
+        for row in kept_taxa.unique(subset="plant_id", keep="first", maintain_order=True).iter_rows(named=True)
     ]
+    records = [decide_origin(taxon, by_binomial.get(taxon.plant_binomial, []), state) for taxon in taxa]
     schema = {
         "plant_id": pl.Int64,
         "origin_category": pl.String,

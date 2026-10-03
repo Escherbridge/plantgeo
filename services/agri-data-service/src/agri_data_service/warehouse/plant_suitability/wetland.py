@@ -2,15 +2,25 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, TypedDict
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, TypedDict
 
 import polars as pl
 
+from agri_data_service.warehouse.plant_suitability.config import rule_config_fingerprint
+from agri_data_service.warehouse.plant_suitability.licences import licence_gate
 from agri_data_service.warehouse.plant_suitability.names import binomial_key
-from agri_data_service.warehouse.plant_suitability.schemas import WETLAND_LIST_SCHEMA, conform
+from agri_data_service.warehouse.plant_suitability.schemas import (
+    GUIDE_ROW_SCHEMA,
+    NWPL_RESOLUTION_COLUMN,
+    WETLAND_LIST_SCHEMA,
+    conform,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Sequence
+
+    from agri_data_service.warehouse.plant_suitability.config import RuleConfig
 
 WETNESS_RANK = {"UPL": 1, "FACU": 2, "FAC": 3, "FACW": 4, "OBL": 5}
 # NWPL 2022 files these under names the PLANTS synonym lists do not link (keyed by the PLANTS / regional name).
@@ -51,54 +61,80 @@ def ratings_by_binomial(wetland_list: pl.DataFrame) -> dict[str, dict[str, str |
     return {key: {"aw": wettest(entry["aw"]), "wmvc": wettest(entry["wmvc"])} for key, entry in collected.items()}
 
 
-def binomials(names: list[str | None]) -> set[str]:
+def binomials(names: Iterable[str | None]) -> set[str]:
     """Binomial keys of the non-empty names."""
     keys = (binomial_key(name) for name in names if name)
     return {key for key in keys if key is not None}
 
 
-def wetland_record(taxon: dict[str, Any], lookup: dict[str, dict[str, str | None]]) -> WetlandRecord:
+@dataclass(frozen=True)
+class NamedTaxon:
+    """A PLANTS taxon with every name the NWPL lookup may match: accepted name, PLANTS synonyms, regional names."""
+
+    plant_id: int
+    accepted_name: str
+    synonyms: Sequence[str | None]
+    regional_names: Sequence[str | None]
+
+
+def wetland_record(taxon: NamedTaxon, lookup: dict[str, dict[str, str | None]]) -> WetlandRecord:
     """Ratings from the first route with an NWPL hit: accepted name, synonyms, the resolution table, regional names."""
-    synonyms: list[str | None] = taxon["synonym_names"] or []
-    regional: list[str | None] = taxon["regional_names"] or []
     resolved = {binomial_key(listed): binomial_key(target) for listed, target in NWPL_NAME_RESOLUTIONS.items()}
-    plants_binomials = binomials([taxon["accepted_name"], *synonyms, *regional])
-    routes: list[tuple[str, list[str | None]]] = [
-        ("accepted_binomial", [taxon["accepted_name"]]),
-        ("plants_synonym", synonyms),
+    plants_binomials = binomials([taxon.accepted_name, *taxon.synonyms, *taxon.regional_names])
+    routes: list[tuple[str, Sequence[str | None]]] = [
+        ("accepted_binomial", [taxon.accepted_name]),
+        ("plants_synonym", taxon.synonyms),
         ("nwpl_name_resolution", [resolved[key] for key in plants_binomials if key in resolved]),
-        ("regional_list_name", regional),
+        ("regional_list_name", taxon.regional_names),
     ]
     for route, names in routes:
         hits = [lookup[key] for key in binomials(names) if key in lookup]
         if hits:
             return {
-                "plant_id": taxon["plant_id"],
+                "plant_id": taxon.plant_id,
                 "nwpl_aw": wettest(hit["aw"] for hit in hits),
                 "nwpl_wmvc": wettest(hit["wmvc"] for hit in hits),
                 "nwpl_route": route,
             }
-    return {"plant_id": taxon["plant_id"], "nwpl_aw": None, "nwpl_wmvc": None, "nwpl_route": NOT_LISTED}
+    return {"plant_id": taxon.plant_id, "nwpl_aw": None, "nwpl_wmvc": None, "nwpl_route": NOT_LISTED}
 
 
 def resolve_wetland_ratings(
-    species: pl.DataFrame, guide_rows: pl.DataFrame, wetland_list: pl.DataFrame
+    species: pl.DataFrame, guide_rows: pl.DataFrame, wetland_list: pl.DataFrame, config: RuleConfig
 ) -> pl.DataFrame:
-    """The species envelope with nwpl_aw / nwpl_wmvc / nwpl_route resolved from an NWPL list (build-time step)."""
+    """The envelope with NWPL ratings resolved from admitted rows' names, stamped with the rule set's fingerprint."""
     lookup = ratings_by_binomial(wetland_list)
+    admitted, _ = licence_gate(conform(guide_rows, GUIDE_ROW_SCHEMA, "guide rows"), config)
     regional_names = (
-        guide_rows.explode("matched_plant_ids", empty_as_null=True)
+        admitted.explode("matched_plant_ids", empty_as_null=True)
         .drop_nulls("matched_plant_ids")
         .group_by(pl.col("matched_plant_ids").alias("plant_id"))
         .agg(pl.col("listed_scientific_name").drop_nulls().unique().alias("regional_names"))
     )
     taxa = species.join(regional_names, on="plant_id", how="left")
-    records = [wetland_record(taxon, lookup) for taxon in taxa.iter_rows(named=True)]
+    records = [
+        wetland_record(
+            NamedTaxon(
+                plant_id=row["plant_id"],
+                accepted_name=row["accepted_name"],
+                synonyms=row["synonym_names"] or [],
+                regional_names=row["regional_names"] or [],
+            ),
+            lookup,
+        )
+        for row in taxa.iter_rows(named=True)
+    ]
     ratings = pl.DataFrame(
         records,
         schema={"plant_id": pl.Int64, "nwpl_aw": pl.String, "nwpl_wmvc": pl.String, "nwpl_route": pl.String},
     )
-    return species.drop(RATING_COLUMNS, strict=False).join(ratings, on="plant_id", how="left").select(species.columns)
+    columns = list(dict.fromkeys([*species.columns, *RATING_COLUMNS, NWPL_RESOLUTION_COLUMN]))
+    return (
+        species.drop(*RATING_COLUMNS, NWPL_RESOLUTION_COLUMN, strict=False)
+        .join(ratings, on="plant_id", how="left")
+        .with_columns(pl.lit(rule_config_fingerprint(config)).alias(NWPL_RESOLUTION_COLUMN))
+        .select(columns)
+    )
 
 
 def assert_wetland_genera_rated(pool: pl.DataFrame) -> None:

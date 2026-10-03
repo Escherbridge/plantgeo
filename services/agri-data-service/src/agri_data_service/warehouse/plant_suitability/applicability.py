@@ -15,6 +15,7 @@ from agri_data_service.warehouse.plant_suitability.axes import (
 
 MILLIMETRES_PER_INCH = 25.4
 FOREST_WOODLAND_MLRAS = ["3", "6", "43B"]
+# Every qualifier habitat_status maps to site data; guide-row load refuses any other (pools.GUIDE_ROW_VOCABULARIES).
 HABITAT_QUALIFIERS = frozenset((
     "saline_alkali_or_poor_drainage", "sandy_or_loam", "forest_woodland", "juniper_sites", "wet_soils",
     "moist_to_wet_soils",
@@ -85,16 +86,12 @@ def both_hold(first: str, second: str) -> pl.Expr:
 
 
 def candidate_conditions(candidates: pl.DataFrame) -> pl.DataFrame:
-    """One row per (taxon, supporting guide row) with its band, qualifier, in-region flag, tag and listed name."""
+    """One row per (taxon, supporting guide row) with its band, qualifier (vocabulary checked at load), tag and name."""
     conditions = (
         candidates.select("plant_id", "applicability_rows")
         .explode("applicability_rows", empty_as_null=True)
         .unnest("applicability_rows")
     )
-    unmapped = set(conditions["habitat_qualifier"].drop_nulls().unique().to_list()) - HABITAT_QUALIFIERS
-    if unmapped:
-        message = f"habitat qualifiers without a site mapping: {sorted(unmapped)}"
-        raise ValueError(message)
     unsupported = set(candidates["plant_id"].to_list()) - set(conditions.drop_nulls("source_tag")["plant_id"].to_list())
     if unsupported:
         message = f"pool taxa without a supporting guide row: {sorted(unsupported)}"

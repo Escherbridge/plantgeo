@@ -26,20 +26,23 @@ if TYPE_CHECKING:
 
 SERVICE_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_DIRECTORY = SERVICE_ROOT / "tests" / "fixtures" / "plant_suitability"
-SCHEMAS_PATH = SERVICE_ROOT / "src" / "agri_data_service" / "warehouse" / "plant_suitability" / "schemas.py"
+ENGINE_DIRECTORY = SERVICE_ROOT / "src" / "agri_data_service" / "warehouse" / "plant_suitability"
 DEFAULT_PROTOTYPE_DIRECTORY = SERVICE_ROOT.parents[1] / ".omc" / "research" / "plant-suitability-v0-20260926"
 REGIONS = ("boise", "corvallis", "bend")
 GUILDS = ("greenstrip", "post_fire_restoration", "hedgerow_buffer")
 STATE_PRESENCE_COLUMNS = {"ID": "present_in_id", "OR": "present_in_or", "WA": "present_in_wa"}
 RANGE_WIDE_SOURCE_IDS = ["idpm_tn2a_2017", "nrcs_id_tn77_2021", "nrcs_tn50_2008"]
 RANGE_WIDE_SHORT_NAMES = frozenset({"NRCS TN PM-2A (2017)", "NRCS ID TN PM-77 (2021)", "NRCS TN PM-50 (2008)"})
-US_GOVERNMENT_WORK = "US Government work"
-UNRECORDED_LICENCE = "unrecorded (the v0 curation captured no licence)"
-# An assumption, not curation (AGENTS.md §Pools): "US Government work" only where regional_lists/SOURCES_*.md names
+# The canonical ids of the engine's licences.py (loaded by path, as schemas.py is, in load_engine_module).
+US_GOVERNMENT_WORK = "us-government-work"
+UNRECORDED_LICENCE = "unrecorded"
+CC_BY_LICENCE = "CC-BY-4.0"
+# An assumption, not curation (AGENTS.md §Licences): us-government-work only where regional_lists/SOURCES_*.md names
 # one US federal agency as the sole publisher; co-published, contractor-named and non-federal sources stay unrecorded.
 SOURCE_LICENCES = {
     "tn16_2009": US_GOVERNMENT_WORK,  # NRCS Idaho TN PM-16
     "bluebunch_pg": US_GOVERNMENT_WORK,  # NRCS plant guide
+    # One document, "NRCS OR/WA guide 2000", curated under two ids: a short name carries one licence (load checks it).
     "orwa_2000": US_GOVERNMENT_WORK,  # NRCS OR/WA guide (steppe id)
     "orwa_guide_2000": US_GOVERNMENT_WORK,  # NRCS OR/WA guide (westside id)
     "soda_2016": US_GOVERNMENT_WORK,  # BLM status report
@@ -52,7 +55,7 @@ SOURCE_LICENCES = {
     "blm_boise_nfesrp_2005": UNRECORDED_LICENCE,  # BLM EA, but the citation also names North Wind, Inc.
     "nrcs_westside_post_fire": UNRECORDED_LICENCE,  # NRCS text distributed by Marion SWCD
     "marion_swcd_wildfire": UNRECORDED_LICENCE,
-    "odfw_2017": UNRECORDED_LICENCE,
+    "odfw_2017": UNRECORDED_LICENCE,  # "ODFW 2017", with odfw_rehab_2017: one document, one licence
     "odfw_rehab_2017": UNRECORDED_LICENCE,
     "osu_co_windbreak": UNRECORDED_LICENCE,
     "osu_willamette_hedgerow_2018": UNRECORDED_LICENCE,  # Metro and NRCS PMC staff, published by OSU
@@ -63,6 +66,53 @@ SOURCE_LICENCES = {
     "xerces_monarch_gb": UNRECORDED_LICENCE,
     "xerces_nppbi_inland_nw": UNRECORDED_LICENCE,
     "xerces_west_hedgerow_422": UNRECORDED_LICENCE,  # Xerces with NRCS
+}
+# Where each site-input group came from (prototype site_conditions/{soil,climate}/SOURCES.md, join/site_table.py).
+# PRISM's terms were never verified (prototype FROZEN.md issue 6), so precipitation stays unrecorded.
+SITE_INPUT_SOURCES = {
+    "soil_survey": {
+        "source": "USDA NRCS SSURGO via Soil Data Access: dominant component, 0-30 cm; MLRA by SDA lookup",
+        "licence": US_GOVERNMENT_WORK,
+        "release": "SDA accessed 2026-09-26",
+    },
+    "soil_ph_texture": {
+        "source": "USDA NRCS SSURGO dominant component where present, else ISRIC SoilGrids v2.0 0-30 cm",
+        "licence": CC_BY_LICENCE,
+        "release": "SDA and SoilGrids 2.0 accessed 2026-09-26",
+    },
+    "cold": {
+        "source": "ERA5-Land via the Open-Meteo archive (era5_seamless, 1991-2020 record low), lapse-adjusted to "
+        "Copernicus DEM GLO-90",
+        "licence": CC_BY_LICENCE,
+        "release": "Open-Meteo archive accessed 2026-09-26",
+    },
+    "frost_free": {
+        "source": "ERA5-Land via the Open-Meteo archive (era5_seamless, 1991-2020 median frost-free days)",
+        "licence": CC_BY_LICENCE,
+        "release": "Open-Meteo archive accessed 2026-09-26",
+    },
+    "frost_free_station_bias": {
+        "source": "NOAA NCEI U.S. Climate Normals 1991-2020 station growing season, against the station cell",
+        "licence": US_GOVERNMENT_WORK,
+        "release": "NCEI normals-annualseasonal-1991-2020 accessed 2026-09-26",
+    },
+    "precipitation": {
+        "source": "PRISM Climate Group 1991-2020 annual precipitation normal, 800 m (terms not verified)",
+        "licence": UNRECORDED_LICENCE,
+        "release": "an91/r2207d normals/9120.a",
+    },
+}
+# The permitted precipitation PRODUCTION is served: era5_seamless precipitation is ERA5 at 0.25 degree, not ERA5-Land
+# (which returns none; prototype site_conditions/climate/SOURCES.md). v0 read PRISM, so the golden keeps PRISM.
+ERA5_PRECIPITATION_SOURCE = {
+    "source": "ERA5 via the Open-Meteo archive (era5_seamless, 0.25 degree; 1991-2020 annual precipitation mean and "
+    "20th-percentile year)",
+    "licence": CC_BY_LICENCE,
+    "release": "Open-Meteo archive accessed 2026-09-26",
+}
+ERA5_PRECIPITATION_COLUMNS = {
+    "mean_annual_precip_mm": "mean_annual_precip_mm",
+    "dry_year_precip_mm": "annual_precip_p20_mm",
 }
 # The licence flow's pair of Boise woody-buffer sources: one the PRODUCTION gate drops, one it keeps.
 LICENCE_DROPPED_SOURCE = ("pnw5_2005", "PNW0005")
@@ -127,11 +177,12 @@ SPECIES_TRAIT_COLUMNS = (
 SCORED = pl.col("scoring_null_reason").is_null()
 
 
-def load_schemas() -> ModuleType:
-    """The engine's schemas module, loaded by path so the prototype interpreter needs no service dependencies."""
-    specification = importlib.util.spec_from_file_location("plant_suitability_schemas", SCHEMAS_PATH)
+def load_engine_module(name: str) -> ModuleType:
+    """One package-free engine module, loaded by path so the prototype interpreter needs no service dependencies."""
+    path = ENGINE_DIRECTORY / f"{name}.py"
+    specification = importlib.util.spec_from_file_location(f"plant_suitability_{name}", path)
     if specification is None or specification.loader is None:
-        message = f"cannot load {SCHEMAS_PATH}"
+        message = f"cannot load {path}"
         raise SystemExit(message)
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
@@ -157,8 +208,9 @@ def guide_rows(prototype: dict[str, ModuleType], traits: pl.DataFrame) -> pl.Dat
         message = f"matched rows whose match name differs from the listed name: {renamed_listing.height}"
         raise SystemExit(message)
     unlicensed = set(matched["source_id"].unique().to_list()) - set(SOURCE_LICENCES)
-    if unlicensed:
-        message = f"sources without a fixture licence entry: {sorted(unlicensed)}"
+    unknown_licences = set(SOURCE_LICENCES.values()) - load_engine_module("licences").KNOWN_LICENCES
+    if unlicensed or unknown_licences:
+        message = f"sources without a fixture licence entry {sorted(unlicensed)}, or unknown ids {unknown_licences}"
         raise SystemExit(message)
     return (
         matched.sort("list_name", "list_row")
@@ -206,6 +258,8 @@ def species_rows(traits: pl.DataFrame, plant_ids: set[int]) -> pl.DataFrame:
             "recorded_states": [state for state, column in STATE_PRESENCE_COLUMNS.items() if row[column]],
             "fire_resistant_values": row["fire_resistant_raw_values"] or [],
             **{column: row[column] for column in SPECIES_TRAIT_COLUMNS},
+            # The prototype resolved these ratings, not the engine: tests run resolve_wetland_ratings per rule set.
+            "nwpl_resolved_under": None,
         }
         for row in traits.filter(pl.col("plant_id").is_in(sorted(plant_ids))).sort("plant_id").iter_rows(named=True)
     ]
@@ -460,14 +514,26 @@ def noxious_taxa(
     return {"noxious_binomial_taxon": single[0], "noxious_genus": genus, "noxious_annotation_taxon": single[1]}
 
 
+def era5_precipitation(prototype_directory: Path, site: pl.DataFrame) -> pl.DataFrame:
+    """ERA5 annual and 20th-percentile precipitation for every fixture cell, in the site schema's column names."""
+    climate = pl.read_parquet(prototype_directory / "site_conditions" / "climate" / "all.parquet")
+    columns = [pl.col(source).alias(target) for target, source in ERA5_PRECIPITATION_COLUMNS.items()]
+    precipitation = site.select("cell_id").join(climate.select("cell_id", *columns), on="cell_id", how="left")
+    missing = precipitation.filter(pl.any_horizontal(pl.all().is_null()))["cell_id"].to_list()
+    if missing:
+        message = f"fixture cells without ERA5 precipitation: {missing}"
+        raise SystemExit(message)
+    return precipitation.sort("cell_id")
+
+
 def write_parquet(frame: pl.DataFrame, schema: Any, name: str, schemas: ModuleType) -> None:
     """Conform to the engine's schema and write a small zstd parquet fixture."""
     schemas.conform(frame, schema, name).write_parquet(FIXTURE_DIRECTORY / f"{name}.parquet", compression="zstd")
 
 
 def main(prototype_directory: Path) -> None:
-    """Write the six fixture tables and the role manifest."""
-    schemas = load_schemas()
+    """Write the fixture tables, both precipitation declarations (v0 PRISM, production ERA5) and the role manifest."""
+    schemas = load_engine_module("schemas")
     prototype = load_prototype(prototype_directory)
     traits = pl.read_parquet(prototype_directory / "join" / "species_traits.parquet")
     guides = guide_rows(prototype, traits)
@@ -503,7 +569,14 @@ def main(prototype_directory: Path) -> None:
     expected.write_parquet(FIXTURE_DIRECTORY / "v0_expected_cells.parquet", compression="zstd")
     manifest = {"roles": roles, "taxa": {"boise": boise_taxa, "bend": bend_taxa}, "cells": cells}
     manifest_text = json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
-    (FIXTURE_DIRECTORY / "fixture_cells.json").write_text(manifest_text, encoding="utf-8")
+    (FIXTURE_DIRECTORY / "fixture_cells.json").write_text(manifest_text, encoding="utf-8", newline="\n")
+    site_inputs_text = json.dumps(SITE_INPUT_SOURCES, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    (FIXTURE_DIRECTORY / "site_inputs.json").write_text(site_inputs_text, encoding="utf-8", newline="\n")
+    era5_precipitation(prototype_directory, site).write_parquet(
+        FIXTURE_DIRECTORY / "era5_precipitation.parquet", compression="zstd"
+    )
+    era5_source_text = json.dumps(ERA5_PRECIPITATION_SOURCE, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    (FIXTURE_DIRECTORY / "era5_precipitation_source.json").write_text(era5_source_text, encoding="utf-8", newline="\n")
     licence_rows = dict(guides.group_by("license").len().iter_rows())
     cell_counts = {region: len(cell_ids) for region, cell_ids in cells.items()}
     print(f"cells {cell_counts}; species {species.height}; guide rows {guides.height} by licence {licence_rows}")

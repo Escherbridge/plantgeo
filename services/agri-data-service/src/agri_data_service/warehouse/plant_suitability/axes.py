@@ -14,7 +14,8 @@ ENVELOPE_AXES = (
     "root_depth", "salinity", "calcareous", "anaerobic", "drought", "wetland_indicator",
 )  # fmt: skip
 AXIS_NAMES = (*ENVELOPE_AXES, "source_applicability")
-ARID_WEST = "AW"
+ARID_WEST, WESTERN_MOUNTAINS_VALLEYS_COAST = "AW", "WMVC"
+NWPL_REGIONS = frozenset({ARID_WEST, WESTERN_MOUNTAINS_VALLEYS_COAST})
 LOW_TOLERANCE, MEDIUM_TOLERANCE = 1, 2
 # PLANTS salinity classes: None 0-2, Low 2.1-4, Medium 4.1-8, High > 8 dS/m.
 SALINITY_LIMIT_DS_PER_M = {0: 2.0, 1: 4.0, 2: 8.0, 3: float("inf")}
@@ -33,6 +34,13 @@ SOMEWHAT_WET_DRAINAGE_CLASSES = ["Somewhat poorly drained"]
 WELL_DRAINED_CLASSES = ["Moderately well drained", "Well drained"]
 DROUGHTY_DRAINAGE_CLASSES = ["Somewhat excessively drained", "Excessively drained"]
 POORLY_DRAINED_WETNESS = ["wet", "somewhat_wet"]
+# The site vocabularies these axes read (prototype site_table.py and GUILD_RULES.md §4); load refuses anything else.
+DRAINAGE_CLASSES = frozenset(
+    WET_DRAINAGE_CLASSES + SOMEWHAT_WET_DRAINAGE_CLASSES + WELL_DRAINED_CLASSES + DROUGHTY_DRAINAGE_CLASSES
+)
+HYDRIC_RATINGS = frozenset({"Yes", "No", "Unranked"})
+RESTRICTION_STATUSES = frozenset({"recorded", "none_recorded", "unknown"})
+TEXTURE_GROUPS = frozenset({"coarse", "medium", "fine"})
 
 
 def site_class_columns() -> list[pl.Expr]:
@@ -78,7 +86,7 @@ def frost_free_uncertain() -> pl.Expr:
 
 
 def nwpl_rating_in_region() -> pl.Expr:
-    """The taxon's NWPL 2022 indicator in the cell's region, else in the other western region."""
+    """The taxon's NWPL 2022 indicator in the cell's region (AW or WMVC, checked at load), else the other one."""
     return (
         pl.when(pl.col("nwpl_region") == ARID_WEST)
         .then(pl.coalesce("nwpl_aw", "nwpl_wmvc"))

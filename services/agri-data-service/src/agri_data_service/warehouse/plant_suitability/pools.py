@@ -6,10 +6,13 @@ import functools
 import operator
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import polars as pl
 
+from agri_data_service.warehouse.plant_suitability.applicability import HABITAT_QUALIFIERS
+from agri_data_service.warehouse.plant_suitability.labels import find_fire_claims
+from agri_data_service.warehouse.plant_suitability.licences import KNOWN_LICENCES, assert_one_licence_per_source
 from agri_data_service.warehouse.plant_suitability.names import (
     BINOMIAL_TOKEN_COUNT,
     bare_tokens,
@@ -23,9 +26,12 @@ from agri_data_service.warehouse.plant_suitability.origin import ORIGIN_SCOPES
 from agri_data_service.warehouse.plant_suitability.schemas import (
     ENVELOPE_CLASSES,
     ENVELOPE_MEASURES,
+    EXCLUSION_SCHEMA,
     GUIDE_ROW_SCHEMA,
     GUILDS,
     SPECIES_ENVELOPE_SCHEMA,
+    USPS_STATE_CODES,
+    assert_vocabularies,
     conform,
 )
 from agri_data_service.warehouse.plant_suitability.wetland import assert_wetland_genera_rated
@@ -35,7 +41,6 @@ if TYPE_CHECKING:
 
     from agri_data_service.warehouse.plant_suitability.config import RuleConfig
 
-MISSING_LICENCE_TEXT = "none recorded"
 PAGE_NOT_AVAILABLE = "page n/a"
 WOODY_GUILD = "hedgerow_buffer"
 WOODY_ROLES = ["shrub", "tree"]
@@ -54,6 +59,8 @@ GUIDE_ROW_VOCABULARIES = {
     "origin_scope": ORIGIN_SCOPES,
     "plant_role": PLANT_ROLES,
     "match_route": MATCH_ROUTES,
+    "license": KNOWN_LICENCES,
+    "habitat_qualifier": HABITAT_QUALIFIERS,
 }
 CONDITION_COLUMNS = ["min_precip_in", "max_precip_in", "habitat_qualifier"]
 NATIVE_L48_STATUSES = frozenset({"N", "N?", "N|N?"})
@@ -102,10 +109,41 @@ def page_label(page: str | None) -> str:
     return re.sub(r"[;,|]", " ", text)
 
 
+def fire_claim_owners(frame: pl.DataFrame, owner: str) -> tuple[list[str], str | None]:
+    """The owner values whose string or list-of-string text claims a fire effect, and the first such claim."""
+    columns: list[pl.DataFrame] = []
+    for name, dtype in frame.schema.items():
+        if dtype in (pl.String, pl.List(pl.String)):
+            column = frame.select(pl.col(owner).cast(pl.String).alias("owner"), pl.col(name).alias("text"))
+            columns.append(column.explode("text", empty_as_null=True) if dtype == pl.List(pl.String) else column)
+    texts = pl.concat(columns).drop_nulls("text").unique()
+    claims = find_fire_claims(texts["text"].unique().sort().to_list())
+    owners = sorted(texts.filter(pl.col("text").is_in(claims))["owner"].unique().to_list())
+    return owners, claims[0] if claims else None
+
+
+def assert_no_fire_claims_in(frame: pl.DataFrame, owner: str, described_as: str) -> None:
+    """Refuse a table whose text (any string or list-of-string column) claims a fire effect, naming the owners."""
+    owners, claim = fire_claim_owners(frame, owner)
+    if owners:
+        message = f"{described_as} {owners} claim a fire effect, e.g. {claim!r}"
+        raise ValueError(message)
+
+
 def prepare_species(species: pl.DataFrame) -> pl.DataFrame:
     """Species envelope with the name facts pools and origin read, and the perennial-grass ranking key."""
     perennial_grass = (pl.col("family_name") == "Poaceae") & (pl.col("duration").fill_null("") == "Perennial")
-    return conform(species, SPECIES_ENVELOPE_SCHEMA, "species envelope").with_columns(
+    envelope = conform(species, SPECIES_ENVELOPE_SCHEMA, "species envelope")
+    assert_no_fire_claims_in(envelope, "accepted_name", "species envelope taxa")
+    inverted = {
+        f"{minimum}>{maximum}": names
+        for minimum, maximum in RANGE_PAIRS
+        if (names := envelope.filter(pl.col(minimum) > pl.col(maximum))["accepted_name"].to_list())
+    }
+    if inverted:
+        message = f"species envelope has inverted ranges (minimum above maximum): {inverted}"
+        raise ValueError(message)
+    return envelope.with_columns(
         pl.col("accepted_name").alias("display_name"),
         pl.col("accepted_name").map_elements(binomial_key, return_dtype=pl.String).alias("plant_binomial"),
         pl.col("accepted_name").map_elements(is_autonym, return_dtype=pl.Boolean).alias("plant_is_autonym"),
@@ -114,44 +152,55 @@ def prepare_species(species: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def licence_key(licence: str) -> str:
-    """A licence text as the gate compares it: trimmed and case-folded, never substring-matched."""
-    return licence.strip().casefold()
-
-
-def licence_gate(rows: pl.DataFrame, config: RuleConfig) -> tuple[pl.DataFrame, dict[str, str]]:
-    """Rows whose licence the preset permits, and each dropped source_id with its licence text (fails closed)."""
-    if config.permitted_licences is None:
-        return rows, {}
-    permitted = {licence_key(licence) for licence in config.permitted_licences}
-    texts = rows["license"].drop_nulls().unique().to_list()
-    admitted_texts = [text for text in texts if licence_key(text) in permitted]
-    admitted = pl.col("license").is_in(admitted_texts).fill_null(value=False)
-    dropped = rows.filter(~admitted).group_by("source_id").agg(pl.col("license").unique())
-    excluded = {
-        source_id: "; ".join(sorted({licence or MISSING_LICENCE_TEXT for licence in licences}))
-        for source_id, licences in dropped.sort("source_id").iter_rows()
-    }
-    return rows.filter(admitted), excluded
-
-
-def load_guide_rows(guide_rows: pl.DataFrame, config: RuleConfig) -> tuple[pl.DataFrame, dict[str, str]]:
-    """Conformed guide rows the licence gate admits, and the sources it dropped; bad vocabulary or alignment raises."""
+def load_guide_rows(guide_rows: pl.DataFrame) -> pl.DataFrame:
+    """Every conformed guide row, before the licence gate; bad vocabulary, licence, alignment or fire claims raise."""
     rows = conform(guide_rows, GUIDE_ROW_SCHEMA, "guide rows")
-    for column, vocabulary in GUIDE_ROW_VOCABULARIES.items():
-        unknown = set(rows[column].unique().to_list()) - vocabulary
-        if unknown:
-            message = f"guide rows carry unknown {column} values {sorted(unknown, key=str)}"
-            raise ValueError(message)
+    assert_vocabularies(rows, GUIDE_ROW_VOCABULARIES, "guide rows")
+    # pool_support matches noxious_states against the cell's USPS code, so "Idaho" would silently match nothing.
+    noxious_states = rows.select(pl.col("noxious_states").explode(empty_as_null=True)).drop_nulls()
+    assert_vocabularies(noxious_states, {"noxious_states": USPS_STATE_CODES}, "guide rows")
     misaligned = rows.filter(pl.col("applies_to_regions").list.len() != pl.col("in_region").list.len())
     if misaligned.height:
         message = f"in_region and applies_to_regions differ in length on rows {misaligned['guide_row_id'].to_list()}"
         raise ValueError(message)
-    return licence_gate(rows, config)
+    assert_one_licence_per_source(rows)
+    assert_no_fire_claims_in(rows, "source_id", "guide rows from sources")
+    return rows
+
+
+def listing_text(listing: Mapping[str, object]) -> str:
+    """One noxious-list row's listed name, common name and ambiguity flag, lower-cased."""
+    return f"{listing['listed_name']} {listing['common_name']} {listing['name_ambiguity_flag'] or ''}".lower()
+
+
+def prepare_exclusions(exclusions: pl.DataFrame) -> pl.DataFrame:
+    """Conformed state noxious-list rows; a non-USPS state, or a name no exclusion rule can key, raises."""
+    rows = conform(exclusions, EXCLUSION_SCHEMA, "exclusions")
+    assert_vocabularies(rows, {"state": USPS_STATE_CODES}, "exclusions")
+    unkeyed = [
+        f"{listing['state']}: {listing['scientific_name']}"
+        for listing in rows.iter_rows(named=True)
+        if exclusion_rule(str(listing["scientific_name"]), listing_text(listing))[1] is None
+    ]
+    if unkeyed:
+        message = (
+            f"exclusions name neither a binomial, a genus listing ('<Genus> spp.') nor a hybrid formula, so they "
+            f"would exclude nothing: {unkeyed[:10]}"
+        )
+        raise ValueError(message)
+    return rows
+
+
+def region_guild_counts(rows: pl.DataFrame, *, scorable_only: bool = False) -> dict[tuple[str, str], int]:
+    """Guide rows per (region, guild), counted over applies_to_regions; scorable only counts rows naming a taxon."""
+    counted = rows.filter(pl.col("matched_plant_ids").list.len() > 0) if scorable_only else rows
+    exploded = counted.select("guild", pl.col("applies_to_regions").alias("region"))
+    counts = exploded.explode("region", empty_as_null=True).drop_nulls("region").group_by("region", "guild").len()
+    return {(region, guild): count for region, guild, count in counts.iter_rows()}
 
 
 def region_rows(rows: pl.DataFrame, config: RuleConfig) -> pl.DataFrame:
-    """One row per (guide row, region) with its in-region flag (after the configured overrides) and label tag."""
+    """One row per (guide row, region) with its in-region flag (after the overrides) and label tag; claims raise."""
     overrides = [
         (pl.col("source_id") == source_id) & (pl.col("region") == region)
         for source_id, region in sorted(config.in_region_overrides)
@@ -162,7 +211,7 @@ def region_rows(rows: pl.DataFrame, config: RuleConfig) -> pl.DataFrame:
     suffix = pl.when(pl.col("in_region")).then(medium_suffix).otherwise(pl.lit(" [neighbour]"))
     page = pl.col("page").map_elements(page_label, return_dtype=pl.String, skip_nulls=False)
     listed_name = pl.coalesce(pl.col("listed_scientific_name"), pl.format("'{}'", "listed_common_name"))
-    return (
+    composed = (
         rows.explode(["applies_to_regions", "in_region"], empty_as_null=True)
         .rename({"applies_to_regions": "region"})
         .drop_nulls("region")
@@ -173,6 +222,10 @@ def region_rows(rows: pl.DataFrame, config: RuleConfig) -> pl.DataFrame:
             pl.lit(None, dtype=pl.String).alias("stratified_from"),
         )
     )
+    # Two clean columns can compose a claim ("... Plants That Reduce" + page "Wildfire appendix"), so scan the result.
+    tags = composed.select("source_id", "source_tag", "listed_name")
+    assert_no_fire_claims_in(tags, "source_id", "composed source tags or listed names from sources")
+    return composed
 
 
 def matched_rows(rows: pl.DataFrame, species: pl.DataFrame) -> pl.DataFrame:
@@ -188,12 +241,10 @@ def matched_rows(rows: pl.DataFrame, species: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def exclusion_rule(row: dict[str, Any]) -> tuple[str, str | None, bool]:
-    """(rule, key, non-native only) for one noxious-list row: genus, hybrid formula or binomial."""
-    name = row["scientific_name"]
+def exclusion_rule(name: str, listing_text: str) -> tuple[str, str | None, bool]:
+    """(rule, key, non-native only) for one noxious-list name and its lower-cased listing text."""
     tokens = name_tokens(name)
-    listed_text = f"{row['listed_name']} {row['common_name']} {row['name_ambiguity_flag'] or ''}".lower()
-    non_native_only = "nonnative" in listed_text or "non-native" in listed_text
+    non_native_only = "nonnative" in listing_text or "non-native" in listing_text
     genus_wide = len(tokens) == BINOMIAL_TOKEN_COUNT and tokens[1] in GENUS_WIDE_EPITHETS
     if genus_wide or "subgenus" in tokens:
         return "genus", tokens[0], non_native_only
@@ -204,7 +255,8 @@ def exclusion_rule(row: dict[str, Any]) -> tuple[str, str | None, bool]:
 
 def excluded_plant_ids(exclusions: pl.DataFrame, taxa: pl.DataFrame, state: str) -> set[int]:
     """Pool taxa a state noxious-list row matches by binomial, genus (non-native only when listed so) or formula."""
-    rules = [exclusion_rule(row) for row in exclusions.filter(pl.col("state") == state).iter_rows(named=True)]
+    listings = exclusions.filter(pl.col("state") == state).iter_rows(named=True)
+    rules = [exclusion_rule(row["scientific_name"], listing_text(row)) for row in listings]
     names = [
         (row["plant_id"], name, (row["native_status_l48"] or "") in NATIVE_L48_STATUSES)
         for row in taxa.select("plant_id", "accepted_name", "synonym_names", "native_status_l48").iter_rows(named=True)
@@ -215,10 +267,10 @@ def excluded_plant_ids(exclusions: pl.DataFrame, taxa: pl.DataFrame, state: str)
         (plant_id, binomial_key(name), name_tokens(name)[0], " ".join(bare_tokens(name)), native)
         for plant_id, name, native in names
     ]
+    # prepare_exclusions refused every listing whose key is None, so none is skipped here.
     return {
         plant_id
         for rule, key, non_native_only in rules
-        if key is not None
         for plant_id, binomial, genus, formula, native in keyed
         if (rule == "genus" and genus == key and not (non_native_only and native))
         or (rule == "hybrid_formula" and formula == key)
@@ -298,7 +350,7 @@ def union_in_order(lists: Iterable[object]) -> list[object]:
 
 
 def merge_members(members: Sequence[Mapping[str, object]]) -> MergedTaxon:
-    """The kept member with null traits filled from the others in kept-row order; inverted fills are rejected."""
+    """The kept member with null traits filled from the others in kept-row then plant_id order; inversions rejected."""
     kept, others = dict(members[0]), members[1:]
     filled: set[str] = set()
     for column in FILLABLE_TRAITS:
@@ -320,7 +372,7 @@ def collapse_infraspecific(pool: pl.DataFrame) -> pl.DataFrame:
         (~pl.col("named_by_source").fill_null(value=False)).cast(pl.Int8).alias("named_rank"),
         pl.col("display_name").map_elements(representative_rank, return_dtype=pl.Int8).alias("representative_rank"),
         (~pl.col("present_in_state").fill_null(value=False)).cast(pl.Int8).alias("in_state_rank"),
-    ).sort("plant_binomial", *KEPT_ROW_KEYS, maintain_order=True)
+    ).sort("plant_binomial", *KEPT_ROW_KEYS, "plant_id")
     groups = [group for _, group in keyed.group_by("plant_binomial", maintain_order=True)]
     ties = [
         " / ".join(group["display_name"].head(2).to_list())

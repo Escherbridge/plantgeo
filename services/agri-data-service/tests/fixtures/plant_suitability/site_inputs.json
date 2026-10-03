@@ -1,0 +1,32 @@
+{
+  "cold": {
+    "licence": "CC-BY-4.0",
+    "release": "Open-Meteo archive accessed 2026-09-26",
+    "source": "ERA5-Land via the Open-Meteo archive (era5_seamless, 1991-2020 record low), lapse-adjusted to Copernicus DEM GLO-90"
+  },
+  "frost_free": {
+    "licence": "CC-BY-4.0",
+    "release": "Open-Meteo archive accessed 2026-09-26",
+    "source": "ERA5-Land via the Open-Meteo archive (era5_seamless, 1991-2020 median frost-free days)"
+  },
+  "frost_free_station_bias": {
+    "licence": "us-government-work",
+    "release": "NCEI normals-annualseasonal-1991-2020 accessed 2026-09-26",
+    "source": "NOAA NCEI U.S. Climate Normals 1991-2020 station growing season, against the station cell"
+  },
+  "precipitation": {
+    "licence": "unrecorded",
+    "release": "an91/r2207d normals/9120.a",
+    "source": "PRISM Climate Group 1991-2020 annual precipitation normal, 800 m (terms not verified)"
+  },
+  "soil_ph_texture": {
+    "licence": "CC-BY-4.0",
+    "release": "SDA and SoilGrids 2.0 accessed 2026-09-26",
+    "source": "USDA NRCS SSURGO dominant component where present, else ISRIC SoilGrids v2.0 0-30 cm"
+  },
+  "soil_survey": {
+    "licence": "us-government-work",
+    "release": "SDA accessed 2026-09-26",
+    "source": "USDA NRCS SSURGO via Soil Data Access: dominant component, 0-30 cm; MLRA by SDA lookup"
+  }
+}
