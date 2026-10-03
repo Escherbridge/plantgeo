@@ -55,7 +55,12 @@ from agri_data_service.execution.lane_ids import (
     WATER_GAUGES_DIRECT_LANE_ID,
     WATERSHEDS_DIRECT_LANE_ID,
 )
-from agri_data_service.execution.lane_specs import LANE_SPECS, LaneExecutionSpec, parse_activation
+from agri_data_service.execution.lane_specs import (
+    EXECUTOR_DEFINITION_PREFIX,
+    LANE_SPECS,
+    LaneExecutionSpec,
+    parse_activation,
+)
 from agri_data_service.foundation.observability.vocabulary import POOL_LABELS
 from agri_data_service.foundation.parquet.lane_contract import nature_has_time_axis
 from agri_data_service.parquet_ops.wire import render_day, render_instant
@@ -493,10 +498,13 @@ def coverage_flags(layer: LayerCoverage) -> list[LaneFlag]:
 
 
 def _owned_rows(rows: Sequence[Mapping[str, object]]) -> dict[str, list[Mapping[str, object]]]:
-    """Usage rows keyed by OWNING lane: a `:gap-fill` definition rolls up as `:gap-repair` already does."""
+    """Usage rows keyed by OWNING lane: a `:gap-fill` definition rolls up as `:gap-repair` already does.
+
+    The SQL's `lane_id` is the executor definition name (`plantgeo.executor.<lane>`), not the bare lane id.
+    """
     by_lane: dict[str, list[Mapping[str, object]]] = defaultdict(list)
     for row in rows:
-        lane_id = owning_lane_id(str(row.get("lane_id")))
+        lane_id = owning_lane_id(str(row.get("lane_id")).removeprefix(EXECUTOR_DEFINITION_PREFIX))
         by_lane[lane_id].append({**row, "lane_id": lane_id})
     return by_lane
 
@@ -783,11 +791,12 @@ async def _read_ledger(
 
 
 def _ledger_filter(lane_ids: Sequence[str] | None, lanes: Sequence[LaneUnderAudit]) -> list[str] | None:
-    """The usage feed's lane filter: a config lane's `:gap-fill` rows are not stripped by the SQL, so name them."""
+    """The usage feed's lane filter in definition-name terms; a config lane's `:gap-fill` rows are named too."""
     if lane_ids is None:
         return None
     config = {lane.lane_id for lane in lanes if lane.path == "config"}
-    return [*lane_ids, *(f"{lane_id}{GAP_FILL_SUFFIX}" for lane_id in lane_ids if lane_id in config)]
+    named = [*lane_ids, *(f"{lane_id}{GAP_FILL_SUFFIX}" for lane_id in lane_ids if lane_id in config)]
+    return [f"{EXECUTOR_DEFINITION_PREFIX}{lane_id}" for lane_id in named]
 
 
 def _section_list(value: object) -> list[Mapping[str, object]]:

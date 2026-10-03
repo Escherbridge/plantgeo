@@ -143,6 +143,8 @@ def attempt(lane_id: str, *, ago: timedelta, **overrides: object) -> dict[str, o
         "weighted_calls_metered": 0,
     }
     base.update(overrides)
+    # As select_provider_usage.sql derives it: the definition name, `:gap-repair` stripped, prefix KEPT.
+    base["lane_id"] = str(base["definition_name"]).removesuffix(":gap-repair")
     return base
 
 
@@ -423,7 +425,9 @@ def test_staleness_reads_the_forward_definition_and_only_for_active_lanes(ledger
     assert "forward_turn_stale" in {flag["code"] for flag in soil["flags"]}
     assert soil["last_turn"]["age_seconds"] >= 30 * 3600
     # ...while the repair turn still counts toward the lane's usage over the window.
-    assert soil["usage"]["attempts"] == len([row for row in ledger.attempts if row["lane_id"] == soil["lane_id"]])
+    assert soil["usage"]["attempts"] == len(
+        [row for row in ledger.attempts if row["lane_id"] == f"plantgeo.executor.{soil['lane_id']}"]
+    )
     # An active lane with no turn at all in a window longer than twice its cadence is stale, too.
     assert "no settled forward turn" in flags(report, "drought-direct-forward")["forward_turn_stale"]["detail"]
 
@@ -564,6 +568,10 @@ def test_a_paid_pool_past_its_gap_fill_ceiling_flags_the_lanes_spending_it(ledge
 def test_the_lane_filter_narrows_the_audit_and_an_unknown_lane_is_refused() -> None:
     report = run_audit("--lane", "soil-era5-land-direct-forward")
     assert [entry["lane_id"] for entry in report["lanes"]] == ["soil-era5-land-direct-forward"]
+    # The narrowed SQL filter still finds the lane's turn: it is phrased in definition-name terms.
+    soil = lane(report, "soil-era5-land-direct-forward")
+    assert soil["usage"]["attempts"] == 1
+    assert soil["last_turn"] is not None
     assert report["unowned_layers"] == []
     refused = CliRunner().invoke(ops, ["lane-audit", "--lane", "soil-era5-land-direct-forwrd"])
     assert refused.exit_code != 0
