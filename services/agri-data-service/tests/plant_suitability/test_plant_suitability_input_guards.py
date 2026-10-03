@@ -18,7 +18,12 @@ from agri_data_service.warehouse.plant_suitability.config import (
 )
 from agri_data_service.warehouse.plant_suitability.engine import MAX_CELLS_PER_CALL, METADATA_RULE_CONFIG, prepare
 from agri_data_service.warehouse.plant_suitability.labels import FIRE_LABEL_PREFIX, pick_label_expression
-from agri_data_service.warehouse.plant_suitability.licences import ALL_RIGHTS_RESERVED, UNRECORDED, US_GOVERNMENT_WORK
+from agri_data_service.warehouse.plant_suitability.licences import (
+    ALL_RIGHTS_RESERVED,
+    PRISM_TERMS_OF_USE,
+    UNRECORDED,
+    US_GOVERNMENT_WORK,
+)
 from agri_data_service.warehouse.plant_suitability.schemas import GUILDS
 from agri_data_service.warehouse.plant_suitability.site import SiteInputProvenance
 from agri_data_service.warehouse.plant_suitability.wetland import resolve_wetland_ratings
@@ -277,13 +282,20 @@ def undeclared_site_input_group(fixture: SuitabilityFixture) -> SuitabilityFixtu
 
 def unknown_site_input_group(fixture: SuitabilityFixture) -> SuitabilityFixture:
     """A declaration for a group the engine does not define."""
-    groups = {**fixture.site_provenance.groups, "rainfall": fixture.era5_precipitation_source}
+    groups = {**fixture.site_provenance.groups, "rainfall": fixture.site_provenance.groups["precipitation"]}
     return replace(fixture, site_provenance=SiteInputProvenance(groups))
 
 
 def free_text_site_input_licence(fixture: SuitabilityFixture) -> SuitabilityFixture:
-    """The ERA5 declaration's licence written as prose instead of the canonical id."""
-    return replace(fixture, era5_precipitation_source=replace(fixture.era5_precipitation_source, licence="CC BY"))
+    """The cold group's licence written as prose instead of the canonical id."""
+    groups = dict(fixture.site_provenance.groups)
+    groups["cold"] = replace(groups["cold"], licence="CC BY")
+    return replace(fixture, site_provenance=SiteInputProvenance(groups))
+
+
+def guide_row_under_prism_terms(fixture: SuitabilityFixture) -> SuitabilityFixture:
+    """A federal guide relicensed to PRISM's terms, whose access-dated attribution a guide row cannot carry."""
+    return fixture.relicensed({WOODY_TOP_THREE_SOURCE[0]}, PRISM_TERMS_OF_USE)
 
 
 def over_the_cell_budget(fixture: SuitabilityFixture) -> SuitabilityFixture:
@@ -313,6 +325,7 @@ def rejection(
         rejection(unknown_match_route, r"unknown match_route values \['exact'\]"),
         rejection(unmapped_habitat_qualifier, r"unknown habitat_qualifier values \['sandy'\]"),
         rejection(free_text_licence, r"unknown license values \['US Gov work'\]"),
+        rejection(guide_row_under_prism_terms, r"unknown license values \['PRISM-terms-of-use'\]"),
         rejection(mixed_licences_in_one_source, "source_id -> license"),
         rejection(mixed_licences_in_one_document, "source_short_name -> license"),
         rejection(two_short_names_for_one_source, "source_id -> source_short_name"),
@@ -457,7 +470,7 @@ def test_an_engine_keeps_each_region_on_the_state_it_was_first_served_or_warmed_
     suitability: SuitabilityFixture,
 ) -> None:
     cell_id = suitability.role_cell("boise", "burned_cell")
-    site = suitability.served_site(suitability.site_row(cell_id), PRODUCTION)
+    site = suitability.site_row(cell_id)
     relabelled = site.with_columns(pl.lit("OR").alias("state"))
     served_first = suitability.prepared(PRODUCTION)
     warmed = suitability.prepared(PRODUCTION)
@@ -495,7 +508,7 @@ def test_a_caller_mutating_its_declaration_or_rule_config_after_prepare_changes_
     suitability: SuitabilityFixture,
 ) -> None:
     cell_id = suitability.role_cell("boise", "soil_failures_cell")
-    groups = dict(suitability.provenance(PRODUCTION).groups)
+    groups = dict(suitability.site_provenance.groups)
     flag_texts = dict(PRODUCTION.introduced_flag_text)
     # Every set field handed in as the caller's own mutable set (review R3).
     overrides, licences = set(PRODUCTION.in_region_overrides), set(PRODUCTION.permitted_licences or ())
@@ -512,8 +525,8 @@ def test_a_caller_mutating_its_declaration_or_rule_config_after_prepare_changes_
     engine = prepare(suitability.envelope(config), suitability.guide_rows, suitability.exclusions, config,
                      SiteInputProvenance(groups))  # fmt: skip
     untouched = suitability.prepared(PRODUCTION)
-    site = suitability.served_site(suitability.site, PRODUCTION)
-    point_site = suitability.served_site(suitability.site_row(cell_id), PRODUCTION)
+    site = suitability.site
+    point_site = suitability.site_row(cell_id)
     point = untouched.candidates_for_cell(point_site)
     woody_origins = point.filter(pl.col("guild") == WOODY)["origin_label"]
     assert woody_origins.str.starts_with(INTRODUCED_FLAG_PLAIN).any(), "no introduced woody taxon: proves nothing"

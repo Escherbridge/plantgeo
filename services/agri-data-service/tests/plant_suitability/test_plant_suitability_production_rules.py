@@ -7,7 +7,7 @@ import json
 import re
 from dataclasses import replace
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import polars as pl
 import pytest
@@ -23,6 +23,7 @@ from agri_data_service.warehouse.plant_suitability.config import (
 from agri_data_service.warehouse.plant_suitability.engine import (
     ENGINE_VERSION,
     METADATA_ADMITTED_SOURCES,
+    METADATA_ATTRIBUTIONS,
     METADATA_ENGINE_VERSION,
     METADATA_EXCLUDED_SOURCES,
     METADATA_INPUTS_SHA256,
@@ -59,9 +60,11 @@ from agri_data_service.warehouse.plant_suitability.licences import (
     CC_BY_NC_SA,
     CC_BY_ND,
     COMMERCIAL_USE_LICENCES,
+    PRISM_TERMS_OF_USE,
     PUBLIC_DOMAIN,
     UNRECORDED,
     US_GOVERNMENT_WORK,
+    SourceCredit,
 )
 from agri_data_service.warehouse.plant_suitability.schemas import (
     CELL_RECOMMENDATIONS_SCHEMA,
@@ -83,6 +86,18 @@ BLM_BOISE_DISTRICT_SOURCE = "blm_boise_nfesrp_2005"
 ODFW_SALINE_MIX_SOURCE = "odfw_2017"
 TN_2A_NEIGHBOUR_TAG = re.compile(r"NRCS TN PM-2A \(2017\) p\.\d+(?:-\d+)? \[neighbour\]")
 FIRE_NAMED_SOURCE_ID, FIRE_NAMED_SOURCE = "blm_range_2026", "BLM Range Fire 2026"
+# The PRISM data's access date (prototype site_conditions/climate/SOURCES.md) in the form PRISM's terms ask for.
+PRISM_ACCESSED = "2026-09-26"
+PRISM_ATTRIBUTION = "PRISM Group, Oregon State University, https://prism.oregonstate.edu, accessed 26 Sep 2026."
+# The CC BY works the fixture's groups draw on, in the credit form served (ERA5 is the PRISM dry year's spread).
+CC_BY_TERMS = "under CC BY 4.0, https://creativecommons.org/licenses/by/4.0/"
+ERA5_CREDIT = f"ERA5 (Copernicus Climate Change Service), Open-Meteo.com, https://open-meteo.com, {CC_BY_TERMS}"
+ERA5_LAND_CREDIT = (
+    f"ERA5-Land (Copernicus Climate Change Service), Open-Meteo.com, https://open-meteo.com, {CC_BY_TERMS}"
+)
+SOILGRIDS_CREDIT = f"SoilGrids 2.0, ISRIC - World Soil Information, https://soilgrids.org, {CC_BY_TERMS}"
+# PRODUCTION's gate without CC BY: the precipitation group's ERA5 credit then withholds it although PRISM is permitted.
+PRODUCTION_WITHOUT_CC_BY = replace(PRODUCTION, permitted_licences=COMMERCIAL_USE_LICENCES - {CC_BY})
 # For subjects that come from licence-unrecorded guides, which real PRODUCTION drops at load.
 PRODUCTION_WITHOUT_LICENCE_GATE = replace(PRODUCTION, permitted_licences=None)
 # One changed value per RuleConfig field; the fingerprint flow fails if a field has no entry here.
@@ -254,11 +269,9 @@ def refused_at_egress(text: str, allow_list: FireTextAllowList) -> bool:
 def test_bend_reads_tn_2a_as_an_in_region_guide(suitability: SuitabilityFixture) -> None:
     cell_id = suitability.role_cell("bend", "east_of_cascade_crest_cell")
     tn_2a_taxon = suitability.taxa("bend", "east_of_cascade_crest_taxon")
-    # Ungated so PRISM is served: TN 2A's 7-12 in bands never apply on ERA5, which is too wet in the Bend rain shadow.
-    config = PRODUCTION_WITHOUT_LICENCE_GATE
 
     v0 = candidate(suitability.candidates(cell_id, V0_FROZEN), tn_2a_taxon, "hedgerow_buffer")
-    production = candidate(suitability.candidates(cell_id, config), tn_2a_taxon, "hedgerow_buffer")
+    production = candidate(suitability.candidates(cell_id, PRODUCTION), tn_2a_taxon, "hedgerow_buffer")
 
     assert v0["is_pick"]
     assert not v0["in_region_supported"]
@@ -319,33 +332,137 @@ def test_a_none_recorded_restriction_is_unknown_in_production_and_counted(
     assert [production_cell[f"{guild}_count_fully_known"] for guild in GUILDS] == [0, 0, 0]
 
 
-def test_production_refuses_to_serve_picks_blind_to_the_prism_precipitation_it_holds_no_licence_for(
+def test_production_serves_prism_precipitation_with_its_dated_attribution_on_both_seams(
     suitability: SuitabilityFixture,
 ) -> None:
-    cell_id = suitability.role_cell("boise", "burned_cell")
-    prism = suitability.site_provenance
-    undeclared = SiteInputProvenance(
-        {group: source for group, source in prism.groups.items() if group != "precipitation"}
-    )
-    tables = (suitability.envelope(PRODUCTION), suitability.guide_rows, suitability.exclusions, PRODUCTION)
+    engine = suitability.prepared(PRODUCTION)
+    cell_id = suitability.role_cell("bend", "east_of_cascade_crest_cell")
 
-    for provenance, reason in (
-        (prism, r"withheld by its licence gate \{'precipitation': 'unrecorded'\}"),
-        (undeclared, r"undeclared \['precipitation'\]"),
-    ):
-        with pytest.raises(ValueError, match=reason):
-            prepare(*tables, provenance)
-        with pytest.raises(ValueError, match=reason):
-            evaluate_cells(suitability.site, *tables, provenance)
-        with pytest.raises(ValueError, match=reason):
-            candidates_for_cell(suitability.site_row(cell_id), *tables, provenance)
+    table = engine.layer_table(suitability.site)
+    point, point_metadata = engine.candidates_with_metadata(suitability.site_row(cell_id))
+
+    metadata = {key.decode(): value.decode() for key, value in table.schema.metadata.items()}
+    precipitation = json.loads(metadata[METADATA_SITE_INPUTS])["precipitation"]
+    assert point_metadata == metadata
+    assert precipitation["licence"] == PRISM_TERMS_OF_USE
+    assert precipitation["accessed"] == PRISM_ACCESSED
+    assert precipitation["attribution"] == PRISM_ATTRIBUTION
+    assert precipitation["credits"] == [ERA5_CREDIT]
+    # The complete credit list: one line per distinct work, ERA5-Land declared by two groups but listed once.
+    expected_credits = sorted([PRISM_ATTRIBUTION, ERA5_CREDIT, ERA5_LAND_CREDIT, SOILGRIDS_CREDIT])
+    assert json.loads(metadata[METADATA_ATTRIBUTIONS]) == expected_credits
+    assert json.loads(metadata[METADATA_WITHHELD_SITE_INPUTS]) == {}
+    assert point.filter(pl.col("is_pick")).height > 0
+
+
+@pytest.mark.parametrize(
+    ("precipitation", "config", "reason"),
+    [
+        pytest.param(
+            {"licence": UNRECORDED, "accessed": None},
+            PRODUCTION,
+            r"withheld by its licence gate \{.*'precipitation': 'unrecorded'",
+            id="unrecorded_before_the_owner_decision",
+        ),
+        pytest.param(
+            {},
+            PRODUCTION_WITHOUT_CC_BY,
+            r"withheld by its licence gate \{.*'precipitation': 'CC-BY-4.0'",
+            id="credited_era5_not_permitted",
+        ),
+        pytest.param(None, PRODUCTION, r"undeclared \['precipitation'\]", id="undeclared"),
+    ],
+)
+def test_production_refuses_to_serve_a_precipitation_group_its_gate_withholds_or_nobody_declared(
+    suitability: SuitabilityFixture, precipitation: dict[str, str | None] | None, config: RuleConfig, reason: str
+) -> None:
+    cell_id = suitability.role_cell("boise", "burned_cell")
+    changed = dict(suitability.site_provenance.groups)
+    if precipitation is None:
+        del changed["precipitation"]
+    else:
+        changed["precipitation"] = replace(changed["precipitation"], **precipitation)
+    declaration = SiteInputProvenance(changed)
+    tables = (suitability.envelope(config), suitability.guide_rows, suitability.exclusions, config)
+
+    with pytest.raises(ValueError, match=reason):
+        prepare(*tables, declaration)
+    with pytest.raises(ValueError, match=reason):
+        evaluate_cells(suitability.site, *tables, declaration)
+    with pytest.raises(ValueError, match=reason):
+        candidates_for_cell(suitability.site_row(cell_id), *tables, declaration)
+
+
+@pytest.mark.parametrize(
+    ("group", "changes", "reason"),
+    [
+        pytest.param(
+            "precipitation",
+            {"accessed": None},
+            r"\{'precipitation': 'PRISM-terms-of-use'\} carry a licence",
+            id="no_access_date",
+        ),
+        pytest.param(
+            "precipitation", {"accessed": "26 Sep 2026"}, r"'26 Sep 2026' is not written YYYY-MM-DD", id="prose_date"
+        ),
+        pytest.param(
+            "precipitation", {"accessed": "20260926"}, r"'20260926' is not written YYYY-MM-DD", id="compact_date"
+        ),
+        pytest.param(
+            "soil_ph_texture",
+            {"credits": ()},
+            r"\['soil_ph_texture'\] carry a licence that obliges a credit but declare none",
+            id="cc_by_group_without_a_credit",
+        ),
+        pytest.param(
+            "precipitation",
+            {"credits": (SourceCredit("ERA5", "Open-Meteo.com", "https://open-meteo.com", UNRECORDED),)},
+            r"no credit form \{'precipitation': \['unrecorded'\]\}",
+            id="credit_under_a_licence_with_no_credit_form",
+        ),
+    ],
+)
+def test_a_site_input_declaration_that_cannot_state_its_credits_is_refused_on_construction(
+    suitability: SuitabilityFixture, group: str, changes: dict[str, Any], reason: str
+) -> None:
+    groups = dict(suitability.site_provenance.groups)
+    groups[group] = replace(groups[group], **changes)
+
+    # Refused before any rule set sees it: the obligation is the licence's, so no preset (V0 included) can serve it.
+    with pytest.raises(ValueError, match=reason):
+        SiteInputProvenance(groups)
+
+
+def test_production_and_v0_read_the_same_precipitation_at_bend(suitability: SuitabilityFixture) -> None:
+    # Before the owner's PRISM decision PRODUCTION read ERA5 here: 1,009 of 2,166 shared rows disagreed.
+    bend_cells = suitability.manifest["cells"]["bend"]
+    precipitation_axes = ["axis_dry_year_precip", "axis_mean_precip"]
+    keys = ["cell_id", "guild", "plant_id"]
+
+    def precipitation_reads(config: RuleConfig) -> pl.DataFrame:
+        """Every (cell, guild, pool taxon) at the Bend fixture cells with its two precipitation axes."""
+        engine = suitability.prepared(config)
+        frames = [
+            engine.candidates_for_cell(suitability.site_row(cell_id)).with_columns(pl.lit(cell_id).alias("cell_id"))
+            for cell_id in bend_cells
+        ]
+        return pl.concat(frames).filter(pl.col("plant_id").is_not_null()).select(*keys, *precipitation_axes)
+
+    v0, production = precipitation_reads(V0_FROZEN), precipitation_reads(PRODUCTION)
+    shared = v0.join(production, on=keys, suffix="_production")
+    disagreeing = shared.filter(
+        pl.any_horizontal([pl.col(axis).ne_missing(pl.col(f"{axis}_production")) for axis in precipitation_axes])
+    )
+
+    assert shared.height > 0
+    assert disagreeing.height == 0
 
 
 @pytest.mark.parametrize("group", sorted(SITE_INPUT_GROUPS))
 def test_production_requires_every_site_input_group_the_envelope_reads(
     suitability: SuitabilityFixture, group: str
 ) -> None:
-    groups = dict(suitability.provenance(PRODUCTION).groups)
+    groups = dict(suitability.site_provenance.groups)
     groups[group] = replace(groups[group], licence=UNRECORDED)
     tables = (suitability.envelope(PRODUCTION), suitability.guide_rows, suitability.exclusions, PRODUCTION)
 
@@ -666,11 +783,9 @@ def test_the_served_layer_names_its_exact_rule_set_inputs_and_sources_and_the_po
     ungated_engine = suitability.prepared(PRODUCTION_WITHOUT_LICENCE_GATE)
     cell_id = suitability.role_cell("boise", "burned_cell")
 
-    table = engine.layer_table(suitability.served_site(suitability.site, PRODUCTION))
+    table = engine.layer_table(suitability.site)
     ungated_table = ungated_engine.layer_table(suitability.site)
-    _, point_metadata = engine.candidates_with_metadata(
-        suitability.served_site(suitability.site_row(cell_id), PRODUCTION)
-    )
+    _, point_metadata = engine.candidates_with_metadata(suitability.site_row(cell_id))
 
     metadata = {key.decode(): value.decode() for key, value in table.schema.metadata.items()}
     ungated_rules = ungated_table.schema.metadata[METADATA_RULE_CONFIG.encode()].decode()
@@ -725,7 +840,7 @@ def test_the_inputs_digest_follows_every_loaded_input_and_the_site_declaration_n
         (pl.col("guide_row_id") + 10_000_000).alias("guide_row_id"),
     )
     dropped_row_added = replace(suitability, guide_rows=pl.concat([suitability.guide_rows, corvallis_greenstrip_row]))
-    corvallis = suitability.served_site(suitability.site.filter(pl.col("region") == "corvallis").head(1), PRODUCTION)
+    corvallis = suitability.site.filter(pl.col("region") == "corvallis").head(1)
     # Rows reversed, and every list cell reversed (a row's regions and in-region flags together, as pairs).
     species_lists = ("synonym_names", "recorded_states", "fire_resistant_values")
     guide_lists = ("matched_plant_ids", "noxious_states", "applies_to_regions", "in_region")
@@ -736,8 +851,12 @@ def test_the_inputs_digest_follows_every_loaded_input_and_the_site_declaration_n
         exclusions=suitability.exclusions.reverse(),
     )
     federal_dropped = suitability.relicensed({suitability.taxa("boise", "licence_kept_source_id")}, UNRECORDED)
-    re_released = replace(
-        suitability, era5_precipitation_source=replace(suitability.era5_precipitation_source, release="a later pull")
+    groups = dict(suitability.site_provenance.groups)
+    re_accessed = replace(
+        suitability,
+        site_provenance=SiteInputProvenance(
+            {**groups, "precipitation": replace(groups["precipitation"], accessed="2026-10-03")}
+        ),
     )
 
     dropped_row_engine = dropped_row_added.prepared(PRODUCTION)
@@ -745,7 +864,7 @@ def test_the_inputs_digest_follows_every_loaded_input_and_the_site_declaration_n
     assert re.fullmatch(r"[0-9a-f]{64}", digest)
     assert reordered.prepared(PRODUCTION).metadata()[METADATA_INPUTS_SHA256] == digest
     assert federal_dropped.prepared(PRODUCTION).metadata()[METADATA_INPUTS_SHA256] != digest
-    assert re_released.prepared(PRODUCTION).metadata()[METADATA_INPUTS_SHA256] != digest
+    assert re_accessed.prepared(PRODUCTION).metadata()[METADATA_INPUTS_SHA256] != digest
     assert engine.evaluate_cells(corvallis)["greenstrip_status"].to_list() == ["no_regional_guide"]
     assert dropped_row_engine.evaluate_cells(corvallis)["greenstrip_status"].to_list() == ["licence_excluded"]
     assert dropped_row_engine.metadata()[METADATA_INPUTS_SHA256] != digest

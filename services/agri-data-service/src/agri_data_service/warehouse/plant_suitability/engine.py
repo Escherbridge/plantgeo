@@ -93,10 +93,11 @@ METADATA_ADMITTED_SOURCES = "plantgeo:admitted_sources"
 METADATA_EXCLUDED_SOURCES = "plantgeo:excluded_sources"
 METADATA_SITE_INPUTS = "plantgeo:site_inputs"
 METADATA_WITHHELD_SITE_INPUTS = "plantgeo:withheld_site_inputs"
+METADATA_ATTRIBUTIONS = "plantgeo:attributions"
 METADATA_KEYS = (
     METADATA_RULE_CONFIG, METADATA_ENGINE_VERSION, METADATA_INPUTS_SHA256, METADATA_PICK_DEFINITION,
     METADATA_NO_FIRE_CLAIM, METADATA_ADMITTED_SOURCES, METADATA_EXCLUDED_SOURCES, METADATA_SITE_INPUTS,
-    METADATA_WITHHELD_SITE_INPUTS,
+    METADATA_WITHHELD_SITE_INPUTS, METADATA_ATTRIBUTIONS,
 )  # fmt: skip
 COUNT_SUFFIXES = (
     "count", "count_fully_known", "count_in_region", "count_uncertain_frost_free", "count_introduced_flagged",
@@ -446,6 +447,8 @@ class PreparedEngine:
             METADATA_EXCLUDED_SOURCES: canonical_json(self.inputs.excluded_sources),
             METADATA_SITE_INPUTS: self.site_provenance.declaration_json(),
             METADATA_WITHHELD_SITE_INPUTS: canonical_json(withheld),
+            # Stated on its own key so a renderer can show it prominently, as PRISM's terms ask (AGENTS.md §Licences).
+            METADATA_ATTRIBUTIONS: canonical_json(self.site_provenance.attributions(self.config)),
         }
         allow_list = served_allow_list(registered_texts(self.inputs))
         assert_no_fire_claims(pl.DataFrame(), metadata, allow_list)

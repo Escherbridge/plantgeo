@@ -1,10 +1,26 @@
 {
   "cold": {
+    "credits": [
+      {
+        "holder": "Open-Meteo.com",
+        "licence": "CC-BY-4.0",
+        "url": "https://open-meteo.com",
+        "work": "ERA5-Land (Copernicus Climate Change Service)"
+      }
+    ],
     "licence": "CC-BY-4.0",
     "release": "Open-Meteo archive accessed 2026-09-26",
     "source": "ERA5-Land via the Open-Meteo archive (era5_seamless, 1991-2020 record low), lapse-adjusted to Copernicus DEM GLO-90"
   },
   "frost_free": {
+    "credits": [
+      {
+        "holder": "Open-Meteo.com",
+        "licence": "CC-BY-4.0",
+        "url": "https://open-meteo.com",
+        "work": "ERA5-Land (Copernicus Climate Change Service)"
+      }
+    ],
     "licence": "CC-BY-4.0",
     "release": "Open-Meteo archive accessed 2026-09-26",
     "source": "ERA5-Land via the Open-Meteo archive (era5_seamless, 1991-2020 median frost-free days)"
@@ -15,11 +31,28 @@
     "source": "NOAA NCEI U.S. Climate Normals 1991-2020 station growing season, against the station cell"
   },
   "precipitation": {
-    "licence": "unrecorded",
+    "accessed": "2026-09-26",
+    "credits": [
+      {
+        "holder": "Open-Meteo.com",
+        "licence": "CC-BY-4.0",
+        "url": "https://open-meteo.com",
+        "work": "ERA5 (Copernicus Climate Change Service)"
+      }
+    ],
+    "licence": "PRISM-terms-of-use",
     "release": "an91/r2207d normals/9120.a",
-    "source": "PRISM Climate Group 1991-2020 annual precipitation normal, 800 m (terms not verified)"
+    "source": "PRISM Group, Oregon State University: 1991-2020 annual precipitation normal, 800 m, area-averaged to the cell; dry year = that normal times ERA5's 20th-percentile-to-mean ratio (Open-Meteo era5_seamless)"
   },
   "soil_ph_texture": {
+    "credits": [
+      {
+        "holder": "ISRIC - World Soil Information",
+        "licence": "CC-BY-4.0",
+        "url": "https://soilgrids.org",
+        "work": "SoilGrids 2.0"
+      }
+    ],
     "licence": "CC-BY-4.0",
     "release": "SDA and SoilGrids 2.0 accessed 2026-09-26",
     "source": "USDA NRCS SSURGO dominant component where present, else ISRIC SoilGrids v2.0 0-30 cm"

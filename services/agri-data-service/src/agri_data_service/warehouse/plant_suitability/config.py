@@ -28,7 +28,8 @@ PRODUCTION_PICK_DEFINITION = (
 # Owner reading: 'eastern Oregon' / Intermountain guides lie east of the Cascade crest, so they are in-region for Bend.
 EAST_OF_CASCADE_CREST_SOURCE_IDS = ("idpm_tn2a_2017", "nrcs_tn50_2008", "orwa_2000", "orwa_guide_2000")
 EAST_OF_CASCADE_CREST_REGION = "bend"
-# Owner rule "exclude non-commercial sources from v1", read as an allow-list of licence ids (AGENTS.md §Licences).
+# Owner rule "exclude non-commercial sources from v1", read as an allow-list of licence ids (AGENTS.md §Licences);
+# it includes PRISM's attribution-only terms (owner decision 2026-10-03), so PRODUCTION reads PRISM precipitation.
 PRODUCTION_PERMITTED_LICENCES = COMMERCIAL_USE_LICENCES
 
 

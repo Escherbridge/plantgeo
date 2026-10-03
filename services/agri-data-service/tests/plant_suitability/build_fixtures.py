@@ -37,6 +37,7 @@ RANGE_WIDE_SHORT_NAMES = frozenset({"NRCS TN PM-2A (2017)", "NRCS ID TN PM-77 (2
 US_GOVERNMENT_WORK = "us-government-work"
 UNRECORDED_LICENCE = "unrecorded"
 CC_BY_LICENCE = "CC-BY-4.0"
+PRISM_TERMS_OF_USE = "PRISM-terms-of-use"
 # An assumption, not curation (AGENTS.md §Licences): us-government-work only where regional_lists/SOURCES_*.md names
 # one US federal agency as the sole publisher; co-published, contractor-named and non-federal sources stay unrecorded.
 SOURCE_LICENCES = {
@@ -68,7 +69,28 @@ SOURCE_LICENCES = {
     "xerces_west_hedgerow_422": UNRECORDED_LICENCE,  # Xerces with NRCS
 }
 # Where each site-input group came from (prototype site_conditions/{soil,climate}/SOURCES.md, join/site_table.py).
-# PRISM's terms were never verified (prototype FROZEN.md issue 6), so precipitation stays unrecorded.
+# PRISM: terms verified 2026-10-03 (attribution with name, URL and access date); the prototype's SOURCES.md records
+# every climate source accessed 2026-09-26, and the cached PRISM zip is stamped 2026-09-26 19:33 MDT.
+# The CC BY works each group draws on (licences.SourceCredit fields). Open-Meteo asks for credit to Open-Meteo.com;
+# era5_seamless is ERA5-Land temperature with ERA5 precipitation, and the PRISM dry year uses ERA5's spread.
+ERA5_LAND_CREDIT = {
+    "work": "ERA5-Land (Copernicus Climate Change Service)",
+    "holder": "Open-Meteo.com",
+    "url": "https://open-meteo.com",
+    "licence": CC_BY_LICENCE,
+}
+ERA5_CREDIT = {
+    "work": "ERA5 (Copernicus Climate Change Service)",
+    "holder": "Open-Meteo.com",
+    "url": "https://open-meteo.com",
+    "licence": CC_BY_LICENCE,
+}
+SOILGRIDS_CREDIT = {
+    "work": "SoilGrids 2.0",
+    "holder": "ISRIC - World Soil Information",
+    "url": "https://soilgrids.org",
+    "licence": CC_BY_LICENCE,
+}
 SITE_INPUT_SOURCES = {
     "soil_survey": {
         "source": "USDA NRCS SSURGO via Soil Data Access: dominant component, 0-30 cm; MLRA by SDA lookup",
@@ -79,17 +101,20 @@ SITE_INPUT_SOURCES = {
         "source": "USDA NRCS SSURGO dominant component where present, else ISRIC SoilGrids v2.0 0-30 cm",
         "licence": CC_BY_LICENCE,
         "release": "SDA and SoilGrids 2.0 accessed 2026-09-26",
+        "credits": [SOILGRIDS_CREDIT],
     },
     "cold": {
         "source": "ERA5-Land via the Open-Meteo archive (era5_seamless, 1991-2020 record low), lapse-adjusted to "
         "Copernicus DEM GLO-90",
         "licence": CC_BY_LICENCE,
         "release": "Open-Meteo archive accessed 2026-09-26",
+        "credits": [ERA5_LAND_CREDIT],
     },
     "frost_free": {
         "source": "ERA5-Land via the Open-Meteo archive (era5_seamless, 1991-2020 median frost-free days)",
         "licence": CC_BY_LICENCE,
         "release": "Open-Meteo archive accessed 2026-09-26",
+        "credits": [ERA5_LAND_CREDIT],
     },
     "frost_free_station_bias": {
         "source": "NOAA NCEI U.S. Climate Normals 1991-2020 station growing season, against the station cell",
@@ -97,22 +122,13 @@ SITE_INPUT_SOURCES = {
         "release": "NCEI normals-annualseasonal-1991-2020 accessed 2026-09-26",
     },
     "precipitation": {
-        "source": "PRISM Climate Group 1991-2020 annual precipitation normal, 800 m (terms not verified)",
-        "licence": UNRECORDED_LICENCE,
+        "source": "PRISM Group, Oregon State University: 1991-2020 annual precipitation normal, 800 m, area-averaged "
+        "to the cell; dry year = that normal times ERA5's 20th-percentile-to-mean ratio (Open-Meteo era5_seamless)",
+        "licence": PRISM_TERMS_OF_USE,
         "release": "an91/r2207d normals/9120.a",
+        "accessed": "2026-09-26",
+        "credits": [ERA5_CREDIT],
     },
-}
-# The permitted precipitation PRODUCTION is served: era5_seamless precipitation is ERA5 at 0.25 degree, not ERA5-Land
-# (which returns none; prototype site_conditions/climate/SOURCES.md). v0 read PRISM, so the golden keeps PRISM.
-ERA5_PRECIPITATION_SOURCE = {
-    "source": "ERA5 via the Open-Meteo archive (era5_seamless, 0.25 degree; 1991-2020 annual precipitation mean and "
-    "20th-percentile year)",
-    "licence": CC_BY_LICENCE,
-    "release": "Open-Meteo archive accessed 2026-09-26",
-}
-ERA5_PRECIPITATION_COLUMNS = {
-    "mean_annual_precip_mm": "mean_annual_precip_mm",
-    "dry_year_precip_mm": "annual_precip_p20_mm",
 }
 # The licence flow's pair of Boise woody-buffer sources: one the PRODUCTION gate drops, one it keeps.
 LICENCE_DROPPED_SOURCE = ("pnw5_2005", "PNW0005")
@@ -185,6 +201,8 @@ def load_engine_module(name: str) -> ModuleType:
         message = f"cannot load {path}"
         raise SystemExit(message)
     module = importlib.util.module_from_spec(specification)
+    # Registered first, as importlib's recipe does: dataclasses resolve string annotations through sys.modules.
+    sys.modules[specification.name] = module
     specification.loader.exec_module(module)
     return module
 
@@ -208,7 +226,7 @@ def guide_rows(prototype: dict[str, ModuleType], traits: pl.DataFrame) -> pl.Dat
         message = f"matched rows whose match name differs from the listed name: {renamed_listing.height}"
         raise SystemExit(message)
     unlicensed = set(matched["source_id"].unique().to_list()) - set(SOURCE_LICENCES)
-    unknown_licences = set(SOURCE_LICENCES.values()) - load_engine_module("licences").KNOWN_LICENCES
+    unknown_licences = set(SOURCE_LICENCES.values()) - load_engine_module("licences").GUIDE_ROW_LICENCES
     if unlicensed or unknown_licences:
         message = f"sources without a fixture licence entry {sorted(unlicensed)}, or unknown ids {unknown_licences}"
         raise SystemExit(message)
@@ -514,25 +532,13 @@ def noxious_taxa(
     return {"noxious_binomial_taxon": single[0], "noxious_genus": genus, "noxious_annotation_taxon": single[1]}
 
 
-def era5_precipitation(prototype_directory: Path, site: pl.DataFrame) -> pl.DataFrame:
-    """ERA5 annual and 20th-percentile precipitation for every fixture cell, in the site schema's column names."""
-    climate = pl.read_parquet(prototype_directory / "site_conditions" / "climate" / "all.parquet")
-    columns = [pl.col(source).alias(target) for target, source in ERA5_PRECIPITATION_COLUMNS.items()]
-    precipitation = site.select("cell_id").join(climate.select("cell_id", *columns), on="cell_id", how="left")
-    missing = precipitation.filter(pl.any_horizontal(pl.all().is_null()))["cell_id"].to_list()
-    if missing:
-        message = f"fixture cells without ERA5 precipitation: {missing}"
-        raise SystemExit(message)
-    return precipitation.sort("cell_id")
-
-
 def write_parquet(frame: pl.DataFrame, schema: Any, name: str, schemas: ModuleType) -> None:
     """Conform to the engine's schema and write a small zstd parquet fixture."""
     schemas.conform(frame, schema, name).write_parquet(FIXTURE_DIRECTORY / f"{name}.parquet", compression="zstd")
 
 
 def main(prototype_directory: Path) -> None:
-    """Write the fixture tables, both precipitation declarations (v0 PRISM, production ERA5) and the role manifest."""
+    """Write the fixture tables, the site-input declaration (PRISM precipitation) and the role manifest."""
     schemas = load_engine_module("schemas")
     prototype = load_prototype(prototype_directory)
     traits = pl.read_parquet(prototype_directory / "join" / "species_traits.parquet")
@@ -572,11 +578,6 @@ def main(prototype_directory: Path) -> None:
     (FIXTURE_DIRECTORY / "fixture_cells.json").write_text(manifest_text, encoding="utf-8", newline="\n")
     site_inputs_text = json.dumps(SITE_INPUT_SOURCES, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
     (FIXTURE_DIRECTORY / "site_inputs.json").write_text(site_inputs_text, encoding="utf-8", newline="\n")
-    era5_precipitation(prototype_directory, site).write_parquet(
-        FIXTURE_DIRECTORY / "era5_precipitation.parquet", compression="zstd"
-    )
-    era5_source_text = json.dumps(ERA5_PRECIPITATION_SOURCE, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
-    (FIXTURE_DIRECTORY / "era5_precipitation_source.json").write_text(era5_source_text, encoding="utf-8", newline="\n")
     licence_rows = dict(guides.group_by("license").len().iter_rows())
     cell_counts = {region: len(cell_ids) for region, cell_ids in cells.items()}
     print(f"cells {cell_counts}; species {species.height}; guide rows {guides.height} by licence {licence_rows}")

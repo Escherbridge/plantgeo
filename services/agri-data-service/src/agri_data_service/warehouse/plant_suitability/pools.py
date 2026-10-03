@@ -12,7 +12,7 @@ import polars as pl
 
 from agri_data_service.warehouse.plant_suitability.applicability import HABITAT_QUALIFIERS
 from agri_data_service.warehouse.plant_suitability.labels import find_fire_claims
-from agri_data_service.warehouse.plant_suitability.licences import KNOWN_LICENCES, assert_one_licence_per_source
+from agri_data_service.warehouse.plant_suitability.licences import GUIDE_ROW_LICENCES, assert_one_licence_per_source
 from agri_data_service.warehouse.plant_suitability.names import (
     BINOMIAL_TOKEN_COUNT,
     bare_tokens,
@@ -59,7 +59,7 @@ GUIDE_ROW_VOCABULARIES = {
     "origin_scope": ORIGIN_SCOPES,
     "plant_role": PLANT_ROLES,
     "match_route": MATCH_ROUTES,
-    "license": KNOWN_LICENCES,
+    "license": GUIDE_ROW_LICENCES,
     "habitat_qualifier": HABITAT_QUALIFIERS,
 }
 CONDITION_COLUMNS = ["min_precip_in", "max_precip_in", "habitat_qualifier"]

@@ -1,26 +1,82 @@
-"""Canonical licence ids and the licence gate; see AGENTS.md §Licences (package-free: build_fixtures loads it)."""
+"""Canonical licence ids, their attribution terms and the licence gate; see AGENTS.md §Licences (package-free)."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 import polars as pl
 
 if TYPE_CHECKING:
+    import datetime
+    from collections.abc import Mapping
+
     from agri_data_service.warehouse.plant_suitability.config import RuleConfig
 
 PUBLIC_DOMAIN = "public-domain"
 US_GOVERNMENT_WORK = "us-government-work"
 CC0 = "CC0-1.0"
 CC_BY = "CC-BY-4.0"
+# Not an SPDX id: PRISM's own terms (https://prism.oregonstate.edu/terms/, fetched 2026-10-03), see AGENTS.md §Licences.
+PRISM_TERMS_OF_USE = "PRISM-terms-of-use"
 CC_BY_NC = "CC-BY-NC-4.0"
 CC_BY_NC_SA = "CC-BY-NC-SA-4.0"
 CC_BY_ND = "CC-BY-ND-4.0"
 ALL_RIGHTS_RESERVED = "all-rights-reserved"
 UNRECORDED = "unrecorded"
-COMMERCIAL_USE_LICENCES = frozenset({PUBLIC_DOMAIN, US_GOVERNMENT_WORK, CC0, CC_BY})
+COMMERCIAL_USE_LICENCES = frozenset({PUBLIC_DOMAIN, US_GOVERNMENT_WORK, CC0, CC_BY, PRISM_TERMS_OF_USE})
 RESTRICTED_LICENCES = frozenset({CC_BY_NC, CC_BY_NC_SA, CC_BY_ND, ALL_RIGHTS_RESERVED, UNRECORDED})
 KNOWN_LICENCES = COMMERCIAL_USE_LICENCES | RESTRICTED_LICENCES
+MONTH_ABBREVIATIONS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+@dataclass(frozen=True)
+class DatedAttributionTerms:
+    """A licence whose every use must state the holder's name, URL and the date the data were accessed."""
+
+    holder: str
+    url: str
+    terms_url: str
+    terms_fetched: str
+
+    def attribution(self, accessed: datetime.date) -> str:
+        """The attribution in the holder's own form, e.g. 'PRISM Group, ..., accessed 16 Dec 2025.' (locale-free)."""
+        month = MONTH_ABBREVIATIONS[accessed.month - 1]
+        return f"{self.holder}, {self.url}, accessed {accessed.day} {month} {accessed.year}."
+
+
+# Licences whose obligations need an access date; only a declaration that carries one may use them.
+DATED_ATTRIBUTION_TERMS: Mapping[str, DatedAttributionTerms] = MappingProxyType(
+    {
+        PRISM_TERMS_OF_USE: DatedAttributionTerms(
+            holder="PRISM Group, Oregon State University",
+            url="https://prism.oregonstate.edu",
+            terms_url="https://prism.oregonstate.edu/terms/",
+            terms_fetched="2026-10-03",
+        ),
+    }
+)
+# Guide rows carry no access date, so a dated-attribution licence is refused there rather than served unattributed.
+GUIDE_ROW_LICENCES = KNOWN_LICENCES - frozenset(DATED_ATTRIBUTION_TERMS)
+# Licences that oblige a credit naming the work, its holder and the licence, as each credit line states it.
+CREDIT_LICENCE_TEXTS: Mapping[str, str] = MappingProxyType(
+    {CC_BY: "CC BY 4.0, https://creativecommons.org/licenses/by/4.0/"}
+)
+
+
+@dataclass(frozen=True)
+class SourceCredit:
+    """One licensed work a site-input group draws on, credited title-holder-source-licence (the CC BY TASL form)."""
+
+    work: str
+    holder: str
+    url: str
+    licence: str
+
+    def text(self) -> str:
+        """The credit line: work, holder, URL, then 'under <licence name and deed URL>'."""
+        return f"{self.work}, {self.holder}, {self.url}, under {CREDIT_LICENCE_TEXTS[self.licence]}"
 
 
 # (key, value) pairs that must be one-to-one: labels and origin votes cite the short name, the gate reads the id.
