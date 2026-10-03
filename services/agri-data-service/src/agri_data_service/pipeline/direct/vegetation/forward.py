@@ -304,6 +304,7 @@ async def _retry_owed_availability(
             session,
             store,
             lane=VEGETATION_PLANE_STREAM,
+            nature=_registered_lane().nature,
             kind=GAP_FILL_PARTITION_KIND,
             availability=availability_storage,
             now=lambda: datetime.now(UTC),

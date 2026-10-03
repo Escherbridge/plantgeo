@@ -625,6 +625,7 @@ async def _drain_owed_availability(  # noqa: PLR0913 - one coordinate of the wal
                 session,
                 store,
                 lane=registration.slug,
+                nature=registration.nature,
                 kind=GAP_FILL_PARTITION_KIND,
                 availability=availability_storage,
                 now=now,

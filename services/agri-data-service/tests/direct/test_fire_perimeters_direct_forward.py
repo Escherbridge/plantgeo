@@ -8,12 +8,9 @@ the calendar -- so there is no before-the-floor no-op path to exercise the way
 `test_drought_forward.py` has one. The two repair-audit tests NEED DuckDB's `spatial` extension: the
 population they render comes from the real 2026-09-15 fixture through `rows.py`.
 
-The availability-drain tests at the bottom of this file are the exception: `TestAvailabilityDrain`
-exercises `_retry_owed_availability` directly with a faked `retry_pending_availability`, and
-`test_the_turn_drains_owed_availability_even_when_the_lane_sits_at_current` drives the whole
-`run_fire_perimeters_forward` entry point end to end with every network and storage seam faked, to
-prove the 2026-10-03 `publication_debt` regression stays fixed: see `pipeline/direct/AGENTS.md`,
-"Fire perimeters", "A standing availability claim never drains itself".
+The turn test at the bottom is the exception. It drives `run_fire_perimeters_forward` end to end, with
+an in-memory bucket and a real `fill_one_lane_day`, to prove that a static lane never claims
+availability. See `pipeline/parquet/AGENTS.md`, "A static lane never claims availability".
 """
 
 # ruff: noqa: PLR2004 - the small literal counts and ratios ARE the assertion; naming each one hides it.
@@ -21,13 +18,13 @@ prove the 2026-10-03 `publication_debt` regression stays fixed: see `pipeline/di
 from __future__ import annotations
 
 import json
-import time
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
+from agri_data_service.execution.job_executor_service import summarize_turn_report
 from agri_data_service.foundation.parquet.lane_contract import SourceWatermark, StaticLaneVerdict
 from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct.fire_perimeters import forward as forward_module
@@ -40,7 +37,6 @@ from agri_data_service.pipeline.direct.fire_perimeters.forward import (
     MemoizedDirectWatermark,
     _emit_geometry_repairs,
     _report,
-    _retry_owed_availability,
     _validate_config,
     parse_args,
     parser,
@@ -53,10 +49,7 @@ from agri_data_service.pipeline.direct.fire_perimeters.products import (
 from agri_data_service.pipeline.direct.fire_perimeters.rows import fire_perimeter_population
 from agri_data_service.pipeline.direct.fire_perimeters.source import FirePerimetersSource
 from agri_data_service.pipeline.direct.fire_perimeters.watermark import DirectWatermarkReading, PublishedLadder
-from agri_data_service.pipeline.parquet.availability_extension import (
-    AvailabilityExtensionOutcome,
-    AvailabilityExtensionTally,
-)
+from agri_data_service.pipeline.parquet.availability_extension import AvailabilityExtensionTally
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from tests.direct.test_fire_perimeters_direct_support import (
     EGYPT_INVALID_POLYGON,
@@ -65,10 +58,11 @@ from tests.direct.test_fire_perimeters_direct_support import (
     WOLF_CREEK_INVALID_MULTIPOLYGON,
     wfigs_fixture_geometries,
 )
+from tests.parquet.test_gap_fill import EmptyAvailabilityStorage
 from tests.parquet.test_objectstore_writer import RecordingBackend
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+    from collections.abc import AsyncIterator, Mapping
 
     from agri_data_service.pipeline.direct.fire_perimeters.rows import FirePerimeterPopulation
 
@@ -307,153 +301,37 @@ def test_the_repair_event_fires_once_naming_each_incident_and_never_on_an_all_va
 
 
 # ---------------------------------------------------------------------------------------------
-# Availability drain: regression coverage for the 2026-10-03 `publication_debt` incident
+# A static lane never claims availability: the 2026-10-03 `publication_debt` incident, through the turn
 #
-# Root cause: this module never called `retry_pending_availability` at all, unlike every sibling
-# direct writer, AND the loader session it would have needed to run one was opened only when a NEW
-# version needed publishing. A `current` turn -- the ordinary outcome of most ticks on a
-# `static_lookup` lane -- therefore never revisited a retry claim a past publish left standing.
+# Every process edge is faked: WFIGS, Postgres and the bucket. `fill_one_lane_day`, the adapter, the
+# tier derivation (DuckDB `spatial`) and the four-rung verification are real. The report is read the
+# way the executor reads it, through `summarize_turn_report`.
 # ---------------------------------------------------------------------------------------------
 
 
-class TestAvailabilityDrain:
-    """`_retry_owed_availability` in isolation: what it drains, and how it fails safe."""
+class _GrantedLock:
+    def scalar(self) -> bool:
+        return True
 
-    @pytest.mark.asyncio
-    async def test_a_drained_claim_is_folded_into_the_turns_tally_and_announced(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        drained = AvailabilityExtensionOutcome(
-            state="extended",
-            lane_root="layer=fire-perimeters/kind=observed",
-            day=date(2026, 9, 4),
-            reason="recovered a standing claim",
-        )
-        captured: dict[str, object] = {}
 
-        async def fake_retry(
-            _session: object, _store: object, **kwargs: object
-        ) -> tuple[AvailabilityExtensionOutcome, ...]:
-            captured.update(kwargs)
-            return (drained,)
+class LockGrantingSession:
+    """A Postgres session as the publish sees it: every advisory lock is granted, every pin accepted."""
 
-        monkeypatch.setattr(forward_module, "retry_pending_availability", fake_retry)
-        tally = AvailabilityExtensionTally()
-        count = await _retry_owed_availability(
-            object(),  # type: ignore[arg-type]
-            ObjectStore(RecordingBackend()),
-            lane_slug="fire-perimeters",
-            run_id="drain-probe",
-            deadline=time.monotonic() + 60,
-            availability_storage=object(),  # type: ignore[arg-type]
-            availability=tally,
-        )
+    async def execute(self, *_args: object, **_kwargs: object) -> _GrantedLock:
+        return _GrantedLock()
 
-        assert count == 1
-        assert captured["lane"] == "fire-perimeters"
-        assert captured["kind"] == FIRE_PERIMETERS_DIRECT_KIND
-        assert tally.to_summary()["availability_extended"] == 1, "a drained claim is a number, not prose"
-        event = json.loads(capsys.readouterr().err.strip())
-        assert event["event"] == "fire_perimeters_forward_availability_retry"
-        assert event["state"] == "extended"
-
-    @pytest.mark.asyncio
-    async def test_a_drain_fault_never_blocks_the_turn_and_is_announced(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        async def raising_retry(*_args: object, **_kwargs: object) -> tuple[AvailabilityExtensionOutcome, ...]:
-            raise RuntimeError("temporary availability-head read fault")
-
-        monkeypatch.setattr(forward_module, "retry_pending_availability", raising_retry)
-
-        count = await _retry_owed_availability(
-            object(),  # type: ignore[arg-type]
-            ObjectStore(RecordingBackend()),
-            lane_slug="fire-perimeters",
-            run_id="drain-probe",
-            deadline=time.monotonic() + 60,
-            availability_storage=object(),  # type: ignore[arg-type]
-            availability=AvailabilityExtensionTally(),
-        )
-
-        assert count == 0
-        event = json.loads(capsys.readouterr().err.strip())
-        assert event["event"] == "fire_perimeters_forward_availability_retry_failed"
-        assert event["detail"] == "RuntimeError: temporary availability-head read fault"
-
-    @pytest.mark.asyncio
-    async def test_a_drain_is_not_started_after_the_turns_deadline(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """The retry re-verifies every physical part of a day; a turn out of clock must not begin one."""
-
-        async def refuse_retry(*_args: object, **_kwargs: object) -> tuple[AvailabilityExtensionOutcome, ...]:
-            raise AssertionError("an expired turn started an availability retry")
-
-        monkeypatch.setattr(forward_module, "retry_pending_availability", refuse_retry)
-
-        count = await _retry_owed_availability(
-            object(),  # type: ignore[arg-type]
-            ObjectStore(RecordingBackend()),
-            lane_slug="fire-perimeters",
-            run_id="drain-probe",
-            deadline=time.monotonic() - 1,
-            availability_storage=object(),  # type: ignore[arg-type]
-            availability=AvailabilityExtensionTally(),
-        )
-
-        assert count == 0
-
-    @pytest.mark.asyncio
-    async def test_a_drain_whose_statement_failed_still_lets_the_owed_version_publish_on_its_first_attempt(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Review 2026-10-03: the drain shares the publish's session, and a failed SQL statement aborts it.
-
-        Without the drain's rollback the publish's first advisory-lock query raised InFailedSQLTransaction,
-        so the turn that owed a new version published nothing.
-        """
-        session = AbortableSession()
-        version_day = date(2026, 9, 6)
-        fill_attempts: list[date] = []
-
-        async def failing_retry(*_args: object, **_kwargs: object) -> tuple[AvailabilityExtensionOutcome, ...]:
-            session.aborted = True  # what a statement timeout inside the drain leaves behind
-            raise RuntimeError("canceling statement due to statement timeout")
-
-        async def fill(
-            fill_session: AbortableSession, _store: object, _lane: object, *, day: date, **_kwargs: object
-        ) -> tuple[str, int, int, int, str | None]:
-            await fill_session.execute("SET LOCAL statement_timeout")
-            fill_attempts.append(day)
-            return ("written", 4, 1, 2048, None)
-
-        _fake_turn_edges(
-            monkeypatch,
-            verdict=StaticLaneVerdict(state="stale", version_day=version_day, detail="WFIGS moved on"),
-            retry=failing_retry,
-            session=session,
-        )
-        monkeypatch.setattr(forward_module, "fill_one_lane_day", fill)
-        monkeypatch.setattr(
-            forward_module,
-            "_tier_status_for_version",
-            lambda _store, _day: dict.fromkeys(FIRE_PERIMETERS_DIRECT_ALL_TIERS, "data"),
-        )
-
-        report = await forward_module.run_fire_perimeters_forward(_config())
-
-        assert report["versions_published"] == 1
-        assert [result["outcome"] for result in cast("list[dict[str, Any]]", report["results"])] == ["written"]
-        assert fill_attempts == [version_day], "published on the first attempt, not after a retry"
+    async def rollback(self) -> None:
+        return None
 
 
 def _fake_turn_edges(
     monkeypatch: pytest.MonkeyPatch,
     *,
     verdict: StaticLaneVerdict,
-    retry: Callable[..., Awaitable[tuple[AvailabilityExtensionOutcome, ...]]],
-    session: object,
+    store: ObjectStore,
+    availability_storage: EmptyAvailabilityStorage,
 ) -> None:
-    """Fake every process edge of `run_fire_perimeters_forward`: WFIGS, the bucket reads, Postgres and the drain."""
+    """Fake every process edge of `run_fire_perimeters_forward`: WFIGS, the bucket reads and Postgres."""
     ladder = PublishedLadder(
         newest_data_day=None, newest_data_instant=None, newest_marker_day=None, version_count=0, stranded_days=()
     )
@@ -474,22 +352,19 @@ def _fake_turn_edges(
         )
 
     @asynccontextmanager
-    async def fake_session(_url: str) -> AsyncIterator[object]:
-        yield session
+    async def fake_session(_url: str) -> AsyncIterator[LockGrantingSession]:
+        yield LockGrantingSession()
 
     monkeypatch.setattr(forward_module, "fetch_fire_perimeters_source", fake_fetch)
     monkeypatch.setattr(forward_module, "read_published_ladder", lambda _store: ladder)
     monkeypatch.setattr(forward_module, "read_direct_watermark", lambda _store, _population, _ladder: reading)
     monkeypatch.setattr(forward_module, "resolve_static_lane", lambda **_kwargs: verdict)
-    monkeypatch.setattr(forward_module, "retry_pending_availability", retry)
     monkeypatch.setattr(forward_module, "local_source_loader_session", fake_session)
+    monkeypatch.setattr(forward_module.ObjectStore, "from_settings", classmethod(lambda _cls, _source=None: store))
     monkeypatch.setattr(
-        forward_module.ObjectStore,
+        forward_module.BotoAvailabilityStorage,
         "from_settings",
-        classmethod(lambda _cls, _source=None: ObjectStore(RecordingBackend())),
-    )
-    monkeypatch.setattr(
-        forward_module.BotoAvailabilityStorage, "from_settings", classmethod(lambda _cls, _source=None: object())
+        classmethod(lambda _cls, _source=None: availability_storage),
     )
     monkeypatch.setattr(
         forward_module.settings.__class__,
@@ -498,67 +373,44 @@ def _fake_turn_edges(
     )
 
 
-class _ScalarResult:
-    def scalar(self) -> bool:
-        return True
-
-
-class AbortableSession:
-    """A Postgres session as the publish sees it: one failed statement aborts it until `rollback()`."""
-
-    def __init__(self) -> None:
-        self.aborted = False
-
-    async def execute(self, *_args: object, **_kwargs: object) -> _ScalarResult:
-        if self.aborted:
-            raise RuntimeError("InFailedSQLTransaction: current transaction is aborted")
-        return _ScalarResult()
-
-    async def rollback(self) -> None:
-        self.aborted = False
-
-
 @pytest.mark.asyncio
-async def test_the_turn_drains_owed_availability_even_when_the_lane_sits_at_current(
+async def test_a_published_version_leaves_no_availability_claim_and_the_turn_owes_no_publication(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """End-to-end regression for the production incident: `current` must not skip the drain.
+    """The production flow: WFIGS moved on, one version publishes, and the executor sees a complete turn.
 
-    Before the fix, the loader session -- the only place this lane could reach
-    `retry_pending_availability` -- was opened ONLY inside the `verdict.version_day is not None`
-    branch, so a `current` verdict (this test's scenario, and the ordinary outcome of most ticks)
-    returned a report built from a brand-new, always-empty `AvailabilityExtensionTally`. A standing
-    claim from a past publish's availability-extension failure was therefore never retried again as
-    long as WFIGS kept answering with content already captured.
+    Before the shared guard, `fill_one_lane_day` claimed availability for this lane too. No index exists
+    for a `static_lookup` lane, so the claim came back `retry_owed` and became `publication_debt`. The
+    leftover claim stands for one a past version left in production: it must be ignored, not drained.
     """
-    drained = AvailabilityExtensionOutcome(
-        state="extended",
-        lane_root="layer=fire-perimeters/kind=observed",
-        day=date(2026, 9, 4),
-        reason="recovered a standing claim from a past publish",
+    version_day = WATERMARK.day
+    assert version_day is not None
+    leftover_day = date(2026, 9, 1)
+    store = ObjectStore(RecordingBackend())
+    leftover = b"written before the guard"
+    store.write_availability_retry(
+        leftover, layer="fire-perimeters", kind=FIRE_PERIMETERS_DIRECT_KIND, day=leftover_day
     )
-    captured: dict[str, object] = {}
-
-    async def fake_retry(
-        _session: object, _store: object, **kwargs: object
-    ) -> tuple[AvailabilityExtensionOutcome, ...]:
-        captured.update(kwargs)
-        return (drained,)
-
+    availability_storage = EmptyAvailabilityStorage()
     _fake_turn_edges(
         monkeypatch,
-        verdict=StaticLaneVerdict(state="current", version_day=None, detail="already current"),
-        retry=fake_retry,
-        session=AbortableSession(),
+        verdict=StaticLaneVerdict(state="stale", version_day=version_day, detail="WFIGS moved on"),
+        store=store,
+        availability_storage=availability_storage,
     )
 
     report = await forward_module.run_fire_perimeters_forward(_config())
 
-    assert report["static_state"] == "current"
-    assert report["versions_published"] == 0, "no new version was owed"
-    assert report["results"] == []
-    assert captured["lane"] == "fire-perimeters", "the drain must name this lane's own slug"
-    assert captured["kind"] == FIRE_PERIMETERS_DIRECT_KIND
-    assert report["availability_extended"] == 1, (
-        "the drained claim must reach the report even though nothing new published this turn"
-    )
+    assert report["status"] == "completed"
+    assert report["versions_published"] == 1
+    assert [result["outcome"] for result in cast("list[dict[str, Any]]", report["results"])] == ["written"]
+    claims = store.list_availability_retry_claims("fire-perimeters", FIRE_PERIMETERS_DIRECT_KIND)
+    assert claims.owed == (leftover_day,), "the published version wrote no claim of its own"
+    assert claims.quarantined == ()
+    assert store.read_availability_retry("fire-perimeters", FIRE_PERIMETERS_DIRECT_KIND, leftover_day) == leftover
+    assert availability_storage.reads == []
+    assert availability_storage.writes == []
+    kept = summarize_turn_report(json.loads(json.dumps(report)), previous=None)
+    assert kept is not None
+    assert kept.publication_debt == 0
+    assert not kept.incomplete, "the executor must not raise lane_incomplete for a static lane"

@@ -232,6 +232,7 @@ async def _drain_owed_availability(  # noqa: PLR0913 - one coordinate of the tic
                 session,
                 store,
                 lane=lane.slug,
+                nature=lane.nature,
                 kind=GAP_FILL_PARTITION_KIND,
                 availability=availability_storage,
                 now=now,

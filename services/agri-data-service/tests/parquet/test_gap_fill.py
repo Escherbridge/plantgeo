@@ -636,6 +636,37 @@ async def test_the_availability_step_can_be_switched_off_for_one_run() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_static_lane_writes_its_version_without_claiming_availability_or_retrying_a_leftover() -> None:
+    """A `static_lookup` lane has no availability index (layer-lanes.md §4a), so a claim is debt forever.
+
+    This was the 2026-10-03 `publication_debt` incident: fire-perimeters and evacuation-zones left one
+    claim per version, and nothing could ever consume them. The leftover here is MALFORMED on purpose:
+    a retry walk that reached it would quarantine it, so seeing it untouched proves no retry ran.
+    """
+    calls: list[LaneCall] = []
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    leftover_day = date(2026, 8, 1)
+    store.write_availability_retry(b"written before the guard", layer="watersheds", kind="observed", day=leftover_day)
+    changed_on = date(2026, 8, 7)
+    availability = EmptyAvailabilityStorage()
+
+    summary = await drive(
+        [stub_lane("watersheds", calls, nature="static_lookup", watermark_day=changed_on)],
+        store,
+        availability_storage=availability,
+    )
+
+    assert summary.lanes[0].written == 1, "the version itself still publishes"
+    claims = store.list_availability_retry_claims("watersheds", "observed")
+    assert claims.owed == (leftover_day,), "no claim for the new version, and the leftover is left alone"
+    assert claims.quarantined == ()
+    assert availability.reads == [], "the index of a lane that has none is never consulted"
+    assert set(summary.availability.to_summary().values()) == {0}, "no availability verdict, so no debt"
+    assert not summary.failed
+
+
+@pytest.mark.asyncio
 async def test_a_recorded_absence_is_covered_on_the_next_tick() -> None:
     """The marker is the memory: without it the same empty day is re-exported on every tick."""
     backend = RecordingBackend()

@@ -20,6 +20,7 @@ from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Final, Literal
 
 from agri_data_service.foundation.canonical import canonical_json, sha256_digest
+from agri_data_service.foundation.parquet.lane_contract import nature_has_time_axis
 from agri_data_service.foundation.parquet.zoom import ZoomTierError, validate_zoom_tier
 from agri_data_service.pipeline.parquet.availability_index import (
     AvailabilityConfig,
@@ -56,6 +57,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from agri_data_service.foundation.parquet.lane_contract import LaneNature
     from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.pipeline.parquet.availability_index import (
         AvailabilityPublicationBarrier,
@@ -438,6 +440,7 @@ async def retry_pending_availability(  # noqa: PLR0913 - one lane coordinate or 
     store: ObjectStore,
     *,
     lane: str,
+    nature: LaneNature,
     kind: PartitionKind,
     availability: AvailabilityStorage | None,
     now: Callable[[], datetime],
@@ -445,6 +448,10 @@ async def retry_pending_availability(  # noqa: PLR0913 - one lane coordinate or 
     publication_barrier: AvailabilityPublicationBarrier = postgres_lane_publication_barrier,
 ) -> tuple[AvailabilityExtensionOutcome, ...]:
     """Retry the AVAILABILITY STEP ALONE for every day one lane owes, never re-exporting the data.
+
+    `nature` is REQUIRED so every caller states it: a `static_lookup` lane has no availability index
+    (layer-lanes.md §4a), so its leftover claims are ignored -- never retried, swept or counted as debt.
+    See `AGENTS.md` in this directory, "A static lane never claims availability".
 
     THE QUARANTINE SWEEP RIDES ON THIS PASS'S OWN LISTING. A parked claim
     (`day=<day>.quarantined.json`) is deliberately invisible to the retry walk -- that is what stops
@@ -454,7 +461,7 @@ async def retry_pending_availability(  # noqa: PLR0913 - one lane coordinate or 
     out of the SAME walk: the count costs no extra request, and the cap it obeys is the key budget
     that walk already had.
     """
-    if availability is None or max_days <= 0:
+    if availability is None or max_days <= 0 or not nature_has_time_axis(nature):
         return ()
     lane_root = availability_lane_root(lane, kind)
     try:

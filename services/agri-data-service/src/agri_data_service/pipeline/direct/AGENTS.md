@@ -1644,7 +1644,7 @@ carried an obligation.
 
 ### The turn's shape, and why the fetch comes first
 
-    fetch -> conform -> read the ladder -> read the watermark -> resolve -> drain owed availability -> publish?
+    fetch -> conform -> read the ladder -> read the watermark -> resolve -> publish?
 
 The fetch is FIRST because this lane's version day is derived from the fetched population, not from the
 calendar: there is no day to lock on until the source has answered. That inverts `drought/forward.py`,
@@ -1669,45 +1669,35 @@ dimension entries across every producer ever reached a second WFIGS version, and
 known silent-freeze failure mode). The history this lane has is the 45 partition days the retired
 `daily_series` shape already wrote; nothing here adds to it and nothing can.
 
-### A standing availability claim never drains itself
+### A static lane never claims availability (supersedes the 2026-10-03 drain)
 
-Fixed 2026-10-03, production incident `lane_incomplete: fire-perimeters-direct-forward ... publication_debt`
-(`execution/job_executor_service.py::_incomplete_reason` names that reason exactly when
-`days_unwritten == 0` and `turn_report.publication_debt > 0` -- `execution/AGENTS.md`, "Publication debt
-is the second, quieter half of an incomplete turn"). The lane kept exiting 0 every hourly tick -- its
-Parquet object writes were landing and verifying across all four tiers -- while an availability retry
-claim from one past publish's `extend_availability_for_lane_day` hiccup (`pipeline/parquet/
-availability_extension.py`) stood forever.
+Production incident on 2026-10-03: `lane_incomplete: fire-perimeters-direct-forward ... publication_debt`.
+`execution/job_executor_service.py::_incomplete_reason` reports `publication_debt` when
+`days_unwritten == 0` and `turn_report.publication_debt > 0`. This lane exited 0 every hour, and its
+four-tier ladders verified, yet the incident was reported on every tick.
 
-**Root cause: this module never called `retry_pending_availability` at all.** Every sibling direct
-writer (`vegetation/forward.py`, `soil/forward.py`, `climate/forward.py`,
-`pipeline/parquet/water_gauges_forward.py`) carries a `_retry_owed_availability` helper that drains a
-bounded batch of owed claims every turn, before deciding what else to do. `fire_perimeters/forward.py`
-had no such call anywhere, and worse: the session that would have been able to run one was opened ONLY
-when `resolve_static_lane` found a new version to publish (`if verdict.version_day is not None:`). Once
-a version's own `fill_one_lane_day` call wrote a `retry_owed` claim (any transient read fault against the
-availability head counts -- `_read_failure`, `_index_claimed_day`'s publish-failure branch), the lane sat
-at `current` on every following tick -- WFIGS kept answering with content already captured -- and the
-claim was never revisited, because nothing ever asked for it back. A `static_lookup` lane can stay
-`current` for as long as the source does not change, so this is not a transient window: it is a claim
-that drains only by luck, on whichever tick happens to publish the next version.
+**Root cause.** `fill_one_lane_day` ran the availability step for every lane, whatever its nature. Each
+published fire-perimeters version therefore left a claim at
+`layer=fire-perimeters/kind=observed/availability/pending/day=<version>.json`. A `static_lookup` lane
+has no availability index (`conductor/code_styleguides/layer-lanes.md` §4a), so no generation ever
+exists to consume that claim. Commit `a9933e5e` read the claims as a missing drain and added
+`_retry_owed_availability` to every turn. That turned them into standing debt: each turn retried up to
+8 claims, and every retry came back `retry_owed` (`availability_not_bootstrapped`).
 
-**The fix drains every turn, unconditionally.** `run_fire_perimeters_forward` now always opens the
-`local_source_loader_session` and calls the new `_retry_owed_availability` as the first thing inside it,
-before checking whether `verdict.version_day` is `None` -- exactly where `water_gauges_forward.py` and
-`climate/forward.py` run their own drains. Publication proceeds afterward, in the same session, only
-when a version is actually owed. A drain fault is caught and logged
-(`fire_perimeters_forward_availability_retry_failed`) and never blocks the turn's own publication,
-matching every sibling's contract.
+**The fix removes the claim, not the drain.** That commit's drain is gone, and the forward turn has its
+pre-2026-10-03 shape again: no session is opened when no version is owed. Three shared guards keyed on
+`nature_has_time_axis` now apply:
 
-**Operator action in production, if the incident is already open:** none beyond deploying this fix and
-letting the next hourly tick run. The claim is self-describing (receipts only, no re-fetch) and the
-drain reads it back from object storage the first time this code runs; no manual retry, backfill or
-Parquet rewrite is needed. If the drain itself reports `retry_claim_failed` or a quarantined claim after
-deploying (meaning the claim bytes themselves are unreadable, not merely untried), that is a SEPARATE,
-rarer failure mode an operator resolves by hand per `pipeline/parquet/AGENTS.md`, "A malformed claim can
-never be retried" -- distinguish it from this incident by reading the drain's own
-`fire_perimeters_forward_availability_retry` event `state` field on the first post-deploy tick.
+- `fill_one_lane_day` skips the availability step for a static lane.
+- `_claim_repaired_day` writes no re-index claim for a repaired static day.
+- `retry_pending_availability` requires `nature` and returns nothing for a static lane.
+
+These guards cover `evacuation-zones` as well, and any static lane added later. Details are in
+`pipeline/parquet/AGENTS.md`, "A static lane never claims availability".
+
+**Operator action:** deploy the fix. The 14 fire-perimeters claims and 4 evacuation-zones claims
+already in production are ignored from then on. Deleting them needs owner approval; the exact
+prefixes are in that section.
 
 ### Entry point
 

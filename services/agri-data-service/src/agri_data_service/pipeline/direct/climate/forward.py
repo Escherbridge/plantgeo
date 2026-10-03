@@ -484,6 +484,7 @@ async def _retry_owed_availability(  # noqa: PLR0913 - one coordinate of the pro
             session,
             store,
             lane=LANE_REGISTRY[product.stream].slug,
+            nature=LANE_REGISTRY[product.stream].nature,
             kind=GAP_FILL_PARTITION_KIND,
             availability=availability_storage,
             now=lambda: datetime.now(UTC),

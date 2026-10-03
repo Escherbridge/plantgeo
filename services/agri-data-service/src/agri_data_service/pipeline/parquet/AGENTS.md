@@ -914,6 +914,40 @@ drivers. It drains at most `DEFAULT_MAX_RETRIES_PER_LANE` pending water claims i
 writer session before publishing newly fetched days, including turns whose NWIS snapshot yields no
 owned publisher day. A retry fault is tallied/emitted and never blocks fresh source publication.
 
+### A static lane never claims availability
+
+Only `daily_series` and `release_series` lanes have an availability index
+(`conductor/code_styleguides/layer-lanes.md` §4a; `AvailabilityNature` in `availability_primitives.py`).
+A `static_lookup` lane is always census-served (`availability_coverage.py::_lane_plan`), so a claim
+written for one can never be consumed: no generation ever exists, so every retry returns `retry_owed`
+(`availability_not_bootstrapped`), and that counts as `publication_debt` on every turn, forever.
+
+Three guards, all keyed on `nature_has_time_axis(lane.nature)` (`foundation/parquet/lane_contract.py`):
+
+- `gap_fill_day.fill_one_lane_day` returns the day's result without the availability step. This is
+  the one publish path for `run_gap_fill`, the drain, the runner writer and every direct writer, so
+  `fire-perimeters`, `evacuation-zones` and any later static lane are covered without their own
+  `extend_availability=False`. No tally is recorded: the report's `availability_*` counts stay 0, as
+  they already did for `watersheds`, `land_context` and `soil_properties`.
+- `gap_fill_repair._claim_repaired_day` writes no re-index claim for a repaired static day.
+- `retry_pending_availability` takes a REQUIRED `nature` and returns `()` for a static lane, so a
+  leftover claim is never retried, quarantined or counted. The argument is required so that no
+  caller can leave it out.
+
+The direct callers of `extend_availability_for_lane_day` (`burn_severity/publish_snapshot.py`,
+`crop_cover/forward.py`, `scripts/correct_sensor_absences.py`) all write time-bearing lanes and are
+not guarded. A new static writer must go through `fill_one_lane_day`.
+
+**Leftover claims in production (read-only check, 2026-10-03).** These were written before the guard
+existed. They are now ignored and are safe to leave. An owner-approved cleanup may delete them:
+
+- `layer=fire-perimeters/kind=observed/availability/pending/day=*.json`: 14 claims, 2026-09-20 to
+  2026-10-03.
+- `layer=evacuation-zones/kind=observed/availability/pending/day=*.json`: 4 claims, 2026-09-21,
+  2026-09-22, 2026-09-28 and 2026-09-29.
+
+Do not delete them without that approval.
+
 ### Physical-ladder availability reconciliation
 
 `availability_reconciliation.compile_physical_ladder_reconciliation` is the pure audit seam for a

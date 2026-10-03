@@ -320,6 +320,7 @@ class ObjectStoreLaneWriter:
                     self.session,
                     self.store,
                     lane=stream,
+                    nature=self._registration(stream).nature,
                     kind=CONFIG_LANE_KIND,
                     availability=self.availability_storage,
                     now=self.clock.now,

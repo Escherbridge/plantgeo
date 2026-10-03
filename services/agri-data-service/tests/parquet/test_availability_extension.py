@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
@@ -20,6 +20,7 @@ import pytest
 from agri_data_service.db.vegetation_publication import unlocked_vegetation_publication_barrier
 from agri_data_service.foundation.canonical import sha256_digest
 from agri_data_service.foundation.parquet.completion import CompletedPart, PartitionCompletion
+from agri_data_service.foundation.parquet.lane_contract import SourceWatermark
 from agri_data_service.foundation.parquet.paths import COMPLETION_FILE_NAME, completion_marker_path
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.pipeline.parquet.availability_extension import (
@@ -794,6 +795,7 @@ async def test_a_lost_bootstrapped_pointer_preserves_claim_until_verified_head_i
         cast("AsyncSession", object()),
         store,
         lane=LANE,
+        nature="daily_series",
         kind=GAP_FILL_PARTITION_KIND,
         availability=storage,
         now=lambda: NOW,
@@ -809,6 +811,7 @@ async def test_a_lost_bootstrapped_pointer_preserves_claim_until_verified_head_i
         cast("AsyncSession", object()),
         store,
         lane=LANE,
+        nature="daily_series",
         kind=GAP_FILL_PARTITION_KIND,
         availability=storage,
         now=lambda: NOW,
@@ -899,6 +902,7 @@ async def test_the_next_turn_consumes_the_retry_marker_and_clears_it() -> None:
         cast("AsyncSession", object()),
         store,
         lane=LANE,
+        nature="daily_series",
         kind=GAP_FILL_PARTITION_KIND,
         availability=storage,
         now=lambda: NOW + timedelta(hours=1),
@@ -1108,6 +1112,7 @@ async def test_an_unreadable_head_still_claims_the_day_and_the_next_turn_indexes
         cast("AsyncSession", object()),
         store,
         lane=LANE,
+        nature="daily_series",
         kind=GAP_FILL_PARTITION_KIND,
         availability=storage,
         now=lambda: NOW + timedelta(hours=1),
@@ -1141,6 +1146,7 @@ async def test_an_unparseable_claim_is_quarantined_out_of_the_oldest_first_ledge
         cast("AsyncSession", object()),
         store,
         lane=LANE,
+        nature="daily_series",
         kind=GAP_FILL_PARTITION_KIND,
         availability=storage,
         now=lambda: NOW + timedelta(hours=1),
@@ -1277,6 +1283,7 @@ async def test_parked_claims_are_counted_in_the_walk_the_retry_pass_already_pays
         cast("AsyncSession", object()),
         store,
         lane=LANE,
+        nature="daily_series",
         kind=GAP_FILL_PARTITION_KIND,
         availability=storage,
         now=lambda: NOW + timedelta(hours=1),
@@ -1439,6 +1446,7 @@ async def repair(
     *,
     day: date = DAY,
     cell_ids: tuple[str, ...] = ("c9", "c8"),
+    lane: LaneRegistration | None = None,
 ) -> LadderRepairOutcome:
     """Re-derive one published day's coarse rungs through the real driver, lock seam granted.
 
@@ -1449,7 +1457,7 @@ async def repair(
     return await repair_one_lane_day(
         cast("AsyncSession", RecordingSession()),
         store,
-        LANE_REGISTRY[LANE],
+        lane if lane is not None else LANE_REGISTRY[LANE],
         day=day,
         run_id=RUN_ID,
         now=lambda: REPAIRED_AT,
@@ -1484,6 +1492,36 @@ async def test_a_repaired_day_writes_the_claim_that_brings_it_into_the_index() -
 
 
 @pytest.mark.asyncio
+async def test_a_repaired_static_lane_day_writes_no_claim() -> None:
+    """A `static_lookup` lane has no index to re-enter (layer-lanes.md §4a), so a claim would be debt forever.
+
+    The same repair as the test above, with the lane's nature as the only difference.
+    """
+
+    async def watermark(_session: object, _store: object, *, today: date) -> SourceWatermark:
+        del today
+        return SourceWatermark(day=DAY, basis="test fixture watermark")
+
+    _backend, store, storage, _log = new_lane()
+    bootstrap_lane(store, storage)
+    write_published_day(store, day=DAY)
+    static = replace(
+        LANE_REGISTRY[LANE],
+        nature="static_lookup",
+        publication_lag_days=0,
+        forecast_module=None,
+        writer_ceiling=None,
+        watermark=watermark,
+    )
+
+    outcome = await repair(store, storage, lane=static)
+
+    assert outcome.outcome == "written", "the coarse rungs are still repaired"
+    assert outcome.availability is None
+    assert store.read_availability_retry(LANE, GAP_FILL_PARTITION_KIND, DAY) is None
+
+
+@pytest.mark.asyncio
 async def test_the_next_turn_indexes_the_repaired_day_without_re_exporting_a_row() -> None:
     """The claim names every physical receipt, so the drain publishes from it and touches no lane part."""
     backend, store, storage, _log = new_lane()
@@ -1496,6 +1534,7 @@ async def test_the_next_turn_indexes_the_repaired_day_without_re_exporting_a_row
         cast("AsyncSession", object()),
         store,
         lane=LANE,
+        nature="daily_series",
         kind=GAP_FILL_PARTITION_KIND,
         availability=storage,
         now=lambda: NOW,
@@ -1539,6 +1578,7 @@ async def test_a_repaired_day_of_eleven_base_parts_still_reaches_the_index() -> 
         cast("AsyncSession", object()),
         store,
         lane=LANE,
+        nature="daily_series",
         kind=GAP_FILL_PARTITION_KIND,
         availability=storage,
         now=lambda: NOW,
@@ -1585,6 +1625,7 @@ async def test_a_re_derivation_after_a_cleared_marker_publishes_a_correction_gen
         cast("AsyncSession", object()),
         store,
         lane=LANE,
+        nature="daily_series",
         kind=GAP_FILL_PARTITION_KIND,
         availability=storage,
         now=lambda: NOW,
@@ -1622,6 +1663,7 @@ async def test_a_repair_reuses_the_source_evidence_of_a_day_the_generation_alrea
         cast("AsyncSession", object()),
         store,
         lane=LANE,
+        nature="daily_series",
         kind=GAP_FILL_PARTITION_KIND,
         availability=storage,
         now=lambda: NOW,

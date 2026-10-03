@@ -11,6 +11,7 @@ from agri_data_service.db.vegetation_publication import (
     try_postgres_vegetation_publication_barrier,
     unlocked_vegetation_publication_barrier,
 )
+from agri_data_service.foundation.parquet.lane_contract import nature_has_time_axis
 from agri_data_service.pipeline.parquet.availability_extension import (
     AvailabilityExtensionOutcome,
     RepairedBaseRung,
@@ -255,7 +256,8 @@ def _claim_repaired_day(  # noqa: PLR0913 - one coordinate of the repaired day p
     availability_storage: AvailabilityStorage | None,
 ) -> AvailabilityExtensionOutcome | None:
     """Record that the repaired day owes a re-index, or say why it could not be claimed. Never raises."""
-    if availability_storage is None or base is None:
+    # A static lane has no index to re-enter; see `AGENTS.md`, "A static lane never claims availability".
+    if availability_storage is None or base is None or not nature_has_time_axis(lane.nature):
         return None
     try:
         marker = store.read_completion_receipt(lane.slug, GAP_FILL_PARTITION_KIND, GAP_FILL_ZOOM_TIER, day)

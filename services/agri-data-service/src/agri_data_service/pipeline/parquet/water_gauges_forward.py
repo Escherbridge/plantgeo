@@ -208,6 +208,7 @@ async def _retry_owed_availability(
             session,
             store,
             lane=LANE_REGISTRY[WATER_GAUGES_STREAM].slug,
+            nature=LANE_REGISTRY[WATER_GAUGES_STREAM].nature,
             kind=KIND,
             availability=availability_storage,
             now=lambda: datetime.now(UTC),

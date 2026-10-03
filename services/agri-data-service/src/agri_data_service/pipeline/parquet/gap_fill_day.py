@@ -12,6 +12,7 @@ from agri_data_service.db.vegetation_publication import (
     unlocked_vegetation_publication_barrier,
 )
 from agri_data_service.foundation.parquet.completion import PartitionCompletion
+from agri_data_service.foundation.parquet.lane_contract import nature_has_time_axis
 from agri_data_service.pipeline.parquet.availability_extension import (
     POSTGRES_DAY_EXPORT_ORIGIN,
     AvailabilityExtensionTally,
@@ -692,6 +693,11 @@ async def fill_one_lane_day(  # noqa: PLR0913 - one caller-supplied coordinate p
             # say about every day it writes, and saying it on each one would bury the notes that
             # describe what actually happened to that day.
             if not extend_availability or availability_storage is None:
+                return result
+            # A STATIC LANE NEVER CLAIMS AVAILABILITY: it has no index to extend (layer-lanes.md §4a)
+            # and is census-served, so a claim here would be publication debt nothing can ever settle.
+            # See `AGENTS.md`, "A static lane never claims availability".
+            if not nature_has_time_axis(lane.nature):
                 return result
             return await _extend_availability_for_result(
                 session,

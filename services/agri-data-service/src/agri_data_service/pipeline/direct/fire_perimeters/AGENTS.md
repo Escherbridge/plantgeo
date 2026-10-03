@@ -3,6 +3,25 @@
 The turn's shape, the no-backfill argument and the activation swap are in `pipeline/direct/AGENTS.md`,
 "Fire perimeters". This file holds what outgrew a docstring inside the package itself.
 
+## Static lanes never claim availability
+
+This lane is `static_lookup`, so it has no availability index (`conductor/code_styleguides/layer-lanes.md`
+§4a). `fill_one_lane_day` writes no availability claim for it, and `retry_pending_availability` ignores
+any claim it finds. `forward.py` has no drain. Full rule: `pipeline/parquet/AGENTS.md`, "A static lane
+never claims availability".
+
+**What went wrong (2026-10-03).** Before the guard, every published version left a claim at
+`layer=fire-perimeters/kind=observed/availability/pending/day=<version>.json`. No generation exists
+for this lane, so the claims could never be consumed. Commit `a9933e5e` then added a drain on every
+turn. Each drain retried up to 8 claims (`DEFAULT_MAX_RETRIES_PER_LANE`), and each retry returned
+`retry_owed`. The result was standing `publication_debt`, and the executor reported `lane_incomplete`
+on every hourly tick. That drain has been removed, and a shared guard in `fill_one_lane_day`
+replaces it.
+
+**Leftover claims in production.** There are 14 claims (2026-09-20 to 2026-10-03), and
+`evacuation-zones` has 4 more (09-21, 09-22, 09-28, 09-29). Nothing reads them now. They may be
+deleted only with owner approval.
+
 ## Geometry repair
 
 **The chain in `support.py` is the baseline trigger's, and the earlier refuse-everything reading was
