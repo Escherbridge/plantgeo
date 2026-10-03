@@ -18,9 +18,8 @@ turn. Each drain retried up to 8 claims (`DEFAULT_MAX_RETRIES_PER_LANE`), and ea
 on every hourly tick. That drain has been removed, and a shared guard in `fill_one_lane_day`
 replaces it.
 
-**Leftover claims in production.** There are 14 claims (2026-09-20 to 2026-10-03), and
-`evacuation-zones` has 4 more (09-21, 09-22, 09-28, 09-29). Nothing reads them now. They may be
-deleted only with owner approval.
+**Leftover claims in production: deleted 2026-10-03** with owner approval (14 here, 4 for
+`evacuation-zones`), after the guard was live; see `pipeline/parquet/AGENTS.md`.
 
 ## Geometry repair
 

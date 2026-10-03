@@ -938,15 +938,11 @@ The direct callers of `extend_availability_for_lane_day` (`burn_severity/publish
 `crop_cover/forward.py`, `scripts/correct_sensor_absences.py`) all write time-bearing lanes and are
 not guarded. A new static writer must go through `fill_one_lane_day`.
 
-**Leftover claims in production (read-only check, 2026-10-03).** These were written before the guard
-existed. They are now ignored and are safe to leave. An owner-approved cleanup may delete them:
-
-- `layer=fire-perimeters/kind=observed/availability/pending/day=*.json`: 14 claims, 2026-09-20 to
-  2026-10-03.
-- `layer=evacuation-zones/kind=observed/availability/pending/day=*.json`: 4 claims, 2026-09-21,
-  2026-09-22, 2026-09-28 and 2026-09-29.
-
-Do not delete them without that approval.
+**Leftover claims in production: deleted 2026-10-03 (owner-approved).** The claims written before the
+guard existed (`layer=fire-perimeters/kind=observed/availability/pending/day=*.json`, 14 claims
+2026-09-20..10-03; `layer=evacuation-zones/...`, 4 claims) were listed, matched against these exact counts
+and deleted after the guard was live and the next fire-perimeters turns completed with no debt. Both
+`pending/` prefixes are empty; a new object under one means a static writer is bypassing the guard.
 
 ### Physical-ladder availability reconciliation
 
