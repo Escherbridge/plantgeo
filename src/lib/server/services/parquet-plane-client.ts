@@ -1191,10 +1191,12 @@ export async function getParquetWarehouseCoverage(): Promise<ParquetWarehouseCov
 
   coverageRequest ??= (async () => {
     const url = endpoint(WIRE.routes.coverage);
+    // No `revalidateSeconds`, so `cache: "no-store"`: the memo above is the only cache. Next's data
+    // cache is stale-while-revalidate and day-blind, so after UTC midnight it answered the memo's
+    // refusal of yesterday's census with that same census and every dated layer read "Dates behind".
     const payload = await readJson(url, {
       maxBytes: MAX_COVERAGE_RESPONSE_BYTES,
       timeoutMs: COVERAGE_TIMEOUT_MS,
-      revalidateSeconds: COVERAGE_REVALIDATE_SECONDS,
     });
     const value = decodeCoverage(payload);
     cachedCoverage = { value, receivedAt: Date.now() };

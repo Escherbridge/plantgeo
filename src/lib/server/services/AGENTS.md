@@ -26,6 +26,18 @@ agree; missing or conflicting timing remains unknown. Cadence is source release 
 while refresh interval is scheduled ingestion, independent of browser capability polling.
 The source ceiling remains a separate reported bound rather than an inferred normal delay.
 
+### coverage-recovery
+- `getParquetWarehouseCoverage` caches the census once, in process:
+  - It reuses a census for 5 minutes, and only while `isReusableSliderCoverage` holds (it is
+    evaluated through today UTC and was generated less than 10 minutes ago).
+  - While a same-day census is stale, it serves it during a single background refresh.
+- The upstream read is `cache: "no-store"`.
+  - Next's data cache is stale-while-revalidate and does not know the date. After UTC midnight it
+    answered the memo's refusal of yesterday's census with yesterday's census.
+  - The strict gate in `parquet-slider-capabilities.ts` (a census not evaluated through today
+    withholds every dated layer as `coverage_not_current`) then showed "Dates behind" on every row
+    (2026-10-03).
+- Keep the gate, and keep exactly one cache.
 
 Environmental service modules may call the governed Parquet readers and availability contracts
 only. They must not import the relational database client or retry a failed Parquet read against

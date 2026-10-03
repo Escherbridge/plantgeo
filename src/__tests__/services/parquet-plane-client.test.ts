@@ -414,14 +414,38 @@ describe("getParquetWarehouseCoverage", () => {
     expect(url.searchParams.has("layer")).toBe(false);
   });
 
-  it("is memoized inside the agreed 5-30 minute band, unlike every viewport read", async () => {
+  it("is memoized in-process inside the agreed 5-30 minute band, never through Next's day-blind data cache", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(census.generated_at));
     mockedFetch.mockResolvedValue(census);
 
     await getParquetWarehouseCoverage();
+    vi.setSystemTime(Date.now() + 299_000);
+    await getParquetWarehouseCoverage();
 
-    const revalidateSeconds = requestedOptions()?.revalidateSeconds;
-    expect(revalidateSeconds).toBeGreaterThanOrEqual(300);
-    expect(revalidateSeconds).toBeLessThanOrEqual(1_800);
+    // One upstream read serves the whole five-minute window...
+    expect(mockedFetch).toHaveBeenCalledTimes(1);
+    // ...and that read is no-store: Next's stale-while-revalidate cache answered the memo's refusal
+    // of yesterday's census with yesterday's census after UTC midnight (2026-10-03, "Dates behind").
+    expect(requestedOptions()).not.toHaveProperty("revalidateSeconds");
+    vi.useRealTimers();
+  });
+
+  it("answers the first read after UTC midnight with today's census, not yesterday's", async () => {
+    vi.useFakeTimers();
+    const yesterday = { ...census, evaluated_through_day: "2026-08-28", generated_at: "2026-08-28T23:58:00Z" };
+    const today = { ...census, evaluated_through_day: "2026-08-29", generated_at: "2026-08-29T00:01:00Z" };
+    vi.setSystemTime(new Date("2026-08-28T23:58:00Z"));
+    mockedFetch.mockResolvedValue(yesterday);
+    await getParquetWarehouseCoverage();
+
+    vi.setSystemTime(new Date("2026-08-29T00:01:00Z"));
+    mockedFetch.mockResolvedValue(today);
+    const afterMidnight = await getParquetWarehouseCoverage();
+
+    expect(afterMidnight.evaluatedThroughDay).toBe("2026-08-29");
+    expect(mockedFetch).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
   });
 
   it("keeps same-day coverage usable while one background refresh runs, then replaces its evidence", async () => {
