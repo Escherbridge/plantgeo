@@ -57,7 +57,8 @@ describe("SSURGO publication status", () => {
     const url = fetch.mock.calls[0]?.[0] as URL;
     expect(url.pathname).toBe("/api/v1/soil-survey/status");
     expect(url.search).toBe("");
-    expect(fetch.mock.calls[0]?.[2]).toMatchObject({ maxBytes: 16 * 1024, timeoutMs: 15_000, signal });
+    // The slider payload awaits this read, so its deadline is a third of the viewport read's.
+    expect(fetch.mock.calls[0]?.[2]).toMatchObject({ maxBytes: 16 * 1024, timeoutMs: 5_000, signal });
   });
 
   it.each(["soil_survey_release_not_admitted", "no_source_bound_in_region"])(

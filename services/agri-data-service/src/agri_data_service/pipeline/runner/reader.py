@@ -60,12 +60,13 @@ class ObjectStoreLaneReader:
             return census
         completeness = SourceCompleteness(self.receipts.storage)
         source_owed = {}
+        source_unresolved = {}
         for stream in streams:
-            complete = completeness.complete_days(stream, first, last, expected_unit_ids)
-            source_owed[stream] = frozenset(
-                day for day, status in census.base[stream].items() if status == "data" and day not in complete
-            )
-        return replace(census, source_owed=source_owed)
+            proofs = completeness.proof_days(stream, first, last, expected_unit_ids)
+            published = frozenset(day for day, status in census.base[stream].items() if status == "data")
+            source_owed[stream] = published - proofs.complete
+            source_unresolved[stream] = published & proofs.unresolved
+        return replace(census, source_owed=source_owed, source_unresolved=source_unresolved)
 
     def receipt(self, stream: str, day: date) -> DayReceipt | None:
         """The stream-day's turn receipt, or `None`."""

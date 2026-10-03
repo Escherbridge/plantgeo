@@ -28,11 +28,15 @@ does I/O (the loader reads files), and is a ruled exception on the same grounds.
 
 ## Loader
 
-Provider endpoints may declare `optional_api_key` only without a customer host, with both
-`api_key_env` and `api_key_parameter` on the provider. The parameter is restricted to the existing
-redactor's `apikey` and `api_key` spellings. This makes optional same-host authentication explicit
-without weakening the required customer-host key rule. The endpoint opt-in scopes credential use;
-other endpoints on the provider remain anonymous.
+Provider endpoints may declare `optional_api_key` only without a customer host, with
+`api_key_env` and the key's name for the provider's `api_key_transport`: `api_key_parameter` for
+`query` (the default; restricted to the redactor's `apikey` and `api_key` spellings) or
+`api_key_header` for `header` (restricted to `X-Api-Key`). Exactly one name matches the transport:
+a header transport refuses `api_key_parameter`, and a query transport refuses `api_key_header`. The
+transport is data so a provider file, not a host check in `ingest/provider_client.py`, decides where
+a key travels (post-push review M2). This makes optional same-host authentication explicit without
+weakening the required customer-host key rule. The endpoint opt-in scopes credential use; other
+endpoints on the provider remain anonymous.
 
 Lazy by construction: nothing reads a file until it is called (the manifest-moves-must-be-lazy
 rule; `LANE_REGISTRY` and friends are read at import, so nothing there may call this at import).

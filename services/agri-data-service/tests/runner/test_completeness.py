@@ -55,6 +55,24 @@ def test_a_count_only_legacy_receipt_is_readable_but_cannot_claim_proven_support
     assert SourceCompleteness(storage).complete_days(STREAM, DAY, DAY, UNITS) == frozenset()
 
 
+def test_a_pending_receipt_is_refused_by_every_v1_reader_while_v1_receipts_still_decode() -> None:
+    """Review L6: every reader before 696f1ae5 accepted only `lane-turn-receipt-v1` and ignored
+    `publication_state`, so it would read a pending receipt as complete. A receipt written now carries
+    another version, which those readers refuse; this reader still decodes both shapes of v1."""
+    pending = replace(FULL, publication_state="pending")
+    written = json.loads(pending.to_payload())
+
+    assert written["schema_version"] != "lane-turn-receipt-v1"
+    assert DayReceipt.from_payload(pending.to_payload()).publication_state == "pending"
+    v1_pending = {**written, "schema_version": "lane-turn-receipt-v1"}
+    del v1_pending["source_resolved"]
+    assert DayReceipt.from_payload(json.dumps(v1_pending).encode()).publication_state == "pending"
+    v1_legacy = {key: value for key, value in v1_pending.items() if key != "publication_state"}
+    assert DayReceipt.from_payload(json.dumps(v1_legacy).encode()).publication_state == "complete"
+    with pytest.raises(TurnReceiptError, match="schema version"):
+        DayReceipt.from_payload(json.dumps({**written, "schema_version": "lane-turn-receipt-v3"}).encode())
+
+
 def test_a_pending_receipt_cannot_confirm_full_source_support() -> None:
     storage = MemoryAvailabilityStorage()
     SourceCompleteness(storage).confirm(replace(FULL, publication_state="pending"))

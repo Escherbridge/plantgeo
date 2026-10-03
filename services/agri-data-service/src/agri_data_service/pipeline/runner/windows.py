@@ -90,6 +90,8 @@ class GapFillPlan:
     retention_exceeded: tuple[date, ...]
     #: Holes past this turn's day cap; they wait for the next fire.
     overflow: tuple[date, ...]
+    #: Unresolved full answers held back, unasked, while any other reachable hole is owed.
+    held: tuple[date, ...] = ()
 
 
 def candidate_edge(days: LaneDays, *, today: date) -> date:
@@ -281,8 +283,13 @@ def plan_gap_fill(
     *,
     owed: Sequence[date],
     max_days: int = GAP_FILL_MAX_DAYS_PER_TURN,
+    last: frozenset[date] = frozenset(),
 ) -> GapFillPlan:
-    """S12 + D3: the census holes, oldest first, capped by history capability, retention and a per-turn day cap."""
+    """S12 + D3: the census holes, oldest first, capped by history capability, retention and a per-turn day cap.
+
+    `last` (unresolved full answers, `LaneCensus.unresolved_days`) is asked only in a turn with no other
+    reachable hole; until then it is `held` and costs no request (runner/AGENTS.md "Unresolved days").
+    """
     ensure_gap_fill_enabled(lane)
     history = lane.source.history if lane.source is not None else None
     reachable: list[date] = []
@@ -292,10 +299,13 @@ def plan_gap_fill(
             retention.append(day)
         else:
             reachable.append(day)
+    holes = [day for day in reachable if day not in last]
+    asked = holes or reachable
     return GapFillPlan(
-        fill=tuple(reachable[:max_days]),
+        fill=tuple(asked[:max_days]),
         retention_exceeded=tuple(retention),
-        overflow=tuple(reachable[max_days:]),
+        overflow=tuple(asked[max_days:]),
+        held=tuple(day for day in reachable if day in last) if holes else (),
     )
 
 

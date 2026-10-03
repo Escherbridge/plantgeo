@@ -26,7 +26,10 @@ import {
 } from "@/lib/environmental/climate-field";
 import { regionIdentityVerdict } from "@/lib/region/region";
 import { WATER_GAUGES_STREAM, WATER_GAUGES_STREAM_FACT } from "@/lib/water-gauges-stream";
-import { getParquetSoilSurveyStatus } from "@/lib/server/services/parquet-trpc-readers/soil-survey";
+import {
+  getParquetSoilSurveyStatus,
+  type ParquetSoilSurveyStatus,
+} from "@/lib/server/services/parquet-trpc-readers/soil-survey";
 import type { ZoomTier } from "@/lib/map/zoom-tiers";
 import {
   SLIDER_STREAM_LAYER_NAMES,
@@ -1035,11 +1038,35 @@ async function getDayPartitionedCapabilities(): Promise<ParquetSliderCapabilitie
   };
 }
 
+/** How long one answered SSURGO status serves later slider payloads; a failed read is never kept. */
+export const SOIL_SURVEY_STATUS_CACHE_MS = 60_000;
+
+let soilSurveyStatusCache: { expiresAt: number; status: Promise<ParquetSoilSurveyStatus> } | null = null;
+
+/** One in-flight or answered status read per minute, shared by concurrent payloads (AGENTS.md §soil-survey). */
+function cachedSoilSurveyStatus(): Promise<ParquetSoilSurveyStatus> {
+  const now = Date.now();
+  if (soilSurveyStatusCache !== null && soilSurveyStatusCache.expiresAt > now) {
+    return soilSurveyStatusCache.status;
+  }
+  const entry = { expiresAt: now + SOIL_SURVEY_STATUS_CACHE_MS, status: getParquetSoilSurveyStatus() };
+  soilSurveyStatusCache = entry;
+  entry.status.catch(() => {
+    if (soilSurveyStatusCache === entry) soilSurveyStatusCache = null;
+  });
+  return entry.status;
+}
+
+/** Test seam: forget the cached SSURGO status. */
+export function resetSoilSurveyStatusCacheForTests(): void {
+  soilSurveyStatusCache = null;
+}
+
 /** Prove SSURGO publication without converting source vintages into observed days. */
 async function soilSurveyCapabilityProof(): Promise<CapabilityProof> {
   let status;
   try {
-    status = await getParquetSoilSurveyStatus();
+    status = await cachedSoilSurveyStatus();
   } catch (error) {
     if (!isCoverageBoundaryFault(error)) throw error;
     console.error("SSURGO publication status unavailable", {

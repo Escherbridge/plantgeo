@@ -16,6 +16,7 @@ python -m agri_data_service.pipeline.runner --lane <id> --mode forward|gap-fill|
 | `windows.py` | which days a turn asks about: forward + S19 gate, gap-fill holes, transform dirty days |
 | `budget.py` | per-turn per-mode caps, the ledger, `BudgetedClient`, `select_affordable_days` |
 | `fetch.py` | the per-unit retry ladder and the quota circuit |
+| `cooldown.py` | per-host persisted Retry-After waits ("throttled until"), honoured by later turns |
 | `checkpoints.py` | source checkpoints over `pipeline/parquet/source_checkpoint.py` |
 | `census.py` | the full-ladder census |
 | `receipts.py` | per stream-day turn receipts (S11 digests, units, input digests, pruned inputs) |
@@ -54,6 +55,9 @@ Deviations from the spec §4.2 text, each deliberate:
   (a feature its page contract refused, an identity two copies disagree on). The runner sums them
   into the S5 fact `rows_dropped_by_reason`, so a drop is counted where the executor reads, not only
   logged.
+- `Written.source_resolved` (post-push review 696f1ae5..21ec86ce, H1): `False` when the strategy
+  dropped rows it cannot resolve (water: two series under one identity). The day is still written
+  from the rows it kept, but it never earns a completeness proof; see "Unresolved days" below.
 
 Typed fetch errors (`SourceThrottledError`, `SourceUnavailableError`, `TurnBudgetExhaustedError`,
 `ProviderConfigurationError`) never reach `settle`; `ingest/http.py`'s own typed errors are
@@ -143,6 +147,30 @@ its ladder never discards its siblings; a configuration error cancels every sibl
 before it propagates. A rejected key (401/403) or an empty required key is
 `ProviderConfigurationError`: the whole turn, exit 78.
 
+**A stated wait the ladder will not honour outlives the turn** (post-push review M3). The clamp
+above meant a `Retry-After: 3600` was retried after 20-40 s, and nothing carried the wait into the
+next turn, so keyless USGS gap-fill could hold the executor's single queue slot (DISPATCH=queue,
+one lane at a time) for about 1.5 h a day. Now `UnitFetcher.fetch_unit` opens the quota circuit at
+once when a stated `Retry-After` exceeds `RETRY_AFTER_CEILING_FACTOR` x the current step, would pass
+the turn's fetch deadline, or arrives after the series is spent (`fetch.py::exceeds_ladder`): the
+unit and every unsent sibling are `deferred_quota`, and nothing is slept. A probe's 429 takes the
+same test at the first step (`turn.py::_Turn._spend_probe`), so a probing lane (Open-Meteo, POWER)
+told to wait an hour sends nothing more that turn, `_revise` included, and does not re-probe on the
+next fire. `fetch.py::hold_stated_wait` records
+`now + min(Retry-After, 24 h)` per host through `cooldown.py::ProviderCooldowns` at
+`lane-provider-cooldowns/v1/<host>.json` in the availability storage, the persistence receipts and
+checkpoints already use (CAS-merged, the later instant wins). The next turn of ANY lane on that host
+(`turn.py::_Turn._honour_cooldown`, keyed by the lane endpoint's free host, the backoff meter's key)
+opens the circuit before its probe or fan-out: zero requests, every owed day `deferred_quota`, exit 0,
+`throttled_until` in the report. CA20's claim retry and ladder repairs still run (they send nothing
+upstream). The cron is unchanged; a fire inside the wait is simply cheap. A cooldown is advisory: an
+unreadable document fails open (the turn sends), and a failed write is noted in the fetch tally,
+never a unit failure. `--compare` honours a cooldown but never writes one. A 429 without
+`Retry-After` still walks the 20/40/80/160 s series and persists nothing. A key set during a keyless
+cooldown takes effect when the cooldown expires (at most one skipped fire). The trade-off: a stated
+wait above 2x the current step (41-160 s on the first 429) now ends the turn's sending where it was
+once waited for about 40 s; watch Open-Meteo's minute-level limits for turns that stop early.
+
 ## Census
 
 Four rungs per stream-day, folded (`fold_ladder`): `data` only when every rung is `data`; an
@@ -185,6 +213,43 @@ replacement upgrades them. For identified coverage, a partial rewrite needs a su
 previously published identities; a larger count with a different missing tile is refused and
 reported, preserving previously served gauges until a coverage-preserving answer arrives.
 
+**Unresolved days** (post-push review H1). Evidence `phase3.md` found 341 identities of
+`USGS-12010000` (two time-series IDs, 1990-09-30 to 1991-09-05) dropped as identity conflicts while
+`confirm` still issued 310 full proofs, all outside the 550-day revision window, so they would never
+be re-pulled. Now `Written.source_resolved` rides into `DayReceipt.source_resolved`, and
+`SourceCompleteness.confirm` writes `completeness.py::unresolved_digest(expected)` instead of the
+proof for a fully answered but unresolved receipt. The marker is a valid 64-hex entry (a pre-marker
+decoder accepts it and reads the day as owed) that never equals `coverage_digest`, so the day stays
+in `source_owed`; `ObjectStoreLaneReader.census` also reports it in `LaneCensus.source_unresolved`
+from the same yearly read. Each turn that settles such a day reports it `unwritten` with reason
+`source_unresolved` (detail: the dropped rows by reason) and counts census-known ones as
+`days_source_unresolved`. Re-asking cannot settle it, so `plan_gap_fill(last=...)` asks
+`LaneCensus.unresolved_days()` only in a turn that owes no other reachable hole. Until then they are
+`GapFillPlan.held`: never fanned out, so they cost no request and no budget, and each is reported
+`source_unresolved` (as are the ones past the day cap once they are asked), never `deferred_budget`.
+Ordering them last was not enough: `_fan_out` re-sorts by day and `select_affordable_days` spends the
+cap greedily in that order, so with fewer than 366 real holes the 1990 days took about 96 of the 112
+calls and scattered holes were deferred every fire (follow-up review MEDIUM). The cost: a hole that
+never fills (a day upstream keeps failing) postpones every unresolved re-ask, since `_revise` asks
+only `LaneCensus.lane_data_days()`, which excludes source-owed days. `decide_rewrite` writes an
+unresolved full answer once (`unresolved_recorded`, which records the marker, crash-safe because the
+census decides), then only on a digest change; a resolved answer later earns the proof
+(`source_completed`). A series-choice rule needs no migration: once the strategy resolves the day,
+the next re-ask proves it. Proofs issued before this change (the 310 dates) are NOT retracted by
+code; removing those entries from `lane-source-completeness/v1/water-gauges-daily/{1990,1991}.json`
+is an owner-approved production step.
+
+**Unresolved days keep a turn `incomplete`, on purpose** (follow-up review LOW 2). Each
+`source_unresolved` entry is `behind_edge`, so it counts in `days_unwritten`, and every water
+gap-fill turn (and any forward turn whose window holds one) reports `outcome=incomplete`; the
+executor's `TurnReport.incomplete` stays true and `consecutive_incomplete_buckets` never resets
+while the days exist. That is the intended signal: such a day serves data with a gauge's rows
+dropped, and which series to keep is an open owner decision. The cost is that the standing
+`lane_incomplete` incident no longer singles out a new real hole; read `unwritten_by_reason` (a
+`deferred_budget` or `upstream_unavailable` count beside `source_unresolved`). Revisit when the
+owner picks a series rule: if days stay unresolved by design after that, move them to a fact outside
+`days_unwritten`.
+
 Forward turns discover ladder debt independently of the decision to re-ask their full recent
 window. Repair candidates are censused again after publication: an unchanged digest cannot hide
 a missing coarse rung, an already rewritten ladder is not derived twice, and a source-incomplete
@@ -211,6 +276,19 @@ outlives the pruned partition (§4.6). A transform lane also keeps one lane-leve
 under `_lane.<lane id>` (`receipts.py::transform_receipt_stream`; no stream slug starts with `_`),
 written after every answered output (review M5).
 
+The key prefix is v1; the document's `schema_version` is `lane-turn-receipt-v2` (post-push review
+L6): it adds `publication_state` (696f1ae5) and `source_resolved` (H1). `DayReceipt.from_payload`
+reads v1 and v2 (a v1 receipt without `publication_state` is complete; one written by
+696f1ae5..21ec86ce keeps its state).
+
+**Rollback note.** Do not roll back below 696f1ae5: every reader before it accepts only v1 and has
+no `publication_state`, so it would read a pending receipt as complete and could let a partial
+replacement through. v2 makes every pre-v2 reader (including 696f1ae5..21ec86ce) refuse a receipt
+written by this code with `TurnReceiptError`: a turn that meets one fails closed (exit 70) instead
+of misreading it, so rolling back past this commit stops those turns until it is rolled forward
+again. The same holds in a mixed-image window: a service still on an older commit after a failed
+redeploy exits 70 on the first v2 receipt it reads, until it runs this code.
+
 ## Digests
 
 `digests.py::table_digest` hashes the Arrow IPC stream of `combine_chunks()`, so chunking never
@@ -232,10 +310,15 @@ completion marker, availability generation and pointer), then the turn receipt. 
 constructed with a compare permit. **A lane-day another run holds is `contended`, never exit 70**
 (review M4): `fill_one_lane_day`'s `contended` outcome, a refused prune lock and a refused repair
 lock raise `LaneDayContendedError`; the turn records that stream-day `contended` and writes the
-rest. Any other non-publishing outcome (`blocked`, `raised`) is still `LaneWriteError`, exit 70. **A static lookup's registration keeps its legacy watermark**
-(`LaneRegistration` refuses a static lane without one), so `fill_one_lane_day` brackets the write
-with that watermark read, as the legacy path does. Prune retracts the coarse rungs first and the
-base last, under the lane-day lock.
+rest. **A coverage refusal under the lock is `refused_partial`** (post-push review L5): `write_day`
+re-reads the receipt after taking the lock, and when another run published coverage this answer
+lacks, it raises `LaneDayCoverageRefusedError` (not a `LaneDayContendedError` subclass, so the turn
+cannot report it `contended`); the turn records `refused_partial` with the refusal's S11 word and
+writes the rest. Any other non-publishing outcome (`blocked`, `raised`) is still `LaneWriteError`,
+exit 70. **A static lookup's registration keeps its legacy watermark** (`LaneRegistration` refuses
+a static lane without one), so `fill_one_lane_day` brackets the write with that watermark read, as
+the legacy path does. Prune retracts the coarse rungs first and the base last, under the lane-day
+lock.
 
 **Free recheck (S11 for ERA5T):** when a forward fan-out's units answer more days than were owed (a
 14-day request answers 14 days), every published window day all of whose units answered is settled
@@ -299,6 +382,7 @@ the `probe` block and `probe_status`, `http_*`, `bytes_in`, `backoff_seconds` an
 `retry_backoff_seconds` (this ladder), `rows_written` / `rows_built`, `partitions_written`,
 `bytes_written`, `elapsed_seconds`, `phase_seconds_{census,probe,fetch,settle,write}`,
 `checkpoint_restores`, `days_revised`, `revision_first`/`revision_last`, `rows_dropped_by_reason`,
+`days_source_unresolved`, `throttled_until`,
 `log_lines_*`, and the writer's `availability_*` tally (the executor reads it
 as publication debt). `TurnLog` keeps ≤ 200 debug/info/warn lines each per turn (the rest counted
 in `log_lines_suppressed`); errors are never dropped. Nothing here calls `print`.
@@ -327,8 +411,11 @@ advisory locks. `ConfigProviderClient` delegates to `ingest/provider_client.py` 
 key (`api_key_env`), sent only inside `KeyedRequestUrl`, so a keyed URL never reaches a log line or
 an exception string; an empty key is a named configuration error (FR-2), never a silent fall-back to
 the free host. `send_provider_request` makes the one attempt, and `binding.py` maps its status onto
-the runner's typed errors. The key's query parameter is known per provider
-(`provider_client.PROVIDER_API_KEY_PARAMETERS`: `open-meteo` -> `apikey`) until the provider schema
-names it. `tests/runner/test_binding.py` drives the real client through `main` over
-`httpx.MockTransport`: the key reaches the customer host and nothing else (report, stderr,
-`request_url`, checkpoints), and an empty or rejected key exits 78.
+the runner's typed errors. Where a key travels is the provider file's `api_key_transport`
+(`query`, the default, or `header`): Open-Meteo's customer hosts take `apikey` in the query
+(`provider_client.PROVIDER_API_KEY_PARAMETERS`, unchanged), USGS's optional key goes in `X-Api-Key`
+(`api_key_header`), so its send URL is the credential-free `request_url` and a keyed send never
+follows a redirect (`ingest/AGENTS.md`, provider_client.py). `tests/runner/test_binding.py`
+drives the real client through `main` over `httpx.MockTransport`: the key reaches the customer
+host and nothing else (report, stderr, `request_url`, checkpoints), and an empty or rejected key
+exits 78.

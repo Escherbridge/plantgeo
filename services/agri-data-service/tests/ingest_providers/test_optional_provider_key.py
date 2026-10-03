@@ -1,7 +1,8 @@
-"""Optional credentials reach only declared endpoints and never durable request identities."""
+"""Optional credentials travel only where the provider file says, and never into a durable request identity."""
 
 from __future__ import annotations
 
+import json
 import secrets
 from typing import TYPE_CHECKING
 
@@ -9,18 +10,32 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
-from agri_data_service.foundation.lane_config import ProviderConfig
+from agri_data_service.foundation.lane_config import ProviderConfig, load_lane_configs
+from agri_data_service.foundation.region import load_region
 from agri_data_service.ingest.http import UpstreamHttpError
 from agri_data_service.ingest.provider_client import ProviderConfigError, provider_endpoint_request
+from agri_data_service.pipeline.parquet.source_checkpoint import SourceResponseCheckpoints
 from agri_data_service.pipeline.runner.binding import ConfigProviderClient
 from agri_data_service.pipeline.runner.checkpoints import TurnCheckpoints
 from agri_data_service.pipeline.runner.contract import ProviderConfigurationError, SourceRequest
-from tests.runner.fakes import ManualClock, providers
+from agri_data_service.pipeline.runner.resolve import resolve_strategy
+from tests.lane_config.builders import REAL_LANES_DIRECTORY
+from tests.lanes.water_gauges.usgs_world import BOISE, DALLES, Reading, UsgsWaterDataWorld
+from tests.parquet.availability_documents import MemoryAvailabilityStorage
+from tests.runner.fakes import ManualClock, MemoryLaneStore, ports_for, providers, run, spec_for
 
 if TYPE_CHECKING:
     from typing import Any
 
+    from agri_data_service.foundation.lane_config import LaneConfig
+
 KEY_ENV = "USGS_WATER_DATA_API_KEY"
+KEY_HEADER = "X-Api-Key"
+
+
+def _shipped_water_lane() -> LaneConfig:
+    """The shipped `water-gauges-daily` lane (enabled by its G3 activation)."""
+    return load_lane_configs(REAL_LANES_DIRECTORY, load_region("pnw")).lanes["water-gauges-daily"]
 
 
 def _provider_document() -> dict[str, Any]:
@@ -33,7 +48,7 @@ def _provider_document() -> dict[str, Any]:
 
 @pytest.mark.parametrize("endpoint", ["daily", "monitoring-locations"])
 @pytest.mark.parametrize("key_state", ["missing", "blank", "present"])
-async def test_optional_key_preserves_identity_and_reaches_only_the_declared_host(
+async def test_optional_key_travels_only_in_a_header_and_never_changes_the_url(
     monkeypatch: pytest.MonkeyPatch, endpoint: str, key_state: str
 ) -> None:
     key = secrets.token_hex(16)
@@ -43,10 +58,9 @@ async def test_optional_key_preserves_identity_and_reaches_only_the_declared_hos
     provider = providers()["usgs-water-data"]
     anonymous = provider_endpoint_request(provider, endpoint, {"limit": "1"}, environment={})
     resolved = provider_endpoint_request(provider, endpoint, {"limit": "1"})
-    assert resolved.request_url == anonymous.request_url
+    assert resolved.send_url.reveal() == resolved.request_url == anonymous.request_url
     assert key not in str(resolved)
     assert key not in repr(resolved)
-    assert "api_key=" not in resolved.request_url
     sent: list[httpx.Request] = []
 
     def respond(request: httpx.Request) -> httpx.Response:
@@ -57,22 +71,24 @@ async def test_optional_key_preserves_identity_and_reaches_only_the_declared_hos
         client = ConfigProviderClient(provider=provider, http=http, clock=ManualClock())
         response = await client.get(endpoint, {"limit": "1"})
     assert response.request_url == anonymous.request_url
-    assert [(request.url.host, request.url.path, request.url.params.get("api_key")) for request in sent] == [
-        (provider.endpoints[endpoint].host, provider.endpoints[endpoint].path, key if key_state == "present" else None)
-    ]
+    [request] = sent
+    assert str(request.url) == anonymous.request_url
+    assert key not in str(request.url)
+    assert request.headers.get(KEY_HEADER) == (key if key_state == "present" else None)
 
 
 @pytest.mark.parametrize("status", [302, 401, 403])
 async def test_optional_key_redirects_and_errors_never_forward_or_report_the_credential(
     monkeypatch: pytest.MonkeyPatch, status: int
 ) -> None:
+    """httpx keeps a custom header across a cross-origin redirect, so a keyed send never follows one."""
     key = secrets.token_hex(16)
     monkeypatch.setenv(KEY_ENV, key)
     sent: list[httpx.Request] = []
 
     def respond(request: httpx.Request) -> httpx.Response:
         sent.append(request)
-        return httpx.Response(status, headers={"location": f"https://other.example/items?api_key={key}"})
+        return httpx.Response(status, headers={"location": "https://other.example/items"})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond), follow_redirects=True) as http:
         client = ConfigProviderClient(provider=providers()["usgs-water-data"], http=http, clock=ManualClock())
@@ -83,11 +99,78 @@ async def test_optional_key_redirects_and_errors_never_forward_or_report_the_cre
     assert key not in repr(caught.value)
 
 
-@pytest.mark.parametrize("field", ["api_key_env", "api_key_parameter"])
-def test_optional_endpoint_requires_both_credential_declarations(field: str) -> None:
-    document = _provider_document()
-    document.pop(field)
-    with pytest.raises(ValidationError, match="optional_api_key needs"):
+async def test_a_keyed_water_turn_sends_the_key_only_as_a_header_and_records_it_nowhere(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], caplog: pytest.LogCaptureFixture
+) -> None:
+    """A real turn: every send carries the header; no URL, log, report, receipt or checkpoint holds the key."""
+    key = secrets.token_hex(16)
+    monkeypatch.setenv(KEY_ENV, key)
+    world = UsgsWaterDataWorld(gauges=[DALLES, BOISE], reading_for=lambda _gauge, day: Reading(str(day.day)))
+    store, checkpoints = MemoryLaneStore(), MemoryAvailabilityStorage()
+    lane = _shipped_water_lane()
+    spec = spec_for(lane)
+    assert spec.provider is not None
+    clock = ManualClock()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(world.handler)) as http:
+        ports = ports_for(
+            resolve_strategy(lane), store, clock=clock, checkpoint_store=SourceResponseCheckpoints(checkpoints)
+        )
+        ports.client = ConfigProviderClient(provider=spec.provider, http=http, clock=clock)
+        exit_code, payload = await run(spec, ports)
+
+    assert exit_code == 0, payload
+    assert world.requests
+    assert {request.headers.get(KEY_HEADER) for request in world.requests} == {key}
+    assert all(key not in str(request.url) for request in world.requests)
+    assert store.writes()
+    assert checkpoints.objects
+    durable = [
+        json.dumps(payload, default=str).encode(),
+        *(receipt.to_payload() for receipt in store.receipts.values()),
+        *(stored_key.encode() + stored.payload for stored_key, stored in checkpoints.objects.items()),
+    ]
+    captured = capsys.readouterr()
+    assert all(key.encode() not in blob for blob in durable)
+    assert all(key not in text for text in (captured.out, captured.err, caplog.text))
+
+
+def test_each_provider_file_names_where_its_key_travels() -> None:
+    """Open-Meteo's customer host takes `apikey` in the query (unchanged); USGS takes `X-Api-Key` on its one host."""
+    key = secrets.token_hex(16)
+    open_meteo = provider_endpoint_request(
+        providers()["open-meteo"], "archive", {"daily": "x"}, environment={"OPEN_METEO_API_KEY": key}
+    )
+    usgs = provider_endpoint_request(
+        providers()["usgs-water-data"], "daily", {"limit": "1"}, environment={KEY_ENV: key}
+    )
+
+    assert httpx.URL(open_meteo.send_url.reveal()).host == "customer-archive-api.open-meteo.com"
+    assert httpx.URL(open_meteo.send_url.reveal()).params["apikey"] == key
+    assert open_meteo.send_headers.reveal() == {}
+    assert usgs.send_url.reveal() == usgs.request_url
+    assert usgs.send_headers.reveal() == {KEY_HEADER: key}
+    assert all(key not in text for request in (open_meteo, usgs) for text in (str(request), repr(request)))
+
+
+@pytest.mark.parametrize(
+    ("change", "refusal"),
+    [
+        ({"api_key_env": None}, "optional_api_key needs"),
+        ({"api_key_header": None}, "api_key_header is declared exactly"),
+        ({"api_key_transport": "query"}, "api_key_header is declared exactly"),
+        ({"api_key_parameter": "api_key"}, "sends no query parameter"),
+        ({"api_key_header": "Authorization"}, "api_key_header"),
+        (
+            {"api_key_parameter": "unredacted", "api_key_transport": "query", "api_key_header": None},
+            "api_key_parameter",
+        ),
+    ],
+)
+def test_a_provider_key_declaration_must_name_one_transport_and_its_redacted_name(
+    change: dict[str, object], refusal: str
+) -> None:
+    document = {**_provider_document(), **change}
+    with pytest.raises(ValidationError, match=refusal):
         ProviderConfig.model_validate(document)
 
 
@@ -104,6 +187,7 @@ def test_optional_key_requires_endpoint_opt_in() -> None:
     provider = ProviderConfig.model_validate(document)
     resolved = provider_endpoint_request(provider, "daily", {}, environment={KEY_ENV: secrets.token_hex(16)})
     assert resolved.send_url.reveal() == resolved.request_url
+    assert resolved.send_headers.reveal() == {}
 
 
 @pytest.mark.parametrize("parameter", ["api_key", "apikey", "API_KEY"])
@@ -112,13 +196,6 @@ def test_caller_cannot_put_credentials_into_checkpoint_identity(parameter: str) 
     with pytest.raises(ProviderConfigError) as caught:
         provider_endpoint_request(providers()["usgs-water-data"], "daily", {parameter: key}, environment={})
     assert key not in str(caught.value)
-
-
-def test_arbitrary_unredacted_query_parameter_is_rejected() -> None:
-    document = _provider_document()
-    document["api_key_parameter"] = "unredacted"
-    with pytest.raises(ValidationError, match="api_key_parameter"):
-        ProviderConfig.model_validate(document)
 
 
 def test_durable_checkpoint_identity_survives_optional_key_configuration(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -26,6 +26,7 @@ from agri_data_service.pipeline.runner.contract import (
     SourceThrottledError,
     SourceUnavailableError,
 )
+from agri_data_service.pipeline.runner.cooldown import ProviderCooldowns
 from agri_data_service.pipeline.runner.exits import TurnConfigurationError
 from agri_data_service.pipeline.runner.reader import ObjectStoreLaneReader
 from agri_data_service.pipeline.runner.receipts import TurnReceipts
@@ -98,7 +99,7 @@ class ConfigProviderClient:
 async def production_ports(
     spec: TurnSpec, strategy: IngestStrategy | TransformStrategy, *, clock: TurnClock
 ) -> AsyncIterator[TurnPorts]:
-    """Bind the bucket, receipts, checkpoints, a metered HTTP client and (unless comparing) the writer."""
+    """Bind the bucket, receipts, checkpoints, cooldowns, a metered HTTP client and (unless comparing) the writer."""
     from agri_data_service.config import settings  # noqa: PLC0415 - lazy by design
     from agri_data_service.db.engine import local_source_loader_session  # noqa: PLC0415 - lazy by design
     from agri_data_service.pipeline.parquet.availability_index import BotoAvailabilityStorage  # noqa: PLC0415
@@ -116,10 +117,12 @@ async def production_ports(
     async with contextlib.AsyncExitStack() as stack:
         client = None
         checkpoint_store = None
+        cooldowns = None
         if spec.lane.kind == "ingest" and spec.provider is not None:
             http = await stack.enter_async_context(upstream_client(CONFIG_PROVIDER_BOUNDS))
             client = ConfigProviderClient(provider=spec.provider, http=http, clock=clock)
             checkpoint_store = SourceResponseCheckpoints(availability)
+            cooldowns = ProviderCooldowns(availability)
         writer = None
         if loader_url is not None:
             session = await stack.enter_async_context(local_source_loader_session(loader_url))
@@ -139,6 +142,7 @@ async def production_ports(
             writer=writer,
             client=client,
             checkpoint_store=checkpoint_store,
+            cooldowns=cooldowns,
         )
 
 

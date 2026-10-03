@@ -159,7 +159,10 @@ class ProviderConfig(_FrozenModel):
     display_name: str = Field(min_length=1)
     weighted: bool
     api_key_env: ApiKeyEnvironmentName | None = None
+    #: Where the key travels: the query (`api_key_parameter`) or a request header (`api_key_header`).
+    api_key_transport: Literal["query", "header"] = "query"
     api_key_parameter: Literal["apikey", "api_key"] | None = None
+    api_key_header: Literal["X-Api-Key"] | None = None
     #: NASA POWER's `time-standard`; only UTC is accepted (daily values must be UTC days).
     time_standard: Literal["UTC"] | None = None
     endpoints: Mapping[KebabIdentifier, ProviderEndpoint]
@@ -177,11 +180,17 @@ class ProviderConfig(_FrozenModel):
         keyed = sorted(name for name, endpoint in self.endpoints.items() if endpoint.customer_host is not None)
         if keyed and self.api_key_env is None:
             raise ValueError(f"endpoints {keyed} declare a customer_host, which needs api_key_env")
+        header = self.api_key_transport == "header"
+        if header != (self.api_key_header is not None):
+            raise ValueError('api_key_header is declared exactly when api_key_transport = "header"')
+        if header and self.api_key_parameter is not None:
+            raise ValueError('api_key_transport = "header" sends no query parameter; drop api_key_parameter')
+        key_name = self.api_key_header if header else self.api_key_parameter
         optional = any(endpoint.optional_api_key for endpoint in self.endpoints.values())
-        if optional and (self.api_key_env is None or self.api_key_parameter is None):
-            raise ValueError("optional_api_key needs api_key_env and api_key_parameter")
-        if self.api_key_parameter is not None and self.api_key_env is None:
-            raise ValueError("api_key_parameter needs api_key_env")
+        if optional and (self.api_key_env is None or key_name is None):
+            raise ValueError("optional_api_key needs api_key_env and the key's api_key_parameter or api_key_header")
+        if (self.api_key_parameter is not None or header) and self.api_key_env is None:
+            raise ValueError("api_key_parameter and api_key_transport need api_key_env")
         return self
 
     @field_validator("endpoints", mode="after")

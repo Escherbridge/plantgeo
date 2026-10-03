@@ -745,9 +745,17 @@ capability is a snapshot with null observed-day bounds and zero observed days, r
 evidence under `staticPublication`. Source vintage and capture time never become slider days.
 No admission and failed status verification remain separate omissions. The static status and
 day census resolve independently, so one failing authority does not erase the other's proof;
-a stated region mismatch still withholds the affected rows. Status reads use no-store semantics
-and existing bounded deadlines, so admission removal or read faults are not hidden by stale
-positive status. The map's capability polling supplies retries without another per-layer poller.
+a stated region mismatch still withholds the affected rows. Status reads use no-store semantics.
+The map's capability polling supplies retries without another per-layer poller.
+
+The status read sits inside `getParquetSliderCapabilities`'s `Promise.all`, so its deadline bounds the
+whole slider payload (post-push review L4, 2026-10-02). It is therefore
+`SOIL_SURVEY_STATUS_TIMEOUT_MS = 5_000` (the viewport read keeps 15 s), and the slider keeps one status
+answer for `SOIL_SURVEY_STATUS_CACHE_MS = 60_000` in process (`cachedSoilSurveyStatus`): concurrent
+payloads share one in-flight read, and an admission removal shows within a minute. A failed or
+timed-out read is never cached: that payload degrades soil-survey alone to
+`soil_survey_status_unavailable`, every day-partitioned lane is still published, and the next payload
+asks again. `resetSoilSurveyStatusCacheForTests` is the test seam.
 
 `parquet-trpc-readers/soil-survey.ts` is the one reader in this file that does NOT go through the
 day-partitioned governed Parquet plane (`getParquetLatestRelease`/`getParquetLayerDay`,

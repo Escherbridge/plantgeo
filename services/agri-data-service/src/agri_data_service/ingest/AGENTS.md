@@ -760,16 +760,24 @@ accidentally persist a credentialed URL.
 
 ## provider_client.py: the Phase-1 config provider client, `KeyedRequestUrl` and SOFT-8 (plan 1C)
 
-**Optional same-host keys.** An endpoint's `optional_api_key` opt-in uses the provider's declared
-`api_key_env` and `api_key_parameter`. USGS declares `api_key` for its daily and monitoring-location
-collections; missing or blank environment values preserve anonymous requests. Keys are added only
-to `send_url`, wrapped in `KeyedRequestUrl`; `request_url` stays identical across key rotation and
-anonymous access, preserving cache/checkpoint identity. Caller-supplied `apikey`/`api_key` fields
-are rejected before URL construction. Only existing redacted parameter spellings are accepted.
-Optional keyed requests disable redirects through `fetch_bounded(follow_redirects=False)` so even
-a Location URL reflecting the key cannot forward it to another host. A redirect becomes an upstream
-HTTP error. Anonymous requests and existing paid customer-host behavior retain client redirect
-settings. No request headers or client-wide credentials are installed.
+**Optional same-host keys, and where a key travels.** An endpoint's `optional_api_key` opt-in uses
+the provider's declared `api_key_env`; missing or blank environment values preserve anonymous
+requests. The provider file names the key's transport (`api_key_transport`, post-push review M2):
+`query` (the default) appends `api_key_parameter` (or `PROVIDER_API_KEY_PARAMETERS`' entry) to
+`send_url` inside `KeyedRequestUrl`, which is how Open-Meteo's customer hosts take `apikey` and is
+unchanged; `header` sends `api_key_header` (`X-Api-Key`, the only accepted name) in
+`ProviderEndpointRequest.send_headers`, a `KeyedHeaders` whose `str`/`repr` print `[redacted]`.
+USGS uses the header (the 7bae4944 query-parameter transport is retired): its `send_url` equals
+`request_url`, so no URL, log line, exception, report or checkpoint identity can carry the key, and
+`request_url` stays identical across key rotation and anonymous access. `send_provider_request`
+hands `send_headers.reveal()` to `fetch_bounded`, never a client-wide header. Every keyed send on a
+header transport, and every optional keyed send, disables redirects through
+`fetch_bounded(follow_redirects=False)`: httpx strips `Authorization` on a cross-origin redirect but
+keeps custom headers such as `X-Api-Key`, and a query key could be reflected into a Location URL. A
+redirect becomes an upstream HTTP error. Anonymous requests and required customer-host requests on a
+query transport keep the client's redirect setting. Caller-supplied `apikey`/`api_key` fields are
+rejected before URL construction. The lane-config schema refuses a header transport without
+`api_key_header` or with `api_key_parameter`, and an `api_key_header` on a query transport.
 
 **Two halves, one of them the runner's seam.** `provider_endpoint_request` + `send_provider_request`
 are what the config runner actually calls: `pipeline/runner/binding.py::ConfigProviderClient` (the

@@ -17,7 +17,10 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 TURN_RECEIPT_PREFIX: Final = "lane-turn-receipts/v1"
-TURN_RECEIPT_VERSION: Final = "lane-turn-receipt-v1"
+#: v2 carries `publication_state` and `source_resolved`; every reader before v2 refuses it (rollback note in AGENTS.md).
+TURN_RECEIPT_VERSION: Final = "lane-turn-receipt-v2"
+#: v1 is still read: without `publication_state` it is complete, and with it (696f1ae5..v2) it is read as written.
+TURN_RECEIPT_READABLE_VERSIONS: Final = frozenset({"lane-turn-receipt-v1", TURN_RECEIPT_VERSION})
 TURN_RECEIPT_MAX_BYTES: Final = 64 * 1024
 _CONTENT_TYPE: Final = "application/json"
 
@@ -53,10 +56,14 @@ class DayReceipt:
     run_id: str = ""
     recorded_at: datetime | None = None
     publication_state: Literal["pending", "complete"] = "complete"
+    #: `Written.source_resolved`: False never earns a completeness proof, however complete the coverage.
+    source_resolved: bool = True
 
     def __post_init__(self) -> None:
         if self.publication_state not in {"pending", "complete"}:
             raise TurnReceiptError("turn receipt has an unknown publication state")
+        if not isinstance(self.source_resolved, bool):
+            raise TurnReceiptError("turn receipt has a non-boolean source resolution")
         expected, present = self.expected_unit_ids, self.present_unit_ids
         if expected is None and present is None:
             return
@@ -89,6 +96,7 @@ class DayReceipt:
             "run_id": self.run_id,
             "recorded_at": recorded_at.astimezone(UTC).isoformat(),
             "publication_state": self.publication_state,
+            "source_resolved": self.source_resolved,
         }
         payload = canonical_json(value).encode("utf-8")
         if len(payload) > TURN_RECEIPT_MAX_BYTES:
@@ -97,12 +105,12 @@ class DayReceipt:
 
     @classmethod
     def from_payload(cls, payload: bytes) -> DayReceipt:
-        """Decode one stored receipt, refusing any other schema version."""
+        """Decode one stored v1 or v2 receipt, refusing any other schema version."""
         try:
             value = json.loads(payload)
         except ValueError as error:
             raise TurnReceiptError("turn receipt is not JSON") from error
-        if not isinstance(value, dict) or value.get("schema_version") != TURN_RECEIPT_VERSION:
+        if not isinstance(value, dict) or value.get("schema_version") not in TURN_RECEIPT_READABLE_VERSIONS:
             raise TurnReceiptError("turn receipt has an unknown schema version")
         recorded_at = value.get("recorded_at")
         return cls(
@@ -120,6 +128,7 @@ class DayReceipt:
             run_id=str(value.get("run_id", "")),
             recorded_at=datetime.fromisoformat(recorded_at) if isinstance(recorded_at, str) else None,
             publication_state=value.get("publication_state", "complete"),
+            source_resolved=value.get("source_resolved", True),
         )
 
 
@@ -177,6 +186,8 @@ class TurnReceipts:
 __all__ = [
     "TRANSFORM_RECEIPT_STREAM_PREFIX",
     "TURN_RECEIPT_PREFIX",
+    "TURN_RECEIPT_READABLE_VERSIONS",
+    "TURN_RECEIPT_VERSION",
     "ConditionalObjectStorage",
     "DayReceipt",
     "TurnReceiptError",

@@ -88,6 +88,8 @@ class UsgsWaterDataWorld:
     tile_overrides: dict[tuple[str, str], str] = field(default_factory=dict)
     #: Gauge ids the monitoring-locations collection leaves out (a daily value with no site record).
     unnamed: set[str] = field(default_factory=set)
+    #: When set, every request answers 429 `OVER_RATE_LIMIT` with this `Retry-After` (P4 request 6).
+    throttle_retry_after: str | None = None
     requests: list[httpx.Request] = field(default_factory=list)
 
     def reading(self, gauge: Gauge, day: date) -> Reading | None:
@@ -102,6 +104,12 @@ class UsgsWaterDataWorld:
         """The MockTransport handler: route by collection path."""
         self.requests.append(request)
         params = request.url.params
+        if self.throttle_retry_after is not None:
+            return httpx.Response(
+                429,
+                json={"error": {"code": "OVER_RATE_LIMIT"}},
+                headers={"retry-after": self.throttle_retry_after},
+            )
         if request.url.path == DAILY_PATH:
             if params["bbox"] in self.failing_tiles:
                 return httpx.Response(503, content=b"Service Unavailable", headers={"content-type": "text/plain"})

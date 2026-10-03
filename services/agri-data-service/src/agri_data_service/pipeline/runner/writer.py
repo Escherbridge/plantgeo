@@ -65,6 +65,7 @@ RewriteReason = Literal[
     "coverage_unproven",
     "coverage_lost",
     "source_completed",
+    "unresolved_recorded",
     "absence_unchanged",
     "data_never_retracted_by_absence",
 ]
@@ -78,6 +79,7 @@ _WRITING_REASONS: Final[frozenset[RewriteReason]] = frozenset(
         "republish",
         "absent",
         "source_completed",
+        "unresolved_recorded",
     }
 )
 
@@ -92,6 +94,10 @@ class LaneWriteError(RuntimeError):
 
 class LaneDayContendedError(LaneWriteError):
     """Another run holds the stream-day's lane-day lock: that day is `contended` and the turn goes on (M4)."""
+
+
+class LaneDayCoverageRefusedError(LaneWriteError):
+    """Under the lock, published coverage refuses this answer (it lost a unit): `refused_partial`; the turn goes on."""
 
 
 class LadderRepairError(LaneWriteError):
@@ -138,6 +144,15 @@ def _coverage_refusal(receipt: DayReceipt | None, settlement: Written) -> Rewrit
     return None
 
 
+def _completing(settlement: Written, *, source_owed: bool, source_unresolved: bool) -> RewriteDecision | None:
+    """A full answer to owed source debt: a proof, the unresolved marker, or `None` (S11's digest rule decides)."""
+    if not source_owed or settlement.partial:
+        return None
+    if settlement.source_resolved:
+        return RewriteDecision("source_completed")
+    return None if source_unresolved else RewriteDecision("unresolved_recorded")
+
+
 def decide_rewrite(  # noqa: PLR0911, PLR0913 - one return per S11 row; the census, receipt, answer and policy are distinct
     *,
     status: PartitionDayStatus,
@@ -147,13 +162,16 @@ def decide_rewrite(  # noqa: PLR0911, PLR0913 - one return per S11 row; the cens
     partial_day: PartialDayPolicy,
     force: bool = False,
     source_owed: bool = False,
+    source_unresolved: bool = False,
 ) -> RewriteDecision:
     """S11: write an unwritten day; rewrite a settled day on a digest change, a partial recheck day only on more units.
 
     A governed absence never overwrites data (fail-closed), and data always retracts a disproven
     absence. A data day with no runner receipt (written before cut-over) is rewritten once, which
     is how it gains one. A `write_and_recheck` answer with fewer units than the written day never
-    replaces it: a tile that failed this turn must not erase the gauges it served last turn.
+    replaces it: a tile that failed this turn must not erase the gauges it served last turn. An
+    unresolved full answer is written once to record its marker (`source_unresolved` says the census
+    already holds it), then only on a digest change.
     """
     if isinstance(settlement, Absent):
         if status == "data":
@@ -174,12 +192,15 @@ def decide_rewrite(  # noqa: PLR0911, PLR0913 - one return per S11 row; the cens
     if receipt is None:
         return RewriteDecision("no_receipt")
     if receipt.publication_state == "pending":
-        return RewriteDecision("coverage_unproven" if settlement.partial else "source_completed")
+        # Pending is never a proof: only a full answer resolves it (into a proof or the unresolved marker).
+        completed = _completing(settlement, source_owed=True, source_unresolved=False)
+        return completed or RewriteDecision("coverage_unproven")
     if partial_day == "write_and_recheck" and _is_partial(receipt):
         previous = receipt.present_units or 0
         return RewriteDecision("more_units" if settlement.present_units > previous else "no_more_units")
-    if source_owed and not settlement.partial:
-        return RewriteDecision("source_completed")
+    completing = _completing(settlement, source_owed=source_owed, source_unresolved=source_unresolved)
+    if completing is not None:
+        return completing
     return RewriteDecision("digest_changed" if source_digest != receipt.source_digest else "digest_unchanged")
 
 
@@ -330,9 +351,10 @@ class ObjectStoreLaneWriter:
                     expected_unit_ids=receipt.expected_unit_ids,
                     present_unit_ids=receipt.present_unit_ids,
                 )
-                if current is not None and _coverage_refusal(current, answer) is not None:
-                    raise LaneDayContendedError(
-                        f"{stream} {day.isoformat()}: published coverage changed before the lock"
+                refusal = None if current is None else _coverage_refusal(current, answer)
+                if refusal is not None:
+                    raise LaneDayCoverageRefusedError(
+                        f"{stream} {day.isoformat()}: published coverage changed before the lock ({refusal.reason})"
                     )
             completeness = SourceCompleteness(self.receipts.storage)
             await asyncio.to_thread(completeness.invalidate, stream, day)
@@ -453,6 +475,7 @@ __all__ = [
     "CompareModeWriteError",
     "LadderRepairError",
     "LaneDayContendedError",
+    "LaneDayCoverageRefusedError",
     "LaneWriteError",
     "LaneWriter",
     "ObjectStoreLaneWriter",

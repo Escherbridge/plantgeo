@@ -12,13 +12,17 @@ import pyarrow as pa  # type: ignore[import-untyped]
 import pytest
 
 from agri_data_service.pipeline.runner.contract import SourceThrottledError, SourceUnavailableError
+from agri_data_service.pipeline.runner.cooldown import ProviderCooldowns
 from agri_data_service.pipeline.runner.windows import (
     GapFillDisabledError,
     plan_gap_fill,
     transform_dirty_days,
 )
+from tests.parquet.availability_documents import MemoryAvailabilityStorage
 from tests.runner.fakes import (
+    NOW,
     TODAY,
+    ManualClock,
     MemoryLaneStore,
     ScriptedUpstream,
     days_between,
@@ -143,6 +147,43 @@ async def test_an_unavailable_or_deferred_probe_gates_the_window_and_exits_zero(
     assert owed[newest.isoformat()]["reason"] == reason
     assert owed[EDGE.isoformat()]["reason"] == reason
     assert report["outcome"] == "incomplete"
+
+
+async def test_a_probe_told_to_wait_an_hour_stops_the_walk_and_the_next_fire_inside_the_hour() -> None:
+    """Review M3 follow-up: a probe 429 whose Retry-After the ladder would never sleep opens the circuit and
+    persists the wait, so neither the walk behind the probe window nor a fire 30 minutes later sends anything."""
+    store, world = MemoryLaneStore(), GridWorld()
+    lane = grid_lane(days={"absence_recheck_days": 20})
+    older = EDGE - timedelta(days=17)
+    world.publish([older])
+    _published_through(store, world, EDGE - timedelta(days=2), first=EDGE - timedelta(days=16))
+    store.publish(GRID_STREAM, EDGE - timedelta(days=19), _grid_rows(world, older))
+    store.publish(GRID_STREAM, EDGE - timedelta(days=18), _grid_rows(world, older))
+
+    def answer(endpoint: str, parameters: dict[str, str], probe: bool) -> bytes:
+        if probe:
+            raise SourceThrottledError("upstream request failed with status 429", retry_after_seconds=3600)
+        return world.answer(endpoint, parameters, probe)
+
+    upstream = ScriptedUpstream(answer)
+    cooldowns = ProviderCooldowns(MemoryAvailabilityStorage())
+
+    exit_code, report = await run(spec_for(lane), ports_for(PER_DAY, store, upstream=upstream, cooldowns=cooldowns))
+
+    assert exit_code == 0
+    assert [send.probe for send in upstream.sends] == [True]
+    assert report["throttled_until"] == (NOW + timedelta(hours=1)).isoformat()
+    assert unwritten_by_day(report)[older.isoformat()]["reason"] == "deferred_quota"
+    later = ManualClock(NOW + timedelta(minutes=30))
+
+    inside_exit, inside = await run(
+        spec_for(lane), ports_for(PER_DAY, store, upstream=upstream, clock=later, cooldowns=cooldowns)
+    )
+
+    assert inside_exit == 0
+    assert len(upstream.sends) == 1
+    assert inside["throttled_until"] == report["throttled_until"]
+    assert unwritten_by_day(inside)[older.isoformat()]["reason"] == "deferred_quota"
 
 
 async def test_an_edge_far_behind_the_lag_fans_out_nothing_past_it_and_drains_the_backlog_oldest_first() -> None:

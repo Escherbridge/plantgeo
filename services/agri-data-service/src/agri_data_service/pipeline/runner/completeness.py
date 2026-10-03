@@ -29,6 +29,20 @@ def coverage_digest(unit_ids: frozenset[str]) -> str:
     return hashlib.sha256(canonical_json(sorted(unit_ids)).encode()).hexdigest()
 
 
+def unresolved_digest(unit_ids: frozenset[str]) -> str:
+    """Mark a day fully answered under this support but unresolved; never equal to its `coverage_digest`."""
+    coverage_digest(unit_ids)  # the same support validation
+    return hashlib.sha256(canonical_json({"unresolved": sorted(unit_ids)}).encode()).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class ProofDays:
+    """Days proven complete, and days fully answered but unresolved (still owed), under one support."""
+
+    complete: frozenset[date]
+    unresolved: frozenset[date]
+
+
 def completeness_key(stream: str, year: int) -> str:
     if re.fullmatch(r"[a-z0-9][a-z0-9._-]*", stream) is None or not date.min.year <= year <= date.max.year:
         raise TurnReceiptError("invalid source-completeness scope")
@@ -85,20 +99,32 @@ class SourceCompleteness:
             raise TurnReceiptError("source-completeness proof has no payload or comparison token")
         return _decode(payload, stream, year), etag
 
-    def complete_days(self, stream: str, first: date, last: date, expected: frozenset[str]) -> frozenset[date]:
-        digest = coverage_digest(expected)
-        days: set[date] = set()
+    def proof_days(self, stream: str, first: date, last: date, expected: frozenset[str]) -> ProofDays:
+        """One read per year: the proven days and the unresolved days in `[first, last]`."""
+        proven, unresolved = coverage_digest(expected), unresolved_digest(expected)
+        complete: set[date] = set()
+        marked: set[date] = set()
         for year in range(first.year, last.year + 1):
             entries, _ = self._read(stream, year)
-            days.update(date.fromisoformat(day) for day, proof in entries.items() if proof == digest)
-        return frozenset(day for day in days if first <= day <= last)
+            for named_day, entry in entries.items():
+                day = date.fromisoformat(named_day)
+                if not first <= day <= last:
+                    continue
+                if entry == proven:
+                    complete.add(day)
+                elif entry == unresolved:
+                    marked.add(day)
+        return ProofDays(complete=frozenset(complete), unresolved=frozenset(marked))
+
+    def complete_days(self, stream: str, first: date, last: date, expected: frozenset[str]) -> frozenset[date]:
+        return self.proof_days(stream, first, last, expected).complete
 
     def invalidate(self, stream: str, day: date) -> None:
         """Remove proof before any partition mutation; a crash leaves the day source-owed."""
         self._update(stream, day, None)
 
     def confirm(self, receipt: DayReceipt) -> None:
-        """Record a full support proof after its matching receipt is durable."""
+        """Record full support after its matching receipt is durable: a proof, or the unresolved marker."""
         expected, present = receipt.expected_unit_ids, receipt.present_unit_ids
         if (
             receipt.publication_state == "complete"
@@ -106,7 +132,8 @@ class SourceCompleteness:
             and expected == present
             and len(expected) == receipt.expected_units == receipt.present_units
         ):
-            self._update(receipt.stream, receipt.day, coverage_digest(expected))
+            digest = coverage_digest(expected) if receipt.source_resolved else unresolved_digest(expected)
+            self._update(receipt.stream, receipt.day, digest)
 
     def _update(self, stream: str, day: date, digest: str | None) -> None:
         key = completeness_key(stream, day.year)

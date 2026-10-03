@@ -429,6 +429,19 @@ G4 validation still require their separate evidence.
   edge is served by both tiles; identical copies collapse, and two different values under one identity
   are dropped, logged (`water_gauges_daily_identity_conflict`) and counted in the turn report
   (`rows_dropped_by_reason.identity_conflict`), never guessed.
+- **Identity-conflict days stay owed** (post-push review H1, 2026-10-02). A day that dropped an identity
+  conflict is written from its other gauges but never earns a source-completeness proof: the runner
+  records an "unresolved" marker in the yearly proof document instead, reports the day `unwritten` as
+  `source_unresolved` (detail `identity_conflict=<n>`), counts `days_source_unresolved`, and keeps it
+  in G4's source debt. Re-asking cannot resolve it, so gap-fill holds it, unasked and costing no
+  request, while any other hole is owed, and an unchanged unresolved answer rewrites nothing. The
+  known case is `USGS-12010000`, 1990-09-30 to 1991-09-05 (two time-series IDs per day; Phase 3
+  evidence). The 310 proofs the first historical turn
+  issued for those dates before this rule are not retracted by code: removing those dates from
+  `lane-source-completeness/v1/water-gauges-daily/1990.json` and `1991.json` is a separate,
+  owner-approved production step, after which the next gap-fill re-pull records their markers. The
+  series-choice rule (which series to keep) is an open owner decision; once `settle` applies one, the
+  next re-ask proves the day with no migration.
 - **Rows:** the legacy stream's fourteen columns (so one web decoder reads both) plus
   `monitoring_location_id`, `source_time` (verbatim), `statistic_id`, `approval_status`, `qualifier`,
   `time_series_id`. A served null or the -999999 sentinel drops the row, as the legacy DV walk did.
@@ -463,10 +476,13 @@ names map layer ids, not the stream, so it is unchanged. The UI layer key stays 
 
 ### 8.4 Gates (owner)
 
-- **G2:** no key is needed (8.1). If the owner wants the higher limit for the re-pull, it takes one
-  code change first: `ingest/provider_client.py` sends a key only to a `customer_host` today, and this
-  provider has one host. Send it as the `X-Api-Key` header (never a query parameter, so it cannot reach
-  a logged URL), then declare `api_key_env = "USGS_WATER_DATA_API_KEY"`.
+- **G2:** no key is needed (8.1). For the higher limit, the owner sets `USGS_WATER_DATA_API_KEY` on the
+  executor; nothing else changes. The provider file (`lanes/_providers/usgs-water-data.toml`) declares
+  it optional on both collections with `api_key_transport = "header"` and `api_key_header = "X-Api-Key"`
+  (post-push review M2, 2026-10-02; 7bae4944 first sent it as the `api_key` query parameter). The key
+  is sent only in that header, so every request URL, checkpoint identity, log line, exception and turn
+  report is identical with and without it; a keyed send never follows a redirect, because httpx keeps
+  custom headers across a cross-origin redirect. A blank or missing value stays anonymous.
 - **G3:** one commit sets `enabled = true`, `gap_fill_enabled = true` and
   `gap_fill_enabled_at_gate = "G3"` in the lane TOML and adds `water-gauges-daily` to
   `tests/lane_config/test_lane_toml_contract.py::GAP_FILL_ENABLED_LANES`; sweep, receipt, push. From
@@ -490,8 +506,15 @@ names map layer ids, not the stream, so it is unchanged. The UI layer key stays 
   are all Approved, P4 request 14); a re-approval of such a day is not picked up.
 - **The low-flow alert has nothing to fire on.** `checkStreamflowAlerts` keys on
   `condition === "critically_low"`, and neither stream carries a percentile or a condition.
-- **Keyless rate limit unknown.** A gap-fill turn sends 104 requests two at a time; a 429 falls to the
-  runner's 20/40/80/160 s series and then `deferred_quota`.
+- **Keyless rate limit unknown.** A gap-fill turn sends 104 requests two at a time; the first
+  historical turn (Phase 3 evidence) drew ten 429s. A 429 without `Retry-After` falls to the runner's
+  20/40/80/160 s series and then `deferred_quota`. A 429 whose `Retry-After` exceeds twice the current
+  step or the turn's deadline (post-push review M3, 2026-10-02) stops the turn's sends at once and is
+  persisted per host (`lane-provider-cooldowns/v1/api.waterdata.usgs.gov.json`, capped at 24 h): every
+  forward or gap-fill fire before that instant sends nothing, reports its owed days `deferred_quota`
+  and exits 0, so the executor's single queue slot is released in seconds. The crons are unchanged. A
+  429 that names no wait is not persisted; the series still bounds that turn to about 5 minutes of
+  backoff per unit chain.
 - **Coverage shows the new stream empty.** The registration makes `water-gauges-daily` censused, so
   coverage reports reflect its unfilled 1990-2026 range until G3's re-pull runs.
 - **Other regions.** The lane's source coverage is US-only, so a deployment of this image for a non-US

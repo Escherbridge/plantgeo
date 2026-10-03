@@ -47,6 +47,8 @@ import {
   MAX_REPORTED_GOVERNED_ABSENCE_RANGES,
   PARQUET_CAPABILITY_CONTRACTS,
   PARQUET_CAPABILITY_LANES,
+  resetSoilSurveyStatusCacheForTests,
+  SOIL_SURVEY_STATUS_CACHE_MS,
 } from "@/lib/server/services/parquet-slider-capabilities";
 // The REAL client readers, imported rather than restated: what this payload has to keep
 // derivable is whatever these functions can still answer, so a second copy of their rules here
@@ -201,6 +203,7 @@ function setCoverage(lanes: CoverageRow[], layerBindings: ParquetRegionLayerBind
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetSoilSurveyStatusCacheForTests();
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-08-28T12:00:00Z"));
   setCoverage(completeCoverage());
@@ -269,6 +272,36 @@ describe("getParquetSliderCapabilities", () => {
       warehouseLayerName: "soil-survey", capabilities: result, capabilitiesUnavailable: false,
     })).toMatchObject({ badge: "Retrying", isSettling: true });
     expect(result.parquetCoverageUnavailable).toBe(false);
+    errorSpy.mockRestore();
+  });
+
+  it("serves a minute of payloads from one status read, never keeps a timed-out one, and keeps every other lane", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.getParquetSoilSurveyStatus.mockRejectedValueOnce(new UpstreamTimeoutError());
+    const stalled = await getParquetSliderCapabilities();
+    expect(stalled.layers).toHaveLength(PARQUET_CAPABILITY_CONTRACTS.length - 1);
+    expect(stalled.withheldParquetCapabilities).toEqual([{
+      layerName: "soil-survey", parquetLanes: ["soil-survey"],
+      reason: "soil_survey_status_unavailable", missingEvidence: [],
+    }]);
+
+    const recovered = await getParquetSliderCapabilities();
+    const cached = await getParquetSliderCapabilities();
+    expect(mocks.getParquetSoilSurveyStatus).toHaveBeenCalledTimes(2);
+    for (const result of [recovered, cached]) {
+      expect(result.layers).toHaveLength(PARQUET_CAPABILITY_CONTRACTS.length);
+      expect(result.withheldParquetCapabilities).toEqual([]);
+    }
+
+    mocks.getParquetSoilSurveyStatus.mockResolvedValue({
+      ...SOIL_STATUS, availability: "unavailable", reason: "soil_survey_release_not_admitted", publication: null,
+    });
+    vi.advanceTimersByTime(SOIL_SURVEY_STATUS_CACHE_MS + 1);
+    const revoked = await getParquetSliderCapabilities();
+    expect(mocks.getParquetSoilSurveyStatus).toHaveBeenCalledTimes(3);
+    expect(revoked.withheldParquetCapabilities.map((entry) => entry.reason)).toEqual([
+      "soil_survey_release_not_admitted",
+    ]);
     errorSpy.mockRestore();
   });
 

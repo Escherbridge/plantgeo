@@ -37,6 +37,8 @@ UnwrittenReason = Literal[
     "contended",
     # The base rung is published but the coarse rungs could not be derived this turn (H1).
     "ladder_owed",
+    # Every unit answered, but the strategy dropped rows it cannot attribute: written, never proven complete.
+    "source_unresolved",
 ]
 UNWRITTEN_REASONS: Final[frozenset[UnwrittenReason]] = frozenset(get_args(UnwrittenReason))
 
@@ -167,6 +169,9 @@ class Written:
     dropped_rows: Mapping[str, int] = field(default_factory=dict, hash=False)
     expected_unit_ids: frozenset[str] | None = None
     present_unit_ids: frozenset[str] | None = None
+    #: False when the strategy dropped rows it cannot resolve (two series disagree): the day is written
+    #: but never proven source-complete, so it stays source debt until the strategy can resolve them.
+    source_resolved: bool = True
 
     def __post_init__(self) -> None:
         if self.expected_unit_ids is None and self.present_unit_ids is None:

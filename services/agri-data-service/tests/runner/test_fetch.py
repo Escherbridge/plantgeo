@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -11,11 +11,14 @@ from agri_data_service.pipeline.runner.contract import (
     SourceThrottledError,
     SourceUnavailableError,
 )
+from agri_data_service.pipeline.runner.cooldown import ProviderCooldowns
 from agri_data_service.pipeline.runner.fetch import THROTTLE_SERIES_SECONDS, FetchRetryPolicy, UnitFetcher
-from tests.runner.fakes import ManualClock, ScriptedUpstream, grid_lane
+from tests.parquet.availability_documents import MemoryAvailabilityStorage
+from tests.runner.fakes import NOW, ManualClock, ScriptedUpstream, grid_lane
 from tests.runner.fixtures.grid_refuse import GridRefuseStrategy, GridWorld
 
 DAY = date(2026, 9, 10)
+HOST = "archive-api.open-meteo.com"
 STRATEGY = GridRefuseStrategy(span_days=1, chunk_size=1)
 #: No jitter, so the waits are exact.
 POLICY = FetchRetryPolicy(server_error_attempts=3, server_error_base_seconds=2.0, server_error_max_seconds=30.0)
@@ -67,23 +70,36 @@ async def test_a_429_walks_the_series_then_defers_quota_and_opens_the_circuit() 
     assert {send.parameters["cells"] for send in upstream.sends} == {"c1"}
 
 
-async def test_a_retry_after_replaces_the_series_step_but_never_shortens_or_more_than_doubles_it() -> None:
-    """SOFT-8's clamp in the runner's ladder: 100 s asked on the 20 s step waits 40; 5 s on the 40 s step waits 40."""
-    world = GridWorld()
-    world.publish([DAY])
-    asked = iter([100.0, 5.0])
+async def test_a_retry_after_inside_its_cap_is_waited_and_one_past_it_opens_the_circuit_for_later_turns() -> None:
+    """SOFT-8 in the runner's ladder: 30 s asked on the 20 s step waits 30; 5 s on the 40 s step waits 40 (never
+    shorter); 400 s on the 80 s step (cap 160) is not waited at all: the circuit opens and the wait is persisted."""
+    waits = (30.0, 5.0, 400.0)
+    asked = iter(waits)
 
-    def answer(endpoint: str, parameters: dict[str, str], probe: bool) -> bytes:
-        wait = next(asked, None)
-        if wait is not None:
-            raise SourceThrottledError("status 429", retry_after_seconds=wait)
-        return world.answer(endpoint, parameters, probe)
+    def answer(endpoint: str, parameters: dict[str, str], probe: bool) -> bytes:  # noqa: ARG001 - the answer shape
+        raise SourceThrottledError("status 429", retry_after_seconds=next(asked))
 
     clock = ManualClock()
-    outcome = await _fetcher(ScriptedUpstream(answer), clock).fetch_unit(_units()[0])
+    upstream = ScriptedUpstream(answer)
+    cooldowns = ProviderCooldowns(MemoryAvailabilityStorage())
+    fetcher = UnitFetcher(
+        strategy=STRATEGY,
+        client=upstream,
+        clock=clock,
+        deadline=10_000.0,
+        policy=POLICY,
+        backoff_host=HOST,
+        cooldowns=cooldowns,
+    )
 
-    assert outcome.response is not None
-    assert clock.slept == [40.0, 40.0]
+    outcomes = await fetcher.fetch_all(_units(), concurrency=1)
+
+    assert clock.slept == [30.0, 40.0]
+    assert {outcome.reason for outcome in outcomes.values()} == {"deferred_quota"}
+    assert len(upstream.sends) == len(waits)
+    held = NOW + timedelta(seconds=waits[-1])
+    assert cooldowns.throttled_until(HOST, now=NOW) == held
+    assert cooldowns.throttled_until(HOST, now=held) is None
 
 
 async def test_a_retry_that_would_pass_the_deadline_is_not_slept() -> None:

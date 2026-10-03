@@ -7,6 +7,7 @@ retry, CA17's republish, compare mode and every S5 fact. See `pipeline/runner/AG
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from collections import Counter
 from collections.abc import Mapping
@@ -58,6 +59,9 @@ from agri_data_service.pipeline.runner.fetch import (
     UnitFetcher,
     UnitOutcome,
     classify_fetch_error,
+    exceeds_ladder,
+    hold_stated_wait,
+    stated_retry_after,
 )
 from agri_data_service.pipeline.runner.receipts import DayReceipt, transform_receipt_stream
 from agri_data_service.pipeline.runner.report import UnwrittenEntry
@@ -77,6 +81,7 @@ from agri_data_service.pipeline.runner.writer import (
     CompareModeWriteError,
     LadderRepairError,
     LaneDayContendedError,
+    LaneDayCoverageRefusedError,
     decide_rewrite,
 )
 
@@ -98,6 +103,7 @@ if TYPE_CHECKING:
         TurnMode,
         UnwrittenReason,
     )
+    from agri_data_service.pipeline.runner.cooldown import ProviderCooldowns
     from agri_data_service.pipeline.runner.fetch import FetchRetryPolicy
     from agri_data_service.pipeline.runner.reader import LaneReader
     from agri_data_service.pipeline.runner.report import TurnLog, TurnReportBuilder
@@ -158,6 +164,8 @@ class TurnPorts:
     client: ProviderClient | None = None
     checkpoint_store: CheckpointStore | None = None
     fetch_policy: FetchRetryPolicy = DEFAULT_FETCH_RETRY_POLICY
+    #: Per-host persisted Retry-After waits (`cooldown.py`); `None` keeps a stated wait inside its turn.
+    cooldowns: ProviderCooldowns | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,6 +214,8 @@ class _TurnTally:
     days_unchanged: int = 0
     days_ladder_owed: int = 0
     days_source_owed: int = 0
+    #: Source-owed days already fully answered but unresolved (`LaneCensus.unresolved_days`).
+    days_source_unresolved: int = 0
     ladder_repairs: int = 0
     rows_written: int = 0
     rows_built: int = 0
@@ -390,6 +400,7 @@ class _Turn:
             "units_fetched": fetch.units_fetched,
             "units_failed": fetch.units_failed,
             "quota_circuit_open": fetch.quota_circuit_open,
+            "throttled_until": None if fetch.throttled_until is None else fetch.throttled_until.isoformat(),
             "retry_backoff_seconds": round(fetch.retry_backoff_seconds, 3),
             "checkpoint_restores": self.checkpoint_restores,
             "checkpoints_retained": self.checkpoints_retained,
@@ -400,6 +411,7 @@ class _Turn:
             "days_unchanged": self.tally.days_unchanged,
             "days_ladder_owed": self.tally.days_ladder_owed,
             "days_source_owed": self.tally.days_source_owed,
+            "days_source_unresolved": self.tally.days_source_unresolved,
             "ladder_repairs": self.tally.ladder_repairs,
             "days_rechecked": self.tally.days_rechecked,
             "days_revised": self.tally.days_revised,
@@ -463,6 +475,7 @@ class _Turn:
         lane = self.spec.lane
         if lane.kind == "transform":
             return await self._transform()
+        await self._honour_cooldown()
         if self.spec.mode == "forward" and not self.spec.compare:
             await self._retry_owed_availability()
         if self.spec.republish_current:
@@ -472,6 +485,18 @@ class _Turn:
         if self.spec.mode == "gap-fill":
             return await self._gap_fill()
         return await self._series_forward()
+
+    async def _honour_cooldown(self) -> None:
+        """A wait an earlier turn persisted for this host opens the circuit before anything is sent (exit 0)."""
+        cooldowns, host = self.ports.cooldowns, _endpoint_host(self.spec)
+        if cooldowns is None or host is None or self.client is None:
+            return
+        until = await asyncio.to_thread(cooldowns.throttled_until, host, now=self.ports.clock.now())
+        if until is not None:
+            self.tally.fetch.hold_until(
+                until, f"{host} is throttled until {until.isoformat()} (a Retry-After an earlier turn received)"
+            )
+            self.log.info("plantgeo_lane_turn_provider_cooldown", host=host, throttled_until=until.isoformat())
 
     async def _retry_owed_availability(self) -> None:
         """CA20: a forward turn retries its streams' owed `availability/pending/` claims before anything else."""
@@ -507,6 +532,7 @@ class _Turn:
         """Upstream days, excluding published bases whose source support is proven complete (ladder-only debt)."""
         source_owed = census.source_owed_days()
         self.tally.days_source_owed = len(source_owed)
+        self.tally.days_source_unresolved = len(census.unresolved_days())
         ladder_only = (census.base_data_days() & set(census.owed_days())) - source_owed
         self.tally.days_ladder_owed = len(ladder_only)
         self.ladder_days = tuple(sorted(ladder_only))
@@ -610,12 +636,16 @@ class _Turn:
         if window is None:
             return EXIT_COMPLETED
         census = self._census(self.streams, window)
-        plan = plan_gap_fill(self.spec.lane, owed=self._owed_days(census, window))
-        self.tally.days_candidate = len(plan.fill) + len(plan.retention_exceeded) + len(plan.overflow)
+        unresolved = census.unresolved_days()
+        plan = plan_gap_fill(self.spec.lane, owed=self._owed_days(census, window), last=unresolved)
+        self.tally.days_candidate = len(plan.fill) + len(plan.retention_exceeded) + len(plan.overflow) + len(plan.held)
         for day in plan.retention_exceeded:
             self.unwritten(day, "retention_exceeded", "older than the source's history capability")
-        for day in plan.overflow:
-            self.unwritten(day, "deferred_budget", "past this turn's gap-fill day cap")
+        for day in (*plan.held, *plan.overflow):
+            if day in unresolved:
+                self.unwritten(day, "source_unresolved", "fully answered but unresolved; re-asked once no hole is owed")
+            else:
+                self.unwritten(day, "deferred_budget", "past this turn's gap-fill day cap")
         exit_code = await self._fan_out_and_publish(plan.fill, census)
         await self._repair_ladders(census)
         return exit_code
@@ -693,7 +723,9 @@ class _Turn:
         with self.phase("probe"):
             if not isinstance(strategy, EdgeProbingStrategy) or self.client is None:
                 raise TurnConfigurationError("a probe was asked of a strategy without probe_edge")
-            if self.ports.clock.monotonic() >= self.fetch_deadline:
+            if self.tally.fetch.quota_circuit_open:
+                probe = ProviderEdge(status="deferred", window=window, detail=self.tally.fetch.quota_circuit_detail)
+            elif self.ports.clock.monotonic() >= self.fetch_deadline:
                 probe = ProviderEdge(status="unavailable", window=window, detail="the turn's time budget ran out")
             else:
                 try:
@@ -704,7 +736,25 @@ class _Turn:
                         raise
                     status: ProbeStatus = "deferred" if kind in {"throttled", "budget"} else "unavailable"
                     self.probe_refused_by_budget = kind == "budget"
-                    probe = ProviderEdge(status=status, window=window, detail=describe_error(error))
+                    detail = describe_error(error)
+                    stated = stated_retry_after(error) if kind == "throttled" else None
+                    if stated is not None and exceeds_ladder(
+                        stated,
+                        step=0,
+                        policy=self.ports.fetch_policy,
+                        now=self.ports.clock.monotonic(),
+                        deadline=self.fetch_deadline,
+                    ):
+                        detail = await hold_stated_wait(
+                            stated,
+                            tally=self.tally.fetch,
+                            clock=self.ports.clock,
+                            host=_endpoint_host(self.spec),
+                            cooldowns=self.ports.cooldowns,
+                            persist=not self.spec.compare,
+                            run_id=self.spec.run_id,
+                        )
+                    probe = ProviderEdge(status=status, window=window, detail=detail)
                 else:
                     probe = _checked_probe(answered, window, clip=clip)
         self.probe = probe
@@ -828,6 +878,9 @@ class _Turn:
                 checkpoints=checkpoints,
                 backoff_host=_endpoint_host(self.spec),
                 tally=self.tally.fetch,
+                cooldowns=self.ports.cooldowns,
+                persist_cooldown=not self.spec.compare,
+                run_id=self.spec.run_id,
             )
             outcomes: dict[str, UnitOutcome] = await fetcher.fetch_all(
                 selection.requests, concurrency=self.spec.lane.budget.max_concurrency
@@ -956,6 +1009,8 @@ class _Turn:
         tables = self._tables_by_stream(produced, day, owe=owe)
         if tables is None:
             return None
+        if not settlement.source_resolved:
+            owe(day, "source_unresolved", _unresolved_detail(settlement))
         return _SettledDay(day=day, settlement=settlement, tables=tables, responses_digest=digest)
 
     def _tables_by_stream(
@@ -1019,6 +1074,7 @@ class _Turn:
                 partial_day=self.partial_day,
                 force=force,
                 source_owed=answered.day in census.source_owed.get(stream, ()),
+                source_unresolved=answered.day in census.source_unresolved.get(stream, ()),
             )
             self.tally.rewrite_reasons[decision.reason] += 1
             if not decision.writes:
@@ -1042,11 +1098,15 @@ class _Turn:
                         present_unit_ids=written.present_unit_ids,
                         run_id=self.spec.run_id,
                         recorded_at=self.ports.clock.now(),
+                        source_resolved=written.source_resolved,
                     ),
                     availability=True,
                 )
             except LaneDayContendedError as error:
                 self.unwritten(answered.day, "contended", describe_error(error), stream=stream)
+                continue
+            except LaneDayCoverageRefusedError as error:
+                self.unwritten(answered.day, "refused_partial", describe_error(error), stream=stream)
                 continue
             self.tally.add_write(stream, result)
             wrote_any = True
@@ -1361,6 +1421,12 @@ def _short_day_detail(failed: Sequence[UnitOutcome], *, planned: int, detail: st
     units = sorted(outcome.request.unit for outcome in failed)
     named = ", ".join(units[:_DETAIL_UNIT_LIMIT]) + (" ..." if len(units) > _DETAIL_UNIT_LIMIT else "")
     return f"{len(failed)} of {planned} units unanswered, the rest settled ({named}): {detail}"
+
+
+def _unresolved_detail(settlement: Written) -> str:
+    """A written-but-unresolved day's S5 detail: the rows the strategy dropped, by reason."""
+    dropped = ", ".join(f"{reason}={count}" for reason, count in sorted(settlement.dropped_rows.items()))
+    return f"written without a completeness proof; dropped rows {dropped or 'none named'}"
 
 
 def _record_nothing(day: date, reason: UnwrittenReason, detail: str = "") -> None:

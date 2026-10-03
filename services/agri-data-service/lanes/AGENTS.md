@@ -52,11 +52,13 @@ tree is quarantined.
 
 - `api_key_env` holds the NAME of an environment variable ending in `_KEY`, never a key. The owner
   sets the variable; a customer host is only declared on a provider that names one.
-- `api_key_parameter` names an already-redacted query spelling (`apikey` or `api_key`). An endpoint
-  opts into an optional same-host key with `optional_api_key = true`, requiring both declarations.
+- `api_key_transport` names where the key travels: `query` (default; `api_key_parameter` names an
+  already-redacted spelling, `apikey` or `api_key`) or `header` (`api_key_header = "X-Api-Key"`, the
+  only accepted name; no `api_key_parameter`). An endpoint opts into an optional same-host key with
+  `optional_api_key = true`, requiring `api_key_env` and the transport's name.
   Missing or blank keys remain anonymous; customer hosts still require their key and cannot opt in.
-  USGS reads `USGS_WATER_DATA_API_KEY` for both collections. The owner supplies its value; no key is
-  provisioned by this change. Official contract: https://api.waterdata.usgs.gov/docs/ogcapi/keys/.
+  USGS reads `USGS_WATER_DATA_API_KEY` for both collections and sends it as `X-Api-Key` (header
+  transport, so no URL ever carries it). The owner supplies its value; no key is provisioned here. Official contract: https://api.waterdata.usgs.gov/docs/ogcapi/keys/.
 - Every host must resolve in `foundation/observability/usage.py::provider_for_host`, or the usage
   report shows `provider None` for it; `tests/lane_config/test_provider_hosts.py` enforces this. Add
   the host rule in the same commit as the provider file.

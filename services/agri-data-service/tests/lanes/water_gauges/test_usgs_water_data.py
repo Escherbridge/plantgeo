@@ -33,6 +33,7 @@ from agri_data_service.pipeline.parquet.lane_registry import (
 from agri_data_service.pipeline.runner.binding import ConfigProviderClient
 from agri_data_service.pipeline.runner.checkpoints import TurnCheckpoints
 from agri_data_service.pipeline.runner.completeness import SourceCompleteness
+from agri_data_service.pipeline.runner.cooldown import ProviderCooldowns
 from agri_data_service.pipeline.runner.exits import TurnConfigurationError
 from agri_data_service.pipeline.runner.receipts import DayReceipt
 from agri_data_service.pipeline.runner.resolve import resolve_strategy
@@ -44,6 +45,8 @@ from tests.parquet.availability_documents import MemoryAvailabilityStorage
 from tests.runner.fakes import NOW, ManualClock, MemoryLaneStore, days_between, ports_for, run, spec_for
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from agri_data_service.foundation.lane_config import LaneConfig
     from agri_data_service.pipeline.runner.contract import TurnMode
 
@@ -95,20 +98,21 @@ def _daily_flow(gauge: Gauge, day: date) -> Reading | None:
     return Reading("55.5")
 
 
-async def _turn(
+async def _turn(  # noqa: PLR0913 - the lane, the two process edges, and the turn's mode, clock and cooldown store
     lane: LaneConfig,
     world: UsgsWaterDataWorld,
     store: MemoryLaneStore,
     *,
     mode: TurnMode | Literal["compare"] = "forward",
     now: datetime = NOW,
+    cooldowns: ProviderCooldowns | None = None,
 ) -> tuple[int, dict[str, object]]:
     """One turn with the real `ConfigProviderClient` sending to the fake API through the real provider file."""
     compare = mode == "compare"
     spec = spec_for(lane, mode="forward" if mode == "compare" else mode, compare=compare)
     clock = ManualClock(now)
     async with httpx.AsyncClient(transport=httpx.MockTransport(world.handler)) as http:
-        ports = ports_for(resolve_strategy(lane), store, clock=clock, compare=compare)
+        ports = ports_for(resolve_strategy(lane), store, clock=clock, compare=compare, cooldowns=cooldowns)
         assert spec.provider is not None
         ports.client = ConfigProviderClient(provider=spec.provider, http=http, clock=clock)
         return await run(spec, ports)
@@ -397,6 +401,141 @@ async def test_two_values_under_one_identity_are_dropped_counted_and_the_rest_of
     assert exit_code == 0, payload
     assert [row["monitoring_location_id"] for row in _rows(store, PROBED_DAY)] == [DALLES.monitoring_location_id]
     assert payload["rows_dropped_by_reason"] == {"identity_conflict": len(WINDOW)}
+
+
+def _conflict_on(day: date) -> Callable[[Gauge, date], Reading | None]:
+    """`_daily_flow`, except the meridian gauge serves only `day`, where its two tiles disagree (override)."""
+
+    def reading(gauge: Gauge, asked: date) -> Reading | None:
+        if gauge == MERIDIAN:
+            return Reading("55.5") if asked == day else None
+        return _daily_flow(gauge, asked)
+
+    return reading
+
+
+async def test_an_identity_conflict_day_is_written_but_stays_owed_while_a_clean_day_earns_its_proof() -> None:
+    """Review H1: a dropped identity conflict never earns a completeness proof; the day is reported and stays
+    source debt, and re-asking the same unresolved answer rewrites nothing."""
+    world = UsgsWaterDataWorld(gauges=[DALLES, MERIDIAN], reading_for=_conflict_on(PROBED_DAY))
+    world.tile_overrides[(SECOND_WESTERN_TILE, MERIDIAN.monitoring_location_id)] = "999"
+    store = MemoryLaneStore()
+
+    exit_code, payload = await _turn(_enabled(), world, store)
+
+    assert exit_code == 0, payload
+    assert _gauges_on(store, PROBED_DAY) == {DALLES.monitoring_location_id}
+    assert _unwritten_reasons(payload) == {PROBED_DAY.isoformat(): "source_unresolved"}
+    assert "identity_conflict=1" in str(_unwritten(payload)[0]["detail"])
+    proofs = MemoryAvailabilityStorage()
+    for receipt in store.receipts.values():  # what the production writer confirms after each publication
+        SourceCompleteness(proofs).confirm(receipt)
+    proven = SourceCompleteness(proofs).proof_days(STREAM, WINDOW[0], WINDOW[-1], SUPPORT_IDS)
+    assert proven.complete == frozenset(WINDOW) - {PROBED_DAY}
+    assert proven.unresolved == {PROBED_DAY}
+    census = store.census([STREAM], WINDOW[0], WINDOW[-1], expected_unit_ids=SUPPORT_IDS)
+    assert census.owed_days() == (PROBED_DAY,)
+    assert census.unresolved_days() == {PROBED_DAY}
+    writes = len(store.writes())
+
+    again_exit, again = await _turn(_enabled(), world, store)
+
+    assert again_exit == 0, again
+    assert again["rewrite_reasons"] == {"digest_unchanged": len(WINDOW)}
+    assert len(store.writes()) == writes
+    assert _unwritten_reasons(again) == {PROBED_DAY.isoformat(): "source_unresolved"}
+    assert again["days_source_unresolved"] == 1
+
+
+async def test_an_unresolved_historical_day_never_starves_the_gap_fills_real_holes() -> None:
+    """Re-asking cannot settle an unresolved full answer, so gap-fill walks every real hole before it again."""
+    lane = _enabled(gap_fill=True)
+    floor = _MEASURED_COMPLETE_HISTORY_FLOORS["water-gauges"]
+    world = UsgsWaterDataWorld(gauges=[DALLES, MERIDIAN], reading_for=_conflict_on(floor))
+    world.tile_overrides[(SECOND_WESTERN_TILE, MERIDIAN.monitoring_location_id)] = "999"
+    store = MemoryLaneStore()
+    first_exit, first = await _turn(lane, world, store, mode="gap-fill")
+    assert first_exit == 0, first
+    assert _unwritten(first)[0]["day"] == floor.isoformat()
+    assert _unwritten(first)[0]["reason"] == "source_unresolved"
+    world.requests.clear()
+
+    second_exit, second = await _turn(lane, world, store, mode="gap-fill")
+
+    assert second_exit == 0, second
+    asked = [date.fromisoformat(request.url.params["time"].split("/")[0]) for request in world.daily_requests()]
+    assert min(asked) == floor + timedelta(days=366)
+    assert max(day for (stream, day) in store.tables if stream == STREAM) == floor + timedelta(days=731)
+    assert second["days_source_unresolved"] == 1
+    assert (_unwritten(second)[0]["day"], _unwritten(second)[0]["reason"]) == (floor.isoformat(), "source_unresolved")
+
+
+async def test_a_held_unresolved_day_spends_no_budget_while_a_scattered_hole_is_owed() -> None:
+    """Review MEDIUM: under the day cap, a cap that affords one chunk fills a hole two chunks above the unresolved
+    floor and sends the floor nothing; the floor is re-asked only by the turn that owes no other hole."""
+    floor, hole = date(2026, 7, 1), date(2026, 8, 15)
+    shipped = _enabled(gap_fill=True)
+    assert shipped.days is not None
+    lane = shipped.model_copy(update={"days": shipped.days.model_copy(update={"floor": floor})})
+    world = UsgsWaterDataWorld(gauges=[DALLES, MERIDIAN], reading_for=_conflict_on(floor))
+    world.tile_overrides[(SECOND_WESTERN_TILE, MERIDIAN.monitoring_location_id)] = "999"
+    store = MemoryLaneStore()
+    first_exit, first = await _turn(lane, world, store, mode="gap-fill")
+    assert first_exit == 0, first
+    assert _unwritten_reasons(first) == {floor.isoformat(): "source_unresolved"}
+    for documents in (store.statuses, store.tables, store.receipts):
+        del documents[(STREAM, hole)]  # a lost partition: one real hole in the August chunk
+    one_chunk = 2 * len(TILES)  # per tile, one daily-values chunk and one monitoring-locations unit
+    capped = lane.model_copy(
+        update={"budget": lane.budget.model_copy(update={"gap_fill_max_weighted_calls": one_chunk})}
+    )
+    world.requests.clear()
+
+    second_exit, second = await _turn(capped, world, store, mode="gap-fill")
+
+    assert second_exit == 0, second
+    assert [request.url.params["time"] for request in world.daily_requests()] == [f"{hole}/{hole}"] * len(TILES)
+    assert _gauges_on(store, hole) == {DALLES.monitoring_location_id}
+    assert _unwritten_reasons(second) == {floor.isoformat(): "source_unresolved"}
+    world.requests.clear()
+
+    third_exit, third = await _turn(capped, world, store, mode="gap-fill")
+
+    assert third_exit == 0, third
+    assert {request.url.params["time"] for request in world.daily_requests()} == {f"{floor}/{floor}"}
+    assert _unwritten_reasons(third) == {floor.isoformat(): "source_unresolved"}
+
+
+async def test_an_hour_long_retry_after_stops_the_turn_and_the_next_turn_inside_it_sends_nothing() -> None:
+    """Review M3: a stated wait past the ladder's cap opens the circuit at once and outlives the turn (exit 0)."""
+    lane = _enabled()
+    world = UsgsWaterDataWorld(gauges=[DALLES, BOISE], reading_for=_daily_flow, throttle_retry_after="3600")
+    store = MemoryLaneStore()
+    cooldowns = ProviderCooldowns(MemoryAvailabilityStorage())
+
+    first_exit, first = await _turn(lane, world, store, cooldowns=cooldowns)
+
+    assert first_exit == 0, first
+    assert 0 < len(world.requests) <= lane.budget.max_concurrency
+    assert first["retry_backoff_seconds"] == 0
+    assert first["throttled_until"] == (NOW + timedelta(hours=1)).isoformat()
+    assert _unwritten_reasons(first) == {day.isoformat(): "deferred_quota" for day in WINDOW}
+    sent = len(world.requests)
+
+    inside_exit, inside = await _turn(lane, world, store, now=NOW + timedelta(minutes=30), cooldowns=cooldowns)
+
+    assert inside_exit == 0, inside
+    assert len(world.requests) == sent
+    assert inside["requests"] == 0
+    assert inside["throttled_until"] == first["throttled_until"]
+    assert _unwritten_reasons(inside) == {day.isoformat(): "deferred_quota" for day in WINDOW}
+    world.throttle_retry_after = None
+
+    after_exit, after = await _turn(lane, world, store, now=NOW + timedelta(minutes=61), cooldowns=cooldowns)
+
+    assert after_exit == 0, after
+    assert after["throttled_until"] is None
+    assert sorted(day for (stream, day) in store.tables if stream == STREAM) == WINDOW
 
 
 async def test_one_unreadable_feature_is_dropped_and_counted_while_its_tile_still_writes() -> None:

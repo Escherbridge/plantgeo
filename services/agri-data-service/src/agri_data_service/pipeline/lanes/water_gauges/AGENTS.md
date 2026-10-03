@@ -84,7 +84,20 @@ shared tile edge is served by both tiles: identical copies collapse. Two differe
 neither can be preferred honestly (the daily collection carries no "primary" flag; only
 `time-series-metadata` does, and it has no geometry to query by tile), so that identity is dropped for the
 day, logged as `water_gauges_daily_identity_conflict`, and counted in `dropped_rows["identity_conflict"]`
-(review M1). The next fire re-asks.
+(review M1).
+
+**A conflict day is written but never proven complete** (post-push review H1). `settle` returns
+`Written(source_resolved=False)` whenever `view.dropped` holds `identity_conflict`: the day's other
+gauges are published as usual, but the runner records the unresolved marker instead of a completeness
+proof, reports the day `source_unresolved` (detail `identity_conflict=<n>`), and keeps it source debt,
+so G4 history validation sees it (`pipeline/runner/AGENTS.md` "Unresolved days"). Gap-fill re-asks such
+days only in a turn that owes no other hole (until then they cost no request), and the same
+unresolved answer rewrites nothing. The production case is `USGS-12010000`, 1990-09-30 to
+1991-09-05: two time-series IDs per day, which conflict even at
+equal values because `time_series_id` is a digest fact. Choosing a series (for example by
+`time-series-metadata`'s "Primary" flag) is an owner decision still open; once `settle` resolves those
+days, the next re-ask proves them with no migration. A `rejected_feature` drop does not make a day
+unresolved: that feature is unreadable on every re-ask.
 
 ## Rows
 
@@ -123,5 +136,8 @@ written are gap-fill's and arrive mostly Approved already.
   bound to the `water-gauges` layer at G4, replacing `usgs_nwis`. A second `water-gauges` binding now would
   break `src/__tests__/region/manifest-parity.test.ts` (it maps bindings by layer slug) and make
   `foundation/region/layer_availability.py::region_layer_availability` report whichever binding is last.
-- **The API key.** P4: none needed. `ingest/provider_client.py` sends a key only to a `customer_host`; this
-  provider has one host, so G2 needs a header-key change there first (`docs/lanes/water-gauges.md` §8.4).
+- **The API key value.** P4: none needed; a key only raises the rate limit. The provider file declares the
+  optional `USGS_WATER_DATA_API_KEY` sent as the `X-Api-Key` header (`api_key_transport = "header"`), so
+  the request URLs, checkpoints and reports are identical with and without it; the owner sets the value
+  (`docs/lanes/water-gauges.md` §8.4). A keyless 429 with a long `Retry-After` parks the lane's host until
+  that instant instead of holding the executor's queue slot (`pipeline/runner/AGENTS.md` "One retry ladder").

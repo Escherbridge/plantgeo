@@ -16,7 +16,7 @@ import asyncio
 import json
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Final
 from urllib.parse import urlencode, urlsplit
@@ -100,6 +100,30 @@ class KeyedRequestUrl:
 
     def __repr__(self) -> str:
         return f"KeyedRequestUrl({self.__str__()!r})"
+
+
+class KeyedHeaders:
+    """Request headers that may carry a credential; `str`/`repr` name each header and never show its value.
+
+    The header twin of `KeyedRequestUrl`: a key sent as `X-Api-Key` never enters a URL, and an
+    accidental `f"{request}"` or `repr(request)` prints `[redacted]` in its place.
+    """
+
+    __slots__ = ("_values",)
+
+    def __init__(self, values: Mapping[str, str] | None = None) -> None:
+        """Hold the headers as given; only `reveal()` returns their values."""
+        self._values: Mapping[str, str] = MappingProxyType(dict(values or {}))
+
+    def reveal(self) -> dict[str, str]:
+        """The real headers. Pass these ONLY to the HTTP client that sends them."""
+        return dict(self._values)
+
+    def __str__(self) -> str:
+        return "{" + ", ".join(f"{name}: {redaction.REDACTED_PLACEHOLDER}" for name in sorted(self._values)) + "}"
+
+    def __repr__(self) -> str:
+        return f"KeyedHeaders({self.__str__()})"
 
 
 def resolve_required_open_meteo_api_key() -> str:
@@ -235,8 +259,10 @@ class ProviderEndpointRequest:
 
     #: The free host's URL with the caller's parameters and no key: what reports, checkpoints and logs see.
     request_url: str
-    #: The actual send URL, including an optional same-host key or required customer-host key.
+    #: The actual send URL: a query-transport key rides here; under header transport it equals `request_url`.
     send_url: KeyedRequestUrl
+    #: A header-transport key (`api_key_transport = "header"`); empty otherwise.
+    send_headers: KeyedHeaders = field(default_factory=KeyedHeaders)
     allow_redirects: bool = True
 
 
@@ -254,7 +280,8 @@ def provider_endpoint_request(
     key_parameter = provider.api_key_parameter or PROVIDER_API_KEY_PARAMETERS.get(provider.id)
     if any(name.lower() in {"apikey", "api_key"} for name in parameters):
         raise ProviderConfigError("API keys must come from the provider environment, not request parameters")
-    credential_free = f"https://{declared.host}{declared.path}?{urlencode(sorted(parameters.items()))}"
+    query = urlencode(sorted(parameters.items()))
+    credential_free = f"https://{declared.host}{declared.path}?{query}"
     if (declared.customer_host is None and not declared.optional_api_key) or provider.api_key_env is None:
         return ProviderEndpointRequest(request_url=credential_free, send_url=KeyedRequestUrl(credential_free))
     source = os.environ if environment is None else environment
@@ -263,12 +290,21 @@ def provider_endpoint_request(
         if declared.optional_api_key:
             return ProviderEndpointRequest(request_url=credential_free, send_url=KeyedRequestUrl(credential_free))
         raise ProviderConfigError(f"{provider.api_key_env} is empty; lanes on {provider.id} need it (FR-2)")
+    host = declared.customer_host or declared.host
+    if provider.api_key_transport == "header" and provider.api_key_header is not None:
+        # httpx keeps custom headers across a cross-origin redirect, so a keyed send never follows one.
+        return ProviderEndpointRequest(
+            request_url=credential_free,
+            send_url=KeyedRequestUrl(f"https://{host}{declared.path}?{query}"),
+            send_headers=KeyedHeaders({provider.api_key_header: key}),
+            allow_redirects=False,
+        )
     if key_parameter is None:
         raise ProviderConfigError(f"provider {provider.id!r} names api_key_env but no key parameter is known")
     keyed = urlencode([*parameters.items(), (key_parameter, key)])
     return ProviderEndpointRequest(
         request_url=credential_free,
-        send_url=KeyedRequestUrl(f"https://{declared.customer_host or declared.host}{declared.path}?{keyed}"),
+        send_url=KeyedRequestUrl(f"https://{host}{declared.path}?{keyed}"),
         allow_redirects=not declared.optional_api_key,
     )
 
@@ -277,9 +313,13 @@ async def send_provider_request(
     client: httpx.AsyncClient, request: ProviderEndpointRequest, bounds: UpstreamBounds
 ) -> BoundedResponse:
     """ONE bounded attempt (plus `fetch_bounded`'s own transport re-sends); the caller's ladder owns every status."""
-    if not request.allow_redirects:
-        return await fetch_bounded(client, request.send_url.reveal(), bounds, follow_redirects=False)
-    return await fetch_bounded(client, request.send_url.reveal(), bounds)
+    return await fetch_bounded(
+        client,
+        request.send_url.reveal(),
+        bounds,
+        request.send_headers.reveal(),
+        follow_redirects=None if request.allow_redirects else False,
+    )
 
 
 async def fetch_single_location(  # noqa: PLR0913 - client, endpoint, coordinates, params, host mode, policy, probe, clocks are each distinct

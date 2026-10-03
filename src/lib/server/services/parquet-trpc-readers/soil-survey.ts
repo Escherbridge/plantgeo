@@ -160,6 +160,9 @@ const releaseStatus = z.object({
 
 export type ParquetSoilSurveyStatus = z.infer<typeof releaseStatus>;
 
+/** The status read sits on the slider payload's critical path; see AGENTS.md §soil-survey. */
+export const SOIL_SURVEY_STATUS_TIMEOUT_MS = 5_000;
+
 /** Read verified release-index metadata; viewport reads still prove their own geometry objects. */
 export async function getParquetSoilSurveyStatus(signal?: AbortSignal): Promise<ParquetSoilSurveyStatus> {
   const url = providerUrl("AGRI_PARQUET_SERVICE_URL", "http://localhost:8000");
@@ -168,7 +171,11 @@ export async function getParquetSoilSurveyStatus(signal?: AbortSignal): Promise<
   const payload = await fetchBoundedJson(
     url,
     { method: "GET", headers: { Accept: "application/json" } },
-    { timeoutMs: 15_000, maxBytes: 16 * 1024, ...(signal === undefined ? {} : { signal }) }
+    {
+      timeoutMs: SOIL_SURVEY_STATUS_TIMEOUT_MS,
+      maxBytes: 16 * 1024,
+      ...(signal === undefined ? {} : { signal }),
+    }
   );
   const parsed = releaseStatus.safeParse(payload);
   if (!parsed.success) {

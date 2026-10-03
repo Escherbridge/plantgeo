@@ -125,6 +125,10 @@ def _safe_provider_key_metadata(path: Path, where: str, value: object) -> bool:
         return False
     if where == "api_key_parameter":
         return value in ("apikey", "api_key")
+    if where == "api_key_transport":
+        return value in ("query", "header")
+    if where == "api_key_header":
+        return value == "X-Api-Key"
     return bool(re.fullmatch(r"endpoints\.[a-z0-9-]+\.optional_api_key", where)) and isinstance(value, bool)
 
 
@@ -320,9 +324,13 @@ def test_the_raw_file_scan_passes_a_real_shaped_lane(tmp_path: Path) -> None:
     [
         (False, 'api_key_parameter = "api_key"\n'),
         (False, "[endpoints.daily]\noptional_api_key = true\n"),
+        (False, 'api_key_header = "X-Api-Key"\n'),
         (True, '[nested]\napi_key_parameter = "api_key"\n'),
+        (True, '[nested]\napi_key_header = "X-Api-Key"\n'),
         (True, "optional_api_key = true\n"),
         (True, 'api_key_parameter = "secret-value"\n'),
+        (True, 'api_key_header = "secret-value"\n'),
+        (True, 'api_key_transport = "secret-value"\n'),
         (True, '[endpoints.daily]\noptional_api_key = "secret-value"\n'),
     ],
 )

@@ -327,7 +327,10 @@ class UsgsWaterDataDailyStrategy:
         )
 
     def settle(self, day: date, responses: Sequence[SourceResponse], context: DayContext) -> Settlement:
-        """Written from the whole tiles (both units answered) out of the tiles planned; a short day is rechecked."""
+        """Written from the whole tiles (both units answered) out of the tiles planned; a short day is rechecked.
+
+        A dropped identity conflict leaves the day unresolved: written, never proven complete (AGENTS.md).
+        """
         view = day_view(day, responses)
         if not view.present_tiles:
             return Unsettled("upstream_unavailable", "no tile answered both its daily values and its gauge names")
@@ -342,6 +345,7 @@ class UsgsWaterDataDailyStrategy:
             dropped_rows=view.dropped,
             expected_unit_ids=expected,
             present_unit_ids=present,
+            source_resolved=IDENTITY_CONFLICT not in view.dropped,
         )
 
     def rows(self, day: date, responses: Sequence[SourceResponse]) -> pa.Table:

@@ -6,8 +6,11 @@ id = "usgs-water-data"
 display_name = "USGS Water Data APIs"
 # Uncharged: no [weight], no [budget]. A turn is capped in logical requests.
 weighted = false
+# Optional (api.data.gov): a key only raises the rate limit. It travels in a header, never the query,
+# so no URL, log line or checkpoint identity can carry it (docs/lanes/water-gauges.md 8.4).
 api_key_env = "USGS_WATER_DATA_API_KEY"
-api_key_parameter = "api_key"
+api_key_transport = "header"
+api_key_header = "X-Api-Key"
 
 [endpoints.daily]
 host = "api.waterdata.usgs.gov"

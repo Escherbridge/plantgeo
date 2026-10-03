@@ -25,6 +25,7 @@ from agri_data_service.pipeline.runner.receipts import DayReceipt, TurnReceiptEr
 from agri_data_service.pipeline.runner.writer import (
     CompareModeWriteError,
     LaneDayContendedError,
+    LaneDayCoverageRefusedError,
     ObjectStoreLaneWriter,
     WritePermit,
     decide_rewrite,
@@ -117,6 +118,39 @@ def test_a_pending_receipt_never_satisfies_an_equal_digest() -> None:
 
     assert decision.reason == "source_completed"
     assert decision.writes
+
+
+@pytest.mark.parametrize(
+    ("receipt", "settlement", "source_unresolved", "reason"),
+    [
+        # A day proven before (or never marked) now answers unresolved: written once, to record its marker.
+        (FULL, Written(4, 4, source_resolved=False), False, "unresolved_recorded"),
+        # The marker is already held: re-asking the same unresolved answer rewrites only on a digest change.
+        (FULL, Written(4, 4, source_resolved=False), True, "digest_unchanged"),
+        # The conflict is gone: the answer earns the proof.
+        (FULL, Written(4, 4), True, "source_completed"),
+        (
+            replace(FULL, publication_state="pending"),
+            Written(4, 4, source_resolved=False),
+            False,
+            "unresolved_recorded",
+        ),
+    ],
+)
+def test_an_unresolved_full_answer_to_source_debt_is_recorded_once_then_held_to_its_digest(
+    receipt: DayReceipt, settlement: Written, source_unresolved: bool, reason: str
+) -> None:
+    decision = decide_rewrite(
+        status="data",
+        receipt=receipt,
+        settlement=settlement,
+        source_digest="old",
+        partial_day="write_and_recheck",
+        source_owed=True,
+        source_unresolved=source_unresolved,
+    )
+
+    assert decision.reason == reason
 
 
 async def test_a_settled_day_is_rewritten_when_its_source_digest_changes_at_the_same_unit_count() -> None:
@@ -292,6 +326,66 @@ async def test_production_source_debt_survives_restart_until_every_unit_is_prove
     ).owed_days() == (JULY_FOURTH,)
 
 
+async def test_an_unresolved_full_answer_is_published_but_marked_owed_until_a_resolved_one_proves_it() -> None:
+    """Review H1 through the production writer: full coverage with unresolved rows earns a marker, never a proof."""
+    store, availability = ObjectStore(RecordingBackend()), MemoryAvailabilityStorage()
+    expected = frozenset({"west", "east"})
+    unresolved = DayReceipt(
+        stream=SIGNAL,
+        day=JULY_FOURTH,
+        lane="fixture",
+        outcome="written",
+        source_digest="two-series",
+        present_units=len(expected),
+        expected_units=len(expected),
+        expected_unit_ids=expected,
+        present_unit_ids=expected,
+        source_resolved=False,
+    )
+
+    await _production_writer(store, availability).write_day(
+        SIGNAL, JULY_FOURTH, signal_rows(), unresolved, availability=False
+    )
+
+    restarted = ObjectStoreLaneReader(store=store, receipts=TurnReceipts(availability))
+    census = restarted.census([SIGNAL], JULY_FOURTH, JULY_FOURTH, expected_unit_ids=expected)
+    assert census.status(SIGNAL, JULY_FOURTH) == "data"
+    assert census.owed_days() == (JULY_FOURTH,)
+    assert census.unresolved_days() == frozenset({JULY_FOURTH})
+    stored = restarted.receipt(SIGNAL, JULY_FOURTH)
+    assert stored is not None
+    assert stored.source_resolved is False
+
+    await _production_writer(store, availability).write_day(
+        SIGNAL, JULY_FOURTH, signal_rows(), replace(unresolved, source_resolved=True), availability=False
+    )
+
+    census = restarted.census([SIGNAL], JULY_FOURTH, JULY_FOURTH, expected_unit_ids=expected)
+    assert census.owed_days() == ()
+    assert census.unresolved_days() == frozenset()
+
+
+async def test_a_coverage_refusal_under_the_lock_is_refused_partial_and_the_turn_writes_the_rest() -> None:
+    """Review L5: another run's wider coverage refuses this answer at the lock; that is `refused_partial`, not
+    `contended`, and the turn's other days are still written."""
+    yesterday = TODAY - timedelta(days=1)
+    window = days_between(yesterday - timedelta(days=2), yesterday)
+    world = PointWorld(readings={(day, station): 1.0 for day in window for station in STATIONS})
+    store = MemoryLaneStore(coverage_refused={(POINT_STREAM, window[0])})
+
+    exit_code, report = await run(
+        spec_for(point_lane()), ports_for(PointRecheckStrategy(), store, upstream=ScriptedUpstream(world.answer))
+    )
+
+    assert exit_code == 0
+    entries = report["unwritten"]
+    assert isinstance(entries, list)
+    [entry] = entries
+    assert (entry["day"], entry["stream"], entry["reason"]) == (window[0].isoformat(), POINT_STREAM, "refused_partial")
+    assert "coverage changed" in entry["detail"]
+    assert sorted(day for (stream, day) in store.tables if stream == POINT_STREAM) == window[1:]
+
+
 async def test_a_failed_receipt_write_leaves_the_mutated_day_source_owed(monkeypatch: pytest.MonkeyPatch) -> None:
     store, availability = ObjectStore(RecordingBackend()), MemoryAvailabilityStorage()
     expected = frozenset({"west", "east"})
@@ -387,7 +481,7 @@ async def test_an_interrupted_eight_unit_write_cannot_be_replaced_using_its_old_
     assert (pending.publication_state, pending.present_unit_ids) == ("pending", expected)
     shorter = replace(full, source_digest="seven", present_units=len(seven), present_unit_ids=seven)
     for _attempt in range(2):
-        with pytest.raises(LaneDayContendedError, match="coverage changed"):
+        with pytest.raises(LaneDayCoverageRefusedError, match="coverage changed"):
             await _production_writer(store, availability).write_day(
                 SIGNAL,
                 JULY_FOURTH,
@@ -430,8 +524,10 @@ async def test_the_write_lock_rechecks_coverage_before_a_stale_partial_answer_ca
     await writer.write_day(SIGNAL, JULY_FOURTH, signal_rows(), full, availability=False)
     partial = replace(full, present_units=1, present_unit_ids=frozenset({"west"}))
 
-    with pytest.raises(LaneDayContendedError, match="coverage changed"):
+    with pytest.raises(LaneDayCoverageRefusedError, match="coverage changed") as refused:
         await writer.write_day(SIGNAL, JULY_FOURTH, signal_rows(), partial, availability=False)
+
+    assert not isinstance(refused.value, LaneDayContendedError)
 
     restarted = ObjectStoreLaneReader(store=store, receipts=TurnReceipts(availability))
     assert restarted.census([SIGNAL], JULY_FOURTH, JULY_FOURTH, expected_unit_ids=expected).owed_days() == ()

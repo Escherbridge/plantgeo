@@ -23,7 +23,12 @@ from agri_data_service.pipeline.runner.digests import table_digest
 from agri_data_service.pipeline.runner.receipts import DayReceipt
 from agri_data_service.pipeline.runner.report import TurnLog, TurnReportBuilder
 from agri_data_service.pipeline.runner.turn import TurnPorts, TurnSpec, run_turn
-from agri_data_service.pipeline.runner.writer import LadderRepairError, LaneDayContendedError, WriteResult
+from agri_data_service.pipeline.runner.writer import (
+    LadderRepairError,
+    LaneDayContendedError,
+    LaneDayCoverageRefusedError,
+    WriteResult,
+)
 from tests.lane_config.builders import (
     REAL_LANES_DIRECTORY,
     merged,
@@ -43,6 +48,7 @@ if TYPE_CHECKING:
     from agri_data_service.foundation.parquet.paths import PartitionDayStatus
     from agri_data_service.pipeline.runner.checkpoints import CheckpointStore
     from agri_data_service.pipeline.runner.contract import Absent, IngestStrategy, TransformStrategy, TurnMode
+    from agri_data_service.pipeline.runner.cooldown import ProviderCooldowns
     from agri_data_service.pipeline.runner.fetch import FetchRetryPolicy
 
 TODAY: Final = date(2026, 9, 20)
@@ -128,6 +134,8 @@ class MemoryLaneStore:
     owed_claims: dict[str, int] = field(default_factory=dict)
     #: Stream-days whose lane-day lock another run holds: every write to them is refused as contended (M4).
     contended: set[tuple[str, date]] = field(default_factory=set)
+    #: Stream-days another run republished with coverage this answer lacks: the locked recheck refuses them.
+    coverage_refused: set[tuple[str, date]] = field(default_factory=set)
     #: Stream-days whose coarse rungs cannot be derived from their base rung (H1).
     unrepairable: set[tuple[str, date]] = field(default_factory=set)
     #: Every write-side call, in order.
@@ -168,20 +176,30 @@ class MemoryLaneStore:
             for stream in streams
         }
         source_owed = {}
+        source_unresolved = {}
         if expected_unit_ids is not None:
             for stream in streams:
-                source_owed[stream] = frozenset(
-                    day
+                # What `SourceCompleteness.confirm` would have recorded for each published day's receipt.
+                answered = {
+                    day: receipt
                     for day in days
                     if base[stream][day] == "data"
-                    and (
-                        (receipt := self.receipt(stream, day)) is None
-                        or receipt.publication_state != "complete"
-                        or receipt.expected_unit_ids != expected_unit_ids
-                        or receipt.present_unit_ids != expected_unit_ids
-                    )
-                )
-        return LaneCensus(first=first, last=last, streams=folded, base=base, source_owed=source_owed)
+                    and (receipt := self.receipt(stream, day)) is not None
+                    and receipt.publication_state == "complete"
+                    and receipt.expected_unit_ids == expected_unit_ids
+                    and receipt.present_unit_ids == expected_unit_ids
+                }
+                proven = {day for day, receipt in answered.items() if receipt.source_resolved}
+                source_owed[stream] = frozenset(day for day in days if base[stream][day] == "data") - proven
+                source_unresolved[stream] = frozenset(answered) - proven
+        return LaneCensus(
+            first=first,
+            last=last,
+            streams=folded,
+            base=base,
+            source_owed=source_owed,
+            source_unresolved=source_unresolved,
+        )
 
     def receipt(self, stream: str, day: date) -> DayReceipt | None:
         return self.receipts.get((stream, day))
@@ -212,6 +230,8 @@ class MemoryLaneStore:
         self, stream: str, day: date, table: pa.Table, receipt: DayReceipt, *, availability: bool
     ) -> WriteResult:
         self._refuse_if_contended(stream, day)
+        if (stream, day) in self.coverage_refused:
+            raise LaneDayCoverageRefusedError(f"{stream} {day.isoformat()}: published coverage changed before the lock")
         self.journal.append(f"write:{stream}:{day.isoformat()}:availability={availability}")
         self.statuses[(stream, day)] = "data"
         self.ladder_incomplete.discard((stream, day))
@@ -362,6 +382,7 @@ def ports_for(  # noqa: PLR0913 - one collaborator per keyword
     compare: bool = False,
     checkpoint_store: CheckpointStore | None = None,
     fetch_policy: FetchRetryPolicy | None = None,
+    cooldowns: ProviderCooldowns | None = None,
 ) -> TurnPorts:
     """Ports over the memory bucket; a compare turn gets no writer, as production binds it."""
     ports = TurnPorts(
@@ -371,6 +392,7 @@ def ports_for(  # noqa: PLR0913 - one collaborator per keyword
         writer=None if compare else store,
         client=upstream,
         checkpoint_store=checkpoint_store,
+        cooldowns=cooldowns,
     )
     if fetch_policy is not None:
         ports.fetch_policy = fetch_policy

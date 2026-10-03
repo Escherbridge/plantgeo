@@ -57,6 +57,8 @@ class LaneCensus:
     #: Base-rung status; published data owes only ladder work when its source support is also proven complete.
     base: Mapping[str, Mapping[date, PartitionDayStatus]] = field(default_factory=dict)
     source_owed: Mapping[str, frozenset[date]] = field(default_factory=dict)
+    #: The `source_owed` days already fully answered but unresolved (`completeness.py::unresolved_digest`).
+    source_unresolved: Mapping[str, frozenset[date]] = field(default_factory=dict)
 
     def days(self) -> tuple[date, ...]:
         """Every day of the window, ascending."""
@@ -80,6 +82,19 @@ class LaneCensus:
     def source_owed_days(self) -> frozenset[date]:
         """Published base days whose current source support has no full receipt proof."""
         return frozenset(day for days in self.source_owed.values() for day in days)
+
+    def unresolved_days(self) -> frozenset[date]:
+        """Owed days whose only debt is an unresolved full answer: re-asking cannot settle them; gap-fill holds them."""
+        return frozenset(
+            day
+            for day in self.days()
+            if any(day in self.source_unresolved.get(stream, ()) for stream in self.streams)
+            and all(
+                self.status(stream, day) == "data"
+                and (day not in self.source_owed.get(stream, ()) or day in self.source_unresolved.get(stream, ()))
+                for stream in self.streams
+            )
+        )
 
     def absent_days(self) -> tuple[date, ...]:
         """Days every stream governs as absent, ascending: the absence-recheck candidates."""
