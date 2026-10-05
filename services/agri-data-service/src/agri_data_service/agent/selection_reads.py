@@ -422,8 +422,8 @@ async def lane_selection(  # noqa: PLR0913 - one argument per coordinate of a la
     page. Only the selected-day answer searches past the tile for the nearest support.
     """
     scope = ReadScope(layer=lane, kind=kind, tier=selected.tier, bbox=selected.bbox)
-    policy = day_tolerance(lane)
     ceiling = schedule_ceiling(kind, today or utc_today())
+    policy = day_tolerance(lane).for_request(selected.day, ceiling)
 
     def work(session: ServingSession) -> dict[str, Any]:
         listing = warehouse.source().authorized_listing(scope)

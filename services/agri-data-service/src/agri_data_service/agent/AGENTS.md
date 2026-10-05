@@ -342,6 +342,16 @@ every earlier state and field keeps its meaning; the ones below are new.
 | `daily_series` in `SPARSE_REVISIT_LANES` (vegetation NDVI) | `nearest` | 2 x `publication_lag_days` = 14 |
 | every other `daily_series` | `nearest` | 3 |
 
+**Near today the bound absorbs the lane's settle lag** (`DayTolerance.for_request`, added after
+the first production run on 2026-10-04): a lane cannot have published anything newer than
+`today - publication_lag_days`, so the tolerance gains `max(0, lag - (today - requested))` days.
+ERA5 soil and climate lanes settle 5 days behind, so "today" may borrow up to 3 + 5 = 8 days back;
+a request older than the lag keeps the plain bound. A sparse-revisit lane gets no allowance, since
+its lag field is its revisit gap and already sits inside its interval. A request after today is
+treated as today (the stretch never exceeds the lag). The lane's wire `tolerance_days` is the bound
+actually applied, with `settle_lag_days` beside it; the catalogue's `lane_day_tolerance` lists each
+lane's BASE bound and its `settle_lag_days`, not a request's stretched bound.
+
 The NDVI row is the one hand-spelled fact: a `daily_series` may not declare `cadence_days > 1`,
 so the registry records the measured 7-day revisit gap as its `publication_lag_days`, and
 `SPARSE_REVISIT_LANES` says "read that as the interval". When the selected day is `day_not_written`

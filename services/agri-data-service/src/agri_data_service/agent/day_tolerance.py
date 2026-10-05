@@ -5,7 +5,7 @@ See agent/AGENTS.md, "Closest-datapoint reads (2026-10-04)", for the owner decis
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Final, Literal
 
 from agri_data_service.foundation.parquet.lane_contract import nature_has_time_axis
@@ -38,10 +38,31 @@ class DayTolerance:
     mode: ResolutionMode
     tolerance_days: int | None
     rule: str
+    #: Days the lane's provider runs behind today (`publication_lag_days`); 0 for sparse-revisit lanes.
+    settle_lag_days: int = 0
+
+    def for_request(self, requested: date, today: date | None) -> DayTolerance:
+        """Widen the bound by the part of the settle lag that still overlaps the requested day.
+
+        A lane cannot have published anything newer than `today - settle_lag_days`, so a request near
+        today is measured from that settled edge; a request older than the lag keeps the plain bound.
+        """
+        if self.tolerance_days is None or today is None or self.settle_lag_days == 0:
+            return self
+        # A request after today is still at most the whole lag unsettled: never a wider stretch.
+        unsettled = self.settle_lag_days - max(0, (today - requested).days)
+        if unsettled <= 0:
+            return self
+        return replace(self, tolerance_days=self.tolerance_days + unsettled, rule=f"{self.rule}+settle_lag")
 
     def to_wire(self) -> dict[str, object]:
         """Render the policy beside a lane's result so the caller can see the bound applied."""
-        return {"resolution": self.mode, "tolerance_days": self.tolerance_days, "tolerance_rule": self.rule}
+        return {
+            "resolution": self.mode,
+            "tolerance_days": self.tolerance_days,
+            "tolerance_rule": self.rule,
+            "settle_lag_days": self.settle_lag_days,
+        }
 
 
 def day_tolerance(lane: str) -> DayTolerance:
@@ -53,6 +74,9 @@ def day_tolerance(lane: str) -> DayTolerance:
     - every other time-axis lane: tolerance = max(3, 2 x interval), where interval is the
       registry's `cadence_days` (7 for weekly drought -> 14) or, for a sparse-revisit daily lane,
       its measured observation gap (`publication_lag_days`, 7 for NDVI -> 14). Daily lanes get 3.
+    - near today the bound also absorbs the lane's settle lag (`DayTolerance.for_request`): ERA5
+      lanes settle 5 days behind, so "today" may borrow up to 3 + 5 days back. A sparse-revisit
+      lane's lag field is its revisit gap, already inside its interval, so it gets no allowance.
     """
     registration = LANE_REGISTRY.get(lane)
     if registration is None:
@@ -66,7 +90,8 @@ def day_tolerance(lane: str) -> DayTolerance:
         interval = max(interval, registration.publication_lag_days)
     tolerance = max(DAILY_TOLERANCE_DAYS, CADENCE_TOLERANCE_MULTIPLIER * interval)
     rule = "daily_floor" if tolerance == DAILY_TOLERANCE_DAYS else "two_intervals"
-    return DayTolerance("nearest", tolerance, rule)
+    settle_lag = 0 if lane in SPARSE_REVISIT_LANES else registration.publication_lag_days
+    return DayTolerance("nearest", tolerance, rule, settle_lag_days=settle_lag)
 
 
 @dataclass(frozen=True, slots=True)

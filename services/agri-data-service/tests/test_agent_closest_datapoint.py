@@ -118,6 +118,33 @@ async def read_surface(source: LocalWarehouse, surface: str, **overrides: Any) -
 
 
 @pytest.mark.parametrize(
+    "case",
+    [
+        # dew point settles 5 days behind: asking for today may borrow up to 3 + 5 days back
+        ("climate-field-dew-point", 0, -8, "published_nearest", 8),
+        ("climate-field-dew-point", 0, -9, "day_not_written", 8),
+        # three days ago only 2 lag days still overlap the request: 3 + 2
+        ("climate-field-dew-point", 3, -5, "published_nearest", 5),
+        ("climate-field-dew-point", 3, -6, "day_not_written", 5),
+        # NDVI's lag field is its revisit gap, already inside its +/-14: no second allowance
+        ("vegetation", 0, -15, "day_not_written", 14),
+        # a day AFTER today is still at most the whole lag unsettled: 3 + 5, never wider
+        ("climate-field-dew-point", -10, -12, "day_not_written", 8),
+    ],
+)
+async def test_a_request_near_today_allows_for_the_lanes_settle_lag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: tuple[str, int, int, str, int]
+) -> None:
+    surface, today_after, published_offset, state, tolerance = case
+    monkeypatch.setattr(selection_evidence, "utc_today", lambda: DAY + timedelta(days=today_after))
+    source = LocalWarehouse()
+    write_lane(source, tmp_path, surface, DAY + timedelta(days=published_offset))
+    lane = (await read_surface(source, surface))["lanes"][0]
+    assert lane["selected"]["state"] == state
+    assert lane["tolerance_days"] == tolerance, "the wire states the bound actually applied"
+
+
+@pytest.mark.parametrize(
     ("surface", "published_offsets", "state", "offset"),
     [
         # exact day: no substitution, offset 0
