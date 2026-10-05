@@ -113,8 +113,14 @@ _SUBSTITUTABLE_STATES: Final = frozenset({"day_not_written"})
 #: Unpublished states that REPORT the nearest published day. A `governed_absence` is a published
 #: answer (fire-detections: FIRMS returned zero detections), so it is annotated, never replaced.
 _NEAREST_DAY_STATES: Final = frozenset({"day_not_written", "governed_absence"})
-#: The distance basis of polygon support, whose nearest neighbour is information, never the value here.
-_OUTSIDE_AREA_BASIS: Final = "geometry_centroid"
+#: SPARSE polygon lanes, where lying inside no polygon is itself the answer ("no drought here"), so
+#: the nearest polygon is information, never the value at the point. Curated: neither the lane
+#: registry nor the schemas separate these from TILING polygon lanes (crop-cover's equal-area grid,
+#: watersheds' wall-to-wall HUC units), whose nearest polygon is a real value like a lattice cell.
+#: Mirrored by `REGIONAL_SPARSE_AREA_NOUNS` in src/lib/server/services/regional-analysis-workflow.ts.
+SPARSE_AREA_LANES: Final = frozenset(
+    {"drought", "fire-perimeters", "evacuation-zones", "land-context-boundaries", "burn-severity"}
+)
 
 Box = tuple[float, float, float, float]
 
@@ -306,20 +312,20 @@ _RESERVED_FEATURE_KEYS: Final = frozenset(
 )
 
 
-def _nearest_relation(basis: object) -> str:
-    """`nearest_area_outside` for a polygon (outside every area is itself the answer), else `nearest_cell`."""
-    return "nearest_area_outside" if basis == _OUTSIDE_AREA_BASIS else "nearest_cell"
+def _nearest_relation(lane: str) -> str:
+    """`nearest_area_outside` for a sparse-area lane (outside every area is the answer), else `nearest_cell`."""
+    return "nearest_area_outside" if lane in SPARSE_AREA_LANES else "nearest_cell"
 
 
-def _spatial_relation(row: dict[str, Any]) -> str:
+def _spatial_relation(row: dict[str, Any], lane: str) -> str:
     if row.get("covers_probe_point") is True:
         return "contains_selection"
     if row.get("nearest_cell") is True:
-        return _nearest_relation(row.get("distance_km_basis"))
+        return _nearest_relation(lane)
     return "intersects_selection_tile"
 
 
-def feature(row: dict[str, Any], *, day: date, selected: date | None) -> dict[str, Any]:
+def feature(row: dict[str, Any], *, day: date, selected: date | None, lane: str) -> dict[str, Any]:
     """Separate provenance and actual support from the lane's original measurement columns.
 
     `selected=None` marks a static lane: a version stamp has no temporal distance to report.
@@ -337,7 +343,7 @@ def feature(row: dict[str, Any], *, day: date, selected: date | None) -> dict[st
             "centroid_longitude": row.get("centroid_longitude"),
             "centroid_latitude": row.get("centroid_latitude"),
             "covers_probe_point": row.get("covers_probe_point") is True,
-            "spatial_relation": _spatial_relation(row),
+            "spatial_relation": _spatial_relation(row, lane),
             "properties": {key: value for key, value in row.items() if key not in _RESERVED_FEATURE_KEYS},
         }
     )
@@ -346,10 +352,10 @@ def feature(row: dict[str, Any], *, day: date, selected: date | None) -> dict[st
     return result
 
 
-def spatial_summary(features: list[dict[str, Any]]) -> dict[str, Any]:
+def spatial_summary(features: list[dict[str, Any]], lane: str) -> dict[str, Any]:
     """One lane-day's spatial answer: `covers` at 0 km, else the nearest support and its distance.
 
-    A polygon lane's nearest area is `nearest_area_outside`: information, never the value at the point.
+    A sparse-area lane's nearest area is `nearest_area_outside`: information, never the value at the point.
     """
     if any(entry["covers_probe_point"] for entry in features):
         return {"spatial_relation": "covers", "distance_km": 0.0, "distance_km_basis": "covers"}
@@ -359,16 +365,18 @@ def spatial_summary(features: list[dict[str, Any]]) -> dict[str, Any]:
     searched = {"nearest_cell", "nearest_area_outside"}
     nearest = min(measured, key=lambda entry: (entry["spatial_relation"] not in searched, entry["distance_km"]))
     return {
-        "spatial_relation": _nearest_relation(nearest["distance_km_basis"]),
+        "spatial_relation": _nearest_relation(lane),
         "distance_km": nearest["distance_km"],
         "distance_km_basis": nearest["distance_km_basis"],
     }
 
 
-def _render(envelope: DayEnvelope, *, selected_day: date | None) -> dict[str, Any]:
+def _render(envelope: DayEnvelope, *, selected_day: date | None, lane: str) -> dict[str, Any]:
     """Render one resolved envelope as an evidence entry with features, offsets and a spatial summary."""
     if isinstance(envelope, PublishedDay):
-        features = [feature(dict(row), day=envelope.served_day, selected=selected_day) for row in envelope.rows]
+        features = [
+            feature(dict(row), day=envelope.served_day, selected=selected_day, lane=lane) for row in envelope.rows
+        ]
         result: dict[str, Any] = {
             "state": "published",
             "requested_day": envelope.requested_day.isoformat(),
@@ -376,7 +384,7 @@ def _render(envelope: DayEnvelope, *, selected_day: date | None) -> dict[str, An
             "day_offset": (envelope.served_day - envelope.requested_day).days,
             "features": features,
             "features_truncated": envelope.truncated,
-            **spatial_summary(features),
+            **spatial_summary(features, lane),
         }
         if envelope.mtbs_snapshot is not None:
             result["mtbs_snapshot"] = envelope.mtbs_snapshot.to_wire()
@@ -450,7 +458,7 @@ async def lane_selection(  # noqa: PLR0913 - one argument per coordinate of a la
                     if policy.mode == "as_of"
                     else resolve_day(listing, reader, scope=scope, day=day)
                 )
-                return _render(envelope, selected_day=selected.day)
+                return _render(envelope, selected_day=selected.day, lane=lane)
             except faults.ServingRefusalError as error:
                 return _refused(day, error)
             finally:
@@ -533,7 +541,7 @@ async def static_lane_selection(surface: str, lane: str, nature: str | None, sel
             refused = _refused(today, error)
             refused.pop("requested_day")
             return {**refused, "static": True}
-        rendered = _render(envelope, selected_day=None)
+        rendered = _render(envelope, selected_day=None, lane=lane)
         rendered.pop("requested_day", None)
         rendered.pop("day_offset", None)
         if "served_day" in rendered:

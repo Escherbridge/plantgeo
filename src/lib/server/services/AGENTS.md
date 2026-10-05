@@ -161,9 +161,12 @@ recomputed from the two named days when both are present) and `cellDistanceKm`, 
 entry first -- soil survey's features carry none of these -- and per-feature `nearest_cell` only as
 the fallback for older readers; when the fields are absent the audit is unchanged. The lane's gap
 line words the used support by `distance_km_basis`: "nearest cell" (`cell_edge`), "nearest station"
-(`source_coordinate`), "nearest delineation" (`delineation_edge`). `nearest_area_outside` (polygon
-lanes: the point is inside no drought area, perimeter or zone) is NEVER `cellDistanceKm` and never
-"(used)": the line reads "not inside any drought area; nearest 121.4 km (to its centroid)". An
+(`source_coordinate`), "nearest delineation" (`delineation_edge`), "nearest cell ... to its
+centroid" (`geometry_centroid`: a TILING polygon lane such as crop-cover's grid, a real value).
+`nearest_area_outside` (SPARSE-area lanes only, `REGIONAL_SPARSE_AREA_NOUNS`, mirroring agri
+`SPARSE_AREA_LANES`: the point is inside no drought area, perimeter or zone) is NEVER
+`cellDistanceKm` and never "(used)": the line reads "not inside any drought area; nearest 121.4 km
+(to its centroid)". An
 unpublished selected entry's `nearest_published_day`/`nearest_day_offset` become "no record on
 2026-10-04; nearest published 2026-08-25 (40 d earlier, beyond the 3-day tolerance)" using the
 lane's `tolerance_days`; a `governed_absence` (a published empty answer, e.g. zero FIRMS

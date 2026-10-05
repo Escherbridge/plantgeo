@@ -9,6 +9,7 @@ admitted SSURGO release reader. See agent/AGENTS.md, "Closest-datapoint reads (2
 from __future__ import annotations
 
 import json
+import re
 import struct
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -20,7 +21,7 @@ import structlog
 
 from agri_data_service.agent import selection_evidence, soil_survey_reads, tools
 from agri_data_service.agent.day_tolerance import nearest_published_day
-from agri_data_service.agent.selection_reads import SelectionReader
+from agri_data_service.agent.selection_reads import SPARSE_AREA_LANES, SelectionReader
 from agri_data_service.agent.selection_scope import (
     MAX_LANE_DAY_READS,
     PAGE_DAYS,
@@ -30,6 +31,7 @@ from agri_data_service.agent.selection_scope import (
     schedule_ceiling,
 )
 from agri_data_service.agent.soil_properties import READS_ENABLED_VARIABLE
+from agri_data_service.agent.surfaces import SURFACE_PARQUET_LANES
 from agri_data_service.config import settings
 from agri_data_service.foundation.soil_survey.receipts import AreaCensusEntry, AreaInventory, Blob, digest, encoded
 from agri_data_service.foundation.soil_survey.release import Release, ShardRef, manifest_key, release_key
@@ -42,6 +44,10 @@ from tests.test_agent_selection_evidence import LocalWarehouse, climate_row
 #: The web's copy of the published catalogue, measured by `ai-prompt-provider-tools.test.ts`.
 WEB_CURRENT_CATALOGUE = (
     Path(__file__).resolve().parents[3] / "src" / "__tests__" / "services" / "agri-tool-catalogue-current.fixture.json"
+)
+#: The web workflow whose `REGIONAL_SPARSE_AREA_NOUNS` mirrors `SPARSE_AREA_LANES`.
+WEB_WORKFLOW = (
+    Path(__file__).resolve().parents[3] / "src" / "lib" / "server" / "services" / "regional-analysis-workflow.ts"
 )
 
 DAY = date(2026, 6, 15)
@@ -279,6 +285,62 @@ async def test_a_point_outside_every_drought_area_is_not_given_the_nearest_area_
     assert selected["distance_km"] == pytest.approx(121.0, abs=1.0)  # to the square's centroid (-116.5, 43.5)
     nearest = selected["features"][0]
     assert (nearest["spatial_relation"], nearest["covers_probe_point"]) == ("nearest_area_outside", False)
+
+
+def crop_cell_row(release: date, *, west: float, south: float, crop_fraction: float) -> dict[str, Any]:
+    """One equal-area crop-cover grid cell (a 0.1-degree square stands in for the 30 km cell)."""
+    return {
+        "feature_id": f"crop-{west}/{south}",
+        "observed_year": release.year,
+        "release_day": release,
+        "source": "fixture",
+        "source_url": "https://example.org/cdl",
+        "source_resolution_m": 30.0,
+        "analysis_resolution_m": 30.0,
+        "aggregation_cell_m": 10_000,
+        "grid_x": 0,
+        "grid_y": 0,
+        "estimation_method": "fixture",
+        "dominant_crop_code": 1,
+        "dominant_crop_name": "Corn",
+        "crop_fraction": crop_fraction,
+        "classified_fraction": 1.0,
+        "crop_area_ha": 100.0,
+        "cell_area_ha": 1000.0,
+        "class_areas_json": "{}",
+        "class_names_json": "{}",
+        "geometry_wkb": _wkb_square(west, south, west + 0.1, south + 0.1),
+        "source_sha256": "0" * 64,
+        "ingested_at": datetime.combine(release, datetime.min.time(), UTC),
+    }
+
+
+async def test_a_tiling_polygon_lane_uses_its_nearest_cell_as_the_value(tmp_path: Path) -> None:
+    """Regression: crop-cover is GeometrySupport-backed but a WALL-TO-WALL grid, not a sparse area."""
+    source = LocalWarehouse()
+    release = date(2026, 2, 27)  # a registered CDL release day; the as-of rule serves it for DAY
+    source.write(
+        tmp_path, "crop-cover", release, [crop_cell_row(release, west=-116.3, south=43.45, crop_fraction=0.42)]
+    )
+    selected = (await read_surface(source, "crop-cover"))["lanes"][0]["selected"]  # BOISE, west of the cell
+    assert (selected["state"], selected["served_day"]) == ("published", release.isoformat())
+    assert (selected["spatial_relation"], selected["distance_km_basis"]) == ("nearest_cell", "geometry_centroid")
+    assert selected["distance_km"] == pytest.approx(19.5, abs=0.5)  # to the cell centroid (-116.25, 43.5)
+    nearest = selected["features"][0]
+    assert nearest["spatial_relation"] == "nearest_cell"
+    assert nearest["properties"]["crop_fraction"] == 0.42
+
+
+def test_the_web_sparse_area_surfaces_mirror_the_agri_lanes() -> None:
+    """The web words `nearest_area_outside` per surface; it must name exactly the sparse-area surfaces."""
+    block = re.search(
+        r"export const REGIONAL_SPARSE_AREA_NOUNS[^=]*= \{(.*?)\};", WEB_WORKFLOW.read_text(encoding="utf-8"), re.DOTALL
+    )
+    assert block, "REGIONAL_SPARSE_AREA_NOUNS moved or was renamed in regional-analysis-workflow.ts"
+    web = set(re.findall(r"'([a-z0-9-]+)':", block.group(1)))
+    agri = {surface for surface, lanes in SURFACE_PARQUET_LANES.items() if set(lanes) <= SPARSE_AREA_LANES}
+    assert web == agri
+    assert "crop-cover" not in web
 
 
 async def test_a_covering_cell_is_covers_at_zero_km(tmp_path: Path) -> None:

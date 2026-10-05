@@ -597,16 +597,21 @@ export function regionalLaneReadNote(audit: AuditCall, result: unknown, noRender
   };
 }
 
-/** What a polygon lane's areas are called in its gap line ("not inside any drought area"). */
-const AREA_NOUNS: Record<string, string> = {
+/**
+ * SPARSE-area surfaces (outside every polygon is the answer) and what their gap line calls an area.
+ * Mirrors agri `selection_reads.SPARSE_AREA_LANES`; tiling polygon lanes (crop-cover, watersheds)
+ * are deliberately absent: their nearest polygon is a used `nearest_cell`. Pinned by an agri test.
+ */
+export const REGIONAL_SPARSE_AREA_NOUNS: Readonly<Record<string, string>> = {
   'drought-areas': 'drought area', 'fire-perimeters': 'fire perimeter', 'evacuation-zones': 'evacuation zone',
-  'burn-severity': 'burn perimeter', watersheds: 'watershed', 'land-context-boundaries': 'land boundary',
+  'burn-severity': 'burn perimeter', 'land-context-boundaries': 'land boundary',
 };
 
 /** The used nearest support, named by what its distance measured (agri `distance_km_basis`). */
 function nearestSupportText(basis: string | null | undefined, km: number): string {
   if (basis === 'source_coordinate') return `no station at the point; nearest station ${km} km (used)`;
   if (basis === 'delineation_edge') return `no soil map unit covers the point; nearest delineation ${km} km (used)`;
+  if (basis === 'geometry_centroid') return `no cell covers the point; nearest cell ${km} km to its centroid (used)`;
   return `no cell covers the point; nearest cell ${km} km (used)`;
 }
 
@@ -635,7 +640,7 @@ export function regionalLaneLimitation(source: string, notes: readonly RegionalL
   const nearestCell = notes.find(({ audit }) => (audit.cellDistanceKm ?? 0) > 0);
   if (nearestCell) parts.push(nearestSupportText(nearestCell.nearestBasis, nearestCell.audit.cellDistanceKm ?? 0));
   const outside = notes.find((note) => (note.outsideAreaKm ?? 0) > 0);
-  if (outside) parts.push(`not inside any ${AREA_NOUNS[source] ?? 'mapped area'}; nearest ${outside.outsideAreaKm} km (to its centroid)`);
+  if (outside) parts.push(`not inside any ${REGIONAL_SPARSE_AREA_NOUNS[source] ?? 'mapped area'}; nearest ${outside.outsideAreaKm} km (to its centroid)`);
   const nearestDay = notes.find(({ audit }) => audit.resolvedDay && audit.dayOffset)?.audit;
   if (nearestDay) {
     parts.push(`${nearestDay.selectedDate ?? 'selected day'} not published; nearest published day ${nearestDay.resolvedDay} (${(nearestDay.dayOffset ?? 0) > 0 ? '+' : ''}${nearestDay.dayOffset} d, used)`);

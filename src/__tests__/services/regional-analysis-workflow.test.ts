@@ -752,6 +752,19 @@ describe('evidence audit honesty', () => {
     expect(line).toBe('vegetation: history 31 sampled day(s), 496 lane-day(s) without records, incomplete (next page_start 31)');
     expect(readRegionalAnalysisEvidence({ version: 1, stages: [], toolCalls: [wideAudit], limitations: Array.from({ length: 40 }, () => line) })).not.toBeNull();
   });
+  it.each([
+    // Regression: crop-cover is polygon-stored but a wall-to-wall grid, so its nearest cell is the value.
+    { surface: 'crop-cover', relation: 'nearest_cell', cellDistanceKm: 19.4, line: 'crop-cover: no cell covers the point; nearest cell 19.4 km to its centroid (used)' },
+    { surface: 'drought-areas', relation: 'nearest_area_outside', cellDistanceKm: undefined, line: 'drought-areas: not inside any drought area; nearest 19.4 km (to its centroid)' },
+  ])('words a polygon lane by its meaning, not its storage: $surface', ({ surface, relation, cellDistanceKm, line }) => {
+    const result = { lanes: [{ selected: {
+      state: 'published', requested_day: '2026-10-04', spatial_relation: relation, distance_km: 19.36, distance_km_basis: 'geometry_centroid',
+      features: [{ covers_probe_point: false, spatial_relation: relation, distance_km: 19.36, properties: { crop_fraction: 0.42 } }],
+    }, history: [] }] };
+    const audit = regionalEvidenceAuditCall('additional-1', 'additional', 'surface_evidence_for_selection', { surface_name: surface, day: '2026-10-04' }, result);
+    expect(audit.cellDistanceKm).toBe(cellDistanceKm);
+    expect(regionalEvidenceLimitations(audit, result)).toEqual([line]);
+  });
   it('keeps two years of weekly drought history instead of reducing it to eight recent releases', () => {
     const weekly = Array.from({ length: 104 }, (_, week) => ({ week, severity_class: week < 52 ? 3 : 0 }));
     expect(boundedEvidence({ weekly_severity: weekly })).toEqual({ weekly_severity: weekly });

@@ -375,10 +375,17 @@ the search. **Station lanes** (point support with lattice size 0: water-gauges a
 weather-observations at the base rung) never "cover" a point, so their nearest station IS the
 answer: one bounded query over the region envelope widened to hold the probe, ordered by distance
 and capped at `NEAREST_CELL_CANDIDATES` rows (`_nearest_station`), never the six-box search.
-**Polygon lanes** (drought-areas, fire-perimeters, evacuation-zones, burn-severity, watersheds; any
-`GeometrySupport`) report a nearest polygon as `spatial_relation: "nearest_area_outside"`: the point
-lies inside NO area, which is itself the answer ("not inside any drought area"), and the nearest
-area and its centroid distance are context, never the value at the point. `distance_km` is a great-circle (haversine) distance and `distance_km_basis` says
+**Sparse-area lanes** (`selection_reads.SPARSE_AREA_LANES`: drought, fire-perimeters,
+evacuation-zones, land-context-boundaries, burn-severity) report a nearest polygon as
+`spatial_relation: "nearest_area_outside"`: the point lies inside NO area, which is itself the
+answer ("not inside any drought area"), and the nearest area and its centroid distance are context,
+never the value at the point. The rule is the lane's MEANING, not its storage: `GeometrySupport`
+also backs TILING polygon lanes -- crop-cover's wall-to-wall equal-area grid, watersheds' HUC units
+-- whose nearest polygon is a real value, reported as `nearest_cell` exactly like a lattice cell
+(a regression fixed 2026-10-04 after the first cut keyed on `geometry_centroid`). Nothing in the
+lane registry or schemas separates the two, so the set is curated; the web mirrors it as
+`REGIONAL_SPARSE_AREA_NOUNS` and `test_the_web_sparse_area_surfaces_mirror_the_agri_lanes` pins them
+equal. `distance_km` is a great-circle (haversine) distance and `distance_km_basis` says
 to what: `cell_edge` (lattice support box), `source_coordinate` (point lanes with no lattice),
 `geometry_centroid` (polygon lanes; the exact covers test is `ST_Intersects`), `delineation_edge`
 (SSURGO, local equirectangular, sub-percent at the <= 9 km search bound), or `covers` (0 km).
@@ -437,7 +444,7 @@ Read from `result.lanes[i].selected` of `surface_evidence_for_selection`:
 | `day_offset` | `served_day - requested_day` in days, signed; 0 = exact | `dayOffset` |
 | `nearest_published_day`, `nearest_day_offset` | on a `day_not_written` entry beyond tolerance, and on EVERY `governed_absence` | the lane's gap line ("no record on 2026-10-04; nearest published 2026-08-25 (40 d earlier, beyond the 3-day tolerance)") |
 | `tolerance_days`, `tolerance_rule`, `resolution` | on each lane entry | `tolerance_days` words the gap line; the rest diagnostic |
-| `spatial_relation` | `covers`, `nearest_cell` (grid cell, station or SSURGO delineation: used as the answer), or `nearest_area_outside` (polygon lanes: inside no area; information only) | `cellDistanceKm` for `nearest_cell` only; `nearest_area_outside` becomes the gap line "not inside any drought area; nearest N km (to its centroid)" |
+| `spatial_relation` | `covers`, `nearest_cell` (grid cell, station or SSURGO delineation: used as the answer), or `nearest_area_outside` (sparse-area lanes only, `SPARSE_AREA_LANES`: inside no area; information only) | `cellDistanceKm` for `nearest_cell` only; `nearest_area_outside` becomes the gap line "not inside any drought area; nearest N km (to its centroid)" |
 | `distance_km`, `distance_km_basis` | great-circle km, and what it measured (`cell_edge`, `source_coordinate`, `geometry_centroid`, `delineation_edge`, `covers`) | `cellDistanceKm`; the basis words the gap line (cell / station / delineation / area centroid) |
 | `proven_nearest` | SSURGO only: `false` when a nearer delineation beyond the searched box is possible | (diagnostic) |
 | `static` | `true` on static lanes (and their selected entry) | `staticLayer` |
