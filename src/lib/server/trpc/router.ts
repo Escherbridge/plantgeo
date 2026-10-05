@@ -17,6 +17,7 @@ import { regionalIntelligenceRouter } from "@/lib/server/trpc/routers/regional-i
 import { forecastsRouter } from "@/lib/server/trpc/routers/forecasts";
 import { jobsRouter } from "@/lib/server/trpc/routers/jobs";
 import { landContextRouter } from "@/lib/server/trpc/routers/land-context";
+import { layerWindowRouter } from "@/lib/server/trpc/routers/layer-window";
 import { usersRouter } from "@/lib/server/trpc/routers/users";
 
 export const appRouter = router({
@@ -42,6 +43,7 @@ export const appRouter = router({
   forecasts: forecastsRouter,
   jobs: jobsRouter,
   landContext: landContextRouter,
+  layerWindow: layerWindowRouter,
   users: usersRouter,
 });
 

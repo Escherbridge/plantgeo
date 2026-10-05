@@ -1570,3 +1570,24 @@ administrative geometry share lifecycle handling without sharing data or selecti
 The clicked boundary retains source evidence through the store. Office lookup intersects the
 selected location/area with the separate published office jurisdiction product, then reads the
 matching official routes once. Geographic overlap does not establish a particular program duty.
+
+<a id="window-distribution"></a>
+## Window chip and the one-line distribution (owner decisions 2026-10-04)
+
+Each dated layer row (`hasSelectableDay`) carries one `LayerWindowChip` -- "30d · to Sep 28" -- in
+the controls line beside Refresh, opening a four-preset menu (7/30/90/365 days). It is the menu
+button pattern: `aria-haspopup="menu"`, `aria-expanded`, `menuitemradio` items with
+`aria-checked`; Arrow/Home/End move, Escape closes and returns focus, Tab and an outside press
+close. The menu is absolutely positioned, `w-max`, and anchored left at the start of a wrapping
+row, so it cannot push the 19rem dock column wider on a phone; every target is 44px under `sm`.
+Static layers have no chip. State and derivation: stores/AGENTS.md §layer-window.
+
+`HoverTooltip` -- the surface that already shows a hovered or tapped point's layer value -- adds one
+line from `WindowDistributionLine`: "30 d: median 0.36 (p10 0.30 – p90 0.41) · 28 of 30 days",
+plus " · nearest cell 23.6 km" when the answer used a nearest cell (worded by
+`distance_km_basis`, like the analysis gap line). Only scalar grids map to a window
+(`windowedToggleForStyleLayer`: climate fields, vegetation NDVI, weather temperature); sparse-area
+layers never ask. Static, refused and `nearest_area_outside` answers render nothing. A hover asks
+only after the point holds still for 400 ms; a tap asks at once. Multi-lane surfaces show the lane
+matching the selected air-temperature variant, else the first lane. Fetch and cache:
+services/AGENTS.md §window-distribution.

@@ -26,9 +26,6 @@ const mocks = vi.hoisted(() => ({
     closePanel: vi.fn(),
     cancelAnalysis: vi.fn(),
     setError: vi.fn(),
-    analysisTimeScale: "month",
-    analysisRangeSteps: 1,
-    setAnalysisWindow: vi.fn(),
   },
 }));
 
@@ -108,14 +105,6 @@ afterEach(() => {
 });
 
 describe("regional analysis panel", () => {
-  it("lets the user choose the calendar scale and symmetric history range for the next question", () => {
-    renderWithProviders(<RegionalIntelligencePanel />);
-    fireEvent.change(screen.getByLabelText("Analysis time scale"), { target: { value: "year" } });
-    expect(mocks.state.setAnalysisWindow).toHaveBeenCalledWith("year", 1);
-    fireEvent.change(screen.getByLabelText("History range on each side"), { target: { value: "3" } });
-    expect(mocks.state.setAnalysisWindow).toHaveBeenCalledWith("month", 3);
-  });
-
   it("shows risk, findings as value · day, recommendations and one consult line, with every item still reachable", () => {
     const calls: Check[] = [
       { id: "moisture", stage: "local", tool: "surface_value_near_point", source: "soil-field-moisture", selectedDate: "2026-09-10", resolvedDay: "2026-09-04", dayOffset: -6, status: "observed" },

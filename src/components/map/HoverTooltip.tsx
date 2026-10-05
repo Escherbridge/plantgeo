@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Map as MapLibreMap, PointLike } from "maplibre-gl";
+import { WindowDistributionLine } from "@/components/map/WindowDistributionLine";
 import { isScalarFieldInspectionAllowed, subscribeScalarFieldInspection } from "@/lib/map/scalar-field-inspection";
 import {
   HOVERABLE_LAYER_IDS,
@@ -31,6 +32,15 @@ interface TooltipState {
    * feature (toggle off), on a different one (replace), or on empty ground (dismiss).
    */
   pinned: boolean;
+  /** Where on the ground the caption points, for the window distribution line. */
+  lngLat: { lng: number; lat: number } | null;
+}
+
+/** A hover waits this long before asking for its distribution; a tap asks at once. */
+const HOVER_DISTRIBUTION_SETTLE_MS = 400;
+
+function eventLngLat(event: maplibregl.MapMouseEvent): TooltipState["lngLat"] {
+  return event.lngLat ? { lng: event.lngLat.lng, lat: event.lngLat.lat } : null;
 }
 
 const TOOLTIP_OFFSET = 14;
@@ -110,7 +120,7 @@ export default function HoverTooltip({ map }: HoverTooltipProps) {
         const content = formatHoverContent(layerId, (feature.properties ?? {}) as Record<string, unknown>);
         if (content) {
           map.getCanvas().style.cursor = "pointer";
-          setTooltip({ content, layerId, x: e.point.x, y: e.point.y, pinned: false });
+          setTooltip({ content, layerId, x: e.point.x, y: e.point.y, lngLat: eventLngLat(e), pinned: false });
           return;
         }
       }
@@ -159,7 +169,7 @@ export default function HoverTooltip({ map }: HoverTooltipProps) {
               return null;
             }
             pinnedRef.current = true;
-            return { content, layerId, x: e.point.x, y: e.point.y, pinned: true };
+            return { content, layerId, x: e.point.x, y: e.point.y, lngLat: eventLngLat(e), pinned: true };
           });
           return;
         }
@@ -275,6 +285,11 @@ export default function HoverTooltip({ map }: HoverTooltipProps) {
           {line}
         </p>
       ))}
+      <WindowDistributionLine
+        styleLayerId={tooltip.layerId}
+        lngLat={tooltip.lngLat}
+        settleMs={tooltip.pinned ? 0 : HOVER_DISTRIBUTION_SETTLE_MS}
+      />
     </div>
   );
 }

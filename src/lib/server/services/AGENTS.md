@@ -227,9 +227,13 @@ receive an explicit default selection, so they cannot re-enable the old prefetch
 containing the authorized point at the active map zoom and each layer's selected calendar day.
 Point support is determined by the source tile or cell containing the coordinate, never by a
 fixed centroid radius. Local reads request only that day, at day scale. <a id="regional-analysis-window"></a>
-Historical reads request a TRAILING window ending at the layer's selected day: 1-10 days, months or
-years back (default one calendar month, owner decision 2026-10-04), or the layer's own
-`analysisSelection.layerWindows` entry, widened to contain its day. Neither the selected day nor the
+Historical reads request a TRAILING window ending at the layer's selected day: the layer's own
+`analysisSelection.layerWindows` entry (the row's window chip, 7/30/90/365 days, default 30;
+stores/AGENTS.md §layer-window), widened to contain its day, else the global default of one
+calendar month (owner decision 2026-10-04). The web client no longer offers a global scale control;
+`timeScale`/`rangeSteps` remain in the schema for older clients. The route refuses a `layerWindows`
+key that is not a stream-backed registry toggle, and a window that is not two real calendar days
+with end ≥ start spanning at most 366 days. Neither the selected day nor the
 window end passes the server's UTC today, except for forecast surfaces (weather-forecast, fire-risk).
 Month and year arithmetic preserves month ends and leap days. Missing dates remain in the request;
 they are never replaced by the newest available observation.
@@ -877,3 +881,17 @@ report that cited one would otherwise fail to parse and vanish from the conversa
 cannot emit one: `regionalFactsForRead` admits facts only for `REGIONAL_TOOL_EVIDENCE_SOURCES`, and
 `reportSchemaForCitations` offers only sources actually read. Drop the list only once no stored
 report can carry the slugs.
+
+<a id="window-distribution"></a>
+## Window distribution at a point (owner decisions 2026-10-04)
+
+`layerWindow.distributionAtPoint` (routers/layer-window.ts) calls the agri `distribution_at_point`
+agent tool through `callRegionalEvidenceTool` -- the same bridge, bounds and refusal handling the
+analysis workflow uses -- with `{surface_name, longitude, latitude, range_start, range_end}`.
+`zoom` is deliberately not sent, so one point has one answer whatever the camera is doing. Input is
+validated with the analysis route's window rule (`isValidLayerWindow`, `isWindowedLayerId`); the
+surface is the toggle's `warehouseLayerName`, exactly as `regionalSurfaceName` resolves it. The
+result is parsed against `distributionAtPointResultSchema` (src/lib/layer-window-distribution.ts);
+a contract mismatch is an `UpstreamPayloadError`, so the client sees a retryable outage rather than
+a fabricated line. Answers are cached in Redis for 15 minutes per (surface, point rounded to 4 dp,
+window) -- a window ending today can still fill in, so the TTL stays short.

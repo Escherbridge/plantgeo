@@ -6,6 +6,7 @@ import { Eye, EyeOff, RefreshCw, Trash2 } from "lucide-react";
 import { LayerIcon } from "@/components/map/layer-panel/layer-icons";
 import { LayerSwatch } from "@/components/map/layer-panel/LayerSwatch";
 import { LayerTimeSlider } from "@/components/map/layer-panel/LayerTimeSlider";
+import { LayerWindowChip } from "@/components/map/layer-panel/LayerWindowChip";
 import { describeCoverageEvidence } from "@/components/map/layer-panel/layer-coverage-track";
 import { LayerOpacitySlider } from "@/components/ui/layer-opacity-slider";
 import {
@@ -385,6 +386,10 @@ export function LayerRow({
         hasSelectableDay(state.capabilities, layerId))
   );
 
+  // The window chip takes the strict rule alone: a layer with no selectable day has no window
+  // to trail (soil survey, snapshots), and an unknown axis is not yet a dated one.
+  const isDated = useTimeSliderStore((state) => hasSelectableDay(state.capabilities, layerId));
+
   // `federation.md` section 2's governed absence, read from the capabilities payload rather than
   // the registry: which layers a deployment binds a source for is a property of the REGION, not of
   // this build, so it cannot be a `permanentlyUnavailableReason` literal. Null in the pilot, where
@@ -549,6 +554,7 @@ export function LayerRow({
           )}
           {mountsDayControls && (
             <div className="flex flex-wrap items-center gap-1">
+              {isDated && <LayerWindowChip layerId={layerId} label={entry.label} />}
               <LayerRefreshControl layerId={layerId} label={entry.label} />
               <LayerSyncResetControl layerId={layerId} label={entry.label} />
             </div>

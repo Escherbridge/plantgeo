@@ -10,6 +10,7 @@ import {
   type LayerToggleId,
 } from "@/lib/map/layer-registry";
 import { useLayerStore } from "@/stores/layer-store";
+import { useLayerWindowStore } from "@/stores/layer-window-store";
 import { useMapStore } from "@/stores/map-store";
 import { hasSelectableDay, useTimeSliderStore } from "@/stores/time-slider-store";
 import {
@@ -813,5 +814,82 @@ describe("LayerRow coverage evidence caption", () => {
     // running commentary about the record behind it.
     expect(screen.getByTestId("layer-row-water").textContent).not.toContain("Coverage from");
     expect(screen.getByTestId("layer-row-water").textContent).not.toContain("publication ceiling");
+  });
+});
+
+/** The per-layer history window chip; see stores/AGENTS.md §layer-window. */
+describe("LayerRow history window chip", () => {
+  const vegetationCapability = {
+    ...CAPABILITIES.layers[0],
+    layerName: "vegetation",
+    latestObservedDate: "2019-03-01",
+  };
+
+  beforeEach(() => {
+    useMapStore.setState({ activeLayers: [...LAYER_TOGGLE_IDS] });
+    useLayerStore.setState({ layerOpacity: {} });
+    useLayerWindowStore.setState({ layerWindowPresets: {} });
+    useTimeSliderStore.setState({
+      layerDates: {},
+      forecastVariant: "monte_carlo",
+      capabilities: { ...CAPABILITIES, layers: [...CAPABILITIES.layers, vegetationCapability] },
+      capabilitiesUnavailable: false,
+    });
+  });
+
+  const chipFor = (layerId: LayerToggleId) => screen.queryByTestId(`layer-window-chip-${layerId}`);
+
+  it.each([
+    ["water", true],
+    ["vegetation", true],
+    ["watersheds", false],
+    ["soil-survey", false],
+    ["soil-soc", false],
+  ] as const)("%s gets a chip: %s", (layerId, expected) => {
+    renderRow(layerId);
+    expect(chipFor(layerId) !== null).toBe(expected);
+  });
+
+  it("defaults to the trailing 30 days ending at the layer's own day", () => {
+    renderRow("water");
+    expect(chipFor("water")?.textContent).toBe("30d · to Mar 7");
+  });
+
+  it("changes only the chosen layer's window, and never ends it past today", () => {
+    // Inside the axis (today + futureAxisDays) but after the server's today.
+    useTimeSliderStore.setState({ layerDates: { water: "2019-03-09" } });
+    renderWithProviders(
+      <ul>
+        <LayerRow layerId="water" legendContext={DEFAULT_LEGEND_CONTEXT} />
+        <LayerRow layerId="vegetation" legendContext={DEFAULT_LEGEND_CONTEXT} />
+      </ul>
+    );
+
+    fireEvent.click(chipFor("water")!);
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "7 days" }));
+
+    expect(chipFor("water")?.textContent).toBe("7d · to Mar 7");
+    expect(chipFor("vegetation")?.textContent).toBe("30d · to Mar 1");
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("is a keyboard menu button that returns focus when dismissed", () => {
+    renderRow("water");
+    const chip = chipFor("water")!;
+    expect(chip.getAttribute("aria-haspopup")).toBe("menu");
+    expect(chip.getAttribute("aria-label")).toBe(
+      `${LAYER_REGISTRY.water.label} history window: last 30 days to Mar 7. Change window`
+    );
+
+    fireEvent.keyDown(chip, { key: "ArrowDown" });
+    expect(chip.getAttribute("aria-expanded")).toBe("true");
+    expect(document.activeElement?.textContent).toBe("30 days");
+    fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
+    expect(document.activeElement?.textContent).toBe("90 days");
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+
+    expect(chip.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(chip);
+    expect(chip.textContent).toBe("30d · to Mar 7");
   });
 });

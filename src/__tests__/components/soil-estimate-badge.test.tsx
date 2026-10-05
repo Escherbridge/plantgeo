@@ -29,9 +29,6 @@ const mocks = vi.hoisted(() => ({
     closePanel: vi.fn(),
     cancelAnalysis: vi.fn(),
     setError: vi.fn(),
-    analysisTimeScale: "month",
-    analysisRangeSteps: 1,
-    setAnalysisWindow: vi.fn(),
   },
 }));
 

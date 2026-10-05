@@ -15,7 +15,12 @@ import {
 import { remediationReportSchema, reportWarehouseEvidenceIssues } from '@/lib/server/services/remediation-report';
 import { readRegionalAnalysisEvidence } from '@/lib/regional-analysis-evidence';
 import type { RegionalAnalysisEvidence } from '@/lib/regional-intelligence';
-import { ANALYSIS_TIME_SCALES, DEFAULT_ANALYSIS_WINDOW } from '@/lib/regional-analysis-selection';
+import {
+  ANALYSIS_TIME_SCALES,
+  DEFAULT_ANALYSIS_WINDOW,
+  isValidLayerWindow,
+  isWindowedLayerId,
+} from '@/lib/regional-analysis-selection';
 import { SAVED_DEFAULT_QUESTION } from '@/lib/server/services/regional-analysis-workflow';
 export { remediationReportSchema } from '@/lib/server/services/remediation-report';
 import {
@@ -47,6 +52,12 @@ const viewedLayerSchema = z
   })
   .strict();
 
+/** One dated layer's own trailing window: calendar days, end ≥ start, at most 366 days inclusive. */
+const layerWindowSchema = z
+  .object({ rangeStart: calendarDaySchema, rangeEnd: calendarDaySchema })
+  .strict()
+  .refine(isValidLayerWindow);
+
 export const requestSchema = z.object({
   lat: z.number().min(-90).max(90),
   lon: z.number().min(-180).max(180),
@@ -62,6 +73,10 @@ export const requestSchema = z.object({
     cropCoverReleaseDay: calendarDaySchema.optional(),
     layerDays: z.record(z.string().min(1).max(64), calendarDaySchema)
       .refine((days) => Object.keys(days).length <= MAX_VIEWED_LAYERS),
+    // Keyed by a registry toggle that names a warehouse stream; any other key is refused.
+    layerWindows: z.record(z.string().max(64).refine(isWindowedLayerId), layerWindowSchema)
+      .refine((windows) => Object.keys(windows).length <= MAX_VIEWED_LAYERS)
+      .optional(),
   }).strict().optional(),
   locationConsent: z
     .object({

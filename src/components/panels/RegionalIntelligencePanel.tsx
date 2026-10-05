@@ -6,7 +6,6 @@ import { MessageFeedback } from './MessageFeedback';
 import { X, MapPin, Send, Loader2 } from 'lucide-react';
 import { useRegionalIntelligenceStore, type ChatMessage } from '@/stores/regional-intelligence-store';
 import { useRegionalIntelligence } from '@/hooks/useRegionalIntelligence';
-import { ANALYSIS_TIME_SCALES, type AnalysisTimeScale } from '@/lib/regional-analysis-selection';
 import { AI_GENERATED_LABEL } from '@/lib/regional-intelligence';
 import { buildSourcesView } from '@/lib/regional-evidence-presentation';
 import { RegionalIntelligenceReport, SourcesDisclosure } from './RegionalIntelligenceReport';
@@ -109,9 +108,6 @@ function RegionalIntelligencePanelBody({ embedded }: { embedded: boolean }) {
   const closePanel = useRegionalIntelligenceStore((state) => state.closePanel);
   const cancelAnalysis = useRegionalIntelligenceStore((state) => state.cancelAnalysis);
   const setError = useRegionalIntelligenceStore((state) => state.setError);
-  const analysisTimeScale = useRegionalIntelligenceStore((state) => state.analysisTimeScale);
-  const analysisRangeSteps = useRegionalIntelligenceStore((state) => state.analysisRangeSteps);
-  const setAnalysisWindow = useRegionalIntelligenceStore((state) => state.setAnalysisWindow);
   const { sendFollowUp, retryLastRequest } = useRegionalIntelligence();
 
   const [input, setInput] = useState('');
@@ -284,23 +280,6 @@ function RegionalIntelligencePanelBody({ embedded }: { embedded: boolean }) {
 
       {/* Input */}
       <div className="border-t p-3 dark:border-gray-700">
-        <fieldset disabled={isLoading} className="mb-3 rounded border p-2 text-xs dark:border-gray-700">
-          <legend className="px-1 font-medium">History around each selected map date</legend>
-          <div className="flex items-center gap-2">
-            <label className="flex items-center gap-1">
-              <span>±</span>
-              <input aria-label="History range on each side" type="number" min={1} max={10}
-                value={analysisRangeSteps}
-                onChange={(event) => setAnalysisWindow(analysisTimeScale, Number(event.target.value))}
-                className="min-h-11 w-14 rounded border bg-transparent px-2" />
-            </label>
-            <select aria-label="Analysis time scale" value={analysisTimeScale}
-              onChange={(event) => setAnalysisWindow(event.target.value as AnalysisTimeScale, analysisRangeSteps)}
-              className="min-h-11 flex-1 rounded border bg-transparent px-2">
-              {ANALYSIS_TIME_SCALES.map((scale) => <option key={scale} value={scale}>{scale === 'day' ? 'Days' : scale === 'month' ? 'Months' : 'Years'}</option>)}
-            </select>
-          </div>
-        </fieldset>
         {isLoading && (
           <div className="mb-2 flex justify-end">
             <button

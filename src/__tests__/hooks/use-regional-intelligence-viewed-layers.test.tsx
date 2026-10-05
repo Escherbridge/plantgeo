@@ -10,6 +10,7 @@ vi.mock("@/lib/map/layer-toggle-context", () => ({
 import { useRegionalIntelligence } from "@/hooks/useRegionalIntelligence";
 import { useRegionalIntelligenceStore } from '@/stores/regional-intelligence-store';
 import { useTimeSliderStore } from "@/stores/time-slider-store";
+import { useLayerWindowStore } from "@/stores/layer-window-store";
 import { useMapStore } from '@/stores/map-store';
 import { useLandContextStore } from '@/stores/land-context-store';
 import type { SliderCapabilities } from "@/types/time-slider";
@@ -81,7 +82,7 @@ beforeEach(() => {
     randomUUID: () => "00000000-0000-4000-8000-000000000000",
   });
   useTimeSliderStore.setState({ capabilities, layerDates: {} });
-  useRegionalIntelligenceStore.getState().setAnalysisWindow('month', 1);
+  useLayerWindowStore.setState({ layerWindowPresets: {} });
   mocks.useViewedLayerDays.mockReturnValue([]);
 });
 
@@ -137,7 +138,7 @@ describe("posting the days the user is viewing with an analysis request", () => 
     expect(useRegionalIntelligenceStore.getState().messages.at(-1)).toMatchObject({ content: 'Analysis canceled. No analysis was completed.', isStreaming: false });
   });
 
-  it('recomputes hidden selected days, history scale and zoom for each follow-up', async () => {
+  it('recomputes hidden selected days and zoom for each follow-up, under the default global window', async () => {
     const fetchMock = refusingFetch();
     vi.stubGlobal('fetch', fetchMock);
     useRegionalIntelligenceStore.getState().openPanel(44, -116, 'exact');
@@ -148,12 +149,34 @@ describe("posting the days the user is viewing with an analysis request", () => 
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).analysisSelection).toEqual({
       timeScale: 'month', rangeSteps: 1, zoom: 8.5, layerDays: { 'soil-vpd': '2024-02-29' },
     });
-    useRegionalIntelligenceStore.getState().setAnalysisWindow('year', 3);
     useTimeSliderStore.setState({ layerDates: { 'soil-vpd': '2020-06-01' } });
     useMapStore.getState().setViewport({ zoom: 12 });
     await act(async () => { await result.current.sendFollowUp('Compare this window'); });
     expect(JSON.parse(fetchMock.mock.calls[1][1].body).analysisSelection).toEqual({
-      timeScale: 'year', rangeSteps: 3, zoom: 12, layerDays: { 'soil-vpd': '2020-06-01' },
+      timeScale: 'month', rangeSteps: 1, zoom: 12, layerDays: { 'soil-vpd': '2020-06-01' },
+    });
+  });
+
+  it('posts each visible dated layer its own chip window, trailing from its day and capped at today', async () => {
+    const fetchMock = refusingFetch();
+    vi.stubGlobal('fetch', fetchMock);
+    mocks.useViewedLayerDays.mockReturnValue([
+      { layerId: 'water', warehouseLayerName: 'water-gauges', date: '2026-08-08', isOnLatest: true },
+      // Visible but not dated in this payload: no window.
+      { layerId: 'soil-survey', warehouseLayerName: 'soil-survey', date: '2026-08-09', isOnLatest: true },
+    ]);
+    useRegionalIntelligenceStore.getState().openPanel(44, -116, 'approximate');
+    const { result } = renderHook(() => useRegionalIntelligence());
+    await act(async () => { await result.current.sendFollowUp('Default window'); });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).analysisSelection.layerWindows).toEqual({
+      water: { rangeStart: '2026-07-10', rangeEnd: '2026-08-08' },
+    });
+
+    useLayerWindowStore.getState().setLayerWindowPreset('water', 7);
+    useTimeSliderStore.setState({ layerDates: { water: '2026-08-20' } });
+    await act(async () => { await result.current.sendFollowUp('Last week, past today'); });
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).analysisSelection.layerWindows).toEqual({
+      water: { rangeStart: '2026-08-03', rangeEnd: '2026-08-09' },
     });
   });
   it('receives server evidence updates and clears prior request evidence before a follow-up', async () => {

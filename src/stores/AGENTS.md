@@ -40,6 +40,25 @@ comes from the query that owns the data rather than render-time ref bookkeeping.
 or unavailable query returns a fresh refusal labelled with the current debounced request day,
 even if TanStack still holds a placeholder internally.
 
-The regional-intelligence store holds an analysis history scale and number of calendar units on
-each side, independently of sparse per-layer map dates. These transient controls survive a new
-chat so the chosen analysis scope stays active; they are read afresh when a question is sent.
+<a id="layer-window"></a>
+## Per-layer history windows (owner decisions 2026-10-04)
+
+`layer-window-store` holds ONE preset per dated layer -- 7, 30, 90 or 365 days -- keyed by toggle
+id and SPARSE: an absent key is the 30-day default, and writing the default deletes the key. It
+is persisted like layer opacity (`plantgeo-layer-window`, localStorage, sanitised on merge). The
+window itself is never stored: `layerWindowFor`/`useLayerWindow` derive `{rangeStart, rangeEnd}`
+from the layer's own resolved day as an inclusive trailing span whose end is capped at the
+server's UTC today (`capabilities.serverCurrentDate`), so a forecast-day selection never asks for
+days that have not happened and a stored window can never go stale against a moved slider.
+
+Kept out of `time-slider-store` on purpose: that store is polled every five minutes and every row
+subscribes to it, while a preset changes only on a click. "Dated" is `hasSelectableDay` -- the same
+single rule that gives a row its scrubber -- so static layers (soil survey, SoilGrids, snapshots)
+get no chip and no window.
+
+The chip on each dated `LayerRow` is the only window control. The agent panel's former global
+"± N days/months/years around each selected map date" control is gone; the analysis request now
+posts the global default (`DEFAULT_ANALYSIS_WINDOW`) plus `analysisSelection.layerWindows` for
+every visible dated layer, and the server prefers the layer's own window
+(services/AGENTS.md §regional-analysis-window). The same window drives the tooltip's one-line
+distribution (map/AGENTS.md §window-distribution).

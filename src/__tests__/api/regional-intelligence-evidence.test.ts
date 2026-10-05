@@ -149,3 +149,42 @@ it('admits a labelled SoilGrids observation backed by the assembled soil block',
   expect(text).toContain('event: done');
   expect(mocks.recordExchange).toHaveBeenCalled();
 });
+
+/** Per-layer windows (stores/AGENTS.md §layer-window) reach context assembly, or the request is refused. */
+function postSelection(layerWindows: unknown) {
+  return POST(new NextRequest('https://plantgeo.test/api/ai/regional-intelligence', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      lat: 44, lon: -116, locationConsent: { precision: 'approximate', confirmed: true },
+      analysisSelection: { timeScale: 'month', rangeSteps: 1, zoom: 9, layerDays: { water: '2026-09-28' }, layerWindows },
+    }),
+  }));
+}
+
+it('hands each layer its own window to context assembly', async () => {
+  vi.stubEnv('OPENROUTER_API_KEY', 'test-key');
+  mocks.stream.mockImplementation(async function* () { yield { type: 'refusal' }; });
+  const layerWindows = {
+    water: { rangeStart: '2026-08-30', rangeEnd: '2026-09-28' },
+    vegetation: { rangeStart: '2025-09-29', rangeEnd: '2026-09-29' }, // 366 days, the bound
+  };
+  const response = await postSelection(layerWindows);
+  await response.text();
+  expect(response.status).toBe(200);
+  expect(mocks.assemble).toHaveBeenCalledWith(44, -116, [], expect.objectContaining({ layerWindows }), true);
+});
+
+it.each([
+  ['an end before its start', { water: { rangeStart: '2026-09-28', rangeEnd: '2026-08-30' } }],
+  ['more than 366 days', { water: { rangeStart: '2025-09-28', rangeEnd: '2026-09-29' } }],
+  ['an impossible calendar day', { water: { rangeStart: '2026-02-30', rangeEnd: '2026-03-28' } }],
+  ['a timestamp instead of a day', { water: { rangeStart: '2026-08-30T00:00:00Z', rangeEnd: '2026-09-28' } }],
+  ['an unknown layer id', { 'not-a-layer': { rangeStart: '2026-08-30', rangeEnd: '2026-09-28' } }],
+  ['a layer no stream backs', { 'soil-soc': { rangeStart: '2026-08-30', rangeEnd: '2026-09-28' } }],
+  ['an extra window field', { water: { rangeStart: '2026-08-30', rangeEnd: '2026-09-28', timeScale: 'day' } }],
+])('refuses a request whose layer window has %s', async (_case, layerWindows) => {
+  vi.stubEnv('OPENROUTER_API_KEY', 'test-key');
+  const response = await postSelection(layerWindows);
+  expect(response.status).toBe(400);
+  expect(mocks.assemble).not.toHaveBeenCalled();
+});

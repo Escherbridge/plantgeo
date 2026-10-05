@@ -5,10 +5,14 @@ import { useRegionalIntelligenceStore } from '@/stores/regional-intelligence-sto
 import { useViewedLayerDays } from '@/lib/map/layer-toggle-context';
 import {
   findLayerCapability,
+  hasSelectableDay,
   isDayDescribed,
   isWithinCoverageGap,
   useTimeSliderStore,
 } from '@/stores/time-slider-store';
+import { layerWindowFor, useLayerWindowStore } from '@/stores/layer-window-store';
+import { isLayerToggleId } from '@/lib/map/layer-registry';
+import { DEFAULT_ANALYSIS_WINDOW } from '@/lib/regional-analysis-selection';
 import type { RegionalIntelligenceResponse } from '@/lib/regional-intelligence';
 import { readRegionalAnalysisEvidence } from '@/lib/regional-analysis-evidence';
 import type { SliderCapabilities } from '@/types/time-slider';
@@ -170,18 +174,26 @@ export function useRegionalIntelligence() {
       const viewedLayers = viewedLayersRef.current.length
         ? viewedLayersRef.current
         : undefined;
-      const selectionState = useRegionalIntelligenceStore.getState();
       const cropSelection = useLandContextStore.getState();
       const cropCoverReleaseDay = cropSelection.cropCoverReleaseDay ?? cropSelection.cropCoverLatestPublishedDay;
+      const { layerDates, capabilities: currentCapabilities } = useTimeSliderStore.getState();
+      const layerDays: Record<string, string> = {
+        ...Object.fromEntries((viewedLayers ?? []).map(({ layer, date }) => [layer, date])),
+        ...layerDates,
+      };
+      // Each visible dated layer's own chip window, trailing from the day posted for it.
+      const { layerWindowPresets } = useLayerWindowStore.getState();
+      const layerWindows = Object.fromEntries((viewedLayers ?? []).flatMap(({ layer }) => {
+        if (!isLayerToggleId(layer) || !hasSelectableDay(currentCapabilities, layer)) return [];
+        const window = layerWindowFor(layerWindowPresets, layerDays, currentCapabilities, layer, layerDays[layer]);
+        return window === null ? [] : [[layer, window]];
+      }));
       const analysisSelection = {
-        timeScale: selectionState.analysisTimeScale,
-        rangeSteps: selectionState.analysisRangeSteps,
+        ...DEFAULT_ANALYSIS_WINDOW,
         zoom: Math.max(0, Math.min(22, useMapStore.getState().viewport.zoom)),
         ...(cropCoverReleaseDay ? { cropCoverReleaseDay } : {}),
-        layerDays: {
-          ...Object.fromEntries((viewedLayers ?? []).map(({ layer, date }) => [layer, date])),
-          ...useTimeSliderStore.getState().layerDates,
-        },
+        layerDays,
+        ...(Object.keys(layerWindows).length > 0 ? { layerWindows } : {}),
       };
       let terminalReceived = false;
 
