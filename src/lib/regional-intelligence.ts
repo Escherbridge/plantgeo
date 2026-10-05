@@ -280,6 +280,14 @@ export interface RegionalAnalysisEvidence {
     observedDates?: string[];
     servedDates?: string[];
     location?: { lat: number; lon: number };
+    /** The day actually read when the requested day had no data: closest published day wins. */
+    resolvedDay?: string;
+    /** `resolvedDay` minus the requested day, in days (negative = earlier). 0 or absent = exact. */
+    dayOffset?: number;
+    /** Distance to the nearest cell when no cell covers the point; 0 or absent = covering cell. */
+    cellDistanceKm?: number;
+    /** A layer with no date axis (e.g. SSURGO): read at its current release, never by date. */
+    staticLayer?: boolean;
     /**
      * `answered`/`answered_no_records` are a strategy-knowledge literature lookup: cited
      * literature, never a measurement. `answered_no_records` is a real answer with zero matching
