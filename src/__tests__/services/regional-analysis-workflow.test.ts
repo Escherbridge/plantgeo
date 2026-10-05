@@ -15,8 +15,9 @@ vi.mock('openai', () => ({
     chat = { completions: { stream: mocks.completionStream } };
   },
 }));
-import { bindRegionalEvidenceArguments, boundedEvidence, buildLiteratureServerContext, evidenceResultStatus, literatureSiteFacts, literatureUserQuestion, MAX_LITERATURE_RESULTS, prepareRegionalAnalysis, REGIONAL_ANALYSIS_PRIORITY_SURFACES, regionalEvidenceAuditCall, regionalEvidenceDay, regionalEvidenceLimitations, regionalEvidenceStageStatus, regionalFactsForRead, siteFactObservationsForRead, STRATEGY_SCREENING } from '@/lib/server/services/regional-analysis-workflow';
+import { bindRegionalEvidenceArguments, boundedEvidence, buildLiteratureServerContext, evidenceResultStatus, literatureSiteFacts, literatureUserQuestion, MAX_LITERATURE_RESULTS, prepareRegionalAnalysis, REGIONAL_ANALYSIS_THEMES, regionalEvidenceAuditCall, regionalEvidenceDay, regionalEvidenceLimitations, regionalEvidenceStageStatus, regionalFactsForRead, siteFactObservationsForRead, STRATEGY_SCREENING } from '@/lib/server/services/regional-analysis-workflow';
 import { RegionalEvidenceArgumentError } from '@/lib/server/services/regional-evidence-tools';
+import { UpstreamHttpError } from '@/lib/server/http/bounded-upstream';
 import { analysisDateRange } from '@/lib/regional-analysis-selection';
 import { LAYER_REGISTRY } from '@/lib/map/layer-registry';
 import { REMEDIATION_REPORT_JSON_SCHEMA, normalizeProviderReport, pairLiteratureProvenance, resolveProviderMeasurementReport, remediationReportSchema, reportCitationManifest, reportSchemaForCitations, reportWarehouseEvidenceIssues, strategyKnowledgeAnswered } from '@/lib/server/services/remediation-report';
@@ -53,27 +54,30 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.resetAllMocks(); });
 
 describe('regional evidence graph', () => {
-  it('prefetches relevant exact tiles and active history while keeping the full layer catalogue available', async () => {
+  it('prefetches every theme plus the selected layers, each at its own day, with trailing history', async () => {
     const result = await prepareRegionalAnalysis(payload, temporal);
-    expect(result.evidence.toolCalls.filter((call) => call.stage === 'local')).toHaveLength(6);
+    const local = result.evidence.toolCalls.filter((call) => call.stage === 'local');
+    // Eight theme anchors, then the four selected layers no anchor already covers.
+    expect(local.map((call) => call.source).sort()).toEqual([
+      ...REGIONAL_ANALYSIS_THEMES.flatMap((theme) => theme.anchors),
+      'climate-field-soil-wetness-root-zone', 'soil-field-moisture', 'soil-field-temperature', 'soil-field-vpd',
+    ].sort());
     expect(JSON.parse(result.context).availableLayers).toEqual([...REGIONAL_TOOL_EVIDENCE_SOURCES]);
     expect(JSON.parse(result.context).observations).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'local-1', evidenceReadId: 'local-1', evidenceSource: 'climate-field-precipitation', evidenceStatus: 'observed' }),
+      expect.objectContaining({ id: 'local-1', evidenceReadId: 'local-1', evidenceSource: 'fire-detections', evidenceStatus: 'observed' }),
     ]));
     expect(result.evidence.stages.map((stage) => stage.id)).toEqual(['inventory', 'local', 'temporal', 'strategies']);
-    const local = result.evidence.toolCalls.filter((call) => call.stage === 'local');
-    expect(local.find((call) => call.source === 'climate-field-precipitation')?.selectedDate).toBe('2024-06-15');
+    expect(local.find((call) => call.source === 'climate-field-precipitation')).toMatchObject({
+      selectedDate: '2024-06-15', rangeStart: '2024-06-15', rangeEnd: '2024-06-15', timeScale: 'day',
+    });
     expect(local.find((call) => call.source === 'climate-field-soil-wetness-root-zone')?.selectedDate).toBe('2023-06-15');
     expect(local.find((call) => call.source === 'soil-field-moisture')?.selectedDate).toBe('2022-06-15');
     expect(local.find((call) => call.source === 'soil-field-temperature')?.selectedDate).toBe('2022-06-16');
     expect(local.find((call) => call.source === 'soil-field-vpd')?.selectedDate).toBe('2022-06-17');
-    expect(REGIONAL_ANALYSIS_PRIORITY_SURFACES).toEqual(expect.arrayContaining([
-      'soil-field-moisture', 'soil-field-temperature', 'soil-field-vpd',
-    ]));
     const past = result.evidence.toolCalls.filter((call) => call.stage === 'temporal');
     expect(past).toEqual(expect.arrayContaining([
-      expect.objectContaining({ source: 'climate-field-precipitation', selectedDate: '2024-06-15', rangeStart: '2024-05-15', rangeEnd: '2024-07-15', timeScale: 'month' }),
-      expect.objectContaining({ source: 'climate-field-soil-wetness-root-zone', selectedDate: '2023-06-15', rangeStart: '2023-05-15', rangeEnd: '2023-07-15' }),
+      expect.objectContaining({ source: 'climate-field-precipitation', selectedDate: '2024-06-15', rangeStart: '2024-05-15', rangeEnd: '2024-06-15', timeScale: 'month' }),
+      expect.objectContaining({ source: 'climate-field-soil-wetness-root-zone', selectedDate: '2023-06-15', rangeStart: '2023-05-15', rangeEnd: '2023-06-15' }),
     ]));
     expect(mocks.call.mock.calls.every(([name, args]) => name === 'surface_evidence_for_selection'
       && args.longitude === payload.location.lon && args.latitude === payload.location.lat
@@ -88,17 +92,21 @@ describe('regional evidence graph', () => {
     expect(regionalEvidenceDay({ ...temporal, readings: [reading('soil-field-vpd', '2021-01-01')] }, 'soil-field-vpd')).toBe('2021-01-01');
   });
 
-  it('discloses partial availability per prefetched source in both the audit and model context', async () => {
+  it('discloses partial availability as one line per lane, folding its selected-day and history reads', async () => {
     mocks.call.mockImplementation(async (_tool, args) => JSON.stringify({
       history: { sampled_days: [args.day], complete: false, next_page_start: 1 },
       lanes: [{ selected: { requested_day: args.day, state: 'published', features: [{ properties: { value: 0.4 } }] },
         history: [{ requested_day: args.day, state: 'published', features: [{ properties: { value: 0.4 } }] }] }],
     }));
     const result = await prepareRegionalAnalysis(payload, temporal);
-    expect(result.evidence.limitations).toEqual(expect.arrayContaining([
-      expect.stringContaining('climate-field-precipitation [local-1]: availability only'),
-      expect.stringContaining('climate-field-precipitation [temporal-1]: availability only'),
-    ]));
+    expect(result.evidence.limitations).toContain('climate-field-precipitation: history 1 sampled day(s), incomplete (next page_start 1)');
+    for (const source of new Set(result.evidence.toolCalls.map((call) => call.source))) {
+      expect(result.evidence.limitations.filter((line) => line.startsWith(`${source}:`)).length).toBeLessThanOrEqual(1);
+    }
+    expect(result.evidence.limitations).toContain('soil-survey: static layer, current release');
+    // The per-read detail stays on the tool-call record instead.
+    expect(result.evidence.toolCalls.find((call) => call.stage === 'temporal' && call.source === 'climate-field-precipitation')?.summary)
+      .toContain('History completeness: incomplete. Continuation page_start 1.');
     expect(JSON.parse(result.context).evidence.limitations).toEqual(result.evidence.limitations);
     expect(result.measurementFacts.facts.length).toBeGreaterThan(0);
     expect(JSON.parse(result.context).measurementFacts).toEqual(result.measurementFacts);
@@ -129,10 +137,8 @@ describe('regional evidence graph', () => {
     const pending = prepareRegionalAnalysis(payload, temporal);
     await vi.advanceTimersByTimeAsync(33_000);
     const result = await pending;
-    expect(maximum).toBe(3);
-    expect(mocks.call.mock.calls.slice(0, 3).map((call) => call[1].surface_name)).toEqual([
-      'climate-field-precipitation', 'climate-field-soil-wetness-root-zone', 'soil-field-moisture',
-    ]);
+    expect(maximum).toBe(2);
+    expect(mocks.call.mock.calls.slice(0, 2).map((call) => call[1].surface_name)).toEqual(['fire-detections', 'drought-areas']);
     expect(result.evidence.toolCalls.some((call) => call.stage === 'local' && call.status === 'not_queried')).toBe(true);
     expect(result.evidence.toolCalls.some((call) => call.stage === 'temporal' && call.status === 'error')).toBe(true);
     expect(result.evidence.toolCalls.some((call) => call.status === 'observed')).toBe(false);
@@ -156,15 +162,20 @@ describe('regional evidence graph', () => {
       range_start: '2026-01-01', range_end: '2026-12-31', zoom: 3, page_start: 31,
     }, payload, current);
     expect(args).toEqual({ surface_name: 'soil-field-vpd', day: '2024-02-29', longitude: -118,
-      latitude: 44, range_start: '2022-02-28', range_end: '2026-02-28', zoom: 8.75,
+      latitude: 44, range_start: '2022-02-28', range_end: '2024-02-29', zoom: 8.75,
       time_scale: 'year', page_start: 31 });
     expect(regionalEvidenceDay(current, 'vegetation')).toBe('2020-03-31');
   });
 
-  it('uses inclusive calendar windows across leap years and unequal months', () => {
-    expect(analysisDateRange('2024-03-31', 'month', 1)).toEqual({ rangeStart: '2024-02-29', rangeEnd: '2024-04-30' });
-    expect(analysisDateRange('2024-02-29', 'year', 1)).toEqual({ rangeStart: '2023-02-28', rangeEnd: '2025-02-28' });
-    expect(analysisDateRange('2024-12-31', 'day', 2)).toEqual({ rangeStart: '2024-12-29', rangeEnd: '2025-01-02' });
+  it.each([
+    ['month end into a leap February', '2024-03-31', 'month', 1, undefined, '2024-02-29', '2024-03-31'],
+    ['leap day back one year', '2024-02-29', 'year', 1, undefined, '2023-02-28', '2024-02-29'],
+    ['days across a year boundary', '2025-01-01', 'day', 2, undefined, '2024-12-30', '2025-01-01'],
+    ['default trailing month ending today', '2026-10-04', 'month', 1, '2026-10-04', '2026-09-04', '2026-10-04'],
+    ['a future selected day is capped at today', '2026-11-04', 'month', 1, '2026-10-04', '2026-10-04', '2026-10-04'],
+    ['a malformed day is returned unchanged', '2025-02-30', 'month', 1, '2026-10-04', '2025-02-30', '2025-02-30'],
+  ] as const)('trailing calendar window: %s', (_case, day, scale, steps, today, rangeStart, rangeEnd) => {
+    expect(analysisDateRange(day, scale, steps, today)).toEqual({ rangeStart, rangeEnd });
   });
 
   it('binds land-context coordinate aliases and area queries to the active selection tile', () => {
@@ -209,6 +220,164 @@ describe('regional evidence graph', () => {
     for (const layer of Object.values(LAYER_REGISTRY)) {
       expect(REGIONAL_TOOL_EVIDENCE_SOURCES).toContain(layer.warehouseLayerName ?? layer.toggleId);
     }
+  });
+});
+
+describe('regional evidence graph against the agri selection reader (owner decisions 2026-10-04)', () => {
+  const today = '2026-10-04';
+  const selection = { timeScale: 'month' as const, rangeSteps: 1, zoom: 13, layerDays: { vegetation: today } };
+  const current: TemporalContext = {
+    serverCurrentDate: today, viewedLayersUnreported: false, readings: [], viewedDates: [today],
+    sourcesServedAsOfLatest: [], analysisSelection: selection,
+  };
+  type Args = Record<string, string>;
+  /** The agri `surface_evidence_for_selection` envelope (selection_evidence.py `_parquet_evidence`). */
+  const agriEnvelope = (args: Args, selected: Record<string, unknown> = {}, lane: Record<string, unknown> = {}) => ({
+    surface_name: args.surface_name, requested_day: args.day,
+    lanes: [{
+      parquet_lane: args.surface_name, lane_nature: 'daily_series', ...lane,
+      selected: {
+        state: 'published', requested_day: args.day, served_day: args.day, features_truncated: false,
+        features: [{ served_day: args.day, covers_probe_point: true, spatial_relation: 'contains_selection', properties: { value: 0.4, unit: 'm3/m3' } }],
+        ...selected,
+      },
+      history: args.range_start === args.range_end ? [] : [{ state: 'published', requested_day: args.range_start, served_day: args.range_start,
+        features: [{ served_day: args.range_start, covers_probe_point: true, properties: { value: 0.3, unit: 'm3/m3' } }] }],
+    }],
+    history: { requested_day_count: 1, sampled_days: [args.range_start], page_start: 0, next_page_start: null, complete: true },
+  });
+  const respond = (override: (args: Args) => unknown = () => undefined) => {
+    mocks.call.mockImplementation(async (_tool: string, args: Args) => JSON.stringify(override(args) ?? agriEnvelope(args)));
+  };
+  const callsFor = (surface: string) => mocks.call.mock.calls.filter(([, args]) => args.surface_name === surface).map(([, args]) => args as Args);
+
+  it('never requests a day or window past the server date, and the local read is one day at day scale', async () => {
+    respond();
+    await prepareRegionalAnalysis(payload, { ...current, analysisSelection: {
+      ...selection, layerDays: { vegetation: today, 'drought-areas': '2026-11-04', 'weather-observations': '2026-08-31' },
+    } });
+    const calls = mocks.call.mock.calls.map(([, args]) => args as Args);
+    expect(calls.every((args) => args.day <= today && args.range_end <= today && args.range_start <= args.day)).toBe(true);
+    expect(calls.filter((args) => args.range_start === args.range_end).every((args) => args.time_scale === 'day')).toBe(true);
+    expect(callsFor('vegetation').map(({ range_start, range_end, time_scale }) => [range_start, range_end, time_scale]))
+      .toEqual([[today, today, 'day'], ['2026-09-04', today, 'month']]);
+    expect(callsFor('drought-areas').at(-1)).toMatchObject({ day: today, range_start: '2026-09-04', range_end: today });
+    expect(callsFor('weather-observations').at(-1)).toMatchObject({ day: '2026-08-31', range_start: '2026-07-31', range_end: '2026-08-31' });
+  });
+
+  it.each([
+    ['the full catalogue', [] as string[], ['fire-detections', 'fire-perimeters', 'drought-areas', 'weather-observations', 'water-gauges', 'soil-survey', 'vegetation', 'climate-field-precipitation']],
+    ['a catalogue missing two anchors', ['fire-perimeters', 'water-gauges'], ['fire-detections', 'burn-severity', 'drought-areas', 'weather-observations', 'watersheds', 'soil-survey', 'vegetation', 'climate-field-precipitation']],
+  ])('reads every theme from %s', async (_case, missing, expected) => {
+    mocks.load.mockResolvedValue({ tools: toolNames.map((name) => ({ name, description: name, input_schema: {} })),
+      surfaces: REGIONAL_TOOL_EVIDENCE_SOURCES.filter((source) => !missing.includes(source)), featureSurfaces: [], valueSurfaces: [] });
+    respond();
+    const result = await prepareRegionalAnalysis(payload, current);
+    const local = result.evidence.toolCalls.filter((call) => call.stage === 'local');
+    expect(local.map((call) => call.source).sort()).toEqual([...expected].sort());
+    expect(local.every((call) => call.status === 'observed')).toBe(true);
+  });
+
+  it('reads static layers once at their current release, with no history pass', async () => {
+    // groundwater is not declared static: its own read marks every lane static_lookup.
+    respond((args) => args.surface_name === 'groundwater' ? agriEnvelope(args, {}, { lane_nature: 'static_lookup' }) : undefined);
+    const result = await prepareRegionalAnalysis(payload, { ...current, analysisSelection: {
+      ...selection, layerDays: { ...selection.layerDays, groundwater: today },
+    } });
+    for (const surface of ['soil-survey', 'fire-perimeters', 'groundwater']) {
+      expect(callsFor(surface)).toHaveLength(1);
+      expect(result.evidence.toolCalls.filter((call) => call.source === surface)).toEqual([
+        expect.objectContaining({ stage: 'local', staticLayer: true, status: 'observed' }),
+      ]);
+      expect(result.evidence.limitations).toContain(`${surface}: static layer, current release`);
+    }
+    expect(callsFor('vegetation')).toHaveLength(2);
+    expect(result.evidence.toolCalls.find((call) => call.source === 'vegetation')).not.toHaveProperty('staticLayer');
+  });
+
+  it.each([
+    {
+      name: 'published_nearest is found with its day offset',
+      selected: { state: 'published_nearest', requested_day: today, served_day: '2026-10-01', day_offset: -3,
+        features: [{ served_day: '2026-10-01', covers_probe_point: true, spatial_relation: 'covers', properties: { ndvi: 0.42 } }] },
+      audit: { status: 'observed', resolvedDay: '2026-10-01', dayOffset: -3 },
+      line: 'vegetation: 2026-10-04 not published; nearest published day 2026-10-01 (-3 d, used)',
+    },
+    {
+      name: 'a nearest cell is found with its distance',
+      selected: { features: [{ served_day: today, covers_probe_point: false, spatial_relation: 'nearest_cell', distance_km: 23.64, properties: { ndvi: 0.31 } }] },
+      audit: { status: 'observed', cellDistanceKm: 23.6 },
+      line: 'vegetation: no cell covers the point; nearest cell 23.6 km (used)',
+    },
+    {
+      name: 'a covering cell from a reader without the new fields is unchanged',
+      selected: {},
+      audit: { status: 'observed' },
+      line: null,
+    },
+  ])('maps the agri resolution into the evidence check: $name', async ({ selected, audit, line }) => {
+    respond((args) => args.surface_name === 'vegetation' ? agriEnvelope(args, selected) : undefined);
+    const result = await prepareRegionalAnalysis(payload, current);
+    const local = result.evidence.toolCalls.find((call) => call.stage === 'local' && call.source === 'vegetation');
+    expect(local).toMatchObject(audit);
+    for (const field of ['resolvedDay', 'dayOffset', 'cellDistanceKm'] as const) {
+      if (!(field in audit)) expect(local).not.toHaveProperty(field);
+    }
+    const lines = result.evidence.limitations.filter((entry) => entry.startsWith('vegetation:'));
+    expect(lines).toEqual(line ? [line] : []);
+    // The nearest-day envelope still yields a citable fact, dated to the day actually served.
+    if ('resolvedDay' in audit) {
+      expect(result.measurementFacts.facts.find((fact) => fact.evidenceReadIds.includes(local?.id ?? ''))?.statement)
+        .toContain(`Served day ${audit.resolvedDay}`);
+    }
+    expect(readRegionalAnalysisEvidence(result.evidence)).not.toBeNull();
+  });
+
+  it.each([
+    { name: 'a whole-call serving_at_capacity refusal', first: () => JSON.stringify({ error: 'parquet_serving_refused', refusal_code: 'serving_at_capacity', refusal_detail: 'every serving slot is busy' }), retried: true },
+    { name: 'a selected-day lane refusal', first: (args: Args) => JSON.stringify(agriEnvelope(args, { state: 'refused', refusal_code: 'serving_at_capacity', features: [] })), retried: true },
+    { name: 'an HTTP 503 from the bridge', first: () => { throw new UpstreamHttpError(503, '{"error":"service_unavailable"}'); }, retried: true },
+    { name: 'a deterministic read_over_budget refusal', first: () => JSON.stringify({ error: 'parquet_serving_refused', refusal_code: 'read_over_budget' }), retried: false },
+    { name: 'a bridge read timeout', first: () => { throw new UpstreamHttpError(503, '{"error":"tool_read_timeout"}'); }, retried: false },
+  ])('retries $name at most once', async ({ first, retried }) => {
+    let precipitationCalls = 0;
+    mocks.call.mockImplementation(async (_tool: string, args: Args) => {
+      if (args.surface_name === 'climate-field-precipitation' && args.range_start === args.range_end && precipitationCalls++ === 0) return first(args);
+      return JSON.stringify(agriEnvelope(args));
+    });
+    const result = await prepareRegionalAnalysis(payload, current);
+    const local = callsFor('climate-field-precipitation').filter((args) => args.range_start === args.range_end);
+    expect(local).toHaveLength(retried ? 2 : 1);
+    const audit = result.evidence.toolCalls.find((call) => call.stage === 'local' && call.source === 'climate-field-precipitation');
+    expect(audit?.status === 'observed').toBe(retried);
+  });
+
+  it('reports a capacity refusal that persists after its one retry', async () => {
+    mocks.call.mockImplementation(async (_tool: string, args: Args) => JSON.stringify(args.surface_name === 'drought-areas'
+      ? { error: 'parquet_serving_refused', refusal_code: 'serving_at_capacity' } : agriEnvelope(args)));
+    const result = await prepareRegionalAnalysis(payload, current);
+    expect(callsFor('drought-areas')).toHaveLength(4);
+    expect(result.evidence.toolCalls.filter((call) => call.source === 'drought-areas').map((call) => call.status)).toEqual(['refused', 'refused']);
+    expect(result.evidence.limitations.filter((line) => line.startsWith('drought-areas:'))).toEqual([
+      'drought-areas: selected-day read refused (parquet_serving_refused: serving_at_capacity); history read refused (parquet_serving_refused: serving_at_capacity)',
+    ]);
+  });
+
+  it('honours a per-layer window, keyed by toggle id or surface, and falls back to the global window', async () => {
+    respond();
+    await prepareRegionalAnalysis(payload, { ...current, analysisSelection: { ...selection,
+      layerDays: { ...selection.layerDays, 'soil-vpd': '2026-07-15' },
+      layerWindows: {
+        vegetation: { rangeStart: '2026-06-01', rangeEnd: '2026-12-31' },
+        'soil-vpd': { rangeStart: '2026-01-01', rangeEnd: '2026-03-31' },
+        'drought-areas': { rangeStart: '2026-10-01', rangeEnd: '2026-09-01' },
+      } } });
+    const history = (surface: string) => callsFor(surface).find((args) => args.range_start !== args.range_end);
+    // Capped at today; widened to contain the layer's own day; a reversed window is ignored.
+    expect(history('vegetation')).toMatchObject({ day: today, range_start: '2026-06-01', range_end: today });
+    expect(history('soil-field-vpd')).toMatchObject({ day: '2026-07-15', range_start: '2026-01-01', range_end: '2026-07-15' });
+    expect(history('drought-areas')).toMatchObject({ day: today, range_start: '2026-09-04', range_end: today });
+    expect(history('water-gauges')).toMatchObject({ range_start: '2026-09-04', range_end: today });
   });
 });
 
@@ -407,83 +576,76 @@ describe('evidence audit honesty', () => {
     expect(JSON.stringify(projected).length).toBeLessThan(original.length / 2);
   });
 
-  it('keeps checked calendar gaps source-specific and separate from served dates and whole-window absence', () => {
-    const args = { surface_name: 'vegetation', day: '2026-09-13', range_start: '2026-08-13', range_end: '2026-10-13' };
-    const result = {
-      history: { sampled_days: ['2026-08-13', '2026-09-13', '2026-10-13'], complete: false, next_page_start: 3, requested_day_count: 62 },
-      lanes: [{ selected: { requested_day: '2026-09-13', served_day: '2026-09-12', state: 'published', features: [] }, history: [
-        { requested_day: '2026-08-13', state: 'governed_absence', features: [] },
-        { requested_day: '2026-09-13', state: 'published', features: [] },
-        { requested_day: '2026-10-13', state: 'day_not_written', features: [] },
-      ] }],
-    };
-    const audit = regionalEvidenceAuditCall('temporal-2', 'temporal', 'surface_evidence_for_selection', args, result);
-    const [limitation] = regionalEvidenceLimitations(audit, result);
-    expect(limitation).toContain('vegetation [temporal-2]: availability only, not a measured condition');
-    expect(limitation).toContain('Explicitly checked history calendar dates (3): 2026-08-13, 2026-09-13, 2026-10-13');
-    expect(limitation).not.toContain('2026-09-12');
-    expect(limitation).toContain('governed_absence at checked requests: 2026-08-13');
-    expect(limitation).toContain('published at checked requests: 2026-09-13');
-    expect(limitation).toContain('day_not_written at checked requests: 2026-10-13');
-    expect(limitation).toContain('History completeness reported by this response: incomplete');
-    expect(limitation).toContain('Continuation page_start: 3');
-    expect(limitation).toContain('Unchecked dates remain unknown');
-    expect(limitation).toContain('not evidence of environmental absence');
+  it.each([
+    {
+      name: 'calendar gaps stay source-specific and separate from served dates',
+      args: { surface_name: 'vegetation', day: '2026-09-13', range_start: '2026-08-13', range_end: '2026-09-13' },
+      result: {
+        history: { sampled_days: ['2026-08-13', '2026-09-01', '2026-09-13'], complete: false, next_page_start: 3, requested_day_count: 32 },
+        lanes: [{ selected: { requested_day: '2026-09-13', served_day: '2026-09-12', state: 'published', features: [] }, history: [
+          { requested_day: '2026-08-13', state: 'governed_absence', features: [] },
+          { requested_day: '2026-09-01', state: 'day_not_written', features: [] },
+          { requested_day: '2026-09-13', state: 'published', features: [] },
+        ] }],
+      },
+      status: 'unavailable',
+      detail: ['History checked 3 calendar date(s): 2026-08-13, 2026-09-01, 2026-09-13.', 'governed_absence at 2026-08-13.',
+        'day_not_written at 2026-09-01.', 'published at 2026-09-13.', 'History completeness: incomplete.', 'Continuation page_start 3.'],
+      line: 'vegetation: no records on 2026-09-13 (published); history 3 sampled day(s), 3 lane-day(s) without records, incomplete (next page_start 3)',
+    },
+    {
+      name: 'a selected measurement survives beside sparse historical gaps',
+      args: { surface_name: 'vegetation', day: '2026-09-09' },
+      result: {
+        history: { sampled_days: ['2026-09-02', '2026-09-09', '2026-09-16'], complete: false, next_page_start: null },
+        lanes: [{ selected: { requested_day: '2026-09-09', state: 'published', features: [{ properties: { ndvi: 0.3558 }, served_day: '2026-09-09' }] }, history: [
+          { requested_day: '2026-09-02', state: 'day_not_written', features: [] },
+          { requested_day: '2026-09-09', state: 'published', features: [{ properties: { ndvi: 0.3558 }, served_day: '2026-09-09' }] },
+          { requested_day: '2026-09-16', state: 'day_not_written', features: [] },
+        ] }],
+      },
+      status: 'observed',
+      detail: ['Selected 2026-09-09: 1/1 lane responses with records.', 'day_not_written at 2026-09-02, 2026-09-16.', 'History completeness: incomplete.'],
+      line: 'vegetation: history 3 sampled day(s), 2 lane-day(s) without records, incomplete',
+    },
+    {
+      name: 'an event reader without a calendar-day list keeps that limitation',
+      args: { surface_name: 'interventions', day: '2026-09-09' },
+      result: { history: { complete: false, next_page_start: null, state: 'historical_snapshots_not_published' },
+        lanes: [{ selected: { requested_day: '2026-09-09', state: 'published', features: [{ observed_interval: ['2020-01-01', '2021-01-01'] }] }, history: [] }] },
+      status: 'observed',
+      detail: ['History declares no checked calendar-day list.', 'History state: historical_snapshots_not_published.'],
+      line: 'interventions: history sampled days not declared, incomplete',
+    },
+  ])('per-read detail stays on the tool call and the lane gets one line: $name', ({ args, result, status, detail, line }) => {
+    const audit = regionalEvidenceAuditCall('additional-1', 'additional', 'surface_evidence_for_selection', args, result);
+    expect(audit.status).toBe(status);
+    const record = (status === 'observed' ? audit.summary : audit.reason) ?? '';
+    for (const fragment of detail) expect(record).toContain(fragment);
+    expect(record).not.toContain('2026-09-12');
+    expect(regionalEvidenceLimitations(audit, result)).toEqual([line]);
   });
 
-  it('retains available selected measurements beside sparse historical gaps', () => {
-    const feature = { properties: { ndvi: 0.3558 }, served_day: '2026-09-09' };
-    const result = {
-      history: { sampled_days: ['2026-09-02', '2026-09-09', '2026-09-16'], complete: false, next_page_start: null },
-      lanes: [{ selected: { requested_day: '2026-09-09', state: 'published', features: [feature] }, history: [
-        { requested_day: '2026-09-02', state: 'day_not_written', features: [] },
-        { requested_day: '2026-09-09', state: 'published', features: [feature] },
-        { requested_day: '2026-09-16', state: 'day_not_written', features: [] },
-      ] }],
-    };
-    const audit = regionalEvidenceAuditCall('temporal-2', 'temporal', 'surface_evidence_for_selection', { surface_name: 'vegetation', day: '2026-09-09' }, result);
-    const [limitation] = regionalEvidenceLimitations(audit, result);
-    expect(audit.status).toBe('observed');
-    expect(limitation).toContain('Selected request 2026-09-09: 1/1 lane responses contain measurement records');
-    expect(limitation).toContain('2/3 history lane responses contained no measurement records');
-    expect(limitation).toContain('day_not_written at checked requests: 2026-09-02, 2026-09-16');
-    expect(limitation).toContain('History completeness reported by this response: incomplete');
-    expect(limitation).not.toContain('Continuation page_start');
-  });
-
-  it('does not infer calendar scans or completeness for event intervals and unsupported snapshot history', () => {
-    const args = { surface_name: 'interventions', day: '2026-09-09' };
-    const result = { history: { complete: false, next_page_start: null },
-      lanes: [{ selected: { requested_day: args.day, state: 'published', features: [{ observed_interval: ['2020-01-01', '2021-01-01'] }] }, history: [] }],
-    };
-    const audit = regionalEvidenceAuditCall('temporal-1', 'temporal', 'surface_evidence_for_selection', args, result);
-    expect(regionalEvidenceLimitations(audit, result)[0]).toContain('does not declare a checked history calendar-day list');
-    const snapshot = { ...result, history: { sampled_days: [], complete: false, next_page_start: null, state: 'historical_snapshots_not_published' } };
-    const limitation = regionalEvidenceLimitations({ ...audit, source: 'interventions' }, snapshot)[0];
-    expect(limitation).toContain('Explicitly checked history calendar dates (0): none');
-    expect(limitation).toContain('History completeness reported by this response: incomplete');
-    expect(limitation).toContain('historical_snapshots_not_published');
-    expect(limitation.length).toBeLessThanOrEqual(2_000);
-    expect(regionalEvidenceLimitations(audit, { ...result, history: { complete: true } })).toEqual([]);
+  it('owes no lane line for a complete history or a non-selection reader, and bounds a sixteen-lane read', () => {
+    const complete = { history: { sampled_days: ['2026-09-09'], complete: true, next_page_start: null },
+      lanes: [{ selected: { requested_day: '2026-09-09', state: 'published', features: [{ properties: { value: 1 } }] },
+        history: [{ requested_day: '2026-09-09', state: 'published', features: [{ properties: { value: 1 } }] }] }] };
+    const audit = regionalEvidenceAuditCall('additional-1', 'additional', 'surface_evidence_for_selection', { surface_name: 'vegetation', day: '2026-09-09' }, complete);
+    expect(regionalEvidenceLimitations(audit, complete)).toEqual([]);
     expect(regionalEvidenceLimitations(audit, null)).toEqual([]);
-    expect(regionalEvidenceLimitations(audit, {})).toEqual([]);
-    expect(regionalEvidenceLimitations({ ...audit, tool: 'list_environmental_layers' }, snapshot)).toEqual([]);
-  });
-
-  it('bounds multilane disclosures and preserves the unknown-date caveat in the persisted audit', () => {
+    expect(regionalEvidenceLimitations({ ...audit, tool: 'list_environmental_layers' }, complete)).toEqual([]);
     const sampledDays = Array.from({ length: 31 }, (_, index) => `2026-08-${String(index + 1).padStart(2, '0')}`);
-    const result = { history: { sampled_days: sampledDays, complete: false, next_page_start: 31 },
+    const wide = { history: { sampled_days: sampledDays, complete: false, next_page_start: 31 },
       lanes: Array.from({ length: 16 }, (_, index) => ({
         selected: { requested_day: '2026-08-15', state: `${index}-${'state'.repeat(20)}`, features: index === 0 ? [{ properties: { value: 1 } }] : [] },
         history: sampledDays.map((day) => ({ requested_day: day, state: `${index}-${'state'.repeat(20)}`, features: [] })),
-      })),
-    };
-    const audit = regionalEvidenceAuditCall('temporal-1', 'temporal', 'surface_evidence_for_selection', { surface_name: 'vegetation', day: '2026-08-15' }, result);
-    const [limitation] = regionalEvidenceLimitations(audit, result);
-    expect(limitation).toContain('1/16 lane responses contain measurement records');
-    expect(limitation.length).toBeLessThanOrEqual(2_000);
-    expect(limitation).toContain('Unchecked dates remain unknown');
-    expect(readRegionalAnalysisEvidence({ version: 1, stages: [], toolCalls: [audit], limitations: Array.from({ length: 40 }, () => limitation) })).not.toBeNull();
+      })) };
+    const wideAudit = regionalEvidenceAuditCall('additional-2', 'additional', 'surface_evidence_for_selection', { surface_name: 'vegetation', day: '2026-08-15' }, wide);
+    expect(wideAudit.summary).toContain('1/16 lane responses with records');
+    expect(wideAudit.summary?.length).toBeLessThanOrEqual(2_000);
+    const [line] = regionalEvidenceLimitations(wideAudit, wide);
+    expect(line).toBe('vegetation: history 31 sampled day(s), 496 lane-day(s) without records, incomplete (next page_start 31)');
+    expect(readRegionalAnalysisEvidence({ version: 1, stages: [], toolCalls: [wideAudit], limitations: Array.from({ length: 40 }, () => line) })).not.toBeNull();
   });
   it('keeps two years of weekly drought history instead of reducing it to eight recent releases', () => {
     const weekly = Array.from({ length: 104 }, (_, week) => ({ week, severity_class: week < 52 ? 3 : 0 }));

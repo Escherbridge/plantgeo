@@ -655,10 +655,10 @@ describe("generate_remediation_report tool wiring", () => {
       expect(events.filter((event) => event.type === 'evidence').at(-1)?.evidence.toolCalls)
         .toEqual(expect.arrayContaining([expect.objectContaining({ id: 'additional-2', selectedDate: day, timeScale: 'year', zoom: 11.5 })]));
       expect(events.filter((event) => event.type === 'evidence').at(-1)?.evidence.limitations)
-        .toEqual(expect.arrayContaining([expect.stringContaining('vegetation [additional-1]: availability only')]));
+        .toEqual(expect.arrayContaining(['vegetation: history sampled days not declared, incomplete (next page_start 31)']));
       const nextRequest = mocks.completionStream.mock.calls.at(-2)?.[0];
       expect(nextRequest.messages).toEqual(expect.arrayContaining([
-        expect.objectContaining({ role: 'tool', tool_call_id: 'page-one', content: expect.stringContaining('"limitations":["vegetation [additional-1]: availability only') }),
+        expect.objectContaining({ role: 'tool', tool_call_id: 'page-one', content: expect.stringContaining('"limitations":["vegetation: history sampled days not declared, incomplete (next page_start 31)"]') }),
       ]));
     }
     expect(mocks.completionStream).toHaveBeenCalledTimes(6);

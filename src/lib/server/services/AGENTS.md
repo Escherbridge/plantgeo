@@ -140,13 +140,24 @@ Observed metadata-only records that cannot form a fact receive an explicit limit
 not force the model to invent a measurement. Without a current fact pool, legacy validation
 retains its ledger-based completeness rule.
 
-Availability limitations are authored from raw serving envelopes before model projection and
-shown through the existing evidence audit. Each names its source/read, selected request result,
-explicit `history.sampled_days`, reported completeness, no-record states and continuation cursor.
-Served dates never stand in for checked calendar dates; a null cursor never changes an incomplete
-response to complete. Readers without a calendar-day list retain that limitation. The list stays
-within forty entries and two thousand characters per entry, including the unknown-date caveat;
-prefetch reserves room for the final workflow notes and additional reads use the same disclosure.
+Availability is authored from raw serving envelopes before model projection. The per-read detail
+(selected request result, explicit `history.sampled_days`, reported completeness, no-record states
+and continuation cursor) lives on that read's tool-call `summary`/`reason`. `evidence.limitations`
+carries ONE concise line per lane, folding the lane's selected-day and history reads together
+(e.g. `vegetation: no cell covers the point; nearest cell 23.6 km (used)`,
+`soil-survey: static layer, current release`); the unknown-date caveat is stated once in the
+workflow's opening limitation, not per read (owner decision 2026-10-04: per-call paragraphs buried
+the answer). Served dates never stand in for checked calendar dates; a null cursor never changes an
+incomplete response to complete. The list stays within forty entries; additional reads add one line each.
+
+<a id="regional-analysis-nearest"></a>The agri reader may answer a selected day it has no partition
+for with `state: published_nearest` (`requested_day`, `served_day`, signed `day_offset`), and a point
+no cell covers with features whose `spatial_relation` is `nearest_cell` with `distance_km`. The audit
+maps these to `resolvedDay`/`dayOffset` (offset recomputed from the two named days when both are
+present) and `cellDistanceKm`; when the fields are absent the audit is unchanged. A transient
+refusal (`serving_at_capacity`, `release_read_changed`, or HTTP 429/502/503 other than the bridge's
+deterministic `tool_response_too_large`/`tool_read_timeout`) is retried once after a 200-600 ms
+jittered pause inside the stage deadline.
 Current warehouse statements are rendered from actual serving records by
 `regional-measurement-facts.ts`; the model selects them without editing their source, dates,
 values, units or spatial-support wording. IDs fingerprint the source, selection and record so
@@ -173,12 +184,18 @@ in the reproduced case. This is observed improvement, not a guarantee of factual
 The default remains Flash Lite and deployment may choose Flash through `OPENROUTER_MODEL`.
 Other configured models retain their existing request settings and scoped canonical report schema.
 
-Inventory has an eight-second transport deadline. Local and temporal stages reserve twelve and
-fifteen seconds respectively, with at most three concurrent reads. Initial retrieval selects up to
-six relevant layers, prioritizing visible and explicitly dated layers before VPD, vegetation,
-precipitation, soil moisture, soil temperature and soil survey. Every catalogue layer stays
-available for additional reads, including disabled toggles; catalogue size never forces an eager
-read of every layer. Stage exhaustion is recorded as skipped or failed work.
+<a id="regional-analysis-themes"></a>Inventory has an eight-second transport deadline. Local and
+temporal stages reserve twelve and fifteen seconds respectively, with at most two concurrent reads
+(the map's own tile reads share the serving slots; three produced `serving_at_capacity`). Initial
+retrieval reads every theme's anchors -- fire (fire-detections, fire-perimeters), drought-areas,
+weather-observations, water-gauges, soil-survey, vegetation, climate-field-precipitation -- with a
+fallback only for an anchor the catalogue lacks, then up to four of the user's visible or dated
+layers (`REGIONAL_ANALYSIS_THEMES`). The earlier six-layer slice over a list naming precipitation
+twice left fire, drought, weather and water unread (prod 2026-10-04). Static (`static_lookup`)
+layers -- `REGIONAL_STATIC_SURFACES`, or any read whose lanes are all `static_lookup` -- are read once
+at their current release with `staticLayer: true` and get no history pass; the set mirrors agri's
+lane natures and must be extended when a lane becomes static. Every catalogue layer stays available
+for additional reads. Stage exhaustion is recorded as skipped or failed work.
 
 The live regional route starts in selection-only assembly mode: location and calendar metadata,
 with no environmental measurement blocks and no old radius or latest-date prefetch. All current
@@ -189,10 +206,13 @@ receive an explicit default selection, so they cannot re-enable the old prefetch
 `surface_evidence_for_selection` is the general measurement reader. Its bounds are the tile
 containing the authorized point at the active map zoom and each layer's selected calendar day.
 Point support is determined by the source tile or cell containing the coordinate, never by a
-fixed centroid radius. Local reads request only that day. Historical reads request the inclusive
-calendar window selected in the analysis panel (day, month or year, with 1?10 units on either
-side). Month and year arithmetic preserves month ends and leap days. Missing and future dates
-remain in the request; they are never replaced by the newest available observation.
+fixed centroid radius. Local reads request only that day, at day scale. <a id="regional-analysis-window"></a>
+Historical reads request a TRAILING window ending at the layer's selected day: 1-10 days, months or
+years back (default one calendar month, owner decision 2026-10-04), or the layer's own
+`analysisSelection.layerWindows` entry, widened to contain its day. Neither the selected day nor the
+window end passes the server's UTC today, except for forecast surfaces (weather-forecast, fire-risk).
+Month and year arithmetic preserves month ends and leap days. Missing dates remain in the request;
+they are never replaced by the newest available observation.
 
 The server binds every additional generic read to the current request's point, zoom, layer day
 and window, preserving only its layer choice and integer history cursor. This is recomputed on

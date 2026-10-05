@@ -8,7 +8,8 @@ import {
 } from '@/lib/regional-intelligence';
 import { buildRegionalMeasurementFacts, type RegionalMeasurementFacts } from './regional-measurement-facts';
 import { isLayerToggleId, LAYER_REGISTRY } from '@/lib/map/layer-registry';
-import { analysisDateRange, DEFAULT_ANALYSIS_WINDOW } from '@/lib/regional-analysis-selection';
+import { analysisDateRange, DEFAULT_ANALYSIS_WINDOW, isAnalysisCalendarDay } from '@/lib/regional-analysis-selection';
+import { UpstreamHttpError } from '@/lib/server/http/bounded-upstream';
 import { selectionTile } from './regional-map-evidence';
 import { resolveZoomTier } from '@/lib/map/zoom-tiers';
 import type { RegionalContextPayload, TemporalContext } from './regional-context';
@@ -21,7 +22,7 @@ import {
 } from './regional-evidence-tools';
 
 type AuditCall = RegionalAnalysisEvidence['toolCalls'][number];
-type ReadRequest = { tool: string; source?: string; args: Record<string, unknown> };
+type ReadRequest = { tool: string; source?: string; staticLayer?: boolean; args: Record<string, unknown> };
 type EvidenceRead = { id: string; evidenceReadId: string; evidenceSource?: string; evidenceStatus: AuditCall['status']; result: unknown };
 
 export const REGIONAL_ANALYSIS_STAGES = [
@@ -31,12 +32,59 @@ export const REGIONAL_ANALYSIS_STAGES = [
   ['strategies', 'Screen management alternatives'],
 ] as const;
 
-export const REGIONAL_ANALYSIS_PRIORITY_SURFACES = [
-  'soil-field-vpd', 'vegetation', 'climate-field-precipitation',
-  'soil-field-moisture', 'soil-field-temperature', 'soil-survey', 'watersheds', 'water-gauges', 'drought-areas',
-  'weather-observations', 'climate-field-precipitation', 'climate-field-soil-wetness-root-zone',
-  'burn-severity', 'fire-detections', 'fire-perimeters',
-];
+/**
+ * Initial reads: every theme reads its anchors; a fallback stands in only for an anchor the
+ * deployed catalogue lacks. See services/AGENTS.md §regional-analysis-themes.
+ */
+export const REGIONAL_ANALYSIS_THEMES = [
+  { theme: 'fire', anchors: ['fire-detections', 'fire-perimeters'], fallbacks: ['burn-severity'] },
+  { theme: 'drought', anchors: ['drought-areas'], fallbacks: [] },
+  { theme: 'weather', anchors: ['weather-observations'], fallbacks: ['climate-field-air-temperature'] },
+  { theme: 'water', anchors: ['water-gauges'], fallbacks: ['watersheds', 'groundwater'] },
+  { theme: 'soil', anchors: ['soil-survey'], fallbacks: ['soil-field-moisture'] },
+  { theme: 'vegetation', anchors: ['vegetation'], fallbacks: [] },
+  { theme: 'climate', anchors: ['climate-field-precipitation'], fallbacks: ['soil-field-vpd', 'climate-field-soil-wetness-root-zone'] },
+] as const;
+
+/** The user's own dated or visible layers read beside the theme anchors. */
+export const MAX_SELECTED_INITIAL_READS = 4;
+
+/** `static_lookup` surfaces: a version, no date axis, so one read at the current release and no history. */
+export const REGIONAL_STATIC_SURFACES: ReadonlySet<string> = new Set([
+  'soil-survey', 'fire-perimeters', 'evacuation-zones', 'watersheds', 'land-context-boundaries',
+  'soil-phh2o', 'soil-soc', 'soil-nitrogen', 'soil-bdod', 'soil-cec', 'soil-ocd',
+]);
+
+/** Forecast surfaces legitimately serve future days, so their window is not capped at today. */
+const FORECAST_SURFACES: ReadonlySet<string> = new Set(['weather-forecast', 'fire-risk']);
+
+/** Concurrent reads per stage; the map's own tile reads share the same serving slots. */
+const STAGE_CONCURRENCY = 2;
+/** Process-state refusals an identical retry can answer differently (agri llm.py `_TRANSIENT_SERVING_REFUSAL_CODES`). */
+const TRANSIENT_REFUSAL_CODES: ReadonlySet<string> = new Set(['serving_at_capacity', 'release_read_changed']);
+const TRANSIENT_HTTP_STATUSES: ReadonlySet<number> = new Set([429, 502, 503]);
+/** Bridge 503s that are deterministic for the same arguments, so never retried. */
+const NON_TRANSIENT_BRIDGE_CODES = ['tool_response_too_large', 'tool_read_timeout'];
+
+/** Plan the initial surfaces: theme anchors first (themes interleaved), then up to four selected layers. */
+export function regionalInitialSurfaces(selected: readonly string[], available: readonly string[]): string[] {
+  const offered = new Set(available);
+  const anchors = REGIONAL_ANALYSIS_THEMES.map(({ anchors, fallbacks }) => {
+    const present: string[] = anchors.filter((surface) => offered.has(surface));
+    const replacements = fallbacks.filter((surface) => offered.has(surface));
+    return [...present, ...replacements.slice(0, anchors.length - present.length)];
+  });
+  const planned: string[] = [];
+  for (let slot = 0; slot < Math.max(...anchors.map((entry) => entry.length)); slot += 1) {
+    for (const entry of anchors) if (entry[slot] && !planned.includes(entry[slot])) planned.push(entry[slot]);
+  }
+  const extras = [...new Set(selected)].filter((surface) => offered.has(surface) && !planned.includes(surface));
+  return [...planned, ...extras.slice(0, MAX_SELECTED_INITIAL_READS)];
+}
+
+export function isRegionalStaticSurface(source: string): boolean {
+  return REGIONAL_STATIC_SURFACES.has(source);
+}
 
 const SOURCE_SURFACE: Record<string, string> = {
   drought: 'drought-areas', streamflow: 'water-gauges', weatherObservations: 'weather-observations',
@@ -59,19 +107,40 @@ export function regionalEvidenceDay(temporal: TemporalContext, source: string): 
     ?? temporal.viewedDates.at(-1) ?? temporal.serverCurrentDate;
 }
 
-/** Bind numeric tile reads to this request's current location and calendar selection. */
+/** This layer's own window from `layerWindows`, widened to contain `day`; null when absent or malformed. */
+function regionalLayerWindow(temporal: TemporalContext, source: string, day: string) {
+  const window = Object.entries(temporal.analysisSelection?.layerWindows ?? {})
+    .find(([layer]) => regionalSurfaceName(layer) === source)?.[1];
+  if (!window || !isAnalysisCalendarDay(window.rangeStart) || !isAnalysisCalendarDay(window.rangeEnd)
+    || window.rangeStart > window.rangeEnd) return null;
+  return {
+    rangeStart: window.rangeStart < day ? window.rangeStart : day,
+    rangeEnd: window.rangeEnd > day ? window.rangeEnd : day,
+  };
+}
+
+/**
+ * Bind numeric tile reads to this request's location and calendar selection. History reads use the
+ * layer's own window, else the trailing global window; neither extends past the server's UTC today
+ * (forecast surfaces excepted). A non-history read is one exact day at day scale.
+ */
 export function regionalSelectionArguments(
   payload: RegionalContextPayload, temporal: TemporalContext, source: string, history = true,
 ): Record<string, unknown> {
-  const day = regionalEvidenceDay(temporal, source);
+  const today = temporal.serverCurrentDate;
+  const capped = !FORECAST_SURFACES.has(source) && isAnalysisCalendarDay(today);
+  const requested = regionalEvidenceDay(temporal, source);
+  const day = capped && isAnalysisCalendarDay(requested) && requested > today ? today : requested;
   const window = temporal.analysisSelection ?? DEFAULT_ANALYSIS_WINDOW;
-  const range = history ? analysisDateRange(day, window.timeScale, window.rangeSteps)
-    : { rangeStart: day, rangeEnd: day };
+  const layerWindow = history ? regionalLayerWindow(temporal, source, day) : null;
+  const range = !history ? { rangeStart: day, rangeEnd: day }
+    : layerWindow ? { rangeStart: layerWindow.rangeStart, rangeEnd: capped && layerWindow.rangeEnd > today ? today : layerWindow.rangeEnd }
+      : analysisDateRange(day, window.timeScale, window.rangeSteps, capped ? today : undefined);
   return {
     surface_name: source, day,
     longitude: payload.location.lon, latitude: payload.location.lat,
     range_start: range.rangeStart, range_end: range.rangeEnd,
-    time_scale: window.timeScale, zoom: temporal.analysisSelection?.zoom ?? 13,
+    time_scale: history ? window.timeScale : 'day', zoom: temporal.analysisSelection?.zoom ?? 13,
   };
 }
 
@@ -90,7 +159,7 @@ export function bindRegionalEvidenceArguments(
   const source = typeof args.surface_name === 'string' ? regionalSurfaceName(args.surface_name)
     : tool === 'drought_history_at_point' ? 'drought-areas' : tool === 'fire_history_near_point' ? 'burn-severity' : '';
   if (tool === 'surface_evidence_for_selection') {
-    return { ...args, ...regionalSelectionArguments(payload, temporal, source) };
+    return { ...args, ...regionalSelectionArguments(payload, temporal, source, !isRegionalStaticSurface(source)) };
   }
   const day = regionalEvidenceDay(temporal, source);
   const tile = 'bbox' in args ? selectionTile(payload.location.lon, payload.location.lat, temporal.analysisSelection?.zoom ?? 13) : null;
@@ -178,7 +247,12 @@ export function evidenceResultStatus(value: unknown, tool?: string): Pick<AuditC
   const root = object(value);
   if (!root) return { status: 'error', reason: 'The tool returned an invalid evidence object.' };
   if (isLiteratureEvidence(tool, root)) return literatureResultStatus(root);
-  if (root.error || root.refusal_code) return { status: 'refused', reason: String(root.error ?? root.refusal_code).slice(0, 240) };
+  if (root.error || root.refusal_code) {
+    // Keep the specific code beside a generic wrapper ("parquet_serving_refused: serving_at_capacity").
+    const reason = root.error && typeof root.refusal_code === 'string' && root.refusal_code !== root.error
+      ? `${String(root.error)}: ${root.refusal_code}` : String(root.error ?? root.refusal_code);
+    return { status: 'refused', reason: reason.slice(0, 240) };
+  }
   const states: string[] = [];
   let rows = 0;
   const visit = (entry: unknown, key = '') => {
@@ -298,6 +372,10 @@ export function regionalEvidenceAuditCall(
     ? ['burn-severity', 'fire-detections'].filter((lane) => observedFireSummaries.some((summary) =>
       object(summary)?.layer_name === lane && Number(object(summary)?.row_count ?? 0) > 0))
     : [];
+  const selectionRead = tool === 'surface_evidence_for_selection';
+  const resolution = selectionRead ? selectedResolution(result) : {};
+  const status = evidenceResultStatus(result, tool);
+  const detail = selectionRead ? selectionReadDetail(validDate ? selectedDate : undefined, result) : null;
   return {
     id, stage, tool,
     ...(source.length > 0 && source.length <= 100 ? { source } : {}),
@@ -313,55 +391,186 @@ export function regionalEvidenceAuditCall(
     ...(typeof args.latitude === 'number' && Number.isFinite(args.latitude) && Math.abs(args.latitude) <= 90
       && typeof args.longitude === 'number' && Number.isFinite(args.longitude) && Math.abs(args.longitude) <= 180
       ? { location: { lat: args.latitude, lon: args.longitude } } : {}),
-    ...evidenceResultStatus(result, tool),
+    ...resolution,
+    ...(selectionRead && (isRegionalStaticSurface(source) || isStaticResult(result)) ? { staticLayer: true } : {}),
+    ...status,
+    // Per-read availability detail lives on the tool-call record; limitations carry one line per lane.
+    ...(detail && status.status === 'observed' ? { summary: `${status.summary ?? ''} ${detail}`.trim().slice(0, 2_000) } : {}),
+    ...(detail && status.status !== 'observed' ? { reason: `${status.reason ?? ''} ${detail}`.trim().slice(0, 2_000) } : {}),
   };
 }
 
-/** Describe requested-day availability without turning missing or unchecked dates into observations. */
-export function regionalEvidenceLimitations(audit: AuditCall, result: unknown): string[] {
-  if (audit.tool !== 'surface_evidence_for_selection' || !audit.source) return [];
-  const root = object(result);
-  if (!root) return [];
-  const history = object(root.history);
-  const lanes = Array.isArray(root.lanes) ? root.lanes.map(object).filter((lane) => lane !== null) : [];
-  const selected = lanes.map((lane) => object(lane.selected)).filter((entry) => entry !== null);
-  const historyEntries = lanes.flatMap((lane) => Array.isArray(lane.history) ? lane.history.map(object).filter((entry) => entry !== null) : []);
-  const hasRecords = (entry: Record<string, unknown>) => ['features', 'rows'].some((field) => Array.isArray(entry[field]) && entry[field].length > 0);
-  const emptySelected = selected.filter((entry) => !hasRecords(entry));
-  const emptyHistory = historyEntries.filter((entry) => !hasRecords(entry));
-  if (!root.error && !root.refusal_code && emptySelected.length === 0 && emptyHistory.length === 0 && history?.complete !== false) return [];
-  const details = [`${audit.source} [${audit.id}]: availability only, not a measured condition.`];
+function selectionLanes(result: unknown): Record<string, unknown>[] {
+  const lanes = object(result)?.lanes;
+  return Array.isArray(lanes) ? lanes.map(object).filter((lane) => lane !== null) : [];
+}
+
+function selectedEntries(result: unknown): Record<string, unknown>[] {
+  return selectionLanes(result).map((lane) => object(lane.selected)).filter((entry) => entry !== null);
+}
+
+function hasRecords(entry: Record<string, unknown>): boolean {
+  return ['features', 'rows'].some((field) => Array.isArray(entry[field]) && (entry[field] as unknown[]).length > 0);
+}
+
+function entryState(entry: Record<string, unknown>): string {
+  return typeof entry.state === 'string' ? entry.state.slice(0, 80) : 'state not reported';
+}
+
+/** A static (`static_lookup`) result: an explicit marker, or every returned lane declares that nature. */
+function isStaticResult(result: unknown): boolean {
+  const marked = (node: Record<string, unknown> | null) => node?.static === true || node?.static_layer === true;
+  const lanes = selectionLanes(result);
+  return marked(object(result)) || lanes.some((lane) => marked(lane) || marked(object(lane.selected)))
+    || (lanes.length > 0 && lanes.every((lane) => lane.lane_nature === 'static_lookup'));
+}
+
+function calendarDayDifference(from: string, to: string): number {
+  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
+}
+
+/**
+ * The agri reader's nearest-day and nearest-cell resolution of the selected read: `published_nearest`
+ * (served_day, signed day_offset) and per-feature `spatial_relation` `covers`|`nearest_cell` with
+ * `distance_km`. Absent fields leave the audit exactly as before.
+ */
+function selectedResolution(result: unknown): Pick<AuditCall, 'resolvedDay' | 'dayOffset' | 'cellDistanceKm'> {
+  const selected = selectedEntries(result);
+  const resolution: Pick<AuditCall, 'resolvedDay' | 'dayOffset' | 'cellDistanceKm'> = {};
+  const nearestDay = selected.find((entry) => entry.state === 'published_nearest' && isCalendarDay(entry.served_day) && hasRecords(entry));
+  if (nearestDay && isCalendarDay(nearestDay.served_day)) {
+    // The two named days are ground truth; `day_offset` is used only when the requested day is absent.
+    const offset = isCalendarDay(nearestDay.requested_day) ? calendarDayDifference(nearestDay.requested_day, nearestDay.served_day)
+      : typeof nearestDay.day_offset === 'number' && Number.isInteger(nearestDay.day_offset) ? nearestDay.day_offset : null;
+    if (offset !== null && offset !== 0 && Math.abs(offset) <= 3_660) {
+      resolution.resolvedDay = nearestDay.served_day;
+      resolution.dayOffset = offset;
+    }
+  }
+  const features = selected.flatMap((entry) => Array.isArray(entry.features) ? entry.features.map(object) : [])
+    .filter((feature) => feature !== null);
+  if (!features.some((feature) => feature.spatial_relation === 'covers' || feature.covers_probe_point === true)) {
+    const distances = features.filter((feature) => feature.spatial_relation === 'nearest_cell')
+      .map((feature) => feature.distance_km)
+      .filter((distance): distance is number => typeof distance === 'number' && Number.isFinite(distance) && distance > 0 && distance <= 5_000);
+    if (distances.length > 0) resolution.cellDistanceKm = Math.round(Math.min(...distances) * 10) / 10;
+  }
+  return resolution;
+}
+
+/** The history envelope's checked days, completeness and continuation, or null when absent. */
+function selectionHistory(result: unknown) {
+  const history = object(object(result)?.history);
+  if (!history) return null;
+  const days = Array.isArray(history.sampled_days) ? [...new Set(history.sampled_days.filter(isCalendarDay))].sort() : null;
+  const entries = selectionLanes(result).flatMap((lane) => Array.isArray(lane.history) ? lane.history.map(object) : [])
+    .filter((entry) => entry !== null);
+  const empty = entries.filter((entry) => !hasRecords(entry));
+  const nextPageStart = typeof history.next_page_start === 'number' && Number.isSafeInteger(history.next_page_start)
+    && history.next_page_start >= 0 ? history.next_page_start : null;
+  return {
+    days, empty, nextPageStart,
+    complete: history.complete === true ? true : history.complete === false ? false : null,
+    state: typeof history.state === 'string' ? history.state.slice(0, 80) : null,
+  };
+}
+
+/** Full per-read availability detail for the tool-call record (not the limitations list). */
+function selectionReadDetail(selectedDate: string | undefined, result: unknown): string | null {
+  const selected = selectedEntries(result);
+  const history = selectionHistory(result);
+  const details: string[] = [];
   if (selected.length) {
-    details.push(`Selected request ${audit.selectedDate ?? 'date unspecified'}: ${selected.length - emptySelected.length}/${selected.length} lane responses contain measurement records.`);
-  } else details.push('No selected-day measurement envelope was returned.');
-  if (emptySelected.length) {
-    const states = [...new Set(emptySelected.map((entry) => typeof entry.state === 'string' ? entry.state.slice(0, 80) : 'state not reported'))];
-    details.push(`Selected responses without records: ${states.join(', ')}.`);
+    const empty = selected.filter((entry) => !hasRecords(entry));
+    details.push(`Selected ${selectedDate ?? 'day'}: ${selected.length - empty.length}/${selected.length} lane responses with records${empty.length ? ` (without records: ${[...new Set(empty.map(entryState))].join(', ')})` : ''}.`);
   }
   if (history) {
-    const days = Array.isArray(history.sampled_days) ? [...new Set(history.sampled_days.filter(isCalendarDay))].sort() : null;
-    if (days) details.push(`Explicitly checked history calendar dates (${days.length}): ${days.slice(0, 31).join(', ') || 'none'}${days.length > 31 ? `; ${days.length - 31} further checked dates omitted here` : ''}.`);
-    else details.push('This reader does not declare a checked history calendar-day list.');
-    details.push(`History completeness reported by this response: ${history.complete === true ? 'complete' : history.complete === false ? 'incomplete' : 'unknown'}.`);
-    if (emptyHistory.length) {
-      details.push(`${emptyHistory.length}/${historyEntries.length} history lane responses contained no measurement records.`);
-      const states = new Map<string, Set<string>>();
-      for (const entry of emptyHistory) {
-        if (!days || !isCalendarDay(entry.requested_day) || !days.includes(entry.requested_day)) continue;
-        const state = typeof entry.state === 'string' ? entry.state.slice(0, 80) : 'state not reported';
-        if (!states.has(state) && states.size < 4) states.set(state, new Set());
-        states.get(state)?.add(entry.requested_day);
-      }
-      for (const [state, dates] of states) {
-        const listed = [...dates].sort();
-        details.push(`${state} at checked requests: ${listed.slice(0, 5).join(', ')}${listed.length > 5 ? `; ${listed.length - 5} further dates omitted here` : ''}.`);
-      }
+    details.push(history.days
+      ? `History checked ${history.days.length} calendar date(s)${history.days.length ? `: ${history.days.slice(0, 31).join(', ')}${history.days.length > 31 ? ` (+${history.days.length - 31} more)` : ''}` : ''}.`
+      : 'History declares no checked calendar-day list.');
+    details.push(`History completeness: ${history.complete === true ? 'complete' : history.complete === false ? 'incomplete' : 'unknown'}.`);
+    const states = new Map<string, Set<string>>();
+    for (const entry of history.empty) {
+      const state = entryState(entry);
+      if (!history.days || !isCalendarDay(entry.requested_day) || !history.days.includes(entry.requested_day)
+        || (!states.has(state) && states.size >= 4)) continue;
+      states.set(state, (states.get(state) ?? new Set<string>()).add(entry.requested_day));
     }
-    if (typeof history.next_page_start === 'number' && Number.isSafeInteger(history.next_page_start) && history.next_page_start >= 0) details.push(`Continuation page_start: ${history.next_page_start}.`);
-    if (typeof history.state === 'string') details.push(`History state: ${history.state.slice(0, 80)}.`);
+    for (const [state, dates] of states) {
+      const listed = [...dates].sort();
+      details.push(`${state} at ${listed.slice(0, 5).join(', ')}${listed.length > 5 ? ` (+${listed.length - 5} more)` : ''}.`);
+    }
+    if (history.nextPageStart !== null) details.push(`Continuation page_start ${history.nextPageStart}.`);
+    if (history.state) details.push(`History state: ${history.state}.`);
   }
-  const caveat = ' Unchecked dates remain unknown. No returned records is not evidence of environmental absence or of unavailability across the entire requested window.';
-  return [details.join(' ').slice(0, 2_000 - caveat.length) + caveat];
+  return details.length ? details.join(' ') : null;
+}
+
+/** What one read contributes to its lane's single limitation line. */
+export interface RegionalLaneReadNote {
+  audit: AuditCall;
+  selectedRecords: boolean;
+  emptySelectedStates: string[];
+  history: ReturnType<typeof selectionHistory>;
+  noRenderableFacts: boolean;
+}
+
+export function regionalLaneReadNote(audit: AuditCall, result: unknown, noRenderableFacts = false): RegionalLaneReadNote {
+  const selected = selectedEntries(result);
+  return {
+    audit,
+    selectedRecords: selected.some(hasRecords),
+    emptySelectedStates: [...new Set(selected.filter((entry) => !hasRecords(entry)).map(entryState))],
+    // A local read's one-day "history" is its selected day again, never a history pass.
+    history: audit.staticLayer || audit.stage === 'local' ? null : selectionHistory(result),
+    noRenderableFacts,
+  };
+}
+
+const STAGE_READ_LABELS: Record<string, string> = { local: 'selected-day', temporal: 'history', additional: 'additional' };
+
+/**
+ * ONE concise line per lane, folding its selected-day and history reads together, e.g.
+ * "vegetation: no cell covers the point; nearest cell 23.6 km (used)". Null when nothing is owed.
+ */
+export function regionalLaneLimitation(source: string, notes: readonly RegionalLaneReadNote[]): string | null {
+  const parts: string[] = [];
+  if (notes.some(({ audit }) => audit.staticLayer)) parts.push('static layer, current release');
+  const nearestCell = notes.find(({ audit }) => (audit.cellDistanceKm ?? 0) > 0)?.audit;
+  if (nearestCell) parts.push(`no cell covers the point; nearest cell ${nearestCell.cellDistanceKm} km (used)`);
+  const nearestDay = notes.find(({ audit }) => audit.resolvedDay && audit.dayOffset)?.audit;
+  if (nearestDay) {
+    parts.push(`${nearestDay.selectedDate ?? 'selected day'} not published; nearest published day ${nearestDay.resolvedDay} (${(nearestDay.dayOffset ?? 0) > 0 ? '+' : ''}${nearestDay.dayOffset} d, used)`);
+  }
+  const emptySelected = notes.find((note) => note.emptySelectedStates.length > 0);
+  if (emptySelected && !notes.some((note) => note.selectedRecords)) {
+    parts.push(`no records on ${emptySelected.audit.selectedDate ?? 'the selected day'} (${emptySelected.emptySelectedStates.join(', ')})`);
+  }
+  for (const { history } of notes) {
+    if (!history || (history.complete === true && history.empty.length === 0)) continue;
+    parts.push(`history ${history.days ? `${history.days.length} sampled day(s)` : 'sampled days not declared'}`
+      + `${history.empty.length ? `, ${history.empty.length} lane-day(s) without records` : ''}`
+      + `${history.complete === false ? ', incomplete' : history.complete === null ? ', completeness unknown' : ''}`
+      + `${history.nextPageStart !== null ? ` (next page_start ${history.nextPageStart})` : ''}`);
+  }
+  for (const { audit, emptySelectedStates, history } of notes) {
+    const stage = STAGE_READ_LABELS[audit.stage] ?? audit.stage;
+    if (['refused', 'error', 'not_queried'].includes(audit.status)) {
+      parts.push(`${stage} read ${audit.status}${audit.reason ? ` (${audit.reason.slice(0, 80)})` : ''}`);
+    } else if (audit.status === 'unavailable' && emptySelectedStates.length === 0 && !history) {
+      parts.push(`${stage} read returned no records`);
+    }
+  }
+  if (notes.some((note) => note.noRenderableFacts)) parts.push('records returned but no renderable measurement facts');
+  const unique = [...new Set(parts)];
+  return unique.length ? `${source}: ${unique.join('; ')}`.slice(0, 600) : null;
+}
+
+/** One read's limitation line (the additional-read path); the prefetch folds reads per lane instead. */
+export function regionalEvidenceLimitations(audit: AuditCall, result: unknown): string[] {
+  if (audit.tool !== 'surface_evidence_for_selection' || !audit.source || !object(result)) return [];
+  const line = regionalLaneLimitation(audit.source, [regionalLaneReadNote(audit, result)]);
+  return line ? [line] : [];
 }
 
 export interface RegionalAnalysisWorkflow {
@@ -616,6 +825,45 @@ export function regionalEvidenceStageStatus(entries: AuditCall[]): RegionalAnaly
   return 'unavailable';
 }
 
+/** A whole-call or selected-day refusal that names process state (a busy slot), not the arguments. */
+function isTransientRefusal(result: unknown): boolean {
+  const transient = (node: Record<string, unknown> | null) => typeof node?.refusal_code === 'string' && TRANSIENT_REFUSAL_CODES.has(node.refusal_code);
+  return transient(object(result)) || selectedEntries(result).some(transient);
+}
+
+function isTransientHttpFailure(error: unknown): boolean {
+  return error instanceof UpstreamHttpError && TRANSIENT_HTTP_STATUSES.has(error.status)
+    && !NON_TRANSIENT_BRIDGE_CODES.some((code) => error.bodyText?.includes(code));
+}
+
+/** 200-600 ms jittered pause that ends early (without throwing) when the stage aborts. */
+function retryPause(signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const done = () => { clearTimeout(timer); signal.removeEventListener('abort', done); resolve(); };
+    const timer = setTimeout(done, 200 + Math.floor(Math.random() * 400));
+    signal.addEventListener('abort', done, { once: true });
+  });
+}
+
+/** Read once; a transient capacity refusal or 429/502/503 is retried exactly once after a jittered pause. */
+async function readEvidenceWithRetry(tool: string, args: Record<string, unknown>, signal: AbortSignal): Promise<unknown> {
+  const attempt = async (): Promise<{ result: unknown } | { failure: unknown }> => {
+    try {
+      return { result: JSON.parse(await callRegionalEvidenceTool(tool, args, signal)) as unknown };
+    } catch (error) {
+      if (isTransientHttpFailure(error)) return { failure: error };
+      throw error;
+    }
+  };
+  let outcome = await attempt();
+  if ('failure' in outcome || isTransientRefusal(outcome.result)) {
+    await retryPause(signal);
+    if (!signal.aborted) outcome = await attempt();
+  }
+  if ('failure' in outcome) throw outcome.failure;
+  return outcome.result;
+}
+
 /** Run the evidence graph before synthesis; see services/AGENTS.md for budgets and transfer limits. */
 export async function prepareRegionalAnalysis(
   payload: RegionalContextPayload,
@@ -627,7 +875,7 @@ export async function prepareRegionalAnalysis(
     stages: REGIONAL_ANALYSIS_STAGES.map(([id, label]) => ({ id, label, status: 'unavailable' })),
     toolCalls: [],
     limitations: [
-      'History pages sample the entire requested window. Sampling, omitted days and continuation must be reported; samples do not establish a continuous trend or seasonal baseline.',
+      'History pages sample the trailing requested window, which never extends past today. Sampling, omitted days and continuation must be reported; samples do not establish a continuous trend or seasonal baseline. Unchecked dates remain unknown, and no returned records is not evidence of environmental absence.',
       'Missing land-use, livestock, terrain, fuel and amendment-quality measurements remain feasibility checks, not assumed site facts.',
     ],
   };
@@ -653,33 +901,37 @@ export async function prepareRegionalAnalysis(
     let next = 0;
     const entries: AuditCall[] = [];
     try {
-      await Promise.all(Array.from({ length: 3 }, async () => {
+      await Promise.all(Array.from({ length: STAGE_CONCURRENCY }, async () => {
         while (next < requests.length) {
           const request = requests[next++];
           const id = `${stage}-${next}`;
           const base = { ...regionalEvidenceAuditCall(id, stage, request.tool, request.args, { error: 'read_not_executed' }),
             ...(request.source ? { source: request.source } : {}) };
+          const note = (audit: AuditCall, result: unknown = null, noRenderableFacts = false) => {
+            if (request.source) laneNotes.set(request.source, [...laneNotes.get(request.source) ?? [], regionalLaneReadNote(audit, result, noRenderableFacts)]);
+          };
           if (controller.signal.aborted || !tools.has(request.tool)) {
-            entries.push({ ...base, status: 'not_queried', reason: controller.signal.aborted ? 'The reserved stage time budget was exhausted.' : 'The deployed catalogue does not expose this reader.' });
+            const skipped: AuditCall = { ...base, status: 'not_queried', reason: controller.signal.aborted ? 'The reserved stage time budget was exhausted.' : 'The deployed catalogue does not expose this reader.' };
+            entries.push(skipped);
+            note(skipped);
             continue;
           }
           try {
-            const raw = await callRegionalEvidenceTool(request.tool, request.args, controller.signal);
-            const result: unknown = JSON.parse(raw);
+            const result = await readEvidenceWithRetry(request.tool, request.args, controller.signal);
             const audit = { ...regionalEvidenceAuditCall(id, stage, request.tool, request.args, result), ...(request.source ? { source: request.source } : {}) };
             entries.push(audit);
-            evidence.limitations.push(...regionalEvidenceLimitations(audit, result).slice(0, Math.max(0, 35 - evidence.limitations.length)));
+            if (audit.staticLayer && request.source) staticSources.add(request.source);
             const readFacts = regionalFactsForRead(audit, result);
             measurementFacts.facts.push(...readFacts.facts);
             measurementFacts.omittedFacts += readFacts.omittedFacts;
             siteFactObservations.push(...siteFactObservationsForRead(audit, result));
-            if (audit.status === 'observed' && readFacts.facts.length === 0 && evidence.limitations.length < 35) {
-              evidence.limitations.push(`${audit.source ?? request.tool} [${id}]: returned records contained no renderable measurement facts; inspect the raw source before making a measured-condition claim.`);
-            }
+            note(audit, result, audit.status === 'observed' && readFacts.facts.length === 0);
             results.push({ id, evidenceReadId: id, evidenceSource: audit.source, evidenceStatus: audit.status, result: boundedEvidence(result) });
           } catch (error) {
             if (signal?.aborted) throw error;
-            entries.push({ ...base, status: 'error', reason: controller.signal.aborted ? 'The evidence read exceeded its reserved stage deadline.' : 'The environmental tool read failed.' });
+            const failed: AuditCall = { ...base, status: 'error', reason: controller.signal.aborted ? 'The evidence read exceeded its reserved stage deadline.' : 'The environmental tool read failed.' };
+            entries.push(failed);
+            note(failed);
           }
         }
       }));
@@ -696,19 +948,25 @@ export async function prepareRegionalAnalysis(
     ...temporal.readings.map((row) => regionalSurfaceName(row.layer)),
     ...Object.keys(temporal.analysisSelection?.layerDays ?? {}).map(regionalSurfaceName),
   ];
-  const surfaces = [...new Set([...selectedSurfaces, ...REGIONAL_ANALYSIS_PRIORITY_SURFACES])]
-    .filter((source) => catalogue.surfaces.includes(source)).slice(0, 6);
+  const surfaces = regionalInitialSurfaces(selectedSurfaces, catalogue.surfaces);
+  const laneNotes = new Map<string, RegionalLaneReadNote[]>();
+  const staticSources = new Set(surfaces.filter(isRegionalStaticSurface));
   await runStage('local', surfaces.map((source) => ({
     source,
     tool: 'surface_evidence_for_selection',
     args: regionalSelectionArguments(payload, temporal, source, false),
   })), 12_000);
-  await runStage('temporal', surfaces.map((source) => ({
+  // Static layers (declared, or marked static by their local read) have no date axis: no history pass.
+  await runStage('temporal', surfaces.filter((source) => !staticSources.has(source)).map((source) => ({
     source, tool: 'surface_evidence_for_selection', args: regionalSelectionArguments(payload, temporal, source),
   })), 15_000);
+  for (const source of surfaces) {
+    const line = regionalLaneLimitation(source, laneNotes.get(source) ?? []);
+    if (line && evidence.limitations.length < 35) evidence.limitations.push(line);
+  }
   evidence.stages[3].status = 'partial';
   evidence.limitations.push('Strategy screening identifies evidence requirements; it does not validate suitability, rank causal benefits, or establish a treatment rate.');
-  evidence.limitations.push('All catalogue layers remain queryable, including hidden layers. Initial reads prioritize six selected or environmental context layers; use additional reads for other relevant layers and history continuation.');
+  evidence.limitations.push('All catalogue layers remain queryable, including hidden layers. Initial reads cover every theme (fire, drought, weather, water, soil, vegetation, climate) plus up to four selected layers; use additional reads for other relevant layers and history continuation.');
   if (temporal.viewedDates.length > 1) evidence.limitations.push('This is a mixed-time comparison. Each selected layer retains its own day; unselected layers inherit the latest selected comparison day.');
   return {
     catalogue, evidence, measurementFacts, siteFactObservations,

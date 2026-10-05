@@ -31,7 +31,8 @@ interface Candidate {
 const FACTS_PER_READ = 10;
 const STATEMENT_LENGTH = 500;
 const RECORD_COLLECTIONS = new Set(["features", "rows", "records"]);
-const RECORD_STATES = new Set(["published", "observed", "detail", "aggregate", "ready", "ok", "current"]);
+/** `published_nearest`: the agri reader served the closest published day; its served_day names it. */
+const RECORD_STATES = new Set(["published", "published_nearest", "observed", "detail", "aggregate", "ready", "ok", "current"]);
 /** A SoilGrids model estimate is never a measurement fact; see soil/AGENTS.md §measurement-facts. */
 const MODEL_ESTIMATE_BASIS = "model_estimate";
 const METADATA_FIELDS = new Set([
