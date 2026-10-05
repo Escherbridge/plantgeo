@@ -23,7 +23,14 @@ from typing import TYPE_CHECKING, Annotated, Any, Final, Literal
 from anthropic import beta_async_tool
 from pydantic import Field
 
-from agri_data_service.agent import parquet_reads, site_brief, soil_properties, strategy_knowledge, warehouse
+from agri_data_service.agent import (
+    parquet_reads,
+    site_brief,
+    soil_properties,
+    strategy_knowledge,
+    warehouse,
+    window_distribution,
+)
 from agri_data_service.agent.selection_evidence import catalogue, parse_selection, retrieve
 from agri_data_service.agent.surfaces import (
     AGENT_SURFACE_NAMES,
@@ -1787,6 +1794,24 @@ async def query_surface_evidence_for_selection(  # noqa: PLR0913 - public select
     return _payload(result)
 
 
+async def query_distribution_at_point(  # noqa: PLR0913 - public window contract
+    surface_name: str,
+    longitude: float,
+    latitude: float,
+    range_start: str,
+    range_end: str,
+    zoom: float = window_distribution.DEFAULT_ZOOM,
+) -> str:
+    """Summarise each lane's per-day values at a point over a window; agent/AGENTS.md "Window distribution"."""
+    result = await window_distribution.distribution(surface_name, longitude, latitude, range_start, range_end, zoom)
+    _record(
+        "distribution_at_point",
+        sum(int(lane.get("days_with_data") or 0) for lane in result.get("lanes", [])),
+        {"surface_name": surface_name, "range_start": range_start, "range_end": range_end},
+    )
+    return _payload(result)
+
+
 @beta_async_tool
 async def list_environmental_layers() -> str:
     """Discover every map layer and its numeric evidence reader, including climate, vegetation, VPD,
@@ -1837,6 +1862,32 @@ async def surface_evidence_for_selection(  # noqa: PLR0913 - public selection co
         zoom,
         page_start,
     )
+
+
+@beta_async_tool
+async def distribution_at_point(  # noqa: PLR0913 - published bounded tool schema
+    surface_name: str,
+    longitude: float,
+    latitude: float,
+    range_start: str,
+    range_end: str,
+    zoom: float = window_distribution.DEFAULT_ZOOM,
+) -> str:
+    """Summarise a layer's daily values at a point over a calendar window: min, p10, median, p90, max, mean.
+
+    Per lane: the point's own cell, else the nearest cell across the window (with distance_km).
+    Days without data are excluded, never zero-filled; days_with_data says how many counted.
+    Static layers answer static_not_applicable. range_end is clamped to today; at most 366 days.
+
+    Args:
+        surface_name: Exact catalogue name, as for surface_evidence_for_selection.
+        longitude: WGS84 selected longitude.
+        latitude: WGS84 selected latitude.
+        range_start: Inclusive window start, ISO YYYY-MM-DD; by default 29 days before range_end.
+        range_end: Inclusive window end, ISO YYYY-MM-DD; use the caller's selected day.
+        zoom: Selected map zoom 0 to 22; picks the map's serving rung.
+    """
+    return await query_distribution_at_point(surface_name, longitude, latitude, range_start, range_end, zoom)
 
 
 # --- Strategy knowledge (literature) -----------------------------------------------
@@ -2026,9 +2077,11 @@ async def search_strategy_research_findings(  # noqa: PLR0913 - the parameter li
 
 #: drought/fire history re-published 2026-10-04 (owner decision 6): no enum arrays, so no Gemini
 #: forced-call "too many states" cost; agent/AGENTS.md "Closest-datapoint reads (2026-10-04)".
+#: distribution_at_point: six plain parameters; agent/AGENTS.md "Window distribution (2026-10-04)".
 WAREHOUSE_TOOLS: Final = (
     list_environmental_layers,
     surface_evidence_for_selection,
+    distribution_at_point,
     soil_properties_at_point,
     observation_coverage_on_day,
     observation_temporal_neighbors,

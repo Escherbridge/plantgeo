@@ -40,6 +40,9 @@ def tool_call_fields(
         entry = lane.get("selected")
         if isinstance(entry, dict):
             selected.append(entry)
+        elif "state" in lane:
+            # A flat lane entry (`distribution_at_point`) carries its own state and spatial fields.
+            selected.append(lane)
     lane_states = [str(entry.get("state")) for entry in selected]
     offsets = [entry["day_offset"] for entry in selected if isinstance(entry.get("day_offset"), int)]
     distances = [float(entry["distance_km"]) for entry in selected if isinstance(entry.get("distance_km"), int | float)]
@@ -50,14 +53,16 @@ def tool_call_fields(
         or result.get("error")
         or next((entry.get("refusal_code") for entry in selected if entry.get("refusal_code")), None)
     )
-    surface = result.get("surface_name") or arguments.get("surface_name")
+    surface = result.get("surface_name") or result.get("surface") or arguments.get("surface_name")
     history = result.get("history")
     reads = history.get("lane_day_reads") if isinstance(history, dict) else None
     return {
         "tool": name,
         "surface": surface if isinstance(surface, str) else None,
-        "lanes": [str(lane.get("parquet_lane")) for lane in lanes],
+        "lanes": list(dict.fromkeys(str(lane.get("parquet_lane")) for lane in lanes)),
         "requested_day": result.get("requested_day") or arguments.get("day") or arguments.get("as_of_day"),
+        "range_start": result.get("range_start") or arguments.get("range_start"),
+        "range_end": result.get("range_end") or arguments.get("range_end"),
         "served_day": served.pop() if len(served) == 1 else None,
         "day_offset": max(offsets, key=abs) if offsets else None,
         "spatial_relation": "nearest_cell" if "nearest_cell" in relations else relations.pop() if relations else None,

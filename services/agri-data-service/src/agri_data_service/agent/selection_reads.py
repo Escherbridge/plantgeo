@@ -49,12 +49,16 @@ if TYPE_CHECKING:
     from agri_data_service.parquet_ops.wire import DayEnvelope
 
 
-def point_selection_statement(support: PointSupport, *, exposed: bool) -> str:
-    """Select every support intersecting the tile, preferring the support containing the click."""
+def point_support_ctes(support: PointSupport, *, exposed: bool) -> str:
+    """The `limits` and `supports` CTEs: every positioned row with its map-lattice support corner.
+
+    Parameters, in order: lattice size, phase, correction; tile west, south, east, north; probe
+    longitude, latitude; then the part-file list. Shared by the tile selection and the window
+    distribution (`window_distribution.py`), so both place a row in the SAME lattice cell.
+    """
     longitude, latitude = f'"{support.longitude_column}"', f'"{support.latitude_column}"'
     exposure = "AND allowed_client_exposure IS TRUE" if exposed else ""
-    return f"""-- agent_selection_point_rows
-WITH limits AS (
+    return f"""limits AS (
     SELECT ?::DOUBLE AS size, ?::DOUBLE AS phase, ?::DOUBLE AS correction,
            ?::DOUBLE AS west, ?::DOUBLE AS south, ?::DOUBLE AS east, ?::DOUBLE AS north,
            ?::DOUBLE AS probe_longitude, ?::DOUBLE AS probe_latitude
@@ -67,7 +71,14 @@ WITH limits AS (
         size, west, south, east, north, probe_longitude, probe_latitude
     FROM read_parquet(?, union_by_name=true, hive_partitioning=false, filename=true) AS data CROSS JOIN limits
     WHERE {longitude} IS NOT NULL AND {latitude} IS NOT NULL {exposure}
-), selected AS (
+)"""
+
+
+def point_selection_statement(support: PointSupport, *, exposed: bool) -> str:
+    """Select every support intersecting the tile, preferring the support containing the click."""
+    longitude, latitude = f'"{support.longitude_column}"', f'"{support.latitude_column}"'
+    return f"""-- agent_selection_point_rows
+WITH {point_support_ctes(support, exposed=exposed)}, selected AS (
     SELECT * EXCLUDE (size, west, south, east, north, probe_longitude, probe_latitude),
         support_west + size AS support_east, support_south + size AS support_north,
         {longitude} AS centroid_longitude, {latitude} AS centroid_latitude,
@@ -147,68 +158,14 @@ class SelectionReader:
 
     def read_rows(self, read: RowRead) -> RowReadResult:
         """Verify authorized bytes, select support in the tile, and add the nearest support when none covers."""
-        selected = self.selection
         support = spatial_support(read.scope.layer, read.scope.kind)
         cap = min(MAX_FEATURES, read.row_budget)
         cache_key = (read.keys, self.nearest_search)
         if cache_key in self.cached_rows:
             return self.cached_rows[cache_key]
-        lattice = support_lattice(self.surface, selected.tier)
         with verified_serving_session(self.listing, self.session, read.keys) as verified:
             uris = [verified.object_uri(key) for key in read.keys]
-            required: tuple[str, ...]
-            parameters: Callable[[Box, int], list[object]]
-            if isinstance(support, PointSupport):
-                required = (support.longitude_column, support.latitude_column)
-                exposed = "allowed_client_exposure" in get_stream_schema(read.scope.layer, "observed").column_names
-                statement = point_selection_statement(support, exposed=exposed)
-                distance_basis = "source_coordinate"
-
-                def parameters(box: Box, limit: int) -> list[object]:
-                    return [*lattice, *box, selected.longitude, selected.latitude, uris, limit]
-
-            elif isinstance(support, GeometrySupport):
-                required = (support.geometry_column,)
-                statement = geometry_selection_statement(support)
-                distance_basis = "geometry_centroid"
-
-                def parameters(box: Box, limit: int) -> list[object]:
-                    return [
-                        uris,
-                        selected.latitude,
-                        selected.longitude,
-                        selected.longitude,
-                        selected.latitude,
-                        *box,
-                        limit,
-                    ]
-
-            else:
-                raise faults.bbox_unsupported(layer=read.scope.layer, reason=support.reason)
-            self._require_columns(verified, uris, required, read.scope.layer)
-            point_lattice = isinstance(support, PointSupport)
-
-            def select(box: Box, limit: int) -> list[dict[str, Any]]:
-                cursor = verified.connection.execute(statement, parameters(box, limit))
-                columns = [entry[0] for entry in cursor.description or ()]
-                found = [dict(zip(columns, values, strict=True)) for values in cursor.fetchall()]
-                for row in found:
-                    row["distance_basis"] = distance_basis
-                    self._measure(row, point_lattice=point_lattice, size=lattice[0])
-                return found
-
-            rows = select(selected.bbox.as_envelope_arguments, cap + 1)
-            if self.nearest_search and not any(row.get("covers_probe_point") is True for row in rows):
-                # A station lane (point support, no lattice) never "covers" a point: its nearest
-                # station IS the answer, found by one bounded query rather than six expanding boxes.
-                nearest = (
-                    self._nearest_station(select)
-                    if point_lattice and lattice[0] == 0
-                    else self._nearest_cell(select, start_degrees=max(lattice[0], self._tile_half_span()))
-                )
-                if nearest is not None:
-                    nearest["nearest_cell"] = True
-                    rows = [nearest, *(row for row in rows if _cell_identity(row) != _cell_identity(nearest))]
+            rows = self.select_support(verified, read.scope.layer, read.scope.kind, uris, limit=cap + 1)
             key_of_uri = dict(zip(uris, read.keys, strict=True))
             unpositioned = 0
             if isinstance(support, PointSupport) and support.nullable:
@@ -226,6 +183,72 @@ class SelectionReader:
         )
         self.cached_rows[cache_key] = result
         return result
+
+    def select_support(
+        self, verified: ServingSession, layer: str, kind: PartitionKind, uris: list[str], *, limit: int
+    ) -> list[dict[str, Any]]:
+        """Support in the tile, covering first, led by the nearest support when none covers and the search is on.
+
+        Runs on an ALREADY-verified session over any part list: one day's parts here, a whole window's
+        in `window_distribution.py`, which is how one nearest search answers every day of a window.
+        """
+        selected = self.selection
+        support = spatial_support(layer, kind)
+        lattice = support_lattice(self.surface, selected.tier)
+        required: tuple[str, ...]
+        parameters: Callable[[Box, int], list[object]]
+        if isinstance(support, PointSupport):
+            required = (support.longitude_column, support.latitude_column)
+            exposed = "allowed_client_exposure" in get_stream_schema(layer, "observed").column_names
+            statement = point_selection_statement(support, exposed=exposed)
+            distance_basis = "source_coordinate"
+
+            def parameters(box: Box, limit: int) -> list[object]:
+                return [*lattice, *box, selected.longitude, selected.latitude, uris, limit]
+
+        elif isinstance(support, GeometrySupport):
+            required = (support.geometry_column,)
+            statement = geometry_selection_statement(support)
+            distance_basis = "geometry_centroid"
+
+            def parameters(box: Box, limit: int) -> list[object]:
+                return [
+                    uris,
+                    selected.latitude,
+                    selected.longitude,
+                    selected.longitude,
+                    selected.latitude,
+                    *box,
+                    limit,
+                ]
+
+        else:
+            raise faults.bbox_unsupported(layer=layer, reason=support.reason)
+        self._require_columns(verified, uris, required, layer)
+        point_lattice = isinstance(support, PointSupport)
+
+        def select(box: Box, limit: int) -> list[dict[str, Any]]:
+            cursor = verified.connection.execute(statement, parameters(box, limit))
+            columns = [entry[0] for entry in cursor.description or ()]
+            found = [dict(zip(columns, values, strict=True)) for values in cursor.fetchall()]
+            for row in found:
+                row["distance_basis"] = distance_basis
+                self._measure(row, point_lattice=point_lattice, size=lattice[0])
+            return found
+
+        rows = select(selected.bbox.as_envelope_arguments, limit)
+        if self.nearest_search and not any(row.get("covers_probe_point") is True for row in rows):
+            # A station lane (point support, no lattice) never "covers" a point: its nearest
+            # station IS the answer, found by one bounded query rather than six expanding boxes.
+            nearest = (
+                self._nearest_station(select)
+                if point_lattice and lattice[0] == 0
+                else self._nearest_cell(select, start_degrees=max(lattice[0], self._tile_half_span()))
+            )
+            if nearest is not None:
+                nearest["nearest_cell"] = True
+                rows = [nearest, *(row for row in rows if _cell_identity(row) != _cell_identity(nearest))]
+        return rows
 
     def _tile_half_span(self) -> float:
         """Half the selection tile's widest span, so the first nearest-cell box already holds the tile."""
@@ -312,7 +335,7 @@ _RESERVED_FEATURE_KEYS: Final = frozenset(
 )
 
 
-def _nearest_relation(lane: str) -> str:
+def nearest_relation(lane: str) -> str:
     """`nearest_area_outside` for a sparse-area lane (outside every area is the answer), else `nearest_cell`."""
     return "nearest_area_outside" if lane in SPARSE_AREA_LANES else "nearest_cell"
 
@@ -321,7 +344,7 @@ def _spatial_relation(row: dict[str, Any], lane: str) -> str:
     if row.get("covers_probe_point") is True:
         return "contains_selection"
     if row.get("nearest_cell") is True:
-        return _nearest_relation(lane)
+        return nearest_relation(lane)
     return "intersects_selection_tile"
 
 
@@ -365,7 +388,7 @@ def spatial_summary(features: list[dict[str, Any]], lane: str) -> dict[str, Any]
     searched = {"nearest_cell", "nearest_area_outside"}
     nearest = min(measured, key=lambda entry: (entry["spatial_relation"] not in searched, entry["distance_km"]))
     return {
-        "spatial_relation": _nearest_relation(lane),
+        "spatial_relation": nearest_relation(lane),
         "distance_km": nearest["distance_km"],
         "distance_km_basis": nearest["distance_km_basis"],
     }

@@ -464,6 +464,76 @@ falls back to feature-level fields for older readers. Feature-level `spatial_rel
 `contains_selection`/`intersects_selection_tile` and adds `nearest_cell`/`nearest_area_outside`;
 each feature also carries `distance_km`/`distance_km_basis`.
 
+## Window distribution (2026-10-04)
+
+Owner intent: "maybe we allow for selecting a 30 day window and query to return a distribution".
+`distribution_at_point` (`window_distribution.py`, published in `WAREHOUSE_TOOLS` and callable through
+`POST /api/v1/agent-tools/call`) summarises one surface's lanes at a point over an inclusive window.
+The web's layer-row chip picks the window (presets 7/30/90/365 days; default the trailing 30 days
+ending at the selected day). The tool takes the window explicitly and never invents one.
+
+**Window.** `range_start`/`range_end` are required. A reversed range or one longer than
+`MAX_WINDOW_DAYS = 366` calendar days is refused (`invalid_window`, `lanes: []`). `range_end` is
+clamped to UTC today, because every lane read here is `observed`. The result echoes the clamped
+`range_end`, `requested_range_end` and `range_end_clamped`. A window that lies wholly after today is
+refused. `days_in_window` counts the clamped window's calendar days.
+
+**One aggregation per lane.** `serving.resolve_window` classifies every day, which is the same
+four-state rule the slider's window route uses, and it refuses a `conflict`/`incomplete` day. Its
+row read is a capturing reader (`_WindowPlan`), so the published days' part list is recorded and no
+rows are loaded. Inside ONE verified session, `SelectionReader.select_support` runs the map's
+selection SQL over EVERY window part at once. It finds the covering support or, when none covers,
+the nearest one (the expanding-box or station search, run once per window and never once per day).
+Then ONE `distribution_statement` runs. Its `target` CTE holds the chosen support's rows. Each
+measure's rows collapse to one value per partition day: `avg` for intensive values and `sum` for
+counts, the same rule as the lane's coarse-rung `ColumnAggregation`, so a station's three readings on
+one day count as one day. The statement then returns `quantile_cont` p10/median/p90,
+min/max/avg and `count(DISTINCT day)`. Point lanes match the chosen lattice corner, so they use the
+same `support_west`/`support_south` expression as the tile query (`point_support_ctes`). Polygon
+lanes match exact containment (`ST_Intersects`). Days without data are excluded, never zero-filled.
+A DuckDB fault becomes `read_over_budget`, and that lane is reported `refused`.
+
+**States per entry.** `published` (stats, or a sparse lane's `nearest_area_outside` with `stats:
+null`), `no_data_in_window`, `static_not_applicable` (no read at all), `refused` (`refusal_code`:
+`release_lane_not_distributed` for as-of release lanes such as crop-cover and burn-severity, because one
+release answers the whole window; `no_window_measure`; or any serving refusal). Additive fields:
+`day_states` (the four-state day counts) and `governed_absence_as_value`.
+
+**Measures (`WINDOW_MEASURES`, curated).** Which column is the value at a point, per dated lane:
+
+| lanes | value column | label | per-day | governed absence |
+|---|---|---|---|---|
+| climate/soil signal lanes | `normalized_value` | the row's `signal_name`/`normalized_unit`; no-data fallback from `CLIMATE_FIELD_PRODUCT_BY_STREAM`/`SOIL_FIELD_PRODUCT_BY_STREAM` | avg | excluded: the marker records fill/null source values, so it is not a measurement |
+| vegetation | `metric_value` | `metric_name`/`metric_unit` (ndvi, unitless) | avg | excluded: no usable Sentinel-2 reading |
+| fire-detections | `detection_count` | fire_detection_count, count | sum | **0**: FIRMS answered with zero records (`fire_detections/adapter.py`) |
+| sensors | `value` | grouped by `measurement_name`/`unit_code` | avg | excluded |
+| water-gauges(-daily) | `flow_cfs` | streamflow, ft^3/s | avg | excluded |
+| weather-observations | four columns, four entries | air_temperature C, relative_humidity %, wind_speed m/s, precipitation mm | avg | excluded |
+| drought | `dm_category` | drought_category, usdm_class (highest class covering the point) | max | excluded: "no release this Tuesday" |
+
+A lane whose rows carry their own label can return more than one entry with the same
+`parquet_lane`; weather-observations always returns four. `test_every_dated_lane_has_a_window_measure_and_
+geometry_measures_are_sparse_areas` keeps the table complete. The only geometry measure is drought, a
+sparse-area lane: a tiling polygon's nearest polygon has no identity that persists across days.
+
+**Caveats, recorded on purpose.** (1) Fire-detections writes rows only for cells with detections.
+On a published day, a missing row at the chosen cell is EXCLUDED, not counted as zero. Only a
+governed-absence day (region-wide zero) counts as 0. With no rows in the window, the counted absences
+report `covers`/`0.0 km`, because a region-wide zero covers the point. (2) Drought counts only release
+days on which an area covers the point. A release that leaves the point outside every area is "no
+drought class", not a numeric class, so it is excluded. If no release covers the point, the lane is
+`nearest_area_outside` with no stats. (3) Station identity is the reported coordinate, so a station
+whose position jitters splits across days. (4) Latency: a 365-day window verifies up to 365 days of
+parts in one session, which is the cost to watch against `TOOL_TIMEOUT_SECONDS` in the
+`agent_tool_call` log (`duration_ms`).
+
+**Log.** The bridge emits the ordinary `agent_tool_call` event. `tool_call_log.py` reads flat lane
+entries (no `selected`), deduplicates `lanes`, and adds `range_start`/`range_end` for every tool.
+
+**Gemini budget.** Six plain parameters (no enum, no bound). The current-catalogue fixture is
+regenerated. The agri catalogue grows from 66/149/60 to 72/149/60 (raw, before the web's Gemini
+projection). The web round-1 total goes from 100/84/30 to 106/84/30, against the accepted 112/208/102.
+
 ## Live regional agent tool bridge (2026-09-12)
 
 The existing Next.js regional agent now reads the tool registry and executes environmental
@@ -518,7 +588,8 @@ and disclose when their data is current-only or cannot answer that day.
 
 The retired generic agent tool vocabulary and its deletion evidence are recorded in
 `conductor/tracks/repository_conformity_hardening_20260901/signal-tool-retirement.md`.
-The single `WAREHOUSE_TOOLS` registry exposes catalogue discovery, selection evidence, metadata,
+The single `WAREHOUSE_TOOLS` registry exposes catalogue discovery, selection evidence, the window
+distribution (`distribution_at_point`, 2026-10-04), metadata,
 the drought and fire history summaries (re-published 2026-10-04), the caller-scoped species lookup,
 and the three strategy-knowledge literature tools (herbaria evidence was retired 2026-10-03; see
 "Herbaria surfaces are retired").

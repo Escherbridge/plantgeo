@@ -83,6 +83,57 @@
   {
     "type": "function",
     "function": {
+      "name": "distribution_at_point",
+      "description": "Summarise a layer's daily values at a point over a calendar window: min, p10, median, p90, max, mean.\n\nPer lane: the point's own cell, else the nearest cell across the window (with distance_km).\nDays without data are excluded, never zero-filled; days_with_data says how many counted.\nStatic layers answer static_not_applicable. range_end is clamped to today; at most 366 days.",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "surface_name": {
+            "description": "Exact catalogue name, as for surface_evidence_for_selection.",
+            "title": "Surface Name",
+            "type": "string"
+          },
+          "longitude": {
+            "description": "WGS84 selected longitude.",
+            "title": "Longitude",
+            "type": "number"
+          },
+          "latitude": {
+            "description": "WGS84 selected latitude.",
+            "title": "Latitude",
+            "type": "number"
+          },
+          "range_start": {
+            "description": "Inclusive window start, ISO YYYY-MM-DD; by default 29 days before range_end.",
+            "title": "Range Start",
+            "type": "string"
+          },
+          "range_end": {
+            "description": "Inclusive window end, ISO YYYY-MM-DD; use the caller's selected day.",
+            "title": "Range End",
+            "type": "string"
+          },
+          "zoom": {
+            "default": 13.0,
+            "description": "Selected map zoom 0 to 22; picks the map's serving rung.",
+            "title": "Zoom",
+            "type": "number"
+          }
+        },
+        "required": [
+          "surface_name",
+          "longitude",
+          "latitude",
+          "range_start",
+          "range_end"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "soil_properties_at_point",
       "description": "Read SoilGrids v2.0 soil property MODEL ESTIMATES at a point: pH, organic carbon, texture and more.\n\nReturns the nearest ~500 m lattice cell centre within radius_meters (50-2000, default 1000; at the\ndefault, when none lies within 1000 m, the nearest within 2000 m, its distance in the label): ten\nproperties at 0-5, 5-15 and 15-30 cm in physical units, plus a thickness-weighted 0-30 cm topsoil with\nUSDA texture class, reaction class and organic-carbon band. Every value is a 250 m machine-learning\nmodel estimate, NOT a measurement or soil sample: repeat its label whenever you cite it. A state of\n\"unavailable\" carries a reason and says nothing about the soil itself.",
       "parameters": {
