@@ -68,7 +68,9 @@ class WindowMeasure:
     #: The lane's own per-row label and unit columns, when it writes them; the SQL groups by them.
     name_column: str | None = None
     unit_column: str | None = None
-    #: The measured value a `governed_absence` day contributes, or None when an absence is not a value.
+    #: The value every ANSWERED day with no row at the point contributes -- a governed absence or a
+    #: published day whose rows are all elsewhere -- or None when only rows are values. A lane that
+    #: sets it is read at the point's own support only, never at a nearest one (fire-detections).
     absence_value: float | None = None
 
 
@@ -84,7 +86,8 @@ _WATER_GAUGE_FLOW: Final = (WindowMeasure("flow_cfs", "streamflow", "ft^3/s", "a
 
 #: Curated, like `SPARSE_AREA_LANES`: which column of each dated lane IS the value at a point. A
 #: dated lane missing here is refused (`no_window_measure`); `test_every_dated_lane_has_a_window_measure`
-#: pins the catalogue. Only fire-detections' absence is a measured zero (FIRMS answered, zero records).
+#: pins the catalogue. Only fire-detections' absence is a measured zero: FIRMS answered, and no
+#: detection fell in the point's cell, whether the day was a governed absence or a published day.
 WINDOW_MEASURES: Final[Mapping[str, tuple[WindowMeasure, ...]]] = MappingProxyType(
     {
         **{
@@ -180,9 +183,16 @@ def _literal(text: str | None) -> str:
 
 
 def _measure_branches(measures: Sequence[WindowMeasure], *, from_rows: bool) -> list[str]:
-    """One `(measure_index, signal_name, unit, day, value)` branch per measure, plus one per counted absence."""
+    """One `(measure_index, signal_name, unit, day, value)` branch per measure.
+
+    A measure with an `absence_value` reads every answered day instead: the point's own value where
+    it has rows that day, else the absence value (the zero-fill join below).
+    """
     branches: list[str] = []
     for index, measure in enumerate(measures):
+        if measure.absence_value is not None:
+            branches.append(_answered_day_branch(index, measure, from_rows=from_rows))
+            continue
         if from_rows:
             value = f'CAST("{measure.value_column}" AS DOUBLE)'
             name = (
@@ -200,26 +210,41 @@ def _measure_branches(measures: Sequence[WindowMeasure], *, from_rows: bool) -> 
                 f"{measure.day_reducer}({value}) AS value "
                 f"FROM target JOIN days USING (filename) WHERE {value} IS NOT NULL AND isfinite({value}) GROUP BY ALL"
             )
-        if measure.absence_value is not None:
-            absence_value = repr(float(measure.absence_value))
-            branches.append(
-                f"SELECT {index} AS measure_index, {_literal(measure.signal_name)} AS signal_name, "
-                f"{_literal(measure.unit)} AS unit, absent.day AS day, {absence_value}::DOUBLE AS value FROM absent"
-            )
     return branches
+
+
+def _answered_day_branch(index: int, measure: WindowMeasure, *, from_rows: bool) -> str:
+    """Every answered day once: the day's reduced value at the point, else `absence_value` (a measured zero)."""
+    if measure.name_column is not None or measure.unit_column is not None:
+        raise ValueError("an absence-valued measure carries one fixed label; it cannot group by row labels")
+    absence_value = f"{float(measure.absence_value or 0.0)!r}::DOUBLE"
+    head = (
+        f"SELECT {index} AS measure_index, {_literal(measure.signal_name)} AS signal_name, "
+        f"{_literal(measure.unit)} AS unit, answered.day AS day, "
+    )
+    if not from_rows:
+        return head + f"{absence_value} AS value FROM answered"
+    value = f'CAST("{measure.value_column}" AS DOUBLE)'
+    return (
+        head + f"coalesce(at_point.value, {absence_value}) AS value FROM answered LEFT JOIN ("
+        f"SELECT days.day AS day, {measure.day_reducer}({value}) AS value FROM target JOIN days USING (filename) "
+        f"WHERE {value} IS NOT NULL AND isfinite({value}) GROUP BY days.day"
+        ") AS at_point ON at_point.day = answered.day"
+    )
 
 
 def distribution_statement(target_ctes: str | None, measures: Sequence[WindowMeasure]) -> str:
     """ONE aggregation over every per-day value at the point: quantile_cont p10/median/p90, min/max/avg, days.
 
     `target_ctes` defines `target` (the chosen support's rows, with `filename`); None aggregates the
-    counted governed absences alone. Parameters after the target's: part filenames, their days, absent days.
+    answered days alone. Parameters after the target's: part filenames, their days, then the answered
+    days an absence-valued measure counts (empty for every other lane).
     """
     ctes = []
     if target_ctes is not None:
         ctes.append(target_ctes)
         ctes.append("days AS (SELECT unnest(?::VARCHAR[]) AS filename, unnest(?::DATE[]) AS day)")
-    ctes.append("absent AS (SELECT unnest(?::DATE[]) AS day)")
+    ctes.append("answered AS (SELECT unnest(?::DATE[]) AS day)")
     branches = _measure_branches(measures, from_rows=target_ctes is not None)
     ctes.append("day_values AS (\n    " + "\n    UNION ALL ".join(branches) + "\n)")
     return f"""-- agent_window_distribution
@@ -287,8 +312,8 @@ class _Spatial:
 
 
 _NO_SPATIAL: Final = {"spatial_relation": None, "distance_km": None, "distance_km_basis": None}
-#: A counted governed absence is region-wide ("FIRMS returned zero detections"), so it covers the point.
-_REGION_WIDE: Final = _Spatial("covers", 0.0, "covers")
+#: An absence-valued lane's zero is measured AT the point: nothing was detected in its own cell.
+_AT_THE_POINT: Final = _Spatial("covers", 0.0, "covers")
 
 
 def _window_spatial(supports: list[dict[str, Any]], lane: str) -> _Spatial | None:
@@ -328,20 +353,21 @@ def _aggregate(connection: Any, statement: str, parameters: list[object]) -> lis
 
 
 def _absence_only(
-    connection: Any, day_states: dict[str, int], measures: Sequence[WindowMeasure], absent: list[date]
+    connection: Any, day_states: dict[str, int], measures: Sequence[WindowMeasure], answered: list[date]
 ) -> _LaneAnswer:
-    """No row anywhere in the window: only the counted governed absences (region-wide zeros) answer."""
-    if not absent:
+    """No row at the point on any day: every answered day is the absence value there (fire: a measured 0)."""
+    if not answered:
         return _LaneAnswer(day_states, None)
     return _LaneAnswer(
-        day_states, _REGION_WIDE, _aggregate(connection, distribution_statement(None, measures), [absent])
+        day_states, _AT_THE_POINT, _aggregate(connection, distribution_statement(None, measures), [answered])
     )
 
 
-def _read_lane(session: ServingSession, surface: str, lane: str, window: DistributionWindow) -> _LaneAnswer:
+def _read_lane(
+    session: ServingSession, surface: str, lane: str, window: DistributionWindow, measures: Sequence[WindowMeasure]
+) -> _LaneAnswer:
     """Classify every window day through `resolve_window`, find the point's support once, aggregate once."""
     selection = window.selection
-    measures = WINDOW_MEASURES[lane]
     scope = ReadScope(layer=lane, kind=WINDOW_KIND, tier=selection.tier, bbox=selection.bbox)
     listing = warehouse.source().authorized_listing(scope)
     plan = _WindowPlan()
@@ -349,26 +375,35 @@ def _read_lane(session: ServingSession, surface: str, lane: str, window: Distrib
         listing, plan, scope=scope, first_day=window.first, last_day=window.last
     )
     day_states = dict(Counter(str(envelope.to_wire()["state"]) for envelope in envelopes))
+    # An absence-valued lane (fire-detections) counts every ANSWERED day -- published or governed
+    # absence -- at the point's own support, zero where it has no row; AGENTS.md "Window distribution".
     counts_absence = any(measure.absence_value is not None for measure in measures)
-    absent = [envelope.requested_day for envelope in envelopes if isinstance(envelope, GovernedAbsenceDay)]
-    absent = absent if counts_absence else []
+    answered = (
+        sorted(
+            {envelope.requested_day for envelope in envelopes if isinstance(envelope, GovernedAbsenceDay)}
+            | {day_of_part_key(key) for key in plan.keys}
+        )
+        if counts_absence
+        else []
+    )
     if not plan.keys:
-        return _absence_only(session.connection, day_states, measures, absent)
+        return _absence_only(session.connection, day_states, measures, answered)
     support = spatial_support(lane, WINDOW_KIND)
     with verified_serving_session(listing, session, plan.keys) as verified:
         uris = [verified.object_uri(key) for key in plan.keys]
         days = [day_of_part_key(key) for key in plan.keys]
         # ONE nearest search for the whole window: the selection SQL runs over every window part at once.
-        reader = SelectionReader(session, listing, selection, surface, nearest_search=True)
+        # An absence-valued lane never searches: a detection cell elsewhere is not a value here.
+        reader = SelectionReader(session, listing, selection, surface, nearest_search=not counts_absence)
         spatial = _window_spatial(
             reader.select_support(verified, lane, WINDOW_KIND, uris, limit=MAX_FEATURES + 1), lane
         )
-        if spatial is None:
-            return _absence_only(verified.connection, day_states, measures, absent)
+        if spatial is None or (counts_absence and spatial.relation != "covers"):
+            return _absence_only(verified.connection, day_states, measures, answered)
         if spatial.relation == "nearest_area_outside":
             # Outside every area is the answer, not a value: no statistics are computed.
             return _LaneAnswer(day_states, spatial)
-        tail: list[object] = [uris, days, absent]
+        tail: list[object] = [uris, days, answered]
         if isinstance(support, PointSupport) and spatial.corner is not None:
             exposed = "allowed_client_exposure" in get_stream_schema(lane, WINDOW_KIND).column_names
             statement = distribution_statement(_point_target(support, exposed=exposed), measures)
@@ -422,9 +457,10 @@ def _lane_entry(  # noqa: PLR0913 - one argument per wire field the caller decid
     }
 
 
-def _render_lane(lane: str, window: DistributionWindow, answer: _LaneAnswer) -> list[dict[str, Any]]:
+def _render_lane(
+    lane: str, window: DistributionWindow, answer: _LaneAnswer, measures: Sequence[WindowMeasure]
+) -> list[dict[str, Any]]:
     """One entry per measure (per label group when the lane labels its rows), in measure order."""
-    measures = WINDOW_MEASURES[lane]
     spatial = answer.spatial.to_wire() if answer.spatial is not None else dict(_NO_SPATIAL)
     absence_value = next((m.absence_value for m in measures if m.absence_value is not None), None)
     extra: dict[str, Any] = {"day_states": answer.day_states, "governed_absence_as_value": absence_value}
@@ -481,8 +517,14 @@ def _label_only(
     )
 
 
-async def lane_distribution(surface: str, lane: str, window: DistributionWindow) -> list[dict[str, Any]]:
-    """Every entry one lane contributes: per-measure statistics, or the single reason it has none."""
+async def lane_distribution(
+    surface: str, lane: str, window: DistributionWindow, measures: Sequence[WindowMeasure] | None = None
+) -> list[dict[str, Any]]:
+    """Every entry one lane contributes: per-measure statistics, or the single reason it has none.
+
+    `measures` narrows a lane to the ones a `signal_name` named; None reads every curated measure.
+    """
+    measures = WINDOW_MEASURES.get(lane, ()) if measures is None else measures
     mode = day_tolerance(lane).mode
     if mode == "static":
         return [_label_only(lane, window, "static_not_applicable", static=True)]
@@ -497,7 +539,7 @@ async def lane_distribution(surface: str, lane: str, window: DistributionWindow)
 
     def work(session: ServingSession) -> _LaneAnswer:
         try:
-            return _read_lane(session, surface, lane, window)
+            return _read_lane(session, surface, lane, window, measures)
         except duckdb.Error as error:
             raise faults.read_over_budget(operation="agent_distribution_at_point") from error
 
@@ -505,7 +547,7 @@ async def lane_distribution(surface: str, lane: str, window: DistributionWindow)
         answer = await warehouse.source().run(work, operation="agent_distribution_at_point")
     except faults.ServingRefusalError as error:
         return [_label_only(lane, window, "refused", refusal_code=error.code, message=error.message)]
-    return _render_lane(lane, window, answer)
+    return _render_lane(lane, window, answer, measures)
 
 
 # --- One surface -------------------------------------------------------------------------------
@@ -518,25 +560,54 @@ def refusal(code: str, message: str, **context: object) -> dict[str, Any]:
 
 NOTE: Final = (
     "stats summarise the per-day values at the point over the window: days without data are excluded, "
-    "never zero-filled, so read days_with_data against days_in_window. spatial_relation covers means the "
+    "never zero-filled, so read days_with_data against days_in_window. fire-detections is the exception: "
+    "it is read in the point's own cell only, and every published or governed-absence day with no "
+    "detection there counts as 0. spatial_relation covers means the "
     "point's own cell; nearest_cell means the nearest cell or station across the window, distance_km away: "
     "say so, never that it is the value here. nearest_area_outside means the point lies inside no area of "
     "this layer on any day (for drought, no drought area): that is the answer, and there are no stats. "
-    "governed_absence_as_value is the measured value a governed-absence day counted as (fire-detections: 0); "
-    "null means absences were excluded. range_end is clamped to today (UTC)."
+    "governed_absence_as_value is the value an answered day with no row at the point counted as "
+    "(fire-detections: 0); null means such days were excluded. range_end is clamped to today (UTC)."
 )
 
 
-async def distribution(  # noqa: PLR0913 - one argument per published tool parameter
+def lane_signal_names(lane: str) -> tuple[str, ...]:
+    """The labels a `signal_name` argument may name for one lane; a lane with no measure answers to its own name."""
+    return tuple(measure.signal_name for measure in WINDOW_MEASURES.get(lane, ())) or (lane,)
+
+
+def select_signal(
+    lanes: Sequence[str], signal_name: str | None
+) -> list[tuple[str, tuple[WindowMeasure, ...] | None]] | None:
+    """Each lane to read with the measures to read it with; None when `signal_name` names no lane's signal.
+
+    No `signal_name` reads every lane whole. A name reads only the lanes carrying it, narrowed to the
+    measure(s) with that label, so a multi-lane surface (air temperature mean/max/min) costs one read.
+    """
+    if signal_name is None:
+        return [(lane, None) for lane in lanes]
+    selected: list[tuple[str, tuple[WindowMeasure, ...] | None]] = []
+    for lane in lanes:
+        if signal_name not in lane_signal_names(lane):
+            continue
+        measures = tuple(measure for measure in WINDOW_MEASURES.get(lane, ()) if measure.signal_name == signal_name)
+        selected.append((lane, measures or None))
+    return selected or None
+
+
+async def distribution(  # noqa: PLR0911, PLR0913 - one return per typed whole-call refusal; one arg per parameter
     surface_name: str,
     longitude: float,
     latitude: float,
     range_start: str,
     range_end: str,
     zoom: float | None = None,
+    signal_name: str | None = None,
 ) -> dict[str, Any]:
     """The distribution of one surface's lanes at a point over an inclusive calendar window."""
-    context = {"surface": surface_name, "range_start": range_start, "range_end": range_end}
+    context: dict[str, object] = {"surface": surface_name, "range_start": range_start, "range_end": range_end}
+    if signal_name is not None:
+        context["signal_name"] = signal_name
     try:
         window = parse_window(
             longitude=longitude,
@@ -562,11 +633,18 @@ async def distribution(  # noqa: PLR0913 - one argument per published tool param
     lanes = surface_lanes(surface_name)
     if not lanes:
         return refusal("parquet_lane_not_published", "No governed map-serving lane serves this surface.", **context)
+    selected = select_signal(lanes, signal_name)
+    if selected is None:
+        accepted = sorted({name for lane in lanes for name in lane_signal_names(lane)})
+        return refusal(
+            "unknown_signal_name", f"signal_name must be one of: {', '.join(accepted)}; or omit it.", **context
+        )
     entries: list[dict[str, Any]] = []
-    for lane in lanes:
-        entries.extend(await lane_distribution(surface_name, lane, window))
+    for lane, measures in selected:
+        entries.extend(await lane_distribution(surface_name, lane, window, measures))
     return {
         "surface": surface_name,
+        **({"signal_name": signal_name} if signal_name is not None else {}),
         "range_start": window.first.isoformat(),
         "range_end": window.last.isoformat(),
         "requested_range_end": window.requested_last.isoformat(),
@@ -585,5 +663,7 @@ __all__ = [
     "distribution",
     "distribution_statement",
     "lane_distribution",
+    "lane_signal_names",
     "parse_window",
+    "select_signal",
 ]

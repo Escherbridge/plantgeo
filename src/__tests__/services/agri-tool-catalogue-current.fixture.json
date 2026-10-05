@@ -104,7 +104,7 @@
             "type": "number"
           },
           "range_start": {
-            "description": "Inclusive window start, ISO YYYY-MM-DD; by default 29 days before range_end.",
+            "description": "Required inclusive window start, ISO YYYY-MM-DD; a 30-day window starts 29 days before range_end.",
             "title": "Range Start",
             "type": "string"
           },
@@ -118,6 +118,19 @@
             "description": "Selected map zoom 0 to 22; picks the map's serving rung.",
             "title": "Zoom",
             "type": "number"
+          },
+          "signal_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional; read only the lane(s) with this signal, e.g. air_temperature_max.",
+            "title": "Signal Name"
           }
         },
         "required": [

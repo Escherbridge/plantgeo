@@ -132,6 +132,31 @@ export async function getCachedGeoJSON<T>(key: string): Promise<T | null> {
   }
 }
 
+/**
+ * Take a short single-flight lock (`SET key token NX EX ttl`). True when this caller now holds it,
+ * false when another caller does, null when Redis is unavailable -- the caller then proceeds
+ * unlocked, since there is no shared cache to hand an answer through either.
+ */
+export async function acquireCacheLock(key: string, token: string, ttlSeconds: number): Promise<boolean | null> {
+  if (!redisAvailable) return null;
+  try {
+    return (await getRedis().set(key, token, "EX", ttlSeconds, "NX")) === "OK";
+  } catch {
+    return null;
+  }
+}
+
+/** Release a lock only while it still carries this caller's token: an expired lock may be another's now. */
+export async function releaseCacheLock(key: string, token: string): Promise<void> {
+  if (!redisAvailable) return;
+  try {
+    const client = getRedis();
+    if ((await client.get(key)) === token) await client.del(key);
+  } catch {
+    // Redis offline: the lock's own TTL releases it.
+  }
+}
+
 /** Preserves authentication, database, and TLS settings for BullMQ. */
 export function parseRedisConnectionOptions(redisUrl: string): RedisOptions {
   const url = new URL(redisUrl);

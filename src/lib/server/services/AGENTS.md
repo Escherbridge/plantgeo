@@ -893,5 +893,43 @@ validated with the analysis route's window rule (`isValidLayerWindow`, `isWindow
 surface is the toggle's `warehouseLayerName`, exactly as `regionalSurfaceName` resolves it. The
 result is parsed against `distributionAtPointResultSchema` (src/lib/layer-window-distribution.ts);
 a contract mismatch is an `UpstreamPayloadError`, so the client sees a retryable outage rather than
-a fabricated line. Answers are cached in Redis for 15 minutes per (surface, point rounded to 4 dp,
-window) -- a window ending today can still fill in, so the TTL stays short.
+a fabricated line.
+
+**Why it is guarded (wave-2 review H1/H2, 2026-10-05).** The procedure is public, and every map
+Parquet read in agri shares `SERVING_MAX_CONCURRENT_READS = 3` slots; an abandoned timed-out read
+keeps its slot. So, in order:
+
+1. **Rate limit.** `publicRateLimit("layer-window-distribution", 20)` (trpc/init.ts) runs
+   `enforcePublicProviderRateLimit` -- the REST routes' limiter, fingerprinting the client address
+   -- on `ctx.req`, which `createTRPCContext` now keeps from the fetch adapter. 429 ->
+   `TOO_MANY_REQUESTS`; the limiter's production fail-closed 503 (no Redis) -> `SERVICE_UNAVAILABLE`.
+   An in-process `createCaller` has no `req` and is refused by this middleware only.
+2. **Canonical input.** The window must be a chip preset's length (7/30/90/365 days, both ends
+   counted, as `trailingLayerWindow` builds it) and end no later than `serverCurrentDate()` (UTC);
+   `signalName` must be one `acceptedDistributionSignalNames(layerId)` lists. Anything else is
+   `BAD_REQUEST`, so varying the window cannot mint unbounded cache keys. Varying the point still
+   can, which is what the rate limit is for.
+3. **Cache by refusal kind.** Key `layer-window-distribution:v2:<surface>:<signal|*>:<lon 4dp>:<lat
+   4dp>:<start>:<end>`. 15 minutes only when every refusal in the answer -- whole-call `refusal_code`
+   or a `refused` lane's -- is on `PERMANENT_REFUSAL_CODES` (code/config/catalogue facts:
+   `release_lane_not_distributed`, `no_window_measure`, `bbox_unsupported`, `invalid_window`,
+   `unknown_surface`, `app_surface_not_distributed`, `not_available_in_region`,
+   `parquet_lane_not_published`, `unknown_signal_name`). Any other code -- `serving_at_capacity`,
+   `read_timed_out`, `read_over_budget`, object-store and availability faults, an incomplete day --
+   is transient: 30 s. agri's own `lane_distribution` turns every `ServingRefusalError` into a
+   `refused` lane, so this is the only place the two kinds are told apart.
+4. **Negative entry.** An agri timeout, `fetch failed` or 429/5xx writes `{unavailable: true}` under
+   the answer's key for 60 s; a hit throws `LayerWindowDistributionUnavailableError` -> 503 without a
+   call.
+5. **Single-flight.** A miss takes `SET <key>:lock <uuid> NX EX 20` (`acquireCacheLock`, 20 s >
+   the bridge's 15 s bound). The leader calls agri WITHOUT the caller's abort signal -- the agri read
+   is spent either way -- caches the answer, then releases the lock (token-checked). A caller that
+   lost the lock polls the cache every 250 ms for up to 3 s, then 503s. Redis down: no lock, no
+   cache, every caller goes straight through (still rate-limited, and in production the limiter
+   fails closed first).
+
+`signal_name` is sent for the air-temperature variants and the weather temperature layers
+(`distributionSignalName`), so agri reads one lane of a multi-lane surface instead of all of them.
+The wire contract is pinned from both sides by `src/__tests__/services/
+agri-distribution-contract.fixture.json`: agri writes/checks it from real outputs, and
+`layer-window-distribution-contract.test.ts` parses every case and checks its line and cache TTL.

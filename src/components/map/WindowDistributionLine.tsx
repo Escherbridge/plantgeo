@@ -6,6 +6,7 @@ import { climateFieldSignalForGeometryLayerId } from "@/lib/map/climate-field-la
 import type { LayerToggleId } from "@/lib/map/layer-registry";
 import {
   describeLaneDistribution,
+  distributionSignalName,
   selectDistributionLane,
   windowedToggleForStyleLayer,
 } from "@/lib/layer-window-distribution";
@@ -64,9 +65,14 @@ function DistributionQueryLine({
   const climateSignal = climateFieldSignalForGeometryLayerId(styleLayerId);
   const preferredSignalName =
     climateSignal === null ? null : climateFieldSignalName(climateSignal, airTemperatureVariant);
+  // Asks agri for the painted signal only, so a multi-lane surface costs one lane read.
+  const signalName = distributionSignalName(styleLayerId, airTemperatureVariant);
 
-  // Asks only once the point holds still, so sweeping a pointer across cells costs nothing.
-  const requestKey = window === null ? null : `${longitude}|${latitude}|${window.rangeStart}|${window.rangeEnd}`;
+  // Asks only once the point holds still, so sweeping a pointer across cells costs nothing. The
+  // point is the FIRST position on the hovered feature (HoverTooltip keeps it), so moving within
+  // one cell leaves this key -- and the line -- alone.
+  const requestKey =
+    window === null ? null : `${longitude}|${latitude}|${window.rangeStart}|${window.rangeEnd}|${signalName ?? ""}`;
   const [settledKey, setSettledKey] = useState<string | null>(null);
   useEffect(() => {
     const timer = setTimeout(() => setSettledKey(requestKey), settleMs);
@@ -80,6 +86,7 @@ function DistributionQueryLine({
       latitude,
       rangeStart: window?.rangeStart ?? "",
       rangeEnd: window?.rangeEnd ?? "",
+      ...(signalName === null ? {} : { signalName }),
     },
     {
       enabled: requestKey !== null && settledKey === requestKey,

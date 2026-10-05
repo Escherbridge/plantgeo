@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import json
 import math
+import os
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import pytest
 import structlog
@@ -21,13 +24,11 @@ from agri_data_service.agent import tools, window_distribution
 from agri_data_service.agent.day_tolerance import day_tolerance
 from agri_data_service.agent.selection_reads import SPARSE_AREA_LANES, SelectionReader
 from agri_data_service.agent.surfaces import APP_SURFACE_NAMES, SURFACE_PARQUET_LANES
+from agri_data_service.parquet_ops import faults
 from agri_data_service.parquet_ops.warehouse_reader import GeometrySupport, spatial_support
 from agri_data_service.routes import agent_tools as route
 from tests.test_agent_closest_datapoint import BOISE, GORGE, _enum_arrays, drought_row, ndvi_row, weather_station_row
 from tests.test_agent_selection_evidence import LocalWarehouse, climate_row
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 #: The window's last day; "today" sits well after it unless a test is about the clamp.
 END = date(2026, 6, 15)
@@ -74,11 +75,11 @@ async def distribution(source: LocalWarehouse, surface: str, **overrides: Any) -
         return json.loads(await tools.query_distribution_at_point(**arguments))
 
 
-def fire_cell_row(day: date, count: int) -> dict[str, Any]:
-    """One fire-detections lattice cell whose 0.005-degree support is [-116.485,-116.48] x [43.495,43.5]."""
+def fire_cell_row(day: date, count: int, *, longitude: float = -116.487, latitude: float = 43.493) -> dict[str, Any]:
+    """One fire-detections lattice cell; the default's 0.005-degree support is [-116.485,-116.48] x [43.495,43.5]."""
     return {
-        "cell_longitude": -116.487,
-        "cell_latitude": 43.493,
+        "cell_longitude": longitude,
+        "cell_latitude": latitude,
         "observed_day": day,
         "detection_count": count,
         "frp_sum": 1.0,
@@ -157,6 +158,107 @@ async def test_a_daily_lane_over_a_window_with_gaps_gives_exact_stats(  # noqa: 
     assert lane["governed_absence_as_value"] == absence_as_value
     assert lane["day_states"]["published"] == len(published)
     assert lane["day_states"].get("governed_absence", 0) == len(absent)
+
+
+#: A detection cell one lattice step east of the probe's: in the same tile, never covering the probe.
+FIRE_ELSEWHERE = {"longitude": -116.477, "latitude": 43.493}
+
+
+@pytest.mark.parametrize(
+    ("at_point", "elsewhere", "absent", "values"),
+    [
+        # Detections only elsewhere on day 3 and a governed absence on day 7: two measured zeros here.
+        ({}, (3,), (7,), [0.0, 0.0]),
+        # The point's own cell burned on day 1 (4 detections); day 3 elsewhere and day 7 absent are zeros.
+        ({1: 4}, (3,), (7,), [4.0, 0.0, 0.0]),
+    ],
+)
+async def test_fire_detections_count_every_answered_day_at_the_point_and_never_borrow_a_nearest_cell(  # noqa: PLR0913
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    at_point: dict[int, int],
+    elsewhere: tuple[int, ...],
+    absent: tuple[int, ...],
+    values: list[float],
+) -> None:
+    """A published day with detections elsewhere is a 0 at the point, exactly like a governed absence."""
+    searches: list[int] = []
+    original = SelectionReader._nearest_cell
+
+    def counted(self: SelectionReader, *args: Any, **kwargs: Any) -> Any:
+        searches.append(1)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(SelectionReader, "_nearest_cell", counted)
+    source = LocalWarehouse()
+    for offset in sorted({*at_point, *elsewhere}):
+        day = START + timedelta(days=offset)
+        rows = [fire_cell_row(day, 9, **FIRE_ELSEWHERE)] if offset in elsewhere else []
+        if offset in at_point:
+            rows.append(fire_cell_row(day, at_point[offset]))
+        source.write(tmp_path, "fire-detections", day, rows)
+    for offset in absent:
+        write_absence(source, "fire-detections", START + timedelta(days=offset))
+    [lane] = (await distribution(source, "fire-detections", **FIRE_PROBE))["lanes"]
+    published_days = len({*at_point, *elsewhere})
+    assert lane["day_states"]["published"] == published_days
+    assert lane["days_with_data"] == published_days + len(absent) == len(values)
+    assert lane["stats"] == pytest.approx(expected_stats(values))
+    assert lane["stats"]["median"] == 0.0
+    assert (lane["spatial_relation"], lane["distance_km"]) == ("covers", 0.0)
+    assert searches == [], "a detection cell elsewhere is never the value at the point"
+
+
+# --- signal_name: one lane of a multi-lane surface ---------------------------------------------
+
+
+AIR_TEMPERATURE_LANES = {
+    "climate-field-air-temperature-mean": ("air_temperature_mean", 10.0),
+    "climate-field-air-temperature-max": ("air_temperature_max", 20.0),
+    "climate-field-air-temperature-min": ("air_temperature_min", 0.0),
+}
+
+
+async def test_a_signal_name_reads_only_its_lane_and_an_unknown_one_is_refused_before_any_read(
+    tmp_path: Path,
+) -> None:
+    source = LocalWarehouse()
+    for lane, (signal, value) in AIR_TEMPERATURE_LANES.items():
+        for offset in (0, 4):
+            day = START + timedelta(days=offset)
+            row = climate_row(day, longitude=-116, latitude=43, value=value + offset)
+            source.write(tmp_path, lane, day, [{**row, "signal_name": signal}])
+
+    whole = await distribution(source, "climate-field-air-temperature")
+    assert [entry["parquet_lane"] for entry in whole["lanes"]] == list(AIR_TEMPERATURE_LANES)
+    assert len(source.operations) == 3
+
+    source.operations.clear()
+    narrowed = await distribution(source, "climate-field-air-temperature", signal_name="air_temperature_max")
+    [lane] = narrowed["lanes"]
+    assert (lane["parquet_lane"], lane["signal_name"]) == ("climate-field-air-temperature-max", "air_temperature_max")
+    assert lane["stats"] == pytest.approx(expected_stats([20.0, 24.0]))
+    assert narrowed["signal_name"] == "air_temperature_max"
+    assert len(source.operations) == 1, "one lane read, not three"
+
+    source.operations.clear()
+    refused = await distribution(source, "climate-field-air-temperature", signal_name="dew_point_temperature")
+    assert (refused["state"], refused["refusal_code"], refused["lanes"]) == ("refused", "unknown_signal_name", [])
+    assert "air_temperature_max" in refused["message"]
+    assert source.operations == []
+
+
+async def test_a_signal_name_narrows_a_multi_measure_lane_to_that_measure(tmp_path: Path) -> None:
+    source = LocalWarehouse()
+    source.write(
+        tmp_path,
+        "weather-observations",
+        START,
+        [weather_station_row(START, longitude=-116.3, latitude=43.49, temperature=12.0)],
+    )
+    [lane] = (await distribution(source, "weather-observations", signal_name="air_temperature"))["lanes"]
+    assert (lane["signal_name"], lane["unit"], lane["days_with_data"]) == ("air_temperature", "C", 1)
+    assert lane["stats"]["median"] == 12.0
 
 
 async def test_several_readings_on_one_day_collapse_to_that_days_mean_before_the_window_stats(
@@ -408,7 +510,66 @@ def test_the_published_tool_adds_no_enum_or_bound_to_the_gemini_budget() -> None
         "range_start",
         "range_end",
         "zoom",
+        "signal_name",
     }
     assert set(parameters["required"]) == {"surface_name", "longitude", "latitude", "range_start", "range_end"}
     assert _enum_arrays(parameters) == []
     assert "enum" not in json.dumps(parameters)
+
+
+# --- The web contract fixture ------------------------------------------------------------------
+
+#: The web parses every case here with `distributionAtPointResultSchema` and checks what it renders.
+WEB_DISTRIBUTION_CONTRACT = (
+    Path(__file__).resolve().parents[3] / "src" / "__tests__" / "services" / "agri-distribution-contract.fixture.json"
+)
+#: Set to 1 to rewrite the web fixture from the real outputs below instead of checking it.
+REWRITE_VARIABLE = "AGRI_WRITE_WEB_DISTRIBUTION_FIXTURE"
+
+
+@dataclass
+class CapacityRefusingWarehouse(LocalWarehouse):
+    """Every read slot taken: the transient refusal a lane reports when serving is at capacity."""
+
+    async def run(self, work: Any, *, operation: str) -> Any:  # noqa: ARG002 - refused before any work runs
+        self.operations.append(operation)
+        raise faults.serving_at_capacity(operation=operation, concurrent_reads=3)
+
+
+async def _contract_cases(root: Path) -> dict[str, dict[str, Any]]:
+    """One real `query_distribution_at_point` output per shape the web must parse."""
+    published = LocalWarehouse()
+    for offset, value in ((0, 2.0), (5, 6.0)):
+        day = START + timedelta(days=offset)
+        published.write(root, DEW_POINT, day, [climate_row(day, longitude=-116, latitude=43, value=value)])
+    nearest = LocalWarehouse()
+    for offset, value in ((0, 0.25), (14, 0.75)):
+        day = START + timedelta(days=offset)
+        nearest.write(root, "vegetation", day, [ndvi_row(day, longitude=-121.625, latitude=45.875, value=value)])
+    fire = LocalWarehouse()
+    fire.write(root, "fire-detections", START, [fire_cell_row(START, 9, **FIRE_ELSEWHERE)])
+    write_absence(fire, "fire-detections", START + timedelta(days=1))
+    return {
+        "published": await distribution(published, DEW_POINT),
+        "published_nearest_cell": await distribution(nearest, "vegetation", **GORGE),
+        "published_fire_zero_at_point": await distribution(fire, "fire-detections", **FIRE_PROBE),
+        "no_data_in_window": await distribution(LocalWarehouse(), DEW_POINT),
+        "static_not_applicable": await distribution(LocalWarehouse(), "soil-survey"),
+        "refused_release_lane": await distribution(LocalWarehouse(), "crop-cover"),
+        "refused_at_capacity": await distribution(CapacityRefusingWarehouse(), DEW_POINT),
+        "whole_call_refusal": await distribution(
+            LocalWarehouse(), DEW_POINT, range_start=END.isoformat(), range_end=START.isoformat()
+        ),
+        "whole_call_unknown_signal": await distribution(LocalWarehouse(), DEW_POINT, signal_name="not_a_signal"),
+    }
+
+
+async def test_the_web_distribution_contract_fixture_is_what_the_tool_returns(tmp_path: Path) -> None:
+    """Producer-checked like the catalogue fixture: regenerate with AGRI_WRITE_WEB_DISTRIBUTION_FIXTURE=1."""
+    produced = json.loads(json.dumps(await _contract_cases(tmp_path)))
+    assert produced["refused_at_capacity"]["lanes"][0]["refusal_code"] == "serving_at_capacity"
+    assert produced["published_fire_zero_at_point"]["lanes"][0]["stats"]["median"] == 0.0
+    if os.environ.get(REWRITE_VARIABLE) == "1":
+        with WEB_DISTRIBUTION_CONTRACT.open("w", encoding="utf-8", newline="\n") as fixture:
+            fixture.write(json.dumps(produced, indent=2) + "\n")
+    assert json.loads(WEB_DISTRIBUTION_CONTRACT.read_text(encoding="utf-8")) == produced

@@ -32,8 +32,13 @@ interface TooltipState {
    * feature (toggle off), on a different one (replace), or on empty ground (dismiss).
    */
   pinned: boolean;
-  /** Where on the ground the caption points, for the window distribution line. */
+  /**
+   * Where on the ground the window distribution line asks about: the FIRST position on the hovered
+   * feature, kept while the pointer moves within it, so a move inside one cell re-asks nothing.
+   */
   lngLat: { lng: number; lat: number } | null;
+  /** The hovered feature's identity (`hoveredFeatureKey`); a hover keeps `lngLat` while it holds. */
+  featureKey: string;
 }
 
 /** A hover waits this long before asking for its distribution; a tap asks at once. */
@@ -72,6 +77,22 @@ function tapHitTestGeometry(point: { x: number; y: number }): PointLike | [Point
     [point.x - TAP_HIT_TEST_PADDING_PX, point.y - TAP_HIT_TEST_PADDING_PX],
     [point.x + TAP_HIT_TEST_PADDING_PX, point.y + TAP_HIT_TEST_PADDING_PX],
   ];
+}
+
+/**
+ * Which feature the pointer is on: its MapLibre id, else the cell/support id its properties carry,
+ * else what its caption reads (there is no feature id every layer here carries).
+ */
+function hoveredFeatureKey(
+  layerId: string,
+  feature: { id?: string | number; properties?: Record<string, unknown> | null },
+  content: HoverContent
+): string {
+  const properties = feature.properties ?? {};
+  const identity = feature.id ?? properties.cellId ?? properties.supportId ?? null;
+  return identity === null
+    ? `${layerId}|caption|${content.title}|${content.lines.join("|")}`
+    : `${layerId}|id|${String(identity)}`;
 }
 
 /** Two captions are the same feature if they would read identically; there is no feature id every layer here carries. */
@@ -120,7 +141,17 @@ export default function HoverTooltip({ map }: HoverTooltipProps) {
         const content = formatHoverContent(layerId, (feature.properties ?? {}) as Record<string, unknown>);
         if (content) {
           map.getCanvas().style.cursor = "pointer";
-          setTooltip({ content, layerId, x: e.point.x, y: e.point.y, lngLat: eventLngLat(e), pinned: false });
+          const featureKey = hoveredFeatureKey(layerId, feature, content);
+          setTooltip((previous) => ({
+            content,
+            layerId,
+            x: e.point.x,
+            y: e.point.y,
+            // Same feature: keep the first position, so the distribution request does not restart.
+            lngLat: previous?.featureKey === featureKey ? previous.lngLat : eventLngLat(e),
+            featureKey,
+            pinned: false,
+          }));
           return;
         }
       }
@@ -169,7 +200,15 @@ export default function HoverTooltip({ map }: HoverTooltipProps) {
               return null;
             }
             pinnedRef.current = true;
-            return { content, layerId, x: e.point.x, y: e.point.y, lngLat: eventLngLat(e), pinned: true };
+            return {
+              content,
+              layerId,
+              x: e.point.x,
+              y: e.point.y,
+              lngLat: eventLngLat(e),
+              featureKey: hoveredFeatureKey(layerId, feature, content),
+              pinned: true,
+            };
           });
           return;
         }

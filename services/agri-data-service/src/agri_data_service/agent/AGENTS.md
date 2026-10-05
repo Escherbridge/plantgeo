@@ -472,6 +472,14 @@ Owner intent: "maybe we allow for selecting a 30 day window and query to return 
 The web's layer-row chip picks the window (presets 7/30/90/365 days; default the trailing 30 days
 ending at the selected day). The tool takes the window explicitly and never invents one.
 
+**Signal.** Optional `signal_name` reads only the lane(s) whose curated measure carries that label,
+narrowed to that measure (`select_signal`): `climate-field-air-temperature` with
+`air_temperature_max` reads one lane instead of three, and `weather-observations` with
+`air_temperature` aggregates one column instead of four. A lane with no measure (static, release)
+answers to its own lane name. A name no lane of the surface carries is a whole-call refusal
+(`unknown_signal_name`, accepted names in `message`) before any read. The web map sends it for the
+air-temperature variants and the weather layer; the model may send it too (one schema property).
+
 **Window.** `range_start`/`range_end` are required. A reversed range or one longer than
 `MAX_WINDOW_DAYS = 366` calendar days is refused (`invalid_window`, `lanes: []`). `range_end` is
 clamped to UTC today, because every lane read here is `observed`. The result echoes the clamped
@@ -505,7 +513,7 @@ release answers the whole window; `no_window_measure`; or any serving refusal). 
 |---|---|---|---|---|
 | climate/soil signal lanes | `normalized_value` | the row's `signal_name`/`normalized_unit`; no-data fallback from `CLIMATE_FIELD_PRODUCT_BY_STREAM`/`SOIL_FIELD_PRODUCT_BY_STREAM` | avg | excluded: the marker records fill/null source values, so it is not a measurement |
 | vegetation | `metric_value` | `metric_name`/`metric_unit` (ndvi, unitless) | avg | excluded: no usable Sentinel-2 reading |
-| fire-detections | `detection_count` | fire_detection_count, count | sum | **0**: FIRMS answered with zero records (`fire_detections/adapter.py`) |
+| fire-detections | `detection_count` | fire_detection_count, count | sum | **0**, and so is every published day with no detection in the point's own cell (see caveat 1) |
 | sensors | `value` | grouped by `measurement_name`/`unit_code` | avg | excluded |
 | water-gauges(-daily) | `flow_cfs` | streamflow, ft^3/s | avg | excluded |
 | weather-observations | four columns, four entries | air_temperature C, relative_humidity %, wind_speed m/s, precipitation mm | avg | excluded |
@@ -516,10 +524,17 @@ A lane whose rows carry their own label can return more than one entry with the 
 geometry_measures_are_sparse_areas` keeps the table complete. The only geometry measure is drought, a
 sparse-area lane: a tiling polygon's nearest polygon has no identity that persists across days.
 
-**Caveats, recorded on purpose.** (1) Fire-detections writes rows only for cells with detections.
-On a published day, a missing row at the chosen cell is EXCLUDED, not counted as zero. Only a
-governed-absence day (region-wide zero) counts as 0. With no rows in the window, the counted absences
-report `covers`/`0.0 km`, because a region-wide zero covers the point. (2) Drought counts only release
+**Caveats, recorded on purpose.** (1) Fire-detections (the one `absence_value` lane) is read AT
+THE POINT only: the point's own covering support, never a nearest cell (no nearest search runs). FIRMS
+writes rows only for cells with detections, so both kinds of answered day mean the same thing here: a
+governed absence ("FIRMS returned zero records", `fire_detections/adapter.py`) and a published day
+whose detections all fell elsewhere are each a measured 0 at the point. The SQL counts every
+ANSWERED day once (`_answered_day_branch`: the day's `sum` at the point, `coalesce`d to 0), so
+`days_with_data` = published days + governed-absence days in the window, and only unwritten days
+are excluded. The spatial fields always read `covers`/`0.0 km`. Before 2026-10-05 the two kinds of day
+were mixed (an absence counted 0, a published day elsewhere was excluded, and a point no cell
+covered borrowed the nearest detection cell's counts); `test_fire_detections_count_every_answered_
+day_at_the_point_and_never_borrow_a_nearest_cell` pins the fix. (2) Drought counts only release
 days on which an area covers the point. A release that leaves the point outside every area is "no
 drought class", not a numeric class, so it is excluded. If no release covers the point, the lane is
 `nearest_area_outside` with no stats. (3) Station identity is the reported coordinate, so a station
@@ -530,9 +545,17 @@ parts in one session, which is the cost to watch against `TOOL_TIMEOUT_SECONDS` 
 **Log.** The bridge emits the ordinary `agent_tool_call` event. `tool_call_log.py` reads flat lane
 entries (no `selected`), deduplicates `lanes`, and adds `range_start`/`range_end` for every tool.
 
-**Gemini budget.** Six plain parameters (no enum, no bound). The current-catalogue fixture is
-regenerated. The agri catalogue grows from 66/149/60 to 72/149/60 (raw, before the web's Gemini
-projection). The web round-1 total goes from 100/84/30 to 106/84/30, against the accepted 112/208/102.
+**Gemini budget.** Seven plain parameters (no enum, no bound); `signal_name` (2026-10-05) is an
+optional string. The current-catalogue fixture is regenerated. The agri catalogue grows from
+66/149/60 to 73/149/60 (raw, before the web's Gemini projection). The web round-1 total goes from
+100/84/30 to 107/84/30, against the accepted 112/208/102.
+
+**Web contract fixture.** `test_the_web_distribution_contract_fixture_is_what_the_tool_returns`
+checks `src/__tests__/services/agri-distribution-contract.fixture.json` against real
+`query_distribution_at_point` outputs (published covers / nearest cell / fire zero, no data, static,
+release-lane refusal, a transient `serving_at_capacity` lane, two whole-call refusals). Regenerate
+with `AGRI_WRITE_WEB_DISTRIBUTION_FIXTURE=1` after any wire change; the web's
+`layer-window-distribution-contract.test.ts` parses every case and checks what the map shows.
 
 ## Live regional agent tool bridge (2026-09-12)
 

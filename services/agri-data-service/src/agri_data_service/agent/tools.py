@@ -1801,9 +1801,12 @@ async def query_distribution_at_point(  # noqa: PLR0913 - public window contract
     range_start: str,
     range_end: str,
     zoom: float = window_distribution.DEFAULT_ZOOM,
+    signal_name: str | None = None,
 ) -> str:
     """Summarise each lane's per-day values at a point over a window; agent/AGENTS.md "Window distribution"."""
-    result = await window_distribution.distribution(surface_name, longitude, latitude, range_start, range_end, zoom)
+    result = await window_distribution.distribution(
+        surface_name, longitude, latitude, range_start, range_end, zoom, signal_name
+    )
     _record(
         "distribution_at_point",
         sum(int(lane.get("days_with_data") or 0) for lane in result.get("lanes", [])),
@@ -1872,6 +1875,7 @@ async def distribution_at_point(  # noqa: PLR0913 - published bounded tool schem
     range_start: str,
     range_end: str,
     zoom: float = window_distribution.DEFAULT_ZOOM,
+    signal_name: str | None = None,
 ) -> str:
     """Summarise a layer's daily values at a point over a calendar window: min, p10, median, p90, max, mean.
 
@@ -1883,11 +1887,14 @@ async def distribution_at_point(  # noqa: PLR0913 - published bounded tool schem
         surface_name: Exact catalogue name, as for surface_evidence_for_selection.
         longitude: WGS84 selected longitude.
         latitude: WGS84 selected latitude.
-        range_start: Inclusive window start, ISO YYYY-MM-DD; by default 29 days before range_end.
+        range_start: Required inclusive window start, ISO YYYY-MM-DD; a 30-day window starts 29 days before range_end.
         range_end: Inclusive window end, ISO YYYY-MM-DD; use the caller's selected day.
         zoom: Selected map zoom 0 to 22; picks the map's serving rung.
+        signal_name: Optional; read only the lane(s) with this signal, e.g. air_temperature_max.
     """
-    return await query_distribution_at_point(surface_name, longitude, latitude, range_start, range_end, zoom)
+    return await query_distribution_at_point(
+        surface_name, longitude, latitude, range_start, range_end, zoom, signal_name
+    )
 
 
 # --- Strategy knowledge (literature) -----------------------------------------------
@@ -2077,7 +2084,8 @@ async def search_strategy_research_findings(  # noqa: PLR0913 - the parameter li
 
 #: drought/fire history re-published 2026-10-04 (owner decision 6): no enum arrays, so no Gemini
 #: forced-call "too many states" cost; agent/AGENTS.md "Closest-datapoint reads (2026-10-04)".
-#: distribution_at_point: six plain parameters; agent/AGENTS.md "Window distribution (2026-10-04)".
+#: distribution_at_point: seven plain parameters (signal_name optional);
+#: agent/AGENTS.md "Window distribution (2026-10-04)".
 WAREHOUSE_TOOLS: Final = (
     list_environmental_layers,
     surface_evidence_for_selection,

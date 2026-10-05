@@ -1588,6 +1588,11 @@ plus " · nearest cell 23.6 km" when the answer used a nearest cell (worded by
 `distance_km_basis`, like the analysis gap line). Only scalar grids map to a window
 (`windowedToggleForStyleLayer`: climate fields, vegetation NDVI, weather temperature); sparse-area
 layers never ask. Static, refused and `nearest_area_outside` answers render nothing. A hover asks
-only after the point holds still for 400 ms; a tap asks at once. Multi-lane surfaces show the lane
-matching the selected air-temperature variant, else the first lane. Fetch and cache:
-services/AGENTS.md §window-distribution.
+only after the point holds still for 400 ms; a tap asks at once. The request is keyed on the
+hovered FEATURE (`hoveredFeatureKey`: MapLibre id, else `cellId`/`supportId`, else the caption):
+`HoverTooltip` keeps the first `lngLat` on a feature while the pointer moves inside it, so a move
+within one cell neither restarts the 400 ms wait nor blanks the line (before 2026-10-05 every
+`mousemove` did both). Multi-lane surfaces ask agri for the painted signal only
+(`distributionSignalName`: the selected air-temperature variant, weather's `air_temperature`) and
+show the lane matching it, else the first lane. Fetch and cache: services/AGENTS.md
+§window-distribution.

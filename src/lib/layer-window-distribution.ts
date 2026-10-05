@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { CLIMATE_FIELD_SIGNALS } from "@/lib/environmental/climate-field";
+import {
+  CLIMATE_FIELD_SIGNALS,
+  climateFieldSignalForToggle,
+  climateFieldSignalName,
+  type AirTemperatureVariant,
+} from "@/lib/environmental/climate-field";
 import { climateFieldSignalForGeometryLayerId } from "@/lib/map/climate-field-layer-ids";
 import type { LayerToggleId } from "@/lib/map/layer-registry";
 
@@ -36,13 +41,20 @@ const distributionLaneSchema = z.object({
   distance_km_basis: z.string().nullable(),
   static: z.boolean(),
   state: z.enum(DISTRIBUTION_LANE_STATES),
+  /** Why a `refused` lane has no statistics; decides how long the answer may be cached. */
+  refusal_code: z.string().nullable().default(null),
 });
 
-/** The agri `distribution_at_point` result (contract 2026-10-04). Unknown extra keys are dropped. */
+/**
+ * The agri `distribution_at_point` result (contract 2026-10-05). A whole-call refusal has the same
+ * shape with `state: "refused"`, a `refusal_code` and no lanes. Unknown extra keys are dropped.
+ */
 export const distributionAtPointResultSchema = z.object({
   surface: z.string(),
   range_start: z.string(),
   range_end: z.string(),
+  state: z.string().nullable().default(null),
+  refusal_code: z.string().nullable().default(null),
   lanes: z.array(distributionLaneSchema).max(32),
 });
 
@@ -59,6 +71,40 @@ export function windowedToggleForStyleLayer(styleLayerId: string): LayerToggleId
   if (styleLayerId === "vegetation-ndvi-cells-fill") return "vegetation";
   if (styleLayerId === "weather-temperature" || styleLayerId === "weather-temperature-cells") return "weather";
   return null;
+}
+
+/** The weather-observations measure the weather temperature layers paint. */
+const WEATHER_AIR_TEMPERATURE_SIGNAL = "air_temperature";
+
+/**
+ * The one signal to ask agri for when the hovered layer paints one signal of a surface that carries
+ * several (air temperature's mean/max/min lanes, weather's four measures); null when the surface's
+ * only signal is the one painted. Sent as `signal_name`, so agri reads one lane, not all of them.
+ */
+export function distributionSignalName(
+  styleLayerId: string,
+  airTemperatureVariant: AirTemperatureVariant
+): string | null {
+  const climateSignal = climateFieldSignalForGeometryLayerId(styleLayerId);
+  if (climateSignal !== null) {
+    return CLIMATE_FIELD_SIGNALS[climateSignal].signalName === null
+      ? climateFieldSignalName(climateSignal, airTemperatureVariant)
+      : null;
+  }
+  if (styleLayerId === "weather-temperature" || styleLayerId === "weather-temperature-cells") {
+    return WEATHER_AIR_TEMPERATURE_SIGNAL;
+  }
+  return null;
+}
+
+/** Every `signalName` the server accepts for a toggle: exactly what `distributionSignalName` can send. */
+export function acceptedDistributionSignalNames(layerId: LayerToggleId): readonly string[] {
+  const climateSignal = climateFieldSignalForToggle(layerId);
+  if (climateSignal !== null) {
+    const definition = CLIMATE_FIELD_SIGNALS[climateSignal];
+    return definition.signalName === null ? definition.variants.map((variant) => variant.signalName) : [];
+  }
+  return layerId === "weather" ? [WEATHER_AIR_TEMPERATURE_SIGNAL] : [];
 }
 
 /** The lane matching the layer's selected variant, else the first lane. */
