@@ -83,7 +83,8 @@ describe("no soil-citing response shows the Observed data badge", () => {
     expect(remediationReportSchema.safeParse(reportFields({ ...response })).success).toBe(true);
     mocks.state.messages = [{ id: "assistant-1", role: "assistant", content: "", parsedResponse: response }];
     const { container } = renderWithProviders(<RegionalIntelligencePanel />);
-    expect(screen.getByText("Published estimate · soilProperties")).toBeTruthy();
+    // The finding's provenance line, not a chip: the per-item origin chips were removed 2026-10-04.
+    expect(screen.getByText("Published estimate")).toBeTruthy();
     expect(container.textContent).not.toContain("Observed data");
     expect(reportToMarkdown(response)).not.toContain("Observed data");
   });

@@ -552,7 +552,7 @@ describe("SoilDetails SSURGO coverage", () => {
 
     renderPanel();
 
-    expect(screen.getByText(/Zoom in to see survey map units/)).toBeTruthy();
+    expect(screen.getByText(/Zoom to 13\+ to see survey polygons/)).toBeTruthy();
     expect(screen.queryByText(/soil survey feed answered unavailable/)).toBeNull();
     expect(screen.queryByText(/no lane publishes it/)).toBeNull();
   });

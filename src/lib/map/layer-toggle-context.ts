@@ -449,8 +449,12 @@ export function useLayerRenderState(layerId: LayerToggleId): LayerRenderState {
     // An unknown availability must read as published. Before the server publishes
     // capabilities there is nothing to withhold on, and treating silence as "no data"
     // would caption every layer with a claim about history nobody has measured.
+    // A verified static release (SSURGO) has no date axis by design, so `earliestObservedDate`
+    // is null and `layerAvailabilityAt` would caption it "no observations this far back".
+    const isStaticRelease =
+      capability?.temporalKind === "snapshot" && capability.staticPublication !== undefined;
     const availability: MetricAtDateAvailability =
-      capabilities === null || capability === null || mapDay.selectedDate === null
+      capabilities === null || capability === null || mapDay.selectedDate === null || isStaticRelease
         ? "published"
         : layerAvailabilityAt(
             capability,

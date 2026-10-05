@@ -11,13 +11,54 @@ labeled as publication availability. It participates in the existing source-age
 classification without being relabeled as ignition or source capture time. Invalid
 calendar days and future availability remain unavailable.
 
-The AI footer recognizes `static_release_untimed` only for soil properties and displays
-"Static release (undated)". Availability does not imply a recent observation. Fire perimeter
+The report's Sources disclosure recognizes `static_release_untimed` only for soil properties and
+shows it as a "Static layer" row (the old panel-level freshness footer was folded into Sources
+on 2026-10-04). Availability does not imply a recent observation. Fire perimeter
 `snapshot_captured_YYYY-MM-DD` markers display their validated capture day, not a measurement
 time, and retain the existing fourteen-day staleness limit. Invalid, future, and source-mismatched
 markers remain unavailable. Keep these labels aligned with `src/lib/regional-intelligence.ts`.
 Drought freshness retains its age checks but displays the publisher's calendar release day.
 Its synthetic UTC midnight is not localized into the previous evening in western timezones.
+
+## Regional report view-model
+
+**2026-10-04, owner constraint: minimise UI complexity on the agent panel.** The report renders
+from one view-model, `src/lib/regional-evidence-presentation.ts` (`buildReportView`), and the
+Markdown export (`reportToMarkdown` → `reportViewToMarkdown`) reads that same view, never the raw
+response. Row and finding lines go through shared formatters (`sourceRowSummary`, finding `meta`),
+so the screen and the export cannot drift; a test asserts they are equal.
+
+Visible by default: risk + headline, up to three findings ("value · day", with "nearest day, N d
+earlier" / "nearest cell, N km" only when the evidence check carries `dayOffset` /
+`cellDistanceKm`), up to three recommendations (title · timeframe + rationale), one consult line
+derived from the recommendations' disciplines with a correct a/an, one footer note, one Export
+menu (copy, Markdown, JSON). Everything else lives in ONE collapsed Sources disclosure:
+
+- One row per lane. Local and history passes for the same source merge; repeated
+  strategy-knowledge lookups merge into "Strategy literature ×N". The row shows the BEST status
+  among its calls, limited to Found / Nearest day / Nearest cell / Static layer / Not published /
+  Error. `governed_absence` is a real answer and reads Found; `answered_no_records` reads Not
+  published but is not a gap. `not_queried` calls are not rows.
+- Raw scope (stage, requested day, window, zoom to 1 dp, coordinates to 4 dp) only inside the
+  row's expand.
+- Gaps: one line per lane — the first failed-call reason or the first `"<source> [<id>]: …"`
+  limitation the server attributed to that lane; further attributed limitations become row
+  details. Unattributed limitations are deduplicated into Caveats. Any gap makes the report
+  "partial" and shows one "Some sources unavailable — see Sources" note.
+- Initial-context `dataFreshness` entries merge into the matching lane (camelCase key →
+  kebab lane id) or become their own row. Deferred model placeholders (`strategyRecommendations`,
+  `carbonPotential`) stay hidden while they only say unavailable/pending.
+- Literature citations (server-written, https links only) sit under the literature row.
+
+Removed on purpose: per-item origin chips ("AI inference" etc.), strategy chips, AI confidence,
+risk factor chips, per-claim "Cited evidence:" restatements, per-bubble copy/share toolbars, the
+panel-level freshness footer and the duplicate input-area disclaimer. The full
+`AI_GENERATED_DISCLAIMER` is kept in the Markdown export, which travels without the panel.
+
+`buildReportView` tolerates an unknown risk level, missing arrays and a null `dataFreshness`;
+it throws `MalformedReportError` only when there is no headline to draw. `RegionalIntelligenceReport`
+wraps each report in `ReportErrorBoundary`, the panel has its own boundary, and `src/app/error.tsx`
+is the route-level fallback.
 
 ## Narrow dock controls and status copy
 

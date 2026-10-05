@@ -2,25 +2,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, within } from "@testing-library/react";
 import { renderWithProviders } from "@/test/utils";
 import type { ChatMessage } from "@/stores/regional-intelligence-store";
-import type { RegionalIntelligenceResponse } from "@/lib/regional-intelligence";
+import type { RegionalAnalysisEvidence, RegionalIntelligenceResponse } from "@/lib/regional-intelligence";
+import { buildReportView, consultLine, sourceRowSummary } from "@/lib/regional-evidence-presentation";
 
-/**
- * jsdom implements no scroll behaviour; the panel calls this once per message list change.
- * Stubbed rather than added to the shared test setup, since no other suite needs it.
- */
+/** jsdom implements no scroll behaviour; the panel calls this once per message list change. */
 Element.prototype.scrollIntoView = vi.fn();
 
-/**
- * A 2026-08-14 fabrication audit found this panel rendering three hard-coded chips --
- * "Regenerative Ag (+18% tau)", "Biochar Soil (+15% tau)", "Wildfire Buffer (+12% tau)" --
- * identically on every AI message, regardless of what the model actually recommended. These
- * tests pin the honest replacement: chips built from the message's own `remediation` array, and
- * nothing rendered when there is nothing to show.
- */
 const mocks = vi.hoisted(() => ({
   state: {
     isOpen: true,
-    // The standalone overlay stands down only while the workspace embeds the same conversation.
     isVisible: true,
     selectedLocation: { lat: 43.6, lon: -116.2, precision: "approximate" as const },
     messages: [] as ChatMessage[],
@@ -29,459 +19,342 @@ const mocks = vi.hoisted(() => ({
     errorRetryable: false,
     analysisCancelled: false,
     dataFreshness: {} as Record<string, string>,
+    analysisEvidence: null as RegionalAnalysisEvidence | null,
     toolActivity: null as string | null,
     activity: [],
     conversationId: null,
     closePanel: vi.fn(),
     cancelAnalysis: vi.fn(),
     setError: vi.fn(),
-    analysisTimeScale: 'month',
+    analysisTimeScale: "month",
     analysisRangeSteps: 1,
     setAnalysisWindow: vi.fn(),
   },
 }));
 
 vi.mock("@/stores/regional-intelligence-store", () => ({
-  useRegionalIntelligenceStore: (selector: (state: typeof mocks.state) => unknown) =>
-    selector(mocks.state),
+  useRegionalIntelligenceStore: (selector: (state: typeof mocks.state) => unknown) => selector(mocks.state),
 }));
 
 vi.mock("@/hooks/useRegionalIntelligence", () => ({
-  useRegionalIntelligence: () => ({
-    sendFollowUp: vi.fn(),
-    retryLastRequest: vi.fn(),
-  }),
+  useRegionalIntelligence: () => ({ sendFollowUp: vi.fn(), retryLastRequest: vi.fn() }),
 }));
 
 import RegionalIntelligencePanel, { reportToMarkdown } from "@/components/panels/RegionalIntelligencePanel";
 
-function baseResponse(
-  remediation: RegionalIntelligenceResponse["remediation"]
-): RegionalIntelligenceResponse {
+type Remediation = RegionalIntelligenceResponse["remediation"][number];
+type Check = RegionalAnalysisEvidence["toolCalls"][number];
+
+function recommendation(overrides: Partial<Remediation> = {}): Remediation {
+  return {
+    strategy: "cover_cropping", title: "Screen acid-tolerant cover crops",
+    rationale: "Topsoil pH near 5.8 favours acid-tolerant species.", timeframe: "short_term",
+    confidence: "low", consultProfessionals: ["agronomist"], evidenceOrigin: "model_inference",
+    ...overrides,
+  };
+}
+
+function report(overrides: Partial<RegionalIntelligenceResponse> = {}): RegionalIntelligenceResponse {
   return {
     aiGenerated: true,
     riskSummary: {
-      level: "moderate",
-      headline: "Elevated drought stress with no active fire signal.",
+      level: "moderate", headline: "Elevated drought stress with no active fire signal.",
       factors: ["D2 drought classification within the context window."],
-      evidenceOrigin: "warehouse",
-      evidenceSources: ["drought"],
+      evidenceOrigin: "model_inference", evidenceSources: [],
     },
     observations: [],
-    remediation,
+    remediation: [recommendation()],
     professionalConsultation: "Confirm with a local conservation district.",
     webSources: [],
     dataFreshness: {},
+    ...overrides,
   };
 }
 
-function assistantMessage(response: RegionalIntelligenceResponse): ChatMessage {
+function evidence(toolCalls: Check[], limitations: string[] = []): RegionalAnalysisEvidence {
   return {
-    id: "assistant-1",
-    role: "assistant",
-    content: "",
-    parsedResponse: response,
+    version: 1,
+    stages: [
+      { id: "local", label: "Local reads", status: "completed" },
+      { id: "temporal", label: "Historical comparison", status: "completed" },
+      { id: "additional", label: "Additional evidence", status: "completed" },
+    ],
+    toolCalls,
+    limitations,
   };
 }
 
-describe("RegionalIntelligencePanel strategy chips", () => {
-  it('lets the user choose the calendar scale and symmetric history range for the next question', () => {
+function showReport(response: RegionalIntelligenceResponse) {
+  mocks.state.messages = [{ id: "assistant-1", role: "assistant", content: "", parsedResponse: response }];
+  return renderWithProviders(<RegionalIntelligencePanel />);
+}
+
+function openSources(name: RegExp = /^Sources \(/) {
+  fireEvent.click(screen.getByRole("button", { name }));
+  return within(screen.getByRole("list", { name: "Source lanes" }));
+}
+
+function laneTexts(): string[] {
+  // Direct children only: an expanded row nests its own detail list.
+  return [...screen.getByRole("list", { name: "Source lanes" }).children].map((item) => item.textContent ?? "");
+}
+
+afterEach(() => {
+  mocks.state.messages = [];
+  mocks.state.dataFreshness = {};
+  mocks.state.analysisEvidence = null;
+  mocks.state.isLoading = false;
+  vi.restoreAllMocks();
+});
+
+describe("regional analysis panel", () => {
+  it("lets the user choose the calendar scale and symmetric history range for the next question", () => {
     renderWithProviders(<RegionalIntelligencePanel />);
-    fireEvent.change(screen.getByLabelText('Analysis time scale'), { target: { value: 'year' } });
-    expect(mocks.state.setAnalysisWindow).toHaveBeenCalledWith('year', 1);
-    fireEvent.change(screen.getByLabelText('History range on each side'), { target: { value: '3' } });
-    expect(mocks.state.setAnalysisWindow).toHaveBeenCalledWith('month', 3);
-  });
-  it('shows the dated read scope beside each cited claim and keeps the associations in Markdown', () => {
-    const response = baseResponse([{
-      strategy: 'water_harvesting', title: 'Assess water harvesting feasibility',
-      rationale: 'Compare site runoff and soil constraints before designing an installation.',
-      timeframe: 'short_term', confidence: 'low', consultProfessionals: ['hydrologist'],
-      evidenceOrigin: 'warehouse', evidenceSource: 'watersheds', evidenceReadIds: ['additional-read'],
-    }]);
-    response.riskSummary.evidenceSources = ['climate-field-precipitation'];
-    response.riskSummary.evidenceReadIds = ['history-read'];
-    response.observations = [{
-      statement: 'The comparison location has a published soil-moisture estimate.',
-      evidenceOrigin: 'warehouse', evidenceSource: 'soil-field-moisture', evidenceReadIds: ['regional-read'],
-    }];
-    response.analysisEvidence = {
-      version: 1,
-      stages: [
-        { id: 'temporal', label: 'Historical comparison', status: 'completed' },
-        { id: 'regional', label: 'Regional comparison', status: 'completed' },
-        { id: 'additional', label: 'Additional evidence', status: 'completed' },
-      ],
-      toolCalls: [
-        { id: 'history-read', stage: 'temporal', tool: 'surface_value_near_point', source: 'climate-field-precipitation', selectedDate: '2025-09-10', observedDates: ['2025-09-10'], location: { lat: 43.6, lon: -116.2 }, status: 'observed' },
-        { id: 'regional-read', stage: 'regional', tool: 'surface_value_near_point', source: 'soil-field-moisture', selectedDate: '2026-09-10', servedDates: ['2026-09-09'], location: { lat: 43.6, lon: -117.7 }, status: 'observed' },
-        { id: 'additional-read', stage: 'additional', tool: 'surface_value_near_point', source: 'watersheds', selectedDate: '2026-09-10', validDates: ['2026-08-30'], servedDates: ['2026-09-01'], location: { lat: 43.6, lon: -116.2 }, status: 'observed' },
-      ],
-      limitations: [],
-    };
-    const riskScope = 'Cited evidence: Historical comparison · climate field precipitation · Requested 2025-09-10 · Observed days: 2025-09-10 · 43.6°, -116.2°';
-    const observationScope = 'Cited evidence: Regional comparison · soil field moisture · Requested 2026-09-10 · Served days: 2026-09-09 · 43.6°, -117.7°';
-    const recommendationScope = 'Cited evidence: Additional evidence · watersheds · Requested 2026-09-10 · Valid dates: 2026-08-30 · Served days: 2026-09-01 · 43.6°, -116.2°';
-    mocks.state.messages = [assistantMessage(response)];
-    renderWithProviders(<RegionalIntelligencePanel />);
-    const risk = within(screen.getByText(response.riskSummary.headline).parentElement as HTMLElement);
-    const observation = within(screen.getByText(response.observations[0].statement).closest('li') as HTMLElement);
-    const recommendation = within(screen.getByText(response.remediation[0].title).closest('article') as HTMLElement);
-    expect(risk.getByText(riskScope)).toBeTruthy();
-    expect(observation.getByText(observationScope)).toBeTruthy();
-    expect(recommendation.getByText(recommendationScope)).toBeTruthy();
-    const markdown = reportToMarkdown(response);
-    expect(markdown.split('## What the data shows')[0]).toContain(riskScope);
-    expect(markdown.split('## What the data shows')[1].split('## Suggested remediation')[0]).toContain(observationScope);
-    expect(markdown.split('## Suggested remediation')[1].split('## Professional consultation')[0]).toContain(recommendationScope);
-    expect(markdown).not.toContain('history-read');
+    fireEvent.change(screen.getByLabelText("Analysis time scale"), { target: { value: "year" } });
+    expect(mocks.state.setAnalysisWindow).toHaveBeenCalledWith("year", 1);
+    fireEvent.change(screen.getByLabelText("History range on each side"), { target: { value: "3" } });
+    expect(mocks.state.setAnalysisWindow).toHaveBeenCalledWith("month", 3);
   });
 
-  it('does not display unresolved read IDs as evidence in historical reports or Markdown', () => {
-    const response = baseResponse([]);
-    response.riskSummary.evidenceReadIds = ['missing-audit-read'];
-    mocks.state.messages = [assistantMessage(response)];
-    renderWithProviders(<RegionalIntelligencePanel />);
-    expect(screen.queryByLabelText('Cited evidence')).toBeNull();
-    expect(document.body.textContent).not.toContain('missing-audit-read');
-    expect(reportToMarkdown(response)).not.toContain('missing-audit-read');
-  });
-
-  it('renders actual source checks with dates and locations and retains additional reads in exports', () => {
-    const response = baseResponse([]);
-    response.analysisEvidence = {
-      version: 1,
-      stages: [{ id: 'history', label: 'Historical comparison', status: 'partial' }],
-      toolCalls: [
-        { id: 'one', stage: 'history', tool: 'surface_values_near_point', source: 'soil-field-moisture', selectedDate: '2025-09-10', location: { lat: 43.6, lon: -116.2 }, status: 'unavailable', reason: 'Requested day has not been published.' },
-        { id: 'two', stage: 'history', tool: 'surface_values_near_point', source: 'climate-field-precipitation', status: 'not_queried' },
-        { id: 'three', stage: 'additional', tool: 'surface_features_near_point', source: 'vegetation', selectedDate: '2026-09-10', validDates: ['2026-08-30'], observedDates: ['2026-08-31'], servedDates: ['2026-09-01'], location: { lat: 43.9, lon: -116.5 }, status: 'observed', summary: 'Nearby vegetation records returned; this is a comparison location.' },
-      ],
-      limitations: ['A nearby region is not an evaluated intervention outcome.'],
-    };
-    mocks.state.messages = [assistantMessage(response)];
-    renderWithProviders(<RegionalIntelligencePanel />);
-    expect(screen.getByText('Evidence checks (2 queried)')).toBeTruthy();
-    expect(screen.getByText('soil field moisture · Unavailable')).toBeTruthy();
-    expect(screen.getByText('climate field precipitation · Not queried')).toBeTruthy();
-    expect(screen.getByText('vegetation · Evidence returned')).toBeTruthy();
-    expect(screen.getByText('Requested 2025-09-10 · 43.6°, -116.2°')).toBeTruthy();
-    expect(screen.getByText(response.analysisEvidence.limitations[0])).toBeTruthy();
-    const markdown = reportToMarkdown(response);
-    expect(markdown).toContain('Requested 2025-09-10 · 43.6°, -116.2°');
-    expect(markdown).toContain('Requested 2026-09-10 · Valid dates: 2026-08-30 · Observed days: 2026-08-31 · Served days: 2026-09-01');
-    expect(screen.getByText('Requested 2026-09-10 · Valid dates: 2026-08-30 · Observed days: 2026-08-31 · Served days: 2026-09-01 · 43.9°, -116.5°')).toBeTruthy();
-    expect(markdown).toContain('vegetation: Evidence returned');
-    expect(markdown).toContain('Requested day has not been published.');
-    expect(markdown).toContain('A nearby region is not an evaluated intervention outcome.');
-  });
-
-  it('labels an answered strategy-knowledge lookup as returned literature, not as unavailable', () => {
-    const response = baseResponse([]);
-    response.analysisEvidence = {
-      version: 1,
-      stages: [{ id: 'additional', label: 'Investigate additional evidence', status: 'completed' }],
-      toolCalls: [
-        { id: 'additional-1', stage: 'additional', tool: 'search_environmental_strategies', source: 'strategy-knowledge', status: 'answered', summary: '3 strategy-knowledge literature records returned (corpus abc123).' },
-        { id: 'additional-2', stage: 'additional', tool: 'search_strategy_research_findings', source: 'strategy-knowledge', status: 'unavailable', reason: 'strategy_knowledge_not_configured: STRATEGY_KNOWLEDGE_URL is not set on this service' },
-      ],
-      limitations: [],
-    };
-    mocks.state.messages = [assistantMessage(response)];
-    renderWithProviders(<RegionalIntelligencePanel />);
-    expect(screen.getByText('Evidence checks (2 queried)')).toBeTruthy();
-    expect(screen.getByText('strategy knowledge · Literature returned')).toBeTruthy();
-    expect(screen.getByText('strategy knowledge · Unavailable')).toBeTruthy();
-    expect(reportToMarkdown(response)).toContain('strategy-knowledge: Literature returned');
-  });
-
-  it("counts supported sources without advertising deferred model placeholders", () => {
-    mocks.state.dataFreshness = {
-      drought: "unavailable", streamflow: "unavailable", weatherObservations: "unavailable",
-      fireDetections: "unavailable", firePerimeters: "unavailable", soilProperties: "unavailable",
-      mtbsPerimeters: "unavailable", strategyRecommendations: "unavailable",
-      carbonPotential: "published_revision_required",
-    };
-    renderWithProviders(<RegionalIntelligencePanel />);
-    fireEvent.click(screen.getByRole("button", { name: "Initial context sources (7)" }));
-    expect(screen.getAllByText("No dated evidence in initial context")).toHaveLength(7);
-    expect(screen.queryByText("strategyRecommendations")).toBeNull();
-    expect(screen.queryByText("carbonPotential")).toBeNull();
-  });
-
-  it("omits a footer containing only deferred model placeholders", () => {
-    mocks.state.dataFreshness = { strategyRecommendations: "published_revision_required", carbonPotential: "unavailable" };
-    renderWithProviders(<RegionalIntelligencePanel />);
-    expect(screen.queryByRole("button", { name: /Initial context sources/ })).toBeNull();
-  });
-
-  it("retains dated evidence in historical reports even for a now-deferred source", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-09-10T12:00:00Z"));
-    mocks.state.dataFreshness = { strategyRecommendations: "2026-08-01T12:00:00Z", carbonPotential: "2026-08-01T12:00:00Z" };
-    renderWithProviders(<RegionalIntelligencePanel />);
-    fireEvent.click(screen.getByRole("button", { name: "Initial context sources (2)" }));
-    expect(screen.getByText("strategyRecommendations")).toBeTruthy();
-    expect(screen.getByText("carbonPotential")).toBeTruthy();
-    expect(screen.queryByText("No dated evidence in initial context")).toBeNull();
-  });
-
-  it("labels SoilGrids evidence as a published estimate without relabelling measured sources", () => {
-    const response = baseResponse([]);
-    response.observations = [
-      { statement: "SoilGrids estimates surface clay at 26%.", evidenceOrigin: "warehouse", evidenceSource: "soilProperties" },
-      { statement: "Streamflow was 14,100 cfs.", evidenceOrigin: "warehouse", evidenceSource: "streamflow" },
+  it("shows risk, findings as value · day, recommendations and one consult line, with every item still reachable", () => {
+    const calls: Check[] = [
+      { id: "moisture", stage: "local", tool: "surface_value_near_point", source: "soil-field-moisture", selectedDate: "2026-09-10", resolvedDay: "2026-09-04", dayOffset: -6, status: "observed" },
+      { id: "precip", stage: "local", tool: "surface_value_near_point", source: "climate-field-precipitation", selectedDate: "2026-09-10", resolvedDay: "2026-09-10", cellDistanceKm: 23.6, status: "observed" },
     ];
-    mocks.state.messages = [assistantMessage(response)];
-    renderWithProviders(<RegionalIntelligencePanel />);
-    expect(screen.getByText("Published estimate · soilProperties")).toBeTruthy();
-    expect(screen.getByText("Observed data · streamflow")).toBeTruthy();
+    showReport(report({
+      observations: [
+        { statement: "Surface soil moisture is 0.12 m³/m³.", evidenceOrigin: "warehouse", evidenceSource: "soil-field-moisture", evidenceReadIds: ["moisture"] },
+        { statement: "Precipitation was 3 mm.", evidenceOrigin: "warehouse", evidenceSource: "climate-field-precipitation", evidenceReadIds: ["precip"] },
+        { statement: "Third finding.", evidenceOrigin: "model_inference" },
+        { statement: "Fourth finding.", evidenceOrigin: "model_inference" },
+      ],
+      remediation: [
+        recommendation(),
+        recommendation({ title: "Second", consultProfessionals: ["soil_scientist"] }),
+        recommendation({ title: "Third", timeframe: "immediate", consultProfessionals: [] }),
+        recommendation({ title: "Fourth", timeframe: "long_term", consultProfessionals: [] }),
+      ],
+      analysisEvidence: evidence(calls),
+    }));
+
+    expect(screen.getByRole("heading", { name: "Risk · Moderate" })).toBeTruthy();
+    expect(screen.getByText("Elevated drought stress with no active fire signal.")).toBeTruthy();
+    expect(screen.getByText("Published estimate · 2026-09-04 · nearest day, 6 d earlier")).toBeTruthy();
+    expect(screen.getByText("Published estimate · 2026-09-10 · nearest cell, 23.6 km")).toBeTruthy();
+    expect(screen.queryByText("Fourth finding.")).toBeNull();
+    expect(screen.getByText("Third · Now")).toBeTruthy();
+    expect(screen.queryByText("Fourth · Multi-year")).toBeNull();
+    expect(screen.getByText("Confirm with an agronomist or soil scientist before acting.")).toBeTruthy();
+
+    const showMore = screen.getAllByRole("button", { name: "Show 1 more" });
+    expect(showMore).toHaveLength(2);
+    showMore.forEach((button) => fireEvent.click(button));
+    expect(screen.getByText("Fourth finding.")).toBeTruthy();
+    expect(screen.getByText("Fourth · Multi-year")).toBeTruthy();
+
+    // Per-item provenance chips and the strategy chip row are gone; one footer note stands in.
+    expect(screen.queryByText(/AI inference/)).toBeNull();
+    expect(screen.queryByLabelText("Suggested strategy chips")).toBeNull();
+    expect(screen.getAllByText("AI-generated; values are published estimates, not measurements.")).toHaveLength(1);
+    expect(document.body.textContent).not.toMatch(/\+\d+%|tau/i);
   });
 
-  it("labels a strategy-knowledge recommendation as literature and never marks it stale", () => {
-    const response = baseResponse([{
-      strategy: "silvopasture", title: "Screen silvopasture against grazing capacity",
-      rationale: "Published guidance describes stocking-rate prerequisites for this cover type.",
-      timeframe: "long_term", confidence: "moderate", consultProfessionals: ["ecologist"],
-      evidenceOrigin: "literature", evidenceSource: "strategy-knowledge",
-    }]);
-    mocks.state.messages = [assistantMessage(response)];
-    renderWithProviders(<RegionalIntelligencePanel />);
-    expect(screen.getByText("Literature · strategy-knowledge")).toBeTruthy();
-    expect(screen.queryByText(/Stale/)).toBeNull();
-    // A literature claim never opens an "Initial context sources" freshness disclosure: it is not
-    // keyed to a RegionalEvidenceSource and carries no dataFreshness/max-age entry to render.
-    expect(screen.queryByRole("button", { name: /Initial context sources/ })).toBeNull();
-  });
-
-  it("shows a literature claim's server-written citations and quietly labels a downgraded claim", () => {
-    const response = baseResponse([
-      {
-        strategy: "cover_cropping", title: "Screen reduced tillage for water savings",
-        rationale: "Northern Great Plains trials reported a −65% relative median change in soil evaporation.",
-        timeframe: "long_term", confidence: "low", consultProfessionals: ["agronomist"],
-        evidenceOrigin: "literature", evidenceSource: "strategy-knowledge",
-        literatureRecordIds: ["sk-finding-F8101", "reduced-tillage-no-till"],
-        literatureCitations: [
-          {
-            recordId: "sk-finding-F8101", kind: "finding", title: "Tillage and water loss in the Northern Great Plains",
-            magnitude: "−65%", direction: "mixed", conditions: "Northern Great Plains irrigated cropland",
-            sourceUrl: "https://example.org/tillage-study",
-          },
-          // A saved report can predate the https-only validator: its link is never rendered.
-          { recordId: "reduced-tillage-no-till", kind: "strategy", title: "Reduced tillage / no-till", sourceUrl: "http://example.org/insecure" },
-        ],
-      },
-      {
-        strategy: "cover_cropping", title: "Expect lower evaporation here",
-        rationale: "Switching to no-till here would cut your soil evaporation by 65%.",
-        timeframe: "long_term", confidence: "low", consultProfessionals: [],
-        evidenceOrigin: "model_inference",
-        groundingNote: "It restates a literature magnitude as an expected outcome at this site; cited studies describe other sites.",
-      },
-    ]);
-    mocks.state.messages = [assistantMessage(response)];
-    renderWithProviders(<RegionalIntelligencePanel />);
-    const grounded = within(screen.getByText(response.remediation[0].title).closest("article") as HTMLElement);
-    expect(grounded.getByText("Literature · strategy-knowledge")).toBeTruthy();
-    const citations = within(grounded.getByRole("list", { name: "Literature citations" }));
-    expect(citations.getByText("Tillage and water loss in the Northern Great Plains")).toBeTruthy();
-    expect(citations.getByText("· Reported −65% (direction: mixed)")).toBeTruthy();
-    expect(citations.getByText("· Conditions: Northern Great Plains irrigated cropland")).toBeTruthy();
-    const link = citations.getByRole("link", { name: /Source for Tillage and water loss/ });
-    expect(link.getAttribute("href")).toBe("https://example.org/tillage-study");
-    expect(link.getAttribute("rel")).toContain("noopener");
-    expect(citations.getAllByRole("link")).toHaveLength(1);
-    expect(grounded.queryByText("Not grounded in the cited research")).toBeNull();
-
-    const downgraded = within(screen.getByText(response.remediation[1].title).closest("article") as HTMLElement);
-    expect(downgraded.getByText("AI inference")).toBeTruthy();
-    expect(downgraded.getByText("Not grounded in the cited research")).toBeTruthy();
-    expect(downgraded.queryByRole("list", { name: "Literature citations" })).toBeNull();
-
-    const markdown = reportToMarkdown(response);
-    expect(markdown).toContain("- Literature: Tillage and water loss in the Northern Great Plains · Reported −65% (direction: mixed) · Conditions: Northern Great Plains irrigated cropland · [Source](https://example.org/tillage-study)");
-    expect(markdown).toContain("- Literature: Reduced tillage / no-till\n");
-    expect(markdown).not.toContain("http://example.org/insecure");
-    expect(markdown).toContain("_Not grounded in the cited research: It restates a literature magnitude");
-  });
-
-  it("escapes Markdown syntax in cited free text and encodes parentheses in the source URL", () => {
-    const response = baseResponse([{
-      strategy: "cover_cropping", title: "Cite a title with Markdown-like text",
-      rationale: "See the cited finding.",
-      timeframe: "long_term", confidence: "low", consultProfessionals: [],
-      evidenceOrigin: "literature", evidenceSource: "strategy-knowledge",
-      literatureRecordIds: ["sk-finding-escape"],
-      literatureCitations: [{
-        recordId: "sk-finding-escape", kind: "finding",
-        title: "Effect of [no-till] on *evaporation* (field study)",
-        // Free text taken verbatim from the record, same as title/conditions (wave-2 fix-stage
-        // review): the Markdown export must escape it too, not just render it live emphasis/a link.
-        magnitude: "*−65%* [see table 2](x)",
-        conditions: "Trials in `plot_1` (irrigated)",
-        sourceUrl: "https://example.org/study_(2019)",
-      }],
-    }]);
-    mocks.state.messages = [assistantMessage(response)];
-    // The UI renders the raw text as text (JSX escapes it for the DOM); only the Markdown export
-    // needs its own escaping, so the on-screen citation is untouched.
-    renderWithProviders(<RegionalIntelligencePanel />);
-    expect(screen.getByText("Effect of [no-till] on *evaporation* (field study)")).toBeTruthy();
-
-    const markdown = reportToMarkdown(response);
-    expect(markdown).toContain("Effect of \\[no-till\\] on \\*evaporation\\* \\(field study\\)");
-    expect(markdown).toContain("Reported \\*−65%\\* \\[see table 2\\]\\(x\\)");
-    expect(markdown).toContain("Trials in \\`plot_1\\` \\(irrigated\\)");
-    expect(markdown).toContain("[Source](https://example.org/study_%282019%29)");
-  });
-
-  it("labels an observation instant with its viewer timezone rather than an ambiguous calendar date", () => {
-    mocks.state.dataFreshness = { streamflow: "2026-09-10T06:45:00Z" };
-    const formatter = vi.spyOn(Date.prototype, "toLocaleString");
-    try {
-      renderWithProviders(<RegionalIntelligencePanel />);
-      fireEvent.click(screen.getByRole("button", { name: "Initial context sources (1)" }));
-      expect(formatter).toHaveBeenCalledWith(undefined, { timeZoneName: "short" });
-    } finally {
-      formatter.mockRestore();
+  it("offers copy and both exports from one menu per report", () => {
+    showReport(report());
+    expect(screen.queryByRole("button", { name: /Copy text|Share text|Export JSON/ })).toBeNull();
+    const menuButton = screen.getByRole("button", { name: "Export" });
+    expect(menuButton.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(menuButton);
+    expect(menuButton.getAttribute("aria-expanded")).toBe("true");
+    for (const name of ["Copy as text", "Download Markdown", "Download JSON"]) {
+      expect(screen.getByRole("button", { name })).toBeTruthy();
     }
   });
-  afterEach(() => {
-    mocks.state.messages = [];
-    mocks.state.dataFreshness = {};
-    vi.useRealTimers();
+
+  it("merges local and history passes per lane and repeated literature lookups into one ×N row", () => {
+    showReport(report({
+      analysisEvidence: evidence([
+        { id: "l1", stage: "local", tool: "surface_value_near_point", source: "soil-field-moisture", selectedDate: "2026-09-10", resolvedDay: "2026-09-10", status: "observed" },
+        { id: "h1", stage: "temporal", tool: "surface_values_near_point", source: "soil-field-moisture", rangeStart: "2026-08-10", rangeEnd: "2026-10-10", timeScale: "month", status: "observed" },
+        { id: "l2", stage: "local", tool: "surface_value_near_point", source: "climate-field-precipitation", selectedDate: "2026-09-10", resolvedDay: "2026-09-10", status: "observed" },
+        { id: "h2", stage: "temporal", tool: "surface_values_near_point", source: "climate-field-precipitation", selectedDate: "2026-08-10", resolvedDay: "2026-08-10", status: "observed" },
+        { id: "k1", stage: "additional", tool: "search_environmental_strategies", source: "strategy-knowledge", status: "answered" },
+        { id: "k2", stage: "additional", tool: "search_strategy_research_findings", source: "strategy-knowledge", status: "answered" },
+        { id: "k3", stage: "additional", tool: "get_environmental_strategies", status: "answered_no_records" },
+        { id: "skip", stage: "additional", tool: "surface_value_near_point", source: "vegetation", status: "not_queried" },
+      ]),
+    }));
+    openSources();
+    expect(laneTexts()).toEqual([
+      "Soil field moisture · Found · 2026-09-10",
+      "Climate field precipitation · Found · 2026-09-10",
+      "Strategy literature ×3 · Found",
+    ]);
   });
 
-  it("does not describe an empty completed request as still reviewing", () => {
+  it.each([
+    ["exact read", { status: "observed", resolvedDay: "2026-09-10" }, "Found · 2026-09-10"],
+    ["nearest day", { status: "observed", resolvedDay: "2026-09-04", dayOffset: -6 }, "Nearest day · 2026-09-04 (6 d earlier)"],
+    ["nearest cell", { status: "observed", resolvedDay: "2026-09-10", cellDistanceKm: 23.6 }, "Nearest cell · 2026-09-10 (23.6 km away)"],
+    ["static layer", { status: "observed", staticLayer: true }, "Static layer"],
+    ["unpublished day", { status: "unavailable", reason: "requested_day_not_published" }, "Not published"],
+    ["failed read", { status: "error", reason: "timeout" }, "Error"],
+  ] as const)("labels a %s with its single status", (_name, fields, expected) => {
+    showReport(report({
+      analysisEvidence: evidence([{ id: "one", stage: "local", tool: "surface_value_near_point", source: "soil-survey", selectedDate: "2026-09-10", ...fields } as Check]),
+    }));
+    openSources();
+    expect(laneTexts()).toEqual([`Soil survey · ${expected}`]);
+  });
+
+  it("keeps raw scope inside the row expand, with zoom and coordinates rounded", () => {
+    showReport(report({
+      analysisEvidence: evidence([{
+        id: "z", stage: "local", tool: "surface_value_near_point", source: "watersheds", selectedDate: "2026-09-10",
+        resolvedDay: "2026-09-10", zoom: 14.904274419894014, location: { lat: 43.612345678, lon: -116.212345678 }, status: "observed",
+      }]),
+    }));
+    const lanes = openSources();
+    const scope = "Local reads: Requested 2026-09-10 · Zoom 14.9 · 43.6123°, -116.2123°";
+    expect(screen.queryByText(scope)).toBeNull();
+    const row = lanes.getByRole("button", { name: /Watersheds · Found/ });
+    fireEvent.click(row);
+    expect(row.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText(scope)).toBeTruthy();
+    expect(document.body.textContent).not.toContain("14.904274419894014");
+  });
+
+  it("states a partial report once and lists one gap line per lane inside Sources", () => {
+    const limitationsWall = Array.from({ length: 12 }, () => "soil-field-moisture [h1]: availability only, not a measured condition.");
+    showReport(report({
+      analysisEvidence: evidence([
+        { id: "l1", stage: "local", tool: "surface_value_near_point", source: "soil-field-moisture", resolvedDay: "2026-09-10", status: "observed" },
+        { id: "h1", stage: "temporal", tool: "surface_values_near_point", source: "soil-field-moisture", status: "observed" },
+        { id: "d1", stage: "local", tool: "surface_value_near_point", source: "drought-areas", status: "unavailable", reason: "requested_day_not_published" },
+      ], [...limitationsWall, "A nearby region is not an evaluated intervention outcome.", "A nearby region is not an evaluated intervention outcome."]),
+    }));
+    expect(screen.getByRole("note").textContent).toBe("Some sources unavailable — see Sources.");
+    openSources();
+    expect(screen.getByText("Soil field moisture: availability only, not a measured condition.")).toBeTruthy();
+    expect(screen.getByText("Drought areas: requested day not published")).toBeTruthy();
+    expect(screen.getAllByText("A nearby region is not an evaluated intervention outcome.")).toHaveLength(1);
+  });
+
+  it("shows no partial note when every queried source answered", () => {
+    showReport(report({
+      analysisEvidence: evidence([{ id: "l1", stage: "local", tool: "surface_value_near_point", source: "watersheds", resolvedDay: "2026-09-10", status: "observed" }]),
+    }));
+    expect(screen.queryByRole("note")).toBeNull();
+  });
+
+  it("contains a malformed saved report to its own boundary and keeps the conversation usable", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.state.messages = [
+      { id: "bad", role: "assistant", content: "", parsedResponse: { aiGenerated: true } as unknown as RegionalIntelligenceResponse },
+      { id: "odd", role: "assistant", content: "", parsedResponse: report({ riskSummary: { ...report().riskSummary, level: "severe" as never }, dataFreshness: null as never }) },
+    ];
+    renderWithProviders(<RegionalIntelligencePanel />);
+    expect(screen.getByRole("alert").textContent).toMatch(/This report could not be displayed/);
+    expect(screen.getByRole("heading", { name: "Risk · Unknown" })).toBeTruthy();
+    expect(screen.getByLabelText("Ask a follow-up question about this location")).toBeTruthy();
+  });
+
+  it("exports exactly the rows, findings and consult line the screen shows", () => {
+    const response = report({
+      observations: [{ statement: "Surface soil moisture is 0.12 m³/m³.", evidenceOrigin: "warehouse", evidenceSource: "soil-field-moisture", evidenceReadIds: ["m"] }],
+      analysisEvidence: evidence([
+        { id: "m", stage: "local", tool: "surface_value_near_point", source: "soil-field-moisture", resolvedDay: "2026-09-04", dayOffset: -6, status: "observed" },
+        { id: "m2", stage: "temporal", tool: "surface_values_near_point", source: "soil-field-moisture", status: "observed" },
+        { id: "k1", stage: "additional", tool: "search_environmental_strategies", source: "strategy-knowledge", status: "answered" },
+        { id: "k2", stage: "additional", tool: "search_environmental_strategies", source: "strategy-knowledge", status: "answered" },
+        { id: "s", stage: "local", tool: "surface_features_near_point", source: "soil-survey", staticLayer: true, status: "observed" },
+      ]),
+      dataFreshness: { soilProperties: "static_release_untimed" },
+    });
+    showReport(response);
+    openSources();
+    const view = buildReportView(response);
+    const markdown = reportToMarkdown(response);
+    const exportedRows = view.sources.rows.map(sourceRowSummary);
+    expect(laneTexts()).toEqual(exportedRows);
+    for (const row of exportedRows) expect(markdown).toContain(`\n- ${row}\n`);
+    expect(markdown).toContain(`- ${response.observations[0].statement} — ${view.findings[0].meta}`);
+    expect(screen.getByText(view.findings[0].meta as string)).toBeTruthy();
+    expect(markdown).toContain(view.consult as string);
+  });
+
+  it("files literature citations under the literature row, https links only, escaped in Markdown", () => {
+    const response = report({
+      remediation: [recommendation({
+        evidenceOrigin: "literature", evidenceSource: "strategy-knowledge",
+        literatureRecordIds: ["sk-1", "sk-2"],
+        literatureCitations: [
+          { recordId: "sk-1", kind: "finding", title: "Effect of [no-till] on *evaporation* (field study)", magnitude: "*−65%*", direction: "mixed", conditions: "Trials in `plot_1` (irrigated)", sourceUrl: "https://example.org/study_(2019)" },
+          { recordId: "sk-2", kind: "strategy", title: "Reduced tillage / no-till", sourceUrl: "http://example.org/insecure" },
+        ],
+      })],
+    });
+    showReport(response);
+    const lanes = openSources();
+    fireEvent.click(lanes.getByRole("button", { name: /Strategy literature · Found/ }));
+    expect(screen.getByText(/Effect of \[no-till\] on \*evaporation\* \(field study\) · Reported \*−65%\* \(direction: mixed\)/)).toBeTruthy();
+    const links = lanes.getAllByRole("link");
+    expect(links).toHaveLength(1);
+    expect(links[0].getAttribute("href")).toBe("https://example.org/study_(2019)");
+
+    const markdown = reportToMarkdown(response);
+    expect(markdown).toContain("Effect of \\[no-till\\] on \\*evaporation\\* \\(field study\\) · Reported \\*−65%\\* \\(direction: mixed\\) · Conditions: Trials in \\`plot_1\\` \\(irrigated\\) · [Source](https://example.org/study_%282019%29)");
+    expect(markdown).not.toContain("http://example.org/insecure");
+  });
+
+  it.each([
+    ["undated soil release", { soilProperties: "static_release_untimed" }, ["Soil properties · Static layer"]],
+    ["captured perimeter snapshot", { firePerimeters: "snapshot_captured_2026-09-01" }, ["Fire perimeters · Found · 2026-09-01"]],
+    ["old perimeter snapshot", { firePerimeters: "snapshot_captured_2026-08-01" }, ["Fire perimeters · Found · 2026-08-01 (stale)"]],
+    ["MTBS publication", { mtbsPerimeters: "publication_available_2026-09-09" }, ["MTBS perimeters · Found · 2026-09-09"]],
+    ["drought publisher day", { drought: "2026-09-01T00:00:00Z" }, ["Drought · Found · 2026-09-01"]],
+    ["deferred placeholders", { strategyRecommendations: "unavailable", carbonPotential: "published_revision_required", streamflow: "unavailable" }, ["Streamflow · Not published"]],
+  ] as const)("folds the initial-context %s into Sources", (_name, freshness, expected) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-10T12:00:00Z"));
+    try {
+      showReport(report({ dataFreshness: { ...freshness } }));
+      openSources();
+      expect(laneTexts()).toEqual(expected);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows the streaming state with the live Sources disclosure, then nothing stale once idle", () => {
+    mocks.state.isLoading = true;
+    mocks.state.messages = [{ id: "s", role: "assistant", content: "", isStreaming: true }];
+    mocks.state.analysisEvidence = evidence([{ id: "l1", stage: "local", tool: "surface_value_near_point", source: "watersheds", resolvedDay: "2026-09-10", status: "observed" }]);
+    renderWithProviders(<RegionalIntelligencePanel />);
+    expect(screen.getByText("Reviewing this location…")).toBeTruthy();
+    openSources(/^Sources so far \(1\)/);
+    expect(laneTexts()).toEqual(["Watersheds · Found · 2026-09-10"]);
+  });
+
+  it("distinguishes the empty panel from a completed turn with no analysis", () => {
+    const { unmount } = renderWithProviders(<RegionalIntelligencePanel />);
+    expect(screen.getByText("Ask about this location to get AI-generated remediation suggestions.")).toBeTruthy();
+    unmount();
     mocks.state.messages = [{ id: "failed", role: "assistant", content: "", isStreaming: false }];
     renderWithProviders(<RegionalIntelligencePanel />);
     expect(screen.getByText("No analysis was completed.")).toBeTruthy();
     expect(screen.queryByText("Reviewing this location…")).toBeNull();
   });
+});
 
-  it("labels undated soil and captured perimeter releases without calling them unobserved", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-09-10T12:00:00Z"));
-    mocks.state.dataFreshness = {
-      soilProperties: "static_release_untimed",
-      firePerimeters: "snapshot_captured_2026-09-01",
-    };
-    renderWithProviders(<RegionalIntelligencePanel />);
-    fireEvent.click(screen.getByRole("button", { name: "Initial context sources (2)" }));
-    expect(screen.getByText("Static release (undated)")).toBeTruthy();
-    expect(screen.getByText("Snapshot captured 2026-09-01")).toBeTruthy();
-    expect(screen.queryByText("No dated evidence in initial context")).toBeNull();
-  });
-
-  it("labels MTBS publication availability separately from snapshot capture or ignition", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-09-11T12:00:00Z"));
-    mocks.state.dataFreshness = { mtbsPerimeters: "publication_available_2026-09-11" };
-    renderWithProviders(<RegionalIntelligencePanel />);
-    fireEvent.click(screen.getByRole("button", { name: "Initial context sources (1)" }));
-    expect(screen.getByText("Publication available 2026-09-11")).toBeTruthy();
-    expect(screen.queryByText("Snapshot captured 2026-09-11")).toBeNull();
-    expect(screen.queryByText("No dated evidence in initial context")).toBeNull();
-  });
-
-  it("keeps an old perimeter snapshot stale while displaying its actual capture day", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-09-10T12:00:00Z"));
-    mocks.state.dataFreshness = { firePerimeters: "snapshot_captured_2026-08-01" };
-    renderWithProviders(<RegionalIntelligencePanel />);
-    fireEvent.click(screen.getByRole("button", { name: "Initial context sources (1)" }));
-    expect(screen.getByText("Stale (Snapshot captured 2026-08-01)")).toBeTruthy();
-  });
-
-  it("labels the drought release by its publisher day rather than the previous local evening", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-09-10T12:00:00Z"));
-    const dateFormat = vi.spyOn(Date.prototype, "toLocaleDateString").mockImplementation(
-      function (this: Date, _locales, options) {
-        return new Intl.DateTimeFormat("en-US", { timeZone: "America/Denver", ...options }).format(this);
-      }
-    );
-    try {
-      mocks.state.dataFreshness = { drought: "2026-09-01T00:00:00Z" };
-      renderWithProviders(<RegionalIntelligencePanel />);
-      fireEvent.click(screen.getByRole("button", { name: "Initial context sources (1)" }));
-      expect(screen.getByText("Release Sep 1, 2026")).toBeTruthy();
-    } finally {
-      dateFormat.mockRestore();
-    }
-  });
-
-  it("renders a chip per recommended strategy, named from the model's own remediation items", () => {
-    mocks.state.messages = [
-      assistantMessage(
-        baseResponse([
-          {
-            strategy: "riparian_buffer",
-            title: "Restore streambank vegetation",
-            rationale: "Bank cover reduces erosion under drought stress.",
-            timeframe: "short_term",
-            confidence: "moderate",
-            consultProfessionals: ["hydrologist"],
-            evidenceOrigin: "model_inference",
-          },
-          {
-            strategy: "managed_grazing",
-            title: "Rotate grazing away from riparian corridor",
-            rationale: "Reduces compaction while vegetation recovers.",
-            timeframe: "immediate",
-            confidence: "high",
-            consultProfessionals: ["agronomist"],
-            evidenceOrigin: "warehouse",
-            evidenceSource: "drought",
-          },
-        ])
-      ),
-    ];
-
-    renderWithProviders(<RegionalIntelligencePanel />);
-
-    const chips = within(screen.getByLabelText("Suggested strategy chips"));
-    expect(chips.getByText(/riparian buffer/i)).toBeTruthy();
-    expect(chips.getByText(/managed grazing/i)).toBeTruthy();
-    // No fabricated causal language anywhere on the page.
-    expect(screen.queryByText(/tau/i)).toBeNull();
-    expect(document.body.textContent).not.toMatch(/\+\d+%/);
-  });
-
-  it("renders no strategy chips when the response recommends nothing", () => {
-    mocks.state.messages = [assistantMessage(baseResponse([]))];
-
-    renderWithProviders(<RegionalIntelligencePanel />);
-
-    expect(
-      screen.getByText(/did not find enough here to suggest a remediation/i)
-    ).toBeTruthy();
-    expect(screen.queryByLabelText("Suggested strategy chips")).toBeNull();
-    expect(screen.queryByText(/tau/i)).toBeNull();
-    expect(document.body.textContent).not.toMatch(/\+\d+%/);
-  });
-
-  it("still offers both a JSON and a Markdown export once a report has rendered", () => {
-    mocks.state.messages = [
-      assistantMessage(
-        baseResponse([
-          {
-            strategy: "biochar",
-            title: "Apply biochar to depleted plots",
-            rationale: "Organic carbon deficit observed in supplied soil context.",
-            timeframe: "long_term",
-            confidence: "low",
-            consultProfessionals: ["soil_scientist"],
-            evidenceOrigin: "model_inference",
-          },
-        ])
-      ),
-    ];
-
-    renderWithProviders(<RegionalIntelligencePanel />);
-
-    expect(screen.getByRole("button", { name: /export json/i })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /export markdown/i })).toBeTruthy();
+describe("consultLine", () => {
+  it.each([
+    [["agronomist"], "Confirm with an agronomist before acting."],
+    [["agronomist", "soil_scientist"], "Confirm with an agronomist or soil scientist before acting."],
+    [["hydrologist", "ecologist", "extension_service"], "Confirm with a hydrologist, ecologist, or extension service before acting."],
+    [["soil_scientist", "soil_scientist"], "Confirm with a soil scientist before acting."],
+    [[], null],
+  ])("%j -> %s", (disciplines, expected) => {
+    expect(consultLine(disciplines)).toBe(expected);
   });
 });

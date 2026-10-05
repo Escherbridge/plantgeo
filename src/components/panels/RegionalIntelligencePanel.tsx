@@ -1,743 +1,27 @@
 "use client";
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { CopyShareText } from './CopyShareText';
 import { MessageFeedback } from './MessageFeedback';
-import {
-  X,
-  MapPin,
-  Send,
-  AlertTriangle,
-  Loader2,
-  ChevronDown,
-  Sparkles,
-  ExternalLink,
-  Stethoscope,
-} from 'lucide-react';
+import { X, MapPin, Send, Loader2 } from 'lucide-react';
 import { useRegionalIntelligenceStore, type ChatMessage } from '@/stores/regional-intelligence-store';
 import { useRegionalIntelligence } from '@/hooks/useRegionalIntelligence';
-import { formatCalendarDay } from '@/lib/map/time-format';
 import { ANALYSIS_TIME_SCALES, type AnalysisTimeScale } from '@/lib/regional-analysis-selection';
-import {
-  AI_GENERATED_DISCLAIMER,
-  AI_GENERATED_LABEL,
-  REGIONAL_TOOL_EVIDENCE_SOURCES,
-  RETIRED_REGIONAL_TOOL_EVIDENCE_SOURCES,
-  isRegionalEvidenceSource,
-  regionalEvidenceFreshnessState,
-  regionalEvidenceSnapshotDay,
-  regionalEvidencePublicationDay,
-  type EvidenceOrigin,
-  type LiteratureCitation,
-  type RegionalAnalysisEvidence,
-  type RegionalIntelligenceResponse,
-} from '@/lib/regional-intelligence';
+import { AI_GENERATED_LABEL } from '@/lib/regional-intelligence';
+import { buildSourcesView } from '@/lib/regional-evidence-presentation';
+import { RegionalIntelligenceReport, SourcesDisclosure } from './RegionalIntelligenceReport';
+import { ReportErrorBoundary } from './ReportErrorBoundary';
 
-// ---------------------------------------------------------------------------
-// Presentation helpers
-// ---------------------------------------------------------------------------
-
-const ORIGIN_LABELS: Record<EvidenceOrigin, string> = {
-  warehouse: 'Observed data',
-  web: 'Web source',
-  literature: 'Literature',
-  model_inference: 'AI inference',
-};
-
-const ORIGIN_STYLES: Record<EvidenceOrigin, string> = {
-  warehouse: 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200',
-  web: 'bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-200',
-  literature: 'bg-indigo-100 text-indigo-900 dark:bg-indigo-950 dark:text-indigo-200',
-  model_inference: 'bg-violet-100 text-violet-900 dark:bg-violet-950 dark:text-violet-200',
-};
-
-function humanize(value: string): string {
-  return value.replace(/_/g, ' ');
-}
-
-function originLabel(origin: EvidenceOrigin, source?: string): string {
-  if (origin === 'warehouse') {
-    if (source === 'soilProperties' || source?.startsWith('climate-field-') || source?.startsWith('soil-field-')) return 'Published estimate';
-    const publishedSources: readonly string[] = [...REGIONAL_TOOL_EVIDENCE_SOURCES, ...RETIRED_REGIONAL_TOOL_EVIDENCE_SOURCES];
-    if (source && publishedSources.includes(source)) return 'Published data';
-  }
-  return ORIGIN_LABELS[origin];
-}
-
-const CHECK_STATUS_LABELS: Record<RegionalAnalysisEvidence['toolCalls'][number]['status'], string> = {
-  observed: 'Evidence returned',
-  answered: 'Literature returned',
-  answered_no_records: 'No matching literature',
-  unavailable: 'Unavailable',
-  refused: 'Read refused',
-  error: 'Request failed',
-  not_queried: 'Not queried',
-  governed_absence: 'Confirmed absence',
-};
-
-function evidenceCheckScope(check: RegionalAnalysisEvidence['toolCalls'][number]): string {
-  return [check.selectedDate ? `Requested ${check.selectedDate}` : undefined,
-    check.rangeStart && check.rangeEnd ? `Window ${check.rangeStart} through ${check.rangeEnd} (${check.timeScale ?? 'day'})` : undefined,
-    check.zoom !== undefined ? `Map zoom ${check.zoom}` : undefined,
-    check.validDates?.length ? `Valid dates: ${check.validDates.join(', ')}` : undefined,
-    check.observedDates?.length ? `Observed days: ${check.observedDates.join(', ')}` : undefined,
-    check.servedDates?.length ? `Served days: ${check.servedDates.join(', ')}` : undefined,
-    check.location ? `${check.location.lat}°, ${check.location.lon}°` : undefined]
-    .filter(Boolean).join(' · ');
-}
-
-function evidenceCheckSources(check: RegionalAnalysisEvidence['toolCalls'][number]): string {
-  return (check.sources ?? (check.source ? [check.source] : [check.tool]))
-    .map((source) => humanize(source).replace(/-/g, ' ')).join(', ');
-}
-
-function citedEvidenceChecks(ids: string[] | undefined, evidence: RegionalAnalysisEvidence | undefined) {
-  if (!evidence || !ids?.length) return [];
-  return [...new Set(ids)].slice(0, 8).flatMap((id) => {
-    const check = evidence.toolCalls.find((entry) => entry.id === id);
-    if (!check) return [];
-    const stage = evidence.stages.find((entry) => entry.id === check.stage)?.label ?? humanize(check.stage);
-    return [{
-      id,
-      description: [stage, evidenceCheckSources(check), evidenceCheckScope(check)]
-        .filter(Boolean).join(' · '),
-    }];
-  });
-}
-
-function ClaimEvidenceReferences({
-  ids,
-  evidence,
-}: {
-  ids: string[] | undefined;
-  evidence: RegionalAnalysisEvidence | undefined;
-}) {
-  const checks = citedEvidenceChecks(ids, evidence);
-  if (!checks.length) return null;
-  return (
-    <ul aria-label="Cited evidence" className="mt-1 space-y-1 text-xs text-gray-600 dark:text-gray-300">
-      {checks.map((check) => <li key={check.id}>Cited evidence: {check.description}</li>)}
-    </ul>
-  );
-}
-
-/** Label for a literature item the server downgraded to model_inference (see `groundLiteratureClaims`). */
-const NOT_GROUNDED_LABEL = 'Not grounded in the cited research';
-
-/** Only an absolute https link is ever rendered, even from an older saved report. */
-function httpsSourceUrl(value: string | undefined): string | undefined {
-  if (!value) return undefined;
-  try {
-    return new URL(value).protocol === 'https:' ? value : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * "Reported −65% (direction: mixed)": the record's own magnitude and direction, verbatim. `magnitude`
- * is free text taken as-is from the cited record, so it goes through the same `escape` as title and
- * conditions (wave-2 fix-stage review: the Markdown path left it unescaped, unlike the other two).
- */
-function literatureEffect(citation: LiteratureCitation, escape: (text: string) => string = (text) => text): string | undefined {
-  const direction = citation.direction ? `direction: ${humanize(citation.direction)}` : undefined;
-  if (citation.magnitude) return `Reported ${escape(citation.magnitude)}${direction ? ` (${direction})` : ''}`;
-  return direction ? `Reported ${direction}` : undefined;
-}
-
-/** JSX renders text as text, so this is safe without escaping there; `escape` is applied only for Markdown export. */
-function literatureCitationText(citation: LiteratureCitation, escape: (text: string) => string = (text) => text): string {
-  return [escape(citation.title), literatureEffect(citation, escape), citation.conditions ? `Conditions: ${escape(citation.conditions)}` : undefined]
-    .filter(Boolean).join(' · ');
-}
-
-/** Escapes Markdown syntax characters in cited free text (record title/conditions, downgrade notes) for export.
- * An underscore between two alphanumeric characters ("plot_1") is left bare: CommonMark never treats an
- * intraword underscore as an emphasis delimiter, so escaping it would only add a visible, spurious backslash. */
-function escapeMarkdown(text: string): string {
-  return text.replace(/([\\`*_{}[\]()#+!|<>~])/g, (_match, char: string, offset: number, source: string) => {
-    if (char === '_') {
-      const before = source[offset - 1];
-      const after = source[offset + 1];
-      if (before && after && /[A-Za-z0-9]/.test(before) && /[A-Za-z0-9]/.test(after)) return char;
-    }
-    return `\\${char}`;
-  });
-}
-
-/** Percent-encodes parentheses so a cited source URL cannot truncate a Markdown `[Source](url)` link early. */
-function markdownLinkUrl(url: string): string {
-  return url.replace(/\(/g, '%28').replace(/\)/g, '%29');
-}
-
-function LiteratureCitations({ citations }: { citations: LiteratureCitation[] | undefined }) {
-  if (!citations?.length) return null;
-  return (
-    <ul aria-label="Literature citations" className="mt-1 space-y-1 text-xs text-gray-600 dark:text-gray-300">
-      {citations.map((citation) => {
-        const sourceUrl = httpsSourceUrl(citation.sourceUrl);
-        const effect = literatureEffect(citation);
-        return (
-          <li key={citation.recordId} className="break-words">
-            <span className="font-medium">{citation.title}</span>
-            {effect && <span> · {effect}</span>}
-            {citation.conditions && <span> · Conditions: {citation.conditions}</span>}
-            {sourceUrl && (
-              <>
-                {' · '}
-                <a
-                  href={sourceUrl}
-                  target="_blank"
-                  rel="noopener noreferrer nofollow"
-                  className="text-blue-600 underline hover:text-blue-800 dark:text-blue-400"
-                >
-                  Source <span className="sr-only">for {citation.title} (opens in a new tab)</span>
-                </a>
-              </>
-            )}
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
-
-function GroundingNote({ note }: { note: string | undefined }) {
-  if (!note) return null;
-  return (
-    <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
-      <span>{NOT_GROUNDED_LABEL}</span> · {note}
-    </p>
-  );
-}
-
-function literatureMarkdownLines(
-  item: { literatureCitations?: LiteratureCitation[]; groundingNote?: string },
-  indent: string,
-): string[] {
-  return [
-    ...(item.literatureCitations ?? []).map((citation) => {
-      const sourceUrl = httpsSourceUrl(citation.sourceUrl);
-      return `${indent}Literature: ${literatureCitationText(citation, escapeMarkdown)}${sourceUrl ? ` · [Source](${markdownLinkUrl(sourceUrl)})` : ''}`;
-    }),
-    ...(item.groundingNote ? [`${indent}_${NOT_GROUNDED_LABEL}: ${escapeMarkdown(item.groundingNote)}_`] : []),
-  ];
-}
-
-function evidenceDisplayStages(evidence: RegionalAnalysisEvidence): RegionalAnalysisEvidence['stages'] {
-  const known = new Set(evidence.stages.map((stage) => stage.id));
-  const additional = [...new Set(evidence.toolCalls.map((check) => check.stage))]
-    .filter((id) => !known.has(id))
-    .map((id) => ({ id, label: 'Additional evidence', status: 'partial' as const }));
-  return [...evidence.stages, ...additional];
-}
-
-function AnalysisEvidenceDetails({ evidence }: { evidence: RegionalAnalysisEvidence }) {
-  const queried = evidence.toolCalls.filter((check) => check.status !== 'not_queried').length;
-  return (
-    <details className="rounded-lg border p-3 text-xs dark:border-gray-700">
-      <summary className="min-h-8 cursor-pointer font-semibold">Evidence checks ({queried} queried)</summary>
-      <p className="mt-1 text-gray-500">Recorded source checks, dates and comparison locations for this analysis.</p>
-      <ol className="mt-2 space-y-2" aria-label="Evidence review stages">
-        {evidenceDisplayStages(evidence).map((stage) => (
-          <li key={stage.id} className="rounded bg-gray-50 p-2 dark:bg-gray-800">
-            <details>
-              <summary className="cursor-pointer font-medium">{stage.label} · {humanize(stage.status)}</summary>
-              <ul className="mt-2 space-y-2">
-                {evidence.toolCalls.filter((check) => check.stage === stage.id).map((check) => (
-                  <li key={check.id} className="break-words">
-                    <p className="font-medium">{evidenceCheckSources(check)} · {CHECK_STATUS_LABELS[check.status]}</p>
-                    {evidenceCheckScope(check) && <p className="text-gray-500">{evidenceCheckScope(check)}</p>}
-                    {check.summary && <p className="mt-0.5">{check.summary}</p>}
-                    {check.reason && <p className="mt-0.5 text-gray-500">{humanize(check.reason)}</p>}
-                  </li>
-                ))}
-              </ul>
-            </details>
-          </li>
-        ))}
-      </ol>
-      {evidence.limitations.length > 0 && <div className="mt-3">
-        <p className="font-semibold">Evidence gaps and comparison limits</p>
-        <ul className="mt-1 list-disc space-y-1 pl-4">{evidence.limitations.map((limitation, index) => <li key={index}>{limitation}</li>)}</ul>
-      </div>}
-    </details>
-  );
-}
-
-function OriginBadge({
-  origin,
-  source,
-}: {
-  origin: EvidenceOrigin;
-  source?: string;
-}) {
-  return (
-    <span
-      className={`inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium ${ORIGIN_STYLES[origin]}`}
-      title={
-        origin === 'model_inference'
-          ? 'Generated by the AI from general knowledge, not from measured data.'
-          : origin === 'literature'
-            ? 'Drawn from published strategy literature, not a local measurement at this site.'
-            : undefined
-      }
-    >
-      {originLabel(origin, source)}
-      {source ? ` · ${humanize(source)}` : ''}
-    </span>
-  );
-}
-
-function AiGeneratedBanner() {
-  return (
-    <div className="flex items-start gap-2 rounded-lg border border-violet-300 bg-violet-50 p-3 text-xs leading-5 text-violet-900 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-200">
-      <Sparkles aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
-      <p>
-        <span className="font-semibold">{AI_GENERATED_LABEL}.</span>{' '}
-        {AI_GENERATED_DISCLAIMER}
-      </p>
-    </div>
-  );
-}
-
-function RiskSummaryCard({ data, evidence }: {
-  data: RegionalIntelligenceResponse['riskSummary'];
-  evidence: RegionalAnalysisEvidence | undefined;
-}) {
-  const colors: Record<string, string> = {
-    low: 'bg-green-100 text-green-900 dark:bg-green-950 dark:text-green-100',
-    moderate: 'bg-yellow-100 text-yellow-900 dark:bg-yellow-950 dark:text-yellow-100',
-    high: 'bg-orange-100 text-orange-900 dark:bg-orange-950 dark:text-orange-100',
-    critical: 'bg-red-100 text-red-900 dark:bg-red-950 dark:text-red-100',
-  };
-  return (
-    <div className={`rounded-lg p-4 ${colors[data.level] ?? 'bg-gray-100 text-gray-800'}`}>
-      <div className="flex items-center gap-2 font-semibold">
-        <AlertTriangle aria-hidden="true" className="h-4 w-4" />
-        Risk: {data.level.toUpperCase()}
-      </div>
-      <p className="mt-1 text-sm">{data.headline}</p>
-      {data.factors.length > 0 && (
-        <ul className="mt-2 flex flex-wrap gap-1">
-          {data.factors.map((factor) => (
-            <li key={factor} className="rounded-full bg-white/60 px-2 py-0.5 text-xs dark:bg-black/20">
-              {factor}
-            </li>
-          ))}
-        </ul>
-      )}
-      <div className="mt-2">
-        <OriginBadge origin={data.evidenceOrigin} />
-      </div>
-      <ClaimEvidenceReferences ids={data.evidenceOrigin === 'warehouse' ? data.evidenceReadIds : undefined} evidence={evidence} />
-    </div>
-  );
-}
-
-function ObservationsList({
-  observations,
-  evidence,
-}: {
-  observations: RegionalIntelligenceResponse['observations'];
-  evidence: RegionalAnalysisEvidence | undefined;
-}) {
-  if (!observations.length) return null;
-  return (
-    <section className="space-y-2">
-      <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-        What the data shows
-      </h4>
-      <ul className="space-y-1.5">
-        {observations.map((observation, index) => (
-          <li
-            key={index}
-            className="rounded bg-gray-50 p-2 text-sm dark:bg-gray-800"
-          >
-            <p>{observation.statement}</p>
-            <div className="mt-1">
-              <OriginBadge
-                origin={observation.evidenceOrigin}
-                source={observation.evidenceSource}
-              />
-            </div>
-            {observation.evidenceOrigin === 'literature' && <LiteratureCitations citations={observation.literatureCitations} />}
-            <GroundingNote note={observation.groundingNote} />
-            <ClaimEvidenceReferences ids={observation.evidenceOrigin === 'warehouse' ? observation.evidenceReadIds : undefined} evidence={evidence} />
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-function RemediationCard({
-  item,
-  evidence,
-}: {
-  item: RegionalIntelligenceResponse['remediation'][number];
-  evidence: RegionalAnalysisEvidence | undefined;
-}) {
-  const timeframeStyles: Record<string, string> = {
-    immediate: 'border-red-400',
-    short_term: 'border-amber-400',
-    long_term: 'border-blue-400',
-  };
-  const timeframeLabels: Record<string, string> = {
-    immediate: 'Now',
-    short_term: 'This season',
-    long_term: 'Multi-year',
-  };
-
-  return (
-    <article
-      className={`rounded border-l-4 bg-white p-3 dark:bg-gray-800 ${timeframeStyles[item.timeframe] ?? 'border-gray-400'}`}
-    >
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium dark:bg-gray-700">
-          {timeframeLabels[item.timeframe] ?? item.timeframe}
-        </span>
-        <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] dark:bg-gray-700">
-          {humanize(item.strategy)}
-        </span>
-        <span className="text-[11px] text-gray-500">
-          AI confidence: {item.confidence}
-        </span>
-      </div>
-      <h5 className="mt-1.5 text-sm font-semibold">{item.title}</h5>
-      <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">{item.rationale}</p>
-      {item.consultProfessionals.length > 0 && (
-        <p className="mt-2 flex items-start gap-1.5 text-xs text-gray-600 dark:text-gray-400">
-          <Stethoscope aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          <span>
-            Confirm with a{' '}
-            {item.consultProfessionals.map((discipline) => humanize(discipline)).join(', ')}{' '}
-            before acting.
-          </span>
-        </p>
-      )}
-      <div className="mt-2">
-        <OriginBadge origin={item.evidenceOrigin} source={item.evidenceSource} />
-      </div>
-      {item.evidenceOrigin === 'literature' && <LiteratureCitations citations={item.literatureCitations} />}
-      <GroundingNote note={item.groundingNote} />
-      <ClaimEvidenceReferences ids={item.evidenceOrigin === 'warehouse' ? item.evidenceReadIds : undefined} evidence={evidence} />
-    </article>
-  );
-}
-
-/**
- * One chip per recommended strategy, built from the model's own `remediation` items -- the only
- * strategy data this panel actually receives (the server never streams `strategyContext` down;
- * see `src/lib/server/services/regional-context.ts`). Renders nothing when there is nothing to
- * show, and never a percentage or an effect-size number: `evidenceOrigin` is the strongest claim
- * a chip is allowed to make about where a strategy came from.
- */
-function StrategyChips({
-  remediation,
-}: {
-  remediation: RegionalIntelligenceResponse['remediation'];
-}) {
-  if (!remediation.length) return null;
-  return (
-    <div aria-label="Suggested strategy chips" className="flex min-w-0 max-w-full flex-wrap gap-1">
-      {remediation.map((item, index) => (
-        <span
-          key={`${item.strategy}-${index}`}
-          className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-mono bg-emerald-500/20 text-emerald-800 dark:text-emerald-300"
-        >
-          {humanize(item.strategy)}
-          <span className="rounded bg-white/50 px-1 text-[10px] font-sans font-medium dark:bg-black/30">
-            {ORIGIN_LABELS[item.evidenceOrigin]}
-          </span>
-        </span>
-      ))}
-    </div>
-  );
-}
-
-/** Renders the report as readable Markdown, mirroring the JSON export's structure. */
-export function reportToMarkdown(response: RegionalIntelligenceResponse): string {
-  const lines: string[] = [];
-  lines.push(`# Remediation report — ${AI_GENERATED_LABEL}`);
-  lines.push('');
-  lines.push(AI_GENERATED_DISCLAIMER);
-  lines.push('');
-  lines.push(`## Risk: ${response.riskSummary.level.toUpperCase()}`);
-  lines.push(response.riskSummary.headline);
-  if (response.riskSummary.factors.length) {
-    lines.push('');
-    for (const factor of response.riskSummary.factors) lines.push(`- ${factor}`);
-  }
-  lines.push('');
-  lines.push(`_Evidence origin: ${ORIGIN_LABELS[response.riskSummary.evidenceOrigin]}_`);
-  for (const check of citedEvidenceChecks(response.riskSummary.evidenceOrigin === 'warehouse' ? response.riskSummary.evidenceReadIds : undefined, response.analysisEvidence)) {
-    lines.push(`- Cited evidence: ${check.description}`);
-  }
-
-  if (response.observations.length) {
-    lines.push('');
-    lines.push('## What the data shows');
-    for (const observation of response.observations) {
-      const source = observation.evidenceSource ? ` (${humanize(observation.evidenceSource)})` : '';
-      lines.push(`- ${observation.statement} — _${originLabel(observation.evidenceOrigin, observation.evidenceSource)}${source}_`);
-      lines.push(...literatureMarkdownLines(observation.evidenceOrigin === 'literature' ? observation : { groundingNote: observation.groundingNote }, '  '));
-      for (const check of citedEvidenceChecks(observation.evidenceOrigin === 'warehouse' ? observation.evidenceReadIds : undefined, response.analysisEvidence)) {
-        lines.push(`  Cited evidence: ${check.description}`);
-      }
-    }
-  }
-
-  lines.push('');
-  lines.push('## Suggested remediation');
-  if (response.remediation.length) {
-    for (const item of response.remediation) {
-      lines.push('');
-      lines.push(`### ${item.title}`);
-      lines.push(
-        `Strategy: ${humanize(item.strategy)} · Timeframe: ${humanize(item.timeframe)} · AI confidence: ${item.confidence} (not a measured success probability)`
-      );
-      lines.push('');
-      lines.push(item.rationale);
-      if (item.consultProfessionals.length) {
-        lines.push('');
-        lines.push(
-          `Consult: ${item.consultProfessionals.map((discipline) => humanize(discipline)).join(', ')}`
-        );
-      }
-      lines.push('');
-      lines.push(`_Evidence origin: ${originLabel(item.evidenceOrigin, item.evidenceSource)}_`);
-      lines.push(...literatureMarkdownLines(item.evidenceOrigin === 'literature' ? item : { groundingNote: item.groundingNote }, '- '));
-      for (const check of citedEvidenceChecks(item.evidenceOrigin === 'warehouse' ? item.evidenceReadIds : undefined, response.analysisEvidence)) {
-        lines.push(`- Cited evidence: ${check.description}`);
-      }
-    }
-  } else {
-    lines.push('');
-    lines.push(
-      'The assistant did not find enough here to suggest a remediation strategy. Treat this as an absence of evidence, not an all-clear.'
-    );
-  }
-
-  lines.push('');
-  lines.push('## Professional consultation');
-  lines.push(response.professionalConsultation);
-
-  if (response.webSources.length) {
-    lines.push('');
-    lines.push('## Web sources consulted');
-    for (const source of response.webSources) lines.push(`- [${source.title}](${source.url})`);
-  }
-
-  if (response.analysisEvidence) {
-    lines.push('', '## Evidence checks');
-    for (const stage of evidenceDisplayStages(response.analysisEvidence)) {
-      lines.push('', `### ${stage.label} — ${stage.status}`);
-      for (const check of response.analysisEvidence.toolCalls.filter((item) => item.stage === stage.id)) {
-        const scope = evidenceCheckScope(check);
-        lines.push(`- ${check.source ?? check.tool}: ${CHECK_STATUS_LABELS[check.status]}${scope ? ` · ${scope}` : ''}`);
-        if (check.summary) lines.push(`  ${check.summary}`);
-        if (check.reason) lines.push(`  ${check.reason}`);
-      }
-    }
-    if (response.analysisEvidence.limitations.length) {
-      lines.push('', '### Evidence gaps and comparison limits');
-      for (const limitation of response.analysisEvidence.limitations) lines.push(`- ${limitation}`);
-    }
-  }
-  return lines.join('\n');
-}
-
-function WebSourcesList({
-  sources,
-}: {
-  sources: RegionalIntelligenceResponse['webSources'];
-}) {
-  if (!sources.length) return null;
-  return (
-    <section className="space-y-1">
-      <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-        Web sources consulted
-      </h4>
-      <ul className="space-y-1">
-        {sources.map((source) => (
-          <li key={source.url}>
-            <a
-              href={source.url}
-              target="_blank"
-              rel="noopener noreferrer nofollow"
-              className="inline-flex items-start gap-1 text-xs text-blue-600 underline hover:text-blue-800 dark:text-blue-400"
-            >
-              <ExternalLink aria-hidden="true" className="mt-0.5 h-3 w-3 shrink-0" />
-              {source.title}
-            </a>
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-function DataFreshnessFooter({ freshness }: { freshness: Record<string, string> }) {
-  const [open, setOpen] = useState(false);
-  const entries = Object.entries(freshness).filter(([source, value]) =>
-    !((source === 'strategyRecommendations' || source === 'carbonPotential') &&
-      (value === 'unavailable' || value === 'published_revision_required'))
-  );
-  if (!entries.length) return null;
-
-  return (
-    <div className="border-t pt-2 dark:border-gray-700">
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        aria-expanded={open}
-        aria-controls="regional-intelligence-freshness"
-        className="flex min-h-11 items-center gap-1 rounded text-xs text-gray-500 hover:text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-      >
-        <ChevronDown
-          aria-hidden="true"
-          className={`h-3 w-3 transition-transform ${open ? 'rotate-180' : ''}`}
-        />
-        Initial context sources ({entries.length})
-      </button>
-      {open && (
-        <div id="regional-intelligence-freshness" className="mt-1 space-y-0.5">
-          {entries.map(([source, value]) => {
-            const freshnessState = isRegionalEvidenceSource(source)
-              ? regionalEvidenceFreshnessState(source, value)
-              : 'unavailable';
-            const timestamp = Date.parse(value);
-            const observedAt = Number.isFinite(timestamp)
-              ? new Date(timestamp).toLocaleString(undefined, { timeZoneName: 'short' })
-              : null;
-            const snapshotDay = isRegionalEvidenceSource(source)
-              ? regionalEvidenceSnapshotDay(source, value)
-              : null;
-            const publicationDay = isRegionalEvidenceSource(source)
-              ? regionalEvidencePublicationDay(source, value)
-              : null;
-            const releaseDay = source === 'drought' ? formatCalendarDay(value.slice(0, 10)) : null;
-            const evidenceLabel = source === 'soilProperties' && value === 'static_release_untimed'
-              ? 'Static release (undated)'
-              : snapshotDay !== null
-                ? `Snapshot captured ${snapshotDay}`
-                : publicationDay !== null
-                  ? `Publication available ${publicationDay}`
-                  : releaseDay !== null
-                    ? `Release ${releaseDay}`
-                    : observedAt;
-            const state =
-              freshnessState === 'available'
-                ? {
-                    label: evidenceLabel ?? 'Available',
-                    color: 'text-green-600 dark:text-green-400',
-                    dot: 'bg-green-400',
-                  }
-                : freshnessState === 'pending'
-                  ? {
-                      label: 'Awaiting validated publication',
-                      color: 'text-amber-600 dark:text-amber-400',
-                      dot: 'bg-amber-400',
-                    }
-                  : freshnessState === 'stale'
-                    ? {
-                        label: `Stale${evidenceLabel ? ` (${evidenceLabel})` : ''}`,
-                        color: 'text-amber-600 dark:text-amber-400',
-                        dot: 'bg-amber-400',
-                      }
-                    : {
-                        label: 'No dated evidence in initial context',
-                        color: 'text-gray-500',
-                        dot: 'bg-gray-400',
-                      };
-            return (
-              <div key={source} className="flex items-center gap-2 text-xs">
-                <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${state.dot}`} />
-                <span className="text-gray-500">{humanize(source)}</span>
-                <span className={state.color}>{state.label}</span>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Shared presentation for live and validated saved analyses. */
-export function RegionalIntelligenceReport({ response }: { response: RegionalIntelligenceResponse }) {
-  const downloadReport = (content: string, mimeType: string, extension: string) => {
-    const reportBlob = new Blob([content], { type: mimeType });
-    const url = URL.createObjectURL(reportBlob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `remediation-report-${Date.now()}.${extension}`;
-    link.click();
-    URL.revokeObjectURL(url);
-  };
-  const handleExportJson = () =>
-    downloadReport(JSON.stringify(response, null, 2), "application/json", "json");
-  const handleExportMarkdown = () =>
-    downloadReport(reportToMarkdown(response), "text/markdown", "md");
-
-  return (
-    <div className="space-y-3">
-      <AiGeneratedBanner />
-      <CopyShareText text={reportToMarkdown(response)} />
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <StrategyChips remediation={response.remediation} />
-        <div className="flex min-w-0 max-w-full flex-wrap gap-1.5">
-          <button
-            onClick={handleExportJson}
-            className="px-2.5 py-1 text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white rounded transition"
-          >
-            Export JSON
-          </button>
-          <button
-            onClick={handleExportMarkdown}
-            className="px-2.5 py-1 text-xs font-semibold bg-gray-600 hover:bg-gray-500 text-white rounded transition"
-          >
-            Export Markdown
-          </button>
-        </div>
-      </div>
-      <RiskSummaryCard data={response.riskSummary} evidence={response.analysisEvidence} />
-      <ObservationsList observations={response.observations} evidence={response.analysisEvidence} />
-      {response.remediation.length > 0 ? (
-        <section className="space-y-2">
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-            Suggested remediation
-          </h4>
-          <p className="text-xs text-gray-500">AI confidence is the model’s assessment, not a measured probability of success.</p>
-          {response.remediation.map((item, index) => (
-            <RemediationCard key={`${item.strategy}-${index}`} item={item} evidence={response.analysisEvidence} />
-          ))}
-        </section>
-      ) : (
-        <p className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
-          The assistant did not find enough here to suggest a remediation
-          strategy. Treat this as an absence of evidence, not an all-clear.
-        </p>
-      )}
-      <div className="flex items-start gap-2 rounded-lg border border-gray-300 bg-gray-50 p-3 text-sm dark:border-gray-700 dark:bg-gray-800">
-        <Stethoscope aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-gray-500" />
-        <p>{response.professionalConsultation}</p>
-      </div>
-      <WebSourcesList sources={response.webSources} />
-      {response.analysisEvidence && <AnalysisEvidenceDetails evidence={response.analysisEvidence} />}
-    </div>
-  );
-}
+// Re-exported so saved-conversation pages and transcripts keep one import site.
+export { RegionalIntelligenceReport } from './RegionalIntelligenceReport';
+export { reportToMarkdown } from '@/lib/regional-evidence-presentation';
 
 function MessageBubble({ message, conversationId }: { message: ChatMessage; conversationId: string | null }) {
   if (message.role === 'user') {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] rounded-lg bg-blue-600 px-3 py-2 text-sm text-white">
+        <div className="max-w-[85%] break-words rounded-lg bg-blue-600 px-3 py-2 text-sm text-white">
           {message.content}
-          <CopyShareText text={message.content} title="PlantGeo question" />
         </div>
       </div>
     );
@@ -751,11 +35,10 @@ function MessageBubble({ message, conversationId }: { message: ChatMessage; conv
   return (
     <div
       role={message.isStreaming ? 'status' : undefined}
-      className="whitespace-pre-wrap rounded-lg bg-gray-50 px-3 py-2 text-sm dark:bg-gray-800"
+      className="whitespace-pre-wrap break-words rounded-lg bg-gray-50 px-3 py-2 text-sm dark:bg-gray-800"
     >
       {message.content || (message.isStreaming ? 'Reviewing this location…' : 'No analysis was completed.')}
-      {message.isStreaming && <span className="ml-1 animate-pulse">|</span>}
-      {!message.isStreaming && message.content && <CopyShareText text={message.content} title="Saved PlantGeo answer" />}
+      {message.isStreaming && <span aria-hidden="true" className="ml-1 animate-pulse">|</span>}
       {!message.isStreaming && conversationId && message.savedMessageId && <MessageFeedback conversationId={conversationId} messageId={message.savedMessageId} />}
     </div>
   );
@@ -777,9 +60,39 @@ export interface RegionalIntelligencePanelProps {
   embedded?: boolean;
 }
 
+/** Stands in for the whole panel when it throws, so the map and its close control survive. */
+function PanelFailure({ embedded, onRetry }: { embedded: boolean; onRetry: () => void }) {
+  const closePanel = useRegionalIntelligenceStore((state) => state.closePanel);
+  return (
+    <aside
+      role="alert"
+      data-testid="regional-intelligence-panel"
+      className={
+        embedded
+          ? 'flex h-full w-full flex-col gap-2 bg-white p-3 text-sm dark:bg-gray-900'
+          : 'absolute right-0 top-0 z-50 flex h-full w-full flex-col gap-2 border-l bg-white p-3 text-sm shadow-xl sm:w-96 dark:border-gray-700 dark:bg-gray-900'
+      }
+    >
+      <p>The analysis panel could not be displayed.</p>
+      <div className="flex gap-3 text-xs">
+        <button type="button" onClick={onRetry} className="min-h-11 underline">Try again</button>
+        <button type="button" onClick={closePanel} className="min-h-11 underline">Close</button>
+      </div>
+    </aside>
+  );
+}
+
 export default function RegionalIntelligencePanel({
   embedded = false,
 }: RegionalIntelligencePanelProps = {}) {
+  return (
+    <ReportErrorBoundary fallback={(reset) => <PanelFailure embedded={embedded} onRetry={reset} />}>
+      <RegionalIntelligencePanelBody embedded={embedded} />
+    </ReportErrorBoundary>
+  );
+}
+
+function RegionalIntelligencePanelBody({ embedded }: { embedded: boolean }) {
   const isOpen = useRegionalIntelligenceStore((state) => state.isOpen);
   const isVisible = useRegionalIntelligenceStore((state) => state.isVisible);
   const selectedLocation = useRegionalIntelligenceStore((state) => state.selectedLocation);
@@ -832,6 +145,12 @@ export default function RegionalIntelligencePanel({
       previousFocusRef.current = null;
     };
   }, [closePanel, embedded, isOpen, isVisible]);
+
+  // While a turn streams, the same Sources disclosure the finished report uses.
+  const liveSources = useMemo(
+    () => (isLoading && analysisEvidence ? buildSourcesView({ evidence: analysisEvidence, freshness: dataFreshness }) : null),
+    [isLoading, analysisEvidence, dataFreshness],
+  );
 
   if (!isOpen || !selectedLocation) return null;
   // The standalone overlay stands down while the workspace embeds this same conversation.
@@ -923,7 +242,7 @@ export default function RegionalIntelligencePanel({
             {toolActivity}
           </p>
         )}
-        {isLoading && analysisEvidence && <AnalysisEvidenceDetails evidence={analysisEvidence} />}
+        {liveSources && <SourcesDisclosure sources={liveSources} heading="Sources so far" />}
         {analysisCancelled && !isLoading && (
           <div role="status" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
             <p>Analysis was canceled. No analysis was completed.</p>
@@ -963,11 +282,6 @@ export default function RegionalIntelligencePanel({
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Data freshness */}
-      <div className="px-3 pb-1">
-        <DataFreshnessFooter freshness={dataFreshness} />
-      </div>
-
       {/* Input */}
       <div className="border-t p-3 dark:border-gray-700">
         <fieldset disabled={isLoading} className="mb-3 rounded border p-2 text-xs dark:border-gray-700">
@@ -986,22 +300,18 @@ export default function RegionalIntelligencePanel({
               {ANALYSIS_TIME_SCALES.map((scale) => <option key={scale} value={scale}>{scale === 'day' ? 'Days' : scale === 'month' ? 'Months' : 'Years'}</option>)}
             </select>
           </div>
-          <p className="mt-1 text-gray-500">The next question uses these dates and the selected map tile. Unavailable days stay visible as gaps.</p>
         </fieldset>
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <p className="text-xs text-gray-500 dark:text-gray-400">
-            {AI_GENERATED_LABEL} — not professional advice. Verify before acting.
-          </p>
-          {isLoading && (
+        {isLoading && (
+          <div className="mb-2 flex justify-end">
             <button
               type="button"
               onClick={cancelAnalysis}
-              className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded px-3 text-xs font-medium text-blue-600 underline hover:text-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-blue-400"
+              className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded px-3 text-xs font-medium text-blue-700 underline hover:text-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-blue-400"
             >
               Cancel
             </button>
-          )}
-        </div>
+          </div>
+        )}
         <div className="flex gap-2">
           <label htmlFor="regional-intelligence-question" className="sr-only">
             Ask a follow-up question about this location

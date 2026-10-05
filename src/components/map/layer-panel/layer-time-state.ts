@@ -434,7 +434,7 @@ export function resolveLayerTimeState({
     return capability.staticPublication === undefined ? SNAPSHOT_STATE : {
       ...SNAPSHOT_STATE,
       badge: "Published reference",
-      detail: "This published soil survey has no date history. Zoom in to see native survey polygons.",
+      detail: "This published soil survey has no date history. Zoom to 13+ to see survey polygons.",
     };
   }
   if (sliderDomain(capabilities, warehouseLayerName) !== null) return READY_STATE;

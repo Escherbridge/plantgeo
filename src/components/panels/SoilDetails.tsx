@@ -508,7 +508,7 @@ export function SoilDetails({
               aria-live="polite"
               className="rounded-md border border-sky-500/40 bg-sky-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
             >
-              Zoom in to see survey map units — the SSURGO release publishes only its native,
+              Zoom to 13+ to see survey polygons — the SSURGO release publishes only its native,
               most-detailed boundaries, and this view is below that zoom.
             </p>
           )}

@@ -145,6 +145,23 @@ describe("layer toggle context", () => {
     expect(result.current.water.availability).toBe("published");
   });
 
+  it.each([
+    // SSURGO: a verified static release with no date axis by design.
+    ["soil-survey", { staticPublication: { revision: "r1", releaseDay: "2026-07-01", capturedAt: "2026-07-01T00:00:00Z", declaredAreaCount: 1, publishedAreaCount: 1, pendingAreaCount: 0 } }, null],
+    // A snapshot with no release evidence and no observations keeps its honest caption.
+    ["sensors", {}, "sensors has no observations this far back."],
+  ] as const)("captions the %s snapshot only when it truly has no record", (layerName, extra, expected) => {
+    const snapshot: SliderLayerCapability = {
+      layerName, temporalKind: "snapshot", forecastHorizonDays: 0, forecastVariants: [],
+      earliestObservedDate: null, latestObservedDate: null, coverageGaps: [], thinRanges: [],
+      describedFromDay: null, ...extra,
+    };
+    useTimeSliderStore.setState({ capabilities: { ...capabilities, layers: [snapshot] } });
+    useMapStore.setState({ activeLayers: [layerName] });
+    const { result } = renderHook(() => useLayerRenderState(layerName));
+    expect(result.current.unavailableReason).toBe(expected);
+  });
+
   it("does not duplicate or desync from useMapStore: both read the same switch", () => {
     const { result } = renderHook(() => ({
       contextView: useLayerToggle("water"),
