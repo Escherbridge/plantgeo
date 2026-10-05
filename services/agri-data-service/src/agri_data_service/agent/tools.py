@@ -2024,12 +2024,16 @@ async def search_strategy_research_findings(  # noqa: PLR0913 - the parameter li
     )
 
 
+#: drought/fire history re-published 2026-10-04 (owner decision 6): no enum arrays, so no Gemini
+#: forced-call "too many states" cost; agent/AGENTS.md "Closest-datapoint reads (2026-10-04)".
 WAREHOUSE_TOOLS: Final = (
     list_environmental_layers,
     surface_evidence_for_selection,
     soil_properties_at_point,
     observation_coverage_on_day,
     observation_temporal_neighbors,
+    drought_history_at_point,
+    fire_history_near_point,
     species_information,
     search_environmental_strategies,
     get_environmental_strategies,

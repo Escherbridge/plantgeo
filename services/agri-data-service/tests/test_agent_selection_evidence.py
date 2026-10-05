@@ -16,6 +16,7 @@ import pytest
 from agri_data_service.agent import selection_evidence, tools
 from agri_data_service.agent.selection_scope import (
     MAX_LANE_DAY_READS,
+    MIN_MULTI_LANE_HISTORY_DAYS,
     PAGE_DAYS,
     Selection,
     balanced_days,
@@ -23,6 +24,7 @@ from agri_data_service.agent.selection_scope import (
     history_page_days,
     support_lattice,
 )
+from agri_data_service.agent.surfaces import SURFACE_PARQUET_LANES
 from agri_data_service.foundation.region.manifest import REGION_ENV_VAR
 from agri_data_service.parquet_ops.duckdb_session import open_guarded_connection
 from agri_data_service.warehouse.parquet.schema import get_stream_schema
@@ -158,7 +160,7 @@ async def test_vpd_and_ndvi_read_their_own_numeric_support(tmp_path: Path, surfa
     assert feature["support_bbox"] == [-116.5, 43.25, -116.25, 43.5]
 
 
-async def test_exact_day_missing_and_governed_absence_do_not_borrow_history(tmp_path: Path) -> None:
+async def test_selected_day_borrows_the_nearest_published_day_but_history_stays_exact(tmp_path: Path) -> None:
     source = LocalWarehouse()
     lane = "climate-field-dew-point"
     before, after = DAY - timedelta(days=1), DAY + timedelta(days=1)
@@ -175,8 +177,10 @@ async def test_exact_day_missing_and_governed_absence_do_not_borrow_history(tmp_
     )
     result = await read_surface(source, lane, range_start=before.isoformat(), range_end=after.isoformat())
     item = result["lanes"][0]
-    assert item["selected"]["state"] == "day_not_written"
-    assert item["selected"]["features"] == []
+    # Owner decision 2026-10-04: the selected day is substituted, labelled, and never silently.
+    assert item["selected"]["state"] == "published_nearest"
+    assert item["selected"]["requested_day_state"] == "day_not_written"
+    assert (item["selected"]["served_day"], item["selected"]["day_offset"]) == (before.isoformat(), -1)
     assert [entry["state"] for entry in item["history"]] == ["published", "day_not_written", "governed_absence"]
     assert item["history"][0]["features"][0]["distance_days"] == 1
     assert item["history"][2]["absence"]["reason"] == "source_empty"
@@ -195,10 +199,19 @@ async def test_multi_metric_lanes_keep_unwritten_depths_explicit(tmp_path: Path)
     ]
 
 
-@pytest.mark.parametrize(("lane_count", "page_days"), [(1, 3), (2, 3), (3, 1), (4, 1)])
+@pytest.mark.parametrize(("lane_count", "page_days"), [(1, 3), (2, 3), (3, 3), (4, 2)])
 def test_history_page_budget_includes_independent_exact_selected_reads(lane_count: int, page_days: int) -> None:
     assert history_page_days(lane_count) == page_days
     assert lane_count * (page_days + 1) <= MAX_LANE_DAY_READS
+
+
+def test_every_multi_lane_catalogue_surface_reads_at_least_two_history_days_within_budget() -> None:
+    """Owner decision 2026-10-04, pinned against the REAL surface table, not a hand-picked count."""
+    for surface, lanes in SURFACE_PARQUET_LANES.items():
+        page_days = history_page_days(len(lanes))
+        assert len(lanes) * (page_days + 1) <= MAX_LANE_DAY_READS, surface
+        if len(lanes) > 1:
+            assert page_days >= MIN_MULTI_LANE_HISTORY_DAYS, surface
 
 
 async def test_multi_metric_pagination_preserves_selected_day_and_every_history_date(tmp_path: Path) -> None:
@@ -212,7 +225,10 @@ async def test_multi_metric_pagination_preserves_selected_day_and_every_history_
             [climate_row(day, longitude=-116, latitude=43, value=18)],
         )
     sampled: list[str] = []
-    for offset in range(3):
+    # Three lanes now read three history days per page (12-read budget), so a five-day window is what
+    # forces a second page and proves continuation still covers every date exactly once.
+    first, last = first - timedelta(days=1), last + timedelta(days=1)
+    for offset in (0, 3):
         result = await read_surface(
             source,
             "climate-field-air-temperature",
@@ -221,13 +237,13 @@ async def test_multi_metric_pagination_preserves_selected_day_and_every_history_
             page_start=offset,
         )
         history = result["history"]
-        assert history["days_per_page"] == 1
-        assert history["next_page_start"] == (offset + 1 if offset < 2 else None)
+        assert history["days_per_page"] == PAGE_DAYS
+        assert history["next_page_start"] == (3 if offset == 0 else None)
         selected = result["lanes"][0]["selected"]
         assert selected["requested_day"] == DAY.isoformat()
         assert selected["features"][0]["properties"]["normalized_value"] == 18
         sampled.extend(entry["requested_day"] for entry in result["lanes"][0]["history"])
-    assert sampled == [first.isoformat(), last.isoformat(), DAY.isoformat()]
+    assert sorted(sampled) == [(first + timedelta(days=offset)).isoformat() for offset in range(5)]
 
 
 def test_long_history_first_page_spans_full_range_and_pages_cover_every_day() -> None:
@@ -310,9 +326,9 @@ def test_sparse_history_prioritizes_real_published_days_on_both_sides() -> None:
     first, last = date(2022, 1, 1), date(2026, 12, 31)
     before, after = DAY - timedelta(days=9), DAY + timedelta(days=17)
     published = {date(2022, 3, 4), date(2024, 9, 7), before, after, date(2026, 11, 27)}
-    ordered = evidence_days(first, last, DAY, published)
-    assert ordered[:PAGE_DAYS] == (first, last, DAY)
-    assert {before, after} <= set(ordered[: PAGE_DAYS + 2])
+    ordered = evidence_days(first, last, DAY, published, today=last)
+    assert ordered[:PAGE_DAYS] == (DAY, before, after)
+    assert ordered[PAGE_DAYS : PAGE_DAYS + 2] == (first, last)
     assert published <= set(ordered[: len(published) + PAGE_DAYS])
     assert len(ordered) == len(set(ordered)) == (last - first).days + 1
 

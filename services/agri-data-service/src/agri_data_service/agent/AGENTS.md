@@ -280,7 +280,9 @@ independently drifting copies of the system prompt.
 `list_environmental_layers` discovers every map surface, including community and soil-raster
 variants. `surface_evidence_for_selection` is the numeric retrieval
 entry point shared by MCP, the HTTP tool bridge and both agent workflows. Older radius tools
-remain internal compatibility helpers where needed; they are not model-facing choices.
+remain internal compatibility helpers where needed; they are not model-facing choices, except
+`drought_history_at_point` and `fire_history_near_point`, re-published 2026-10-04 (see
+"Closest-datapoint reads (2026-10-04)").
 
 The request contains the selected coordinate, map zoom, exact day and inclusive active calendar
 window. Its spatial scope is the Web Mercator tile containing that coordinate. The serving rung
@@ -300,10 +302,11 @@ survives custom SQL. Static version dates and collection publication dates are n
 observation dates. Refusals are retained per lane/day and do not erase other depth/metric results.
 
 Each call retains the exact selected day and limits additional history to three days for
-one or two lanes, or one day for three or four lanes. The shared page budget admits at most
-eight lane-day resolutions including selected-day reads; cold multi-depth requests must fit
-the ordinary tool deadline. The history schedule starts with both active-window endpoints,
-then the selected day and actual published neighbours on both sides. Subsequent pages distribute
+one to three lanes, or two days for four lanes. The shared page budget admits at most
+twelve lane-day resolutions including selected-day reads; cold multi-depth requests must fit
+the ordinary tool deadline. The history schedule starts with the selected day and its nearest
+actual published neighbours on both sides, then both active-window endpoints, and never schedules
+a day after the server's UTC today (see "Closest-datapoint reads (2026-10-04)"). Subsequent pages distribute
 reads across each lane's published dates before visiting unwritten calendar gaps. The plan uses
 the same authorized inventory as subsequent reads; integer `page_start` offsets eventually cover
 every requested day without omissions. The response names its effective `days_per_page`, sampled
@@ -319,6 +322,96 @@ ERA5-Land respectively, so availability never depends on a retired generic layer
 
 The older sections below record previous contracts and migration evidence. This selection
 contract and the executable registry govern current model-facing retrieval.
+
+## Closest-datapoint reads (2026-10-04)
+
+Owner decisions 2026-10-04, after a production diagnosis found the agent answering "no data" where
+the map showed data: page 1 never reached the nearest published days, an exact-day miss had no
+fallback, the spatial search stopped at the one map tile, and soil survey was read through the
+observed-partition listing that answers `day_not_written` at every date. All changes are additive:
+every earlier state and field keeps its meaning; the ones below are new.
+
+**1. Nearest published day, per-lane tolerance** (`day_tolerance.py`). One named rule, the
+*two-interval rule with a three-day floor*, derived from the lane registry:
+
+| lane registration | mode | tolerance |
+|---|---|---|
+| `static_lookup` (no time axis) | `static` | n/a: read at the current release |
+| `release_series`, `cadence_days == 1` (MTBS, crop-cover, forecasts) | `as_of` | n/a: the existing as-of rule |
+| `release_series`, `cadence_days > 1` (weekly drought) | `nearest` | 2 x cadence = 14 |
+| `daily_series` in `SPARSE_REVISIT_LANES` (vegetation NDVI) | `nearest` | 2 x `publication_lag_days` = 14 |
+| every other `daily_series` | `nearest` | 3 |
+
+The NDVI row is the one hand-spelled fact: a `daily_series` may not declare `cadence_days > 1`,
+so the registry records the measured 7-day revisit gap as its `publication_lag_days`, and
+`SPARSE_REVISIT_LANES` says "read that as the interval". When the selected day is `day_not_written`
+or a `governed_absence` and a published day lies within tolerance, the selected entry becomes
+`published_nearest`, served from that day; a tie goes to the EARLIER day (it is settled). Beyond
+tolerance the entry keeps its unpublished state and adds `nearest_published_day`/`nearest_day_offset`
+("nearest is 40 days back"). A `conflict`/`incomplete` day still refuses: a warehouse fault is not
+a gap to paper over. Substitution applies to the SELECTED day only; history entries stay exact
+calendar samples, so history never borrows. The nearest search reads the listing for the window's
+years plus one year each side of the selected day, and never a day after the server's UTC today.
+The system prompt is deliberately unchanged (`test_both_flags_off_is_the_wave_two_graph_exactly`
+pins it byte for byte): how to word a `published_nearest` or `nearest_cell` answer travels in the
+tool result's own `note`, beside the evidence it explains.
+
+**2. Always the nearest cell** (`selection_reads.SelectionReader`, `selection_geodesy.py`). When no
+support in the tile covers the point, an expanding-box nearest-neighbour search runs the SAME
+selection SQL over probe-centred boxes (0.25 degrees, then x4 each step, at most six steps), stopping
+once the best hit lies inside the box's inscribed circle (nothing outside the box can be nearer) or
+the box covers the region envelope. Each step re-reads only the receipt-verified local copies of
+that day's parts. `distance_km` is a great-circle (haversine) distance and `distance_km_basis` says
+to what: `cell_edge` (lattice support box), `source_coordinate` (point lanes with no lattice),
+`geometry_centroid` (polygon lanes; the exact covers test is `ST_Intersects`), `delineation_edge`
+(SSURGO, local equirectangular, sub-percent at the <= 9 km search bound), or `covers` (0 km).
+
+**3. History ranking.** Page 1: selected day, nearest published before, nearest published after,
+then the window endpoints, then published dates, then calendar gaps. `MAX_LANE_DAY_READS` rose
+from 8 to 12 so four-lane soil temperature reads two history days (was one); three-lane surfaces
+read three. Peak memory does not grow with it: each lane-day is a separate capped query run in
+sequence inside one `SERVING_MEMORY_LIMIT` session, so `read_over_budget` is per query. The real
+cost is latency against the 12 s `TOOL_TIMEOUT_SECONDS`, which is the first thing to watch in the
+`agent_tool_call` log (`duration_ms`). A test pins the two-day floor against `SURFACE_PARQUET_LANES`.
+
+**4. Static lanes.** `nature_has_time_axis` false: read ONCE at the current release, no date, no
+history, `static: true` on the lane and its selected entry, `release_day` instead of `served_day`.
+`soil-survey` reads through `planes.soil_survey` (`soil_survey_reads.py`), the admitted-release
+reader `interface/http/soil_survey.py` serves the map from, returning map-unit properties without
+geometry. Other static lanes use the map's `/release` rule, `resolve_release(as_of=UTC today)`.
+
+**5. One structured log event per bridge call.** `routes/agent_tools.py::call_agent_tool` emits
+`agent_tool_call` (fields built in `tool_call_log.py`): `tool`, `surface`, `lanes`,
+`requested_day`, `served_day` (when all lanes agree), `day_offset` (furthest from zero across
+lanes), `spatial_relation` (`nearest_cell` if any lane fell back), `distance_km` (largest),
+`state` (lanes' shared state, else `mixed`; `rejected`/`error` for 400/503 paths), `lane_states`,
+`static`, `refusal_code`, `duration_ms`, `record_count` (ledger rows). Never arguments, coordinates
+or payloads.
+
+**6. Drought and fire history re-published.** `drought_history_at_point` and
+`fire_history_near_point` take only numbers and an optional ISO day: no enum array, so they add
+nothing to the Gemini forced-call "too many states" count (an array of enums with a bound is the
+known trigger). `test_agent_closest_datapoint.py` checks that and drives the drought tool through
+the HTTP bridge over real DuckDB.
+
+### Contract for the web (`regional-analysis-evidence.ts` evidence fields)
+
+Read from `result.lanes[i].selected` of `surface_evidence_for_selection`:
+
+| wire field | values | web evidence field |
+|---|---|---|
+| `state` | adds `published_nearest` beside `published`, `governed_absence`, `day_not_written`, `lane_never_written`, `refused` | `status: "observed"` for both `published` and `published_nearest` (add it to `RECORD_STATES`) |
+| `requested_day` | the caller's selected day (absent on static lanes) | `selectedDate` |
+| `served_day` | the day actually read (`release_day` on static lanes) | `resolvedDay` |
+| `day_offset` | `served_day - requested_day` in days, signed; 0 = exact | `dayOffset` |
+| `nearest_published_day`, `nearest_day_offset` | only on an unpublished entry beyond tolerance | `reason` text ("nearest is 40 days back") |
+| `tolerance_days`, `tolerance_rule`, `resolution` | on each lane entry | (diagnostic) |
+| `spatial_relation` | `covers` or `nearest_cell` | `cellDistanceKm` absent/0 for `covers` |
+| `distance_km`, `distance_km_basis` | great-circle km, and what it measured | `cellDistanceKm` |
+| `static` | `true` on static lanes (and their selected entry) | `staticLayer` |
+
+Feature-level `spatial_relation` keeps `contains_selection`/`intersects_selection_tile` and adds
+`nearest_cell`; each feature also carries `distance_km`/`distance_km_basis`.
 
 ## Live regional agent tool bridge (2026-09-12)
 
@@ -375,8 +468,9 @@ and disclose when their data is current-only or cannot answer that day.
 The retired generic agent tool vocabulary and its deletion evidence are recorded in
 `conductor/tracks/repository_conformity_hardening_20260901/signal-tool-retirement.md`.
 The single `WAREHOUSE_TOOLS` registry exposes catalogue discovery, selection evidence, metadata,
-the caller-scoped species lookup, and the three strategy-knowledge literature tools (herbaria
-evidence was retired 2026-10-03; see "Herbaria surfaces are retired").
+the drought and fire history summaries (re-published 2026-10-04), the caller-scoped species lookup,
+and the three strategy-knowledge literature tools (herbaria evidence was retired 2026-10-03; see
+"Herbaria surfaces are retired").
 
 ## Topology
 

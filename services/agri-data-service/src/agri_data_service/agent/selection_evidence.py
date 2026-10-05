@@ -7,15 +7,19 @@ from typing import Any, Final
 
 import httpx
 
-from agri_data_service.agent.selection_reads import lane_selection
+from agri_data_service.agent.day_tolerance import day_tolerance
+from agri_data_service.agent.selection_reads import lane_selection, static_lane_selection
 from agri_data_service.agent.selection_scope import (
     MAX_FEATURES,
     MAX_LANE_DAY_READS,
     MAX_RANGE_DAYS,
+    MIN_MULTI_LANE_HISTORY_DAYS,
     PAGE_DAYS,
     Selection,
     history_page_days,
+    utc_today,
 )
+from agri_data_service.agent.soil_survey_reads import SOIL_SURVEY_LANE, soil_survey_selection
 from agri_data_service.agent.surfaces import (
     AGENT_SURFACE_NAMES,
     APP_SURFACE_NAMES,
@@ -46,6 +50,7 @@ def catalogue() -> dict[str, Any]:
                 "tool": "surface_evidence_for_selection",
                 "parquet_lanes": list(surface_lanes(surface)),
                 "lane_natures": {lane: natures.get(lane) for lane in surface_lanes(surface)},
+                "lane_day_tolerance": {lane: day_tolerance(lane).to_wire() for lane in surface_lanes(surface)},
                 "bound_in_region": None if binding is None else is_layer_bound(region, binding),
                 "availability": "resolve_at_requested_selection",
             }
@@ -56,6 +61,7 @@ def catalogue() -> dict[str, Any]:
         "region": region.slug,
         "bounds": {
             "max_history_days_per_page": PAGE_DAYS,
+            "min_history_days_per_page_multi_lane": MIN_MULTI_LANE_HISTORY_DAYS,
             "max_lane_day_reads_per_call": MAX_LANE_DAY_READS,
             "max_calendar_range_days": MAX_RANGE_DAYS,
             "feature_rows_per_lane_day": MAX_FEATURES,
@@ -101,11 +107,21 @@ async def _parquet_evidence(surface: str, selection: Selection, base: dict[str, 
             "parquet_lane_not_published", "No governed map-serving lane is admitted for this surface.", **base
         )
     natures = {entry.layer: entry.nature for entry in registered_census_lanes()}
-    page_days = history_page_days(len(lanes))
+    static_lanes = {lane for lane in lanes if day_tolerance(lane).mode == "static"}
+    dated_lanes = [lane for lane in lanes if lane not in static_lanes]
+    page_days = history_page_days(len(dated_lanes)) if dated_lanes else 0
+    today = utc_today()
     results = []
     for lane in lanes:
         try:
-            result = await lane_selection(surface, lane, natures.get(lane), selection, page_days=page_days)
+            if lane == SOIL_SURVEY_LANE:
+                result = await soil_survey_selection(selection)
+            elif lane in static_lanes:
+                result = await static_lane_selection(surface, lane, natures.get(lane), selection)
+            else:
+                result = await lane_selection(
+                    surface, lane, natures.get(lane), selection, page_days=page_days, today=today
+                )
         except ServingRefusalError as error:
             result = {
                 "parquet_lane": lane,
@@ -115,7 +131,9 @@ async def _parquet_evidence(surface: str, selection: Selection, base: dict[str, 
             }
         results.append(result)
     total = (selection.last - selection.first).days + 1
-    page_count = min(page_days, total - selection.page_start)
+    # Days after the server's UTC today are never scheduled, so pagination ends at today.
+    schedulable = max(0, (min(selection.last, today) - selection.first).days + 1) if dated_lanes else 0
+    page_count = max(0, min(page_days, schedulable - selection.page_start))
     sampled = sorted({entry["requested_day"] for lane in results for entry in lane["history"]})
     next_offset = selection.page_start + page_count
     return {
@@ -123,22 +141,28 @@ async def _parquet_evidence(surface: str, selection: Selection, base: dict[str, 
         "lanes": results,
         "history": {
             "requested_day_count": total,
+            "schedulable_day_count": schedulable,
             "days_per_page": page_days,
             "sampled_day_count": len(sampled),
             "page_start": selection.page_start,
-            "next_page_start": next_offset if next_offset < total else None,
-            "complete": selection.page_start == 0 and next_offset == total,
-            "sampling": "published_support_then_calendar_gaps",
+            "next_page_start": next_offset if next_offset < schedulable else None,
+            "complete": selection.page_start == 0 and next_offset == schedulable,
+            "sampling": "selected_then_nearest_published_then_endpoints" if dated_lanes else "static_current_release",
             "sampled_days": sampled,
         },
         "note": (
             "Evidence comes from the map's governed lane, serving rung and numeric source support intersecting "
-            "the selected tile. covers_probe_point identifies support containing the coordinate; other features "
-            "are spatial neighbours within that tile. A containing grid cell remains a cell measurement, never "
-            "a point measurement. Exact day and served release date stay separate. History prioritizes actual "
-            "published dates across the complete requested interval, including its endpoints, with explicit "
-            "pagination. Unsampled days are unknown; do not infer a complete trend until all pages are read. "
-            "Read day states and truncation before features; unwritten or refused data is never zero."
+            "the selected tile. covers_probe_point identifies support containing the coordinate. When no support "
+            "covers it, spatial_relation is nearest_cell and distance_km is the great-circle distance to that "
+            "cell, however far: say 'the nearest cell is N km away', never that it is the value here. A "
+            "containing grid cell remains a cell measurement, never a point measurement. state "
+            "published_nearest means the selected day was not published and served_day, day_offset days away "
+            "(negative = earlier), is the nearest published day within the lane's tolerance_days; say so. "
+            "Beyond tolerance the day stays unpublished and nearest_published_day/nearest_day_offset say how far "
+            "the nearest one is. static lanes are read at their current release and carry no date. History "
+            "starts with the selected day and its nearest published neighbours, then the window endpoints, with "
+            "explicit pagination. Unsampled days are unknown; do not infer a complete trend until all pages are "
+            "read. Read day states and truncation before features; unwritten or refused data is never zero."
         ),
     }
 

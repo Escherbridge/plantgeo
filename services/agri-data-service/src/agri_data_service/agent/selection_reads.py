@@ -1,28 +1,50 @@
-"""Receipt-verified numeric evidence from the same lane, rung, and day as a map tile."""
+"""Receipt-verified numeric evidence from the same lane, rung, and day as a map tile.
+
+Closest-datapoint rules (nearest day, nearest cell, static lanes): agent/AGENTS.md,
+"Closest-datapoint reads (2026-10-04)".
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 import duckdb
 
 from agri_data_service.agent import warehouse
-from agri_data_service.agent.selection_scope import MAX_FEATURES, PAGE_DAYS, evidence_days, support_lattice
+from agri_data_service.agent.day_tolerance import day_tolerance, nearest_published_day
+from agri_data_service.agent.selection_geodesy import (
+    box_contains,
+    distance_to_box_km,
+    haversine_km,
+    inscribed_radius_km,
+    search_boxes,
+)
+from agri_data_service.agent.selection_scope import (
+    MAX_FEATURES,
+    PAGE_DAYS,
+    evidence_days,
+    support_lattice,
+    utc_today,
+)
+from agri_data_service.foundation.region import load_region
 from agri_data_service.parquet_ops import faults
 from agri_data_service.parquet_ops.authorized_serving import verified_serving_session
 from agri_data_service.parquet_ops.request_params import ReadScope
 from agri_data_service.parquet_ops.serving import day_status_sets, resolve_day, resolve_release
 from agri_data_service.parquet_ops.warehouse_reader import GeometrySupport, PointSupport, RowReadResult, spatial_support
-from agri_data_service.parquet_ops.wire import PublishedDay
+from agri_data_service.parquet_ops.wire import GovernedAbsenceDay, PublishedDay
 from agri_data_service.warehouse.parquet.schema import get_stream_schema
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from datetime import date
 
+    from agri_data_service.agent.day_tolerance import DayTolerance
     from agri_data_service.agent.selection_scope import Selection
     from agri_data_service.parquet_ops.duckdb_session import ServingSession
     from agri_data_service.parquet_ops.warehouse_reader import RowRead, WarehouseListing
+    from agri_data_service.parquet_ops.wire import DayEnvelope
 
 
 def point_selection_statement(support: PointSupport, *, exposed: bool) -> str:
@@ -81,6 +103,22 @@ SELECT * FROM selected ORDER BY covers_probe_point DESC, distance_meters LIMIT ?
 """
 
 
+#: Rows one nearest-cell box query may return; the nearest by cell edge is among the nearest by centroid.
+NEAREST_CELL_CANDIDATES: Final = MAX_FEATURES + 1
+
+#: Day states that are not a publication, so the selected day may borrow the nearest published day.
+_SUBSTITUTABLE_STATES: Final = frozenset({"day_not_written", "governed_absence"})
+
+Box = tuple[float, float, float, float]
+
+
+def _cell_identity(row: dict[str, Any]) -> tuple[object, ...]:
+    """Which physical support a row is, so the nearest cell is never listed twice."""
+    return tuple(
+        row.get(key) for key in ("filename", "centroid_longitude", "centroid_latitude", "support_west", "support_south")
+    )
+
+
 @dataclass
 class SelectionReader:
     """A bounded spatial adapter inside the map's ordinary day/release resolver."""
@@ -92,48 +130,62 @@ class SelectionReader:
     cached_rows: dict[tuple[str, ...], RowReadResult] = field(default_factory=dict)
 
     def read_rows(self, read: RowRead) -> RowReadResult:
-        """Verify authorized bytes before selecting numeric source support intersecting the tile."""
+        """Verify authorized bytes, select support in the tile, and add the nearest cell when none covers."""
         selected = self.selection
         support = spatial_support(read.scope.layer, read.scope.kind)
-        bbox = selected.bbox.as_envelope_arguments
         cap = min(MAX_FEATURES, read.row_budget)
         if read.keys in self.cached_rows:
             return self.cached_rows[read.keys]
+        lattice = support_lattice(self.surface, selected.tier)
         with verified_serving_session(self.listing, self.session, read.keys) as verified:
             uris = [verified.object_uri(key) for key in read.keys]
             required: tuple[str, ...]
+            parameters: Callable[[Box, int], list[object]]
             if isinstance(support, PointSupport):
                 required = (support.longitude_column, support.latitude_column)
                 exposed = "allowed_client_exposure" in get_stream_schema(read.scope.layer, "observed").column_names
                 statement = point_selection_statement(support, exposed=exposed)
-                parameters: list[object] = [
-                    *support_lattice(self.surface, selected.tier),
-                    *bbox,
-                    selected.longitude,
-                    selected.latitude,
-                    uris,
-                    cap + 1,
-                ]
                 distance_basis = "source_coordinate"
+
+                def parameters(box: Box, limit: int) -> list[object]:
+                    return [*lattice, *box, selected.longitude, selected.latitude, uris, limit]
+
             elif isinstance(support, GeometrySupport):
                 required = (support.geometry_column,)
                 statement = geometry_selection_statement(support)
-                parameters = [
-                    uris,
-                    selected.latitude,
-                    selected.longitude,
-                    selected.longitude,
-                    selected.latitude,
-                    *bbox,
-                    cap + 1,
-                ]
                 distance_basis = "geometry_centroid"
+
+                def parameters(box: Box, limit: int) -> list[object]:
+                    return [
+                        uris,
+                        selected.latitude,
+                        selected.longitude,
+                        selected.longitude,
+                        selected.latitude,
+                        *box,
+                        limit,
+                    ]
+
             else:
                 raise faults.bbox_unsupported(layer=read.scope.layer, reason=support.reason)
             self._require_columns(verified, uris, required, read.scope.layer)
-            cursor = verified.connection.execute(statement, parameters)
-            columns = [entry[0] for entry in cursor.description or ()]
-            rows = [dict(zip(columns, values, strict=True)) for values in cursor.fetchall()]
+            point_lattice = isinstance(support, PointSupport)
+
+            def select(box: Box, limit: int) -> list[dict[str, Any]]:
+                cursor = verified.connection.execute(statement, parameters(box, limit))
+                columns = [entry[0] for entry in cursor.description or ()]
+                found = [dict(zip(columns, values, strict=True)) for values in cursor.fetchall()]
+                for row in found:
+                    row["distance_basis"] = distance_basis
+                    self._measure(row, point_lattice=point_lattice, size=lattice[0])
+                return found
+
+            rows = select(selected.bbox.as_envelope_arguments, cap + 1)
+            if not any(row.get("covers_probe_point") is True for row in rows):
+                nearest = self._nearest_cell(select, start_degrees=max(lattice[0], self._tile_half_span()))
+                if nearest is not None:
+                    nearest["nearest_cell"] = True
+                    rows = [nearest, *(row for row in rows if _cell_identity(row) != _cell_identity(nearest))]
             key_of_uri = dict(zip(uris, read.keys, strict=True))
             unpositioned = 0
             if isinstance(support, PointSupport) and support.nullable:
@@ -144,8 +196,6 @@ class SelectionReader:
                     [uris],
                 ).fetchone()
                 unpositioned = int(probe[0]) if probe else 0
-        for row in rows:
-            row["distance_basis"] = distance_basis
         result = RowReadResult(
             rows=tuple((key_of_uri[str(row.pop("filename"))], row) for row in rows[:cap]),
             budget_exhausted=len(rows) > cap,
@@ -153,6 +203,46 @@ class SelectionReader:
         )
         self.cached_rows[read.keys] = result
         return result
+
+    def _tile_half_span(self) -> float:
+        """Half the selection tile's widest span, so the first nearest-cell box already holds the tile."""
+        west, south, east, north = self.selection.bbox.as_envelope_arguments
+        return max(east - west, north - south) / 2
+
+    def _measure(self, row: dict[str, Any], *, point_lattice: bool, size: float) -> None:
+        """Attach the great-circle distance to the cell's own support, and say what it measured."""
+        probe = (self.selection.longitude, self.selection.latitude)
+        if row.get("covers_probe_point") is True:
+            row["distance_km"], row["distance_km_basis"] = 0.0, "covers"
+        elif point_lattice and "support_west" in row:
+            west, south = float(row["support_west"]), float(row["support_south"])
+            row["distance_km"] = round(distance_to_box_km(*probe, (west, south, west + size, south + size)), 3)
+            row["distance_km_basis"] = "cell_edge" if size > 0 else "source_coordinate"
+        elif row.get("centroid_longitude") is None or row.get("centroid_latitude") is None:
+            row["distance_km"], row["distance_km_basis"] = None, "unpositioned"
+        else:
+            centroid = (float(row["centroid_longitude"]), float(row["centroid_latitude"]))
+            row["distance_km"] = round(haversine_km(*probe, *centroid), 3)
+            row["distance_km_basis"] = "geometry_centroid"
+
+    def _nearest_cell(
+        self, select: Callable[[Box, int], list[dict[str, Any]]], *, start_degrees: float
+    ) -> dict[str, Any] | None:
+        """Expanding-box nearest-neighbour search, stopped once proven nearest or the region is covered."""
+        envelope = load_region().envelope
+        region = (envelope.west, envelope.south, envelope.east, envelope.north)
+        longitude, latitude = self.selection.longitude, self.selection.latitude
+        best: dict[str, Any] | None = None
+        for box in search_boxes(longitude, latitude, start_degrees):
+            found = [row for row in select(box, NEAREST_CELL_CANDIDATES) if row.get("distance_km") is not None]
+            if found:
+                best = min(found, key=lambda row: (row["distance_km"], repr(_cell_identity(row))))
+                # A hit inside the box's inscribed circle cannot be beaten by anything outside the box.
+                if best["distance_km"] <= inscribed_radius_km(longitude, latitude, box):
+                    return best
+            if box_contains(box, region):
+                return best
+        return best
 
     @staticmethod
     def _require_columns(session: ServingSession, uris: list[str], columns: tuple[str, ...], layer: str) -> None:
@@ -168,11 +258,13 @@ class SelectionReader:
                 raise faults.bbox_columns_absent(layer=layer, columns=tuple(sorted(missing)), key=path)
 
 
-def feature(row: dict[str, Any], *, day: date, selected: date) -> dict[str, Any]:
-    """Separate provenance and actual support from the lane's original measurement columns."""
-    reserved = {
+_RESERVED_FEATURE_KEYS: Final = frozenset(
+    {
         "distance_meters",
         "distance_basis",
+        "distance_km",
+        "distance_km_basis",
+        "nearest_cell",
         "centroid_longitude",
         "centroid_latitude",
         "covers_probe_point",
@@ -181,80 +273,147 @@ def feature(row: dict[str, Any], *, day: date, selected: date) -> dict[str, Any]
         "support_east",
         "support_north",
     }
-    contains = row.get("covers_probe_point") is True
-    result: dict[str, Any] = {
-        "served_day": day.isoformat(),
-        "distance_days": abs((day - selected).days),
-        "temporal_relation": "selected_day" if day == selected else "before" if day < selected else "after",
-        "distance_meters": row.get("distance_meters"),
-        "distance_basis": row.get("distance_basis"),
-        "centroid_longitude": row.get("centroid_longitude"),
-        "centroid_latitude": row.get("centroid_latitude"),
-        "covers_probe_point": contains,
-        "spatial_relation": "contains_selection" if contains else "intersects_selection_tile",
-        "properties": {key: value for key, value in row.items() if key not in reserved},
-    }
+)
+
+
+def _spatial_relation(row: dict[str, Any]) -> str:
+    if row.get("covers_probe_point") is True:
+        return "contains_selection"
+    return "nearest_cell" if row.get("nearest_cell") is True else "intersects_selection_tile"
+
+
+def feature(row: dict[str, Any], *, day: date, selected: date | None) -> dict[str, Any]:
+    """Separate provenance and actual support from the lane's original measurement columns.
+
+    `selected=None` marks a static lane: a version stamp has no temporal distance to report.
+    """
+    result: dict[str, Any] = {"served_day": day.isoformat()}
+    if selected is not None:
+        result["distance_days"] = abs((day - selected).days)
+        result["temporal_relation"] = "selected_day" if day == selected else "before" if day < selected else "after"
+    result.update(
+        {
+            "distance_meters": row.get("distance_meters"),
+            "distance_basis": row.get("distance_basis"),
+            "distance_km": row.get("distance_km"),
+            "distance_km_basis": row.get("distance_km_basis"),
+            "centroid_longitude": row.get("centroid_longitude"),
+            "centroid_latitude": row.get("centroid_latitude"),
+            "covers_probe_point": row.get("covers_probe_point") is True,
+            "spatial_relation": _spatial_relation(row),
+            "properties": {key: value for key, value in row.items() if key not in _RESERVED_FEATURE_KEYS},
+        }
+    )
     if "support_west" in row:
         result["support_bbox"] = [row["support_west"], row["support_south"], row["support_east"], row["support_north"]]
     return result
 
 
-async def lane_selection(
-    surface: str, lane: str, nature: str | None, selected: Selection, page_days: int = PAGE_DAYS
+def spatial_summary(features: list[dict[str, Any]]) -> dict[str, Any]:
+    """One lane-day's spatial answer: `covers` at 0 km, else the `nearest_cell` and its distance."""
+    if any(entry["covers_probe_point"] for entry in features):
+        return {"spatial_relation": "covers", "distance_km": 0.0, "distance_km_basis": "covers"}
+    measured = [entry for entry in features if entry.get("distance_km") is not None]
+    if not measured:
+        return {}
+    nearest = min(measured, key=lambda entry: (entry["spatial_relation"] != "nearest_cell", entry["distance_km"]))
+    return {
+        "spatial_relation": "nearest_cell",
+        "distance_km": nearest["distance_km"],
+        "distance_km_basis": nearest["distance_km_basis"],
+    }
+
+
+def _render(envelope: DayEnvelope, *, selected_day: date | None) -> dict[str, Any]:
+    """Render one resolved envelope as an evidence entry with features, offsets and a spatial summary."""
+    if isinstance(envelope, PublishedDay):
+        features = [feature(dict(row), day=envelope.served_day, selected=selected_day) for row in envelope.rows]
+        result: dict[str, Any] = {
+            "state": "published",
+            "requested_day": envelope.requested_day.isoformat(),
+            "served_day": envelope.served_day.isoformat(),
+            "day_offset": (envelope.served_day - envelope.requested_day).days,
+            "features": features,
+            "features_truncated": envelope.truncated,
+            **spatial_summary(features),
+        }
+        if envelope.mtbs_snapshot is not None:
+            result["mtbs_snapshot"] = envelope.mtbs_snapshot.to_wire()
+        return result
+    wire: dict[str, Any] = dict(envelope.to_wire())
+    if isinstance(envelope, GovernedAbsenceDay):
+        wire["day_offset"] = (envelope.served_day - envelope.requested_day).days
+    return {**wire, "features": [], "features_truncated": False}
+
+
+def _refused(day: date, error: faults.ServingRefusalError) -> dict[str, Any]:
+    return {
+        "state": "refused",
+        "requested_day": day.isoformat(),
+        "refusal_code": error.code,
+        "message": str(error),
+        "features": [],
+    }
+
+
+async def lane_selection(  # noqa: PLR0913 - one argument per coordinate of a lane read
+    surface: str,
+    lane: str,
+    nature: str | None,
+    selected: Selection,
+    page_days: int = PAGE_DAYS,
+    *,
+    today: date | None = None,
 ) -> dict[str, Any]:
-    """Read one lane's selected day and balanced history under one authorized inventory."""
+    """Read one lane's selected day and balanced history, substituting the nearest day within tolerance."""
     scope = ReadScope(layer=lane, kind="observed", tier=selected.tier, bbox=selected.bbox)
+    policy = day_tolerance(lane)
+    current = today or utc_today()
 
     def work(session: ServingSession) -> dict[str, Any]:
         listing = warehouse.source().authorized_listing(scope)
         reader = SelectionReader(session, listing, selected, surface)
-        if nature in {"static_lookup", "release_series"}:
-            page = selected.page(page_days)
-        else:
+        published: frozenset[date] = frozenset()
+        if policy.mode == "nearest":
+            # One year each side of the selected day too, so "the nearest is 40 days back" is findable.
+            first_year = min(selected.first.year, selected.day.year - 1)
+            last_year = min(max(selected.last.year, selected.day.year + 1), current.year)
             keys = tuple(
                 key
-                for year in range(selected.first.year, selected.last.year + 1)
+                for year in range(first_year, last_year + 1)
                 for key in listing.list_keys(lane, "observed", selected.tier, year=year)
             )
-            published = set(day_status_sets(keys, layer=lane, kind="observed", tier=selected.tier).data)
-            schedule = evidence_days(selected.first, selected.last, selected.day, published)
+            statuses = day_status_sets(keys, layer=lane, kind="observed", tier=selected.tier)
+            published = frozenset(day for day in statuses.data if day <= current)
+            schedule = evidence_days(selected.first, selected.last, selected.day, set(published), today=current)
             page = tuple(sorted(schedule[selected.page_start : selected.page_start + page_days]))
-        days = tuple(sorted({*page, selected.day}))
+        else:
+            page = selected.page(page_days, today=current)
         results: dict[date, dict[str, Any]] = {}
-        for day in days:
-            try:
-                envelope = (
-                    resolve_release(listing, reader, scope=scope, as_of=day)
-                    if nature in {"static_lookup", "release_series"}
-                    else resolve_day(listing, reader, scope=scope, day=day)
-                )
-                if isinstance(envelope, PublishedDay):
-                    result: dict[str, Any] = {
-                        "state": "published",
-                        "requested_day": day.isoformat(),
-                        "served_day": envelope.served_day.isoformat(),
-                        "features": [
-                            feature(dict(row), day=envelope.served_day, selected=selected.day) for row in envelope.rows
-                        ],
-                        "features_truncated": envelope.truncated,
-                    }
-                    if envelope.mtbs_snapshot is not None:
-                        result["mtbs_snapshot"] = envelope.mtbs_snapshot.to_wire()
-                else:
-                    result = {**envelope.to_wire(), "features": [], "features_truncated": False}
-            except faults.ServingRefusalError as error:
-                result = {
-                    "state": "refused",
-                    "requested_day": day.isoformat(),
-                    "refusal_code": error.code,
-                    "message": str(error),
-                    "features": [],
-                }
-            results[day] = result
+
+        def read(day: date) -> dict[str, Any]:
+            if day not in results:
+                try:
+                    envelope = (
+                        resolve_release(listing, reader, scope=scope, as_of=day)
+                        if policy.mode == "as_of"
+                        else resolve_day(listing, reader, scope=scope, day=day)
+                    )
+                    results[day] = _render(envelope, selected_day=selected.day)
+                except faults.ServingRefusalError as error:
+                    results[day] = _refused(day, error)
+            return results[day]
+
+        for day in sorted({*page, selected.day}):
+            read(day)
+        chosen = results[selected.day]
+        if policy.mode == "nearest" and chosen["state"] in _SUBSTITUTABLE_STATES:
+            chosen = _nearest_substitute(chosen, read, published, selected.day, policy, current)
         return {
             "parquet_lane": lane,
             "lane_nature": nature,
-            "selected": results[selected.day],
+            **policy.to_wire(),
+            "selected": chosen,
             "history": [results[day] for day in page],
         }
 
@@ -262,3 +421,72 @@ async def lane_selection(
         return await warehouse.source().run(work, operation="agent_surface_evidence_for_selection")
     except duckdb.Error as error:
         raise faults.read_over_budget(operation="agent_surface_evidence_for_selection") from error
+
+
+def _nearest_substitute(  # noqa: PLR0913 - the unpublished answer plus every input of the substitution
+    unpublished: dict[str, Any],
+    read: Callable[[date], dict[str, Any]],
+    published: frozenset[date],
+    requested: date,
+    policy: DayTolerance,
+    today: date,
+) -> dict[str, Any]:
+    """Serve the nearest published day within tolerance as `published_nearest`; else report how far it is."""
+    if policy.tolerance_days is None:
+        return unpublished
+    nearest = nearest_published_day(published, requested, tolerance_days=policy.tolerance_days, today=today)
+    if nearest is None:
+        return {**unpublished, "nearest_published_day": None, "nearest_day_offset": None}
+    beyond = {**unpublished, "nearest_published_day": nearest.day.isoformat(), "nearest_day_offset": nearest.offset}
+    if not nearest.within_tolerance:
+        return beyond
+    served = read(nearest.day)
+    if served["state"] != "published":
+        return beyond
+    substituted = {
+        **served,
+        "state": "published_nearest",
+        "requested_day": requested.isoformat(),
+        "served_day": nearest.day.isoformat(),
+        "day_offset": nearest.offset,
+        "requested_day_state": unpublished["state"],
+    }
+    if "absence" in unpublished:
+        substituted["requested_day_absence"] = unpublished["absence"]
+    return substituted
+
+
+async def static_lane_selection(surface: str, lane: str, nature: str | None, selected: Selection) -> dict[str, Any]:
+    """Read a static lane ONCE at its current published release; it takes no date and no history."""
+    scope = ReadScope(layer=lane, kind="observed", tier=selected.tier, bbox=selected.bbox)
+    policy = day_tolerance(lane)
+
+    def work(session: ServingSession) -> dict[str, Any]:
+        listing = warehouse.source().authorized_listing(scope)
+        reader = SelectionReader(session, listing, selected, surface)
+        today = utc_today()
+        try:
+            envelope = resolve_release(listing, reader, scope=scope, as_of=today)
+        except faults.ServingRefusalError as error:
+            refused = _refused(today, error)
+            refused.pop("requested_day")
+            return {**refused, "static": True}
+        rendered = _render(envelope, selected_day=None)
+        rendered.pop("requested_day", None)
+        rendered.pop("day_offset", None)
+        if "served_day" in rendered:
+            rendered["release_day"] = rendered.pop("served_day")
+        return {**rendered, "static": True}
+
+    try:
+        result = await warehouse.source().run(work, operation="agent_surface_evidence_for_selection")
+    except duckdb.Error as error:
+        raise faults.read_over_budget(operation="agent_surface_evidence_for_selection") from error
+    return {
+        "parquet_lane": lane,
+        "lane_nature": nature,
+        "static": True,
+        **policy.to_wire(),
+        "selected": result,
+        "history": [],
+    }

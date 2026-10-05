@@ -5,7 +5,7 @@ from __future__ import annotations
 import heapq
 import math
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from itertools import pairwise
 from typing import TYPE_CHECKING, Final
 
@@ -23,7 +23,12 @@ if TYPE_CHECKING:
     from agri_data_service.foundation.parquet.zoom import ZoomTier
 
 PAGE_DAYS: Final = 3
-MAX_LANE_DAY_READS: Final = 8
+#: Lane-day resolutions one call may make, selected-day reads included. 12 = four lanes x (two history
+#: days + one selected day); each read is a separate capped query, so peak memory does not grow with it.
+MAX_LANE_DAY_READS: Final = 12
+#: The history floor for multi-lane surfaces (owner decision 2026-10-04): never one day per page again.
+#: Met by sizing MAX_LANE_DAY_READS, not by overriding the budget; a test pins it per catalogue surface.
+MIN_MULTI_LANE_HISTORY_DAYS: Final = 2
 MAX_RANGE_DAYS: Final = 36_600
 MAX_FEATURES: Final = 12
 TIME_SCALES: Final = ("day", "week", "month", "year", "all")
@@ -88,9 +93,9 @@ class Selection:
             page_value,
         )
 
-    def page(self, budget: int = PAGE_DAYS) -> tuple[date, ...]:
-        """Select a reproducible page spread across the entire active calendar interval."""
-        ordered = balanced_days(self.first, self.last, self.day)
+    def page(self, budget: int = PAGE_DAYS, *, today: date | None = None) -> tuple[date, ...]:
+        """Select a reproducible page spread across the active interval, never past `today`."""
+        ordered = [day for day in balanced_days(self.first, self.last, self.day) if today is None or day <= today]
         return tuple(sorted(ordered[self.page_start : self.page_start + budget]))
 
     def to_wire(self) -> dict[str, object]:
@@ -136,17 +141,26 @@ def balanced_days(first: date, last: date, selected: date) -> tuple[date, ...]:
     return tuple(first + timedelta(days=offset) for offset in answer)
 
 
-def evidence_days(first: date, last: date, selected: date, published: set[date]) -> tuple[date, ...]:
-    """Prioritize real published neighbours and distribute reads across the whole active interval."""
+def utc_today() -> date:
+    """The server's UTC calendar day; nothing after it is ever scheduled as history."""
+    return datetime.now(UTC).date()
+
+
+def evidence_days(first: date, last: date, selected: date, published: set[date], *, today: date) -> tuple[date, ...]:
+    """Rank page 1 as selected, nearest published before, nearest published after, then the endpoints.
+
+    The rest of the schedule distributes reads across the published dates, then the calendar gaps,
+    so integer page offsets still cover every day of the window. No day after `today` is scheduled.
+    """
     available = sorted(day for day in published if first <= day <= last)
     before = [day for day in available if day < selected]
     after = [day for day in available if day > selected]
-    priority = [first, last, selected, *before[-1:], *after[:1]]
+    priority = [selected, *before[-1:], *after[:1], first, last]
     if available:
         index_days = balanced_days(date.min, date.min + timedelta(days=len(available) - 1), date.min)
         priority.extend(available[(day - date.min).days] for day in index_days)
     priority.extend(balanced_days(first, last, selected))
-    return tuple(dict.fromkeys(priority))
+    return tuple(day for day in dict.fromkeys(priority) if day <= today)
 
 
 def history_page_days(lane_count: int) -> int:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any, Final
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -14,7 +15,11 @@ from sanic.response import HTTPResponse
 from agri_data_service.agent.llm import argument_error_detail, tool_by_name, tool_schemas
 from agri_data_service.agent.strategy_knowledge import LITERATURE_TOOL_NAMES, ServerContext, bound_strategy_context
 from agri_data_service.agent.surfaces import AGENT_SURFACE_NAMES, FEATURE_SURFACE_NAMES
+from agri_data_service.agent.tool_call_log import tool_call_fields
 from agri_data_service.agent.tools import WAREHOUSE_TOOLS, run_context
+from agri_data_service.foundation.observability.logging import get_logger
+
+logger = get_logger(__name__)
 
 agent_tools_bp = Blueprint("agent_tools", url_prefix="/agent-tools")
 
@@ -127,32 +132,57 @@ def _parse_call(request: Request, names: set[str]) -> AgentToolCallRequest | HTT
     return payload
 
 
+def _log_call(
+    name: str, arguments: dict[str, Any], content: object, ledger: list[dict[str, Any]], started: float, **override: Any
+) -> None:
+    """Emit the one `agent_tool_call` event per call; fields in agent/tool_call_log.py, never the payload."""
+    fields = tool_call_fields(name, arguments, content, ledger)
+    fields.update(override)
+    logger.info("agent_tool_call", duration_ms=round((time.perf_counter() - started) * 1000, 1), **fields)
+
+
 @agent_tools_bp.post("/call")
 async def call_agent_tool(request: Request) -> HTTPResponse:
     """Execute one schema-validated tool inside the existing Parquet admission boundary."""
+    started = time.perf_counter()
     payload = _parse_call(request, _callable_tool_names())
     if isinstance(payload, HTTPResponse):
+        body = json.loads(payload.body or b"{}")
+        _log_call(str(body.get("tool") or ""), {}, body, [], started, state="rejected")
         return payload
     strategy_context = (
         payload.server_context.strategy_context()
         if payload.server_context is not None and payload.name in LITERATURE_TOOL_NAMES
         else None
     )
+    ledger: list[dict[str, Any]] = []
     try:
-        async with asyncio.timeout(TOOL_TIMEOUT_SECONDS), run_context():
+        async with asyncio.timeout(TOOL_TIMEOUT_SECONDS), run_context() as ledger:
             with bound_strategy_context(strategy_context):
                 result = await tool_by_name(payload.name).call(payload.arguments)
         content = json.loads(result) if isinstance(result, str) else result
         encoded = json.dumps(content, default=str, allow_nan=False)
     except (TimeoutError, TypeError, ValueError) as error:
         timed_out = isinstance(error, TimeoutError)
+        code = "tool_read_timeout" if timed_out else "invalid_tool_arguments"
+        _log_call(payload.name, payload.arguments, {}, ledger, started, state="error", refusal_code=code)
         return _refusal(
             payload.name,
-            "tool_read_timeout" if timed_out else "invalid_tool_arguments",
+            code,
             _UNAVAILABLE if timed_out else _BAD_REQUEST,
             # Which argument broke which rule, bounded and value-free; see agent/AGENTS.md.
             None if timed_out else argument_error_detail(error),
         )
     if len(encoded.encode("utf-8")) > MAX_RESPONSE_BYTES:
+        _log_call(
+            payload.name,
+            payload.arguments,
+            content,
+            ledger,
+            started,
+            state="error",
+            refusal_code="tool_response_too_large",
+        )
         return _refusal(payload.name, "tool_response_too_large", _UNAVAILABLE)
+    _log_call(payload.name, payload.arguments, content, ledger, started)
     return json_response({"tool": payload.name, "result": content}, headers=_HEADERS)
