@@ -43,6 +43,7 @@ import {
   WatershedResponseError,
 } from "@/lib/server/services/hydrosheds";
 import { NLCD_CLASSES } from "@/lib/server/services/nlcd";
+import { granularityForZoomTier } from "@/lib/server/services/zoom-granularity";
 import { METRIC_AT_DATE_IDS, type MetricAtDateCollection } from "@/types/time-slider";
 import {
   soilSurveyAreaCeiling,
@@ -204,12 +205,10 @@ export interface ProxiedSoilSurveyCollection extends ProxiedFeatureCollection {
  * `planes/soil_survey.py`) means a captured native row is never dropped, only quarantine-labeled
  * via its own `geometryQuality`, so this port has no unreadable-geometry gap to report.
  *
- * `granularity` is unconditionally `"detail"`: the admitted-release backend serves exactly one
- * geometry rung (z13) and never merges rows into a coarser average (see the function doc above),
- * so there is no live "regional-average"/"coarse-average" DRAWN state left to claim -- reporting
- * the request-side zoom tier here would make `SoilDetails.tsx`'s aggregated-averages caption fire
- * on every zoomed-out answer (including `soil_survey_zoom_in`, which already has its own caption),
- * claiming averages were drawn when nothing was.
+ * `granularity` follows the SERVED zoom, never the requested one: map units are served at z13
+ * ("detail"), and the below-z13 drainage overview at z9 / z5 / z0 ("regional-average" /
+ * "coarse-average"). A `soil_survey_zoom_in` answer reports servedZoom 13, so it stays "detail"
+ * and `SoilDetails.tsx` never claims averages were drawn when nothing was.
  */
 function adaptSoilSurveyCollection(
   raw: ParquetSoilSurveyCollection
@@ -231,7 +230,7 @@ function adaptSoilSurveyCollection(
     unreadableGeometries: 0,
     observedAt: raw.capturedAt ?? null,
     revision: raw.revision,
-    granularity: "detail",
+    granularity: granularityForZoomTier(raw.servedZoom),
     coverage,
   };
 }

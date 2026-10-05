@@ -15,12 +15,13 @@ claims a plant prevents, slows or reduces fire.
 | module | owns |
 |---|---|
 | `schemas.py` | Arrow schemas for the five inputs and the one-row-per-cell output; USPS state codes; the site-input groups, structural site columns and their partition check; the NWPL resolution marker column; `conform` and `assert_vocabularies` |
-| `licences.py` | the canonical licence ids, the dated-attribution terms (`DATED_ATTRIBUTION_TERMS`: PRISM), the credit form (`SourceCredit`, `CREDIT_LICENCE_TEXTS`), the licences a guide row may carry, the source-identity check (one licence per source id and per short name, one short name per source id) and `licence_gate`; package-free so `build_fixtures.py` can load it by path |
+| `licences.py` | the canonical licence ids, the dated-attribution terms (`DATED_ATTRIBUTION_TERMS`: PRISM), the strict `YYYY-MM-DD` reader, the credit forms (`SourceCredit`, `CREDIT_LICENCE_TEXTS`, the prescribed notices `CREDIT_NOTICES`: Copernicus DEM), the licences a guide row may carry, the source-identity check (one licence per source id and per short name, one short name per source id) and `licence_gate`; package-free so `build_fixtures.py` can load it by path |
 | `config.py` | `RuleConfig` (mapping and set fields frozen on construction), the presets `V0_FROZEN` and `PRODUCTION`, `canonical_json`, `rule_config_fingerprint` and `assert_rule_config` |
-| `site.py` | site conditions at load: vocabularies, `SiteInputProvenance`, the required-group gate, licence withholding, SSURGO classes |
+| `regions.py`, `curation_regions.json` | curation-region data the rules read (`CurationRegionData`: named in-region readings, the MLRAs a habitat qualifier reads), and `pilot_region_data()`, which reads the pilot release per call |
+| `site.py` | site conditions at load: vocabularies, `SiteInputProvenance`, the required-group gate, the fixture gate, the access floor for dated attributions, licence withholding, SSURGO classes |
 | `names.py` | name keys (binomial, autonym, rank) shared by pools, exclusions and wetland |
 | `axes.py` | SSURGO site classes, the site vocabularies they read, and the 12 envelope axes as tri-state expressions; margin; `evaluate_pairs` |
-| `applicability.py` | the 13th axis, `source_applicability`: each guide row's precipitation band and habitat qualifier |
+| `applicability.py` | the 13th axis, `source_applicability`: each guide row's precipitation band and habitat qualifier, and the release-derived `site_forest_woodland` class |
 | `pools.py` | guide rows at load (vocabularies incl. `noxious_states`, licence ids, source identity, ingress fire claims), species text and composed source tags checked for claims, exclusions at load (USPS state, keyable name), region explode + overrides, woody filter, rank-change guard, stratification inheritance, noxious exclusion, infraspecific merge |
 | `wetland.py` | NWPL 2022 rating resolution (with the name table and the resolving rule set's fingerprint) and the wetland-genus assertion |
 | `origin.py` | origin decided once per (region, taxon) |
@@ -30,7 +31,8 @@ claims a plant prevents, slows or reduces fire.
 
 The package exports the input schemas (`SITE_CONDITIONS_SCHEMA`, `SPECIES_ENVELOPE_SCHEMA`, `GUIDE_ROW_SCHEMA`,
 `EXCLUSION_SCHEMA`, `WETLAND_LIST_SCHEMA`), the output schemas (`CELL_RECOMMENDATIONS_SCHEMA`,
-`CANDIDATE_OUTPUT_SCHEMA`), every `METADATA_*` key and `ENGINE_VERSION`.
+`CANDIDATE_OUTPUT_SCHEMA`), every `METADATA_*` key, `ENGINE_VERSION`, and the region-data types
+(`CurationRegionData`, `InRegionReading`, `pilot_region_data`).
 
 ## Schemas
 
@@ -65,9 +67,9 @@ verbatim text from a licence-unrecorded source is committed with the fixtures.
 
 ## Engine
 
-`prepare(species, guide_rows, exclusions, config, site_provenance=None) -> PreparedEngine` validates the rule
-set, the three reference tables and the site provenance once. The engine then serves every seam from that one
-state:
+`prepare(species, guide_rows, exclusions, config, site_provenance=None, region_data=None) -> PreparedEngine`
+validates the rule set, the three reference tables, the curation-region data (the pilot release when none is passed;
+see Regions) and the site provenance once. The engine then serves every seam from that one state:
 
 - `evaluate_cells(site)`: one row per input cell, in input order.
 - `layer_table(site)`: the same cells as Arrow, cast to `CELL_RECOMMENDATIONS_SCHEMA` (plain `string`,
@@ -84,21 +86,21 @@ state:
 |---|---|
 | `plantgeo:rule_config` | `"<name> sha256:<hex>"`, see Presets |
 | `plantgeo:engine_version` | `ENGINE_VERSION`, a date; bump it on any change to what a served table says for the same inputs and rule set |
-| `plantgeo:inputs_sha256` | sha256 over the conformed species envelope, every loaded guide row (admitted or not: a row the licence gate drops still turns a guild's status from `no_regional_guide` to `licence_excluded`, review R2 N5), the exclusions (each as its rows' JSON lines, sorted, so row order never changes it) and the site-input declaration. List cells the engine reads as sets (`engine.SET_LIKE_LIST_COLUMNS`) are sorted first, and `in_region` is reordered with `applies_to_regions` (`PAIRED_LIST_COLUMNS`), so order inside a list cell never changes it either (review R3; served output is unchanged under that reordering) |
+| `plantgeo:inputs_sha256` | sha256 over the conformed species envelope, every loaded guide row (admitted or not: a row the licence gate drops still turns a guild's status from `no_regional_guide` to `licence_excluded`, review R2 N5), the exclusions (each as its rows' JSON lines, sorted, so row order never changes it), the curation-region data and the site-input declaration. List cells the engine reads as sets (`engine.SET_LIKE_LIST_COLUMNS`) are sorted first, and `in_region` is reordered with `applies_to_regions` (`PAIRED_LIST_COLUMNS`), so order inside a list cell never changes it either (review R3; served output is unchanged under that reordering) |
 | `plantgeo:pick_definition` | the preset's pick definition |
 | `plantgeo:no_fire_claim` | the disclaimer |
 | `plantgeo:admitted_sources` | each admitted source_id -> `{short_name, licence}` |
 | `plantgeo:excluded_sources` | each source_id the licence gate dropped -> its licence id |
-| `plantgeo:site_inputs` | the full site-input declaration: per group its columns, source, licence, release, access date, the dated attribution its licence obliges (null when none) and the credit lines of the works it draws on |
+| `plantgeo:site_inputs` | the full site-input declaration: per group its columns, source, licence, release, access date, the dated attribution its licence obliges (null when none), the credit lines of the works it draws on, and `fixture` (true only for the frozen prototype's pull) |
 | `plantgeo:withheld_site_inputs` | the groups nulled under the gate, with their licence ids |
-| `plantgeo:attributions` | the complete credit list, as a sorted JSON list of distinct lines over every served (not withheld) group: each dated attribution (PRISM) and each credited work (ERA5, ERA5-Land, SoilGrids in the fixture). The one key a renderer shows (see Licences) |
+| `plantgeo:attributions` | the complete credit list, as a sorted JSON list of distinct lines over every served (not withheld) group: each dated attribution (PRISM) and each credited work (ERA5, ERA5-Land, SoilGrids and the Copernicus DEM notice in the fixture). The one key a renderer shows (see Licences) |
 
 **Immutability.** `PreparedEngine` is a frozen dataclass (`eq=False`), so its rule set, inputs and provenance
 cannot be reassigned after preparation (review p09: reassigning `config` once served v0 metadata over
 production pools). The mappings a caller hands in are copied into read-only views on construction:
 `SiteInputProvenance.groups` and `RuleConfig.introduced_flag_text` (review R2 N4: mutating the caller's dict
 after `prepare` withheld precipitation on the next call, under unchanged metadata). The four set fields of
-`RuleConfig` (`in_region_overrides`, `permitted_licences`, `required_site_input_groups`,
+`RuleConfig` (`in_region_readings`, `permitted_licences`, `required_site_input_groups`,
 `declared_empty_exclusion_states`) are copied into frozensets the same way (review R3: clearing the caller's
 licence set after `prepare` nulled every site group, and the engine's config no longer fingerprinted as its metadata
 said). The metadata is built once at construction, guarded once (see Labels) and held read-only.
@@ -154,23 +156,26 @@ Every behavioural difference is a field; no code branches on a preset's name.
 
 | field | `V0_FROZEN` | `PRODUCTION` | owner decision |
 |---|---|---|---|
-| `in_region_overrides` | none | TN 2A, TN PM-50, OR/WA guides in-region for `bend` | "eastern Oregon" / Intermountain = east of the Cascade crest |
+| `in_region_readings` | none | `east_of_cascade_crest` (region data: TN 2A, TN PM-50, OR/WA guides in-region for `bend`) | "eastern Oregon" / Intermountain = east of the Cascade crest |
 | `range_wide_origin_is_not_state_claim` | False | True | open issue 2: TN 2A, TN PM-77, TN PM-50 origin statements are range-wide |
 | `inherit_stratification` | False | True | open issue 1: unstratified in-region rows inherit the taxon's bands/qualifiers |
 | `null_restriction_depth_is_unknown` | False | True | SSURGO split: null restriction depth is unknown, never a pass |
 | `introduced_flag_text` | "(CPS 394)" on every guild | CPS 394 on greenstrip only | CPS 394 is the Firebreak standard |
 | `pick_definition` | v0 text | adds "absence is not evidence of unsuitability" | open issue 5 |
-| `permitted_licences` | none (no gate; v0 had none) | `public-domain`, `us-government-work`, `CC0-1.0`, `CC-BY-4.0`, `PRISM-terms-of-use` | "exclude non-commercial sources from v1"; PRISM in production (2026-10-03) |
+| `permitted_licences` | none (no gate; v0 had none) | `public-domain`, `us-government-work`, `CC0-1.0`, `CC-BY-4.0`, `PRISM-terms-of-use`, `Copernicus-DEM-licence` | "exclude non-commercial sources from v1"; PRISM in production (2026-10-03); the DEM licence is free for any use (see Licences) |
 | `required_site_input_groups` | none | every group in `SITE_INPUT_GROUPS` | review B1: never serve a pick blind to an input the envelope reads |
 | `label_unchecked_axes` | False | True | review B1: a pick names every axis it could not check |
 | `declared_empty_exclusion_states` | empty | empty | a state served without a noxious list must be declared, never inferred |
+| `dated_attribution_accessed_after` | none | `2026-09-26` (the prototype's pull) | production declares its own PRISM pull's access date (owner decision 2026-10-03) |
+| `allow_fixture_site_inputs` | True (it replays the prototype's own pull) | False | review of loop 2a: whether a `fixture=True` group may serve is the rule set's call, never the declaration's (see Site inputs, Production's own pull) |
 
 Restoration uses the plain flag in `PRODUCTION`: the owner named greenstrip (with CPS 394) and hedgerow
 (without) and gave the reason ("it is the Firebreak standard"); restoration is not a firebreak either.
 
-Of the four `in_region_overrides` source ids, only TN 2A changes the curated rows today (TN PM-50 and the OR/WA
-guide are already in-region for Bend there); all four stay because they record the owner's decision and survive
-re-curation.
+Of the four source ids the `east_of_cascade_crest` reading names, only TN 2A changes the curated rows today (TN
+PM-50 and the OR/WA guide are already in-region for Bend there); all four stay because they record the owner's
+decision and survive re-curation. The rule set names the reading; its region and source ids are region data (see
+Regions), so the fingerprint records the owner's decision and the inputs digest records the release that applies it.
 
 `null_restriction_depth_is_unknown` exists because production ships SSURGO restriction depth null. Once
 restriction depth is served it must flip to False, and the producer must then emit an unknown restriction status
@@ -196,7 +201,7 @@ Guide rows and site-input declarations carry a canonical licence id, never free 
 
 | group | ids |
 |---|---|
-| permitted under `PRODUCTION` (`COMMERCIAL_USE_LICENCES`) | `public-domain`, `us-government-work`, `CC0-1.0`, `CC-BY-4.0`, `PRISM-terms-of-use` |
+| permitted under `PRODUCTION` (`COMMERCIAL_USE_LICENCES`) | `public-domain`, `us-government-work`, `CC0-1.0`, `CC-BY-4.0`, `PRISM-terms-of-use`, `Copernicus-DEM-licence` |
 | known, not permitted (`RESTRICTED_LICENCES`) | `CC-BY-NC-4.0`, `CC-BY-NC-SA-4.0`, `CC-BY-ND-4.0`, `all-rights-reserved`, `unrecorded` |
 
 Any other text raises at load, so a new licence forces curation instead of being silently dropped (the v0
@@ -220,6 +225,9 @@ an access date, so:
 - `SiteInputSource.accessed` (`YYYY-MM-DD`, strictly: `date.fromisoformat` alone also takes `20260926`) is
   required for it, and `SiteInputProvenance` raises on construction without one, under every rule set, because
   the obligation comes from the licence, not the preset;
+- under a rule set with `dated_attribution_accessed_after` (PRODUCTION: `2026-09-26`, the prototype's pull),
+  `prepare` refuses such a group accessed on or before that date, unless it is declared `fixture=True` under a
+  rule set with `allow_fixture_site_inputs` (see Site inputs, Production's own pull);
 - the attribution is rendered in PRISM's own form (month abbreviations are fixed, never the locale's) into the
   group's `attribution` in `plantgeo:site_inputs`, and is one line of `plantgeo:attributions`;
 - guide rows may not carry it (`GUIDE_ROW_LICENCES`): a guide row has no access date, so it would be admitted
@@ -230,15 +238,32 @@ group can draw on several works (pH and texture on SSURGO and SoilGrids; the PRI
 So each `SiteInputSource` lists the works it draws on that oblige a credit, as `licences.SourceCredit(work,
 holder, url, licence)`, rendered in the CC BY title-holder-source-licence form: "SoilGrids 2.0, ISRIC - World
 Soil Information, https://soilgrids.org, under CC BY 4.0, https://creativecommons.org/licenses/by/4.0/".
-`SiteInputProvenance` raises on construction when a group's licence obliges a credit (`CREDIT_LICENCE_TEXTS`:
-CC BY 4.0) and it declares none, or a credit names a licence with no credit form. A credited work's licence is
-gated like the group's: a group is withheld when either is not permitted, naming the first that is not.
+`SiteInputProvenance` raises on construction when a group's licence obliges a credit (`CREDIT_FORM_LICENCES`: CC
+BY 4.0 and the Copernicus DEM licence) and it declares none, or a credit names a licence with no credit form. A
+credited work's licence is gated like the group's: a group is withheld when either is not permitted, naming the
+first that is not.
+
+**Copernicus DEM (`Copernicus-DEM-licence`, credited 2026-10-05).** The `cold` group's record low is ERA5-Land
+lapse-adjusted to Copernicus DEM GLO-90 (prototype `site_conditions/climate/SOURCES.md`, Elevation), so the group
+credits the DEM as well as ERA5-Land. No terms were captured with the prototype; the wording comes from the
+Copernicus Data Space COP-DEM collection page
+(`https://dataspace.copernicus.eu/explore-data/data-collections/copernicus-contributing-missions/collections-description/COP-DEM`,
+fetched 2026-10-05 into `.omc/research/copdem-terms-20261005-dataspace.html`, which the AWS open-data registry entry
+for `copernicus-dem-90m` points to as the licence). Verbatim: "The GLO-30 and GLO-90 datasets are available
+worldwide with a free license", and "Where the Copernicus data have been adapted or modified, the User shall provide
+the following notice: 'produced using Copernicus WorldDEM-90 © DLR e.V. 2010-2014 and © Airbus Defence and Space
+GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved'". A lapse-adjusted
+temperature is adapted data, so the credit line is that notice, verbatim (`CREDIT_NOTICES`; `SourceCredit.text()`
+returns a prescribed notice in place of the CC BY form). The id is permitted under PRODUCTION because the licence
+allows any use with the notice; that reading of "exclude non-commercial sources" is an assumption for the owner to
+confirm. Guide rows may not carry it (they have no credit line), like PRISM's terms. "©" is Latin-1, so the egress
+script guard serves it.
 
 `plantgeo:attributions` is the complete credit list a renderer shows "clearly and prominently", as PRISM's terms
 ask: every dated attribution and every credit line of every served group, deduplicated (the `cold` and
 `frost_free` groups both credit ERA5-Land; it is listed once) and sorted so the order is deterministic. Each line
 passes the metadata fire guards (`PreparedEngine.__post_init__`). Government works (SSURGO, NCEI) oblige no
-credit and declare none; the Copernicus DEM is not yet credited (Deferred).
+credit and declare none.
 
 Source identity is checked at load (`licences.SOURCE_IDENTITY_PAIRS`):
 
@@ -274,7 +299,7 @@ access date, a dated-attribution licence without one, or a missing or malformed 
 |---|---|---|
 | `soil_survey` | drainage, hydric, restriction status and depth, EC, CaCO3, MLRA, `scoring_null_reason` | SSURGO / SDA, `us-government-work` |
 | `soil_ph_texture` | `site_ph`, `site_texture_group` | SSURGO where present, else SoilGrids v2.0, `CC-BY-4.0` |
-| `cold` | `record_min_c` | ERA5-Land via Open-Meteo, `CC-BY-4.0` |
+| `cold` | `record_min_c` | ERA5-Land via Open-Meteo, `CC-BY-4.0`, lapse-adjusted to Copernicus DEM GLO-90 (credited: `Copernicus-DEM-licence`) |
 | `frost_free` | `median_frost_free_days` | ERA5-Land via Open-Meteo, `CC-BY-4.0` |
 | `frost_free_station_bias` | `frost_free_days_station_bias` | NCEI 1991-2020 normals, `us-government-work` |
 | `precipitation` | `mean_annual_precip_mm`, `dry_year_precip_mm` | PRISM 1991-2020 normals, 800 m, `PRISM-terms-of-use`, accessed 2026-09-26, for v0 and production alike (owner decision 2026-10-03) |
@@ -308,7 +333,20 @@ as the dry year). The dry year is PRISM's mean times ERA5's relative spread (Ope
 and it credits ERA5 via Open-Meteo (CC BY 4.0) for that spread. The `cold` and `frost_free` declarations credit
 ERA5-Land, a different dataset, so they do not cover it. The access date 2026-09-26 is the prototype's (`site_conditions/climate/
 SOURCES.md`: "All sources accessed 2026-09-26"; the cached `raw/prism/prism_ppt_us_30s_2020_avg_30y.zip` is
-stamped 2026-09-26 19:33 MDT, 01:33 UTC on the 27th). Production must declare the date of its own PRISM pull.
+stamped 2026-09-26 19:33 MDT, 01:33 UTC on the 27th).
+
+**Production's own pull (owner decision 2026-10-03).** Production must declare the date of its own PRISM pull, so
+`RuleConfig.dated_attribution_accessed_after` (PRODUCTION: `2026-09-26`) makes `prepare` (so every seam) refuse a
+dated-attribution group accessed on or before that date. A missing date is already refused on construction. The
+seam is a rule-set field because every preset difference is one (Presets), checked next to the required-group gate,
+on the declaration, never the data. The frozen fixture is the one honest exception, and the exception belongs to
+the rule set, not the data: its groups declare `fixture=True` (served in `plantgeo:site_inputs`), and `prepare`
+refuses any `fixture=True` group outright unless `RuleConfig.allow_fixture_site_inputs` is set
+(`site.assert_fixture_inputs_allowed`, before the floor). PRODUCTION leaves it False, so a declaration copied from
+`tests/fixtures/plant_suitability/site_inputs.json` (even with a fresh PRISM date) is refused, not served on the
+prototype's pull. Tests run `support.PRODUCTION_ON_FIXTURE` (`replace(PRODUCTION, allow_fixture_site_inputs=True)`),
+whose rule-config fingerprint differs from PRODUCTION's, so a fixture run cannot pose as production in what it
+serves either. `V0_FROZEN` has no floor and allows fixtures: it is the prototype's own rule set over its own pull.
 
 PRODUCTION used to be served ERA5 precipitation instead, because the PRISM declaration was `unrecorded`; ERA5's
 0.25-degree cells read the Bend rain shadow far too wet (fixture median 610 mm against PRISM's 337 mm). That
@@ -340,8 +378,8 @@ Thresholds are prototype `GUILD_RULES.md` §5.
 A taxon is a pick at a cell only when at least one guide row naming it applies there: its precipitation
 band (inclusive, open sides never fail) against the cell's mean annual precipitation, and its habitat
 qualifier against site data (`saline_alkali_or_poor_drainage`: EC > 2 dS/m or poorly drained;
-`sandy_or_loam`: coarse or medium texture; `forest_woodland`: MLRA 3, 6 or 43B; `juniper_sites`: always
-unknown; `wet_soils`; `moist_to_wet_soils`). In-region support at the cell comes from the rows that carry
+`sandy_or_loam`: coarse or medium texture; `forest_woodland`: an MLRA the curation release lists, MLRA 3, 6 or 43B
+in the pilot (see Regions); `juniper_sites`: always unknown; `wet_soils`; `moist_to_wet_soils`). In-region support at the cell comes from the rows that carry
 the pick (rows that apply, or when none applies, rows whose status is unknown).
 
 **Stratification inheritance** (production): an in-region row with neither band nor qualifier takes every
@@ -351,6 +389,21 @@ region (any guild), one copy per condition, and applies when any copy applies. T
 by the unstratified BLM Boise District list, inherits ODFW's saline/alkali qualifier. Same region only,
 because a region's guides are the evidence for that region's sites. Only admitted rows lend conditions: a
 licence-excluded stratified row never reaches the pools.
+
+## Regions
+
+Curation-region facts are release data, not code (review m-e). `CurationRegionData` holds a release id, named
+in-region readings (each a region, its source ids and the decision it records) and the MLRAs each MLRA-read habitat
+qualifier applies in (`forest_woodland` only; the release must list it). The pilot release is
+`curation_regions.json` beside the package, read by `pilot_region_data()` on each `prepare` that is passed no
+release; nothing reads it at import (memory rule "manifest moves must be lazy": a module-level load snapshots the
+data and hides the dependency). The wiring passes the published `plant-curation-regions` release instead.
+
+`prepare` resolves the rule set's `in_region_readings` against the release (an unknown reading raises), and
+`PreparedEngine.prepare_site` derives `site_forest_woodland` from the cell's MLRA and the release's list (null when
+the MLRA is null, so the qualifier stays unknown; computed after withholding, so a withheld soil survey stays
+unknown). The release is part of `plantgeo:inputs_sha256`, so the same tables under another release never share a
+digest.
 
 ## Pools
 
@@ -522,7 +575,9 @@ the matched species rows (NWPL ratings as the prototype resolved them, `nwpl_res
 exclusions, the NWPL rows those taxa need, the frozen v0 output rows for the chosen cells, `site_inputs.json`
 (the site-input declaration every preset reads, PRISM precipitation with its access date) and
 `fixture_cells.json` naming each special cell and taxon. They are generated, never hand-edited, by
-`tests/plant_suitability/build_fixtures.py` from the frozen prototype.
+`tests/plant_suitability/build_fixtures.py` from the frozen prototype; `build_fixtures.write_site_inputs()` rewrites
+the declaration alone (it needs no prototype). Every declared group is `fixture: true`, so only a rule set with
+`allow_fixture_site_inputs` serves it.
 
 `support.SuitabilityFixture` serves each rule set the inputs production would:
 
@@ -532,9 +587,11 @@ exclusions, the NWPL rows those taxa need, the frozen v0 output rows for the cho
   read one precipitation;
 - `relicensed(...)` relicenses whole documents (every source id sharing a short name), as the load check requires.
 
-Production tests use real `PRODUCTION` unless their subject comes from a licence-unrecorded source. Those use
-`dataclasses.replace(PRODUCTION, permitted_licences=None)` or relicense the minimum set of documents, and say
-why in one line.
+Production tests use `support.PRODUCTION_ON_FIXTURE` (real `PRODUCTION` with fixtures allowed, the one change the
+frozen declaration needs) unless their subject comes from a licence-unrecorded source. Those use
+`dataclasses.replace(PRODUCTION_ON_FIXTURE, permitted_licences=None)` or relicense the minimum set of documents,
+and say why in one line. Flows about production's own declaration use real `PRODUCTION` over
+`SuitabilityFixture.own_pull(accessed)` (every group `fixture: false`, PRISM accessed on that date).
 
 **Mutation survivors left alone.** Of the round-2 survivors, these are equivalent and have no test:
 
@@ -558,14 +615,13 @@ uncovers nothing.
 
 ## Deferred
 
-- **Regional literals (review m-e).** `config.EAST_OF_CASCADE_CREST_REGION` ("bend") with its source ids, and
-  `applicability.FOREST_WOODLAND_MLRAS`, are pilot facts in code. They move to region/release data in the
-  wiring push.
-- **Geometry.** Cells carry no geometry here; the wiring adds it.
-- **Copernicus DEM in the cold group.** The record low is lapse-adjusted to Copernicus DEM GLO-90. The
-  fixture declaration names it in the source text, but the group's licence id and its one credit are ERA5-Land
-  via Open-Meteo (CC BY 4.0), so `plantgeo:attributions` does not credit the DEM. Its own terms (Copernicus DEM
-  licence, attribution required) have no licence id here yet; add one, and a credit, before production serves it.
+- **Geometry.** Cells carry no geometry here; the wiring push that has published cells adds it.
+- **Region release as a lane.** The pilot release is a package file; the wiring passes the published
+  `plant-curation-regions` release to `prepare(region_data=...)` and may surface its release id in the metadata.
+  A reading naming a source id no guide row carries is not refused yet (it would be a silent no-op).
+- **Copernicus DEM licence as permitted.** Admitted under PRODUCTION as free for any use with its notice; the owner
+  confirms that reading. The DEM terms' DOI citation (`https://doi.org/10.5270/ESA-c5d3d65`) is requested for
+  research publications only and is not served.
 - **Per-point latency.** A prepared per-point call no longer rebuilds pools; it measured 86-457 ms for three
   guilds on the dev machine, almost all in Polars collects inside `evaluate_guild` / `with_pick_labels`.
   Revisit if the point tool needs to be interactive.

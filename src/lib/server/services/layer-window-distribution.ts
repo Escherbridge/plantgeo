@@ -23,8 +23,8 @@ export const UNAVAILABLE_CACHE_SECONDS = 60;
 /** Longer than the bridge's 15 s fetch bound, so a live leader never loses its lock mid-call. */
 const SINGLE_FLIGHT_LOCK_SECONDS = 20;
 const SINGLE_FLIGHT_POLL_MS = 250;
-/** How long a caller that lost the lock waits for the leader's answer before a 503. */
-const SINGLE_FLIGHT_WAIT_MS = 3_000;
+/** How long a caller that lost the lock waits for the leader's answer before a 503: a leader takes 2-11 s, under the 15 s bridge. */
+const SINGLE_FLIGHT_WAIT_MS = 12_000;
 
 /**
  * Refusal codes that the same question answers the same way next time: they depend on code,

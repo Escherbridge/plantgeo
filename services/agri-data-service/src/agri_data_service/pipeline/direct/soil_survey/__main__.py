@@ -1,9 +1,10 @@
-"""Offline SSURGO commands: census, capture, prepare, verify-replay, validate, stage, release.
+"""Offline SSURGO commands: census, capture, prepare, verify-replay, validate, stage, release, overview.
 
 Ported from `archive/freshness-integrated-candidate-20260914`'s `pipeline/direct/soil_survey/
 __main__.py`: slice S1 wired `areas` and `capture`; slice S2 adds the candidate verbs
 (`AGENTS.md`, "Operational entry point"). Every command is dry-run unless `--apply` is given. Only
-`stage --apply` and `release --apply` write to a bucket, and only behind `require_stage_authorised`;
+`stage --apply`, `release --apply` and `overview-publish --apply` write to a bucket, and only behind
+`require_stage_authorised`;
 nothing here advances admission or reports `serving_published=true`, this package is not a
 registered lane (`pipeline/parquet/lane_registry.py` still refuses it) and no cron calls it.
 """
@@ -42,6 +43,13 @@ from agri_data_service.pipeline.direct.soil_survey.capture import (
     save_checkpoint,
 )
 from agri_data_service.pipeline.direct.soil_survey.local_storage import LocalCandidateStorage
+from agri_data_service.pipeline.direct.soil_survey.overview import (
+    build_overview,
+    decode_overview,
+    overview_key,
+    read_release,
+    read_release_from,
+)
 from agri_data_service.pipeline.direct.soil_survey.prepare import (
     DEFAULT_PREPARATION_SECONDS,
     load_candidate_manifest,
@@ -74,9 +82,20 @@ from agri_data_service.pipeline.validation.soil_survey import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from agri_data_service.foundation.soil_survey.release import Release
     from agri_data_service.pipeline.parquet.availability_storage import AvailabilityStorage
 
-COMMANDS: Final = ("areas", "capture", "prepare", "verify-replay", "validate", "stage", "release")
+COMMANDS: Final = (
+    "areas",
+    "capture",
+    "prepare",
+    "verify-replay",
+    "validate",
+    "stage",
+    "release",
+    "overview",
+    "overview-publish",
+)
 
 #: `--census-tile-degrees`' own default: the Go-2 live re-run over the full pnw envelope (16x9 deg)
 #: at this edge measured 15.4 s median / 23.7 s max / 11.3 s min across 33 tiles reached, zero
@@ -235,9 +254,15 @@ def parser() -> argparse.ArgumentParser:
         help="release only: one staged shard manifest SHA-256; repeat once per shard",
     )
     result.add_argument(
+        "--release",
+        default=None,
+        help="overview/overview-publish: the release index SHA-256 the overview is derived from",
+    )
+    result.add_argument(
         "--bucket",
         default=None,
-        help="stage/release: must equal OBJECT_STORE_BUCKET; --apply also needs SSURGO_STAGE_ALLOWED=1",
+        help="stage/release/overview-publish: must equal OBJECT_STORE_BUCKET; --apply also needs "
+        "SSURGO_STAGE_ALLOWED=1",
     )
     result.add_argument(
         "--include-source-evidence",
@@ -253,7 +278,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--from-bucket",
         action="store_true",
-        help="validate only: read parts from the configured bucket instead of --root (reads only)",
+        help="validate/overview: read parts from the configured bucket instead of --root (reads only)",
     )
     result.add_argument(
         "--apply",
@@ -548,6 +573,67 @@ def _release(arguments: argparse.Namespace) -> dict[str, object]:
     }
 
 
+def _overview_path(arguments: argparse.Namespace) -> Path:
+    return Path(arguments.root) / f"overview-{arguments.release}.parquet"
+
+
+def _overview_release(arguments: argparse.Namespace) -> tuple[Release, AvailabilityStorage]:
+    """The release index and the storage its parts are read from: the bucket, or the local root."""
+    if arguments.from_bucket:
+        storage: AvailabilityStorage = BotoAvailabilityStorage.from_settings()
+        return read_release_from(storage, arguments.release), storage
+    local = Path(arguments.root) / f"release-{arguments.release}.json"
+    release = read_release(local.read_bytes() if local.is_file() else None, arguments.release)
+    return release, LocalCandidateStorage(arguments.root)
+
+
+def _overview(arguments: argparse.Namespace) -> dict[str, object]:
+    """Derive the overview from every native part (reads only) and write it under --root."""
+    release, storage = _overview_release(arguments)
+    build = build_overview(release, arguments.release, storage)
+    path = _overview_path(arguments)
+    path.write_bytes(build.payload)
+    return {
+        "outcome": "overview_built",
+        "release_sha256": arguments.release,
+        "path": str(path),
+        "bytes": len(build.payload),
+        "parts": build.parts,
+        "polygons": build.polygons,
+        "undecodable": build.undecodable,
+        "cells_by_degrees": {str(degrees): count for degrees, count in build.cells_by_degrees.items()},
+        "serving_published": False,
+    }
+
+
+def _overview_publish(arguments: argparse.Namespace) -> dict[str, object]:
+    """Upload the built overview once; serving lights up below z13 as soon as the key exists."""
+    _authorise_bucket_write(arguments)
+    payload = _overview_path(arguments).read_bytes()
+    decode_overview(payload, release_sha256=arguments.release)
+    storage = BotoAvailabilityStorage.from_settings()
+    key = overview_key(arguments.release)
+    storage.put_immutable(key, payload, content_type="application/octet-stream")
+    stored = storage.read(key, max_bytes=len(payload))
+    if stored is None or stored.payload != payload:
+        raise SoilSurveyError("SSURGO overview failed publication readback")
+    return {
+        "outcome": "overview_published",
+        "overview_key": key,
+        "overview_sha256": digest(payload),
+        "bytes": len(payload),
+        "serving_published": True,
+    }
+
+
+#: (flag, commands that need it, value shape shown in the usage error).
+_REQUIRED_FLAGS: Final = (
+    ("manifest", {"verify-replay", "validate", "stage"}, " <sha256>"),
+    ("bucket", {"stage", "release", "overview-publish"}, ""),
+    ("release", {"overview", "overview-publish"}, " <sha256>"),
+)
+
+
 def _usage_error(arguments: argparse.Namespace) -> str | None:
     """The one argument rule a command breaks, or None."""
     command = arguments.command
@@ -555,10 +641,9 @@ def _usage_error(arguments: argparse.Namespace) -> str | None:
         return "capture requires exactly one --area per bounded invocation"
     if command == "prepare" and (not arguments.area or arguments.shard is None):
         return "prepare requires --shard and the shard's complete explicit --area list"
-    if command in {"verify-replay", "validate", "stage"} and arguments.manifest is None:
-        return f"{command} requires --manifest <sha256>"
-    if command in {"stage", "release"} and arguments.bucket is None:
-        return f"{command} requires --bucket"
+    for flag, commands, shape in _REQUIRED_FLAGS:
+        if command in commands and getattr(arguments, flag) is None:
+            return f"{command} requires --{flag}{shape}"
     if command == "release" and not arguments.shard_manifest:
         return "release requires at least one --shard-manifest <sha256>"
     return None
@@ -582,6 +667,8 @@ def _dry_run_details(arguments: argparse.Namespace) -> dict[str, object]:
             "already_journaled": sum(item.key in journaled for item in plan.objects),
             "include_source_evidence": arguments.include_source_evidence,
         }
+    if arguments.command in {"overview", "overview-publish"}:
+        return {"release_sha256": arguments.release, "overview_key": overview_key(arguments.release)}
     if arguments.command == "release":
         release, payload = build_release(
             arguments.root, arguments.shard_manifest, bucket=arguments.bucket, prefix=settings.object_store_prefix
@@ -603,6 +690,8 @@ _APPLY: Final[dict[str, Callable[[argparse.Namespace], dict[str, object]]]] = {
     "validate": lambda arguments: asyncio.run(_validate(arguments)),
     "stage": _stage,
     "release": _release,
+    "overview": _overview,
+    "overview-publish": _overview_publish,
 }
 
 

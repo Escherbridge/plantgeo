@@ -104,4 +104,31 @@ describe("SSURGO static reference route", () => {
     expect(result.granularity).toBe("detail");
     expect(result.coverage).toEqual({ cells: 264, covered: 220, ingested: 2 });
   });
+
+  it("reports the served zoom's granularity, so a below-z13 overview reads as averages", async () => {
+    read.mockResolvedValue({
+      ...rawPublished,
+      servedZoom: 9,
+      requestedZoom: 10,
+      features: [
+        {
+          type: "Feature",
+          geometry: null,
+          properties: { aggregated: true, drainageClass: "Well drained", mapUnitCount: 3 },
+        },
+      ],
+    });
+
+    const result = await caller.getSoilSurvey({ bbox: "-117,43,-116,44", zoom: 10 });
+
+    expect(result.granularity).toBe("regional-average");
+  });
+
+  it("keeps a zoom_in answer at detail even when the request was zoomed out", async () => {
+    read.mockResolvedValue({ ...rawUnavailable, reason: "soil_survey_zoom_in", requestedZoom: 9 });
+
+    const result = await caller.getSoilSurvey({ bbox: "-117,43,-116,44", zoom: 9 });
+
+    expect(result.granularity).toBe("detail");
+  });
 });

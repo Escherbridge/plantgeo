@@ -389,7 +389,7 @@ average, and a tiled full-Region census of **264 areas**.
 
 | Constant (`foundation/soil_survey/release.py`) | Value | Derivation |
 |---|---|---|
-| `REQUIRED_RUNGS` / `NATIVE_RUNG` | `(13,)` / 13 | Owner Q1: GeoJSON serves z13 only; below z13 the route says "zoom in" until the PMTiles artifact (Go-5). |
+| `REQUIRED_RUNGS` / `NATIVE_RUNG` | `(13,)` / 13 | Owner Q1: map-unit GeoJSON serves z13 only. Below z13 the route serves the derived overview once published ("Overview below z13"), else "zoom in". |
 | `MAX_SURVEY_AREAS` | 50 per shard | Equals `MAX_VALIDATION_AREAS`, so one shard validates in one bounded call. 264 areas need at least 6 shards. |
 | `MAX_PREPARATION_ROWS` | 500,000 per shard | Pilot mean is 5,710 rows per area, so a typical 50-area shard is about 285,500 rows; 500,000 is about 1.75x that. It is a guard, not a measured throughput limit: prepare time is first measured at Go-2 against R5's 1,200 s target (`DEFAULT_PREPARATION_SECONDS`) under the 1,800 s cap. An outlier area can still exceed it, and then its shard must hold fewer areas. |
 | `MAX_PART_ROWS` | 500 | The plan's chunk size, equal to the capture page size. At about 2.1 KB/row of WKB (WKT at 4,456 B/row carries about 34 characters per vertex against WKB's 16 bytes; *est.*), a part is about 1 MB before zstd. |
@@ -418,6 +418,59 @@ That is inside 16 but with little margin at a corner where three survey areas me
 as the **placeholder**, to be re-derived at Go-2 from real parts: count the parts touched by z13
 viewports in a dense area and at a survey-area corner. `tests/direct/soil_survey/
 test_prepare.py::test_z13_viewport_touches_at_most_the_part_cap` pins the synthetic version.
+
+## Overview below z13
+
+**What and why.** Below z13 the map used to draw nothing for SSURGO (the route answered
+`soil_survey_zoom_in`). The overview is the smallest real answer: a drainage-class map on square
+cells, derived offline from the SAME admitted release, so it needs no new source, no change to the
+frozen `Release`/`Candidate` formats and no new admission pin. It was chosen over the alternatives:
+no other published soil lane carries drainage class (SoilGrids is pH/SOC/N/BD/CEC/OCD), so drawing
+one as a stand-in would show a different quantity under this layer's name; and generalized
+polygons need GEOS simplification, which this repo does not carry.
+
+**How it is computed** (`overview.py`). Polygon rasterization by the cell-centre rule: every
+delineation is scan-filled (even-odd, all rings at once, so holes and multipolygon parts need no
+special case) onto a global 0.0025-degree sample lattice anchored at 0,0, and each sample is
+attributed to the delineation containing its centre -- the GDAL rasterize rule. Samples are then
+summed per cell (majority resample) on three nested grids, 0.025, 0.05 and 0.2 degrees (10, 20 and
+80 samples a side). Per cell: the dominant drainage class by sample share, `dominant_share`,
+`mapped_share` (surveyed fraction of the cell), `hydric_fraction` (over rated samples only) and
+`map_unit_count` (distinct delineations sampled there). Integer sample indices with floor division
+make the grids exact west of Greenwich. A delineation smaller than one sample (about 0.04 sq km)
+still counts toward `map_unit_count` of its centre cell but adds no area. An undecodable WKB row
+(Z/M, a non-polygon) is counted in `undecodable`, never guessed at.
+
+**Sizes.** The PNW envelope (about 98 sq deg) is at most 157k cells at 0.025 degrees, so the file
+is a few MB and parquet-api holds it in memory once per process. `MAX_OVERVIEW_CELLS = 4000`
+bounds one answer: a z9 screen (about 2.8 sq deg) is about 1,100 cells at 0.05, z12 about 70 at
+0.025, z5-8 at most about 2,450 at 0.2. The 0.025 floor at z9-12 is a payload choice, not a ladder
+rung: SSURGO has no base lattice for `zoom-tiers.ts` to inherit, and each cell carries its own
+`cellDegrees`, so the client never infers a pitch.
+
+**Publish recipe (owner go required; nothing here has been run against production).** The
+release in service is the one `SSURGO_ADMITTED_RELEASE_SHA256` pins on parquet-api
+(`ee50154349e0...`, RUNBOOK "SSURGO soil survey"). From the capture root that built it (it holds
+`release-<sha>.json`, the candidate manifests and `objects/`):
+
+```bash
+cd services/agri-data-service
+# 1. Build locally; reads only. Add --from-bucket to read the parts from the bucket instead.
+uv run python -m agri_data_service.pipeline.direct.soil_survey overview \
+  --root <capture-root> --release <admitted-sha> --apply
+#    -> <capture-root>/overview-<admitted-sha>.parquet; check polygons ~1.78M, undecodable ~0.
+#    Measured ~150 us per delineation: ~4.5 min of compute for 1.78M rows, plus reading the parts.
+# 2. Publish: the ONE production write. Serving lights up within 300 s, no restart or env change.
+SSURGO_STAGE_ALLOWED=1 uv run python -m agri_data_service.pipeline.direct.soil_survey overview-publish \
+  --root <capture-root> --release <admitted-sha> --bucket <OBJECT_STORE_BUCKET> --apply
+```
+
+Rollback is deleting `soil-survey/candidates/overviews/<sha>.parquet` (`overview_key`, under the
+store prefix) and restarting parquet-api: a loaded overview stays cached for the process lifetime
+(only a miss is re-checked). Re-pinning a new release
+needs its own overview (the stamp check refuses the old one). Before step 2, the web router must
+report the overview as an average (`environmental.ts#adaptSoilSurveyCollection` granularity), or
+the soil panel would count cells as map units.
 
 ## No shim here
 

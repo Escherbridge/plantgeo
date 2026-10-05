@@ -8,6 +8,7 @@ import {
 import {
   addUtcDays,
   boundedResult,
+  cellFootprintViewport,
   cellSupport,
   daySchema,
   finiteNumberSchema,
@@ -75,41 +76,49 @@ export async function getParquetFireDetections(
   }
   const firstDay = addUtcDays(lastDay, -(requestedRange - 1));
   const zoomTier = resolveZoomTier(input.mapZoom);
+  // FIRMS has a real base cell (0.005 degrees, `fire_detections_day_export.sql`'s floor-snap), so
+  // this is a tessellated cell lane like vegetation and soil-field, not raw points: footprint, not
+  // stored point. `null` only when no viewport was requested at all. See
+  // src/lib/map/AGENTS.md §viewport-footprint.
+  const footprint =
+    input.bbox === undefined ? null : cellFootprintViewport(input.bbox, "fire-detections", zoomTier);
   return boundedResult(async () => {
     const envelopes = await getParquetLayerDayWindow({
       layer: "fire-detections",
       firstDay,
       lastDay,
       zoomTier,
-      ...(input.bbox === undefined ? {} : { bbox: input.bbox }),
+      ...(footprint === null ? {} : { bbox: footprint.requestBbox }),
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
     const days = envelopes.map((envelope) =>
       mapEnvelope(envelope, (rows) =>
-        parseRows(rows, fireDetectionRowSchema, "fire-detections").map((row) => ({
-          longitude: row.cell_longitude,
-          latitude: row.cell_latitude,
-          observedDay: row.observed_day,
-          detectionCount: row.detection_count,
-          frpSum: row.frp_sum,
-          frpObservationCount: row.frp_observation_count,
-          highConfidenceDetectionCount: row.high_confidence_detection_count,
-          newestObservedAt: row.newest_observed_at,
-          support: cellSupport({
-            lane: "fire-detections",
-            zoomTier,
-            supportKind: "aggregate_cell",
-            aggregationMethod: "count",
-            contributorCount: row.detection_count,
-            // The lane publishes no cell identity at any rung: its grain IS the snapped
-            // coordinate pair, so the id is minted from the rung and that pair.
-            cellId: null,
+        parseRows(rows, fireDetectionRowSchema, "fire-detections")
+          .map((row) => ({
             longitude: row.cell_longitude,
             latitude: row.cell_latitude,
             observedDay: row.observed_day,
+            detectionCount: row.detection_count,
+            frpSum: row.frp_sum,
+            frpObservationCount: row.frp_observation_count,
+            highConfidenceDetectionCount: row.high_confidence_detection_count,
             newestObservedAt: row.newest_observed_at,
-          }),
-        }))
+            support: cellSupport({
+              lane: "fire-detections",
+              zoomTier,
+              supportKind: "aggregate_cell",
+              aggregationMethod: "count",
+              contributorCount: row.detection_count,
+              // The lane publishes no cell identity at any rung: its grain IS the snapped
+              // coordinate pair, so the id is minted from the rung and that pair.
+              cellId: null,
+              longitude: row.cell_longitude,
+              latitude: row.cell_latitude,
+              observedDay: row.observed_day,
+              newestObservedAt: row.newest_observed_at,
+            }),
+          }))
+          .filter((row) => footprint === null || footprint.meetsViewport(row.longitude, row.latitude))
       )
     );
     const published = days.filter(

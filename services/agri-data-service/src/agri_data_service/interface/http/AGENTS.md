@@ -49,19 +49,27 @@ inside `parquet_routes.py`: it reads `foundation.soil_survey.release`'s sharded 
 rather than the day-partitioned Parquet layout every other route in this directory serves, so it
 carries its own admission pin (`config.py::ssurgo_admitted_release_sha256`) and its own gates.
 
-**Gate order, cheapest and most storage-free first**, and every gate below runs before object
-storage is ever touched:
+**Gate order, cheapest and most storage-free first**; the first three run before object storage is
+ever touched:
 
 1. Request shape (`_parse`) -- malformed bbox/point/zoom is 400 `soil_survey_invalid_request`.
 2. Region binding (`foundation.region.is_layer_bound(load_region(), "soil-survey")`) -- an unbound
    region answers 200 `unavailable`/`no_source_bound_in_region`.
 3. The admission pin -- unset, 200 `unavailable`/`soil_survey_release_not_admitted` (dark by
    default: this is the state a fresh deploy of push P3 answers with, per plan Go-A3).
-4. The zoom gate -- below z13 (`SoilSurveyViewport.at_native_rung`), 200
-   `unavailable`/`soil_survey_zoom_in`. There is no coarser rung this port ever publishes; a
-   vector-tile artifact for lower zooms is Go-5, a separate later step.
+4. The zoom gate -- below z13 (`SoilSurveyViewport.at_native_rung`) a `/point` request is 200
+   `unavailable`/`soil_survey_zoom_in` with no I/O. A `/query` request answers from the admitted
+   release's overview (`pipeline/direct/soil_survey/AGENTS.md`, "Overview below z13") when one is
+   published at `overview_key(<pin>)`; with none published, or on ANY read fault, it is the same
+   200 `soil_survey_zoom_in` -- the overview is an enhancement, so its fault never becomes a 503 at
+   zooms that answered 200 before it existed. `_overview_cache` holds one entry per process (the
+   pin's release index and overview, both immutable per SHA) and re-checks a miss after 300 s, so a
+   freshly published overview lights up without a restart. An UNUSABLE object (mis-stamped,
+   truncated, oversized, undecodable: `_OVERVIEW_CONTENT_FAULTS`) is cached as a miss too, so a bad
+   publish costs one download per 5 min rather than one per pan holding a `_GATHER_SLOT` the z13
+   path also needs; transport faults (boto) are not cached and the next pan retries.
 
-Only once all four pass does the route open object storage, and even then the object-store reads
+Only once all four pass does the z13 route open object storage, and even then the object-store reads
 (release index, shard manifests, part bytes) run OFF the event loop (`asyncio.to_thread`) and
 OUTSIDE `parquet_ops.duckdb_session.run_serving_read`'s bounded slot -- see `planes/AGENTS.md`,
 "Admitted release read path" (F10). A read fault at any of those stages (`SoilSurveyError`, a

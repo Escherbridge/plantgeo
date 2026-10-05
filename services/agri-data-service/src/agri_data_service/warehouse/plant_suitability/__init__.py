@@ -41,6 +41,7 @@ from agri_data_service.warehouse.plant_suitability.licences import (
     CC_BY_NC_SA,
     CC_BY_ND,
     COMMERCIAL_USE_LICENCES,
+    COPERNICUS_DEM,
     KNOWN_LICENCES,
     PRISM_TERMS_OF_USE,
     PUBLIC_DOMAIN,
@@ -49,6 +50,7 @@ from agri_data_service.warehouse.plant_suitability.licences import (
     US_GOVERNMENT_WORK,
     SourceCredit,
 )
+from agri_data_service.warehouse.plant_suitability.regions import CurationRegionData, InRegionReading, pilot_region_data
 from agri_data_service.warehouse.plant_suitability.schemas import (
     CELL_RECOMMENDATIONS_SCHEMA,
     EXCLUSION_SCHEMA,
@@ -73,6 +75,7 @@ __all__ = [
     "CC_BY_ND",
     "CELL_RECOMMENDATIONS_SCHEMA",
     "COMMERCIAL_USE_LICENCES",
+    "COPERNICUS_DEM",
     "ENGINE_VERSION",
     "EXCLUSION_SCHEMA",
     "GUIDE_ROW_SCHEMA",
@@ -108,7 +111,9 @@ __all__ = [
     "US_GOVERNMENT_WORK",
     "V0_FROZEN",
     "WETLAND_LIST_SCHEMA",
+    "CurationRegionData",
     "FireTextAllowList",
+    "InRegionReading",
     "PreparedEngine",
     "RuleConfig",
     "SiteInputProvenance",
@@ -118,6 +123,7 @@ __all__ = [
     "candidates_for_cell",
     "evaluate_cells",
     "find_fire_claims",
+    "pilot_region_data",
     "prepare",
     "resolve_wetland_ratings",
     "served_allow_list",

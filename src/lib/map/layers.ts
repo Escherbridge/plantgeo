@@ -638,6 +638,8 @@ export const soilSurveyOutlineLayer: LayerSpecification = {
   id: "soil-survey-outline",
   type: "line",
   source: SOIL_SURVEY_SOURCE,
+  // Map units only: outlining the below-z13 overview cells would paint the grid, not the soil.
+  filter: ["!=", ["get", "aggregated"], true],
   paint: {
     "line-color": SOIL_SURVEY_OUTLINE_COLOR,
     "line-width": 0.5,

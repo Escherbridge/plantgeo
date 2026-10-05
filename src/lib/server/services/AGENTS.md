@@ -315,6 +315,48 @@ the history tools stay published. The agri test
 catalogue drifts from this fixture, which closes the "no equivalent budget test on the agri side"
 gap above for the current catalogue.
 
+**Server-bound arguments (2026-10-05). Headroom: 81 of 112 properties (31 free), 80 of 208 enum
+values, 21 of 102 constraints**, for the current catalogue plus `distribution_at_point`, which had
+taken it to 107. `bindRegionalEvidenceArguments` already overwrote a set of arguments from the map
+selection BY TOOL NAME, whatever the model sent, so offering them cost budget and changed nothing.
+`ai-prompt.ts::providerEvidenceTool` now withholds them, the same way it withholds the literature
+arguments (`SERVER_BOUND_EVIDENCE_ARGUMENTS`):
+- `surface_evidence_for_selection`: everything except `surface_name` and `page_start`, because
+  `regionalSelectionArguments` sets day, point, range, `time_scale` and `zoom` on every call.
+- `as_of_day` on the drought and fire history tools.
+- `asOfDay` and `zoomTier` on `read_crop_cover_in_area`.
+- `bbox` on `read_crop_cover_in_area`, `resolve_land_boundary_in_area` and
+  `lookup_land_contacts_in_area`. `bindRegionalEvidenceArguments` replaces a `bbox` with the
+  selection tile only when the call NAMES one, so `ai-prompt.ts::bindProviderEvidenceArguments`
+  (the loop's only binding entry point) restores the key for these three tools first. The model
+  never has to send `bbox`, not even `{}`. An earlier draft kept the key as a property-less
+  `{type:'object'}`. That shape was in fact already live (`draft_land_inquiry_text.contact`, since
+  fec24ed3), but it still relied on the model sending `{}`. The budget test now pins
+  `draft_land_inquiry_text.contact` as the ONLY property-less object property, so adding another one
+  fails CI until someone has probed it live.
+The flow test `reads the selection tile for an area tool the model calls with no arguments at all`
+drives `streamRegionalIntelligence` with `{}` calls and asserts each reader receives a tile around
+the point. The contract test `supplies every catalogue argument the provider view withholds...` sends each
+current-catalogue and land-context tool only the arguments it is offered, then asserts the bound
+call carries every withheld argument and every catalogue-required one. If the binding stops
+supplying an argument, that test fails. The test also counts the withheld arguments, so a stale
+tool name in the list fails it too.
+
+Levers considered and rejected:
+- Scoping round 1 to a theme's tools. `streamRegionalIntelligence` sends every tool on every round,
+  and narrowing the list would remove tools the model can choose today.
+- Turning `bbox` into a four-number array. Moot: `bbox` is now withheld outright, and an array
+  shape would have been new to the live Gemini path.
+- Trimming agri-side arguments. Every one is read by `agent/tools.py`, so the published catalogue
+  (and this fixture) are unchanged.
+- Shrinking the report. Its enums are what its own validation reads.
+
+Still offered although the server binds them: `longitude`/`latitude`, `lon`/`lat` and `day`. The
+binding sets those only when the call names the key, so withholding them would drop the value. That
+is about 14 more properties, available if the binding moves to tool-name keying in
+`regional-analysis-workflow.ts`. A new point tool (plant suitability) costs only its own
+model-chosen arguments if its point is bound the same way.
+
 ### gemini-forced-call-states
 
 The 2026-09-28 refusal, bisected live against OpenRouter in 39 calls
@@ -635,6 +677,22 @@ rather than introduced by it (STYLE-REVIEW-W1.md S8). NOT renamed here: `mtbsSna
 response field, a client contract, and a rename is owed a contract version bump
 (`federation.md` §5 step 3), not a drive-by edit alongside a style pass.
 
+### viewport-footprint-parity
+
+`vegetation.ts` and `fire-detections.ts` now pad their request bbox and trim served rows through
+`shared.ts`'s `cellFootprintViewport`, the same helper `climate-field.ts` and `soil-field.ts` already
+used — see `src/lib/map/AGENTS.md` §viewport-footprint for the general rule (a bbox filter on the
+STORED point misses a cell whose square overlaps the viewport while its point sits just outside).
+`fire-detections` was not obviously a cell lane from its reader alone — FIRMS detections could have
+been raw points — but `LANE_BASE_LATTICES["fire-detections"]` (zoom-tiers.ts) says otherwise: a real
+0.005-degree base grain, floor-snapped to the cell ORIGIN by `fire_detections_day_export.sql`. A real
+lattice at every rung means the same miss-at-the-edge bug applies, so it gets the same fix; `bbox` is
+optional on this lane (`ParquetViewportRead`), so the footprint is `null` and trimming is skipped only
+when no viewport was requested at all. `water-gauges` and `weather-observations` are the two lanes
+this still does not reach, correctly — their `LANE_BASE_LATTICES` entries carry `cellSizeDegrees: 0`
+because a gauge or a weather observation IS a raw point, and `cellFootprintViewport` throws rather
+than silently returning a zero-margin pad if ever called on one.
+
 ### named-day-rule
 
 A published day is a `YYYY-MM-DD` string and is compared as one. Never turn it into an instant:
@@ -839,9 +897,16 @@ The zod schema in that file is a MIRROR of the frozen wire contract in `services
 src/agri_data_service/planes/soil_survey.py` (`soil_survey_unavailable`,
 `render_served_soil_survey`), never a design surface of its own -- read that module (and
 `interface/http/soil_survey.py`'s gate order: region binding, then the admission pin, then the
-native z13 zoom gate) before changing a field here. `servedZoom` is always the literal `13`
-(`NATIVE_RUNG`): the backend serves exactly one geometry rung and refuses honestly
-(`soil_survey_zoom_in`) below it rather than degrading to a coarser candidate.
+native z13 zoom gate) before changing a field here. Map units come only at `servedZoom` 13
+(`NATIVE_RUNG`). Below it the answer is either `soil_survey_zoom_in` or, once an overview is
+published for the admitted release, square drainage-class cells at the ladder tier that served
+them (`servedZoom` 0/5/9) -- the refinement refuses any mix of the two, and the overview cap is
+`MAX_SOIL_SURVEY_OVERVIEW_CELLS`. Overview cells carry the legacy aggregate shape
+(`aggregated: true`, `drainageClass`, `mapUnitCount`, `hydricFraction`) on purpose: `hover-fields.ts`
+("Soil drainage average") and `SoilDetails.tsx` (the zoomed-out averages caption, which sums
+`mapUnitCount`) already caption it, and `soilSurveyOutlineLayer`'s filter keeps the grid unoutlined.
+Rationale and publish recipe: `services/agri-data-service/src/agri_data_service/pipeline/direct/
+soil_survey/AGENTS.md`, "Overview below z13".
 
 `environmental.ts#adaptSoilSurveyCollection` is the seam between that raw wire shape and
 `ProxiedSoilSurveyCollection`, the contract `SoilDetails.tsx` and `LayerManager.tsx` have always
@@ -923,10 +988,20 @@ keeps its slot. So, in order:
    call.
 5. **Single-flight.** A miss takes `SET <key>:lock <uuid> NX EX 20` (`acquireCacheLock`, 20 s >
    the bridge's 15 s bound). The leader calls agri WITHOUT the caller's abort signal -- the agri read
-   is spent either way -- caches the answer, then releases the lock (token-checked). A caller that
-   lost the lock polls the cache every 250 ms for up to 3 s, then 503s. Redis down: no lock, no
-   cache, every caller goes straight through (still rate-limited, and in production the limiter
-   fails closed first).
+   is spent either way -- caches the answer, then releases the lock with `releaseCacheLock`
+   (`redis.ts`, token-checked). A caller that lost the lock polls the cache
+   every 250 ms for up to 12 s (a leader takes 2-11 s), then 503s. Redis down: no lock, no cache, every caller goes straight
+   through (still rate-limited, and in production the limiter fails closed first).
+
+   `releaseCacheLock` is a one-round-trip `EVAL` (`if GET(key) == token then DEL(key)`), not a
+   separate `GET` then `DEL` (its old shape). The two-call version has a real gap:
+   if this caller's lock TTL expires and a second caller's `acquireCacheLock` re-`SET`s the same key
+   between the `GET` and the `DEL`, the first caller's stale release deletes the SECOND caller's
+   live lock, and a third caller then wins the single-flight window the second caller thought it
+   owned. `EVAL` runs the check and the delete as one atomic Redis command, closing that gap.
+   `layer-window-distribution-lock.test.ts` reproduces the race directly: seed the key with another
+   holder's token, release with the ORIGINAL (now-stale) token, and assert the second holder's lock
+   survives.
 
 `signal_name` is sent for the air-temperature variants and the weather temperature layers
 (`distributionSignalName`), so agri reads one lane of a multi-lane surface instead of all of them.

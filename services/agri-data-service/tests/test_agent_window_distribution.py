@@ -8,10 +8,11 @@ See agent/AGENTS.md, "Window distribution (2026-10-04)".
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,12 +24,13 @@ import structlog
 from agri_data_service.agent import tools, window_distribution
 from agri_data_service.agent.day_tolerance import day_tolerance
 from agri_data_service.agent.selection_reads import SPARSE_AREA_LANES, SelectionReader
-from agri_data_service.agent.surfaces import APP_SURFACE_NAMES, SURFACE_PARQUET_LANES
+from agri_data_service.agent.surfaces import APP_SURFACE_NAMES, SURFACE_PARQUET_LANES, surface_lanes
 from agri_data_service.parquet_ops import faults
+from agri_data_service.parquet_ops.duckdb_session import SERVING_MAX_CONCURRENT_READS, open_guarded_connection
 from agri_data_service.parquet_ops.warehouse_reader import GeometrySupport, spatial_support
 from agri_data_service.routes import agent_tools as route
 from tests.test_agent_closest_datapoint import BOISE, GORGE, _enum_arrays, drought_row, ndvi_row, weather_station_row
-from tests.test_agent_selection_evidence import LocalWarehouse, climate_row
+from tests.test_agent_selection_evidence import LocalSession, LocalWarehouse, climate_row
 
 #: The window's last day; "today" sits well after it unless a test is about the clamp.
 END = date(2026, 6, 15)
@@ -441,6 +443,151 @@ async def test_366_days_is_the_longest_window_answered(tmp_path: Path) -> None:
         source.write(tmp_path, DEW_POINT, day, [climate_row(day, longitude=-116, latitude=43, value=1.0)])
     [lane] = (await distribution(source, DEW_POINT, range_start=first.isoformat()))["lanes"]
     assert (lane["days_in_window"], lane["days_with_data"]) == (366, 2)
+
+
+# --- Latency shape: cost follows published parts and lanes overlap -----------------------------
+# Production measurements and the budget they are held against: agent/AGENTS.md, "Window
+# distribution", caveat 4.
+
+
+class StatementLog:
+    """A DuckDB connection that records, per statement, how many fixture part files it names."""
+
+    def __init__(self, connection: Any, parts: set[str], named: list[int]) -> None:
+        self._connection = connection
+        self._parts = parts
+        self._named = named
+
+    def execute(self, statement: str, parameters: list[object] | None = None) -> Any:
+        listed = {item for value in parameters or () if isinstance(value, list) for item in value}
+        self._named.append(len(listed & self._parts))
+        return self._connection.execute(statement, parameters)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._connection, name)
+
+
+@dataclass
+class StatementCountingWarehouse(LocalWarehouse):
+    """Real DuckDB, with every statement's part-file count recorded in order."""
+
+    named_parts: list[int] = field(default_factory=list)
+
+    async def run(self, work: Any, *, operation: str) -> Any:
+        self.operations.append(operation)
+        connection = open_guarded_connection()
+        try:
+            counted = StatementLog(connection, set(self.files.values()), self.named_parts)
+            return work(LocalSession(counted, self.files))
+        finally:
+            connection.close()
+
+
+async def test_a_365_day_window_runs_the_same_statements_as_30_days_over_only_its_published_parts(
+    tmp_path: Path,
+) -> None:
+    published = [END - timedelta(days=offset) for offset in (0, 11, 22)]  # inside both windows
+    plans: dict[int, list[int]] = {}
+    for window_days in (30, 365):
+        source = StatementCountingWarehouse()
+        for day in published:
+            source.write(tmp_path, DEW_POINT, day, [climate_row(day, longitude=-116, latitude=43, value=1.0)])
+        first = END - timedelta(days=window_days - 1)
+        [lane] = (await distribution(source, DEW_POINT, range_start=first.isoformat()))["lanes"]
+        assert (lane["days_in_window"], lane["days_with_data"]) == (window_days, 3)
+        plans[window_days] = source.named_parts
+    assert plans[365] == plans[30], "a longer window adds no statement: never one per calendar day"
+    assert set(plans[365]) == {3}, "every statement reads the published parts, never a file per calendar day"
+
+
+@dataclass
+class SlotLimitedWarehouse(LocalWarehouse):
+    """A process with `slots` serving slots, like `run_serving_read`'s admission gate.
+
+    A read that finds every slot taken is refused `serving_at_capacity` after the (scaled-down) slot
+    wait: a full process stays full because other callers take any slot that frees. Every read holds
+    its slot for `hold_seconds`, long enough for a sibling read to start.
+    """
+
+    slots: int = SERVING_MAX_CONCURRENT_READS
+    hold_seconds: float = 0.05
+    slot_wait_seconds: float = 0.2
+    in_flight: int = 0
+    peak: int = 0
+    refused: int = 0
+
+    async def run(self, work: Any, *, operation: str) -> Any:
+        if self.in_flight >= self.slots:
+            await asyncio.sleep(self.slot_wait_seconds)
+            self.refused += 1
+            raise faults.serving_at_capacity(operation=operation, concurrent_reads=self.slots)
+        self.in_flight += 1
+        self.peak = max(self.peak, self.in_flight)
+        try:
+            await asyncio.sleep(self.hold_seconds)
+            return await super().run(work, operation=operation)
+        finally:
+            self.in_flight -= 1
+
+
+MULTI_LANE_SURFACE = "climate-field-air-temperature"
+
+
+def write_multi_lane_surface(source: LocalWarehouse, root: Path) -> tuple[str, ...]:
+    """Two days on every lane of the three-lane surface; lane i's window mean is 14.5 + i."""
+    lanes = surface_lanes(MULTI_LANE_SURFACE)
+    root.mkdir(parents=True, exist_ok=True)
+    for index, lane in enumerate(lanes):
+        for offset in (0, 9):
+            day = START + timedelta(days=offset)
+            value = 10.0 + index + offset
+            source.write(root, lane, day, [climate_row(day, longitude=-116, latitude=43, value=value)])
+    return lanes
+
+
+def lane_means(result: dict[str, Any]) -> list[tuple[str, float]]:
+    return [(entry["parquet_lane"], entry["stats"]["mean"]) for entry in result["lanes"]]
+
+
+EXPECTED_MEANS = [(lane, 14.5 + index) for index, lane in enumerate(surface_lanes(MULTI_LANE_SURFACE))]
+
+
+async def test_one_multi_lane_call_reads_two_lanes_at_once_and_answers_in_catalogue_order(tmp_path: Path) -> None:
+    source = SlotLimitedWarehouse()
+    lanes = write_multi_lane_surface(source, tmp_path)
+    assert len(lanes) > window_distribution.LANE_READ_CONCURRENCY
+    assert lane_means(await distribution(source, MULTI_LANE_SURFACE)) == EXPECTED_MEANS
+    assert (source.peak, source.refused) == (window_distribution.LANE_READ_CONCURRENCY, 0)
+
+
+async def test_two_concurrent_multi_lane_calls_borrow_one_extra_slot_between_them_and_none_is_refused(
+    tmp_path: Path,
+) -> None:
+    source = SlotLimitedWarehouse()
+    write_multi_lane_surface(source, tmp_path)
+    first, second = await asyncio.gather(
+        distribution(source, MULTI_LANE_SURFACE), distribution(source, MULTI_LANE_SURFACE)
+    )
+    assert lane_means(first) == lane_means(second) == EXPECTED_MEANS
+    # Each call's own slot plus ONE borrowed slot for the whole process: per-call borrowing would need 4.
+    assert (source.peak, source.refused) == (SERVING_MAX_CONCURRENT_READS, 0)
+
+
+async def test_a_borrowed_lane_refused_at_capacity_is_read_on_the_calls_own_slot_not_reported_refused(
+    tmp_path: Path,
+) -> None:
+    # One slot left in the process: the borrowed read is refused after a wait longer than the call's
+    # own slot takes over every other lane, so the handed-back lane is read after that loop ended.
+    crowded = SlotLimitedWarehouse(slots=1, slot_wait_seconds=1.0)
+    write_multi_lane_surface(crowded, tmp_path / "crowded")
+    assert lane_means(await distribution(crowded, MULTI_LANE_SURFACE)) == EXPECTED_MEANS
+    assert (crowded.peak, crowded.refused) == (1, 1)
+
+    # The hand-back returned the process's borrowed slot: the next call reads two lanes at once again.
+    free = SlotLimitedWarehouse()
+    write_multi_lane_surface(free, tmp_path / "free")
+    assert lane_means(await distribution(free, MULTI_LANE_SURFACE)) == EXPECTED_MEANS
+    assert free.peak == window_distribution.LANE_READ_CONCURRENCY
 
 
 # --- The HTTP bridge: same result, one structured log event ------------------------------------

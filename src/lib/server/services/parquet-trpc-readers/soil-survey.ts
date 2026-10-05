@@ -70,6 +70,33 @@ const soilSurveyFeature = z.object({
   properties: soilSurveyFeatureProperties,
 });
 
+const share = z.number().min(0).max(1);
+
+/**
+ * `_overview_feature` in `planes/soil_survey.py`: one overview cell below z13, in the legacy
+ * aggregate shape (`aggregated`, `drainageClass`, `mapUnitCount`, `hydricFraction`) that
+ * `hover-fields.ts` and `SoilDetails.tsx` already caption as an average. See
+ * `src/lib/server/services/AGENTS.md` §soil-survey.
+ */
+const soilSurveyOverviewFeature = z.object({
+  type: z.literal("Feature"),
+  id: z.string(),
+  geometry: z.object({ type: z.literal("Polygon"), coordinates: polygon }),
+  properties: z.object({
+    aggregated: z.literal(true),
+    drainageClass: z.string().nullable(),
+    dominantShare: share,
+    mappedShare: share,
+    hydricFraction: share.nullable(),
+    mapUnitCount: z.number().int().nonnegative(),
+    cellDegrees: z.number().positive(),
+    geometryRepresentation: z.literal("overview_cell"),
+    source: z.literal("usda-sda"),
+  }),
+});
+
+export type SoilSurveyOverviewFeature = z.infer<typeof soilSurveyOverviewFeature>;
+
 /** `render_served_soil_survey`'s `spatialCoverage`; present only on a `published` answer. */
 const spatialCoverage = z.object({
   viewportAreas: z.array(z.string()),
@@ -82,16 +109,21 @@ const temporalScope = z.object({
   selectedDaySupported: z.literal(false),
 });
 
-/** `NATIVE_RUNG` in `foundation/soil_survey/release.py` -- the one rung this port ever serves. */
+/** `NATIVE_RUNG` in `foundation/soil_survey/release.py` -- the one rung that serves map units. */
 const NATIVE_SERVED_ZOOM = 13;
 
 /** `MAX_VIEWPORT_ROWS` in `foundation/soil_survey/release.py`. */
 const MAX_SOIL_SURVEY_FEATURES = 1000;
 
+/** `MAX_OVERVIEW_CELLS` in `pipeline/direct/soil_survey/overview.py`. */
+export const MAX_SOIL_SURVEY_OVERVIEW_CELLS = 4000;
+
 const collection = z
   .object({
     type: z.literal("FeatureCollection"),
-    features: z.array(soilSurveyFeature).max(MAX_SOIL_SURVEY_FEATURES),
+    features: z
+      .array(z.union([soilSurveyFeature, soilSurveyOverviewFeature]))
+      .max(MAX_SOIL_SURVEY_OVERVIEW_CELLS),
     availability: z.enum(["published", "unavailable"]),
     reason: z.string().nullable(),
     truncated: z.boolean(),
@@ -99,7 +131,8 @@ const collection = z
       .string()
       .regex(/^[0-9a-f]{64}$/)
       .nullable(),
-    servedZoom: z.literal(NATIVE_SERVED_ZOOM),
+    // Below z13 a published answer is the release's overview at the ladder tier that served it.
+    servedZoom: z.union([z.literal(0), z.literal(5), z.literal(9), z.literal(NATIVE_SERVED_ZOOM)]),
     requestedZoom: z.number().int(),
     temporalScope,
     spatialCoverage: spatialCoverage.nullable(),
@@ -132,7 +165,30 @@ const collection = z
         message: "Unavailable SSURGO response cannot claim release evidence",
       });
     }
+    // Map units only at the native rung, overview cells only below it -- never a mix.
+    const atNativeRung = value.servedZoom === NATIVE_SERVED_ZOOM;
+    const overviewCells = value.features.filter(isSoilSurveyOverviewFeature).length;
+    if (atNativeRung ? overviewCells > 0 : overviewCells !== value.features.length) {
+      context.addIssue({
+        code: "custom",
+        message: "SSURGO response mixes map units and overview cells across rungs",
+      });
+    }
+    if (atNativeRung && value.features.length > MAX_SOIL_SURVEY_FEATURES) {
+      context.addIssue({
+        code: "custom",
+        message: `SSURGO native answer exceeds ${MAX_SOIL_SURVEY_FEATURES} map units`,
+      });
+    }
   });
+
+/** True for a below-z13 overview cell rather than a surveyed map unit. */
+export function isSoilSurveyOverviewFeature(feature: {
+  properties: object;
+}): feature is SoilSurveyOverviewFeature {
+  return "geometryRepresentation" in feature.properties &&
+    feature.properties.geometryRepresentation === "overview_cell";
+}
 
 export type ParquetSoilSurveyCollection = z.infer<typeof collection>;
 

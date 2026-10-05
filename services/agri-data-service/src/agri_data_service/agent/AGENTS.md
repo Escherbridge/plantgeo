@@ -538,9 +538,59 @@ day_at_the_point_and_never_borrow_a_nearest_cell` pins the fix. (2) Drought coun
 days on which an area covers the point. A release that leaves the point outside every area is "no
 drought class", not a numeric class, so it is excluded. If no release covers the point, the lane is
 `nearest_area_outside` with no stats. (3) Station identity is the reported coordinate, so a station
-whose position jitters splits across days. (4) Latency: a 365-day window verifies up to 365 days of
-parts in one session, which is the cost to watch against `TOOL_TIMEOUT_SECONDS` in the
-`agent_tool_call` log (`duration_ms`).
+whose position jitters splits across days. (4) Latency, below.
+
+**Latency (measured 2026-10-05).** The budget is the smallest deadline on the path:
+`routes/agent_tools.py::TOOL_TIMEOUT_SECONDS = 12` (the web bridge allows 15 s,
+`regional-evidence-tools.ts`, and a web follower waits only 3 s for the leader's cached answer,
+`SINGLE_FLIGHT_WAIT_MS`). Production, one lane, Gorge probe (-121.95, 45.68), window ending 2026-10-05,
+cold/warm ms:
+
+| surface | 30 d | 90 d | 365 d |
+|---|---|---|---|
+| climate-field-precipitation | 3799 / 3165 | 10622 / 9825 | refused in 414 / 182 |
+| soil-field-vpd | 2422 / 2829 | 10717 / 9726 | refused in 255 / 104 |
+| vegetation | 3759 / 2000 | 6478 / 7082 | refused in 575 / 98 |
+| fire-detections | 2914 / 2944 | 10235 / 7810 | refused in 2600 / 162 |
+
+Cost is about 115 ms per PUBLISHED day, linear, and nearly all of it is admission, not DuckDB. A
+365-day refusal returns after the listing, index and day classification in under 0.6 s, so those
+are cheap. What scales is `authorized_serving.verified_object_uris`: for every published day it
+GETs the completion marker and then each part, one at a time, and hashes them before DuckDB opens
+the local copies. The SQL is constant per lane: one `parquet_schema`, one selection (plus at most the
+nearest ladder) and one aggregation, each naming only published parts.
+`test_a_365_day_window_runs_the_same_statements_as_30_days_over_only_its_published_parts` pins that
+shape. Warm runs are no faster because nothing is cached between calls.
+
+Consequences. 90 days already uses 55-90% of the 12 s, and 365 days would need about 40 s. 365
+days is refused today anyway: every lane reports `partition_day_incomplete` for history before July
+2026 (vegetation for April-June 2026), so the 365-day preset answers nothing on these four surfaces.
+A multi-lane surface multiplies the cost. Before 2026-10-05 its lanes ran one after another, and
+`soil-field-temperature` (4 lanes) and `soil-field-moisture` (3 lanes) hit `tool_read_timeout` at 30
+days (12.09 s and 12.04 s). `climate-field-air-temperature` with no signal took 11.98 s.
+
+**Lane concurrency is a process-wide borrow, not a per-call one.** The agent tools and the map reads
+(`parquet_bp`) share one admission gate per Sanic worker process (`duckdb_session._read_slot`, 3
+slots, 2 s wait), and the web runs agent evidence calls three at a time. A per-call cap of 2 (the
+first cut) let two multi-lane calls, or one plus a map pan, ask for 4+ slots and get lanes or map
+layers refused `serving_at_capacity`. So each call reads its lanes one at a time on its own slot, and
+a second lane may read alongside only while the call holds `_borrowed_lane_slot`, ONE lock for the
+whole process taken without waiting (`LANE_READ_CONCURRENCY` = 2 is the per-call result). Process
+demand is therefore at most callers + 1, never callers x 2. A borrowed read that is still refused at
+capacity is handed back (`_LaneHandedBackError`) and read on the call's own slot, after its loop if
+that loop already ended, so the call's own parallelism never puts a refused lane in its answer. What
+remains: the one borrowed read can still make a single-slot caller (a map read) wait, and a lane
+longer than the 2 s wait can get it refused. Not measured under concurrent load; measure it after
+the deploy (two concurrent multi-lane calls plus a map pan) before raising the borrow. The cheaper
+win is the web sending the painted depth's `signal_name`, so a soil toggle reads one lane. A
+borrowed lane cancelled by the tool timeout returns the borrow at once, while its DuckDB worker keeps
+the real slot until it finishes (`run_bounded_read` releases on the worker's future). Tests:
+`test_two_concurrent_multi_lane_calls_borrow_one_extra_slot_between_them_and_none_is_refused` and
+`test_a_borrowed_lane_refused_at_capacity_is_read_on_the_calls_own_slot_not_reported_refused`.
+
+A 90-day or 365-day window needs a bounded-concurrency `verified_object_uris`, which lives in
+`parquet_ops/authorized_serving.py`, outside this module. Re-measure with `duration_ms` in the
+`agent_tool_call` log.
 
 **Log.** The bridge emits the ordinary `agent_tool_call` event. `tool_call_log.py` reads flat lane
 entries (no `selected`), deduplicates `lanes`, and adds `range_start`/`range_end` for every tool.

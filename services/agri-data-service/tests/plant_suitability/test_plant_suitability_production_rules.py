@@ -60,6 +60,7 @@ from agri_data_service.warehouse.plant_suitability.licences import (
     CC_BY_NC_SA,
     CC_BY_ND,
     COMMERCIAL_USE_LICENCES,
+    COPERNICUS_DEM,
     PRISM_TERMS_OF_USE,
     PUBLIC_DOMAIN,
     UNRECORDED,
@@ -72,7 +73,7 @@ from agri_data_service.warehouse.plant_suitability.schemas import (
     SITE_INPUT_GROUPS,
 )
 from agri_data_service.warehouse.plant_suitability.site import SiteInputProvenance
-from tests.plant_suitability.support import candidate, cell_row, served_labels
+from tests.plant_suitability.support import PRODUCTION_ON_FIXTURE, candidate, cell_row, served_labels
 
 if TYPE_CHECKING:
     from tests.plant_suitability.support import SuitabilityFixture
@@ -96,14 +97,29 @@ ERA5_LAND_CREDIT = (
     f"ERA5-Land (Copernicus Climate Change Service), Open-Meteo.com, https://open-meteo.com, {CC_BY_TERMS}"
 )
 SOILGRIDS_CREDIT = f"SoilGrids 2.0, ISRIC - World Soil Information, https://soilgrids.org, {CC_BY_TERMS}"
+# The notice the Copernicus DEM licence prescribes for adapted GLO-90 data (the record low is lapse-adjusted to it).
+COPERNICUS_DEM_NOTICE = (
+    "produced using Copernicus WorldDEM-90 \u00a9 DLR e.V. 2010-2014 and \u00a9 Airbus Defence and Space GmbH "
+    "2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved"
+)
+# A later pull than the prototype's, declared as production's own (not the fixture).
+PRODUCTION_PULL, PRODUCTION_PULL_ATTRIBUTION = (
+    "2026-10-03",
+    "PRISM Group, Oregon State University, https://prism.oregonstate.edu, accessed 3 Oct 2026.",
+)
+# PRODUCTION's gate without the DEM licence, with the cold group optional so its withholding is served, not refused.
+PRODUCTION_WITHOUT_DEM = replace(PRODUCTION_ON_FIXTURE, permitted_licences=COMMERCIAL_USE_LICENCES - {COPERNICUS_DEM})
+COLD_OPTIONAL_WITHOUT_DEM = replace(
+    PRODUCTION_WITHOUT_DEM, required_site_input_groups=PRODUCTION_ON_FIXTURE.required_site_input_groups - {"cold"}
+)
 # PRODUCTION's gate without CC BY: the precipitation group's ERA5 credit then withholds it although PRISM is permitted.
-PRODUCTION_WITHOUT_CC_BY = replace(PRODUCTION, permitted_licences=COMMERCIAL_USE_LICENCES - {CC_BY})
+PRODUCTION_WITHOUT_CC_BY = replace(PRODUCTION_ON_FIXTURE, permitted_licences=COMMERCIAL_USE_LICENCES - {CC_BY})
 # For subjects that come from licence-unrecorded guides, which real PRODUCTION drops at load.
-PRODUCTION_WITHOUT_LICENCE_GATE = replace(PRODUCTION, permitted_licences=None)
+PRODUCTION_WITHOUT_LICENCE_GATE = replace(PRODUCTION_ON_FIXTURE, permitted_licences=None)
 # One changed value per RuleConfig field; the fingerprint flow fails if a field has no entry here.
 FINGERPRINT_VARIANTS = {
     "name": "production_preview",
-    "in_region_overrides": frozenset(),
+    "in_region_readings": frozenset(),
     "range_wide_origin_is_not_state_claim": False,
     "inherit_stratification": False,
     "null_restriction_depth_is_unknown": False,
@@ -113,6 +129,8 @@ FINGERPRINT_VARIANTS = {
     "required_site_input_groups": frozenset(),
     "label_unchecked_axes": False,
     "declared_empty_exclusion_states": frozenset({"OR"}),
+    "dated_attribution_accessed_after": None,
+    "allow_fixture_site_inputs": True,
 }
 # The review's round-2 bypasses (p03): invisible and combining characters, lookalike letters, then phrasings.
 EGRESS_REFUSED = (
@@ -254,7 +272,7 @@ EGRESS_SERVED = (
 @pytest.fixture(scope="module")
 def production_allow_list(suitability: SuitabilityFixture) -> FireTextAllowList:
     """The egress allow-list of a PRODUCTION engine over the fixture's guide rows."""
-    return suitability.prepared(PRODUCTION).allow_list
+    return suitability.prepared(PRODUCTION_ON_FIXTURE).allow_list
 
 
 def refused_at_egress(text: str, allow_list: FireTextAllowList) -> bool:
@@ -271,7 +289,7 @@ def test_bend_reads_tn_2a_as_an_in_region_guide(suitability: SuitabilityFixture)
     tn_2a_taxon = suitability.taxa("bend", "east_of_cascade_crest_taxon")
 
     v0 = candidate(suitability.candidates(cell_id, V0_FROZEN), tn_2a_taxon, "hedgerow_buffer")
-    production = candidate(suitability.candidates(cell_id, PRODUCTION), tn_2a_taxon, "hedgerow_buffer")
+    production = candidate(suitability.candidates(cell_id, PRODUCTION_ON_FIXTURE), tn_2a_taxon, "hedgerow_buffer")
 
     assert v0["is_pick"]
     assert not v0["in_region_supported"]
@@ -309,7 +327,7 @@ def test_null_ec_caco3_and_restriction_depth_are_unknown_axes_never_failures(sui
     shipped_null = measured.with_columns([pl.lit(None, dtype=pl.Float64).alias(column) for column in soil_inputs])
 
     v0_measured = suitability.candidates(measured, V0_FROZEN)
-    production = suitability.candidates(shipped_null, PRODUCTION)
+    production = suitability.candidates(shipped_null, PRODUCTION_ON_FIXTURE)
 
     assert v0_measured.filter(pl.col("axis_salinity") == 0).height > 0
     for axis in SOIL_AXES:
@@ -323,7 +341,7 @@ def test_a_none_recorded_restriction_is_unknown_in_production_and_counted(
     cell_id = suitability.role_cell("boise", "restriction_none_recorded_cell")
 
     v0 = suitability.candidates(cell_id, V0_FROZEN)
-    production = suitability.candidates(cell_id, PRODUCTION)
+    production = suitability.candidates(cell_id, PRODUCTION_ON_FIXTURE)
     v0_cell, production_cell = cell_row(v0_cells, cell_id), cell_row(production_cells, cell_id)
 
     assert set(v0["axis_root_depth"].to_list()) == {1}
@@ -335,7 +353,7 @@ def test_a_none_recorded_restriction_is_unknown_in_production_and_counted(
 def test_production_serves_prism_precipitation_with_its_dated_attribution_on_both_seams(
     suitability: SuitabilityFixture,
 ) -> None:
-    engine = suitability.prepared(PRODUCTION)
+    engine = suitability.prepared(PRODUCTION_ON_FIXTURE)
     cell_id = suitability.role_cell("bend", "east_of_cascade_crest_cell")
 
     table = engine.layer_table(suitability.site)
@@ -349,7 +367,9 @@ def test_production_serves_prism_precipitation_with_its_dated_attribution_on_bot
     assert precipitation["attribution"] == PRISM_ATTRIBUTION
     assert precipitation["credits"] == [ERA5_CREDIT]
     # The complete credit list: one line per distinct work, ERA5-Land declared by two groups but listed once.
-    expected_credits = sorted([PRISM_ATTRIBUTION, ERA5_CREDIT, ERA5_LAND_CREDIT, SOILGRIDS_CREDIT])
+    expected_credits = sorted(
+        [PRISM_ATTRIBUTION, ERA5_CREDIT, ERA5_LAND_CREDIT, SOILGRIDS_CREDIT, COPERNICUS_DEM_NOTICE]
+    )
     assert json.loads(metadata[METADATA_ATTRIBUTIONS]) == expected_credits
     assert json.loads(metadata[METADATA_WITHHELD_SITE_INPUTS]) == {}
     assert point.filter(pl.col("is_pick")).height > 0
@@ -360,7 +380,7 @@ def test_production_serves_prism_precipitation_with_its_dated_attribution_on_bot
     [
         pytest.param(
             {"licence": UNRECORDED, "accessed": None},
-            PRODUCTION,
+            PRODUCTION_ON_FIXTURE,
             r"withheld by its licence gate \{.*'precipitation': 'unrecorded'",
             id="unrecorded_before_the_owner_decision",
         ),
@@ -370,7 +390,7 @@ def test_production_serves_prism_precipitation_with_its_dated_attribution_on_bot
             r"withheld by its licence gate \{.*'precipitation': 'CC-BY-4.0'",
             id="credited_era5_not_permitted",
         ),
-        pytest.param(None, PRODUCTION, r"undeclared \['precipitation'\]", id="undeclared"),
+        pytest.param(None, PRODUCTION_ON_FIXTURE, r"undeclared \['precipitation'\]", id="undeclared"),
     ],
 )
 def test_production_refuses_to_serve_a_precipitation_group_its_gate_withholds_or_nobody_declared(
@@ -433,6 +453,91 @@ def test_a_site_input_declaration_that_cannot_state_its_credits_is_refused_on_co
         SiteInputProvenance(groups)
 
 
+def test_the_record_low_credits_the_copernicus_dem_it_was_lapse_adjusted_to_while_the_cold_group_is_served(
+    suitability: SuitabilityFixture,
+) -> None:
+    cell_id = suitability.role_cell("boise", "burned_cell")
+    served = suitability.prepared(PRODUCTION_ON_FIXTURE)
+    without_dem = suitability.prepared(COLD_OPTIONAL_WITHOUT_DEM)
+
+    point, point_metadata = served.candidates_with_metadata(suitability.site_row(cell_id))
+    cold = json.loads(point_metadata[METADATA_SITE_INPUTS])["cold"]
+    withheld_metadata = without_dem.metadata()
+    withheld_point = without_dem.candidates_for_cell(suitability.site_row(cell_id))
+
+    assert cold["credits"] == [ERA5_LAND_CREDIT, COPERNICUS_DEM_NOTICE]
+    assert COPERNICUS_DEM_NOTICE in json.loads(point_metadata[METADATA_ATTRIBUTIONS])
+    assert point["axis_cold"].drop_nulls().len() > 0
+    # The DEM credit is gated like the group's own licence: withheld, the record low and its notice go together,
+    # while frost-free days still credit ERA5-Land.
+    assert json.loads(withheld_metadata[METADATA_WITHHELD_SITE_INPUTS]) == {"cold": COPERNICUS_DEM}
+    assert COPERNICUS_DEM_NOTICE not in json.loads(withheld_metadata[METADATA_ATTRIBUTIONS])
+    assert ERA5_LAND_CREDIT in json.loads(withheld_metadata[METADATA_ATTRIBUTIONS])
+    assert withheld_point["axis_cold"].drop_nulls().len() == 0
+    with pytest.raises(ValueError, match=r"withheld by its licence gate \{'cold': 'Copernicus-DEM-licence'\}"):
+        suitability.prepared(PRODUCTION_WITHOUT_DEM)
+
+
+@pytest.mark.parametrize("accessed", ["2026-09-26", "2025-12-16"], ids=["prototype_pull", "earlier_date"])
+def test_production_refuses_a_prism_pull_no_later_than_the_prototypes(
+    suitability: SuitabilityFixture, accessed: str
+) -> None:
+    cell_id = suitability.role_cell("bend", "burned_cell")
+    declaration = suitability.own_pull(accessed).site_provenance
+    tables = (suitability.envelope(PRODUCTION), suitability.guide_rows, suitability.exclusions, PRODUCTION)
+    reason = rf"needs its own pull of \{{'precipitation': '{accessed}'\}}"
+
+    with pytest.raises(ValueError, match=reason):
+        prepare(*tables, declaration)
+    with pytest.raises(ValueError, match=reason):
+        evaluate_cells(suitability.site, *tables, declaration)
+    with pytest.raises(ValueError, match=reason):
+        candidates_for_cell(suitability.site_row(cell_id), *tables, declaration)
+    # V0 is the prototype's own rule set, so the prototype's pull serves under it.
+    v0 = suitability.own_pull(accessed).candidates(cell_id, V0_FROZEN)
+    assert v0.filter(pl.col("is_pick")).height > 0
+
+
+@pytest.mark.parametrize("prism_accessed", [None, PRODUCTION_PULL], ids=["as_generated", "prism_re_dated"])
+def test_production_refuses_the_fixture_declaration_even_with_a_fresh_prism_date(
+    suitability: SuitabilityFixture, prism_accessed: str | None
+) -> None:
+    cell_id = suitability.role_cell("bend", "burned_cell")
+    groups = dict(suitability.site_provenance.groups)
+    if prism_accessed is not None:
+        # The accident the guard exists for: the fixture declaration copied, with only the PRISM date changed.
+        groups["precipitation"] = replace(groups["precipitation"], accessed=prism_accessed)
+    declaration = SiteInputProvenance(groups)
+    tables = (suitability.envelope(PRODUCTION), suitability.guide_rows, suitability.exclusions, PRODUCTION)
+    reason = re.escape(f"does not serve the frozen fixture's pull, declared for site input groups {sorted(groups)}")
+
+    with pytest.raises(ValueError, match=reason):
+        prepare(*tables, declaration)
+    with pytest.raises(ValueError, match=reason):
+        evaluate_cells(suitability.site, *tables, declaration)
+    with pytest.raises(ValueError, match=reason):
+        candidates_for_cell(suitability.site_row(cell_id), *tables, declaration)
+
+
+def test_production_serves_its_own_pull_under_that_date_with_the_picks_the_fixture_run_serves(
+    suitability: SuitabilityFixture, production_cells: pl.DataFrame
+) -> None:
+    own_pull = suitability.own_pull(PRODUCTION_PULL).prepared(PRODUCTION)
+
+    metadata = own_pull.metadata()
+    declared = json.loads(metadata[METADATA_SITE_INPUTS])
+    fixture_run = suitability.prepared(PRODUCTION_ON_FIXTURE).metadata()
+
+    assert {group: source["fixture"] for group, source in declared.items()} == dict.fromkeys(SITE_INPUT_GROUPS, False)
+    assert declared["precipitation"]["attribution"] == PRODUCTION_PULL_ATTRIBUTION
+    assert PRODUCTION_PULL_ATTRIBUTION in json.loads(metadata[METADATA_ATTRIBUTIONS])
+    assert PRISM_ATTRIBUTION not in json.loads(metadata[METADATA_ATTRIBUTIONS])
+    # The fixture run says so twice in what it serves: its declaration and its rule-config fingerprint.
+    assert json.loads(fixture_run[METADATA_SITE_INPUTS])["precipitation"]["fixture"] is True
+    assert fixture_run[METADATA_RULE_CONFIG] != metadata[METADATA_RULE_CONFIG]
+    assert own_pull.evaluate_cells(suitability.site).equals(production_cells)
+
+
 def test_production_and_v0_read_the_same_precipitation_at_bend(suitability: SuitabilityFixture) -> None:
     # Before the owner's PRISM decision PRODUCTION read ERA5 here: 1,009 of 2,166 shared rows disagreed.
     bend_cells = suitability.manifest["cells"]["bend"]
@@ -448,7 +553,7 @@ def test_production_and_v0_read_the_same_precipitation_at_bend(suitability: Suit
         ]
         return pl.concat(frames).filter(pl.col("plant_id").is_not_null()).select(*keys, *precipitation_axes)
 
-    v0, production = precipitation_reads(V0_FROZEN), precipitation_reads(PRODUCTION)
+    v0, production = precipitation_reads(V0_FROZEN), precipitation_reads(PRODUCTION_ON_FIXTURE)
     shared = v0.join(production, on=keys, suffix="_production")
     disagreeing = shared.filter(
         pl.any_horizontal([pl.col(axis).ne_missing(pl.col(f"{axis}_production")) for axis in precipitation_axes])
@@ -464,7 +569,12 @@ def test_production_requires_every_site_input_group_the_envelope_reads(
 ) -> None:
     groups = dict(suitability.site_provenance.groups)
     groups[group] = replace(groups[group], licence=UNRECORDED)
-    tables = (suitability.envelope(PRODUCTION), suitability.guide_rows, suitability.exclusions, PRODUCTION)
+    tables = (
+        suitability.envelope(PRODUCTION_ON_FIXTURE),
+        suitability.guide_rows,
+        suitability.exclusions,
+        PRODUCTION_ON_FIXTURE,
+    )
 
     with pytest.raises(ValueError, match=rf"withheld by its licence gate \{{'{group}': 'unrecorded'\}}"):
         prepare(*tables, SiteInputProvenance(groups))
@@ -475,7 +585,7 @@ def test_a_production_pick_label_names_every_axis_it_could_not_check(suitability
     cell_id = suitability.role_cell("bend", "burned_cell")
 
     v0 = suitability.candidates(cell_id, V0_FROZEN).filter(pl.col("is_pick"))
-    production = suitability.candidates(cell_id, PRODUCTION).filter(pl.col("is_pick"))
+    production = suitability.candidates(cell_id, PRODUCTION_ON_FIXTURE).filter(pl.col("is_pick"))
 
     unchecked = [
         ([AXIS_LABELS[axis] for axis in AXIS_NAMES if pick[f"axis_{axis}"] is None], pick["pick_label"])
@@ -493,12 +603,14 @@ def test_a_cell_without_frost_free_days_blames_the_site_value_not_plants(suitabi
     cell_id = suitability.role_cell("boise", "burned_cell")
     missing = suitability.site_row(cell_id).with_columns(pl.lit(None, dtype=pl.Float64).alias("median_frost_free_days"))
 
-    for config in (V0_FROZEN, PRODUCTION):
+    for config in (V0_FROZEN, PRODUCTION_ON_FIXTURE):
         labels = suitability.candidates(missing, config).filter(pl.col("is_pick"))["pick_label"].to_list()
         assert labels
         assert all(SITE_FROST_FREE_MISSING in label for label in labels)
         assert not [label for label in labels if UNKNOWN_FROST_FREE in label]
-    production = suitability.candidates(missing, PRODUCTION).filter(pl.col("is_pick"))["pick_label"].to_list()
+    production = (
+        suitability.candidates(missing, PRODUCTION_ON_FIXTURE).filter(pl.col("is_pick"))["pick_label"].to_list()
+    )
     assert all(AXIS_LABELS["frost_free_days"] in label.split(UNCHECKED_PREFIX)[-1] for label in production)
 
 
@@ -531,8 +643,8 @@ def test_a_licence_excluded_guide_lends_no_stratification_to_an_admitted_one(sui
     blm_admitted = suitability.relicensed({BLM_BOISE_DISTRICT_SOURCE}, US_GOVERNMENT_WORK)
     both_admitted = suitability.relicensed({BLM_BOISE_DISTRICT_SOURCE, ODFW_SALINE_MIX_SOURCE}, US_GOVERNMENT_WORK)
 
-    gated = candidate(blm_admitted.candidates(cell_id, PRODUCTION), LEYMUS, "post_fire_restoration")
-    lent = candidate(both_admitted.candidates(cell_id, PRODUCTION), LEYMUS, "post_fire_restoration")
+    gated = candidate(blm_admitted.candidates(cell_id, PRODUCTION_ON_FIXTURE), LEYMUS, "post_fire_restoration")
+    lent = candidate(both_admitted.candidates(cell_id, PRODUCTION_ON_FIXTURE), LEYMUS, "post_fire_restoration")
 
     assert gated["is_pick"]
     assert gated["axis_source_applicability"] == 1
@@ -543,7 +655,7 @@ def test_a_licence_excluded_guide_lends_no_stratification_to_an_admitted_one(sui
 
 def test_no_origin_label_cites_a_licence_excluded_document(suitability: SuitabilityFixture) -> None:
     cell_id = suitability.role_cell("boise", "burned_cell")
-    excluded_ids = sorted(suitability.prepared(PRODUCTION).excluded_sources)
+    excluded_ids = sorted(suitability.prepared(PRODUCTION_ON_FIXTURE).excluded_sources)
     excluded_names = set(suitability.guide_rows.filter(pl.col("source_id").is_in(excluded_ids))["source_short_name"])
 
     def citing_excluded(candidates: pl.DataFrame) -> list[str]:
@@ -551,7 +663,7 @@ def test_no_origin_label_cites_a_licence_excluded_document(suitability: Suitabil
         return [label for label in labels if any(name in label for name in excluded_names)]
 
     assert citing_excluded(suitability.candidates(cell_id, PRODUCTION_WITHOUT_LICENCE_GATE))
-    assert not citing_excluded(suitability.candidates(cell_id, PRODUCTION))
+    assert not citing_excluded(suitability.candidates(cell_id, PRODUCTION_ON_FIXTURE))
 
 
 def test_range_wide_native_statements_no_longer_exempt_a_taxon_plants_does_not_record_in_the_state(
@@ -559,7 +671,7 @@ def test_range_wide_native_statements_no_longer_exempt_a_taxon_plants_does_not_r
 ) -> None:
     cell_id = suitability.role_cell("boise", "burned_cell")
     v0 = suitability.candidates(cell_id, V0_FROZEN)
-    production = suitability.candidates(cell_id, PRODUCTION)
+    production = suitability.candidates(cell_id, PRODUCTION_ON_FIXTURE)
     # Ungated: the state-scoped native statements come from Xerces Idaho 2017 (licence unrecorded).
     ungated = suitability.candidates(cell_id, PRODUCTION_WITHOUT_LICENCE_GATE)
 
@@ -580,7 +692,7 @@ def test_only_greenstrip_cites_cps_394_in_the_introduced_flag(suitability: Suita
     cell_id = suitability.role_cell("boise", "burned_cell")
     introduced = pl.col("origin_label").str.starts_with(INTRODUCED_FLAG_PLAIN)
     v0 = suitability.candidates(cell_id, V0_FROZEN).filter(introduced)
-    production = suitability.candidates(cell_id, PRODUCTION).filter(introduced)
+    production = suitability.candidates(cell_id, PRODUCTION_ON_FIXTURE).filter(introduced)
 
     for guild in GUILDS:
         v0_labels = v0.filter(pl.col("guild") == guild)["origin_label"].to_list()
@@ -599,7 +711,7 @@ def test_a_guide_row_without_a_page_is_cited_page_n_a(suitability: SuitabilityFi
     unpaged = pl.when(pl.col("source_id") == source_id).then(pl.lit(None, dtype=pl.String)).otherwise(pl.col("page"))
     without_page = replace(suitability, guide_rows=rows.with_columns(unpaged.alias("page")))
 
-    woody = without_page.candidates(cell_id, PRODUCTION).filter(pl.col("guild") == "hedgerow_buffer")
+    woody = without_page.candidates(cell_id, PRODUCTION_ON_FIXTURE).filter(pl.col("guild") == "hedgerow_buffer")
 
     for taxon in suitability.taxa("boise", "licence_kept_source_only_taxa"):
         assert f"{short_name} page n/a" in candidate(woody, taxon)["pick_label"]
@@ -620,7 +732,9 @@ def test_hedgerow_labels_carry_no_fire_field_and_the_other_guilds_open_with_the_
 def test_the_egress_guard_passes_the_served_layer_and_refuses_a_fire_word_in_it(
     production_cells: pl.DataFrame, production_allow_list: FireTextAllowList, suitability: SuitabilityFixture
 ) -> None:
-    assert_no_fire_claims(production_cells, suitability.prepared(PRODUCTION).metadata(), production_allow_list)
+    assert_no_fire_claims(
+        production_cells, suitability.prepared(PRODUCTION_ON_FIXTURE).metadata(), production_allow_list
+    )
 
     first_row = pl.int_range(pl.len()) == 0
     claimed = production_cells.with_columns(
@@ -750,7 +864,7 @@ def test_the_licence_gate_admits_exactly_the_commercial_use_licence_ids(
 ) -> None:
     source_id = suitability.taxa("boise", "licence_kept_source_id")
 
-    metadata = suitability.relicensed({source_id}, licence).prepared(PRODUCTION).metadata()
+    metadata = suitability.relicensed({source_id}, licence).prepared(PRODUCTION_ON_FIXTURE).metadata()
 
     assert (source_id not in json.loads(metadata[METADATA_EXCLUDED_SOURCES])) is admitted
     assert (source_id in json.loads(metadata[METADATA_ADMITTED_SOURCES])) is admitted
@@ -763,8 +877,8 @@ def test_production_drops_licence_unrecorded_guides_and_keeps_federal_ones(suita
     woody = pl.col("guild") == "hedgerow_buffer"
 
     v0 = suitability.candidates(cell_id, V0_FROZEN).filter(woody)
-    production = suitability.candidates(cell_id, PRODUCTION).filter(woody)
-    metadata = suitability.prepared(PRODUCTION).metadata()
+    production = suitability.candidates(cell_id, PRODUCTION_ON_FIXTURE).filter(woody)
+    metadata = suitability.prepared(PRODUCTION_ON_FIXTURE).metadata()
 
     excluded = json.loads(metadata[METADATA_EXCLUDED_SOURCES])
     assert excluded[dropped_source] == UNRECORDED
@@ -779,7 +893,7 @@ def test_production_drops_licence_unrecorded_guides_and_keeps_federal_ones(suita
 def test_the_served_layer_names_its_exact_rule_set_inputs_and_sources_and_the_point_tool_carries_the_same(
     suitability: SuitabilityFixture,
 ) -> None:
-    engine = suitability.prepared(PRODUCTION)
+    engine = suitability.prepared(PRODUCTION_ON_FIXTURE)
     ungated_engine = suitability.prepared(PRODUCTION_WITHOUT_LICENCE_GATE)
     cell_id = suitability.role_cell("boise", "burned_cell")
 
@@ -811,10 +925,12 @@ def test_the_served_layer_names_its_exact_rule_set_inputs_and_sources_and_the_po
 
 
 def test_the_rule_config_fingerprint_changes_with_every_field(suitability: SuitabilityFixture) -> None:
-    production = suitability.prepared(PRODUCTION).metadata()[METADATA_RULE_CONFIG]
+    # Production's own pull, so every variant (fixtures allowed or not) serves and only the rule set differs.
+    own_pull = suitability.own_pull(PRODUCTION_PULL)
+    production = own_pull.prepared(PRODUCTION).metadata()[METADATA_RULE_CONFIG]
 
     variants = {
-        name: suitability.prepared(replace(PRODUCTION, **{name: value})).metadata()[METADATA_RULE_CONFIG]
+        name: own_pull.prepared(replace(PRODUCTION, **{name: value})).metadata()[METADATA_RULE_CONFIG]
         for name, value in FINGERPRINT_VARIANTS.items()
     }
 
@@ -827,7 +943,7 @@ def test_the_rule_config_fingerprint_changes_with_every_field(suitability: Suita
 def test_the_inputs_digest_follows_every_loaded_input_and_the_site_declaration_never_row_or_list_order(
     suitability: SuitabilityFixture,
 ) -> None:
-    engine = suitability.prepared(PRODUCTION)
+    engine = suitability.prepared(PRODUCTION_ON_FIXTURE)
     digest = engine.metadata()[METADATA_INPUTS_SHA256]
     # A licence-dropped source gains a Corvallis greenstrip row: dropped, yet it turns that guild's status.
     dropped_row = suitability.guide_rows.filter(
@@ -859,12 +975,12 @@ def test_the_inputs_digest_follows_every_loaded_input_and_the_site_declaration_n
         ),
     )
 
-    dropped_row_engine = dropped_row_added.prepared(PRODUCTION)
+    dropped_row_engine = dropped_row_added.prepared(PRODUCTION_ON_FIXTURE)
 
     assert re.fullmatch(r"[0-9a-f]{64}", digest)
-    assert reordered.prepared(PRODUCTION).metadata()[METADATA_INPUTS_SHA256] == digest
-    assert federal_dropped.prepared(PRODUCTION).metadata()[METADATA_INPUTS_SHA256] != digest
-    assert re_accessed.prepared(PRODUCTION).metadata()[METADATA_INPUTS_SHA256] != digest
+    assert reordered.prepared(PRODUCTION_ON_FIXTURE).metadata()[METADATA_INPUTS_SHA256] == digest
+    assert federal_dropped.prepared(PRODUCTION_ON_FIXTURE).metadata()[METADATA_INPUTS_SHA256] != digest
+    assert re_accessed.prepared(PRODUCTION_ON_FIXTURE).metadata()[METADATA_INPUTS_SHA256] != digest
     assert engine.evaluate_cells(corvallis)["greenstrip_status"].to_list() == ["no_regional_guide"]
     assert dropped_row_engine.evaluate_cells(corvallis)["greenstrip_status"].to_list() == ["licence_excluded"]
     assert dropped_row_engine.metadata()[METADATA_INPUTS_SHA256] != digest

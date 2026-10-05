@@ -5,6 +5,8 @@ Rationale and the qualifier-to-site mapping: AGENTS.md §Applicability in this d
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import polars as pl
 
 from agri_data_service.warehouse.plant_suitability.axes import (
@@ -13,8 +15,12 @@ from agri_data_service.warehouse.plant_suitability.axes import (
     status,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
 MILLIMETRES_PER_INCH = 25.4
-FOREST_WOODLAND_MLRAS = ["3", "6", "43B"]
+# The site class forest_woodland reads, derived per prepared engine from the curation release's MLRA list.
+FOREST_WOODLAND_SITE_COLUMN = "site_forest_woodland"
 # Every qualifier habitat_status maps to site data; guide-row load refuses any other (pools.GUIDE_ROW_VOCABULARIES).
 HABITAT_QUALIFIERS = frozenset((
     "saline_alkali_or_poor_drainage", "sandy_or_loam", "forest_woodland", "juniper_sites", "wet_soils",
@@ -22,8 +28,16 @@ HABITAT_QUALIFIERS = frozenset((
 ))  # fmt: skip
 CONDITION_KEY = ["min_precip_in", "max_precip_in", "habitat_qualifier"]
 SITE_COLUMNS = [
-    "mean_annual_precip_mm", "ec_ds_per_m", "site_wetness_class", "site_drainage_regime", "site_texture_group", "mlra",
+    "mean_annual_precip_mm", "ec_ds_per_m", "site_wetness_class", "site_drainage_regime", "site_texture_group",
+    FOREST_WOODLAND_SITE_COLUMN,
 ]  # fmt: skip
+
+
+def forest_woodland_site(mlras: Iterable[str]) -> pl.Expr:
+    """True when the cell's MLRA is one the release lists for forest_woodland, null when the MLRA is unknown."""
+    mlra = pl.col("mlra")
+    in_listed = pl.when(mlra.is_null()).then(None).otherwise(mlra.is_in(sorted(mlras)))
+    return in_listed.cast(pl.Boolean).alias(FOREST_WOODLAND_SITE_COLUMN)
 
 
 def band_status() -> pl.Expr:
@@ -40,7 +54,7 @@ def habitat_status() -> pl.Expr:
     """1 / 0 / null for the row's habitat qualifier against the cell (a row without one applies)."""
     qualifier, conductivity = pl.col("habitat_qualifier"), pl.col("ec_ds_per_m")
     wetness, regime = pl.col("site_wetness_class"), pl.col("site_drainage_regime")
-    texture, mlra = pl.col("site_texture_group"), pl.col("mlra")
+    texture, forest_site = pl.col("site_texture_group"), pl.col(FOREST_WOODLAND_SITE_COLUMN)
     poorly_drained = wetness.is_in(POORLY_DRAINED_WETNESS)
     saline = (conductivity > NON_SALINE_CEILING_DS_PER_M).fill_null(value=False)
     saline_or_poorly_drained = (
@@ -51,7 +65,7 @@ def habitat_status() -> pl.Expr:
         .otherwise(0)
     )
     sandy_or_loam = pl.when(texture.is_null()).then(None).when(texture.is_in(["coarse", "medium"])).then(1).otherwise(0)
-    forest_woodland = pl.when(mlra.is_null()).then(None).when(mlra.is_in(FOREST_WOODLAND_MLRAS)).then(1).otherwise(0)
+    forest_woodland = pl.when(forest_site.is_null()).then(None).when(forest_site).then(1).otherwise(0)
     wet_soils = pl.when(wetness == "unknown").then(None).when(poorly_drained).then(1).otherwise(0)
     moist_to_wet = pl.when(regime == "unknown").then(None).when(regime == "droughty").then(0).otherwise(1)
     return (

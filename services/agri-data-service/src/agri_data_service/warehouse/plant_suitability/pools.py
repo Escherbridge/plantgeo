@@ -199,11 +199,11 @@ def region_guild_counts(rows: pl.DataFrame, *, scorable_only: bool = False) -> d
     return {(region, guild): count for region, guild, count in counts.iter_rows()}
 
 
-def region_rows(rows: pl.DataFrame, config: RuleConfig) -> pl.DataFrame:
+def region_rows(rows: pl.DataFrame, in_region_overrides: frozenset[tuple[str, str]]) -> pl.DataFrame:
     """One row per (guide row, region) with its in-region flag (after the overrides) and label tag; claims raise."""
     overrides = [
         (pl.col("source_id") == source_id) & (pl.col("region") == region)
-        for source_id, region in sorted(config.in_region_overrides)
+        for source_id, region in sorted(in_region_overrides)
     ]
     overridden = functools.reduce(operator.or_, overrides, pl.lit(value=False))
     medium_confidence = pl.col("applicability_confidence") == "medium"

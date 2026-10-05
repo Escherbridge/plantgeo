@@ -9,7 +9,9 @@ from typing import TYPE_CHECKING, Any
 
 import polars as pl
 
+from agri_data_service.warehouse.plant_suitability.config import PRODUCTION
 from agri_data_service.warehouse.plant_suitability.engine import candidates_for_cell, evaluate_cells, prepare
+from agri_data_service.warehouse.plant_suitability.licences import DATED_ATTRIBUTION_TERMS
 from agri_data_service.warehouse.plant_suitability.site import SiteInputProvenance, SiteInputSource
 from agri_data_service.warehouse.plant_suitability.wetland import resolve_wetland_ratings
 
@@ -18,8 +20,11 @@ if TYPE_CHECKING:
 
     from agri_data_service.warehouse.plant_suitability.config import RuleConfig
     from agri_data_service.warehouse.plant_suitability.engine import PreparedEngine
+    from agri_data_service.warehouse.plant_suitability.regions import CurationRegionData
 
 FIXTURE_DIRECTORY = Path(__file__).resolve().parents[1] / "fixtures" / "plant_suitability"
+# PRODUCTION's rules over the frozen fixture's pull: its fingerprint differs, so the run cannot pose as PRODUCTION.
+PRODUCTION_ON_FIXTURE = replace(PRODUCTION, allow_fixture_site_inputs=True)
 
 
 @dataclass(frozen=True)
@@ -35,6 +40,8 @@ class SuitabilityFixture:
     manifest: dict[str, Any]
     site_provenance: SiteInputProvenance
     fixed_envelope: pl.DataFrame | None = None
+    # None reads the package's pilot release, as prepare() does for a caller that passes none.
+    region_data: CurationRegionData | None = None
 
     def role_cell(self, region: str, role: str) -> str:
         """The fixture cell build_fixtures.py chose for a named role."""
@@ -54,20 +61,41 @@ class SuitabilityFixture:
             return self.fixed_envelope
         return resolve_wetland_ratings(self.species, self.guide_rows, self.wetland_list, config)
 
+    def reference_arguments(self, config: RuleConfig) -> tuple[Any, ...]:
+        """Every argument prepare() takes after the site, as this fixture supplies them for the rule set."""
+        return (
+            self.envelope(config),
+            self.guide_rows,
+            self.exclusions,
+            config,
+            self.site_provenance,
+            self.region_data,
+        )
+
     def prepared(self, config: RuleConfig) -> PreparedEngine:
         """The prepare-once seam over the fixture's reference tables and site provenance."""
-        return prepare(self.envelope(config), self.guide_rows, self.exclusions, config, self.site_provenance)
+        return prepare(*self.reference_arguments(config))
 
     def evaluate(self, config: RuleConfig, site: pl.DataFrame | None = None) -> pl.DataFrame:
         """The batch seam over the fixture's cells (or the given site rows)."""
-        arguments = (self.envelope(config), self.guide_rows, self.exclusions, config, self.site_provenance)
-        return evaluate_cells(self.site if site is None else site, *arguments)
+        return evaluate_cells(self.site if site is None else site, *self.reference_arguments(config))
 
     def candidates(self, cell: str | pl.DataFrame, config: RuleConfig) -> pl.DataFrame:
         """The per-point seam for a fixture cell id, or for an explicit one-row site frame."""
         site = self.site_row(cell) if isinstance(cell, str) else cell
-        arguments = (self.envelope(config), self.guide_rows, self.exclusions, config, self.site_provenance)
-        return candidates_for_cell(site, *arguments)
+        return candidates_for_cell(site, *self.reference_arguments(config))
+
+    def own_pull(self, accessed: str) -> SuitabilityFixture:
+        """The fixture declared as a run's own pull: no group a fixture, each dated-attribution group accessed then."""
+        groups = {
+            group: replace(
+                source,
+                fixture=False,
+                accessed=accessed if source.licence in DATED_ATTRIBUTION_TERMS else source.accessed,
+            )
+            for group, source in self.site_provenance.groups.items()
+        }
+        return replace(self, site_provenance=SiteInputProvenance(groups))
 
     def relicensed(self, source_ids: Iterable[str], licence: str) -> SuitabilityFixture:
         """The fixture with every guide row of the given sources' documents (same short name) under another licence."""

@@ -5,6 +5,7 @@ import { getParquetLayerDayWindow } from "@/lib/server/services/parquet-plane-cl
 import {
   addUtcDays,
   boundedResult,
+  cellFootprintViewport,
   cellSupport,
   daySchema,
   finiteNumberSchema,
@@ -70,47 +71,52 @@ export async function getParquetVegetation(
   rejectFutureDay(lastDay, nowMs, "vegetation");
   const firstDay = addUtcDays(lastDay, -(VEGETATION_TRAILING_DAYS - 1));
   const zoomTier = resolveZoomTier(input.mapZoom);
+  // Footprint, not stored point: a quarter-degree cell whose CENTROID lies just outside the
+  // viewport still overlaps it. See src/lib/map/AGENTS.md §viewport-footprint.
+  const footprint = cellFootprintViewport(input.bbox, "vegetation", zoomTier);
   return boundedResult(async () => {
     const envelopes = await getParquetLayerDayWindow({
       layer: "vegetation",
       firstDay,
       lastDay,
       zoomTier,
-      bbox: input.bbox,
+      bbox: footprint.requestBbox,
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
     const days = envelopes.map((envelope) =>
       mapEnvelope(envelope, (rows) =>
-        parseRows(rows, vegetationRowSchema, "vegetation").map((row) => ({
-          cellId: row.cell_id,
-          gridName: row.grid_name,
-          metricName: row.metric_name,
-          metricUnit: row.metric_unit,
-          observedDay: row.observed_day,
-          metricValue: row.metric_value,
-          observationChecksum: row.observation_checksum,
-          dataAvailableAt: row.data_available_at,
-          releaseCount: row.release_count,
-          allowedClientExposure: row.allowed_client_exposure,
-          longitude: row.cell_longitude,
-          latitude: row.cell_latitude,
-          support: cellSupport({
-            lane: "vegetation",
-            zoomTier,
-            // `tessellated_cell`, never `raw_point`: a centre dot for a quarter-degree measurement
-            // is the fictitious footprint the render contract forbids.
-            supportKind: "tessellated_cell",
-            aggregationMethod: "mean",
-            contributorCount: row.release_count,
+        parseRows(rows, vegetationRowSchema, "vegetation")
+          .map((row) => ({
             cellId: row.cell_id,
+            gridName: row.grid_name,
+            metricName: row.metric_name,
+            metricUnit: row.metric_unit,
+            observedDay: row.observed_day,
+            metricValue: row.metric_value,
+            observationChecksum: row.observation_checksum,
+            dataAvailableAt: row.data_available_at,
+            releaseCount: row.release_count,
+            allowedClientExposure: row.allowed_client_exposure,
             longitude: row.cell_longitude,
             latitude: row.cell_latitude,
-            observedDay: row.observed_day,
-            // The lane publishes an AVAILABILITY instant, never an observation one, so the
-            // envelope says null rather than passing a publication time off as a measurement time.
-            newestObservedAt: null,
-          }),
-        }))
+            support: cellSupport({
+              lane: "vegetation",
+              zoomTier,
+              // `tessellated_cell`, never `raw_point`: a centre dot for a quarter-degree measurement
+              // is the fictitious footprint the render contract forbids.
+              supportKind: "tessellated_cell",
+              aggregationMethod: "mean",
+              contributorCount: row.release_count,
+              cellId: row.cell_id,
+              longitude: row.cell_longitude,
+              latitude: row.cell_latitude,
+              observedDay: row.observed_day,
+              // The lane publishes an AVAILABILITY instant, never an observation one, so the
+              // envelope says null rather than passing a publication time off as a measurement time.
+              newestObservedAt: null,
+            }),
+          }))
+          .filter((row) => footprint.meetsViewport(row.longitude, row.latitude))
       )
     );
     const published = days.filter(

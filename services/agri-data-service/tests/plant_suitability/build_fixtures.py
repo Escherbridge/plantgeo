@@ -38,6 +38,7 @@ US_GOVERNMENT_WORK = "us-government-work"
 UNRECORDED_LICENCE = "unrecorded"
 CC_BY_LICENCE = "CC-BY-4.0"
 PRISM_TERMS_OF_USE = "PRISM-terms-of-use"
+COPERNICUS_DEM_LICENCE = "Copernicus-DEM-licence"
 # An assumption, not curation (AGENTS.md §Licences): us-government-work only where regional_lists/SOURCES_*.md names
 # one US federal agency as the sole publisher; co-published, contractor-named and non-federal sources stay unrecorded.
 SOURCE_LICENCES = {
@@ -69,6 +70,7 @@ SOURCE_LICENCES = {
     "xerces_west_hedgerow_422": UNRECORDED_LICENCE,  # Xerces with NRCS
 }
 # Where each site-input group came from (prototype site_conditions/{soil,climate}/SOURCES.md, join/site_table.py).
+# Every group is the frozen prototype's pull, declared "fixture": only allow_fixture_site_inputs rule sets serve it.
 # PRISM: terms verified 2026-10-03 (attribution with name, URL and access date); the prototype's SOURCES.md records
 # every climate source accessed 2026-09-26, and the cached PRISM zip is stamped 2026-09-26 19:33 MDT.
 # The CC BY works each group draws on (licences.SourceCredit fields). Open-Meteo asks for credit to Open-Meteo.com;
@@ -91,15 +93,25 @@ SOILGRIDS_CREDIT = {
     "url": "https://soilgrids.org",
     "licence": CC_BY_LICENCE,
 }
+# The record low is lapse-adjusted to Copernicus DEM GLO-90 (prototype site_conditions/climate/SOURCES.md, Elevation):
+# adapted data, so the licence's "produced using Copernicus WorldDEM-90" notice is the credit line (licences.py).
+COPERNICUS_DEM_CREDIT = {
+    "work": "Copernicus DEM GLO-90",
+    "holder": "European Space Agency, Copernicus programme",
+    "url": "https://doi.org/10.5270/ESA-c5d3d65",
+    "licence": COPERNICUS_DEM_LICENCE,
+}
 SITE_INPUT_SOURCES = {
     "soil_survey": {
         "source": "USDA NRCS SSURGO via Soil Data Access: dominant component, 0-30 cm; MLRA by SDA lookup",
         "licence": US_GOVERNMENT_WORK,
+        "fixture": True,
         "release": "SDA accessed 2026-09-26",
     },
     "soil_ph_texture": {
         "source": "USDA NRCS SSURGO dominant component where present, else ISRIC SoilGrids v2.0 0-30 cm",
         "licence": CC_BY_LICENCE,
+        "fixture": True,
         "release": "SDA and SoilGrids 2.0 accessed 2026-09-26",
         "credits": [SOILGRIDS_CREDIT],
     },
@@ -107,24 +119,28 @@ SITE_INPUT_SOURCES = {
         "source": "ERA5-Land via the Open-Meteo archive (era5_seamless, 1991-2020 record low), lapse-adjusted to "
         "Copernicus DEM GLO-90",
         "licence": CC_BY_LICENCE,
+        "fixture": True,
         "release": "Open-Meteo archive accessed 2026-09-26",
-        "credits": [ERA5_LAND_CREDIT],
+        "credits": [ERA5_LAND_CREDIT, COPERNICUS_DEM_CREDIT],
     },
     "frost_free": {
         "source": "ERA5-Land via the Open-Meteo archive (era5_seamless, 1991-2020 median frost-free days)",
         "licence": CC_BY_LICENCE,
+        "fixture": True,
         "release": "Open-Meteo archive accessed 2026-09-26",
         "credits": [ERA5_LAND_CREDIT],
     },
     "frost_free_station_bias": {
         "source": "NOAA NCEI U.S. Climate Normals 1991-2020 station growing season, against the station cell",
         "licence": US_GOVERNMENT_WORK,
+        "fixture": True,
         "release": "NCEI normals-annualseasonal-1991-2020 accessed 2026-09-26",
     },
     "precipitation": {
         "source": "PRISM Group, Oregon State University: 1991-2020 annual precipitation normal, 800 m, area-averaged "
         "to the cell; dry year = that normal times ERA5's 20th-percentile-to-mean ratio (Open-Meteo era5_seamless)",
         "licence": PRISM_TERMS_OF_USE,
+        "fixture": True,
         "release": "an91/r2207d normals/9120.a",
         "accessed": "2026-09-26",
         "credits": [ERA5_CREDIT],
@@ -537,6 +553,12 @@ def write_parquet(frame: pl.DataFrame, schema: Any, name: str, schemas: ModuleTy
     schemas.conform(frame, schema, name).write_parquet(FIXTURE_DIRECTORY / f"{name}.parquet", compression="zstd")
 
 
+def write_site_inputs() -> None:
+    """Write the site-input declaration every preset reads (needs no prototype, so it can be rewritten alone)."""
+    site_inputs_text = json.dumps(SITE_INPUT_SOURCES, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    (FIXTURE_DIRECTORY / "site_inputs.json").write_text(site_inputs_text, encoding="utf-8", newline="\n")
+
+
 def main(prototype_directory: Path) -> None:
     """Write the fixture tables, the site-input declaration (PRISM precipitation) and the role manifest."""
     schemas = load_engine_module("schemas")
@@ -576,8 +598,7 @@ def main(prototype_directory: Path) -> None:
     manifest = {"roles": roles, "taxa": {"boise": boise_taxa, "bend": bend_taxa}, "cells": cells}
     manifest_text = json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
     (FIXTURE_DIRECTORY / "fixture_cells.json").write_text(manifest_text, encoding="utf-8", newline="\n")
-    site_inputs_text = json.dumps(SITE_INPUT_SOURCES, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
-    (FIXTURE_DIRECTORY / "site_inputs.json").write_text(site_inputs_text, encoding="utf-8", newline="\n")
+    write_site_inputs()
     licence_rows = dict(guides.group_by("license").len().iter_rows())
     cell_counts = {region: len(cell_ids) for region, cell_ids in cells.items()}
     print(f"cells {cell_counts}; species {species.height}; guide rows {guides.height} by licence {licence_rows}")

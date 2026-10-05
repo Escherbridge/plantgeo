@@ -146,12 +146,15 @@ export async function acquireCacheLock(key: string, token: string, ttlSeconds: n
   }
 }
 
+/** Atomic compare-and-delete: GET-then-DEL could delete a lock another holder re-acquired between the two calls. */
+const RELEASE_IF_OWNER_SCRIPT =
+  'if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("DEL", KEYS[1]) else return 0 end';
+
 /** Release a lock only while it still carries this caller's token: an expired lock may be another's now. */
 export async function releaseCacheLock(key: string, token: string): Promise<void> {
   if (!redisAvailable) return;
   try {
-    const client = getRedis();
-    if ((await client.get(key)) === token) await client.del(key);
+    await getRedis().eval(RELEASE_IF_OWNER_SCRIPT, 1, key, token);
   } catch {
     // Redis offline: the lock's own TTL releases it.
   }

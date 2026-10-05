@@ -12,7 +12,6 @@ import pytest
 from agri_data_service.warehouse.plant_suitability import engine as engine_module
 from agri_data_service.warehouse.plant_suitability.config import (
     INTRODUCED_FLAG_PLAIN,
-    PRODUCTION,
     V0_FROZEN,
     rule_config_fingerprint,
 )
@@ -20,14 +19,16 @@ from agri_data_service.warehouse.plant_suitability.engine import MAX_CELLS_PER_C
 from agri_data_service.warehouse.plant_suitability.labels import FIRE_LABEL_PREFIX, pick_label_expression
 from agri_data_service.warehouse.plant_suitability.licences import (
     ALL_RIGHTS_RESERVED,
+    COPERNICUS_DEM,
     PRISM_TERMS_OF_USE,
     UNRECORDED,
     US_GOVERNMENT_WORK,
 )
+from agri_data_service.warehouse.plant_suitability.regions import pilot_region_data
 from agri_data_service.warehouse.plant_suitability.schemas import GUILDS
 from agri_data_service.warehouse.plant_suitability.site import SiteInputProvenance
 from agri_data_service.warehouse.plant_suitability.wetland import resolve_wetland_ratings
-from tests.plant_suitability.support import candidate, cell_row, served_labels
+from tests.plant_suitability.support import PRODUCTION_ON_FIXTURE, candidate, cell_row, served_labels
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -52,28 +53,33 @@ WOODY_TOP_THREE_SOURCE = ("idpm_tn2a_2017", "NRCS TN PM-2A (2017)")
 ODFW_SECOND_SOURCE_ID = "odfw_rehab_2017"
 # A variant that does not require the soil survey, so its licence gate withholds the group instead of refusing it.
 SOIL_SURVEY_OPTIONAL = replace(
-    PRODUCTION, required_site_input_groups=PRODUCTION.required_site_input_groups - {"soil_survey"}
+    PRODUCTION_ON_FIXTURE, required_site_input_groups=PRODUCTION_ON_FIXTURE.required_site_input_groups - {"soil_survey"}
 )
 # A variant requiring no site input group, so an undeclared group with values meets the per-call withholding check.
-NOTHING_REQUIRED = replace(PRODUCTION, required_site_input_groups=frozenset())
+NOTHING_REQUIRED = replace(PRODUCTION_ON_FIXTURE, required_site_input_groups=frozenset())
 # Rule sets naming a licence id, a state code or a site-input group outside the fixed vocabularies.
-UNKNOWN_LICENCE_RULES = replace(PRODUCTION, permitted_licences=frozenset({"CC-BY"}))
-UNKNOWN_STATE_RULES = replace(PRODUCTION, declared_empty_exclusion_states=frozenset({"Oregon"}))
-UNKNOWN_GROUP_RULES = replace(PRODUCTION, required_site_input_groups=frozenset({"rainfall"}))
+UNKNOWN_LICENCE_RULES = replace(PRODUCTION_ON_FIXTURE, permitted_licences=frozenset({"CC-BY"}))
+UNKNOWN_STATE_RULES = replace(PRODUCTION_ON_FIXTURE, declared_empty_exclusion_states=frozenset({"Oregon"}))
+UNKNOWN_GROUP_RULES = replace(PRODUCTION_ON_FIXTURE, required_site_input_groups=frozenset({"rainfall"}))
+PROSE_ACCESS_FLOOR_RULES = replace(PRODUCTION_ON_FIXTURE, dated_attribution_accessed_after="26 Sep 2026")
 # Rule sets whose own texts carry fire wording (review R3): a claim, a bare fire word, a disguised claim, and a claim
 # with no fire-family stem. Flag texts are served in every introduced label, the pick definition in the metadata.
 FLAG_TEXT_CLAIM_RULES = replace(
-    PRODUCTION,
+    PRODUCTION_ON_FIXTURE,
     introduced_flag_text={
-        **PRODUCTION.introduced_flag_text,
+        **PRODUCTION_ON_FIXTURE.introduced_flag_text,
         "post_fire_restoration": "introduced \u2014 this hedge slows wildfire spread",
     },
 )
 FLAG_TEXT_FIRE_WORD_RULES = replace(
-    PRODUCTION, introduced_flag_text=dict.fromkeys(GUILDS, "introduced \u2014 a fire-following annual")
+    PRODUCTION_ON_FIXTURE, introduced_flag_text=dict.fromkeys(GUILDS, "introduced \u2014 a fire-following annual")
 )
-DISGUISED_PICK_DEFINITION_RULES = replace(PRODUCTION, pick_definition="Picks are f\u00a1re-res\u00a1stant hedges")
-STEMLESS_PICK_DEFINITION_RULES = replace(PRODUCTION, pick_definition="Picks are hedges that create defensible space")
+DISGUISED_PICK_DEFINITION_RULES = replace(
+    PRODUCTION_ON_FIXTURE, pick_definition="Picks are f\u00a1re-res\u00a1stant hedges"
+)
+STEMLESS_PICK_DEFINITION_RULES = replace(
+    PRODUCTION_ON_FIXTURE, pick_definition="Picks are hedges that create defensible space"
+)
 RULE_TEXT_FIRE_WORDING = "rule config 'production' flag texts or pick definition carry fire wording"
 # The verbatim PLANTS field with a Cyrillic i: both guards fold it back to the allowed prefix.
 LOOKALIKE_FIRE_LABEL_PREFIX = FIRE_LABEL_PREFIX.replace("fire-", "f\u0456re-", 1)
@@ -298,6 +304,21 @@ def guide_row_under_prism_terms(fixture: SuitabilityFixture) -> SuitabilityFixtu
     return fixture.relicensed({WOODY_TOP_THREE_SOURCE[0]}, PRISM_TERMS_OF_USE)
 
 
+def guide_row_under_the_copernicus_dem_licence(fixture: SuitabilityFixture) -> SuitabilityFixture:
+    """A federal guide relicensed to the DEM's terms, whose prescribed notice a guide row cannot carry."""
+    return fixture.relicensed({WOODY_TOP_THREE_SOURCE[0]}, COPERNICUS_DEM)
+
+
+def release_without_the_east_of_crest_reading(fixture: SuitabilityFixture) -> SuitabilityFixture:
+    """Curation region data that lacks the in-region reading PRODUCTION names."""
+    return replace(fixture, region_data=replace(pilot_region_data(), in_region_readings={}))
+
+
+def release_without_forest_woodland_mlras(fixture: SuitabilityFixture) -> SuitabilityFixture:
+    """Curation region data with no MLRA list for the forest_woodland qualifier the guide rows carry."""
+    return replace(fixture, region_data=replace(pilot_region_data(), habitat_mlras={}))
+
+
 def over_the_cell_budget(fixture: SuitabilityFixture) -> SuitabilityFixture:
     """One more cell than a single call may evaluate."""
     copies = fixture.site.head(1).sample(n=MAX_CELLS_PER_CALL + 1, with_replacement=True)
@@ -307,7 +328,7 @@ def over_the_cell_budget(fixture: SuitabilityFixture) -> SuitabilityFixture:
 def rejection(
     corrupt: Callable[[SuitabilityFixture], SuitabilityFixture],
     message: str,
-    config: RuleConfig = PRODUCTION,
+    config: RuleConfig = PRODUCTION_ON_FIXTURE,
     name: str | None = None,
 ) -> ParameterSet:
     """One row of the rejection table, named after the corruption unless the rule set is what is malformed."""
@@ -326,6 +347,7 @@ def rejection(
         rejection(unmapped_habitat_qualifier, r"unknown habitat_qualifier values \['sandy'\]"),
         rejection(free_text_licence, r"unknown license values \['US Gov work'\]"),
         rejection(guide_row_under_prism_terms, r"unknown license values \['PRISM-terms-of-use'\]"),
+        rejection(guide_row_under_the_copernicus_dem_licence, r"unknown license values \['Copernicus-DEM-licence'\]"),
         rejection(mixed_licences_in_one_source, "source_id -> license"),
         rejection(mixed_licences_in_one_document, "source_short_name -> license"),
         rejection(two_short_names_for_one_source, "source_id -> source_short_name"),
@@ -362,6 +384,9 @@ def rejection(
         rejection(unchanged, r"licence ids \['CC-BY'\]", UNKNOWN_LICENCE_RULES, "rule_set_licence"),
         rejection(unchanged, r"state codes \['Oregon'\]", UNKNOWN_STATE_RULES, "rule_set_state"),
         rejection(unchanged, r"site input groups \['rainfall'\]", UNKNOWN_GROUP_RULES, "rule_set_site_input_group"),
+        rejection(unchanged, "access floor '26 Sep 2026' is not written", PROSE_ACCESS_FLOOR_RULES, "rule_set_floor"),
+        rejection(release_without_the_east_of_crest_reading, r"no in-region readings \['east_of_cascade_crest'\]"),
+        rejection(release_without_forest_woodland_mlras, r"list MLRAs for exactly \['forest_woodland'\]"),
         rejection(unchanged, RULE_TEXT_FIRE_WORDING, FLAG_TEXT_CLAIM_RULES, "rule_set_flag_text_claim"),
         rejection(unchanged, RULE_TEXT_FIRE_WORDING, FLAG_TEXT_FIRE_WORD_RULES, "rule_set_flag_text_fire_word"),
         rejection(unchanged, RULE_TEXT_FIRE_WORDING, DISGUISED_PICK_DEFINITION_RULES, "rule_set_disguised_definition"),
@@ -448,8 +473,8 @@ def test_a_non_native_only_genus_listing_removes_introduced_members_and_keeps_th
     )
     listed = replace(suitability, exclusions=pl.concat([suitability.exclusions, listing], how="diagonal_relaxed"))
 
-    unlisted_pool = pool_names(suitability.candidates(cell_id, PRODUCTION))
-    listed_pool = pool_names(listed.candidates(cell_id, PRODUCTION))
+    unlisted_pool = pool_names(suitability.candidates(cell_id, PRODUCTION_ON_FIXTURE))
+    listed_pool = pool_names(listed.candidates(cell_id, PRODUCTION_ON_FIXTURE))
 
     assert {NATIVE_FESCUE, *INTRODUCED_FESCUES} <= unlisted_pool
     assert NATIVE_FESCUE in listed_pool
@@ -459,7 +484,7 @@ def test_a_non_native_only_genus_listing_removes_introduced_members_and_keeps_th
 def test_a_state_declared_to_have_no_noxious_list_is_served_without_one(suitability: SuitabilityFixture) -> None:
     cell_id = suitability.role_cell("bend", "burned_cell")
     without_oregon = replace(suitability, exclusions=suitability.exclusions.filter(pl.col("state") != "OR"))
-    declared = replace(PRODUCTION, declared_empty_exclusion_states=frozenset({"OR"}))
+    declared = replace(PRODUCTION_ON_FIXTURE, declared_empty_exclusion_states=frozenset({"OR"}))
 
     cells = without_oregon.evaluate(declared, site=suitability.site_row(cell_id))
 
@@ -472,8 +497,8 @@ def test_an_engine_keeps_each_region_on_the_state_it_was_first_served_or_warmed_
     cell_id = suitability.role_cell("boise", "burned_cell")
     site = suitability.site_row(cell_id)
     relabelled = site.with_columns(pl.lit("OR").alias("state"))
-    served_first = suitability.prepared(PRODUCTION)
-    warmed = suitability.prepared(PRODUCTION)
+    served_first = suitability.prepared(PRODUCTION_ON_FIXTURE)
+    warmed = suitability.prepared(PRODUCTION_ON_FIXTURE)
 
     served_first.candidates_for_cell(site)
     warmed.warm({"boise": "OR"})
@@ -509,22 +534,25 @@ def test_a_caller_mutating_its_declaration_or_rule_config_after_prepare_changes_
 ) -> None:
     cell_id = suitability.role_cell("boise", "soil_failures_cell")
     groups = dict(suitability.site_provenance.groups)
-    flag_texts = dict(PRODUCTION.introduced_flag_text)
+    flag_texts = dict(PRODUCTION_ON_FIXTURE.introduced_flag_text)
     # Every set field handed in as the caller's own mutable set (review R3).
-    overrides, licences = set(PRODUCTION.in_region_overrides), set(PRODUCTION.permitted_licences or ())
-    required = set(PRODUCTION.required_site_input_groups)
-    declared_empty = set(PRODUCTION.declared_empty_exclusion_states)
+    readings, licences = (
+        set(PRODUCTION_ON_FIXTURE.in_region_readings),
+        set(PRODUCTION_ON_FIXTURE.permitted_licences or ()),
+    )
+    required = set(PRODUCTION_ON_FIXTURE.required_site_input_groups)
+    declared_empty = set(PRODUCTION_ON_FIXTURE.declared_empty_exclusion_states)
     config = replace(
-        PRODUCTION,
+        PRODUCTION_ON_FIXTURE,
         introduced_flag_text=flag_texts,
-        in_region_overrides=overrides,
+        in_region_readings=readings,
         permitted_licences=licences,
         required_site_input_groups=required,
         declared_empty_exclusion_states=declared_empty,
     )
     engine = prepare(suitability.envelope(config), suitability.guide_rows, suitability.exclusions, config,
                      SiteInputProvenance(groups))  # fmt: skip
-    untouched = suitability.prepared(PRODUCTION)
+    untouched = suitability.prepared(PRODUCTION_ON_FIXTURE)
     site = suitability.site
     point_site = suitability.site_row(cell_id)
     point = untouched.candidates_for_cell(point_site)
@@ -533,7 +561,7 @@ def test_a_caller_mutating_its_declaration_or_rule_config_after_prepare_changes_
 
     groups["precipitation"] = replace(groups["precipitation"], licence=UNRECORDED)
     flag_texts[WOODY] = "introduced (rewritten after prepare)"
-    for caller_set in (overrides, licences, required):
+    for caller_set in (readings, licences, required):
         caller_set.clear()
     declared_empty.add(NOXIOUS_STATE)
 
@@ -557,9 +585,9 @@ def test_both_seams_refuse_fire_wording_that_arrives_in_a_source_name(
     cell_id = suitability.role_cell("boise", "burned_cell")
 
     with pytest.raises(ValueError, match=message):
-        renamed.evaluate(PRODUCTION, site=suitability.site_row(cell_id))
+        renamed.evaluate(PRODUCTION_ON_FIXTURE, site=suitability.site_row(cell_id))
     with pytest.raises(ValueError, match=message):
-        renamed.candidates(cell_id, PRODUCTION)
+        renamed.candidates(cell_id, PRODUCTION_ON_FIXTURE)
 
 
 def test_a_fire_named_source_is_a_citation_both_seams_serve_on_the_woody_buffer(
@@ -569,10 +597,10 @@ def test_a_fire_named_source_is_a_citation_both_seams_serve_on_the_woody_buffer(
     woody = pl.col("guild") == WOODY
     retitled = renamed_sources(suitability, WOODY, FIRE_NAMED_EDITION)
 
-    point = suitability.candidates(cell_id, PRODUCTION)
-    batch = suitability.evaluate(PRODUCTION, site=suitability.site_row(cell_id))
-    retitled_batch = served_labels(retitled.evaluate(PRODUCTION, site=suitability.site_row(cell_id)), WOODY)
-    retitled_point = retitled.candidates(cell_id, PRODUCTION).filter(woody & pl.col("is_pick"))["pick_label"]
+    point = suitability.candidates(cell_id, PRODUCTION_ON_FIXTURE)
+    batch = suitability.evaluate(PRODUCTION_ON_FIXTURE, site=suitability.site_row(cell_id))
+    retitled_batch = served_labels(retitled.evaluate(PRODUCTION_ON_FIXTURE, site=suitability.site_row(cell_id)), WOODY)
+    retitled_point = retitled.candidates(cell_id, PRODUCTION_ON_FIXTURE).filter(woody & pl.col("is_pick"))["pick_label"]
 
     assert FIRE_NAMED_SOURCE in candidate(point, FIRE_CITING_WOODY_TAXON, WOODY)["origin_label"]
     assert cell_row(batch, cell_id)[f"{WOODY}_status"] == "scored"
@@ -607,9 +635,9 @@ def test_a_fire_claim_in_the_site_input_provenance_stops_both_seams(
     cell_id = suitability.role_cell("boise", "burned_cell")
 
     with pytest.raises(ValueError, match=message):
-        claimed.evaluate(PRODUCTION, site=suitability.site_row(cell_id))
+        claimed.evaluate(PRODUCTION_ON_FIXTURE, site=suitability.site_row(cell_id))
     with pytest.raises(ValueError, match=message):
-        claimed.candidates(cell_id, PRODUCTION)
+        claimed.candidates(cell_id, PRODUCTION_ON_FIXTURE)
 
 
 def test_an_unregistered_fire_word_in_a_page_citation_stops_the_batch_top_three_and_the_point_tool(
@@ -620,13 +648,13 @@ def test_an_unregistered_fire_word_in_a_page_citation_stops_the_batch_top_three_
     rows = suitability.guide_rows
     page = pl.when(pl.col("source_id") == source_id).then(pl.lit("Fire appendix")).otherwise(pl.col("page"))
     repaged = replace(suitability, guide_rows=rows.with_columns(page.alias("page")))
-    labels = served_labels(suitability.evaluate(PRODUCTION, site=suitability.site_row(cell_id)), WOODY)
+    labels = served_labels(suitability.evaluate(PRODUCTION_ON_FIXTURE, site=suitability.site_row(cell_id)), WOODY)
     assert any(f"{short_name} p." in label for label in labels), "no top-3 source tag cites it here: proves nothing"
 
     with pytest.raises(ValueError, match="fire words outside the allow-list"):
-        repaged.evaluate(PRODUCTION, site=suitability.site_row(cell_id))
+        repaged.evaluate(PRODUCTION_ON_FIXTURE, site=suitability.site_row(cell_id))
     with pytest.raises(ValueError, match="fire words outside the allow-list"):
-        repaged.candidates(cell_id, PRODUCTION)
+        repaged.candidates(cell_id, PRODUCTION_ON_FIXTURE)
 
 
 # Since review R3 the rule set refuses fire wording in its flag texts, so only the verbatim PLANTS field (which both
@@ -642,9 +670,9 @@ def test_the_point_tool_refuses_the_fire_field_in_a_woody_origin_label_even_on_a
     suitability: SuitabilityFixture, woody_flag_text: str
 ) -> None:
     cell_id = suitability.role_cell("boise", "soil_failures_cell")
-    flag_texts = MappingProxyType({**PRODUCTION.introduced_flag_text, WOODY: woody_flag_text})
-    config = replace(PRODUCTION, introduced_flag_text=flag_texts)
-    woody = suitability.candidates(cell_id, PRODUCTION).filter(pl.col("guild") == WOODY)
+    flag_texts = MappingProxyType({**PRODUCTION_ON_FIXTURE.introduced_flag_text, WOODY: woody_flag_text})
+    config = replace(PRODUCTION_ON_FIXTURE, introduced_flag_text=flag_texts)
+    woody = suitability.candidates(cell_id, PRODUCTION_ON_FIXTURE).filter(pl.col("guild") == WOODY)
     introduced = woody.filter(pl.col("origin_label").str.starts_with(INTRODUCED_FLAG_PLAIN))
     assert introduced.height > 0, "no introduced woody taxon here, so this flow proves nothing"
     assert not introduced["is_pick"].any(), "an introduced woody pick here would carry the flag in its pick label"
@@ -665,6 +693,6 @@ def test_both_seams_refuse_a_fire_label_guild_whose_labels_lose_the_verbatim_pre
     monkeypatch.setattr(engine_module, "pick_label_expression", woody_wording)
 
     with pytest.raises(ValueError, match=r"(greenstrip|post_fire_restoration) labels lack the verbatim PLANTS fire"):
-        suitability.evaluate(PRODUCTION, site=suitability.site_row(cell_id))
+        suitability.evaluate(PRODUCTION_ON_FIXTURE, site=suitability.site_row(cell_id))
     with pytest.raises(ValueError, match=r"(greenstrip|post_fire_restoration) labels lack the verbatim PLANTS fire"):
-        suitability.candidates(cell_id, PRODUCTION)
+        suitability.candidates(cell_id, PRODUCTION_ON_FIXTURE)

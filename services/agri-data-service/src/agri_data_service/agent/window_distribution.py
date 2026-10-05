@@ -5,7 +5,9 @@ Rules, per-lane measures and the governed-absence decision: agent/AGENTS.md, "Wi
 
 from __future__ import annotations
 
-from collections import Counter
+import asyncio
+import threading
+from collections import Counter, deque
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Final, Literal
@@ -20,6 +22,7 @@ from agri_data_service.agent.surfaces import AGENT_SURFACE_NAMES, APP_SURFACE_NA
 from agri_data_service.foundation.region import is_layer_bound, load_region
 from agri_data_service.parquet_ops import faults
 from agri_data_service.parquet_ops.authorized_serving import verified_serving_session
+from agri_data_service.parquet_ops.duckdb_session import SERVING_MAX_CONCURRENT_READS
 from agri_data_service.parquet_ops.request_params import ReadScope, RequestError, parse_calendar_day
 from agri_data_service.parquet_ops.serving import resolve_window
 from agri_data_service.parquet_ops.warehouse_reader import (
@@ -51,6 +54,11 @@ WINDOW_KIND: Final[PartitionKind] = "observed"
 DEFAULT_ZOOM: Final = 13.0
 #: Two lattice corners closer than this are the same support (both come from one SQL expression).
 _SAME_SUPPORT_DEGREES: Final = 1e-9
+#: The most lanes one call reads at once: its own slot plus the process's one borrowed slot.
+LANE_READ_CONCURRENCY: Final = min(2, SERVING_MAX_CONCURRENT_READS)
+#: The ONE extra serving slot the whole process lends to multi-lane calls; latency budget and
+#: contention: agent/AGENTS.md, "Window distribution", caveat 4.
+_borrowed_lane_slot: Final = threading.Lock()
 
 DayReducer = Literal["avg", "sum", "max"]
 
@@ -518,11 +526,17 @@ def _label_only(
 
 
 async def lane_distribution(
-    surface: str, lane: str, window: DistributionWindow, measures: Sequence[WindowMeasure] | None = None
+    surface: str,
+    lane: str,
+    window: DistributionWindow,
+    measures: Sequence[WindowMeasure] | None = None,
+    *,
+    hand_back_at_capacity: bool = False,
 ) -> list[dict[str, Any]]:
     """Every entry one lane contributes: per-measure statistics, or the single reason it has none.
 
     `measures` narrows a lane to the ones a `signal_name` named; None reads every curated measure.
+    `hand_back_at_capacity` raises `_LaneHandedBackError` instead of reporting `serving_at_capacity`.
     """
     measures = WINDOW_MEASURES.get(lane, ()) if measures is None else measures
     mode = day_tolerance(lane).mode
@@ -546,8 +560,14 @@ async def lane_distribution(
     try:
         answer = await warehouse.source().run(work, operation="agent_distribution_at_point")
     except faults.ServingRefusalError as error:
+        if hand_back_at_capacity and error.code == "serving_at_capacity":
+            raise _LaneHandedBackError from error
         return [_label_only(lane, window, "refused", refusal_code=error.code, message=error.message)]
     return _render_lane(lane, window, answer, measures)
+
+
+class _LaneHandedBackError(Exception):
+    """A lane read on the borrowed slot found every serving slot taken; the call's own slot reads it."""
 
 
 # --- One surface -------------------------------------------------------------------------------
@@ -595,6 +615,44 @@ def select_signal(
     return selected or None
 
 
+async def _read_lanes(
+    surface: str, selected: Sequence[tuple[str, tuple[WindowMeasure, ...] | None]], window: DistributionWindow
+) -> list[dict[str, Any]]:
+    """Every selected lane's entries in catalogue order: one lane at a time, plus a second only on the borrowed slot."""
+    pending = deque(enumerate(selected))
+    answers: list[list[dict[str, Any]]] = [[] for _ in selected]
+
+    async def own_slot() -> None:
+        while pending:
+            index, (lane, measures) = pending.popleft()
+            answers[index] = await lane_distribution(surface, lane, window, measures)
+
+    async def borrowed_slot() -> None:
+        # No await between the emptiness check, the borrow and the pop: one event loop owns `pending`.
+        while pending and _borrowed_lane_slot.acquire(blocking=False):
+            index, (lane, measures) = pending.popleft()
+            try:
+                answers[index] = await lane_distribution(surface, lane, window, measures, hand_back_at_capacity=True)
+            except _LaneHandedBackError:
+                pending.appendleft((index, (lane, measures)))  # the own-slot loop reads it; stop borrowing
+                return
+            finally:
+                _borrowed_lane_slot.release()
+
+    tasks = [asyncio.ensure_future(own_slot())]
+    if len(selected) > 1:
+        tasks.append(asyncio.ensure_future(borrowed_slot()))
+    try:
+        await asyncio.gather(*tasks)
+        await own_slot()  # a lane handed back after the own-slot loop had already drained
+    except BaseException:
+        # gather leaves siblings running on a failure; a failed call must not keep holding slots.
+        for task in tasks:
+            task.cancel()
+        raise
+    return [entry for entries in answers for entry in entries]
+
+
 async def distribution(  # noqa: PLR0911, PLR0913 - one return per typed whole-call refusal; one arg per parameter
     surface_name: str,
     longitude: float,
@@ -639,9 +697,7 @@ async def distribution(  # noqa: PLR0911, PLR0913 - one return per typed whole-c
         return refusal(
             "unknown_signal_name", f"signal_name must be one of: {', '.join(accepted)}; or omit it.", **context
         )
-    entries: list[dict[str, Any]] = []
-    for lane, measures in selected:
-        entries.extend(await lane_distribution(surface_name, lane, window, measures))
+    entries = await _read_lanes(surface_name, selected, window)
     return {
         "surface": surface_name,
         **({"signal_name": signal_name} if signal_name is not None else {}),
@@ -656,6 +712,7 @@ async def distribution(  # noqa: PLR0911, PLR0913 - one return per typed whole-c
 
 
 __all__ = [
+    "LANE_READ_CONCURRENCY",
     "MAX_WINDOW_DAYS",
     "WINDOW_MEASURES",
     "DistributionWindow",

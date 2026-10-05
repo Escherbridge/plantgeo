@@ -2,7 +2,8 @@
 
 Checks run in one fixed order, cheapest and most storage-free first (`AGENTS.md` in this
 directory): the region binding, then the admission pin, then the zoom gate -- so an unbound region
-or a below-z13 request never opens object storage to say so. Everything else parses, gathers,
+or an unadmitted release never opens object storage to say so. Below z13 a viewport query answers
+from the admitted release's published overview, else `soil_survey_zoom_in`. Everything else parses, gathers,
 queries and renders through `planes.soil_survey`; this module owns only request parsing, ordering
 the gates, and mapping faults to a transport status. See that module's own "Admitted release read
 path" banner for the wire contract this route serves.
@@ -11,9 +12,11 @@ path" banner for the wire contract this route serves.
 from __future__ import annotations
 
 import asyncio
-from typing import Final
+import time
+from typing import TYPE_CHECKING, Final
 
 import duckdb
+import pyarrow as pa  # type: ignore[import-untyped]
 from botocore.exceptions import BotoCoreError, ClientError  # type: ignore[import-untyped]
 from pydantic import ValidationError
 from sanic import Blueprint, Request, json
@@ -35,11 +38,19 @@ from agri_data_service.planes.soil_survey import (
     SoilSurveyViewport,
     gather_admitted_soil_survey_viewport,
     load_admitted_release,
+    load_soil_survey_overview,
     render_served_soil_survey,
+    render_soil_survey_overview,
     render_soil_survey_status,
     run_admitted_soil_survey_query,
     soil_survey_unavailable,
 )
+
+if TYPE_CHECKING:
+    import polars as pl
+
+    from agri_data_service.foundation.soil_survey.release import Release
+    from agri_data_service.pipeline.parquet.availability_storage import AvailabilityStorage
 
 logger = get_logger(__name__)
 
@@ -76,6 +87,52 @@ _READ_FAULTS: Final = (
 )
 
 
+#: How long a process trusts "no usable overview published" before asking the bucket again.
+_OVERVIEW_MISS_SECONDS: Final = 300.0
+#: One entry, keyed by admitted SHA: (checked at, release, overview or None). Both are immutable
+#: per SHA, so only a miss expires.
+_overview_cache: dict[str, tuple[float, Release, pl.DataFrame | None]] = {}
+#: Faults that say the overview OBJECT is unusable (mis-stamped, truncated, oversized, undecodable),
+#: so they are cached like a miss; transport faults (boto) are not, and the next pan retries.
+_OVERVIEW_CONTENT_FAULTS: Final = (SoilSurveyError, ValueError, AvailabilityError, pa.ArrowException)
+
+
+def _cached_overview(storage: AvailabilityStorage, admitted: str) -> tuple[Release, pl.DataFrame | None]:
+    """The admitted release and its overview, read once per process (a miss or bad object is re-checked)."""
+    now = time.monotonic()
+    cached = _overview_cache.get(admitted)
+    if cached is not None and (cached[2] is not None or now - cached[0] < _OVERVIEW_MISS_SECONDS):
+        return cached[1], cached[2]
+    release = load_admitted_release(storage, admitted)
+    try:
+        overview = load_soil_survey_overview(storage, admitted)
+    except _OVERVIEW_CONTENT_FAULTS as error:
+        logger.warning("soil_survey_overview_unusable", error_type=type(error).__name__)
+        overview = None
+    _overview_cache.clear()
+    _overview_cache[admitted] = (now, release, overview)
+    return release, overview
+
+
+async def _overview_answer(parsed: SoilSurveyViewport, admitted: str, *, point: bool) -> HTTPResponse:
+    """Overview cells for a below-z13 viewport; a point, a miss or any fault keeps the `zoom_in` answer."""
+    zoom_in = soil_survey_unavailable("soil_survey_zoom_in", requested_zoom=parsed.requested_zoom)
+    if point:
+        return json(zoom_in)
+    try:
+        credentials = settings.require_object_store()
+        storage = BotoAvailabilityStorage.from_credentials(credentials, prefix=settings.object_store_prefix)
+        async with asyncio.timeout(_READ_DEADLINE_SECONDS), _GATHER_SLOT:
+            release, overview = await asyncio.to_thread(_cached_overview, storage, admitted)
+        if overview is None:
+            return json(zoom_in)
+        result = render_soil_survey_overview(overview, release=release, request=parsed, admitted_sha256=admitted)
+    except _READ_FAULTS as error:
+        logger.warning("soil_survey_overview_refused", error_type=type(error).__name__)
+        return json(zoom_in)
+    return json(result, headers={"Cache-Control": "no-store"})
+
+
 def _parse(request: Request, *, point: bool) -> SoilSurveyViewport:
     """Parse and shape-validate one request; raises `ValueError`/`KeyError`/`TypeError` on a malformed one."""
     allowed = {"lon", "lat", "zoom"} if point else {"bbox", "zoom"}
@@ -107,7 +164,7 @@ async def _answer(request: Request, *, point: bool) -> HTTPResponse:
     if not admitted:
         return json(soil_survey_unavailable("soil_survey_release_not_admitted", requested_zoom=parsed.requested_zoom))
     if not parsed.at_native_rung:
-        return json(soil_survey_unavailable("soil_survey_zoom_in", requested_zoom=parsed.requested_zoom))
+        return await _overview_answer(parsed, admitted, point=point)
 
     try:
         credentials = settings.require_object_store()
@@ -150,7 +207,7 @@ async def _answer(request: Request, *, point: bool) -> HTTPResponse:
 
 @soil_survey_bp.get("/query")
 async def query_soil_survey(request: Request) -> HTTPResponse:
-    """Bounded native-geometry GeoJSON for one viewport, at the admitted release's z13 rung."""
+    """Native-geometry GeoJSON for one viewport at z13+, or the release's overview cells below it."""
     return await _answer(request, point=False)
 
 

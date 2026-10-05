@@ -16,7 +16,7 @@ vi.mock('openai', () => ({
   },
 }));
 
-import { DEFAULT_MODEL, providerFunctionTools, REPORT_TOOL, SEARCH_TOOL, streamRegionalIntelligence } from '@/lib/server/services/ai-prompt';
+import { bindProviderEvidenceArguments, DEFAULT_MODEL, providerFunctionTools, REPORT_TOOL, SEARCH_TOOL, SERVER_BOUND_EVIDENCE_ARGUMENTS, streamRegionalIntelligence } from '@/lib/server/services/ai-prompt';
 import { geminiEvidenceSchema, geminiReportSchema } from '@/lib/server/services/gemini-report-schema';
 import { landContextTools } from '@/lib/server/services/land-context-tools';
 import { bindRegionalEvidenceArguments, SERVER_OWNED_LITERATURE_ARGUMENTS } from '@/lib/server/services/regional-analysis-workflow';
@@ -156,6 +156,8 @@ describe('provider tool complexity budget (2026-09-28 schema_too_complex inciden
     expect(total.enumValues).toBeLessThanOrEqual(KNOWN_GOOD_ROUND_ONE_BUDGET.enumValues);
     expect(total.constraints).toBeLessThanOrEqual(KNOWN_GOOD_ROUND_ONE_BUDGET.constraints);
     expect(tools.flatMap((tool) => tool.function.name === REPORT_TOOL.name ? [] : enumArrays(tool.function.parameters))).toEqual([]);
+    // Live since fec24ed3 (2026-09-13); any other property-less OBJECT is a shape Gemini has not been shown.
+    expect(tools.flatMap((tool) => emptyObjectProperties(tool.function.parameters, tool.function.name))).toEqual(['draft_land_inquiry_text.contact']);
   });
 
   it('would have failed on the incident shape, so the budget is a real tripwire', () => {
@@ -166,6 +168,20 @@ describe('provider tool complexity budget (2026-09-28 schema_too_complex inciden
     expect(total.properties).toBeGreaterThan(KNOWN_GOOD_ROUND_ONE_BUDGET.properties);
   });
 });
+
+/** Paths of nested object-typed properties that declare no properties; a top-level `{}` tool is fine. */
+function emptyObjectProperties(schema: unknown, path: string): string[] {
+  if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) return [];
+  const properties = (schema as { properties?: unknown }).properties;
+  if (properties === null || typeof properties !== 'object' || Array.isArray(properties)) return [];
+  return Object.entries(properties).flatMap(([key, child]) => {
+    const childPath = `${path}.${key}`;
+    const childProperties = (child as { properties?: unknown } | null)?.properties;
+    const isObject = (child as { type?: unknown } | null)?.type === 'object';
+    const empty = isObject && (childProperties === null || typeof childProperties !== 'object' || Object.keys(childProperties).length === 0);
+    return empty ? [childPath] : emptyObjectProperties(child, childPath);
+  });
+}
 
 /** Every `maxItems` in a schema tree; the bisect's trigger is a medium bound over an enum array. */
 function maxItemsBounds(node: unknown, found: number[] = []): number[] {
@@ -227,7 +243,7 @@ describe('Gemini forced-call decoding states (2026-09-28 bisect, AGENTS.md §gem
 });
 
 describe('provider-facing catalogue schemas', () => {
-  it('omits only the server-owned literature arguments from the request the loop actually sends', async () => {
+  it('omits only the server-owned and server-bound arguments from the request the loop actually sends', async () => {
     vi.stubEnv('OPENROUTER_MODEL', '');
     vi.spyOn(webEvidence, 'getWebEvidenceProvider').mockReturnValue(null);
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -248,29 +264,107 @@ describe('provider-facing catalogue schemas', () => {
     const sentByName = new Map(sent.tools.map((tool) => [tool.function.name, tool.function.parameters]));
     for (const { function: tool } of AGRI_CATALOGUE_56467BD4) {
       const parameters = sentByName.get(tool.name);
-      // DEFAULT_MODEL is Gemini, so every tool also carries the bounds-as-instructions projection.
-      if (!isStrategyKnowledgeTool(tool.name)) {
-        expect(parameters, tool.name).toEqual(geminiEvidenceSchema(tool.parameters));
-        continue;
-      }
+      const withheld: readonly string[] = isStrategyKnowledgeTool(tool.name)
+        ? SERVER_OWNED_LITERATURE_ARGUMENTS : SERVER_BOUND_EVIDENCE_ARGUMENTS[tool.name] ?? [];
       const catalogueProperties = tool.parameters.properties as Record<string, unknown>;
-      const expectedProperties = Object.fromEntries(Object.entries(catalogueProperties)
-        .filter(([key]) => !(SERVER_OWNED_LITERATURE_ARGUMENTS as readonly string[]).includes(key)));
+      const expectedProperties = Object.fromEntries(Object.entries(catalogueProperties).filter(([key]) => !withheld.includes(key)));
+      // DEFAULT_MODEL is Gemini, so every tool also carries the bounds-as-instructions projection.
       expect(parameters, tool.name).toEqual(geminiEvidenceSchema({
         ...tool.parameters,
         properties: expectedProperties,
-        ...(Array.isArray(tool.parameters.required) ? { required: tool.parameters.required.filter((key: unknown) => key !== 'site_profile' && key !== 'region') } : {}),
+        ...(Array.isArray(tool.parameters.required) ? { required: tool.parameters.required.filter((key: unknown) => !withheld.includes(String(key))) } : {}),
       }));
     }
     expect(sentByName.get('search_environmental_strategies')).not.toHaveProperty('properties.site_profile');
     expect(sentByName.get('search_strategy_research_findings')).not.toHaveProperty('properties.region');
+    expect(Object.keys(sentByName.get('surface_evidence_for_selection')?.properties as object)).toEqual(['surface_name', 'page_start']);
     // The shared catalogue keeps its full schema: the projection is a copy.
     expect(catalogueTools.find((tool) => tool.name === 'search_environmental_strategies')?.input_schema)
       .toHaveProperty('properties.site_profile');
   });
 });
 
+/** A placeholder value of the offered schema's type; the binding, not this value, is under test. */
+function sampleArgument(key: string, schema: unknown): unknown {
+  if (key === 'surface_name') return 'vegetation';
+  const declared = (schema as { type?: unknown } | undefined)?.type;
+  const type = Array.isArray(declared) ? declared.find((entry) => entry !== 'null') : declared;
+  return type === 'number' || type === 'integer' ? 1 : type === 'object' ? {} : type === 'array' ? [] : type === 'boolean' ? false : 'x';
+}
+
 describe('provider schemas round-trip through strict server validation', () => {
+  // AGENTS.md §provider-tool-budget (server-bound arguments): the provider view is only smaller, never
+  // weaker, if every argument it withholds still reaches the reader from the map selection.
+  it('supplies every catalogue argument the provider view withholds when the model sends only what it is offered', () => {
+    const catalogue = [
+      ...AGRI_CATALOGUE_CURRENT.map(({ function: tool }) => ({ name: tool.name, description: tool.description, input_schema: structuredClone(tool.parameters) })),
+      ...landContextTools(),
+    ];
+    const offered = new Map(asProviderTools(providerFunctionTools(catalogue, {}, DEFAULT_MODEL))
+      .map((tool) => [tool.function.name, tool.function.parameters]));
+    let withheldCount = 0;
+    for (const tool of catalogue) {
+      // Literature withholds site_profile/region on purpose; the bridge rebuilds them from server_context (test above).
+      if (isStrategyKnowledgeTool(tool.name)) continue;
+      const parameters = offered.get(tool.name) ?? {};
+      const offeredProperties = (parameters.properties ?? {}) as Record<string, unknown>;
+      const catalogueProperties = (tool.input_schema.properties ?? {}) as Record<string, unknown>;
+      const call = Object.fromEntries(((parameters.required ?? []) as string[]).map((key) => [key, sampleArgument(key, offeredProperties[key])]));
+      const bound = bindProviderEvidenceArguments(tool.name, call, payload, temporal);
+      const withheld = Object.keys(catalogueProperties).filter((key) => !(key in offeredProperties));
+      withheldCount += withheld.length;
+      for (const key of [...withheld, ...((tool.input_schema.required ?? []) as string[])]) {
+        expect(bound, `${tool.name}.${key}`).toHaveProperty(key);
+      }
+      if ('bbox' in catalogueProperties) {
+        expect(offeredProperties, tool.name).not.toHaveProperty('bbox');
+        expect(bound.bbox, tool.name).toEqual({
+          west: expect.any(Number), south: expect.any(Number), east: expect.any(Number), north: expect.any(Number),
+        });
+      }
+    }
+    expect(withheldCount).toBe(Object.values(SERVER_BOUND_EVIDENCE_ARGUMENTS).flat().length);
+  });
+
+  it('reads the selection tile for an area tool the model calls with no arguments at all', async () => {
+    vi.stubEnv('OPENROUTER_MODEL', '');
+    vi.spyOn(webEvidence, 'getWebEvidenceProvider').mockReturnValue(null);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    mocks.load.mockResolvedValue({ tools: landContextTools(), surfaces: [], featureSurfaces: [], valueSurfaces: [] });
+    mocks.call.mockResolvedValue('{}');
+    const areaTools = ['read_crop_cover_in_area', 'resolve_land_boundary_in_area', 'lookup_land_contacts_in_area'];
+    mocks.completionStream.mockReturnValueOnce({
+      [Symbol.asyncIterator]: () => (async function* () {})(),
+      finalChatCompletion: async () => ({ choices: [{
+        finish_reason: 'tool_calls',
+        message: { role: 'assistant', content: null, refusal: null, tool_calls: areaTools.map((name) => ({
+          id: name, type: 'function', function: { name, arguments: '{}' },
+        })) },
+      }] }),
+    });
+    mocks.completionStream.mockImplementation(() => {
+      throw new Error('stop after round two');
+    });
+
+    const run = async () => {
+      for await (const event of streamRegionalIntelligence(payload, {}, true, temporal, [])) void event;
+    };
+    await expect(run()).rejects.toThrow('stop after round two');
+
+    const offered = (mocks.completionStream.mock.calls[0][0] as { tools: ProviderTool[] }).tools;
+    for (const name of areaTools) {
+      expect(offered.find((tool) => tool.function.name === name)?.function.parameters, name).not.toHaveProperty('properties.bbox');
+      const [, args] = mocks.call.mock.calls.find(([called]) => called === name) ?? [];
+      expect(args, name).toMatchObject({
+        bbox: { west: expect.any(Number), south: expect.any(Number), east: expect.any(Number), north: expect.any(Number) },
+      });
+      expect(args.bbox.west, name).toBeLessThan(payload.location.lon);
+      expect(args.bbox.east, name).toBeGreaterThan(payload.location.lon);
+    }
+    expect(mocks.call.mock.calls.find(([called]) => called === 'read_crop_cover_in_area')?.[1])
+      .toMatchObject({ asOfDay: temporal.serverCurrentDate, zoomTier: 13 });
+  });
+
   it('binds a literature call identically whether or not the model still sends server-owned arguments', () => {
     for (const name of ['search_environmental_strategies', 'search_strategy_research_findings']) {
       const [offered] = asProviderTools(providerFunctionTools([agriTool(name)], {}, DEFAULT_MODEL));

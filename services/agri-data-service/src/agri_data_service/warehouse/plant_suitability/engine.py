@@ -10,7 +10,11 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from agri_data_service.warehouse.plant_suitability.applicability import applicability, supporting_rows
+from agri_data_service.warehouse.plant_suitability.applicability import (
+    applicability,
+    forest_woodland_site,
+    supporting_rows,
+)
 from agri_data_service.warehouse.plant_suitability.axes import AXIS_NAMES, evaluate_pairs
 from agri_data_service.warehouse.plant_suitability.config import (
     assert_rule_config,
@@ -46,6 +50,7 @@ from agri_data_service.warehouse.plant_suitability.pools import (
     region_rows,
 )
 from agri_data_service.warehouse.plant_suitability.ranking import TOP_PICK_COUNT, ranked_picks
+from agri_data_service.warehouse.plant_suitability.regions import CurationRegionData, pilot_region_data
 from agri_data_service.warehouse.plant_suitability.schemas import (
     CELL_RECOMMENDATIONS_SCHEMA,
     GUILDS,
@@ -56,6 +61,8 @@ from agri_data_service.warehouse.plant_suitability.schemas import (
 )
 from agri_data_service.warehouse.plant_suitability.site import (
     SiteInputProvenance,
+    assert_dated_access_after,
+    assert_fixture_inputs_allowed,
     assert_required_site_inputs,
     prepare_site,
 )
@@ -68,7 +75,7 @@ if TYPE_CHECKING:
     from agri_data_service.warehouse.plant_suitability.config import RuleConfig
 
 # Bumped on any change to what a served table says for the same inputs and rule set (AGENTS.md §Engine).
-ENGINE_VERSION = "2026-10-03"
+ENGINE_VERSION = "2026-10-05"
 # List columns whose element order means nothing (the engine reads them as sets), and paired lists (values ->
 # keys): the inputs digest sorts both, so reordering inside a list cell never changes it (review R3).
 SET_LIKE_LIST_COLUMNS = (
@@ -131,7 +138,7 @@ CANDIDATE_OUTPUT_SCHEMA = pl.Schema(
 
 @dataclass(frozen=True)
 class PreparedInputs:
-    """Conformed species, admitted guide rows (per region too), origin statements, exclusions and row counts."""
+    """Conformed species, admitted guide rows (per region too), origin statements, exclusions, region data, counts."""
 
     species: pl.DataFrame
     loaded_rows_sha256: str
@@ -145,6 +152,7 @@ class PreparedInputs:
     admitted_row_counts: Mapping[tuple[str, str], int]
     scorable_row_counts: Mapping[tuple[str, str], int]
     admitted_scorable_row_counts: Mapping[tuple[str, str], int]
+    region_data: CurationRegionData
 
 
 @dataclass(frozen=True)
@@ -177,9 +185,13 @@ def assert_ratings_resolved_under(species: pl.DataFrame, config: RuleConfig) -> 
 
 
 def prepare_inputs(
-    species: pl.DataFrame, guide_rows: pl.DataFrame, exclusions: pl.DataFrame, config: RuleConfig
+    species: pl.DataFrame,
+    guide_rows: pl.DataFrame,
+    exclusions: pl.DataFrame,
+    config: RuleConfig,
+    region_data: CurationRegionData,
 ) -> PreparedInputs:
-    """Validate the reference tables once; a guide row (admitted or not) naming a missing taxon raises."""
+    """Validate the reference tables once; a guide row naming a missing taxon, or an unknown reading, raises."""
     prepared_species = prepare_species(species)
     assert_ratings_resolved_under(prepared_species, config)
     every_row = load_guide_rows(guide_rows)
@@ -193,7 +205,7 @@ def prepare_inputs(
         species=prepared_species,
         loaded_rows_sha256=canonical_rows_digest(every_row),
         admitted_rows=rows,
-        region_rows=region_rows(rows, config),
+        region_rows=region_rows(rows, region_data.in_region_overrides(config.in_region_readings)),
         documents=document_statements(matched_rows(rows, prepared_species), config),
         exclusions=prepare_exclusions(exclusions),
         source_ids=frozenset(every_row["source_id"].to_list()),
@@ -202,6 +214,7 @@ def prepare_inputs(
         admitted_row_counts=MappingProxyType(region_guild_counts(rows)),
         scorable_row_counts=MappingProxyType(region_guild_counts(every_row, scorable_only=True)),
         admitted_scorable_row_counts=MappingProxyType(region_guild_counts(rows, scorable_only=True)),
+        region_data=region_data,
     )
 
 
@@ -227,12 +240,13 @@ def canonical_rows_digest(frame: pl.DataFrame) -> str:
 
 
 def inputs_digest(inputs: PreparedInputs, site_provenance: SiteInputProvenance) -> str:
-    """sha256 over the conformed envelope, every loaded guide row, exclusions and the site-input declaration."""
+    """sha256 over the envelope, every loaded guide row, exclusions, the curation region data and site inputs."""
     # Every loaded row, not only the admitted ones: rows the licence gate drops still decide guild statuses.
     parts = {
         "species_envelope": canonical_rows_digest(inputs.species.select(SPECIES_ENVELOPE_SCHEMA.names)),
         "guide_rows": inputs.loaded_rows_sha256,
         "exclusions": canonical_rows_digest(inputs.exclusions),
+        "region_data": inputs.region_data.digest_value(),
         "site_inputs": site_provenance.declaration_json(),
     }
     return hashlib.sha256(canonical_json(parts).encode("utf-8")).hexdigest()
@@ -434,8 +448,10 @@ class PreparedEngine:
     cache: RegionCache = field(init=False, repr=False, compare=False, default_factory=RegionCache)
 
     def __post_init__(self) -> None:
-        """Refuse a missing or withheld required site input, then build and guard the metadata once."""
+        """Refuse a missing, withheld or stale required site input or a disallowed fixture, then build the metadata."""
         assert_required_site_inputs(self.site_provenance, self.config)
+        assert_fixture_inputs_allowed(self.site_provenance, self.config)
+        assert_dated_access_after(self.site_provenance, self.config)
         withheld = self.site_provenance.withheld_groups(self.config)
         metadata = {
             METADATA_RULE_CONFIG: rule_config_fingerprint(self.config),
@@ -502,8 +518,9 @@ class PreparedEngine:
             recorded.update(pairs)
 
     def prepare_site(self, site: pl.DataFrame) -> pl.DataFrame:
-        """Site conditions through the load checks and withholding; unknown regions or a changed state raise."""
-        cells = prepare_site(site, self.site_provenance, self.config)
+        """Site conditions through the load checks, withholding and the release's site classes; bad regions raise."""
+        forest_woodland = forest_woodland_site(self.inputs.region_data.forest_woodland_mlras())
+        cells = prepare_site(site, self.site_provenance, self.config).with_columns(forest_woodland)
         self.assert_known_regions(cells["region"].unique().to_list())
         self.record_region_states(region_state_pairs(cells))
         return cells
@@ -606,17 +623,20 @@ class PreparedEngine:
         return self.candidates_for_cell(cell_site), self.metadata()
 
 
-def prepare(
+def prepare(  # noqa: PLR0913 - the three reference tables, the rule set and the two declarations.
     species: pl.DataFrame,
     guide_rows: pl.DataFrame,
     exclusions: pl.DataFrame,
     config: RuleConfig,
     site_provenance: SiteInputProvenance | None = None,
+    region_data: CurationRegionData | None = None,
 ) -> PreparedEngine:
-    """Validate the rule set, reference tables and site provenance once; both seams then serve from that state."""
+    """Validate the rule set, reference tables, region data and site provenance once; both seams serve from that."""
     assert_rule_config(config)
     provenance = SiteInputProvenance({}) if site_provenance is None else site_provenance
-    return PreparedEngine(config, prepare_inputs(species, guide_rows, exclusions, config), provenance)
+    # Read per call, never at import: the pilot release unless the caller passes the published one.
+    regions = pilot_region_data() if region_data is None else region_data
+    return PreparedEngine(config, prepare_inputs(species, guide_rows, exclusions, config, regions), provenance)
 
 
 def evaluate_cells(  # noqa: PLR0913 - the site frame plus every argument prepare() takes.
@@ -626,9 +646,10 @@ def evaluate_cells(  # noqa: PLR0913 - the site frame plus every argument prepar
     exclusions: pl.DataFrame,
     config: RuleConfig,
     site_provenance: SiteInputProvenance | None = None,
+    region_data: CurationRegionData | None = None,
 ) -> pl.DataFrame:
     """`prepare(...).evaluate_cells(site)` for a one-off call."""
-    return prepare(species, guide_rows, exclusions, config, site_provenance).evaluate_cells(site)
+    return prepare(species, guide_rows, exclusions, config, site_provenance, region_data).evaluate_cells(site)
 
 
 def candidates_for_cell(  # noqa: PLR0913 - the site frame plus every argument prepare() takes.
@@ -638,6 +659,8 @@ def candidates_for_cell(  # noqa: PLR0913 - the site frame plus every argument p
     exclusions: pl.DataFrame,
     config: RuleConfig,
     site_provenance: SiteInputProvenance | None = None,
+    region_data: CurationRegionData | None = None,
 ) -> pl.DataFrame:
     """`prepare(...).candidates_for_cell(cell_site)` for a one-off call."""
-    return prepare(species, guide_rows, exclusions, config, site_provenance).candidates_for_cell(cell_site)
+    arguments = (species, guide_rows, exclusions, config, site_provenance, region_data)
+    return prepare(*arguments).candidates_for_cell(cell_site)

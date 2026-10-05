@@ -10,7 +10,11 @@ vi.mock("@/lib/server/http/bounded-upstream", async (importOriginal) => {
 });
 
 import { fetchBoundedJson, UpstreamTimeoutError } from "@/lib/server/http/bounded-upstream";
-import { getParquetSoilSurvey, getParquetSoilSurveyStatus } from "@/lib/server/services/parquet-trpc-readers/soil-survey";
+import {
+  getParquetSoilSurvey,
+  getParquetSoilSurveyStatus,
+  isSoilSurveyOverviewFeature,
+} from "@/lib/server/services/parquet-trpc-readers/soil-survey";
 import {
   ParquetPlaneContractError,
   ParquetPlaneRequestError,
@@ -181,8 +185,8 @@ describe("admitted-release SSURGO bridge", () => {
     });
   });
 
-  // `soil_survey_zoom_in` case: below the native z13 rung the route answers unavailable rather
-  // than degrading to a coarser candidate -- there is no coarser one to fall back to (plan Q1).
+  // `soil_survey_zoom_in` case: below the native z13 rung with no overview published for the
+  // admitted release (or any fault reading one), the route answers unavailable.
   it("passes through the zoom-in refusal below the native rung", async () => {
     fetch.mockResolvedValue({ ...unavailable, reason: "soil_survey_zoom_in", requestedZoom: 9 });
 
@@ -251,6 +255,81 @@ describe("admitted-release SSURGO bridge", () => {
 
     expect(result.availability).toBe("published");
     expect(result.features).toHaveLength(1);
-    expect(result.features[0]?.properties.geometryQuality).toBe("invalid_unrepaired");
+    expect(result.features[0]?.properties).toMatchObject({ geometryQuality: "invalid_unrepaired" });
+  });
+
+  describe("below the native rung, once an overview is published", () => {
+    const published = {
+      ...unavailable,
+      availability: "published" as const,
+      reason: null,
+      revision: "a".repeat(64),
+      releaseDay: "2025-08-27",
+      capturedAt: "2026-09-13T12:00:00+00:00",
+      spatialCoverage: { viewportAreas: [], declaredAreaCount: 264, pendingAreaCount: 0 },
+    };
+    const cell = {
+      type: "Feature",
+      id: "overview:0.05:-2340:900",
+      geometry: {
+        type: "Polygon",
+        coordinates: [[[-117, 45], [-116.95, 45], [-116.95, 45.05], [-117, 45.05], [-117, 45]]],
+      },
+      properties: {
+        aggregated: true,
+        drainageClass: "well-drained",
+        dominantShare: 0.8,
+        mappedShare: 0.5,
+        hydricFraction: 0.2,
+        mapUnitCount: 2,
+        cellDegrees: 0.05,
+        geometryRepresentation: "overview_cell",
+        source: "usda-sda",
+      },
+    };
+    const mapUnit = {
+      type: "Feature",
+      id: "mup-1",
+      geometry: { type: "Polygon", coordinates: [[[-117, 45], [-116.99, 45], [-117, 45.01], [-117, 45]]] },
+      properties: {
+        mupolygonkey: "mup-1",
+        mukey: "mu-1",
+        muname: null,
+        soilSeries: null,
+        drainageClass: "well-drained",
+        hydric: null,
+        landCapabilityClass: null,
+        areaSymbol: "ID001",
+        surveyAreaVintage: "2025-08-27",
+        geometryQuality: "valid",
+        geometryRepresentation: "native",
+        source: "usda-sda",
+        releaseSha256: "a".repeat(64),
+      },
+    };
+
+    it("reads drainage-class cells as averages at the tier that served them", async () => {
+      fetch.mockResolvedValue({ ...published, servedZoom: 9, requestedZoom: 10, features: [cell] });
+
+      const result = await getParquetSoilSurvey({ bbox: "-117,45,-116.9,45.1", zoom: 10 });
+
+      expect(result.servedZoom).toBe(9);
+      expect(result.features.every(isSoilSurveyOverviewFeature)).toBe(true);
+      expect(result.features[0]?.properties).toMatchObject({ aggregated: true, mapUnitCount: 2 });
+    });
+
+    it.each([
+      ["an overview cell at the native rung", { servedZoom: 13, features: [cell] }],
+      ["a map unit below the native rung", { servedZoom: 9, features: [mapUnit] }],
+      ["map units mixed into an overview", { servedZoom: 9, features: [cell, mapUnit] }],
+      ["more native map units than the viewport cap", { servedZoom: 13, features: Array(1001).fill(mapUnit) }],
+      ["a share outside 0..1", { servedZoom: 9, features: [{ ...cell, properties: { ...cell.properties, dominantShare: 1.2 } }] }],
+    ])("refuses %s", async (_why, patch) => {
+      fetch.mockResolvedValue({ ...published, ...patch });
+
+      await expect(getParquetSoilSurvey({ bbox: "0,0,1,1", zoom: 10 })).rejects.toBeInstanceOf(
+        ParquetPlaneContractError
+      );
+    });
   });
 });

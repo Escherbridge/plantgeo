@@ -64,6 +64,15 @@ from agri_data_service.foundation.soil_survey.release import (
     manifest_key,
     release_key,
 )
+from agri_data_service.pipeline.direct.soil_survey.overview import (
+    MAX_OVERVIEW_BYTES,
+    MAX_OVERVIEW_CELLS,
+    OVERVIEW_CELL_DEGREES,
+    OVERVIEW_FLOOR_DEGREES_BY_TIER,
+    decode_overview,
+    drainage_class_id,
+    overview_key,
+)
 from agri_data_service.warehouse.schemas.soil_survey import SOIL_SURVEY_SCHEMA, SOIL_SURVEY_STREAM
 
 if TYPE_CHECKING:
@@ -723,7 +732,6 @@ def run_admitted_soil_survey_query(
 
 
 def _feature_from_row(row: Mapping[str, object], *, admitted_sha256: str) -> dict[str, object]:
-    drainage = row["drainage_class"]
     vintage = row["survey_area_vintage"]
     if not isinstance(vintage, datetime):
         # `SOIL_SURVEY_SCHEMA` declares this column non-nullable timestamp; a non-datetime here
@@ -739,7 +747,7 @@ def _feature_from_row(row: Mapping[str, object], *, admitted_sha256: str) -> dic
             "mukey": row["mukey"],
             "muname": row["map_unit_name"],
             "soilSeries": row["soil_series"],
-            "drainageClass": drainage.lower().replace(" ", "-") if isinstance(drainage, str) else None,
+            "drainageClass": drainage_class_id(row["drainage_class"]),
             "hydric": row["hydric_rating"],
             "landCapabilityClass": row["land_capability_class"],
             "areaSymbol": row["survey_area_symbol"],
@@ -784,6 +792,107 @@ def render_served_soil_survey(
         "capturedAt": release.captured_at.isoformat(),
         "spatialCoverage": {
             "viewportAreas": list(touched_areas),
+            "declaredAreaCount": len(served_areas),
+            "pendingAreaCount": len(release.pending_areas),
+        },
+    }
+
+
+# --- Overview below the native rung -------------------------------------------------------------
+#
+# A request below z13 answers from the overview `pipeline/direct/soil_survey/overview.py` derived
+# from the SAME admitted release, when one has been published at `overview_key(<release sha>)`; with
+# none published it is still `soil_survey_zoom_in`. See `AGENTS.md` in this directory, "SSURGO
+# overview below z13".
+
+
+def load_soil_survey_overview(storage: AvailabilityStorage, admitted_sha256: str) -> pl.DataFrame | None:
+    """The admitted release's overview, or None when none has been published for it."""
+    stored = storage.read(overview_key(admitted_sha256), max_bytes=MAX_OVERVIEW_BYTES)
+    return None if stored is None else decode_overview(stored.payload, release_sha256=admitted_sha256)
+
+
+def _overview_cells_in(overview: pl.DataFrame, bbox: Bounds, degrees: float) -> pl.DataFrame:
+    west, south, east, north = bbox
+    # East/north are exclusive: a cell that only touches the viewport's edge is not in view.
+    return overview.filter(
+        (pl.col("cell_degrees") == degrees)
+        & pl.col("col").is_between(
+            math.floor(west / degrees), max(math.floor(west / degrees), math.ceil(east / degrees) - 1)
+        )
+        & pl.col("row").is_between(
+            math.floor(south / degrees), max(math.floor(south / degrees), math.ceil(north / degrees) - 1)
+        )
+    )
+
+
+def select_overview_cells(overview: pl.DataFrame, request: SoilSurveyViewport) -> tuple[float, pl.DataFrame, bool]:
+    """The finest rung the tier allows whose viewport fits `MAX_OVERVIEW_CELLS`; else the coarsest, centre-first.
+
+    Returns `(cell degrees, cells, truncated)`.
+    """
+    floor = OVERVIEW_FLOOR_DEGREES_BY_TIER[serving_zoom_tier(request.requested_zoom)]
+    allowed = [degrees for degrees in OVERVIEW_CELL_DEGREES if degrees >= floor]
+    for degrees in allowed:
+        cells = _overview_cells_in(overview, request.bbox, degrees)
+        if cells.height <= MAX_OVERVIEW_CELLS:
+            return degrees, cells, False
+    west, south, east, north = request.bbox
+    degrees = allowed[-1]
+    centre_col, centre_row = (west + east) / 2 / degrees - 0.5, (south + north) / 2 / degrees - 0.5
+    nearest = cells.sort((pl.col("col") - centre_col) ** 2 + (pl.col("row") - centre_row) ** 2)
+    return degrees, nearest.head(MAX_OVERVIEW_CELLS), True
+
+
+def _overview_feature(cell: Mapping[str, object], degrees: float) -> dict[str, object]:
+    col, row = cast("int", cell["col"]), cast("int", cell["row"])
+    west, east = round(col * degrees, 6), round((col + 1) * degrees, 6)
+    south, north = round(row * degrees, 6), round((row + 1) * degrees, 6)
+    hydric = cell["hydric_fraction"]
+    return {
+        "type": "Feature",
+        "id": f"overview:{degrees}:{col}:{row}",
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[[west, south], [east, south], [east, north], [west, north], [west, south]]],
+        },
+        "properties": {
+            # The legacy aggregate shape the map's hover and the soil panel already caption.
+            "aggregated": True,
+            "drainageClass": cell["drainage_class"],
+            "dominantShare": round(cast("float", cell["dominant_share"]), 4),
+            "mappedShare": round(cast("float", cell["mapped_share"]), 4),
+            "hydricFraction": None if hydric is None else round(cast("float", hydric), 4),
+            "mapUnitCount": cell["map_unit_count"],
+            "cellDegrees": degrees,
+            "geometryRepresentation": "overview_cell",
+            "source": "usda-sda",
+        },
+    }
+
+
+def render_soil_survey_overview(
+    overview: pl.DataFrame, *, release: Release, request: SoilSurveyViewport, admitted_sha256: str
+) -> dict[str, object]:
+    """The `published` envelope for a below-z13 request, carrying overview cells instead of map units."""
+    degrees, cells, truncated = select_overview_cells(overview, request)
+    served_areas = {area.area for shard in release.shards for area in shard.areas}
+    logger.info("soil_survey_overview_served", cells=cells.height, cell_degrees=degrees, truncated=truncated)
+    return {
+        "type": "FeatureCollection",
+        "features": [_overview_feature(cell, degrees) for cell in cells.iter_rows(named=True)],
+        "availability": "published",
+        "reason": None,
+        "truncated": truncated,
+        "revision": admitted_sha256,
+        "servedZoom": serving_zoom_tier(request.requested_zoom),
+        "requestedZoom": request.requested_zoom,
+        "temporalScope": {"kind": "static_reference", "selectedDaySupported": False},
+        "releaseDay": release.release_day.isoformat(),
+        "capturedAt": release.captured_at.isoformat(),
+        # An overview cell is not attributed to survey areas, so none are claimed as touched.
+        "spatialCoverage": {
+            "viewportAreas": [],
             "declaredAreaCount": len(served_areas),
             "pendingAreaCount": len(release.pending_areas),
         },

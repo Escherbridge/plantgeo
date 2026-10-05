@@ -1,0 +1,13 @@
+{
+  "release": "pilot-v0-2026-09-26",
+  "in_region_readings": {
+    "east_of_cascade_crest": {
+      "decision": "owner reading: 'eastern Oregon' and Intermountain guides lie east of the Cascade crest, so they are in-region for Bend",
+      "region": "bend",
+      "source_ids": ["idpm_tn2a_2017", "nrcs_tn50_2008", "orwa_2000", "orwa_guide_2000"]
+    }
+  },
+  "habitat_mlras": {
+    "forest_woodland": ["3", "6", "43B"]
+  }
+}

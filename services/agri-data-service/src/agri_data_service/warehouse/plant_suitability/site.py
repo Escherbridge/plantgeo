@@ -6,7 +6,6 @@ Rationale, the column groups, the required-group gate and the withholding rule: 
 from __future__ import annotations
 
 import datetime
-import re
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
@@ -23,10 +22,11 @@ from agri_data_service.warehouse.plant_suitability.axes import (
 )
 from agri_data_service.warehouse.plant_suitability.config import canonical_json
 from agri_data_service.warehouse.plant_suitability.licences import (
-    CREDIT_LICENCE_TEXTS,
+    CREDIT_FORM_LICENCES,
     DATED_ATTRIBUTION_TERMS,
     KNOWN_LICENCES,
     SourceCredit,
+    iso_calendar_date,
 )
 from agri_data_service.warehouse.plant_suitability.schemas import (
     SITE_CONDITIONS_SCHEMA,
@@ -43,8 +43,6 @@ if TYPE_CHECKING:
 
 # A withheld soil survey still withholds the cells it marks: nulling the reason would score them (fail open).
 NEVER_WITHHELD_COLUMNS = frozenset({"scoring_null_reason"})
-# Strict ISO calendar date: date.fromisoformat alone also takes "20260926" and week dates.
-ISO_DATE_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}")
 SITE_VOCABULARIES: Mapping[str, frozenset[str]] = MappingProxyType(
     {
         "state": USPS_STATE_CODES,
@@ -59,13 +57,15 @@ SITE_VOCABULARIES: Mapping[str, frozenset[str]] = MappingProxyType(
 
 @dataclass(frozen=True)
 class SiteInputSource:
-    """Where one site-input group came from: source, licence id, release, access date and the works it credits."""
+    """Where one site-input group came from: source, licence id, release, access date, credits, fixture or not."""
 
     source: str
     licence: str
     release: str | None = None
     accessed: str | None = None
     credits: tuple[SourceCredit, ...] = ()
+    # True only for the frozen prototype's pull (the test fixture); served in the declaration (AGENTS.md §Site inputs).
+    fixture: bool = False
 
     def __post_init__(self) -> None:
         """Freeze the credits as a tuple, so a caller's list mutated after prepare() changes nothing served."""
@@ -86,10 +86,11 @@ class SiteInputSource:
         """The access date, or None when undeclared; raises unless it is a calendar date written YYYY-MM-DD."""
         if self.accessed is None:
             return None
-        if not ISO_DATE_PATTERN.fullmatch(self.accessed):
+        accessed = iso_calendar_date(self.accessed)
+        if accessed is None:
             message = f"site input access date {self.accessed!r} is not written YYYY-MM-DD"
             raise ValueError(message)
-        return datetime.date.fromisoformat(self.accessed)
+        return accessed
 
     def attribution(self) -> str | None:
         """The attribution its licence obliges every use to state, or None for a licence without dated terms."""
@@ -139,6 +140,7 @@ class SiteInputProvenance:
                 "accessed": source.accessed,
                 "attribution": source.attribution(),
                 "credits": [credit.text() for credit in source.credits],
+                "fixture": source.fixture,
             }
             for group, source in self.groups.items()
         }
@@ -166,12 +168,12 @@ class SiteInputProvenance:
 def assert_credits_discharge_licences(groups: Mapping[str, SiteInputSource]) -> None:
     """Raise when a group's licence obliges a credit it does not declare, or a credit names a licence with no form."""
     uncredited = sorted(
-        group for group, source in groups.items() if source.licence in CREDIT_LICENCE_TEXTS and not source.credits
+        group for group, source in groups.items() if source.licence in CREDIT_FORM_LICENCES and not source.credits
     )
     no_credit_form = {
-        group: sorted({credit.licence for credit in source.credits} - set(CREDIT_LICENCE_TEXTS))
+        group: sorted({credit.licence for credit in source.credits} - CREDIT_FORM_LICENCES)
         for group, source in sorted(groups.items())
-        if {credit.licence for credit in source.credits} - set(CREDIT_LICENCE_TEXTS)
+        if {credit.licence for credit in source.credits} - CREDIT_FORM_LICENCES
     }
     if uncredited or no_credit_form:
         message = (
@@ -190,6 +192,40 @@ def assert_required_site_inputs(provenance: SiteInputProvenance, config: RuleCon
         message = (
             f"rule set {config.name!r} requires site input groups that are undeclared {undeclared} or withheld by its "
             f"licence gate {withheld}: declare a permitted source for each, so no pick is served blind to them"
+        )
+        raise ValueError(message)
+
+
+def assert_fixture_inputs_allowed(provenance: SiteInputProvenance, config: RuleConfig) -> None:
+    """Raise, naming them, when groups declare the frozen fixture's pull and the rule set does not allow fixtures."""
+    fixture_groups = sorted(group for group, source in provenance.groups.items() if source.fixture)
+    if fixture_groups and not config.allow_fixture_site_inputs:
+        message = (
+            f"rule set {config.name!r} does not serve the frozen fixture's pull, declared for site input groups "
+            f"{fixture_groups}: declare this run's own sources, or run a rule set with allow_fixture_site_inputs"
+        )
+        raise ValueError(message)
+
+
+def assert_dated_access_after(provenance: SiteInputProvenance, config: RuleConfig) -> None:
+    """Raise when a dated-attribution group predates the rule set's access floor, unless it is an allowed fixture."""
+    floor = config.dated_attribution_accessed_after
+    if floor is None:
+        return
+    floor_date = datetime.date.fromisoformat(floor)  # checked YYYY-MM-DD by assert_rule_config
+    # Construction already refused a missing date, so every dated-attribution group here carries one.
+    stale = {
+        group: source.accessed
+        for group, source in sorted(provenance.groups.items())
+        if source.licence in DATED_ATTRIBUTION_TERMS
+        and not (source.fixture and config.allow_fixture_site_inputs)
+        and (accessed := source.accessed_date()) is not None
+        and accessed <= floor_date
+    }
+    if stale:
+        message = (
+            f"rule set {config.name!r} needs its own pull of {stale}: an access date on or before {floor} is the "
+            "prototype's, so declare the date of this run's pull"
         )
         raise ValueError(message)
 

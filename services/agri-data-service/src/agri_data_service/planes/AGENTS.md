@@ -41,6 +41,22 @@ one (see the next section). A future migration to the platform's `static_lookup`
 (`.omc/research/merge-20260927/soil-survey-port-plan.md` §4) is expected to retire the old lane
 outright rather than reconcile the two schemas.
 
+### SSURGO overview below z13
+
+`load_soil_survey_overview` / `render_soil_survey_overview` serve the overview the operator derived
+from the admitted release (`pipeline/direct/soil_survey/overview.py`; rationale and publish recipe in
+that directory's `AGENTS.md`, "Overview below z13"). `decode_overview` refuses a file stamped for any
+release but the pin, so re-pinning a new release never serves a stale overview -- it serves "zoom
+in" until that release's own overview is published. `select_overview_cells` draws the finest rung
+the request's ladder tier allows (`OVERVIEW_FLOOR_DEGREES_BY_TIER`: z9-12 -> 0.025, z5-8 -> 0.05,
+z0-4 -> 0.2 degrees) whose viewport fits `MAX_OVERVIEW_CELLS`, else the next coarser; if even 0.2
+overflows it keeps the cells nearest the view centre and says `truncated`. The viewport's east and
+north edges are exclusive, so a cell that only touches the edge is not drawn. Features carry the
+legacy aggregate shape (`aggregated`, `drainageClass`, `mapUnitCount`, `hydricFraction`) that the
+web hover and soil panel already caption as averages, plus `cellDegrees`, `dominantShare`,
+`mappedShare` and `geometryRepresentation: "overview_cell"`; `spatialCoverage.viewportAreas` is
+empty because a cell is not attributed to survey areas.
+
 `render_soil_survey_status` describes an already verified admitted index independently of the
 old lane census. It reports the actual source vintage, capture clock and published/pending
 survey-area counts, preserving partial release coverage. These fields authorize a static

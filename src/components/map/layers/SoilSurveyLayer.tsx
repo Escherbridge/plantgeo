@@ -54,11 +54,12 @@ interface SoilSurveyLayerProps {
  * Distinct from `SoilLayer`, which paints the SoilGrids raster: this one is the vector
  * survey.
  *
- * Three style layers over ONE source, because the server answers a viewport with one of
- * three shapes and each needs its own geometry type: real delineations and drainage-class
- * unions are polygons (the fill + outline pair), and a viewport too wide to union honestly
- * is a lattice of counted points (the summary circles). The circle layer's own `summary`
- * filter is what keeps them apart, so nothing here has to branch on which tier answered.
+ * Three style layers over ONE source. At z13+ the server answers with surveyed map units
+ * (fill + outline); below z13, once an overview is published for the admitted release, with
+ * square drainage-class cells (`aggregated: true`) that the fill paints by the same class
+ * colours and the outline's own filter skips. The summary circles are the retired counted
+ * lattice's point shape, kept behind their `summary` filter. Nothing here branches on which
+ * tier answered. See `src/lib/server/services/AGENTS.md` §soil-survey.
  *
  * Paint and ids come from `src/lib/map/layers.ts` rather than being restated here, so the
  * fill's `drainageClass` arms, the outline, and the hover formatter keyed on

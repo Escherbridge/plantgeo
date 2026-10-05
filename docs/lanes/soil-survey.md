@@ -6,6 +6,14 @@ horizon: none
 
 # soil-survey lane
 
+> **Serving today (2026-10-05).** SSURGO is served from one admitted, content-addressed release
+> (`foundation/soil_survey/release.py`; RUNBOOK "SSURGO soil survey"): map-unit polygons at z13+,
+> and below z13 a derived drainage-class overview once it is published -- see
+> `services/agri-data-service/src/agri_data_service/pipeline/direct/soil_survey/AGENTS.md`,
+> "Overview below z13". The sections below predate the port: their `usda-soil.ts` line citations,
+> lazy read-through ingest, "aggregated"/"summary" request-time shapes and coverage ledger describe
+> the retired Postgres path, not what serves now.
+
 Source-of-truth spec for the `soil-survey` layer lane, one of the eleven layers
 named in `conductor/RUNBOOK.md` §0.24.2 (`conductor/RUNBOOK.md:3336-3348`) and
 governed by `conductor/code_styleguides/layer-lanes.md`. This document does not

@@ -456,13 +456,38 @@ function readQuery(input: unknown): string | null {
 }
 
 /**
- * Provider-facing view of one catalogue tool: a literature tool loses the arguments the server
- * owns (`SERVER_OWNED_LITERATURE_ARGUMENTS`), which `bindRegionalEvidenceArguments` drops anyway.
- * Deep-copied, so the shared catalogue is never mutated. See AGENTS.md §provider-tool-budget.
+ * Evidence arguments the server sets BY TOOL NAME whatever the model sends, so the provider view
+ * omits them. See AGENTS.md §provider-tool-budget (server-bound arguments).
+ */
+const SERVER_BOUND_EVIDENCE_ARGUMENTS: Readonly<Record<string, readonly string[]>> = {
+  surface_evidence_for_selection: ['day', 'longitude', 'latitude', 'range_start', 'range_end', 'time_scale', 'zoom'],
+  drought_history_at_point: ['as_of_day'],
+  fire_history_near_point: ['as_of_day'],
+  read_crop_cover_in_area: ['bbox', 'asOfDay', 'zoomTier'],
+  resolve_land_boundary_in_area: ['bbox'],
+  lookup_land_contacts_in_area: ['bbox'],
+};
+
+/**
+ * Binds one provider call. A withheld `bbox` key is restored first, because
+ * `bindRegionalEvidenceArguments` fills the selection tile only for a call that names `bbox`.
+ */
+function bindProviderEvidenceArguments(
+  tool: string, args: Record<string, unknown>, payload: RegionalContextPayload, temporal: TemporalContext,
+): Record<string, unknown> {
+  const restored = SERVER_BOUND_EVIDENCE_ARGUMENTS[tool]?.includes('bbox') ? { ...args, bbox: null } : args;
+  return bindRegionalEvidenceArguments(tool, restored, payload, temporal);
+}
+
+/**
+ * Provider-facing view of one catalogue tool: it loses the arguments the server owns or binds
+ * (`SERVER_OWNED_LITERATURE_ARGUMENTS`, `SERVER_BOUND_EVIDENCE_ARGUMENTS`). Deep-copied, so the
+ * shared catalogue is never mutated. See AGENTS.md §provider-tool-budget.
  */
 function providerEvidenceTool(tool: AgentTool): AgentTool {
-  if (!isStrategyKnowledgeTool(tool.name)) return tool;
-  const serverOwned: readonly string[] = SERVER_OWNED_LITERATURE_ARGUMENTS;
+  const serverOwned: readonly string[] = isStrategyKnowledgeTool(tool.name)
+    ? SERVER_OWNED_LITERATURE_ARGUMENTS : SERVER_BOUND_EVIDENCE_ARGUMENTS[tool.name] ?? [];
+  if (serverOwned.length === 0) return tool;
   const inputSchema = structuredClone(tool.input_schema);
   const properties = inputSchema.properties;
   if (properties !== null && typeof properties === 'object' && !Array.isArray(properties)) {
@@ -782,7 +807,7 @@ export async function* streamRegionalIntelligence(
       if (use.type !== 'function') return;
       const evidenceId = `additional-${++evidenceCallsAttempted}`;
       const proposedArgs = readToolArguments(use.function.arguments);
-      const args = proposedArgs ? bindRegionalEvidenceArguments(use.function.name, proposedArgs, payload, temporalContext) : null;
+      const args = proposedArgs ? bindProviderEvidenceArguments(use.function.name, proposedArgs, payload, temporalContext) : null;
       const literature = isStrategyKnowledgeTool(use.function.name);
       const callKey = toolCallKey(use.function.name, args, use.function.arguments);
       const pushAudit = (entry: RegionalAnalysisEvidence['toolCalls'][number]) => {
@@ -989,4 +1014,6 @@ export {
   providerFunctionTools,
   REPORT_TOOL,
   SEARCH_TOOL,
+  SERVER_BOUND_EVIDENCE_ARGUMENTS,
+  bindProviderEvidenceArguments,
 };

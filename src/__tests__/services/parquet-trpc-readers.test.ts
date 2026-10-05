@@ -1490,7 +1490,10 @@ describe("lane day and release semantics", () => {
       firstDay: "2026-07-22",
       lastDay: "2026-08-20",
       zoomTier: 5,
-      bbox: "-125,42,-111,49",
+      // Footprint, not the raw viewport: z5 keeps the 0.25-degree base grain (finer than the
+      // z5 ladder step), so the pad is 0.25 + 2*(0.2/2) = 0.45 degrees on every side. See
+      // src/lib/map/AGENTS.md §viewport-footprint.
+      bbox: "-125.45,41.55,-110.55,49.45",
     });
     expect(result).toMatchObject({
       state: "ready",
