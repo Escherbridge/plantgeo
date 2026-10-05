@@ -107,8 +107,13 @@ async def _query(storage: AvailabilityStorage, release: Release, request: SoilSu
 async def _nearest_delineation(
     storage: AvailabilityStorage, release: Release, point: tuple[float, float]
 ) -> tuple[dict[str, Any] | None, str]:
-    """Search growing viewports for the delineation edge nearest the point; say why the search stopped."""
+    """Search growing viewports for the delineation edge nearest the point; say why the search stopped.
+
+    A hit outside the last box's inscribed circle is still returned, flagged `proven_nearest: false`:
+    something outside the searched box could be nearer, but the hit itself is real.
+    """
     longitude, latitude = point
+    best: dict[str, Any] | None = None
     for half in NEAREST_DELINEATION_HALF_WIDTHS:
         request = SoilSurveyViewport(
             (longitude - half, latitude - half, longitude + half, latitude + half), NATIVE_RUNG
@@ -116,14 +121,16 @@ async def _nearest_delineation(
         try:
             rows = await _query(storage, release, request)
         except SoilSurveyError:
-            return None, "viewport_budget_reached"
+            return best, "viewport_budget_reached"
         measured = [(distance_to_geojson_km(point, json.loads(str(row["geometry_json"]))), row) for row in rows]
         if measured:
             distance, row = min(measured, key=lambda pair: (pair[0], str(pair[1]["mupolygonkey"])))
             # Inside the box's inscribed circle no delineation outside the box can be nearer.
-            if distance <= half * _KM_PER_DEGREE_LATITUDE * math.cos(math.radians(abs(latitude) + half)):
-                return {**row, "distance_km": round(distance, 3)}, "found"
-    return None, "search_bound_reached"
+            proven = distance <= half * _KM_PER_DEGREE_LATITUDE * math.cos(math.radians(abs(latitude) + half))
+            best = {**row, "distance_km": round(distance, 3), "proven_nearest": proven}
+            if proven:
+                return best, "found"
+    return best, "search_bound_reached"
 
 
 def _map_unit(feature: dict[str, Any]) -> dict[str, Any]:
@@ -160,11 +167,10 @@ async def soil_survey_selection(selected: Selection) -> dict[str, Any]:
         release = await asyncio.to_thread(load_admitted_release, storage, admitted)
         rows = await _query(storage, release, request)
         search = "covers"
-        nearest_distance: float | None = 0.0
+        nearest: dict[str, Any] | None = None
         if not rows:
             nearest, search = await _nearest_delineation(storage, release, point)
             rows = [] if nearest is None else [nearest]
-            nearest_distance = None if nearest is None else nearest["distance_km"]
     except _READ_FAULTS as error:
         return {
             **base,
@@ -189,13 +195,15 @@ async def soil_survey_selection(selected: Selection) -> dict[str, Any]:
         "features_truncated": rendered["truncated"],
         "nearest_search": search,
     }
-    if features:
-        covers = search == "covers"
+    if features and nearest is None:
+        result.update({"spatial_relation": "covers", "distance_km": 0.0, "distance_km_basis": "covers"})
+    elif features and nearest is not None:
         result.update(
             {
-                "spatial_relation": "covers" if covers else "nearest_cell",
-                "distance_km": 0.0 if covers else nearest_distance,
-                "distance_km_basis": "covers" if covers else "delineation_edge",
+                "spatial_relation": "nearest_cell",
+                "distance_km": nearest["distance_km"],
+                "distance_km_basis": "delineation_edge",
+                "proven_nearest": nearest["proven_nearest"],
             }
         )
     return {**base, "selected": result}

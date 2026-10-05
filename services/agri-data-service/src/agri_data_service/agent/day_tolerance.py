@@ -79,10 +79,13 @@ class NearestDay:
 
 
 def nearest_published_day(
-    published: Iterable[date], requested: date, *, tolerance_days: int, today: date
+    published: Iterable[date], requested: date, *, tolerance_days: int, today: date | None
 ) -> NearestDay | None:
-    """Pick the closest published day other than `requested`; a tie goes to the EARLIER, settled day."""
-    candidates = [day for day in published if day != requested and day <= today]
+    """Pick the closest published day other than `requested`; a tie goes to the EARLIER, settled day.
+
+    `today=None` is a forecast read (`selection_scope.schedule_ceiling`): future days are candidates.
+    """
+    candidates = [day for day in published if day != requested and (today is None or day <= today)]
     if not candidates:
         return None
     # Sort key (gap, day): equal gaps fall back to calendar order, so the earlier day wins a tie.

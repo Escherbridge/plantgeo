@@ -66,7 +66,11 @@ const TRANSIENT_HTTP_STATUSES: ReadonlySet<number> = new Set([429, 502, 503]);
 /** Bridge 503s that are deterministic for the same arguments, so never retried. */
 const NON_TRANSIENT_BRIDGE_CODES = ['tool_response_too_large', 'tool_read_timeout'];
 
-/** Plan the initial surfaces: theme anchors first (themes interleaved), then up to four selected layers. */
+/**
+ * Plan the initial surfaces: the user's own selected layers FIRST (any theme anchor among them, plus
+ * up to four others), then every theme anchor or stand-in not already planned, themes interleaved.
+ * The set is unchanged by the order; only who reads first inside the 12 s local stage is.
+ */
 export function regionalInitialSurfaces(selected: readonly string[], available: readonly string[]): string[] {
   const offered = new Set(available);
   const anchors = REGIONAL_ANALYSIS_THEMES.map(({ anchors, fallbacks }) => {
@@ -74,12 +78,21 @@ export function regionalInitialSurfaces(selected: readonly string[], available: 
     const replacements = fallbacks.filter((surface) => offered.has(surface));
     return [...present, ...replacements.slice(0, anchors.length - present.length)];
   });
-  const planned: string[] = [];
+  const themeReads: string[] = [];
   for (let slot = 0; slot < Math.max(...anchors.map((entry) => entry.length)); slot += 1) {
-    for (const entry of anchors) if (entry[slot] && !planned.includes(entry[slot])) planned.push(entry[slot]);
+    for (const entry of anchors) if (entry[slot] && !themeReads.includes(entry[slot])) themeReads.push(entry[slot]);
   }
-  const extras = [...new Set(selected)].filter((surface) => offered.has(surface) && !planned.includes(surface));
-  return [...planned, ...extras.slice(0, MAX_SELECTED_INITIAL_READS)];
+  const planned: string[] = [];
+  let extras = 0;
+  for (const surface of new Set(selected)) {
+    if (!offered.has(surface)) continue;
+    if (themeReads.includes(surface)) planned.push(surface);
+    else if (extras < MAX_SELECTED_INITIAL_READS) {
+      planned.push(surface);
+      extras += 1;
+    }
+  }
+  return [...planned, ...themeReads.filter((surface) => !planned.includes(surface))];
 }
 
 export function isRegionalStaticSurface(source: string): boolean {
@@ -429,10 +442,28 @@ function calendarDayDifference(from: string, to: string): number {
   return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
 }
 
+/** A nearest-support distance the audit can carry (agri `distance_km`; schema max 5,000 km). */
+function plausibleDistanceKm(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= 5_000;
+}
+
+function entryFeatures(entry: Record<string, unknown>): Record<string, unknown>[] {
+  return Array.isArray(entry.features) ? entry.features.map(object).filter((feature) => feature !== null) : [];
+}
+
+/** Whether a selected entry's support contains the point: its own summary, or any containing feature. */
+function entryCovers(entry: Record<string, unknown>): boolean {
+  return entry.spatial_relation === 'covers'
+    || entryFeatures(entry).some((feature) => feature.spatial_relation === 'covers' || feature.covers_probe_point === true);
+}
+
 /**
  * The agri reader's nearest-day and nearest-cell resolution of the selected read: `published_nearest`
- * (served_day, signed day_offset) and per-feature `spatial_relation` `covers`|`nearest_cell` with
- * `distance_km`. Absent fields leave the audit exactly as before.
+ * (served_day, signed day_offset), and the SELECTED entry's `spatial_relation`/`distance_km` (agri
+ * agent/AGENTS.md contract table) -- soil survey's features carry neither. Per-feature `nearest_cell`
+ * is the fallback for readers that predate the entry summary. `nearest_area_outside` (a polygon the
+ * point is NOT inside) never becomes `cellDistanceKm`: it is not the value here. Absent fields leave
+ * the audit exactly as before.
  */
 function selectedResolution(result: unknown): Pick<AuditCall, 'resolvedDay' | 'dayOffset' | 'cellDistanceKm'> {
   const selected = selectedEntries(result);
@@ -447,12 +478,11 @@ function selectedResolution(result: unknown): Pick<AuditCall, 'resolvedDay' | 'd
       resolution.dayOffset = offset;
     }
   }
-  const features = selected.flatMap((entry) => Array.isArray(entry.features) ? entry.features.map(object) : [])
-    .filter((feature) => feature !== null);
-  if (!features.some((feature) => feature.spatial_relation === 'covers' || feature.covers_probe_point === true)) {
-    const distances = features.filter((feature) => feature.spatial_relation === 'nearest_cell')
-      .map((feature) => feature.distance_km)
-      .filter((distance): distance is number => typeof distance === 'number' && Number.isFinite(distance) && distance > 0 && distance <= 5_000);
+  if (!selected.some(entryCovers)) {
+    const distances = selected.flatMap((entry) => entry.spatial_relation === 'nearest_cell' ? [entry.distance_km]
+      : entry.spatial_relation === undefined
+        ? entryFeatures(entry).filter((feature) => feature.spatial_relation === 'nearest_cell').map((feature) => feature.distance_km)
+        : []).filter(plausibleDistanceKm);
     if (distances.length > 0) resolution.cellDistanceKm = Math.round(Math.min(...distances) * 10) / 10;
   }
   return resolution;
@@ -506,6 +536,17 @@ function selectionReadDetail(selectedDate: string | undefined, result: unknown):
   return details.length ? details.join(' ') : null;
 }
 
+/** The nearest published day agri names beside an unpublished selected entry (`nearest_published_day`). */
+export interface RegionalNearestPublishedDay {
+  requestedDay: string | null;
+  /** The selected entry's own state: `day_not_written` or `governed_absence`. */
+  state: string;
+  /** Null when agri searched and found no other published day. */
+  day: string | null;
+  offset: number | null;
+  toleranceDays: number | null;
+}
+
 /** What one read contributes to its lane's single limitation line. */
 export interface RegionalLaneReadNote {
   audit: AuditCall;
@@ -513,10 +554,36 @@ export interface RegionalLaneReadNote {
   emptySelectedStates: string[];
   history: ReturnType<typeof selectionHistory>;
   noRenderableFacts: boolean;
+  nearestPublished?: RegionalNearestPublishedDay | null;
+  /** Polygon lanes: the point is inside no area; the nearest area's centroid distance, information only. */
+  outsideAreaKm?: number | null;
+  /** What the used nearest-support distance measured: `cell_edge`, `source_coordinate`, `delineation_edge`. */
+  nearestBasis?: string | null;
+}
+
+function nearestPublishedOf(result: unknown): RegionalNearestPublishedDay | null {
+  for (const lane of selectionLanes(result)) {
+    const entry = object(lane.selected);
+    if (!entry || hasRecords(entry) || !('nearest_published_day' in entry)) continue;
+    const offset = entry.nearest_day_offset;
+    const tolerance = lane.tolerance_days;
+    return {
+      requestedDay: isCalendarDay(entry.requested_day) ? entry.requested_day : null,
+      state: entryState(entry),
+      day: isCalendarDay(entry.nearest_published_day) ? entry.nearest_published_day : null,
+      offset: typeof offset === 'number' && Number.isInteger(offset) && offset !== 0 ? offset : null,
+      toleranceDays: typeof tolerance === 'number' && Number.isInteger(tolerance) && tolerance >= 0 ? tolerance : null,
+    };
+  }
+  return null;
 }
 
 export function regionalLaneReadNote(audit: AuditCall, result: unknown, noRenderableFacts = false): RegionalLaneReadNote {
   const selected = selectedEntries(result);
+  const covered = selected.some(entryCovers);
+  const outside = covered ? [] : selected.filter((entry) => entry.spatial_relation === 'nearest_area_outside')
+    .map((entry) => entry.distance_km).filter(plausibleDistanceKm);
+  const basis = selected.find((entry) => entry.spatial_relation === 'nearest_cell')?.distance_km_basis;
   return {
     audit,
     selectedRecords: selected.some(hasRecords),
@@ -524,7 +591,35 @@ export function regionalLaneReadNote(audit: AuditCall, result: unknown, noRender
     // A local read's one-day "history" is its selected day again, never a history pass.
     history: audit.staticLayer || audit.stage === 'local' ? null : selectionHistory(result),
     noRenderableFacts,
+    nearestPublished: nearestPublishedOf(result),
+    outsideAreaKm: outside.length ? Math.round(Math.min(...outside) * 10) / 10 : null,
+    nearestBasis: typeof basis === 'string' ? basis.slice(0, 40) : null,
   };
+}
+
+/** What a polygon lane's areas are called in its gap line ("not inside any drought area"). */
+const AREA_NOUNS: Record<string, string> = {
+  'drought-areas': 'drought area', 'fire-perimeters': 'fire perimeter', 'evacuation-zones': 'evacuation zone',
+  'burn-severity': 'burn perimeter', watersheds: 'watershed', 'land-context-boundaries': 'land boundary',
+};
+
+/** The used nearest support, named by what its distance measured (agri `distance_km_basis`). */
+function nearestSupportText(basis: string | null | undefined, km: number): string {
+  if (basis === 'source_coordinate') return `no station at the point; nearest station ${km} km (used)`;
+  if (basis === 'delineation_edge') return `no soil map unit covers the point; nearest delineation ${km} km (used)`;
+  return `no cell covers the point; nearest cell ${km} km (used)`;
+}
+
+/** "no record on 2026-10-04; nearest published 2026-08-25 (40 d earlier, beyond the 3-day tolerance)". */
+function nearestPublishedText(nearest: RegionalNearestPublishedDay, fallbackDay: string | undefined): string {
+  const requested = nearest.requestedDay ?? fallbackDay ?? 'the selected day';
+  const governed = nearest.state === 'governed_absence';
+  const head = governed ? `governed absence on ${requested} (published as no records, not a gap)` : `no record on ${requested}`;
+  if (!nearest.day || nearest.offset === null) return `${head}; no other published day found`;
+  const distance = `${Math.abs(nearest.offset)} d ${nearest.offset < 0 ? 'earlier' : 'later'}`;
+  const beyond = nearest.toleranceDays !== null && Math.abs(nearest.offset) > nearest.toleranceDays;
+  const qualifier = beyond ? `, beyond the ${nearest.toleranceDays}-day tolerance` : governed ? ', context only' : '';
+  return `${head}; nearest published ${nearest.day} (${distance}${qualifier})`;
 }
 
 const STAGE_READ_LABELS: Record<string, string> = { local: 'selected-day', temporal: 'history', additional: 'additional' };
@@ -532,18 +627,23 @@ const STAGE_READ_LABELS: Record<string, string> = { local: 'selected-day', tempo
 /**
  * ONE concise line per lane, folding its selected-day and history reads together, e.g.
  * "vegetation: no cell covers the point; nearest cell 23.6 km (used)". Null when nothing is owed.
+ * The `<source>: ` prefix is what `regional-evidence-presentation.ts` files under the lane's row.
  */
 export function regionalLaneLimitation(source: string, notes: readonly RegionalLaneReadNote[]): string | null {
   const parts: string[] = [];
   if (notes.some(({ audit }) => audit.staticLayer)) parts.push('static layer, current release');
-  const nearestCell = notes.find(({ audit }) => (audit.cellDistanceKm ?? 0) > 0)?.audit;
-  if (nearestCell) parts.push(`no cell covers the point; nearest cell ${nearestCell.cellDistanceKm} km (used)`);
+  const nearestCell = notes.find(({ audit }) => (audit.cellDistanceKm ?? 0) > 0);
+  if (nearestCell) parts.push(nearestSupportText(nearestCell.nearestBasis, nearestCell.audit.cellDistanceKm ?? 0));
+  const outside = notes.find((note) => (note.outsideAreaKm ?? 0) > 0);
+  if (outside) parts.push(`not inside any ${AREA_NOUNS[source] ?? 'mapped area'}; nearest ${outside.outsideAreaKm} km (to its centroid)`);
   const nearestDay = notes.find(({ audit }) => audit.resolvedDay && audit.dayOffset)?.audit;
   if (nearestDay) {
     parts.push(`${nearestDay.selectedDate ?? 'selected day'} not published; nearest published day ${nearestDay.resolvedDay} (${(nearestDay.dayOffset ?? 0) > 0 ? '+' : ''}${nearestDay.dayOffset} d, used)`);
   }
+  const informed = notes.find((note) => note.nearestPublished);
+  if (informed?.nearestPublished) parts.push(nearestPublishedText(informed.nearestPublished, informed.audit.selectedDate));
   const emptySelected = notes.find((note) => note.emptySelectedStates.length > 0);
-  if (emptySelected && !notes.some((note) => note.selectedRecords)) {
+  if (emptySelected && !informed && !notes.some((note) => note.selectedRecords)) {
     parts.push(`no records on ${emptySelected.audit.selectedDate ?? 'the selected day'} (${emptySelected.emptySelectedStates.join(', ')})`);
   }
   for (const { history } of notes) {

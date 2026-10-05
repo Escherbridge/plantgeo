@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { readMapFocus } from "@/lib/map/focus-params";
-import type { RegionalIntelligenceResponse } from "@/lib/regional-intelligence";
+import { AI_GENERATED_DISCLAIMER, type RegionalIntelligenceResponse } from "@/lib/regional-intelligence";
 import { readSavedReport } from "@/app/dashboard/conversations/saved-report";
 
 const mocks = vi.hoisted(() => ({ limit: vi.fn(), orderBy: vi.fn() }));
@@ -38,7 +38,7 @@ it("renders saved reports with the live report presentation and safe source link
   expect(screen.getByText("Published estimate")).toBeTruthy();
   expect(screen.getByText(`${report.remediation[0].title} · Multi-year`)).toBeTruthy();
   expect(screen.getByText("Confirm with an ecologist before acting.")).toBeTruthy();
-  expect(screen.getByText("AI-generated; values are published estimates, not measurements.")).toBeTruthy();
+  expect(screen.getByText(AI_GENERATED_DISCLAIMER)).toBeTruthy();
   expect(screen.getByRole("button", { name: "Export" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: /^Sources \(/ }));
   expect(screen.getByRole("link", { name: "SoilGrids documentation" }).getAttribute("href")).toBe("https://docs.isric.org/");

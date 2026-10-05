@@ -24,6 +24,7 @@ import { groundLiteratureClaims, normalizeProviderReport, pairLiteratureProvenan
 import * as webEvidence from '@/lib/server/services/web-evidence';
 import { isStrategyKnowledgeTool } from '@/lib/regional-intelligence';
 import agriCatalogueFixture from './agri-tool-catalogue-56467bd4.fixture.json';
+import agriCurrentCatalogueFixture from './agri-tool-catalogue-current.fixture.json';
 
 type CatalogueEntry = { type: 'function'; function: { name: string; description: string; parameters: Record<string, unknown> } };
 type ProviderTool = { type: string; function: { name: string; parameters: Record<string, unknown> } };
@@ -33,6 +34,9 @@ const asProviderTools = (tools: unknown): ProviderTool[] => tools as ProviderToo
 
 /** The agri catalogue live during the 2026-09-28 incident: `agent/llm.py::tool_schemas` at 56467bd4. */
 const AGRI_CATALOGUE_56467BD4 = agriCatalogueFixture as unknown as CatalogueEntry[];
+
+/** The catalogue `GET /agent-tools/` publishes NOW with SOIL_PROPERTIES_READS_ENABLED=true (production). */
+const AGRI_CATALOGUE_CURRENT = agriCurrentCatalogueFixture as unknown as CatalogueEntry[];
 
 /**
  * The round-1 shape of d060dd2b, the last catalogue Gemini accepted: 112 properties, 208 enum
@@ -132,6 +136,26 @@ describe('provider tool complexity budget (2026-09-28 schema_too_complex inciden
     expect(total.properties).toBeLessThanOrEqual(KNOWN_GOOD_ROUND_ONE_BUDGET.properties);
     expect(total.enumValues).toBeLessThanOrEqual(KNOWN_GOOD_ROUND_ONE_BUDGET.enumValues);
     expect(total.constraints).toBeLessThanOrEqual(KNOWN_GOOD_ROUND_ONE_BUDGET.constraints);
+  });
+
+  // The CURRENT published catalogue (soil flag on, drought/fire history re-published 2026-10-04),
+  // as `GET /agent-tools/` serves it. agri `test_agent_closest_datapoint.py::
+  // test_the_web_current_catalogue_fixture_is_the_published_catalogue` fails when it drifts.
+  it('keeps the CURRENT published catalogue within the last accepted shape', () => {
+    const current = (AGRI_CATALOGUE_CURRENT as CatalogueEntry[]).map(({ function: tool }) => ({
+      name: tool.name, description: tool.description, input_schema: structuredClone(tool.parameters),
+    }));
+    expect(current.map((tool) => tool.name)).toEqual(expect.arrayContaining([
+      'drought_history_at_point', 'fire_history_near_point', 'soil_properties_at_point',
+    ]));
+    const tools = asProviderTools(providerFunctionTools(
+      [SEARCH_TOOL, REPORT_TOOL, ...current, ...landContextTools()], roundOneReportSchema(), DEFAULT_MODEL,
+    ));
+    const total = totalComplexity(tools.map((tool) => tool.function.parameters));
+    expect(total.properties).toBeLessThanOrEqual(KNOWN_GOOD_ROUND_ONE_BUDGET.properties);
+    expect(total.enumValues).toBeLessThanOrEqual(KNOWN_GOOD_ROUND_ONE_BUDGET.enumValues);
+    expect(total.constraints).toBeLessThanOrEqual(KNOWN_GOOD_ROUND_ONE_BUDGET.constraints);
+    expect(tools.flatMap((tool) => tool.function.name === REPORT_TOOL.name ? [] : enumArrays(tool.function.parameters))).toEqual([]);
   });
 
   it('would have failed on the incident shape, so the budget is a real tripwire', () => {

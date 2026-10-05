@@ -36,7 +36,6 @@ export type SourceStatus = (typeof SOURCE_STATUSES)[number];
 /** How many findings / recommendations are visible before "Show more". */
 export const KEY_ITEM_LIMIT = 3;
 
-export const REPORT_FOOTER_NOTE = "AI-generated; values are published estimates, not measurements.";
 export const PARTIAL_NOTE = "Some sources unavailable — see Sources.";
 
 export interface CitationView {
@@ -282,8 +281,11 @@ function checkScope(check: EvidenceCheck, stageLabel: string | null): string {
   return [stageLabel, scope].filter(Boolean).join(": ");
 }
 
-/** `"<source> [<id>]: text"`, the prefix the server stamps on a per-read limitation. */
-const ATTRIBUTED_LIMITATION = /^(\S+) \[([^\]]+)\]: ([\s\S]+)$/;
+/**
+ * `"<source>: text"`, the prefix `regionalLaneLimitation` stamps on a lane's one gap line; an optional
+ * `" [<read id>]"` (older saved reports) pins it to that read's lane.
+ */
+const ATTRIBUTED_LIMITATION = /^(\S+?)(?: \[([^\]]+)\])?: ([\s\S]+)$/;
 
 function citationView(citation: LiteratureCitation): CitationView {
   const direction = citation.direction ? `direction: ${humanize(citation.direction)}` : null;
@@ -329,6 +331,8 @@ function freshnessEntry(source: string, value: string, now: number): { status: S
 interface RowDraft extends SourceRow {
   rank: number;
   gap: string | null;
+  /** A failed call's reason: the gap only when the server wrote no lane line for this row. */
+  failedReason: string | null;
 }
 
 /** Groups evidence checks by lane (local + history merge; repeated literature lookups merge as ×N). */
@@ -352,7 +356,7 @@ export function buildSourcesView(input: {
     if (!row) {
       row = {
         laneId, label: laneLabel(laneId), status: "Error", rank: Number.POSITIVE_INFINITY,
-        day: null, dayNote: null, callCount: 0, details: [], citations: [], gap: null,
+        day: null, dayNote: null, callCount: 0, details: [], citations: [], gap: null, failedReason: null,
       };
       rows.set(laneId, row);
     }
@@ -380,7 +384,9 @@ export function buildSourcesView(input: {
       addDetail(row, checkScope(check, stageLabel));
       addDetail(row, check.summary);
       if (check.reason) addDetail(row, humanize(check.reason));
-      if (isFailedCheck(check) && row.gap === null) row.gap = humanize(check.reason ?? check.summary ?? "no data for the requested day");
+      if (isFailedCheck(check) && row.failedReason === null) {
+        row.failedReason = humanize(check.reason ?? check.summary ?? "no data for the requested day");
+      }
     }
   }
 
@@ -388,7 +394,9 @@ export function buildSourcesView(input: {
   for (const limitation of arrayOf<string>(evidence?.limitations)) {
     if (typeof limitation !== "string" || !limitation.trim()) continue;
     const match = ATTRIBUTED_LIMITATION.exec(limitation.trim());
-    const laneId = match ? callLane.get(match[2]) ?? (rows.has(laneIdFor(match[1])) ? laneIdFor(match[1]) : null) : null;
+    const laneId = match
+      ? (match[2] ? callLane.get(match[2]) : undefined) ?? (rows.has(laneIdFor(match[1])) ? laneIdFor(match[1]) : null)
+      : null;
     if (match && laneId) {
       const row = rowFor(laneId);
       if (row.gap === null) row.gap = match[3];
@@ -432,17 +440,21 @@ export function buildSourcesView(input: {
   }
 
   const drafts = [...rows.values()];
+  // The server's one lane line wins; a failed call's reason (already a row detail) fills in otherwise.
+  for (const row of drafts) row.gap ??= row.failedReason;
   const gaps = drafts
     .filter((row) => row.gap !== null)
     .map((row) => ({ laneId: row.laneId, label: row.label, text: row.gap as string }));
   return {
-    rows: drafts.map(({ rank: _rank, gap: _gap, ...row }) => row),
+    rows: drafts.map(({ rank: _rank, gap: _gap, failedReason: _failedReason, ...row }) => row),
     gaps,
     caveats,
     webSources: arrayOf<{ title: string; url: string }>(input.webSources).filter(
       (source) => isRecord(source) && typeof source.title === "string" && httpsOrHttp(source.url),
     ),
-    isPartial: gaps.length > 0,
+    // Partial means a source could not answer; a lane line on an answered row (static layer, nearest
+    // cell, a governed absence) is a gap note, not an unavailable source.
+    isPartial: drafts.some((row) => row.gap !== null && (row.status === "Not published" || row.status === "Error")),
   };
 }
 
@@ -561,7 +573,7 @@ export function recommendationLine(item: RecommendationView): string {
 
 /** Markdown for a view; the export never reads the raw response, only the view the screen draws. */
 export function reportViewToMarkdown(view: ReportView): string {
-  const lines: string[] = [`# Regional analysis — ${AI_GENERATED_LABEL}`, "", AI_GENERATED_DISCLAIMER, ""];
+  const lines: string[] = [`# Regional analysis — ${AI_GENERATED_LABEL}`, ""];
   lines.push(`## Risk: ${view.risk.label}`, view.risk.headline);
   if (view.sources.isPartial) lines.push("", `> ${PARTIAL_NOTE}`);
   if (view.findings.length) {
@@ -604,7 +616,8 @@ export function reportViewToMarkdown(view: ReportView): string {
       for (const source of webSources) lines.push(`- [${escapeMarkdown(source.title)}](${markdownLinkUrl(source.url)})`);
     }
   }
-  lines.push("", `_${REPORT_FOOTER_NOTE}_`);
+  // The one footer block, as on screen: the disclaimer verbatim (agri agent/AGENTS.md: legally load-bearing).
+  lines.push("", `_${AI_GENERATED_DISCLAIMER}_`);
   return lines.join("\n");
 }
 

@@ -20,12 +20,17 @@ from agri_data_service.parquet_ops.request_params import (
 from agri_data_service.warehouse.parquet.tiers import BASE_ZOOM_TIER, TIER_RESOLUTION_DEGREES
 
 if TYPE_CHECKING:
+    from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.foundation.parquet.zoom import ZoomTier
 
 PAGE_DAYS: Final = 3
-#: Lane-day resolutions one call may make, selected-day reads included. 12 = four lanes x (two history
-#: days + one selected day); each read is a separate capped query, so peak memory does not grow with it.
-MAX_LANE_DAY_READS: Final = 12
+#: Reads every dated lane reserves outside its history page: the selected day, and the one
+#: nearest-published-day substitution read (agent/AGENTS.md, "Closest-datapoint reads").
+RESERVED_READS_PER_LANE: Final = 2
+#: Lane-day resolutions one call may make, selected-day AND substitution reads included. 16 = four
+#: lanes x (two history days + one selected day + one substitution); each read is a separate capped
+#: query, so peak memory does not grow with it.
+MAX_LANE_DAY_READS: Final = 16
 #: The history floor for multi-lane surfaces (owner decision 2026-10-04): never one day per page again.
 #: Met by sizing MAX_LANE_DAY_READS, not by overriding the budget; a test pins it per catalogue surface.
 MIN_MULTI_LANE_HISTORY_DAYS: Final = 2
@@ -146,11 +151,19 @@ def utc_today() -> date:
     return datetime.now(UTC).date()
 
 
-def evidence_days(first: date, last: date, selected: date, published: set[date], *, today: date) -> tuple[date, ...]:
+def schedule_ceiling(kind: PartitionKind, today: date) -> date | None:
+    """The last schedulable day: UTC today for observations, none for a forecast (its future IS the data)."""
+    return None if kind == "forecast" else today
+
+
+def evidence_days(
+    first: date, last: date, selected: date, published: set[date], *, today: date | None
+) -> tuple[date, ...]:
     """Rank page 1 as selected, nearest published before, nearest published after, then the endpoints.
 
     The rest of the schedule distributes reads across the published dates, then the calendar gaps,
-    so integer page offsets still cover every day of the window. No day after `today` is scheduled.
+    so integer page offsets still cover every day of the window. No day after `today` is scheduled;
+    `today=None` (a forecast read, `schedule_ceiling`) schedules future days too.
     """
     available = sorted(day for day in published if first <= day <= last)
     before = [day for day in available if day < selected]
@@ -160,12 +173,12 @@ def evidence_days(first: date, last: date, selected: date, published: set[date],
         index_days = balanced_days(date.min, date.min + timedelta(days=len(available) - 1), date.min)
         priority.extend(available[(day - date.min).days] for day in index_days)
     priority.extend(balanced_days(first, last, selected))
-    return tuple(day for day in dict.fromkeys(priority) if day <= today)
+    return tuple(day for day in dict.fromkeys(priority) if today is None or day <= today)
 
 
 def history_page_days(lane_count: int) -> int:
-    """Bound total lane-day work, reserving one exact selected-day read per lane."""
-    return min(PAGE_DAYS, max(1, MAX_LANE_DAY_READS // max(1, lane_count) - 1))
+    """Bound total lane-day work, reserving the selected-day and substitution reads of every lane."""
+    return min(PAGE_DAYS, max(1, MAX_LANE_DAY_READS // max(1, lane_count) - RESERVED_READS_PER_LANE))
 
 
 def support_lattice(surface: str, tier: ZoomTier) -> tuple[float, float, float]:

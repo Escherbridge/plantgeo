@@ -15,7 +15,8 @@ vi.mock('openai', () => ({
     chat = { completions: { stream: mocks.completionStream } };
   },
 }));
-import { bindRegionalEvidenceArguments, boundedEvidence, buildLiteratureServerContext, evidenceResultStatus, literatureSiteFacts, literatureUserQuestion, MAX_LITERATURE_RESULTS, prepareRegionalAnalysis, REGIONAL_ANALYSIS_THEMES, regionalEvidenceAuditCall, regionalEvidenceDay, regionalEvidenceLimitations, regionalEvidenceStageStatus, regionalFactsForRead, siteFactObservationsForRead, STRATEGY_SCREENING } from '@/lib/server/services/regional-analysis-workflow';
+import { bindRegionalEvidenceArguments, boundedEvidence, buildLiteratureServerContext, evidenceResultStatus, literatureSiteFacts, literatureUserQuestion, MAX_LITERATURE_RESULTS, prepareRegionalAnalysis, REGIONAL_ANALYSIS_THEMES, regionalEvidenceAuditCall, regionalEvidenceDay, regionalEvidenceLimitations, regionalEvidenceStageStatus, regionalFactsForRead, regionalInitialSurfaces, siteFactObservationsForRead, STRATEGY_SCREENING } from '@/lib/server/services/regional-analysis-workflow';
+import { buildReportView, laneIdFor } from '@/lib/regional-evidence-presentation';
 import { RegionalEvidenceArgumentError } from '@/lib/server/services/regional-evidence-tools';
 import { UpstreamHttpError } from '@/lib/server/http/bounded-upstream';
 import { analysisDateRange } from '@/lib/regional-analysis-selection';
@@ -57,14 +58,15 @@ describe('regional evidence graph', () => {
   it('prefetches every theme plus the selected layers, each at its own day, with trailing history', async () => {
     const result = await prepareRegionalAnalysis(payload, temporal);
     const local = result.evidence.toolCalls.filter((call) => call.stage === 'local');
-    // Eight theme anchors, then the four selected layers no anchor already covers.
+    // The selected layers (four beyond the anchors) and all eight theme anchors: the set, in any order.
     expect(local.map((call) => call.source).sort()).toEqual([
       ...REGIONAL_ANALYSIS_THEMES.flatMap((theme) => theme.anchors),
       'climate-field-soil-wetness-root-zone', 'soil-field-moisture', 'soil-field-temperature', 'soil-field-vpd',
     ].sort());
     expect(JSON.parse(result.context).availableLayers).toEqual([...REGIONAL_TOOL_EVIDENCE_SOURCES]);
     expect(JSON.parse(result.context).observations).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'local-1', evidenceReadId: 'local-1', evidenceSource: 'fire-detections', evidenceStatus: 'observed' }),
+      // The user's own selected layer is read first (review fix M1).
+      expect.objectContaining({ id: 'local-1', evidenceReadId: 'local-1', evidenceSource: 'climate-field-precipitation', evidenceStatus: 'observed' }),
     ]));
     expect(result.evidence.stages.map((stage) => stage.id)).toEqual(['inventory', 'local', 'temporal', 'strategies']);
     expect(local.find((call) => call.source === 'climate-field-precipitation')).toMatchObject({
@@ -138,10 +140,27 @@ describe('regional evidence graph', () => {
     await vi.advanceTimersByTimeAsync(33_000);
     const result = await pending;
     expect(maximum).toBe(2);
-    expect(mocks.call.mock.calls.slice(0, 2).map((call) => call[1].surface_name)).toEqual(['fire-detections', 'drought-areas']);
+    // The user's own layers read first; the theme anchors queue behind them.
+    expect(mocks.call.mock.calls.slice(0, 2).map((call) => call[1].surface_name)).toEqual(['climate-field-precipitation', 'climate-field-soil-wetness-root-zone']);
     expect(result.evidence.toolCalls.some((call) => call.stage === 'local' && call.status === 'not_queried')).toBe(true);
     expect(result.evidence.toolCalls.some((call) => call.stage === 'temporal' && call.status === 'error')).toBe(true);
     expect(result.evidence.toolCalls.some((call) => call.status === 'observed')).toBe(false);
+  });
+
+  it.each([
+    {
+      name: 'no selection reads the theme anchors, interleaved',
+      selected: [] as string[],
+      planned: ['fire-detections', 'drought-areas', 'weather-observations', 'water-gauges', 'soil-survey', 'vegetation', 'climate-field-precipitation', 'fire-perimeters'],
+    },
+    {
+      name: 'selected layers first (an anchor among them, four others), then every remaining anchor',
+      selected: ['soil-field-vpd', 'vegetation', 'not-offered', 'soil-field-moisture', 'soil-field-temperature', 'climate-field-dew-point', 'climate-field-wind-speed'],
+      planned: ['soil-field-vpd', 'vegetation', 'soil-field-moisture', 'soil-field-temperature', 'climate-field-dew-point',
+        'fire-detections', 'drought-areas', 'weather-observations', 'water-gauges', 'soil-survey', 'climate-field-precipitation', 'fire-perimeters'],
+    },
+  ])('plans initial reads: $name', ({ selected, planned }) => {
+    expect(regionalInitialSurfaces(selected, [...REGIONAL_TOOL_EVIDENCE_SOURCES])).toEqual(planned);
   });
 
   it('keeps failed catalogue discovery explicit without attempting any data tools', async () => {
@@ -331,6 +350,92 @@ describe('regional evidence graph against the agri selection reader (owner decis
         .toContain(`Served day ${audit.resolvedDay}`);
     }
     expect(readRegionalAnalysisEvidence(result.evidence)).not.toBeNull();
+  });
+
+  /** One closest-datapoint shape per lane, as the agri reader returns it (agent/AGENTS.md contract table). */
+  const closestDatapointCases = [
+    {
+      name: 'soil survey reads its nearest delineation from the SELECTED entry (features carry no spatial fields)',
+      surface: 'soil-survey',
+      selected: { static: true, release_day: '2026-01-01', spatial_relation: 'nearest_cell', distance_km: 5.56, distance_km_basis: 'delineation_edge',
+        proven_nearest: true, features: [{ properties: { muname: 'Loam', areaSymbol: 'ID001' } }] },
+      lane: { lane_nature: 'static_lookup', static: true },
+      audit: { status: 'observed', cellDistanceKm: 5.6, staticLayer: true },
+      line: 'soil-survey: static layer, current release; no soil map unit covers the point; nearest delineation 5.6 km (used)',
+    },
+    {
+      name: 'a station lane answers with its nearest station',
+      surface: 'weather-observations',
+      selected: { spatial_relation: 'nearest_cell', distance_km: 15.3, distance_km_basis: 'source_coordinate',
+        features: [{ covers_probe_point: false, spatial_relation: 'nearest_cell', distance_km: 15.3, distance_km_basis: 'source_coordinate', properties: { temperature_c: 21 } }] },
+      lane: {},
+      audit: { status: 'observed', cellDistanceKm: 15.3 },
+      line: 'weather-observations: no station at the point; nearest station 15.3 km (used)',
+    },
+    {
+      name: 'a point outside every drought area is not given the nearest area as its value',
+      surface: 'drought-areas',
+      selected: { spatial_relation: 'nearest_area_outside', distance_km: 121.43, distance_km_basis: 'geometry_centroid',
+        features: [{ covers_probe_point: false, spatial_relation: 'nearest_area_outside', distance_km: 121.43, properties: { dm_category: 1 } }] },
+      lane: { lane_nature: 'release_series' },
+      audit: { status: 'observed' },
+      line: 'drought-areas: not inside any drought area; nearest 121.4 km (to its centroid)',
+    },
+    {
+      name: 'a governed absence keeps its measured zero and names the nearest day as context',
+      surface: 'fire-detections',
+      selected: { state: 'governed_absence', features: [], absence: { reason: 'source_empty' }, nearest_published_day: '2026-10-02', nearest_day_offset: -2 },
+      lane: { tolerance_days: 3 },
+      audit: { status: 'governed_absence' },
+      line: 'fire-detections: governed absence on 2026-10-04 (published as no records, not a gap); nearest published 2026-10-02 (2 d earlier, context only)',
+    },
+    {
+      name: 'an unwritten day beyond tolerance says how far the nearest published day is',
+      surface: 'climate-field-precipitation',
+      selected: { state: 'day_not_written', features: [], nearest_published_day: '2026-08-25', nearest_day_offset: -40 },
+      lane: { tolerance_days: 3 },
+      audit: { status: 'unavailable' },
+      line: 'climate-field-precipitation: no record on 2026-10-04; nearest published 2026-08-25 (40 d earlier, beyond the 3-day tolerance)',
+    },
+  ];
+  const closestDatapointResponder = (args: Args) => {
+    const match = closestDatapointCases.find((entry) => entry.surface === args.surface_name);
+    return match ? agriEnvelope(args, match.selected, match.lane) : undefined;
+  };
+
+  it.each(closestDatapointCases)('words the lane line from the agri closest-datapoint fields: $name', async ({ surface, audit, line }) => {
+    respond(closestDatapointResponder);
+    const result = await prepareRegionalAnalysis(payload, current);
+    const local = result.evidence.toolCalls.find((call) => call.stage === 'local' && call.source === surface);
+    expect(local).toMatchObject(audit);
+    if (!('cellDistanceKm' in audit)) expect(local).not.toHaveProperty('cellDistanceKm');
+    expect(result.evidence.limitations.filter((entry) => entry.startsWith(`${surface}:`))).toEqual([line]);
+    expect(readRegionalAnalysisEvidence(result.evidence)).not.toBeNull();
+  });
+
+  it('files every lane line the workflow writes under that lane in the report view (screen and export)', async () => {
+    respond(closestDatapointResponder);
+    const result = await prepareRegionalAnalysis(payload, current);
+    const view = buildReportView({
+      aiGenerated: true,
+      riskSummary: { level: 'low', headline: 'Flow test.', factors: [], evidenceOrigin: 'model_inference', evidenceSources: [] },
+      observations: [], remediation: [], professionalConsultation: '', webSources: [], dataFreshness: {},
+      analysisEvidence: result.evidence,
+    });
+    const surfaces = new Set(result.evidence.toolCalls.map((call) => call.source));
+    const laneLines = result.evidence.limitations
+      .map((line) => /^(\S+?): ([\s\S]+)$/.exec(line))
+      .filter((match): match is RegExpExecArray => match !== null && surfaces.has(match[1]));
+    expect(laneLines.map((match) => match[1]).sort()).toEqual(expect.arrayContaining(closestDatapointCases.map((entry) => entry.surface).sort()));
+    for (const [, source, text] of laneLines) {
+      expect(view.sources.rows.some((row) => row.laneId === laneIdFor(source))).toBe(true);
+      expect(view.sources.gaps).toContainEqual(expect.objectContaining({ laneId: laneIdFor(source), text }));
+    }
+    // None of these lane lines leaks into the unattributed Caveats.
+    expect(view.sources.caveats.some((caveat) => laneLines.some(([line]) => caveat === line))).toBe(false);
+    // Every lane line here is a note on an answered row (precipitation answered through its history
+    // read), so none makes the report "partial": that is reserved for Not published / Error rows.
+    expect(view.sources.isPartial).toBe(false);
   });
 
   it.each([

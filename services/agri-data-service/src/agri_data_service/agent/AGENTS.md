@@ -303,7 +303,7 @@ observation dates. Refusals are retained per lane/day and do not erase other dep
 
 Each call retains the exact selected day and limits additional history to three days for
 one to three lanes, or two days for four lanes. The shared page budget admits at most
-twelve lane-day resolutions including selected-day reads; cold multi-depth requests must fit
+sixteen lane-day resolutions including selected-day and substitution reads; cold multi-depth requests must fit
 the ordinary tool deadline. The history schedule starts with the selected day and its nearest
 actual published neighbours on both sides, then both active-window endpoints, and never schedules
 a day after the server's UTC today (see "Closest-datapoint reads (2026-10-04)"). Subsequent pages distribute
@@ -345,13 +345,21 @@ every earlier state and field keeps its meaning; the ones below are new.
 The NDVI row is the one hand-spelled fact: a `daily_series` may not declare `cadence_days > 1`,
 so the registry records the measured 7-day revisit gap as its `publication_lag_days`, and
 `SPARSE_REVISIT_LANES` says "read that as the interval". When the selected day is `day_not_written`
-or a `governed_absence` and a published day lies within tolerance, the selected entry becomes
-`published_nearest`, served from that day; a tie goes to the EARLIER day (it is settled). Beyond
-tolerance the entry keeps its unpublished state and adds `nearest_published_day`/`nearest_day_offset`
-("nearest is 40 days back"). A `conflict`/`incomplete` day still refuses: a warehouse fault is not
-a gap to paper over. Substitution applies to the SELECTED day only; history entries stay exact
+and a published day lies within tolerance, the selected entry becomes `published_nearest`, served
+from that day; a tie goes to the EARLIER day (it is settled). Beyond tolerance the entry keeps its
+unpublished state and adds `nearest_published_day`/`nearest_day_offset` ("nearest is 40 days back").
+**A `governed_absence` is never substituted** (review fix H3, 2026-10-04): it is a published answer
+-- for fire-detections, FIRMS returned zero detections (`fire_detections/adapter.py`) -- so another
+day's numbers must not replace a measured zero. It keeps its state and gains
+`nearest_published_day`/`nearest_day_offset` as information only, inside tolerance or not. A
+`conflict`/`incomplete` day still refuses: a warehouse fault is not a gap to paper over. Substitution applies to the SELECTED day only; history entries stay exact
 calendar samples, so history never borrows. The nearest search reads the listing for the window's
-years plus one year each side of the selected day, and never a day after the server's UTC today.
+years plus one year each side of the selected day, and never a day after the server's UTC today
+for an `observed` read. `selection_scope.schedule_ceiling(kind, today)` is the one rule: `observed`
+stops at UTC today (an observation dated tomorrow does not exist), `forecast` has no ceiling (its
+future days ARE the data), for the history schedule and the nearest-day search alike
+(`lane_selection(kind=...)`). No surface routes a forecast-kind read through this reader yet:
+`fire-risk` and `weather-forecast` are `APP_SURFACE_NAMES`, answered by the map app's reader.
 The system prompt is deliberately unchanged (`test_both_flags_off_is_the_wave_two_graph_exactly`
 pins it byte for byte): how to word a `published_nearest` or `nearest_cell` answer travels in the
 tool result's own `note`, beside the evidence it explains.
@@ -361,15 +369,31 @@ support in the tile covers the point, an expanding-box nearest-neighbour search 
 selection SQL over probe-centred boxes (0.25 degrees, then x4 each step, at most six steps), stopping
 once the best hit lies inside the box's inscribed circle (nothing outside the box can be nearer) or
 the box covers the region envelope. Each step re-reads only the receipt-verified local copies of
-that day's parts. `distance_km` is a great-circle (haversine) distance and `distance_km_basis` says
+that day's parts. The search runs ONLY for the selected-day answer (and its substitution read;
+`SelectionReader.nearest_search`): history days stay tile-only samples, so a page never multiplies
+the search. **Station lanes** (point support with lattice size 0: water-gauges and
+weather-observations at the base rung) never "cover" a point, so their nearest station IS the
+answer: one bounded query over the region envelope widened to hold the probe, ordered by distance
+and capped at `NEAREST_CELL_CANDIDATES` rows (`_nearest_station`), never the six-box search.
+**Polygon lanes** (drought-areas, fire-perimeters, evacuation-zones, burn-severity, watersheds; any
+`GeometrySupport`) report a nearest polygon as `spatial_relation: "nearest_area_outside"`: the point
+lies inside NO area, which is itself the answer ("not inside any drought area"), and the nearest
+area and its centroid distance are context, never the value at the point. `distance_km` is a great-circle (haversine) distance and `distance_km_basis` says
 to what: `cell_edge` (lattice support box), `source_coordinate` (point lanes with no lattice),
 `geometry_centroid` (polygon lanes; the exact covers test is `ST_Intersects`), `delineation_edge`
 (SSURGO, local equirectangular, sub-percent at the <= 9 km search bound), or `covers` (0 km).
+SSURGO's nearest delineation also carries `proven_nearest`: `false` when the best hit of the last
+search box lies outside that box's inscribed circle (a nearer delineation beyond the box cannot be
+ruled out). The hit is returned rather than discarded; `nearest_search` says why the search stopped.
 
 **3. History ranking.** Page 1: selected day, nearest published before, nearest published after,
-then the window endpoints, then published dates, then calendar gaps. `MAX_LANE_DAY_READS` rose
-from 8 to 12 so four-lane soil temperature reads two history days (was one); three-lane surfaces
-read three. Peak memory does not grow with it: each lane-day is a separate capped query run in
+then the window endpoints, then published dates, then calendar gaps. `MAX_LANE_DAY_READS` is 16:
+every dated lane reserves `RESERVED_READS_PER_LANE = 2` reads outside its history page (the
+selected day and the one nearest-day substitution read), so four-lane soil temperature reads two
+history days and three-lane surfaces read three, and `lanes x (page_days + 2) <= 16` holds for every
+catalogue surface (pinned against `SURFACE_PARQUET_LANES`). The substitution read reuses a history
+read of the same day when that read already covers the point. Each lane reports `lane_day_reads`
+and the envelope's `history.lane_day_reads` sums them (also logged). Peak memory does not grow with it: each lane-day is a separate capped query run in
 sequence inside one `SERVING_MEMORY_LIMIT` session, so `read_over_budget` is per query. The real
 cost is latency against the 12 s `TOOL_TIMEOUT_SECONDS`, which is the first thing to watch in the
 `agent_tool_call` log (`duration_ms`). A test pins the two-day floor against `SURFACE_PARQUET_LANES`.
@@ -385,14 +409,21 @@ geometry. Other static lanes use the map's `/release` rule, `resolve_release(as_
 `requested_day`, `served_day` (when all lanes agree), `day_offset` (furthest from zero across
 lanes), `spatial_relation` (`nearest_cell` if any lane fell back), `distance_km` (largest),
 `state` (lanes' shared state, else `mixed`; `rejected`/`error` for 400/503 paths), `lane_states`,
-`static`, `refusal_code`, `duration_ms`, `record_count` (ledger rows). Never arguments, coordinates
+`static`, `refusal_code`, `duration_ms`, `record_count` (ledger rows), `lane_day_reads` (every
+resolution the call made, substitution reads included). Never arguments, coordinates
 or payloads.
 
 **6. Drought and fire history re-published.** `drought_history_at_point` and
 `fire_history_near_point` take only numbers and an optional ISO day: no enum array, so they add
 nothing to the Gemini forced-call "too many states" count (an array of enums with a bound is the
 known trigger). `test_agent_closest_datapoint.py` checks that and drives the drought tool through
-the HTTP bridge over real DuckDB.
+the HTTP bridge over real DuckDB. The whole round-1 budget is measured on the web against the
+CURRENT catalogue (soil flag on, as production runs): `src/__tests__/services/
+agri-tool-catalogue-current.fixture.json`, which
+`test_the_web_current_catalogue_fixture_is_the_published_catalogue` keeps equal to
+`environmental_tool_schemas()`. Measured 2026-10-04: 100 properties / 84 enum values / 30
+constraints with the web's own tools, against the last accepted 112 / 208 / 102 (rejected at 117
+properties). Regenerate the fixture whenever a tool schema changes.
 
 ### Contract for the web (`regional-analysis-evidence.ts` evidence fields)
 
@@ -404,14 +435,17 @@ Read from `result.lanes[i].selected` of `surface_evidence_for_selection`:
 | `requested_day` | the caller's selected day (absent on static lanes) | `selectedDate` |
 | `served_day` | the day actually read (`release_day` on static lanes) | `resolvedDay` |
 | `day_offset` | `served_day - requested_day` in days, signed; 0 = exact | `dayOffset` |
-| `nearest_published_day`, `nearest_day_offset` | only on an unpublished entry beyond tolerance | `reason` text ("nearest is 40 days back") |
-| `tolerance_days`, `tolerance_rule`, `resolution` | on each lane entry | (diagnostic) |
-| `spatial_relation` | `covers` or `nearest_cell` | `cellDistanceKm` absent/0 for `covers` |
-| `distance_km`, `distance_km_basis` | great-circle km, and what it measured | `cellDistanceKm` |
+| `nearest_published_day`, `nearest_day_offset` | on a `day_not_written` entry beyond tolerance, and on EVERY `governed_absence` | the lane's gap line ("no record on 2026-10-04; nearest published 2026-08-25 (40 d earlier, beyond the 3-day tolerance)") |
+| `tolerance_days`, `tolerance_rule`, `resolution` | on each lane entry | `tolerance_days` words the gap line; the rest diagnostic |
+| `spatial_relation` | `covers`, `nearest_cell` (grid cell, station or SSURGO delineation: used as the answer), or `nearest_area_outside` (polygon lanes: inside no area; information only) | `cellDistanceKm` for `nearest_cell` only; `nearest_area_outside` becomes the gap line "not inside any drought area; nearest N km (to its centroid)" |
+| `distance_km`, `distance_km_basis` | great-circle km, and what it measured (`cell_edge`, `source_coordinate`, `geometry_centroid`, `delineation_edge`, `covers`) | `cellDistanceKm`; the basis words the gap line (cell / station / delineation / area centroid) |
+| `proven_nearest` | SSURGO only: `false` when a nearer delineation beyond the searched box is possible | (diagnostic) |
 | `static` | `true` on static lanes (and their selected entry) | `staticLayer` |
 
-Feature-level `spatial_relation` keeps `contains_selection`/`intersects_selection_tile` and adds
-`nearest_cell`; each feature also carries `distance_km`/`distance_km_basis`.
+The web reads these from the SELECTED entry first (soil survey's features carry none of them) and
+falls back to feature-level fields for older readers. Feature-level `spatial_relation` keeps
+`contains_selection`/`intersects_selection_tile` and adds `nearest_cell`/`nearest_area_outside`;
+each feature also carries `distance_km`/`distance_km_basis`.
 
 ## Live regional agent tool bridge (2026-09-12)
 

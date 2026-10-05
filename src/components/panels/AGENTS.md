@@ -31,8 +31,12 @@ so the screen and the export cannot drift; a test asserts they are equal.
 Visible by default: risk + headline, up to three findings ("value · day", with "nearest day, N d
 earlier" / "nearest cell, N km" only when the evidence check carries `dayOffset` /
 `cellDistanceKm`), up to three recommendations (title · timeframe + rationale), one consult line
-derived from the recommendations' disciplines with a correct a/an, one footer note, one Export
-menu (copy, Markdown, JSON). Everything else lives in ONE collapsed Sources disclosure:
+derived from the recommendations' disciplines with a correct a/an, one footer block, one Export
+menu (copy, Markdown, JSON). The footer block IS `AI_GENERATED_DISCLAIMER`, verbatim, once per
+report, in small muted text (gray-600 / dark gray-400, both WCAG AA at 11 px): agri
+agent/AGENTS.md calls that sentence legally load-bearing, so it is never paraphrased or shortened.
+It replaced the older "values are published estimates, not measurements" note, which was wrong
+for station observations. Everything else lives in ONE collapsed Sources disclosure:
 
 - One row per lane. Local and history passes for the same source merge; repeated
   strategy-knowledge lookups merge into "Strategy literature ×N". The row shows the BEST status
@@ -41,10 +45,14 @@ menu (copy, Markdown, JSON). Everything else lives in ONE collapsed Sources disc
   published but is not a gap. `not_queried` calls are not rows.
 - Raw scope (stage, requested day, window, zoom to 1 dp, coordinates to 4 dp) only inside the
   row's expand.
-- Gaps: one line per lane — the first failed-call reason or the first `"<source> [<id>]: …"`
-  limitation the server attributed to that lane; further attributed limitations become row
-  details. Unattributed limitations are deduplicated into Caveats. Any gap makes the report
-  "partial" and shows one "Some sources unavailable — see Sources" note.
+- Gaps: one line per lane — the first `"<source>: …"` limitation the server wrote for that lane
+  (`regionalLaneLimitation`; an optional `" [<read id>]"` after the source, from older saved
+  reports, pins it to that read's lane), else the first failed-call reason (which is also a row
+  detail); further attributed limitations become row details. A flow test feeds the workflow's
+  real output into `buildReportView`. Unattributed limitations are deduplicated into Caveats. A gap on a row whose status is
+  Not published or Error makes the report "partial" and shows one "Some sources unavailable — see
+  Sources" note; a lane line on an answered row (static layer, nearest cell, governed absence) is a
+  gap note only, or every report would read partial once the server's lane lines were filed.
 - Initial-context `dataFreshness` entries merge into the matching lane (camelCase key →
   kebab lane id) or become their own row. Deferred model placeholders (`strategyRecommendations`,
   `carbonPotential`) stay hidden while they only say unavailable/pending.
@@ -52,8 +60,8 @@ menu (copy, Markdown, JSON). Everything else lives in ONE collapsed Sources disc
 
 Removed on purpose: per-item origin chips ("AI inference" etc.), strategy chips, AI confidence,
 risk factor chips, per-claim "Cited evidence:" restatements, per-bubble copy/share toolbars, the
-panel-level freshness footer and the duplicate input-area disclaimer. The full
-`AI_GENERATED_DISCLAIMER` is kept in the Markdown export, which travels without the panel.
+panel-level freshness footer and the duplicate input-area disclaimer. The Markdown export ends
+with the same verbatim `AI_GENERATED_DISCLAIMER` footer, so it travels with the export too.
 
 `buildReportView` tolerates an unknown risk level, missing arrays and a null `dataFreshness`;
 it throws `MalformedReportError` only when there is no headline to draw. `RegionalIntelligenceReport`

@@ -149,17 +149,23 @@ async def _parquet_evidence(surface: str, selection: Selection, base: dict[str, 
             "complete": selection.page_start == 0 and next_offset == schedulable,
             "sampling": "selected_then_nearest_published_then_endpoints" if dated_lanes else "static_current_release",
             "sampled_days": sampled,
+            # Every lane-day resolution this call made, substitution reads included (<= the catalogue's
+            # max_lane_day_reads_per_call); a static lane is one read.
+            "lane_day_reads": sum(int(lane.get("lane_day_reads", 1)) for lane in results),
         },
         "note": (
             "Evidence comes from the map's governed lane, serving rung and numeric source support intersecting "
             "the selected tile. covers_probe_point identifies support containing the coordinate. When no support "
             "covers it, spatial_relation is nearest_cell and distance_km is the great-circle distance to that "
-            "cell, however far: say 'the nearest cell is N km away', never that it is the value here. A "
-            "containing grid cell remains a cell measurement, never a point measurement. state "
-            "published_nearest means the selected day was not published and served_day, day_offset days away "
+            "cell or station, however far: say 'the nearest cell is N km away', never that it is the value "
+            "here. nearest_area_outside means the point lies inside NO polygon of this layer (for drought, no "
+            "drought area): that is the answer, and the nearest area and its centroid distance are context "
+            "only. A containing grid cell remains a cell measurement, never a point measurement. state "
+            "published_nearest means the selected day was not written and served_day, day_offset days away "
             "(negative = earlier), is the nearest published day within the lane's tolerance_days; say so. "
-            "Beyond tolerance the day stays unpublished and nearest_published_day/nearest_day_offset say how far "
-            "the nearest one is. static lanes are read at their current release and carry no date. History "
+            "governed_absence is a published answer (for fire-detections, zero detections) and is never "
+            "replaced; it and an unwritten day beyond tolerance carry nearest_published_day/nearest_day_offset "
+            "as information only. static lanes are read at their current release and carry no date. History "
             "starts with the selected day and its nearest published neighbours, then the window endpoints, with "
             "explicit pagination. Unsampled days are unknown; do not infer a complete trend until all pages are "
             "read. Read day states and truncation before features; unwritten or refused data is never zero."

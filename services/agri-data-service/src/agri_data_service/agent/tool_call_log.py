@@ -51,6 +51,8 @@ def tool_call_fields(
         or next((entry.get("refusal_code") for entry in selected if entry.get("refusal_code")), None)
     )
     surface = result.get("surface_name") or arguments.get("surface_name")
+    history = result.get("history")
+    reads = history.get("lane_day_reads") if isinstance(history, dict) else None
     return {
         "tool": name,
         "surface": surface if isinstance(surface, str) else None,
@@ -65,4 +67,5 @@ def tool_call_fields(
         "static": any(lane.get("static") is True for lane in lanes),
         "refusal_code": refusal if isinstance(refusal, str) else None,
         "record_count": sum(int(entry.get("row_count") or 0) for entry in ledger),
+        "lane_day_reads": reads if isinstance(reads, int) else None,
     }

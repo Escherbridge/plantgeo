@@ -11,14 +11,25 @@ from __future__ import annotations
 import json
 import struct
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import Any, Literal
 
 import pytest
 import structlog
 
 from agri_data_service.agent import selection_evidence, soil_survey_reads, tools
-from agri_data_service.agent.selection_scope import PAGE_DAYS, evidence_days
+from agri_data_service.agent.day_tolerance import nearest_published_day
+from agri_data_service.agent.selection_reads import SelectionReader
+from agri_data_service.agent.selection_scope import (
+    MAX_LANE_DAY_READS,
+    PAGE_DAYS,
+    RESERVED_READS_PER_LANE,
+    Selection,
+    evidence_days,
+    schedule_ceiling,
+)
+from agri_data_service.agent.soil_properties import READS_ENABLED_VARIABLE
 from agri_data_service.config import settings
 from agri_data_service.foundation.soil_survey.receipts import AreaCensusEntry, AreaInventory, Blob, digest, encoded
 from agri_data_service.foundation.soil_survey.release import Release, ShardRef, manifest_key, release_key
@@ -28,8 +39,10 @@ from agri_data_service.routes import agent_tools as route
 from tests.direct.soil_survey.fakes import AREA, VINTAGE, completed
 from tests.test_agent_selection_evidence import LocalWarehouse, climate_row
 
-if TYPE_CHECKING:
-    from pathlib import Path
+#: The web's copy of the published catalogue, measured by `ai-prompt-provider-tools.test.ts`.
+WEB_CURRENT_CATALOGUE = (
+    Path(__file__).resolve().parents[3] / "src" / "__tests__" / "services" / "agri-tool-catalogue-current.fixture.json"
+)
 
 DAY = date(2026, 6, 15)
 #: The diagnosed production point: no NDVI cell covers it on any day.
@@ -137,24 +150,50 @@ async def test_selected_day_resolves_to_the_nearest_published_day_within_toleran
         assert selected["distance_km"] == 0.0
 
 
-async def test_a_governed_absence_on_the_selected_day_names_itself_when_substituted(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("surface", "requested_day", "published_offset", "state"),
+    [
+        # Nothing written on the selected day: borrow the nearest published day within tolerance.
+        ("vegetation", "unwritten", -5, "published_nearest"),
+        ("climate-field-dew-point", "unwritten", -1, "published_nearest"),
+        # A governed absence IS a published answer (fire-detections: FIRMS returned zero), so another
+        # day's numbers never replace it -- even one day away, well inside tolerance.
+        ("vegetation", "governed_absence", -5, "governed_absence"),
+        ("climate-field-dew-point", "governed_absence", -1, "governed_absence"),
+    ],
+)
+async def test_only_an_unwritten_day_borrows_and_a_governed_absence_keeps_its_measured_zero(
+    tmp_path: Path, surface: str, requested_day: str, published_offset: int, state: str
+) -> None:
     source = LocalWarehouse()
-    source.listing_store.write_absence(
-        "vegetation",
-        "observed",
-        13,
-        DAY,
-        reason="source_empty",
-        upstream_response="cloud screened",
-        recorded_at=datetime(2026, 6, 16, tzinfo=UTC),
-        run_id="fixture",
-    )
-    write_lane(source, tmp_path, "vegetation", DAY - timedelta(days=5))
-    selected = (await read_surface(source, "vegetation"))["lanes"][0]["selected"]
-    assert selected["state"] == "published_nearest"
-    assert selected["day_offset"] == -5
-    assert selected["requested_day_state"] == "governed_absence"
-    assert selected["requested_day_absence"]["reason"] == "source_empty"
+    if requested_day == "governed_absence":
+        source.listing_store.write_absence(
+            surface,
+            "observed",
+            13,
+            DAY,
+            reason="source_empty",
+            upstream_response="zero records",
+            recorded_at=datetime(2026, 6, 16, tzinfo=UTC),
+            run_id="fixture",
+        )
+    nearest = DAY + timedelta(days=published_offset)
+    write_lane(source, tmp_path, surface, nearest)
+    selected = (await read_surface(source, surface))["lanes"][0]["selected"]
+    assert selected["state"] == state
+    if state == "published_nearest":
+        assert (selected["served_day"], selected["day_offset"]) == (nearest.isoformat(), published_offset)
+        assert selected["requested_day_state"] == "day_not_written"
+        assert selected["features"]
+    else:
+        assert selected["features"] == []
+        assert selected["absence"]["reason"] == "source_empty"
+        assert "served_day" not in selected or selected["served_day"] == DAY.isoformat()
+        # The nearest day is information beside the absence, never its value.
+        assert (selected["nearest_published_day"], selected["nearest_day_offset"]) == (
+            nearest.isoformat(),
+            published_offset,
+        )
 
 
 # --- Decision 2: always the nearest cell, with its distance ------------------------------------
@@ -175,6 +214,71 @@ async def test_a_point_outside_every_cell_gets_the_nearest_cell_and_its_great_ci
     assert nearest["spatial_relation"] == "nearest_cell"
     assert nearest["covers_probe_point"] is False
     assert nearest["properties"]["metric_value"] == 0.41
+
+
+def weather_station_row(day: date, *, longitude: float, latitude: float, temperature: float) -> dict[str, Any]:
+    observed = datetime.combine(day, datetime.min.time(), UTC)
+    return {
+        "latitude": latitude,
+        "longitude": longitude,
+        "observed_at": observed,
+        "observed_day": day,
+        "external_id": f"station-{longitude}/{latitude}",
+        "temperature_c": temperature,
+        "relative_humidity_pct": 40.0,
+        "wind_speed_ms": 2.0,
+        "wind_direction_deg": None,
+        "precipitation_mm": 0.0,
+        "source": "fixture",
+        "feature_id": None,
+        "ingested_at": observed,
+    }
+
+
+async def test_a_station_lane_answers_with_its_nearest_station_in_one_query_on_the_selected_day_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_expanding_search(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("a station lane needs no expanding nearest-cell boxes")
+
+    monkeypatch.setattr(SelectionReader, "_nearest_cell", no_expanding_search)
+    source = LocalWarehouse()
+    before = DAY - timedelta(days=1)
+    for day in (before, DAY):
+        source.write(
+            tmp_path,
+            "weather-observations",
+            day,
+            [
+                weather_station_row(day, longitude=-116.3, latitude=43.49, temperature=21.0),  # ~15 km east
+                weather_station_row(day, longitude=-114.0, latitude=43.49, temperature=30.0),  # ~200 km east
+            ],
+        )
+    result = await read_surface(source, "weather-observations", range_start=before.isoformat())
+    lane = result["lanes"][0]
+    selected = lane["selected"]
+    assert (selected["spatial_relation"], selected["distance_km_basis"]) == ("nearest_cell", "source_coordinate")
+    assert selected["distance_km"] == pytest.approx(15.3, abs=0.2)
+    assert selected["features"][0]["properties"]["temperature_c"] == 21.0
+    # History days are tile-only samples: no station lies in the zoom-13 tile, and none is searched for.
+    history = {entry["requested_day"]: entry for entry in lane["history"]}
+    assert history[before.isoformat()]["features"] == []
+    assert lane["lane_day_reads"] == 2
+
+
+async def test_a_point_outside_every_drought_area_is_not_given_the_nearest_area_as_its_value(tmp_path: Path) -> None:
+    source = LocalWarehouse()
+    write_lane(source, tmp_path, "drought-areas", DAY)  # one D1 square, [-117,-116] x [43,44]
+    selected = (await read_surface(source, "drought-areas", longitude=-118.0, latitude=43.5))["lanes"][0]["selected"]
+    assert selected["state"] == "published"
+    # Outside every polygon IS the answer; the nearest area and its centroid distance are context.
+    assert (selected["spatial_relation"], selected["distance_km_basis"]) == (
+        "nearest_area_outside",
+        "geometry_centroid",
+    )
+    assert selected["distance_km"] == pytest.approx(121.0, abs=1.0)  # to the square's centroid (-116.5, 43.5)
+    nearest = selected["features"][0]
+    assert (nearest["spatial_relation"], nearest["covers_probe_point"]) == ("nearest_area_outside", False)
 
 
 async def test_a_covering_cell_is_covers_at_zero_km(tmp_path: Path) -> None:
@@ -237,6 +341,36 @@ async def test_multi_lane_surfaces_read_two_history_days_and_nothing_after_today
     assert history["schedulable_day_count"] == 3
     assert all(day <= DAY.isoformat() for day in history["sampled_days"])
     assert [len(entry["history"]) for entry in result["lanes"]] == [2, 2, 2, 2]
+    # The written lane substituted its unwritten selected day, and that read is inside the budget.
+    assert [entry["selected"]["state"] for entry in result["lanes"]].count("published_nearest") == 1
+    assert all(entry["lane_day_reads"] <= 2 + RESERVED_READS_PER_LANE for entry in result["lanes"])
+    assert history["lane_day_reads"] == sum(entry["lane_day_reads"] for entry in result["lanes"])
+    assert history["lane_day_reads"] <= MAX_LANE_DAY_READS
+
+
+@pytest.mark.parametrize(
+    ("kind", "last_scheduled", "future_is_nearest"), [("observed", 0, False), ("forecast", 5, True)]
+)
+def test_only_a_forecast_read_schedules_or_borrows_days_after_today(
+    kind: Literal["observed", "forecast"], last_scheduled: int, *, future_is_nearest: bool
+) -> None:
+    """An observation dated after today does not exist; a forecast's future days are its data."""
+    ceiling = schedule_ceiling(kind, DAY)
+    first, last = DAY - timedelta(days=2), DAY + timedelta(days=5)
+    selection = Selection.parse(
+        **BOISE,
+        zoom=13,
+        day=DAY.isoformat(),
+        range_start=first.isoformat(),
+        range_end=last.isoformat(),
+        time_scale="day",
+        page_start=0,
+    )
+    expected = DAY + timedelta(days=last_scheduled)
+    assert max(selection.page(16, today=ceiling)) == expected
+    assert max(evidence_days(first, last, DAY, set(), today=ceiling)) == expected
+    nearest = nearest_published_day({DAY + timedelta(days=2)}, DAY, tolerance_days=3, today=ceiling)
+    assert (nearest is not None) is future_is_nearest
 
 
 # --- Decision 4: soil survey through the admitted release reader -------------------------------
@@ -321,7 +455,24 @@ async def test_soil_survey_outside_every_delineation_reports_the_nearest_one(
     assert selected["spatial_relation"] == "nearest_cell"
     assert selected["distance_km_basis"] == "delineation_edge"
     assert selected["distance_km"] == pytest.approx(5.56, abs=0.05)
+    assert selected["proven_nearest"] is True
     assert len(selected["features"]) == 1
+
+
+async def test_soil_survey_keeps_a_delineation_found_beyond_the_proof_circle_as_unproven(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await _admit_release(tmp_path, monkeypatch)
+    # Diagonal from the (2, 2) corner: ~11 km, inside the last 0.08-degree box but outside its
+    # ~8.9 km inscribed circle, so a nearer delineation beyond the box cannot be ruled out.
+    selected = (await read_surface(LocalWarehouse(), "soil-survey", longitude=2.07, latitude=2.07))["lanes"][0][
+        "selected"
+    ]
+    assert selected["nearest_search"] == "search_bound_reached"
+    assert len(selected["features"]) == 1
+    assert selected["spatial_relation"] == "nearest_cell"
+    assert selected["distance_km"] == pytest.approx(11.0, abs=0.2)
+    assert selected["proven_nearest"] is False
 
 
 # --- Decision 6: the history tools are published, and cost Gemini no enum-array states ---------
@@ -335,6 +486,18 @@ def _enum_arrays(schema: object) -> list[str]:
     if isinstance(schema, list):
         return [hit for value in schema for hit in _enum_arrays(value)]
     return []
+
+
+def test_the_web_current_catalogue_fixture_is_the_published_catalogue(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The web measures Gemini's schema budget against this fixture, so it must be what production serves.
+
+    Production runs with the soil flag on. Regenerate after a catalogue change with
+    `SOIL_PROPERTIES_READS_ENABLED=true uv run python -c "import json; from agri_data_service.routes.agent_tools
+    import environmental_tool_schemas as s; print(json.dumps(s(), indent=2, ensure_ascii=False))"`.
+    """
+    monkeypatch.setenv(READS_ENABLED_VARIABLE, "true")
+    published = json.loads(json.dumps(route.environmental_tool_schemas()))
+    assert json.loads(WEB_CURRENT_CATALOGUE.read_text(encoding="utf-8")) == published
 
 
 async def test_the_drought_history_tool_is_published_and_answers_through_the_bridge(

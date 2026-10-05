@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, within } from "@testing-library/react";
 import { renderWithProviders } from "@/test/utils";
 import type { ChatMessage } from "@/stores/regional-intelligence-store";
-import type { RegionalAnalysisEvidence, RegionalIntelligenceResponse } from "@/lib/regional-intelligence";
+import { AI_GENERATED_DISCLAIMER, type RegionalAnalysisEvidence, type RegionalIntelligenceResponse } from "@/lib/regional-intelligence";
 import { buildReportView, consultLine, sourceRowSummary } from "@/lib/regional-evidence-presentation";
 
 /** jsdom implements no scroll behaviour; the panel calls this once per message list change. */
@@ -152,10 +152,11 @@ describe("regional analysis panel", () => {
     expect(screen.getByText("Fourth finding.")).toBeTruthy();
     expect(screen.getByText("Fourth · Multi-year")).toBeTruthy();
 
-    // Per-item provenance chips and the strategy chip row are gone; one footer note stands in.
+    // Per-item provenance chips and the strategy chip row are gone; the verbatim disclaimer is the footer.
     expect(screen.queryByText(/AI inference/)).toBeNull();
     expect(screen.queryByLabelText("Suggested strategy chips")).toBeNull();
-    expect(screen.getAllByText("AI-generated; values are published estimates, not measurements.")).toHaveLength(1);
+    expect(screen.getAllByText(AI_GENERATED_DISCLAIMER)).toHaveLength(1);
+    expect(document.body.textContent).not.toContain("published estimates, not measurements");
     expect(document.body.textContent).not.toMatch(/\+\d+%|tau/i);
   });
 
@@ -225,7 +226,8 @@ describe("regional analysis panel", () => {
   });
 
   it("states a partial report once and lists one gap line per lane inside Sources", () => {
-    const limitationsWall = Array.from({ length: 12 }, () => "soil-field-moisture [h1]: availability only, not a measured condition.");
+    // The server's real lane-line format (`regionalLaneLimitation`): "<source>: text", no read id.
+    const limitationsWall = Array.from({ length: 12 }, () => "soil-field-moisture: availability only, not a measured condition.");
     showReport(report({
       analysisEvidence: evidence([
         { id: "l1", stage: "local", tool: "surface_value_near_point", source: "soil-field-moisture", resolvedDay: "2026-09-10", status: "observed" },
@@ -281,6 +283,9 @@ describe("regional analysis panel", () => {
     expect(markdown).toContain(`- ${response.observations[0].statement} — ${view.findings[0].meta}`);
     expect(screen.getByText(view.findings[0].meta as string)).toBeTruthy();
     expect(markdown).toContain(view.consult as string);
+    // The legally load-bearing disclaimer travels verbatim, exactly once, as the export's footer.
+    expect(markdown.split(AI_GENERATED_DISCLAIMER)).toHaveLength(2);
+    expect(markdown.trimEnd().endsWith(`_${AI_GENERATED_DISCLAIMER}_`)).toBe(true);
   });
 
   it("files literature citations under the literature row, https links only, escaped in Markdown", () => {

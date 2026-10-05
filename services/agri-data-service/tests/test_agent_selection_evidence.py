@@ -18,6 +18,7 @@ from agri_data_service.agent.selection_scope import (
     MAX_LANE_DAY_READS,
     MIN_MULTI_LANE_HISTORY_DAYS,
     PAGE_DAYS,
+    RESERVED_READS_PER_LANE,
     Selection,
     balanced_days,
     evidence_days,
@@ -200,16 +201,16 @@ async def test_multi_metric_lanes_keep_unwritten_depths_explicit(tmp_path: Path)
 
 
 @pytest.mark.parametrize(("lane_count", "page_days"), [(1, 3), (2, 3), (3, 3), (4, 2)])
-def test_history_page_budget_includes_independent_exact_selected_reads(lane_count: int, page_days: int) -> None:
+def test_history_page_budget_includes_selected_and_substitution_reads(lane_count: int, page_days: int) -> None:
     assert history_page_days(lane_count) == page_days
-    assert lane_count * (page_days + 1) <= MAX_LANE_DAY_READS
+    assert lane_count * (page_days + RESERVED_READS_PER_LANE) <= MAX_LANE_DAY_READS
 
 
 def test_every_multi_lane_catalogue_surface_reads_at_least_two_history_days_within_budget() -> None:
     """Owner decision 2026-10-04, pinned against the REAL surface table, not a hand-picked count."""
     for surface, lanes in SURFACE_PARQUET_LANES.items():
         page_days = history_page_days(len(lanes))
-        assert len(lanes) * (page_days + 1) <= MAX_LANE_DAY_READS, surface
+        assert len(lanes) * (page_days + RESERVED_READS_PER_LANE) <= MAX_LANE_DAY_READS, surface
         if len(lanes) > 1:
             assert page_days >= MIN_MULTI_LANE_HISTORY_DAYS, surface
 
@@ -225,7 +226,7 @@ async def test_multi_metric_pagination_preserves_selected_day_and_every_history_
             [climate_row(day, longitude=-116, latitude=43, value=18)],
         )
     sampled: list[str] = []
-    # Three lanes now read three history days per page (12-read budget), so a five-day window is what
+    # Three lanes now read three history days per page (16-read budget), so a five-day window is what
     # forces a second page and proves continuation still covers every date exactly once.
     first, last = first - timedelta(days=1), last + timedelta(days=1)
     for offset in (0, 3):

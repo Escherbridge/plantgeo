@@ -2,13 +2,12 @@
 
 import { useId, useMemo, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
-import type { RegionalIntelligenceResponse } from '@/lib/regional-intelligence';
+import { AI_GENERATED_DISCLAIMER, type RegionalIntelligenceResponse } from '@/lib/regional-intelligence';
 import {
   KEY_ITEM_LIMIT,
   NO_RECOMMENDATION_TEXT,
   NOT_GROUNDED_LABEL,
   PARTIAL_NOTE,
-  REPORT_FOOTER_NOTE,
   buildReportView,
   citationSummary,
   recommendationLine,
@@ -278,8 +277,9 @@ function ReportBody({ response }: { response: RegionalIntelligenceResponse }) {
 
       <SourcesDisclosure sources={view.sources} />
 
-      <footer className="flex items-center justify-between gap-2 border-t pt-2 dark:border-gray-700">
-        <p className={`text-[11px] ${MUTED}`}>{REPORT_FOOTER_NOTE}</p>
+      {/* The one footer block: AI_GENERATED_DISCLAIMER verbatim, small and muted (gray-600/400 meet WCAG AA). */}
+      <footer className="flex items-start justify-between gap-2 border-t pt-2 dark:border-gray-700">
+        <p className={`min-w-0 flex-1 text-[11px] leading-snug ${MUTED}`}>{AI_GENERATED_DISCLAIMER}</p>
         <ReportActions response={response} view={view} />
       </footer>
     </article>

@@ -145,16 +145,30 @@ Availability is authored from raw serving envelopes before model projection. The
 and continuation cursor) lives on that read's tool-call `summary`/`reason`. `evidence.limitations`
 carries ONE concise line per lane, folding the lane's selected-day and history reads together
 (e.g. `vegetation: no cell covers the point; nearest cell 23.6 km (used)`,
-`soil-survey: static layer, current release`); the unknown-date caveat is stated once in the
+`soil-survey: static layer, current release`). The `<source>: ` prefix is the contract with
+`regional-evidence-presentation.ts`, which files the line under that lane's Sources row (a
+`" [<read id>]"` after the source is optional there, for older saved reports); a flow test feeds
+the workflow's own output into `buildReportView`. The unknown-date caveat is stated once in the
 workflow's opening limitation, not per read (owner decision 2026-10-04: per-call paragraphs buried
 the answer). Served dates never stand in for checked calendar dates; a null cursor never changes an
 incomplete response to complete. The list stays within forty entries; additional reads add one line each.
 
 <a id="regional-analysis-nearest"></a>The agri reader may answer a selected day it has no partition
 for with `state: published_nearest` (`requested_day`, `served_day`, signed `day_offset`), and a point
-no cell covers with features whose `spatial_relation` is `nearest_cell` with `distance_km`. The audit
-maps these to `resolvedDay`/`dayOffset` (offset recomputed from the two named days when both are
-present) and `cellDistanceKm`; when the fields are absent the audit is unchanged. A transient
+no support covers with the SELECTED entry's `spatial_relation`/`distance_km`/`distance_km_basis`
+(agri agent/AGENTS.md contract table). The audit maps these to `resolvedDay`/`dayOffset` (offset
+recomputed from the two named days when both are present) and `cellDistanceKm`, reading the selected
+entry first -- soil survey's features carry none of these -- and per-feature `nearest_cell` only as
+the fallback for older readers; when the fields are absent the audit is unchanged. The lane's gap
+line words the used support by `distance_km_basis`: "nearest cell" (`cell_edge`), "nearest station"
+(`source_coordinate`), "nearest delineation" (`delineation_edge`). `nearest_area_outside` (polygon
+lanes: the point is inside no drought area, perimeter or zone) is NEVER `cellDistanceKm` and never
+"(used)": the line reads "not inside any drought area; nearest 121.4 km (to its centroid)". An
+unpublished selected entry's `nearest_published_day`/`nearest_day_offset` become "no record on
+2026-10-04; nearest published 2026-08-25 (40 d earlier, beyond the 3-day tolerance)" using the
+lane's `tolerance_days`; a `governed_absence` (a published empty answer, e.g. zero FIRMS
+detections) is never substituted by agri and reads "governed absence on ... ; nearest published ...
+(context only)". A transient
 refusal (`serving_at_capacity`, `release_read_changed`, or HTTP 429/502/503 other than the bridge's
 deterministic `tool_response_too_large`/`tool_read_timeout`) is retried once after a 200-600 ms
 jittered pause inside the stage deadline.
@@ -187,10 +201,13 @@ Other configured models retain their existing request settings and scoped canoni
 <a id="regional-analysis-themes"></a>Inventory has an eight-second transport deadline. Local and
 temporal stages reserve twelve and fifteen seconds respectively, with at most two concurrent reads
 (the map's own tile reads share the serving slots; three produced `serving_at_capacity`). Initial
-retrieval reads every theme's anchors -- fire (fire-detections, fire-perimeters), drought-areas,
-weather-observations, water-gauges, soil-survey, vegetation, climate-field-precipitation -- with a
-fallback only for an anchor the catalogue lacks, then up to four of the user's visible or dated
-layers (`REGIONAL_ANALYSIS_THEMES`). The earlier six-layer slice over a list naming precipitation
+retrieval reads the user's own visible or dated layers FIRST (any theme anchor among them, plus up
+to four others), then every theme anchor not already planned -- fire (fire-detections,
+fire-perimeters), drought-areas, weather-observations, water-gauges, soil-survey, vegetation,
+climate-field-precipitation -- with a fallback only for an anchor the catalogue lacks
+(`REGIONAL_ANALYSIS_THEMES`, `regionalInitialSurfaces`). The set is the same either way; the order
+decides who reads inside the 12 s stage at concurrency two, and the layers the user is looking at
+must not queue behind eight anchors (review fix M1, 2026-10-04). The earlier six-layer slice over a list naming precipitation
 twice left fire, drought, weather and water unread (prod 2026-10-04). Static (`static_lookup`)
 layers -- `REGIONAL_STATIC_SURFACES`, or any read whose lanes are all `static_lookup` -- are read once
 at their current release with `staticLayer: true` and get no history pass; the set mirrors agri's
@@ -278,6 +295,18 @@ production shows up in the logs immediately rather than only in this frozen fixt
 hidden (agri b258a97b) and this budget met (85 properties, 144 enum values, 60 constraints logged
 live), Gemini still refused. See §gemini-forced-call-states. The budget stays useful as a size
 tripwire, but it is not the refusal's cause.
+
+**Current catalogue (2026-10-04).** The 56467bd4 fixture stays frozen as the incident snapshot. A
+second test measures the catalogue production publishes NOW --
+`agri-tool-catalogue-current.fixture.json`, the agri `environmental_tool_schemas()` with
+`SOIL_PROPERTIES_READS_ENABLED=true` (as production runs), including the re-published
+`drought_history_at_point` and `fire_history_near_point` -- through the same
+`providerFunctionTools` round-1 path against the same 112 / 208 / 102 limit, and asserts no evidence
+tool offers an enum array. Measured: 100 properties, 84 enum values, 30 constraints, 21 tools, so
+the history tools stay published. The agri test
+`test_the_web_current_catalogue_fixture_is_the_published_catalogue` fails when the published
+catalogue drifts from this fixture, which closes the "no equivalent budget test on the agri side"
+gap above for the current catalogue.
 
 ### gemini-forced-call-states
 
