@@ -9,6 +9,7 @@ import { BASE_ZOOM_TIER, resolveZoomTier, type ZoomTier } from "@/lib/map/zoom-t
 import { getParquetLayerDay } from "@/lib/server/services/parquet-plane-client";
 import {
   boundedResult,
+  cellFootprintViewport,
   cellSupport,
   contractError,
   mapEnvelope,
@@ -349,16 +350,22 @@ export async function getParquetClimateField(
   }
   const signal = input.signal;
   const layer = climateFieldProduct(signal, input.variant).layer;
+  // Footprint, not stored point: a viewport narrower than one cell holds no cell's sample.
+  // See src/lib/map/AGENTS.md §viewport-footprint.
+  const footprint = cellFootprintViewport(input.bbox, "climate-field", zoomTier);
   const result = await boundedResult(async () =>
     mapEnvelope(
       await getParquetLayerDay({
         layer,
         day,
         zoomTier,
-        bbox: input.bbox,
+        bbox: footprint.requestBbox,
         ...(input.abortSignal === undefined ? {} : { signal: input.abortSignal }),
       }),
-      (rows) => decodeClimateFieldRows(rows, signal, input.variant, day, zoomTier)
+      (rows) =>
+        decodeClimateFieldRows(rows, signal, input.variant, day, zoomTier).filter((row) =>
+          footprint.meetsViewport(row.longitude, row.latitude)
+        )
     )
   );
   return { zoomTier, result };

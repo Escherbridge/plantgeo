@@ -441,7 +441,7 @@ describe("Parquet tRPC state adapter", () => {
       layer: "climate-field-precipitation",
       day: "2026-08-06",
       zoomTier: 13,
-      bbox: "-125,42,-111,49",
+      bbox: "-126,41,-110,50",
     });
     // The rung is reported back, not inferred by the caller: the renderer must be able to say
     // whether it is drawing stored cells or an aggregate without re-resolving the ladder.
@@ -729,7 +729,7 @@ describe("Parquet tRPC state adapter", () => {
         layer,
         day: "2026-08-02",
         zoomTier: 13,
-        bbox: "-125,42,-111,49",
+        bbox: "-126,41,-110,50",
       });
       expect(result).toMatchObject({ state: "ready", data: [{ value: 21.5 }] });
     }
@@ -750,7 +750,7 @@ describe("Parquet tRPC state adapter", () => {
       layer: "soil-wetness-root-zone",
       day: "2026-08-02",
       zoomTier: 13,
-      bbox: "-125,42,-111,49",
+      bbox: "-126,41,-110,50",
     });
     expect(result).toMatchObject({ state: "ready", data: [{ value: 0.42 }] });
   });
@@ -1614,7 +1614,7 @@ describe("lane day and release semantics", () => {
       layer: "soil-field-moisture-7-28cm",
       day: "2026-08-02",
       zoomTier: 13,
-      bbox: "-125,42,-111,49",
+      bbox: "-125.25,41.75,-110.75,49.25",
     });
     expect(result).toMatchObject({
       availability: "published",
@@ -1680,7 +1680,7 @@ describe("lane day and release semantics", () => {
       layer: "soil-field-vpd",
       day: "2026-08-02",
       zoomTier: 5,
-      bbox: "-125,35,-105,50",
+      bbox: "-125.45,34.55,-104.55,50.45",
     });
     expect(result).toMatchObject({
       availability: "published",
@@ -1811,7 +1811,7 @@ describe("lane day and release semantics", () => {
       layer: "soil-temperature-28-to-100cm",
       day: "2026-08-02",
       zoomTier: 13,
-      bbox: "-125,42,-111,49",
+      bbox: "-125.25,41.75,-110.75,49.25",
     });
     expect(result).toMatchObject({
       availability: "published",

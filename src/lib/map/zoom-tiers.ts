@@ -397,6 +397,80 @@ export function tessellatedCellPolygon(
   };
 }
 
+/** A WGS84 viewport as `[west, south, east, north]`, the order every `bbox` string uses. */
+export type LatticeBounds = readonly [west: number, south: number, east: number, north: number];
+
+/** Parse a `"west,south,east,north"` bbox; throws on anything that is not four ordered ordinates. */
+export function parseLatticeBounds(bbox: string): LatticeBounds {
+  const bounds = bbox.split(",").map(Number);
+  if (
+    bounds.length !== 4 ||
+    bounds.some((value) => !Number.isFinite(value)) ||
+    bounds[0] < -180 ||
+    bounds[2] > 180 ||
+    bounds[1] < -90 ||
+    bounds[3] > 90 ||
+    bounds[0] >= bounds[2] ||
+    bounds[1] >= bounds[3]
+  ) {
+    throw new TypeError('Invalid bbox: expected positive WGS84 "west,south,east,north" bounds');
+  }
+  return [bounds[0], bounds[1], bounds[2], bounds[3]];
+}
+
+/**
+ * Whether lattice cell (`columnIndex`, `rowIndex`) overlaps `viewport` by a non-zero area.
+ * Open edges, so a cell that only touches the viewport's border is not in view.
+ * See `src/lib/map/AGENTS.md` §viewport-footprint.
+ */
+export function latticeCellIndicesMeetBounds(
+  columnIndex: number,
+  rowIndex: number,
+  lattice: ServedCellLattice,
+  viewport: LatticeBounds
+): boolean {
+  const [west, east] = latticeCellSpan(columnIndex, lattice);
+  const [south, north] = latticeCellSpan(rowIndex, lattice);
+  return west < viewport[2] && east > viewport[0] && south < viewport[3] && north > viewport[1];
+}
+
+/** Whether the cell one SERVED coordinate stands for overlaps `viewport`; cell lanes only. */
+export function latticeCellMeetsBounds(
+  longitude: number,
+  latitude: number,
+  lattice: ServedCellLattice,
+  viewport: LatticeBounds
+): boolean {
+  return latticeCellIndicesMeetBounds(
+    latticeCellIndex(longitude, lattice),
+    latticeCellIndex(latitude, lattice),
+    lattice,
+    viewport
+  );
+}
+
+/**
+ * The bounds to REQUEST so a coordinate-filtered row read returns every cell whose footprint meets
+ * `viewport`: the viewport grown by one served cell plus the rung's floor step on every side,
+ * clamped to WGS84. The answer is a superset; trim it with `latticeCellMeetsBounds`.
+ * See `src/lib/map/AGENTS.md` §viewport-footprint.
+ */
+export function latticeFootprintQueryBounds(
+  viewport: LatticeBounds,
+  lattice: ServedCellLattice
+): LatticeBounds {
+  // `2 * snapCorrectionDegrees` is the grid step the stored coordinate was floored by on a derived
+  // rung, which can carry it up to that far west/south of its own cell (soil at z5: centre -116.625
+  // floored onto the 0.2 grid is stored as -116.8, outside its [-116.75, -116.5] cell).
+  const margin = lattice.cellSizeDegrees + 2 * lattice.snapCorrectionDegrees;
+  return [
+    Math.max(-180, viewport[0] - margin),
+    Math.max(-90, viewport[1] - margin),
+    Math.min(180, viewport[2] + margin),
+    Math.min(90, viewport[3] + margin),
+  ];
+}
+
 /**
  * A stable support id for a row whose rung carries no cell identity of its own.
  *

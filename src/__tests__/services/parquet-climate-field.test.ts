@@ -241,7 +241,12 @@ describe("Parquet climate-field collection adapter", () => {
     expect(climateFieldLatticeCellCount(bbox, 0)).toBe(2);
   });
 
-  it("uses centers rather than intersecting cell footprints at viewport edges", () => {
+  /**
+   * Footprint, not centre (2026-10-04): the viewport's west and east quarters lie inside the -116
+   * and -114 cells, whose samples are outside it. Counting by centre said 1 and, read with a
+   * viewport narrower than a cell, said 0 -- the "not_published" over a covered map.
+   */
+  it("counts every cell whose footprint meets the viewport, not only those whose centre does", () => {
     const bbox = "-115.75,42.75,-114.25,43.25";
     const collection = parquetClimateFieldCollection(
       ready([row(13)]),
@@ -252,8 +257,12 @@ describe("Parquet climate-field collection adapter", () => {
       "field"
     );
 
-    expect(climateFieldLatticeCellCount(bbox, 13)).toBe(1);
-    expect(collection).toMatchObject({ cellCount: 1, latticeCellCount: 1 });
+    expect(climateFieldLatticeCellCount(bbox, 13)).toBe(3);
+    expect(collection).toMatchObject({ cellCount: 1, latticeCellCount: 3 });
+    // A viewport strictly inside one cell, holding no lattice centre, still has that cell in view.
+    expect(climateFieldLatticeCellCount("-116.4,43.6,-116.0,43.8", 9)).toBe(1);
+    // At z0 the same viewport sits inside one five-degree cell.
+    expect(climateFieldLatticeCellCount("-116.4,43.6,-116.0,43.8", 0)).toBe(1);
   });
 
   it("includes a lattice center exactly on the east and north bbox corner", () => {

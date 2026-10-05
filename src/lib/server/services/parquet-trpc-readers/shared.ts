@@ -12,8 +12,11 @@ import type {
 import {
   LANE_BASE_LATTICES,
   latticeCellIndex,
+  latticeCellMeetsBounds,
   latticeCellSpan,
+  latticeFootprintQueryBounds,
   mintedSupportId,
+  parseLatticeBounds,
   resolveZoomTier,
   servedCellLattice,
   type CellLaneId,
@@ -104,6 +107,36 @@ export function cellSupport(input: CellSupportInput): AggregateEnvelopeSupport {
       newestObservedAt: input.newestObservedAt,
       attribution: LANE_ATTRIBUTIONS[input.lane],
     },
+  };
+}
+
+/** One viewport read on a tessellated cell lane: what to ask the plane for, and how to trim it. */
+export interface CellFootprintViewport {
+  /** The viewport grown by one served cell, as the plane's `bbox` parameter. */
+  requestBbox: string;
+  /** Whether the cell a served row's coordinate stands for overlaps the caller's viewport. */
+  meetsViewport(longitude: number, latitude: number): boolean;
+}
+
+/**
+ * Footprint semantics for a viewport read on a cell lane; the plane alone filters by stored point.
+ * See `src/lib/map/AGENTS.md` §viewport-footprint.
+ */
+export function cellFootprintViewport(
+  bbox: string,
+  lane: CellLaneId,
+  zoomTier: ZoomTier
+): CellFootprintViewport {
+  const lattice = servedCellLattice(zoomTier, LANE_BASE_LATTICES[lane]);
+  // A point lane's base rung has no cell; its index arithmetic would divide by zero and trim all.
+  if (lattice.cellSizeDegrees <= 0) {
+    throw new RangeError(`${lane} has no cell footprint at z${zoomTier}; filter it by point instead`);
+  }
+  const viewport = parseLatticeBounds(bbox);
+  return {
+    requestBbox: latticeFootprintQueryBounds(viewport, lattice).join(","),
+    meetsViewport: (longitude, latitude) =>
+      latticeCellMeetsBounds(longitude, latitude, lattice, viewport),
   };
 }
 

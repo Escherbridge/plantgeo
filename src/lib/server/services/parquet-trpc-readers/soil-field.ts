@@ -27,6 +27,7 @@ import {
 import { SOIL_FIELD_MAX_CELLS } from "@/lib/server/services/parquet-layer-constants";
 import { getParquetLayerDay } from "@/lib/server/services/parquet-plane-client";
 import {
+  cellFootprintViewport,
   contractError,
   currentUtcDay,
   LANE_ATTRIBUTIONS,
@@ -314,11 +315,13 @@ export async function getParquetSoilField(
       null
     );
   }
+  // Footprint, not stored point; see src/lib/map/AGENTS.md §viewport-footprint.
+  const footprint = cellFootprintViewport(bbox, "soil-field", zoomTier);
   const envelope = await getParquetLayerDay({
     layer,
     day: requestedDay,
     zoomTier,
-    bbox,
+    bbox: footprint.requestBbox,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
   if (envelope.state !== "published") {
@@ -345,7 +348,7 @@ export async function getParquetSoilField(
     layer,
     envelope.servedDay,
     zoomTier
-  );
+  ).filter((row) => footprint.meetsViewport(row.cell_longitude, row.cell_latitude));
   const drawable = rows.slice(0, SOIL_FIELD_MAX_CELLS);
   const lattice = servedCellLattice(zoomTier, LANE_BASE_LATTICES["soil-field"]);
   const features = drawable.map((row): GeoJSON.Feature<GeoJSON.Polygon> => {

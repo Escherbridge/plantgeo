@@ -22,6 +22,8 @@ import {
   BASE_ZOOM_TIER,
   LANE_BASE_LATTICES,
   latticeCellIndexContaining,
+  latticeCellIndicesMeetBounds,
+  parseLatticeBounds,
   servedCellLattice,
   tessellatedCellPolygon,
   type ServedCellLattice,
@@ -82,23 +84,6 @@ const CLIMATE_FIELD_LATTICE_ROWS = [
   [51, -125, -104],
 ] as const satisfies readonly ClimateLatticeRow[];
 
-function parseBbox(bbox: string): readonly [number, number, number, number] {
-  const bounds = bbox.split(",").map(Number);
-  if (
-    bounds.length !== 4 ||
-    bounds.some((value) => !Number.isFinite(value)) ||
-    bounds[0] < -180 ||
-    bounds[2] > 180 ||
-    bounds[1] < -90 ||
-    bounds[3] > 90 ||
-    bounds[0] >= bounds[2] ||
-    bounds[1] >= bounds[3]
-  ) {
-    throw new TypeError('Invalid bbox: expected positive WGS84 "west,south,east,north" bounds');
-  }
-  return bounds as [number, number, number, number];
-}
-
 /**
  * How many cells of the SERVED rung's lattice this viewport could be filled with.
  *
@@ -110,30 +95,27 @@ function parseBbox(bbox: string): readonly [number, number, number, number] {
  * DISTINCT cells are counted, so at z0 a whole viewport of samples collapses into the handful of
  * five-degree cells that actually get drawn.
  *
- * Counted by CENTRE, never by footprint: a cell whose centre is outside the bbox is not in view
- * for this purpose, which is the rule that keeps the numerator and denominator on the same test.
+ * Counted by FOOTPRINT: a served cell is in view when its square overlaps the bbox, the same
+ * `latticeCellIndicesMeetBounds` test the reader trims its rows with, so the numerator and the
+ * denominator stay on one rule. See `src/lib/map/AGENTS.md` §viewport-footprint.
  *
  * `latticeCellIndexContaining`, not `latticeCellIndex`: a frozen lattice centre means only itself
  * and was never floored onto a rung's grid, so the served-coordinate recovery would push it into
  * the next cell up whenever it sits past that cell's midpoint.
  */
 export function climateFieldLatticeCellCount(bbox: string, zoomTier: ZoomTier): number {
-  const [west, south, east, north] = parseBbox(bbox);
+  const viewport = parseLatticeBounds(bbox);
   const lattice = servedCellLattice(zoomTier, CLIMATE_FIELD_LANE);
   const servedCells = new Set<string>();
   for (const [latitude, minimumLongitude, maximumLongitude, excluded = []] of
     CLIMATE_FIELD_LATTICE_ROWS) {
     const excludedLongitudes: readonly number[] = excluded;
-    if (latitude < south || latitude > north) {
-      continue;
-    }
+    const rowIndex = latticeCellIndexContaining(latitude, lattice);
     for (let longitude = minimumLongitude; longitude <= maximumLongitude; longitude += 1) {
       if (excludedLongitudes.includes(longitude)) continue;
-      if (longitude >= west && longitude <= east) {
-        servedCells.add(
-          `${latticeCellIndexContaining(longitude, lattice)}:` +
-            `${latticeCellIndexContaining(latitude, lattice)}`
-        );
+      const columnIndex = latticeCellIndexContaining(longitude, lattice);
+      if (latticeCellIndicesMeetBounds(columnIndex, rowIndex, lattice, viewport)) {
+        servedCells.add(`${columnIndex}:${rowIndex}`);
       }
     }
   }

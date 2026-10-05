@@ -382,6 +382,37 @@ and nothing reads them. `hover-fields.ts`'s `formatFirePerimeter` reads camelCas
 it shows a title and a severity line; widening it is a hover-fields change with its own review, not
 something the cutover should have decided by shipping extra columns.
 
+## §viewport-footprint
+
+**A cell is in view when its FOOTPRINT meets the viewport, not when its stored coordinate does**
+(fixed 2026-10-04). The Parquet plane filters a point-support lane by the stored coordinate alone
+(`_predicate` in `services/agri-data-service/src/agri_data_service/parquet_ops/warehouse_reader.py`:
+`cell_longitude BETWEEN west AND east AND cell_latitude BETWEEN south AND north`). For a cell lane
+that coordinate is ONE point of the cell: its centre on a rung that kept the base grain, its
+south-west corner on a rung that coarsened onto the ladder's grid (`servedCellLattice`). Passing
+the map viewport straight through therefore dropped every cell whose sample lay outside the view
+even while its square covered it -- and once the viewport is narrower than a cell (a one-degree
+climate cell from about map zoom 10 on a desktop screen, a five-degree z0 cell over a state-sized
+view, a quarter-degree soil cell at street zoom) NO stored coordinate is inside it, the plane answers `published` with
+`rows: []`, and the map reads `not_published` over ground that has data.
+
+The fix is client-side because the lattice is client knowledge (`LANE_BASE_LATTICES`): a viewport
+read on a cell lane asks for `latticeFootprintQueryBounds` -- the viewport grown by one served
+cell PLUS the rung's floor step (`2 * snapCorrectionDegrees`) -- and trims the answer back with
+`latticeCellMeetsBounds`, an open-edge overlap test on `latticeCellSpan`. One cell alone is NOT
+enough: the stored point does not always lie on its own cell. On a derived rung that kept the base
+grain the writer floors the CENTRE onto the ladder's grid (`floor_to_resolution`, agri-data-service
+`warehouse/parquet/tiers.py`), which can move it up to one grid step west/south of the cell -- soil
+at z5 stores the cell centred on -116.625 at -116.8, outside its [-116.75, -116.5] square, so a
+one-cell pad from a viewport edge at -116.52 never fetched it. Within a cell plus one floor step
+holds for every rung: base rungs store the centre or the corner (step 0 or one base cell), and a
+coarsened rung stores the floored corner, which is inside its own cell. The denominator (`climateFieldLatticeCellCount`) runs the SAME overlap
+test on the served cell each frozen lattice centre falls in, so "N of M cells in view" compares
+like with like. The agent's selection reader (`agent/selection_reads.py`
+`point_selection_statement`) already intersected footprints, which is why the agent read these
+lanes while the map did not. Vegetation and fire-detections still pass the raw viewport; at their
+grains the loss is an edge ring, not a blank map, and they are the next readers to move.
+
 ## deferred-analysis-surfaces
 
 As of 2026-09-10, `isLayerDeferred` excludes untrained Strategy Recommendations from dock groups.
