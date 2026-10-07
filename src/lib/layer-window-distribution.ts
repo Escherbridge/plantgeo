@@ -6,6 +6,14 @@ import {
   type AirTemperatureVariant,
 } from "@/lib/environmental/climate-field";
 import { climateFieldSignalForGeometryLayerId } from "@/lib/map/climate-field-layer-ids";
+import {
+  DEFAULT_SOIL_FIELD_DEPTHS,
+  SOIL_FIELD_MEASURES,
+  soilFieldDepthDefinition,
+  soilFieldLayerIdsFor,
+  type SoilFieldDepth,
+  type SoilFieldMeasure,
+} from "@/lib/environmental/soil-field";
 import type { LayerToggleId } from "@/lib/map/layer-registry";
 
 /** The agri agent tool behind the one-line window distribution; see map/AGENTS.md §window-distribution. */
@@ -62,12 +70,32 @@ export type DistributionAtPointResult = z.infer<typeof distributionAtPointResult
 export type DistributionLane = DistributionAtPointResult["lanes"][number];
 
 /**
+ * The two ERA5-Land soil measures a hovered/tapped point may read a window over. `soil-vpd` is
+ * deliberately excluded: its one pseudo-depth ("surface") is already the whole signal, so it
+ * needs no depth-to-signal threading and stays off this surface's small, hand-written map.
+ */
+export const WINDOWED_SOIL_FIELD_MEASURES: readonly SoilFieldMeasure[] = ["moisture", "temperature"];
+
+/** The measure whose `soilFieldLayerIdsFor` fill/outline id this is, as `SoilFieldLayer.tsx` forms them. */
+export function soilFieldMeasureForStyleLayerId(styleLayerId: string): SoilFieldMeasure | null {
+  for (const measure of WINDOWED_SOIL_FIELD_MEASURES) {
+    const ids = soilFieldLayerIdsFor(measure);
+    if (styleLayerId === ids.fill || styleLayerId === ids.outline) {
+      return measure;
+    }
+  }
+  return null;
+}
+
+/**
  * The dated toggle whose window a hovered/tapped style layer reads, or null when that layer has no
  * scalar value series to summarise. Deliberately small: scalar grids only, never sparse areas.
  */
 export function windowedToggleForStyleLayer(styleLayerId: string): LayerToggleId | null {
   const climateSignal = climateFieldSignalForGeometryLayerId(styleLayerId);
   if (climateSignal !== null) return CLIMATE_FIELD_SIGNALS[climateSignal].toggleId;
+  const soilMeasure = soilFieldMeasureForStyleLayerId(styleLayerId);
+  if (soilMeasure !== null) return SOIL_FIELD_MEASURES[soilMeasure].toggleId;
   if (styleLayerId === "vegetation-ndvi-cells-fill") return "vegetation";
   if (styleLayerId === "weather-temperature" || styleLayerId === "weather-temperature-cells") return "weather";
   return null;
@@ -78,18 +106,29 @@ const WEATHER_AIR_TEMPERATURE_SIGNAL = "air_temperature";
 
 /**
  * The one signal to ask agri for when the hovered layer paints one signal of a surface that carries
- * several (air temperature's mean/max/min lanes, weather's four measures); null when the surface's
- * only signal is the one painted. Sent as `signal_name`, so agri reads one lane, not all of them.
+ * several (air temperature's mean/max/min lanes, weather's four measures, a soil field's 3-4
+ * depths); null when the surface's only signal is the one painted. Sent as `signal_name`, so agri
+ * reads one lane, not all of them.
+ *
+ * `soilFieldDepths` is the painted depth per measure (`soil-store.fieldDepth`), not an
+ * `AirTemperatureVariant` sibling parameter, because a depth is per-MEASURE (moisture and
+ * temperature pick independently) where a variant is per-SURFACE: defaulted so every existing
+ * caller -- weather, climate, vegetation -- keeps compiling unchanged.
  */
 export function distributionSignalName(
   styleLayerId: string,
-  airTemperatureVariant: AirTemperatureVariant
+  airTemperatureVariant: AirTemperatureVariant,
+  soilFieldDepths: Readonly<Record<SoilFieldMeasure, SoilFieldDepth>> = DEFAULT_SOIL_FIELD_DEPTHS
 ): string | null {
   const climateSignal = climateFieldSignalForGeometryLayerId(styleLayerId);
   if (climateSignal !== null) {
     return CLIMATE_FIELD_SIGNALS[climateSignal].signalName === null
       ? climateFieldSignalName(climateSignal, airTemperatureVariant)
       : null;
+  }
+  const soilMeasure = soilFieldMeasureForStyleLayerId(styleLayerId);
+  if (soilMeasure !== null) {
+    return soilFieldDepthDefinition(soilMeasure, soilFieldDepths[soilMeasure]).signalName;
   }
   if (styleLayerId === "weather-temperature" || styleLayerId === "weather-temperature-cells") {
     return WEATHER_AIR_TEMPERATURE_SIGNAL;
@@ -103,6 +142,12 @@ export function acceptedDistributionSignalNames(layerId: LayerToggleId): readonl
   if (climateSignal !== null) {
     const definition = CLIMATE_FIELD_SIGNALS[climateSignal];
     return definition.signalName === null ? definition.variants.map((variant) => variant.signalName) : [];
+  }
+  const soilMeasure = WINDOWED_SOIL_FIELD_MEASURES.find(
+    (measure) => SOIL_FIELD_MEASURES[measure].toggleId === layerId
+  );
+  if (soilMeasure !== undefined) {
+    return SOIL_FIELD_MEASURES[soilMeasure].depths.map((depth) => depth.signalName);
   }
   return layerId === "weather" ? [WEATHER_AIR_TEMPERATURE_SIGNAL] : [];
 }

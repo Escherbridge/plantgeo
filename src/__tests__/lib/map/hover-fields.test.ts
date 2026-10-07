@@ -19,6 +19,7 @@ import {
   CLIMATE_FIELD_GEOMETRY_LAYER_IDS,
   climateFieldLayerIdsFor,
 } from "@/lib/map/climate-field-layer-ids";
+import { DEFAULT_SOIL_FIELD_DEPTHS } from "@/lib/environmental/soil-field";
 
 /** Fails if any rendered string ever leaks a raw null/undefined/NaN sentinel. */
 function assertNoSentinels(content: { title: string; lines: string[] } | null) {
@@ -68,6 +69,10 @@ describe("HOVERABLE_LAYER_IDS", () => {
       "weather-temperature",
       "weather-temperature-cells",
       "vegetation-ndvi-cells-fill",
+      // ERA5-Land soil moisture/temperature fields -- added 2026-10-05; `soil-vpd-field-fill` is
+      // deliberately absent, matching `WINDOWED_SOIL_FIELD_MEASURES`'s own exclusion of vpd.
+      "soil-moisture-field-fill",
+      "soil-temperature-field-fill",
       ...CLIMATE_FIELD_GEOMETRY_LAYER_IDS,
     ]);
   });
@@ -130,6 +135,46 @@ describe("formatHoverContent: climate geometry", () => {
     expect(formatHoverContent(layerId, {})).toBeNull();
     expect(formatHoverContent(layerId, { value: "not-a-number" })).toBeNull();
     expect(formatHoverContent("climate-field-unknown-fill", { value: 42 })).toBeNull();
+  });
+});
+
+describe("formatHoverContent: soil field", () => {
+  it("formats the painted soil-moisture value with its unit and the painted depth", () => {
+    const content = formatHoverContent(
+      "soil-moisture-field-fill",
+      { value: 0.2138, aggregated: false, coverageFraction: 0.92, cellKey: "z9:1:2" },
+      { ...DEFAULT_SOIL_FIELD_DEPTHS, moisture: "root-zone" }
+    );
+
+    expect(content).toEqual({
+      title: "Volumetric soil water",
+      lines: ["Value: 0.214 m³/m³", "Depth: Root zone (7-28 cm)", "Coverage: 92%"],
+    });
+    assertNoSentinels(content);
+  });
+
+  it("formats soil-temperature at the default depth and marks an aggregated (coarse-zoom) cell", () => {
+    const content = formatHoverContent("soil-temperature-field-fill", { value: -3.24, aggregated: true });
+
+    expect(content).toEqual({
+      title: "Soil temperature",
+      lines: ["Value: -3.2 °C", "Depth: Surface (0-7 cm)", "Aggregated soil cell"],
+    });
+  });
+
+  it("reads the depth independently per measure, not one shared selection", () => {
+    const soilFieldDepths = { ...DEFAULT_SOIL_FIELD_DEPTHS, temperature: "substratum" as const };
+    const moisture = formatHoverContent("soil-moisture-field-fill", { value: 0.1 }, soilFieldDepths);
+    const temperature = formatHoverContent("soil-temperature-field-fill", { value: 4 }, soilFieldDepths);
+
+    expect(moisture?.lines).toContain("Depth: Surface (0-7 cm)");
+    expect(temperature?.lines).toContain("Depth: Substratum (100-255 cm)");
+  });
+
+  it("refuses a feature with no real painted value, and never matches soil-vpd", () => {
+    expect(formatHoverContent("soil-moisture-field-fill", {})).toBeNull();
+    expect(formatHoverContent("soil-moisture-field-fill", { value: "not-a-number" })).toBeNull();
+    expect(formatHoverContent("soil-vpd-field-fill", { value: 1.2 })).toBeNull();
   });
 });
 

@@ -27,7 +27,10 @@ import { LAYER_WINDOW_DISTRIBUTION_RATE_LIMIT, layerWindowRouter } from "@/lib/s
 import { trpc } from "@/lib/trpc/client";
 import { useLayerWindowStore } from "@/stores/layer-window-store";
 import { useTimeSliderStore } from "@/stores/time-slider-store";
+import { SLIDER_STREAM_LAYER_NAMES } from "@/types/time-slider";
 import type { SliderCapabilities } from "@/types/time-slider";
+import { DEFAULT_SOIL_FIELD_DEPTHS } from "@/lib/environmental/soil-field";
+import { useSoilStore } from "@/stores/soil-store";
 
 const fetchJson = vi.mocked(fetchBoundedJson);
 const TODAY = "2026-10-04";
@@ -51,6 +54,17 @@ const CAPABILITIES: SliderCapabilities = {
       forecastHorizonDays: 0,
       forecastVariants: [],
       earliestObservedDate: "2022-01-01",
+      latestObservedDate: "2026-09-28",
+      coverageGaps: [],
+      thinRanges: [],
+      describedFromDay: null,
+    },
+    {
+      layerName: SLIDER_STREAM_LAYER_NAMES.soilMoisture,
+      temporalKind: "daily_series",
+      forecastHorizonDays: 0,
+      forecastVariants: [],
+      earliestObservedDate: "2022-04-30",
       latestObservedDate: "2026-09-28",
       coverageGaps: [],
       thinRanges: [],
@@ -147,6 +161,75 @@ async function tapVegetationCell() {
   });
 }
 
+/** One ERA5-Land soil-moisture depth lane, as agri's `distribution_at_point` shapes it. */
+function soilMoistureLane(depthLayer: 1 | 2 | 3, median: number): Lane {
+  return {
+    parquet_lane: "soil-field-moisture",
+    signal_name: `soil_water_content_layer_${depthLayer}`,
+    unit: "m^3/m^3",
+    days_in_window: 30,
+    days_with_data: 28,
+    stats: {
+      min: median - 0.05,
+      p10: median - 0.03,
+      median,
+      p90: median + 0.03,
+      max: median + 0.05,
+      mean: median,
+    },
+    spatial_relation: "covers",
+    distance_km: null,
+    distance_km_basis: null,
+    static: false,
+    state: "published",
+  };
+}
+
+/** A hovered `soil-moisture-field-fill` feature, carrying exactly what `getParquetSoilField`
+ * puts on a `SoilFieldFeatureProperties` -- no `depth`, which is why the depth in the caption
+ * below has to come from `soil-store.fieldDepth`, not the feature. */
+function createSoilFakeMap(properties: Record<string, unknown>) {
+  const listeners = new Map<string, Set<(event: unknown) => void>>();
+  return {
+    on: (type: string, handler: (event: unknown) => void) => {
+      if (!listeners.has(type)) listeners.set(type, new Set());
+      listeners.get(type)!.add(handler);
+    },
+    off: (type: string, handler: (event: unknown) => void) => listeners.get(type)?.delete(handler),
+    emit: (type: string, event: unknown) => listeners.get(type)?.forEach((handler) => handler(event)),
+    getStyle: () => ({ layers: [] }),
+    getLayer: () => ({}),
+    queryRenderedFeatures: (_geometry: unknown, options: { layers: string[] }) =>
+      options.layers.includes("soil-moisture-field-fill")
+        ? [{ layer: { id: "soil-moisture-field-fill" }, properties }]
+        : [],
+    getCanvas: () => ({ style: { cursor: "" } }),
+    getContainer: () => ({ clientWidth: 800, clientHeight: 600 }),
+  };
+}
+
+function renderSoilTooltip(properties: Record<string, unknown>) {
+  const fakeMap = createSoilFakeMap(properties);
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const trpcClient = trpc.createClient({
+    links: [
+      unstable_localLink({
+        router: testRouter,
+        createContext: async () => ({ db: {}, session: null, req: clientRequest() }) as never,
+        transformer: superjson,
+      }) as never,
+    ],
+  });
+  render(
+    <trpc.Provider client={trpcClient} queryClient={queryClient}>
+      <QueryClientProvider client={queryClient}>
+        <HoverTooltip map={fakeMap as unknown as MapLibreMap} />
+      </QueryClientProvider>
+    </trpc.Provider>
+  );
+  return fakeMap;
+}
+
 function useCoarsePointer(coarse: boolean) {
   window.matchMedia = vi.fn().mockReturnValue({ matches: coarse }) as unknown as typeof window.matchMedia;
 }
@@ -158,6 +241,7 @@ beforeEach(async () => {
   fetchJson.mockReset();
   useTimeSliderStore.setState({ capabilities: CAPABILITIES, layerDates: {} });
   useLayerWindowStore.setState({ layerWindowPresets: {} });
+  useSoilStore.setState({ fieldDepth: DEFAULT_SOIL_FIELD_DEPTHS });
 });
 
 afterEach(() => {
@@ -340,5 +424,43 @@ describe("layerWindow.distributionAtPoint", () => {
   it("reports a contract mismatch as a retryable outage, not a line", async () => {
     fetchJson.mockResolvedValue({ tool: "distribution_at_point", result: { surface: "vegetation", lanes: "nope" } });
     await expect(caller().layerWindow.distributionAtPoint(valid)).rejects.toMatchObject({ code: "SERVICE_UNAVAILABLE" });
+  });
+});
+
+/**
+ * `hover-fields.ts` previously had no `soil-moisture-field-fill` / `soil-temperature-field-fill`
+ * in `HOVERABLE_LAYER_IDS`, so a hover over a soil field reached no `formatHoverContent` entry,
+ * `HoverTooltip` never rendered a tooltip, and `WindowDistributionLine` -- mounted only inside
+ * that tooltip -- never got the chance to ask for a distribution at all, even though the query it
+ * would send was already correct (`soil-window-distribution.test.tsx` renders
+ * `WindowDistributionLine` directly and was green the whole time). This proves the full path a
+ * real hover takes: `mousemove` -> caption with the painted value and depth -> the distribution
+ * line asking for THAT depth's `signal_name`, not the default.
+ */
+describe("the hovered soil-moisture cell's window distribution", () => {
+  it("shows the painted value and wires the distribution line to the painted depth, not the default", async () => {
+    useCoarsePointer(false);
+    useSoilStore.setState({ fieldDepth: { ...DEFAULT_SOIL_FIELD_DEPTHS, moisture: "root-zone" } });
+    agriAnswers([soilMoistureLane(1, 0.08), soilMoistureLane(2, 0.22), soilMoistureLane(3, 0.34)]);
+    const fakeMap = renderSoilTooltip({
+      value: 0.214,
+      aggregated: false,
+      coverageFraction: 0.92,
+      cellKey: "z9:12:34",
+    });
+
+    await act(async () => {
+      fakeMap.emit("mousemove", { point: { x: 100, y: 100 }, lngLat: { lng: -116.123456, lat: 43.654321 } });
+    });
+
+    // `getByText` throws (failing the test) if the caption is missing; no further assertion needed.
+    screen.getByText("Volumetric soil water");
+    screen.getByText("Value: 0.214 m³/m³");
+    screen.getByText("Depth: Root zone (7-28 cm)");
+    expect((await screen.findByTestId("layer-window-distribution")).textContent).toContain("median 0.22");
+    expect(agriBodies()[0].arguments).toMatchObject({
+      surface_name: "soil-field-moisture",
+      signal_name: "soil_water_content_layer_2",
+    });
   });
 });

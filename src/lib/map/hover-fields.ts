@@ -22,6 +22,15 @@ import {
   CLIMATE_FIELD_GEOMETRY_LAYER_IDS,
   climateFieldSignalForGeometryLayerId,
 } from "@/lib/map/climate-field-layer-ids";
+import {
+  DEFAULT_SOIL_FIELD_DEPTHS,
+  soilFieldDepthDefinition,
+  soilFieldLayerIdsFor,
+  soilFieldMeasureDefinition,
+  type SoilFieldDepth,
+  type SoilFieldMeasure,
+} from "@/lib/environmental/soil-field";
+import { soilFieldMeasureForStyleLayerId, WINDOWED_SOIL_FIELD_MEASURES } from "@/lib/layer-window-distribution";
 
 /** Style layer ids the shared hover manager queries via queryRenderedFeatures. */
 export const HOVERABLE_LAYER_IDS: string[] = [
@@ -55,6 +64,14 @@ export const HOVERABLE_LAYER_IDS: string[] = [
   "weather-temperature",
   "weather-temperature-cells",
   "vegetation-ndvi-cells-fill",
+  // ERA5-Land soil moisture/temperature fields -- ids from `soilFieldLayerIdsFor` (soil-field.ts). Added
+  // 2026-10-05: this allow-list previously carried only `soil-survey-*` (SSURGO), so a reader who
+  // painted soil moisture or temperature and hovered a cell got no tooltip at all, and
+  // `WindowDistributionLine`'s depth-correct `signal_name` (src/lib/layer-window-distribution.ts)
+  // never mounted in production even though it was fully wired. `soil-vpd-field-fill` is
+  // deliberately absent, matching `WINDOWED_SOIL_FIELD_MEASURES`'s exclusion of vpd from the same
+  // surface -- its one pseudo-depth needs no hover-depth caption.
+  ...WINDOWED_SOIL_FIELD_MEASURES.map((measure) => soilFieldLayerIdsFor(measure).fill),
   ...CLIMATE_FIELD_GEOMETRY_LAYER_IDS,
 ];
 
@@ -511,6 +528,47 @@ function formatWeatherObservation(props: Properties): HoverContent | null {
   ]);
 }
 
+/**
+ * One ERA5-Land soil-moisture or soil-temperature cell -- `SoilFieldFeatureProperties`
+ * (`environmental-contracts.ts`): `value`, `bandIndex`, `bandLabel`, `aggregated`, `cellKey`,
+ * `coverageFraction`. Deliberately NOT `formatClimateField`'s shape verbatim: a soil-field fill
+ * always carries the real measured `value` (never a band-representative one -- this surface
+ * never draws isobands), so `bandLabel` is redundant with the value line and is not shown, and the
+ * feature carries no per-cell `observedDay` (`getParquetSoilField` puts the day on the
+ * COLLECTION, not the feature) -- there is nothing to show there.
+ *
+ * `soilFieldDepths` fills in for the one thing the properties genuinely cannot carry: WHICH of a
+ * measure's 3-4 depths this fill is currently painting is a client toggle
+ * (`soil-store.fieldDepth`), not a per-feature fact, the same way `climateFieldLayerIdsFor`'s
+ * `air-temperature` mean/max/min variant is -- except every air-temperature variant still shares
+ * one generic "Air temperature" caption with no variant line, where soil's owner explicitly wants
+ * the depth named. Defaulted to `DEFAULT_SOIL_FIELD_DEPTHS` so every existing call site -- this
+ * module's own `formatHoverContent`, and `hover-fields.test.ts` -- keeps compiling against the old
+ * two-argument shape, exactly the default `distributionSignalName` takes for the same reason
+ * (`src/lib/layer-window-distribution.ts`).
+ */
+function formatSoilField(
+  measure: SoilFieldMeasure,
+  props: Properties,
+  soilFieldDepths: Readonly<Record<SoilFieldMeasure, SoilFieldDepth>>
+): HoverContent | null {
+  const value = toFiniteNumber(props.value);
+  if (value === null) return null;
+
+  const definition = soilFieldMeasureDefinition(measure);
+  const fractionDigits = measure === "moisture" ? 3 : 1;
+  const formattedValue = `${value.toFixed(fractionDigits)} ${definition.unitLabel}`;
+  const depthLabel = soilFieldDepthDefinition(measure, soilFieldDepths[measure]).label;
+  const coverageFraction = toFiniteNumber(props.coverageFraction);
+
+  return buildContent(definition.quantityLabel, [
+    `Value: ${formattedValue}`,
+    `Depth: ${depthLabel}`,
+    props.aggregated === true ? "Aggregated soil cell" : null,
+    coverageFraction === null ? null : `Coverage: ${Math.round(coverageFraction * 100)}%`,
+  ]);
+}
+
 /** Exact served NDVI metadata; see src/lib/map/AGENTS.md. */
 function formatVegetationCell(props: Properties): HoverContent | null {
   const value = typeof props.ndvi === "number" ? props.ndvi : NaN;
@@ -554,10 +612,22 @@ const FORMATTERS: Record<string, (props: Properties) => HoverContent | null> = {
   "vegetation-ndvi-cells-fill": formatVegetationCell,
 };
 
-/** Per-layer field selection + unit formatting for the hover tooltip. Null when nothing to show. */
-export function formatHoverContent(layerId: string, properties: Properties): HoverContent | null {
+/**
+ * Per-layer field selection + unit formatting for the hover tooltip. Null when nothing to show.
+ *
+ * `soilFieldDepths` is read-only context a caller supplies, not a feature property -- see
+ * `formatSoilField`'s doc comment. Defaulted so every call site that never touches a soil field
+ * (every existing one before 2026-10-05) keeps compiling unchanged.
+ */
+export function formatHoverContent(
+  layerId: string,
+  properties: Properties,
+  soilFieldDepths: Readonly<Record<SoilFieldMeasure, SoilFieldDepth>> = DEFAULT_SOIL_FIELD_DEPTHS
+): HoverContent | null {
   const climate = formatClimateField(layerId, properties ?? {});
   if (climate !== null) return climate;
+  const soilMeasure = soilFieldMeasureForStyleLayerId(layerId);
+  if (soilMeasure !== null) return formatSoilField(soilMeasure, properties ?? {}, soilFieldDepths);
   const formatter = FORMATTERS[layerId];
   if (!formatter) return null;
   return formatter(properties ?? {});

@@ -94,6 +94,14 @@ def day_status_sets(keys: tuple[str, ...], *, layer: str, kind: PartitionKind, t
     )
 
 
+def tier_has_objects(listing: WarehouseListing, *, scope: ReadScope) -> bool:
+    """Whether the lane has written anything at this tier; stops at the first key, never listing the tier.
+
+    An authorized listing yields an index-named key first, so this costs it no physical LIST at all.
+    """
+    return next(listing.iter_tier_keys(scope.layer, scope.kind, scope.tier), None) is not None
+
+
 def resolve_day(
     listing: WarehouseListing,
     reader: PartitionRowReader,
@@ -120,8 +128,8 @@ def resolve_day(
     if day in statuses.data:
         return _published(reader, scope=scope, keys=month_keys, requested_day=day, served_day=day)
     # A non-empty month listing already proves the lane has written SOMETHING at this tier, so the
-    # whole-tier probe below is paid only by a request that landed outside every written month.
-    if month_keys or listing.list_keys(scope.layer, scope.kind, scope.tier):
+    # existence probe below is paid only by a request that landed outside every written month.
+    if month_keys or tier_has_objects(listing, scope=scope):
         return DayNotWritten(requested_day=day)
     return LaneNeverWritten(requested_day=day)
 
@@ -152,7 +160,7 @@ def resolve_window(
     for snapshot in snapshots.values():
         _snapshot_keys(snapshot, scope=scope, keys=keys)
     rows_by_day, truncated_from = _window_rows(reader, scope=scope, keys=keys, published_days=published_days)
-    lane_written = bool(keys) or bool(listing.list_keys(scope.layer, scope.kind, scope.tier))
+    lane_written = bool(keys) or tier_has_objects(listing, scope=scope)
     envelopes = tuple(
         _window_envelope(
             listing,
@@ -194,7 +202,7 @@ def _resolve_calendar_release(
     eligible = tuple(day for day in release_days if day <= as_of)
     if eligible:
         return replace(resolve_day(listing, reader, scope=scope, day=eligible[-1]), requested_day=as_of)
-    if listing.list_keys(scope.layer, scope.kind, scope.tier):
+    if tier_has_objects(listing, scope=scope):
         return DayNotWritten(requested_day=as_of)
     return LaneNeverWritten(requested_day=as_of)
 
@@ -234,7 +242,7 @@ def resolve_release(
                 absence=read_absence_evidence(listing, scope=scope, day=served_day),
             )
         return _published(reader, scope=scope, keys=keys, requested_day=as_of, served_day=served_day)
-    if listing.list_keys(scope.layer, scope.kind, scope.tier):
+    if tier_has_objects(listing, scope=scope):
         return DayNotWritten(requested_day=as_of)
     return LaneNeverWritten(requested_day=as_of)
 

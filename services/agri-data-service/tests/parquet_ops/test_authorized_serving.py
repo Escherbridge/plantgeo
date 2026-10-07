@@ -45,6 +45,18 @@ class _ReadOnlyStore:
         raise AssertionError("a GET path attempted to advance a pointer")
 
 
+class _RecordingPool:
+    """The shared fetch pool, recording which receipt each submitted fetch was for."""
+
+    def __init__(self, inner: Any) -> None:
+        self.inner = inner
+        self.submitted: list[str] = []
+
+    def submit(self, stage: Any, receipt: EvidenceReceipt, *args: object) -> Any:
+        self.submitted.append(receipt.key)
+        return self.inner.submit(stage, receipt, *args)
+
+
 def _index(*rows: object) -> Any:
     return SimpleNamespace(
         rows=rows,
@@ -62,6 +74,7 @@ def _row(day: date, *, part: str, completion: str, part_payload: bytes, completi
         day=day,
         rung=13,
         terminal_state="published",
+        provenance="digested",
         terminal_receipt=EvidenceReceipt(
             key="layer=vegetation/kind=observed/availability/evidence/terminal=" + "1" * 64 + ".json",
             sha256="1" * 64,
@@ -179,16 +192,20 @@ def test_verified_part_bytes_are_the_sources_given_to_the_row_reader(monkeypatch
     assert rows.observed_payload == payload
 
 
-def test_aggregate_staging_budget_stops_before_fetching_remaining_parts(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_aggregate_budget_breach_submits_no_part_fetch_beyond_one_sliding_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     day = date(2026, 8, 6)
-    parts = tuple(partition_path("vegetation", "observed", 13, day, index) for index in range(3))
-    payloads = (b"aaaaaa", b"bbbbbb", b"cccccc")
+    part_count = 30
+    parts = tuple(partition_path("vegetation", "observed", 13, day, index) for index in range(part_count))
+    payloads = tuple(bytes([65 + index % 26]) * 6 for index in range(part_count))
     completion = completion_marker_path("vegetation", "observed", 13, day)
     completion_payload = b"completion"
     row = SimpleNamespace(
         day=day,
         rung=13,
         terminal_state="published",
+        provenance="digested",
         terminal_receipt=EvidenceReceipt(
             key="layer=vegetation/kind=observed/availability/evidence/terminal=" + "1" * 64 + ".json",
             sha256="1" * 64,
@@ -202,18 +219,25 @@ def test_aggregate_staging_budget_stops_before_fetching_remaining_parts(monkeypa
     _stub_index(monkeypatch, _index(row))
     monkeypatch.setattr(serving, "MAX_VERIFIED_READ_BYTES", 10)
     store = _ReadOnlyStore({completion: completion_payload, **dict(zip(parts, payloads, strict=True))})
+    rows = FakeRowReader()
+    pool = _RecordingPool(serving._RECEIPT_FETCH_POOL)
+    monkeypatch.setattr(serving, "_RECEIPT_FETCH_POOL", pool)
 
     with pytest.raises(faults.ServingRefusalError) as caught:
         serving.resolve_authorized_day(
             serving.AuthorizedServingReader(store),
             FakeListing(),
-            FakeRowReader(),
+            rows,
             scope=ReadScope(layer="vegetation", kind="observed", tier=13, bbox=None),
             day=day,
         )
 
     assert caught.value.code == "read_over_budget"
-    assert store.reads == [completion, parts[0], parts[1]]
+    assert rows.reads == []
+    assert store.reads[0] == completion
+    # The first window, then one refill when part 0 is admitted. Part 1 breaches the budget before its
+    # refill is submitted, so nothing past that one sliding window is ever queued.
+    assert [key for key in pool.submitted if key in parts] == list(parts[: serving._RECEIPT_FETCH_WINDOW + 1])
 
 
 def test_listing_absence_history_opens_no_terminal_evidence(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -17,6 +17,7 @@ import click
 
 from agri_data_service.config import settings
 from agri_data_service.db.engine import receiver_writer_session
+from agri_data_service.parquet_ops.authorized_serving import MAX_CACHED_INDEX_GENERATION_BYTES, MAX_CACHED_INDEX_ROWS
 from agri_data_service.pipeline.parquet.availability_index import (
     AvailabilityError,
     BotoAvailabilityStorage,
@@ -30,6 +31,11 @@ from agri_data_service.pipeline.parquet.availability_reconciliation import (
     ReconciliationCompilation,
     compile_physical_ladder_reconciliation,
     install_reconciliation_evidence,
+)
+from agri_data_service.pipeline.parquet.availability_trusted_digest import (
+    MAX_TRUSTED_DIGEST_DAYS,
+    IndexCacheLimits,
+    compile_trusted_digest,
 )
 from agri_data_service.pipeline.parquet.objectstore import BotoObjectStoreBackend, ObjectStore
 
@@ -233,6 +239,102 @@ def availability_reconcile_physical(  # noqa: PLR0913 - each option is a safety 
     )
 
 
+@click.command("availability-digest-trusted")
+@click.option("--lane", required=True, help="Registered physical layer slug.")
+@click.option("--kind", required=True, type=click.Choice(["observed", "forecast"]))
+@click.option("--start", "start_text", required=True, help="Inclusive first day (YYYY-MM-DD).")
+@click.option("--end", "end_text", required=True, help=f"Inclusive last day; at most {MAX_TRUSTED_DIGEST_DAYS} days.")
+@click.option(
+    "--output",
+    "output_path",
+    required=True,
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Local JSON report; the publication document is written beside it as <stem>.publication.json.",
+)
+@click.option("--expected-sha256", help="Required with --apply; document_sha256 from the reviewed dry run.")
+@click.option("--expected-head-generation", help="Required with --apply; head_generation_key from the dry run.")
+@click.option("--apply", "apply_", is_flag=True, default=False, help="Install evidence and invoke the CAS publisher.")
+def availability_digest_trusted(  # noqa: PLR0913 - each option is a safety pin or range coordinate
+    lane: str,
+    kind: str,
+    start_text: str,
+    end_text: str,
+    output_path: Path,
+    expected_sha256: str | None,
+    expected_head_generation: str | None,
+    *,
+    apply_: bool,
+) -> None:
+    """Hash the parts of manifest-trusted days and publish them as digested rows (dry run by default)."""
+    try:
+        start_day = date.fromisoformat(start_text)
+        end_day = date.fromisoformat(end_text)
+    except ValueError as exc:
+        raise click.ClickException(f"invalid_digest_range: {exc}") from exc
+    span = (end_day - start_day).days + 1
+    if span < 1 or span > MAX_TRUSTED_DIGEST_DAYS:
+        raise click.ClickException(f"invalid_digest_range: must contain 1..{MAX_TRUSTED_DIGEST_DAYS} days, got {span}")
+    if apply_ and (expected_sha256 is None or expected_head_generation is None):
+        raise click.ClickException("--apply requires --expected-sha256 and --expected-head-generation")
+    try:
+        storage = _storage()
+        compilation = compile_trusted_digest(
+            _object_store(),
+            storage,
+            lane=lane,
+            kind=cast("PartitionKind", kind),
+            start_day=start_day,
+            end_day=end_day,
+            cache_limits=IndexCacheLimits(
+                generation_bytes=MAX_CACHED_INDEX_GENERATION_BYTES, rows=MAX_CACHED_INDEX_ROWS
+            ),
+        )
+    except (AvailabilityError, AvailabilityReconciliationError, OSError, ValueError) as exc:
+        raise click.ClickException(f"availability_digest_refused: {exc}") from exc
+    report = compilation.report()
+    document_path = output_path.with_name(f"{output_path.stem}.publication.json")
+    publication = compilation.publication
+    report["document_path"] = None if publication is None else str(document_path)
+    # The report is written before the pins are compared, so a refused apply still leaves the evidence.
+    output_path.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    if expected_head_generation is not None and compilation.head_generation_key != expected_head_generation:
+        raise click.ClickException(
+            f"trusted-digest head is {compilation.head_generation_key}, expected {expected_head_generation}"
+        )
+    if expected_sha256 is not None and compilation.document_sha256 != expected_sha256:
+        raise click.ClickException(
+            f"trusted-digest document digest is {compilation.document_sha256}, expected {expected_sha256}"
+        )
+    preview: dict[str, object] = {
+        "document_sha256": compilation.document_sha256,
+        "head_generation_key": compilation.head_generation_key,
+        "head_generation_sha256": compilation.head_generation_sha256,
+        "index_size": report["index_size"],
+        "lane": lane,
+        "output": str(output_path),
+        "totals": report["totals"],
+    }
+    if publication is None:
+        if apply_:
+            raise click.ClickException("availability_digest_refused: no day in the range is ready to publish")
+        _emit({"operation": "availability-digest-trusted", "applied": False, "request": preview})
+        return
+    document_path.write_bytes(publication.document)
+    request = _load(
+        lambda: load_publication_request(
+            document_path,
+            expected_sha256=publication.document_sha256,
+            expected_row_count=publication.row_count,
+        )
+    )
+    _run(
+        "availability-digest-trusted",
+        preview,
+        apply_=apply_,
+        work=lambda: _apply_reconciliation(storage, publication, request),
+    )
+
+
 def _request_preview(
     *,
     identity: AvailabilityIdentity,
@@ -326,8 +428,20 @@ def _storage() -> BotoAvailabilityStorage:
     return BotoAvailabilityStorage.from_settings(settings)
 
 
+def _object_store() -> ObjectStore:
+    return ObjectStore(
+        BotoObjectStoreBackend.from_credentials(settings.require_object_store()),
+        prefix=settings.object_store_prefix,
+    )
+
+
 def _emit(payload: dict[str, object]) -> None:
     click.echo(json.dumps(payload, sort_keys=True, separators=(",", ":")))
 
 
-__all__ = ["availability_bootstrap", "availability_publish", "availability_reconcile_physical"]
+__all__ = [
+    "availability_bootstrap",
+    "availability_digest_trusted",
+    "availability_publish",
+    "availability_reconcile_physical",
+]

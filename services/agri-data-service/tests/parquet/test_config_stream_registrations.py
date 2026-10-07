@@ -299,7 +299,7 @@ _FRESH_INTERPRETER_PROBE: Final = textwrap.dedent(
     completion = completion_marker_path("mirror-fixture-daily", "observed", 13, day)
     objects = {part: b"receipt-bound parquet bytes", completion: b"receipt-bound completion"}
     row = SimpleNamespace(
-        day=day, rung=13, terminal_state="published",
+        day=day, rung=13, terminal_state="published", provenance="digested",
         terminal_receipt=EvidenceReceipt(key=part + ".terminal.json", sha256="1" * 64),
         data_receipts=(EvidenceReceipt(key=part, sha256=sha256_digest(objects[part])),),
         completion_receipt=EvidenceReceipt(key=completion, sha256=sha256_digest(objects[completion])),

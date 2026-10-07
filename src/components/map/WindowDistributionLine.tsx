@@ -13,6 +13,7 @@ import {
 import { trpc } from "@/lib/trpc/client";
 import { useClimateStore } from "@/stores/climate-store";
 import { useLayerWindow } from "@/stores/layer-window-store";
+import { useSoilStore } from "@/stores/soil-store";
 import { hasSelectableDay, useTimeSliderStore } from "@/stores/time-slider-store";
 
 const DISTRIBUTION_STALE_MS = 15 * 60 * 1000;
@@ -62,11 +63,18 @@ function DistributionQueryLine({
 }) {
   const { window } = useLayerWindow(layerId);
   const airTemperatureVariant = useClimateStore((state) => state.airTemperatureVariant);
+  const soilFieldDepths = useSoilStore((state) => state.fieldDepth);
   const climateSignal = climateFieldSignalForGeometryLayerId(styleLayerId);
+  // Asks agri for the painted signal only, so a multi-lane surface (air temperature's three
+  // statistics, weather's four measures, a soil field's 3-4 depths) costs one lane read.
+  const signalName = distributionSignalName(styleLayerId, airTemperatureVariant, soilFieldDepths);
+  // The signal to DISPLAY, which is not always the one sent: climate's fixed-signal surfaces
+  // (precipitation, soil-wetness-*) send no `signalName` because there is only one lane, but that
+  // lane's own name must still be preferred so `selectDistributionLane` cannot fall through to
+  // `lanes[0]` of a differently-ordered response. Every other surface's preferred signal is
+  // exactly what was asked for.
   const preferredSignalName =
-    climateSignal === null ? null : climateFieldSignalName(climateSignal, airTemperatureVariant);
-  // Asks agri for the painted signal only, so a multi-lane surface costs one lane read.
-  const signalName = distributionSignalName(styleLayerId, airTemperatureVariant);
+    climateSignal === null ? signalName : climateFieldSignalName(climateSignal, airTemperatureVariant);
 
   // Asks only once the point holds still, so sweeping a pointer across cells costs nothing. The
   // point is the FIRST position on the hovered feature (HoverTooltip keeps it), so moving within

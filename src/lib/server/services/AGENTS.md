@@ -1003,8 +1003,27 @@ keeps its slot. So, in order:
    holder's token, release with the ORIGINAL (now-stale) token, and assert the second holder's lock
    survives.
 
-`signal_name` is sent for the air-temperature variants and the weather temperature layers
-(`distributionSignalName`), so agri reads one lane of a multi-lane surface instead of all of them.
-The wire contract is pinned from both sides by `src/__tests__/services/
+`signal_name` is sent for the air-temperature variants, the weather temperature layers and the two
+depth-bearing soil fields (`distributionSignalName`), so agri reads one lane of a multi-lane
+surface instead of all of them. The soil case (owner decisions 2026-10-05) takes a FOURTH
+parameter the others don't need: `soilFieldDepths`, the painted depth per measure
+(`soil-store.fieldDepth`), because a depth is chosen per MEASURE (moisture and temperature pick
+independently) where a variant is chosen per SURFACE -- defaulted to `DEFAULT_SOIL_FIELD_DEPTHS` so
+every pre-existing caller keeps compiling unchanged. `soil-moisture` accepts exactly
+`soil_water_content_layer_1..3`; `soil-temperature` accepts exactly `soil_temperature_level_1..4`;
+`soil-vpd` accepts nothing, because its one pseudo-depth is already the whole signal. Without the
+signal name, agri read every depth lane of the surface (3-4 lanes, several seconds) while the
+client's `selectDistributionLane` showed `lanes[0]` regardless of which depth was painted -- not
+necessarily the one on screen. The wire contract is pinned from both sides by `src/__tests__/services/
 agri-distribution-contract.fixture.json`: agri writes/checks it from real outputs, and
 `layer-window-distribution-contract.test.ts` parses every case and checks its line and cache TTL.
+
+**Soil hover is wired (2026-10-05, `src/lib/map/hover-fields.ts`).** `HOVERABLE_LAYER_IDS` now
+carries `soil-moisture-field-fill` / `soil-temperature-field-fill`, and `formatHoverContent`
+dispatches them to `formatSoilField` (alongside `formatClimateField`'s special-case, not the
+`FORMATTERS` map) -- it shows the painted `value` with its unit and the painted depth read from
+`soil-store.fieldDepth`, since depth is a client toggle, not a `SoilFieldFeatureProperties` field.
+A hover now reaches `HoverTooltip` -> a tooltip -> `WindowDistributionLine`, which sends the same
+depth-correct `signal_name` `soil-window-distribution.test.tsx` already proved in isolation; the
+end-to-end path is covered by `window-distribution.test.tsx`'s "the hovered soil-moisture cell's
+window distribution" describe block.

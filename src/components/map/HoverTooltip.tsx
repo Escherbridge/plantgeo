@@ -14,6 +14,9 @@ import {
   climateFieldLayerIdsFor,
   climateFieldSignalForGeometryLayerId,
 } from "@/lib/map/climate-field-layer-ids";
+import { soilFieldMeasureForStyleLayerId } from "@/lib/layer-window-distribution";
+import { soilFieldLayerIdsFor } from "@/lib/environmental/soil-field";
+import { useSoilStore } from "@/stores/soil-store";
 
 interface HoverTooltipProps {
   map: MapLibreMap;
@@ -114,6 +117,13 @@ export default function HoverTooltip({ map }: HoverTooltipProps) {
   // Read by `handleMouseMove` without joining the effect's deps -- see the note on `pinned`
   // above for why a hover pass must not clear what a tap just pinned.
   const pinnedRef = useRef(false);
+  // Which depth each soil measure is currently painting (`SoilFieldLayer`'s own prop), so a soil
+  // caption can say "Depth: Root zone (7-28 cm)" rather than always the default -- the same store
+  // `WindowDistributionLine` already reads to pick the matching `signal_name`. In the effect's
+  // dep array below: a depth change must re-register `handleMouseMove`/`handleClick` with the new
+  // value, since both close over it rather than reading a ref (there is no layer z-order to
+  // protect here, unlike `SoilFieldLayer`'s `propsRef` trick).
+  const soilFieldDepths = useSoilStore((state) => state.fieldDepth);
 
   useEffect(() => {
     function handleMouseMove(e: maplibregl.MapMouseEvent) {
@@ -138,7 +148,7 @@ export default function HoverTooltip({ map }: HoverTooltipProps) {
       for (const feature of features) {
         const layerId = feature.layer?.id;
         if (!layerId) continue;
-        const content = formatHoverContent(layerId, (feature.properties ?? {}) as Record<string, unknown>);
+        const content = formatHoverContent(layerId, (feature.properties ?? {}) as Record<string, unknown>, soilFieldDepths);
         if (content) {
           map.getCanvas().style.cursor = "pointer";
           const featureKey = hoveredFeatureKey(layerId, feature, content);
@@ -190,7 +200,7 @@ export default function HoverTooltip({ map }: HoverTooltipProps) {
       for (const feature of features) {
         const layerId = feature.layer?.id;
         if (!layerId) continue;
-        const content = formatHoverContent(layerId, (feature.properties ?? {}) as Record<string, unknown>);
+        const content = formatHoverContent(layerId, (feature.properties ?? {}) as Record<string, unknown>, soilFieldDepths);
         if (content) {
           setTooltip((previous) => {
             // Tapping the same pinned feature again is how a touch reader dismisses it -- there
@@ -232,13 +242,21 @@ export default function HoverTooltip({ map }: HoverTooltipProps) {
       setTooltip(previous => {
         if (previous === null) return previous;
         const climateSignal = climateFieldSignalForGeometryLayerId(previous.layerId);
+        const soilMeasure = soilFieldMeasureForStyleLayerId(previous.layerId);
         const replacesVegetation =
           event.sourceId === "vegetation-ndvi-cells" &&
           previous.layerId === "vegetation-ndvi-cells-fill";
         const replacesClimate =
           climateSignal !== null &&
           event.sourceId === climateFieldLayerIdsFor(climateSignal).sourceId;
-        if (!replacesVegetation && !replacesClimate) return previous;
+        // A soil field's source reloads on BOTH a day change and a depth change
+        // (`SoilFieldLayer.tsx`'s `setData` effect) -- either one must drop a pinned soil
+        // caption, because `WindowDistributionLine` reads the painted depth live off the soil
+        // store while the caption text above it is frozen at pin time; without this branch a
+        // depth switch left "Depth: Surface" captioned beside a Deep-layer distribution line.
+        const replacesSoil =
+          soilMeasure !== null && event.sourceId === soilFieldLayerIdsFor(soilMeasure).source;
+        if (!replacesVegetation && !replacesClimate && !replacesSoil) return previous;
         pinnedRef.current = false;
         map.getCanvas().style.cursor = "";
         return null;
@@ -268,7 +286,7 @@ export default function HoverTooltip({ map }: HoverTooltipProps) {
       map.off("sourcedata", handleSourceData);
       map.getCanvas().style.cursor = "";
     };
-  }, [map]);
+  }, [map, soilFieldDepths]);
 
   // Measure the current caption before paint; see AGENTS.md §vegetation-scalar-field.
   useLayoutEffect(() => {

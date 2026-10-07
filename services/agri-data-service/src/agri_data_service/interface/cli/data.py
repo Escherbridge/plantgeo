@@ -5,6 +5,7 @@ import click
 from agri_data_service.interface.cli._registry import register_commands
 from agri_data_service.interface.cli.availability import (
     availability_bootstrap,
+    availability_digest_trusted,
     availability_publish,
     availability_reconcile_physical,
 )
@@ -23,6 +24,7 @@ register_commands(
         ("availability-bootstrap", availability_bootstrap),
         ("availability-publish", availability_publish),
         ("availability-reconcile-physical", availability_reconcile_physical),
+        ("availability-digest-trusted", availability_digest_trusted),
     ),
 )
 

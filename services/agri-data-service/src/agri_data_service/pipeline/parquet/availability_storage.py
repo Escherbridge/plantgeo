@@ -33,6 +33,8 @@ from agri_data_service.pipeline.parquet.objectstore import BotoObjectStoreBacken
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from botocore.config import Config as BotoClientConfig  # type: ignore[import-untyped]
+
     from agri_data_service.pipeline.parquet.availability_documents import EvidenceReceipt
 
 
@@ -97,18 +99,25 @@ class BotoAvailabilityStorage:
         credentials: ObjectStoreCredentials,
         *,
         prefix: str = "",
+        client_config: BotoClientConfig | None = None,
     ) -> BotoAvailabilityStorage:
-        """Build the conditional adapter without performing network I/O."""
-        backend = BotoObjectStoreBackend.from_credentials(credentials)
+        """Build the conditional adapter without performing network I/O; `client_config` as on the backend."""
+        backend = BotoObjectStoreBackend.from_credentials(credentials, client_config=client_config)
         return cls(bucket=backend.bucket, client=backend.client, prefix=_normalize_prefix(prefix))
 
     @classmethod
-    def from_settings(cls, source: Settings | None = None) -> BotoAvailabilityStorage:
+    def from_settings(
+        cls,
+        source: Settings | None = None,
+        *,
+        client_config: BotoClientConfig | None = None,
+    ) -> BotoAvailabilityStorage:
         """Build from validated application settings."""
         resolved = settings if source is None else source
         return cls.from_credentials(
             resolved.require_object_store(),
             prefix=resolved.object_store_prefix,
+            client_config=client_config,
         )
 
     def read(self, key: str, *, max_bytes: int) -> StoredAvailabilityObject | None:

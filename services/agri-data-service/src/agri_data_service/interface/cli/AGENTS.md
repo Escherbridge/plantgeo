@@ -39,6 +39,13 @@ document SHA-256 and audited head-generation key, installs immutable typed evide
 request to the existing CAS publisher. It never rewrites a data part, and public reads may author a
 candidate through the pure compiler but may not trigger this apply path.
 
+`data availability-digest-trusted` is its sibling for already-indexed `manifest_trusted` days. It
+hashes those days' parts, writes a JSON report to `--output` plus `<stem>.publication.json`, and
+publishes rows carrying real part receipts only with `--apply` and both pins. It refuses more than
+366 days, and refuses an unpinned `--apply`, before building any client. Day selection, checks,
+index-size limits and the operator recipe: `pipeline/parquet/AGENTS.md`, "Digesting
+manifest-trusted days".
+
 ## Executor operator inputs
 
 `ops jobs-set-lane-enabled` previews or applies an exact registered executor definition's durable

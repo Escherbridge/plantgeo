@@ -5,6 +5,7 @@ import HoverTooltip from "@/components/map/HoverTooltip";
 import { climateFieldSignalDefinition } from "@/lib/environmental/climate-field";
 import { setScalarFieldInspectionSuppressed } from "@/lib/map/scalar-field-inspection";
 import { climateFieldLayerIdsFor } from "@/lib/map/climate-field-layer-ids";
+import { soilFieldLayerIdsFor } from "@/lib/environmental/soil-field";
 
 /**
  * Touch fires no `mousemove` at all, so every `TOOLTIP_TAP_LAYER_IDS` layer was uninspectable on
@@ -338,5 +339,30 @@ describe("HoverTooltip: climate geometry", () => {
     expect(queryByText("Relative humidity")).toBeTruthy();
     act(() => fakeMap.emit("sourcedata", { sourceId: ids.sourceId, sourceDataType: "content" }));
     expect(queryByText("Relative humidity")).toBeNull();
+  });
+});
+
+describe("HoverTooltip: soil field", () => {
+  it("clears a pinned soil caption only when its own source reloads, not an unrelated one", () => {
+    setCoarsePointer(true);
+    const sourceId = soilFieldLayerIdsFor("moisture").source;
+    const fakeMap = createFakeMap([
+      { layer: { id: "soil-moisture-field-fill" }, properties: { value: 0.214, coverageFraction: 0.92 } },
+    ]);
+    const { getByText, queryByText } = render(<HoverTooltip map={asMap(fakeMap)} />);
+
+    act(() => fakeMap.emit("click", { point: { x: 100, y: 120 } }));
+    expect(getByText("Volumetric soil water")).toBeTruthy();
+
+    // An unrelated source's reload -- including the OTHER soil measure's own source -- must not
+    // touch a pinned moisture caption.
+    act(() => fakeMap.emit("sourcedata", { sourceId: soilFieldLayerIdsFor("temperature").source, sourceDataType: "content" }));
+    expect(getByText("Volumetric soil water")).toBeTruthy();
+
+    // The painted depth changed (or the day did) -- `SoilFieldLayer` calls `setData` on the same
+    // source either way, and the frozen "Depth: ..." caption must not survive it, because
+    // `WindowDistributionLine` would otherwise keep asking about the NEW depth under the OLD label.
+    act(() => fakeMap.emit("sourcedata", { sourceId, sourceDataType: "content" }));
+    expect(queryByText("Volumetric soil water")).toBeNull();
   });
 });

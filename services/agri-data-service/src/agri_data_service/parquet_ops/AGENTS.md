@@ -664,10 +664,14 @@ range and propagate truncation from the first cut published day through every la
 
 ## Listings, and what is memoized
 
-- `day` lists ONE month. Only a request landing outside every written month pays the whole-tier
-  listing that separates `day_not_written` from `lane_never_written`; a non-empty month listing
-  already proves the lane has been written.
-- `window` lists the one or two months its range touches.
+- `day` lists ONE month. Only a request landing outside every written month pays the existence
+  probe that separates `day_not_written` from `lane_never_written`; a non-empty month listing
+  already proves the lane has been written. The probe is `serving.tier_has_objects`:
+  `next(iter_tier_keys(...))`, so it stops at the first key and never materializes a tier. Every
+  resolver (`day`, `window`, `release`, calendar release) uses it. Over an availability-authorized
+  listing the first key is always index-named, so the probe makes ZERO physical LISTs.
+- `window` lists each month its range touches. Over an authorized listing those month lists are
+  answered from the index; only a year holding a manifest-trusted day pays one physical LIST.
 - `release` walks back year by year, bounded by `RELEASE_LOOKBACK_YEARS`, and stops at the first year
   holding a resolvable day.
 - `coverage` is the expensive one — one whole-stream listing for every mutable direct/product lane,
@@ -844,7 +848,8 @@ is limited to 8 MiB per serialized generation, 16 MiB and 100,000 rows across al
 and 16 entries; a larger valid generation is revalidated normally but is never retained as an
 unbounded Python object graph. The verified generation supplies the exact part,
 completion, and governed-absence receipts exposed to the existing four-state resolver; unrelated
-physical objects are invisible even when they share an authorized day prefix. Missing, stale,
+physical objects are invisible even when they share an authorized day prefix (the one exception is
+a manifest-trusted day, below). Missing, stale,
 malformed, or checksum-invalid availability fails closed with a typed serving refusal. The adapter
 implements no write method and a GET never refreshes a receipt, authors work, or advances a pointer.
 
@@ -853,6 +858,189 @@ Listing a month, year, or whole tier therefore opens no terminal documents; only
 loads its terminal receipt and marker bytes. This keeps a fire-history existence probe from turning
 1,069 unrelated absences into thousands of synchronous GETs or letting one unrelated corrupt marker
 withhold an otherwise valid published day.
+
+### Trust levels: `hash_verified` and `manifest_trusted`
+
+**Owner decision 2026-10-05: "serve now, hash later".** A published day is served at one of two
+trust levels. `AvailabilityAuthorizedListing.trust_level(day)` reports which level applies.
+
+- **`hash_verified`**: the row names every part with a sha256. Each staged part must match its
+  digest. This path is unchanged.
+- **`manifest_trusted`**: the row's `provenance` is `manifest_trusted`. That means it is published,
+  has `row_count > 0`, has zero `data_receipts`, and binds an ordinary `_complete.json`. This is the
+  bootstrap class from owner decision D3 (`pipeline/parquet/availability_primitives.py`,
+  `AvailabilityProvenance`). The compiler bound every day older than its 90-day digest window this
+  way. On 2026-10-05 that was about 50,100 z13 days across 14 lanes. Before this change the listing
+  gave such a day only its marker, so it classified `incomplete`. The slider offered those days, and
+  `/parquet/day`, `/parquet/window` and `distribution_at_point` then refused them with
+  `partition_day_incomplete`. See `.omc/research/completion-receipts-20261005.md`.
+
+A trusted day is served like this:
+
+1. **Naming.** The listing cannot read the marker to learn `part_count`, because agent readers look
+   up `object_uri(key)` for each listed key. So a trusted day's part names come from **one physical
+   LIST per calendar year** (`year=YYYY/` prefix). The first ask that touches a trusted day binds
+   that day's WHOLE year, and the binding is kept for the listing's life (one request). A 365-day
+   window therefore pays 1-2 LISTs, not one per month. Two rules hold:
+   - An ask whose month (or year) holds no trusted day never LISTs; a hashed month is named by its
+     receipts alone, even inside a year that has trusted days. The tier prefix is never listed: a
+     whole-tier ask binds year by year.
+   - A bound year is never listed again, so a day's part names cannot change between two resolves
+     on one listing.
+
+   This is the only place an authorized listing sees physical objects. If a trusted day has an
+   `absent.json` or a `_complete.empty.json` beside it, or has no parts, the listing gives it only
+   its marker, and the resolver refuses it `partition_day_incomplete`. `iter_tier_keys` yields a
+   trusted day's marker (known from the index) BEFORE it binds that day's year. An existence probe
+   that stops at the first key therefore never LISTs. Before this rule, the probe called
+   `list_keys()` with no year and LISTed the whole z13 tier whenever trusted days spanned two years.
+
+   **The LIST is bounded by the serving client, not by the staging deadline.** It runs while the
+   resolver classifies days, before `verified_object_uris` starts its 20 s clock. Both physical
+   listing holders (`interface/http/parquet_routes.py::_ListingHolder` and
+   `agent/warehouse.py::_ObjectStoreSource.listing`) build their backend with
+   `SERVING_CLIENT_CONFIG`, so each LIST page gives up within 2 x (3 + 6) s, the same bound a receipt
+   GET has. Those holders also serve coverage census listings, so census pages get the same bound.
+   Pinned by `test_both_physical_listing_holders_use_the_serving_client_bounds`.
+2. **Marker check.** The marker is verified exactly as for a hashed day, in the same first phase
+   and the same input order. Then it is decoded. It must not be derived-empty, and its `row_count`
+   must equal the index row's.
+3. **Part count.** The selected part indexes must be exactly `0 .. part_count-1`. A missing,
+   surplus or repeated part refuses. The check uses parsed indexes, not rendered names, so it does
+   not depend on how names are padded. The writer mints them as `partition_path(..., i)`, contiguous
+   from 0 (`objectstore.write_partition`, `derivation._write_tier`, `prune_surplus_parts`).
+4. **Row count.** The parts go through the same bounded, in-order, gated, budgeted staging as hashed
+   parts. There is no digest to compare (`_verified_payload` exempts only `_ManifestTrustedPart`).
+   As each part is admitted, `_TrustedRowTally` reads its Parquet footer. On a day's last part, the
+   summed rows must equal the marker's count, or the day refuses.
+
+Refusals: a count or row mismatch is `partition_day_incomplete`. A marker digest mismatch is
+`availability_checksum_invalid`, unchanged. Unreadable Parquet or an undecodable marker is
+`availability_malformed`. The order of marker before part, the first failure in input order, and the
+byte budgets are all unchanged. Mixed windows of hashed and trusted days stage in one fan-out.
+
+**Observability.** A read that admits trusted days logs `authorized_read_trust` with
+`trust_level=manifest_trusted`, `manifest_trusted_days`, `hash_verified_days` and the trusted day
+range. If no event is logged, every staged day was hash-verified. The wire envelope is unchanged,
+because the web zod mirrors it.
+
+**What the weaker claim is (owner-accepted trade-off).** The marker is bound to the index by its
+digest, and the bytes match the marker's counts. Nothing binds the part bytes themselves. **A
+rewrite of a part that keeps the same row count and lands after the marker check IS SERVED on the
+trusted path.** The owner accepted this on 2026-10-05 ("serve now, hash later"). A 2026-10-07
+review flagged it again, and it stays by that decision until the digest verb reaches the day. A rewrite that clears the marker first fails
+closed, and so does any rewrite that changes the row count. The planned `availability-digest-trusted` verb adds `data_receipts` to these
+rows. A digested day then takes the `hash_verified` path with no change here, and the trusted
+branch, together with its LIST, stops being reached. Pinned by
+`tests/parquet_ops/test_authorized_serving_trusted.py`.
+
+### Receipt-fetch concurrency
+
+Production measured the sequential marker-then-part fetch at ~115 ms per published day, linear in
+window length: a 30-day, 3-lane soil-temperature `distribution_at_point` took ~10.5 s against the
+12 s agent tool timeout, and map routes share the path. `_stage_in_order` now fans fetches out on
+ONE module-level `ThreadPoolExecutor` (`_RECEIPT_FETCH_WORKERS = 8`), so concurrent GETs to R2 are
+bounded per process, not per request: three overlapping DuckDB-slot reads still hold at most 8,
+under boto's default 10-connection pool. A per-request pool would multiply that by every
+overlapping call and leak threads on each one. Each request also keeps at most
+`_RECEIPT_FETCH_WINDOW` (4) fetches outstanding, as a sliding window, so a long window cannot fill the
+shared queue and a refusal never has more than one window of fetches behind it.
+
+**The window alone does not protect the pool.** A window of 4 out of 8 workers stops one *live*
+stalled request from holding every worker. It does not stop *abandoned* fetches from piling up: a
+request that refuses (deadline, corrupt receipt) does not wait for its running siblings, so they keep
+their workers until their GET returns. Two abandoned requests against a stalled R2 prefix filled all
+8 workers, and a healthy request then queued behind them and refused `read_timed_out` with no fetch
+started. Two mechanisms close that:
+
+- **A bounded serving client.** `AuthorizedServingReaderHolder` builds its own boto client with
+  `SERVING_CLIENT_CONFIG`: `connect_timeout=3`, `read_timeout=6`,
+  `retries={"mode": "standard", "total_max_attempts": 2}`. A fully stalled GET therefore gives up
+  within 2 x (3 + 6) = 18 s, inside the 20 s staging deadline. Spell it `total_max_attempts`:
+  botocore reads `retries.max_attempts` as the number of *retries*, so `max_attempts: 2` means three
+  GETs and ~27 s. Ingestion keeps botocore defaults (60 s read timeout), because
+  `BotoAvailabilityStorage.from_settings()` without `client_config` is the publication path for long
+  uploads; the config is threaded through `client_config` on `BotoObjectStoreBackend.from_credentials`
+  and `BotoAvailabilityStorage.from_credentials`/`from_settings`. `read_timeout` bounds the gap
+  between received bytes, not a whole body, so a body that trickles slowly has no total bound. The
+  cap below is the backstop for that case.
+- **A cap on abandoned fetches.** `_ABANDONED_FETCHES` counts, process-wide, every fetch a request
+  gave up on while it was still running. A done-callback releases each one when its GET returns.
+  When the count reaches `_RECEIPT_FETCH_WINDOW`, a new `_stage_in_order` refuses
+  `serving_at_capacity` up front instead of queueing behind the stragglers. The check is advisory:
+  two requests can both pass at a count of 3. That is acceptable, because it bounds a pile-up and is
+  not an exact quota.
+
+`_RECEIPT_STAGING_DEADLINE_SECONDS` (20 s) bounds one `verified_object_uris` call across both phases.
+On a breach, the call refuses `read_timed_out`, the transient serving code the agent maps to
+`timeout`. The deadline sits above every caller's own deadline (12 s agent tool, 14 s row route), so
+it never cuts off an answer that a caller is still waiting for. Its only job is to give back the
+serving slot that an abandoned worker thread holds: `asyncio.timeout` cancels the awaiting
+coroutine, but not the thread under it. A GET already running on a pool thread cannot be cancelled;
+it keeps that worker until the serving client's timeouts above end it.
+
+**Interpreter exit.** `concurrent.futures` joins every pool worker at exit, so a straggler still
+running delays shutdown. The serving client's bounds limit that delay to about 18 s per straggler
+GET, instead of botocore's 60 s read timeout plus retries.
+
+**Memory ceiling.** `BotoAvailabilityStorage.read` buffers a whole object. So the steady-state worst
+case for resident part payloads per process is `_RECEIPT_FETCH_WORKERS x MAX_VERIFIED_PART_BYTES` =
+8 x 64 MiB = **512 MiB**, plus each DuckDB session's `memory_limit`. While `body.read()` joins the
+received chunks into one `bytes`, a thread briefly holds about twice its payload, so the transient
+peak can approach 2x that figure. Under the sequential path it was about 3 x 64 MiB (one per serving
+slot). Real parts are far below 64 MiB, so the ceiling is a bound, not a forecast. Check it against
+the agri service's container memory limit before raising either constant. Streaming the GET body to
+its file, with an incremental sha256 and the file deleted on a mismatch, would cut this to one chunk
+per thread. That needs a streaming read on the `AvailabilityStorage` protocol.
+
+The invariants the fan-out keeps, and the test that pins each (in
+`tests/parquet_ops/test_authorized_serving_concurrency.py` unless named otherwise):
+
+- **Commit point first.** Every selected completion marker is fetched and digest-checked, as its
+  own phase, before any part fetch is *submitted*. A rewriter clears the marker before it replaces
+  part-0, so marker verification first is what makes a concurrent rewrite fail closed. The
+  two phases cost one extra round trip. That is the price of the invariant, so do not merge them.
+  Pinned by `test_every_completion_marker_is_verified_before_any_part_fetch_starts` and
+  `test_corrupt_marker_refuses_before_any_part_is_fetched`.
+- **Input-order admission.** Results are consumed strictly in input order (`future.result()` on the
+  window head). The aggregate byte ceilings (`MAX_VERIFIED_MARKERS_BYTES`,
+  `MAX_VERIFIED_READ_BYTES`) are charged in that order. The refusal raised is therefore the one the
+  sequential loop raised: the first failing receipt in input order, even when a later one fails
+  sooner on the wall clock. Each head is admitted *before* the window is refilled, so a budget
+  breach queues no further GET. Pinned by
+  `test_first_failure_in_input_order_wins_even_when_a_later_one_lands_first` and, in
+  `test_authorized_serving.py`, `test_aggregate_budget_breach_submits_no_part_fetch_beyond_one_sliding_window`
+  (part budget only: no test drives `MAX_VERIFIED_MARKERS_BYTES`).
+- **Workers write, the consumer admits.** A pool thread verifies a part and writes it to its
+  index-named temp file, then returns only the byte count. So memory holds at most one payload per
+  pool thread (see the ceiling above), and no payload per waiting request. A part staged and then
+  refused over budget is never named in `exact_sources`, and the temporary tree removes it. Pinned
+  by `test_window_fetches_concurrently_within_the_bound_and_stages_each_key_its_own_bytes`, where
+  later parts finish first and each key must still read its own bytes.
+- **No wait on stragglers.** On any exit, the `finally` cancels queued futures and hands the ones
+  still running to `_ABANDONED_FETCHES`. It never waits on them. A definite refusal, such as
+  `availability_checksum_invalid` on marker 0, therefore returns at once even while marker 1 is
+  stalled. Waiting would turn it into a transient timeout at the caller's 12 s or 14 s deadline.
+  Waiting also does not work: CPython's `wait()` does not report a just-cancelled queued future as
+  done while the pool is busy. Pinned by `test_a_definite_refusal_is_not_held_behind_a_stalled_sibling`.
+- **No write after abandonment.** The `finally` first calls `_StagedWrites.abandon()`. Every staged
+  write takes the same per-request lock and checks the flag, so once `abandon()` returns, no write is
+  in progress and none can start. This gate is what makes not waiting safe. Without it, a straggler
+  could write into the temporary tree while it is removed, and the removal fails with
+  `PermissionError` on Windows or `OSError(ENOTEMPTY)` on Linux instead of raising the refusal.
+  Pinned by `test_a_straggler_released_while_its_tree_is_removed_writes_nothing_into_it`, which
+  releases the hung read and lets its worker finish *before* the tree is removed, and by the
+  no-late-write assertion in the input-order test.
+- **Capped abandonment.** Pinned by
+  `test_abandoned_stragglers_at_the_window_size_refuse_new_staging_until_they_drain`, which also
+  checks that the count drains and that serving resumes. The serving client's bounds are pinned by
+  `test_the_serving_client_is_built_with_bounds_inside_the_staging_deadline`, and the listing
+  holders' by `test_both_physical_listing_holders_use_the_serving_client_bounds`.
+- **Bounded head wait.** The consumer waits on the window head with the remaining deadline, and a
+  head that does not finish refuses `read_timed_out`. Pinned by
+  `test_staging_past_its_deadline_refuses_as_a_timeout_and_leaves_no_staged_file`. A head that does
+  finish is passed to `future.result()`, so a worker's own `TimeoutError` is not mistaken for the
+  deadline. No test pins that part.
 
 `static_lookup` lanes deliberately retain their physical listing behavior because the availability
 contract applies to time-bearing lanes. MTBS still passes through its additional captured-snapshot

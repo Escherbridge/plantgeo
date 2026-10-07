@@ -5,6 +5,7 @@ import type { Map as MapLibreMap, GeoJSONSource } from "maplibre-gl";
 import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
 import {
   soilFieldColorStops,
+  soilFieldLayerIdsFor,
   soilFieldMeasureDefinition,
   SOIL_FIELD_ATTRIBUTION,
   type SoilFieldMeasure,
@@ -50,22 +51,6 @@ function hasParsedStyle(mapInstance: MapLibreMap): boolean {
   } catch {
     return false;
   }
-}
-
-interface SoilFieldLayerIds {
-  source: string;
-  fill: string;
-  outline: string;
-  label: string;
-}
-
-function layerIdsFor(measure: SoilFieldMeasure): SoilFieldLayerIds {
-  return {
-    source: `soil-${measure}-field`,
-    fill: `soil-${measure}-field-fill`,
-    outline: `soil-${measure}-field-outline`,
-    label: `soil-${measure}-field-value-labels`,
-  };
 }
 
 /**
@@ -128,7 +113,7 @@ export function SoilFieldLayer({
   opacityScale = 1,
   visible = true,
 }: SoilFieldLayerProps) {
-  const ids = useMemo(() => layerIdsFor(measure), [measure]);
+  const ids = useMemo(() => soilFieldLayerIdsFor(measure), [measure]);
   const fillColor = useMemo(() => fillColorFor(measure), [measure]);
   const fillOpacity = opacity * opacityScale;
   const labelOpacity = scaleOpacityValue(1, opacityScale) as number;

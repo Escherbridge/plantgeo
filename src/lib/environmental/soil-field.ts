@@ -360,6 +360,31 @@ export function soilFieldMeasureDefinition(
   return SOIL_FIELD_MEASURES[measure];
 }
 
+/** The map style/source ids one `SoilFieldLayer` instance owns for its measure. */
+export interface SoilFieldLayerIds {
+  source: string;
+  fill: string;
+  outline: string;
+  label: string;
+}
+
+/**
+ * The one place `soil-${measure}-field[-fill|-outline|-value-labels]` is spelled out. Shared by
+ * `SoilFieldLayer.tsx` (which adds/removes these ids), `layer-window-distribution.ts` (which
+ * matches a hovered style layer id back to its measure) and `HoverTooltip.tsx` (which matches a
+ * `sourcedata` event's `sourceId` back to the same source) -- previously each rebuilt the naming
+ * rule by its own string template, which is how a soil field's `sourcedata` reload went unhandled
+ * entirely rather than merely inconsistently (see HoverTooltip.tsx's `handleSourceData`).
+ */
+export function soilFieldLayerIdsFor(measure: SoilFieldMeasure): SoilFieldLayerIds {
+  return {
+    source: `soil-${measure}-field`,
+    fill: `soil-${measure}-field-fill`,
+    outline: `soil-${measure}-field-outline`,
+    label: `soil-${measure}-field-value-labels`,
+  };
+}
+
 /** True when the string names a measure this lane publishes. */
 export function isSoilFieldMeasure(value: string): value is SoilFieldMeasure {
   return Object.prototype.hasOwnProperty.call(SOIL_FIELD_MEASURES, value);

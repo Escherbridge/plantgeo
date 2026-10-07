@@ -19,6 +19,7 @@ from agri_data_service.config import settings
 from agri_data_service.foundation.region import load_region, region_layer_availability
 from agri_data_service.parquet_ops import faults
 from agri_data_service.parquet_ops.authorized_serving import (
+    SERVING_CLIENT_CONFIG,
     AuthorizedServingReaderHolder,
     resolve_authorized_day,
     resolve_authorized_release,
@@ -171,7 +172,7 @@ class _ListingHolder:
         if self._held is None:
             credentials = settings.require_object_store()
             self._held = ObjectStoreListing(
-                backend=BotoObjectStoreBackend.from_credentials(credentials),
+                backend=BotoObjectStoreBackend.from_credentials(credentials, client_config=SERVING_CLIENT_CONFIG),
                 prefix=settings.object_store_prefix,
                 mtbs_snapshot_loader=configured_snapshot_loader(settings),
             )

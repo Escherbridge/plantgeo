@@ -991,6 +991,93 @@ must not acquire write authority.
 being published. Hashing a request's own rows and shipping the digest alongside them proved nothing;
 the source evidence document is an object outside the request that every row of the day cites.
 
+### Digesting manifest-trusted days (`availability_trusted_digest.py`, 2026-10-07)
+
+**Why it exists.** The bootstrap bound history older than its 90-day digest window as
+`manifest_trusted` (owner decision D3): published, `row_count > 0`, zero `data_receipts`, citing a v1
+count-only `_complete.json`. Authorized serving builds a day's listing from `data_receipts +
+completion_receipt`, so a trusted day's listing holds only the marker, `classify_partition_day` calls
+it `incomplete`, and every window touching it refuses `partition_day_incomplete`. Root cause and the
+per-lane counts: `.omc/research/completion-receipts-20261005.md`. The fix is to give those rows the
+part receipts they never had; nothing about the data plane is wrong.
+
+**Why not the physical reconciler.** It refuses this shape three ways, each correct for ITS job:
+count-only markers are refused (`_read_complete_rung`), an indexed day that differs from the physical
+ladder is a conflict (`_require_matching_blessed_day`), and it stamps `published_at` from the marker,
+which the publisher's stale-conflict rule (`availability_requests._classify_request_rows`) refuses
+against a held row. `compile_trusted_digest` is a sibling that shares the reconciler's evidence and
+document builders (`_ladder_evidence`, `_compile_publication`) and replaces only day selection, the
+per-rung check, and the timestamp. None of the reconciler's refusals were loosened.
+
+**Day selection.** A day is a candidate only when EVERY required rung is held, published and
+`manifest_trusted`. Otherwise it is `skipped` with a reason (`not_indexed`, `already_hashed`,
+`governed_absence`, `mixed`) and a `held_shape` string per rung; nothing is downloaded for it.
+
+**Per-rung checks, in order, each refusing the DAY (never the run):** no `absent.json`
+(`absence_marker_present`); the marker exists (`completion_marker_missing` -- a re-export clears it
+first, so a concurrent rewrite lands here); its key and sha256 equal the indexed completion receipt
+(`completion_receipt_mismatch`, the binding every later count leans on); not derived-empty; marker
+rows equal indexed rows; marker not later than the head; parts LISTed, downloaded, hashed and decoded
+as Parquet (`parts_unreadable`); the marker, read AGAIN after the parts were hashed, still has the
+sha256 of the first read (`marker_changed_during_digest` -- a re-export that committed mid-digest
+would otherwise pair its new parts with the old indexed marker; a cleared marker on the re-read lands
+here too); listed part count equals `part_count` (`part_count_mismatch`);
+indexes contiguous from 0; Parquet rows sum to the marker count (`row_count_mismatch`); and a v2
+marker's recorded parts equal the bytes. The first failing rung stops that day's downloads; the
+remaining rungs report `not_checked`. Trust-on-first-digest is the honest limit: there is no earlier
+part hash to compare against, only a marker the index already vouched for and bytes that match it.
+
+**`published_at` is the index's clock, not the wall clock**: head `created_at + 1 µs`. It is strictly
+after every held row, so the publisher treats each row as a correction rather than a stale conflict,
+and the same pinned head always compiles to the same bytes -- which is what lets `--expected-sha256`
+survive the recompile `--apply` performs. A wall-clock stamp would change the digest on every run.
+
+**What `--apply` writes:** the per-day source evidence (citing the parts, the marker, and the
+superseded rows' source and terminal evidence as lineage) and one terminal evidence per rung, then
+`publish_availability` with the reviewed head pinned. Rows keep their completion receipt and gain
+`data_receipts`. Markers and Parquet are never written. The publisher re-reads every part to verify
+and again before the CAS, so an apply downloads each part three times in total.
+
+**Index size.** A digest adds receipts INSIDE existing `(day, rung)` rows, so row counts never change
+(largest lane, dew-point, holds 62,460 of the 100,000-row cache limit). Bytes do grow, by about 36-39
+bytes per receipt after zstd (measured 2026-10-07 by serializing synthetic generations at production
+row counts with `_serialize_generation`). Against the serving cache's 8 MiB per-generation limit
+(`parquet_ops/authorized_serving.py::_remember_index`), estimated full-history sizes at one part per
+rung are:
+
+| lane | rows | trusted rows | now (est.) | all digested (est.) |
+|---|---|---|---|---|
+| climate-field-dew-point | 62,460 | 62,000 | 7.9 MB | **10.2 MB, over 8 MiB** |
+| fire-detections | 37,876 | 33,128 | 5.0 MB | 6.2 MB |
+| climate-field-relative-humidity | 12,784 | 12,104 | 1.7 MB | 2.2 MB |
+| climate-field-precipitation (and other 2022-start lanes) | 6,464 | 6,004 | 0.9 MB | 1.1 MB |
+
+Dew-point crosses the limit after roughly 13,000 receipts, about 3,300 days or nine 366-day runs.
+Past that point `_remember_index` stops caching its generation: serving stays correct but re-reads
+and re-verifies about 10 MB per request. Every run's report carries the exact figures
+(`index_size.head_generation_bytes`, `after_run_generation_bytes`,
+`full_history_generation_bytes_estimate`, `fits_cache_*`), so check them before each dew-point
+apply. Digesting dew-point's full history needs a serving-side decision first: raise the per-lane
+limit, or bound dew-point's history.
+
+**Operator recipe** (`agri-service data availability-digest-trusted`; never more than 366 days):
+
+1. Dry run, which writes `report.json` and `report.publication.json` locally and nothing to the bucket:
+   `agri-service data availability-digest-trusted --lane climate-field-precipitation --kind observed
+   --start 2025-06-08 --end 2026-06-08 --output /tmp/precip-digest.json`
+2. Review the report. Look at `totals`, every `refused` day's `reason`/`detail`, the `skipped`
+   reasons, and `index_size.fits_cache_after_run`. A refused day is not written; investigate it
+   separately.
+3. Apply with both pins from that report, promptly. A forward publish advances the head and turns
+   the pins stale, and a stale pin refuses without writing anything:
+   `... --apply --expected-sha256 <document_sha256> --expected-head-generation <head_generation_key>`
+4. Re-run the dry run. Applied days must now read `already_hashed`.
+
+Lane order: the four agent surfaces first (climate-field-precipitation, soil-field-vpd, vegetation,
+fire-detections), then climate-field-dew-point and the remaining long-history lanes. Dew-point stops
+at the cache limit above. Vegetation has 736 trusted days at z13 but only 188 at its coarser rungs, so expect about 548 of
+them to read `mixed`. This verb skips those by design.
+
 ### The emptied rung, and the receipt that stopped it stranding its day
 
 A derived rung that generalises to zero rows is RETRACTED by `derivation._retract_tier`: its parts

@@ -104,6 +104,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
     from datetime import date
 
+    from botocore.config import Config as BotoClientConfig  # type: ignore[import-untyped]
+
     from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.foundation.parquet.zoom import ZoomTier
 
@@ -473,14 +475,23 @@ class BotoObjectStoreBackend:
     client: _S3Api
 
     @classmethod
-    def from_credentials(cls, credentials: ObjectStoreCredentials) -> BotoObjectStoreBackend:
-        """Build a client from validated coordinates; constructing it performs no network call."""
+    def from_credentials(
+        cls,
+        credentials: ObjectStoreCredentials,
+        *,
+        client_config: BotoClientConfig | None = None,
+    ) -> BotoObjectStoreBackend:
+        """Build a client from validated coordinates; constructing it performs no network call.
+
+        `client_config` is `None` (botocore defaults) for ingestion; request serving passes its own bounds.
+        """
         client: _S3Api = boto3.client(
             "s3",
             endpoint_url=credentials.endpoint_url,
             region_name=credentials.region,
             aws_access_key_id=credentials.access_key_id.get_secret_value(),
             aws_secret_access_key=credentials.secret_access_key.get_secret_value(),
+            config=client_config,
         )
         return cls(bucket=credentials.bucket, client=client)
 

@@ -118,45 +118,7 @@ def compile_physical_ladder_reconciliation(  # noqa: PLR0913 - one bounded range
             for rung in index.pointer.required_rungs
         )
         published_at = max(item.completed_at for item in rungs).astimezone(UTC)
-        source_objects = tuple(
-            sorted(
-                (
-                    *(receipt for item in rungs for receipt in item.data_receipts),
-                    *(item.completion_receipt for item in rungs),
-                ),
-                key=lambda receipt: receipt.key,
-            )
-        )
-        source = build_source_evidence(
-            SourceEvidence(
-                identity=index.pointer.identity,
-                day=day,
-                source_ceiling=index.pointer.source_ceiling,
-                object_receipts=source_objects,
-            )
-        )
-        day_rows: list[AvailabilityRow] = []
-        day_artifacts: list[TypedEvidenceArtifact] = [source]
-        for item in rungs:
-            terminal = TerminalEvidence(
-                identity=index.pointer.identity,
-                day=day,
-                rung=item.rung,
-                terminal_state="published",
-                row_count=item.row_count,
-                source_ceiling=index.pointer.source_ceiling,
-                published_at=published_at,
-                source_receipt=source.receipt,
-                data_receipts=item.data_receipts,
-                completion_receipt=item.completion_receipt,
-                absence_receipt=None,
-                absence_reason=None,
-            )
-            terminal_artifact = build_terminal_evidence(terminal)
-            day_artifacts.append(terminal_artifact)
-            day_rows.append(
-                availability_row_from_terminal_evidence(terminal, terminal_receipt=terminal_artifact.receipt)
-            )
+        day_rows, day_artifacts = _ladder_evidence(index, day=day, rungs=rungs, published_at=published_at)
         if held:
             _require_matching_blessed_day(index, day=day, held=held, physical=day_rows)
             blessed_days.append(day)
@@ -167,7 +129,79 @@ def compile_physical_ladder_reconciliation(  # noqa: PLR0913 - one bounded range
 
     if not candidate_rows:
         raise AvailabilityReconciliationError("range contains no physically complete unblessed day")
-    created_at = max(index.pointer.created_at, *(row.published_at for row in candidate_rows)).astimezone(UTC)
+    return _compile_publication(
+        index,
+        rows=candidate_rows,
+        artifacts=artifacts,
+        candidate_days=candidate_days,
+        blessed_days=blessed_days,
+    )
+
+
+def _ladder_evidence(
+    index: AvailabilityIndex,
+    *,
+    day: date,
+    rungs: Sequence[_PhysicalRung],
+    published_at: datetime,
+    lineage_receipts: Sequence[EvidenceReceipt] = (),
+) -> tuple[tuple[AvailabilityRow, ...], tuple[TypedEvidenceArtifact, ...]]:
+    """Build one day's source evidence and one terminal evidence per rung from hashed physical rungs.
+
+    `lineage_receipts` are extra objects the source evidence cites; the trusted-digest upgrade cites
+    the rows it supersedes, the physical reconciler cites none.
+    """
+    source_objects = tuple(
+        sorted(
+            (
+                *(receipt for item in rungs for receipt in item.data_receipts),
+                *(item.completion_receipt for item in rungs),
+                *lineage_receipts,
+            ),
+            key=lambda receipt: receipt.key,
+        )
+    )
+    source = build_source_evidence(
+        SourceEvidence(
+            identity=index.pointer.identity,
+            day=day,
+            source_ceiling=index.pointer.source_ceiling,
+            object_receipts=source_objects,
+        )
+    )
+    day_rows: list[AvailabilityRow] = []
+    day_artifacts: list[TypedEvidenceArtifact] = [source]
+    for item in rungs:
+        terminal = TerminalEvidence(
+            identity=index.pointer.identity,
+            day=day,
+            rung=item.rung,
+            terminal_state="published",
+            row_count=item.row_count,
+            source_ceiling=index.pointer.source_ceiling,
+            published_at=published_at,
+            source_receipt=source.receipt,
+            data_receipts=item.data_receipts,
+            completion_receipt=item.completion_receipt,
+            absence_receipt=None,
+            absence_reason=None,
+        )
+        terminal_artifact = build_terminal_evidence(terminal)
+        day_artifacts.append(terminal_artifact)
+        day_rows.append(availability_row_from_terminal_evidence(terminal, terminal_receipt=terminal_artifact.receipt))
+    return tuple(day_rows), tuple(day_artifacts)
+
+
+def _compile_publication(
+    index: AvailabilityIndex,
+    *,
+    rows: Sequence[AvailabilityRow],
+    artifacts: Sequence[TypedEvidenceArtifact],
+    candidate_days: Sequence[date],
+    blessed_days: Sequence[date],
+) -> ReconciliationCompilation:
+    """Render the deterministic publication document and bind it to the head it was compiled against."""
+    created_at = max(index.pointer.created_at, *(row.published_at for row in rows)).astimezone(UTC)
     identity = index.pointer.identity
     document = canonical_json(
         {
@@ -179,7 +213,7 @@ def compile_physical_ladder_reconciliation(  # noqa: PLR0913 - one bounded range
             "nature": identity.nature,
             "product": identity.product,
             "required_rungs": list(identity.required_rungs),
-            "rows": [row.to_wire() for row in candidate_rows],
+            "rows": [row.to_wire() for row in rows],
             "schema_version": PUBLICATION_INPUT_SCHEMA_VERSION,
             "source_ceiling": index.pointer.source_ceiling.isoformat(),
             "verified_source_inventory_root": identity.verified_source_inventory_root,
@@ -195,7 +229,7 @@ def compile_physical_ladder_reconciliation(  # noqa: PLR0913 - one bounded range
         head_pointer_sha256=sha256_digest(pointer_payload),
         candidate_days=tuple(candidate_days),
         already_blessed_days=tuple(blessed_days),
-        row_count=len(candidate_rows),
+        row_count=len(rows),
     )
 
 
