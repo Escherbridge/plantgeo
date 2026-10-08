@@ -480,6 +480,78 @@ async def test_366_days_is_the_longest_window_answered(tmp_path: Path) -> None:
     assert (lane["days_in_window"], lane["days_with_data"]) == (366, 2)
 
 
+# --- The read cap: a long window reads its latest published days and says so -------------------
+# Owner decision 2026-10-07; the cap's measured basis: agent/AGENTS.md, "Window distribution", caveat 5.
+
+#: Six published dew-point days (offset -> value, each distinct) and one governed absence at day 8. With a
+#: cap of 2, published[2] (day 12) differs from published[-2] (day 20), so a front-indexed cut fails here.
+CAPPED_DAYS = {0: 1.0, 5: 2.0, 12: 3.0, 16: 4.0, 20: 5.0, 27: 6.0}
+
+
+@pytest.mark.parametrize(
+    ("cap", "read_from", "values", "day_states"),
+    [
+        # Over the cap: only the two LATEST published days (20, 27) are staged; the absence at day 8
+        # lies before the read range and is neither read nor counted.
+        (2, 20, [5.0, 6.0], {"published": 2, "day_not_written": 8}),
+        # At the cap: the whole window, exactly as before the cap existed.
+        (6, 0, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0], {"published": 6, "governed_absence": 1, "day_not_written": 23}),
+    ],
+)
+async def test_a_window_over_the_read_cap_stages_only_its_latest_published_days_and_says_so(  # noqa: PLR0913 - table row
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    cap: int,
+    read_from: int,
+    values: list[float],
+    day_states: dict[str, int],
+) -> None:
+    monkeypatch.setattr(window_distribution, "MAX_DISTRIBUTION_DAYS_READ", cap)
+    source = StatementCountingWarehouse()
+    for offset, value in CAPPED_DAYS.items():
+        day = START + timedelta(days=offset)
+        source.write(tmp_path, DEW_POINT, day, [climate_row(day, longitude=-116, latitude=43, value=value)])
+    write_absence(source, DEW_POINT, START + timedelta(days=8))
+    [lane] = (await distribution(source, DEW_POINT))["lanes"]
+    truncated = read_from > 0
+    assert {key: lane[key] for key in ("truncated", "days_read", "read_range_start", "read_range_end")} == {
+        "truncated": truncated,
+        "days_read": len(values),
+        "read_range_start": (START + timedelta(days=read_from)).isoformat(),
+        "read_range_end": END.isoformat(),
+    }
+    assert (lane["days_in_window"], lane["days_in_read_range"], lane["days_with_data"]) == (
+        30,
+        30 - read_from,
+        len(values),
+    )
+    assert lane["stats"] == pytest.approx(expected_stats(values)), "statistics cover the days read only"
+    assert lane["day_states"] == day_states
+    assert set(source.named_parts) == {len(values)}, "every statement stages exactly the days read"
+
+
+async def test_a_truncated_fire_window_counts_governed_absences_inside_the_read_range_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(window_distribution, "MAX_DISTRIBUTION_DAYS_READ", 2)
+    source = LocalWarehouse()
+    # Five published days, so published[2] (day 15) differs from published[-2] (day 20).
+    for offset, count in ((2, 1), (10, 2), (15, 5), (20, 3), (25, 4)):
+        day = START + timedelta(days=offset)
+        source.write(tmp_path, "fire-detections", day, [fire_cell_row(day, count)])
+    for offset in (5, 22):  # day 5 lies before the read range (from day 20), day 22 inside it
+        write_absence(source, "fire-detections", START + timedelta(days=offset))
+    [lane] = (await distribution(source, "fire-detections", **FIRE_PROBE))["lanes"]
+    assert (lane["truncated"], lane["days_read"], lane["read_range_start"]) == (
+        True,
+        2,
+        (START + timedelta(days=20)).isoformat(),
+    )
+    assert lane["days_with_data"] == 3, "days 20 and 25 published, day 22 a measured zero"
+    assert lane["stats"] == pytest.approx(expected_stats([3.0, 0.0, 4.0]))
+    assert lane["day_states"] == {"published": 2, "governed_absence": 1, "day_not_written": 7}
+
+
 # --- Latency shape: cost follows published parts and lanes overlap -----------------------------
 # Production measurements and the budget they are held against: agent/AGENTS.md, "Window
 # distribution", caveat 4.
@@ -731,8 +803,16 @@ async def _contract_cases(root: Path) -> dict[str, dict[str, Any]]:
     fire = LocalWarehouse()
     fire.write(root, "fire-detections", START, [fire_cell_row(START, 9, **FIRE_ELSEWHERE)])
     write_absence(fire, "fire-detections", START + timedelta(days=1))
+    over_cap = LocalWarehouse()
+    for offset, value in ((0, 2.0), (5, 6.0), (20, 8.0)):
+        day = START + timedelta(days=offset)
+        over_cap.write(root, DEW_POINT, day, [climate_row(day, longitude=-116, latitude=43, value=value)])
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(window_distribution, "MAX_DISTRIBUTION_DAYS_READ", 2)
+        truncated = await distribution(over_cap, DEW_POINT)
     return {
         "published": await distribution(published, DEW_POINT),
+        "published_truncated": truncated,
         "published_nearest_cell": await distribution(nearest, "vegetation", **GORGE),
         "published_fire_zero_at_point": await distribution(fire, "fire-detections", **FIRE_PROBE),
         "no_data_in_window": await distribution(LocalWarehouse(), DEW_POINT),
@@ -751,6 +831,7 @@ async def test_the_web_distribution_contract_fixture_is_what_the_tool_returns(tm
     produced = json.loads(json.dumps(await _contract_cases(tmp_path)))
     assert produced["refused_at_capacity"]["lanes"][0]["refusal_code"] == "serving_at_capacity"
     assert produced["published_fire_zero_at_point"]["lanes"][0]["stats"]["median"] == 0.0
+    assert produced["published_truncated"]["lanes"][0]["truncated"] is True
     if os.environ.get(REWRITE_VARIABLE) == "1":
         with WEB_DISTRIBUTION_CONTRACT.open("w", encoding="utf-8", newline="\n") as fixture:
             fixture.write(json.dumps(produced, indent=2) + "\n")

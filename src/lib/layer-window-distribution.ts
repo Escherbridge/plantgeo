@@ -34,6 +34,16 @@ const distributionLaneSchema = z.object({
   unit: z.string().nullable(),
   days_in_window: z.number().int().nonnegative(),
   days_with_data: z.number().int().nonnegative(),
+  /**
+   * The read cap (contract 2026-10-07): `truncated` means agri read only the window's latest published
+   * days, `read_range_start..read_range_end` (`days_in_read_range` calendar days), and every count and
+   * statistic covers that range alone. Defaulted so an answer cached before the cap still parses.
+   */
+  days_read: z.number().int().nonnegative().nullable().default(null),
+  days_in_read_range: z.number().int().nonnegative().nullable().default(null),
+  read_range_start: z.string().nullable().default(null),
+  read_range_end: z.string().nullable().default(null),
+  truncated: z.boolean().default(false),
   stats: z
     .object({
       min: finiteNumber,
@@ -179,13 +189,20 @@ function nearestSupportNoun(basis: string | null): string {
 
 /**
  * The one line, e.g. "30 d: median 0.36 (p10 0.30 – p90 0.41) · 28 of 30 days · nearest cell
- * 23.6 km". Null -- render nothing -- for static, refused and outside-every-area answers.
+ * 23.6 km"; a truncated read says so: "365 d (latest 204 read): median … · 200 of 204 days".
+ * Null -- render nothing -- for static, refused and outside-every-area answers.
  */
 export function describeLaneDistribution(lane: DistributionLane): string | null {
   if (lane.static || lane.state === "static_not_applicable" || lane.state === "refused") return null;
   if (lane.spatial_relation === "nearest_area_outside") return null;
-  const window = `${lane.days_in_window} d`;
-  const coverage = `${lane.days_with_data} of ${lane.days_in_window} days`;
+  // A truncated answer's counts cover only the days read, so they are read against that range.
+  const daysCounted =
+    lane.truncated && lane.days_in_read_range !== null ? lane.days_in_read_range : lane.days_in_window;
+  const window =
+    daysCounted === lane.days_in_window
+      ? `${lane.days_in_window} d`
+      : `${lane.days_in_window} d (latest ${daysCounted} d read)`;
+  const coverage = `${lane.days_with_data} of ${daysCounted} days`;
   const nearest =
     lane.spatial_relation === "nearest_cell" && lane.distance_km !== null
       ? ` · nearest ${nearestSupportNoun(lane.distance_km_basis)} ${lane.distance_km.toFixed(1)} km`

@@ -24,7 +24,7 @@ from agri_data_service.parquet_ops import faults
 from agri_data_service.parquet_ops.authorized_serving import verified_serving_session
 from agri_data_service.parquet_ops.duckdb_session import SERVING_MAX_CONCURRENT_READS
 from agri_data_service.parquet_ops.request_params import ReadScope, RequestError, parse_calendar_day
-from agri_data_service.parquet_ops.serving import resolve_window
+from agri_data_service.parquet_ops.serving import resolve_window, window_published_days
 from agri_data_service.parquet_ops.warehouse_reader import (
     GeometrySupport,
     PointSupport,
@@ -42,11 +42,14 @@ if TYPE_CHECKING:
 
     from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.parquet_ops.duckdb_session import ServingSession
-    from agri_data_service.parquet_ops.warehouse_reader import RowRead
+    from agri_data_service.parquet_ops.warehouse_reader import RowRead, WarehouseListing
     from agri_data_service.parquet_ops.wire import DayEnvelope
 
 #: The longest window one call summarises: the web's largest preset is 365 days, plus a leap day.
 MAX_WINDOW_DAYS: Final = 366
+#: The most PUBLISHED days one lane read stages; a window holding more reads only its latest ones
+#: and says so (`truncated`). Measured basis: agent/AGENTS.md, "Window distribution", caveat 5.
+MAX_DISTRIBUTION_DAYS_READ: Final = 200
 #: Every lane this tool reads is an observation, so no window day may lie after UTC today.
 WINDOW_KIND: Final[PartitionKind] = "observed"
 #: The map zoom a call names no zoom for: the base rung, the finest support the map paints.
@@ -318,6 +321,30 @@ class _Spatial:
         return {"spatial_relation": self.relation, "distance_km": self.distance_km, "distance_km_basis": self.basis}
 
 
+@dataclass(frozen=True, slots=True)
+class _ReadRange:
+    """The days a lane's answer covers: the whole window, or its tail holding the latest capped published days."""
+
+    first: date
+    last: date
+    #: Published days whose parts were staged (0 when none were, or the lane was never read).
+    days_read: int
+    truncated: bool
+
+    @classmethod
+    def whole(cls, window: DistributionWindow) -> _ReadRange:
+        return cls(window.first, window.last, days_read=0, truncated=False)
+
+    def to_wire(self) -> dict[str, Any]:
+        return {
+            "days_read": self.days_read,
+            "days_in_read_range": (self.last - self.first).days + 1,
+            "read_range_start": self.first.isoformat(),
+            "read_range_end": self.last.isoformat(),
+            "truncated": self.truncated,
+        }
+
+
 _NO_SPATIAL: Final = {"spatial_relation": None, "distance_km": None, "distance_km_basis": None}
 #: An absence-valued lane's zero is measured AT the point: nothing was detected in its own cell.
 _AT_THE_POINT: Final = _Spatial("covers", 0.0, "covers")
@@ -349,6 +376,7 @@ class _LaneAnswer:
     """What one lane's window read produced, before it is rendered per measure."""
 
     day_states: dict[str, int]
+    read_range: _ReadRange
     spatial: _Spatial | None
     groups: list[dict[str, Any]] = field(default_factory=list)
 
@@ -360,28 +388,55 @@ def _aggregate(connection: Any, statement: str, parameters: list[object]) -> lis
 
 
 def _absence_only(
-    connection: Any, day_states: dict[str, int], measures: Sequence[WindowMeasure], answered: list[date]
+    connection: Any,
+    day_states: dict[str, int],
+    read_range: _ReadRange,
+    measures: Sequence[WindowMeasure],
+    answered: list[date],
 ) -> _LaneAnswer:
     """No row at the point on any day: every answered day is the absence value there (fire: a measured 0)."""
     if not answered:
-        return _LaneAnswer(day_states, None)
+        return _LaneAnswer(day_states, read_range, None)
     return _LaneAnswer(
-        day_states, _AT_THE_POINT, _aggregate(connection, distribution_statement(None, measures), [answered])
+        day_states,
+        read_range,
+        _AT_THE_POINT,
+        _aggregate(connection, distribution_statement(None, measures), [answered]),
     )
+
+
+def _read_range_first(listing: WarehouseListing, scope: ReadScope, window: DistributionWindow) -> tuple[date, bool]:
+    """Where a lane's read starts, and whether that cut the window: at the earliest of its LATEST capped published days.
+
+    A count of published days, never a clock, so the same request always reads the same days.
+    """
+    if window.days_in_window <= MAX_DISTRIBUTION_DAYS_READ:
+        return (window.first, False)  # cannot hold more published days than the cap: no classification pass
+    published = window_published_days(listing, scope=scope, first_day=window.first, last_day=window.last)
+    if len(published) <= MAX_DISTRIBUTION_DAYS_READ:
+        return (window.first, False)
+    return (published[-MAX_DISTRIBUTION_DAYS_READ], True)
 
 
 def _read_lane(
     session: ServingSession, surface: str, lane: str, window: DistributionWindow, measures: Sequence[WindowMeasure]
 ) -> _LaneAnswer:
-    """Classify every window day through `resolve_window`, find the point's support once, aggregate once."""
+    """Classify every read-range day through `resolve_window`, find the point's support once, aggregate once.
+
+    The read range is the window, or its tail holding the latest `MAX_DISTRIBUTION_DAYS_READ` published
+    days: nothing before it is staged, counted in `day_states`, refused, or read for absence evidence.
+    """
     selection = window.selection
     scope = ReadScope(layer=lane, kind=WINDOW_KIND, tier=selection.tier, bbox=selection.bbox)
     listing = warehouse.source().authorized_listing(scope)
+    read_first, truncated = _read_range_first(listing, scope, window)
     plan = _WindowPlan()
     envelopes: Sequence[DayEnvelope] = resolve_window(
-        listing, plan, scope=scope, first_day=window.first, last_day=window.last
+        listing, plan, scope=scope, first_day=read_first, last_day=window.last
     )
     day_states = dict(Counter(str(envelope.to_wire()["state"]) for envelope in envelopes))
+    staged_days = len({day_of_part_key(key) for key in plan.keys})
+    read_range = _ReadRange(read_first, window.last, days_read=staged_days, truncated=truncated)
     # An absence-valued lane (fire-detections) counts every ANSWERED day -- published or governed
     # absence -- at the point's own support, zero where it has no row; AGENTS.md "Window distribution".
     counts_absence = any(measure.absence_value is not None for measure in measures)
@@ -394,7 +449,7 @@ def _read_lane(
         else []
     )
     if not plan.keys:
-        return _absence_only(session.connection, day_states, measures, answered)
+        return _absence_only(session.connection, day_states, read_range, measures, answered)
     support = spatial_support(lane, WINDOW_KIND)
     with verified_serving_session(listing, session, plan.keys) as verified:
         uris = [verified.object_uri(key) for key in plan.keys]
@@ -406,10 +461,10 @@ def _read_lane(
             reader.select_support(verified, lane, WINDOW_KIND, uris, limit=MAX_FEATURES + 1), lane
         )
         if spatial is None or (counts_absence and spatial.relation != "covers"):
-            return _absence_only(verified.connection, day_states, measures, answered)
+            return _absence_only(verified.connection, day_states, read_range, measures, answered)
         if spatial.relation == "nearest_area_outside":
             # Outside every area is the answer, not a value: no statistics are computed.
-            return _LaneAnswer(day_states, spatial)
+            return _LaneAnswer(day_states, read_range, spatial)
         tail: list[object] = [uris, days, answered]
         if isinstance(support, PointSupport) and spatial.corner is not None:
             statement = distribution_statement(_point_target(support), measures)
@@ -428,8 +483,8 @@ def _read_lane(
             parameters = [uris, selection.longitude, selection.latitude, *tail]
         else:
             # A nearest POLYGON of a tiling lane has no fixed identity across days; no dated lane has one.
-            return _LaneAnswer(day_states, spatial)
-        return _LaneAnswer(day_states, spatial, _aggregate(verified.connection, statement, parameters))
+            return _LaneAnswer(day_states, read_range, spatial)
+        return _LaneAnswer(day_states, read_range, spatial, _aggregate(verified.connection, statement, parameters))
 
 
 def _stats(group: dict[str, Any]) -> dict[str, float | None]:
@@ -447,6 +502,7 @@ def _lane_entry(  # noqa: PLR0913 - one argument per wire field the caller decid
     days_with_data: int = 0,
     stats: dict[str, float | None] | None = None,
     static: bool = False,
+    read_range: _ReadRange | None = None,
     **extra: Any,
 ) -> dict[str, Any]:
     return {
@@ -455,6 +511,7 @@ def _lane_entry(  # noqa: PLR0913 - one argument per wire field the caller decid
         "unit": unit,
         "days_in_window": window.days_in_window,
         "days_with_data": days_with_data,
+        **(read_range or _ReadRange.whole(window)).to_wire(),
         "stats": stats,
         **spatial,
         "static": static,
@@ -469,7 +526,11 @@ def _render_lane(
     """One entry per measure (per label group when the lane labels its rows), in measure order."""
     spatial = answer.spatial.to_wire() if answer.spatial is not None else dict(_NO_SPATIAL)
     absence_value = next((m.absence_value for m in measures if m.absence_value is not None), None)
-    extra: dict[str, Any] = {"day_states": answer.day_states, "governed_absence_as_value": absence_value}
+    extra: dict[str, Any] = {
+        "day_states": answer.day_states,
+        "governed_absence_as_value": absence_value,
+        "read_range": answer.read_range,
+    }
     outside = answer.spatial is not None and answer.spatial.relation == "nearest_area_outside"
     entries: list[dict[str, Any]] = []
     for index, measure in enumerate(measures):
@@ -578,7 +639,12 @@ def refusal(code: str, message: str, **context: object) -> dict[str, Any]:
 
 NOTE: Final = (
     "stats summarise the per-day values at the point over the window: days without data are excluded, "
-    "never zero-filled, so read days_with_data against days_in_window. fire-detections is the exception: "
+    "never zero-filled, so read days_with_data against days_in_window. truncated true means the window "
+    "held more published days than one read stages, so only the latest days_read published days were read: "
+    "stats, days_with_data and day_states cover read_range_start..read_range_end alone, so read "
+    "days_with_data against days_in_read_range and say the answer is partial, as "
+    "'<days_in_read_range> of <days_in_window> days read'; days before read_range_start were not read, so "
+    "nothing is known about them, including warehouse faults. fire-detections is the exception: "
     "it is read in the point's own cell only, and every published or governed-absence day with no "
     "detection there counts as 0. spatial_relation covers means the "
     "point's own cell; nearest_cell means the nearest cell or station across the window, distance_km away: "
@@ -711,6 +777,7 @@ async def distribution(  # noqa: PLR0911, PLR0913 - one return per typed whole-c
 
 __all__ = [
     "LANE_READ_CONCURRENCY",
+    "MAX_DISTRIBUTION_DAYS_READ",
     "MAX_WINDOW_DAYS",
     "WINDOW_MEASURES",
     "DistributionWindow",

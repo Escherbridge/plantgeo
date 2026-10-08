@@ -28,6 +28,10 @@ const EXPECTED: Record<string, { line: string | null; cacheSeconds: number }> = 
     line: "30 d: median 4.00 degC (p10 2.40 – p90 5.60) · 2 of 30 days",
     cacheSeconds: SETTLED_CACHE_SECONDS,
   },
+  published_truncated: {
+    line: "30 d (latest 25 d read): median 7.00 degC (p10 6.20 – p90 7.80) · 2 of 25 days",
+    cacheSeconds: SETTLED_CACHE_SECONDS,
+  },
   published_nearest_cell: {
     line: "30 d: median 0.50 unitless (p10 0.30 – p90 0.70) · 2 of 30 days · nearest cell 17.4 km",
     cacheSeconds: SETTLED_CACHE_SECONDS,

@@ -1028,6 +1028,20 @@ depth-correct `signal_name` `soil-window-distribution.test.tsx` already proved i
 end-to-end path is covered by `window-distribution.test.tsx`'s "the hovered soil-moisture cell's
 window distribution" describe block.
 
+**A long window can be a labelled partial answer (owner 2026-10-07).** agri caps one lane read at
+its latest 200 PUBLISHED days (`MAX_DISTRIBUTION_DAYS_READ`), so the 365-day preset answers in about
+9 s or less, cold, instead of hitting the 12 s tool timeout. The cut is deterministic, so the cached
+answer is stable. Measured basis: agri `agent/AGENTS.md`, "Window distribution", caveat 5. Each lane
+then carries `truncated`, `days_read`, `days_in_read_range`, `read_range_start` and `read_range_end`.
+`distributionAtPointResultSchema` defaults all five (`truncated: false`, the rest `null`), so an
+answer cached before the cap, or one from an agri that has not deployed it yet, still parses as
+untruncated. Cached answers need no key bump. When `truncated`, `describeLaneDistribution` reads
+the counts against the read range: "365 d (latest 204 read): median ... · 200 of 204 days". The
+untruncated line is unchanged. Both forms are pinned by the contract fixture's `published_truncated`
+and `published` cases, and by `window-distribution.test.tsx`'s "says how much of a long window agri
+read". The model never sees this line. It reads the raw JSON, and the agri NOTE tells it to say
+"N of 365 days read".
+
 ## `allowed_client_exposure` is not a read gate (owner 2026-10-07)
 
 The Parquet row column `allowed_client_exposure` is an export artifact, not a restriction: older

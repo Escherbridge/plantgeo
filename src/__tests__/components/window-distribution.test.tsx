@@ -282,6 +282,25 @@ describe("the tapped cell's window distribution", () => {
     expect([args.range_start, args.range_end]).toEqual(["2026-09-28", TODAY]);
   });
 
+  it("says how much of a long window agri read when it read only the latest days", async () => {
+    agriAnswers([
+      lane({
+        days_in_window: 365,
+        days_with_data: 200,
+        days_read: 200,
+        days_in_read_range: 204,
+        read_range_start: "2026-03-18",
+        read_range_end: "2026-10-07",
+        truncated: true,
+      }),
+    ]);
+    await tapVegetationCell();
+
+    expect((await screen.findByTestId("layer-window-distribution")).textContent).toBe(
+      "365 d (latest 204 d read): median 0.36 (p10 0.30 – p90 0.41) · 200 of 204 days"
+    );
+  });
+
   it("notes the nearest cell when no cell covers the point", async () => {
     agriAnswers([lane({ spatial_relation: "nearest_cell", distance_km: 23.64, distance_km_basis: "cell_edge" })]);
     await tapVegetationCell();

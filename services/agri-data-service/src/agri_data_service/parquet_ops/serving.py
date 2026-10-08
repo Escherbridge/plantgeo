@@ -176,6 +176,23 @@ def resolve_window(
     return tuple(_attach_window_snapshot(envelope, snapshots, scope=scope) for envelope in envelopes)
 
 
+def window_published_days(
+    listing: WarehouseListing,
+    *,
+    scope: ReadScope,
+    first_day: date,
+    last_day: date,
+) -> tuple[date, ...]:
+    """The closed range's published days, ascending, by the SAME classification `resolve_window` uses.
+
+    Opens no object and refuses nothing, so a caller that caps how many published days it stages can
+    pick its range first and then `resolve_window` only that range.
+    """
+    keys = _keys_for_months(listing, scope=scope, first_day=first_day, last_day=last_day)
+    statuses = day_status_sets(keys, layer=scope.layer, kind=scope.kind, tier=scope.tier)
+    return tuple(sorted(day for day in statuses.data if first_day <= day <= last_day))
+
+
 def _attach_window_snapshot(
     envelope: DayEnvelope, snapshots: dict[date, VerifiedMtbsSnapshot], *, scope: ReadScope
 ) -> DayEnvelope:

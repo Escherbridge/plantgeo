@@ -6,12 +6,16 @@
           "day_not_written": 28,
           "published": 2
         },
+        "days_in_read_range": 30,
         "days_in_window": 30,
+        "days_read": 2,
         "days_with_data": 2,
         "distance_km": 0.0,
         "distance_km_basis": "covers",
         "governed_absence_as_value": null,
         "parquet_lane": "climate-field-dew-point",
+        "read_range_end": "2026-06-15",
+        "read_range_start": "2026-05-17",
         "signal_name": "air_temperature",
         "spatial_relation": "covers",
         "state": "published",
@@ -24,10 +28,52 @@
           "p10": 2.4000000000000004,
           "p90": 5.6000000000000005
         },
+        "truncated": false,
         "unit": "degC"
       }
     ],
-    "note": "stats summarise the per-day values at the point over the window: days without data are excluded, never zero-filled, so read days_with_data against days_in_window. fire-detections is the exception: it is read in the point's own cell only, and every published or governed-absence day with no detection there counts as 0. spatial_relation covers means the point's own cell; nearest_cell means the nearest cell or station across the window, distance_km away: say so, never that it is the value here. nearest_area_outside means the point lies inside no area of this layer on any day (for drought, no drought area): that is the answer, and there are no stats. governed_absence_as_value is the value an answered day with no row at the point counted as (fire-detections: 0); null means such days were excluded. range_end is clamped to today (UTC).",
+    "note": "stats summarise the per-day values at the point over the window: days without data are excluded, never zero-filled, so read days_with_data against days_in_window. truncated true means the window held more published days than one read stages, so only the latest days_read published days were read: stats, days_with_data and day_states cover read_range_start..read_range_end alone, so read days_with_data against days_in_read_range and say the answer is partial, as '<days_in_read_range> of <days_in_window> days read'; days before read_range_start were not read, so nothing is known about them, including warehouse faults. fire-detections is the exception: it is read in the point's own cell only, and every published or governed-absence day with no detection there counts as 0. spatial_relation covers means the point's own cell; nearest_cell means the nearest cell or station across the window, distance_km away: say so, never that it is the value here. nearest_area_outside means the point lies inside no area of this layer on any day (for drought, no drought area): that is the answer, and there are no stats. governed_absence_as_value is the value an answered day with no row at the point counted as (fire-detections: 0); null means such days were excluded. range_end is clamped to today (UTC).",
+    "range_end": "2026-06-15",
+    "range_end_clamped": false,
+    "range_start": "2026-05-17",
+    "requested_range_end": "2026-06-15",
+    "surface": "climate-field-dew-point",
+    "zoom_tier": 13
+  },
+  "published_truncated": {
+    "lanes": [
+      {
+        "day_states": {
+          "day_not_written": 23,
+          "published": 2
+        },
+        "days_in_read_range": 25,
+        "days_in_window": 30,
+        "days_read": 2,
+        "days_with_data": 2,
+        "distance_km": 0.0,
+        "distance_km_basis": "covers",
+        "governed_absence_as_value": null,
+        "parquet_lane": "climate-field-dew-point",
+        "read_range_end": "2026-06-15",
+        "read_range_start": "2026-05-22",
+        "signal_name": "air_temperature",
+        "spatial_relation": "covers",
+        "state": "published",
+        "static": false,
+        "stats": {
+          "max": 8.0,
+          "mean": 7.0,
+          "median": 7.0,
+          "min": 6.0,
+          "p10": 6.2,
+          "p90": 7.8
+        },
+        "truncated": true,
+        "unit": "degC"
+      }
+    ],
+    "note": "stats summarise the per-day values at the point over the window: days without data are excluded, never zero-filled, so read days_with_data against days_in_window. truncated true means the window held more published days than one read stages, so only the latest days_read published days were read: stats, days_with_data and day_states cover read_range_start..read_range_end alone, so read days_with_data against days_in_read_range and say the answer is partial, as '<days_in_read_range> of <days_in_window> days read'; days before read_range_start were not read, so nothing is known about them, including warehouse faults. fire-detections is the exception: it is read in the point's own cell only, and every published or governed-absence day with no detection there counts as 0. spatial_relation covers means the point's own cell; nearest_cell means the nearest cell or station across the window, distance_km away: say so, never that it is the value here. nearest_area_outside means the point lies inside no area of this layer on any day (for drought, no drought area): that is the answer, and there are no stats. governed_absence_as_value is the value an answered day with no row at the point counted as (fire-detections: 0); null means such days were excluded. range_end is clamped to today (UTC).",
     "range_end": "2026-06-15",
     "range_end_clamped": false,
     "range_start": "2026-05-17",
@@ -42,12 +88,16 @@
           "day_not_written": 28,
           "published": 2
         },
+        "days_in_read_range": 30,
         "days_in_window": 30,
+        "days_read": 2,
         "days_with_data": 2,
         "distance_km": 17.37,
         "distance_km_basis": "cell_edge",
         "governed_absence_as_value": null,
         "parquet_lane": "vegetation",
+        "read_range_end": "2026-06-15",
+        "read_range_start": "2026-05-17",
         "signal_name": "ndvi",
         "spatial_relation": "nearest_cell",
         "state": "published",
@@ -60,10 +110,11 @@
           "p10": 0.30000000000000004,
           "p90": 0.7000000000000001
         },
+        "truncated": false,
         "unit": "unitless"
       }
     ],
-    "note": "stats summarise the per-day values at the point over the window: days without data are excluded, never zero-filled, so read days_with_data against days_in_window. fire-detections is the exception: it is read in the point's own cell only, and every published or governed-absence day with no detection there counts as 0. spatial_relation covers means the point's own cell; nearest_cell means the nearest cell or station across the window, distance_km away: say so, never that it is the value here. nearest_area_outside means the point lies inside no area of this layer on any day (for drought, no drought area): that is the answer, and there are no stats. governed_absence_as_value is the value an answered day with no row at the point counted as (fire-detections: 0); null means such days were excluded. range_end is clamped to today (UTC).",
+    "note": "stats summarise the per-day values at the point over the window: days without data are excluded, never zero-filled, so read days_with_data against days_in_window. truncated true means the window held more published days than one read stages, so only the latest days_read published days were read: stats, days_with_data and day_states cover read_range_start..read_range_end alone, so read days_with_data against days_in_read_range and say the answer is partial, as '<days_in_read_range> of <days_in_window> days read'; days before read_range_start were not read, so nothing is known about them, including warehouse faults. fire-detections is the exception: it is read in the point's own cell only, and every published or governed-absence day with no detection there counts as 0. spatial_relation covers means the point's own cell; nearest_cell means the nearest cell or station across the window, distance_km away: say so, never that it is the value here. nearest_area_outside means the point lies inside no area of this layer on any day (for drought, no drought area): that is the answer, and there are no stats. governed_absence_as_value is the value an answered day with no row at the point counted as (fire-detections: 0); null means such days were excluded. range_end is clamped to today (UTC).",
     "range_end": "2026-06-15",
     "range_end_clamped": false,
     "range_start": "2026-05-17",
@@ -79,12 +130,16 @@
           "governed_absence": 1,
           "published": 1
         },
+        "days_in_read_range": 30,
         "days_in_window": 30,
+        "days_read": 1,
         "days_with_data": 2,
         "distance_km": 0.0,
         "distance_km_basis": "covers",
         "governed_absence_as_value": 0.0,
         "parquet_lane": "fire-detections",
+        "read_range_end": "2026-06-15",
+        "read_range_start": "2026-05-17",
         "signal_name": "fire_detection_count",
         "spatial_relation": "covers",
         "state": "published",
@@ -97,10 +152,11 @@
           "p10": 0.0,
           "p90": 0.0
         },
+        "truncated": false,
         "unit": "count"
       }
     ],
-    "note": "stats summarise the per-day values at the point over the window: days without data are excluded, never zero-filled, so read days_with_data against days_in_window. fire-detections is the exception: it is read in the point's own cell only, and every published or governed-absence day with no detection there counts as 0. spatial_relation covers means the point's own cell; nearest_cell means the nearest cell or station across the window, distance_km away: say so, never that it is the value here. nearest_area_outside means the point lies inside no area of this layer on any day (for drought, no drought area): that is the answer, and there are no stats. governed_absence_as_value is the value an answered day with no row at the point counted as (fire-detections: 0); null means such days were excluded. range_end is clamped to today (UTC).",
+    "note": "stats summarise the per-day values at the point over the window: days without data are excluded, never zero-filled, so read days_with_data against days_in_window. truncated true means the window held more published days than one read stages, so only the latest days_read published days were read: stats, days_with_data and day_states cover read_range_start..read_range_end alone, so read days_with_data against days_in_read_range and say the answer is partial, as '<days_in_read_range> of <days_in_window> days read'; days before read_range_start were not read, so nothing is known about them, including warehouse faults. fire-detections is the exception: it is read in the point's own cell only, and every published or governed-absence day with no detection there counts as 0. spatial_relation covers means the point's own cell; nearest_cell means the nearest cell or station across the window, distance_km away: say so, never that it is the value here. nearest_area_outside means the point lies inside no area of this layer on any day (for drought, no drought area): that is the answer, and there are no stats. governed_absence_as_value is the value an answered day with no row at the point counted as (fire-detections: 0); null means such days were excluded. range_end is clamped to today (UTC).",
     "range_end": "2026-06-15",
     "range_end_clamped": false,
     "range_start": "2026-05-17",
@@ -114,21 +170,26 @@
         "day_states": {
           "lane_never_written": 30
         },
+        "days_in_read_range": 30,
         "days_in_window": 30,
+        "days_read": 0,
         "days_with_data": 0,
         "distance_km": null,
         "distance_km_basis": null,
         "governed_absence_as_value": null,
         "parquet_lane": "climate-field-dew-point",
+        "read_range_end": "2026-06-15",
+        "read_range_start": "2026-05-17",
         "signal_name": "dew_point_temperature",
         "spatial_relation": null,
         "state": "no_data_in_window",
         "static": false,
         "stats": null,
+        "truncated": false,
         "unit": "C"
       }
     ],
-    "note": "stats summarise the per-day values at the point over the window: days without data are excluded, never zero-filled, so read days_with_data against days_in_window. fire-detections is the exception: it is read in the point's own cell only, and every published or governed-absence day with no detection there counts as 0. spatial_relation covers means the point's own cell; nearest_cell means the nearest cell or station across the window, distance_km away: say so, never that it is the value here. nearest_area_outside means the point lies inside no area of this layer on any day (for drought, no drought area): that is the answer, and there are no stats. governed_absence_as_value is the value an answered day with no row at the point counted as (fire-detections: 0); null means such days were excluded. range_end is clamped to today (UTC).",
+    "note": "stats summarise the per-day values at the point over the window: days without data are excluded, never zero-filled, so read days_with_data against days_in_window. truncated true means the window held more published days than one read stages, so only the latest days_read published days were read: stats, days_with_data and day_states cover read_range_start..read_range_end alone, so read days_with_data against days_in_read_range and say the answer is partial, as '<days_in_read_range> of <days_in_window> days read'; days before read_range_start were not read, so nothing is known about them, including warehouse faults. fire-detections is the exception: it is read in the point's own cell only, and every published or governed-absence day with no detection there counts as 0. spatial_relation covers means the point's own cell; nearest_cell means the nearest cell or station across the window, distance_km away: say so, never that it is the value here. nearest_area_outside means the point lies inside no area of this layer on any day (for drought, no drought area): that is the answer, and there are no stats. governed_absence_as_value is the value an answered day with no row at the point counted as (fire-detections: 0); null means such days were excluded. range_end is clamped to today (UTC).",
     "range_end": "2026-06-15",
     "range_end_clamped": false,
     "range_start": "2026-05-17",
@@ -139,20 +200,25 @@
   "static_not_applicable": {
     "lanes": [
       {
+        "days_in_read_range": 30,
         "days_in_window": 30,
+        "days_read": 0,
         "days_with_data": 0,
         "distance_km": null,
         "distance_km_basis": null,
         "parquet_lane": "soil-survey",
+        "read_range_end": "2026-06-15",
+        "read_range_start": "2026-05-17",
         "signal_name": "soil-survey",
         "spatial_relation": null,
         "state": "static_not_applicable",
         "static": true,
         "stats": null,
+        "truncated": false,
         "unit": null
       }
     ],
-    "note": "stats summarise the per-day values at the point over the window: days without data are excluded, never zero-filled, so read days_with_data against days_in_window. fire-detections is the exception: it is read in the point's own cell only, and every published or governed-absence day with no detection there counts as 0. spatial_relation covers means the point's own cell; nearest_cell means the nearest cell or station across the window, distance_km away: say so, never that it is the value here. nearest_area_outside means the point lies inside no area of this layer on any day (for drought, no drought area): that is the answer, and there are no stats. governed_absence_as_value is the value an answered day with no row at the point counted as (fire-detections: 0); null means such days were excluded. range_end is clamped to today (UTC).",
+    "note": "stats summarise the per-day values at the point over the window: days without data are excluded, never zero-filled, so read days_with_data against days_in_window. truncated true means the window held more published days than one read stages, so only the latest days_read published days were read: stats, days_with_data and day_states cover read_range_start..read_range_end alone, so read days_with_data against days_in_read_range and say the answer is partial, as '<days_in_read_range> of <days_in_window> days read'; days before read_range_start were not read, so nothing is known about them, including warehouse faults. fire-detections is the exception: it is read in the point's own cell only, and every published or governed-absence day with no detection there counts as 0. spatial_relation covers means the point's own cell; nearest_cell means the nearest cell or station across the window, distance_km away: say so, never that it is the value here. nearest_area_outside means the point lies inside no area of this layer on any day (for drought, no drought area): that is the answer, and there are no stats. governed_absence_as_value is the value an answered day with no row at the point counted as (fire-detections: 0); null means such days were excluded. range_end is clamped to today (UTC).",
     "range_end": "2026-06-15",
     "range_end_clamped": false,
     "range_start": "2026-05-17",
@@ -163,22 +229,27 @@
   "refused_release_lane": {
     "lanes": [
       {
+        "days_in_read_range": 30,
         "days_in_window": 30,
+        "days_read": 0,
         "days_with_data": 0,
         "distance_km": null,
         "distance_km_basis": null,
         "message": "One release answers every day of a window; read it with surface_evidence_for_selection.",
         "parquet_lane": "crop-cover",
+        "read_range_end": "2026-06-15",
+        "read_range_start": "2026-05-17",
         "refusal_code": "release_lane_not_distributed",
         "signal_name": "crop-cover",
         "spatial_relation": null,
         "state": "refused",
         "static": false,
         "stats": null,
+        "truncated": false,
         "unit": null
       }
     ],
-    "note": "stats summarise the per-day values at the point over the window: days without data are excluded, never zero-filled, so read days_with_data against days_in_window. fire-detections is the exception: it is read in the point's own cell only, and every published or governed-absence day with no detection there counts as 0. spatial_relation covers means the point's own cell; nearest_cell means the nearest cell or station across the window, distance_km away: say so, never that it is the value here. nearest_area_outside means the point lies inside no area of this layer on any day (for drought, no drought area): that is the answer, and there are no stats. governed_absence_as_value is the value an answered day with no row at the point counted as (fire-detections: 0); null means such days were excluded. range_end is clamped to today (UTC).",
+    "note": "stats summarise the per-day values at the point over the window: days without data are excluded, never zero-filled, so read days_with_data against days_in_window. truncated true means the window held more published days than one read stages, so only the latest days_read published days were read: stats, days_with_data and day_states cover read_range_start..read_range_end alone, so read days_with_data against days_in_read_range and say the answer is partial, as '<days_in_read_range> of <days_in_window> days read'; days before read_range_start were not read, so nothing is known about them, including warehouse faults. fire-detections is the exception: it is read in the point's own cell only, and every published or governed-absence day with no detection there counts as 0. spatial_relation covers means the point's own cell; nearest_cell means the nearest cell or station across the window, distance_km away: say so, never that it is the value here. nearest_area_outside means the point lies inside no area of this layer on any day (for drought, no drought area): that is the answer, and there are no stats. governed_absence_as_value is the value an answered day with no row at the point counted as (fire-detections: 0); null means such days were excluded. range_end is clamped to today (UTC).",
     "range_end": "2026-06-15",
     "range_end_clamped": false,
     "range_start": "2026-05-17",
@@ -189,22 +260,27 @@
   "refused_at_capacity": {
     "lanes": [
       {
+        "days_in_read_range": 30,
         "days_in_window": 30,
+        "days_read": 0,
         "days_with_data": 0,
         "distance_km": null,
         "distance_km_basis": null,
         "message": "the agent_distribution_at_point read found all 3 serving slots busy; each one holds a memory-capped DuckDB session, so the read is refused rather than queued. This is a serving limit and says nothing about what the warehouse holds",
         "parquet_lane": "climate-field-dew-point",
+        "read_range_end": "2026-06-15",
+        "read_range_start": "2026-05-17",
         "refusal_code": "serving_at_capacity",
         "signal_name": "dew_point_temperature",
         "spatial_relation": null,
         "state": "refused",
         "static": false,
         "stats": null,
+        "truncated": false,
         "unit": "C"
       }
     ],
-    "note": "stats summarise the per-day values at the point over the window: days without data are excluded, never zero-filled, so read days_with_data against days_in_window. fire-detections is the exception: it is read in the point's own cell only, and every published or governed-absence day with no detection there counts as 0. spatial_relation covers means the point's own cell; nearest_cell means the nearest cell or station across the window, distance_km away: say so, never that it is the value here. nearest_area_outside means the point lies inside no area of this layer on any day (for drought, no drought area): that is the answer, and there are no stats. governed_absence_as_value is the value an answered day with no row at the point counted as (fire-detections: 0); null means such days were excluded. range_end is clamped to today (UTC).",
+    "note": "stats summarise the per-day values at the point over the window: days without data are excluded, never zero-filled, so read days_with_data against days_in_window. truncated true means the window held more published days than one read stages, so only the latest days_read published days were read: stats, days_with_data and day_states cover read_range_start..read_range_end alone, so read days_with_data against days_in_read_range and say the answer is partial, as '<days_in_read_range> of <days_in_window> days read'; days before read_range_start were not read, so nothing is known about them, including warehouse faults. fire-detections is the exception: it is read in the point's own cell only, and every published or governed-absence day with no detection there counts as 0. spatial_relation covers means the point's own cell; nearest_cell means the nearest cell or station across the window, distance_km away: say so, never that it is the value here. nearest_area_outside means the point lies inside no area of this layer on any day (for drought, no drought area): that is the answer, and there are no stats. governed_absence_as_value is the value an answered day with no row at the point counted as (fire-detections: 0); null means such days were excluded. range_end is clamped to today (UTC).",
     "range_end": "2026-06-15",
     "range_end_clamped": false,
     "range_start": "2026-05-17",

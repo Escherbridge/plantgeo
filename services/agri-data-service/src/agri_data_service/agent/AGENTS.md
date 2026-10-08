@@ -505,7 +505,9 @@ A DuckDB fault becomes `read_over_budget`, and that lane is reported `refused`.
 null`), `no_data_in_window`, `static_not_applicable` (no read at all), `refused` (`refusal_code`:
 `release_lane_not_distributed` for as-of release lanes such as crop-cover and burn-severity, because one
 release answers the whole window; `no_window_measure`; or any serving refusal). Additive fields:
-`day_states` (the four-state day counts) and `governed_absence_as_value`.
+`day_states` (the four-state day counts of the days read) and `governed_absence_as_value`, and the
+read-cap fields `days_read`, `days_in_read_range`, `read_range_start`, `read_range_end`, `truncated`
+(caveat 5).
 
 **Measures (`WINDOW_MEASURES`, curated).** Which column is the value at a point, per dated lane:
 
@@ -538,7 +540,8 @@ day_at_the_point_and_never_borrow_a_nearest_cell` pins the fix. (2) Drought coun
 days on which an area covers the point. A release that leaves the point outside every area is "no
 drought class", not a numeric class, so it is excluded. If no release covers the point, the lane is
 `nearest_area_outside` with no stats. (3) Station identity is the reported coordinate, so a station
-whose position jitters splits across days. (4) Latency, below.
+whose position jitters splits across days. (4) Latency, below. (5) A long window may be answered
+partially, from its latest published days only: the read cap, below.
 
 **Latency (measured 2026-10-05).** The budget is the smallest deadline on the path:
 `routes/agent_tools.py::TOOL_TIMEOUT_SECONDS = 12` (the web bridge allows 15 s,
@@ -588,9 +591,45 @@ the real slot until it finishes (`run_bounded_read` releases on the worker's fut
 `test_two_concurrent_multi_lane_calls_borrow_one_extra_slot_between_them_and_none_is_refused` and
 `test_a_borrowed_lane_refused_at_capacity_is_read_on_the_calls_own_slot_not_reported_refused`.
 
-A 90-day or 365-day window needs a bounded-concurrency `verified_object_uris`, which lives in
-`parquet_ops/authorized_serving.py`, outside this module. Re-measure with `duration_ms` in the
-`agent_tool_call` log.
+**Read cap (caveat 5; owner decision 2026-10-07).** Doubling the receipt-fetch concurrency
+(window 8 over a pool of 16, bfb4ed6a) was not enough: live 365-day calls still answered in 11.3-12.0 s
+or hit `tool_read_timeout` (precipitation, vegetation). The owner chose a labelled PARTIAL answer
+over a timeout. `MAX_DISTRIBUTION_DAYS_READ = 200` caps the PUBLISHED days one lane read stages.
+`_read_range_first` counts the window's published days with `serving.window_published_days`, the
+same `day_status_sets` classification `resolve_window` uses, opening no object. Over the cap, the
+read range starts at the 200th-latest published day, and `resolve_window` runs over that range only.
+So nothing earlier is staged, counted in `day_states`, refused as `conflict`/`incomplete`, or read
+for governed-absence evidence. The cut is a COUNT, never a clock, so one request always reads the
+same days and the cached answer is stable. A window of at most 200 calendar days skips the count
+entirely. Every lane entry reports `days_read` (published days staged), `days_in_read_range`,
+`read_range_start`/`read_range_end` and `truncated`. Unread and refused lanes report the whole
+window with `days_read: 0`. `days_with_data` and the stats cover the read range only. Fire's
+governed absences inside it still count as measured zeros. The NOTE tells the model to read
+`days_with_data` against `days_in_read_range` and to say "N of 365 days read". Tests:
+`test_a_window_over_the_read_cap_stages_only_its_latest_published_days_and_says_so` (mutation-checked:
+front-indexed, keep-earliest and cap-ignored variants all fail it) and
+`test_a_truncated_fire_window_counts_governed_absences_inside_the_read_range_only`.
+
+The cap was measured 2026-10-07 in a FRESH process inside plantgeo-parquet-api, at the Gorge probe,
+for 365 days ending 2026-10-07. Every run was cold: index load, first boto client and DuckDB start
+were all paid. Seconds:
+
+| lane | uncapped (n published) | cap 200 | cap 240 | where the capped time goes |
+|---|---|---|---|---|
+| climate-field-precipitation | 12.8 (361) | 8.7 / 6.0 | 8.5 | parts 3.5-4.9, markers 1.2-1.7, index 0.5-0.9 |
+| fire-detections | 13.1 (364) | 9.0 / 9.0 | 9.1 | cold index 2.3-2.5, parts 4.9-5.2 |
+| vegetation | 10.4 (307 + 47 absent) | 6.8 / 6.9 | - | parts 3.8-4.2; 28 absence reads 0.6-0.7 |
+| soil-field-vpd | 13.8 (359, 2026-10-07 pre-doubling) | 6.3 | - | parts 4.2 |
+
+The marginal cost is about 24 ms per published part plus 3-8 ms per marker. Fire's cold index
+(2.4 s) is the binding constraint: 200 puts it at the ~9 s target, and 240 would add about 1 s
+expected. Vegetation's serial absence evidence (2 GETs per absent day) costs 0.65 s once it is
+confined to the read range, so it was left serial. The pre-pass classification costs 0.1-0.4 s,
+but it warms the year LISTs that `resolve_window` would otherwise pay, so the net cost is about zero.
+Headroom left: about 3 s for one lane. A 3-lane surface with no `signal_name` at 365 days is
+still about 2 x 9 s on the call's own slot plus the borrowed one, which overruns. The web always sends
+the painted lane's `signal_name`; the model may not. Re-measure with `duration_ms` in the
+`agent_tool_call` log; probe: `.omc/research/history-serving-20261007.md`.
 
 **Log.** The bridge emits the ordinary `agent_tool_call` event. `tool_call_log.py` reads flat lane
 entries (no `selected`), deduplicates `lanes`, and adds `range_start`/`range_end` for every tool.
@@ -602,7 +641,7 @@ optional string. The current-catalogue fixture is regenerated. The agri catalogu
 
 **Web contract fixture.** `test_the_web_distribution_contract_fixture_is_what_the_tool_returns`
 checks `src/__tests__/services/agri-distribution-contract.fixture.json` against real
-`query_distribution_at_point` outputs (published covers / nearest cell / fire zero, no data, static,
+`query_distribution_at_point` outputs (published covers / truncated / nearest cell / fire zero, no data, static,
 release-lane refusal, a transient `serving_at_capacity` lane, two whole-call refusals). Regenerate
 with `AGRI_WRITE_WEB_DISTRIBUTION_FIXTURE=1` after any wire change; the web's
 `layer-window-distribution-contract.test.ts` parses every case and checks what the map shows.

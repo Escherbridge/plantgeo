@@ -489,9 +489,17 @@ def _quantile(ordered: list[float], fraction: float) -> float:
     return ordered[low] + (position - low) * (ordered[high] - ordered[low])
 
 
-async def test_distribution_at_point_answers_a_mixed_365_day_window(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    "cap",
+    [
+        window_distribution.MAX_WINDOW_DAYS,  # no cut: every trusted and hashed day of the year
+        window_distribution.MAX_DISTRIBUTION_DAYS_READ,  # the shipped cap: the latest days, still mixed trust
+    ],
+)
+async def test_distribution_at_point_answers_a_mixed_365_day_window(monkeypatch: pytest.MonkeyPatch, cap: int) -> None:
     last_day = date(2026, 6, 15)
     monkeypatch.setattr(window_distribution, "utc_today", lambda: date(2026, 9, 1))
+    monkeypatch.setattr(window_distribution, "MAX_DISTRIBUTION_DAYS_READ", cap)
     source = _AuthorizedLocalWarehouse()
     rows, values = _mixed_year(source.bucket, last_day)
     _stub_index(monkeypatch, rows)
@@ -509,9 +517,11 @@ async def test_distribution_at_point_answers_a_mixed_365_day_window(monkeypatch:
 
     [lane] = answer["lanes"]
     assert lane["state"] == "published", lane
-    assert lane["day_states"] == {"published": 365}
-    assert lane["days_with_data"] == 365
-    ordered = sorted(values.values())
+    read = min(cap, 365)
+    assert lane["day_states"] == {"published": read}
+    assert (lane["days_with_data"], lane["days_read"], lane["truncated"]) == (read, read, read < 365)
+    assert lane["read_range_start"] == (last_day - timedelta(days=read - 1)).isoformat()
+    ordered = sorted(value for day, value in values.items() if day > last_day - timedelta(days=read))
     assert lane["stats"] == pytest.approx(
         {
             "min": ordered[0],

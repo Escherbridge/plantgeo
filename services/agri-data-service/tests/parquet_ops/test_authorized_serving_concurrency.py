@@ -221,7 +221,7 @@ def test_first_failure_in_input_order_wins_even_when_a_later_one_lands_first(
 
     with pytest.raises(faults.ServingRefusalError) as caught:
         _read_window(store, lane, reader)
-    refused_at = time.monotonic()
+    refused_at = time.perf_counter()  # high-resolution: monotonic ticks ~15.6 ms on Windows
 
     assert caught.value.code == "availability_checksum_invalid"
     assert slow_tampered in caught.value.message
@@ -310,7 +310,7 @@ def _record_write_times(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     write_bytes = Path.write_bytes
 
     def recording_write_bytes(self: Path, data: Any) -> int:
-        attempts.append(time.monotonic())
+        attempts.append(time.perf_counter())
         return write_bytes(self, data)
 
     monkeypatch.setattr(Path, "write_bytes", recording_write_bytes)
