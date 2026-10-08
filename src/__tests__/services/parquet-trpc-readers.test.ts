@@ -1524,23 +1524,25 @@ describe("lane day and release semantics", () => {
     });
   });
 
-  it("fails the whole vegetation read closed when a row is not approved for client exposure", async () => {
+  it("serves a vegetation cell whose allowed_client_exposure is false: it is an export artifact, not a read gate (owner 2026-10-07)", async () => {
     mockedWindow.mockResolvedValue([
       published("2026-08-20", [
         { ...vegetationRow("2026-08-20", 0.72), allowed_client_exposure: false },
       ]),
     ]);
 
-    await expect(
-      getParquetVegetation({
-        bbox: "-125,42,-111,49",
-        date: "2026-08-20",
-        mapZoom: 7,
-        nowMs: Date.parse("2026-08-24T12:00:00Z"),
-      })
-    ).resolves.toMatchObject({
-      state: "upstream_unavailable",
-      fault: { kind: "contract" },
+    const result = await getParquetVegetation({
+      bbox: "-125,42,-111,49",
+      date: "2026-08-20",
+      mapZoom: 7,
+      nowMs: Date.parse("2026-08-24T12:00:00Z"),
+    });
+
+    expect(result).toMatchObject({
+      state: "ready",
+      data: {
+        observations: [{ observedDay: "2026-08-20", metricValue: 0.72, allowedClientExposure: false }],
+      },
     });
   });
 
@@ -1603,7 +1605,7 @@ describe("lane day and release semantics", () => {
     });
   });
 
-  it("serves the requested ERA5-Land moisture depth from its exact Parquet day", async () => {
+  it("serves the requested ERA5-Land moisture depth from its exact Parquet day, keeping a row whose allowed_client_exposure is false (export artifact, not a read gate -- owner 2026-10-07)", async () => {
     mockedDay.mockResolvedValue(published("2026-08-02", [soilMoistureRow()]));
 
     const result = await getParquetSoilField("-125,42,-111,49", {
@@ -1619,6 +1621,10 @@ describe("lane day and release semantics", () => {
       zoomTier: 13,
       bbox: "-125.25,41.75,-110.75,49.25",
     });
+    // `soilMoistureRow()` defaults `allowed_client_exposure` to false; the cell is still drawn. The
+    // field is an export artifact, not a read gate: no `sourceClientExposureApproved` field exists
+    // on the contract.
+    expect(result).not.toHaveProperty("sourceClientExposureApproved");
     expect(result).toMatchObject({
       availability: "published",
       reason: null,
@@ -1628,7 +1634,6 @@ describe("lane day and release semantics", () => {
       requestedDay: "2026-08-02",
       granularity: "detail",
       maxObservationAgeDays: 0,
-      sourceClientExposureApproved: false,
       features: [
         {
           id: "era5-land:42.125:-124.875",

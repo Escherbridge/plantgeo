@@ -32,7 +32,10 @@ const vegetationRowSchema = z
     observation_checksum: z.string().nullable(),
     data_available_at: instantSchema,
     release_count: z.number().int().nonnegative(),
-    allowed_client_exposure: z.literal(true),
+    // Export artifact, not a read gate (owner 2026-10-07): a `false` row is still served.
+    // See services/AGENTS.md §allowed-client-exposure; the agri vegetation warehouse schema
+    // declares this column non-nullable boolean (warehouse/schemas/vegetation.py), so no `.nullable()`.
+    allowed_client_exposure: z.boolean(),
     cell_longitude: finiteNumberSchema,
     cell_latitude: finiteNumberSchema,
   })
@@ -48,7 +51,7 @@ export interface ParquetVegetationObservation {
   observationChecksum: string | null;
   dataAvailableAt: string;
   releaseCount: number;
-  allowedClientExposure: true;
+  allowedClientExposure: boolean;
   longitude: number;
   latitude: number;
   /** The quarter-degree cell this NDVI mean describes, at every rung. */

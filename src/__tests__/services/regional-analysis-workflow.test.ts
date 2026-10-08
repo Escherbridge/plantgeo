@@ -681,6 +681,18 @@ describe('evidence audit honesty', () => {
     expect(JSON.stringify(projected).length).toBeLessThan(original.length / 2);
   });
 
+  it('strips allowed_client_exposure from model-facing evidence at every nesting level while keeping the rest of the record', () => {
+    const raw = { allowed_client_exposure: false, lanes: [{ selected: { features: [{ covers_probe_point: true,
+      allowed_client_exposure: false, properties: { allowed_client_exposure: false, normalized_value: 2.38, normalized_unit: 'kPa' } }] } }] };
+    const projected = boundedEvidence(raw) as Record<string, unknown>;
+    expect(projected).not.toHaveProperty('allowed_client_exposure');
+    expect(projected).toHaveProperty('lanes.0.selected.features.0.covers_probe_point', true);
+    expect(projected).not.toHaveProperty('lanes.0.selected.features.0.allowed_client_exposure');
+    expect(projected).toHaveProperty('lanes.0.selected.features.0.properties.normalized_value', 2.38);
+    expect(projected).toHaveProperty('lanes.0.selected.features.0.properties.normalized_unit', 'kPa');
+    expect(projected).not.toHaveProperty('lanes.0.selected.features.0.properties.allowed_client_exposure');
+  });
+
   it.each([
     {
       name: 'calendar gaps stay source-specific and separate from served dates',
@@ -1270,6 +1282,12 @@ describe('literature server context (seam S1)', () => {
     expect(siteFactObservationsForRead(audit('soil-phh2o', 'additional-1', 'observed', 'observation_coverage_on_day'),
       lanes([metric('phh2o', 62, 'pH*10')]))).toEqual([]);
     expect(siteFactObservationsForRead(audit('soil-phh2o'), { error: 'refused', ...lanes([metric('phh2o', 62, 'pH*10')]) })).toEqual([]);
+  });
+
+  it('keeps a point-containing flat `rows` record whose allowed_client_exposure is false: export artifact, not a read gate (owner 2026-10-07)', () => {
+    expect(siteFactObservationsForRead(audit('soil-phh2o'), {
+      rows: [{ covers_probe_point: true, allowed_client_exposure: false, properties: { signal_name: 'phh2o', normalized_value: 62, normalized_unit: 'pH*10' } }],
+    })).toEqual([{ fact: 'soil_ph', value: 6.2, readId: 'local-1' }]);
   });
 
   it('dates the most recent fire containing the point from the server day, never from publication or detections', () => {

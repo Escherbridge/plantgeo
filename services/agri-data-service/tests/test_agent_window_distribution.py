@@ -30,7 +30,7 @@ from agri_data_service.parquet_ops.duckdb_session import SERVING_MAX_CONCURRENT_
 from agri_data_service.parquet_ops.warehouse_reader import GeometrySupport, spatial_support
 from agri_data_service.routes import agent_tools as route
 from tests.test_agent_closest_datapoint import BOISE, GORGE, _enum_arrays, drought_row, ndvi_row, weather_station_row
-from tests.test_agent_selection_evidence import LocalSession, LocalWarehouse, climate_row
+from tests.test_agent_selection_evidence import LocalSession, LocalWarehouse, climate_row, read_surface
 
 #: The window's last day; "today" sits well after it unless a test is about the clamp.
 END = date(2026, 6, 15)
@@ -160,6 +160,41 @@ async def test_a_daily_lane_over_a_window_with_gaps_gives_exact_stats(  # noqa: 
     assert lane["governed_absence_as_value"] == absence_as_value
     assert lane["day_states"]["published"] == len(published)
     assert lane["day_states"].get("governed_absence", 0) == len(absent)
+
+
+def write_mixed_exposure_days(tmp_path: Path) -> LocalWarehouse:
+    """Two older-export days (`allowed_client_exposure = false`) and one direct-writer day (`true`)."""
+    source = LocalWarehouse()
+    exported = {0: (2.0, False), 5: (4.0, False), 29: (9.0, True)}
+    for offset, (value, exposed) in exported.items():
+        day = START + timedelta(days=offset)
+        row = {**climate_row(day, longitude=-116, latitude=43, value=value), "allowed_client_exposure": exposed}
+        source.write(tmp_path, DEW_POINT, day, [row])
+    return source
+
+
+# Owner 2026-10-07: `allowed_client_exposure` is an export artifact, not a read gate. The map serves
+# false-flagged rows, so both agent reads must too (agent/AGENTS.md, "Exposure is not a read gate").
+
+
+async def test_the_window_distribution_counts_days_exported_with_exposure_false(tmp_path: Path) -> None:
+    source = write_mixed_exposure_days(tmp_path)
+    [lane] = (await distribution(source, DEW_POINT))["lanes"]
+    assert (lane["state"], lane["days_with_data"]) == ("published", 3)
+    assert lane["stats"] == pytest.approx(expected_stats([2.0, 4.0, 9.0]))
+
+
+async def test_the_selection_read_serves_a_day_exported_with_exposure_false(tmp_path: Path) -> None:
+    source = write_mixed_exposure_days(tmp_path)
+    selection = await read_surface(
+        source, DEW_POINT, day=START.isoformat(), range_start=START.isoformat(), range_end=END.isoformat()
+    )
+    selected = selection["lanes"][0]["selected"]
+    assert (selected["state"], selected["served_day"]) == ("published", START.isoformat())
+    [feature] = selected["features"]
+    assert feature["covers_probe_point"] is True
+    assert feature["properties"]["normalized_value"] == 2.0
+    assert feature["properties"]["allowed_client_exposure"] is False
 
 
 #: A detection cell one lattice step east of the probe's: in the same tile, never covering the probe.

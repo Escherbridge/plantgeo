@@ -35,7 +35,6 @@ from agri_data_service.parquet_ops.warehouse_reader import (
 from agri_data_service.parquet_ops.wire import GovernedAbsenceDay
 from agri_data_service.pipeline.direct.climate.products import CLIMATE_FIELD_PRODUCT_BY_STREAM
 from agri_data_service.pipeline.direct.soil.products import SOIL_FIELD_PRODUCT_BY_STREAM
-from agri_data_service.warehouse.parquet.schema import get_stream_schema
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -266,10 +265,10 @@ ORDER BY measure_index, signal_name NULLS FIRST, unit NULLS FIRST
 """
 
 
-def _point_target(support: PointSupport, *, exposed: bool) -> str:
+def _point_target(support: PointSupport) -> str:
     """Every row in the chosen lattice support (corner bound by the two parameters after the part list)."""
     return (
-        point_support_ctes(support, exposed=exposed)
+        point_support_ctes(support)
         + """, target AS (
     SELECT * FROM supports
     WHERE abs(support_west - ?::DOUBLE) <= """
@@ -413,8 +412,7 @@ def _read_lane(
             return _LaneAnswer(day_states, spatial)
         tail: list[object] = [uris, days, answered]
         if isinstance(support, PointSupport) and spatial.corner is not None:
-            exposed = "allowed_client_exposure" in get_stream_schema(lane, WINDOW_KIND).column_names
-            statement = distribution_statement(_point_target(support, exposed=exposed), measures)
+            statement = distribution_statement(_point_target(support), measures)
             lattice = support_lattice(surface, selection.tier)
             parameters: list[object] = [
                 *lattice,

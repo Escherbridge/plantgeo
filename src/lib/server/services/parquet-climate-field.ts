@@ -230,7 +230,6 @@ function emptyCollection(
     maxCellCount: CLIMATE_FIELD_MAX_CELLS,
     maxObservationAgeDays: 0,
     bands: definition.bands,
-    sourceClientExposureApproved: false,
     support: collectionSupport(signal, zoomTier, renderForm, requestedDay, []),
   };
 }
@@ -380,7 +379,8 @@ export function parquetClimateFieldCollection(
     maxCellCount: CLIMATE_FIELD_MAX_CELLS,
     maxObservationAgeDays: 0,
     bands: definition.bands,
-    sourceClientExposureApproved: rows.every((row) => row.allowedClientExposure === true),
+    // `allowed_client_exposure` is an export artifact, not a read gate (owner 2026-10-07): every
+    // published row is shown regardless of its value. See services/AGENTS.md §allowed-client-exposure.
     support: collectionSupport(signal, zoomTier, renderForm, result.servedDay, rows),
   };
 }

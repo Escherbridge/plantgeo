@@ -164,7 +164,6 @@ function emptyParquetSoilField(
     latticeDegrees: servedCellLattice(zoomTier, LANE_BASE_LATTICES["soil-field"]).cellSizeDegrees,
     smoothingSigmaDegrees: null,
     bands: definition.bands,
-    sourceClientExposureApproved: false,
     zoomTier,
     // Declared even when nothing was drawn: an empty collection still has to say which rung was
     // asked and at what pitch, or the panel cannot tell "no cells here" from "no rung answered".
@@ -399,9 +398,8 @@ export async function getParquetSoilField(
     latticeDegrees: lattice.cellSizeDegrees,
     smoothingSigmaDegrees: null,
     bands: definition.bands,
-    sourceClientExposureApproved: rows.every(
-      (row) => row.allowed_client_exposure === true
-    ),
+    // `allowed_client_exposure` is an export artifact, not a read gate (owner 2026-10-07): every
+    // published row is shown regardless of its value. See services/AGENTS.md §allowed-client-exposure.
     zoomTier,
     support: soilFieldSupport(layer, zoomTier, envelope.servedDay, drawable),
   };

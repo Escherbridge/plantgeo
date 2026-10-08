@@ -939,18 +939,28 @@ branch, together with its LIST, stops being reached. Pinned by
 Production measured the sequential marker-then-part fetch at ~115 ms per published day, linear in
 window length: a 30-day, 3-lane soil-temperature `distribution_at_point` took ~10.5 s against the
 12 s agent tool timeout, and map routes share the path. `_stage_in_order` now fans fetches out on
-ONE module-level `ThreadPoolExecutor` (`_RECEIPT_FETCH_WORKERS = 8`), so concurrent GETs to R2 are
-bounded per process, not per request: three overlapping DuckDB-slot reads still hold at most 8,
-under boto's default 10-connection pool. A per-request pool would multiply that by every
-overlapping call and leak threads on each one. Each request also keeps at most
-`_RECEIPT_FETCH_WINDOW` (4) fetches outstanding, as a sliding window, so a long window cannot fill the
-shared queue and a refusal never has more than one window of fetches behind it.
+ONE module-level `ThreadPoolExecutor` (`_RECEIPT_FETCH_WORKERS = 16`), so concurrent GETs to R2 are
+bounded per process, not per request: three overlapping DuckDB-slot reads still hold at most 16.
+`SERVING_CLIENT_CONFIG` sets `max_pool_connections=_RECEIPT_FETCH_WORKERS`, so every worker has its
+own urllib3 connection. boto's default pool is 10, so an eleventh concurrent GET would wait for a
+connection inside botocore, where no bound here can see it. A per-request pool
+would multiply that by every overlapping call and leak threads on each one. Each request also keeps
+at most `_RECEIPT_FETCH_WINDOW` (8) fetches outstanding, as a sliding window, so a long window cannot
+fill the shared queue and a refusal never has more than one window of fetches behind it.
 
-**The window alone does not protect the pool.** A window of 4 out of 8 workers stops one *live*
+**Doubled 2026-10-07 (owner-approved; was 4 of 8).** Measured on precipitation over 365 days
+(`.omc/research/history-serving-20261007.md` §A): 18 s in total, of which the parts phase was 14.4 s
+(360 GETs averaging 90 ms, 32.5 s summed, only 2.3x effective overlap from a window of 4) and the
+markers phase 2.7 s. The expected result at window 8 is about 0.7-1.4 s for markers and 4-6 s for
+parts (32.5 s / 8, less head-of-line loss). Adding 0.6 s of classification and 0.3 s of DuckDB gives
+about **7-9 s against a 9 s target**. That target is an estimate until production re-measures it.
+The window stays at half the pool for the reason below.
+
+**The window alone does not protect the pool.** A window of 8 out of 16 workers stops one *live*
 stalled request from holding every worker. It does not stop *abandoned* fetches from piling up: a
 request that refuses (deadline, corrupt receipt) does not wait for its running siblings, so they keep
 their workers until their GET returns. Two abandoned requests against a stalled R2 prefix filled all
-8 workers, and a healthy request then queued behind them and refused `read_timed_out` with no fetch
+8 workers (measured at the earlier 4-of-8 sizing), and a healthy request then queued behind them and refused `read_timed_out` with no fetch
 started. Two mechanisms close that:
 
 - **A bounded serving client.** `AuthorizedServingReaderHolder` builds its own boto client with
@@ -967,9 +977,12 @@ started. Two mechanisms close that:
 - **A cap on abandoned fetches.** `_ABANDONED_FETCHES` counts, process-wide, every fetch a request
   gave up on while it was still running. A done-callback releases each one when its GET returns.
   When the count reaches `_RECEIPT_FETCH_WINDOW`, a new `_stage_in_order` refuses
-  `serving_at_capacity` up front instead of queueing behind the stragglers. The check is advisory:
-  two requests can both pass at a count of 3. That is acceptable, because it bounds a pile-up and is
-  not an exact quota.
+  `serving_at_capacity` up front instead of queueing behind the stragglers. Tying the cap to the
+  window (8 of 16) keeps one invariant: while a request is admitted, stragglers hold at most 7
+  workers, so at least 9 remain and a full live window always fits beside them. The check is
+  advisory: two requests can both pass at a count of 7. That is acceptable, because it bounds a
+  pile-up and is not an exact quota. Raising the window without raising the pool would break that
+  invariant: the window must stay at most half of `_RECEIPT_FETCH_WORKERS`.
 
 `_RECEIPT_STAGING_DEADLINE_SECONDS` (20 s) bounds one `verified_object_uris` call across both phases.
 On a breach, the call refuses `read_timed_out`, the transient serving code the agent maps to
@@ -985,7 +998,9 @@ GET, instead of botocore's 60 s read timeout plus retries.
 
 **Memory ceiling.** `BotoAvailabilityStorage.read` buffers a whole object. So the steady-state worst
 case for resident part payloads per process is `_RECEIPT_FETCH_WORKERS x MAX_VERIFIED_PART_BYTES` =
-8 x 64 MiB = **512 MiB**, plus each DuckDB session's `memory_limit`. While `body.read()` joins the
+16 x 64 MiB = **1 GiB**, plus each DuckDB session's `memory_limit`. That was 512 MiB before the
+2026-10-07 doubling. Production peaked at 2.6 GB against a 32 GB container limit, and real parts are
+at most about 120 kB, so the doubled ceiling was accepted. While `body.read()` joins the
 received chunks into one `bytes`, a thread briefly holds about twice its payload, so the transient
 peak can approach 2x that figure. Under the sequential path it was about 3 x 64 MiB (one per serving
 slot). Real parts are far below 64 MiB, so the ceiling is a bound, not a forecast. Check it against
@@ -1033,7 +1048,8 @@ The invariants the fan-out keeps, and the test that pins each (in
   no-late-write assertion in the input-order test.
 - **Capped abandonment.** Pinned by
   `test_abandoned_stragglers_at_the_window_size_refuse_new_staging_until_they_drain`, which also
-  checks that the count drains and that serving resumes. The serving client's bounds are pinned by
+  checks that the count drains and that serving resumes. The serving client's bounds, including
+  `max_pool_connections >= _RECEIPT_FETCH_WORKERS`, are pinned by
   `test_the_serving_client_is_built_with_bounds_inside_the_staging_deadline`, and the listing
   holders' by `test_both_physical_listing_holders_use_the_serving_client_bounds`.
 - **Bounded head wait.** The consumer waits on the window head with the remaining deadline, and a

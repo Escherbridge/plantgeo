@@ -78,7 +78,7 @@ function ringArea(ring: number[][]): number {
 }
 
 describe("Parquet climate-field collection adapter", () => {
-  it("preserves the existing GeoJSON contract from an exact Parquet day", () => {
+  it("preserves the existing GeoJSON contract from an exact Parquet day, keeping a row whose allowedClientExposure is false (export artifact, not a read gate -- owner 2026-10-07)", () => {
     const collection = parquetClimateFieldCollection(
       ready([row(13)]),
       "precipitation",
@@ -88,6 +88,8 @@ describe("Parquet climate-field collection adapter", () => {
       "field"
     );
 
+    // `row(13)` defaults `allowedClientExposure` to false; the cell is still drawn. The field is an
+    // export artifact, not a read gate: no `sourceClientExposureApproved` field exists on the contract.
     expect(collection).toMatchObject({
       availability: "published",
       signal: "precipitation",
@@ -97,10 +99,10 @@ describe("Parquet climate-field collection adapter", () => {
       cellCount: 1,
       latticeCellCount: 4,
       maxObservationAgeDays: 0,
-      sourceClientExposureApproved: false,
       granularity: "detail",
       zoomTier: 13,
     });
+    expect(collection).not.toHaveProperty("sourceClientExposureApproved");
     expect(collection.features[0]).toMatchObject({
       id: "cell--115-43",
       geometry: { type: "Polygon" },

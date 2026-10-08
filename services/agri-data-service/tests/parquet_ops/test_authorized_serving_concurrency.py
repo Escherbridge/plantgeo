@@ -147,6 +147,11 @@ def _read_window(store: _LatencyStore, lane: _Lane, reader: FakeRowReader) -> An
     )
 
 
+def test_the_per_request_window_is_at_most_half_the_shared_pool() -> None:
+    """The abandoned-fetch cap only leaves a live request a full window while window <= pool / 2."""
+    assert 2 * serving._RECEIPT_FETCH_WINDOW <= serving._RECEIPT_FETCH_WORKERS
+
+
 def test_window_fetches_concurrently_within_the_bound_and_stages_each_key_its_own_bytes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -253,7 +258,8 @@ def test_overlapping_requests_share_one_process_wide_fetch_bound(monkeypatch: py
 
 
 def test_a_request_stalled_on_r2_leaves_workers_for_an_overlapping_request(monkeypatch: pytest.MonkeyPatch) -> None:
-    lane = _Lane(days=8)
+    # More days than one window, so only the window (never the day count) can stop the stalled request at it.
+    lane = _Lane(days=2 * serving._RECEIPT_FETCH_WINDOW)
     _stub_index(monkeypatch, lane.index())
     stalled = _LatencyStore(lane.objects, latency=lambda _key: 0.5)
     healthy = _LatencyStore(lane.objects, latency=lambda _key: 0.001)
@@ -342,7 +348,7 @@ def test_a_definite_refusal_is_not_held_behind_a_stalled_sibling(monkeypatch: py
 def test_abandoned_stragglers_at_the_window_size_refuse_new_staging_until_they_drain(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    lane = _Lane(days=8)
+    lane = _Lane(days=2 * serving._RECEIPT_FETCH_WINDOW)
     _stub_index(monkeypatch, lane.index())
     monkeypatch.setattr(serving, "_RECEIPT_STAGING_DEADLINE_SECONDS", 0.3)
     release = threading.Event()
@@ -442,6 +448,8 @@ def test_the_serving_client_is_built_with_bounds_inside_the_staging_deadline() -
     config = reader._store.inner.client.meta.config
     attempts = config.retries["total_max_attempts"]
     assert attempts * (config.connect_timeout + config.read_timeout) < serving._RECEIPT_STAGING_DEADLINE_SECONDS
+    # One connection per fetch worker: boto's default 10 would queue GETs inside botocore, past every bound.
+    assert config.max_pool_connections >= serving._RECEIPT_FETCH_WORKERS
     # Ingestion builds the same storage without the serving bounds; long uploads keep botocore defaults.
     ingestion = serving.BotoAvailabilityStorage.from_settings(source).client.meta.config
     assert ingestion.read_timeout > config.read_timeout
@@ -469,3 +477,4 @@ def test_both_physical_listing_holders_use_the_serving_client_bounds(
         serving.SERVING_CLIENT_CONFIG.read_timeout,
         serving.SERVING_CLIENT_CONFIG.retries["total_max_attempts"],
     )
+    assert config.max_pool_connections >= serving._RECEIPT_FETCH_WORKERS

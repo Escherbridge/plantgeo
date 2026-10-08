@@ -121,8 +121,18 @@ describe("server-authored regional measurement facts", () => {
       { id: "raster", source: "soil-phh2o", result: { state: "numeric_values_unavailable", features: [feature()], raster_publication: { valueMin: 2, valueMax: 10 } } },
       { id: "refusal", source: "vegetation", result: { refusal_code: "not_available_in_region", features: [feature()] } },
       read([{ properties: { observation_count: 5, coverage_fraction: 1, cell_id: "identifier", observed_day: DAY } }]),
-      read([{ ...feature(), properties: { ...feature().properties, allowed_client_exposure: false } }]),
     ])).toEqual({ facts: [], omittedFacts: 0 });
+  });
+
+  it.each([
+    ["on the row itself", { ...feature(), allowed_client_exposure: false }],
+    ["inside properties", { ...feature(), properties: { ...feature().properties, allowed_client_exposure: false } }],
+  ])("keeps a row whose allowed_client_exposure is false %s: it is an export artifact, not a read gate (owner 2026-10-07)", (_position, row) => {
+    const { facts } = buildRegionalMeasurementFacts([read([row])]);
+    expect(facts).toHaveLength(1);
+    expect(facts[0].statement).toContain('signal_name="vapor_pressure_deficit"');
+    // The field stays metadata-only: it must never surface in the rendered statement either way.
+    expect(facts[0].statement).not.toMatch(/allowed_client_exposure/);
   });
 
   it.each([null, Number.NaN, Number.POSITIVE_INFINITY])("does not mint a measurement from descriptors when its value is %s", (value) => {

@@ -35,7 +35,6 @@ from agri_data_service.parquet_ops.request_params import ReadScope
 from agri_data_service.parquet_ops.serving import day_status_sets, resolve_day, resolve_release
 from agri_data_service.parquet_ops.warehouse_reader import GeometrySupport, PointSupport, RowReadResult, spatial_support
 from agri_data_service.parquet_ops.wire import GovernedAbsenceDay, PublishedDay
-from agri_data_service.warehouse.parquet.schema import get_stream_schema
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -49,15 +48,15 @@ if TYPE_CHECKING:
     from agri_data_service.parquet_ops.wire import DayEnvelope
 
 
-def point_support_ctes(support: PointSupport, *, exposed: bool) -> str:
+def point_support_ctes(support: PointSupport) -> str:
     """The `limits` and `supports` CTEs: every positioned row with its map-lattice support corner.
 
     Parameters, in order: lattice size, phase, correction; tile west, south, east, north; probe
     longitude, latitude; then the part-file list. Shared by the tile selection and the window
     distribution (`window_distribution.py`), so both place a row in the SAME lattice cell.
+    No `allowed_client_exposure` predicate: agent reads match the map (agent/AGENTS.md, "Exposure is not a read gate").
     """
     longitude, latitude = f'"{support.longitude_column}"', f'"{support.latitude_column}"'
-    exposure = "AND allowed_client_exposure IS TRUE" if exposed else ""
     return f"""limits AS (
     SELECT ?::DOUBLE AS size, ?::DOUBLE AS phase, ?::DOUBLE AS correction,
            ?::DOUBLE AS west, ?::DOUBLE AS south, ?::DOUBLE AS east, ?::DOUBLE AS north,
@@ -70,15 +69,15 @@ def point_support_ctes(support: PointSupport, *, exposed: bool) -> str:
              ELSE floor(({latitude} + correction - phase) / size) * size + phase END AS support_south,
         size, west, south, east, north, probe_longitude, probe_latitude
     FROM read_parquet(?, union_by_name=true, hive_partitioning=false, filename=true) AS data CROSS JOIN limits
-    WHERE {longitude} IS NOT NULL AND {latitude} IS NOT NULL {exposure}
+    WHERE {longitude} IS NOT NULL AND {latitude} IS NOT NULL
 )"""
 
 
-def point_selection_statement(support: PointSupport, *, exposed: bool) -> str:
+def point_selection_statement(support: PointSupport) -> str:
     """Select every support intersecting the tile, preferring the support containing the click."""
     longitude, latitude = f'"{support.longitude_column}"', f'"{support.latitude_column}"'
     return f"""-- agent_selection_point_rows
-WITH {point_support_ctes(support, exposed=exposed)}, selected AS (
+WITH {point_support_ctes(support)}, selected AS (
     SELECT * EXCLUDE (size, west, south, east, north, probe_longitude, probe_latitude),
         support_west + size AS support_east, support_south + size AS support_north,
         {longitude} AS centroid_longitude, {latitude} AS centroid_latitude,
@@ -199,8 +198,7 @@ class SelectionReader:
         parameters: Callable[[Box, int], list[object]]
         if isinstance(support, PointSupport):
             required = (support.longitude_column, support.latitude_column)
-            exposed = "allowed_client_exposure" in get_stream_schema(layer, "observed").column_names
-            statement = point_selection_statement(support, exposed=exposed)
+            statement = point_selection_statement(support)
             distance_basis = "source_coordinate"
 
             def parameters(box: Box, limit: int) -> list[object]:

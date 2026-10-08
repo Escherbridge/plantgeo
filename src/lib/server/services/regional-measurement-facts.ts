@@ -157,8 +157,9 @@ function collectCandidates(root: RecordValue): Candidate[] {
         if (Array.isArray(entries)) {
           for (const record of entries) {
             const row = object(record);
-            if (row && !row.error && !row.refusal_code && !isModelEstimate(row) && row.allowed_client_exposure !== false
-              && object(row.properties)?.allowed_client_exposure !== false) {
+            // `allowed_client_exposure` is an export artifact, not a read gate (owner 2026-10-07):
+            // see services/AGENTS.md §allowed-client-exposure. Dropping false rows hid real history.
+            if (row && !row.error && !row.refusal_code && !isModelEstimate(row)) {
               candidates.push({ record: row, envelope: scope, lane: nextLane, group, selected, position: candidates.length });
             }
           }

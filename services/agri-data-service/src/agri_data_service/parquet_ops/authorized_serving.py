@@ -102,11 +102,12 @@ MAX_CACHED_INDEX_GENERATION_BYTES: Final = 8 * 1024 * 1024
 MAX_CACHED_INDEX_BYTES: Final = 16 * 1024 * 1024
 MAX_CACHED_INDEX_ROWS: Final = 100_000
 
-# One process-wide pool bounds concurrent receipt GETs across every overlapping request (boto's
-# default connection pool is 10). Each request keeps at most a window of fetches outstanding, kept
-# below the pool size so one request stalled on R2 never holds every worker; see AGENTS.md.
-_RECEIPT_FETCH_WORKERS: Final = 8
-_RECEIPT_FETCH_WINDOW: Final = 4
+# One process-wide pool bounds concurrent receipt GETs across every overlapping request; the serving
+# client's connection pool is sized to match (boto's default is 10). Each request keeps at most a
+# window of fetches outstanding, half the pool, so one request stalled on R2 never holds every
+# worker; see AGENTS.md, "Receipt-fetch concurrency".
+_RECEIPT_FETCH_WORKERS: Final = 16
+_RECEIPT_FETCH_WINDOW: Final = 8
 # Above every caller's own deadline (12 s agent tool, 14 s row route): it only frees a serving slot.
 _RECEIPT_STAGING_DEADLINE_SECONDS: Final = 20.0
 _RECEIPT_FETCH_POOL: Final = ThreadPoolExecutor(
@@ -115,11 +116,13 @@ _RECEIPT_FETCH_POOL: Final = ThreadPoolExecutor(
 )
 # The serving client's own bounds, so a fully stalled GET frees its worker inside the staging deadline:
 # 2 attempts x (3 s connect + 6 s to first byte) = 18 s. botocore counts `max_attempts` as RETRIES, so the
-# total is spelled `total_max_attempts`. Ingestion keeps botocore defaults; see AGENTS.md.
+# total is spelled `total_max_attempts`. One connection per fetch worker, so no GET waits on urllib3's
+# pool. Ingestion keeps botocore defaults; see AGENTS.md.
 SERVING_CLIENT_CONFIG: Final = Config(
     connect_timeout=3,
     read_timeout=6,
     retries={"mode": "standard", "total_max_attempts": 2},
+    max_pool_connections=_RECEIPT_FETCH_WORKERS,
 )
 
 
@@ -628,6 +631,8 @@ class AvailabilityAuthorizedListing:
         """
         if receipts and _ABANDONED_FETCHES.count >= _RECEIPT_FETCH_WINDOW:
             # Abandoned stragglers already hold a window's worth of workers: refuse now, not queue behind them.
+            # Below the cap they hold at most WINDOW - 1 of the 2 x WINDOW workers, so stragglers alone never
+            # leave this request less than a full window.
             raise faults.serving_at_capacity(operation="receipt verification", concurrent_reads=_RECEIPT_FETCH_WORKERS)
         window: deque[tuple[int, Future[int]]] = deque()
         upcoming = iter(range(len(receipts)))

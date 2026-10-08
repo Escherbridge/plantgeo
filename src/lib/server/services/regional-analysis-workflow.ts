@@ -296,6 +296,11 @@ const MODEL_OMITTED_STORAGE_LINEAGE = new Set([
   'input_source_part_sha256s', 'selected_source_row_sha256', 'input_source_row_sha256s',
   'input_source_row_digest', 'source_manifest_sha256', 'selected_source_release_payload_checksum',
 ]);
+/** `allowed_client_exposure` is an export artifact, not a read gate or evidence of unapproved data
+ * (owner 2026-10-07; see services/AGENTS.md §allowed-client-exposure). Stripped at every nesting
+ * level `boundedEvidence` reaches, same as the opaque storage-lineage set above, so the model never
+ * sees a false value on a pre-Aug-2026 row and reports it back as a caveat. */
+const MODEL_OMITTED_EXPORT_ARTIFACTS = new Set(['allowed_client_exposure']);
 
 /** Matches the strategy-knowledge tools' own `limit` ceiling (1-10), so no requested record is cut. */
 export const MAX_LITERATURE_RESULTS = 10;
@@ -313,7 +318,7 @@ export function boundedEvidence(value: unknown, depth = 0, field = '', literatur
   }
   if (object(value)) {
     const entries = Object.entries(value as Record<string, unknown>);
-    const retained = entries.filter(([key]) => !MODEL_OMITTED_STORAGE_LINEAGE.has(key));
+    const retained = entries.filter(([key]) => !MODEL_OMITTED_STORAGE_LINEAGE.has(key) && !MODEL_OMITTED_EXPORT_ARTIFACTS.has(key));
     // Only the top-level record arrays of a literature payload get the wider bound.
     const literature = depth === 0 && isLiteratureEvidence(undefined, value);
     return {
@@ -775,7 +780,9 @@ function pointRecords(result: unknown): Array<{ properties: Record<string, unkno
       if ((key === 'features' || key === 'rows') && Array.isArray(entry)) {
         for (const item of entry) {
           const row = object(item);
-          if (row?.covers_probe_point === true && row.allowed_client_exposure !== false) {
+          // `allowed_client_exposure` is an export artifact, not a read gate (owner 2026-10-07):
+          // see services/AGENTS.md §allowed-client-exposure.
+          if (row?.covers_probe_point === true) {
             records.push({ properties: object(row.properties) ?? row, selected });
           }
         }

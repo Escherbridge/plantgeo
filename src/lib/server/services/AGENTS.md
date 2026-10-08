@@ -1027,3 +1027,29 @@ A hover now reaches `HoverTooltip` -> a tooltip -> `WindowDistributionLine`, whi
 depth-correct `signal_name` `soil-window-distribution.test.tsx` already proved in isolation; the
 end-to-end path is covered by `window-distribution.test.tsx`'s "the hovered soil-moisture cell's
 window distribution" describe block.
+
+## `allowed_client_exposure` is not a read gate (owner 2026-10-07)
+
+The Parquet row column `allowed_client_exposure` is an export artifact, not a restriction: older
+exports wrote `false` on every row, newer ones write `true`, and the column says nothing about
+whether a row is safe to show. Dropping or schema-rejecting `false` rows hid real history
+(precipitation before ~Aug 2026, dew-point back to 1984). No web-side reader filters, gates or
+schema-rejects on it any more -- matches the agri agent fix (agent/AGENTS.md "Exposure is not a
+read gate"). Sites fixed: `regional-measurement-facts.ts` `collectCandidates` (dropped the two
+`!== false` checks; field stays metadata-only via the existing `METADATA_FIELDS` entry),
+`regional-analysis-workflow.ts` `pointRecords` (dropped the `allowed_client_exposure !== false`
+half of the point filter), `parquet-trpc-readers/soil-field.ts` and `parquet-climate-field.ts`
+(no per-row gate; a published collection draws every row regardless of the flag's value), and
+`parquet-trpc-readers/vegetation.ts` (`allowed_client_exposure` relaxed from `z.literal(true)` to
+`z.boolean()`, so a response holding a `false` row parses instead of failing the whole read closed).
+`burn-severity.ts` and `signal-plane-rows.ts` keep the field as a plain passthrough schema column --
+they never gated on it, so they are unchanged.
+
+The model never sees the flag either: `regional-analysis-workflow.ts` `boundedEvidence` strips
+`allowed_client_exposure` at every nesting level (`MODEL_OMITTED_EXPORT_ARTIFACTS`, a sibling of the
+opaque-storage-lineage set it already stripped), so a `false` value on a pre-Aug-2026 row can never
+surface as a false "not approved for client exposure" caveat in a report. The dead
+`sourceClientExposureApproved` field -- which used to re-derive the old per-row gate as a collection-level
+`rows.every(... === true)`, then sat hardcoded `true`/`false` once the gate was removed -- was deleted
+outright from `environmental-contracts.ts` and both producers: nothing in `components/`, `hooks/` or
+`stores/` ever read it.

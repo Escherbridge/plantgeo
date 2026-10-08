@@ -910,6 +910,24 @@ DuckDB geometry takes longitude then latitude; `ST_Distance_Spheroid` takes lati
 longitude. Both conventions are pinned by real DuckDB tests. Polygon centroid distance is labelled
 as centroid distance and never presented as distance to the polygon edge.
 
+### Exposure is not a read gate (owner 2026-10-07)
+
+`allowed_client_exposure` is an export artifact, not a restriction. No agent read filters on it:
+`selection_reads.point_support_ctes` (shared by the selection read and the window distribution)
+keeps every positioned row, exactly as the map's `/parquet/day` does.
+
+History: a14ee9bd (2026-09-20) added `AND allowed_client_exposure IS TRUE` whenever a lane's schema
+had the column. Older exports wrote `false` on every row; direct-writer days write `true`
+(`pipeline/direct/climate/rows.py`). So the agent saw no history before about August 2026 while
+the map painted it. The production diagnosis, with row counts per day, is
+`.omc/research/history-serving-20261007.md` §B. Do not reinstate a row filter on this column. If
+exposure ever becomes real policy, it belongs in the shared serving layer, so the map and the agent
+change together. Pinned by `tests/test_agent_window_distribution.py::test_the_window_distribution_counts_days_exported_with_exposure_false`
+and `::test_the_selection_read_serves_a_day_exported_with_exposure_false`.
+
+The web side follows the same rule (owner 2026-10-07): see `src/lib/server/services/AGENTS.md`
+§"`allowed_client_exposure` is not a read gate". The model never sees the flag.
+
 ## The catalogue the agent and the map share
 
 `list_environmental_layers` publishes all selectable map data surfaces, aliases such as VPD and

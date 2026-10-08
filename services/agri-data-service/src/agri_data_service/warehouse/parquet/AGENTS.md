@@ -46,9 +46,12 @@ present are non-nullable, so a null fails the write loudly. `coverage_fraction` 
 `allowed_client_exposure` are nullable because the matview derives them with `array_agg` over base
 columns that admit NULL — even though §0.22.3 measured them constant at `1.0` and `False`.
 
-**`allowed_client_exposure` is unresolved**, not merely constant: every governed row says exposure
-is *not* permitted while the map paints the data (§0.22.7). Do not build an exposure gate on this
-column until that is settled.
+**`allowed_client_exposure` is not a read gate (owner 2026-10-07).** The flag is an export artifact,
+not a restriction. Older exports wrote `false` on every row (§0.22.7); direct-writer days write
+`true`. The map has always painted both. The agent's filter (a14ee9bd, 2026-09-20) hid all history
+before about August 2026. It was removed so that agent reads match the map: see `agent/AGENTS.md`,
+"Exposure is not a read gate". The column stays in the schema, and the coarse rungs still aggregate
+it with `all`. No read path in this service treats it as permission.
 
 ### ADDENDUM 2026-09-04 — historical base rungs predate the position columns, and a re-export is owed
 

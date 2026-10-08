@@ -63,7 +63,6 @@ export interface PublishedSoilFieldCollection
   latticeDegrees: number | null;
   smoothingSigmaDegrees: number | null;
   bands: readonly SoilFieldBand[];
-  sourceClientExposureApproved: boolean;
 }
 
 export interface SoilFieldReadOptions {
@@ -103,7 +102,6 @@ export interface PublishedClimateFieldCollection
   maxCellCount: number;
   maxObservationAgeDays: number;
   bands: readonly ClimateFieldBand[];
-  sourceClientExposureApproved: boolean;
 }
 
 export interface ClimateFieldReadOptions {
