@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { NO_IOS_FOCUS_ZOOM, TOUCH_TARGET } from "@/components/ui/touch-target";
 
 /** Requests a reset link. Always renders the same neutral outcome — never reveals account existence. */
 export function ForgotPasswordForm() {
@@ -50,13 +51,13 @@ export function ForgotPasswordForm() {
           required
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          className="rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+          className={`rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
         />
       </div>
       <button
         type="submit"
         disabled={loading}
-        className="rounded-md bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 px-4 py-2 text-sm font-medium text-white transition-colors"
+        className={`rounded-md bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 px-4 py-2 text-sm font-medium text-white transition-colors ${TOUCH_TARGET}`}
       >
         {loading ? "Sending…" : "Send reset link"}
       </button>

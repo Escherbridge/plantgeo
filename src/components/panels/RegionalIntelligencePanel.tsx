@@ -10,6 +10,7 @@ import { AI_GENERATED_LABEL } from '@/lib/regional-intelligence';
 import { buildSourcesView } from '@/lib/regional-evidence-presentation';
 import { RegionalIntelligenceReport, SourcesDisclosure } from './RegionalIntelligenceReport';
 import { ReportErrorBoundary } from './ReportErrorBoundary';
+import { TOUCH_TARGET, NO_IOS_FOCUS_ZOOM } from '@/components/ui/touch-target';
 
 // Re-exported so saved-conversation pages and transcripts keep one import site.
 export { RegionalIntelligenceReport } from './RegionalIntelligenceReport';
@@ -210,18 +211,29 @@ function RegionalIntelligencePanelBody({ embedded }: { embedded: boolean }) {
       )}
 
       {/* Messages */}
-      <div className="flex flex-wrap gap-3 border-b px-3 py-2 text-xs">
-        <button type="button" disabled={isLoading} className="text-blue-600 hover:underline disabled:opacity-50" onClick={() => {
+      {/* `max-sm:items-center` on the ROW, not on each child: the row is `align-items:
+          stretch` by default, so once TOUCH_TARGET grows the controls to 44px the plain
+          <span> below stretches with them and pins its text to the top while the button and
+          the links centre theirs -- four items in one row at two different baselines. Centring
+          here fixes all of them and lets the children keep their own display. */}
+      <div className="flex flex-wrap gap-3 border-b px-3 py-2 text-xs max-sm:items-center">
+        <button type="button" disabled={isLoading} className={`text-blue-600 hover:underline disabled:opacity-50 ${TOUCH_TARGET}`} onClick={() => {
           useRegionalIntelligenceStore.getState().openPanel(selectedLocation.lat, selectedLocation.lon, selectedLocation.precision);
           setInput('');
         }}>New chat</button>
-        <Link href="/dashboard/conversations" className="text-blue-600 hover:underline">Chat history</Link>
-        {conversationId && <Link href={`/dashboard/conversations/${conversationId}`} className="text-blue-600 hover:underline">Saved conversation</Link>}
+        <Link href="/dashboard/conversations" className={`text-blue-600 hover:underline ${TOUCH_TARGET}`}>Chat history</Link>
+        {conversationId && <Link href={`/dashboard/conversations/${conversationId}`} className={`text-blue-600 hover:underline ${TOUCH_TARGET}`}>Saved conversation</Link>}
         <span className="text-gray-500">Private to your account</span>
       </div>
       <div className="flex-1 space-y-3 overflow-y-auto p-3">
         {activity.length > 0 && <details className="rounded border p-2 text-xs">
-          <summary className="cursor-pointer font-medium">Activity in this session ({activity.length})</summary>
+          {/* NO display class here. A `summary` is `display: list-item`, and that is the only
+              reason ::marker paints the disclosure triangle -- setting any other display
+              removes it, which would leave this row as plain bold text with no affordance and
+              no open/closed indicator, on the one viewport where `cursor-pointer` means
+              nothing. `min-height` applies to a list-item box, so TOUCH_TARGET alone is
+              enough; vertical padding, never `flex`, is the way to centre this label. */}
+          <summary className={`cursor-pointer font-medium ${TOUCH_TARGET} max-sm:py-3`}>Activity in this session ({activity.length})</summary>
           <ol className="mt-2 space-y-1">{activity.map(event => <li key={event.id}><time dateTime={event.at}>{new Date(event.at).toLocaleTimeString()}</time> — {event.label}</li>)}</ol>
         </details>}
         {messages.length === 0 && !isLoading && (
@@ -305,7 +317,7 @@ function RegionalIntelligencePanelBody({ embedded }: { embedded: boolean }) {
             placeholder="Ask a follow-up question..."
             maxLength={1000}
             disabled={isLoading}
-            className="min-h-11 flex-1 rounded-lg border bg-gray-50 px-3 py-2 text-sm outline-none focus-visible:border-blue-500 focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800"
+            className={`min-h-11 flex-1 rounded-lg border bg-gray-50 px-3 py-2 text-sm outline-none focus-visible:border-blue-500 focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 ${NO_IOS_FOCUS_ZOOM}`}
           />
           <button
             type="button"

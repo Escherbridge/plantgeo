@@ -12,6 +12,7 @@ import {
 import { useViewportBounds } from "@/hooks/useViewportProxiedLayers";
 import { useOfflineSync } from "@/hooks/useOfflineSync";
 import { Download, Trash2, AlertTriangle } from "lucide-react";
+import { TOUCH_TARGET } from "@/components/ui/touch-target";
 
 /**
  * The dock's Offline & Sync section body -- area download, storage usage and sync-conflict
@@ -85,7 +86,7 @@ export function OfflinePanel() {
         </div>
         <button
           onClick={handleClearCache}
-          className="flex items-center gap-1 rounded-md border border-rose-800/40 bg-rose-950/40 px-3 py-1.5 text-rose-400 transition-colors hover:bg-rose-900/60 hover:text-rose-300"
+          className={`flex items-center gap-1 rounded-md border border-rose-800/40 bg-rose-950/40 px-3 py-1.5 text-rose-400 transition-colors hover:bg-rose-900/60 hover:text-rose-300 ${TOUCH_TARGET}`}
         >
           <Trash2 className="h-3.5 w-3.5" />
           <span>Clear Cache</span>
@@ -117,13 +118,13 @@ export function OfflinePanel() {
                 <div className="flex gap-2">
                   <button
                     onClick={() => handleResolveConflict(conflict.id, "keep-local")}
-                    className="flex-1 rounded bg-emerald-700/60 px-2 py-1 font-medium text-emerald-100 transition-colors hover:bg-emerald-600/70"
+                    className={`flex-1 rounded bg-emerald-700/60 px-2 py-1 font-medium text-emerald-100 transition-colors hover:bg-emerald-600/70 ${TOUCH_TARGET}`}
                   >
                     Keep Local
                   </button>
                   <button
                     onClick={() => handleResolveConflict(conflict.id, "discard-local")}
-                    className="flex-1 rounded bg-slate-700/60 px-2 py-1 font-medium text-slate-200 transition-colors hover:bg-slate-600/70"
+                    className={`flex-1 rounded bg-slate-700/60 px-2 py-1 font-medium text-slate-200 transition-colors hover:bg-slate-600/70 ${TOUCH_TARGET}`}
                   >
                     Discard Local
                   </button>
@@ -149,7 +150,7 @@ export function OfflinePanel() {
               max="10"
               value={minZoom}
               onChange={(e) => setMinZoom(Number(e.target.value))}
-              className="w-full accent-emerald-500"
+              className={`w-full accent-emerald-500 ${TOUCH_TARGET}`}
             />
           </div>
           <div>
@@ -162,7 +163,7 @@ export function OfflinePanel() {
               max="15"
               value={maxZoom}
               onChange={(e) => setMaxZoom(Number(e.target.value))}
-              className="w-full accent-emerald-500"
+              className={`w-full accent-emerald-500 ${TOUCH_TARGET}`}
             />
           </div>
         </div>
@@ -170,7 +171,7 @@ export function OfflinePanel() {
         <button
           onClick={handleDownload}
           disabled={isDownloading}
-          className="flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 font-medium text-white shadow-md transition-colors hover:bg-emerald-500 disabled:bg-[hsl(var(--muted))] disabled:text-[hsl(var(--muted-foreground))]"
+          className={`flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 font-medium text-white shadow-md transition-colors hover:bg-emerald-500 disabled:bg-[hsl(var(--muted))] disabled:text-[hsl(var(--muted-foreground))] ${TOUCH_TARGET}`}
         >
           <Download className="h-4 w-4" />
           <span>{isDownloading ? "Downloading Tiles..." : "Download Selected Region"}</span>

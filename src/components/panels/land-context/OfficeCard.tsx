@@ -1,5 +1,6 @@
 import { sanitizeOfficeContact } from "./land-context-utils";
 import { RouteBadge } from "./RouteBadge";
+import { TOUCH_TARGET } from "@/components/ui/touch-target";
 import type { OfficeCardData } from "./types";
 
 interface OfficeCardProps {
@@ -28,7 +29,7 @@ export function OfficeCard({ card }: OfficeCardProps) {
         {office.publicPhone ? (
           <a
             href={`tel:${office.publicPhone}`}
-            className="inline-block rounded px-2 py-1.5 underline hover:text-zinc-100"
+            className={`inline-block rounded px-2 py-1.5 underline hover:text-zinc-100 ${TOUCH_TARGET}`}
           >
             {office.publicPhone}
           </a>
@@ -36,7 +37,7 @@ export function OfficeCard({ card }: OfficeCardProps) {
         {office.publicEmail ? (
           <a
             href={`mailto:${office.publicEmail}`}
-            className="inline-block rounded px-2 py-1.5 underline hover:text-zinc-100"
+            className={`inline-block rounded px-2 py-1.5 underline hover:text-zinc-100 ${TOUCH_TARGET}`}
           >
             {office.publicEmail}
           </a>
@@ -46,7 +47,7 @@ export function OfficeCard({ card }: OfficeCardProps) {
             href={office.formUrl}
             target="_blank"
             rel="noreferrer"
-            className="inline-block rounded px-2 py-1.5 underline hover:text-zinc-100"
+            className={`inline-block rounded px-2 py-1.5 underline hover:text-zinc-100 ${TOUCH_TARGET}`}
           >
             Contact form
           </a>
@@ -56,7 +57,7 @@ export function OfficeCard({ card }: OfficeCardProps) {
             href={office.officialUrl}
             target="_blank"
             rel="noreferrer"
-            className="inline-block rounded px-2 py-1.5 underline hover:text-zinc-100"
+            className={`inline-block rounded px-2 py-1.5 underline hover:text-zinc-100 ${TOUCH_TARGET}`}
           >
             Official page
           </a>

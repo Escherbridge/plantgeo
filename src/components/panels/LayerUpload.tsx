@@ -11,6 +11,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { trpc } from "@/lib/trpc/client";
+import { TOUCH_TARGET } from "@/components/ui/touch-target";
 
 interface LayerUploadProps {
   open: boolean;
@@ -139,7 +140,7 @@ export function LayerUpload({ open, onOpenChange, onLayerCreated }: LayerUploadP
             handleFiles(e.dataTransfer.files);
           }}
           onClick={() => fileRef.current?.click()}
-          className={`flex cursor-pointer flex-col items-center justify-center gap-3 rounded-(--radius) border-2 border-dashed p-10 transition-colors ${
+          className={`flex cursor-pointer flex-col items-center justify-center gap-3 rounded-(--radius) border-2 border-dashed p-10 transition-colors ${TOUCH_TARGET} ${
             dragging
               ? "border-[hsl(var(--primary))] bg-[hsl(var(--primary))]/5"
               : "border-[hsl(var(--border))] hover:border-[hsl(var(--primary))]/50"

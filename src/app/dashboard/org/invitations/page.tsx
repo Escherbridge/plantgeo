@@ -6,12 +6,16 @@ import { trpc } from "@/lib/trpc/client";
 import { toast } from "@/components/ui/toast";
 import { OneTimeCodeReveal } from "@/components/onboarding/OneTimeCodeReveal";
 import { useActiveOrganization } from "../useActiveOrganization";
+import { TOUCH_TARGET, TOUCH_TARGET_SQUARE, NO_IOS_FOCUS_ZOOM } from "@/components/ui/touch-target";
 
 /** Roles an invitation or join link may grant; owner is never delegable this way. */
 type DelegableRole = "member" | "viewer";
 
 const inputClass =
-  "rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500";
+  `rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`;
+
+// Shared by the two role <select>s below: raw native control under the 44px floor at text-sm.
+const selectClass = `rounded-md border border-zinc-700 bg-zinc-800 px-2 py-2 text-sm capitalize text-zinc-100 ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`;
 
 function formatDate(value: string | Date | null | undefined): string {
   if (!value) return "—";
@@ -37,7 +41,7 @@ function CopyLinkButton({ value, label = "Copy link" }: { value: string; label?:
           // Clipboard permission denied — nothing more we can do here.
         }
       }}
-      className="flex items-center gap-1 rounded px-2 py-1 text-xs text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+      className={`flex items-center gap-1 rounded px-2 py-1 text-xs text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200 ${TOUCH_TARGET}`}
     >
       {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
       {copied ? "Copied" : label}
@@ -163,7 +167,7 @@ export default function OrganizationInvitationsPage() {
           <select
             value={inviteRole}
             onChange={(e) => setInviteRole(e.target.value as DelegableRole)}
-            className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-2 text-sm capitalize text-zinc-100"
+            className={selectClass}
           >
             {availableRoles.map((r) => (
               <option key={r} value={r}>
@@ -174,7 +178,7 @@ export default function OrganizationInvitationsPage() {
           <button
             type="submit"
             disabled={createInvitationMutation.isPending || !inviteEmail.trim()}
-            className="flex items-center gap-1.5 rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-40"
+            className={`flex items-center gap-1.5 rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-40 ${TOUCH_TARGET}`}
           >
             {createInvitationMutation.isPending ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -195,7 +199,7 @@ export default function OrganizationInvitationsPage() {
               <button
                 type="button"
                 onClick={() => setLastSentInvite(null)}
-                className="rounded p-1 text-zinc-500 transition-colors hover:text-zinc-300"
+                className={`flex items-center justify-center rounded p-1 text-zinc-500 transition-colors hover:text-zinc-300 ${TOUCH_TARGET_SQUARE}`}
                 aria-label="Dismiss"
               >
                 <X className="h-3.5 w-3.5" />
@@ -230,7 +234,7 @@ export default function OrganizationInvitationsPage() {
                       type="button"
                       onClick={() => handleResend(invitation.email, invitation.teamRole)}
                       disabled={createInvitationMutation.isPending}
-                      className="flex items-center gap-1 rounded px-2 py-1 text-xs text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+                      className={`flex items-center gap-1 rounded px-2 py-1 text-xs text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200 ${TOUCH_TARGET}`}
                       title="Resend and get a fresh link"
                     >
                       <Send className="h-3 w-3" />
@@ -240,7 +244,7 @@ export default function OrganizationInvitationsPage() {
                       type="button"
                       onClick={() => revokeInvitationMutation.mutate({ invitationId: invitation.id })}
                       disabled={revokeInvitationMutation.isPending}
-                      className="rounded p-1.5 text-zinc-500 transition-colors hover:bg-red-500/10 hover:text-red-400"
+                      className={`flex items-center justify-center rounded p-1.5 text-zinc-500 transition-colors hover:bg-red-500/10 hover:text-red-400 ${TOUCH_TARGET_SQUARE}`}
                       title="Revoke invitation"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -268,7 +272,7 @@ export default function OrganizationInvitationsPage() {
           <select
             value={joinLinkRole}
             onChange={(e) => setJoinLinkRole(e.target.value as DelegableRole)}
-            className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-2 text-sm capitalize text-zinc-100"
+            className={selectClass}
           >
             {availableRoles.map((r) => (
               <option key={r} value={r}>
@@ -280,7 +284,7 @@ export default function OrganizationInvitationsPage() {
             type="button"
             onClick={handleCreateJoinLink}
             disabled={createJoinLinkMutation.isPending}
-            className="flex items-center gap-1.5 rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-40"
+            className={`flex items-center gap-1.5 rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-40 ${TOUCH_TARGET}`}
           >
             {createJoinLinkMutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             New join link
@@ -320,7 +324,7 @@ export default function OrganizationInvitationsPage() {
                         type="button"
                         onClick={() => rotateJoinLinkMutation.mutate({ linkId: link.id })}
                         disabled={rotateJoinLinkMutation.isPending}
-                        className="flex items-center gap-1 rounded px-2 py-1 text-xs text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+                        className={`flex items-center gap-1 rounded px-2 py-1 text-xs text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200 ${TOUCH_TARGET}`}
                         title="Rotate code"
                       >
                         <RefreshCw className="h-3.5 w-3.5" />
@@ -330,7 +334,7 @@ export default function OrganizationInvitationsPage() {
                         type="button"
                         onClick={() => revokeJoinLinkMutation.mutate({ linkId: link.id })}
                         disabled={revokeJoinLinkMutation.isPending}
-                        className="rounded p-1.5 text-zinc-500 transition-colors hover:bg-red-500/10 hover:text-red-400"
+                        className={`flex items-center justify-center rounded p-1.5 text-zinc-500 transition-colors hover:bg-red-500/10 hover:text-red-400 ${TOUCH_TARGET_SQUARE}`}
                         title="Revoke join link"
                       >
                         <Trash2 className="h-3.5 w-3.5" />

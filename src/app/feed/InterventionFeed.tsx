@@ -20,6 +20,7 @@ import { InterventionDetailModal } from "@/components/map/InterventionDetailModa
 import { buildMapFocusHref } from "@/lib/map/focus-params";
 import { trpc } from "@/lib/trpc/client";
 import { useInterventionDetailStore } from "@/stores/intervention-detail-store";
+import { TOUCH_TARGET } from "@/components/ui/touch-target";
 
 /** Mirrors `InterventionTypeSchema` in src/lib/server/trpc/routers/interventions.ts. */
 const TYPE_OPTIONS = [
@@ -114,7 +115,7 @@ function ProposalRow({ proposal }: { proposal: ProposedIntervention }) {
             // The accessible name carries the proposal: the row's controls are
             // read out of context in a list of many identical ones.
             aria-label={`Comments on ${name}`}
-            className="inline-flex items-center rounded border border-[hsl(var(--border))] px-2 py-1 text-xs"
+            className={`inline-flex items-center rounded border border-[hsl(var(--border))] px-2 py-1 text-xs ${TOUCH_TARGET}`}
           >
             Comments
           </button>

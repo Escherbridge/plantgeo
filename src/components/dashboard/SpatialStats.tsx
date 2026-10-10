@@ -11,7 +11,9 @@ export function SpatialStats() {
   if (isLoading || systemLoading) {
     return (
       <div className="flex flex-col gap-3">
-        <div className="grid grid-cols-3 gap-3">
+        {/* Renders inside the /dashboard route at full viewport width (not the 19rem map
+            dock), so a phone genuinely has less room here -- collapse to one column. */}
+        <div className="grid grid-cols-3 max-sm:grid-cols-1 gap-3">
           {[0, 1, 2].map((i) => (
             <Skeleton key={i} className="h-14 rounded-lg" />
           ))}
@@ -29,7 +31,8 @@ export function SpatialStats() {
   return (
     <div className="flex flex-col gap-4">
       {/* System overview */}
-      <div className="grid grid-cols-3 gap-3">
+      {/* Same /dashboard-width rationale as the skeleton above. */}
+      <div className="grid grid-cols-3 max-sm:grid-cols-1 gap-3">
         <div className="rounded-lg bg-[hsl(var(--muted))] px-3 py-2 flex flex-col gap-0.5">
           <span className="text-xs text-[hsl(var(--muted-foreground))]">Layers</span>
           <span className="text-xl font-bold text-[hsl(var(--foreground))]">

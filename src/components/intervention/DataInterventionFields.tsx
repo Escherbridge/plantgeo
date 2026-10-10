@@ -5,6 +5,7 @@ import {
   DATA_INTERVENTION_LANES,
   type DataInterventionDetails,
 } from "@/lib/environmental/data-intervention";
+import { NO_IOS_FOCUS_ZOOM } from "@/components/ui/touch-target";
 
 interface DataInterventionFieldsProps {
   type: string;
@@ -20,7 +21,10 @@ export function DataInterventionFields({
 }: DataInterventionFieldsProps) {
   const id = useId();
   const submission = type === "data_submission";
-  const inputClass = "min-h-11 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]";
+  // `min-h-11` here is already unconditional (every viewport, not just `max-sm:`), so the 44px
+  // floor itself needs no change -- only NO_IOS_FOCUS_ZOOM is added, to stop the mobile Safari
+  // focus-zoom these text-sm native fields would otherwise trigger.
+  const inputClass = `min-h-11 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] ${NO_IOS_FOCUS_ZOOM}`;
 
   return (
     <fieldset

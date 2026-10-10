@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { buildDraftInquiryText, ROUTE_MEANING_LABELS } from "./land-context-utils";
+import { TOUCH_TARGET, NO_IOS_FOCUS_ZOOM } from "@/components/ui/touch-target";
 import type { DraftInquiryInput } from "./types";
 
 interface DraftInquiryProps {
@@ -52,7 +53,7 @@ export function DraftInquiry({ input }: DraftInquiryProps) {
       <button
         type="button"
         onClick={handleOpen}
-        className="rounded border border-sky-700 bg-sky-950/40 px-3 py-1.5 text-xs font-medium text-sky-300 hover:bg-sky-950/70"
+        className={`rounded border border-sky-700 bg-sky-950/40 px-3 py-1.5 text-xs font-medium text-sky-300 hover:bg-sky-950/70 ${TOUCH_TARGET}`}
       >
         Draft inquiry
       </button>
@@ -77,7 +78,7 @@ export function DraftInquiry({ input }: DraftInquiryProps) {
         value={userIdea}
         onChange={(event) => handleRegenerate(event.target.value)}
         rows={2}
-        className="mt-1 w-full rounded border border-zinc-700 bg-zinc-950 p-2 text-xs text-zinc-200"
+        className={`mt-1 w-full rounded border border-zinc-700 bg-zinc-950 p-2 text-xs text-zinc-200 ${NO_IOS_FOCUS_ZOOM}`}
         placeholder="Describe what you're looking into..."
       />
 
@@ -89,21 +90,21 @@ export function DraftInquiry({ input }: DraftInquiryProps) {
         value={draftText}
         onChange={(event) => setDraftText(event.target.value)}
         rows={10}
-        className="mt-1 w-full rounded border border-zinc-700 bg-zinc-950 p-2 font-mono text-xs text-zinc-200"
+        className={`mt-1 w-full rounded border border-zinc-700 bg-zinc-950 p-2 font-mono text-xs text-zinc-200 ${NO_IOS_FOCUS_ZOOM}`}
       />
 
       <div className="mt-2 flex items-center gap-2">
         <button
           type="button"
           onClick={handleCopy}
-          className="rounded border border-emerald-700 bg-emerald-950/40 px-3 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-950/70"
+          className={`rounded border border-emerald-700 bg-emerald-950/40 px-3 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-950/70 ${TOUCH_TARGET}`}
         >
           Copy draft
         </button>
         <button
           type="button"
           onClick={() => setIsOpen(false)}
-          className="rounded border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-400 hover:text-zinc-200"
+          className={`rounded border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-400 hover:text-zinc-200 ${TOUCH_TARGET}`}
         >
           Close
         </button>

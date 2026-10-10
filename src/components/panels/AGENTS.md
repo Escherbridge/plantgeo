@@ -336,3 +336,51 @@ second, raw layer-day subscription. The query's `requestDate` is itself derived 
 so comparing the response to that same value keeps the day label and the data it describes in sync
 through a scrub; comparing against the raw, undebounced selection instead can desync the two for
 the length of the settle window.
+
+## The 44px mobile floor reaches these bodies too — 2026-10-10
+
+Until this date the tap-target floor was a fact about the dock's **chrome** only. `max-sm:min-h-11`
+was applied across `src/components/map/layer-panel/**`, `dock-disclosure.ts:33` called it "the 44px
+mobile tap target every control on this map holds to", and `MapManagerMobileLayout.test.tsx`
+asserted it on three sections — while a grep for `max-sm:` across all 33 files of this directory
+returned **zero**. The layer tree held the floor and the reports it mounts did not: the soil
+property chips were `px-2.5 py-1 text-xs`, about 26px tall.
+
+A render test could not have caught that, and this is the load-bearing lesson. It covers the
+controls its own mocks expose, so a control in an unmocked state — or a control added next
+month — is invisible to it. Enforcement is therefore
+`src/__tests__/components/mobile-touch-target-contract.test.ts`, which **scans the source** of
+this directory for raw `<button>`, `<input>` and `<select>`, plus
+`role="switch"|"tab"|"checkbox"|"radio"`, and fails on any that carries neither the floor nor a
+stated exemption. `<textarea>` is deliberately NOT size-scanned — its HTML default is `rows=2`,
+so it always clears 44px and the floor on it is a no-op — but it IS covered by the suite's
+separate `NO_IOS_FOCUS_ZOOM` assertion. Adding a panel costs no harness; adding a control without the floor fails.
+
+Rules when editing a body in here:
+
+- **Import the contract, don't retype it.** `TOUCH_TARGET`, `TOUCH_TARGET_SQUARE` and
+  `NO_IOS_FOCUS_ZOOM` live in `src/components/ui/touch-target.ts` with their rationale.
+- **`<Button>`, `<Input>`, `<Select>` and `<TabsTrigger>` already carry it** in their base
+  classes, so adding it at those call sites is noise. The floor is for **raw** elements.
+- **Never add `max-sm:grid-cols-1` in here.** The dock is `w-[19rem]` (304px) on the desktop and
+  `max-sm:w-full` on a phone, and a phone viewport at 320px and up is wider than 304px — **a body
+  in this directory has at least as much horizontal room on a phone as on a laptop.** Collapsing its columns makes the phone
+  layout worse than the desktop layout it was copied from. Column collapses belong only where the
+  container is the viewport: the dashboard, the admin tables, `src/app/**`.
+- **`min-height` does nothing to a `display: inline` box** (CSS 2.1 §10.5). The floor is a no-op
+  on a citation link sitting mid-sentence, and giving one `inline-block` to make it apply reflows
+  the paragraph around it. Leave those links and record the reason.
+- **Dense data type stays dense.** The owner's 2026-10-10 decision was "fix targets only": the
+  10px/11px lines carrying units, cell sizes, source releases and model-estimate provenance keep
+  their size on every viewport. The sole font-size exception is `NO_IOS_FOCUS_ZOOM` on a native
+  field, because mobile Safari zooms the whole document on focus of a field under 16px and does
+  not zoom back out — which on a full-bleed map strands the reader with the dock off screen.
+- **A checkbox or radio is floored by its `<label>`, never by the box.** A press anywhere on the
+  wrapping label toggles the control natively, so the label — which carries the text and the
+  padding — is the tap surface. `TOUCH_TARGET_SQUARE` on the input itself paints a 44px checkbox.
+  The contract test exempts `type="checkbox"`/`type="radio"` for this reason, and that exemption
+  is a stated blind spot: a regex cannot prove the enclosing label is large enough, so review it
+  by eye.
+- **Adding the floor is never a reason to remove one.** Three buttons in `WeatherHistoryReport`
+  already carried an unconditional `min-h-11`; rescoping those to `max-sm:` would lower them to
+  26px for desktop touchscreens, which is this pass running backwards.

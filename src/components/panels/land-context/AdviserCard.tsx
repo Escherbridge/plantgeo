@@ -1,4 +1,5 @@
 import { sanitizeOfficeContact } from "./land-context-utils";
+import { TOUCH_TARGET } from "@/components/ui/touch-target";
 import type { AdviserCardData } from "./types";
 
 interface AdviserCardProps {
@@ -30,7 +31,7 @@ export function AdviserCard({ card }: AdviserCardProps) {
         {adviser.publicPhone ? (
           <a
             href={`tel:${adviser.publicPhone}`}
-            className="inline-block rounded px-2 py-1.5 underline hover:text-zinc-100"
+            className={`inline-block rounded px-2 py-1.5 underline hover:text-zinc-100 ${TOUCH_TARGET}`}
           >
             {adviser.publicPhone}
           </a>
@@ -38,7 +39,7 @@ export function AdviserCard({ card }: AdviserCardProps) {
         {adviser.publicEmail ? (
           <a
             href={`mailto:${adviser.publicEmail}`}
-            className="inline-block rounded px-2 py-1.5 underline hover:text-zinc-100"
+            className={`inline-block rounded px-2 py-1.5 underline hover:text-zinc-100 ${TOUCH_TARGET}`}
           >
             {adviser.publicEmail}
           </a>
@@ -48,7 +49,7 @@ export function AdviserCard({ card }: AdviserCardProps) {
             href={adviser.officialUrl}
             target="_blank"
             rel="noreferrer"
-            className="inline-block rounded px-2 py-1.5 underline hover:text-zinc-100"
+            className={`inline-block rounded px-2 py-1.5 underline hover:text-zinc-100 ${TOUCH_TARGET}`}
           >
             Official page
           </a>

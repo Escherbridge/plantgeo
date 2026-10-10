@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc/client";
 import type { Map as MapLibreMap } from "maplibre-gl";
+import { TOUCH_TARGET } from "@/components/ui/touch-target";
 
 interface ServiceAreaDrawToolProps {
   teamId: string;
@@ -304,7 +305,7 @@ export function ServiceAreaDrawTool({
         {drawState !== "drawing" && (
           <button
             onClick={handleStartDraw}
-            className="px-3 py-2 rounded-lg bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] text-sm font-medium hover:opacity-90 transition-opacity"
+            className={`px-3 py-2 rounded-lg bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] text-sm font-medium hover:opacity-90 transition-opacity ${TOUCH_TARGET}`}
           >
             {existingServiceArea || drawnCoords.length > 0 ? "Redraw" : "Draw Service Area"}
           </button>
@@ -317,7 +318,7 @@ export function ServiceAreaDrawTool({
               const map = getMap();
               if (map) map.getCanvas().style.cursor = "";
             }}
-            className="px-3 py-2 rounded-lg bg-[hsl(var(--muted))] text-[hsl(var(--muted-foreground))] text-sm font-medium hover:opacity-90 transition-opacity"
+            className={`px-3 py-2 rounded-lg bg-[hsl(var(--muted))] text-[hsl(var(--muted-foreground))] text-sm font-medium hover:opacity-90 transition-opacity ${TOUCH_TARGET}`}
           >
             Cancel Drawing
           </button>
@@ -328,13 +329,13 @@ export function ServiceAreaDrawTool({
             <button
               onClick={handleSave}
               disabled={updateMutation.isPending}
-              className="px-3 py-2 rounded-lg bg-green-600 text-white text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
+              className={`px-3 py-2 rounded-lg bg-green-600 text-white text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50 ${TOUCH_TARGET}`}
             >
               {updateMutation.isPending ? "Saving…" : "Save Service Area"}
             </button>
             <button
               onClick={handleClear}
-              className="px-3 py-2 rounded-lg border border-[hsl(var(--border))] text-[hsl(var(--foreground))] text-sm hover:bg-[hsl(var(--muted))] transition-colors"
+              className={`px-3 py-2 rounded-lg border border-[hsl(var(--border))] text-[hsl(var(--foreground))] text-sm hover:bg-[hsl(var(--muted))] transition-colors ${TOUCH_TARGET}`}
             >
               Clear
             </button>

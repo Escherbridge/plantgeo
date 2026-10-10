@@ -2,6 +2,7 @@
 
 import { useId, useMemo, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
+import { TOUCH_TARGET } from '@/components/ui/touch-target';
 import { AI_GENERATED_DISCLAIMER, type RegionalIntelligenceResponse } from '@/lib/regional-intelligence';
 import {
   KEY_ITEM_LIMIT,
@@ -44,7 +45,7 @@ const STATUS_DOTS: Record<SourceStatus, string> = {
 const MUTED = 'text-gray-600 dark:text-gray-400';
 const SECTION_HEADING = `font-editorial-label text-[11px] font-medium uppercase tracking-[0.12em] ${MUTED}`;
 const DISCLOSURE_BUTTON =
-  'rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500';
+  `rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${TOUCH_TARGET}`;
 
 function DisclosureChevron({ open }: { open: boolean }) {
   return <ChevronDown aria-hidden="true" className={`h-3.5 w-3.5 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />;

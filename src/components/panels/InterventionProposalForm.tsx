@@ -17,6 +17,7 @@ import type { InterventionGeometry } from "@/lib/geo/intervention-geometry-schem
 import { useInterventionDraftStore } from "@/stores/intervention-draft-store";
 import { DataInterventionFields } from "@/components/intervention/DataInterventionFields";
 import { isDataInterventionType, validateDataInterventionDetails } from "@/lib/environmental/data-intervention";
+import { NO_IOS_FOCUS_ZOOM, TOUCH_TARGET } from "@/components/ui/touch-target";
 
 const InterventionDrawControl = dynamic(
   () =>
@@ -183,7 +184,7 @@ export function InterventionProposalForm({
             onChange={(event) =>
               handleCategoryChange(event.target.value as InterventionCategory)
             }
-            className="min-h-11 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+            className={`min-h-11 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] ${NO_IOS_FOCUS_ZOOM}`}
           >
             <option value="land">Land</option>
             <option value="air">Air</option>
@@ -204,7 +205,7 @@ export function InterventionProposalForm({
             onChange={(event) =>
               setInterventionType(event.target.value as InterventionType)
             }
-            className="min-h-11 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+            className={`min-h-11 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] ${NO_IOS_FOCUS_ZOOM}`}
           >
             {typeOptions.map((type) => (
               <option key={type} value={type}>
@@ -258,7 +259,7 @@ export function InterventionProposalForm({
             onChange={(event) => setName(event.target.value)}
             maxLength={256}
             placeholder="Name for this intervention site"
-            className="min-h-11 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-3 py-2 text-sm text-[hsl(var(--foreground))] placeholder:text-[hsl(var(--muted-foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+            className={`min-h-11 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-3 py-2 text-sm text-[hsl(var(--foreground))] placeholder:text-[hsl(var(--muted-foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] ${NO_IOS_FOCUS_ZOOM}`}
           />
         </div>
 
@@ -276,7 +277,7 @@ export function InterventionProposalForm({
             rows={3}
             maxLength={2000}
             placeholder="What is proposed here, and why (optional)"
-            className="resize-none rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-3 py-2 text-sm text-[hsl(var(--foreground))] placeholder:text-[hsl(var(--muted-foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+            className={`resize-none rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-3 py-2 text-sm text-[hsl(var(--foreground))] placeholder:text-[hsl(var(--muted-foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
           />
         </div>
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { MapPin, Sparkles, Sprout, X } from "lucide-react";
+import { TOUCH_TARGET } from "@/components/ui/touch-target";
 
 interface AgentInteractionProps {
   coordinates: [number, number];
@@ -82,7 +83,10 @@ export function AgentInteraction({
 
       <fieldset className="mt-3 space-y-2 text-sm">
         <legend className="font-medium">Location precision</legend>
-        <label className="flex cursor-pointer items-start gap-2 rounded p-1 hover:bg-[hsl(var(--muted))]">
+        {/* The tappable row is the <label>, not the native radio dot it wraps (clicking the
+            label toggles the input natively) -- so the floor goes on the label, which is also
+            the only element here with text to lay the row out against. */}
+        <label className={`flex cursor-pointer items-start gap-2 rounded p-1 hover:bg-[hsl(var(--muted))] ${TOUCH_TARGET}`}>
           <input
             type="radio"
             name={`${consentId}-precision`}
@@ -94,7 +98,7 @@ export function AgentInteraction({
             <span className="block text-xs text-[hsl(var(--muted-foreground))]">Rounds coordinates to about 1 km.</span>
           </span>
         </label>
-        <label className="flex cursor-pointer items-start gap-2 rounded p-1 hover:bg-[hsl(var(--muted))]">
+        <label className={`flex cursor-pointer items-start gap-2 rounded p-1 hover:bg-[hsl(var(--muted))] ${TOUCH_TARGET}`}>
           <input
             type="radio"
             name={`${consentId}-precision`}

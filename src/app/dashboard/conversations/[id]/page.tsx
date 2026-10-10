@@ -10,6 +10,7 @@ import { RegionalIntelligenceReport } from '@/components/panels/RegionalIntellig
 import { readSavedReport } from '../saved-report';
 import { ResumeConversation } from '../ResumeConversation';
 import { MessageFeedback } from '@/components/panels/MessageFeedback';
+import { TOUCH_TARGET_SQUARE } from '@/components/ui/touch-target';
 
 export default async function ConversationDetailPage({
   params,
@@ -46,7 +47,7 @@ export default async function ConversationDetailPage({
       <div className="mb-6 flex items-center gap-3">
         <Link
           href="/dashboard/conversations"
-          className="rounded p-1 hover:bg-gray-100 dark:hover:bg-gray-800"
+          className={`flex items-center justify-center rounded p-1 hover:bg-gray-100 dark:hover:bg-gray-800 ${TOUCH_TARGET_SQUARE}`}
         >
           <ArrowLeft className="h-5 w-5" />
         </Link>

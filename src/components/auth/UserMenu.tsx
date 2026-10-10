@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useSession, signOut } from "next-auth/react";
 import { TeamSwitcher } from "@/components/teams/TeamSwitcher";
+import { TOUCH_TARGET } from "@/components/ui/touch-target";
 
 /**
  * Signed-in identity badge with sign-out and the organization switcher.
@@ -30,7 +31,7 @@ export function UserMenu() {
         type="button"
         onClick={handleSignOut}
         disabled={signingOut}
-        className="rounded-md bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors"
+        className={`rounded-md bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors ${TOUCH_TARGET}`}
       >
         {signingOut ? "Signing out…" : "Sign out"}
       </button>

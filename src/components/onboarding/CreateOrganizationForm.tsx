@@ -8,9 +8,10 @@ import { trpc } from "@/lib/trpc/client";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import { OrganizationTypePicker, type OrganizationType } from "./OrganizationTypePicker";
+import { NO_IOS_FOCUS_ZOOM, TOUCH_TARGET, TOUCH_TARGET_SQUARE } from "@/components/ui/touch-target";
 
 const inputClass =
-  "min-w-0 w-full rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500";
+  `min-w-0 w-full rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`;
 
 type Step = "basics" | "type" | "details";
 const STEPS: Step[] = ["basics", "type", "details"];
@@ -160,7 +161,7 @@ export function CreateOrganizationForm({ onCancel }: CreateOrganizationFormProps
                     setSlug(effectiveSlug);
                     setSlugTouched(true);
                   }}
-                  className="text-xs text-emerald-400 transition-colors hover:text-emerald-300"
+                  className={`text-xs text-emerald-400 transition-colors hover:text-emerald-300 ${TOUCH_TARGET}`}
                 >
                   Customize
                 </button>
@@ -245,7 +246,7 @@ export function CreateOrganizationForm({ onCancel }: CreateOrganizationFormProps
                     <button
                       type="button"
                       onClick={() => setSpecialties((prev) => prev.filter((t) => t !== tag))}
-                      className="text-zinc-500 transition-colors hover:text-red-400"
+                      className={`inline-flex items-center justify-center text-zinc-500 transition-colors hover:text-red-400 ${TOUCH_TARGET_SQUARE}`}
                       aria-label={`Remove ${tag}`}
                     >
                       <X className="h-3 w-3" />
@@ -264,7 +265,7 @@ export function CreateOrganizationForm({ onCancel }: CreateOrganizationFormProps
         <button
           type="button"
           onClick={() => (stepIndex === 0 ? onCancel() : setStep(STEPS[stepIndex - 1]))}
-          className="flex items-center gap-1 rounded-md px-3 py-2 text-sm text-zinc-400 transition-colors hover:text-zinc-200"
+          className={`flex items-center gap-1 rounded-md px-3 py-2 text-sm text-zinc-400 transition-colors hover:text-zinc-200 ${TOUCH_TARGET}`}
         >
           <ArrowLeft className="h-4 w-4" />
           {stepIndex === 0 ? "Back" : "Previous"}
@@ -275,7 +276,7 @@ export function CreateOrganizationForm({ onCancel }: CreateOrganizationFormProps
             type="button"
             disabled={step === "basics" ? !name.trim() : !orgType}
             onClick={() => setStep(STEPS[stepIndex + 1])}
-            className="flex items-center gap-2 rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-40"
+            className={`flex items-center gap-2 rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-40 ${TOUCH_TARGET}`}
           >
             Continue
             <ArrowRight className="h-4 w-4" />
@@ -285,7 +286,7 @@ export function CreateOrganizationForm({ onCancel }: CreateOrganizationFormProps
             type="button"
             disabled={submitting || !name.trim() || !orgType}
             onClick={handleCreate}
-            className="flex items-center gap-2 rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-40"
+            className={`flex items-center gap-2 rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-40 ${TOUCH_TARGET}`}
           >
             {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
             {submitting ? "Creating…" : "Create organization"}

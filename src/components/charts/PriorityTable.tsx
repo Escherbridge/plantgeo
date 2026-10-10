@@ -1,6 +1,7 @@
 "use client";
 
 import { MapPin } from "lucide-react";
+import { TOUCH_TARGET_SQUARE } from "@/components/ui/touch-target";
 
 export interface PrioritySubregion {
   name: string;
@@ -74,7 +75,10 @@ export function PriorityTable({ data, onFlyTo }: PriorityTableProps) {
               <td className="py-2 pr-2 text-[hsl(var(--muted-foreground))] font-medium">
                 {i + 1}
               </td>
-              <td className="py-2 pr-2 font-medium text-[hsl(var(--foreground))] max-w-[140px] truncate">
+              {/* Wider cap on a phone: this table renders at viewport width (not in the map
+                  dock), so 140px truncates a place name that has room to show. Safe because the
+                  wrapper above scrolls horizontally rather than clipping. */}
+              <td className="py-2 pr-2 font-medium text-[hsl(var(--foreground))] max-w-[140px] max-sm:max-w-[220px] truncate">
                 {row.name}
               </td>
               <td className={`py-2 pr-2 text-right font-bold tabular-nums ${scoreColor(row.score)}`}>
@@ -87,7 +91,7 @@ export function PriorityTable({ data, onFlyTo }: PriorityTableProps) {
                 {onFlyTo && (
                   <button
                     onClick={() => onFlyTo(row.lat, row.lon)}
-                    className="p-1 rounded hover:bg-[hsl(var(--accent))] transition-colors"
+                    className={`inline-flex items-center justify-center rounded p-1 hover:bg-[hsl(var(--accent))] transition-colors ${TOUCH_TARGET_SQUARE}`}
                     title={`Fly to ${row.name}`}
                     aria-label={`Fly to ${row.name}`}
                   >

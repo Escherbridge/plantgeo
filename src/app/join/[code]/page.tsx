@@ -7,6 +7,7 @@ import { AlertTriangle, Loader2 } from "lucide-react";
 import { trpc } from "@/lib/trpc/client";
 import { toast } from "@/components/ui/toast";
 import { InvitePreviewCard, type InvitePreviewState } from "@/components/onboarding/InvitePreviewCard";
+import { TOUCH_TARGET } from "@/components/ui/touch-target";
 
 /** Public join-code landing page: preview, then sign-in/redeem based on session state. */
 export default function JoinCodePage() {
@@ -89,13 +90,13 @@ export default function JoinCodePage() {
                 <div className="flex gap-2">
                   <Link
                     href={`/login?callbackUrl=${encodeURIComponent(callbackPath)}`}
-                    className="flex-1 rounded-md bg-emerald-600 px-4 py-2 text-center text-sm font-medium text-white transition-colors hover:bg-emerald-500"
+                    className={`flex flex-1 items-center justify-center rounded-md bg-emerald-600 px-4 py-2 text-center text-sm font-medium text-white transition-colors hover:bg-emerald-500 ${TOUCH_TARGET}`}
                   >
                     Sign in
                   </Link>
                   <Link
                     href={`/register?callbackUrl=${encodeURIComponent(callbackPath)}`}
-                    className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-4 py-2 text-center text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-700"
+                    className={`flex flex-1 items-center justify-center rounded-md border border-zinc-700 bg-zinc-800 px-4 py-2 text-center text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-700 ${TOUCH_TARGET}`}
                   >
                     Create account
                   </Link>
@@ -120,7 +121,7 @@ export default function JoinCodePage() {
                   type="button"
                   disabled={joining}
                   onClick={handleJoin}
-                  className="flex items-center justify-center gap-2 rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-40"
+                  className={`flex items-center justify-center gap-2 rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-40 ${TOUCH_TARGET}`}
                 >
                   {joining && <Loader2 className="h-4 w-4 animate-spin" />}
                   {joining ? "Joining…" : "Join organization"}

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { trpc } from '@/lib/trpc/client';
+import { TOUCH_TARGET, NO_IOS_FOCUS_ZOOM } from '@/components/ui/touch-target';
 
 /** Private feedback tied to a persisted, owner-checked assistant message. */
 export function MessageFeedback({ conversationId, messageId }: { conversationId: string; messageId: string }) {
@@ -28,13 +29,13 @@ export function MessageFeedback({ conversationId, messageId }: { conversationId:
   return <fieldset className="mt-3 space-y-2 rounded border p-2 text-xs" disabled={query.isLoading || mutation.isPending}>
     <legend className="px-1">Was this answer helpful?</legend>
     <div className="flex flex-wrap gap-2">
-      <button type="button" aria-pressed={feedback?.rating === 'helpful'} onClick={() => save(feedback?.rating === 'helpful' ? null : 'helpful')} className="rounded border px-3 py-2 aria-pressed:bg-blue-100 dark:aria-pressed:bg-blue-900">Helpful</button>
-      <button type="button" aria-pressed={feedback?.rating === 'not_helpful'} onClick={() => save(feedback?.rating === 'not_helpful' ? null : 'not_helpful')} className="rounded border px-3 py-2 aria-pressed:bg-blue-100 dark:aria-pressed:bg-blue-900">Not helpful</button>
+      <button type="button" aria-pressed={feedback?.rating === 'helpful'} onClick={() => save(feedback?.rating === 'helpful' ? null : 'helpful')} className={`rounded border px-3 py-2 aria-pressed:bg-blue-100 dark:aria-pressed:bg-blue-900 ${TOUCH_TARGET}`}>Helpful</button>
+      <button type="button" aria-pressed={feedback?.rating === 'not_helpful'} onClick={() => save(feedback?.rating === 'not_helpful' ? null : 'not_helpful')} className={`rounded border px-3 py-2 aria-pressed:bg-blue-100 dark:aria-pressed:bg-blue-900 ${TOUCH_TARGET}`}>Not helpful</button>
     </div>
     <label className="block">Optional reason
-      <textarea maxLength={1000} value={reason} onChange={event => setReasonDraft(event.target.value)} rows={2} className="mt-1 block w-full rounded border bg-transparent p-2" />
+      <textarea maxLength={1000} value={reason} onChange={event => setReasonDraft(event.target.value)} rows={2} className={`mt-1 block w-full rounded border bg-transparent p-2 ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`} />
     </label>
-    {feedback && <button type="button" onClick={() => save(feedback.rating)} className="rounded border px-3 py-2">Save reason</button>}
+    {feedback && <button type="button" onClick={() => save(feedback.rating)} className={`rounded border px-3 py-2 ${TOUCH_TARGET}`}>Save reason</button>}
     <p className="text-gray-500">Private feedback on this saved answer. Click the selected rating again to clear it.</p>
     <p role="status">{mutation.isPending ? 'Saving feedback…' : status}</p>
   </fieldset>;

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { DEFAULT_CALLBACK_URL, safeCallbackUrl } from "@/lib/auth/callback-url";
 import { MAX_BCRYPT_PASSWORD_BYTES, MIN_PASSWORD_LENGTH, registrationSchema } from "@/lib/auth/registration";
+import { NO_IOS_FOCUS_ZOOM, TOUCH_TARGET } from "@/components/ui/touch-target";
 
 /** Registration form; redirects to /login with callbackUrl preserved on success. */
 export function RegisterForm({
@@ -69,7 +70,7 @@ export function RegisterForm({
           maxLength={100}
           value={name}
           onChange={(e) => setName(e.target.value)}
-          className="rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+          className={`rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
         />
       </div>
       <div className="flex flex-col gap-1">
@@ -86,7 +87,7 @@ export function RegisterForm({
           onChange={(e) => setEmail(e.target.value)}
           aria-invalid={Boolean(error)}
           aria-describedby={error ? "reg-error" : undefined}
-          className="rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+          className={`rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
         />
       </div>
       <div className="flex flex-col gap-1">
@@ -103,7 +104,7 @@ export function RegisterForm({
           onChange={(e) => setPassword(e.target.value)}
           aria-invalid={passwordTooShort || passwordTooLong}
           aria-describedby="reg-password-hint"
-          className="rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+          className={`rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
         />
         <p
           id="reg-password-hint"
@@ -120,7 +121,7 @@ export function RegisterForm({
       <button
         type="submit"
         disabled={loading}
-        className="rounded-md bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 px-4 py-2 text-sm font-medium text-white transition-colors"
+        className={`rounded-md bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 px-4 py-2 text-sm font-medium text-white transition-colors ${TOUCH_TARGET}`}
       >
         {loading ? "Creating account…" : "Create account"}
       </button>

@@ -5,6 +5,7 @@ import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { DEFAULT_CALLBACK_URL, safeCallbackUrl } from "@/lib/auth/callback-url";
+import { NO_IOS_FOCUS_ZOOM, TOUCH_TARGET } from "@/components/ui/touch-target";
 
 /** Credentials + OAuth sign-in form. Redirects to callbackUrl on success. */
 export function LoginForm({
@@ -66,7 +67,7 @@ export function LoginForm({
           onChange={(e) => setEmail(e.target.value)}
           aria-invalid={Boolean(error)}
           aria-describedby={error ? "login-error" : undefined}
-          className="rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+          className={`rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
         />
       </div>
       <div className="flex flex-col gap-1">
@@ -76,7 +77,7 @@ export function LoginForm({
           </label>
           <Link
             href="/forgot-password"
-            className="text-xs text-emerald-400 transition-colors hover:text-emerald-300"
+            className={`text-xs text-emerald-400 transition-colors hover:text-emerald-300 ${TOUCH_TARGET}`}
           >
             Forgot password?
           </Link>
@@ -90,7 +91,7 @@ export function LoginForm({
           onChange={(e) => setPassword(e.target.value)}
           aria-invalid={Boolean(error)}
           aria-describedby={error ? "login-error" : undefined}
-          className="rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+          className={`rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
         />
       </div>
       {error && (
@@ -101,7 +102,7 @@ export function LoginForm({
       <button
         type="submit"
         disabled={loading}
-        className="rounded-md bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 px-4 py-2 text-sm font-medium text-white transition-colors"
+        className={`rounded-md bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 px-4 py-2 text-sm font-medium text-white transition-colors ${TOUCH_TARGET}`}
       >
         {loading ? "Signing in…" : "Sign in"}
       </button>
@@ -109,14 +110,14 @@ export function LoginForm({
         <button
           type="button"
           onClick={() => signIn("google", { callbackUrl: destination })}
-          className="rounded-md bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 px-4 py-2 text-sm text-zinc-200 transition-colors"
+          className={`rounded-md bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 px-4 py-2 text-sm text-zinc-200 transition-colors ${TOUCH_TARGET}`}
         >
           Continue with Google
         </button>
         <button
           type="button"
           onClick={() => signIn("github", { callbackUrl: destination })}
-          className="rounded-md bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 px-4 py-2 text-sm text-zinc-200 transition-colors"
+          className={`rounded-md bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 px-4 py-2 text-sm text-zinc-200 transition-colors ${TOUCH_TARGET}`}
         >
           Continue with GitHub
         </button>

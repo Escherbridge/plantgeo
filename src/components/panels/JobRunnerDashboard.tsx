@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc/client";
 import { Activity, Play, RefreshCw, Power, Clock, Database, Layers, Info } from "lucide-react";
+import { TOUCH_TARGET, TOUCH_TARGET_SQUARE } from "@/components/ui/touch-target";
 
 /**
  * The platform admin view of the durable job runner, over `agri.job_definition` / `agri.job_run`.
@@ -157,7 +158,7 @@ export function JobRunnerDashboard() {
 
         <button
           onClick={() => void invalidate()}
-          className="flex items-center space-x-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-medium rounded-xl border border-slate-700 transition"
+          className={`flex items-center space-x-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-medium rounded-xl border border-slate-700 transition ${TOUCH_TARGET}`}
         >
           <RefreshCw className="w-4 h-4" />
           <span>Refresh</span>
@@ -212,7 +213,7 @@ export function JobRunnerDashboard() {
       <div className="flex space-x-2 border-b border-slate-800 pb-2">
         <button
           onClick={() => setActiveTab("lanes")}
-          className={`px-4 py-2 rounded-xl text-sm font-medium transition ${
+          className={`px-4 py-2 rounded-xl text-sm font-medium transition ${TOUCH_TARGET} ${
             activeTab === "lanes"
               ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
               : "text-slate-400 hover:text-slate-200"
@@ -222,7 +223,7 @@ export function JobRunnerDashboard() {
         </button>
         <button
           onClick={() => setActiveTab("history")}
-          className={`px-4 py-2 rounded-xl text-sm font-medium transition ${
+          className={`px-4 py-2 rounded-xl text-sm font-medium transition ${TOUCH_TARGET} ${
             activeTab === "history"
               ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
               : "text-slate-400 hover:text-slate-200"
@@ -232,7 +233,7 @@ export function JobRunnerDashboard() {
         </button>
         <button
           onClick={() => setActiveTab("gaps")}
-          className={`px-4 py-2 rounded-xl text-sm font-medium transition ${
+          className={`px-4 py-2 rounded-xl text-sm font-medium transition ${TOUCH_TARGET} ${
             activeTab === "gaps"
               ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30"
               : "text-slate-400 hover:text-slate-200"
@@ -265,7 +266,7 @@ export function JobRunnerDashboard() {
                         toggleLane.mutate({ laneId: lane.laneId, enabled: !lane.enabled })
                       }
                       disabled={pending}
-                      className={`p-2 rounded-xl border transition disabled:opacity-50 ${
+                      className={`p-2 rounded-xl border transition disabled:opacity-50 ${TOUCH_TARGET_SQUARE} ${
                         lane.enabled
                           ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/30"
                           : "bg-slate-800 border-slate-700 text-slate-500 hover:bg-slate-700"
@@ -355,7 +356,7 @@ export function JobRunnerDashboard() {
                   <button
                     onClick={() => triggerLane.mutate({ laneId: lane.laneId })}
                     disabled={pending}
-                    className="flex items-center space-x-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition"
+                    className={`flex items-center space-x-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition ${TOUCH_TARGET}`}
                   >
                     {triggerLane.isPending ? (
                       <RefreshCw className="w-3.5 h-3.5 animate-spin" />

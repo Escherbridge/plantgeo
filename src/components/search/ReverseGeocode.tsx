@@ -8,6 +8,7 @@ import { MapPopup, MapPopupBody } from "@/components/ui/map-popup";
 import { cn } from "@/lib/utils";
 import { readGeocodingResults } from "@/lib/geocoding";
 import { useRoutingStore } from "@/stores/routing-store";
+import { TOUCH_TARGET } from "@/components/ui/touch-target";
 
 interface PopupState {
   x: number;
@@ -202,7 +203,8 @@ export function ReverseGeocode() {
                     "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium",
                     "bg-[hsl(var(--muted))] text-[hsl(var(--muted-foreground))]",
                     "hover:bg-[hsl(var(--accent))] hover:text-[hsl(var(--accent-foreground))]",
-                    "transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
+                    "transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]",
+                    TOUCH_TARGET
                   )}
                 >
                   <Copy className="h-3 w-3" />
@@ -214,7 +216,8 @@ export function ReverseGeocode() {
                     "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium",
                     "bg-[hsl(var(--muted))] text-[hsl(var(--muted-foreground))]",
                     "hover:bg-[hsl(var(--accent))] hover:text-[hsl(var(--accent-foreground))]",
-                    "transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
+                    "transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]",
+                    TOUCH_TARGET
                   )}
                 >
                   <Navigation className="h-3 w-3" />

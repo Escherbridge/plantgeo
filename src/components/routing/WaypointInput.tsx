@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useId } from "react";
 import { X, MapPin, Loader2 } from "lucide-react";
 import { useGeocode } from "@/hooks/useGeocode";
 import type { NormalizedGeocodingResult } from "@/lib/geocoding";
+import { NO_IOS_FOCUS_ZOOM, TOUCH_TARGET } from "@/components/ui/touch-target";
 
 interface WaypointInputProps {
   placeholder: string;
@@ -79,7 +80,7 @@ export function WaypointInput({
           aria-controls={listboxId}
           aria-expanded={open}
           aria-activedescendant={open ? `${listboxId}-option-${activeIndex}` : undefined}
-          className="flex-1 bg-transparent text-sm outline-none placeholder:text-[hsl(var(--muted-foreground))]"
+          className={`flex-1 bg-transparent text-sm outline-none placeholder:text-[hsl(var(--muted-foreground))] ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
           placeholder={placeholder}
           value={value}
           onChange={(e) => onChange(e.target.value)}
@@ -111,7 +112,7 @@ export function WaypointInput({
               id={`${listboxId}-option-${index}`}
               role="option"
               aria-selected={index === activeIndex}
-              className={`cursor-pointer px-3 py-2 text-left text-sm hover:bg-[hsl(var(--accent))] hover:text-[hsl(var(--accent-foreground))] ${
+              className={`cursor-pointer px-3 py-2 text-left text-sm hover:bg-[hsl(var(--accent))] hover:text-[hsl(var(--accent-foreground))] ${TOUCH_TARGET} ${
                 index === activeIndex
                   ? "bg-[hsl(var(--accent))] text-[hsl(var(--accent-foreground))]"
                   : ""

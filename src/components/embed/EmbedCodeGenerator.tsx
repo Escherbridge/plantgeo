@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { NO_IOS_FOCUS_ZOOM, TOUCH_TARGET } from "@/components/ui/touch-target";
 
 type MapStyle = "dark" | "light" | "satellite";
 
@@ -46,7 +47,7 @@ export default function EmbedCodeGenerator() {
             type="number"
             value={lat}
             onChange={(e) => setLat(e.target.value)}
-            className="w-full rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+            className={`w-full rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
             placeholder="37.7749"
           />
         </div>
@@ -58,7 +59,7 @@ export default function EmbedCodeGenerator() {
             type="number"
             value={lng}
             onChange={(e) => setLng(e.target.value)}
-            className="w-full rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+            className={`w-full rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
             placeholder="-122.4194"
           />
         </div>
@@ -72,7 +73,7 @@ export default function EmbedCodeGenerator() {
             max="22"
             value={zoom}
             onChange={(e) => setZoom(e.target.value)}
-            className="w-full rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+            className={`w-full rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
             placeholder="10"
           />
         </div>
@@ -83,7 +84,7 @@ export default function EmbedCodeGenerator() {
           <select
             value={style}
             onChange={(e) => setStyle(e.target.value as MapStyle)}
-            className="w-full rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+            className={`w-full rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
           >
             <option value="dark">Dark</option>
             <option value="light">Light</option>
@@ -98,7 +99,7 @@ export default function EmbedCodeGenerator() {
             type="number"
             value={width}
             onChange={(e) => setWidth(e.target.value)}
-            className="w-full rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+            className={`w-full rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
             placeholder="800"
           />
         </div>
@@ -110,7 +111,7 @@ export default function EmbedCodeGenerator() {
             type="number"
             value={height}
             onChange={(e) => setHeight(e.target.value)}
-            className="w-full rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+            className={`w-full rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
             placeholder="500"
           />
         </div>
@@ -127,7 +128,7 @@ export default function EmbedCodeGenerator() {
           type="text"
           value={markers}
           onChange={(e) => setMarkers(e.target.value)}
-          className="w-full rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+          className={`w-full rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
           placeholder="37.7749,-122.4194,San Francisco"
         />
       </div>
@@ -139,7 +140,7 @@ export default function EmbedCodeGenerator() {
           </label>
           <button
             onClick={handleCopy}
-            className="rounded-md bg-[hsl(var(--primary))] px-3 py-1.5 text-xs font-medium text-[hsl(var(--primary-foreground))] hover:opacity-90 transition-opacity"
+            className={`rounded-md bg-[hsl(var(--primary))] px-3 py-1.5 text-xs font-medium text-[hsl(var(--primary-foreground))] hover:opacity-90 transition-opacity ${TOUCH_TARGET}`}
           >
             {copied ? "Copied!" : "Copy"}
           </button>

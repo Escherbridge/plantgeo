@@ -8,9 +8,10 @@ import { trpc } from "@/lib/trpc/client";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import { InvitePreviewCard, type InvitePreviewState } from "./InvitePreviewCard";
+import { NO_IOS_FOCUS_ZOOM, TOUCH_TARGET } from "@/components/ui/touch-target";
 
 const inputClass =
-  "rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500";
+  `rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`;
 
 type Mode = "invite" | "code";
 
@@ -136,6 +137,7 @@ export function JoinOrganizationForm({ onCancel }: JoinOrganizationFormProps) {
             onClick={() => switchMode(m)}
             className={cn(
               "rounded px-3 py-1.5 text-xs font-medium transition-colors",
+              TOUCH_TARGET,
               mode === m ? "bg-emerald-600 text-white" : "text-zinc-400 hover:text-zinc-200"
             )}
           >
@@ -163,7 +165,7 @@ export function JoinOrganizationForm({ onCancel }: JoinOrganizationFormProps) {
           <button
             type="submit"
             disabled={!rawInput.trim()}
-            className="self-start rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-40"
+            className={`self-start rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-40 ${TOUCH_TARGET}`}
           >
             Preview
           </button>
@@ -180,7 +182,7 @@ export function JoinOrganizationForm({ onCancel }: JoinOrganizationFormProps) {
                   type="button"
                   disabled={accepting}
                   onClick={handleAccept}
-                  className="flex items-center justify-center gap-2 rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-40"
+                  className={`flex items-center justify-center gap-2 rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-40 ${TOUCH_TARGET}`}
                 >
                   {accepting && <Loader2 className="h-4 w-4 animate-spin" />}
                   {accepting ? "Joining…" : "Accept & continue"}
@@ -191,7 +193,7 @@ export function JoinOrganizationForm({ onCancel }: JoinOrganizationFormProps) {
           <button
             type="button"
             onClick={() => setSubmittedId(null)}
-            className="self-start text-xs text-zinc-500 transition-colors hover:text-zinc-300"
+            className={`self-start text-xs text-zinc-500 transition-colors hover:text-zinc-300 ${TOUCH_TARGET}`}
           >
             Try a different link or code
           </button>
@@ -201,7 +203,7 @@ export function JoinOrganizationForm({ onCancel }: JoinOrganizationFormProps) {
       <button
         type="button"
         onClick={onCancel}
-        className="flex items-center gap-1 self-start text-sm text-zinc-400 transition-colors hover:text-zinc-200"
+        className={`flex items-center gap-1 self-start text-sm text-zinc-400 transition-colors hover:text-zinc-200 ${TOUCH_TARGET}`}
       >
         <ArrowLeft className="h-4 w-4" />
         Back

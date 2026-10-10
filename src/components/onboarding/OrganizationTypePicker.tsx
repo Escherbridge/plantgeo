@@ -2,6 +2,7 @@
 
 import { Briefcase, Check, HeartHandshake, Landmark, User, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { TOUCH_TARGET } from "@/components/ui/touch-target";
 
 export type OrganizationType =
   | "nonprofit"
@@ -73,6 +74,7 @@ export function OrganizationTypePicker({ value, onChange, className }: Organizat
             onClick={() => onChange(optionValue)}
             className={cn(
               "group relative flex items-start gap-3 rounded-lg border px-3.5 py-3 text-left transition-all",
+              TOUCH_TARGET,
               selected
                 ? "border-emerald-500/60 bg-emerald-500/10"
                 : "border-zinc-800 bg-zinc-950/40 hover:border-zinc-700 hover:bg-zinc-900"

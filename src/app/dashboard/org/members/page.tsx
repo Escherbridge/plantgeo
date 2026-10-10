@@ -8,6 +8,7 @@ import { trpc } from "@/lib/trpc/client";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import { useActiveOrganization } from "../useActiveOrganization";
+import { TOUCH_TARGET, TOUCH_TARGET_SQUARE, NO_IOS_FOCUS_ZOOM } from "@/components/ui/touch-target";
 
 type TeamRole = "owner" | "member" | "viewer";
 const ROLE_OPTIONS: TeamRole[] = ["owner", "member", "viewer"];
@@ -49,7 +50,7 @@ export default function OrganizationMembersPage() {
         <button
           type="button"
           onClick={() => membersQuery.refetch()}
-          className="rounded-md bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-700"
+          className={`rounded-md bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-700 ${TOUCH_TARGET}`}
         >
           Try again
         </button>
@@ -124,6 +125,9 @@ export default function OrganizationMembersPage() {
         </p>
       ) : (
         <div className="overflow-hidden rounded-lg border border-zinc-800">
+          {/* overflow-x-auto on a dedicated inner wrapper, not the rounded-corner clipper above:
+              CSS Overflow 3 makes both axes "auto" once either is non-visible on the same box. */}
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-zinc-800 bg-zinc-900/60 text-left text-xs uppercase tracking-wide text-zinc-500">
@@ -155,7 +159,7 @@ export default function OrganizationMembersPage() {
                           disabled={lastOwner || updateRoleMutation.isPending}
                           onChange={(e) => handleRoleChange(member.userId, e.target.value as TeamRole)}
                           title={lastOwner ? "An organization must retain at least one owner" : undefined}
-                          className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs capitalize text-zinc-100 disabled:opacity-50"
+                          className={`rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs capitalize text-zinc-100 disabled:opacity-50 ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
                         >
                           {ROLE_OPTIONS.map((r) => (
                             <option key={r} value={r}>
@@ -178,14 +182,14 @@ export default function OrganizationMembersPage() {
                               type="button"
                               onClick={() => handleRemove(member.userId)}
                               disabled={removeMemberMutation.isPending}
-                              className="rounded bg-red-600 px-2 py-1 text-xs font-medium text-white transition-colors hover:bg-red-500 disabled:opacity-50"
+                              className={`rounded bg-red-600 px-2 py-1 text-xs font-medium text-white transition-colors hover:bg-red-500 disabled:opacity-50 ${TOUCH_TARGET}`}
                             >
                               Confirm
                             </button>
                             <button
                               type="button"
                               onClick={() => setConfirmingRemoval(null)}
-                              className="rounded bg-zinc-800 px-2 py-1 text-xs text-zinc-300 transition-colors hover:bg-zinc-700"
+                              className={`rounded bg-zinc-800 px-2 py-1 text-xs text-zinc-300 transition-colors hover:bg-zinc-700 ${TOUCH_TARGET}`}
                             >
                               Cancel
                             </button>
@@ -196,7 +200,7 @@ export default function OrganizationMembersPage() {
                             disabled={lastOwner}
                             title={lastOwner ? "An organization must retain at least one owner" : "Remove member"}
                             onClick={() => setConfirmingRemoval(member.userId)}
-                            className="rounded p-1.5 text-zinc-500 transition-colors hover:bg-red-500/10 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-zinc-500"
+                            className={`rounded p-1.5 text-zinc-500 transition-colors hover:bg-red-500/10 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-zinc-500 ${TOUCH_TARGET_SQUARE}`}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
@@ -208,6 +212,7 @@ export default function OrganizationMembersPage() {
               })}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
@@ -224,7 +229,7 @@ export default function OrganizationMembersPage() {
               type="button"
               onClick={handleLeave}
               disabled={leaveTeamMutation.isPending}
-              className="flex items-center gap-1.5 rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-red-500 disabled:opacity-50"
+              className={`flex items-center gap-1.5 rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-red-500 disabled:opacity-50 ${TOUCH_TARGET}`}
             >
               {leaveTeamMutation.isPending && <Loader2 className="h-3 w-3 animate-spin" />}
               Confirm leave
@@ -232,7 +237,7 @@ export default function OrganizationMembersPage() {
             <button
               type="button"
               onClick={() => setConfirmingLeave(false)}
-              className="rounded-md bg-zinc-800 px-3 py-1.5 text-xs text-zinc-300 transition-colors hover:bg-zinc-700"
+              className={`rounded-md bg-zinc-800 px-3 py-1.5 text-xs text-zinc-300 transition-colors hover:bg-zinc-700 ${TOUCH_TARGET}`}
             >
               Cancel
             </button>
@@ -242,7 +247,8 @@ export default function OrganizationMembersPage() {
             type="button"
             onClick={() => setConfirmingLeave(true)}
             className={cn(
-              "flex items-center gap-1.5 text-sm text-zinc-400 transition-colors hover:text-red-400"
+              "flex items-center gap-1.5 text-sm text-zinc-400 transition-colors hover:text-red-400",
+              TOUCH_TARGET
             )}
           >
             <LogOut className="h-3.5 w-3.5" />

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { BadgeCheck, Globe, Loader2, Settings, UserPlus, Users } from "lucide-react";
 import { trpc } from "@/lib/trpc/client";
 import { useActiveOrganization } from "./useActiveOrganization";
+import { TOUCH_TARGET } from "@/components/ui/touch-target";
 
 const ORG_TYPE_LABEL: Record<string, string> = {
   nonprofit: "Nonprofit",
@@ -37,7 +38,7 @@ export default function OrganizationOverviewPage() {
         <button
           type="button"
           onClick={() => refetch()}
-          className="rounded-md bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-700"
+          className={`rounded-md bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-700 ${TOUCH_TARGET}`}
         >
           Try again
         </button>
@@ -51,7 +52,7 @@ export default function OrganizationOverviewPage() {
         <p className="text-sm text-zinc-400">You&rsquo;re not part of an organization yet.</p>
         <Link
           href="/onboarding"
-          className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500"
+          className={`flex items-center justify-center rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500 ${TOUCH_TARGET}`}
         >
           Set up an organization
         </Link>

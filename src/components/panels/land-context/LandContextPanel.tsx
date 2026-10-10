@@ -8,6 +8,7 @@ import { PlaceDetailsSection } from "./PlaceDetailsSection";
 import { RelatedAdvisersSection } from "./RelatedAdvisersSection";
 import { RelevantPartiesSection } from "./RelevantPartiesSection";
 import { RouteRationaleSection } from "./RouteRationaleSection";
+import { TOUCH_TARGET } from "@/components/ui/touch-target";
 import type { LandContextPanelData } from "./types";
 
 interface LandContextPanelProps {
@@ -140,7 +141,7 @@ export function LandContextPanel({
             type="button"
             onClick={onClose}
             aria-label="Close land context panel"
-            className="text-xs text-zinc-500 hover:text-zinc-300"
+            className={`text-xs text-zinc-500 hover:text-zinc-300 ${TOUCH_TARGET}`}
           >
             Close
           </button>

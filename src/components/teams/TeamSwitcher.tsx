@@ -7,6 +7,7 @@ import { Check, ChevronDown, Loader2, Plus } from "lucide-react";
 import { trpc } from "@/lib/trpc/client";
 import { useAuthStore } from "@/stores/auth-store";
 import { cn } from "@/lib/utils";
+import { TOUCH_TARGET } from "@/components/ui/touch-target";
 
 function initialsFor(name: string): string {
   const trimmed = name.trim();
@@ -64,7 +65,7 @@ export function TeamSwitcher() {
       <button
         onClick={() => setOpen((v) => !v)}
         disabled={isLoading}
-        className="flex items-center gap-2 rounded-md px-3 py-1.5 text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-100 transition-colors disabled:opacity-60"
+        className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-100 transition-colors disabled:opacity-60 ${TOUCH_TARGET}`}
       >
         {isLoading ? (
           <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-400" />
@@ -96,6 +97,7 @@ export function TeamSwitcher() {
               disabled={switching}
               className={cn(
                 "flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-zinc-800 disabled:cursor-wait disabled:opacity-60",
+                TOUCH_TARGET,
                 activeTeamId === team.id ? "text-emerald-400" : "text-zinc-200"
               )}
             >
@@ -119,7 +121,7 @@ export function TeamSwitcher() {
             <Link
               href="/onboarding?create=1"
               onClick={() => setOpen(false)}
-              className="flex items-center gap-2 rounded px-2 py-1.5 text-sm text-emerald-400 transition-colors hover:bg-zinc-800"
+              className={`flex items-center gap-2 rounded px-2 py-1.5 text-sm text-emerald-400 transition-colors hover:bg-zinc-800 ${TOUCH_TARGET}`}
             >
               <Plus className="h-3.5 w-3.5" />
               Create organization

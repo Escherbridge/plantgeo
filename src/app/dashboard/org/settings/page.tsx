@@ -6,11 +6,14 @@ import { trpc } from "@/lib/trpc/client";
 import { toast } from "@/components/ui/toast";
 import { OrganizationTypePicker, type OrganizationType } from "@/components/onboarding/OrganizationTypePicker";
 import { useActiveOrganization } from "../useActiveOrganization";
+import { TOUCH_TARGET, NO_IOS_FOCUS_ZOOM } from "@/components/ui/touch-target";
 
 type OrganizationRow = NonNullable<ReturnType<typeof useActiveOrganization>["organization"]>;
 
+// Every input/textarea on this form shares one class string, so the floor and the iOS
+// zoom fix only need to be named here once to cover all of them.
 const inputClass =
-  "rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500";
+  `rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`;
 
 /** Organization settings: profile fields for owners/members, slug editing restricted to owners. */
 export default function OrganizationSettingsPage() {
@@ -185,7 +188,10 @@ function SettingsForm({ organization, isOwner }: { organization: OrganizationRow
                 <button
                   type="button"
                   onClick={() => setSpecialties((prev) => prev.filter((t) => t !== tag))}
-                  className="text-zinc-500 transition-colors hover:text-red-400"
+                  /* No TOUCH_TARGET_SQUARE: a 44px child makes the whole `py-0.5` pill 44px
+                     tall and ~44px wider, which is a layout change rather than hit area. The
+                     chip needs a redesign to carry the floor honestly; deferred. */
+                  className="flex items-center justify-center text-zinc-500 transition-colors hover:text-red-400"
                   aria-label={`Remove ${tag}`}
                 >
                   <X className="h-3 w-3" />
@@ -199,7 +205,7 @@ function SettingsForm({ organization, isOwner }: { organization: OrganizationRow
       <button
         type="submit"
         disabled={updateMutation.isPending || !name.trim()}
-        className="flex items-center justify-center gap-2 self-start rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-40"
+        className={`flex items-center justify-center gap-2 self-start rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-40 ${TOUCH_TARGET}`}
       >
         {updateMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
         Save changes

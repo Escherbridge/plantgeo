@@ -6,6 +6,7 @@ import { ArrowLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TeamSwitcher } from "@/components/teams/TeamSwitcher";
 import { useActiveOrganization } from "./useActiveOrganization";
+import { TOUCH_TARGET } from "@/components/ui/touch-target";
 
 interface NavItem {
   href: string;
@@ -33,7 +34,7 @@ export default function OrganizationLayout({ children }: { children: React.React
         <div className="mx-auto flex max-w-4xl items-center justify-between">
           <Link
             href="/dashboard"
-            className="flex items-center gap-1.5 text-sm text-zinc-500 transition-colors hover:text-zinc-300"
+            className={`flex items-center gap-1.5 text-sm text-zinc-500 transition-colors hover:text-zinc-300 ${TOUCH_TARGET}`}
           >
             <ArrowLeft className="h-4 w-4" />
             Dashboard
@@ -49,10 +50,11 @@ export default function OrganizationLayout({ children }: { children: React.React
                 key={item.href}
                 href={item.href}
                 className={cn(
-                  "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                  "flex items-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
                   isActive
                     ? "bg-emerald-600/15 text-emerald-400"
-                    : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+                    : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200",
+                  TOUCH_TARGET
                 )}
               >
                 {item.label}

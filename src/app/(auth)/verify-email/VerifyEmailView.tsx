@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
+import { TOUCH_TARGET } from "@/components/ui/touch-target";
 
 type VerifyState = "pending" | "success" | "error";
 
@@ -68,7 +69,7 @@ export function VerifyEmailView() {
           <p className="text-sm text-emerald-400">Your email has been verified.</p>
           <Link
             href="/dashboard"
-            className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500"
+            className={`flex items-center justify-center rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500 ${TOUCH_TARGET}`}
           >
             Go to dashboard
           </Link>

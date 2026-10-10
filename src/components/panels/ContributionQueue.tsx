@@ -5,6 +5,7 @@ import { useState } from "react";
 import { buildMapFocusHref } from "@/lib/map/focus-params";
 import { trpc } from "@/lib/trpc/client";
 import { DataInterventionSummary } from "@/components/intervention/DataInterventionSummary";
+import { NO_IOS_FOCUS_ZOOM, TOUCH_TARGET } from "@/components/ui/touch-target";
 
 /** A rejection with no reason can't be acted on by the submitter — see src/app/moderation/page.tsx. */
 function hasRejectReason(note: string): boolean {
@@ -182,7 +183,7 @@ export function ContributionQueue() {
               focusHref ? (
                 <Link
                   href={focusHref}
-                  className="text-xs font-mono text-emerald-400 hover:text-emerald-300 hover:underline w-fit"
+                  className={`inline-flex items-center text-xs font-mono text-emerald-400 hover:text-emerald-300 hover:underline w-fit ${TOUCH_TARGET}`}
                 >
                   {formatCoordinates(summary.longitude, summary.latitude)} — view on map
                 </Link>
@@ -202,7 +203,7 @@ export function ContributionQueue() {
               onChange={(e) =>
                 setRejectNote((n) => ({ ...n, [feature.id]: e.target.value }))
               }
-              className="rounded bg-zinc-900 border border-zinc-700 px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              className={`rounded bg-zinc-900 border border-zinc-700 px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-emerald-500 ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
             />
             <div className="flex gap-2">
               <button
@@ -210,7 +211,7 @@ export function ContributionQueue() {
                   publishMutation.mutate({ featureId: feature.id })
                 }
                 disabled={publishMutation.isPending}
-                className="flex-1 rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 px-2 py-1 text-xs font-medium text-white transition-colors"
+                className={`flex-1 rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 px-2 py-1 text-xs font-medium text-white transition-colors ${TOUCH_TARGET}`}
               >
                 Approve
               </button>
@@ -223,7 +224,7 @@ export function ContributionQueue() {
                 }
                 disabled={rejectMutation.isPending || !canReject}
                 title={canReject ? undefined : "A rejection note is required"}
-                className="flex-1 rounded bg-red-700 hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed px-2 py-1 text-xs font-medium text-white transition-colors"
+                className={`flex-1 rounded bg-red-700 hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed px-2 py-1 text-xs font-medium text-white transition-colors ${TOUCH_TARGET}`}
               >
                 Reject
               </button>

@@ -20,6 +20,7 @@ import {
   type SoilFieldMeasure,
 } from "@/lib/environmental/soil-field";
 import { LANE_BASE_LATTICES } from "@/lib/map/zoom-tiers";
+import { TOUCH_TARGET } from "@/components/ui/touch-target";
 
 /**
  * The ground ERA5-Land actually measures, from the one lane table. The caption compares the
@@ -164,7 +165,7 @@ function SoilFieldSection({
               {definition.depths.map((option) => (
                 <button
                   key={option.depth}
-                  className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
+                  className={`${TOUCH_TARGET} rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
                     depth === option.depth
                       ? "bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] border-transparent"
                       : "border-[hsl(var(--border))] text-[hsl(var(--foreground))] bg-[hsl(var(--card))]"
@@ -638,7 +639,7 @@ export function SoilDetails({
                 {SOIL_PROPERTY_OPTIONS.map((opt) => (
                   <button
                     key={opt.value}
-                    className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
+                    className={`${TOUCH_TARGET} rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
                       selectedProperty === opt.value
                         ? "bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] border-transparent"
                         : "border-[hsl(var(--border))] text-[hsl(var(--foreground))] bg-[hsl(var(--card))]"
@@ -689,7 +690,7 @@ export function SoilDetails({
 
             {queryPoint && onClearQueryPoint && (
               <button
-                className="self-start rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-2.5 py-1 text-xs font-medium text-[hsl(var(--foreground))] transition-colors hover:bg-[hsl(var(--accent))]"
+                className={`${TOUCH_TARGET} self-start rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-2.5 py-1 text-xs font-medium text-[hsl(var(--foreground))] transition-colors hover:bg-[hsl(var(--accent))]`}
                 onClick={onClearQueryPoint}
               >
                 Clear queried point

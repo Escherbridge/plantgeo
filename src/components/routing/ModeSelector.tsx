@@ -3,6 +3,7 @@
 import { Car, Bike, PersonStanding, Truck } from "lucide-react";
 import { useRoutingStore, type TransportMode } from "@/stores/routing-store";
 import { cn } from "@/lib/utils";
+import { TOUCH_TARGET } from "@/components/ui/touch-target";
 
 const MODES: { mode: TransportMode; label: string; icon: React.ReactNode }[] = [
   { mode: "car", label: "Car", icon: <Car className="h-4 w-4" /> },
@@ -24,6 +25,7 @@ export function ModeSelector() {
           onClick={() => setTransportMode(mode)}
           className={cn(
             "flex flex-1 flex-col items-center gap-1 rounded-md px-2 py-2 text-xs transition-colors",
+            TOUCH_TARGET,
             transportMode === mode
               ? "bg-emerald-500 text-white"
               : "bg-[hsl(var(--muted))] text-[hsl(var(--muted-foreground))] hover:bg-[hsl(var(--accent))] hover:text-[hsl(var(--accent-foreground))]"

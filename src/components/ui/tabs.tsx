@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { cn } from "@/lib/utils";
+import { TOUCH_TARGET } from "@/components/ui/touch-target";
 
 interface TabsContextValue {
   value: string;
@@ -103,7 +104,7 @@ const TabsTrigger = React.forwardRef<HTMLButtonElement, TabsTriggerProps>(
         onClick={() => ctx.onValueChange(value)}
         onKeyDown={handleKeyDown}
         className={cn(
-          "relative inline-flex min-w-fit max-w-full items-center justify-center whitespace-normal rounded-[calc(var(--radius)-2px)] px-2 py-1.5 text-center text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--background))] disabled:pointer-events-none disabled:opacity-50 [&_svg]:shrink-0",
+          `${TOUCH_TARGET} relative inline-flex min-w-fit max-w-full items-center justify-center whitespace-normal rounded-[calc(var(--radius)-2px)] px-2 py-1.5 text-center text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--background))] disabled:pointer-events-none disabled:opacity-50 [&_svg]:shrink-0`,
           isActive
             ? "bg-[hsl(var(--background))] text-[hsl(var(--foreground))] shadow-sm"
             : "hover:text-[hsl(var(--foreground))]",

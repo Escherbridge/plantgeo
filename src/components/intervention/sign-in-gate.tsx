@@ -24,6 +24,8 @@ export function SocialSignInPrompt({
       className="rounded border border-[hsl(var(--border))] px-3 py-2 text-xs"
     >
       {message}{" "}
+      {/* touch-target-exempt: inline prose link inside running text, not a flex item --
+          min-height has no effect on a non-replaced inline box, so there is nothing to grow. */}
       <a href={SOCIAL_SIGN_IN_HREF} className="underline">
         Log in
       </a>

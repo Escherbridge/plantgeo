@@ -19,6 +19,7 @@ import {
   INTERVENTION_UNCLASSIFIED_LABEL,
 } from "@/lib/map/layers";
 import { useInterventionDetailStore } from "@/stores/intervention-detail-store";
+import { TOUCH_TARGET } from "@/components/ui/touch-target";
 
 /**
  * The standalone intervention detail surface (track OQ-3).
@@ -234,7 +235,7 @@ export function InterventionDetailCard({
           type="button"
           onClick={onToggleExpanded}
           aria-expanded={isExpanded}
-          className="rounded border border-[hsl(var(--border))] px-2 py-1 text-xs"
+          className={`rounded border border-[hsl(var(--border))] px-2 py-1 text-xs ${TOUCH_TARGET}`}
         >
           {isExpanded ? "Collapse" : "Expand"}
         </button>
@@ -242,7 +243,7 @@ export function InterventionDetailCard({
           type="button"
           onClick={onClose}
           aria-label="Close intervention details"
-          className="rounded border border-[hsl(var(--border))] px-2 py-1 text-xs"
+          className={`rounded border border-[hsl(var(--border))] px-2 py-1 text-xs ${TOUCH_TARGET}`}
         >
           Close
         </button>

@@ -7,6 +7,7 @@ import {
   useLayerVisibility,
 } from "@/lib/map/layer-toggle-context";
 import { BASE_ZOOM_TIER } from "@/lib/map/zoom-tiers";
+import { TOUCH_TARGET } from "@/components/ui/touch-target";
 import { useClimateStore } from "@/stores/climate-store";
 import { WeatherHistoryReport } from "@/components/panels/WeatherHistoryReport";
 import {
@@ -41,9 +42,12 @@ function ColorLegendRow({ color, label }: { color: string; label: string }) {
   );
 }
 
-/** The shared chip styling for the render-form and statistic pickers. */
+/**
+ * The shared chip styling for the render-form and statistic pickers. Carries `TOUCH_TARGET`
+ * once here rather than at each call site, since both pickers below are this same chip.
+ */
 function pickerButtonClassName(selected: boolean): string {
-  return `rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
+  return `${TOUCH_TARGET} rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
     selected
       ? "bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] border-transparent"
       : "border-[hsl(var(--border))] text-[hsl(var(--foreground))] bg-[hsl(var(--card))]"

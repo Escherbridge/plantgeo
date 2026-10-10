@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { ControlDockSection } from "@/components/map/layer-panel/ControlDockSection";
 import { IngestionCoverageBadge } from "@/components/map/IngestionCoverageBadge";
+import { NO_IOS_FOCUS_ZOOM, TOUCH_TARGET, TOUCH_TARGET_SQUARE } from "@/components/ui/touch-target";
 import { useGeocode } from "@/hooks/useGeocode";
 import { useMap } from "@/lib/map/map-context";
 import { cn } from "@/lib/utils";
@@ -182,7 +183,14 @@ function SearchDockBody() {
 
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="flex items-center gap-1.5 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background)/0.4)] px-2 py-1.5 focus-within:ring-2 focus-within:ring-[hsl(var(--ring))]">
+      {/* The floor is on the FIELD below, and this row sheds its vertical padding on a phone
+          so the two do not stack into a 56px band. It deliberately does NOT carry the floor on
+          the row alone: a bare <div> has no activation behaviour and no `htmlFor`, so a tap on
+          the row outside the input would focus nothing -- `focus-within:ring-2` is the only
+          thing the row contributes. A <label> wrapper would make the row a real hit area but
+          may not contain the clear <button> (HTML forbids interactive content other than the
+          labelled control inside a label), so the field owns its own 44px. */}
+      <div className="flex items-center gap-1.5 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background)/0.4)] px-2 py-1.5 focus-within:ring-2 focus-within:ring-[hsl(var(--ring))] max-sm:py-0">
         {isLoading ? (
           <Loader2
             aria-hidden="true"
@@ -208,7 +216,7 @@ function SearchDockBody() {
           }
           autoComplete="off"
           spellCheck={false}
-          className="min-w-0 flex-1 border-none bg-transparent text-xs text-[hsl(var(--foreground))] outline-none placeholder:text-[hsl(var(--muted-foreground))]"
+          className={`min-w-0 flex-1 border-none bg-transparent text-xs text-[hsl(var(--foreground))] outline-none placeholder:text-[hsl(var(--muted-foreground))] ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
         />
         {query.length > 0 && (
           <button
@@ -218,7 +226,7 @@ function SearchDockBody() {
               inputRef.current?.focus();
             }}
             aria-label="Clear search"
-            className="shrink-0 rounded p-1 text-[hsl(var(--muted-foreground))] transition-colors hover:text-[hsl(var(--foreground))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
+            className={`flex shrink-0 items-center justify-center rounded p-1 text-[hsl(var(--muted-foreground))] transition-colors hover:text-[hsl(var(--foreground))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] ${TOUCH_TARGET_SQUARE}`}
           >
             <X aria-hidden="true" className="size-3.5" />
           </button>
@@ -254,7 +262,7 @@ function SearchDockBody() {
           <button
             type="button"
             onClick={clearRecentSearches}
-            className="rounded px-1 text-[10px] text-[hsl(var(--muted-foreground))] transition-colors hover:text-[hsl(var(--foreground))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
+            className={`rounded px-1 text-[10px] text-[hsl(var(--muted-foreground))] transition-colors hover:text-[hsl(var(--foreground))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] ${TOUCH_TARGET}`}
           >
             Clear
           </button>

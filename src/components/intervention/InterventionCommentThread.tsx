@@ -8,6 +8,7 @@ import {
   contributorFallbackLabel,
   useDisplayNames,
 } from "@/components/intervention/use-display-names";
+import { NO_IOS_FOCUS_ZOOM, TOUCH_TARGET } from "@/components/ui/touch-target";
 
 /** Exactly `listComments`' projection, restated so the component stays prop-shaped. */
 export interface InterventionComment {
@@ -165,7 +166,7 @@ export function InterventionCommentThread({
         <button
           type="button"
           onClick={() => setOffset(nextOffset)}
-          className="mt-2 rounded border border-[hsl(var(--border))] px-2 py-1 text-xs"
+          className={`mt-2 rounded border border-[hsl(var(--border))] px-2 py-1 text-xs ${TOUCH_TARGET}`}
         >
           Load more comments
         </button>
@@ -181,12 +182,12 @@ export function InterventionCommentThread({
           onChange={(event) => setDraft(event.target.value)}
           rows={2}
           maxLength={2000}
-          className="w-full rounded border border-[hsl(var(--border))] bg-transparent px-2 py-1 text-xs"
+          className={`w-full rounded border border-[hsl(var(--border))] bg-transparent px-2 py-1 text-xs ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
         />
         <button
           type="submit"
           disabled={postComment.isPending || draft.trim().length === 0}
-          className="rounded border border-[hsl(var(--border))] px-2 py-1 text-xs disabled:opacity-60"
+          className={`rounded border border-[hsl(var(--border))] px-2 py-1 text-xs disabled:opacity-60 ${TOUCH_TARGET}`}
         >
           Post comment
         </button>
@@ -239,7 +240,7 @@ function CommentRow({
             type="button"
             onClick={onDelete}
             aria-label="Delete comment"
-            className="ml-auto rounded border border-[hsl(var(--border))] px-1 text-[10px]"
+            className={`ml-auto rounded border border-[hsl(var(--border))] px-1 text-[10px] ${TOUCH_TARGET}`}
           >
             Delete comment
           </button>

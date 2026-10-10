@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { NO_IOS_FOCUS_ZOOM, TOUCH_TARGET } from "@/components/ui/touch-target";
 
 const MIN_PASSWORD_LENGTH = 8;
 // Mirrors MAX_BCRYPT_PASSWORD_BYTES in src/lib/server/security/registration.ts
@@ -64,7 +65,7 @@ export function ResetPasswordForm({ token }: { token: string }) {
         </p>
         <a
           href="/forgot-password"
-          className="text-xs text-emerald-400 transition-colors hover:text-emerald-300"
+          className={`text-xs text-emerald-400 transition-colors hover:text-emerald-300 ${TOUCH_TARGET}`}
         >
           Request a new reset link
         </a>
@@ -88,7 +89,7 @@ export function ResetPasswordForm({ token }: { token: string }) {
           onChange={(e) => setPassword(e.target.value)}
           aria-invalid={passwordTooShort || passwordTooLong}
           aria-describedby="new-password-hint"
-          className="rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+          className={`rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
         />
         <p
           id="new-password-hint"
@@ -110,7 +111,7 @@ export function ResetPasswordForm({ token }: { token: string }) {
           onChange={(e) => setConfirmPassword(e.target.value)}
           aria-invalid={passwordsMismatch}
           aria-describedby={passwordsMismatch ? "confirm-password-error" : undefined}
-          className="rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+          className={`rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
         />
         {passwordsMismatch && (
           <p id="confirm-password-error" className="text-[11px] text-red-400">
@@ -126,7 +127,7 @@ export function ResetPasswordForm({ token }: { token: string }) {
       <button
         type="submit"
         disabled={loading}
-        className="rounded-md bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 px-4 py-2 text-sm font-medium text-white transition-colors"
+        className={`rounded-md bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 px-4 py-2 text-sm font-medium text-white transition-colors ${TOUCH_TARGET}`}
       >
         {loading ? "Resetting…" : "Reset password"}
       </button>

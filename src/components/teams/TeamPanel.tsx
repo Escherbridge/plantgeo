@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc/client";
 import { useAuthStore } from "@/stores/auth-store";
+import { NO_IOS_FOCUS_ZOOM, TOUCH_TARGET } from "@/components/ui/touch-target";
 
 export function TeamPanel() {
   const { activeTeamId } = useAuthStore();
@@ -56,14 +57,14 @@ export function TeamPanel() {
               aria-label="Email address"
               value={inviteEmail}
               onChange={(event) => setInviteEmail(event.target.value)}
-              className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              className={`flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
             />
             <select
               value={inviteRole}
               onChange={(event) =>
                 setInviteRole(event.target.value as "member" | "viewer")
               }
-              className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100"
+              className={`rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
             >
               <option value="viewer">Viewer</option>
               {activeTeam.role === "owner" && (
@@ -79,7 +80,7 @@ export function TeamPanel() {
                 })
               }
               disabled={!inviteEmail || inviteMutation.isPending}
-              className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
+              className={`rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-50 ${TOUCH_TARGET}`}
             >
               Invite
             </button>

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { trpc } from "@/lib/trpc/client";
 import { DataInterventionSummary } from "@/components/intervention/DataInterventionSummary";
 import { ShieldCheck, CheckCircle2, XCircle, AlertCircle, Info, Sparkles, MapPin } from "lucide-react";
+import { TOUCH_TARGET } from "@/components/ui/touch-target";
 
 /** Effect evidence for one proposal; only the absence case exists today. See AGENTS.md. */
 type EffectEvidence = { kind: "unavailable"; reason: "no_evaluated_estimate" };
@@ -141,7 +142,7 @@ export function ModerationPanel() {
                   <div className="flex items-center space-x-2">
                     <button
                       onClick={() => handleVote(item.id, "approve")}
-                      className="flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg transition"
+                      className={`flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg transition ${TOUCH_TARGET}`}
                     >
                       <CheckCircle2 className="w-4 h-4" />
                       <span>Approve & Publish</span>
@@ -149,7 +150,7 @@ export function ModerationPanel() {
 
                     <button
                       onClick={() => handleVote(item.id, "request_revision")}
-                      className="flex items-center space-x-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold rounded-lg transition"
+                      className={`flex items-center space-x-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold rounded-lg transition ${TOUCH_TARGET}`}
                     >
                       <AlertCircle className="w-4 h-4" />
                       <span>Request Revision</span>
@@ -157,7 +158,7 @@ export function ModerationPanel() {
 
                     <button
                       onClick={() => handleVote(item.id, "reject")}
-                      className="flex items-center space-x-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold rounded-lg transition"
+                      className={`flex items-center space-x-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold rounded-lg transition ${TOUCH_TARGET}`}
                     >
                       <XCircle className="w-4 h-4" />
                       <span>Reject</span>
@@ -168,13 +169,13 @@ export function ModerationPanel() {
                     <span className="text-[11px] text-zinc-400">Lifecycle:</span>
                     <button
                       onClick={() => handleTransition(item.id, "active")}
-                      className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-cyan-300 text-xs font-mono rounded border border-zinc-700"
+                      className={`px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-cyan-300 text-xs font-mono rounded border border-zinc-700 ${TOUCH_TARGET}`}
                     >
                       Set ACTIVE
                     </button>
                     <button
                       onClick={() => handleTransition(item.id, "monitored")}
-                      className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-purple-300 text-xs font-mono rounded border border-zinc-700"
+                      className={`px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-purple-300 text-xs font-mono rounded border border-zinc-700 ${TOUCH_TARGET}`}
                     >
                       Set MONITORED
                     </button>

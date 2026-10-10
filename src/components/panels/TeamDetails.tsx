@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { trpc } from "@/lib/trpc/client";
 import { ServiceAreaDrawTool } from "@/components/tools/ServiceAreaDrawTool";
+import { TOUCH_TARGET, NO_IOS_FOCUS_ZOOM } from "@/components/ui/touch-target";
 import type { Map as MapLibreMap } from "maplibre-gl";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -102,7 +103,7 @@ function SettingsForm({ teamId, initialValues, onSaved }: SettingsFormProps) {
           required
           value={name}
           onChange={(e) => setName(e.target.value)}
-          className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+          className={`rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
         />
       </div>
 
@@ -114,7 +115,7 @@ function SettingsForm({ teamId, initialValues, onSaved }: SettingsFormProps) {
           rows={3}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] resize-none"
+          className={`rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] resize-none ${NO_IOS_FOCUS_ZOOM}`}
         />
       </div>
 
@@ -125,7 +126,7 @@ function SettingsForm({ teamId, initialValues, onSaved }: SettingsFormProps) {
         <select
           value={orgType}
           onChange={(e) => setOrgType(e.target.value)}
-          className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+          className={`rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
         >
           <option value="">Select type…</option>
           {ORG_TYPES.map((o) => (
@@ -146,7 +147,7 @@ function SettingsForm({ teamId, initialValues, onSaved }: SettingsFormProps) {
               key={s.value}
               type="button"
               onClick={() => toggleSpecialty(s.value)}
-              className={`text-xs px-2 py-1 rounded-full border transition-colors ${
+              className={`text-xs px-2 py-1 rounded-full border transition-colors ${TOUCH_TARGET} ${
                 selectedSpecialties.includes(s.value)
                   ? "border-[hsl(var(--primary))] bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]"
                   : "border-[hsl(var(--border))] text-[hsl(var(--foreground))] hover:bg-[hsl(var(--muted))]"
@@ -167,14 +168,14 @@ function SettingsForm({ teamId, initialValues, onSaved }: SettingsFormProps) {
           value={website}
           onChange={(e) => setWebsite(e.target.value)}
           placeholder="https://example.org"
-          className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+          className={`rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
         />
       </div>
 
       <button
         type="submit"
         disabled={updateMutation.isPending}
-        className="px-4 py-2 rounded-lg bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
+        className={`px-4 py-2 rounded-lg bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50 ${TOUCH_TARGET}`}
       >
         {updateMutation.isPending ? "Saving…" : "Save Settings"}
       </button>
@@ -240,7 +241,7 @@ export function TeamDetails({ teamId, mapRef }: TeamDetailsProps) {
           </p>
           <Link
             href="/onboarding?create=1"
-            className="text-sm text-[hsl(var(--primary))] hover:underline"
+            className={`text-sm text-[hsl(var(--primary))] hover:underline ${TOUCH_TARGET}`}
           >
             Create or join an organization →
           </Link>
@@ -261,7 +262,7 @@ export function TeamDetails({ teamId, mapRef }: TeamDetailsProps) {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${TOUCH_TARGET} ${
                   activeTab === tab.id
                     ? "border-[hsl(var(--primary))] text-[hsl(var(--primary))]"
                     : "border-transparent text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
@@ -357,7 +358,7 @@ export function TeamDetails({ teamId, mapRef }: TeamDetailsProps) {
                   </p>
                   <button
                     onClick={() => setActiveTab("service-area")}
-                    className="mt-2 text-sm text-[hsl(var(--primary))] hover:underline"
+                    className={`mt-2 text-sm text-[hsl(var(--primary))] hover:underline ${TOUCH_TARGET}`}
                   >
                     Set up service area →
                   </button>

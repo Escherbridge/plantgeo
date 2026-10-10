@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { TOUCH_TARGET } from '@/components/ui/touch-target';
 
 /** Shares only the text explicitly selected by the user; never publishes a conversation URL. */
 export function CopyShareText({ text, title = 'PlantGeo analysis' }: { text: string; title?: string }) {
@@ -31,8 +32,8 @@ export function CopyShareText({ text, title = 'PlantGeo analysis' }: { text: str
     }
   };
   return <div className="flex max-w-full flex-wrap items-center gap-2 text-xs">
-    <button type="button" onClick={() => void copy()} disabled={!text} className="rounded border px-2.5 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-800">Copy text</button>
-    <button type="button" onClick={() => void share()} disabled={!text} className="rounded border px-2.5 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-800">Share text</button>
+    <button type="button" onClick={() => void copy()} disabled={!text} className={`rounded border px-2.5 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 ${TOUCH_TARGET}`}>Copy text</button>
+    <button type="button" onClick={() => void share()} disabled={!text} className={`rounded border px-2.5 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 ${TOUCH_TARGET}`}>Share text</button>
     <span role="status" className="basis-full text-gray-500">{status}</span>
   </div>;
 }

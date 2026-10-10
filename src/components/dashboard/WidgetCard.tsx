@@ -2,6 +2,7 @@
 
 import { X } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TOUCH_TARGET, TOUCH_TARGET_SQUARE } from "@/components/ui/touch-target";
 
 interface WidgetCardProps {
   title: string;
@@ -41,7 +42,7 @@ export function WidgetCard({ title, children, onClose, exportData, className, is
           {exportData && exportData.length > 0 && (
             <button
               onClick={handleExportCSV}
-              className="text-xs text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] transition-colors px-2 py-0.5 rounded border border-[hsl(var(--border))] hover:border-[hsl(var(--foreground))]"
+              className={`text-xs text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] transition-colors px-2 py-0.5 rounded border border-[hsl(var(--border))] hover:border-[hsl(var(--foreground))] ${TOUCH_TARGET}`}
             >
               CSV
             </button>
@@ -49,7 +50,7 @@ export function WidgetCard({ title, children, onClose, exportData, className, is
           {onClose && (
             <button
               onClick={onClose}
-              className="text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] transition-colors"
+              className={`inline-flex items-center justify-center text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] transition-colors ${TOUCH_TARGET_SQUARE}`}
               aria-label="Close widget"
             >
               <X className="h-4 w-4" />

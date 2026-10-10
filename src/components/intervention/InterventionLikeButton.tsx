@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useSession } from "next-auth/react";
 import { trpc } from "@/lib/trpc/client";
 import { SOCIAL_SIGN_IN_HREF } from "@/components/intervention/sign-in-gate";
+import { TOUCH_TARGET } from "@/components/ui/touch-target";
 
 /** One feature's like count and the viewer's own like state. */
 export interface InterventionLikeButtonProps {
@@ -65,7 +66,7 @@ export function InterventionLikeButton({
           if (disabled) return;
           toggle.mutate({ featureId });
         }}
-        className={`inline-flex items-center gap-1 rounded border px-2 py-1 text-xs ${
+        className={`inline-flex items-center gap-1 rounded border px-2 py-1 text-xs ${TOUCH_TARGET} ${
           state.liked
             ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600"
             : "border-[hsl(var(--border))]"
@@ -79,7 +80,7 @@ export function InterventionLikeButton({
         <a
           data-testid="intervention-like-signin"
           href={SOCIAL_SIGN_IN_HREF}
-          className="text-xs underline"
+          className={`text-xs underline ${TOUCH_TARGET}`}
         >
           Sign in to like
         </a>

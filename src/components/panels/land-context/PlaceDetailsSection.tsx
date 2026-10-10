@@ -1,3 +1,4 @@
+import { TOUCH_TARGET } from "@/components/ui/touch-target";
 import type { PlaceDetail } from "./types";
 
 interface PlaceDetailsSectionProps {
@@ -80,7 +81,7 @@ export function PlaceDetailsSection({ place }: PlaceDetailsSectionProps) {
           href={place.officialRecordUrl}
           target="_blank"
           rel="noreferrer"
-          className="mt-2 inline-block text-xs text-sky-400 underline"
+          className={`mt-2 inline-block text-xs text-sky-400 underline ${TOUCH_TARGET}`}
         >
           {place.officialRecordLabel ?? "Official source record"}
         </a>

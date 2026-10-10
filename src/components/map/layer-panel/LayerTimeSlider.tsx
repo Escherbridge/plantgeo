@@ -20,6 +20,7 @@ import {
 } from "@/components/map/layer-panel/layer-time-state";
 import { LayerTimeStatus } from "@/components/map/layer-panel/LayerTimeStatus";
 import { LaneAvailabilityLabel } from "@/components/map/layer-panel/LaneAvailabilityLabel";
+import { NO_IOS_FOCUS_ZOOM } from "@/components/ui/touch-target";
 import { layerLabel, type LayerToggleId } from "@/lib/map/layer-registry";
 import { useLayerDay } from "@/lib/map/layer-toggle-context";
 import { cn } from "@/lib/utils";
@@ -500,10 +501,17 @@ export function LayerTimeSlider({
         <label className="sr-only" htmlFor={dateInputId}>
           {label} date, YYYY-MM-DD
         </label>
+        {/* `NO_IOS_FOCUS_ZOOM` is the one font size this app's mobile pass raises, and it is an
+            interaction fix rather than a legibility one: mobile Safari zooms the whole document
+            when focus lands on a field under 16px and never zooms back out, which on a
+            full-bleed map strands the reader pinch-zoomed into a corner with the dock off
+            screen. This is the field that picks the day for every raster, so it is the worst
+            place in the app to lose the viewport. The 10px desktop size, and every label and
+            unit around it, are untouched -- see touch-target.ts. */}
         <input
           id={dateInputId}
           type="date"
-          className="layer-time-slider-date-input min-w-0 flex-1 rounded-(--radius) border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-1 py-0.5 text-[10px] tabular-nums text-[hsl(var(--foreground))] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[hsl(var(--ring))] max-sm:min-h-11"
+          className={`layer-time-slider-date-input min-w-0 flex-1 rounded-(--radius) border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-1 py-0.5 text-[10px] tabular-nums text-[hsl(var(--foreground))] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[hsl(var(--ring))] max-sm:min-h-11 ${NO_IOS_FOCUS_ZOOM}`}
           value={draftDate}
           min={firstDay}
           max={lastDay}
@@ -716,6 +724,10 @@ export function LayerTimeSlider({
             on this date" exactly where a sighted user sees the hatch. `aria-describedby` adds the
             two things the value alone cannot carry: the shape of the whole record, and whatever
             the note below the track is saying about this day. */}
+        {/* touch-target-exempt: the 44px comes from the `.layer-time-slider-range` media query
+            in this file's own stylesheet, not from a utility class. It has to: the hit area must
+            grow without the TRACK growing with it, and `min-h-11` on the element would stretch
+            the painted 12px rail into a band. See the `(max-width: 640px)` rule above. */}
         <input
           type="range"
           className={cn("layer-time-slider-range absolute inset-x-0", isFetchingCurrentDay && "is-pending")}

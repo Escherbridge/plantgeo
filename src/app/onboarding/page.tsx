@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Building2, Loader2, UserPlus } from "lucide-react";
 import { trpc } from "@/lib/trpc/client";
+import { TOUCH_TARGET } from "@/components/ui/touch-target";
 import { CreateOrganizationForm } from "@/components/onboarding/CreateOrganizationForm";
 import { JoinOrganizationForm } from "@/components/onboarding/JoinOrganizationForm";
 
@@ -26,7 +27,7 @@ export default function OnboardingPage() {
       <div className="flex flex-col items-center gap-2 border-b border-zinc-800 pb-5 text-center">
         <Link
           href="/dashboard"
-          className="rounded-md border border-emerald-500/50 px-4 py-2 text-sm font-medium text-emerald-300 transition-colors hover:bg-emerald-500/10"
+          className={`flex items-center justify-center rounded-md border border-emerald-500/50 px-4 py-2 text-sm font-medium text-emerald-300 transition-colors hover:bg-emerald-500/10 ${TOUCH_TARGET}`}
         >
           Continue individually
         </Link>
@@ -67,7 +68,7 @@ function OnboardingView() {
         <button
           type="button"
           onClick={() => refetch()}
-          className="rounded-md bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-700"
+          className={`rounded-md bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-700 ${TOUCH_TARGET}`}
         >
           Try again
         </button>

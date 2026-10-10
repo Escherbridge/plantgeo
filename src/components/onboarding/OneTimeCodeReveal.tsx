@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { AlertTriangle, Check, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { TOUCH_TARGET } from "@/components/ui/touch-target";
 
 interface OneTimeCodeRevealProps {
   code: string;
@@ -29,6 +30,7 @@ function CopyButton({ value, label }: { value: string; label: string }) {
       onClick={handleCopy}
       className={cn(
         "flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors",
+        TOUCH_TARGET,
         copied
           ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
           : "border-zinc-700 bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
@@ -74,7 +76,7 @@ export function OneTimeCodeReveal({ code, joinUrl, onDismiss }: OneTimeCodeRevea
       <button
         type="button"
         onClick={onDismiss}
-        className="self-end rounded-md bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-700"
+        className={`self-end rounded-md bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-700 ${TOUCH_TARGET}`}
       >
         I&rsquo;ve saved it
       </button>

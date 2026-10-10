@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { TOUCH_TARGET, NO_IOS_FOCUS_ZOOM } from "@/components/ui/touch-target";
 
 type Endpoint = {
   id: string;
@@ -133,7 +134,7 @@ export default function ApiTester() {
         <select
           value={selectedEndpoint}
           onChange={(e) => handleEndpointChange(e.target.value)}
-          className="w-full rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+          className={`w-full rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
         >
           {ENDPOINTS.map((ep) => (
             <option key={ep.id} value={ep.id}>
@@ -151,7 +152,7 @@ export default function ApiTester() {
           type="text"
           value={apiKey}
           onChange={(e) => setApiKey(e.target.value)}
-          className="w-full rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 text-sm font-mono text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+          className={`w-full rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 text-sm font-mono text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
           placeholder="pg_..."
         />
       </div>
@@ -172,7 +173,7 @@ export default function ApiTester() {
                 value={params[p.name] ?? ""}
                 onChange={(e) => setParams((prev) => ({ ...prev, [p.name]: e.target.value }))}
                 placeholder={p.placeholder}
-                className="flex-1 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-1.5 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+                className={`flex-1 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-1.5 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
               />
             </div>
           ))}
@@ -188,7 +189,7 @@ export default function ApiTester() {
             value={body}
             onChange={(e) => setBody(e.target.value)}
             rows={8}
-            className="w-full rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 font-mono text-xs text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+            className={`w-full rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 font-mono text-xs text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] ${NO_IOS_FOCUS_ZOOM}`}
           />
         </div>
       )}
@@ -196,7 +197,7 @@ export default function ApiTester() {
       <button
         onClick={handleSubmit}
         disabled={loading}
-        className="rounded-md bg-[hsl(var(--primary))] px-4 py-2 text-sm font-medium text-[hsl(var(--primary-foreground))] hover:opacity-90 disabled:opacity-50 transition-opacity"
+        className={`rounded-md bg-[hsl(var(--primary))] px-4 py-2 text-sm font-medium text-[hsl(var(--primary-foreground))] hover:opacity-90 disabled:opacity-50 transition-opacity ${TOUCH_TARGET}`}
       >
         {loading ? "Sending..." : "Send Request"}
       </button>

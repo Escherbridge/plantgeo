@@ -5,6 +5,7 @@ import { AlertTriangle } from "lucide-react";
 import { WidgetCard } from "./WidgetCard";
 import { SpatialStats } from "./SpatialStats";
 import { MetricsBar } from "./MetricsBar";
+import { TOUCH_TARGET } from "@/components/ui/touch-target";
 
 type PresetName = "Fire Monitoring" | "Fleet Overview" | "Environmental";
 
@@ -98,7 +99,7 @@ export function DashboardGrid() {
             key={item}
             type="button"
             onClick={() => handlePresetChange(item)}
-            className={`px-3 py-1 rounded-full text-xs font-medium transition-colors border ${
+            className={`px-3 py-1 rounded-full text-xs font-medium transition-colors border ${TOUCH_TARGET} ${
               preset === item
                 ? "bg-emerald-500 text-white border-emerald-500"
                 : "border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"

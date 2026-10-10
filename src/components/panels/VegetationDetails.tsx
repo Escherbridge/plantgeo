@@ -8,6 +8,7 @@ import {
   useVegetationDisplayMode,
 } from "@/lib/map/layer-toggle-context";
 import type { VegetationSource } from "@/components/map/layers/VegetationLayer";
+import { TOUCH_TARGET } from "@/components/ui/touch-target";
 
 
 /**
@@ -161,7 +162,7 @@ export function VegetationDetails() {
                     type="button"
                     aria-pressed={source === option.value}
                     data-testid={`vegetation-source-${option.value}`}
-                    className={`flex-1 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
+                    className={`${TOUCH_TARGET} flex-1 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
                       source === option.value
                         ? "bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] border-transparent"
                         : "border-[hsl(var(--border))] text-[hsl(var(--foreground))] bg-[hsl(var(--card))]"

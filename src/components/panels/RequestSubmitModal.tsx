@@ -8,6 +8,7 @@ import {
   TYPES_BY_CATEGORY,
 } from "@/lib/environmental/intervention-form";
 import type { InterventionGeometry } from "@/lib/geo/intervention-geometry-schema";
+import { NO_IOS_FOCUS_ZOOM, TOUCH_TARGET } from "@/components/ui/touch-target";
 
 interface RequestSubmitModalProps {
   /** Map centre the request is pinned to; recentring the map moves the pin. */
@@ -129,7 +130,7 @@ export function RequestSubmitModal({
               id="strategy-request-type"
               value={requestType}
               onChange={(e) => setRequestType(e.target.value as InterventionType)}
-              className="min-h-11 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+              className={`min-h-11 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] ${NO_IOS_FOCUS_ZOOM}`}
             >
               {typeOptions.map((type) => (
                 <option key={type} value={type}>
@@ -150,7 +151,7 @@ export function RequestSubmitModal({
               onChange={(e) => setTitle(e.target.value)}
               maxLength={200}
               placeholder="Brief title for this request"
-              className="min-h-11 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] placeholder:text-[hsl(var(--muted-foreground))]"
+              className={`min-h-11 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] placeholder:text-[hsl(var(--muted-foreground))] ${NO_IOS_FOCUS_ZOOM}`}
             />
           </div>
 
@@ -165,7 +166,7 @@ export function RequestSubmitModal({
               rows={3}
               maxLength={2000}
               placeholder="Describe why this area needs intervention (optional)"
-              className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] placeholder:text-[hsl(var(--muted-foreground))] resize-none"
+              className={`rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] placeholder:text-[hsl(var(--muted-foreground))] resize-none ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
             />
           </div>
 
