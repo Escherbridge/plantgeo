@@ -1,7 +1,7 @@
 ---
 type: runbook
 status: active
-updated_on: 2026-09-26
+updated_on: 2026-10-10
 ---
 
 # Current operating runbook
@@ -662,6 +662,106 @@ Go-1 pilot (local, read-only, SDA): 2 areas and 11,421 rows captured, 0 invalid 
   - The first executor pass on it: catalogue loaded, 12 definitions synced their shape, the 2026-08
     usage receipt was written, no WARN or ERRO.
 
+## Session handoff — lead session, 2026-10-10
+
+**Goal.** The owner's 2026-10-04 asks ("closest datapoint wins", working 30/90/365-day windows per layer, an
+agent panel with less clutter, drainage and climate layers drawing at every zoom), then the runbook
+follow-ups plus the stalled suitability track, run as a parallel swarm (2026-10-05).
+
+**State (main = `ab8cb2ad`, all four services deployed and probed at -121.95, 45.68 on 2026-10-08).**
+- `ab43cf22`:
+  - vegetation and fire-detection readers on the cell-footprint query;
+  - atomic lock release in `redis.ts`;
+  - multi-lane distributions borrow one slot;
+  - Gemini round 1 at 81/112;
+  - SSURGO overview code;
+  - plant-suitability loop 2a (dark).
+- `1d869f4e`:
+  - serving accepts manifest-trusted history days;
+  - bounded receipt fetches;
+  - the `availability-digest-trusted` verb;
+  - the soil painted depth on hover.
+- `bfb4ed6a`:
+  - `allowed_client_exposure` is not a read gate (agent and web);
+  - fetch concurrency is 16 workers with a window of 8.
+- `ab8cb2ad`: long windows read each lane's latest 200 published days and say so (`truncated`, `days_read`,
+  `read_range_*`).
+- Live probes:
+  - every 365-day surface answers in 6.8–9.0 s, partial and labelled;
+  - 2024 and 1995 weeks answer 7 of 7 days;
+  - 30-day soil at the painted depth answers in 0.66 s.
+- Production write (owner go): the SSURGO overview object is published for release `ee501543…`.
+- The stalled worktree was archived as tag `archive/plant-suitability-wiring-draft-20260928`, and the
+  worktree removed.
+- Working tree clean except the untracked `conductor.zip` (not ours, never touch).
+
+**Review ledger.**
+
+| Commit | Combined review | Verifier |
+|---|---|---|
+| `ab43cf22` | CHANGES-REQUIRED, 5 findings fixed | APPROVE after a mypy fix |
+| `1d869f4e` | CHANGES-REQUIRED, majors fixed | 2 passes, final APPROVE |
+| `bfb4ed6a` | — | CHANGES-REQUIRED (model-facing flag), fixed, APPROVE |
+| `ab8cb2ad` | — | approve-with-minors, fixed |
+
+Every push passed the full `npm test`, the agri `check.py` receipt and a live probe.
+
+**Decisions.** See memory `plantgeo-owner-decisions-2026-10-04` and `-2026-10-05`:
+- closest datapoint wins, with a cadence and settle-lag bound;
+- always nearest cell;
+- per-layer window chips;
+- minimal agent panel;
+- trusted history served now, hashed later;
+- the exposure flag is not a gate;
+- concurrency doubled, plus a labelled partial cap of 200 days;
+- SSURGO overview published;
+- Copernicus DEM admitted.
+
+**Assumptions.**
+- `MAX_DISTRIBUTION_DAYS_READ = 200` (keep the latest 200 days) · default taken: recency over even
+  sampling · to reverse: one constant plus a changed read-range rule. Seasonality questions see only the
+  latest ~6.5 months.
+- The census and listing holders run on the serving boto bounds (6 s read, 2 attempts) · default taken:
+  shared bounds · to reverse: a dedicated census client if `/coverage` logs `ReadTimeoutError`.
+
+**Gotchas.**
+- **Local CLI against production:** run it under `railway run --service <parquet-api id>`. Pass
+  `SERVICE_PROFILE=combined_local`, because the local `.env` `DATABASE_URL` trips the production-profile
+  guard.
+- **Scripts over `railway`:** put the commands in a script file. `bash -c` quoting breaks through
+  `railway` on Windows.
+- **Probes:** `.omc/probes/run-probe.sh <script>` runs node inside plantgeo-main (read-only);
+  `probe-wave4.js` is the standard check.
+- **Receipt order:** commit → `check.py --write-receipt` → amend → push. Confirm a deploy row exists for
+  every push.
+- **Sub-agents:** they must never `git stash` (memory `subagents-stash-despite-brief`).
+- **Timing tests:** use `time.perf_counter()`. Windows `monotonic()` ticks every ~15.6 ms.
+
+**Continuation plan.**
+1. Digest backfill dry run, read-only, for climate-field-precipitation:
+   `agri-service data availability-digest-trusted --lane climate-field-precipitation --kind observed --start 2025-06-08 --end 2026-06-08 --output /tmp/precip-digest.json`
+   - Run it inside parquet-api via `railway ssh`, or locally under `railway run` as above.
+   - Review the report, then ask the owner for the `--apply --expected-sha256 … --expected-head-generation …` go.
+   - Apply promptly: a forward publish moves the head.
+   - Order: the four agent surfaces, then the long-history lanes. Before dew-point, the owner decides
+     between raising the 8 MiB index cache and limiting how much history gets hashed.
+2. `agent/tools.py:~1880`, the `distribution_at_point` docstring: say long windows may be partial and to
+   pass `signal_name` on multi-lane surfaces (a 365-day call without it runs 2 × ~9 s). Regenerate the
+   catalogue fixture through its producer and keep Gemini at or under 112.
+3. Cutover G4: retire `water-gauges-direct-forward` after the validation rows, then Phase 4 TOMLs and
+   the G7 climate gap-fill (row "Config-driven ingestion").
+4. Minors:
+   - the pinned soil tooltip caption lags a depth switch;
+   - the dead `year is None` branch in `_ReleaseListing` (`agent/warehouse.py:~385`);
+   - the MTBS snapshot loader is still on the default boto bounds;
+   - fire's ~2.4 s cold index load (cache the index for more headroom).
+
+**Recommended invocations.**
+- Inline, for step 1: a dry run plus a review needs no agents.
+- One `oh-my-claudecode:executor` (sonnet), then one `quality-reviewer`, for step 2: a single file plus a
+  fixture regen.
+- `/slice` for step 4: its four minors touch disjoint files.
+
 ## Open owner items
 
 - **Object-store credential rotation (2026-09-19).** An operations agent printed
@@ -678,6 +778,7 @@ Go-1 pilot (local, read-only, SDA): 2 areas and 11,421 rows captured, 0 invalid 
   - The spec §4.9.3 amendment: `BREAKER_MODE=legacy` now keeps GL-5 soft failure.
 - **`OfflinePanel.tsx:52` download box** — a product decision, tracked as a known offender in
   `src/__tests__/region/footprint-literals.test.ts`.
+- **Digest backfill go (2026-10-08):** each `availability-digest-trusted --apply` needs an owner go. Before dew-point, decide whether to raise the 8 MiB index cache or limit how much history gets hashed (its full history overflows the cache).
 - **Stale worktrees under `.tmp`** — eleven from earlier sessions hold uncommitted work. Owner asked
   for assessment and salvage, not deletion; inventory in
   `.omc/ultrapilot-20260918/WORKTREE-SALVAGE-20260919.md`.
