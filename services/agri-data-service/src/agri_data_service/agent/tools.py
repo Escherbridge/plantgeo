@@ -1882,6 +1882,9 @@ async def distribution_at_point(  # noqa: PLR0913 - published bounded tool schem
     Per lane: the point's own cell, else the nearest cell across the window (with distance_km).
     Days without data are excluded, never zero-filled; days_with_data says how many counted.
     Static layers answer static_not_applicable. range_end is clamped to today; at most 366 days.
+    A long window may be partial: a lane reads only its latest 200 published days and then says
+    truncated: true, with days_read and read_range_start..read_range_end; report that range and say
+    the answer is partial.
 
     Args:
         surface_name: Exact catalogue name, as for surface_evidence_for_selection.
@@ -1890,7 +1893,8 @@ async def distribution_at_point(  # noqa: PLR0913 - published bounded tool schem
         range_start: Required inclusive window start, ISO YYYY-MM-DD; a 30-day window starts 29 days before range_end.
         range_end: Inclusive window end, ISO YYYY-MM-DD; use the caller's selected day.
         zoom: Selected map zoom 0 to 22; picks the map's serving rung.
-        signal_name: Optional; read only the lane(s) with this signal, e.g. air_temperature_max.
+        signal_name: Optional; read only the lane(s) with this signal, e.g. air_temperature_max. Pass it on
+            multi-lane surfaces when one signal is asked: every lane is read otherwise, slower on long windows.
     """
     return await query_distribution_at_point(
         surface_name, longitude, latitude, range_start, range_end, zoom, signal_name

@@ -84,7 +84,7 @@
     "type": "function",
     "function": {
       "name": "distribution_at_point",
-      "description": "Summarise a layer's daily values at a point over a calendar window: min, p10, median, p90, max, mean.\n\nPer lane: the point's own cell, else the nearest cell across the window (with distance_km).\nDays without data are excluded, never zero-filled; days_with_data says how many counted.\nStatic layers answer static_not_applicable. range_end is clamped to today; at most 366 days.",
+      "description": "Summarise a layer's daily values at a point over a calendar window: min, p10, median, p90, max, mean.\n\nPer lane: the point's own cell, else the nearest cell across the window (with distance_km).\nDays without data are excluded, never zero-filled; days_with_data says how many counted.\nStatic layers answer static_not_applicable. range_end is clamped to today; at most 366 days.\nA long window may be partial: a lane reads only its latest 200 published days and then says\ntruncated: true, with days_read and read_range_start..read_range_end; report that range and say\nthe answer is partial.",
       "parameters": {
         "additionalProperties": false,
         "properties": {
@@ -129,7 +129,7 @@
               }
             ],
             "default": null,
-            "description": "Optional; read only the lane(s) with this signal, e.g. air_temperature_max.",
+            "description": "Optional; read only the lane(s) with this signal, e.g. air_temperature_max. Pass it on\nmulti-lane surfaces when one signal is asked: every lane is read otherwise, slower on long windows.",
             "title": "Signal Name"
           }
         },

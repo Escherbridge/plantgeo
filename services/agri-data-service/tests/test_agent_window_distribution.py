@@ -771,6 +771,16 @@ def test_the_published_tool_adds_no_enum_or_bound_to_the_gemini_budget() -> None
     assert "enum" not in json.dumps(parameters)
 
 
+def test_the_published_description_states_the_caps_the_reader_enforces() -> None:
+    """The model is told the window and read caps in prose; a changed constant must fail here, not mislead it."""
+    [schema] = [
+        entry for entry in route.environmental_tool_schemas() if entry["function"]["name"] == "distribution_at_point"
+    ]
+    description = schema["function"]["description"]
+    assert f"at most {window_distribution.MAX_WINDOW_DAYS} days" in description
+    assert f"latest {window_distribution.MAX_DISTRIBUTION_DAYS_READ} published days" in description
+
+
 # --- The web contract fixture ------------------------------------------------------------------
 
 #: The web parses every case here with `distributionAtPointResultSchema` and checks what it renders.
