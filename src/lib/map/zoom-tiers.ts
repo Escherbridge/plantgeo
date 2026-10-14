@@ -485,3 +485,21 @@ export function mintedSupportId(
 ): string {
   return `${zoomTier}:${longitude}:${latitude}`;
 }
+
+/**
+ * The map zoom from which the drought map reads its base rung instead of z9. Drought never reads
+ * z5 or z0. See `src/lib/map/AGENTS.md` §drought-rungs for the measured seams and bytes.
+ */
+export const DROUGHT_BASE_RUNG_FROM_ZOOM = 7;
+
+/** The rung the drought map reads below `DROUGHT_BASE_RUNG_FROM_ZOOM`. */
+export const DROUGHT_OVERVIEW_TIER = 9 satisfies ZoomTier;
+
+/**
+ * Resolve a map zoom to the rung the drought map reads: z9 below `DROUGHT_BASE_RUNG_FROM_ZOOM`,
+ * the base rung from it. Refuses exactly what `resolveZoomTier` refuses.
+ */
+export function resolveDroughtZoomTier(mapZoom: number): ZoomTier {
+  resolveZoomTier(mapZoom);
+  return mapZoom >= DROUGHT_BASE_RUNG_FROM_ZOOM ? BASE_ZOOM_TIER : DROUGHT_OVERVIEW_TIER;
+}

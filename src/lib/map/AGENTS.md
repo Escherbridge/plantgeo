@@ -382,6 +382,58 @@ and nothing reads them. `hover-fields.ts`'s `formatFirePerimeter` reads camelCas
 it shows a title and a severity line; widening it is a hover-fields change with its own review, not
 something the cutover should have decided by shipping extra columns.
 
+## §drought-rungs
+
+**Drought reads z9 below z7 and its base rung (z13) from z7. It never reads z5 or z0**
+(`zoom-tiers.ts` `resolveDroughtZoomTier`, used by `getParquetDrought`). This fixes acceptance gate
+S6 ("no background visible through cracks between D-classes").
+
+**The defect, measured 2026-10-13.** Raw captures and scripts are in
+`.omc/research/drought-geometry-2026-10-13/`. A USDM release's five classes are MUTUALLY EXCLUSIVE,
+not nested: 0% of any D(k+1) lies inside D(k). At z13 they form a valid coverage. The coarse rungs
+were simplified one class at a time, so every shared class edge was moved twice, along two paths.
+At the default PNW camera (z≈5.9, which read z5):
+- 3.3% of the base drought area was left unpainted, through seams and a generalised outline; the
+  widest gap was 0.21° (≈9 px);
+- 0.79 deg² was painted by two classes at once.
+
+On a phone (default camera z≈5, which read z0), the classes overlapped across 53 deg². D4 kept only
+33% of its own area, and 10.7% of the paint fell outside any drought.
+
+Not the cause:
+- release freshness (every rung served 2026-10-06);
+- draw order (the payload is DM 0..4, and exclusive classes do not stack).
+
+**Why z9 below z7.** The published z9 rung's widest interior seam is 0.0135°:
+- 0.6 px at z6 and 1.2 px at z7, and each class's 0.5 px outline runs along both sides of it;
+- at z9-z12, the zooms the uniform ladder serves it at, the same seam is 5-39 px.
+
+Bytes, measured on the public route:
+
+| read | raw | gzip |
+|---|---|---|
+| default PNW camera, z9 rung | 78 KB | 23 KB |
+| phone opening viewport (≈17.5×22°), z9 rung | 109 KB | 31 KB |
+| whole national release, z9 rung | 1.3 MB | 399 KB |
+| default PNW camera, old z5 rung | 22 KB | 6.4 KB |
+| phone opening viewport, old z0 rung | 18 KB | — |
+
+**Why the base from z7.** The base is a seam-free coverage, clipped server-side to the viewport.
+
+| desktop z7 viewport (16×10°) | raw | gzip |
+|---|---|---|
+| Midwest | 312 KB | 95 KB |
+| PNW | 533 KB | 176 KB |
+| Southeast | 1.53 MB | 520 KB |
+
+At z9+ the viewport is a sixteenth of that. Drawing the base from z6 would double each side of the
+viewport: 1.08 MB raw for a 32×20° window over the west alone.
+
+**Revisit when** every published release is re-derived with coverage simplification
+(`warehouse/parquet/AGENTS.md`, "Coverage-preserving simplification"). Coverage rungs carry no seams,
+so drought can return to `resolveZoomTier` and its smaller z5 bytes. Until then this resolver is
+the only thing between those rungs and the canvas.
+
 ## §viewport-footprint
 
 **A cell is in view when its FOOTPRINT meets the viewport, not when its stored coordinate does**

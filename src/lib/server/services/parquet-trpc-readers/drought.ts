@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { resolveZoomTier } from "@/lib/map/zoom-tiers";
+import { resolveDroughtZoomTier } from "@/lib/map/zoom-tiers";
 import { getParquetLatestRelease } from "@/lib/server/services/parquet-plane-client";
 import type { ParquetPlaneEnvelope } from "@/lib/server/services/parquet-envelope";
 import {
@@ -56,6 +56,7 @@ function releaseServedDay(envelope: ParquetPlaneEnvelope, asOfDay: string): stri
 /**
  * The USDM release standing at the requested day, carried forward only as far as the weekly
  * cadence allows. See `src/lib/server/services/AGENTS.md` §drought-carry-forward.
+ * Read at drought's own rung, never z5 or z0: see `src/lib/map/AGENTS.md` §drought-rungs.
  */
 export async function getParquetDrought(
   input: ParquetViewportRead
@@ -63,7 +64,7 @@ export async function getParquetDrought(
   const nowMs = input.nowMs ?? Date.now();
   const day = selectedDay(input.date, nowMs);
   rejectFutureDay(day, nowMs, "drought");
-  const zoomTier = resolveZoomTier(input.mapZoom);
+  const zoomTier = resolveDroughtZoomTier(input.mapZoom);
   return boundedResult(async () => {
     const releaseRequest = {
       layer: "drought",

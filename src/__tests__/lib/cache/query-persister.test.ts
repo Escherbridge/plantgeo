@@ -249,6 +249,41 @@ describe("indexedDbLayerQueryPersister", () => {
     expect(stored?.schemaVersion).toBe(CACHE_SCHEMA_VERSION);
   });
 
+  it.each([
+    ["refetched when it was persisted before the z9/z13 rung change (schema v1)", 1, "fresh"],
+    ["served when it was persisted under the current schema", CACHE_SCHEMA_VERSION, "persisted"],
+  ] as const)("a persisted drought answer is %s", async (_description, schemaVersion, served) => {
+    // Same query key, different rungs served (src/lib/map/AGENTS.md §drought-rungs): only the
+    // schema bump keeps a returning browser from repainting the cracked z5/z0 payload it saved.
+    const key = trpcQueryKey(["environmental", "getDroughtClassification"], {
+      bbox: "-125,42,-116,49",
+      date: "2026-08-01",
+      zoom: 5.9,
+    });
+    const query = makeQuery(key, "hash-drought");
+    const persistedPayload = {
+      type: "FeatureCollection",
+      features: [{ type: "Feature", properties: { rung: 5 } }],
+      availability: "published",
+      reason: null,
+    };
+    await setEntry(STORE_CONFIG, "hash-drought", {
+      key: "hash-drought",
+      schemaVersion,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + HISTORICAL_TTL_MS,
+      lastAccessedAt: Date.now(),
+      approxByteSize: 10,
+      value: persistedPayload,
+    } satisfies StoredLayerQueryEntry);
+    const freshPayload = { ...persistedPayload, features: [{ type: "Feature", properties: { rung: 9 } }] };
+    const queryFn = vi.fn().mockResolvedValue(freshPayload);
+
+    const result = await indexedDbLayerQueryPersister(queryFn, FAKE_CONTEXT, query);
+
+    expect(result).toEqual(served === "fresh" ? freshPayload : persistedPayload);
+  });
+
   it("never caches a response that represents a failed request", async () => {
     const key = trpcQueryKey(["environmental", "getDroughtClassification"], { bbox: "0,0,1,1" });
     const query = makeQuery(key, "hash-failed");

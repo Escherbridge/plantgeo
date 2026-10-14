@@ -67,8 +67,12 @@ export const STORE_CONFIG: IndexedDbStoreConfig = {
   version: 2,
 };
 
-/** Bump when `StoredLayerQueryEntry`'s VALUE shape or meaning changes; old entries become misses. */
-export const CACHE_SCHEMA_VERSION = 1;
+/**
+ * Bump when `StoredLayerQueryEntry`'s VALUE shape or meaning changes; old entries become misses.
+ * v2 (2026-10-13): drought's unchanged query key now serves the z9/z13 rungs, not the cracked z5/z0
+ * ones (src/lib/map/AGENTS.md §drought-rungs).
+ */
+export const CACHE_SCHEMA_VERSION = 2;
 
 /**
  * How long a past calendar day's answer is served from disk before the cache stops trusting it.

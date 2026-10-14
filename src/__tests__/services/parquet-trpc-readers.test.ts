@@ -1399,6 +1399,37 @@ describe("lane day and release semantics", () => {
     });
   });
 
+  it("reads drought from z9 below z7 and from the base rung from z7, never from z5 or z0", async () => {
+    // The published z5 and z0 rungs were simplified one class at a time, which opened seams between
+    // D-classes; see src/lib/map/AGENTS.md §drought-rungs. 4.96 is the phone's opening camera and
+    // 5.92 the derived default camera (gate S1), which the uniform ladder sent to z0 and z5.
+    const nowMs = Date.parse("2026-08-24T12:00:00Z");
+    const zoomTierByMapZoom: ReadonlyArray<readonly [mapZoom: number, zoomTier: number]> = [
+      [0, 9],
+      [4.96, 9],
+      [5.92, 9],
+      [6.99, 9],
+      [7, 13],
+      [9.5, 13],
+      [14, 13],
+    ];
+
+    for (const [mapZoom, zoomTier] of zoomTierByMapZoom) {
+      mockedRelease.mockReset();
+      mockedRelease.mockResolvedValue(published("2026-08-24", [], "2026-08-18"));
+
+      await expect(
+        getParquetDrought({ bbox: "-125,42,-111,49", date: "2026-08-24", mapZoom, nowMs })
+      ).resolves.toMatchObject({ state: "ready", servedDay: "2026-08-18" });
+      expect(mockedRelease, `map zoom ${mapZoom}`).toHaveBeenCalledWith({
+        layer: "drought",
+        asOfDay: "2026-08-24",
+        zoomTier,
+        bbox: "-125,42,-111,49",
+      });
+    }
+  });
+
   it("does not carry a drought release across a skipped historical release week", async () => {
     mockedRelease
       .mockResolvedValueOnce(published("2026-08-12", [], "2026-08-04"))

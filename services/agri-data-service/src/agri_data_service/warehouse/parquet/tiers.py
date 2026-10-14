@@ -300,12 +300,37 @@ class GeometrySimplification:
     tier's grid". The unit underneath is squared degrees rather than a projected area because the
     geometry is EPSG:4326 with no projection applied anywhere in this warehouse, so a square-metre
     threshold would be a fabricated conversion that varies with latitude.
+
+    `coverage_partition_columns`, when set, simplifies each partition's rows as ONE polygonal
+    coverage (`ST_CoverageSimplify`), so an edge two rows share moves once and stays shared.
+    `tolerance_degrees_by_tier` overrides `TIER_RESOLUTION_DEGREES` for this lane only. Both are
+    opt-in and only `drought` sets them; see `AGENTS.md` here, "Coverage-preserving simplification".
     """
 
     geometry_column: str
     dissolve: HierarchicalDissolve | None = None
     aggregations: tuple[ColumnAggregation, ...] = ()
     min_area_tier_squares: float | None = None
+    coverage_partition_columns: tuple[str, ...] = ()
+    tolerance_degrees_by_tier: tuple[tuple[ZoomTier, float], ...] = ()
+
+    def __post_init__(self) -> None:
+        """Refuse a coverage over a dissolve, and an override that names the base rung, repeats, or is not positive."""
+        if self.coverage_partition_columns and self.dissolve is not None:
+            raise TierDerivationError(
+                "a coverage simplification cannot also dissolve: the dissolve unions rows into parents, so the rows "
+                "it would simplify as one coverage no longer exist"
+            )
+        overridden = [tier for tier, _ in self.tolerance_degrees_by_tier]
+        if len(set(overridden)) != len(overridden):
+            raise TierDerivationError(f"tolerance_degrees_by_tier names a rung twice: {overridden}")
+        for tier, tolerance in self.tolerance_degrees_by_tier:
+            if validate_zoom_tier(tier) not in DERIVED_ZOOM_TIERS:
+                raise TierDerivationError(
+                    f"tolerance_degrees_by_tier names z{tier}, which is not derived; only {DERIVED_ZOOM_TIERS} are"
+                )
+            if not tolerance > 0:
+                raise TierDerivationError(f"tolerance_degrees_by_tier gives z{tier} a non-positive {tolerance!r}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -705,9 +730,12 @@ def _derive_geometry_tier(
         # result with no batches -- `pl.from_arrow` then loses the schema and raises "Must pass
         # schema, or at least one RecordBatch", which names neither the lane nor the tier.
         return frame
-    tolerance = tier_resolution_degrees(tier)
+    tolerance = _geometry_tolerance_degrees(strategy, tier)
     with _geometry_session(connection) as session, _registered_base_tier(session, frame):
-        if strategy.dissolve is None:
+        if strategy.coverage_partition_columns:
+            _require_total_coverage(frame, keyed=frame.columns, aggregated=(), stream=stream)
+            query = _coverage_query(frame, strategy, stream=stream, tolerance=tolerance)
+        elif strategy.dissolve is None:
             _require_total_coverage(frame, keyed=frame.columns, aggregated=(), stream=stream)
             carried = ", ".join(column for column in frame.columns if column != geometry)
             generalised = _simplify_sql(f"ST_GeomFromWKB({geometry})", tolerance)
@@ -754,6 +782,49 @@ def _derive_geometry_tier(
 def _simplify_sql(inner_geometry: str, tolerance: float) -> str:
     """Wrap a DuckDB geometry expression in the topology-preserving simplifier at `tolerance` degrees."""
     return f"ST_SimplifyPreserveTopology({inner_geometry}, {tolerance})"
+
+
+def _geometry_tolerance_degrees(strategy: GeometrySimplification, tier: ZoomTier) -> float:
+    """The tolerance `strategy` simplifies `tier` at: its own override, else the shared ladder's resolution."""
+    for overridden_tier, tolerance in strategy.tolerance_degrees_by_tier:
+        if overridden_tier == tier:
+            return tolerance
+    return tier_resolution_degrees(tier)
+
+
+def _coverage_query(frame: pl.DataFrame, strategy: GeometrySimplification, *, stream: str, tolerance: float) -> str:
+    """Return the SELECT that simplifies each partition's rows as one polygonal coverage.
+
+    Coverage simplification (GEOS `CoverageSimplifier`). A partition that is NOT a valid coverage
+    takes the per-row simplifier instead: DuckDB hands an invalid coverage back unsimplified, which
+    would publish base-rung bytes at every rung. See `AGENTS.md` here, "Coverage-preserving simplification".
+    """
+    geometry = strategy.geometry_column
+    partition = strategy.coverage_partition_columns
+    _require_columns(frame, [geometry, *partition], role="coverage partition", stream=stream)
+    keys = ", ".join(partition)
+    carried = [column for column in frame.columns if column != geometry]
+    # A total order, so the position a row gets is the same in both CTEs that read it, whether or
+    # not DuckDB materialises `positioned`; two rows tied on every column are the same row.
+    position_order = ", ".join([*carried, geometry])
+    per_row = _simplify_sql(f"ST_GeomFromWKB(positioned.{geometry})", tolerance)
+    projection = ", ".join(f"positioned.{column}" for column in carried)
+    return (
+        f"WITH positioned AS (SELECT *, row_number() OVER (PARTITION BY {keys} ORDER BY {position_order}) "
+        f"AS coverage_position FROM base_tier), "
+        f"members AS (SELECT {keys}, list(ST_GeomFromWKB({geometry}) ORDER BY coverage_position) AS geometries "
+        f"FROM positioned GROUP BY {keys}), "
+        f"validity AS (SELECT {keys}, geometries, ST_CoverageInvalidEdges(geometries) IS NULL AS is_coverage "
+        f"FROM members), "
+        f"coverages AS (SELECT {keys}, is_coverage, CASE WHEN is_coverage THEN "
+        f"ST_CoverageSimplify(geometries, {tolerance}) END AS simplified FROM validity), "
+        f"pieces AS (SELECT {keys}, unnest(ST_Dump(simplified)) AS piece FROM coverages WHERE is_coverage), "
+        f"reassembled AS (SELECT {keys}, CAST(piece.path[1] AS BIGINT) AS coverage_position, "
+        f"ST_Collect(list(piece.geom)) AS {geometry} FROM pieces GROUP BY {keys}, piece.path[1]) "
+        f"SELECT {projection}, CASE WHEN coverages.is_coverage THEN reassembled.{geometry} ELSE {per_row} END "
+        f"AS {geometry} FROM positioned JOIN coverages USING ({keys}) "
+        f"LEFT JOIN reassembled USING ({keys}, coverage_position)"
+    )
 
 
 def _dissolve_query(
@@ -904,11 +975,25 @@ def validate_derivation_against_schema(stream: str) -> tuple[str, ...]:
                 f"{stream}: {column!r} is declared base-non-null but no coarse rung nulls it, so nothing explains why "
                 f"its arrow field is nullable at all"
             )
-    if isinstance(strategy, GeometrySimplification) and strategy.geometry_column not in columns:
+    if isinstance(strategy, GeometrySimplification):
+        problems.extend(_geometry_schema_problems(strategy, columns, stream=stream))
+    return tuple(problems)
+
+
+def _geometry_schema_problems(
+    strategy: GeometrySimplification, columns: Mapping[str, object], *, stream: str
+) -> list[str]:
+    """Name the geometry column and every coverage-partition column `strategy` reads that the schema lacks."""
+    problems: list[str] = []
+    if strategy.geometry_column not in columns:
         problems.append(
             f"{stream}: the derivation names geometry column {strategy.geometry_column!r}, which its schema lacks"
         )
-    return tuple(problems)
+    problems.extend(
+        f"{stream}: the derivation partitions its coverage on column {missing!r}, which its schema lacks"
+        for missing in sorted(set(strategy.coverage_partition_columns) - set(columns))
+    )
+    return problems
 
 
 __all__ = [

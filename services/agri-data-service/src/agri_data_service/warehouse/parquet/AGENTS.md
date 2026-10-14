@@ -256,3 +256,48 @@ fallback died before touching the network. `_load_spatial` now runs
 directory both sessions share -- and only when that directory exists, so a developer machine still falls
 back to `$HOME/.duckdb`. Point lanes never saw this: their coarse rungs are Polars aggregations and never
 open DuckDB.
+
+## Coverage-preserving simplification (`coverage_partition_columns`, 2026-10-13)
+
+**Why.** `ST_SimplifyPreserveTopology` preserves topology *within one geometry*. It knows nothing of the
+row beside it. A lane whose rows tile the ground between them (drought: D0-D4 of one USDM release) gets
+each shared edge simplified twice, once per side, along two different paths. The result is seams that
+show the basemap and slivers where two classes overlap. Measured on the 2026-10-06 release, which is a
+valid polygonal coverage at z13 (`ST_CoverageInvalidEdges` is NULL, inter-class overlap exactly 0):
+
+| published rung (per-row) | inter-class overlap | widest seam | classes still painted their own class |
+|---|---|---|---|
+| z9 (0.01°) | 0.11 deg² | 0.0135° (interior) | 99.5-99.8% |
+| z5 (0.2°) | 14.2 deg² | 0.26° | 82.8-92.0% |
+| z0 (5.0°) | 245.7 deg² | 1.50° | 34.9-77.9% |
+
+The 2025-08-05 and 2023-01-03 releases show the same pattern: valid coverages at z13, and at z5 4.1 and
+6.1 deg² of seams that lie more than 0.25° inside the drought edge, i.e. real cracks rather than
+generalised outline. Raw captures and scripts: `.omc/research/drought-geometry-2026-10-13/`.
+
+**What.** When a `GeometrySimplification` names `coverage_partition_columns`, `_coverage_query` gathers
+each partition's rows in a fixed total order. It simplifies them as ONE coverage
+(`ST_CoverageSimplify(GEOMETRY[], tolerance)`, which is GEOS `CoverageSimplifier`). Then it maps
+collection element *i* back to row *i* through `ST_Dump`'s first path index. Same-day overlap and
+interior seams are zero by construction, at every rung (three of three sampled releases at 0.2°).
+
+**Three behaviours a maintainer must not be surprised by.**
+- *An invalid coverage takes the per-row simplifier.* This DuckDB build returns an invalid coverage
+  UNSIMPLIFIED, so the rung would silently carry base-rung bytes (8.9 MB national for drought). The
+  validity test runs first, and `ST_CoverageSimplify` is evaluated only inside its `CASE`. A release
+  whose repaired classes overlap is therefore published exactly as before this change, with today's
+  seams, rather than refused or bloated.
+- *The tolerance is Visvalingam-Whyatt's, not Douglas-Peucker's.* At the same number, it keeps more
+  vertices. Drought national GeoJSON: z9 1.68 MB (vs 1.30 MB per-row), z5 581 KB (vs 545 KB).
+- *Every member survives.* A polygon smaller than the tolerance becomes a triangle, never EMPTY. The
+  `NOT ST_IsEmpty` filter still guards the path.
+
+**`tolerance_degrees_by_tier`** overrides `TIER_RESOLUTION_DEGREES` for one lane and leaves the shared
+ladder alone (`agent/selection_scope.py` and every lane import it). Drought sets z0 to 0.2° because
+5.0° destroys its shapes and buys almost no bytes (`warehouse/schemas/drought.py`,
+`DROUGHT_Z0_TOLERANCE_DEGREES`).
+
+**Already-published rungs are NOT rewritten by this change.** New releases pick it up at their next
+publish. A published release is re-derived only by republishing it. The web map does not wait for
+that: it reads only the z9 rung below z7 and the base from z7 (`src/lib/map/AGENTS.md`, "Drought
+rungs").

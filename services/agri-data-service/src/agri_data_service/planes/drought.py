@@ -215,14 +215,11 @@ def most_severe_class_at_point(  # noqa: PLR0913 - one parameter per point/windo
 ) -> DroughtCoverageAnswer:
     """Return the MOST SEVERE USDM class covering one WGS-84 point, from the resolved release.
 
-    The five USDM classes are nested severity boundaries, not a spatial partition: D4 is drawn as
-    a subset of D3, ... D0 as the broadest boundary, so a point inside D4 is typically inside every
-    lower class too. That is a fact about USDM's own cartography stated by the task that requested
-    this module, consistent with USDM's published GIS convention; it was NOT independently
-    re-derived from a live geometry query here, since this session may not run one. The query below
-    does not assume it: every polygon covering the point is tested and the HIGHEST `dm_category`
-    among the matches wins, which is the correct answer whether or not the nesting invariant holds
-    exactly for a given release.
+    The five classes are MUTUALLY EXCLUSIVE, not nested. Measured 2026-10-13 on three releases: 0% of
+    any D(k+1) lies inside D(k), and each base release is a valid polygonal coverage
+    (`warehouse/parquet/AGENTS.md`, "Coverage-preserving simplification"). The query still tests
+    every covering polygon and keeps the HIGHEST `dm_category`. A per-class-simplified coarse rung
+    can put a point inside two classes, and the more severe one is the conservative answer.
     """
     zoom = serving_zoom_tier(requested_zoom)
     answer = resolve_drought_release(

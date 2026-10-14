@@ -85,8 +85,8 @@ DROUGHT_SCHEMA: Final = register_stream_schema(
 )
 
 # Tier derivation: SIMPLIFY ONLY, no hierarchy (no dissolve, no aggregations). With dissolve=None,
-# every row is carried through unchanged and only the geometry is generalised via topology-
-# preserving simplification, so no per-column aggregates are needed and no nullability changes.
+# every row is carried through unchanged and only the geometry is generalised (coverage
+# simplification, below), so no per-column aggregates are needed and no nullability changes.
 # THE AREA FLOOR IS DELIBERATELY UNSET, and the measurement is why. `min_area_tier_squares=1.0`
 # was the first choice and it EMPTIES this lane at z0: one z0 grid square is 5.0 x 5.0 = 25 square
 # degrees, while the whole PNW universe this warehouse holds is roughly 10 x 10 degrees, so every
@@ -95,12 +95,24 @@ DROUGHT_SCHEMA: Final = register_stream_schema(
 # Simplification alone already collapses these polygons to a handful of vertices, which is where
 # the byte saving actually comes from. The knob stays available for a future lane whose features
 # are genuinely global in extent; for this data, dropping is the wrong half of the trade.
+#
+# ONE RELEASE IS ONE COVERAGE. The five classes are mutually exclusive and share their edges exactly
+# (measured on three releases, 2026-10-13), so each `valid_date` is simplified as a coverage and a
+# shared class edge moves once. See `warehouse/parquet/AGENTS.md`, "Coverage-preserving simplification".
+
+# z0's tolerance, in degrees, replacing the shared ladder's 5.0 for this lane only. Measured on the
+# 2026-10-06 national release (GeoJSON bytes): 5.0 keeps 50-79% of each class's area for 474 KB; 0.2
+# keeps 88-96% for 581 KB. Drought's byte floor is its polygon count, not its tolerance.
+DROUGHT_Z0_TOLERANCE_DEGREES: Final = 0.2
+
 DROUGHT_DERIVATION: Final = register_tier_derivation(
     TierDerivation(
         stream=DROUGHT_STREAM,
         strategy=GeometrySimplification(
             geometry_column="geom",
             min_area_tier_squares=None,
+            coverage_partition_columns=("valid_date",),
+            tolerance_degrees_by_tier=((0, DROUGHT_Z0_TOLERANCE_DEGREES),),
         ),
     )
 )
