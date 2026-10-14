@@ -14,7 +14,9 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import UTC, date, datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
+
+import pytest
 
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
@@ -25,11 +27,9 @@ from agri_data_service.pipeline.parquet.availability_extension import (
     AvailabilityExtensionTally,
 )
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
+from agri_data_service.pipeline.parquet.verified_days import VERIFIED_REFUSAL
 from agri_data_service.warehouse.schemas.water_gauges import WATER_GAUGES_SCHEMA
 from tests.parquet.test_objectstore_writer import RecordingBackend
-
-if TYPE_CHECKING:
-    import pytest
 
 DAY_ONE = date(2026, 9, 1)
 DAY_TWO = date(2026, 9, 2)
@@ -280,3 +280,21 @@ def test_forward_availability_drain_failure_never_blocks_source_publication(
     event = json.loads(capsys.readouterr().out.strip())
     assert event["event"] == "water_gauges_forward_availability_retry_failed"
     assert event["detail"] == "RuntimeError: temporary read fault"
+
+
+@pytest.mark.parametrize(
+    ("outcomes", "exit_code"),
+    [
+        # Every unwritten day is a verified day the seam refused: manual correction only, not a failure.
+        ([VERIFIED_REFUSAL], 0),
+        # A raised day beside it is still the failure the exit code reports.
+        ([VERIFIED_REFUSAL, "raised"], 1),
+    ],
+)
+def test_a_verified_day_the_seam_refused_does_not_fail_the_poll(outcomes: list[str], exit_code: int) -> None:
+    """The owner verified a day still inside the rolling window: the poll skips it without tripping the breaker."""
+    days = (DAY_TWO, DAY_ONE)
+    verdict = forward._bucket_verdict([_result(days[index], outcome) for index, outcome in enumerate(outcomes)])
+
+    assert verdict.outcome == "incomplete"
+    assert verdict.exit_code == exit_code

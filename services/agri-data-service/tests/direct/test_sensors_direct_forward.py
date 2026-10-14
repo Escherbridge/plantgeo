@@ -25,6 +25,7 @@ from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct.sensors import forward
 from agri_data_service.pipeline.direct.sensors.adapter import OverturnedAbsence, RetractedAbsenceMarker
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
+from agri_data_service.pipeline.parquet.verified_days import VERIFIED_REFUSAL
 from agri_data_service.warehouse.schemas.sensors import SENSORS_SCHEMA
 from tests.parquet.test_objectstore_writer import RecordingBackend
 
@@ -357,3 +358,47 @@ def test_a_retraction_followed_by_a_failed_write_is_still_reported_on_the_attemp
     assert attempt["absence_overturned"]["markers"][0]["run_id"] == (
         "pipeline/lanes/sensors.py:export_sensors_day:20260906T012000Z"
     ), "the retired producer's provenance must reach the parsed report, not only stderr"
+
+
+@pytest.mark.parametrize(
+    ("alongside", "exit_code"),
+    [
+        # The only due day is verified: the poll leaves it alone and stays green.
+        ([], 0),
+        # A real publish fault beside it still trips the breaker.
+        ([_result(DAY_TWO, "raised", detail=REFUSAL, publish_attempted=True)], 1),
+    ],
+)
+def test_a_verified_day_the_seam_refused_does_not_fail_the_poll(
+    monkeypatch: pytest.MonkeyPatch, alongside: list[forward.ForwardDayResult], exit_code: int
+) -> None:
+    """The owner verified a day still inside the rolling window: a manual-correction-only skip, never exit 1."""
+
+    async def refuse(
+        _session: object, _store: object, _lane: object, **_kwargs: object
+    ) -> tuple[str, int, int, int, str]:
+        return (VERIFIED_REFUSAL, 0, 0, 0, f"{VERIFIED_REFUSAL}: sensors 2026-09-01 is verified")
+
+    monkeypatch.setattr(forward, "fill_one_lane_day", refuse)
+
+    class _SessionDouble:
+        async def rollback(self) -> None:
+            return None
+
+    refused = asyncio.run(
+        forward._publish_day(
+            cast("Any", _SessionDouble()),
+            ObjectStore(RecordingBackend()),
+            day=DAY_ONE,
+            table=SENSORS_SCHEMA.arrow_schema.empty_table(),
+            run_id="sensors-direct-forward-test",
+            max_day_attempts=3,
+            retry_base_seconds=0.0,
+            retry_max_seconds=0.0,
+            contention_timeout_seconds=0.0,
+        )
+    )
+    verdict = forward._bucket_verdict([refused, *alongside])
+
+    assert (refused.outcome, refused.attempts, refused.publish_attempted) == (VERIFIED_REFUSAL, 1, False)
+    assert verdict.exit_code == exit_code

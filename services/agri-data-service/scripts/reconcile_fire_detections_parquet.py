@@ -53,6 +53,7 @@ from agri_data_service.pipeline.parquet.gap_fill import (  # noqa: E402
 )
 from agri_data_service.pipeline.parquet.lane_registry import resolve_lanes  # noqa: E402
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore, conform_to_stream_schema  # noqa: E402
+from agri_data_service.pipeline.parquet.verified_days import VERIFIED_REFUSAL  # noqa: E402
 from agri_data_service.warehouse.parquet.tiers import DERIVED_ZOOM_TIERS, derive_tier  # noqa: E402
 from agri_data_service.warehouse.schemas.fire_detections import (  # noqa: E402
     FIRE_DETECTIONS_SCHEMA,
@@ -900,6 +901,14 @@ async def _repair_day(
             outcome = "raised"
             parts = rows = written_bytes = 0
             detail = f"{day.isoformat()}: {type(error).__name__}: {error}"
+        if outcome == VERIFIED_REFUSAL:
+            # The day is VERIFIED: no retry can change it, and this script never corrects one.
+            return {
+                "day": day.isoformat(),
+                "outcome": outcome,
+                "detail": detail,
+                "next_step": "release it with `data availability-release-verified-days --reason ...`, then re-run",
+            }
         if outcome == "contended":
             contention_polls += 1
             if contention_polls >= args.lock_polls:
@@ -1254,6 +1263,10 @@ async def _run_locked(args: argparse.Namespace, *, checkpoint_path: Path) -> int
                     args=args,
                 )
             result["repair_attempts"] = repair_reports
+            # Named apart from `remaining_repairable_days`: only a release by hand lets a repair touch these.
+            result["verified_days_left_alone"] = [
+                report["day"] for report in repair_reports if report["outcome"] == VERIFIED_REFUSAL
+            ]
             result["pre_repair_issues"] = pre_repair_issues if repair_reports else []
             result["remaining_repairable_days"] = [day.isoformat() for day in sorted(repairable)]
             result["manual_intervention_days"] = [day.isoformat() for day in sorted(manual)]

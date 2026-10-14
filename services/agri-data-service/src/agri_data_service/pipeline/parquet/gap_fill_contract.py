@@ -109,7 +109,9 @@ MAX_STATIC_EXPORT_ATTEMPTS: Final = 2
 # into `complete`: "this reference set matches its source" and "this window has no gaps left" are
 # different claims about different clocks, and an operator scanning a summary needs to see which.
 LaneFillOutcome = Literal["complete", "filled", "budget_exhausted", "raised", "blocked", "no_window", "current"]
-LaneDayOutcome = Literal["written", "absent", "raised", "blocked", "contended"]
+# `verified_manual_correction_only` (`verified_days.VERIFIED_REFUSAL`): the day is verified and this
+# automated write was refused before it touched anything -- neither failure nor progress.
+LaneDayOutcome = Literal["written", "absent", "raised", "blocked", "contended", "verified_manual_correction_only"]
 
 # The outcomes that mean this tick found something WRONG, as opposed to found work still to do.
 # Named once so the summary, the exit rule and any log line cannot disagree about what failure is.
@@ -277,6 +279,8 @@ class LaneFillVerdict:
     #: together would tell an operator "wait for the next tick" about a day no tick will ever fix.
     #: Defaulted rather than positional so a caller built before this field existed still constructs.
     ladder_unrepairable: int = 0
+    #: Owed days (export or ladder) this turn left alone because they are VERIFIED: manual correction only.
+    skipped_verified: int = 0
 
     def to_row(self) -> dict[str, object]:
         """Render one summary-table row."""
@@ -292,6 +296,7 @@ class LaneFillVerdict:
             "remaining": self.remaining,
             "ladder_remaining": self.ladder_remaining,
             "ladder_unrepairable": self.ladder_unrepairable,
+            "skipped_verified": self.skipped_verified,
             "parts": self.parts,
             "rows": self.rows,
             "bytes": self.written_bytes,
@@ -354,6 +359,7 @@ class GapFillSummary:
             "blocked": sum(lane.blocked for lane in self.lanes),
             "blocked_lanes": [lane.slug for lane in self.lanes if lane.blocked],
             "contended": sum(lane.contended for lane in self.lanes),
+            "skipped_verified": sum(lane.skipped_verified for lane in self.lanes),
             **self.availability.to_summary(),
             # The two availability verdicts that lose a terminal day for good, named at the top level
             # so an operator does not have to read a per-lane detail string to find them.

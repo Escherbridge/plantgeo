@@ -195,6 +195,7 @@ def parse_args(argv: Sequence[str] | None = None) -> BurnSeverityForwardConfig:
         contention_timeout_seconds=arguments.contention_timeout_seconds,
         run_id=arguments.run_id,
         bbox=arguments.bbox,
+        correct_verified=arguments.correct_verified,
     )
     try:
         _validate_config(config)

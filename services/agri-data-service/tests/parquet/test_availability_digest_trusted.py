@@ -45,6 +45,13 @@ from agri_data_service.pipeline.parquet.availability_primitives import (
 from agri_data_service.pipeline.parquet.availability_reconciliation import AvailabilityReconciliationError
 from agri_data_service.pipeline.parquet.availability_trusted_digest import compile_trusted_digest
 from agri_data_service.pipeline.parquet.gap_fill import GAP_FILL_PARTITION_KIND, GAP_FILL_ZOOM_TIER
+from agri_data_service.pipeline.parquet.verified_days import (
+    AUTOMATED_REWRITE,
+    VERIFIED_REFUSAL,
+    automated_rewrite_refusal,
+    ladder_sha256,
+    read_verified_days,
+)
 from agri_data_service.warehouse.schemas.availability_index import AVAILABILITY_REQUIRED_RUNGS
 from tests.parquet.test_availability_extension import (
     LANE,
@@ -355,6 +362,154 @@ def test_apply_with_the_reviewed_pins_publishes_rows_that_cite_every_part_by_dig
     _code, _output, rerun = digest(tmp_path)
     assert {day_report(rerun, day)["reason"] for day in TRUSTED_DAYS} == {"already_hashed"}
     assert rerun["document_sha256"] is None
+
+
+def test_apply_verifies_exactly_the_days_it_published_and_a_digested_by_shape_day_stays_unverified(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Owner 2026-10-13: only the manual verb verifies; HASHED_DAY reads `digested` by shape and is NOT verified."""
+    _backend, store, storage = trusted_lane()
+    wire_cli(monkeypatch, store, storage)
+    _code, _output, reviewed = digest(tmp_path)
+    assert read_verified_days(store, lane=LANE, kind=GAP_FILL_PARTITION_KIND).days == {}, "a dry run verifies nothing"
+
+    code, output, _report = digest(
+        tmp_path,
+        "--apply",
+        "--expected-sha256",
+        cast("str", reviewed["document_sha256"]),
+        "--expected-head-generation",
+        cast("str", reviewed["head_generation_key"]),
+    )
+
+    assert code == 0, output
+    registration = json.loads(output)["verified_registration"]
+    assert registration["registered"] == [day.isoformat() for day in TRUSTED_DAYS]
+    register = read_verified_days(store, lane=LANE, kind=GAP_FILL_PARTITION_KIND)
+    assert sorted(register.days) == list(TRUSTED_DAYS)
+    index = read_latest_availability(storage, lane_root=LANE_ROOT)
+    for day in TRUSTED_DAYS:
+        entry = register.days[day]
+        assert entry.ladder_sha256 == ladder_sha256([row for row in index.rows if row.day == day])
+        assert (entry.generation_key, entry.verified_by) == (
+            index.pointer.generation_key,
+            "availability-digest-trusted",
+        )
+
+
+def verify(*extra: str) -> tuple[int, dict[str, object]]:
+    """Run `availability-verify-days` over the fixture's whole range; return its exit code and JSON line."""
+    result = CliRunner().invoke(
+        cli,
+        [
+            "data",
+            "availability-verify-days",
+            "--lane",
+            LANE,
+            "--kind",
+            GAP_FILL_PARTITION_KIND,
+            "--start",
+            FIRST.isoformat(),
+            "--end",
+            LAST.isoformat(),
+            *extra,
+        ],
+    )
+    lines = result.output.strip().splitlines()
+    payload = json.loads(lines[-1]) if lines and lines[-1].startswith("{") else {}
+    return result.exit_code, payload
+
+
+def test_verify_days_registers_only_wholly_digested_days_and_only_against_the_reviewed_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The re-verification verb: a dry run names each day's fate; `--apply` needs the head it was reviewed against."""
+    _backend, store, storage = trusted_lane()
+    wire_cli(monkeypatch, store, storage)
+
+    code, dry = verify()
+
+    assert code == 0
+    assert dry["would_register"] == [HASHED_DAY.isoformat()]
+    assert dry["skipped"] == {"manifest_trusted": [day.isoformat() for day in (*TRUSTED_DAYS, MIXED_DAY)]}
+    stale_code, _stale = verify("--apply", "--expected-head-generation", "not-the-reviewed-head")
+    assert stale_code != 0
+    assert read_verified_days(store, lane=LANE, kind=GAP_FILL_PARTITION_KIND).days == {}
+
+    code, applied = verify("--apply", "--expected-head-generation", cast("str", dry["head_generation_key"]))
+
+    assert code == 0
+    assert applied["registered"] == [HASHED_DAY.isoformat()]
+    assert sorted(read_verified_days(store, lane=LANE, kind=GAP_FILL_PARTITION_KIND).days) == [HASHED_DAY]
+
+
+def release(*extra: str) -> tuple[int, dict[str, object]]:
+    """Run `availability-release-verified-days` for HASHED_DAY and MIXED_DAY; return its exit code and JSON line."""
+    result = CliRunner().invoke(
+        cli,
+        [
+            "data",
+            "availability-release-verified-days",
+            "--lane",
+            LANE,
+            "--kind",
+            GAP_FILL_PARTITION_KIND,
+            "--day",
+            HASHED_DAY.isoformat(),
+            "--day",
+            MIXED_DAY.isoformat(),
+            "--reason",
+            "provider revised the release",
+            *extra,
+        ],
+    )
+    lines = result.output.strip().splitlines()
+    payload = json.loads(lines[-1]) if lines and lines[-1].startswith("{") else {}
+    return result.exit_code, payload
+
+
+def _automated_refusal(store: ObjectStore) -> str | None:
+    return automated_rewrite_refusal(
+        store, lane=LANE, nature="daily_series", kind=GAP_FILL_PARTITION_KIND, day=HASHED_DAY, policy=AUTOMATED_REWRITE
+    )
+
+
+def test_release_hands_a_verified_day_back_to_automation_and_leaves_who_and_why_in_the_register(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The manual path every lane has: after a release the seam stops refusing, and the trace says who and why."""
+    _backend, store, storage = trusted_lane()
+    wire_cli(monkeypatch, store, storage)
+    _code, reviewed = verify()
+    verify("--apply", "--expected-head-generation", cast("str", reviewed["head_generation_key"]))
+    refused_before = _automated_refusal(store)
+
+    dry_code, dry = release()
+    code, applied = release("--apply", "--run-id", "owner-fix-1")
+
+    assert refused_before is not None
+    assert refused_before.startswith(VERIFIED_REFUSAL)
+    assert (dry_code, dry["would_release"], dry["not_verified"]) == (
+        0,
+        [HASHED_DAY.isoformat()],
+        [MIXED_DAY.isoformat()],
+    )
+    assert code == 0, applied
+    assert applied["released"] == [HASHED_DAY.isoformat()]
+    assert _automated_refusal(store) is None, "the release must reach the seam, not wait out its memo"
+    register = read_verified_days(store, lane=LANE, kind=GAP_FILL_PARTITION_KIND)
+    assert register.days == {}
+    (trace,) = register.corrections
+    marker = store.read_completion_receipt(LANE, GAP_FILL_PARTITION_KIND, BASE, HASHED_DAY)
+    assert marker is not None
+    assert (trace.day, trace.run_id, trace.reason, trace.new_base_completion_sha256) == (
+        HASHED_DAY,
+        "owner-fix-1",
+        "provider revised the release",
+        None,
+    )
+    assert trace.old_base_completion_sha256 == marker.sha256
 
 
 def _rewrite_marker(backend: LoggingBackend, store: ObjectStore) -> None:

@@ -60,6 +60,8 @@ RepairVerdict = Literal[
     "deferred_by_budget",
     "deferred_by_rotation",
     "complete",
+    # Every measured gap day is VERIFIED (`pipeline/parquet/verified_days.py`): manual correction only.
+    "verified_only",
     "coverage_withheld",
     "no_repair_binding",
     "lane_inactive",
@@ -318,6 +320,8 @@ class LaneGapFacts:
     behind_provider: bool | None
     #: The first withholding any rung states; unproven coverage authors no work.
     withheld_reason: str | None = None
+    #: Measured gap days removed because they are verified; they are never handed to a writer.
+    skipped_verified_days: int = 0
 
     @property
     def oldest_gap_day(self) -> date | None:
@@ -362,6 +366,7 @@ class RepairCandidate:
             ),
             "staleness_days": facts.staleness_days,
             "behind_provider": facts.behind_provider,
+            "skipped_verified_days": facts.skipped_verified_days,
             "request": None if self.request is None else self.request.to_payload(),
         }
 
@@ -397,15 +402,19 @@ class RepairPlan:
 AUTHORIZING_VERDICTS: Final[frozenset[str]] = frozenset({"repair_authorized", "behind_provider"})
 
 
-def select_repair_candidates(
+def select_repair_candidates(  # noqa: PLR0913 - the rows, the activation, the clock, the budget and two filters
     rows: Sequence[LaneCoverage],
     *,
     active_lanes: AbstractSet[str],
     now: datetime,
     budget: RepairBudget,
     recently_authored: AbstractSet[str] = frozenset(),
+    verified_days: Mapping[tuple[str, str], AbstractSet[date]] | None = None,
 ) -> RepairPlan:
     """Turn coverage rows into bounded repair verdicts: which lanes get a turn, and why every other one does not.
+
+    `verified_days` (keyed `(layer, kind)`) are taken out of every gap first, so a lane whose measured
+    gaps are all verified reads `verified_only` and authors nothing (owner 2026-10-13).
 
     The rows are the census's Parquet-derived evidence and the only input; nothing here reads a
     database or lists an object prefix. Lanes flagged `behind_provider` are ordered first, then the
@@ -417,9 +426,16 @@ def select_repair_candidates(
     grouped: dict[tuple[str, str], list[LaneCoverage]] = {}
     for row in rows:
         grouped.setdefault((row.layer, row.kind), []).append(row)
+    verified = verified_days or {}
     judged = [
-        _judge(measure_lane_gaps(lane_rows), active_lanes=active_lanes, today=today, now=now, budget=budget)
-        for lane_rows in grouped.values()
+        _judge(
+            measure_lane_gaps(lane_rows, verified=verified.get(key, frozenset())),
+            active_lanes=active_lanes,
+            today=today,
+            now=now,
+            budget=budget,
+        )
+        for key, lane_rows in grouped.items()
     ]
     authorizing = [candidate for candidate in judged if candidate.verdict in AUTHORIZING_VERDICTS]
     rotated_out = [candidate for candidate in authorizing if candidate.layer in recently_authored]
@@ -457,10 +473,14 @@ def select_repair_candidates(
     return RepairPlan(candidates=tuple(ordered), budget=budget)
 
 
-def measure_lane_gaps(rows: Sequence[LaneCoverage]) -> LaneGapFacts:
-    """Fold one lane's rung rows into the facts a verdict reads; a hole on ANY rung is a hole in the lane."""
+def measure_lane_gaps(rows: Sequence[LaneCoverage], *, verified: AbstractSet[date] = frozenset()) -> LaneGapFacts:
+    """Fold one lane's rung rows into the facts a verdict reads; a hole on ANY rung is a hole in the lane.
+
+    Verified days are removed from the holes before anything is counted: they are never repair work.
+    """
     first = rows[0]
-    gaps = union_day_ranges(entry for row in rows for entry in row.gap_ranges)
+    measured = union_day_ranges(entry for row in rows for entry in row.gap_ranges)
+    gaps, skipped_verified = subtract_days(measured, verified)
     binding = REPAIR_BINDINGS.get(first.layer)
     flagged = [row.behind_provider for row in rows if row.behind_provider is not None]
     return LaneGapFacts(
@@ -475,6 +495,7 @@ def measure_lane_gaps(rows: Sequence[LaneCoverage]) -> LaneGapFacts:
         staleness_days=max((row.staleness_days for row in rows if row.staleness_days is not None), default=None),
         behind_provider=any(flagged) if flagged else None,
         withheld_reason=next((row.withheld_reason for row in rows if row.withheld_reason is not None), None),
+        skipped_verified_days=skipped_verified,
     )
 
 
@@ -496,6 +517,15 @@ def _judge(  # noqa: PLR0911 - one return per verdict word
     if binding is None:
         detail = REPAIR_EXCLUSIONS.get(facts.layer, "no executor lane repairs this layer through a bounded knob")
         return RepairCandidate(facts=facts, verdict="no_repair_binding", detail=detail)
+    if not facts.gap_ranges and facts.skipped_verified_days and not facts.behind_provider:
+        return RepairCandidate(
+            facts=facts,
+            verdict="verified_only",
+            detail=(
+                f"every measured gap day ({facts.skipped_verified_days}) is verified; verified days are corrected "
+                "by hand, never repaired"
+            ),
+        )
     if not facts.gap_ranges and not facts.behind_provider:
         return RepairCandidate(facts=facts, verdict="complete", detail="no gap measured through the lane's own ceiling")
     if binding.lane_id not in active_lanes:
@@ -591,6 +621,23 @@ def union_day_ranges(ranges: Iterable[DayRange]) -> tuple[DayRange, ...]:
     return tuple(merged)
 
 
+def subtract_days(ranges: Sequence[DayRange], days: AbstractSet[date]) -> tuple[tuple[DayRange, ...], int]:
+    """Remove `days` from ascending closed ranges, splitting around each one; return the rest and how many went."""
+    kept: list[DayRange] = []
+    removed = 0
+    for entry in ranges:
+        inside = sorted(day for day in days if entry.first_day <= day <= entry.last_day)
+        removed += len(inside)
+        start = entry.first_day
+        for day in inside:
+            if start < day:
+                kept.append(DayRange(first_day=start, last_day=day - timedelta(days=1)))
+            start = day + timedelta(days=1)
+        if start <= entry.last_day:
+            kept.append(DayRange(first_day=start, last_day=entry.last_day))
+    return tuple(kept), removed
+
+
 def _newest(days: Iterable[date | None]) -> date | None:
     known = [day for day in days if day is not None]
     return max(known) if known else None
@@ -640,5 +687,6 @@ __all__ = [
     "RepairVerdict",
     "measure_lane_gaps",
     "select_repair_candidates",
+    "subtract_days",
     "union_day_ranges",
 ]

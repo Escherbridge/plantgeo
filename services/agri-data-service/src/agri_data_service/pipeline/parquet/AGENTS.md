@@ -374,7 +374,7 @@ still allowed there because it reads the published base rung and never invokes t
   after a failed statement, that rollback is what makes per-lane isolation real rather than asserted.
   `SET LOCAL statement_timeout` dies with it, so the 120 s pin is re-applied per day.
 
-## Five lane-day outcomes, and what each one means to an operator
+## Six lane-day outcomes, and what each one means to an operator
 
 **`LaneDayOutcome`** classifies what happened to one lane-day attempt. The driver's census groups
 by outcome; an operator reading a failed tick needs to know what each one means and what to DO.
@@ -396,10 +396,109 @@ by outcome; an operator reading a failed tick needs to know what each one means 
   admin resolves it.
 - **`contended`** — another run holds this lane-day's advisory lock. NOT a failure; the other run is
   working on it. Nothing to do. Not counted in `written`, `absent`, or any failure tally.
+- **`verified_manual_correction_only`** — the day is VERIFIED (or the register could not prove an
+  existing day is not), so this automated write was refused before it fetched or wrote anything. NOT a
+  failure; counted as `skipped_verified`. Change the day only with a manual verb and
+  `--correct-verified`. See "Verified days are manual-correction only".
 
 **A remaining backlog after a tick is not a failure.** Only outcomes in `FAILING_LANE_OUTCOMES`
 (`raised`, `blocked`) set a non-zero exit code — matching `jobs-pulse`'s exit philosophy, and safe
 under `restartPolicyType: NEVER`. A tick that wrote 50 days and has 500 still unfilled exits 0.
+
+## Verified days are manual-correction only (owner 2026-10-13)
+
+Owner directive: *"Stop backfill automation once records have been verified; corrections should be
+manual."* Home: `verified_days.py`.
+
+**Definition.** A lane-day is VERIFIED when its lane's verified-days register names it
+(`objectstore.verified_days_register_path`: `layer=<slug>/kind=<kind>/availability/verified-days.json`).
+Only manual verbs write the register. A third one, `availability-release-verified-days`, only removes
+days (see "Release by hand" below). Two add days, and only days whose every required rung is
+published and `digested`:
+- `data availability-digest-trusted --apply` registers each day it upgraded from `manifest_trusted` to
+  `digested`, read back from the head AFTER its publish (a day the head no longer matches is named
+  `head_changed_after_digest`, never registered);
+- `data availability-verify-days --apply` (head-pinned) registers already-digested published days. It
+  is how a manually corrected day is re-verified.
+
+`manifest_trusted` days are never verified. Governed absences are never verified (neither verb
+registers one), so the 14-day absence rechecks keep running.
+
+**Why a register, not the index's `digested` class.** The first definition proposed was "the index
+entry carries `DIGESTED_PROVENANCE`". That class is a SHAPE (see "Provenance is a SHAPE" above):
+`availability_row_provenance` returns `digested` for EVERY row except published-with-rows-and-no-part,
+so every day the forward path publishes (its ledger names the parts it wrote) and every governed
+absence reads `digested` already. Gating on it would have frozen each indexed day the moment it was
+published -- partial-day rechecks (`more_units`), provider revisions (`digest_changed`), absence
+rechecks and ladder repairs would all stop on the first deploy, although `availability-digest-trusted
+--apply` has never run. The register makes "verified" mean what the owner meant (a manual verb was run
+over the day) and leaves production unchanged until the owner verifies a lane.
+
+**The policy.** `RewritePolicy` is `AUTOMATED_REWRITE` (the default of every seam) or
+`MANUAL_CORRECTION` (a manual verb run with `--correct-verified`).
+
+**One choke point.** `gap_fill_day.fill_one_lane_day` and `gap_fill_repair.repair_one_lane_day` ask
+`automated_rewrite_refusal` UNDER the lane-day lock and BEFORE the adapter runs. Under the automated
+policy a verified day returns the lane-day outcome `verified_manual_correction_only` having fetched
+and written nothing. Every writer -- the config runner, gap fill, the drain, every
+`pipeline/direct/*` forward, the manual scripts -- reaches the bucket through one of these two, so no
+adapter can forget. `runner/writer.py::write_day` asks the same question before it marks a turn
+receipt `pending`. A static lane has no index, so nothing about it can be verified and no GET is spent.
+
+**Fail-closed for overwrites only.** A register that cannot be read or parsed comes back
+`VerifiedDays.unreadable`. The seam then checks whether the base rung already holds a marker, an
+absence or a part: if it does, or that cannot be read, the automated write is refused; a brand-new
+missing day is still written.
+
+**One read per lane per turn.** `verified_days_for(store, lane, kind)` memoizes one GET per lane per
+`ObjectStore` instance (built per turn), for at most 300 s, so a long-lived store cannot hold a stale
+answer. Planners share that memo with the seam.
+
+**Planners.** `run_gap_fill` drops verified days from both queues before the walk and counts them
+(`skipped_verified` per lane and in the summary). The config runner passes `verified=` into
+`decide_rewrite` (any writing decision becomes `verified_manual_correction_only`; a transform writes no
+receipt for it) and skips verified ladder repairs. The executor's repair planner subtracts verified
+days from measured gaps (`execution/AGENTS.md`, "Bounded gap repair"). Direct forward drivers rely on
+the seam and report the day as skipped (`pipeline/direct/AGENTS.md`).
+
+**Ladder repair is refused too.** The digest covers every required rung (`_skip_reason` demands the
+whole ladder and `_check_trusted_day` hashes each rung), so re-deriving a verified day's coarse rungs
+would change bytes the owner verified.
+
+**Manual correction.** Under `MANUAL_CORRECTION`, `fill_one_lane_day` refuses (before writing) unless
+availability storage is wired, reads the base completion marker's digest, writes, then
+`record_correction`: removes the day from the register and appends a `corrections` record (day,
+`run_id`, the verified ladder digest, old and new base-marker sha256) under compare-and-swap, and
+logs `plantgeo_verified_day_corrected`. The republished index row is `digested` by shape (new parts,
+hashed as written) but the day is NO LONGER VERIFIED until the owner re-runs
+`availability-verify-days`. A failed release leaves the old entry standing, which keeps automation off
+the day, and the day's detail says so.
+
+**Release by hand, for every lane.** `--correct-verified` exists only on drought and burn-severity
+forward/backfill and `scripts/correct_sensor_absences.py`. Every other lane corrects a verified day
+with `data availability-release-verified-days --lane --kind --day ... --reason --apply`
+(`interface/cli/AGENTS.md`). It releases the days in one compare-and-swap and leaves a `corrections`
+record for each, with its `reason` and `new_base_completion_sha256: null`. After that, ordinary
+automation or any manual verb may rewrite the day. Then re-verify it.
+
+**Rolling windows skip, never fail.** Sensors, weather-observations and water-gauges excuse a
+refused day in their bucket verdict. Crop-cover returns `verified_manual_correction_only` as its
+outcome. A verified day inside a merge window therefore never turns a poll red.
+
+**Production state: the gate is INERT until the owner applies it.** No register object exists until
+a manual verb writes one. On deploy nothing is verified, and every automated path behaves exactly as
+before, including rewrites of already-`digested` history. Until then the owner's directive ("stop
+backfill automation once records have been verified") is NOT met.
+
+Owner decision (review 2026-10-13), one of:
+- **(a) keep the register.** Go live by running `availability-verify-days --apply` (head-pinned) per
+  lane over settled ranges.
+- **(b) a hybrid predicate.** `automated_rewrite_refusal` would also refuse a day whose head row is
+  `digested` at every required rung AND is older than the lane's recheck horizon (e.g.
+  `max(CLIMATE_ABSENCE_RECHECK_DAYS, settle lag)`). This honours "verified = digested" without
+  freezing the forward edge.
+
+The register definition above stands until the owner chooses (b).
 
 ## Reading it back
 `polars_storage_options(credentials)` returns the Polars/`object_store` connection dict for

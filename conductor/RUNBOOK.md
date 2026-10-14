@@ -779,6 +779,18 @@ Every push passed the full `npm test`, the agri `check.py` receipt and a live pr
 - **`OfflinePanel.tsx:52` download box** — a product decision, tracked as a known offender in
   `src/__tests__/region/footprint-literals.test.ts`.
 - **Digest backfill go (2026-10-08):** each `availability-digest-trusted --apply` needs an owner go. Before dew-point, decide whether to raise the 8 MiB index cache or limit how much history gets hashed (its full history overflows the cache).
+- **Verified-days gate is inert until you choose (2026-10-13).** "Stop backfill automation once records
+  are verified" shipped as a per-lane verified-days REGISTER that only manual verbs write. Production
+  holds no register, so every digested day is still automatically rewritable. Since this change, each
+  digest `--apply` above also registers the days it publishes as verified. Choose one:
+  - (a) keep the register, and go live by running `data availability-verify-days --apply` per lane
+    over settled ranges;
+  - (b) add a hybrid predicate: also refuse a day whose head rows are `digested` at every rung AND
+    older than the lane's recheck horizon.
+
+  Corrections run through `data availability-release-verified-days`. Detail:
+  `services/agri-data-service/src/agri_data_service/pipeline/parquet/AGENTS.md`, "Verified days are
+  manual-correction only".
 - **Stale worktrees under `.tmp`** — eleven from earlier sessions hold uncommitted work. Owner asked
   for assessment and salvage, not deletion; inventory in
   `.omc/ultrapilot-20260918/WORKTREE-SALVAGE-20260919.md`.

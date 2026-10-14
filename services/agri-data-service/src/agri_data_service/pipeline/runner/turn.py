@@ -19,6 +19,7 @@ import pyarrow as pa  # type: ignore[import-untyped]
 
 from agri_data_service.foundation.observability import events
 from agri_data_service.foundation.observability.redaction import describe_error
+from agri_data_service.pipeline.parquet.verified_days import VERIFIED_REFUSAL
 from agri_data_service.pipeline.runner.budget import (
     BudgetedClient,
     TurnBudget,
@@ -82,6 +83,7 @@ from agri_data_service.pipeline.runner.writer import (
     LadderRepairError,
     LaneDayContendedError,
     LaneDayCoverageRefusedError,
+    LaneDayVerifiedError,
     decide_rewrite,
 )
 
@@ -558,6 +560,10 @@ class _Turn:
                         or census.base.get(stream, {}).get(day) != "data"
                     ):
                         continue
+                    if self.ports.reader.is_verified(stream, day):
+                        # A verified day's digest covers every rung: its ladder is manual-correction only.
+                        self.tally.rewrite_reasons[VERIFIED_REFUSAL] += 1
+                        continue
                     if self.ports.clock.monotonic() >= deadline:
                         self.unwritten(day, "ladder_owed", "the turn's time ran out before its repair", stream=stream)
                         continue
@@ -565,6 +571,9 @@ class _Turn:
                         result = await writer.repair_ladder(stream, day)
                     except LaneDayContendedError as error:
                         self.unwritten(day, "contended", describe_error(error), stream=stream)
+                        continue
+                    except LaneDayVerifiedError:
+                        self.tally.rewrite_reasons[VERIFIED_REFUSAL] += 1
                         continue
                     except LadderRepairError as error:
                         self.unwritten(day, "ladder_owed", describe_error(error), stream=stream)
@@ -1075,6 +1084,7 @@ class _Turn:
                 force=force,
                 source_owed=answered.day in census.source_owed.get(stream, ()),
                 source_unresolved=answered.day in census.source_unresolved.get(stream, ()),
+                verified=reader.is_verified(stream, answered.day),
             )
             self.tally.rewrite_reasons[decision.reason] += 1
             if not decision.writes:
@@ -1108,6 +1118,10 @@ class _Turn:
             except LaneDayCoverageRefusedError as error:
                 self.unwritten(answered.day, "refused_partial", describe_error(error), stream=stream)
                 continue
+            except LaneDayVerifiedError:
+                # The seam's fail-closed refusal: a day verified mid-turn, or an unreadable register.
+                self.tally.rewrite_reasons[VERIFIED_REFUSAL] += 1
+                continue
             self.tally.add_write(stream, result)
             wrote_any = True
         if wrote_any:
@@ -1125,6 +1139,7 @@ class _Turn:
                 settlement=absence,
                 source_digest=answered.responses_digest,
                 partial_day=self.partial_day,
+                verified=self.ports.reader.is_verified(stream, answered.day),
             )
             self.tally.rewrite_reasons[decision.reason] += 1
             if decision.reason == "data_never_retracted_by_absence":
@@ -1150,6 +1165,9 @@ class _Turn:
                 )
             except LaneDayContendedError as error:
                 self.unwritten(answered.day, "contended", describe_error(error), stream=stream)
+                continue
+            except LaneDayVerifiedError:
+                self.tally.rewrite_reasons[VERIFIED_REFUSAL] += 1
                 continue
             self.tally.add_write(stream, result)
             governed_any = True
@@ -1337,7 +1355,7 @@ class _Turn:
         """S11 for a transform: rebuild on an input-digest change; an unchanged output only refreshes its receipt."""
         writer = self._writer()
         reader = self.ports.reader
-        wrote_any = contended = False
+        wrote_any = contended = refused_verified = False
         with self.phase("write"):
             for stream, table in tables.items():
                 digest = reader.canonical_digest(stream, table)
@@ -1361,8 +1379,13 @@ class _Turn:
                     settlement=Written(expected_units=table.num_rows, present_units=table.num_rows),
                     source_digest=digest,
                     partial_day="refuse",
+                    verified=reader.is_verified(stream, day),
                 )
                 self.tally.rewrite_reasons[decision.reason] += 1
+                if decision.reason == VERIFIED_REFUSAL:
+                    # NO RECEIPT EITHER: it would claim the new inputs were built into an output they were not.
+                    refused_verified = True
+                    continue
                 if not decision.writes:
                     await writer.write_receipt(receipt)
                     continue
@@ -1372,9 +1395,14 @@ class _Turn:
                     self.unwritten(day, "contended", describe_error(error), stream=stream)
                     contended = True
                     continue
+                except LaneDayVerifiedError:
+                    self.tally.rewrite_reasons[VERIFIED_REFUSAL] += 1
+                    refused_verified = True
+                    continue
                 wrote_any = True
-            if not contended:
-                # Last, after every answered output: the day is clean only once all of them landed (M5).
+            if not contended and not refused_verified:
+                # Last, after every answered output: the day is clean only once all of them landed (M5). A
+                # verified-refused output did not land, so the transform receipt must not claim its new inputs.
                 await writer.write_receipt(
                     DayReceipt(
                         stream=transform_receipt_stream(self.spec.lane.id),

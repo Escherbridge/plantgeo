@@ -118,6 +118,7 @@ from agri_data_service.pipeline.parquet.availability_index import BotoAvailabili
 from agri_data_service.pipeline.parquet.gap_fill import fill_one_lane_day, postgres_lane_day_lock
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 from agri_data_service.pipeline.parquet.objectstore import BotoObjectStoreBackend, ObjectStore, conform_to_stream_schema
+from agri_data_service.pipeline.parquet.verified_days import VERIFIED_REFUSAL
 from agri_data_service.warehouse.schemas.sensors import SENSORS_SCHEMA, SENSORS_STREAM
 
 if TYPE_CHECKING:
@@ -263,7 +264,8 @@ def _bucket_verdict(
     """
     unwritten = tuple(result for result in results if result.outcome != "written")
     days_written = len(results) - len(unwritten)
-    stuck = any(result.day not in excused for result in unwritten)
+    # A VERIFIED day the seam refused is excused like a deferred one: manual correction only, not a fault.
+    stuck = any(result.day not in excused and result.outcome != VERIFIED_REFUSAL for result in unwritten)
     publish_faulted = any(result.publish_attempted for result in unwritten)
     return ForwardBucketVerdict(
         outcome=COMPLETE if results and not unwritten else INCOMPLETE,
@@ -453,7 +455,8 @@ def _result_after_failure(  # noqa: PLR0913 - one caller-supplied coordinate per
         written_bytes=written_bytes,
         detail=detail,
         absence_overturned=adapter.absence_overturned,
-        publish_attempted=True,
+        # The verified-day refusal fetched and wrote nothing: not a publish fault (`verified_days.py`).
+        publish_attempted=outcome != VERIFIED_REFUSAL,
     )
 
 

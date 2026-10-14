@@ -97,8 +97,11 @@ if TYPE_CHECKING:
 # --------------------------------------------------------------------------------------------
 
 #: RESTATES `pipeline/parquet/gap_fill.py::LaneDayOutcome`; see the module docstring for why this is
-#: a copy and not an import. A test pins the two equal.
-LANE_DAY_OUTCOMES: Final[frozenset[str]] = frozenset({"written", "absent", "raised", "blocked", "contended"})
+#: a copy and not an import. A test pins the two equal. `verified_manual_correction_only` is
+#: `pipeline/parquet/verified_days.py::VERIFIED_REFUSAL`: a verified day an automated turn left alone.
+LANE_DAY_OUTCOMES: Final[frozenset[str]] = frozenset(
+    {"written", "absent", "raised", "blocked", "contended", "verified_manual_correction_only"}
+)
 
 #: The turn ran out of wall clock before reaching this day. NOT a failure: the day is untouched and
 #: the next tick starts where this one stopped. Writers with multi-day walks report it; writers that
@@ -175,7 +178,7 @@ NO_WINDOW: Final = "no_window"
 #: (`vegetation/backfill.py::VEGETATION_BACKFILL_DURABLE_OUTCOMES`).
 INCOMPLETE_AFTER_WRITE: Final = "incomplete_after_write"
 
-#: Words a bounded direct-writer turn may report ON TOP OF the five lane-day words.
+#: Words a bounded direct-writer turn may report ON TOP OF the six lane-day words.
 DIRECT_ONLY_OUTCOMES: Final[frozenset[str]] = frozenset(
     {
         TIME_BUDGET_EXHAUSTED,

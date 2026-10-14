@@ -157,6 +157,8 @@ class TrustedDigestCompilation:
     days: tuple[TrustedDayReport, ...]
     publication: ReconciliationCompilation | None
     index_size: IndexSizeProjection
+    #: The digested rows this run compiled for its ready days; a registration checks the head against them.
+    rows: tuple[AvailabilityRow, ...] = ()
 
     @property
     def document_sha256(self) -> str | None:
@@ -328,6 +330,7 @@ def compile_trusted_digest(  # noqa: PLR0913 - one bounded range coordinate, its
             published_at=published_at,
             limits=cache_limits,
         ),
+        rows=tuple(rows),
     )
 
 

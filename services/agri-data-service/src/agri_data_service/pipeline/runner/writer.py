@@ -29,6 +29,11 @@ from agri_data_service.pipeline.parquet.gap_fill import (
     unlocked_lane_day,
 )
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY, normalise_export_outcome
+from agri_data_service.pipeline.parquet.verified_days import (
+    AUTOMATED_REWRITE,
+    VERIFIED_REFUSAL,
+    automated_rewrite_refusal,
+)
 from agri_data_service.pipeline.runner.census import CONFIG_LANE_KIND, FULL_LADDER_TIERS
 from agri_data_service.pipeline.runner.clock import utc_today
 from agri_data_service.pipeline.runner.completeness import SourceCompleteness
@@ -68,6 +73,8 @@ RewriteReason = Literal[
     "unresolved_recorded",
     "absence_unchanged",
     "data_never_retracted_by_absence",
+    # The day is verified (`pipeline/parquet/verified_days.py`): no automated rule may rewrite it.
+    "verified_manual_correction_only",
 ]
 _WRITING_REASONS: Final[frozenset[RewriteReason]] = frozenset(
     {
@@ -102,6 +109,10 @@ class LaneDayCoverageRefusedError(LaneWriteError):
 
 class LadderRepairError(LaneWriteError):
     """A published base rung's coarse rungs could not be derived this turn: that day is `ladder_owed` (H1)."""
+
+
+class LaneDayVerifiedError(LaneWriteError):
+    """The stream-day is verified, or the register could not prove it is not: left untouched; the turn goes on."""
 
 
 class UnregisteredStreamError(RuntimeError):
@@ -153,7 +164,7 @@ def _completing(settlement: Written, *, source_owed: bool, source_unresolved: bo
     return None if source_unresolved else RewriteDecision("unresolved_recorded")
 
 
-def decide_rewrite(  # noqa: PLR0911, PLR0913 - one return per S11 row; the census, receipt, answer and policy are distinct
+def decide_rewrite(  # noqa: PLR0913 - the census, receipt, answer, policy and verification are distinct facts
     *,
     status: PartitionDayStatus,
     receipt: DayReceipt | None,
@@ -163,6 +174,39 @@ def decide_rewrite(  # noqa: PLR0911, PLR0913 - one return per S11 row; the cens
     force: bool = False,
     source_owed: bool = False,
     source_unresolved: bool = False,
+    verified: bool = False,
+) -> RewriteDecision:
+    """S11, then the verified-day rule: any decision that would write a VERIFIED day becomes a refusal.
+
+    Non-writing verdicts keep their own word (an absence over data still reads
+    `data_never_retracted_by_absence`). See `pipeline/parquet/AGENTS.md`, "Verified days are
+    manual-correction only".
+    """
+    decision = _decide_unverified_rewrite(
+        status=status,
+        receipt=receipt,
+        settlement=settlement,
+        source_digest=source_digest,
+        partial_day=partial_day,
+        force=force,
+        source_owed=source_owed,
+        source_unresolved=source_unresolved,
+    )
+    if verified and decision.writes:
+        return RewriteDecision("verified_manual_correction_only")
+    return decision
+
+
+def _decide_unverified_rewrite(  # noqa: PLR0911, PLR0913 - one return per S11 row; the census, receipt, answer and policy are distinct
+    *,
+    status: PartitionDayStatus,
+    receipt: DayReceipt | None,
+    settlement: Settlement,
+    source_digest: str | None,
+    partial_day: PartialDayPolicy,
+    force: bool,
+    source_owed: bool,
+    source_unresolved: bool,
 ) -> RewriteDecision:
     """S11: write an unwritten day; rewrite a settled day on a digest change, a partial recheck day only on more units.
 
@@ -344,6 +388,18 @@ class ObjectStoreLaneWriter:
         async with self.lane_day_lock(self.session, _lane_day_lock_key(registration, day)) as granted:
             if not granted:
                 raise LaneDayContendedError(f"{stream} {day.isoformat()}: another run holds this lane-day")
+            # BEFORE THE RECEIPT IS TOUCHED: a refused verified day must not be left `pending`, or the
+            # census would re-ask it every turn only for the seam to refuse it again.
+            verified_refusal = automated_rewrite_refusal(
+                self.store,
+                lane=stream,
+                nature=registration.nature,
+                kind=CONFIG_LANE_KIND,
+                day=day,
+                policy=AUTOMATED_REWRITE,
+            )
+            if verified_refusal is not None:
+                raise LaneDayVerifiedError(verified_refusal)
             if receipt.expected_unit_ids is not None and receipt.present_unit_ids is not None:
                 current = await asyncio.to_thread(self.receipts.read, stream, day)
                 answer = Written(
@@ -430,6 +486,8 @@ class ObjectStoreLaneWriter:
             self.tally.record(repair.availability)
         if repair.outcome == "contended":
             raise LaneDayContendedError(f"{stream} {day.isoformat()}: {repair.detail}")
+        if repair.outcome == VERIFIED_REFUSAL:
+            raise LaneDayVerifiedError(repair.detail or f"{stream} {day.isoformat()} is verified")
         if repair.outcome != "written":
             raise LadderRepairError(f"{stream} {day.isoformat()}: outcome={repair.outcome}, detail={repair.detail}")
         return WriteResult(partitions=repair.parts, rows=repair.rows, bytes_written=repair.written_bytes)
@@ -467,6 +525,8 @@ class ObjectStoreLaneWriter:
         await self.session.rollback()
         if outcome == "contended":
             raise LaneDayContendedError(f"{stream} {day.isoformat()} was not written: {detail}")
+        if outcome == VERIFIED_REFUSAL:
+            raise LaneDayVerifiedError(detail or f"{stream} {day.isoformat()} is verified")
         if outcome not in {"written", "absent"}:
             raise LaneWriteError(f"{stream} {day.isoformat()} did not publish: outcome={outcome}, detail={detail}")
         return WriteResult(partitions=parts, rows=rows, bytes_written=written_bytes)
@@ -477,6 +537,7 @@ __all__ = [
     "LadderRepairError",
     "LaneDayContendedError",
     "LaneDayCoverageRefusedError",
+    "LaneDayVerifiedError",
     "LaneWriteError",
     "LaneWriter",
     "ObjectStoreLaneWriter",

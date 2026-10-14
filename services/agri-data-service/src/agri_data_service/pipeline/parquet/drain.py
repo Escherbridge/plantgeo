@@ -120,6 +120,7 @@ from agri_data_service.pipeline.parquet.gap_fill import (
     resolve_lane_watermarks,
 )
 from agri_data_service.pipeline.parquet.objectstore import availability_lane_root
+from agri_data_service.pipeline.parquet.verified_days import VERIFIED_REFUSAL
 from agri_data_service.warehouse.parquet.tiers import BASE_ZOOM_TIER, DERIVED_ZOOM_TIERS, derivation_session
 
 if TYPE_CHECKING:
@@ -302,6 +303,8 @@ class DrainLaneProgress:
     absent: int = 0
     blocked: int = 0
     contended: int = 0
+    #: Days the seam refused because they are verified (`verified_days.py`): manual correction only.
+    skipped_verified: int = 0
     failed: int = 0
     consecutive_failures: int = 0
     contended_retries: dict[date, int] = field(default_factory=dict)
@@ -382,6 +385,7 @@ class DrainSummary:
                     "absent": lane.absent,
                     "blocked": lane.blocked,
                     "contended": lane.contended,
+                    "skipped_verified": lane.skipped_verified,
                     "failed": lane.failed,
                     "remaining": len(lane.pending),
                     "abandoned_contended": len(lane.abandoned),
@@ -922,30 +926,11 @@ async def _drain_one_day(  # noqa: PLR0913 - one coordinate of the day being dra
         lane.absent += 1
     elif outcome == "blocked":
         lane.blocked += 1
+    elif outcome == VERIFIED_REFUSAL:
+        # Left exactly as it was and never re-queued: only a manual correction may change it.
+        lane.skipped_verified += 1
     elif outcome == "contended":
-        # The cron holds this lane-day right now. Not a failure and not progress: put it BACK so a
-        # later turn retakes it, or the drain would leave a hole exactly where the two runs met --
-        # the one gap nothing else would ever come back for, since the cron fills newest-first and
-        # this day is old.
-        lane.contended += 1
-        seen = lane.contended_retries.get(day, 0) + 1
-        lane.contended_retries[day] = seen
-        if seen < MAX_CONTENDED_RETRIES_PER_DAY:
-            lane.pending.append(day)
-        else:
-            # Left pending-no-more and RECORDED rather than retried into an infinite loop. Nothing
-            # was written for this day, so re-running the drain simply takes it again.
-            lane.abandoned.append(
-                DrainDayFailure(
-                    slug=lane.slug,
-                    day=day,
-                    outcome="contended",
-                    detail=(
-                        f"another run held this lane-day on {seen} separate turns, so the drain stopped retrying it "
-                        f"this run rather than spinning on it; nothing was written and a later run will take it"
-                    ),
-                )
-            )
+        _requeue_contended_day(lane, day)
     if outcome in FAILING_LANE_OUTCOMES and outcome != "blocked":
         lane.failed += 1
         lane.consecutive_failures += 1
@@ -960,6 +945,34 @@ async def _drain_one_day(  # noqa: PLR0913 - one coordinate of the day being dra
         lane.consecutive_failures = 0
     if on_day is not None:
         on_day(lane.slug, day, outcome, detail)
+
+
+def _requeue_contended_day(lane: DrainLaneProgress, day: date) -> None:
+    """Count a contended day and put it back on the queue, or record it abandoned once it has contended too often.
+
+    The cron holds this lane-day right now. Not a failure and not progress: put it BACK so a later
+    turn retakes it, or the drain would leave a hole exactly where the two runs met -- the one gap
+    nothing else would ever come back for, since the cron fills newest-first and this day is old.
+    """
+    lane.contended += 1
+    seen = lane.contended_retries.get(day, 0) + 1
+    lane.contended_retries[day] = seen
+    if seen < MAX_CONTENDED_RETRIES_PER_DAY:
+        lane.pending.append(day)
+        return
+    # Left pending-no-more and RECORDED rather than retried into an infinite loop. Nothing was
+    # written for this day, so re-running the drain simply takes it again.
+    lane.abandoned.append(
+        DrainDayFailure(
+            slug=lane.slug,
+            day=day,
+            outcome="contended",
+            detail=(
+                f"another run held this lane-day on {seen} separate turns, so the drain stopped retrying it "
+                f"this run rather than spinning on it; nothing was written and a later run will take it"
+            ),
+        )
+    )
 
 
 # --- Retiring the pre-zoom layout ----------------------------------------------------------------

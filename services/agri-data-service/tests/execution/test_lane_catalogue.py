@@ -550,6 +550,7 @@ def test_the_repair_verb_authors_nothing_for_a_config_lane(monkeypatch: pytest.M
         ),
     )
     monkeypatch.setattr(gap_repair, "read_parquet_coverage", lambda *, now: coverage)  # noqa: ARG005
+    monkeypatch.setattr(gap_repair, "read_verified_lane_days", lambda _coverage: {})
     monkeypatch.setattr(gap_repair, "parse_activation", lambda: ActivationConfig(frozenset({CONFIG_LANE})))
 
     def plan() -> dict[str, object]:

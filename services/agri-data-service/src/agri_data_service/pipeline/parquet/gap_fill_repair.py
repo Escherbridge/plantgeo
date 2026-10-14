@@ -35,6 +35,11 @@ from agri_data_service.pipeline.parquet.objectstore import (
     GovernedAbsenceConflictError,
     availability_lane_root,
 )
+from agri_data_service.pipeline.parquet.verified_days import (
+    AUTOMATED_REWRITE,
+    VERIFIED_REFUSAL,
+    automated_rewrite_refusal,
+)
 from agri_data_service.warehouse.schemas.vegetation import VEGETATION_PLANE_STREAM
 
 if TYPE_CHECKING:
@@ -53,6 +58,7 @@ if TYPE_CHECKING:
     )
     from agri_data_service.pipeline.parquet.lane_registry import LaneRegistration
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore, PartitionRead, WrittenObjectLedger
+    from agri_data_service.pipeline.parquet.verified_days import RewritePolicy
 
 
 async def repair_one_lane_day(  # noqa: PLR0913 - one caller-supplied coordinate per arg, none foldable
@@ -69,8 +75,12 @@ async def repair_one_lane_day(  # noqa: PLR0913 - one caller-supplied coordinate
     derive_tiers: TierDeriver = derive_and_write_day_tiers,
     connection: DuckDBPyConnection | None = None,
     availability_storage: AvailabilityStorage | None = None,
+    rewrite_policy: RewritePolicy = AUTOMATED_REWRITE,
 ) -> LadderRepairOutcome:
     """Re-derive one published day's coarse rungs from its base rung, then CLAIM the day for the index.
+
+    A VERIFIED day is refused under `AUTOMATED_REWRITE`: its digest covers every required rung, so
+    re-deriving a coarse rung would change bytes the owner verified (`verified_days.py`).
 
     THE CLAIM IS NOT OPTIONAL BOOKKEEPING. A repair rewrites three of the day's four rungs, so their
     receipts change; without a claim the day stays complete at every rung, is never re-selected, and
@@ -104,6 +114,16 @@ async def repair_one_lane_day(  # noqa: PLR0913 - one caller-supplied coordinate
                         f"{day.isoformat()}: another run holds this lane-day, so its coarse rungs were left alone "
                         "rather than derived beside a base rung being rewritten; a later turn will take it",
                     )
+                refusal = automated_rewrite_refusal(
+                    store,
+                    lane=lane.slug,
+                    nature=lane.nature,
+                    kind=GAP_FILL_PARTITION_KIND,
+                    day=day,
+                    policy=rewrite_policy,
+                )
+                if refusal is not None:
+                    return LadderRepairOutcome(VERIFIED_REFUSAL, 0, 0, 0, refusal)
                 # ONE READ OF THE BASE RUNG SERVES BOTH HALVES: the derivation gets the rows and the
                 # claim gets the key and digest of every part it cites. Letting the deriver read the
                 # day again, or hashing the parts afterwards, would download it twice.

@@ -8,6 +8,8 @@ from agri_data_service.interface.cli.availability import (
     availability_digest_trusted,
     availability_publish,
     availability_reconcile_physical,
+    availability_release_verified_days,
+    availability_verify_days,
 )
 from agri_data_service.interface.cli.parquet import parquet
 
@@ -25,6 +27,8 @@ register_commands(
         ("availability-publish", availability_publish),
         ("availability-reconcile-physical", availability_reconcile_physical),
         ("availability-digest-trusted", availability_digest_trusted),
+        ("availability-verify-days", availability_verify_days),
+        ("availability-release-verified-days", availability_release_verified_days),
     ),
 )
 

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Protocol
 from agri_data_service.foundation.parquet.lane_contract import newest_data_day
 from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.objectstore import PartitionNotWrittenError, conform_to_stream_schema
+from agri_data_service.pipeline.parquet.verified_days import verified_days_for
 from agri_data_service.pipeline.runner.census import CONFIG_LANE_KIND, read_census
 from agri_data_service.pipeline.runner.completeness import SourceCompleteness
 from agri_data_service.pipeline.runner.digests import table_digest
@@ -42,6 +43,8 @@ class LaneReader(Protocol):
     def newest_data_day(self, stream: str) -> date | None: ...
 
     def canonical_digest(self, stream: str, table: pa.Table) -> str: ...
+
+    def is_verified(self, stream: str, day: date) -> bool: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +90,10 @@ class ObjectStoreLaneReader:
     def canonical_digest(self, stream: str, table: pa.Table) -> str:
         """The digest of `table` as the store would hold it: conformed to the stream schema and sorted to its grain."""
         return table_digest(conform_to_stream_schema(table, get_stream_schema(stream, CONFIG_LANE_KIND)))
+
+    def is_verified(self, stream: str, day: date) -> bool:
+        """True when the stream's verified-days register names `day` (one GET per stream per turn)."""
+        return verified_days_for(self.store, lane=stream, kind=CONFIG_LANE_KIND).is_verified(day)
 
 
 __all__ = ["LaneReader", "ObjectStoreLaneReader"]

@@ -37,6 +37,7 @@ from agri_data_service.pipeline.parquet.gap_fill import (
 )
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY, LaneRegistration
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
+from agri_data_service.pipeline.parquet.verified_days import VERIFIED_REFUSAL
 from agri_data_service.warehouse.schemas.fire_detections import FIRE_DETECTIONS_STREAM
 
 from .adapter import DirectFireDetectionsAdapter
@@ -185,7 +186,8 @@ async def run_fire_forward(config: FireForwardConfig) -> dict[str, object]:
         max_seconds=config.retry_max_seconds,
     )
     window_backlog = pending_days(final_statuses)
-    remaining = tuple(day for day in window_backlog if day in set(pending))
+    left_verified = {day for day, result in zip(pending, results, strict=True) if result["outcome"] == VERIFIED_REFUSAL}
+    remaining = tuple(day for day in window_backlog if day in set(pending) and day not in left_verified)
     if remaining:
         raise PipelineOperationError(
             f"the bounded forward window still has {len(remaining)} unfilled day(s): "
@@ -311,6 +313,21 @@ async def _publish_locked_day_with_retries(  # noqa: PLR0913
             parts = rows = written_bytes = 0
             detail = f"{day.isoformat()}: {type(error).__name__}: {error}"
         source = adapter.source
+        if outcome == VERIFIED_REFUSAL:
+            # Refused before the fetch: the day is verified, so only a manual correction may touch it.
+            return {
+                "day": day.isoformat(),
+                "outcome": VERIFIED_REFUSAL,
+                "raw_records": 0,
+                "deduplicated_records": 0,
+                "source_products": [],
+                "product_counts": {},
+                "base_rows": 0,
+                "parts": 0,
+                "rows_across_write": 0,
+                "written_bytes": 0,
+                "detail": detail,
+            }
         if outcome in {"blocked", "absent", "written"} and source is None:
             raise PipelineOperationError(
                 f"fire-detections {day} returned {outcome} without a completed locked source fetch",

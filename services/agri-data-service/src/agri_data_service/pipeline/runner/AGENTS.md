@@ -320,6 +320,13 @@ a static lane without one), so `fill_one_lane_day` brackets the write with that 
 the legacy path does. Prune retracts the coarse rungs first and the base last, under the lane-day
 lock.
 
+**Verified days (owner 2026-10-13):** `decide_rewrite(verified=...)` turns any WRITING verdict on a
+verified stream-day into `verified_manual_correction_only` (non-writing verdicts keep their own word);
+the turn asks `LaneReader.is_verified`, skips a verified ladder repair, and writes no transform receipt
+for a refused day. `write_day` refuses before it touches the receipt, and `LaneDayVerifiedError` (the
+seam's fail-closed refusal) is tallied, never exit 70. Definition and register:
+`pipeline/parquet/AGENTS.md`, "Verified days are manual-correction only".
+
 **Free recheck (S11 for ERA5T):** when a forward fan-out's units answer more days than were owed (a
 14-day request answers 14 days), every published window day all of whose units answered is settled
 too, at no extra cost, and rewritten only on a digest change. Such a day is never reported unwritten.

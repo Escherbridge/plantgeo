@@ -1577,12 +1577,14 @@ async def _author_due_repairs(
     clock.mark(started)
     try:
         coverage = await asyncio.to_thread(gap_repair.read_parquet_coverage, now=now)
+        verified = await asyncio.to_thread(gap_repair.read_verified_lane_days, coverage)
         plan = gap_repair.plan_gap_repairs(
             coverage,
             activation=activation,
             now=now,
             budget=RepairBudget(),
             recently_authored=clock.excluded(started),
+            verified_days=verified,
         )
         receipts = await gap_repair.author_gap_repairs(session, plan=plan, now=now, apply=True)
         await _commit_planning_transaction(session)

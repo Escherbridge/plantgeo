@@ -56,6 +56,7 @@ from agri_data_service.pipeline.parquet.objectstore import (
     PartitionNotWrittenError,
     availability_lane_root,
 )
+from agri_data_service.pipeline.parquet.verified_days import VERIFIED_REFUSAL
 from agri_data_service.pipeline.source_bindings import resolve_crop_cover_source
 from agri_data_service.warehouse.schemas.crop_cover import CROP_COVER_STREAM
 
@@ -317,6 +318,9 @@ async def _publish(
                 now=lambda: datetime.now(UTC),
             )
             report["availability_state"] = extension.state
+    if outcome == VERIFIED_REFUSAL:
+        # The release day is VERIFIED: refused before any write; manual correction only (`verified_days.py`).
+        return {**report, "outcome": VERIFIED_REFUSAL, "run_id": run_id, "detail": detail}
     if outcome != "written":
         raise fail(f"Annual crop publication did not complete: {outcome}: {detail}")
     if not all(store.read_completion_marker(CROP_COVER_STREAM, "observed", tier, day) for tier in ZOOM_TIERS):

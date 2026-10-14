@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from agri_data_service.foundation.parquet.lane_contract import nature_has_time_axis
 from agri_data_service.pipeline.parquet.availability_extension import (
     AvailabilityExtensionTally,
     retry_pending_availability,
@@ -21,6 +22,7 @@ from agri_data_service.pipeline.parquet.gap_fill_contract import (
     LaneGapCensus,
     _append_note,
 )
+from agri_data_service.pipeline.parquet.verified_days import VERIFIED_REFUSAL, verified_days_for
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -55,6 +57,8 @@ class _LaneProgress:
     repaired: int = 0
     blocked: int = 0
     contended: int = 0
+    #: Owed days left alone because they are verified (planner-dropped, or refused at the seam).
+    skipped_verified: int = 0
     parts: int = 0
     rows: int = 0
     written_bytes: int = 0
@@ -102,6 +106,26 @@ class _LaneProgress:
             seconds=self.seconds,
             availability=self.availability,
             detail=self.detail,
+            skipped_verified=self.skipped_verified,
+        )
+
+
+def _drop_verified_days(entry: _LaneProgress, store: ObjectStore, *, lane: LaneRegistration) -> None:
+    """Take verified days out of both queues before any is attempted: ONE register read per lane per tick.
+
+    A day dropped here is counted, never silently forgotten. An unreadable register drops nothing --
+    the seam (`fill_one_lane_day`) then refuses each EXISTING day fail-closed and still writes a missing one.
+    """
+    if not nature_has_time_axis(lane.nature) or not (entry.pending or entry.repairs):
+        return
+    register = verified_days_for(store, lane=lane.slug, kind=GAP_FILL_PARTITION_KIND)
+    entry.pending, verified_exports = register.split(entry.pending)
+    entry.repairs, verified_repairs = register.split(entry.repairs)
+    dropped = len(verified_exports) + len(verified_repairs)
+    if dropped:
+        entry.skipped_verified += dropped
+        entry.detail = _append_note(
+            entry.detail, f"{dropped} owed day(s) left alone: verified, manual correction only ({VERIFIED_REFUSAL})"
         )
 
 
@@ -128,6 +152,11 @@ def _record_day_outcome(entry: _LaneProgress, outcome: LaneDayOutcome, detail: s
         # Not a failure and not progress: another run owns this day. It is left out of every tally
         # so the tick's counts stay a record of what THIS run did.
         entry.contended += 1
+        entry.detail = detail
+        return
+    if outcome == VERIFIED_REFUSAL:
+        # Not a failure and not progress either: the seam refused a verified (or unprovable) day.
+        entry.skipped_verified += 1
         entry.detail = detail
         return
     if outcome == "absent":
@@ -172,6 +201,8 @@ def _record_repair_outcome(entry: _LaneProgress, result: LadderRepairOutcome) ->
         entry.repaired += 1
     elif result.outcome == "contended":
         entry.contended += 1
+    elif result.outcome == VERIFIED_REFUSAL:
+        entry.skipped_verified += 1
     elif result.outcome == "blocked":
         entry.blocked += 1
         entry.ladder_unrepairable += 1

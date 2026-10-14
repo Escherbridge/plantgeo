@@ -113,6 +113,7 @@ from agri_data_service.pipeline.parquet.gap_fill import fill_one_lane_day, postg
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 from agri_data_service.pipeline.parquet.objectstore import BotoObjectStoreBackend, ObjectStore, conform_to_stream_schema
 from agri_data_service.pipeline.parquet.source_checkpoint import CHECKPOINT_MAX_AGE, SourceResponseCheckpoints
+from agri_data_service.pipeline.parquet.verified_days import VERIFIED_REFUSAL
 from agri_data_service.warehouse.schemas.weather_observations import (
     WEATHER_OBSERVATIONS_GRAIN,
     WEATHER_OBSERVATIONS_SCHEMA,
@@ -280,9 +281,11 @@ def _bucket_verdict(
     unwritten = tuple(result for result in results if result.outcome != "written")
     days_written = len(results) - len(unwritten)
     clean = bool(results) and not unwritten and not retention_failed and not recovery_degraded
+    # Only VERIFIED days left unwritten is not a failure: the seam refused them, manual correction only.
+    only_verified_refused = bool(unwritten) and all(result.outcome == VERIFIED_REFUSAL for result in unwritten)
     return ForwardBucketVerdict(
         outcome=COMPLETE if clean else INCOMPLETE,
-        exit_code=0 if days_written else 1,
+        exit_code=0 if days_written or only_verified_refused else 1,
         days_written=days_written,
         unwritten=unwritten,
         absences_overturned=tuple(result.day for result in results if result.absence_overturned is not None),

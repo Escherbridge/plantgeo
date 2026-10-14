@@ -212,6 +212,23 @@ Consequences worth knowing:
 - `mirrored_past_proof` defaults to `no_mirrored_past_proof`, which returns `None`. Fail-closed: any
   caller that has not supplied the proof gets the refusal, never a fabricated absence.
 
+## Verified days are manual-correction only (owner 2026-10-13)
+
+Every writer here reaches the bucket through `gap_fill.fill_one_lane_day`, which refuses an AUTOMATED
+rewrite of a VERIFIED day before the adapter fetches anything and returns
+`verified_manual_correction_only` (a `LANE_DAY_OUTCOMES` word). Climate, soil, vegetation, drought,
+burn-severity and fire-detections report that day as skipped and leave it out of their "still owed"
+checks; the partial-day re-bind, the absence rechecks and `--target-day` are all covered by that one
+seam. A verified day is only ever a published, digested day, so absence rechecks never meet one.
+Drought and burn-severity forward/backfill take `--correct-verified` (manual use only: the day is
+rewritten, released from the register, and the correction recorded). Sensors, weather-observations and
+water-gauges excuse a refused day in their bucket verdict: it is `incomplete`, but never exit 1 on its
+own (sensors marks it `publish_attempted=False`), so a day verified inside a rolling merge window
+cannot turn the poll red. Crop-cover returns the refusal as its outcome rather than raising. Every
+other lane, fire-detections `--force-day` included, corrects a verified day with
+`data availability-release-verified-days`. Definition, register and fail-closed rule:
+`pipeline/parquet/AGENTS.md`, "Verified days are manual-correction only".
+
 ## A governed absence is re-examined, or it is permanent
 
 `_retract_disproven_absence` exists precisely because the archive backfills a day it first answered

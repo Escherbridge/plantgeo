@@ -62,6 +62,7 @@ from agri_data_service.pipeline.parquet.sensor_absence_correction import (
     verify_quiescence,
     verify_retry,
 )
+from agri_data_service.pipeline.parquet.verified_days import AUTOMATED_REWRITE, MANUAL_CORRECTION
 from agri_data_service.warehouse.parquet.tiers import BASE_ZOOM_TIER
 
 if TYPE_CHECKING:
@@ -423,9 +424,13 @@ class GuardedBackend:
 
 
 async def apply(  # noqa: PLR0912, PLR0915 - ordered recovery gates
-    request: Path, request_sha: str, quiescence: Path, quiescence_sha: str
+    request: Path, request_sha: str, quiescence: Path, quiescence_sha: str, *, correct_verified: bool = False
 ) -> dict[str, Any]:
-    """Apply only a pinned plan under externally proven quiescence and existing advisory locks."""
+    """Apply only a pinned plan under externally proven quiescence and existing advisory locks.
+
+    A VERIFIED day is refused unless `correct_verified` (`--correct-verified`); see
+    `pipeline/parquet/AGENTS.md`, "Verified days are manual-correction only".
+    """
     payload = local_read(request, request_sha)
     plan = json.loads(payload)
     require(
@@ -637,6 +642,9 @@ async def apply(  # noqa: PLR0912, PLR0915 - ordered recovery gates
                         today=date.fromisoformat(plan["published_at"][:10]),
                         lane_day_lock=owned_day,
                         extend_availability=False,
+                        # Storage only so a corrected VERIFIED day can release its register entry.
+                        availability_storage=storage if correct_verified else None,
+                        rewrite_policy=MANUAL_CORRECTION if correct_verified else AUTOMATED_REWRITE,
                     )
                 require(result[0] == "written", f"ordinary finalizer failed: {result}")
                 require(
@@ -724,13 +732,26 @@ def main() -> int:
     parser.add_argument("--request-sha256")
     parser.add_argument("--quiescence", type=Path)
     parser.add_argument("--quiescence-sha256")
+    parser.add_argument(
+        "--correct-verified",
+        action="store_true",
+        help="manual correction only: allow rewriting a VERIFIED day (its register entry is released)",
+    )
     args = parser.parse_args()
     if args.apply:
         require(
             all((args.request_sha256, args.quiescence, args.quiescence_sha256)),
             "apply requires request and quiescence SHA pins",
         )
-        result = asyncio.run(apply(args.apply, args.request_sha256, args.quiescence, args.quiescence_sha256))
+        result = asyncio.run(
+            apply(
+                args.apply,
+                args.request_sha256,
+                args.quiescence,
+                args.quiescence_sha256,
+                correct_verified=args.correct_verified,
+            )
+        )
     else:
         require(all((args.candidate, args.archive, args.out)), "prepare requires candidate, archive and out")
         result = prepare(args.candidate, args.archive, args.out)

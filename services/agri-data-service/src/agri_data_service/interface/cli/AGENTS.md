@@ -44,7 +44,23 @@ hashes those days' parts, writes a JSON report to `--output` plus `<stem>.public
 publishes rows carrying real part receipts only with `--apply` and both pins. It refuses more than
 366 days, and refuses an unpinned `--apply`, before building any client. Day selection, checks,
 index-size limits and the operator recipe: `pipeline/parquet/AGENTS.md`, "Digesting
-manifest-trusted days".
+manifest-trusted days". After a successful `--apply` it registers the days it published as VERIFIED
+(reported under `verified_registration`; a failed registration exits non-zero beside the durable
+publication and is retried with `data availability-verify-days`).
+
+`data availability-verify-days` registers already-digested published days in one lane/kind/range
+(at most 366 days) as VERIFIED -- manual-correction only. The dry run reports `would_register`,
+`already_verified` and `skipped` by reason (`not_indexed`, `manifest_trusted`, `governed_absence`,
+`mixed`); `--apply` requires `--expected-head-generation` and writes the register under
+compare-and-swap. See `pipeline/parquet/AGENTS.md`, "Verified days are manual-correction only".
+
+`data availability-release-verified-days --lane --kind --day ... --reason [--run-id] [--apply]` is
+the manual correction path for every lane, including the ones with no `--correct-verified` flag.
+The dry run reports `would_release` and `not_verified`. `--apply` removes the named days from the
+register in ONE compare-and-swap. For each day it appends a `corrections` record: the run id, the
+reason, the verified ladder digest, the base marker sha256 the day had, and
+`new_base_completion_sha256: null`, meaning nothing has been rewritten yet. After that, ordinary
+automation or any manual verb may rewrite the day. Re-verify with `availability-verify-days`.
 
 ## Executor operator inputs
 

@@ -58,6 +58,7 @@ from agri_data_service.pipeline.parquet.gap_fill import (
     unlocked_lane_day,
 )
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
+from agri_data_service.pipeline.parquet.verified_days import AUTOMATED_REWRITE, MANUAL_CORRECTION, VERIFIED_REFUSAL
 from agri_data_service.pipeline.source_bindings import resolve_drought_source
 from agri_data_service.warehouse.parquet.tiers import DERIVED_ZOOM_TIERS
 from agri_data_service.warehouse.schemas.drought import DROUGHT_STREAM
@@ -153,6 +154,8 @@ class DroughtForwardConfig:
     #: selects is `_selected_release_weeks`; that the selection survives the owed-work filter is
     #: `_weeks_this_turn`.
     target_day: date | None = None
+    #: `--correct-verified`: a manual correction may rewrite a VERIFIED release (`verified_days.py`).
+    correct_verified: bool = False
 
 
 def emit(payload: Mapping[str, object]) -> None:
@@ -242,7 +245,8 @@ async def run_drought_forward(config: DroughtForwardConfig) -> dict[str, object]
     selected_and_settled = {
         day
         for day, result in zip(pending, results, strict=True)
-        if result["outcome"] not in {DROUGHT_TIME_BUDGET_OUTCOME, DROUGHT_SOURCE_UNSETTLED_OUTCOME, "absent"}
+        if result["outcome"]
+        not in {DROUGHT_TIME_BUDGET_OUTCOME, DROUGHT_SOURCE_UNSETTLED_OUTCOME, "absent", VERIFIED_REFUSAL}
     }
     remaining = tuple(day for day in window_backlog if day in selected_and_settled)
     if remaining:
@@ -391,6 +395,7 @@ async def _publish_locked_release_with_retries(  # noqa: PLR0913
                 statement_timeout_seconds=DROUGHT_STATEMENT_TIMEOUT_SECONDS,
                 availability_storage=availability_storage,
                 availability_tally=availability,
+                rewrite_policy=MANUAL_CORRECTION if config.correct_verified else AUTOMATED_REWRITE,
             )
             await session.rollback()
         except Exception as error:  # a source-unsettled refusal must not fail the turn
@@ -415,6 +420,9 @@ async def _publish_locked_release_with_retries(  # noqa: PLR0913
         else:
             source = adapter.source
 
+        if outcome == VERIFIED_REFUSAL:
+            # Refused before any fetch or write: the release is verified, so only --correct-verified changes it.
+            return {**_skipped_result(day, outcome=VERIFIED_REFUSAL), "detail": detail}
         if outcome in {"blocked", "absent", "written"} and source is None:
             raise DirectDroughtError(f"drought {day} returned {outcome} without a completed locked source fetch")
         if outcome in {"blocked", "absent"}:
@@ -782,6 +790,15 @@ def parser() -> argparse.ArgumentParser:
             "the horizon. Use the backfill walker for a release older than that."
         ),
     )
+    built.add_argument(
+        "--correct-verified",
+        action="store_true",
+        help=(
+            "Manual correction only: allow rewriting a day the owner VERIFIED (its verified-days entry is "
+            "released and the correction recorded). Without it a verified day is left untouched and "
+            "reported `verified_manual_correction_only`. Never pass it from a scheduled command."
+        ),
+    )
     return built
 
 
@@ -798,6 +815,7 @@ def parse_args(argv: Sequence[str] | None = None) -> DroughtForwardConfig:
         contention_timeout_seconds=arguments.contention_timeout_seconds,
         run_id=arguments.run_id,
         target_day=arguments.target_day,
+        correct_verified=arguments.correct_verified,
     )
     try:
         _validate_config(config)

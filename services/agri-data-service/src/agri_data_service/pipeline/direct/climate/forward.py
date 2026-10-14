@@ -70,6 +70,7 @@ from agri_data_service.pipeline.parquet.gap_fill import (
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from agri_data_service.pipeline.parquet.source_checkpoint import SourceResponseCheckpoints
+from agri_data_service.pipeline.parquet.verified_days import VERIFIED_REFUSAL
 from agri_data_service.warehouse.parquet.tiers import DERIVED_ZOOM_TIERS
 
 if TYPE_CHECKING:
@@ -672,6 +673,9 @@ async def _publish_locked_day(  # noqa: PLR0913, PLR0911 - one lane-day coordina
                 await session.rollback()
             outcome, parts, rows, written_bytes = "raised", 0, 0, 0
             detail = f"{type(error).__name__}: {error}"
+        if outcome == VERIFIED_REFUSAL:
+            # Refused before the fetch: the day is verified, so no recheck or re-bind may touch it.
+            return _stopped_day(day, outcome=VERIFIED_REFUSAL, attempts=attempt, detail=detail)
         if adapter.unchanged_partial is not None:
             # A SHORT DAY THAT HAS NOT GROWN IS LEFT ALONE. Nothing was cleared and nothing was
             # written; the day stays served and stays a recheck. Reported under the no-op name so a

@@ -42,6 +42,14 @@ from agri_data_service.pipeline.parquet.objectstore import (
     GovernedAbsenceConflictError,
     SurplusPruneResult,
 )
+from agri_data_service.pipeline.parquet.verified_days import (
+    AUTOMATED_REWRITE,
+    VERIFIED_REFUSAL,
+    automated_rewrite_refusal,
+    base_completion_sha256,
+    correction_target,
+    record_correction,
+)
 from agri_data_service.warehouse.schemas.vegetation import VEGETATION_PLANE_STREAM
 
 if TYPE_CHECKING:
@@ -60,6 +68,7 @@ if TYPE_CHECKING:
     )
     from agri_data_service.pipeline.parquet.lane_registry import LaneRegistration
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore, WrittenObjectLedger
+    from agri_data_service.pipeline.parquet.verified_days import RewritePolicy
 
 
 async def resolve_lane_watermarks(
@@ -604,7 +613,7 @@ async def _extend_availability_for_result(  # noqa: PLR0913 - one coordinate of 
     return outcome, parts, rows, written_bytes, _append_note(detail, extension.note)
 
 
-async def fill_one_lane_day(  # noqa: PLR0913 - one caller-supplied coordinate per arg, none foldable
+async def fill_one_lane_day(  # noqa: PLR0911, PLR0913 - one return per refusal; one caller coordinate per arg
     session: AsyncSession,
     store: ObjectStore,
     lane: LaneRegistration,
@@ -620,8 +629,14 @@ async def fill_one_lane_day(  # noqa: PLR0913 - one caller-supplied coordinate p
     extend_availability: bool = True,
     availability_storage: AvailabilityStorage | None = None,
     availability_tally: AvailabilityExtensionTally | None = None,
+    rewrite_policy: RewritePolicy = AUTOMATED_REWRITE,
 ) -> tuple[LaneDayOutcome, int, int, int, str | None]:
     """Export one lane-day under its advisory lock. Static lanes also bracket their window.
+
+    THE VERIFIED-DAY GATE LIVES HERE, under the lock and before the adapter runs, so no lane can
+    forget it: an `AUTOMATED_REWRITE` of a verified day returns `verified_manual_correction_only`
+    having fetched and written nothing; a `MANUAL_CORRECTION` rewrites it and releases its register
+    entry. See `AGENTS.md`, "Verified days are manual-correction only".
 
     PUBLIC because the bulk drain (`pipeline/parquet/drain.py`) calls exactly this. The drain and
     the hourly cron must not drift on what one lane-day MEANS -- the lock, the prune, the coarse
@@ -662,6 +677,30 @@ async def fill_one_lane_day(  # noqa: PLR0913 - one caller-supplied coordinate p
                     f"{day.isoformat()}: another run holds this lane-day, so it was skipped rather than "
                     "written twice; it stays missing and the next tick will take it",
                 )
+            refusal = automated_rewrite_refusal(
+                store, lane=lane.slug, nature=lane.nature, kind=GAP_FILL_PARTITION_KIND, day=day, policy=rewrite_policy
+            )
+            if refusal is not None:
+                return VERIFIED_REFUSAL, 0, 0, 0, refusal
+            corrected = correction_target(
+                store, lane=lane.slug, nature=lane.nature, kind=GAP_FILL_PARTITION_KIND, day=day, policy=rewrite_policy
+            )
+            if corrected is not None and availability_storage is None:
+                # Refused BEFORE the write: a correction that could not release its register entry
+                # would leave the day "verified" over bytes nobody verified.
+                return (
+                    "raised",
+                    0,
+                    0,
+                    0,
+                    f"{day.isoformat()}: correcting a verified day needs availability storage to release its "
+                    "verified-days entry; nothing was written",
+                )
+            replaced_marker = (
+                None
+                if corrected is None
+                else base_completion_sha256(store, lane=lane.slug, kind=GAP_FILL_PARTITION_KIND, day=day)
+            )
             # THE LEDGER SPANS THE WHOLE EXPORT so the availability step can name every object this
             # run wrote -- part keys and digests included -- without re-reading a single byte of them.
             # It records nothing unless this scope is open, so no other caller pays for it.
@@ -689,6 +728,19 @@ async def fill_one_lane_day(  # noqa: PLR0913 - one caller-supplied coordinate p
                         derive_tiers=derive_tiers,
                         statement_timeout_seconds=statement_timeout_seconds,
                     )
+            if corrected is not None and availability_storage is not None and result[0] in ("written", "absent"):
+                outcome, parts, rows, written_bytes, detail = result
+                note = record_correction(
+                    availability_storage,
+                    store,
+                    lane=lane.slug,
+                    kind=GAP_FILL_PARTITION_KIND,
+                    verified=corrected,
+                    run_id=run_id,
+                    corrected_at=now(),
+                    old_base_completion_sha256=replaced_marker,
+                )
+                result = (outcome, parts, rows, written_bytes, _append_note(detail, note))
             # SILENT WHEN IT IS NOT WIRED. A run with no conditional storage has the same thing to
             # say about every day it writes, and saying it on each one would bury the notes that
             # describe what actually happened to that day.

@@ -138,6 +138,8 @@ class MemoryLaneStore:
     coverage_refused: set[tuple[str, date]] = field(default_factory=set)
     #: Stream-days whose coarse rungs cannot be derived from their base rung (H1).
     unrepairable: set[tuple[str, date]] = field(default_factory=set)
+    #: Stream-days the owner VERIFIED: manual-correction only (`pipeline/parquet/verified_days.py`).
+    verified: set[tuple[str, date]] = field(default_factory=set)
     #: Every write-side call, in order.
     journal: list[str] = field(default_factory=list)
 
@@ -212,6 +214,10 @@ class MemoryLaneStore:
             (day for (name, day), status in self.statuses.items() if name == stream and status == "data"),
             default=None,
         )
+
+    def is_verified(self, stream: str, day: date) -> bool:
+        """True when the stream-day is verified, as the production reader's register read says."""
+        return (stream, day) in self.verified
 
     def canonical_digest(self, stream: str, table: pa.Table) -> str:  # noqa: ARG002 - the LaneReader shape
         return table_digest(table)

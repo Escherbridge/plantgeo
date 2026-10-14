@@ -71,6 +71,7 @@ from agri_data_service.pipeline.parquet.gap_fill import (
     unlocked_lane_day,
 )
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
+from agri_data_service.pipeline.parquet.verified_days import AUTOMATED_REWRITE, MANUAL_CORRECTION, VERIFIED_REFUSAL
 from agri_data_service.pipeline.source_bindings import resolve_burn_severity_source
 from agri_data_service.warehouse.parquet.tiers import DERIVED_ZOOM_TIERS
 from agri_data_service.warehouse.schemas.burn_severity import BURN_SEVERITY_STREAM
@@ -151,6 +152,8 @@ class BurnSeverityForwardConfig:
     bbox: str | None = None
     today: date | None = None
     current_snapshots: bool = False
+    #: `--correct-verified`: a manual correction may rewrite a VERIFIED release day (`verified_days.py`).
+    correct_verified: bool = False
 
 
 def emit(payload: Mapping[str, object]) -> None:
@@ -249,7 +252,7 @@ async def run_burn_severity_forward(config: BurnSeverityForwardConfig) -> dict[s
     selected_and_settled = {
         day
         for day, result in zip(pending, results, strict=True)
-        if result["outcome"] != BURN_SEVERITY_TIME_BUDGET_OUTCOME
+        if result["outcome"] not in {BURN_SEVERITY_TIME_BUDGET_OUTCOME, VERIFIED_REFUSAL}
     }
     remaining = tuple(day for day in window_backlog if day in selected_and_settled)
     if remaining:
@@ -403,6 +406,7 @@ async def _publish_locked_release_day_with_retries(  # noqa: PLR0913
                 statement_timeout_seconds=BURN_SEVERITY_STATEMENT_TIMEOUT_SECONDS,
                 availability_storage=availability_storage,
                 availability_tally=availability,
+                rewrite_policy=MANUAL_CORRECTION if config.correct_verified else AUTOMATED_REWRITE,
             )
             await session.rollback()
         except Exception as error:  # every source/object-store failure surfaces as `raised`
@@ -415,6 +419,9 @@ async def _publish_locked_release_day_with_retries(  # noqa: PLR0913
         else:
             source = adapter.source
 
+        if outcome == VERIFIED_REFUSAL:
+            # Refused before any fetch or write: the day is verified, so only --correct-verified changes it.
+            return {**_skipped_result(day, outcome=VERIFIED_REFUSAL), "detail": detail}
         if outcome in {"blocked", "absent", "written"} and source is None:
             raise DirectBurnSeverityError(
                 f"burn-severity {day} returned {outcome} without a completed locked source fetch"
@@ -688,6 +695,15 @@ def parser() -> argparse.ArgumentParser:
     built.add_argument(
         "--contention-timeout-seconds", type=float, default=BURN_SEVERITY_DEFAULT_CONTENTION_TIMEOUT_SECONDS
     )
+    built.add_argument(
+        "--correct-verified",
+        action="store_true",
+        help=(
+            "Manual correction only: allow rewriting a day the owner VERIFIED (its verified-days entry is "
+            "released and the correction recorded). Without it a verified day is left untouched and "
+            "reported `verified_manual_correction_only`. Never pass it from a scheduled command."
+        ),
+    )
     return built
 
 
@@ -711,6 +727,7 @@ def parse_args(argv: Sequence[str] | None = None) -> BurnSeverityForwardConfig:
         run_id=arguments.run_id,
         bbox=arguments.bbox,
         current_snapshots=arguments.current_snapshots,
+        correct_verified=arguments.correct_verified,
     )
     try:
         _validate_config(config)

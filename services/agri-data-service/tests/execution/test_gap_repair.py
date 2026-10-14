@@ -257,6 +257,42 @@ def test_a_stalled_lane_with_no_measured_gap_is_authorized_as_behind_provider() 
     assert [candidate.verdict for candidate in inactive.candidates] == ["lane_inactive"]
 
 
+SEPT = (date(2026, 9, 1), date(2026, 9, 2), date(2026, 9, 3))
+
+
+@pytest.mark.parametrize(
+    ("verified", "verdict", "left", "skipped"),
+    [
+        # Every measured gap day is verified: nothing is authored, and the plan says why.
+        (set(SEPT), "verified_only", [], 3),
+        # A verified day inside a gap splits it; the unverified days are still repair work.
+        ({SEPT[1]}, "repair_authorized", [(SEPT[0], SEPT[0]), (SEPT[2], SEPT[2])], 1),
+        # Nothing verified: the plan is exactly what it was before verification existed.
+        (set(), "repair_authorized", [(SEPT[0], SEPT[2])], 0),
+    ],
+)
+def test_verified_days_are_taken_out_of_measured_gaps_before_any_verdict(
+    verified: set[date], verdict: str, left: list[tuple[date, date]], skipped: int
+) -> None:
+    """Owner 2026-10-13: a verified day is manual-correction only, so it is never handed to a writer as repair."""
+    rows = _rows("vegetation", gaps=[_gap(SEPT[0], SEPT[2])])
+
+    plan = select_repair_candidates(
+        rows,
+        active_lanes=ACTIVE.active_lanes,
+        now=NOW,
+        budget=RepairBudget(),
+        verified_days={("vegetation", "observed"): verified},
+    )
+
+    (candidate,) = plan.candidates
+    assert candidate.verdict == verdict
+    assert [(entry.first_day, entry.last_day) for entry in candidate.facts.gap_ranges] == left
+    assert candidate.to_dict()["skipped_verified_days"] == skipped
+    assert [entry.layer for entry in plan.authorized] == ([] if verdict == "verified_only" else ["vegetation"])
+    assert getattr(candidate.request, "gap_day_count", 0) == len(SEPT) - skipped
+
+
 def test_a_recently_authored_layer_sits_the_pass_out() -> None:
     rows = (
         *_rows(SHORTWAVE, gaps=[_gap(date(2026, 9, 10), date(2026, 9, 10))], behind=True),
@@ -653,6 +689,7 @@ def test_a_dry_run_of_the_verb_prints_the_plan_and_opens_no_ledger(monkeypatch: 
         return coverage
 
     monkeypatch.setattr(gap_repair, "read_parquet_coverage", pinned_coverage)
+    monkeypatch.setattr(gap_repair, "read_verified_lane_days", lambda _coverage: {})
     monkeypatch.setattr(gap_repair, "parse_activation", lambda: ACTIVE)
 
     def no_ledger() -> str:

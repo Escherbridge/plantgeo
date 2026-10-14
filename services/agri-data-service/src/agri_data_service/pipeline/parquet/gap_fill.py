@@ -122,6 +122,7 @@ from agri_data_service.pipeline.parquet.gap_fill_day import (
 )
 from agri_data_service.pipeline.parquet.gap_fill_progress import (
     _drain_owed_availability,
+    _drop_verified_days,
     _record_day_outcome,
     _record_repair_outcome,
     _seeded_progress,
@@ -187,6 +188,12 @@ async def run_gap_fill(  # noqa: PLR0913 - one parameter per operator-tunable kn
     census = build_gap_census(lanes, store, today=today, max_days_per_lane=max_days_per_lane, watermarks=watermarks)
     progress = [_seeded_progress(entry, today=today) for entry in census]
     by_slug = {lane.slug: lane for lane in lanes}
+    # VERIFIED DAYS NEVER ENTER EITHER QUEUE (owner 2026-10-13): one register read per lane, before
+    # the walk, so a lane whose owed range is wholly verified authors nothing and says how many it
+    # skipped. A missing day is never verified, so the newest-first edge is untouched.
+    for entry in progress:
+        if entry.census.slug in by_slug:
+            _drop_verified_days(entry, store, lane=by_slug[entry.census.slug])
     if extend_availability and availability_storage is not None:
         # OWED AVAILABILITY IS DRAINED BEFORE ANY NEW DAY IS TAKEN. It is the cheap half of the
         # tick -- no export, no derivation, only the publication a previous turn could not finish --
@@ -297,6 +304,7 @@ __all__ = [
     "TierDeriver",
     "_absence_reason_of_record",
     "_drain_owed_availability",
+    "_drop_verified_days",
     "_export_one_day",
     "_fill_static_day",
     "_finalize_written_day",

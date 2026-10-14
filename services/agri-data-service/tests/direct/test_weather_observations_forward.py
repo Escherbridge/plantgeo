@@ -31,6 +31,7 @@ from agri_data_service.pipeline.direct.weather_observations.recovery import (
 )
 from agri_data_service.pipeline.direct.weather_observations.source import WeatherPointObservation
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
+from agri_data_service.pipeline.parquet.verified_days import VERIFIED_REFUSAL
 from agri_data_service.warehouse.schemas.weather_observations import WEATHER_OBSERVATIONS_SCHEMA
 from tests.parquet.test_objectstore_writer import RecordingBackend
 
@@ -734,3 +735,21 @@ class TestRecoverDayArgument:
 
     def test_a_day_inside_the_window_is_accepted(self) -> None:
         forward._validate_args(_args(recover_day=DAY_ONE), today=DAY_THREE)
+
+
+@pytest.mark.parametrize(
+    ("outcomes", "exit_code"),
+    [
+        # Every unwritten day is a verified day the seam refused: manual correction only, not a failure.
+        ([VERIFIED_REFUSAL], 0),
+        # A raised day beside it is still the failure the exit code reports.
+        ([VERIFIED_REFUSAL, "raised"], 1),
+    ],
+)
+def test_a_verified_day_the_seam_refused_does_not_fail_the_poll(outcomes: list[str], exit_code: int) -> None:
+    """The owner verified a day still inside the rolling window: the poll skips it without tripping the breaker."""
+    days = (DAY_TWO, DAY_ONE)
+    verdict = forward._bucket_verdict([_result(days[index], outcome) for index, outcome in enumerate(outcomes)])
+
+    assert verdict.outcome == "incomplete"
+    assert verdict.exit_code == exit_code

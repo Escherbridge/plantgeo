@@ -67,6 +67,7 @@ from agri_data_service.pipeline.parquet.gap_fill import (
 )
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
+from agri_data_service.pipeline.parquet.verified_days import VERIFIED_REFUSAL
 from agri_data_service.warehouse.parquet.tiers import DERIVED_ZOOM_TIERS
 from agri_data_service.warehouse.schemas.vegetation import VEGETATION_PLANE_STREAM
 
@@ -395,7 +396,7 @@ async def _publish_day_with_retries(  # noqa: PLR0913 - one lane-day coordinate 
         await asyncio.sleep(min(1.0, remaining))
 
 
-async def _publish_locked_day(  # noqa: PLR0913 - one lane-day coordinate per argument
+async def _publish_locked_day(  # noqa: PLR0913, PLR0911 - one lane-day coordinate per argument; one return per outcome
     session: AsyncSession,
     store: ObjectStore,
     day: date,
@@ -447,6 +448,9 @@ async def _publish_locked_day(  # noqa: PLR0913 - one lane-day coordinate per ar
                 await session.rollback()
             outcome, parts, rows, written_bytes = "raised", 0, 0, 0
             detail = f"{type(error).__name__}: {error}"
+        if outcome == VERIFIED_REFUSAL:
+            # Refused before the fetch: the day is verified, so no recheck or re-bind may touch it.
+            return _stopped_day(day, outcome=VERIFIED_REFUSAL, attempts=attempt, detail=detail)
         if adapter.unsettled_refusal is not None:
             # NOT A FAILURE AND NOT A RETRY. Refetching this day inside the same turn asks the same
             # question of the same catalogue; the next turn is the soonest the answer can differ.

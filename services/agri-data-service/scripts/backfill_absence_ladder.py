@@ -71,6 +71,10 @@ from agri_data_service.pipeline.parquet.derivation import (  # noqa: E402
     write_absence_ladder,
 )
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore  # noqa: E402
+from agri_data_service.pipeline.parquet.verified_days import (  # noqa: E402
+    VERIFIED_REFUSAL,
+    read_verified_days,
+)
 from agri_data_service.warehouse.schemas.availability_index import AVAILABILITY_REQUIRED_RUNGS  # noqa: E402
 
 if TYPE_CHECKING:
@@ -279,6 +283,27 @@ def backfill_lane(
     result.days_published = sum(1 for verdict in verdicts if verdict.outcome == OUTCOME_PUBLISHED)
     result.refused = [verdict for verdict in verdicts if verdict.outcome == OUTCOME_REFUSED]
     owed = tuple(verdict for verdict in verdicts if verdict.outcome == OUTCOME_NEEDS_MARKERS)
+    # A VERIFIED day is manual-correction only, and this sweep is not a correction: refused by name.
+    # Unreachable in practice (only published, digested days are ever registered, and those are never
+    # absence-only), so this is the belt beside the braces. An unreadable register refuses every day.
+    register = read_verified_days(store, lane=layer, kind=kind)
+    verified = tuple(
+        verdict for verdict in owed if register.unreadable is not None or register.is_verified(verdict.day)
+    )
+    for verdict in verified:
+        result.refused.append(
+            DayVerdict(
+                day=verdict.day,
+                outcome=OUTCOME_REFUSED,
+                refusal=VERIFIED_REFUSAL,
+                detail=(
+                    "the day is verified; only a manual correction may change it"
+                    if register.unreadable is None
+                    else f"the verified-days register could not be read: {register.unreadable}"
+                ),
+            )
+        )
+    owed = tuple(verdict for verdict in owed if verdict not in verified)
     evidence = _read_base_evidence(
         store,
         layer=layer,

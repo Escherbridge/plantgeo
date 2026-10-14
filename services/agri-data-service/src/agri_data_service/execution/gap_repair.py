@@ -52,11 +52,13 @@ from agri_data_service.parquet_ops.coverage import registered_census_lanes
 from agri_data_service.parquet_ops.freshness import render_freshness_report
 from agri_data_service.parquet_ops.wire import WarehouseCoverage, render_instant
 from agri_data_service.pipeline.parquet.availability_index import BotoAvailabilityStorage
+from agri_data_service.pipeline.parquet.verified_days import read_verified_days
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
     from collections.abc import Set as AbstractSet
+    from datetime import date
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -151,7 +153,32 @@ def read_parquet_coverage(*, now: datetime) -> WarehouseCoverage:
     )
 
 
-def plan_gap_repairs(  # noqa: PLR0913 - the coverage, the activation, the clock, the budget and two filters
+def read_verified_lane_days(coverage: WarehouseCoverage) -> dict[tuple[str, str], frozenset[date]]:
+    """One register GET per repair-bound `(layer, kind)` that HAS a measured gap; ADVISORY, the writer's seam enforces.
+
+    Anything that is not a coverage read, or a store that cannot be built, contributes nothing: the
+    plan is then exactly what it was, and `fill_one_lane_day` still refuses every verified day.
+    """
+    if not isinstance(coverage, WarehouseCoverage):
+        return {}
+    wanted = sorted(
+        {(row.layer, row.kind) for row in coverage.lanes if row.layer in REPAIR_BINDINGS and row.gap_ranges}
+    )
+    if not wanted:
+        return {}
+    try:
+        storage = BotoAvailabilityStorage.from_settings()
+    except ValueError:
+        return {}
+    verified: dict[tuple[str, str], frozenset[date]] = {}
+    for layer, kind in wanted:
+        register = read_verified_days(storage, lane=layer, kind=kind)
+        if register.days:
+            verified[(layer, kind)] = frozenset(register.days)
+    return verified
+
+
+def plan_gap_repairs(  # noqa: PLR0913 - the coverage, the activation, the clock, the budget and three filters
     coverage: WarehouseCoverage,
     *,
     activation: ActivationConfig,
@@ -159,6 +186,7 @@ def plan_gap_repairs(  # noqa: PLR0913 - the coverage, the activation, the clock
     budget: RepairBudget,
     lane_ids: AbstractSet[str] | None = None,
     recently_authored: AbstractSet[str] = frozenset(),
+    verified_days: Mapping[tuple[str, str], AbstractSet[date]] | None = None,
 ) -> RepairPlan:
     """Judge the coverage rows, optionally only those whose repair binding names one of `lane_ids`."""
     rows = coverage.lanes
@@ -172,6 +200,7 @@ def plan_gap_repairs(  # noqa: PLR0913 - the coverage, the activation, the clock
         now=now,
         budget=budget,
         recently_authored=recently_authored,
+        verified_days=verified_days,
     )
 
 
@@ -280,7 +309,10 @@ async def _plan_process(
     # stops, reads `lane_inactive` here exactly as it does in the tick's own authoring pass.
     activation = current_lane_catalogue(LANE_SPECS).legacy_activation(parse_activation())
     coverage = await asyncio.to_thread(read_parquet_coverage, now=now)
-    plan = plan_gap_repairs(coverage, activation=activation, now=now, budget=budget, lane_ids=lane_ids)
+    verified = await asyncio.to_thread(read_verified_lane_days, coverage)
+    plan = plan_gap_repairs(
+        coverage, activation=activation, now=now, budget=budget, lane_ids=lane_ids, verified_days=verified
+    )
     freshness = render_freshness_report(coverage)
     if not plan.authorized:
         return RepairAuthoringReport(generated_at=now, ledger=None, plan=plan, receipts=(), freshness=freshness)

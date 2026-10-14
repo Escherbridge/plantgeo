@@ -139,6 +139,9 @@ _AVAILABILITY_RETRY_SEGMENT: Final = "availability/pending/"
 _AVAILABILITY_RETRY_DAY_PREFIX: Final = "day="
 _AVAILABILITY_RETRY_SUFFIX: Final = ".json"
 _AVAILABILITY_RETRY_QUARANTINE_SUFFIX: Final = ".quarantined.json"
+_VERIFIED_DAYS_REGISTER_NAME: Final = "availability/verified-days.json"
+#: The register's byte ceiling; ~250 B per verified day, so ~30,000 days fit beside their correction trail.
+MAX_VERIFIED_DAYS_REGISTER_BYTES: Final = 8 * 1024 * 1024
 _ABSENT_OBJECT_CODES: Final = frozenset({"404", "NoSuchKey", "NotFound"})
 # Rows per BASE part for a lane whose day is folded over latitude bands (`derivation.py`). Sized so
 # the largest estimated base (0.0025 deg, 85.6M rows at the top of ROW-CAP-ANALYSIS section 2.3's
@@ -179,6 +182,11 @@ def availability_retry_quarantine_path(layer: str, kind: PartitionKind, day: dat
 def availability_retry_prefix(layer: str, kind: PartitionKind) -> str:
     """Return the prefix holding every availability retry marker of one lane."""
     return f"{availability_lane_root(layer, kind)}/{_AVAILABILITY_RETRY_SEGMENT}"
+
+
+def verified_days_register_path(layer: str, kind: PartitionKind) -> str:
+    """Return the relative key of one lane's verified-days register (see `verified_days.py`)."""
+    return f"{availability_lane_root(layer, kind)}/{_VERIFIED_DAYS_REGISTER_NAME}"
 
 
 def try_parse_availability_retry_path(path: str) -> date | None:
@@ -826,6 +834,13 @@ class ObjectStore:
         payload = self._backend.get(self.key_for(promotion_receipt_path(layer, kind, day)))
         if payload is not None and len(payload) > MAX_PROMOTION_RECEIPT_BYTES:
             raise ValueError(f"promotion receipt for {layer!r} {kind} {day.isoformat()} exceeds its ceiling")
+        return payload
+
+    def read_verified_days_register(self, layer: str, kind: PartitionKind) -> bytes | None:
+        """Return one lane's verified-days register bytes, or `None` when no day was ever verified."""
+        payload = self._backend.get(self.key_for(verified_days_register_path(layer, kind)))
+        if payload is not None and len(payload) > MAX_VERIFIED_DAYS_REGISTER_BYTES:
+            raise ValueError(f"verified-days register for {layer!r} {kind} exceeds its ceiling")
         return payload
 
     def write_ml_object(self, payload: bytes, *, relative_path: str, content_type: str) -> str:

@@ -770,6 +770,14 @@ deleted 2026-09-12 as the last PostgreSQL reactivation surface, which left a mea
   makes `run_executor_tick` call `_author_due_repairs` once per interval -- one coverage read under the
   availability authority, one plan, one committed applied pass -- and a failed pass advances the clock
   too, so a broken store is never probed every 30 s. The verb remains for a human who wants a turn now.
+- **Verified days are manual-correction only** (owner 2026-10-13). `read_verified_lane_days` reads one
+  verified-days register per repair-bound `(layer, kind)` that has a measured gap, and
+  `select_repair_candidates(verified_days=...)` subtracts those days from the gaps before judging
+  (`subtract_days`); a lane whose gaps are all verified reads `verified_only` and authors nothing, and
+  every candidate reports `skipped_verified_days`. ADVISORY: availability-authority gaps cannot hold an
+  indexed (hence verified) day anyway, and the writer selects its own days, so the enforcement is the
+  seam (`pipeline/parquet/gap_fill_day.py::fill_one_lane_day`). Definition:
+  `pipeline/parquet/AGENTS.md`, "Verified days are manual-correction only".
 - **A stalled lane with NO measured gap is still authorized** (`behind_provider` verdict,
   `gap_repair_contract._behind_provider`): availability rows close against the publisher's own ceiling,
   so the shortwave shape has `gap_ranges == ()` by construction and a gap-only rule never fires. The

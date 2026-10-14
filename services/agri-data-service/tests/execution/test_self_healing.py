@@ -386,16 +386,27 @@ async def test_a_due_clock_reads_coverage_once_plans_and_commits_an_applied_pass
 ) -> None:
     calls: list[tuple[str, object]] = []
     coverage = object()
+    verified = {("drought", "observed"): frozenset({NOW.date()})}
     plan = type("Plan", (), {"authorized": (), "candidates": ()})()
 
     def read_coverage(*, now: datetime) -> object:
         calls.append(("read", now))
         return coverage
 
-    def plan_repairs(
-        seen: object, *, activation: ActivationConfig, now: datetime, budget: object, recently_authored: object
+    def read_verified(seen: object) -> object:
+        calls.append(("verified", seen))
+        return verified
+
+    def plan_repairs(  # noqa: PLR0913 - mirrors plan_gap_repairs' keyword contract
+        seen: object,
+        *,
+        activation: ActivationConfig,
+        now: datetime,
+        budget: object,
+        recently_authored: object,
+        verified_days: object,
     ) -> object:
-        calls.append(("plan", (seen, activation, now, type(budget).__name__, recently_authored)))
+        calls.append(("plan", (seen, activation, now, type(budget).__name__, recently_authored, verified_days)))
         return plan
 
     async def author(session: object, *, plan: object, now: datetime, apply: bool) -> tuple:
@@ -406,6 +417,7 @@ async def test_a_due_clock_reads_coverage_once_plans_and_commits_an_applied_pass
         calls.append(("commit", None))
 
     monkeypatch.setattr(gap_repair, "read_parquet_coverage", read_coverage)
+    monkeypatch.setattr(gap_repair, "read_verified_lane_days", read_verified)
     monkeypatch.setattr(gap_repair, "plan_gap_repairs", plan_repairs)
     monkeypatch.setattr(gap_repair, "author_gap_repairs", author)
     monkeypatch.setattr(job_executor_service, "_commit_planning_transaction", commit)
@@ -415,9 +427,12 @@ async def test_a_due_clock_reads_coverage_once_plans_and_commits_an_applied_pass
     summary = await _author(session, clock)
 
     assert summary == {"authorized": [], "verdicts": {}, "receipts": []}
-    assert [name for name, _ in calls] == ["read", "plan", "author", "commit"]
-    assert calls[1][1] == (coverage, ACTIVE, NOW, "RepairBudget", frozenset())
-    assert calls[2][1] == (session, plan, NOW, True), "an applied pass, with nobody at the keyboard"
+    assert [name for name, _ in calls] == ["read", "verified", "plan", "author", "commit"]
+    assert calls[1][1] is coverage, "the verified register is read for the same coverage the plan judges"
+    assert calls[2][1] == (coverage, ACTIVE, NOW, "RepairBudget", frozenset(), verified), (
+        "the register read for that coverage is handed to the plan, which subtracts it from every gap"
+    )
+    assert calls[3][1] == (session, plan, NOW, True), "an applied pass, with nobody at the keyboard"
     assert clock.last_authored is not None
 
 

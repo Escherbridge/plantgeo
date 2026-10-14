@@ -16,6 +16,7 @@ import pytest
 from agri_data_service.foundation.parquet.completion import PartitionCompletion
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
+from agri_data_service.pipeline.lanes.transforms.precedence import STRATEGY as PRECEDENCE
 from agri_data_service.pipeline.parquet.derivation import DerivationResult, DerivedTierReport
 from agri_data_service.pipeline.parquet.gap_fill import no_derived_tiers, unlocked_lane_day
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
@@ -26,6 +27,7 @@ from agri_data_service.pipeline.runner.writer import (
     CompareModeWriteError,
     LaneDayContendedError,
     LaneDayCoverageRefusedError,
+    LaneDayVerifiedError,
     ObjectStoreLaneWriter,
     WritePermit,
     decide_rewrite,
@@ -33,6 +35,7 @@ from agri_data_service.pipeline.runner.writer import (
 from tests.parquet.availability_documents import MemoryAvailabilityStorage
 from tests.parquet.test_gap_fill import RecordingSession
 from tests.parquet.test_objectstore_writer import JULY_FOURTH, RecordingBackend, signal_rows
+from tests.parquet.test_verified_days import seed_verified_register
 from tests.runner.fakes import (
     TODAY,
     ManualClock,
@@ -40,8 +43,10 @@ from tests.runner.fakes import (
     ScriptedUpstream,
     days_between,
     grid_lane,
+    grid_table,
     point_lane,
     ports_for,
+    precedence_lanes,
     run,
     spec_for,
 )
@@ -91,6 +96,31 @@ def test_the_s11_rewrite_rules(  # noqa: PLR0913 - one parameter per column of t
     )
 
     assert decision.reason == reason
+
+
+@pytest.mark.parametrize(
+    ("status", "receipt", "settlement", "digest", "policy", "reason"),
+    [
+        # Every WRITING S11 verdict on a verified day becomes the one refusal word.
+        ("data", FULL, Written(4, 4), "revised", "refuse", "verified_manual_correction_only"),
+        ("data", PARTIAL, Written(4, 4), "revised", "write_and_recheck", "verified_manual_correction_only"),
+        ("data", None, Written(4, 4), "new", "refuse", "verified_manual_correction_only"),
+        ("incomplete", None, Written(4, 4), "new", "refuse", "verified_manual_correction_only"),
+        # A non-writing verdict keeps its own word: nothing was going to be written anyway.
+        ("data", FULL, Written(4, 4), "old", "refuse", "digest_unchanged"),
+        ("data", FULL, Absent("no_values", "later day published"), "x", "refuse", "data_never_retracted_by_absence"),
+    ],
+)
+def test_a_verified_day_refuses_every_writing_s11_verdict(  # noqa: PLR0913 - one parameter per column of the S11 table
+    status: PartitionDayStatus, receipt: DayReceipt | None, settlement: Any, digest: str, policy: Any, reason: str
+) -> None:
+    """Owner 2026-10-13: a verified day is manual-correction only, whatever S11 would otherwise have said."""
+    decision = decide_rewrite(
+        status=status, receipt=receipt, settlement=settlement, source_digest=digest, partial_day=policy, verified=True
+    )
+
+    assert decision.reason == reason
+    assert not decision.writes
 
 
 def test_a_missing_completeness_proof_requires_republication_even_with_an_equal_receipt_digest() -> None:
@@ -177,6 +207,53 @@ async def test_a_settled_day_is_rewritten_when_its_source_digest_changes_at_the_
     ]
     assert store.tables[(GRID_STREAM, revised)].num_rows == before.num_rows
     assert store.status(GRID_STREAM, edge) == "data"
+
+
+async def test_a_verified_day_keeps_its_bytes_when_its_source_is_revised_and_the_new_edge_still_lands() -> None:
+    """The ERA5T revision above, with the revised day verified: refused by name, and the new edge day is written."""
+    edge = TODAY - timedelta(days=5)
+    revised = edge - timedelta(days=5)
+    store, world = MemoryLaneStore(), GridWorld()
+    world.publish(days_between(edge - timedelta(days=13), edge - timedelta(days=1)))
+    strategy = GridRefuseStrategy(span_days=14)
+    await run(spec_for(grid_lane()), ports_for(strategy, store, upstream=ScriptedUpstream(world.answer)))
+    before = store.tables[(GRID_STREAM, revised)]
+    store.verified.add((GRID_STREAM, revised))
+    world.publish([edge])
+    world.publish([revised], value=9.0)
+
+    exit_code, report = await run(
+        spec_for(grid_lane()), ports_for(strategy, store, upstream=ScriptedUpstream(world.answer))
+    )
+
+    assert exit_code == 0
+    assert report["rewrite_reasons"] == {"verified_manual_correction_only": 1, "digest_unchanged": 12, "new": 1}
+    assert store.tables[(GRID_STREAM, revised)].equals(before)
+    assert store.status(GRID_STREAM, edge) == "data"
+
+
+async def test_a_refused_verified_transform_output_leaves_its_day_dirty_so_a_release_rebuilds_it() -> None:
+    """No transform receipt claims inputs a verified output refused; once released, the day rebuilds from them."""
+    transform, inputs = precedence_lanes()
+    store = MemoryLaneStore()
+    window = days_between(TODAY - timedelta(days=5), TODAY - timedelta(days=1))
+    for day in window:
+        store.publish("fixture-era5-value", day, grid_table(day, dict.fromkeys(CELLS, 1.0)))
+    spec = spec_for(transform, mode="transform", input_lanes=inputs)
+    await run(spec, ports_for(PRECEDENCE, store))
+    revised = window[1]
+    store.verified.add(("fixture-value", revised))
+    store.publish("fixture-era5-value", revised, grid_table(revised, dict.fromkeys(CELLS, 5.0)))
+
+    _, refused = await run(spec, ports_for(PRECEDENCE, store))
+    kept = store.tables[("fixture-value", revised)].column("value").to_pylist()
+    store.verified.clear()
+    _, released = await run(spec, ports_for(PRECEDENCE, store))
+
+    assert refused["rewrite_reasons"] == {"verified_manual_correction_only": 1}
+    assert kept == [1.0] * len(CELLS)
+    assert released["days_candidate"] == 1
+    assert store.tables[("fixture-value", revised)].column("value").to_pylist() == [5.0] * len(CELLS)
 
 
 async def test_a_partial_recheck_day_is_rewritten_only_when_more_units_arrive() -> None:
@@ -279,6 +356,41 @@ async def test_the_production_writer_publishes_the_whole_ladder_and_its_turn_rec
     assert published is not None
     assert reader.canonical_digest(SIGNAL, published) == reader.canonical_digest(SIGNAL, table)
     assert reader.newest_data_day(SIGNAL) == JULY_FOURTH
+
+
+async def test_the_production_writer_refuses_a_verified_day_before_touching_its_bytes_or_receipt() -> None:
+    """The seam's own check runs before the receipt goes `pending`, so a refused day is not re-asked forever."""
+    backend = RecordingBackend()
+    store, availability = ObjectStore(backend), MemoryAvailabilityStorage()
+    first = DayReceipt(
+        stream=SIGNAL,
+        day=JULY_FOURTH,
+        lane="fixture",
+        outcome="written",
+        source_digest="digest-1",
+        present_units=3,
+        expected_units=3,
+    )
+    writer = _production_writer(store, availability)
+    await writer.write_day(SIGNAL, JULY_FOURTH, signal_rows(), first, availability=True)
+    seed_verified_register(backend, store, SIGNAL, [JULY_FOURTH])
+    bucket = dict(backend.objects)
+
+    with pytest.raises(LaneDayVerifiedError, match="verified_manual_correction_only"):
+        await _production_writer(store, availability).write_day(
+            SIGNAL,
+            JULY_FOURTH,
+            signal_rows(cell_ids=("revised",)),
+            replace(first, source_digest="digest-2"),
+            availability=True,
+        )
+
+    assert backend.objects == bucket
+    stored = ObjectStoreLaneReader(store=store, receipts=TurnReceipts(availability)).receipt(SIGNAL, JULY_FOURTH)
+    assert (getattr(stored, "source_digest", None), getattr(stored, "publication_state", None)) == (
+        "digest-1",
+        "complete",
+    )
 
 
 async def test_production_source_debt_survives_restart_until_every_unit_is_proven() -> None:

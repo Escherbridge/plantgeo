@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -25,6 +25,7 @@ from agri_data_service.pipeline.parquet.availability_index import (
     load_bootstrap_request,
     load_publication_request,
     publish_availability,
+    read_latest_availability,
 )
 from agri_data_service.pipeline.parquet.availability_reconciliation import (
     AvailabilityReconciliationError,
@@ -35,22 +36,44 @@ from agri_data_service.pipeline.parquet.availability_reconciliation import (
 from agri_data_service.pipeline.parquet.availability_trusted_digest import (
     MAX_TRUSTED_DIGEST_DAYS,
     IndexCacheLimits,
+    TrustedDigestCompilation,
     compile_trusted_digest,
 )
-from agri_data_service.pipeline.parquet.objectstore import BotoObjectStoreBackend, ObjectStore
+from agri_data_service.pipeline.parquet.objectstore import (
+    BotoObjectStoreBackend,
+    ObjectStore,
+    availability_lane_root,
+)
+from agri_data_service.pipeline.parquet.verified_days import (
+    VerifiedDayCorrection,
+    VerifiedDaysError,
+    base_completion_sha256,
+    forget_verified_days,
+    ladder_sha256,
+    read_verified_days,
+    record_verified_days,
+    release_verified_days,
+    verified_entries,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine
+    from collections.abc import Callable, Coroutine, Sequence
 
     from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.pipeline.parquet.availability_index import (
         AvailabilityIdentity,
+        AvailabilityRow,
         BootstrapRequest,
         PublicationRequest,
         PublicationResult,
     )
 
 _APPLY_TIMEOUT_SECONDS = 120.0
+_DIGEST_VERB = "availability-digest-trusted"
+_VERIFY_VERB = "availability-verify-days"
+_RELEASE_VERB = "availability-release-verified-days"
+#: A ready day whose head ladder no longer matches what this digest compiled (a write raced the publish).
+_HEAD_CHANGED_AFTER_DIGEST = "head_changed_after_digest"
 
 
 def _pinned_document_options(function: click.decorators.FC) -> click.decorators.FC:
@@ -328,11 +351,209 @@ def availability_digest_trusted(  # noqa: PLR0913 - each option is a safety pin 
         )
     )
     _run(
-        "availability-digest-trusted",
+        _DIGEST_VERB,
         preview,
         apply_=apply_,
         work=lambda: _apply_reconciliation(storage, publication, request),
+        after=lambda _result: _register_digested_days(storage, compilation, kind=cast("PartitionKind", kind)),
     )
+
+
+@click.command(_VERIFY_VERB)
+@click.option("--lane", required=True, help="Registered physical layer slug.")
+@click.option("--kind", required=True, type=click.Choice(["observed", "forecast"]))
+@click.option("--start", "start_text", required=True, help="Inclusive first day (YYYY-MM-DD).")
+@click.option("--end", "end_text", required=True, help=f"Inclusive last day; at most {MAX_TRUSTED_DIGEST_DAYS} days.")
+@click.option("--expected-head-generation", help="Required with --apply; head_generation_key from the dry run.")
+@click.option("--apply", "apply_", is_flag=True, default=False, help="Write the verified-days register (CAS).")
+def availability_verify_days(  # noqa: PLR0913 - each option is a safety pin or range coordinate
+    lane: str,
+    kind: str,
+    start_text: str,
+    end_text: str,
+    expected_head_generation: str | None,
+    *,
+    apply_: bool,
+) -> None:
+    """Register already-digested published days as VERIFIED -- manual-correction only (dry run by default).
+
+    Verified days are refused by every automated writer; see `pipeline/parquet/AGENTS.md`, "Verified
+    days are manual-correction only". This is how a manually corrected day is re-verified.
+    """
+    try:
+        start_day = date.fromisoformat(start_text)
+        end_day = date.fromisoformat(end_text)
+    except ValueError as exc:
+        raise click.ClickException(f"invalid_verify_range: {exc}") from exc
+    span = (end_day - start_day).days + 1
+    if span < 1 or span > MAX_TRUSTED_DIGEST_DAYS:
+        raise click.ClickException(f"invalid_verify_range: must contain 1..{MAX_TRUSTED_DIGEST_DAYS} days, got {span}")
+    if apply_ and expected_head_generation is None:
+        raise click.ClickException("--apply requires --expected-head-generation")
+    partition_kind = cast("PartitionKind", kind)
+    try:
+        storage = _storage()
+        index = read_latest_availability(
+            storage, lane_root=availability_lane_root(lane, partition_kind), expected_lane=lane
+        )
+    except (AvailabilityError, OSError, ValueError) as exc:
+        raise click.ClickException(f"availability_verify_refused: {exc}") from exc
+    held = read_verified_days(storage, lane=lane, kind=partition_kind)
+    if held.unreadable is not None:
+        raise click.ClickException(f"availability_verify_refused: the register could not be read: {held.unreadable}")
+    entries, skipped = verified_entries(
+        index.rows,
+        days=(start_day + timedelta(days=offset) for offset in range(span)),
+        required_rungs=index.pointer.required_rungs,
+        generation_key=index.pointer.generation_key,
+        verified_at=datetime.now(UTC),
+        verified_by=_VERIFY_VERB,
+    )
+    already = {
+        entry.day
+        for entry in entries
+        if (current := held.days.get(entry.day)) is not None and current.ladder_sha256 == entry.ladder_sha256
+    }
+    owed = tuple(entry for entry in entries if entry.day not in already)
+    report: dict[str, object] = {
+        "operation": _VERIFY_VERB,
+        "applied": False,
+        "lane": lane,
+        "kind": kind,
+        "head_generation_key": index.pointer.generation_key,
+        "would_register": [entry.day.isoformat() for entry in owed],
+        "already_verified": sorted(day.isoformat() for day in already),
+        "skipped": _days_by_reason(skipped),
+    }
+    if not apply_:
+        _emit(report)
+        return
+    if index.pointer.generation_key != expected_head_generation:
+        raise click.ClickException(
+            f"verify head is {index.pointer.generation_key}, expected {expected_head_generation}"
+        )
+    if not owed:
+        raise click.ClickException("availability_verify_refused: no day in the range is ready to register")
+    try:
+        record_verified_days(storage, lane=lane, kind=partition_kind, entries=owed)
+    except (VerifiedDaysError, AvailabilityError, OSError, ValueError) as exc:
+        raise click.ClickException(f"availability_verify_refused: {exc}") from exc
+    _emit({**report, "applied": True, "registered": report["would_register"]})
+
+
+@click.command(_RELEASE_VERB)
+@click.option("--lane", required=True, help="Registered physical layer slug.")
+@click.option("--kind", required=True, type=click.Choice(["observed", "forecast"]))
+@click.option("--day", "day_texts", required=True, multiple=True, help="A verified day (YYYY-MM-DD); repeatable.")
+@click.option("--reason", required=True, help="Why the owner is releasing the day(s); kept in the register's trace.")
+@click.option("--run-id", help="Correlation id kept in the trace; generated when omitted.")
+@click.option("--apply", "apply_", is_flag=True, default=False, help="Release the days from the register (CAS).")
+def availability_release_verified_days(  # noqa: PLR0913 - each option is a safety pin or day coordinate
+    lane: str,
+    kind: str,
+    day_texts: tuple[str, ...],
+    reason: str,
+    run_id: str | None,
+    *,
+    apply_: bool,
+) -> None:
+    """Release VERIFIED days so a correction can run: the manual path for every lane (dry run by default).
+
+    Each released day leaves a durable `corrections` record (run id, reason, the verified ladder digest,
+    the base marker it had); after it, any writer may rewrite the day. Re-verify with
+    `availability-verify-days`. See `pipeline/parquet/AGENTS.md`, "Verified days are manual-correction only".
+    """
+    try:
+        days = sorted({date.fromisoformat(text) for text in day_texts})
+    except ValueError as exc:
+        raise click.ClickException(f"invalid_release_day: {exc}") from exc
+    if not reason.strip():
+        raise click.ClickException("availability_release_refused: --reason must say why the day is released")
+    partition_kind = cast("PartitionKind", kind)
+    try:
+        storage = _storage()
+    except (AvailabilityError, OSError, ValueError) as exc:
+        raise click.ClickException(f"availability_release_refused: {exc}") from exc
+    held = read_verified_days(storage, lane=lane, kind=partition_kind)
+    if held.unreadable is not None:
+        raise click.ClickException(f"availability_release_refused: the register could not be read: {held.unreadable}")
+    releasable = [day for day in days if day in held.days]
+    report: dict[str, object] = {
+        "operation": _RELEASE_VERB,
+        "applied": False,
+        "lane": lane,
+        "kind": kind,
+        "reason": reason.strip(),
+        "would_release": [day.isoformat() for day in releasable],
+        "not_verified": [day.isoformat() for day in days if day not in held.days],
+    }
+    if not apply_:
+        _emit(report)
+        return
+    if not releasable:
+        raise click.ClickException("availability_release_refused: no named day is verified")
+    released_at = datetime.now(UTC)
+    trace_run_id = run_id or f"{_RELEASE_VERB}:{released_at:%Y%m%dT%H%M%SZ}"
+    try:
+        store = _object_store()
+        corrections = tuple(
+            VerifiedDayCorrection(
+                day=day,
+                corrected_at=released_at,
+                run_id=trace_run_id,
+                verified_ladder_sha256=held.days[day].ladder_sha256,
+                old_base_completion_sha256=base_completion_sha256(store, lane=lane, kind=partition_kind, day=day),
+                new_base_completion_sha256=None,
+                reason=reason.strip(),
+            )
+            for day in releasable
+        )
+        release_verified_days(storage, lane=lane, kind=partition_kind, corrections=corrections)
+        forget_verified_days(store)
+    except (VerifiedDaysError, AvailabilityError, OSError, ValueError) as exc:
+        raise click.ClickException(f"availability_release_refused: {exc}") from exc
+    _emit({**report, "applied": True, "released": report["would_release"], "run_id": trace_run_id})
+
+
+def _register_digested_days(
+    storage: BotoAvailabilityStorage, compilation: TrustedDigestCompilation, *, kind: PartitionKind
+) -> dict[str, object]:
+    """Register each day this digest published AS THE HEAD NOW HOLDS IT; a drifted day is named, not registered."""
+    ready = [report.day for report in compilation.days if report.outcome == "ready"]
+    index = read_latest_availability(
+        storage, lane_root=availability_lane_root(compilation.lane, kind), expected_lane=compilation.lane
+    )
+    entries, skipped = verified_entries(
+        index.rows,
+        days=ready,
+        required_rungs=index.pointer.required_rungs,
+        generation_key=index.pointer.generation_key,
+        verified_at=datetime.now(UTC),
+        verified_by=_DIGEST_VERB,
+    )
+    compiled = _ladders_by_day(compilation.rows)
+    drifted = {entry.day for entry in entries if compiled.get(entry.day) != entry.ladder_sha256}
+    kept = tuple(entry for entry in entries if entry.day not in drifted)
+    if kept:
+        record_verified_days(storage, lane=compilation.lane, kind=kind, entries=kept)
+    return {
+        "registered": [entry.day.isoformat() for entry in kept],
+        "not_registered": _days_by_reason({**skipped, **dict.fromkeys(drifted, _HEAD_CHANGED_AFTER_DIGEST)}),
+    }
+
+
+def _ladders_by_day(rows: Sequence[AvailabilityRow]) -> dict[date, str]:
+    by_day: dict[date, list[AvailabilityRow]] = {}
+    for row in rows:
+        by_day.setdefault(row.day, []).append(row)
+    return {day: ladder_sha256(day_rows) for day, day_rows in by_day.items()}
+
+
+def _days_by_reason(skipped: dict[date, str]) -> dict[str, list[str]]:
+    grouped: dict[str, list[str]] = {}
+    for day in sorted(skipped):
+        grouped.setdefault(skipped[day], []).append(day.isoformat())
+    return grouped
 
 
 def _request_preview(
@@ -372,6 +593,7 @@ def _run(
     *,
     apply_: bool,
     work: Callable[[], Coroutine[object, object, PublicationResult]],
+    after: Callable[[PublicationResult], dict[str, object]] | None = None,
 ) -> None:
     # THE GATE: every store/session constructor sits behind `work`, which is only ever called here.
     # Offline validation has already finished by this point, so a missing --apply cannot touch the
@@ -385,16 +607,25 @@ def _run(
         raise click.ClickException(f"availability_refused: {exc}") from exc
     except ValueError as exc:
         raise click.ClickException(f"invalid_availability_input: {exc}") from exc
-    _emit(
-        {
-            "operation": operation,
-            "applied": True,
-            "advanced": result.advanced,
-            "attempts": result.attempts,
-            "pointer": result.pointer.to_wire(),
-            "request": preview,
-        }
-    )
+    payload: dict[str, object] = {
+        "operation": operation,
+        "applied": True,
+        "advanced": result.advanced,
+        "attempts": result.attempts,
+        "pointer": result.pointer.to_wire(),
+        "request": preview,
+    }
+    if after is not None:
+        # THE PUBLICATION IS ALREADY DURABLE; a failed follow-up is reported beside it, never instead of it.
+        try:
+            payload["verified_registration"] = after(result)
+        except (AvailabilityError, VerifiedDaysError, OSError, ValueError) as exc:
+            payload["verified_registration"] = {"error": f"{type(exc).__name__}: {exc}"}
+            _emit(payload)
+            raise click.ClickException(
+                f"availability_published_but_not_verified: {exc}; re-run {_VERIFY_VERB} over the same range"
+            ) from exc
+    _emit(payload)
 
 
 async def _apply_bootstrap(request: BootstrapRequest) -> PublicationResult:
@@ -444,4 +675,6 @@ __all__ = [
     "availability_digest_trusted",
     "availability_publish",
     "availability_reconcile_physical",
+    "availability_release_verified_days",
+    "availability_verify_days",
 ]
