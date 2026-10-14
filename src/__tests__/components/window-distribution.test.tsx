@@ -241,7 +241,7 @@ beforeEach(async () => {
   fetchJson.mockReset();
   useTimeSliderStore.setState({ capabilities: CAPABILITIES, layerDates: {} });
   useLayerWindowStore.setState({ layerWindowPresets: {} });
-  useSoilStore.setState({ fieldDepth: DEFAULT_SOIL_FIELD_DEPTHS });
+  useSoilStore.setState({ fieldDepth: DEFAULT_SOIL_FIELD_DEPTHS, paintedFieldDepth: DEFAULT_SOIL_FIELD_DEPTHS });
 });
 
 afterEach(() => {
@@ -459,7 +459,9 @@ describe("layerWindow.distributionAtPoint", () => {
 describe("the hovered soil-moisture cell's window distribution", () => {
   it("shows the painted value and wires the distribution line to the painted depth, not the default", async () => {
     useCoarsePointer(false);
-    useSoilStore.setState({ fieldDepth: { ...DEFAULT_SOIL_FIELD_DEPTHS, moisture: "root-zone" } });
+    // Root zone requested AND drawn: the caption names the drawn depth (AGENTS.md §soil-painted-depth).
+    const rootZone = { ...DEFAULT_SOIL_FIELD_DEPTHS, moisture: "root-zone" as const };
+    useSoilStore.setState({ fieldDepth: rootZone, paintedFieldDepth: rootZone });
     agriAnswers([soilMoistureLane(1, 0.08), soilMoistureLane(2, 0.22), soilMoistureLane(3, 0.34)]);
     const fakeMap = renderSoilTooltip({
       value: 0.214,

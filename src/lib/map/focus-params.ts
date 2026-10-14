@@ -9,6 +9,8 @@
  * throws on a non-finite centre rather than ignoring it.
  */
 
+import { clampCameraZoom } from "./camera-limits";
+
 export const MAP_FOCUS_LONGITUDE_PARAM = "focusLng";
 export const MAP_FOCUS_LATITUDE_PARAM = "focusLat";
 export const MAP_FOCUS_ZOOM_PARAM = "focusZoom";
@@ -16,8 +18,9 @@ export const MAP_FOCUS_ZOOM_PARAM = "focusZoom";
 /** Close enough to read a parcel boundary without outrunning the tile coverage. */
 export const DEFAULT_MAP_FOCUS_ZOOM = 13;
 
-const MIN_ZOOM = 0;
-const MAX_ZOOM = 22;
+// A finite zoom is CLAMPED to the map's own ceiling (camera-limits.ts), never rejected: links
+// written under the old z22 contract (focusZoom=20) still open at the deepest zoom the map has,
+// not seven levels out at the default. Only a non-finite zoom falls back to the default.
 
 /** Six decimal places is ~0.1 m — past the precision any of our sources carry. */
 const COORDINATE_PRECISION = 6;
@@ -56,7 +59,7 @@ export function buildMapFocusHref(
     [MAP_FOCUS_LONGITUDE_PARAM]: longitude.toFixed(COORDINATE_PRECISION),
     [MAP_FOCUS_LATITUDE_PARAM]: latitude.toFixed(COORDINATE_PRECISION),
     [MAP_FOCUS_ZOOM_PARAM]: String(
-      isFiniteWithin(zoom, MIN_ZOOM, MAX_ZOOM) ? zoom : DEFAULT_MAP_FOCUS_ZOOM
+      Number.isFinite(zoom) ? clampCameraZoom(zoom) : DEFAULT_MAP_FOCUS_ZOOM
     ),
   });
 
@@ -73,8 +76,8 @@ export function readMapFocus(
   if (!isFiniteWithin(latitude, -90, 90)) return null;
 
   const parsedZoom = parseParam(params.get(MAP_FOCUS_ZOOM_PARAM));
-  const zoom = isFiniteWithin(parsedZoom, MIN_ZOOM, MAX_ZOOM)
-    ? parsedZoom
+  const zoom = Number.isFinite(parsedZoom)
+    ? clampCameraZoom(parsedZoom)
     : DEFAULT_MAP_FOCUS_ZOOM;
 
   return { longitude, latitude, zoom };

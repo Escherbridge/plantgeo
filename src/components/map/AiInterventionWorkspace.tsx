@@ -8,6 +8,7 @@ import { LayerIcon } from "@/components/map/layer-panel/layer-icons";
 import { AgentInteraction } from "@/components/map/AgentInteraction";
 import { InterventionProposalForm } from "@/components/panels/InterventionProposalForm";
 import { getStyle } from "@/lib/map/styles";
+import { MAP_MAX_ZOOM } from "@/lib/map/camera-limits";
 import { LAYER_REGISTRY, type LayerToggleId } from "@/lib/map/layer-registry";
 import { useLayerToggle, useToggleLayer } from "@/lib/map/layer-toggle-context";
 import { hasInterventionDraftWork, useInterventionDraftStore } from "@/stores/intervention-draft-store";
@@ -138,6 +139,9 @@ export function AiInterventionWorkspace({
       style: getStyle(useMapStore.getState().currentStyle),
       center,
       zoom: 14,
+      // Same ceiling every map on this platform obeys -- see camera-limits.ts. This drawing
+      // map carries no NavigationControl, but pinch-to-zoom is still on by default.
+      maxZoom: MAP_MAX_ZOOM,
     });
     setDrawMap(instance);
     return () => {

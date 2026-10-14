@@ -40,6 +40,8 @@ export function MapFocus() {
       zoom: focus.zoom,
     };
 
+    // camera-cap-exempt: focus.zoom is already clamped to MAP_MAX_ZOOM by readMapFocus's
+    // clampCameraZoom (focus-params.ts), the shared contract both the /feed writer and this reader obey.
     map.jumpTo(camera);
   }, [map, searchParams]);
 

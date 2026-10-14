@@ -382,11 +382,11 @@ class _ReleaseListing:
     ) -> tuple[str, ...]:
         key = (layer, kind, tier, year, month)
         if key not in self.inventories:
-            if year is None:
-                first = next(self.underlying.iter_tier_keys(layer, kind, tier), None)
-                self.inventories[key] = () if first is None else (first,)
-            else:
-                self.inventories[key] = self.underlying.list_keys(layer, kind, tier, year=year, month=month)
+            # `year` is always supplied here: `resolve_release` only ever resolves a specific calendar
+            # release or release year (never an unscoped tier listing), so the `year is None` branch this
+            # method once special-cased was unreachable from its one caller and has been removed. The
+            # `year: int | None` signature stays to match `WarehouseListing` structurally.
+            self.inventories[key] = self.underlying.list_keys(layer, kind, tier, year=year, month=month)
         return self.inventories[key]
 
     def iter_tier_keys(self, layer: str, kind: PartitionKind, tier: ZoomTier) -> Iterator[str]:

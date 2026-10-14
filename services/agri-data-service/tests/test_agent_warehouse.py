@@ -72,3 +72,53 @@ async def test_authority_loading_runs_off_the_event_loop(operation: str) -> None
 
     assert source.authorized_threads
     assert all(thread_id != event_loop_thread for thread_id in source.authorized_threads)
+
+
+@dataclass
+class _YearRecordingListing(FakeListing):
+    """A `FakeListing` that records every `year` its `list_keys` is called with."""
+
+    years_seen: list[int | None] = field(default_factory=list)
+
+    def list_keys(
+        self,
+        layer: str,
+        kind: Any,
+        tier: Any,
+        *,
+        year: int | None = None,
+        month: int | None = None,
+    ) -> tuple[str, ...]:
+        self.years_seen.append(year)
+        return super().list_keys(layer, kind, tier, year=year, month=month)
+
+
+@pytest.mark.asyncio
+async def test_release_rows_never_lists_an_unscoped_year() -> None:
+    """`_ReleaseListing.list_keys` always receives an explicit `year` through `release_rows`.
+
+    `resolve_release`'s calendar-release path narrows by month, and its lookback loop narrows by a
+    specific year every iteration (see `agent/warehouse.py::_ReleaseListing.list_keys`, which once
+    special-cased `year is None` for a code path no caller reached). A lane with no registered
+    `release_days` and no snapshot -- "drought" -- exercises the lookback loop, so this proves the
+    production call graph never asks the listing for an unscoped tier.
+    """
+    listing = _YearRecordingListing()
+    source = _ThreadRecordingSource(held=listing)
+    token = warehouse.set_source(source)
+
+    async def no_rows(_keys: tuple[str, ...], _listing: Any) -> tuple[Any, ...]:
+        return ()
+
+    try:
+        await warehouse.release_rows(
+            layer="drought",
+            as_of=date(2026, 8, 2),
+            row_limit=1,
+            read=no_rows,
+        )
+    finally:
+        warehouse.reset_source(token)
+
+    assert listing.years_seen
+    assert all(year is not None for year in listing.years_seen)

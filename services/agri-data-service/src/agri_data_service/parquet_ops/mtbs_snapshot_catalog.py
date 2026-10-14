@@ -311,8 +311,20 @@ def configured_snapshot_loader(settings: Settings) -> Callable[[date], VerifiedM
     """Inject lazily constructed real object-store metadata reads into HTTP and CLI listings."""
 
     def load(as_of: date) -> VerifiedMtbsSnapshot | None:
+        # Local import: `authorized_serving` imports `serving`, which imports this module for
+        # `VerifiedMtbsSnapshot`, so a module-level import here would cycle back on a partially
+        # initialized `authorized_serving`. By call time every module involved has finished loading.
+        # Reuse the one serving-bounds client config (3 s connect / 6 s read / 2 attempts / 16
+        # connections) instead of the botocore defaults ingestion keeps; see
+        # `authorized_serving.py::SERVING_CLIENT_CONFIG`.
+        from agri_data_service.parquet_ops.authorized_serving import (  # noqa: PLC0415 - see note above
+            SERVING_CLIENT_CONFIG,
+        )
+
         return load_latest_mtbs_snapshot(
-            BotoAvailabilityStorage.from_settings(settings), as_of=as_of, now=datetime.now(UTC)
+            BotoAvailabilityStorage.from_settings(settings, client_config=SERVING_CLIENT_CONFIG),
+            as_of=as_of,
+            now=datetime.now(UTC),
         )
 
     return load

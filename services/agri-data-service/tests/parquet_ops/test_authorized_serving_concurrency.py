@@ -18,7 +18,7 @@ from agri_data_service.foundation.canonical import sha256_digest
 from agri_data_service.foundation.parquet.paths import completion_marker_path, partition_path
 from agri_data_service.interface.http import parquet_routes
 from agri_data_service.parquet_ops import authorized_serving as serving
-from agri_data_service.parquet_ops import faults
+from agri_data_service.parquet_ops import faults, mtbs_snapshot_catalog
 from agri_data_service.parquet_ops.request_params import ReadScope
 from agri_data_service.pipeline.parquet.availability_index import EvidenceReceipt
 from tests.parquet_ops.fakes import FakeListing, FakeRowReader
@@ -453,6 +453,29 @@ def test_the_serving_client_is_built_with_bounds_inside_the_staging_deadline() -
     # Ingestion builds the same storage without the serving bounds; long uploads keep botocore defaults.
     ingestion = serving.BotoAvailabilityStorage.from_settings(source).client.meta.config
     assert ingestion.read_timeout > config.read_timeout
+
+
+def test_the_mtbs_snapshot_loader_reuses_the_serving_client_bounds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`configured_snapshot_loader` builds its own `BotoAvailabilityStorage` directly, so it is the one
+    MTBS-snapshot call site at risk of silently keeping boto's defaults (10 connections, no read
+    timeout) instead of the shared serving bounds every other authorized reader is held to.
+    """
+    source = _settings_without_network()
+    captured: list[Any] = []
+
+    def _capture_storage(storage: Any, *, as_of: date, now: Any) -> None:
+        del as_of, now
+        captured.append(storage)
+
+    monkeypatch.setattr(mtbs_snapshot_catalog, "load_latest_mtbs_snapshot", _capture_storage)
+
+    mtbs_snapshot_catalog.configured_snapshot_loader(source)(FIRST_DAY)
+
+    assert len(captured) == 1
+    config = captured[0].client.meta.config
+    attempts = config.retries["total_max_attempts"]
+    assert attempts * (config.connect_timeout + config.read_timeout) < serving._RECEIPT_STAGING_DEADLINE_SECONDS
+    assert config.max_pool_connections >= serving._RECEIPT_FETCH_WORKERS
 
 
 def _route_listing(monkeypatch: pytest.MonkeyPatch) -> Any:

@@ -6,6 +6,7 @@ import { trpc } from "@/lib/trpc/client";
 import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
 import { viewportForBbox } from "@/lib/map/coverage-region";
 import { readMapFocus } from "@/lib/map/focus-params";
+import { MAP_MAX_ZOOM } from "@/lib/map/camera-limits";
 
 const SOURCE_ID = "ingestion-coverage";
 const MASK_LAYER_ID = "ingestion-coverage-mask";
@@ -243,7 +244,10 @@ export function ServiceAreaLayer({ map }: ServiceAreaLayerProps) {
           [bbox.west, bbox.south],
           [bbox.east, bbox.north],
         ],
-        { padding: 40, duration: cameraAlreadyMatches ? 0 : 800 }
+        // `maxZoom` here is `FitBoundsOptions`' own clamp on the zoom fitBounds COMPUTES from
+        // the bbox -- a narrow deployment bbox (a single county's INGEST_BBOX) could otherwise
+        // compute a fit deeper than any source actually serves.
+        { padding: 40, duration: cameraAlreadyMatches ? 0 : 800, maxZoom: MAP_MAX_ZOOM }
       );
     }
   }, [map, bbox?.west, bbox?.south, bbox?.east, bbox?.north]);

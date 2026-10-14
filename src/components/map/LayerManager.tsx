@@ -16,6 +16,7 @@ import {
 import { scaleOpacityValue, styleLayerOpacityTargets } from "@/lib/map/layer-opacity";
 import { useParquetFireDetections } from "@/hooks/useParquetFireDetections";
 import { useCropCover } from "@/hooks/useCropCover";
+import { usePaintedSoilFieldDepth } from "@/hooks/usePaintedSoilFieldDepth";
 import {
   drawnDayReadState,
   useSoilFieldQuery,
@@ -507,6 +508,10 @@ export default function LayerManager() {
   });
   const soilVpdGeoJSON: GeoJSON.FeatureCollection =
     soilVpdRead.answer ?? EMPTY_FEATURE_COLLECTION;
+  // Which depth each field's drawn answer IS, for the hover caption (AGENTS.md §soil-painted-depth).
+  usePaintedSoilFieldDepth("moisture", soilMoistureRead, soilMode.fieldDepth.moisture);
+  usePaintedSoilFieldDepth("temperature", soilTemperatureRead, soilMode.fieldDepth.temperature);
+  usePaintedSoilFieldDepth("vpd", soilVpdRead, soilMode.fieldDepth.vpd);
 
   // The nine NASA POWER rows read and draw themselves inside `ClimateFieldLayers` below: each
   // signal owns a toggle, a slider and a day, so there is no single climate query or climate

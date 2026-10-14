@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { MAP_MAX_ZOOM, MAP_MIN_ZOOM } from "@/lib/map/camera-limits";
 import {
   DEFAULT_MAP_FOCUS_ZOOM,
   buildMapFocusHref,
@@ -36,9 +37,13 @@ describe("buildMapFocusHref", () => {
     expect(buildMapFocusHref(0, Number.POSITIVE_INFINITY)).toBeNull();
   });
 
-  it("falls back to the default zoom when handed an unusable one", () => {
-    const href = buildMapFocusHref(-116.2023, 43.615, 99);
-    expect(href).toContain(`focusZoom=${DEFAULT_MAP_FOCUS_ZOOM}`);
+  it.each([
+    ["a non-finite zoom falls back to the default", Number.NaN, DEFAULT_MAP_FOCUS_ZOOM],
+    ["a zoom past the ceiling is clamped to it", 99, MAP_MAX_ZOOM],
+    ["an in-range zoom is written as given", 15, 15],
+  ])("%s", (_description, zoom, written) => {
+    const href = buildMapFocusHref(-116.2023, 43.615, zoom);
+    expect(href).toContain(`focusZoom=${written}`);
   });
 });
 
@@ -59,23 +64,19 @@ describe("readMapFocus", () => {
     expect(focusFrom("focusLng=-116.2&focusLat=")).toBeNull();
   });
 
-  it("keeps a valid point when only the zoom is unusable", () => {
-    expect(focusFrom("focusLng=-116.2&focusLat=43.6&focusZoom=nope")).toEqual({
+  it.each([
+    ["an unparseable zoom keeps the point at the default zoom", "nope", DEFAULT_MAP_FOCUS_ZOOM],
+    ["a blank zoom keeps the point at the default zoom", "", DEFAULT_MAP_FOCUS_ZOOM],
+    ["an in-range zoom is honoured", "16.5", 16.5],
+    ["the floor is honoured", "0", 0],
+    ["a z20 link written under the old z22 contract opens at the ceiling", "20", MAP_MAX_ZOOM],
+    ["a far-past-the-ceiling zoom opens at the ceiling", "40", MAP_MAX_ZOOM],
+    ["a negative zoom opens at the floor", "-3", MAP_MIN_ZOOM],
+  ])("%s", (_description, zoomParam, zoom) => {
+    expect(focusFrom(`focusLng=-116.2&focusLat=43.6&focusZoom=${zoomParam}`)).toEqual({
       longitude: -116.2,
       latitude: 43.6,
-      zoom: DEFAULT_MAP_FOCUS_ZOOM,
+      zoom,
     });
-    expect(focusFrom("focusLng=-116.2&focusLat=43.6&focusZoom=40")).toEqual({
-      longitude: -116.2,
-      latitude: 43.6,
-      zoom: DEFAULT_MAP_FOCUS_ZOOM,
-    });
-  });
-
-  it("honours an in-range zoom", () => {
-    expect(focusFrom("focusLng=-116.2&focusLat=43.6&focusZoom=16.5")?.zoom).toBe(
-      16.5
-    );
-    expect(focusFrom("focusLng=0&focusLat=0&focusZoom=0")?.zoom).toBe(0);
   });
 });

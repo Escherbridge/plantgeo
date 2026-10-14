@@ -10,6 +10,7 @@ import { isClickOwnedByAnotherSurface } from "@/components/map/land-context/clic
 import { DataLoadingChip } from "@/components/map/DataLoadingChip";
 import { SyncIndicator } from "@/components/ui/SyncIndicator";
 import { getStyle, skyThemes } from "@/lib/map/styles";
+import { MAP_MAX_ZOOM } from "@/lib/map/camera-limits";
 import { MapProvider } from "@/lib/map/map-context";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MapFocus } from "./MapFocus";
@@ -214,6 +215,11 @@ export default function MapView() {
       style: getStyle(currentStyle),
       center: [focus?.longitude ?? viewport.longitude, focus?.latitude ?? viewport.latitude],
       zoom: focus?.zoom ?? viewport.zoom,
+      // The one ceiling every source on this map actually supports -- see camera-limits.ts.
+      // Mobile pinch-zoom overshoots far more easily than a mouse wheel, and with no ceiling
+      // the camera could reach MapLibre's default z22 while even the deepest source (satellite,
+      // z19) has nothing left to show but a stretched crop of its last real tile.
+      maxZoom: MAP_MAX_ZOOM,
       bearing: viewport.bearing,
       pitch: is3DEnabled ? 60 : 0,
       maxPitch: 85,

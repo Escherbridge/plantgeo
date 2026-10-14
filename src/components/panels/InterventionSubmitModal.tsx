@@ -15,6 +15,7 @@ import {
 } from "@/lib/environmental/intervention-form";
 import type { InterventionGeometry } from "@/lib/geo/intervention-geometry-schema";
 import { getStyle } from "@/lib/map/styles";
+import { MAP_MAX_ZOOM } from "@/lib/map/camera-limits";
 import { useMapStore } from "@/stores/map-store";
 import { DataInterventionFields } from "@/components/intervention/DataInterventionFields";
 import { isDataInterventionType, validateDataInterventionDetails, type DataInterventionDetails } from "@/lib/environmental/data-intervention";
@@ -105,6 +106,9 @@ export function InterventionSubmitModal({
       style: getStyle(currentStyle),
       center: [lon, lat],
       zoom: 14,
+      // Same ceiling every map on this platform obeys -- see camera-limits.ts. This drawing
+      // map carries no NavigationControl, but pinch-to-zoom is still on by default.
+      maxZoom: MAP_MAX_ZOOM,
     });
     setMap(instance);
     return () => {

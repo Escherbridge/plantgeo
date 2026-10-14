@@ -15,7 +15,12 @@ import {
   climateFieldSignalForGeometryLayerId,
 } from "@/lib/map/climate-field-layer-ids";
 import { soilFieldMeasureForStyleLayerId } from "@/lib/layer-window-distribution";
-import { soilFieldLayerIdsFor } from "@/lib/environmental/soil-field";
+import {
+  soilFieldDepthDefinition,
+  soilFieldLayerIdsFor,
+  type SoilFieldDepth,
+  type SoilFieldMeasure,
+} from "@/lib/environmental/soil-field";
 import { useSoilStore } from "@/stores/soil-store";
 
 interface HoverTooltipProps {
@@ -104,6 +109,29 @@ function sameContent(a: HoverContent, b: HoverContent): boolean {
 }
 
 /**
+ * A soil caption's "Depth: ..." line must describe the depth actually painted, never the live
+ * toggle -- the feature carries no depth of its own (`hover-fields.ts`'s `formatSoilField` doc
+ * comment), so labelling it with a depth the fetch hasn't caught up to yet states a wrong pairing
+ * (new label, old value) rather than a merely stale one. `content` is built from `paintedDepths`
+ * (honest), and this only ADDS a plain notice when the live toggle has moved past it; see
+ * `SoilFieldLayer.tsx`'s `setData` effect for the fetch this races.
+ */
+function withSoilDepthLoadingNotice(
+  content: HoverContent,
+  layerId: string,
+  requestedDepths: Readonly<Record<SoilFieldMeasure, SoilFieldDepth>>,
+  paintedDepths: Readonly<Record<SoilFieldMeasure, SoilFieldDepth>>
+): HoverContent {
+  const measure = soilFieldMeasureForStyleLayerId(layerId);
+  if (measure === null) return content;
+  const requested = requestedDepths[measure];
+  const painted = paintedDepths[measure];
+  if (requested === painted) return content;
+  const requestedLabel = soilFieldDepthDefinition(measure, requested).label;
+  return { ...content, lines: [...content.lines, `Loading ${requestedLabel}…`] };
+}
+
+/**
  * Shared hover-and-tap affordance for every visualized dataset. A `mousemove` listener queries
  * `HOVERABLE_LAYER_IDS` and renders a lightweight tooltip near the cursor for a fine pointer;
  * a `click` listener queries `TOOLTIP_TAP_LAYER_IDS` (with a padded hit box) and PINS the same
@@ -124,6 +152,12 @@ export default function HoverTooltip({ map }: HoverTooltipProps) {
   // value, since both close over it rather than reading a ref (there is no layer z-order to
   // protect here, unlike `SoilFieldLayer`'s `propsRef` trick).
   const soilFieldDepths = useSoilStore((state) => state.fieldDepth);
+  // Which depth each soil measure's DRAWN answer actually is -- as opposed to `soilFieldDepths`
+  // above, the live toggle, which runs ahead of it while a new depth loads. A property of the
+  // answer (`usePaintedSoilFieldDepth`), never inferred from `sourcedata` events: an opacity change
+  // re-`setData`s the OLD depth's frame too. See `withSoilDepthLoadingNotice` and
+  // src/components/map/AGENTS.md §soil-painted-depth.
+  const paintedSoilDepths = useSoilStore((state) => state.paintedFieldDepth);
 
   useEffect(() => {
     function handleMouseMove(e: maplibregl.MapMouseEvent) {
@@ -148,8 +182,13 @@ export default function HoverTooltip({ map }: HoverTooltipProps) {
       for (const feature of features) {
         const layerId = feature.layer?.id;
         if (!layerId) continue;
-        const content = formatHoverContent(layerId, (feature.properties ?? {}) as Record<string, unknown>, soilFieldDepths);
-        if (content) {
+        const paintedContent = formatHoverContent(
+          layerId,
+          (feature.properties ?? {}) as Record<string, unknown>,
+          paintedSoilDepths
+        );
+        if (paintedContent) {
+          const content = withSoilDepthLoadingNotice(paintedContent, layerId, soilFieldDepths, paintedSoilDepths);
           map.getCanvas().style.cursor = "pointer";
           const featureKey = hoveredFeatureKey(layerId, feature, content);
           setTooltip((previous) => ({
@@ -200,8 +239,13 @@ export default function HoverTooltip({ map }: HoverTooltipProps) {
       for (const feature of features) {
         const layerId = feature.layer?.id;
         if (!layerId) continue;
-        const content = formatHoverContent(layerId, (feature.properties ?? {}) as Record<string, unknown>, soilFieldDepths);
-        if (content) {
+        const paintedContent = formatHoverContent(
+          layerId,
+          (feature.properties ?? {}) as Record<string, unknown>,
+          paintedSoilDepths
+        );
+        if (paintedContent) {
+          const content = withSoilDepthLoadingNotice(paintedContent, layerId, soilFieldDepths, paintedSoilDepths);
           setTooltip((previous) => {
             // Tapping the same pinned feature again is how a touch reader dismisses it -- there
             // is no "move the mouse away" for them to do instead.
@@ -286,7 +330,7 @@ export default function HoverTooltip({ map }: HoverTooltipProps) {
       map.off("sourcedata", handleSourceData);
       map.getCanvas().style.cursor = "";
     };
-  }, [map, soilFieldDepths]);
+  }, [map, soilFieldDepths, paintedSoilDepths]);
 
   // Measure the current caption before paint; see AGENTS.md §vegetation-scalar-field.
   useLayoutEffect(() => {

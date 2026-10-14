@@ -323,11 +323,13 @@ export const satelliteStyle: StyleSpecification = {
   // terrain enabled on-demand via MapView controls
   layers: [
     {
+      // No layer maxzoom: MapLibre HIDES a layer at zoom >= its maxzoom, and the camera stops at
+      // MAP_MAX_ZOOM (19), so a layer maxzoom of 19 blanked the imagery at the ceiling. The SOURCE's
+      // maxzoom above is what stops the fetches; past it the z19 tiles overzoom.
       id: "satellite-base",
       type: "raster",
       source: "satellite",
       minzoom: 0,
-      maxzoom: 19,
     },
     hillshadeLayer,
     buildings3dLayer("#64748b", "#06b6d4"),

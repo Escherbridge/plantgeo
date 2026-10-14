@@ -15,6 +15,7 @@ import {
 import { ControlDockSection } from "@/components/map/layer-panel/ControlDockSection";
 import { IngestionCoverageBadge } from "@/components/map/IngestionCoverageBadge";
 import { NO_IOS_FOCUS_ZOOM, TOUCH_TARGET, TOUCH_TARGET_SQUARE } from "@/components/ui/touch-target";
+import { clampCameraZoom } from "@/lib/map/camera-limits";
 import { useGeocode } from "@/hooks/useGeocode";
 import { useMap } from "@/lib/map/map-context";
 import { cn } from "@/lib/utils";
@@ -143,7 +144,7 @@ function SearchDockBody() {
 
   const flyToResult = useCallback(
     (result: NormalizedGeocodingResult) => {
-      map?.flyTo({ center: result.coordinates, zoom: ZOOM_BY_TYPE[result.type] });
+      map?.flyTo({ center: result.coordinates, zoom: clampCameraZoom(ZOOM_BY_TYPE[result.type]) });
       addRecentSearch(result);
       resetSearch();
     },
@@ -154,7 +155,7 @@ function SearchDockBody() {
     if (coordinateTarget === null) return;
     map?.flyTo({
       center: [coordinateTarget.lon, coordinateTarget.lat],
-      zoom: COORDINATE_JUMP_ZOOM,
+      zoom: clampCameraZoom(COORDINATE_JUMP_ZOOM),
     });
     resetSearch();
   }, [coordinateTarget, map, resetSearch]);

@@ -6,6 +6,7 @@ import { climateFieldSignalDefinition } from "@/lib/environmental/climate-field"
 import { setScalarFieldInspectionSuppressed } from "@/lib/map/scalar-field-inspection";
 import { climateFieldLayerIdsFor } from "@/lib/map/climate-field-layer-ids";
 import { soilFieldLayerIdsFor } from "@/lib/environmental/soil-field";
+import { useSoilStore } from "@/stores/soil-store";
 
 /**
  * Touch fires no `mousemove` at all, so every `TOOLTIP_TAP_LAYER_IDS` layer was uninspectable on
@@ -364,5 +365,50 @@ describe("HoverTooltip: soil field", () => {
     // `WindowDistributionLine` would otherwise keep asking about the NEW depth under the OLD label.
     act(() => fakeMap.emit("sourcedata", { sourceId, sourceDataType: "content" }));
     expect(queryByText("Volumetric soil water")).toBeNull();
+  });
+});
+
+describe("HoverTooltip: soil field depth switch lag", () => {
+  afterEach(() => {
+    // The store is a module-wide singleton; a test that switches depth must not leak it forward.
+    act(() => {
+      useSoilStore.getState().setFieldDepth("moisture", "surface");
+      useSoilStore.getState().setPaintedFieldDepth("moisture", "surface");
+    });
+  });
+
+  it("captions the DRAWN depth with a Loading notice until the requested depth's answer is drawn, whatever reloads the source meanwhile", () => {
+    setCoarsePointer(false);
+    const sourceId = soilFieldLayerIdsFor("moisture").source;
+    // One feature, never swapped -- the fill keeps painting this exact surface reading until the
+    // root-zone answer is drawn; only the live toggle moves ahead of it.
+    const fakeMap = createFakeMap([
+      { layer: { id: "soil-moisture-field-fill" }, properties: { value: 0.214, coverageFraction: 0.92 } },
+    ]);
+    const { getByText, queryByText } = render(<HoverTooltip map={asMap(fakeMap)} />);
+    const hover = () => act(() => fakeMap.emit("mousemove", { point: { x: 100, y: 120 } }));
+
+    hover();
+    expect(getByText("Depth: Surface (0-7 cm)")).toBeTruthy();
+    expect(queryByText(/Loading/)).toBeNull();
+
+    act(() => {
+      useSoilStore.getState().setFieldDepth("moisture", "root-zone");
+    });
+    // An opacity drag while root-zone is pending re-`setData`s the retained SURFACE frame: a
+    // content event that says nothing about which depth is drawn.
+    act(() => fakeMap.emit("sourcedata", { sourceId, sourceDataType: "content" }));
+    hover();
+
+    expect(getByText("Depth: Surface (0-7 cm)")).toBeTruthy();
+    expect(getByText("Loading Root zone (7-28 cm)…")).toBeTruthy();
+
+    // The root-zone answer is drawn (`usePaintedSoilFieldDepth` records it); the caption catches up.
+    act(() => {
+      useSoilStore.getState().setPaintedFieldDepth("moisture", "root-zone");
+    });
+    hover();
+    expect(getByText("Depth: Root zone (7-28 cm)")).toBeTruthy();
+    expect(queryByText(/Loading/)).toBeNull();
   });
 });

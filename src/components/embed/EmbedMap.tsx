@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import maplibregl from "maplibre-gl";
 import { Protocol } from "pmtiles";
 import { getStyle } from "@/lib/map/styles";
+import { MAP_MAX_ZOOM, clampCameraZoom } from "@/lib/map/camera-limits";
 import type { MapStyle } from "@/types/map";
 import "maplibre-gl/dist/maplibre-gl.css";
 
@@ -77,7 +78,11 @@ export default function EmbedMap() {
       container: mapContainer.current,
       style: getStyle(resolvedStyle),
       center,
-      zoom,
+      // `zoom` is query-string input (an embedding site's own HTML), so it is clamped the same
+      // way the postMessage handler below clamps a `flyTo` request. `maxZoom` is the map-level
+      // ceiling itself -- see camera-limits.ts.
+      zoom: clampCameraZoom(zoom),
+      maxZoom: MAP_MAX_ZOOM,
       attributionControl: false,
     });
 
@@ -134,9 +139,11 @@ export default function EmbedMap() {
       if (msg.action === "flyTo") {
         const { center: flyCenter, zoom: flyZoom } = msg;
         if (Array.isArray(flyCenter) && flyCenter.length === 2) {
+          // flyZoom arrives over postMessage from whatever page embeds this iframe --
+          // untrusted the same way a URL query param is, so it is clamped the same way.
           m.flyTo({
             center: [flyCenter[0], flyCenter[1]],
-            zoom: flyZoom ?? m.getZoom(),
+            zoom: clampCameraZoom(flyZoom ?? m.getZoom()),
             duration: 1500,
           });
         }

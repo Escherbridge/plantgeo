@@ -659,6 +659,25 @@ free. No custom shader was needed and none was written.
 The depth selector in `SoilPanel` is a **depth**, not a second clock: the day always comes
 from the global time slider, as "One time control, projected per layer" above requires.
 
+## §soil-painted-depth
+
+A soil-field hover caption names the depth that is DRAWN, not the depth the toggle asks for. A
+served feature carries no depth of its own, and while a new depth loads, `keepPreviousData`
+keeps drawing the old depth's frame.
+
+- `soil-store.paintedFieldDepth` is the drawn depth per measure. Only
+  `hooks/usePaintedSoilFieldDepth.ts` writes it (from `LayerManager`), and only when the read
+  holds a fresh, non-retained answer. Such an answer is, by construction, the requested depth's
+  own.
+- `HoverTooltip` captions from that record. When the toggle has moved past it, the caption adds
+  `Loading <requested depth>…`.
+- It is never inferred from `sourcedata` events. `SoilFieldLayer` re-`setData`s on every opacity,
+  outline or visibility change, so a `content` event fires for the OLD depth's frame too. The first
+  version advanced on those events and mislabelled a Surface value "Root zone" after an opacity
+  drag (review 2026-10-13).
+
+Phone: no layout change. The tap-pinned caption carries the same lines.
+
 ## §climate-field
 
 **Rewritten 2026-08-10.** This section described one `climate-field` toggle drawing one of nine
