@@ -128,6 +128,15 @@ UNIT: Final = "statewide-snapshot"
 #: `watermark.py::WATERMARK_RETRY_*`, which is the lighter read-only census path's). Restated rather
 #: than imported from `pipeline/direct/evacuation_zones/forward.py::EVACUATION_ZONES_DEFAULT_RETRY_*`
 #: because this package may not import `pipeline/direct/**` (`AGENTS.md`); the values are the same.
+#:
+#: BUDGET DEPENDENCY: this series runs entirely inside one `fetch()`/`probe_edge()` call, and
+#: `fetch()`'s is wrapped in a hard `asyncio.wait_for` by the runner
+#: (`pipeline/runner/fetch.py::UnitFetcher.fetch_unit`, `timeout = min(PER_UNIT_FETCH_CAP_SECONDS,
+#: remaining-of-the-turn's-fetch-share)`) -- a series that does not fit inside that window is
+#: cancelled mid-retry and then RETRIED WHOLESALE by the runner's own outer ladder, restarting this
+#: series from attempt 1 every time ("retry-of-retries"). See
+#: `lanes/evacuation-zones-direct-forward.toml`'s `[budget]` comment for the arithmetic that sizes
+#: `turn_timeout_seconds` to this series with margin; the two must be re-derived together.
 CAPTURE_RETRY_ATTEMPTS: Final = 5
 CAPTURE_RETRY_BASE_SECONDS: Final = 5.0
 CAPTURE_RETRY_MAX_SECONDS: Final = 60.0
@@ -137,7 +146,9 @@ _DIGEST_EXCERPT: Final = 12
 
 
 class OregonOemStrategyError(RuntimeError):
-    """Raised when this strategy is asked to fetch with no bbox configured and no cached capture."""
+    """Raised when this strategy is asked to fetch with no bbox configured and no cached capture,
+    when a captured watermark is stamped behind an already-published version, or when a
+    `SourceResponse.payload` is not the `_ProbedCapture` this module itself always produces."""
 
 
 @dataclass(slots=True)
@@ -147,6 +158,22 @@ class _ProbedCapture:
     source: EvacuationZonesSource
     digest: str
     published: PublishedSnapshot | None
+
+
+def _require_capture(payload: object) -> _ProbedCapture:
+    """Narrow `SourceResponse.payload` (typed `object` in `contract.py`) back to `_ProbedCapture`.
+
+    `payload` is `object` by Protocol, so an unchecked `capture: _ProbedCapture = responses[0].payload`
+    is an unsound downcast mypy strict flags at every call site (the watersheds-review pattern: an
+    `isinstance` guard with a loud raise, never a cast). The only way this strategy's own `payload`
+    is ever anything else is a caller (a checkpoint replay, a test) handing `settle`/`rows` a response
+    this module did not build itself -- `turn.py::_settle`/`_tables_by_stream` catch any exception
+    `settle`/`rows` raise and classify the day `strategy_error`, so failing loudly here is the correct,
+    already-handled outcome rather than a crash.
+    """
+    if not isinstance(payload, _ProbedCapture):
+        raise OregonOemStrategyError(f"expected a _ProbedCapture payload, got {type(payload).__name__}")
+    return payload
 
 
 def _unchanged_row_stamps(table: pa.Table, published: PublishedSnapshot | None) -> dict[str, datetime]:
@@ -207,13 +234,26 @@ class OregonOemEvacuationZonesStrategy:
     and the module docstring above states exactly why it is structurally required rather than an
     optimisation. `store_factory` defaults to the real bucket and exists so a test can hand this
     strategy an `ObjectStore(RecordingBackend())` without monkeypatching a classmethod.
+
+    SAFETY DEPENDS ON ONE UNSTATED-ELSEWHERE INVARIANT this class does not itself enforce: one turn
+    runs in its own subprocess, so a fresh `python -m agri_data_service.pipeline.runner` invocation
+    means a fresh module import and a fresh `STRATEGY` instance, never a `_captured` left over from an
+    earlier turn (`execution/job_executor_service.py:5064`'s `asyncio.create_subprocess_exec`, spawning
+    the per-turn CLI call `execution/AGENTS.md:359` names). A future binding that ran turns inside one
+    long-lived process would need to reset `_captured` between them, which nothing here does.
     """
 
     store_factory: Callable[[], ObjectStore] = ObjectStore.from_settings
     _captured: _ProbedCapture | None = field(default=None, init=False, repr=False)
 
     async def probe_edge(self, client: ProviderClient, window: ProbeWindow) -> ProviderEdge:  # noqa: ARG002 - never sent through; see the module docstring
-        """Capture Oregon's current statewide set once, decide this turn's watermark day from it, and cache it."""
+        """Capture Oregon's current statewide set once, decide this turn's watermark day from it, and cache it.
+
+        `_watermark_day` is computed, and can raise (see its own docstring for the clock-skew guard
+        and exactly which outcome that produces), BEFORE `self._captured` is set: a turn this strategy
+        refuses to decide a day for should not leave a capture cached for a `fetch()` call that, for
+        the normal (non-CA17) path, will never happen this turn anyway.
+        """
         bbox = resolve_coverage_bbox()
         if bbox is None:
             return ProviderEdge(status="invalid", window=window, detail=bbox_unconfigured_reason())
@@ -221,8 +261,8 @@ class OregonOemEvacuationZonesStrategy:
             capture = await self._capture(bbox)
         except (EvacuationZonesSourceError, EvacuationZonesTruncatedError, EvacuationZonesWatermarkError) as error:
             return ProviderEdge(status="unavailable", window=window, detail=f"{type(error).__name__}: {error}")
-        self._captured = capture
         day = _watermark_day(capture)
+        self._captured = capture
         return ProviderEdge(status="ok", window=window, valued_days=frozenset({day}))
 
     def plan_requests(
@@ -256,7 +296,7 @@ class OregonOemEvacuationZonesStrategy:
         context: DayContext,  # noqa: ARG002 - the watermark decision already happened in `probe_edge`
     ) -> Settlement:
         """A capture with zero areas is a governed absence; otherwise every captured area is present."""
-        capture: _ProbedCapture = responses[0].payload
+        capture = _require_capture(responses[0].payload)
         if capture.source.zone_count == 0:
             return _quiet_day_absence(capture)
         return Written(
@@ -267,7 +307,7 @@ class OregonOemEvacuationZonesStrategy:
 
     def rows(self, day: date, responses: Sequence[SourceResponse]) -> pa.Table:
         """Build this version's rows, carrying `feature_updated_at` forward for every unchanged area."""
-        capture: _ProbedCapture = responses[0].payload
+        capture = _require_capture(responses[0].payload)
         table = evacuation_zones_table(capture.source, snapshot_day=day)
         carried = _unchanged_row_stamps(table, capture.published)
         return apply_carried_forward_updated_at(table, carried)
@@ -299,11 +339,37 @@ def _watermark_day(capture: _ProbedCapture) -> date:
 
     The rule `forward.py` inlines (module docstring, "Why this diverges from `watermark.py`'s
     `day=None`"), restated here because that module is off-limits to import from this package.
+
+    CLOCK-SKEW GUARD, restated from `forward.py:252-261` (also off-limits to import): a published
+    day AHEAD of this capture's own day means some version was stamped ahead of this capture -- a
+    skewed host clock, or a hand-written future version -- and a day behind it would be invisible to
+    every later turn, which would then re-decide the SAME behind-schedule day and rewrite nothing,
+    forever (`served >= watermark` reading "current" with no calendar day ever catching up). Checked
+    UNCONDITIONALLY, before the sticky comparison, exactly as `forward.py` orders it.
+
+    The raise is NOT caught by `probe_edge`'s own `except (EvacuationZonesSourceError,
+    EvacuationZonesTruncatedError, EvacuationZonesWatermarkError)` -- `OregonOemStrategyError` is
+    none of those -- so it propagates out of `probe_edge` to `turn.py::_Turn._spend_probe`'s generic
+    `except Exception` handler. `fetch.py::classify_fetch_error` has no typed case for it, so it
+    falls through to `"strategy"`, which `_spend_probe` maps to `status="unavailable"` (never the
+    `"config"` branch that re-raises and ends the turn). That is a SOFTER outcome than legacy's
+    uncaught `DirectEvacuationZonesError` (which failed the whole process): today is reported
+    `unwritten`/`upstream_unavailable` and the turn exits 0, to be retried next tick -- and it will
+    raise again every tick until an operator fixes the host clock or retracts the future version,
+    which is the same pair of remedies the message below names.
     """
     published = capture.published
+    capture_day = capture.source.fetched_at.date()
+    if published is not None and published.day > capture_day:
+        raise OregonOemStrategyError(
+            f"the newest published version {published.day.isoformat()} is later than this capture's "
+            f"own day {capture_day.isoformat()}; a version behind it would be invisible to every "
+            "later turn and this one would rewrite nothing, forever. Check the host clock, or "
+            "retract the future version"
+        )
     if published is not None and published.digest == capture.digest:
         return published.day
-    return capture.source.fetched_at.date()
+    return capture_day
 
 
 #: S14: `strategy = "evacuation_zones.oregon_oem"` resolves to this module's `STRATEGY`.

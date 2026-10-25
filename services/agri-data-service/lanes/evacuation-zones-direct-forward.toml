@@ -71,9 +71,23 @@ forward_max_weighted_calls = 1
 # the forward cap only because LaneBudget requires a value.
 gap_fill_max_weighted_calls = 1
 max_concurrency = 1
-# The legacy forward writer's own default time budget
-# (pipeline/direct/evacuation_zones/forward.py::EVACUATION_ZONES_DEFAULT_TIME_BUDGET_SECONDS).
-turn_timeout_seconds = 300
+# RE-DERIVED from the legacy writer's 300s (post-hoc skip model) for the new runner's HARD
+# cancellation of fetch() (pipeline/runner/fetch.py::UnitFetcher.fetch_unit wraps every fetch() in
+# asyncio.wait_for(timeout=min(PER_UNIT_FETCH_CAP_SECONDS, remaining-of-the-fetch-share))); the fetch
+# share is 80% of this field (turn.py::_Turn.fetch_deadline). oregon_oem.py's own
+# CAPTURE_RETRY_ATTEMPTS=5 series (base 5s, max 60s) can itself approach the old 240s fetch share:
+# backoff alone sums to min(60,5*2^0)+min(60,5*2^1)+min(60,5*2^2)+min(60,5*2^3) = 5+10+20+40 = 75s,
+# +25% max jitter = ~94s, and each of the 5 attempts can cost up to ~40s of real request time at the
+# current (~116-area, ~480 KB) population scale -- two EVACUATION_ZONES_BOUNDS-timeout (20s) pages,
+# generously, not the full 20-page/400s structural ceiling source.py bounds the walk to, which this
+# lane's population is nowhere near. Realistic worst case: 5*40 + 94 = ~294s. A series that exceeds
+# the fetch share is cancelled mid-retry and RETRIED WHOLESALE by the runner's own outer ladder
+# (oregon_oem.py::CAPTURE_RETRY_ATTEMPTS's own comment calls this "retry-of-retries"), which is why
+# the fix here is the per-lane budget field (the contract-level mechanism this track already gives
+# every lane; execution/AGENTS.md "Each runs the runner CLI... with the TOML's turn_timeout_seconds")
+# rather than a runner code change. 420 puts the fetch share at 420*0.8 = 336s, ~42s (~14%) of margin
+# over the 294s realistic worst case; re-derive both together if either changes.
+turn_timeout_seconds = 420
 
 [[streams]]
 slug = "evacuation-zones"
