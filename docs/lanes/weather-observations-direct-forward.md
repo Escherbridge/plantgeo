@@ -62,6 +62,19 @@ Phase 4 "frozen" runner contract:
   drift, not a normal-path outcome; it is exercised directly in
   `tests/lanes/weather_observations/test_open_meteo_current.py` with a hand-built response, since
   the real fetch path cannot currently produce one.
+- **Same-day freshness at G6 (OWNER decision, not resolved here).** The legacy writer polls hourly
+  and lands current conditions in TODAY's own bucket every time. `pipeline/runner/windows.py`'s
+  `candidate_edge` clamps every `write_and_recheck` lane's edge to `today - 1` (the O1 invariant: "a
+  write_and_recheck lane never reaches past yesterday UTC") — a runner-level invariant this TOML
+  cannot opt out of, only state honestly (`publication_lag_days = 1`, matching the clamp rather than
+  claiming `0` and relying on the clamp to silently correct it). Under the config runner this lane
+  can therefore never write TODAY, only TODAY − 1: an `executor = "config"` cut-over as-is would
+  regress current-conditions freshness by up to ~24h for a lane whose purpose is near-real-time
+  conditions. The track records this as an open OWNER decision — an O1 carve-out for
+  zero-settlement-delay lanes versus accepting the day lag — and the lane must not flip to
+  `executor = "config"` before that decision is made; see
+  `pipeline/lanes/weather_observations/AGENTS.md` "Same-day freshness at G6" for the same note next
+  to the code.
 - **The sample grid moved from `INGEST_BBOX` to `region.default_camera_envelope`.** A config lane
   has no CLI flag to carry a bbox override, and the region manifest is this track's one source of a
   lane's spatial footprint (`pipeline/lanes/AGENTS.md`). DEVIATION, flagged rather than silently

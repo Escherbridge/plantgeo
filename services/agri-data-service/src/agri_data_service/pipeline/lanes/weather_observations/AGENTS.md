@@ -70,6 +70,23 @@ whose rows carry a retrieval instant must set its own digest, or every re-poll r
 `_support_digest` is `sha256_hex` over the bbox+spacing that built the grid, binding a checkpoint to
 the support it was planned over.
 
+## Same-day freshness at G6 (OWNER decision, not resolved here)
+
+The legacy writer (`pipeline/direct/weather_observations/forward.py`) polls hourly and lands current
+conditions in **TODAY's** own bucket every time it runs. `pipeline/runner/windows.py::candidate_edge`
+clamps every `write_and_recheck` lane's edge to `today - 1` (O1: "a write_and_recheck lane never
+reaches past yesterday UTC", `pipeline/runner/AGENTS.md:80-83`) — this lane's TOML now states that
+clamp honestly (`publication_lag_days = 1`), but the clamp itself is a `pipeline/runner/` invariant,
+not a TOML setting, so it cannot be opted out of from here. Under the config runner this lane can
+therefore **never write TODAY**, only TODAY − 1: a straight `executor = "config"` cut-over as-is
+would regress current-conditions freshness by up to ~24h relative to the legacy writer it replaces,
+for a lane whose entire purpose is a near-real-time current-conditions feed. This is an OWNER
+decision recorded in the track — an O1 carve-out for zero-settlement-delay lanes (a poll with no
+archive and no revision concept, unlike every other `write_and_recheck` lane in this track) versus
+accepting the day lag as the cost of the config runner's framework — and the lane must **not** flip
+to `executor = "config"` before that decision is made. Do not attempt an O1 change from this
+package: `pipeline/runner/windows.py` is not an owned file of this slice.
+
 ## Deviations from the legacy writer (recorded, not silently absorbed)
 
 - **The sample grid is keyed off `region.default_camera_envelope`, not `INGEST_BBOX`.** A config
