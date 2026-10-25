@@ -779,6 +779,24 @@ query transport keep the client's redirect setting. Caller-supplied `apikey`/`ap
 rejected before URL construction. The lane-config schema refuses a header transport without
 `api_key_header` or with `api_key_parameter`, and an `api_key_header` on a query transport.
 
+**Path-segment keys and per-request path segments (`path_template`).** Schema and syntax live in
+`foundation/lane_config/AGENTS.md` "Path templates"; this is the client half. Placeholder values
+come from the request's own `parameters` (the rest stay the query), so `credential_free` and
+`SourceRequest.credential_free_url` are the same rule and a checkpoint identity always equals the
+response's `request_url`. `api_key_transport = "path"` (nasa-firms) fills the reserved `{api_key}`
+segment ONLY on the existing required-key branch: the endpoint must have opted in with
+`customer_host` (the schema pairs the two), an empty key is the FR-2 `ProviderConfigError`, and an
+endpoint with no opt-in hits the m3 refusal, which now covers path as well as query transport
+(`tests/ingest_providers/test_optional_provider_key.py::test_an_endpoint_with_no_customer_host_and_no_optional_opt_in_refuses_a_declared_key`,
+parametrized over both). Redaction: a path key has no `name=` for `redact_for_log`'s regex to find,
+and a key passed via `environment=` is not in the exact-value scrub either, so the send URL is a
+`KeyedRequestUrl(..., display=credential_free)` whose `str`/`repr` print the credential-free form;
+`request_url` (reports, `ProviderResponse`, checkpoints, budget keys) carries the literal
+`{api_key}` marker, stable across key rotation; template refusals are raised `from None` and name the
+placeholder, never the value; `fetch_bounded`'s retry/failure log events carry only the host and the
+error type. Redirects follow the client's setting, matching the required-customer-host query
+transport (a path key is not a header httpx would forward).
+
 **Two halves, one of them the runner's seam.** `provider_endpoint_request` + `send_provider_request`
 are what the config runner actually calls: `pipeline/runner/binding.py::ConfigProviderClient` (the
 concrete `pipeline/runner/contract.py::ProviderClient`) resolves every request through

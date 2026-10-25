@@ -190,11 +190,29 @@ def test_optional_key_requires_endpoint_opt_in() -> None:
     assert resolved.send_headers.reveal() == {}
 
 
-def test_an_endpoint_with_no_customer_host_and_no_optional_opt_in_refuses_a_declared_key() -> None:
-    """m3: nasa-firms names api_key_env but its endpoint can carry no key (no customer_host) and is
-    not optional_api_key -- silently answering keyless would hide that the key never attaches."""
+def _firms_without_its_key_opt_in(transport: str) -> ProviderConfig:
+    """nasa-firms as it shipped before path transport: a named key, fixed paths, no customer_host opt-in."""
+    firms = providers()["nasa-firms"]
+    return ProviderConfig.model_validate(
+        {
+            **firms.model_dump(exclude={"endpoints"}),
+            "api_key_transport": transport,
+            "endpoints": {
+                name: {**endpoint.model_dump(), "customer_host": None, "path_template": None}
+                for name, endpoint in firms.endpoints.items()
+            },
+        }
+    )
+
+
+@pytest.mark.parametrize("transport", ["query", "path"])
+def test_an_endpoint_with_no_customer_host_and_no_optional_opt_in_refuses_a_declared_key(transport: str) -> None:
+    """m3: an endpoint that names api_key_env but can carry no key (no customer_host) and is not
+    optional_api_key refuses -- silently answering keyless would hide that the key never attaches.
+    The shipped nasa-firms now opts in (customer_host + `{api_key}`), so the fixture strips that opt-in."""
+    provider = _firms_without_its_key_opt_in(transport)
     with pytest.raises(ProviderConfigError, match=r"nasa-firms.*area-csv.*NASA_FIRMS_KEY") as caught:
-        provider_endpoint_request(providers()["nasa-firms"], "area-csv", {}, environment={"NASA_FIRMS_KEY": "x"})
+        provider_endpoint_request(provider, "area-csv", {}, environment={"NASA_FIRMS_KEY": "x"})
     assert "nasa-firms" in str(caught.value)
     assert "area-csv" in str(caught.value)
     assert "NASA_FIRMS_KEY" in str(caught.value)

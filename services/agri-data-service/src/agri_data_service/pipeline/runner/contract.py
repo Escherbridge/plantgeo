@@ -63,7 +63,7 @@ class SourceRequest:
     endpoint: str
     #: Every day this unit's response answers; may be wider than the days the runner asked for.
     days: tuple[date, ...]
-    #: Query parameters, key-free: the provider client adds the key and picks the host.
+    #: Key-free parameters: a templated endpoint's `{placeholder}` names fill its path, the rest are the query.
     parameters: tuple[tuple[str, str], ...] = ()
     #: The parameters whose values settle a day; checkpoint eligibility is judged per parameter.
     requested_parameters: frozenset[str] = frozenset()
@@ -77,7 +77,8 @@ class SourceRequest:
     def credential_free_url(self, provider: ProviderConfig) -> str:
         """The unit's URL on the provider's FREE host: the weight, checkpoint and report key. Never carries a key."""
         endpoint = provider.endpoints[self.endpoint]
-        return f"https://{endpoint.host}{endpoint.path}?{urlencode(sorted(self.parameters))}"
+        path_values, query_items = endpoint.split_parameters(self.parameters)
+        return endpoint.request_url(endpoint.host, path_values, urlencode(sorted(query_items)))
 
 
 @dataclass(frozen=True, slots=True)

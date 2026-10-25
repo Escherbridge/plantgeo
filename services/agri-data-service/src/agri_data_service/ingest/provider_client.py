@@ -21,6 +21,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Final
 from urllib.parse import urlencode, urlsplit
 
+from agri_data_service.foundation.lane_config.models import PathTemplateError
 from agri_data_service.foundation.observability import redaction
 from agri_data_service.ingest.http import (
     UpstreamHttpError,
@@ -85,18 +86,20 @@ class KeyedRequestUrl:
     where the credentialed string must actually leave the process (the httpx send).
     """
 
-    __slots__ = ("_value",)
+    __slots__ = ("_display", "_value")
 
-    def __init__(self, value: str) -> None:
-        """Wrap one credentialed URL. `value` is stored as given; only `reveal()` returns it whole."""
+    def __init__(self, value: str, *, display: str | None = None) -> None:
+        """Wrap one credentialed URL; `display` (a credential-free form) replaces it in `str`/`repr` when given."""
         self._value = value
+        self._display = display
 
     def reveal(self) -> str:
         """The real, credentialed URL. Pass this ONLY to the HTTP client that sends it."""
         return self._value
 
     def __str__(self) -> str:
-        return redaction.redact_for_log(self._value)
+        # A path-segment key has no `name=` for the regex scrub to find, so it shows its credential-free form.
+        return redaction.redact_for_log(self._value if self._display is None else self._display)
 
     def __repr__(self) -> str:
         return f"KeyedRequestUrl({self.__str__()!r})"
@@ -273,28 +276,38 @@ def provider_endpoint_request(
     *,
     environment: Mapping[str, str] | None = None,
 ) -> ProviderEndpointRequest:
-    """Resolve declared endpoint credentials; see `ingest/AGENTS.md`, Optional same-host keys."""
+    """Resolve declared endpoint credentials; see `ingest/AGENTS.md`, Optional same-host keys and Path-segment keys."""
     declared = provider.endpoints.get(endpoint)
     if declared is None:
         raise ProviderConfigError(f"endpoint {endpoint!r} is not declared by provider {provider.id!r}")
     key_parameter = provider.api_key_parameter or PROVIDER_API_KEY_PARAMETERS.get(provider.id)
     if any(name.lower() in {"apikey", "api_key"} for name in parameters):
         raise ProviderConfigError("API keys must come from the provider environment, not request parameters")
-    query = urlencode(sorted(parameters.items()))
-    credential_free = f"https://{declared.host}{declared.path}?{query}"
+    # A templated endpoint's placeholders take their values from `parameters`; the rest stay the query.
+    path_values, query_items = declared.split_parameters(parameters.items())
+    query = urlencode(sorted(query_items))
+
+    def endpoint_url(host: str, query_text: str, *, api_key: str | None = None) -> str:
+        try:
+            return declared.request_url(host, path_values, query_text, api_key=api_key)
+        except PathTemplateError as error:
+            raise ProviderConfigError(f"provider {provider.id!r} endpoint {endpoint!r}: {error}") from None
+
+    # `{api_key}` stays a literal marker here: the credential-free URL is a durable identity, never sent.
+    credential_free = endpoint_url(declared.host, query)
     if declared.customer_host is None and not declared.optional_api_key:
-        # Only a QUERY-transport key is stranded here: it rides the customer host's send URL, so with
-        # no customer_host it can never be attached (nasa-firms' path-segment key is this shape). A
-        # HEADER-transport key (usgs-water-data's X-Api-Key) attaches at send time regardless, below.
-        if provider.api_key_env is not None and provider.api_key_transport == "query":
+        # A QUERY- or PATH-transport key is stranded here: it rides the customer host's send URL, so
+        # with no customer_host it can never be attached. A HEADER-transport key (usgs-water-data's
+        # X-Api-Key) attaches at send time regardless, below.
+        if provider.api_key_env is not None and provider.api_key_transport != "header":
             raise ProviderConfigError(
                 f"provider {provider.id!r} endpoint {endpoint!r} declares api_key_env "
-                f"{provider.api_key_env!r} with query transport but has no customer_host and is not "
-                "optional_api_key; the key can never be attached, so this endpoint must either gain "
-                "a customer_host, opt into optional_api_key, or stop naming a key the strategy must "
-                "place itself"
+                f"{provider.api_key_env!r} with {provider.api_key_transport} transport but has no "
+                "customer_host and is not optional_api_key; the key can never be attached, so this "
+                "endpoint must either gain a customer_host, opt into optional_api_key, or stop naming "
+                "a key the strategy must place itself"
             )
-        # The opt-in contract holds for BOTH transports (see ingest/AGENTS.md, Optional same-host
+        # The opt-in contract holds for EVERY transport (see ingest/AGENTS.md, Optional same-host
         # keys): an endpoint that neither opted in nor carries a customer host sends keyless.
         return ProviderEndpointRequest(request_url=credential_free, send_url=KeyedRequestUrl(credential_free))
     if provider.api_key_env is None:
@@ -306,20 +319,27 @@ def provider_endpoint_request(
             return ProviderEndpointRequest(request_url=credential_free, send_url=KeyedRequestUrl(credential_free))
         raise ProviderConfigError(f"{provider.api_key_env} is empty; lanes on {provider.id} need it (FR-2)")
     host = declared.customer_host or declared.host
+    if provider.api_key_transport == "path":
+        # Reached only under the customer_host opt-in (the schema pairs it with `{api_key}`); the
+        # filled URL is shown as its credential-free form, since no `name=` scrub can find the key.
+        return ProviderEndpointRequest(
+            request_url=credential_free,
+            send_url=KeyedRequestUrl(endpoint_url(host, query, api_key=key), display=credential_free),
+        )
     if provider.api_key_transport == "header" and provider.api_key_header is not None:
         # httpx keeps custom headers across a cross-origin redirect, so a keyed send never follows one.
         return ProviderEndpointRequest(
             request_url=credential_free,
-            send_url=KeyedRequestUrl(f"https://{host}{declared.path}?{query}"),
+            send_url=KeyedRequestUrl(endpoint_url(host, query)),
             send_headers=KeyedHeaders({provider.api_key_header: key}),
             allow_redirects=False,
         )
     if key_parameter is None:
         raise ProviderConfigError(f"provider {provider.id!r} names api_key_env but no key parameter is known")
-    keyed = urlencode([*parameters.items(), (key_parameter, key)])
+    keyed = urlencode([*query_items, (key_parameter, key)])
     return ProviderEndpointRequest(
         request_url=credential_free,
-        send_url=KeyedRequestUrl(f"https://{host}{declared.path}?{keyed}"),
+        send_url=KeyedRequestUrl(endpoint_url(host, keyed)),
         allow_redirects=not declared.optional_api_key,
     )
 
