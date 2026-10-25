@@ -16,6 +16,7 @@ from agri_data_service.pipeline.parquet.verified_days import verified_days_for
 from agri_data_service.pipeline.runner.census import CONFIG_LANE_KIND, read_census
 from agri_data_service.pipeline.runner.completeness import SourceCompleteness
 from agri_data_service.pipeline.runner.digests import table_digest
+from agri_data_service.pipeline.runner.exits import TurnConfigurationError
 from agri_data_service.warehouse.parquet.schema import get_stream_schema
 
 if TYPE_CHECKING:
@@ -91,7 +92,12 @@ class ObjectStoreLaneReader:
     def canonical_digest(self, stream: str, table: pa.Table, *, excluding: Sequence[str] = ()) -> str:
         """The digest of `table` as the store would hold it (conformed, grain-sorted), less the `excluding` columns."""
         conformed = conform_to_stream_schema(table, get_stream_schema(stream, CONFIG_LANE_KIND))
-        return table_digest(conformed.drop_columns(list(excluding)) if excluding else conformed)
+        if not excluding:
+            return table_digest(conformed)
+        missing = [column for column in excluding if column not in conformed.column_names]
+        if missing:
+            raise TurnConfigurationError(f"stream {stream!r} volatile_columns {missing} are absent from its schema")
+        return table_digest(conformed.drop_columns(list(excluding)))
 
     def is_verified(self, stream: str, day: date) -> bool:
         """True when the stream's verified-days register names `day` (one GET per stream per turn)."""

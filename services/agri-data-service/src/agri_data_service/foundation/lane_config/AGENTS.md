@@ -23,8 +23,10 @@ does I/O (the loader reads files), and is a ruled exception on the same grounds.
   values it fires on. It has no clock. `execution/cron_schedule.py` (`f1-executor`) owns next-fire
   and due computation and should build on `CronExpression` rather than re-parse, so the executor and
   the loader can never disagree about what a cron string means.
-- `loader.py` — `load_lane_configs(directory, region) -> LaneConfigSet`, plus
-  `default_lanes_directory()`.
+- `loader.py` — `load_lane_configs(directory, region, *, stream_contract=None) -> LaneConfigSet`, plus
+  `default_lanes_directory()`. The optional `stream_contract` resolver enables the `volatile_columns`
+  check; the runner CLI injects it, the executor's catalogue DELIBERATELY does not (a catalogue
+  quarantine stops a lane on both paths; a compare-only hint must never stop a live legacy writer).
 
 ## Loader
 

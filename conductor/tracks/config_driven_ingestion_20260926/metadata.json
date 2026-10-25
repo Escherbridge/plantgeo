@@ -4591,7 +4591,8 @@
       "s-soil": "CHANGES-REQUIRED (ring, sonnet): CRITICAL TOML quarantined (complete_history_floor 2022-04-30 < history_floor, models.py:450); support_cells provenance challenged then RESOLVED (coverage_fraction=1.0 uniform IS production state, GROUP BY verified). FIXED d3e90ed6, merged 84945910",
       "s-weather-observations": "CHANGES-REQUIRED (ring, sonnet): O1 clamp (windows.py:97-102) means lane can NEVER write today; lag=0 comment false; both main flow tests asserted an impossible day. FIXED 18e55513 (lag=1, same effective window, midnight-straddle fixture)",
       "s-fire-detections": "CHANGES-REQUIRED (ring, sonnet): 10 mechanical ruff; forward constellation-change wedge named as 2nd G6 prerequisite; 10k-per-product vs legacy 50k-merged cap flagged to owner; cap failure-direction REFUTED as regression (legacy crash-loops hourly). FIXED inline by orchestrator"
-    }
+    },
+    "b1a_compare_independent": "COMPLETE 2026-10-25 (opus, owner-ordered): core compare logic APPROVED after refutation attempts (stable-sort safety proven; both sides share the exclusion; ALL shipped volatile declarations verified clock-stamped in BOTH writers; evac geometry_last_confirmed_at corrected to fetched_at-every-row). CHANGES-REQUIRED on wiring, all RESOLVED by orchestrator: (M1) catalogue stream_contract injection REMOVED -- a catalogue quarantine stops a lane on both paths, so a compare-only hint could have stopped a live legacy writer on a future schema rename; (M2) real ObjectStoreLaneReader.canonical_digest now pinned by tests/runner/test_reader_canonical_digest.py (fake-only coverage closed); (L5) bare KeyError -> named TurnConfigurationError; (L6) loader signature doc; (L3 null-blindness, L4 evac by-construction equality) recorded as G6 sign-off caveats in runner/AGENTS.md. Residual: fire-perimeters/evac compares stay untrusted until day-alignment (static_freshness_contract)."
   },
   "owner_decisions_20261024_campaign": {
     "g4_closeout": "supersede + retire now on forward-health evidence; history-depth validation row deferred while gap-fill drains under the config lane (explicit owner deviation from the G4-as-written history prerequisite)",
@@ -4686,5 +4687,13 @@
     "vegetation_flip_preconditions": "measure legacy p95 day-walk (sentinel2_ndvi_grid_sampled logs); do not flip while p95>~250s until CQ-9 per-lane unit cap lands; check bucket status of 2026-09-01..05 before G6; promotion transform needs a Parquet governed-output stream or a runner Postgres output hook (Postgres-to-community pivot decision)",
     "sensors_request_volume": "config lane re-polls 5 window days x ~582 stations hourly (limit=1 fix cut bytes ~200x; count still ~2.9k requests/hr vs legacy once-per-ended-day); NWS is unmetered but needs an owner nod",
     "weather_obs_doc_collision": "docs/lanes/weather-observations.md documents the OTHER producer (NASA-POWER archive); new lane doc lives at weather-observations-direct-forward.md; rename the archive doc to disambiguate or bless the alternate path"
+  },
+  "owner_decisions_20261025_batch2": {
+    "o1_same_day_freshness": "ACCEPT the ~24h current-conditions lag; no O1 carve-out. weather-observations may flip at G6 as configured (lag=1, O1-clamped edge = yesterday UTC)",
+    "firms": "ACCEPTED: the 10,000-per-product Unsettled cap is blessed, and the availability-aware SourceCoverageStrategy port is approved to build now (prerequisite for both gap-fill and forward-flip confidence)",
+    "soil_key": "OPEN_METEO_API_KEY is SET in prod (owner 2026-10-25); exit-78 blocker cleared. Part-key host lineage: align the config strategy's part-key host with the host actually used at fetch (= customer host once keyed, matching legacy) \u2014 folded into the soil G6-flip slice",
+    "vegetation_promotion": "OWNER DELEGATED; picked: Parquet governed-output stream (consistent with the 2026-08-22 Parquet/DuckDB pivot \u2014 Postgres out of the serving path), retiring the agri.forecast_observation target when the transform is ported for real; port scheduled after the flips, not blocking",
+    "b1a_review": "owner ordered the outstanding independent adversarial review of the compare slice \u2014 launched 2026-10-25",
+    "vegetation_p95_measured": "MEASURED 2026-10-25 from agri.job_run (652 succeeded runs, 30d): whole-turn p50 6.4s, p95 15.8s, max 85.3s \u2014 the 330s PER_UNIT_FETCH_CAP has ~4x headroom over the worst observed TURN (the day-walk alone is smaller still). The 'do not flip while p95 > ~250s' precondition is SATISFIED; CQ-9 per-lane cap override not needed for vegetation at current walk sizes. Script: .omc/research/lane-audits/raw/veg-p95.mjs"
   }
 }

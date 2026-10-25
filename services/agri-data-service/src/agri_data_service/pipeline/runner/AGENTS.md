@@ -325,6 +325,14 @@ same blindness (a static lane's capture-time column makes every refetch mismatch
 under a day-grain watermark, versions churn daily); it is left to the owner's day-grain
 `static_freshness_contract` decision (track metadata `owner_go_steps`), not fixed here.
 
+G6 SIGN-OFF CAVEATS (independent review 2026-10-25): (1) an excluded column's own integrity is not
+compared -- a config strategy writing NULL `ingested_at` would still tally `days_equal`; spot-check the
+excluded columns' null counts at sign-off. (2) evacuation-zones' `feature_updated_at` equality is by
+construction (carried forward from the very snapshot compare reads), not independent proof. (3) the
+`stream_contract` resolver is injected by the runner CLI only; the executor's catalogue load
+deliberately skips the check, because a catalogue quarantine stops a lane on BOTH dispatch paths and a
+compare-only hint must never stop a live legacy writer.
+
 ## Writer
 
 `writer.py::decide_rewrite` is the one statement of S11: write a missing/incomplete day; retract a
