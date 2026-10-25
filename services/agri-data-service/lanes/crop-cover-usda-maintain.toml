@@ -75,3 +75,6 @@ slug = "crop-cover"
 history_floor = "2023-01-30"
 complete_history_floor = "2023-01-30"
 floor_basis = "warehouse/crop_cover_releases.py::CDL_RELEASE_DATES; provisional -- the real stream binding for the bulk capture is decided at activation"
+# G6 --compare leaves capture-time columns out of its digest (pipeline/runner/AGENTS.md "Volatile columns"):
+# pipeline/lanes/crop_cover/usda_cdl.py::UsdaCdlEditionIdentityStrategy.rows stamps `ingested_at` from `responses[0].retrieved_at`.
+volatile_columns = ["ingested_at"]

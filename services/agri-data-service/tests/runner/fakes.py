@@ -219,8 +219,14 @@ class MemoryLaneStore:
         """True when the stream-day is verified, as the production reader's register read says."""
         return (stream, day) in self.verified
 
-    def canonical_digest(self, stream: str, table: pa.Table) -> str:  # noqa: ARG002 - the LaneReader shape
-        return table_digest(table)
+    def canonical_digest(
+        self,
+        stream: str,  # noqa: ARG002 - the LaneReader shape
+        table: pa.Table,
+        *,
+        excluding: Sequence[str] = (),
+    ) -> str:
+        return table_digest(table.drop_columns(list(excluding)) if excluding else table)
 
     # --- LaneWriter ---------------------------------------------------------------------------
 

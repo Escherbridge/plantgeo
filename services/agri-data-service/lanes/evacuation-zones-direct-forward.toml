@@ -100,3 +100,6 @@ slug = "evacuation-zones"
 # "a version-stamped stream keys to a source watermark, which a data row cannot carry"). The day
 # axis itself does not exist for this nature; see docs/lanes/evacuation-zones.md section 3.
 floor_basis = "static_lookup, no day axis: the literal registration (pipeline/parquet/lane_registry.py) already carries the real floor and basis; this entry repeats it rather than adding a second one"
+# G6 --compare leaves capture-time columns out of its digest (pipeline/runner/AGENTS.md "Volatile columns"):
+# pipeline/lanes/evacuation_zones/rows.py::evacuation_zones_table stamps `geometry_last_confirmed_at` from the capture's `fetched_at` (source.py, datetime.now).
+volatile_columns = ["geometry_last_confirmed_at"]

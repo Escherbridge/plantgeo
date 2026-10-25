@@ -60,3 +60,6 @@ turn_timeout_seconds = 900
 [[streams]]
 slug = "fire-perimeters"
 floor_basis = "static_lookup: no time axis to float a history floor over (foundation/parquet/lane_contract.py; agent/day_tolerance.py:71); the generic driver still reads pipeline/parquet/lane_registry.py's own registered floor, unedited by this TOML"
+# G6 --compare leaves capture-time columns out of its digest (pipeline/runner/AGENTS.md "Volatile columns"):
+# pipeline/lanes/fire_perimeters/wfigs.py::_conform stamps `updated_at` from the fetch's `fetched_at` (datetime.now).
+volatile_columns = ["updated_at"]

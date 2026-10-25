@@ -1195,9 +1195,10 @@ class _Turn:
             self.tally.days_unchanged += 1
 
     def _compare(self, answered: _SettledDay, census: LaneCensus) -> None:
-        """Diff one built day against what the bucket serves; nothing is written."""
+        """Diff one built day against what the bucket serves, blind to `volatile_columns`; nothing is written."""
         reader = self.ports.reader
         tally = self.compare_tally
+        volatile = {declared.slug: declared.volatile_columns for declared in self.spec.lane.streams}
         streams = self.streams if isinstance(answered.settlement, Absent) else tuple(answered.tables)
         for stream in streams:
             status = census.status(stream, answered.day)
@@ -1211,7 +1212,9 @@ class _Turn:
                 continue
             tally.rows_published[stream] += published.num_rows
             built = answered.tables[stream]
-            if reader.canonical_digest(stream, built) == reader.canonical_digest(stream, published):
+            excluding = volatile.get(stream, ())
+            built_digest = reader.canonical_digest(stream, built, excluding=excluding)
+            if built_digest == reader.canonical_digest(stream, published, excluding=excluding):
                 tally.days_equal[stream] += 1
             else:
                 tally.days_differ[stream] += 1
