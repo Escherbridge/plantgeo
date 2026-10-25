@@ -83,8 +83,10 @@ never a value.** `services/agri-data-service/lanes/_providers/nasa-firms.toml` d
 from the environment variable at send time, under the endpoint's `customer_host` opt-in (FIRMS'
 one host, key mandatory, so an empty key is a named `ProviderConfigurationError`, never a silent
 fall-back). The config-lane strategy, `pipeline/lanes/fire_detections/nasa_firms.py`, never reads
-`NASA_FIRMS_KEY` and never places it: its `SourceRequest.parameters` carries only the OTHER four
-placeholders the template names — `source`, `area`, `day_range`, `start_date` — and every
+`NASA_FIRMS_KEY` and never places it: each `area-csv-dated` send carries only the OTHER four
+placeholders the template names — `source`, `area`, `day_range`, `start_date` — the one
+`data-availability` read per turn (`/api/data_availability/csv/{api_key}/all`, which decides the
+products each day owes) carries no parameter at all, and every
 credential-free artifact this strategy or the runner produces (the report, checkpoints,
 `SourceRequest.credential_free_url`) carries the literal `{api_key}` marker instead of the value,
 stable across key rotation (`foundation/lane_config/AGENTS.md` "Path templates"; `ingest/AGENTS.md`

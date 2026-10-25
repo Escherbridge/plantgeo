@@ -1,4 +1,4 @@
-"""`fire-detections-direct-forward`'s config-lane strategy: one request per (settled day, VIIRS NRT product).
+"""`fire-detections-direct-forward`'s config-lane strategy: one unit per settled day, products from FIRMS availability.
 
 Strategy key `fire_detections.nasa_firms` (`pipeline/lanes/AGENTS.md` "Config-lane strategies").
 Ships DARK: `lanes/fire-detections-direct-forward.toml` declares `executor = "legacy"`, so
@@ -29,41 +29,74 @@ FIRMS' bare "now" window, which this lane's forward cadence has no use for.
 **`{api_key}` is never touched here.** `nasa-firms.toml` declares `api_key_transport = "path"`: the
 reserved `{api_key}` path segment is filled by the provider client alone, from `api_key_env`
 (`NASA_FIRMS_KEY`, named, never a value) under the endpoint's `customer_host` opt-in
-(`foundation/lane_config/AGENTS.md` "Path templates"; `ingest/AGENTS.md` "Path-segment keys"). This
-strategy's `SourceRequest.parameters` carries exactly the OTHER four placeholders the
-`area-csv-dated` template names -- `source`, `area`, `day_range`, `start_date` -- and nothing else;
-`split_parameters` routes all four into the path, so the send URL has no bare `?` and no query
-string, byte-for-byte the legacy producer's own URL shape.
+(`foundation/lane_config/AGENTS.md` "Path templates"; `ingest/AGENTS.md` "Path-segment keys"). Every
+`area-csv-dated` send carries exactly the OTHER four placeholders that template names -- `source`,
+`area`, `day_range`, `start_date` -- and the one `data-availability` send per turn carries no
+parameter at all (its template names only `{api_key}`); `split_parameters` routes them all into the
+path, so no send has a query string, byte-for-byte the legacy producer's own URL shapes.
 
-**Coverage unit = one VIIRS NRT product, not one HTTP page.** `Written.expected_units`/
-`present_units` count how many of the three live constellation members
-(`ingest/firms.py::FIRMS_VIIRS_SOURCES`: `VIIRS_SNPP_NRT`, `VIIRS_NOAA20_NRT`, `VIIRS_NOAA21_NRT`)
-answered for a day, mirroring the legacy source's own fan-out
-(`pipeline/direct/fire_detections/source.py::fetch_fire_day`'s `asyncio.gather` over exactly those
-three). This restates, in the runner's vocabulary, the legacy adapter's hand-written "a missing
-constellation member refuses that day; it must not look like a quiet fire day"
-(`pipeline/direct/fire_detections/AGENTS.md`).
+**Availability-aware coverage: one unit per settled day, its products read from FIRMS itself.**
+This closes the scope limit earlier revisions documented here (a pinned three-product
+`expected_units`), for the forward AND the gap-fill path alike. Each day is ONE `SourceRequest`
+(the retry grain), and its `fetch`:
 
-**Two different mechanisms answer to that one sentence, and only one of them fires in practice
-under this TOML's `partial_day = "refuse"`.** When a unit's FETCH itself fails (exhausts the
-runner's own retry ladder: `SourceUnavailableError`/`SourceThrottledError`/a transport fault),
-`turn.py::_settle_answered` never calls this strategy's `settle()` for that day at all on a
-`refuse` lane -- it reports the day unwritten directly, under the failed unit's OWN reason (e.g.
-`upstream_unavailable`), and the other two products' successful answers are discarded with it. The
-`present_units < expected_units` branch inside `settle()` below is therefore DEFENSIVE, not the
-path a genuinely down satellite takes today: it exists for correctness (so this strategy never
-mislabels a short response as a governed absence) and for a possible future where
-`partial_day` is `"write_and_recheck"`, under which the runner DOES hand `settle()` whatever subset
-of units answered. `tests/lanes/fire_detections/test_nasa_firms.py::
-test_a_missing_constellation_member_refuses_the_whole_day_never_a_quiet_fire_day` pins the actual
-(`upstream_unavailable`, direct-report) path.
+1. reads FIRMS' live `data_availability` table through the declared `data-availability` endpoint --
+   ONCE per turn, shared by every day unit of that turn (`_TurnAvailability`, keyed on the turn's own
+   budgeted client); a failed read is never cached, so the runner's per-unit retry ladder re-asks it;
+2. asks `ingest/firms.py::products_covering` which of `FIRMS_HISTORY_SOURCES` (the three live VIIRS
+   NRT products, the three VIIRS SP products, MODIS_SP) cover that exact day -- the same port of the
+   legacy `pipeline/direct/fire_detections/source.py::fetch_fire_day` read
+   (`fetch_product_availability` + `products_covering_span(availability, day, 1)`), whose own
+   docstring is "every applicable FIRMS product for one exact settled day as one retry unit";
+3. fetches exactly those products, sequentially (so the TOML's `max_concurrency = 3` stays the
+   turn's concurrent-send ceiling), and any one of them failing fails the whole unit.
+
+`settle()` then counts `expected_units = len(covering products)` and `present_units = products that
+answered`. Three failure modes follow from that, each pinned by a flow test in
+`tests/lanes/fire_detections/test_nasa_firms.py`:
+
+* **No forward wedge.** A product NASA retires or renames drops out of the availability table and
+  is simply never asked; the day settles from the products that DO cover it (expected = present =
+  2, say), instead of failing that product every turn and holding every day `upstream_unavailable`
+  forever.
+* **No gap-fill under-count.** An old day owes exactly the products that covered it then -- MODIS_SP
+  and the SP series for 2012-era days, never "whichever NRT products happen to exist today" -- so a
+  day settled short of a covering product can never be written as complete. NRT/SP overlap on a
+  reprocessing boundary is collapsed by `ingest/firms.py::collapse_history_records` (standard
+  processing supersedes near-real-time), the legacy writer's own precedence rule.
+* **Coverage is proven or the day is held -- never guessed.** A covering product failing its fetch
+  fails the unit, so on this `partial_day = "refuse"` lane `turn.py::_settle_answered` reports the day
+  unwritten under that failure's own reason and nothing is written. An availability read that fails
+  fails every unit that needed it the same way: every owed day held, nothing written, and the
+  runner's own exit (75 when every sent unit ended `upstream_unavailable`; a parse fault is a per-day
+  `strategy_error`). There is no fallback to a pinned constellation. A day the table names NO
+  covering product for is a loud per-day `Unsettled` naming the candidates, never a quiet skip and
+  never a governed absence.
+
+**Why per-day units, not per-(day, product), and why not `SourceCoverageStrategy`.** The contract's
+`SourceCoverageStrategy.source_unit_ids(lane, region)` (`pipeline/runner/contract.py`) is ONE stable
+support set for every day, and `turn.py::_settle` rejects any `Written.expected_unit_ids` that differs
+from it -- the wrong shape for coverage that varies by era, so this strategy does not implement it
+and sets no unit identities (counts only, as before). `plan_requests` is synchronous and runs before
+any send, so it cannot know which products cover a day; planning one unit per CANDIDATE product would
+reserve seven units of the turn's request cap per day for products never sent. One unit per day
+reserves one (`budget.py::select_affordable_days`), while `BudgetedClient` still charges every real
+send -- the availability read once per turn (one `request_key`, however often retried), each covering
+product once -- and refuses a send past the cap before it leaves (`deferred_budget`, never a partial
+day). A day unit's `source` path value is the literal `DAY_UNIT_SOURCE` marker: the unit's key for
+budget reservation, never a URL anything sends. Day units are never checkpoint-eligible
+(`complete_parameters` is empty): a replay client answers only the one request it holds
+(`checkpoints.py::_ReplayClient`) and could never re-read availability, so a retained answer would be
+a write that can never restore. The remaining G6 preconditions (gap-fill budget sizing against the
+one-reservation-per-day estimate; a product new to FIRMS but absent from `FIRMS_HISTORY_SOURCES` is
+never asked) are listed in `pipeline/lanes/fire_detections/AGENTS.md`.
 
 **The forward window re-asks absences, not already-written days.** `lanes/fire-detections-direct-
 forward.toml`'s `absence_recheck_days = 5` is the "refetch window" split back from the edge
 (`pipeline/runner/AGENTS.md` "Windows": `forward_window = [edge - absence_recheck_days + 1,
 edge]`). Inside that window, `turn.py::_series_forward` owes only `_owed_days()` (missing or
 incomplete) and re-asks `census.absent_days()` (governed absences, to retract one once FIRMS
-starts reporting fires there) -- a day already written with all three products present is neither,
+starts reporting fires there) -- a day already written with every covering product present is neither,
 so it is NOT re-fetched again by a later turn. This is a DELIBERATE, narrower behaviour than the
 legacy hourly job, which blindly re-walks every day in its window including already-complete ones
 (`docs/lanes/fire-detections.md` section 2: "Each turn refreshes the bounded settled window...
@@ -77,38 +110,12 @@ archive-only and out of this forward lane's realistic window). `tests/lanes/fire
 test_nasa_firms.py::test_an_initially_absent_day_is_re_asked_and_its_absence_retracted` pins the
 retraction path this mechanism actually exercises.
 
-**A SCOPE LIMIT, stated rather than hidden: `expected_units` is pinned to the three LIVE NRT
-products and this strategy never consults FIRMS' `data_availability` table.** The legacy source
-module always reads that table first and filters to the products that actually cover a day
-(`fetch_product_availability` / `products_covering_span`) because its archive walker also reaches
-into `VIIRS_*_SP`/`MODIS_SP` territory, where product coverage genuinely varies. This lane's
-realistic forward window (`absence_recheck_days = 5`, back from `today - publication_lag_days`)
-only ever lands inside each live VIIRS NRT product's already-active coverage, so skipping the
-availability read costs nothing today and saves one extra request per turn. It is NOT safe to
-enable `gap_fill_enabled` against this module as written, for a quieter reason than a hard refusal:
-`ingest/firms.py`'s own documented behaviour is that a product asked for a day it does not cover
-answers with FEWER rows, never an error ("over-asking is safe and cheap"), so a pre-2018 day would
-likely still settle and write -- using only whichever of the three NRT products happened to exist
-yet, silently omitting every `VIIRS_*_SP`/`MODIS_SP` detection the legacy archive walker's
-availability-aware fan-out would have included. That is UNDER-counted history served as if it were
-complete, not a loud refusal -- worse, not better, and exactly the failure mode
-`SourceCoverageStrategy` exists to prevent. Porting `fetch_product_availability`/
-`products_covering_span` into this strategy (or an equivalent `SourceCoverageStrategy`) is the
-prerequisite for ever flipping `gap_fill_enabled` here; tracked, not fixed, in this slice.
-
-The pinned constellation has a FORWARD-path cost too (ring review, 2026-10-25): if NASA retires or
-renames one of the three NRT tokens, that product fails every fetch, and on a `refuse` lane a day
-with any failed unit never reaches `settle()` -- every day is held `upstream_unavailable` forever,
-indistinguishable from a transient 503. The same availability-aware fan-out (or an alert on a
-persistent single-product failure streak) is therefore a G6 prerequisite for the FORWARD path as
-well, not only for gap-fill.
-
 **The 10,000-record cap, surfaced as an explicit UNWRITTEN day, never a silent partial.**
 `docs/lanes/fire-detections.md` section 5.1 ("THE HEADLINE TRAP") documents `INGEST_MAX_SOURCE_
 RECORDS` defaulting to 10,000 and the legacy ROLLING forward job silently keeping only the newest
 10,000 of a merged multi-day, multi-product tick -- a measured, real loss
 (memory note `agri-firms-record-cap-drops-silently`; `docs/lanes/fire-detections.md:234-248`). This
-strategy's request shape is narrower (one exact day, one product per unit) than the job that number
+strategy's request shape is narrower (one exact day, one send per covering product) than the job that number
 was measured against, but the number itself is the one piece of upstream behaviour this repo has
 ever measured against FIRMS' per-request CSV answer, so `settle()` below treats ANY single
 product-day response landing at or above that same threshold as a tripwire: such a response can
@@ -120,8 +127,8 @@ next hourly turn re-asks it inside the 5-day `absence_recheck_days` window; a da
 tripping the cap stays visibly `unsettled` rather than quietly wrong.
 
 **Governed absence is unconditional here, unlike `drought.usdm_releases`' mirrored-past pattern.**
-`settle()` below does not need `DayContext.later_published_day`: a day where every one of the three
-live products answered (no missing member, no cap hit) with zero total rows is an immediate
+`settle()` below does not need `DayContext.later_published_day`: a day where every product the availability
+table names as covering it answered (no missing member, no cap hit) with zero total rows is an immediate
 `Absent` -- directly mirroring the legacy adapter's own unconditional governed absence
 (`pipeline/direct/fire_detections/adapter.py`: "all {products} requests succeeded... and yielded
 zero accepted records"). USDM's 404 needed a mirrored-past proof because a 404 is ambiguous
@@ -150,15 +157,23 @@ never the turn's"). This restates, rather than relaxes, the legacy writer's
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC
 from decimal import ROUND_FLOOR, Decimal
 from typing import TYPE_CHECKING, Final
 
 import pyarrow as pa  # type: ignore[import-untyped]
 
-from agri_data_service.ingest.firms import FIRMS_VIIRS_SOURCES, build_fire_detection_write, parse_firms_csv
+from agri_data_service.ingest.firms import (
+    FIRMS_HISTORY_SOURCES,
+    build_fire_detection_write,
+    collapse_history_records,
+    parse_firms_csv,
+    parse_product_availability,
+    products_covering,
+)
 from agri_data_service.ingest.policy import resolve_bounded_bbox
 from agri_data_service.pipeline.runner.contract import Absent, SourceRequest, SourceResponse, Unsettled, Written
 from agri_data_service.warehouse.schemas.fire_detections import (
@@ -173,11 +188,18 @@ if TYPE_CHECKING:
 
     from agri_data_service.foundation.lane_config.models import LaneConfig
     from agri_data_service.foundation.region.manifest import Region
+    from agri_data_service.ingest.firms import ProductAvailability
     from agri_data_service.ingest.records import FeatureWrite
     from agri_data_service.pipeline.runner.contract import DayContext, ProviderClient, Settlement
 
 #: Matches `lanes/_providers/nasa-firms.toml`'s `[endpoints.area-csv-dated]` declaration.
 FORWARD_ENDPOINT: Final = "area-csv-dated"
+#: Matches `lanes/_providers/nasa-firms.toml`'s `[endpoints.data-availability]` declaration.
+AVAILABILITY_ENDPOINT: Final = "data-availability"
+#: Every product a day may owe; which of them it DOES owe is read from FIRMS per turn (module docstring).
+CANDIDATE_PRODUCTS: Final = FIRMS_HISTORY_SOURCES
+#: A day unit's `source` path value: its budget/report key, never sent (module docstring, "Why per-day units").
+DAY_UNIT_SOURCE: Final = "AVAILABILITY_COVERED"
 #: Every placeholder the dated template names besides the reserved `{api_key}`.
 _REQUESTED_PARAMETERS: Final = frozenset({"source", "area", "day_range", "start_date"})
 #: One exact settled UTC day per request; never a rolling span (see module docstring).
@@ -192,14 +214,70 @@ _POINT_COORDINATE_COUNT: Final = 2
 _CELL_SIZE: Final = Decimal(str(FIRE_DETECTIONS_CELL_SIZE_DEGREES))
 
 
-def _product_of(response: SourceResponse) -> str:
-    """The VIIRS NRT product token this response answered for, read back off its own request."""
-    return dict(response.request.parameters).get("source", "?")
+@dataclass(frozen=True, slots=True)
+class ProductAnswer:
+    """One covering product's parsed CSV for the day."""
+
+    product: str
+    features: list[dict[str, object]]
 
 
-def _record_count(response: SourceResponse) -> int:
-    """How many raw CSV rows this response parsed to, before identity/geometry validation."""
-    return len(response.payload) if isinstance(response.payload, list) else 0
+@dataclass(frozen=True, slots=True)
+class FirmsDay:
+    """A day unit's payload: the products availability names as covering the day, and each one's answer."""
+
+    covering: tuple[str, ...]
+    answers: tuple[ProductAnswer, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _Availability:
+    """One parsed `data_availability` read and when it was retrieved."""
+
+    table: Mapping[str, ProductAvailability]
+    retrieved_at: datetime
+
+
+@dataclass(slots=True)
+class _TurnAvailability:
+    """Memoization: one `data_availability` read per turn, shared by every day unit the turn's client fetches.
+
+    Keyed on the client's identity (the runner builds one `BudgetedClient` per turn). A failed read is
+    dropped, never cached, so the runner's per-unit retry ladder re-asks it; concurrent units await one
+    shielded in-flight read, so a sibling's per-unit timeout never cancels it for the others.
+    """
+
+    client: object = None
+    task: asyncio.Future[_Availability] | None = None
+
+    async def read(self, client: ProviderClient) -> _Availability:
+        """The turn's availability: the in-flight or finished read for this client, else a new one."""
+        task = self.task
+        if task is None or self.client is not client:
+            self.client = client
+            task = self.task = asyncio.ensure_future(_read_availability(client))
+        try:
+            return await asyncio.shield(task)
+        except Exception:
+            if self.task is task:
+                self.task = None
+            raise
+
+
+async def _read_availability(client: ProviderClient) -> _Availability:
+    """The live per-product coverage windows (`ingest/firms.py::parse_product_availability`)."""
+    response = await client.get(AVAILABILITY_ENDPOINT, {})
+    return _Availability(
+        table=parse_product_availability(response.body.decode("utf-8")), retrieved_at=response.retrieved_at
+    )
+
+
+def _firms_day(responses: Sequence[SourceResponse]) -> FirmsDay:
+    """The one day unit's payload (`plan_requests` plans exactly one unit per day)."""
+    days = [response.payload for response in responses if isinstance(response.payload, FirmsDay)]
+    if len(days) != 1:
+        raise ValueError(f"expected exactly one FIRMS day answer, got {len(days)}")
+    return days[0]
 
 
 def _floor_cell(value: Decimal) -> Decimal:
@@ -231,10 +309,12 @@ class _CellTotals:
 
 @dataclass(frozen=True, slots=True)
 class NasaFirmsForwardStrategy:
-    """One unit per (settled day, live VIIRS NRT product); never a partial day (`partial_day = "refuse"`)."""
+    """One unit per settled day, owing exactly the products FIRMS availability names; never a partial day."""
+
+    _availability: _TurnAvailability = field(default_factory=_TurnAvailability, compare=False, repr=False)
 
     def plan_requests(self, days: Sequence[date], lane: LaneConfig, region: Region) -> list[SourceRequest]:  # noqa: ARG002 - the Protocol's lane and region; bbox comes from INGEST_BBOX (matches watersheds.nhdplus)
-        """One request per (day, product); gracefully plans nothing when `INGEST_BBOX` is unset."""
+        """One request per day; gracefully plans nothing when `INGEST_BBOX` is unset."""
         bbox = resolve_bounded_bbox(None)
         if bbox is None:
             # No raise: `plan_requests` raising aborts the WHOLE turn (exit 70, a code-fault
@@ -243,11 +323,11 @@ class NasaFirmsForwardStrategy:
             return []
         return [
             SourceRequest(
-                unit=f"{day.isoformat()}:{product}",
+                unit=day.isoformat(),
                 endpoint=FORWARD_ENDPOINT,
                 days=(day,),
                 parameters=(
-                    ("source", product),
+                    ("source", DAY_UNIT_SOURCE),
                     ("area", bbox),
                     ("day_range", _DAY_RANGE),
                     ("start_date", day.isoformat()),
@@ -255,28 +335,45 @@ class NasaFirmsForwardStrategy:
                 requested_parameters=_REQUESTED_PARAMETERS,
             )
             for day in days
-            for product in FIRMS_VIIRS_SOURCES
         ]
 
     async def fetch(self, request: SourceRequest, client: ProviderClient) -> SourceResponse:
-        """Fetch one product-day CSV and parse it; FIRMS answers an uncovered day with an empty body, never a 404."""
-        response = await client.get(request.endpoint, request.query())
-        product = dict(request.parameters)["source"]
-        features = parse_firms_csv(response.body.decode("utf-8"), product)
+        """Read the turn's availability, then fetch every product covering the day; any failure fails the unit."""
+        day = request.days[0]
+        availability = await self._availability.read(client)
+        covering = products_covering(availability.table, day, CANDIDATE_PRODUCTS)
+        answers: list[ProductAnswer] = []
+        bodies: list[bytes] = []
+        retrieved_at = availability.retrieved_at
+        # Sequential: the TOML's max_concurrency stays the turn's concurrent-send ceiling.
+        for product in covering:
+            response = await client.get(request.endpoint, {**request.query(), "source": product})
+            features = parse_firms_csv(response.body.decode("utf-8"), product)
+            answers.append(ProductAnswer(product=product, features=features))
+            bodies.append(product.encode("utf-8") + b"\n" + response.body)
+            retrieved_at = max(retrieved_at, response.retrieved_at)
         return SourceResponse(
             request=request,
-            body=response.body,
-            retrieved_at=response.retrieved_at,
-            complete_parameters=request.requested_parameters,
-            payload=features,
+            body=b"\n".join(bodies),
+            retrieved_at=retrieved_at,
+            # Never checkpoint-eligible: a replay could not re-read availability (module docstring).
+            complete_parameters=frozenset(),
+            payload=FirmsDay(covering=covering, answers=tuple(answers)),
         )
 
     def settle(self, day: date, responses: Sequence[SourceResponse], context: DayContext) -> Settlement:  # noqa: ARG002 - absence here is unconditional (module docstring); no mirrored-past proof needed
-        """A missing member or a capped response never settles as complete; zero-of-three is an immediate absence."""
+        """Expected = the day's covering products; none covering is a loud refusal, a capped one never complete."""
         if not responses:
-            return Unsettled("upstream_unavailable", f"no VIIRS NRT product answered for {day.isoformat()}")
+            return Unsettled("upstream_unavailable", f"no FIRMS answer for {day.isoformat()}")
+        firms_day = _firms_day(responses)
+        if not firms_day.covering:
+            return Unsettled(
+                "unsettled",
+                f"FIRMS data_availability names no product covering {day.isoformat()} (candidates: "
+                f"{', '.join(CANDIDATE_PRODUCTS)}); refusing rather than certifying a fire-free day",
+            )
         capped = sorted(
-            {_product_of(response) for response in responses if _record_count(response) >= FIRMS_RESPONSE_RECORD_CAP}
+            answer.product for answer in firms_day.answers if len(answer.features) >= FIRMS_RESPONSE_RECORD_CAP
         )
         if capped:
             return Unsettled(
@@ -285,40 +382,35 @@ class NasaFirmsForwardStrategy:
                 "response at FIRMS' own silent per-request truncation point can never be proven complete -- see "
                 'this module\'s docstring ("The 10,000-record cap") and docs/lanes/fire-detections.md section 5.1',
             )
-        present_units = len(responses)
-        expected_units = len(FIRMS_VIIRS_SOURCES)
-        if present_units < expected_units:
-            # Defensive, not the live path for a fetch failure (module docstring, "Two different
-            # mechanisms"): a genuinely down satellite never reaches here on this TOML's
-            # `partial_day = "refuse"`. Kept so a response SHORTAGE this strategy itself ever
-            # produces (never a fetch failure) is still reported as a partial `Written`, never
-            # silently folded into a governed absence.
-            return Written(expected_units=expected_units, present_units=present_units)
-        if sum(_record_count(response) for response in responses) == 0:
+        expected_units = len(firms_day.covering)
+        present_units = len({answer.product for answer in firms_day.answers} & set(firms_day.covering))
+        if present_units == expected_units and not any(answer.features for answer in firms_day.answers):
             return Absent(
-                reason="every live VIIRS NRT product answered with zero detections",
-                proof=f"{', '.join(sorted(FIRMS_VIIRS_SOURCES))} each answered {day.isoformat()} with zero rows",
+                reason="every FIRMS product covering the day answered with zero detections",
+                proof=f"{', '.join(firms_day.covering)} each answered {day.isoformat()} with zero rows",
             )
+        # A short answer is a partial `Written`, which the runner refuses on this `refuse` lane.
         return Written(expected_units=expected_units, present_units=present_units)
 
     def rows(self, day: date, responses: Sequence[SourceResponse]) -> pa.Table:
         """One row per valued 0.005-degree cell; any identity or geometry defect refuses the whole day."""
+        retrieved_at = max(response.retrieved_at for response in responses)
+        features = [feature for answer in _firms_day(responses).answers for feature in answer.features]
         writes: dict[str, FeatureWrite] = {}
         rejected = 0
-        for response in responses:
-            features = response.payload if isinstance(response.payload, list) else []
-            for feature in features:
-                write = build_fire_detection_write(feature, FIRE_DETECTIONS_STREAM, None, response.retrieved_at)
-                if write is None:
-                    rejected += 1
-                    continue
-                observed_at = write.identity.observed_at
-                if observed_at is None or observed_at.astimezone(UTC).date() != day:
-                    raise ValueError(
-                        f"FIRMS answered the exact-day request for {day.isoformat()} with a detection observed at "
-                        f"{observed_at}; refusing the whole day rather than writing it under the wrong partition"
-                    )
-                writes[write.external_id] = write
+        # SP supersedes NRT on a reprocessing overlap, deterministically (ingest/firms.py precedence rule).
+        for feature in collapse_history_records(features):
+            write = build_fire_detection_write(feature, FIRE_DETECTIONS_STREAM, None, retrieved_at)
+            if write is None:
+                rejected += 1
+                continue
+            observed_at = write.identity.observed_at
+            if observed_at is None or observed_at.astimezone(UTC).date() != day:
+                raise ValueError(
+                    f"FIRMS answered the exact-day request for {day.isoformat()} with a detection observed at "
+                    f"{observed_at}; refusing the whole day rather than writing it under the wrong partition"
+                )
+            writes[write.external_id] = write
         if rejected:
             raise ValueError(
                 f"FIRMS returned {rejected} unkeyable or invalid detection(s) for {day.isoformat()}; refusing the "
@@ -367,8 +459,13 @@ STRATEGY: Final = NasaFirmsForwardStrategy()
 
 
 __all__ = [
+    "AVAILABILITY_ENDPOINT",
+    "CANDIDATE_PRODUCTS",
+    "DAY_UNIT_SOURCE",
     "FIRMS_RESPONSE_RECORD_CAP",
     "FORWARD_ENDPOINT",
     "STRATEGY",
+    "FirmsDay",
     "NasaFirmsForwardStrategy",
+    "ProductAnswer",
 ]
