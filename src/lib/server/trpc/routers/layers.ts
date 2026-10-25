@@ -82,21 +82,6 @@ async function assertCanMutateLayer(ctx: Context, id: string) {
   return layer;
 }
 
-async function assertCanCreateInTeam(ctx: Context, teamId?: string) {
-  const identity = identityFromSession(ctx.session);
-  if (isPlatformAdmin(identity)) return;
-  if (!teamId) {
-    throw new TRPCError({
-      code: "FORBIDDEN",
-      message: "Contributor layers must belong to a team",
-    });
-  }
-  const role = await getTeamRole(ctx, teamId, requireUserId(ctx));
-  if (!isTeamEditorRole(role)) {
-    throw new TRPCError({ code: "FORBIDDEN" });
-  }
-}
-
 async function assertCanSetLayerVisibility(ctx: Context, teamId?: string | null) {
   const identity = identityFromSession(ctx.session);
   if (isPlatformAdmin(identity)) return;
@@ -139,17 +124,6 @@ export const layersRouter = router({
         )
         .limit(1);
       return layer ?? null;
-    }),
-
-  create: contributorProcedure
-    .input(layerCreateSchema)
-    .mutation(async ({ ctx, input }) => {
-      await assertCanCreateInTeam(ctx, input.teamId);
-      if (input.isPublic === true) {
-        await assertCanSetLayerVisibility(ctx, input.teamId);
-      }
-      const [layer] = await ctx.db.insert(layers).values(input).returning();
-      return layer;
     }),
 
   update: contributorProcedure

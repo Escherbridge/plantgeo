@@ -1,13 +1,9 @@
 import { router } from "@/lib/server/trpc/init";
 import { layersRouter } from "@/lib/server/trpc/routers/layers";
-import { routingRouter } from "@/lib/server/trpc/routers/routing";
 import { teamsRouter } from "@/lib/server/trpc/routers/teams";
 import { contributionsRouter } from "@/lib/server/trpc/routers/contributions";
 import { analyticsRouter } from "@/lib/server/trpc/routers/analytics";
-import { trackingRouter } from "@/lib/server/trpc/routers/tracking";
 import { wildfireRouter } from "@/lib/server/trpc/routers/wildfire";
-import { visualizationRouter } from "@/lib/server/trpc/routers/visualization";
-import { placesRouter } from "@/lib/server/trpc/routers/places";
 import { environmentalRouter } from "@/lib/server/trpc/routers/environmental";
 import { interventionsRouter } from "@/lib/server/trpc/routers/interventions";
 import { interventionSocialRouter } from "@/lib/server/trpc/routers/intervention-social";
@@ -22,14 +18,10 @@ import { usersRouter } from "@/lib/server/trpc/routers/users";
 
 export const appRouter = router({
   layers: layersRouter,
-  routing: routingRouter,
   teams: teamsRouter,
   contributions: contributionsRouter,
   analytics: analyticsRouter,
-  tracking: trackingRouter,
   wildfire: wildfireRouter,
-  visualization: visualizationRouter,
-  places: placesRouter,
   environmental: environmentalRouter,
   // No `community` namespace: its five procedures (submitRequest/voteOnRequest/getRequests/
   // getPriorityZones/getRequestById) were the private strategy-request path, retired by

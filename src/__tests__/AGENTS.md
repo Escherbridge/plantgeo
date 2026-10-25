@@ -54,3 +54,5 @@ regex over an unnamed multi-line fixture string (this file's own self-tests, pla
 or a multi-line PNW literal to prove the guard finds it) would otherwise flag the guard's own test
 data as the offense it exists to catch. The tradeoff is a blind spot for a genuine offender that
 happens to live in a `*.test.ts` file; accepted, stated here rather than left implicit.
+
+Removed 2026-10-25: `lib/map/deck-config.ts` (the RGBA colour arrays referenced above) -- zero callers (dead-code audit); the shape predicate described above still applies to any future literal of that shape.

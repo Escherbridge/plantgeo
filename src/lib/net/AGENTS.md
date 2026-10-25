@@ -234,3 +234,5 @@ whoever wires or extends it next:
 - `request-budget.ts` -- the scheduler described above: concurrency cap, token-bucket rate
   limiter, round-robin lane fairness, abort-safe acquire/release, the fetch adapter, and the
   observability surface (`getRequestBudgetSnapshot`, `subscribeToRequestBudget`).
+
+Removed 2026-10-25: `useWebSocket.ts` -- zero callers (dead-code audit); `useSSE.ts` remains the live realtime read path, its reconnect backoff description above is unaffected.
