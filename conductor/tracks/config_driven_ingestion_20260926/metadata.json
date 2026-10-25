@@ -4666,6 +4666,10 @@
     "new_blockers": {
       "crop_cover_compare_conformance": "usda_cdl.py rows() emits only 4 columns; will not conform to CROP_COVER_SCHEMA at G6 compare (B1a finding). Crop-cover-specific G6 blocker, pre-existing",
       "wfigs_day_alignment": "volatile half RESOLVED; day-resolution mismatch (editingInfo.lastEditDate vs fetched_at.date()) still bars compare for fire-perimeters \u2014 part of static_freshness_contract owner decision"
-    }
+    },
+    "pushed": "B1 join fc281fe2 (receipt green no waiver); B2 transport 84a804c5 (receipt green no waiver). Deploys watched per push.",
+    "b2_result": "MERGED 09accb65 + join fixes: path_template on ProviderEndpoint ('{name}' segments extending the fixed path); path values ride SourceRequest.parameters (budget.request_key + checkpoint replay key on (endpoint, parameters) \u2014 a new field would alias two releases); {api_key} reserved segment filled ONLY by the client under customer_host opt-in; m3 keyless refusal widened query->non-header (contract test parametrized query+path, fixture reconstructs pre-opt-in shape \u2014 ORCHESTRATOR REVIEWED+APPROVED); redaction: credential-free URL is the durable identity, KeyedRequestUrl(display=) for the send URL; usdm 'release' endpoint added (release-json kept for dark strategy until G6 flip); 'path' admitted to the TOML secret-shape guard allowlist",
+    "open_review_debt": "B1a compare semantics (bed37846) passed the gate + orchestrator join inspection but no independent adversarial review yet; schedule one before the first real G6 --compare run is trusted",
+    "b2_followups": "budget.py::_url still builds path?params for templated endpoints (harmless: both providers weight 0; wrong if a weighted provider templates); lanes/AGENTS.md api_key_transport note + docs/lanes/fire-detections.md Auth don't mention path transport; usdm_releases.py gap docstring now stale \u2014 belongs to the drought G6 flip slice"
   }
 }
