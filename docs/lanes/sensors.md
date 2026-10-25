@@ -313,3 +313,70 @@ Two things should shape *how* this lane implements that horizon, both flowing fr
   legend-relevant, by analogy with `weather-temperature`'s existing hover formatter,
   `src/lib/map/hover-fields.ts:371`) and treating the rest as available-but-not-yet-forecast, rather
   than building sixteen provenance-carrying ensembles this wave has no consumer for.
+
+## 8. Config-lane strategy (`s-sensors`, track `config_driven_ingestion_20260926`)
+
+A dark `daily_series` TOML and strategy now sit beside the legacy direct writer, built against the
+Phase 4 "frozen" runner contract.
+
+- **Files.** `services/agri-data-service/lanes/sensors-direct-forward.toml` (new, `executor =
+  "legacy"`, `enabled = true`, `strategy = "sensors.nws"`); `pipeline/lanes/sensors/source.py` (new
+  — the roster+poll sweep for one day, reusing `ingest/sensors.py`'s public surface); `pipeline/
+  lanes/sensors/nws.py` (new — the `sensors.nws` `STRATEGY`). `pipeline/lanes/sensors/merge.py`
+  (p4-extract, unchanged) is NOT used by the new strategy; see its `AGENTS.md` for why.
+- **Wave O: `fetch` bypasses the governed `ProviderClient`**, exactly as `pipeline/lanes/watersheds/
+  nhdplus.py` does for NHDPlus_HR's own two-phase walk. The station roster is itself an upstream
+  answer (`GET /stations`) and `plan_requests` is synchronous, so it cannot pre-plan one
+  `SourceRequest` per station; `nws.py` plans exactly ONE unit per owed day and `source.py::
+  fetch_sensors_day_snapshot` sweeps the whole roster for that day through its own
+  `upstream_client`-backed walk. `lanes/_providers/nws.toml` needed no change: its one declared
+  `stations` endpoint is named on every planned unit only so the unit carries a valid endpoint key.
+- **Retention is a strategy-level check, not the generic gap-fill one, because it rolls.**
+  `pipeline/runner/windows.py::plan_gap_fill`'s `retention_exceeded` reads a FIXED
+  `[source].history.earliest`; NWS's own floor is `now - 6 days`
+  (`ingest/sensors.py::NWS_OBSERVATION_RETENTION`, §3 above), a value no TOML-time field can hold.
+  `[source].history = { capability = "none" }` declares exactly that — no fixed earliest day — and
+  `gap_fill_enabled = false`, because the legacy writer's own "gap walk" (§5's forward-only sweep)
+  never reaches past this SAME 6-day window either; there is no deeper historical backfill duty to
+  port. `source.py::fetch_sensors_day_snapshot` computes the real rolling floor at fetch time instead
+  (never asking NWS's roster for a day already past it — pinned directly in
+  `tests/lanes/sensors/test_nws.py`), and `nws.py::settle` folds that into
+  `Unsettled(reason="retention_exceeded", ...)`, reusing the shared `UnwrittenReason` word the same
+  way `pipeline/lanes/watersheds/nhdplus.py:201` sets the precedent for constructing `strategy_error`
+  directly rather than raising.
+- **`absence_recheck_days = 6`, matching the retention window exactly** (`[days]` in the TOML): the
+  forward window is `[edge - 5, edge]` with `edge = today - 1` (write_and_recheck forces that cap),
+  six calendar days. The calendar window and the strategy's own rolling check can still disagree by
+  up to the turn's own clock instant inside a day (the window is calendar-grained, the retention
+  floor is not) — `settle`'s check is the real boundary; the TOML sizing only keeps that disagreement
+  small.
+- **No row-level merge with the previously published day, unlike `merge.py`.** A strategy cannot
+  read back the prior partition (`DayContext` hands it day lists and digests only), so `nws.py::rows`
+  always returns the turn's own complete sweep. The anti-regression property `merge.py`'s block-merge
+  gives the legacy writer — a later, smaller poll cannot silently erase a station's last measurements
+  — is recovered generically instead: `settle`'s `Written.expected_unit_ids`/`present_unit_ids` are
+  keyed by station identifier, and the runner's own S11 "fewer units never written" rule (`pipeline/
+  runner/AGENTS.md`, "Writer") refuses to rewrite a day with FEWER present stations than a previous
+  turn wrote, the same protection by a different, generic mechanism.
+- **Known gap: the roster itself is not a stable partition, unlike `water_gauges`' fixed tiles.**
+  `UsgsWaterDataDailyStrategy.source_unit_ids` is deterministic from the region's camera envelope
+  alone; the sensors roster is discovered fresh every turn (`SENSOR_STATION_STATES`/
+  `SENSOR_MAX_STATIONS`/NWS's own roster churn all vary it). The S11 rule above, built for a STABLE
+  tile set, can therefore misread an ordinary roster shrink (a station NWS retires) as a failed poll
+  and refuse to settle a day that genuinely has fewer stations now, not fewer successful requests.
+  The legacy writer has no equivalent failure mode (its merge keeps a retired station's last block
+  forever). Flagged for the per-lane adversarial review before G6; a fix would need `DayContext` to
+  expose the PREVIOUS turn's `present_unit_ids`, which it does not today.
+- **No `volatile_columns` declared — evidence, not an omission.** No `SENSORS_SCHEMA` column is
+  stamped from this strategy's own fetch/retrieval instant: `observed_at` is the winning report's OWN
+  instant (content), and `data_available_at` is always null content, never a capture-time stamp.
+  Contrast `water-gauges-daily.toml`'s `ingested_at` or `fire-perimeters-direct-forward.toml`'s
+  `updated_at`.
+- **No addition owed to `tests/lanes/test_direct_feature_id_parity.py`.** `source.py` mints the same
+  `direct:` prefix `pipeline/direct/sensors/rows.py::_feature_id` already uses, never a new one.
+- **The runner's own turn clock is not threaded into the retention check.** `nws.py::fetch` calls
+  `fetch_sensors_day_snapshot` with no `now=`, so it always reads the real wall clock rather than the
+  turn's (test) clock — harmless in production, but it means no `run_turn` flow test can
+  deterministically exercise the real boundary end-to-end; `tests/lanes/sensors/test_nws.py` pins the
+  boundary arithmetic directly against `source.py` instead, and drives `run_turn` through a
+  monkeypatched snapshot for the flow-level cases.

@@ -1,0 +1,81 @@
+# Sensors (spec §7 row; plan Phase 4, `s-sensors`): NOAA NWS ground-station observations, re-asked
+# every window day because NWS's own retention rolls (`ingest/sensors.py::NWS_OBSERVATION_RETENTION`,
+# six days). Data only; behaviour is pipeline/lanes/sensors/nws.py (AGENTS.md there and nws.py's own
+# module docstring explain the deviations). Authoring: lanes/AGENTS.md. Source facts:
+# docs/lanes/sensors.md §8.
+#
+# DARK: executor = "legacy" keeps pipeline/direct/sensors/forward.py -- hourly at :20
+# (execution/lane_specs.py:705), production-live since 2026-09-07 -- as the implementation the
+# executor actually drives. This file is authored and reviewed ahead of the G6 cut-over (plan
+# Phase 5); flipping to executor = "config" is that gate's job, not this slice's.
+
+id = "sensors-direct-forward"
+kind = "ingest"
+nature = "daily_series"
+enabled = true
+executor = "legacy"
+strategy = "sensors.nws"
+
+[source]
+provider = "nws"
+endpoint = "stations"
+coverage = "regional"
+iso_country_codes = ["US"]
+# capability = "none": NWS's retention floor is `now - 6 days`, a ROLLING value this field's
+# `earliest` (a fixed date, checked once at TOML load) cannot express. The strategy computes the
+# real floor at fetch time instead and reports a day past it as `retention_exceeded` from its own
+# `settle()` (pipeline/lanes/sensors/nws.py's module docstring, "Retention is a strategy-level
+# check"). `capability = "none"` also correctly keeps this lane out of the generic gap-fill
+# retention path, which `gap_fill_enabled = false` below disables anyway.
+history = { capability = "none" }
+lifecycle = "active"
+
+[schedule]
+# The legacy poller's own cadence, unchanged (execution/lane_specs.py:705); not a new cost.
+forward_cron = "20 * * * *"
+# The legacy writer's "gap walk" (pipeline/direct/sensors/AGENTS.md, "Ask once per day") never
+# reaches past the SAME 6-day rolling window the forward sweep already covers -- there is no deeper
+# historical backfill duty to port, so this lane has no gap-fill gate to name.
+gap_fill_enabled = false
+catch_up = "coalesce_latest"
+
+[days]
+# No fixed floor: a rolling 6-day source has no calendar day before which asking is pointless in
+# the way an archive's accretion-start floor means (contrast water-gauges-daily.toml's 1990-09-30).
+publication_lag_days = 1
+# [edge - 5, edge] with edge = today - 1 (write_and_recheck forces that cap): six calendar days,
+# matching NWS_OBSERVATION_RETENTION exactly. Sized so every window day STARTS inside retention;
+# `settle()`'s own rolling check (nws.py) is still the real boundary enforcement, since the exact
+# cutoff depends on the turn's own clock instant, not the calendar alone.
+absence_recheck_days = 6
+# write_and_recheck: every window day is re-asked each turn, and a short day (fewer stations
+# answered than a previous turn's roster) is rewritten only on strictly more units (S11) -- the
+# generic recovery of the legacy writer's own "never erase a station's last block" property; see
+# nws.py's module docstring, "no row-level merge", for why this is a strategy-level set comparison
+# rather than a row merge.
+partial_day = "write_and_recheck"
+
+[budget]
+# One unit per window day (pipeline/lanes/sensors/nws.py: `fetch` sweeps the whole roster for one
+# day in a single call, bypassing the governed client -- Wave O). 6 window days x 1 unit = 6;
+# `write_and_recheck` re-asks the whole window every turn, so this is the per-turn ceiling, not a
+# historical backlog bound.
+forward_max_weighted_calls = 6
+gap_fill_max_weighted_calls = 0
+# Each unit's own internal roster sweep already fans out to MAX_CONCURRENT_STATION_REQUESTS (8)
+# stations at once (ingest/sensors.py); running multiple days' sweeps concurrently on top of that
+# would multiply pressure on a provider with an "unpublished" rate posture (lanes/_providers/nws.toml).
+max_concurrency = 1
+# Legacy's own time-budget ceiling (pipeline/direct/sensors/forward.py::SENSORS_MAX_TIME_BUDGET_SECONDS),
+# sized for the same worst case this strategy now spends sequentially across up to 6 day-units
+# instead of one resumable poll: each unit's own roster walk must still fit the generic per-unit
+# fetch cap (pipeline/runner/fetch.py::PER_UNIT_FETCH_CAP_SECONDS = 330s).
+turn_timeout_seconds = 900
+
+[[streams]]
+slug = "sensors"
+floor_basis = "no archive floor: NWS's own rolling 6-day retention (ingest/sensors.py::NWS_OBSERVATION_RETENTION) is the only history this source has ever had; see [source].history above and docs/lanes/sensors.md §3"
+# No volatile_columns: nothing in SENSORS_SCHEMA is stamped from this strategy's own fetch/retrieval
+# instant -- `observed_at` is the winning report's OWN instant (content, from FeatureIdentity.
+# observed_at) and `data_available_at` is always null content, never a capture-time stamp. Evidence,
+# not an omission: see pipeline/lanes/sensors/nws.py's module docstring, "no volatile column".
