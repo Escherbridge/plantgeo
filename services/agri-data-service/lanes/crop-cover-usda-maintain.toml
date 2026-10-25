@@ -4,6 +4,21 @@
 # maintenance daily for forward refresh and gap repair" -- the config lane mirrors that daily
 # check, even though a release itself publishes once a year.
 #
+# `executor = "legacy"`, not `"config"` -- LOAD-BEARING, not a style choice. This id is a REAL
+# legacy lane: execution/lane_ids.py:26's CROP_COVER_MAINTENANCE_LANE_ID = "crop-cover-usda-maintain"
+# names a dispatchable spec in execution/lane_specs.py:859-884 (command, `0 10 * * *` daily cadence,
+# timeout_seconds = 3600 + COMMAND_CLEANUP_MARGIN_SECONDS = 3900), and
+# tests/execution/test_lane_catalogue.py's pinned LEGACY_LANE_IDS names this exact string.
+# execution/lane_catalogue.py::build_lane_catalogue takes an id OFF `legacy_specs` the INSTANT a
+# TOML with that id loads with `executor = "config"` (lane_catalogue.py:292-304) -- BEFORE `enabled`
+# is ever read. execution/AGENTS.md:349-351 ("Lane catalogue", "Config wins"): "A lane TOML with
+# `executor = "config"` takes its id off the legacy path; its legacy spec, if any, is skipped.
+# `executor = "legacy"` leaves the lane where it was, and names a legacy spec or is quarantined."
+# `executor = "config"` here would therefore silently de-path the live legacy maintain cron with
+# nothing behind it (this TOML ships `enabled = false`) -- the exact failure mode, not a
+# hypothetical. Same mechanism, same fix shape as `pipeline/lanes/land_context/AGENTS.md`'s
+# "executor = "legacy", not "config" -- load-bearing" note for its own three legacy lane ids.
+#
 # Dark by design (enabled = false): this strategy proves EDITION IDENTITY only (the settle
 # semantics spec §7 names) from the USDA catalogue's lightweight metadata query; the bulk
 # multi-gigabyte tile capture stays pipeline/lanes/crop_cover/source.py::capture()'s job, run
@@ -18,7 +33,7 @@ id = "crop-cover-usda-maintain"
 kind = "ingest"
 nature = "release_series"
 enabled = false
-executor = "config"
+executor = "legacy"
 strategy = "crop_cover.usda_cdl"
 
 [source]
@@ -44,8 +59,12 @@ absence_recheck_days = 1
 partial_day = "refuse"
 
 [budget]
-# One lightweight, unweighted catalogue query per admitted release day actually asked this turn
-# (at most 4, almost always 0): no tile is ever fetched through this contract.
+# publication_lag_days = 0 and absence_recheck_days = 1 make the forward window exactly
+# [today, today] (pipeline/runner/windows.py::forward_window: [edge - recheck_days + 1, edge]), so a
+# turn plans AT MOST ONE catalogue unit -- never "4 release days per turn" -- and almost always zero,
+# since today must land on one of the four admitted release dates for anything to be planned at all.
+# This cap is 1 real planned unit + 3 headroom, not a per-edition count; no tile is ever fetched
+# through this contract.
 forward_max_weighted_calls = 4
 gap_fill_max_weighted_calls = 0
 max_concurrency = 1
