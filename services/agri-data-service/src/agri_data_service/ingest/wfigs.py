@@ -23,7 +23,6 @@ from agri_data_service.ingest.http import (
     UpstreamPayloadError,
     fetch_bounded_json,
     fetch_bounded_json_sized,
-    upstream_client,
 )
 from agri_data_service.ingest.identity import (
     MissingNativeKeyError,
@@ -31,13 +30,8 @@ from agri_data_service.ingest.identity import (
     format_javascript_timestamp,
 )
 from agri_data_service.ingest.layer_binding import LayerBinding
-from agri_data_service.ingest.policy import (
-    UNCONFIGURED_BBOX_REASON,
-    resolve_bounded_bbox,
-    resolve_max_source_records,
-)
+from agri_data_service.ingest.policy import resolve_max_source_records
 from agri_data_service.ingest.records import FeatureWrite
-from agri_data_service.ingest.results import IngestionJobResult, skipped_result
 from agri_data_service.ingest.source import HistoryCapability
 from agri_data_service.ingest.upstream_retry import UpstreamRetryPolicy, retry_upstream
 
@@ -47,9 +41,7 @@ if TYPE_CHECKING:
     import httpx
 
     from agri_data_service.ingest.arcgis import AdaptiveWalkOutcome, OversizedSourceRecord
-    from agri_data_service.ingest.records import FeatureWriter
 
-WFIGS_SOURCE: Final = "wfigs-fire-perimeters"
 WFIGS_PROPERTY_SOURCE: Final = "WFIGS Interagency Fire Perimeters"
 
 FIRE_PERIMETERS_LAYER: Final = LayerBinding(
@@ -394,45 +386,4 @@ def build_perimeter_write(perimeter: Mapping[str, object], layer_name: str) -> F
             "geometry": perimeter.get("geometry"),
         },
         channel=WFIGS_CHANNEL,
-    )
-
-
-async def run_fire_perimeters_ingestion_job(
-    write_features: FeatureWriter,
-    *,
-    bbox: str | None = None,
-    client: httpx.AsyncClient | None = None,
-) -> IngestionJobResult:
-    """Fetch bounded WFIGS perimeters and refresh them in place as their polygons and containment advance."""
-    area = resolve_bounded_bbox(bbox)
-    if area is None:
-        return skipped_result(WFIGS_SOURCE, UNCONFIGURED_BBOX_REASON)
-
-    if client is None:
-        async with upstream_client(WFIGS_BOUNDS) as owned_client:
-            perimeters, walk = await fetch_fire_perimeters_walk(owned_client, area)
-    else:
-        perimeters, walk = await fetch_fire_perimeters_walk(client, area)
-
-    selected = perimeters[: resolve_max_source_records()]
-    layer_name = resolve_fire_perimeters_layer_name()
-    writes = [
-        write for write in (build_perimeter_write(perimeter, layer_name) for perimeter in selected) if write is not None
-    ]
-
-    return IngestionJobResult(
-        source=WFIGS_SOURCE,
-        status="ingested",
-        records_seen=len(perimeters),
-        records_written=await write_features(writes),
-        # An oversized-record refusal is a real, named loss, so it reports as truncated alongside the
-        # two truncation causes that were already here. `truncated` answers "are you seeing all of
-        # it", and after a skip the answer is no -- for a reason `reason` states by name.
-        truncated=walk.truncated or bool(walk.oversized) or len(perimeters) > len(selected),
-        reason=oversized_refusal_reason(walk.oversized),
-        details={
-            "rejected": len(selected) - len(writes),
-            "oversized_records": len(walk.oversized),
-            "bytes_read": walk.bytes_read,
-        },
     )

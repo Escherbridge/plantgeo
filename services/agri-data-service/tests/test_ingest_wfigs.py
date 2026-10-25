@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
 
 import httpx
 import pytest
@@ -18,7 +17,6 @@ from agri_data_service.ingest.wfigs import (
     WFIGS_GEOMETRY_PRECISION,
     WFIGS_HISTORY_CAPABILITY,
     WFIGS_PERIMETER_HISTORY_EARLIEST,
-    WFIGS_SOURCE,
     WFIGS_TOTAL_BYTE_BUDGET,
     build_perimeter_write,
     build_query_url,
@@ -27,30 +25,13 @@ from agri_data_service.ingest.wfigs import (
     fetch_fire_perimeters_walk,
     parse_perimeter_collection,
     perimeter_severity,
-    run_fire_perimeters_ingestion_job,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
-
-    from agri_data_service.ingest.writer import FeatureWrite
 
 # Captured 2026-08-03 read-only from production `geo.features` on the `fire-perimeters` layer.
 RECORDED_FIRE_IDENTIFIER = "2026-ID1AX-000618"
 POLYGON_EPOCH_MILLISECONDS = 1_784_087_760_000  # 2026-07-15T03:56:00.000Z
 
 SQUARE_RING = [[-113.0, 47.0], [-113.0, 47.1], [-112.9, 47.1], [-112.9, 47.0], [-113.0, 47.0]]
-
-
-class RecordingWriter:
-    """A feature writer that records what a job handed it, so a job test needs no database."""
-
-    def __init__(self) -> None:
-        self.writes: list[FeatureWrite] = []
-
-    async def __call__(self, writes: Sequence[FeatureWrite]) -> int:
-        self.writes = list(writes)
-        return len(self.writes)
 
 
 async def _no_sleep(_delay: float) -> None:
@@ -318,48 +299,6 @@ async def test_the_ceiling_stops_paging_even_when_the_upstream_says_more_remain(
     assert more_remaining is True
 
 
-async def test_an_unset_bbox_is_skipped_and_never_failed() -> None:
-    result = await run_fire_perimeters_ingestion_job(RecordingWriter())
-    assert result.source == WFIGS_SOURCE
-    assert result.status == "skipped"
-    assert result.reason == "INGEST_BBOX is not configured"
-
-
-async def test_the_job_writes_the_perimeters_it_fetched() -> None:
-    response = httpx.Response(
-        200,
-        content=json.dumps(_collection()).encode(),
-        headers={"content-type": "application/json"},
-    )
-    writer = RecordingWriter()
-    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _r: response)) as client:
-        result = await run_fire_perimeters_ingestion_job(writer, bbox="-125,42,-111,49", client=client)
-
-    assert result.status == "ingested"
-    assert result.records_seen == 1
-    assert result.records_written == 1
-    assert result.truncated is False
-    assert [write.external_id for write in writer.writes] == [RECORDED_FIRE_IDENTIFIER]
-
-
-async def test_the_job_reports_truncation_when_the_upstream_says_more_perimeters_remain(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(wfigs, "resolve_max_source_records", lambda: 1)
-
-    def handler(_request: httpx.Request) -> httpx.Response:
-        collection = _collection()
-        collection["properties"] = {"exceededTransferLimit": True}
-        return _json_response(collection)
-
-    writer = RecordingWriter()
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        result = await run_fire_perimeters_ingestion_job(writer, bbox="-125,42,-111,49", client=client)
-
-    assert result.status == "ingested"
-    assert result.truncated is True
-
-
 # --- The 2026-09-02 repair: a page the byte cap refuses, and a record no page can hold ---
 #
 # `postgres-fire-perimeters` entered retry backoff with `UpstreamPayloadError: upstream response
@@ -459,29 +398,6 @@ async def test_a_skipped_perimeter_makes_the_two_tuple_caller_report_truncation(
     assert [record["uniqueFireIdentifier"] for record in records] == [
         perimeter["uniqueFireIdentifier"] for perimeter in walk_records
     ]
-
-
-async def test_a_skipped_perimeter_is_stated_in_the_run_outcome_rather_than_only_logged() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.params.get("returnGeometry") == "false":
-            return _json_response(_collection())
-        if request.url.params.get("resultOffset") == "0":
-            return _oversized_response()
-        return _json_response(_collection(attr_UniqueFireIdentifier="2026-ID1AX-000619"))
-
-    writer = RecordingWriter()
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        result = await run_fire_perimeters_ingestion_job(writer, bbox="-125,42,-111,49", client=client)
-
-    assert result.status == "ingested"
-    assert result.records_written == 1
-    assert result.details["oversized_records"] == 1
-    # Truncated, because a named skip means the caller is NOT seeing everything -- the same answer
-    # the record ceiling and the transfer limit already give, for a reason the reason line states.
-    assert result.truncated is True
-    assert result.reason is not None
-    assert RECORDED_FIRE_IDENTIFIER in result.reason
-    assert str(WFIGS_BOUNDS.max_bytes) in result.reason
 
 
 async def test_the_two_tuple_contract_the_validation_pipeline_calls_is_unchanged() -> None:

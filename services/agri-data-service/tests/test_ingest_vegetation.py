@@ -217,8 +217,6 @@ def test_a_measured_cell_writes_its_own_geometry_and_grid_identity() -> None:
 # and scene-timestamp contracts are still pinned here. The forward-publication ordering the three
 # `on_persisted` tests protected is now `forward.py`'s own, covered by `tests/direct/`.
 #
-# STILL OWED, and recorded rather than silently dropped: `bind_vegetation_forward_writer`
-# (`pipeline/parquet/vegetation_forward.py:882`) lost its only two call sites with those tests' subject
-# and now has ZERO src callers. It is not deleted here because that module is outside this lane's
-# ownership; it retires with `parquet-forward-vegetation` and `vegetation-catch-up` under the track's
-# D-fills item.
+# PAID 2026-10-25: `bind_vegetation_forward_writer` (`pipeline/parquet/vegetation_forward.py`) was
+# recorded above as STILL OWED after losing its only two call sites with those tests' subject. The
+# debt is paid, not deferred -- that whole module no longer exists.

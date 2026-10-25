@@ -38,7 +38,7 @@ from agri_data_service.foundation.geography.bounding_box import (
     parse_bounding_box as _parse_bounding_box,
 )
 from agri_data_service.foundation.region import load_region
-from agri_data_service.ingest.http import UpstreamBounds, upstream_client
+from agri_data_service.ingest.http import UpstreamBounds
 from agri_data_service.ingest.identity import (
     MTBS_PRODUCER,
     build_burn_severity_identity,
@@ -46,13 +46,11 @@ from agri_data_service.ingest.identity import (
 )
 from agri_data_service.ingest.layer_binding import LayerBinding
 from agri_data_service.ingest.policy import (
-    UNCONFIGURED_BBOX_REASON,
     parse_bbox,
-    resolve_bounded_bbox,
     resolve_max_source_records,
 )
 from agri_data_service.ingest.records import FeatureWrite
-from agri_data_service.ingest.results import IngestionJobResult, skipped_result
+from agri_data_service.ingest.results import IngestionJobResult
 from agri_data_service.ingest.source import (
     FetchRequest,
     FreshnessRule,
@@ -1135,39 +1133,6 @@ async def _run_mtbs_job(
         truncated=selection.truncated,
         details={"releases": len(resolve_release_years(release_years)), "rejected": selection.rejected},
     )
-
-
-async def run_mtbs_ingestion_job(
-    write_features: FeatureWriter,
-    *,
-    bbox: str | None = None,
-    release_years: Sequence[int] | None = None,
-    client: httpx.AsyncClient | None = None,
-    now: datetime | None = None,
-) -> IngestionJobResult:
-    """Ingest every MTBS release cohort with an established publication date into the burn-severity layer.
-
-    Each cohort is paged to completion behind the same three truncation signals the capture uses --
-    an authoritative `returnCountOnly` taken before paging, a cross-page `fire_id` uniqueness
-    assertion, and `exceededTransferLimit` -- so a short run fails rather than quietly storing 13%
-    of the Pacific Northwest, which is what the retired TypeScript did.
-
-    Nothing here is dated from a clock. A fire's warehouse row and its geometry version are both
-    dated by the publication date of the release that completed its fire year, so a model reading
-    this layer at a past time-slider position sees exactly the fires that had been published by then.
-    A fire year with no established release date raises rather than borrowing one.
-
-    Re-running is cheap and idempotent by construction: the writer refreshes by `properties->>'id'`
-    and its diff rejects an unchanged payload, and the geometry adapter classifies an unchanged shape
-    as confirmed. A re-mapped fire moves `mappingRevision`, which is what makes it a genuine change.
-    """
-    area = resolve_bounded_bbox(bbox)
-    if area is None:
-        return skipped_result(MTBS_SOURCE, UNCONFIGURED_BBOX_REASON)
-    if client is not None:
-        return await _run_mtbs_job(write_features, area, client, release_years=release_years, now=now)
-    async with upstream_client(MTBS_BOUNDS) as owned_client:
-        return await _run_mtbs_job(write_features, area, owned_client, release_years=release_years, now=now)
 
 
 def parse_reviewed_at(value: str) -> datetime:

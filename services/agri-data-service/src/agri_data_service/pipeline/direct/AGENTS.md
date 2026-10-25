@@ -1015,9 +1015,15 @@ going oldest-first beside a forward walker going newest-first contends for the s
 `burn_severity/` is the SECOND geometry-lane direct writer, built the same shape as `drought/`
 (DuckDB spatial repair before the base rung, no `TerminalEvidence`/`provenance=`, an adapter substituted
 via `replace(lane, adapter=...)`) but adapted to a source with no "not yet published" state at all.
-`mtbs-forward`/`ingest-mtbs` is **STILL ACTIVE** -- nothing here stops it, and stopping it is an
-owner-confirmed Railway variable edit outside this package's ownership -- but since 2026-09-07 it is
-no longer a writer anything reads. `LANE_REGISTRY['burn-severity'].adapter` was `_fill_burn_severity`,
+**CORRECTED 2026-10-25: `mtbs-forward` is not active.** The `mtbs-forward` lane spec remains
+REGISTERED in `execution/lane_specs.py` (`MTBS_FORWARD_LANE_ID`), but it is absent from the deployed
+`PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` allow-list and has had 0 runs since 2026-09-09. Its underlying
+daily refresh stays live by a DIFFERENT path: `burn_severity/daily.py:135` calls
+`run_burn_severity_forward` directly, outside the lane-executor mechanism the spec would otherwise
+drive. The spec's own future -- reactivate it, or formally retire it -- is an open owner decision
+(tracked as CA7/CQ-9); it is NOT deleted here, since a registered-but-inactive spec and a dead one are
+different facts. Separately, since 2026-09-07 the Postgres-reading export half is no longer a writer
+anything reads: `LANE_REGISTRY['burn-severity'].adapter` was `_fill_burn_severity`,
 reading `geo.features` through `pipeline/lanes/burn_severity.py::export_burn_severity_release_day`,
 and is now a `_source_direct_refusal` naming this package, so no Parquet lane consumes those rows.
 The lane MODULE survives -- `pipeline/validation/burn_severity.py` still calls its
@@ -1141,11 +1147,15 @@ grows only through a governance code change, and because `forward.py`'s per-turn
 sized for that cadence (see "Known simplifications" below). IT SHIPPED SHADOW and is now ACTIVE, with
 `parquet-burn-severity` retired; `LANE_REGISTRY['burn-severity'].adapter` was routed to a source-direct
 refusal on 2026-09-07. The two conditions this section recorded were (1) `parity.py` proving D1 parity
-against what `geo.features` holds and (2) the owner stopping `mtbs-forward`/`ingest-mtbs`. Only the
-first still bears on anything: `mtbs-forward` is STILL ACTIVE, and the swap did not need it stopped,
-because it writes `geo.features` while this package writes Parquet -- the layer was never served by
-both. What the swap DID change is that `mtbs-forward` now has no Parquet consumer at all, which is the
-argument for retiring it, not a reason the swap was unsafe. The registration carries no
+against what `geo.features` holds and (2) the owner stopping `mtbs-forward`/`ingest-mtbs`. **CORRECTED
+2026-10-25:** condition (2) is effectively satisfied, not merely moot -- the `mtbs-forward` lane spec
+is absent from the deployed `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` allow-list and has had 0 runs since
+2026-09-09, though the spec itself remains registered (an owner-gated CA7/CQ-9 decision, not deleted;
+see "Burn severity" above). The swap did not need it stopped to be safe regardless, because it writes
+`geo.features` while this package writes Parquet -- the layer was never served by both. What the swap
+DID change is that `mtbs-forward`'s underlying daily refresh (`run_burn_severity_forward`, now driven
+by `burn_severity/daily.py:135` rather than the lane spec) has no Parquet consumer at all, which is the
+argument for retiring the spec formally, not a reason the swap was unsafe. The registration carries no
 `writer_ceiling`, because `forward.py` and `backfill.py` between them claim the whole governed release
 set the generic lane covered; `conflicts_with` against `parquet-burn-severity` is what keeps a
 re-activation of that retired lane off, and the refusal is what it hits if anyone tries.

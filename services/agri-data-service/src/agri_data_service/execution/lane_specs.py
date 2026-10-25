@@ -466,40 +466,6 @@ def _spec(  # noqa: PLR0913 - this is the declarative constructor for the code-o
 # The lane identifiers themselves live in `execution/lane_ids.py`, a leaf, so the repair contract can name
 # a lane without importing this scheduler.
 
-# PostgreSQL materialized-view refresh jobs were retired with the forecast/source cutover.
-_DURABLE_JOB_SCHEDULES: Final[tuple[tuple[str, int, int, int, str, CatchUpPolicy], ...]] = ()
-
-
-_JOBS_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
-    *(
-        _spec(
-            f"jobs-{lane}",
-            command=(
-                "agri-service",
-                "ops",
-                "jobs-pulse",
-                "--lane",
-                lane,
-                "--skip-maintenance",
-                "--time-budget-seconds",
-                "600",
-            ),
-            work_class="backlog",
-            cadence_seconds=cadence_seconds,
-            phase_offset_seconds=phase_offset_seconds,
-            schedule=schedule,
-            catch_up_policy=catch_up_policy,
-            publication_lag_source=f"durable definition {lane}",
-            selection_policy="one isolated durable slice per turn",
-            timeout_seconds=inner_budget + COMMAND_CLEANUP_MARGIN_SECONDS,
-            description=f"Independent durable failure domain for {lane}.",
-        )
-        for lane, inner_budget, cadence_seconds, phase_offset_seconds, schedule, catch_up_policy in (
-            _DURABLE_JOB_SCHEDULES
-        )
-    ),
-)
-
 _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
     _spec(
         FIRE_DETECTIONS_DIRECT_LANE_ID,
@@ -886,7 +852,6 @@ _REFERENCE_DATA_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
 )
 
 _LANE_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
-    *_JOBS_SPECS,
     *_MIGRATION_INPUT_SPECS,
     *_REFERENCE_DATA_SPECS,
 )

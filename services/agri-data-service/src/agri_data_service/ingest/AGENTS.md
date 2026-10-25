@@ -29,16 +29,25 @@ DELETED, not merely unused"), applied to the ingestion path.
 
 | Deleted | Layer | What owns the layer now |
 |---|---|---|
-| `ingest-firms`, `firms.py::run_fire_ingestion_job`, `FIRMS_SOURCE`, `firms_day_range()` + `FIRMS_DAY_RANGE` | fire-detections | `pipeline/direct/fire_detections/` (forward); `jobs-firms-archive` still fills history **into Postgres** |
-| `ingest-streamflow`, `usgs_nwis.py::run_water_ingestion_job`, `USGS_STREAMFLOW_SOURCE` | water-gauges | `pipeline/parquet/water_gauges_forward.py`; `jobs-streamflow-archive` still fills history **into Postgres** |
+| `ingest-firms`, `firms.py::run_fire_ingestion_job`, `FIRMS_SOURCE`, `firms_day_range()` + `FIRMS_DAY_RANGE` | fire-detections | `pipeline/direct/fire_detections/` (forward); `jobs-firms-archive`, the durable lane that once filled history into Postgres, was itself DELETED 2026-09-12 (fd602901, 8b3850ae) -- no archive producer remains |
+| `ingest-streamflow`, `usgs_nwis.py::run_water_ingestion_job`, `USGS_STREAMFLOW_SOURCE` | water-gauges | `pipeline/parquet/water_gauges_forward.py`; `jobs-streamflow-archive`, the durable lane that once filled history into Postgres, was itself DELETED 2026-09-12 (fd602901, 8b3850ae) -- no archive producer remains |
 | `ingest-weather`, `open_meteo.py::run_weather_ingestion_job`, `build_weather_write`, `OPEN_METEO_SOURCE` | weather-observations | `pipeline/direct/weather_observations/` |
 | `ingest-drought` + `ingest-drought-history`, `usdm.py::PostgresDroughtStore`/`run_drought_ingestion_job`/`DroughtStore`/retention, the whole `usdm_history.py` walk, `sql/ingest/store_drought_area.sql`, `sql/ingest/prune_drought_releases.sql` | drought | `pipeline/direct/drought/` |
 | `ingest-ndvi` (`ndvi.py`, whole module), `vegetation.py::build_vegetation_source` + its `IngestionSource` composition, `VEGETATION_SOURCE` | vegetation | `pipeline/direct/vegetation/` |
 | `ingest-watersheds`, `watersheds.py::run_watersheds_ingestion_job`, `build_watershed_write`, `WATERSHEDS_SOURCE`, `pipeline/lanes/watersheds.py`, `sql/pipeline/watersheds_day_export.sql`, lane `postgres-watersheds` | watersheds | `pipeline/direct/watersheds/` (second wave, 2026-09-06 -- see the removal packet under `conductor/tracks/environmental_postgres_retirement_20260904/evidence/`) |
 
-**Kept, and why — this is the load-bearing half.** The `ingest-*` verbs that remain
-(`ingest-fire-perimeters`, plus `ingest-mtbs` and `ingest-geometry-repair`) are NOT survivors of an
-oversight. Their generic `parquet-*` exporters read `geo.features`
+**CORRECTED 2026-10-25: `ingest-fire-perimeters`, `ingest-mtbs` and `ingest-geometry-repair` are no
+longer CLI verbs at all.** `root.py` wires only the `data`, `ops` and `agent` groups; the jobs-*/
+maintenance-* durable lanes that these verbs belonged to were deleted 2026-09-12 (fd602901,
+8b3850ae), and their underlying job entry points (`mtbs.py::run_mtbs_ingestion_job`,
+`wfigs.py::run_fire_perimeters_ingestion_job`, and whatever backed `ingest-geometry-repair`) have
+since been removed as zero-caller dead code. The paragraph below describes why those PRODUCERS were
+once kept; read it as history, not as a statement about any CLI surface that exists today.
+`pipeline/direct/fire_perimeters/forward.py` now performs its own geometry repair inline
+(`_emit_geometry_repairs`) rather than depending on a separate `ingest-geometry-repair` job.
+
+**Kept, and why — this is the load-bearing half (as of the pass that produced this paragraph).** The
+generic `parquet-*` exporters that depended on these producers read `geo.features`
 (`sql/pipeline/{fire_perimeters,burn_severity}_day_export.sql`), so deleting their producers would
 not finish the cutover; it would stop the layer. For fire-perimeters that is not for want of a direct
 writer: `fire-perimeters-direct-forward` exists but is SHADOW, because it refuses to publish while
@@ -66,13 +75,10 @@ that took a `FeatureWriter` or a session: the `run_*_ingestion_job` entry point,
 token, and any private helper or environment tunable that had no other reader. A module that now looks
 thin is a module whose write half is gone, not one that lost its contract.
 
-**Still owed after this pass** (recorded, not fixed here — outside this lane's ownership):
-`pipeline/parquet/vegetation_forward.py::bind_vegetation_forward_writer` lost both of its call sites
-with `ingest-ndvi` and now has ZERO src callers; it retires with `parquet-forward-vegetation` and
-`vegetation-catch-up` under the track's D-fills item. `jobs-firms-archive` and `jobs-streamflow-archive`
-are still ACTIVE lanes writing `geo.features` — the same D-fills item covers them, and they must be
-deactivated before they are deleted, because they are the only producers of fire-detections and
-water-gauges days below their direct writers' floors.
+**Debt paid / CORRECTED 2026-10-25:** `pipeline/parquet/vegetation_forward.py::bind_vegetation_forward_writer`,
+named below as still owed, no longer exists as a module -- the debt was paid, not deferred. `jobs-firms-archive`
+and `jobs-streamflow-archive`, described below as still-active lanes writing `geo.features`, were themselves
+DELETED 2026-09-12 (fd602901, 8b3850ae); no archive producer remains below the direct writers' floors.
 
 `identity.py` is the single definition of a warehouse identity string: it maps one upstream record to a `FeatureIdentity` carrying a producer token, a producer-local id byte-identical to the `featureId` the TypeScript job writes into `geo.features.properties->>'id'`, and the observation timestamp that dates that feature's first geometry version. It is deliberately not a fetcher, a payload validator, a change-detection or circuit-breaker rule, or a database writer; it imports no SQLAlchemy, no config, and no `agri_data_service.db`, so its golden test runs before any lane owns a database connection. The namespace is the producer token (`firms`, `usgs-nwis`, `open-meteo`, `wfigs`, `usdm`, `mtbs`), never the layer name, and `PRODUCER_BY_LAYER_NAME` exists so the backfill substitutes a producer for `l.name` rather than namespacing by a renameable presentation label. Under a Type-2 dimension that namespace is a correctness requirement rather than hygiene: `natural_key` no longer means "this row is unique" but "these rows are the same place over time", so two producers colliding on an unnamespaced id are interleaved into one version chain and fabricate a plausible history, which is strictly harder to detect than a duplicate row. For the same reason the module rejects rather than synthesises — `MissingNativeKeyError` is raised whenever an upstream record supplies no stable native key, and it never falls back to coordinates, a payload hash, a UUID, or the wall clock, because a degenerate key is a synthesised key wearing a real one's shape. `observed_at is None` is a different thing entirely and is legal: it is the contract's representation of `'-infinity'::timestamptz` for `geo.geometry.version_valid_from`, so a consumer writing SQL emits that literal and never a sentinel datetime, `datetime.min`, or `now()`.
 
