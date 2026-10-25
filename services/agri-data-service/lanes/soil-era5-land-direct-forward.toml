@@ -1,0 +1,136 @@
+# soil-era5-land-direct-forward: the eight ERA5-Land soil streams (three moisture depths, four
+# temperature depths, VPD) off the Open-Meteo archive (plan Phase 4 swarm `s-soil`). Dark at launch:
+# ships `executor = "legacy"` so `pipeline.direct.soil` keeps running unchanged --
+# execution/lane_catalogue.py drops a lane id from the legacy dispatch the moment its TOML loads
+# with `executor = "config"`, before `enabled` is read, so flipping it is p5-cutover's G6 commit and
+# nothing else. Behaviour: pipeline/lanes/soil/open_meteo_era5_land.py. Writeup: docs/lanes/soil.md.
+# Authoring: lanes/AGENTS.md.
+#
+# KNOWN G6 BLOCKERS (docs/lanes/soil.md section 8): the cell identities
+# (pipeline/lanes/soil/support_cells.json, from agri.spatial_cell) are not shipped yet, so every
+# config-written day is a strategy_error until they are; and the archive endpoint's customer_host
+# makes OPEN_METEO_API_KEY mandatory for a config turn (exit 78 while it is empty).
+
+id = "soil-era5-land-direct-forward"
+kind = "ingest"
+nature = "daily_series"
+# Mirrors the live legacy lane: execution/lane_specs.py SOIL_DIRECT_LANE_ID is ACTIVE in production.
+enabled = true
+executor = "legacy"
+strategy = "soil.open_meteo_era5_land"
+grid = "analysis-0p25"
+
+[source]
+provider = "open-meteo"
+endpoint = "archive"
+# ingest/open_meteo.py OPEN_METEO_ERA5_LAND_MODEL; the endpoint default (era5, 0.25 degrees) is a different product.
+model = "era5_land"
+coverage = "global"
+# ERA5-Land's own record start (Copernicus C3S ERA5-Land, 1950 to present; the reviewed plans' source citation).
+history = { capability = "archive", earliest = "1950-01-01" }
+lifecycle = "active"
+
+[schedule]
+# The legacy cadence exactly: execution/lane_specs.py SOIL_DIRECT_LANE_ID schedule "50 */6 * * *"
+# (six-hourly since G1, O6/FR-21). Four fires a UTC day on a weighted provider, so S6/S19 require
+# probe_edge, which the strategy implements.
+forward_cron = "50 */6 * * *"
+# Pre-declared (inert while gap_fill_enabled = false) for p5-cutover's G6 flip: once a UTC day, off
+# every forward minute (spec section 4.1's illustrative soil lane).
+gap_fill_cron = "20 3 * * *"
+gap_fill_enabled = false
+gap_fill_enabled_at_gate = "G6"
+catch_up = "coalesce_latest"
+
+[days]
+# warehouse/field_products/soil.py SOIL_DIRECT_WRITER_START_DAY: the day after the immutable snapshot
+# (ERA5_LAND_SNAPSHOT_LAST_DAY 2026-08-02) ends. Gap-fill never walks below it, so no config turn can
+# ever reach the immutable history (the legacy adapter's refuse_immutable_day; settle refuses too).
+floor = "2026-08-03"
+floor_basis = "warehouse/field_products/soil.py SOIL_DIRECT_WRITER_START_DAY: the day after the immutable ERA5-Land snapshot (last day 2026-08-02) all eight streams hold"
+# ERA5_LAND_ARCHIVE_PUBLICATION_LAG_DAYS: Open-Meteo's documented ERA5-Land delay, the candidate edge the probe tests.
+publication_lag_days = 5
+# pipeline/direct/soil/forward.py SOIL_ABSENCE_RECHECK_DAYS = SOIL_EDGE_PROBE_WINDOW_DAYS = 14.
+absence_recheck_days = 14
+# A day is 0 or 1,470 valued cells per variable; anything between is refused_partial, never written thin.
+partial_day = "refuse"
+# pipeline/direct/soil/support.py ERA5_LAND_VALUE_CELL_COUNT (measured on all 1,556 immutable days);
+# open_meteo_era5_land.py VALUE_CELL_COUNT, pinned equal by tests/lanes/soil.
+expected_value_units = 1470
+
+[budget]
+# One day's fan-out is 32 chunks = 31 x 50 + 18 = 1,568 weighted calls (one per location: 1 day,
+# 8 variables), plus the 2-call probe = 1,570. 1,600 affords exactly one day per turn, the legacy G0
+# cap (33 requests, one day; pipeline/direct/soil/AGENTS.md) restated in weighted calls.
+forward_max_weighted_calls = 1600
+# Gap-fill ships off (S12); when flipped, one 1,568-call day per turn (spec section 6.3 soil gap-fill line).
+gap_fill_max_weighted_calls = 1600
+# pipeline/direct/soil/source.py ERA5_LAND_CHUNK_CONCURRENCY = 2.
+max_concurrency = 2
+# warehouse/field_products/soil.py SOIL_DEFAULT_TIME_BUDGET_SECONDS = 900.
+turn_timeout_seconds = 900
+
+# S18: one entry per stream, mirroring pipeline/parquet/lane_registry.py's generated soil
+# registrations literally: history_floor = product.history_floor (2026-08-03), complete_history_floor
+# = _MEASURED_COMPLETE_HISTORY_FLOORS (2022-04-30), lag 5, daily_series.
+#
+# volatile_columns (pipeline/runner/AGENTS.md "Volatile columns"): pipeline/lanes/soil/rows.py
+# stamps `selected_source_release_retrieved_at` (moisture, _lineage_row) and
+# `selected_release_retrieved_at` (temperature, _lane_row) from DayReceipt.retrieved_at, which
+# the strategy module's rows() takes as max(response.retrieved_at). VPD's
+# plane row carries no capture-time column (newest_observed_at is the day's own midnight).
+
+[[streams]]
+slug = "soil-field-moisture-0-7cm"
+history_floor = "2026-08-03"
+complete_history_floor = "2022-04-30"
+floor_basis = "pipeline/parquet/lane_registry.py generated soil registration: writer floor 2026-08-03 after the immutable snapshot; measured complete floor 2022-04-30"
+volatile_columns = ["selected_source_release_retrieved_at"]
+
+[[streams]]
+slug = "soil-field-moisture-7-28cm"
+history_floor = "2026-08-03"
+complete_history_floor = "2022-04-30"
+floor_basis = "pipeline/parquet/lane_registry.py generated soil registration: writer floor 2026-08-03 after the immutable snapshot; measured complete floor 2022-04-30"
+volatile_columns = ["selected_source_release_retrieved_at"]
+
+[[streams]]
+slug = "soil-field-moisture-28-100cm"
+history_floor = "2026-08-03"
+complete_history_floor = "2022-04-30"
+floor_basis = "pipeline/parquet/lane_registry.py generated soil registration: writer floor 2026-08-03 after the immutable snapshot; measured complete floor 2022-04-30"
+volatile_columns = ["selected_source_release_retrieved_at"]
+
+[[streams]]
+slug = "soil-temperature-0-to-7cm"
+history_floor = "2026-08-03"
+complete_history_floor = "2022-04-30"
+floor_basis = "pipeline/parquet/lane_registry.py generated soil registration: writer floor 2026-08-03 after the immutable snapshot; measured complete floor 2022-04-30"
+volatile_columns = ["selected_release_retrieved_at"]
+
+[[streams]]
+slug = "soil-temperature-7-to-28cm"
+history_floor = "2026-08-03"
+complete_history_floor = "2022-04-30"
+floor_basis = "pipeline/parquet/lane_registry.py generated soil registration: writer floor 2026-08-03 after the immutable snapshot; measured complete floor 2022-04-30"
+volatile_columns = ["selected_release_retrieved_at"]
+
+[[streams]]
+slug = "soil-temperature-28-to-100cm"
+history_floor = "2026-08-03"
+complete_history_floor = "2022-04-30"
+floor_basis = "pipeline/parquet/lane_registry.py generated soil registration: writer floor 2026-08-03 after the immutable snapshot; measured complete floor 2022-04-30"
+volatile_columns = ["selected_release_retrieved_at"]
+
+[[streams]]
+slug = "soil-temperature-100-to-255cm"
+history_floor = "2026-08-03"
+complete_history_floor = "2022-04-30"
+floor_basis = "pipeline/parquet/lane_registry.py generated soil registration: writer floor 2026-08-03 after the immutable snapshot; measured complete floor 2022-04-30"
+volatile_columns = ["selected_release_retrieved_at"]
+
+[[streams]]
+slug = "soil-field-vpd"
+history_floor = "2026-08-03"
+complete_history_floor = "2022-04-30"
+floor_basis = "pipeline/parquet/lane_registry.py generated soil registration: writer floor 2026-08-03 after the immutable snapshot; measured complete floor 2022-04-30"
