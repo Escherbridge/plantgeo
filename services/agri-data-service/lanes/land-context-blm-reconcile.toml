@@ -1,0 +1,50 @@
+# Land-context BLM reference snapshots: PNW surface management (OR/WA + Idaho SMA) and field-office
+# jurisdictions, served as three static_lookup streams (land-context-boundaries, land-context-offices,
+# land-context-contacts). Data only; behaviour is pipeline/lanes/land_context/blm_arcgis.py.
+# Authoring: lanes/AGENTS.md. Sibling of land-context-blm-forward.toml (read it first: the executor,
+# TIGERweb and shadow-class notes below apply identically and are not repeated in full here).
+#
+# CLASS E SHADOW (spec.md section 4.8.1): clock start "never (Q-21)" inside config_driven_ingestion_20260926.
+# executor = "legacy" on purpose: this id is one of the three pinned LEGACY_LANE_IDS entries
+# (tests/execution/test_lane_catalogue.py) and lane_specs.py's LAND_CONTEXT_RECONCILE_LANE_ID still
+# owns the production cron. Legacy forward.py's `--mode reconcile`: "inspect every stored rung and
+# author repair by replaying the admitted capture." How that duty maps onto the runner's forward vs
+# gap-fill turn modes -- and whether it becomes its own TOML cron or folds into the forward lane's
+# own repair path -- is the "reconcile mapping decided at activation" this file defers (O7).
+#
+# No [[streams]]: land-context-boundaries/-offices/-contacts are owned by land-context-blm-forward.toml
+# (S18: one owner per slug), pending the same deferred activation decision.
+
+id = "land-context-blm-reconcile"
+kind = "ingest"
+nature = "static_lookup"
+enabled = false
+executor = "legacy"
+strategy = "land_context.blm_arcgis"
+
+[source]
+provider = "blm"
+endpoint = "or-ownership-query"
+coverage = "regional"
+iso_country_codes = ["US"]
+history = { capability = "none" }
+lifecycle = "active"
+
+[schedule]
+# Legacy lane_specs.py: LAND_CONTEXT_RECONCILE_LANE_ID fires "reconcile" at hour 11 UTC.
+forward_cron = "0 11 * * *"
+catch_up = "coalesce_latest"
+
+[days]
+floor = "2026-09-20"
+floor_basis = "pipeline/parquet/lane_registry.py land-context-* registration: PNW BLM source admission 2026-09-20; current captured reference, no inferred history."
+publication_lag_days = 0
+absence_recheck_days = 1
+partial_day = "refuse"
+
+[budget]
+# Same 3-request arithmetic as land-context-blm-forward.toml; see that file's [budget] comment.
+forward_max_weighted_calls = 3
+gap_fill_max_weighted_calls = 0
+max_concurrency = 1
+turn_timeout_seconds = 3900
