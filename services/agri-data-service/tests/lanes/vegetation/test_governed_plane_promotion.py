@@ -9,6 +9,7 @@ from __future__ import annotations
 import importlib
 from datetime import date
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -17,12 +18,15 @@ from agri_data_service.execution.lane_specs import LANE_SPECS
 from agri_data_service.foundation.lane_config import load_lane_configs
 from agri_data_service.foundation.region import load_region
 from agri_data_service.pipeline.lanes.vegetation import governed_plane_promotion
-from agri_data_service.pipeline.lanes.vegetation.governed_plane_promotion import (
-    STRATEGY,
-    GovernedPlaneTargetNotExpressibleError,
-)
+from agri_data_service.pipeline.lanes.vegetation.governed_plane_promotion import STRATEGY
+from agri_data_service.pipeline.runner.exits import TurnConfigurationError
+from agri_data_service.pipeline.runner.reader import registered_stream_contract
 from agri_data_service.pipeline.runner.resolve import resolve_strategy
 from tests.lane_config.builders import REAL_LANES_DIRECTORY
+from tests.runner.fakes import ManualClock, MemoryLaneStore, ports_for, run, spec_for
+
+if TYPE_CHECKING:
+    from agri_data_service.foundation.lane_config.models import LaneConfig
 
 LANE_ID = "vegetation-ndvi-governed-plane-promotion"
 FORWARD_LANE_ID = "vegetation-sentinel2-ndvi-direct-forward"
@@ -30,8 +34,13 @@ SQL_ROOT = Path(vegetation_ndvi_plane.__file__).parent.parent / "sql"
 INSERT_SQL = SQL_ROOT / "execution" / "insert_partition_observations.sql"
 
 
+def _shipped_lane() -> LaneConfig:
+    configs = load_lane_configs(REAL_LANES_DIRECTORY, load_region("pnw"), stream_contract=registered_stream_contract)
+    return configs.lanes[LANE_ID]
+
+
 def test_the_disabled_transform_loads_unquarantined_and_resolves_to_a_deriving_strategy() -> None:
-    configs = load_lane_configs(REAL_LANES_DIRECTORY, load_region("pnw"))
+    configs = load_lane_configs(REAL_LANES_DIRECTORY, load_region("pnw"), stream_contract=registered_stream_contract)
     lane = configs.lanes[LANE_ID]
 
     assert LANE_ID not in configs.quarantined
@@ -56,6 +65,14 @@ def test_the_declared_input_and_output_target_are_the_legacy_promotion_s() -> No
     assert f"INSERT INTO {table} (" in INSERT_SQL.read_text(encoding="utf-8")
 
 
-def test_derive_refuses_every_day_naming_the_target() -> None:
-    with pytest.raises(GovernedPlaneTargetNotExpressibleError, match="agri.forecast_observation"):
-        STRATEGY.derive(date(2026, 10, 10), {FORWARD_LANE_ID: None}, context=None)  # type: ignore[arg-type]
+async def test_a_transform_turn_of_the_shipped_lane_is_refused_before_derive_ever_runs() -> None:
+    """The real guard: `turn.py::_validate` refuses ANY `mode="transform"` turn of a lane that
+    declares no `[[streams]]`, before any census read or `derive` call -- disabled or not, and
+    regardless of what `derive` itself would have raised. Exit 78 (`TurnConfigurationError`,
+    `pipeline/runner/exits.py::EXIT_CONFIGURATION_ERROR`).
+    """
+    spec = spec_for(_shipped_lane(), mode="transform")
+    ports = ports_for(STRATEGY, MemoryLaneStore(), clock=ManualClock())
+
+    with pytest.raises(TurnConfigurationError, match=r"declares no \[\[streams\]\]"):
+        await run(spec, ports)

@@ -52,6 +52,11 @@ probe only saves those sends. An unreadable probe body is `invalid`.
 `sortby=-properties.datetime` is the one request shape the legacy reader never sent; verify it
 against the live API before G6 (open item).
 
+Accepted cost: every governed absence inside the 14-day `absence_recheck_days` window is re-walked
+EVERY hourly fire until it ages out of the window, not asked once and remembered -- a scene-less
+day costs one empty STAC page, a cloud-masked one costs the full COG `Range` reads that find
+nothing usable. This is deliberate (no absence-skip exists), not a missed optimisation.
+
 ## Wave O fetch: the whole day walk is one unit
 
 A day is a STAC paging walk plus `Range` reads against per-scene COG hrefs on another host, sized
@@ -71,6 +76,13 @@ upstream_client" alternative, the same one `watersheds/nhdplus.py` documents. Co
 - `SourceResponse.body` is the day's record digest text (the COG bytes are never held), and
   `Written.source_digest` is set explicitly because rows carry the capture instant.
 
+**A WRITTEN G6 precondition, not an open item:** measure the legacy walk's p95 day-walk time from
+the `sentinel2_ndvi_grid_sampled` logs before flipping this lane's `executor` at G6, and do NOT flip
+while that p95 exceeds roughly 250 s, until the per-lane `PER_UNIT_FETCH_CAP_SECONDS` override (CQ-9)
+lands. The reason: the 330 s cap cancels and restarts a long walk WHOLE, and a cancelled-and-restarted
+walk re-enters the fan-out's oldest-first queue at the head, so a lane running close to the cap can
+starve every day behind the slow one instead of making forward progress.
+
 ## Support (`support.py`)
 
 The published rows key on `agri.spatial_cell.id`, a random `gen_random_uuid()` that no lattice
@@ -78,13 +90,12 @@ arithmetic can derive, and a strategy has no database session. The legacy writer
 `SELECT cell.id, cell.cell_key, ST_X(cell.centroid), ST_Y(cell.centroid) FROM agri.spatial_cell
 WHERE grid_name = 'sentinel2-ndvi-0p25deg'` (`direct/vegetation/support.py::_SUPPORT_CELLS_SQL`). This
 package reads the same four columns from a pinned snapshot, `support_cells.json` beside this file
-(a JSON list of `{cell_id, cell_key, cell_longitude, cell_latitude}`), cached per process. It is NOT
-committed yet: generating it is a production read that needs an owner go (open item). Until it
-exists, the probe reports `unavailable` naming the missing file, and the lane writes nothing (it is
-dark anyway). `plan_requests` refuses a support whose keys or centroids differ from the region's
-`analysis-0p25` lattice (`foundation/region/pnw.json`, prefix `sentinel2-ndvi-0p25deg:`); that check
-replaces the legacy step/extent guard. The fetch bbox is derived from the cells with the legacy
-formula, so the STAC query is byte-identical.
+(a JSON list of `{cell_id, cell_key, cell_longitude, cell_latitude}`), cached per process. IT IS
+COMMITTED: 1,568 rows, verified against the region's `analysis-0p25` lattice (the check below, and
+`tests/lanes/vegetation/test_support.py`). `plan_requests` refuses a support whose keys or
+centroids differ from the region's `analysis-0p25` lattice (`foundation/region/pnw.json`, prefix
+`sentinel2-ndvi-0p25deg:`); that check replaces the legacy step/extent guard. The fetch bbox is
+derived from the cells with the legacy formula, so the STAC query is byte-identical.
 
 ## Row identity and volatile columns
 

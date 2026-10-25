@@ -12,9 +12,7 @@ import hashlib
 import json
 import math
 from datetime import UTC, date, datetime, timedelta
-from typing import TYPE_CHECKING
-
-import pytest
+from typing import TYPE_CHECKING, Any, cast
 
 from agri_data_service.execution.lane_specs import LANE_SPECS
 from agri_data_service.foundation.lane_config import load_lane_configs
@@ -31,6 +29,7 @@ from agri_data_service.pipeline.lanes.vegetation.support import (
     VegetationSupportCell,
     build_support,
 )
+from agri_data_service.pipeline.runner.reader import registered_stream_contract
 from agri_data_service.pipeline.runner.resolve import resolve_strategy
 from tests.lane_config.builders import REAL_LANES_DIRECTORY
 from tests.runner.fakes import (
@@ -47,6 +46,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
     import pyarrow as pa  # type: ignore[import-untyped]
+    import pytest
 
     from agri_data_service.foundation.lane_config.models import LaneConfig
     from agri_data_service.ingest.vegetation import GridSampleWindow
@@ -141,12 +141,17 @@ def _stac_probe(newest: date | None) -> Callable[[str, dict[str, str], bool], by
 
 
 def _shipped_lane() -> LaneConfig:
-    return load_lane_configs(REAL_LANES_DIRECTORY, load_region("pnw")).lanes[LANE_ID]
+    return load_lane_configs(
+        REAL_LANES_DIRECTORY, load_region("pnw"), stream_contract=registered_stream_contract
+    ).lanes[LANE_ID]
 
 
-def _config_lane() -> LaneConfig:
+def _config_lane(*, gap_fill: bool = False) -> LaneConfig:
     """The shipped lane as G6 will flip it (tests/lanes/watersheds/test_nhdplus.py pattern)."""
-    return _shipped_lane().model_copy(update={"executor": "config"})
+    lane = _shipped_lane().model_copy(update={"executor": "config"})
+    if gap_fill:
+        lane = lane.model_copy(update={"schedule": lane.schedule.model_copy(update={"gap_fill_enabled": True})})
+    return lane
 
 
 async def _turn(
@@ -224,7 +229,7 @@ async def test_the_partial_day_policy_is_the_legacy_forward_s(monkeypatch: pytes
       `adapter.py` lines 118-127 and `forward.py` lines 454-462 (`source_unsettled`).
     """
     sparse_day, later_published = date(2026, 10, 8), date(2026, 10, 12)
-    _install_walk(monkeypatch, {sparse_day: [_record(FIRST, sparse_day)]})
+    asked = _install_walk(monkeypatch, {sparse_day: [_record(FIRST, sparse_day)]})
     store = MemoryLaneStore()
     store.publish(STREAM, later_published, _legacy_table(later_published, [_record(SECOND, later_published)]))
 
@@ -239,6 +244,59 @@ async def test_the_partial_day_policy_is_the_legacy_forward_s(monkeypatch: pytes
     unwritten = unwritten_by_day(payload)
     assert unwritten["2026-10-13"]["reason"] == "unsettled"
     assert all(entry["reason"] != "refused_partial" for entry in unwritten.values())
+    # The already-written day is census-complete, not an owed hole: the walk never re-asks it.
+    assert later_published not in _asked_days(asked)
+
+
+async def test_a_day_governed_absent_is_retracted_once_a_later_walk_finds_cells(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No separate 'un-absent' verb exists for this lane: the forward window just re-asks every day
+    inside `absence_recheck_days` every fire, absent or not (AGENTS.md "Probe" accepted cost), and
+    `writer.py::_decide_unverified_rewrite` already names the generic S11 rule for what happens next --
+    a `Written` settlement over an `absent` status returns `RewriteDecision("retract_disproven_absence")`,
+    which writes.
+    """
+    day, later_published = date(2026, 10, 6), date(2026, 10, 12)
+    _install_walk(monkeypatch, {})
+    store = MemoryLaneStore()
+    store.publish(STREAM, later_published, _legacy_table(later_published, [_record(SECOND, later_published)]))
+    first_exit, _ = await _turn(_config_lane(), store, ScriptedUpstream(answer=_stac_probe(WINDOW_LAST)))
+    assert first_exit == 0
+    assert store.status(STREAM, day) == "absent"
+
+    _install_walk(monkeypatch, {day: [_record(FIRST, day)]})
+    exit_code, payload = await _turn(_config_lane(), store, ScriptedUpstream(answer=_stac_probe(WINDOW_LAST)))
+
+    assert exit_code == 0, payload
+    assert store.status(STREAM, day) == "data"
+    assert store.tables[(STREAM, day)].num_rows == 1
+
+
+async def test_the_g6_gap_fill_flip_fills_the_oldest_five_days_back_to_the_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S12: flipping `gap_fill_enabled` is G6's whole job. The window runs from the TOML floor
+    2026-09-01 up to just before the forward window, but `[budget] gap_fill_max_weighted_calls = 5`
+    (the legacy `VEGETATION_MAX_DAYS` repair cap) lets only the oldest five days through one fire,
+    oldest first (`windows.py::plan_gap_fill` + `select_affordable_days`); the rest wait
+    `deferred_budget`. `earth-search` is unweighted, so each day costs exactly one request.
+    """
+    owed = [date(2026, 9, 1) + timedelta(days=offset) for offset in range(5)]
+    asked = _install_walk(monkeypatch, {day: [_record(FIRST, day)] for day in owed})
+    store = MemoryLaneStore()
+    upstream = ScriptedUpstream(answer=_stac_probe(None))
+
+    spec = spec_for(_config_lane(gap_fill=True), mode="gap-fill")
+    ports = ports_for(TEST_STRATEGY, store, upstream=upstream, clock=ManualClock(NOW))
+    exit_code, payload = await run(spec, ports)
+
+    assert exit_code == 0, payload
+    assert _asked_days(asked) == owed
+    assert [store.status(STREAM, day) for day in owed] == ["data"] * 5
+    # A gap-fill turn never touches the provider client for this lane: Wave O bypasses it entirely.
+    assert upstream.sends == []
+    assert unwritten_by_day(payload)[date(2026, 9, 6).isoformat()]["reason"] == "deferred_budget"
 
 
 async def test_the_stac_probe_is_the_edge_and_newer_days_are_never_walked(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -338,8 +396,10 @@ async def _legacy_published(
 ) -> pa.Table:
     """The day exactly as the legacy writer publishes it, stamped an hour after midnight (an older capture)."""
     _install_walk(monkeypatch, {day: records}, module=legacy_source)
+    # The walk is faked (above), so no real httpx client ever sends; `fetch_vegetation_day` only
+    # needs something of the declared shape (`httpx.AsyncClient | None`), never a live connection.
     fetched = await legacy_source.fetch_vegetation_day(
-        day=day, support=_legacy_support(), deadline=math.inf, client=object()
+        day=day, support=_legacy_support(), deadline=math.inf, client=cast("Any", object())
     )
     return legacy_rows.vegetation_day_table(
         day=day, values=fetched.values, data_available_at=datetime(day.year, day.month, day.day, 1, tzinfo=UTC)
@@ -348,10 +408,11 @@ async def _legacy_published(
 
 def _legacy_table(day: date, records: Sequence[dict[str, object]]) -> pa.Table:
     """A published legacy day built without a fetch, for census-only seeding."""
-    values = tuple(
-        legacy_source._select_clearest(  # noqa: SLF001 - the legacy governed-value builder, read-only parity
-            _legacy_support().resolve(str(record["cellKey"])), [record]
-        )
-        for record in records
-    )
-    return legacy_rows.vegetation_day_table(day=day, values=values, data_available_at=NOW)
+    support = _legacy_support()
+    values: list[legacy_source.VegetationCellValue] = []
+    for record in records:
+        cell = support.resolve(str(record["cellKey"]))
+        if cell is None:
+            raise AssertionError(f"record cellKey {record['cellKey']!r} is not on the test support")
+        values.append(legacy_source._select_clearest(cell, [record]))
+    return legacy_rows.vegetation_day_table(day=day, values=tuple(values), data_available_at=NOW)
