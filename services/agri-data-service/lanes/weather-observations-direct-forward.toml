@@ -1,0 +1,118 @@
+# Weather observations, Open-Meteo CURRENT-CONDITIONS grid (track config_driven_ingestion_20260926,
+# batch-2 swarm, slice s-weather-observations). Behaviour lives in
+# pipeline/lanes/weather_observations/open_meteo_current.py. Authoring: lanes/AGENTS.md. Legacy
+# facts: pipeline/direct/weather_observations/** (READ-ONLY twin -- never imported by the strategy).
+#
+# NAME TRAP (read before touching this file): "weather-observations" is overloaded in this repo.
+# This lane is the CURRENT-CONDITIONS poll (`ingest/open_meteo.py`'s `WEATHER_LAYER`, the `current`
+# endpoint), NOT the governed NASA-POWER/ERA5-Land historical archive that backs
+# `agri.signal_observation` under the SAME stream name (`execution/weather_observations/AGENTS.md`
+# "Traps that will otherwise be rediscovered"; `docs/lanes/weather-observations.md` section 5 item 3,
+# which describes that OTHER producer). This TOML's `strategy`/`[[streams]].slug` target the
+# `geo.features`-shaped producer only.
+#
+# SHIPPED DARK: executor = "legacy" (plan.md Phase 4 "The swarm": "All TOMLs ship executor = 'legacy'
+# (migrated) or enabled = false (new/shadow)"). The legacy executor lane of this same id already
+# polls hourly through pipeline/direct/weather_observations/forward.py
+# (execution/lane_specs.py:636-645, WEATHER_OBSERVATIONS_DIRECT_LANE_ID); this TOML does not change
+# that path -- it only prepares this lane's eventual G6 cut-over to executor = "config".
+#
+# EXEMPT from S19's probe_edge requirement: that rule binds only a `refuse` lane on a weighted
+# provider (foundation/lane_config/models.py::lane_requires_probe_edge); this lane's
+# partial_day = "write_and_recheck" below takes it out of scope, the same reasoning
+# docs/lanes/drought.md section 8 "No probe_edge needed" gives for a different lane.
+
+id = "weather-observations-direct-forward"
+kind = "ingest"
+nature = "daily_series"
+enabled = true
+executor = "legacy"
+strategy = "weather_observations.open_meteo_current"
+
+[source]
+provider = "open-meteo"
+# The "forecast" endpoint declared in lanes/_providers/open-meteo.toml -- the SAME host pair legacy
+# `pipeline/direct/weather_observations/source.py` resolves current-conditions through
+# (`ingest/provider_client.py::FORECAST_ENDPOINT`), never the "archive" endpoint. The customer host
+# (and its API key) applies automatically after cut-over, through the existing customer_host opt-in
+# (`pipeline/runner/binding.py::ConfigProviderClient`) -- no new key plumbing added here.
+endpoint = "forecast"
+coverage = "regional"
+iso_country_codes = ["US"]
+# No archive: the `current` endpoint answers only the instant closest to the poll, never a settled
+# past day (pipeline/direct/weather_observations/source.py module docstring: "there is no day this
+# lane's writer can ask the source for by date"). `history.capability = "none"` is the same claim
+# watersheds-direct-forward.toml makes for the same reason (a version snapshot, not a series).
+history = { capability = "none" }
+lifecycle = "active"
+
+[schedule]
+# Legacy cadence, cited exactly: execution/lane_specs.py:640, WEATHER_OBSERVATIONS_DIRECT_LANE_ID's
+# `schedule = "30 * * * *"`.
+forward_cron = "30 * * * *"
+gap_fill_enabled = false
+# No gap_fill_cron: there is no archive to backfill from (see [source].history above), so a hole
+# behind the edge can only be closed by a FUTURE poll re-bucketing the rolling instant, which the
+# forward window's own absence_recheck_days already does every fire.
+
+[days]
+# No floor/floor_basis: gap_fill_enabled = false and there is no archive floor to declare (see
+# [source].history). `lane_registry.py`'s WEATHER_OBSERVATIONS_STREAM registration DOES carry a
+# history_floor (2026-08-01), but mirroring it here would imply a gap-fill walk this lane can never
+# perform; see [[streams]] below for where that registration fact is mirrored instead (S18).
+#
+# publication_lag_days = 0: the forward edge is always `today` -- there is no settled day to lag
+# behind (pipeline/direct/weather_observations/source.py module docstring, same citation as above).
+publication_lag_days = 0
+# absence_recheck_days = 2, basis = cited: WEATHER_OBSERVATIONS_MAX_DAYS
+# (pipeline/direct/weather_observations/forward.py) caps one poll at the newest TWO day buckets it
+# can ever produce -- today, and (within MAX_OBSERVATION_AGE = 3h of UTC midnight,
+# ingest/open_meteo.py) yesterday. A window of 1 would silently lose the midnight-straddle bucket
+# forward.py's own WEATHER_OBSERVATIONS_DEFAULT_MAX_DAYS comment warns against ("a bucket the
+# default silently dropped at the UTC midnight straddle could never be re-fetched"); 2 is the
+# smallest window that can never drop it.
+absence_recheck_days = 2
+# write_and_recheck: every fire re-asks the whole window and rewrites a day's reading set whenever
+# more sample points answer (S11) -- the rolling incremental-accumulation shape
+# pipeline/direct/weather_observations/adapter.py ports from water_gauges's own merge, never a
+# settled-once day.
+partial_day = "write_and_recheck"
+
+[budget]
+# One weighted call per sample point (lanes/_providers/open-meteo.toml [weight]: a single-location,
+# <=10-variable, <14-day request prices at the 1.0 floor), up to
+# ingest/policy.py::MAX_WEATHER_SAMPLE_POINTS = 150 points per poll.
+forward_max_weighted_calls = 150
+# gap-fill mode is refused before it can send anything (gap_fill_enabled = false, S12); kept at
+# parity with the forward cap rather than 0, matching watersheds-direct-forward.toml's reasoning for
+# an operator-triggered `--mode gap-fill` that this lane will never schedule itself.
+gap_fill_max_weighted_calls = 150
+# ingest/http.py::upstream_client caps real concurrent sockets per client at MAX_UPSTREAM_CONNECTIONS
+# = 10; matching it here keeps one turn's fan-out inside the same connection budget the legacy
+# asyncio.gather already shared across every sample point.
+max_concurrency = 10
+# ESTIMATE, not measured (SKETCH scope, basis = uncited): the legacy writer's own default CLI budget
+# is 120s (WEATHER_OBSERVATIONS_DEFAULT_TIME_BUDGET_SECONDS, forward.py) for one poll with its OWN
+# per-point retry ladder (WEATHER_CURRENT_RETRY_LADDER, <=30s wall-clock per point). The runner's
+# ladder is sized differently (fetch.py: 3 attempts 5xx/timeout, doubling from 2s; 20/40/80/160s for
+# 429) and is not re-derived here; 300s leaves headroom over the legacy default without a worst-case
+# calculation. Measure a real turn before relying on this number -- open item for i-coordinator.
+turn_timeout_seconds = 300
+
+[[streams]]
+slug = "weather-observations"
+# S18 mirror of lane_registry.py's WEATHER_OBSERVATIONS_STREAM registration, literally: that
+# registration's own words call this number a "FALLBACK -- NOT DECLARED ANYWHERE, AND THE GUESS IS
+# DELIBERATELY SHALLOW" (lane_registry.py, the registration's floor_basis), so basis = uncited here
+# is the honest word for it, not a weaker citation than the registration itself carries.
+history_floor = "2026-08-01"
+# complete_history_floor DELIBERATELY OMITTED: the registration's own complete_history_floor
+# (2018-01-01) resolves through _MEASURED_COMPLETE_HISTORY_FLOORS["weather-observations"], a dict
+# entry the registration's comment says describes the UNRELATED signal/archive producer this name
+# collides with (see this file's header note), not the current-conditions poll this lane is. Mirroring
+# it here would launder a known mismatch forward rather than report it -- open item below.
+floor_basis = "uncited -- lane_registry.py's WEATHER_OBSERVATIONS_STREAM registration: 'FALLBACK -- NOT DECLARED ANYWHERE, AND THE GUESS IS DELIBERATELY SHALLOW'; 2026-08-01 is that same conservative guess, mirrored rather than re-guessed (S18)."
+# pipeline/lanes/weather_observations/open_meteo_current.py::_row stamps `ingested_at` from each
+# point's own fetch response (`retrieved_at`), never from source content -- the same capture-time
+# column water-gauges-daily.toml declares volatile for the identical reason.
+volatile_columns = ["ingested_at"]
