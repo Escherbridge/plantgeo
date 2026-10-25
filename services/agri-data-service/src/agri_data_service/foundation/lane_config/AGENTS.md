@@ -38,6 +38,39 @@ a key travels (post-push review M2). This makes optional same-host authenticatio
 weakening the required customer-host key rule. The endpoint opt-in scopes credential use; other
 endpoints on the provider remain anonymous.
 
+### Path templates
+
+An endpoint may declare `path_template` beside its fixed `path` when the upstream resource is a
+per-request PATH segment (a USDM release `/data/json/usdm_{release}.json`; a FIRMS window
+`/api/area/csv/{api_key}/{source}/{area}/{day_range}`). Syntax: literal `[A-Za-z0-9/_.-]` plus
+`{name}` placeholders, `name` a lowercase identifier. The template must extend `path` (so `path`
+stays the endpoint's stable prefix for anything that reads it), name at least one placeholder,
+name none twice, and carry no empty or dot segment; any other `{`/`}` is an unclosed or stray
+brace. Every one of these is refused at LOAD (`PathTemplateError`, a `ValueError`, so the provider
+file lands in `provider_failures` and only its own lanes quarantine), never discovered as a
+malformed URL at send time.
+
+There is no separate path-parameter seam: a strategy puts the values in `SourceRequest.parameters`
+under the placeholder names, and `ProviderEndpoint.split_parameters` routes them into the path and
+the rest into the query. That is deliberate: `pipeline/runner/budget.py` (`request_key`,
+`BudgetedClient`) and `checkpoints.py::_ReplayClient` key a logical request on
+`(endpoint, parameters)`, so two releases stay two requests and a replay matches its send with no
+change to the `ProviderClient.get(endpoint, parameters)` Protocol or either wrapper. At request time
+`fill_path_template` refuses a missing value, and an empty, `.`, `..`-bearing, `/`- or
+backslash-bearing value; it URL-path-escapes the rest with RFC 3986 `pchar` minus `/` (FIRMS' bbox
+commas survive; `?` and `#` are escaped, so a value can never open a query or fragment). Refusals
+name the placeholder, never the value. A templated endpoint sends no bare `?` when it has no query,
+so a USDM URL equals `ingest/usdm.py::usdm_source_url` byte for byte.
+
+**`{api_key}` is reserved** and only the provider client fills it, from `api_key_env`. It needs
+`api_key_transport = "path"` (no `api_key_parameter`/`api_key_header`), and it pairs one-to-one
+with the endpoint's `customer_host` opt-in: a `{api_key}` template without `customer_host`, a
+`customer_host` without `{api_key}`, or `optional_api_key` under path transport (an optional key
+cannot fill a required segment) all fail the load. `customer_host` may equal `host`: it is the
+REQUIRED-key opt-in, which is FIRMS' shape (one host, key mandatory), so an empty key is FR-2's
+named refusal. An endpoint with neither keeps the m3 request-time refusal
+(`ingest/provider_client.py`), extended from query to path transport.
+
 Lazy by construction: nothing reads a file until it is called (the manifest-moves-must-be-lazy
 rule; `LANE_REGISTRY` and friends are read at import, so nothing there may call this at import).
 

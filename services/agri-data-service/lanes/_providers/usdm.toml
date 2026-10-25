@@ -14,3 +14,12 @@ weighted = false
 [endpoints.release-json]
 host = "droughtmonitor.unl.edu"
 path = "/data/json"
+
+# The same release as a per-request PATH segment: `release` is the valid date as YYYYMMDD, so the URL
+# equals ingest/usdm.py::usdm_source_url (a templated endpoint sends no bare `?`). The fixed-path
+# `release-json` above is what the dark strategy names today (pipeline/lanes/drought/usdm_releases.py
+# RELEASE_ENDPOINT); its G6 flip moves here. Template rules: foundation/lane_config/AGENTS.md.
+[endpoints.release]
+host = "droughtmonitor.unl.edu"
+path = "/data/json"
+path_template = "/data/json/usdm_{release}.json"

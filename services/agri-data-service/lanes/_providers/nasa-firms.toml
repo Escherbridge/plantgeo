@@ -10,22 +10,34 @@ display_name = "NASA FIRMS"
 # logical requests; the meter labels this host's pool `firms` (foundation/observability/vocabulary.py).
 weighted = false
 # REQUIRED MAP_KEY (ingest/firms.py::_require_api_key raises when it is unset). The NAME only.
-# The schema DEFAULTS api_key_transport to "query" (foundation/lane_config/models.py ProviderConfig)
-# whether or not this file names it, but that default is moot here: the key actually rides a URL
-# PATH SEGMENT (`/api/area/csv/{api_key}/...`), a shape neither "query" nor "header" transport can
-# express, so the provider client attaches nothing regardless: the strategy must place it itself,
-# and must never log the URL (docs/lanes/fire-detections.md "Auth").
-# TODO(s-fire-detections): a `path` key transport needs a schema decision before the strategy lands.
+# The key rides a URL PATH SEGMENT, so it travels by `path` transport: the provider client fills the
+# reserved `{api_key}` placeholder itself, and only because each keyed endpoint opts in with
+# `customer_host` (here FIRMS' one host, so an empty key is FR-2's named refusal). A strategy never
+# places or sees the key; reports, checkpoints and logs carry the literal `{api_key}` marker instead
+# (ingest/AGENTS.md "Path-segment keys"; docs/lanes/fire-detections.md "Auth").
 api_key_env = "NASA_FIRMS_KEY"
+api_key_transport = "path"
 # TODO(s-fire-detections): verify the MAP_KEY transaction limit against the live probe; nothing in
 # the tree records it.
 
-# Current and dated windows: `/api/area/csv/{api_key}/{source}/{area}/{day_range}[/{start_date}]`.
+# Current windows: `/api/area/csv/{api_key}/{source}/{area}/{day_range}`. `area` is the
+# `west,south,east,north` bbox; its commas stay unescaped (RFC 3986 sub-delims).
 [endpoints.area-csv]
 host = "firms.modaps.eosdis.nasa.gov"
+customer_host = "firms.modaps.eosdis.nasa.gov"
 path = "/api/area/csv"
+path_template = "/api/area/csv/{api_key}/{source}/{area}/{day_range}"
+
+# Dated windows, FIRMS' whole archive access: the same path with a trailing `{start_date}`.
+[endpoints.area-csv-dated]
+host = "firms.modaps.eosdis.nasa.gov"
+customer_host = "firms.modaps.eosdis.nasa.gov"
+path = "/api/area/csv"
+path_template = "/api/area/csv/{api_key}/{source}/{area}/{day_range}/{start_date}"
 
 # Per-product coverage windows, read before every history walk: `/api/data_availability/csv/{api_key}/all`.
 [endpoints.data-availability]
 host = "firms.modaps.eosdis.nasa.gov"
+customer_host = "firms.modaps.eosdis.nasa.gov"
 path = "/api/data_availability/csv"
+path_template = "/api/data_availability/csv/{api_key}/all"

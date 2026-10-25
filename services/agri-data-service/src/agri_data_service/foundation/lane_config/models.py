@@ -6,10 +6,12 @@ Spec §4.1 (D1, S3, S12, S14, S18, S19). Config holds DATA; strategies hold BEHA
 
 from __future__ import annotations
 
-from collections.abc import Mapping  # noqa: TC003 - pydantic resolves this at runtime
+import re
+from collections.abc import Iterable, Mapping  # noqa: TC003 - pydantic resolves this at runtime
 from datetime import date  # noqa: TC003 - pydantic resolves this at runtime
 from types import MappingProxyType
 from typing import Annotated, Final, Literal
+from urllib.parse import quote
 
 from pydantic import (
     AfterValidator,
@@ -63,6 +65,13 @@ ApiKeyEnvironmentName = Annotated[
 ]
 HostName = Annotated[str, StringConstraints(pattern=r"^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$")]
 UrlPath = Annotated[str, StringConstraints(pattern=r"^/[A-Za-z0-9/_.-]*$")]
+_LITERAL_PATH_PATTERN: Final = re.compile(r"^/[A-Za-z0-9/_.-]*$")
+#: One `{name}` placeholder in a `path_template`: a lowercase identifier filled per request.
+PATH_PLACEHOLDER_PATTERN: Final = re.compile(r"\{([a-z][a-z0-9_]*)\}")
+#: The reserved placeholder the provider client fills from `api_key_env` itself; a request never supplies it.
+API_KEY_PLACEHOLDER: Final = "api_key"
+#: RFC 3986 `pchar` without `/`: what a filled path value may carry unescaped (FIRMS' bbox commas).
+_PATH_VALUE_SAFE: Final = "-._~!$&'()*+,;=:@"
 #: An owner gate id as the plan names them: `G6`, `G9Q-1a`, `G9.0`.
 GateName = Annotated[str, StringConstraints(pattern=r"^G[0-9][0-9A-Za-z.-]*$")]
 CronText = Annotated[str, AfterValidator(_validate_cron)]
@@ -85,19 +94,95 @@ class _FrozenModel(BaseModel):
 # --- Provider file ------------------------------------------------------------------------------
 
 
+class PathTemplateError(ValueError):
+    """A `path_template`, or one request's values for it, cannot form a safe URL path; never echoes a value."""
+
+
+def _validate_path_template(template: str) -> str:
+    literal = PATH_PLACEHOLDER_PATTERN.sub("", template)
+    if "{" in literal or "}" in literal:
+        raise PathTemplateError(f"path_template {template!r} has an unclosed or stray brace; a placeholder is {{name}}")
+    if not _LITERAL_PATH_PATTERN.match(literal):
+        raise PathTemplateError(f"path_template {template!r} must be an absolute path of [A-Za-z0-9/_.-] and {{name}}")
+    if any(segment in {"", ".", ".."} for segment in template.split("/")[1:]):
+        raise PathTemplateError(f"path_template {template!r} has an empty or dot segment")
+    names = PATH_PLACEHOLDER_PATTERN.findall(template)
+    if not names:
+        raise PathTemplateError(f"path_template {template!r} names no placeholder; a fixed path belongs in path")
+    if len(set(names)) != len(names):
+        raise PathTemplateError(f"path_template {template!r} names a placeholder twice")
+    return template
+
+
+def _quote_path_value(name: str, value: str) -> str:
+    """URL-path-escape one placeholder value; empty, dot, slash and backslash values are refused, never echoed."""
+    if not value.strip() or value == "." or ".." in value or "/" in value or "\\" in value:
+        raise PathTemplateError(f"the value for path placeholder {{{name}}} is empty, a dot segment, or holds / or ..")
+    return quote(value, safe=_PATH_VALUE_SAFE)
+
+
+def fill_path_template(template: str, values: Mapping[str, str], *, api_key: str | None = None) -> str:
+    """Fill every `{name}` from `values`; `{api_key}` takes `api_key`, or stays a literal marker when it is None."""
+    names = PATH_PLACEHOLDER_PATTERN.findall(template)
+    missing = sorted(name for name in names if name != API_KEY_PLACEHOLDER and name not in values)
+    if missing:
+        raise PathTemplateError(f"path_template {template!r} has no request value for {missing}")
+
+    def substitute(match: re.Match[str]) -> str:
+        name = match.group(1)
+        if name == API_KEY_PLACEHOLDER:
+            return match.group(0) if api_key is None else _quote_path_value(name, api_key)
+        return _quote_path_value(name, values[name])
+
+    return PATH_PLACEHOLDER_PATTERN.sub(substitute, template)
+
+
+PathTemplate = Annotated[str, AfterValidator(_validate_path_template)]
+
+
 class ProviderEndpoint(_FrozenModel):
     """One endpoint: its free host, its keyed customer host when the provider sells one, and its path."""
 
     host: HostName
+    #: The REQUIRED-key opt-in; may equal `host` when a provider keys its one host (nasa-firms).
     customer_host: HostName | None = None
     path: UrlPath
+    #: Per-request path segments (`/data/json/usdm_{release}.json`); see `AGENTS.md` "Path templates".
+    path_template: PathTemplate | None = None
     optional_api_key: bool = Field(default=False, strict=True)
 
     @model_validator(mode="after")
     def _optional_key_uses_the_public_host(self) -> ProviderEndpoint:
         if self.optional_api_key and self.customer_host is not None:
             raise ValueError("optional_api_key cannot weaken a customer_host's required key")
+        if self.path_template is not None and not self.path_template.startswith(self.path.rstrip("/") + "/"):
+            raise ValueError(f"path_template {self.path_template!r} must extend the fixed path {self.path!r}")
         return self
+
+    def path_placeholders(self) -> tuple[str, ...]:
+        """The template's placeholder names in order; empty for a fixed-path endpoint."""
+        return () if self.path_template is None else tuple(PATH_PLACEHOLDER_PATTERN.findall(self.path_template))
+
+    def keyed_by_path(self) -> bool:
+        """Whether the template carries the reserved `{api_key}` segment."""
+        return API_KEY_PLACEHOLDER in self.path_placeholders()
+
+    def split_parameters(
+        self, items: Iterable[tuple[str, str]]
+    ) -> tuple[dict[str, str], tuple[tuple[str, str], ...]]:
+        """A request's parameters as (path placeholder values, the remaining query items, in order)."""
+        pairs = tuple(items)
+        names = set(self.path_placeholders()) - {API_KEY_PLACEHOLDER}
+        return {name: value for name, value in pairs if name in names}, tuple(p for p in pairs if p[0] not in names)
+
+    def request_url(
+        self, host: str, path_values: Mapping[str, str], query: str, *, api_key: str | None = None
+    ) -> str:
+        """`https://host/path?query`; a templated endpoint drops a bare `?` (the legacy URL shape)."""
+        if self.path_template is None:
+            return f"https://{host}{self.path}?{query}"
+        path = fill_path_template(self.path_template, path_values, api_key=api_key)
+        return f"https://{host}{path}?{query}" if query else f"https://{host}{path}"
 
 
 class ProviderWeightRule(_FrozenModel):
@@ -161,8 +246,8 @@ class ProviderConfig(_FrozenModel):
     display_name: str = Field(min_length=1)
     weighted: bool
     api_key_env: ApiKeyEnvironmentName | None = None
-    #: Where the key travels: the query (`api_key_parameter`) or a request header (`api_key_header`).
-    api_key_transport: Literal["query", "header"] = "query"
+    #: Where the key travels: the query (`api_key_parameter`), a header (`api_key_header`), or a `{api_key}` path.
+    api_key_transport: Literal["query", "header", "path"] = "query"
     api_key_parameter: Literal["apikey", "api_key"] | None = None
     api_key_header: Literal["X-Api-Key"] | None = None
     #: NASA POWER's `time-standard`; only UTC is accepted (daily values must be UTC days).
@@ -187,6 +272,7 @@ class ProviderConfig(_FrozenModel):
             raise ValueError('api_key_header is declared exactly when api_key_transport = "header"')
         if header and self.api_key_parameter is not None:
             raise ValueError('api_key_transport = "header" sends no query parameter; drop api_key_parameter')
+        self._path_keys_agree()
         key_name = self.api_key_header if header else self.api_key_parameter
         optional = any(endpoint.optional_api_key for endpoint in self.endpoints.values())
         if optional and (self.api_key_env is None or key_name is None):
@@ -194,6 +280,26 @@ class ProviderConfig(_FrozenModel):
         if (self.api_key_parameter is not None or header) and self.api_key_env is None:
             raise ValueError("api_key_parameter and api_key_transport need api_key_env")
         return self
+
+    def _path_keys_agree(self) -> None:
+        """`{api_key}` needs path transport, and fills only under the endpoint's customer_host opt-in."""
+        templated = sorted(name for name, endpoint in self.endpoints.items() if endpoint.keyed_by_path())
+        if self.api_key_transport != "path":
+            if templated:
+                raise ValueError(f'endpoints {templated} template {{api_key}}, which needs api_key_transport = "path"')
+            return
+        if self.api_key_env is None:
+            raise ValueError('api_key_transport = "path" needs api_key_env')
+        if self.api_key_parameter is not None:
+            raise ValueError('api_key_transport = "path" sends no query parameter; drop api_key_parameter')
+        for name, endpoint in sorted(self.endpoints.items()):
+            if endpoint.optional_api_key:
+                raise ValueError(f"endpoint {name!r}: an optional key cannot fill a required {{api_key}} path segment")
+            if endpoint.keyed_by_path() != (endpoint.customer_host is not None):
+                raise ValueError(
+                    f"endpoint {name!r}: under path transport {{api_key}} fills only under a customer_host "
+                    "opt-in, and a customer_host needs the {api_key} placeholder"
+                )
 
     @field_validator("endpoints", mode="after")
     @classmethod
