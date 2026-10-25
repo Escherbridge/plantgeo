@@ -31,9 +31,9 @@ iso_country_codes = ["US"]
 # "archive" because area-csv-dated is the SAME endpoint for a settled recent day and a decades-old
 # one (ingest/firms.py docstring: "there is no separate archive host"); the MODIS_SP floor below is
 # the oldest any FIRMS_HISTORY_SOURCES member offers (ingest/firms.py::FIRMS_ARCHIVE_EARLIEST_OBSERVATION).
-# This lane's forward strategy only ever requests the three live VIIRS NRT products
-# (ingest/firms.py::FIRMS_VIIRS_SOURCES); see nasa_firms.py's module docstring for why a gap-fill
-# walk into this full floor needs an availability-aware expected_units before it may enable.
+# Which FIRMS_HISTORY_SOURCES products a day owes is read per turn from FIRMS' data_availability
+# table (nasa-firms.toml [endpoints.data-availability]; nasa_firms.py "Availability-aware coverage"),
+# so a 2000-era day owes MODIS_SP and a 2026 day the live NRT trio -- never a pinned constellation.
 history = { capability = "archive", earliest = "2000-11-01" }
 lifecycle = "active"
 
@@ -61,7 +61,7 @@ publication_lag_days = 2
 # = FIRE_DIRECT_MAX_LOOKBACK_DAYS = 5 (pipeline/direct/fire_detections/products.py). This is the
 # "refetch window" split back from the edge (pipeline/runner/AGENTS.md "Windows":
 # forward_window = [edge - absence_recheck_days + 1, edge]). Inside it, a day already written with
-# all three VIIRS NRT products present is settled and NOT re-asked again (`refuse` nature: only
+# every covering FIRMS product present is settled and NOT re-asked again (`refuse` nature: only
 # `_owed_days()` -- missing/incomplete -- and `census.absent_days()` -- governed absences -- are
 # owed each turn; pipeline/runner/AGENTS.md "Windows", "A refuse lane owes its missing and
 # incomplete days"). A day that was a zero-detection absence WILL be re-asked for the full 5 days,
@@ -73,26 +73,28 @@ publication_lag_days = 2
 # loses nothing a fully-answered day would have changed (see nasa_firms.py's module docstring,
 # "The forward window re-asks absences, not already-written days").
 absence_recheck_days = 5
-# Any missing constellation member, cap hit, or identity defect refuses the WHOLE day -- never a
+# Any covering product that fails, cap hit, or identity defect refuses the WHOLE day -- never a
 # partial write (pipeline/direct/fire_detections/forward.py::WRITER_CONTRACT:
 # identity_defect=REFUSE_WHOLE_RELEASE, geometry_defect=REFUSE_WHOLE_RELEASE). See nasa_firms.py.
 partial_day = "refuse"
 
 [budget]
-# Unweighted provider (nasa-firms.toml: weighted = false): the cap counts LOGICAL requests, one per
-# (day, VIIRS NRT product). 5 days (absence_recheck_days) x 3 products
-# (ingest/firms.py::FIRMS_VIIRS_SOURCES) = 15 per hourly turn, +3 headroom for a delayed-overpass day
-# straddling two turns (matching drought-direct-forward.toml's own "+3 headroom" sizing convention).
+# Unweighted provider (nasa-firms.toml: weighted = false): the cap counts LOGICAL sends, one per
+# (day, covering product) plus ONE data_availability read per turn. 5 days (absence_recheck_days) x
+# the 3 live NRT products (ingest/firms.py::FIRMS_VIIRS_SOURCES) + 1 = 16 per hourly turn, inside 18
+# (drought-direct-forward.toml's own "+3 headroom" sizing convention, less the availability read).
 forward_max_weighted_calls = 18
 # gap_fill ships off (S12); this is a PLANNING ESTIMATE, not a measured one, matching
-# drought-direct-forward.toml's identical caveat: one month of daily 3-product rechecks per turn
-# against the 2000-11-01..today backlog, once a future gate admits an availability-aware gap-fill walk.
+# drought-direct-forward.toml's identical caveat. The runner reserves one request per DAY unit while a
+# day really costs one send per covering product, so a turn finishes fewer days than it selects (the
+# rest `deferred_budget`, never partial); re-size against measured coverage before G6
+# (pipeline/lanes/fire_detections/AGENTS.md "Remaining G6 preconditions").
 gap_fill_max_weighted_calls = 90
-# The three-member VIIRS NRT constellation, matching the legacy source's own
-# asyncio.gather(...) fan-out width (pipeline/direct/fire_detections/source.py::fetch_fire_day).
+# Three day units at once, each sending its covering products sequentially: at most 3 concurrent
+# sends, the legacy source's own asyncio.gather(...) width (pipeline/direct/fire_detections/source.py).
 max_concurrency = 3
 # Each unit is one small CSV (UpstreamBounds(max_bytes=16 MiB, timeout_seconds=15.0),
-# ingest/firms.py::FIRMS_BOUNDS); 300 s is ample headroom for 18 such units plus the runner's own
+# ingest/firms.py::FIRMS_BOUNDS); 300 s is ample headroom for 18 such sends plus the runner's own
 # per-unit retry ladder, matching drought-direct-forward.toml's identical sizing for a similarly
 # small per-turn request count.
 turn_timeout_seconds = 300

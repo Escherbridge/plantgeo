@@ -9,7 +9,7 @@ moved nothing here, because fire-detections' legacy modules
 
 | module | what |
 |---|---|
-| `nasa_firms.py` | the strategy (`STRATEGY`): plans one unit per (settled day, VIIRS NRT product), fetches and parses the dated area CSV, settles (constellation-complete / capped / absent / written), and floor-aggregates to the registered cell-day grain |
+| `nasa_firms.py` | the strategy (`STRATEGY`): plans one unit per settled day; its fetch reads FIRMS' `data_availability` once per turn and asks exactly the products covering that day; settles (no-coverage refusal / capped / absent / written), and floor-aggregates to the registered cell-day grain |
 
 Imports: `foundation`, `ingest` (specifically `ingest/firms.py` and `ingest/policy.py`, per the
 namespace rule the batch-1 `fire_perimeters.wfigs` lane also leans on), `warehouse`,
@@ -28,18 +28,18 @@ DuckDB session anywhere in this lane. `_shared/digest.py` is unused for the same
 carry no capture-time column, so there is nothing to canonical-JSON-digest to keep a refetch from
 reading as a revision -- the runner's own rows-table digest already does the right thing.
 
-## Why `expected_units` counts VIIRS NRT products, not grid cells
+## Why `expected_units` counts covering FIRMS products, not grid cells
 
 Unlike the `grid_refuse` conformance fixture (`tests/runner/fixtures/grid_refuse.py`), whose
-`Written.expected_units` is the GRID's own cell count, this lane's coverage unit is "did this live
-satellite's product answer for this day" -- there is no fixed cell population to compare against;
-a settled day's true detection count is whatever FIRMS published, zero included. Counting
-constellation members (3, always) rather than detections means a single down satellite's day is
-never read as a quiet fire day. In practice that refusal happens one level UP from `settle()`:
-`turn.py::_settle_answered` reports a day short of ANY unit directly under the failed unit's own
-reason (e.g. `upstream_unavailable`) on a `partial_day = "refuse"` lane, without ever calling this
-strategy's `settle()` -- see `nasa_firms.py`'s module docstring, "Two different mechanisms", and
-its pinning test.
+`Written.expected_units` is the GRID's own cell count, this lane's coverage unit is "did every
+product FIRMS says covers this day answer" -- there is no fixed cell population to compare against;
+a settled day's true detection count is whatever FIRMS published, zero included. The expected set
+is read per turn from FIRMS' own `data_availability` table, restricted to
+`ingest/firms.py::FIRMS_HISTORY_SOURCES` (`ingest/firms.py::products_covering`), so it is 3 for a
+2026 day (the NRT trio), 1 for a 2000 day (MODIS_SP), and whatever the table says after a satellite
+is retired. A covering product that fails its fetch fails the whole day unit, so the day is held
+one level UP from `settle()`: `turn.py::_settle_answered` reports it under the failure's own reason
+on this `partial_day = "refuse"` lane and writes nothing.
 
 ## The two "10,000" numbers in this codebase, and why only one of them is this module's concern
 
@@ -55,21 +55,37 @@ one upstream-truncation figure this repo has ever measured) against a PER-PRODUC
 "The 10,000-record cap", for the full reasoning; `docs/lanes/fire-detections.md` section 5.1 is the
 evidence trail for the number itself.
 
-## Known gap, deliberately not closed here: no availability-aware gap-fill
+## Availability-aware coverage: the known gap is CLOSED (2026-10-25, owner-approved)
 
-The legacy source module (`pipeline/direct/fire_detections/source.py`) reads FIRMS'
-`data_availability` table before every fetch and filters to the products that actually cover a day,
-because its archive walker reaches into `VIIRS_*_SP`/`MODIS_SP` territory where coverage genuinely
-varies by product and by era. This strategy skips that read entirely: its forward window
-(`absence_recheck_days = 5` back from `today - publication_lag_days`) never leaves the three live
-VIIRS NRT products' already-active coverage, so `expected_units` is safely pinned at 3. **This
-makes `gap_fill_enabled = true` unsafe as written, for a quiet reason rather than a loud one** --
-`ingest/firms.py` documents that a product asked for a day it does not cover answers with fewer
-rows, never an error ("over-asking is safe and cheap"), so a walk back toward the TOML's `floor =
-2000-11-01` would likely still settle and WRITE each ancient day, using only whichever of the three
-NRT products happened to exist yet and silently omitting every `VIIRS_*_SP`/`MODIS_SP` detection
-the legacy archive walker's availability-aware fan-out would have included. History served
-under-counted, looking complete, is the real risk here, not a hard refusal. Porting
-`fetch_product_availability`/`products_covering_span` into this strategy (or an equivalent
-`SourceCoverageStrategy`) is the prerequisite for ever flipping `gap_fill_enabled` here; tracked at
-the TOML's `gap_fill_enabled_at_gate = "G6"` line, not fixed in this slice.
+Earlier revisions pinned `expected_units = 3` (the live NRT trio) and skipped FIRMS'
+`data_availability` read, which had two failure modes: a FORWARD WEDGE (a retired/renamed NRT token
+fails every fetch, so every day is held `upstream_unavailable` forever) and a GAP-FILL UNDER-COUNT
+(an old day settled from only the products existing then, silently omitting SP/MODIS detections).
+Both are closed by the same port of the legacy `pipeline/direct/fire_detections/source.py::
+fetch_fire_day` read (never imported): one unit per day, whose fetch reads the availability table
+once per turn through the declared `data-availability` endpoint and asks only the products covering
+that day. An availability read that fails holds every day that needed it -- there is no fallback to
+a pinned constellation. A day no product covers is a loud per-day `Unsettled`, never an absence.
+`nasa_firms.py`'s module docstring ("Availability-aware coverage", "Why per-day units") has the
+mechanism and why it is NOT `SourceCoverageStrategy` (that Protocol is one static support set per
+lane, and `turn.py::_settle` rejects any per-day difference from it).
+
+**Remaining G6 preconditions, stated honestly:**
+
+* **Gap-fill budget sizing.** `select_affordable_days` reserves ONE request per day unit, but a day
+  really costs one send per covering product (plus the turn's single availability read).
+  `BudgetedClient` still refuses any send past the cap (the unit is `deferred_budget`, never
+  partial), so this is safe, but a 90-call gap-fill turn selects ~90 days and finishes roughly
+  90 / (covering products per day) of them, wasting the tail unit's partial sends. Re-size
+  `gap_fill_max_weighted_calls` (or the day cap) against measured coverage before flipping
+  `gap_fill_enabled`. The forward turn is unaffected: 5 days x 3 + 1 = 16 sends under its cap of 18.
+* **A product NEW to FIRMS is not asked.** Candidates are `ingest/firms.py::FIRMS_HISTORY_SOURCES`;
+  a product the availability table names that is not in that tuple (e.g. a future
+  `VIIRS_NOAA22_NRT`) is ignored, so its detections would be missing without any signal. Adding it
+  is a one-line `ingest/firms.py` change; nothing alerts on it yet.
+* **No retry-grain finer than the day.** One covering product's 503 re-sends that day's other
+  products on each retry (attempts only -- `budget.py::TurnBudget.charge` counts a logical request
+  once). This mirrors the legacy writer's own day retry unit.
+* **No source checkpoints.** Day units are never checkpoint-eligible (a replay could not re-read
+  availability), so a held day is re-fetched in full next turn.
+* `gap_fill_enabled` stays `false` until the owner flips it inside gate G6 (S12).
