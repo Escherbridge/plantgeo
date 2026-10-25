@@ -12,7 +12,7 @@ modules; see that module's own docstring for the design decisions unique to a co
 |---|---|
 | `products.py` | identity constants and the Oregon-only coverage gate; deliberately NO edge to `LANE_REGISTRY` |
 | `source.py` | the bounded Oregon OEM fetch (`fetch_evacuation_zones_snapshot`) |
-| `support.py` | DuckDB geometry repair to WKB |
+| `support.py` | DuckDB geometry repair to WKB (`_shared/geometry.py`'s `"pass_through_flagged"` mode) |
 | `rows.py` | the Arrow table, natural keys, content digests and part splitting |
 | `watermark.py` | the `static_lookup` source watermark `lane_registry.py` imports |
 | `oregon_oem.py` | the config-lane strategy (S14, `evacuation-zones-direct-forward.toml`); the only module here that imports `pipeline/runner/contract.py` |

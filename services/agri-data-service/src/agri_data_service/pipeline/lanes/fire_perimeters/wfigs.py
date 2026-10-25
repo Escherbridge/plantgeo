@@ -100,7 +100,6 @@ producer's contract ever widens, the right fix is at that producer, not a second
 
 from __future__ import annotations
 
-import hashlib
 import json
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -117,6 +116,13 @@ from agri_data_service.ingest.wfigs import (
     epoch_milliseconds_to_iso,
     fetch_fire_perimeters_walk,
     perimeter_severity,
+)
+from agri_data_service.pipeline.lanes._shared.digest import (
+    DEFAULT_SEPARATORS,
+    canonical_json_bytes,
+    canonical_json_text,
+    sha256_hex,
+    sha256_hex_of_lines,
 )
 from agri_data_service.pipeline.lanes.fire_perimeters.support import (
     fire_perimeter_geometry_session,
@@ -249,7 +255,7 @@ def _bbox(envelope: RegionEnvelope) -> str:
 
 def _support_digest(bbox: str) -> str:
     """Binds a checkpoint to the extent the one unit was planned over (`SourceRequest.support_digest`)."""
-    return hashlib.sha256(bbox.encode("utf-8")).hexdigest()
+    return sha256_hex(bbox.encode("utf-8"))
 
 
 def _arcgis_error_message(error: Mapping[str, object]) -> str:
@@ -354,15 +360,17 @@ def content_digest(rows: Sequence[Mapping[str, object]]) -> str:
     "watermark-unchanged" is a property of THIS function being stable across two calls on an
     unchanged population, which is what the strategy's own tests exercise directly.
     """
-    canonical = "\n".join(
-        json.dumps(
+    # Default `", "`/`": "` separators and `default=str`: the frozen per-row rendering, never compacted.
+    return sha256_hex_of_lines(
+        canonical_json_text(
             {key: value for key, value in row.items() if key not in _DIGEST_EXCLUDED_COLUMNS},
             sort_keys=True,
+            separators=DEFAULT_SEPARATORS,
+            allow_nan=True,
             default=str,
         )
         for row in sorted(rows, key=lambda row: str(row["unique_fire_identifier"]))
     )
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _snapshot_payload(responses: Sequence[SourceResponse]) -> FirePerimeterSnapshot | None:
@@ -471,7 +479,7 @@ class WfigsFirePerimetersStrategy:
             )
         fetched_at = datetime.now(UTC)
         snapshot = _conform(perimeters, fetched_at)
-        body = json.dumps(
+        body = canonical_json_bytes(
             {
                 "perimeters_seen": snapshot.perimeters_seen,
                 "rows_conformed": len(snapshot.rows),
@@ -480,7 +488,9 @@ class WfigsFirePerimetersStrategy:
                 "fetched_at": fetched_at.isoformat(),
             },
             sort_keys=True,
-        ).encode("utf-8")
+            separators=DEFAULT_SEPARATORS,
+            allow_nan=True,
+        )
         return SourceResponse(request=request, body=body, retrieved_at=fetched_at, payload=snapshot)
 
     def settle(self, day: date, responses: Sequence[SourceResponse], context: DayContext) -> Settlement:  # noqa: ARG002 - the Protocol's day and context

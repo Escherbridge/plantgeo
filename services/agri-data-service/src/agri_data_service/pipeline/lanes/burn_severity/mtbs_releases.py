@@ -1,8 +1,8 @@
 """`burn-severity-direct-forward`, historical side: one governed MTBS release day per unit, every cohort paged whole.
 
 Strategy key `burn_severity.mtbs_releases` (spec S14, §7). Imports `execution.contracts`, `ingest`, `warehouse`,
-this package and `pipeline/runner/contract.py` only. The Friday current capture is NOT here and has no successor
-(CA7): `pipeline/lanes/burn_severity/AGENTS.md`, "CA7: no capture successor", says which contract surface refuses it.
+`pipeline/lanes/_shared`, this package and `pipeline/runner/contract.py` only. The Friday current capture is NOT
+here and has no successor (CA7): `pipeline/lanes/burn_severity/AGENTS.md`, "CA7: no capture successor", says which contract surface refuses it.
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ from agri_data_service.ingest.mtbs import (
     resolve_data_available_at,
     validate_release_window,
 )
+from agri_data_service.pipeline.lanes._shared.digest import COMPACT_SEPARATORS, canonical_json_bytes
 from agri_data_service.pipeline.lanes.burn_severity.products import (
     governed_release_days,
     release_days_by_ignition_year,
@@ -321,9 +322,12 @@ class MtbsReleaseStrategy:
             cohorts.append(cohort)
             bodies.append({"ignition_year": year, "count": cohort.count, "features": features})
             retrieved.append(retrieved_at)
-        body = json.dumps(
-            {"release_day": day.isoformat(), "cohorts": bodies}, sort_keys=True, separators=(",", ":"), allow_nan=False
-        ).encode("utf-8")
+        body = canonical_json_bytes(
+            {"release_day": day.isoformat(), "cohorts": bodies},
+            sort_keys=True,
+            separators=COMPACT_SEPARATORS,
+            allow_nan=False,
+        )
         return SourceResponse(
             request=request,
             body=body,

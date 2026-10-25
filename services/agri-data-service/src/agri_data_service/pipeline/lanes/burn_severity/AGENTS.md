@@ -79,11 +79,11 @@ collide with it, hence `mtbs_releases.py`.
 ### Release rows
 
 `release_rows.py` restates legacy `pipeline/direct/burn_severity/rows.py` and `support.py` (same
-columns, same MakeValid -> CollectionExtract(3) -> Multi chain, same DuckDB caps with spilling
+columns, same MakeValid -> CollectionExtract(3) -> Multi chain -- `_shared/geometry.py`'s `"always_multi"` mode -- same DuckDB caps with spilling
 disabled, same whole-day refusal on an empty repair or a Fire_ID repeated across cohorts) because no
 `pipeline/lanes/**` module may import `pipeline/direct/**`. `allowed_client_exposure` stays a hard `False`.
 Nothing structural ties the two copies, so `tests/lanes/burn_severity/test_release_rows_parity.py` pins
-them: the SQL, the three DuckDB caps and the feature-id prefix are equal, and both builders produce an
+them: the chain expression (found inside the legacy SQL), the three DuckDB caps and the feature-id prefix are equal, and both builders produce an
 equal table for the same records. **Cleanup item (7S):** move the legacy `rows.py` + `support.py` here
 and leave re-export shims (CA14), which retires the parity test; not done mid-swarm because it crosses
 the `pipeline/direct/**` boundary this slice only reads. No module here constructs `TerminalEvidence`

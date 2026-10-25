@@ -67,7 +67,6 @@ G6 prerequisite with `i-coordinator`; see `docs/lanes/drought.md` section 8 and 
 
 from __future__ import annotations
 
-import hashlib
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -77,6 +76,7 @@ import pyarrow as pa  # type: ignore[import-untyped]
 
 from agri_data_service.ingest.http import HTTP_NOT_FOUND, UpstreamHttpError
 from agri_data_service.ingest.usdm import DroughtRelease, parse_drought_release
+from agri_data_service.pipeline.lanes._shared.digest import COMPACT_SEPARATORS, canonical_json_bytes, sha256_hex
 from agri_data_service.pipeline.lanes.drought.geometry import drought_geometry_session, repair_drought_areas_to_wkb
 from agri_data_service.pipeline.lanes.drought.products import release_weeks
 from agri_data_service.pipeline.runner.contract import Absent, SourceRequest, SourceResponse, Unsettled, Written
@@ -135,7 +135,7 @@ def _source_digest(release: DroughtRelease) -> str:
     NOT make this lane's output immune to a false delta at G6 compare; see this module's docstring,
     "A second known gap".
     """
-    canonical = json.dumps(
+    canonical = canonical_json_bytes(
         {
             "valid_date": release.valid_date,
             "source_url": release.source_url,
@@ -145,9 +145,10 @@ def _source_digest(release: DroughtRelease) -> str:
             ],
         },
         sort_keys=True,
-        separators=(",", ":"),
+        separators=COMPACT_SEPARATORS,
+        allow_nan=True,
     )
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return sha256_hex(canonical)
 
 
 def _release_payload(response: SourceResponse) -> DroughtRelease | None:

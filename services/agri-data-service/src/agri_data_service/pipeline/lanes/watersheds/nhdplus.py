@@ -62,8 +62,6 @@ under the owner's cross-lane `static_freshness_contract` row once one exists.
 
 from __future__ import annotations
 
-import hashlib
-import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
@@ -72,6 +70,7 @@ import structlog
 
 from agri_data_service.ingest.policy import resolve_bounded_bbox
 from agri_data_service.ingest.watersheds import WATERSHEDS_PROPERTY_SOURCE
+from agri_data_service.pipeline.lanes._shared.digest import COMPACT_SEPARATORS, canonical_json_bytes, sha256_hex
 from agri_data_service.pipeline.lanes.watersheds.geometry import (
     convert_watershed_geometries_to_wkb,
     watersheds_geometry_session,
@@ -131,13 +130,14 @@ def _snapshot_digest_body(accepted: Sequence[WatershedRecord]) -> bytes:
             record.states,
             record.hutype,
             None if record.observed_at is None else record.observed_at.isoformat(),
-            hashlib.sha256(
-                json.dumps(record.geometry, sort_keys=True, separators=(",", ":")).encode("utf-8")
-            ).hexdigest(),
+            sha256_hex(
+                canonical_json_bytes(record.geometry, sort_keys=True, separators=COMPACT_SEPARATORS, allow_nan=True)
+            ),
         )
         for record in sorted(accepted, key=lambda record: record.huc12)
     ]
-    return json.dumps(facts, separators=(",", ":")).encode("utf-8")
+    # The outer dump never sorted keys; `sort_keys=False` keeps the frozen digest bytes, never normalise it.
+    return canonical_json_bytes(facts, sort_keys=False, separators=COMPACT_SEPARATORS, allow_nan=True)
 
 
 @dataclass(frozen=True, slots=True)

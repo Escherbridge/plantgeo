@@ -2,24 +2,22 @@
 
 The config-lane successor of the legacy `rows.py` + `support.py` pair under `pipeline/direct/burn_severity/`,
 restated rather than imported because no `pipeline/lanes/**` module may import `pipeline/direct/**`
-(`tests/test_direct_extraction_shims.py`). Same columns, same repair chain, same caps; why each holds:
-`pipeline/lanes/burn_severity/AGENTS.md`, "Release rows".
+(`tests/test_direct_extraction_shims.py`). Same columns, same repair chain (`_shared/geometry.py`'s
+`"always_multi"` mode), same caps; why each holds: `pipeline/lanes/burn_severity/AGENTS.md`, "Release rows".
 """
 
 from __future__ import annotations
 
-import json
-from contextlib import contextmanager
 from typing import TYPE_CHECKING, Final
 
-import duckdb
 import pyarrow as pa  # type: ignore[import-untyped]
 
-from agri_data_service.foundation.parquet.duckdb_extensions import extension_directory_setting
+from agri_data_service.pipeline.lanes._shared.geometry import convert_geojson_to_wkb, spatial_session
 from agri_data_service.warehouse.schemas.burn_severity import BURN_SEVERITY_SCHEMA
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping, Sequence
+    from collections.abc import Mapping, Sequence
+    from contextlib import AbstractContextManager
     from datetime import date
 
     from duckdb import DuckDBPyConnection
@@ -28,13 +26,6 @@ if TYPE_CHECKING:
 
 #: Namespaces `feature_id`: a direct row has no `geo.features.id` to cite, and a bare UUID never holds a colon.
 DIRECT_FEATURE_ID_PREFIX: Final = "direct"
-
-#: MakeValid, keep the polygonal parts, normalise to MULTIPOLYGON: the PostGIS trigger's chain, in DuckDB spatial.
-_REPAIR_SQL: Final = (
-    "SELECT fire_id, ST_AsWKB(repaired) AS wkb, ST_IsEmpty(repaired) AS is_empty FROM ("
-    "SELECT fire_id, ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_GeomFromGeoJSON(geojson)), 3)) "
-    "AS repaired FROM raw_burn_severity_features) ORDER BY fire_id"
-)
 
 #: The derivation session's resource guard, spilling disabled (`warehouse/parquet/tiers.py`).
 _REPAIR_MEMORY_LIMIT: Final = "1600MB"
@@ -51,67 +42,34 @@ def direct_feature_id(fire_id: str) -> str:
     return f"{DIRECT_FEATURE_ID_PREFIX}:{fire_id}"
 
 
-def _load_spatial(session: DuckDBPyConnection) -> None:
-    """Load `spatial` from the image's extension directory first: the runtime user has no home directory."""
-    setting = extension_directory_setting()
-    if setting is not None:
-        session.execute(setting)
-    try:
-        session.execute("LOAD spatial")
-    except duckdb.Error:
-        session.execute("INSTALL spatial")
-        session.execute("LOAD spatial")
-
-
-@contextmanager
-def geometry_session() -> Iterator[DuckDBPyConnection]:
+def geometry_session() -> AbstractContextManager[DuckDBPyConnection]:
     """An in-memory, single-use, resource-guarded DuckDB session with `spatial` loaded."""
-    session = duckdb.connect(database=":memory:")
-    try:
-        session.execute(f"SET memory_limit = '{_REPAIR_MEMORY_LIMIT}'")
-        session.execute(f"SET threads = {_REPAIR_THREAD_COUNT}")
-        session.execute(f"SET max_temp_directory_size = '{_REPAIR_TEMP_DIRECTORY_SIZE}'")
-        _load_spatial(session)
-        yield session
-    finally:
-        session.close()
+    return spatial_session(
+        memory_limit=_REPAIR_MEMORY_LIMIT,
+        threads=_REPAIR_THREAD_COUNT,
+        max_temp_directory_size=_REPAIR_TEMP_DIRECTORY_SIZE,
+    )
 
 
 def repair_geometries_to_wkb(
     session: DuckDBPyConnection, features: Sequence[tuple[str, Mapping[str, object]]]
 ) -> dict[str, bytes]:
     """Repair every fire's GeoJSON polygon to WKB in one round trip; refuse the whole day on an empty repair."""
-    if not features:
-        return {}
     fire_ids = [fire_id for fire_id, _geometry in features]
     if len(set(fire_ids)) != len(fire_ids):
         raise BurnSeverityGeometryError(
             "a burn-severity release day repeats a Fire_ID across its ignition-year cohorts; refusing rather "
             "than collapsing one fire's geometry into another's"
         )
-    frame = pa.table(
-        {
-            "fire_id": fire_ids,
-            "geojson": [
-                json.dumps(geometry, allow_nan=False, separators=(",", ":")) for _fire_id, geometry in features
-            ],
-        }
-    )
-    session.register("raw_burn_severity_features", frame)
-    try:
-        answered = session.execute(_REPAIR_SQL).fetchall()
-    finally:
-        session.unregister("raw_burn_severity_features")
+    shapes = convert_geojson_to_wkb(session, [geometry for _fire_id, geometry in features], mode="always_multi")
     repaired: dict[str, bytes] = {}
-    for fire_id, wkb, is_empty in answered:
-        if is_empty:
+    for fire_id, shape in zip(fire_ids, shapes, strict=True):
+        if shape.is_empty:
             raise BurnSeverityGeometryError(
                 f"MTBS Fire_ID {fire_id!r} repaired to an empty geometry; refusing the release day rather than "
                 "storing a MULTIPOLYGON EMPTY burned-area claim"
             )
-        repaired[str(fire_id)] = bytes(wkb)
-    if repaired.keys() != set(fire_ids):
-        raise BurnSeverityGeometryError("the DuckDB repair returned a different set of Fire_IDs than it was given")
+        repaired[str(fire_id)] = shape.wkb
     return repaired
 
 

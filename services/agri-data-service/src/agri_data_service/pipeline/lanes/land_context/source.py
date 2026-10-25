@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import time
 from dataclasses import dataclass, field
@@ -13,6 +12,8 @@ from urllib.parse import urlencode
 
 from agri_data_service.ingest.http import UpstreamBounds, fetch_bounded_text, upstream_client
 from agri_data_service.pipeline.errors import PipelineOperationError
+from agri_data_service.pipeline.lanes._shared.arcgis import ArcgisEnvelopeFault, arcgis_envelope_fault
+from agri_data_service.pipeline.lanes._shared.digest import COMPACT_SEPARATORS, canonical_json_bytes, sha256_hex
 from agri_data_service.pipeline.lanes.land_context.products import (
     ARCHIVE_ROOT,
     PRODUCTS,
@@ -33,11 +34,13 @@ BOUNDS = UpstreamBounds(max_bytes=64 * 1024 * 1024, timeout_seconds=120)
 
 
 def canonical_bytes(value: object) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    """Sorted, compact, NaN-refusing canonical JSON: the published `content_sha256` input, byte-frozen."""
+    return canonical_json_bytes(value, sort_keys=True, separators=COMPACT_SEPARATORS, allow_nan=False)
 
 
 def digest(value: bytes) -> str:
-    return hashlib.sha256(value).hexdigest()
+    """Hex SHA-256 of exact bytes."""
+    return sha256_hex(value)
 
 
 def refuse(message: str) -> PipelineOperationError:
@@ -87,11 +90,12 @@ class CaptureSession:
         self.storage.put_immutable(f"{ARCHIVE_ROOT}/blobs/{identity}", body, content_type="application/json")
         self.responses.append({"url": endpoint, "params": params, "sha256": identity, "bytes": len(body)})
         parsed = json.loads(body)
-        if not isinstance(parsed, dict) or "error" in parsed:
-            raise refuse(
-                f"ArcGIS refused {endpoint}: {parsed.get('error') if isinstance(parsed, dict) else 'not an object'}"
-            )
-        if parsed.get("exceededTransferLimit"):
+        fault = arcgis_envelope_fault(parsed)
+        if fault is ArcgisEnvelopeFault.NOT_AN_OBJECT:
+            raise refuse(f"ArcGIS refused {endpoint}: not an object")
+        if fault is ArcgisEnvelopeFault.SERVICE_ERROR:
+            raise refuse(f"ArcGIS refused {endpoint}: {parsed.get('error')}")
+        if fault is ArcgisEnvelopeFault.TRUNCATED:
             raise refuse(f"ArcGIS truncated {endpoint}; refusing a partial population")
         return parsed
 
@@ -231,7 +235,7 @@ class ReplaySession:
         if stored is None or digest(stored.payload) != receipt["sha256"] or len(stored.payload) != receipt["bytes"]:
             raise refuse("Archived BLM response hash/size verification failed")
         parsed = json.loads(stored.payload)
-        if not isinstance(parsed, dict) or "error" in parsed or parsed.get("exceededTransferLimit"):
+        if arcgis_envelope_fault(parsed) is not None:
             raise refuse("Archived BLM source response is refused or truncated")
         return parsed
 

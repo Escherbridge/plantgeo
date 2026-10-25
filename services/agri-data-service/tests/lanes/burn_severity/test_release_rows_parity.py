@@ -14,6 +14,7 @@ from typing import Final
 from agri_data_service.ingest.mtbs import MtbsBurnSeverityRecord, MtbsSeverityThresholds
 from agri_data_service.pipeline.direct.burn_severity import rows as legacy_rows
 from agri_data_service.pipeline.direct.burn_severity import support as legacy_support
+from agri_data_service.pipeline.lanes._shared.geometry import CHAIN_EXPRESSIONS
 from agri_data_service.pipeline.lanes.burn_severity import release_rows
 
 PERMANENT_FIX: Final = (
@@ -60,8 +61,8 @@ def _record(fire_id: str, geometry: dict[str, object]) -> MtbsBurnSeverityRecord
 
 
 def test_the_repair_chain_and_its_duckdb_caps_are_the_legacy_ones() -> None:
-    """The SQL and the three resource caps are equal string for string."""
-    assert release_rows._REPAIR_SQL == legacy_support._REPAIR_SQL, PERMANENT_FIX
+    """The `always_multi` chain expression sits inside the legacy SQL; the caps are equal string for string."""
+    assert CHAIN_EXPRESSIONS["always_multi"] in legacy_support._REPAIR_SQL, PERMANENT_FIX
     assert release_rows._REPAIR_MEMORY_LIMIT == legacy_support._REPAIR_MEMORY_LIMIT, PERMANENT_FIX
     assert release_rows._REPAIR_THREAD_COUNT == legacy_support._REPAIR_THREAD_COUNT, PERMANENT_FIX
     assert release_rows._REPAIR_TEMP_DIRECTORY_SIZE == legacy_support._REPAIR_TEMP_DIRECTORY_SIZE, PERMANENT_FIX

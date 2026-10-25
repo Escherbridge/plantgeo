@@ -42,14 +42,12 @@ VALID shape too would read as "changed" on a byte comparison even when nothing u
 of 99 live perimeters invalid on 2026-09-15) that made refusing every invalid shape untenable and a
 repair chain necessary in the first place.
 
-**Consolidating the two variants into one parameterised helper is a candidate for `c7-scaffold` (7S,
-plan.md "c7-scaffold"/"7.1 Slices"), not this dark slice.** 7S already owns the docs/styleguide
-rewrite once `pipeline/direct/**` is deleted whole; folding BOTH restatements (the pass-through-and-
-flag variant here and in `evacuation_zones`, and burn-severity's always-repair variant) into one
-shared, parameter-switched module under `foundation` (never under one lane's own `pipeline/lanes/
-<layer>/` package, which strategies may not import from each other -- `lanes/AGENTS.md`) belongs
-there, where the decision whether MTBS's flagging gap is itself a bug can be made with the legacy
-packages' full history in view rather than guessed at from this slice.
+**The SQL now lives once, in `pipeline/lanes/_shared/geometry.py`, as NAMED chain modes** -- this
+module runs `"pass_through_flagged"`, burn-severity and drought run `"always_multi"`, watersheds runs
+`"bare"`. The extraction moved code, not decisions: every variant is preserved byte-for-byte as its
+own mode, and whether MTBS's flagging gap is itself a bug is STILL a decision to be made with the
+legacy packages' full history in view (7S, plan.md "c7-scaffold"), never by switching a mode here.
+See `pipeline/lanes/_shared/AGENTS.md`, "Geometry".
 
 SRID IS CARRIED BY CONVENTION, NOT BY BYTES, ON BOTH SIDES -- same reasoning as the restated module:
 `ST_AsWKB` emits standard WKB with no SRID header, every row is `geometry(GEOMETRY,4326)`
@@ -63,36 +61,22 @@ unit-free by construction, so it needs neither `ST_Distance_Sphere` nor `ST_Dist
 
 from __future__ import annotations
 
-import json
-from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
 import duckdb
-import pyarrow as pa  # type: ignore[import-untyped]
 
-from agri_data_service.foundation.parquet.duckdb_extensions import extension_directory_setting
+from agri_data_service.pipeline.lanes._shared.geometry import (
+    SpatialConversionError,
+    convert_geojson_to_wkb,
+    spatial_session,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Sequence
+    from contextlib import AbstractContextManager
 
     from duckdb import DuckDBPyConnection
-
-#: The trigger's chain, restated for DuckDB and keyed by position -- see the module docstring for
-#: what each step reproduces. 3 is hardcoded because the strategy's own fetch admits only Polygon /
-#: MultiPolygon geometry (`ingest/arcgis.py::require_polygon_geometry`), and `ST_CollectionExtract`
-#: on a non-collection is a no-op in both engines.
-_REPAIR_SQL: Final = (
-    "SELECT position, ST_AsWKB(repaired) AS wkb, ST_IsValid(repaired) AS is_valid, "
-    "ST_IsEmpty(repaired) AS is_empty, NOT was_valid AS was_repaired, "
-    "CASE WHEN NOT was_valid AND ST_Area(parsed) > 0 "
-    "THEN (ST_Area(repaired) - ST_Area(parsed)) / ST_Area(parsed) END AS area_change FROM ("
-    "SELECT position, parsed, was_valid, "
-    "CASE WHEN was_valid THEN parsed ELSE ST_CollectionExtract(ST_MakeValid(parsed), 3) END AS repaired FROM ("
-    "SELECT position, parsed, ST_IsValid(parsed) AS was_valid FROM ("
-    "SELECT position, ST_GeomFromGeoJSON(geojson) AS parsed FROM raw_fire_perimeters"
-    "))) ORDER BY position"
-)
 
 #: Mirrors `pipeline/direct/fire_perimeters/support.py`'s own constants byte-for-byte -- restated as
 #: literals rather than imported for the same reason the module docstring gives, and restated rather
@@ -126,40 +110,13 @@ class RepairedPerimeterGeometry:
     area_change: float | None
 
 
-def _load_spatial(session: DuckDBPyConnection) -> None:
-    """Load DuckDB's spatial extension from the image's directory. NEVER opened any other way.
-
-    Restated from `warehouse/parquet/tiers.py::_load_spatial` (read-only to a lane strategy): the
-    runtime user's home is `/nonexistent` in both images, so LOAD/INSTALL die on "Can't find the
-    home directory" without the extension directory set first.
-    """
-    setting = extension_directory_setting()
-    if setting is not None:
-        session.execute(setting)
-    try:
-        session.execute("LOAD spatial")
-    except duckdb.Error:
-        session.execute("INSTALL spatial")
-        session.execute("LOAD spatial")
-
-
-@contextmanager
-def fire_perimeter_geometry_session() -> Iterator[DuckDBPyConnection]:
-    """Open an in-memory, single-use DuckDB session with `spatial` loaded, for repairing one snapshot.
-
-    `:memory:` and no database file, so a repair can never leave one behind or reopen a stale one.
-    Not shared across turns, because this lane publishes at most one version per turn (`static_lookup`),
-    so the `LOAD spatial` a shared session would save is paid once either way.
-    """
-    session = duckdb.connect(database=":memory:")
-    try:
-        session.execute(f"SET memory_limit = '{_CONVERT_MEMORY_LIMIT}'")
-        session.execute(f"SET threads = {_CONVERT_THREAD_COUNT}")
-        session.execute(f"SET max_temp_directory_size = '{_CONVERT_TEMP_DIRECTORY_SIZE}'")
-        _load_spatial(session)
-        yield session
-    finally:
-        session.close()
+def fire_perimeter_geometry_session() -> AbstractContextManager[DuckDBPyConnection]:
+    """An in-memory, single-use spatial session for one snapshot (`static_lookup`: at most one version a turn)."""
+    return spatial_session(
+        memory_limit=_CONVERT_MEMORY_LIMIT,
+        threads=_CONVERT_THREAD_COUNT,
+        max_temp_directory_size=_CONVERT_TEMP_DIRECTORY_SIZE,
+    )
 
 
 def repair_perimeter_geometries_to_wkb(
@@ -181,48 +138,27 @@ def repair_perimeter_geometries_to_wkb(
             f"{len(geometries)} geometries were given beside {len(identities)} identities; a refusal that "
             "cannot name its perimeter is not a refusal an operator can act on"
         )
-    frame = pa.table(
-        {
-            "position": list(range(len(geometries))),
-            # `allow_nan=False` refuses a non-finite ordinate here rather than letting DuckDB read
-            # `NaN` as a coordinate.
-            "geojson": [json.dumps(geometry, allow_nan=False, separators=(",", ":")) for geometry in geometries],
-        }
-    )
-    session.register("raw_fire_perimeters", frame)
     try:
-        rows = session.execute(_REPAIR_SQL).fetchall()
+        shapes = convert_geojson_to_wkb(session, geometries, mode="pass_through_flagged")
     except duckdb.Error as error:
         raise FirePerimeterGeometryError(
             f"DuckDB could not read one of {len(geometries)} WFIGS perimeter geometries as GeoJSON, which is "
             f"the same document PostGIS refuses with SQLSTATE 22023: {type(error).__name__}: {error}"
         ) from error
-    finally:
-        session.unregister("raw_fire_perimeters")
-    if len(rows) != len(geometries):
-        raise FirePerimeterGeometryError(
-            f"the DuckDB repair returned {len(rows)} shapes for {len(geometries)} perimeters"
-        )
+    except SpatialConversionError as error:
+        # A count/order/NULL fault would draw each perimeter on another fire's ground.
+        raise FirePerimeterGeometryError(f"the DuckDB repair answer cannot be aligned: {error}") from error
     converted: list[RepairedPerimeterGeometry] = []
-    for expected_position, (position, wkb, is_valid, is_empty, was_repaired, area_change) in enumerate(rows):
-        if int(position) != expected_position:
+    for identity, shape in zip(identities, shapes, strict=True):
+        if not shape.is_valid or shape.is_empty:
+            fault = "empty" if shape.is_empty else "invalid"
             raise FirePerimeterGeometryError(
-                f"the DuckDB repair returned position {position} where {expected_position} was ordered; "
-                "an out-of-order answer would draw each perimeter on another fire's ground"
-            )
-        if not is_valid or is_empty:
-            fault = "empty" if is_empty else "invalid"
-            raise FirePerimeterGeometryError(
-                f"WFIGS perimeter {identities[expected_position]!r} is still {fault} after ST_MakeValid and "
+                f"WFIGS perimeter {identity!r} is still {fault} after ST_MakeValid and "
                 "ST_CollectionExtract -- there is no honest shape to publish for this incident, so the whole "
                 "snapshot is refused rather than published with it missing"
             )
         converted.append(
-            RepairedPerimeterGeometry(
-                wkb=bytes(wkb),
-                repaired=bool(was_repaired),
-                area_change=None if area_change is None else float(area_change),
-            )
+            RepairedPerimeterGeometry(wkb=shape.wkb, repaired=bool(shape.was_repaired), area_change=shape.area_change)
         )
     return tuple(converted)
 
