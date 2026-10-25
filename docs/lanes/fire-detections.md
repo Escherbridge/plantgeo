@@ -75,6 +75,25 @@ is used by the FIRMS acquisition path only."* Do not conflate the two NASA
 sources. That statement describes the pre-handoff location; the credential is
 now configured on `plantgeo-job-executor`.
 
+**Auth under the config-lane runner (wave B2, `s-fire-detections`): path transport, name only,
+never a value.** `services/agri-data-service/lanes/_providers/nasa-firms.toml` declares
+`api_key_transport = "path"` with `api_key_env = "NASA_FIRMS_KEY"` — the key rides the reserved
+`{api_key}` segment of the provider's `path_template` (`/api/area/csv/{api_key}/{source}/{area}/
+{day_range}[/{start_date}]`), filled ONLY by `pipeline/runner/binding.py::ConfigProviderClient`
+from the environment variable at send time, under the endpoint's `customer_host` opt-in (FIRMS'
+one host, key mandatory, so an empty key is a named `ProviderConfigurationError`, never a silent
+fall-back). The config-lane strategy, `pipeline/lanes/fire_detections/nasa_firms.py`, never reads
+`NASA_FIRMS_KEY` and never places it: its `SourceRequest.parameters` carries only the OTHER four
+placeholders the template names — `source`, `area`, `day_range`, `start_date` — and every
+credential-free artifact this strategy or the runner produces (the report, checkpoints,
+`SourceRequest.credential_free_url`) carries the literal `{api_key}` marker instead of the value,
+stable across key rotation (`foundation/lane_config/AGENTS.md` "Path templates"; `ingest/AGENTS.md`
+"Path-segment keys"). This is the identical mechanism `drought-direct-forward.toml`'s own TODO
+names as the blocking gap for its dated USDM URL; wave B2 (`config_driven_ingestion_20260926`,
+provider-client path-segment transport) closed it for both lanes at once. This lane still ships
+`executor = "legacy"` (dark): the path-transport capability exists and is reviewed, but the G6
+cut-over that would actually dispatch it through this client is a later gate, not this slice's.
+
 **Licensing/redistribution constraint: UNVERIFIED in this repo.** No file in
 `services/agri-data-service` or `docs/` states FIRMS' redistribution terms. NASA
 Earth science data is commonly public/open with attribution, but that is general

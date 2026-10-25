@@ -1,0 +1,111 @@
+# Fire detections, NASA FIRMS VIIRS NRT constellation (track config_driven_ingestion_20260926,
+# spec S7 per-lane migration row; Phase 4 "The swarm", slice s-fire-detections). Behaviour:
+# pipeline/lanes/fire_detections/nasa_firms.py. Authoring: lanes/AGENTS.md. Source facts:
+# docs/lanes/fire-detections.md.
+#
+# MIGRATED LANE, DARK: ships executor = "legacy" (plan.md Phase 4: "All TOMLs ship
+# executor = 'legacy' (migrated) or enabled = false (new/shadow)"). The legacy executor lane of
+# this same id already runs hourly at :15 through pipeline/direct/fire_detections/forward.py
+# (docs/lanes/fire-detections.md section 2, "Executor lane fire-detections-direct-forward runs at
+# minute :15 each hour"); this TOML does not change that path -- it only prepares the lane's G6
+# cut-over to executor = "config".
+#
+# PATH-SEGMENT KEY (wave B2 unblocks this): lanes/_providers/nasa-firms.toml declares
+# api_key_transport = "path" with {api_key} reserved for the provider client alone. This lane's
+# strategy never reads NASA_FIRMS_KEY and never places it; every per-request path value (source,
+# area, day_range, start_date) travels in SourceRequest.parameters under the placeholder names
+# (foundation/lane_config/AGENTS.md "Path templates"; ingest/AGENTS.md "Path-segment keys").
+
+id = "fire-detections-direct-forward"
+kind = "ingest"
+nature = "daily_series"
+enabled = true
+executor = "legacy"
+strategy = "fire_detections.nasa_firms"
+
+[source]
+provider = "nasa-firms"
+endpoint = "area-csv-dated"
+coverage = "regional"
+iso_country_codes = ["US"]
+# "archive" because area-csv-dated is the SAME endpoint for a settled recent day and a decades-old
+# one (ingest/firms.py docstring: "there is no separate archive host"); the MODIS_SP floor below is
+# the oldest any FIRMS_HISTORY_SOURCES member offers (ingest/firms.py::FIRMS_ARCHIVE_EARLIEST_OBSERVATION).
+# This lane's forward strategy only ever requests the three live VIIRS NRT products
+# (ingest/firms.py::FIRMS_VIIRS_SOURCES); see nasa_firms.py's module docstring for why a gap-fill
+# walk into this full floor needs an availability-aware expected_units before it may enable.
+history = { capability = "archive", earliest = "2000-11-01" }
+lifecycle = "active"
+
+[schedule]
+# Matches the live legacy lane's own minute exactly (docs/lanes/fire-detections.md section 2).
+forward_cron = "15 * * * *"
+# Pre-declared (inert while gap_fill_enabled = false) for the eventual G6 flip; an off-peak hour
+# distinct from the other Phase-4 lanes' gap-fill crons (drought: "30 4 * * *").
+gap_fill_cron = "45 4 * * *"
+gap_fill_enabled = false
+gap_fill_enabled_at_gate = "G6"
+catch_up = "coalesce_latest"
+
+[days]
+# pipeline/parquet/lane_registry.py LANE_REGISTRY[FIRE_DETECTIONS_STREAM]: history_floor 2000-11-01,
+# the measured MODIS_SP floor (docs/lanes/fire-detections.md section 3: "the exact production
+# reconciliation on 2026-08-26 found four eligible MODIS_SP detections on 2000-11-01, so the held
+# minimum and declared lane floor now agree").
+floor = "2000-11-01"
+floor_basis = "pipeline/parquet/lane_registry.py LANE_REGISTRY['fire-detections']: history_floor 2000-11-01 (MODIS_SP's own published min_date); production reconciliation 2026-08-26 confirmed four held detections on that exact day"
+# Registry's own publication_lag_days=2, citing FIRMS_DAY_RANGE's rolling NRT lookback (default 2,
+# clamped 1-5; docs/lanes/fire-detections.md section 2).
+publication_lag_days = 2
+# Matches the legacy direct writer's own bounded lookback exactly: FIRE_DIRECT_DEFAULT_LOOKBACK_DAYS
+# = FIRE_DIRECT_MAX_LOOKBACK_DAYS = 5 (pipeline/direct/fire_detections/products.py). This is the
+# "refetch window" split back from the edge (pipeline/runner/AGENTS.md "Windows":
+# forward_window = [edge - absence_recheck_days + 1, edge]). Inside it, a day already written with
+# all three VIIRS NRT products present is settled and NOT re-asked again (`refuse` nature: only
+# `_owed_days()` -- missing/incomplete -- and `census.absent_days()` -- governed absences -- are
+# owed each turn; pipeline/runner/AGENTS.md "Windows", "A refuse lane owes its missing and
+# incomplete days"). A day that was a zero-detection absence WILL be re-asked for the full 5 days,
+# so it can retract to data once FIRMS starts reporting fires there -- the legacy adapter's own
+# "a complete non-empty response retracts that day's governed-absence marker"
+# (docs/lanes/fire-detections.md section 2). A SCOPED DEVIATION from the legacy hourly job, which
+# blindly re-walks every day in its window including already-complete ones: the generic runner's
+# `refuse` nature narrows that to the days genuinely still unsettled, which is strictly cheaper and
+# loses nothing a fully-answered day would have changed (see nasa_firms.py's module docstring,
+# "The forward window re-asks absences, not already-written days").
+absence_recheck_days = 5
+# Any missing constellation member, cap hit, or identity defect refuses the WHOLE day -- never a
+# partial write (pipeline/direct/fire_detections/forward.py::WRITER_CONTRACT:
+# identity_defect=REFUSE_WHOLE_RELEASE, geometry_defect=REFUSE_WHOLE_RELEASE). See nasa_firms.py.
+partial_day = "refuse"
+
+[budget]
+# Unweighted provider (nasa-firms.toml: weighted = false): the cap counts LOGICAL requests, one per
+# (day, VIIRS NRT product). 5 days (absence_recheck_days) x 3 products
+# (ingest/firms.py::FIRMS_VIIRS_SOURCES) = 15 per hourly turn, +3 headroom for a delayed-overpass day
+# straddling two turns (matching drought-direct-forward.toml's own "+3 headroom" sizing convention).
+forward_max_weighted_calls = 18
+# gap_fill ships off (S12); this is a PLANNING ESTIMATE, not a measured one, matching
+# drought-direct-forward.toml's identical caveat: one month of daily 3-product rechecks per turn
+# against the 2000-11-01..today backlog, once a future gate admits an availability-aware gap-fill walk.
+gap_fill_max_weighted_calls = 90
+# The three-member VIIRS NRT constellation, matching the legacy source's own
+# asyncio.gather(...) fan-out width (pipeline/direct/fire_detections/source.py::fetch_fire_day).
+max_concurrency = 3
+# Each unit is one small CSV (UpstreamBounds(max_bytes=16 MiB, timeout_seconds=15.0),
+# ingest/firms.py::FIRMS_BOUNDS); 300 s is ample headroom for 18 such units plus the runner's own
+# per-unit retry ladder, matching drought-direct-forward.toml's identical sizing for a similarly
+# small per-turn request count.
+turn_timeout_seconds = 300
+
+[[streams]]
+slug = "fire-detections"
+history_floor = "2000-11-01"
+complete_history_floor = "2000-11-01"
+floor_basis = "pipeline/parquet/lane_registry.py LANE_REGISTRY['fire-detections']: history_floor 2000-11-01, confirmed held by the 2026-08-26 production reconciliation (docs/lanes/fire-detections.md section 3)"
+# No volatile_columns declared (deliberately empty, not merely omitted): warehouse/schemas/
+# fire_detections.py's FIRE_DETECTIONS_SCHEMA carries no capture-time column at all -- unlike
+# drought's ingested_at or fire-perimeters' updated_at, this stream's rows() stamps nothing from the
+# clock, and `newest_observed_at` is SOURCE content (the latest FIRMS-published observedAt rolled
+# into the cell-day), not a retrieval instant. Written.source_digest is therefore left None in
+# nasa_firms.py, letting the runner digest the built rows table directly (pipeline/runner/AGENTS.md
+# "Volatile columns": "declare conservatively... a column wrongly declared volatile blinds G6 to real drift").
