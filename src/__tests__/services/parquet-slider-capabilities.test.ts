@@ -9,7 +9,7 @@ import {
   CLIMATE_FIELD_SIGNAL_IDS,
   climateFieldStreamName,
 } from "@/lib/environmental/climate-field";
-import { WATER_GAUGES_STREAM_FACT } from "@/lib/water-gauges-stream";
+import { WATER_GAUGES_STREAM, WATER_GAUGES_STREAM_FACT, WATER_GAUGES_SURFACE } from "@/lib/water-gauges-stream";
 import { UpstreamHttpError, UpstreamPayloadError, UpstreamTimeoutError } from "@/lib/server/http/bounded-upstream";
 import { ParquetPlaneContractError } from "@/lib/server/services/parquet-plane-client";
 import type {
@@ -86,7 +86,11 @@ it("offers data activities for environmental streams and non-slider source surfa
   expect(profileStream).toBeDefined();
   expect(new Set(offered).size).toBe(offered.length);
   expect([...offered].sort()).toEqual([
-    ...PARQUET_CAPABILITY_LANES, "fire-risk", "weather-forecast",
+    // Community data activities name the stable surface id, not the served stream: the G4 stream
+    // move (water-gauges -> water-gauges-daily) must not strand stored submissions, so the water
+    // capability lane maps back to WATER_GAUGES_SURFACE here (same rationale as botanical below).
+    ...PARQUET_CAPABILITY_LANES.map((lane) => (lane === WATER_GAUGES_STREAM ? WATER_GAUGES_SURFACE : lane)),
+    "fire-risk", "weather-forecast",
     // No map row or plane since 2026-10-03 (herbaria retired), but still a community data-activity
     // target so stored submissions keep validating (src/components/map/AGENTS.md §Retired herbaria layers).
     "botanical-occurrences",
@@ -967,15 +971,22 @@ describe("getParquetSliderCapabilities", () => {
     const result = await getParquetSliderCapabilities();
     const water = result.layers.find((layer) => layer.layerName === "water-gauges-daily");
 
+    // The daily stream's truth (G4, owner 2026-10-24): a 1990 day on water-gauges-daily is a real
+    // re-pulled daily mean, so it is honestly selectable and the 32-year hole is LISTED as a gap --
+    // never clamped away by the retired legacy floor, never "clustered" out. Thinner-but-honest
+    // history while the gap-fill drains is the accepted trade.
     expect(water).toMatchObject({
-      earliestObservedDate: FIRST_DAY,
+      earliestObservedDate: "1990-09-30",
       earliestRecordedObservationDate: "1990-09-30",
       earliestContinuousObservationDate: FIRST_DAY,
-      earliestObservedDateRule: "gap_clustered",
-      observedDayCount: 1_477,
-      excludedObservedDayCount: 1,
-      gapExcludedObservedDayCount: 1,
-      coverageGaps: [{ from: "2026-08-21", to: "2026-08-28" }],
+      earliestObservedDateRule: "warehouse_coverage",
+      observedDayCount: 1_478,
+      excludedObservedDayCount: 0,
+      gapExcludedObservedDayCount: 0,
+      coverageGaps: [
+        { from: "1990-10-01", to: "2022-08-04" },
+        { from: "2026-08-21", to: "2026-08-28" },
+      ],
     });
   });
 

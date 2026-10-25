@@ -8,6 +8,10 @@ export const DATA_INTERVENTION_LANES = [
   { id: "fire-perimeters", label: "Fire perimeters" },
   { id: "burn-severity", label: "Burn severity" },
   { id: "fire-risk", label: "Fire risk" },
+  // The COMMUNITY data vocabulary, stored in geo.features properties.dataDetails.lane: it stays
+  // "water-gauges" across the G4 stream move so existing submissions keep validating, exactly like
+  // the retired-herbaria "botanical-occurrences" entry. The slider parity test maps the served
+  // stream back to this id.
   { id: "water-gauges", label: "Water gauges" },
   { id: "watersheds", label: "Watersheds" },
   { id: "drought", label: "Drought" },
