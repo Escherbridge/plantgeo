@@ -98,10 +98,12 @@ A dark `daily_series` TOML and strategy beside the legacy direct writer:
 
 ### 8.1 G6 blockers (outside this slice's files)
 
-1. **Cell identities are not shipped.** `pipeline/lanes/soil/support_cells.json` (1,568 entries from
-   `agri.spatial_cell WHERE grid_name = 'sentinel2-ndvi-0p25deg' ORDER BY cell_key`) must be
-   extracted once with the legacy support read and committed. Until then `rows` raises and every
-   day is a `strategy_error`. Check the package data is included in the image (`src/` is copied
+1. **Cell identities are shipped.** `pipeline/lanes/soil/support_cells.json` (1,568 entries from
+   `agri.spatial_cell WHERE grid_name = 'sentinel2-ndvi-0p25deg' ORDER BY cell_key`) was extracted
+   read-only from production and committed 2026-10-25 (commit `7ebe29b9`); see
+   `pipeline/lanes/soil/AGENTS.md` "Cell identities" for the two facts verified at extraction (ordinal
+   collation agrees; `coverage_fraction = 1.0` for all 1,568 cells is production's real state, not an
+   extraction artifact). Still check the package data is included in the image (`src/` is copied
    whole today).
 2. **The customer host makes the key mandatory.** `[endpoints.archive]` declares a
    `customer_host`, and `ingest/provider_client.py::provider_endpoint_request` treats an empty

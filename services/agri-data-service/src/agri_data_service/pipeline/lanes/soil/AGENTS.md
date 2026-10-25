@@ -87,10 +87,22 @@ Rows carry `cell_id` and `coverage_fraction` from `agri.spatial_cell`, which a s
 
 Produce it once from the legacy support read (`pipeline/direct/soil/support.py::_SUPPORT_CELLS_SQL`,
 `WHERE grid_name = 'sentinel2-ndvi-0p25deg' ORDER BY cell_key`), `support_ordinal` = row position.
-**It is not shipped yet**: until it is, every config-written day is a `strategy_error` (the lane is
-dark, so nothing runs it). `parse_support_identity` refuses a document whose ordinals do not follow
-Python's `cell_key` sort: a Postgres collation that disagreed would also have chunked the legacy
-requests differently, so it must be loud, never reconciled.
+**Shipped 2026-10-25** (commit `7ebe29b9`): extracted read-only from production `agri.spatial_cell`
+with the legacy SQL verbatim; generation script preserved at
+`.omc/research/lane-audits/raw/soil-cells.mjs`. `parse_support_identity` refuses a document whose
+ordinals do not follow Python's `cell_key` sort: a Postgres collation that disagreed would also have
+chunked the legacy requests differently, so it must be loud, never reconciled. Two facts verified at
+extraction time:
+
+- **Ordinal collation agrees.** Postgres's `ORDER BY cell_key` order was checked equal to Python's
+  code-unit sort over the same 1,568 keys, so `parse_support_identity`'s ordinal check accepts the
+  shipped document without reconciliation.
+- **`coverage_fraction` is 1.0 for all 1,568 cells, and that is production's real state, not an
+  extraction artifact** -- a `GROUP BY coverage_fraction` on 2026-10-25 returned a single value. The
+  1,470 `VALUE_CELL_COUNT` (`open_meteo_era5_land.py`) is unrelated to coverage: it comes from the
+  Open-Meteo archive answering `null` for the 98 ocean/out-of-domain cells on an otherwise-complete
+  day (`pipeline/direct/soil/support.py` ERA5_LAND_VALUE_CELL_COUNT comment), never from a cell's own
+  coverage fraction being partial.
 
 ## The probe
 

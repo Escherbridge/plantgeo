@@ -83,54 +83,46 @@ turn_timeout_seconds = 900
 [[streams]]
 slug = "soil-field-moisture-0-7cm"
 history_floor = "2026-08-03"
-complete_history_floor = "2022-04-30"
 floor_basis = "pipeline/parquet/lane_registry.py generated soil registration: writer floor 2026-08-03 after the immutable snapshot; measured complete floor 2022-04-30"
 volatile_columns = ["selected_source_release_retrieved_at"]
 
 [[streams]]
 slug = "soil-field-moisture-7-28cm"
 history_floor = "2026-08-03"
-complete_history_floor = "2022-04-30"
 floor_basis = "pipeline/parquet/lane_registry.py generated soil registration: writer floor 2026-08-03 after the immutable snapshot; measured complete floor 2022-04-30"
 volatile_columns = ["selected_source_release_retrieved_at"]
 
 [[streams]]
 slug = "soil-field-moisture-28-100cm"
 history_floor = "2026-08-03"
-complete_history_floor = "2022-04-30"
 floor_basis = "pipeline/parquet/lane_registry.py generated soil registration: writer floor 2026-08-03 after the immutable snapshot; measured complete floor 2022-04-30"
 volatile_columns = ["selected_source_release_retrieved_at"]
 
 [[streams]]
 slug = "soil-temperature-0-to-7cm"
 history_floor = "2026-08-03"
-complete_history_floor = "2022-04-30"
 floor_basis = "pipeline/parquet/lane_registry.py generated soil registration: writer floor 2026-08-03 after the immutable snapshot; measured complete floor 2022-04-30"
 volatile_columns = ["selected_release_retrieved_at"]
 
 [[streams]]
 slug = "soil-temperature-7-to-28cm"
 history_floor = "2026-08-03"
-complete_history_floor = "2022-04-30"
 floor_basis = "pipeline/parquet/lane_registry.py generated soil registration: writer floor 2026-08-03 after the immutable snapshot; measured complete floor 2022-04-30"
 volatile_columns = ["selected_release_retrieved_at"]
 
 [[streams]]
 slug = "soil-temperature-28-to-100cm"
 history_floor = "2026-08-03"
-complete_history_floor = "2022-04-30"
 floor_basis = "pipeline/parquet/lane_registry.py generated soil registration: writer floor 2026-08-03 after the immutable snapshot; measured complete floor 2022-04-30"
 volatile_columns = ["selected_release_retrieved_at"]
 
 [[streams]]
 slug = "soil-temperature-100-to-255cm"
 history_floor = "2026-08-03"
-complete_history_floor = "2022-04-30"
 floor_basis = "pipeline/parquet/lane_registry.py generated soil registration: writer floor 2026-08-03 after the immutable snapshot; measured complete floor 2022-04-30"
 volatile_columns = ["selected_release_retrieved_at"]
 
 [[streams]]
 slug = "soil-field-vpd"
 history_floor = "2026-08-03"
-complete_history_floor = "2022-04-30"
 floor_basis = "pipeline/parquet/lane_registry.py generated soil registration: writer floor 2026-08-03 after the immutable snapshot; measured complete floor 2022-04-30"

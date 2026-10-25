@@ -181,9 +181,7 @@ class OpenMeteoEra5LandStrategy:
             day
             for day in days
             if all(
-                value is not None
-                for parameter in SOIL_SOURCE_PARAMETERS
-                for value in answer.day_values(parameter, day)
+                value is not None for parameter in SOIL_SOURCE_PARAMETERS for value in answer.day_values(parameter, day)
             )
         )
         return ProviderEdge(status="ok", window=window, valued_days=valued)
