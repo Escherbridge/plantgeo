@@ -222,7 +222,8 @@ async def test_a_first_forward_turn_writes_the_whole_extent_at_the_watermark_day
         "USGS NHDPlus HR WBDHU12",
         watermark_day,
     )
-    assert isinstance(first["geom"], bytes) and len(first["geom"]) > 0
+    assert isinstance(first["geom"], bytes)
+    assert len(first["geom"]) > 0
     # Two full walks this turn: the probe reads the watermark, then the fan-out fetches the rows.
     assert calls == [BBOX, BBOX]
 
@@ -301,4 +302,3 @@ async def test_compare_mode_runs_the_dark_shipped_lane_despite_its_legacy_execut
     assert store.tables == {}  # a compare turn is read-only
     compare_result = payload["compare_result"][STREAM]
     assert compare_result["days_unpublished"] == 1  # nothing published yet to compare against
-

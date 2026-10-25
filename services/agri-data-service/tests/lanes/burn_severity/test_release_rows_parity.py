@@ -61,12 +61,10 @@ def _record(fire_id: str, geometry: dict[str, object]) -> MtbsBurnSeverityRecord
 
 def test_the_repair_chain_and_its_duckdb_caps_are_the_legacy_ones() -> None:
     """The SQL and the three resource caps are equal string for string."""
-    assert release_rows._REPAIR_SQL == legacy_support._REPAIR_SQL, PERMANENT_FIX  # noqa: SLF001 - the pinned copies
-    assert release_rows._REPAIR_MEMORY_LIMIT == legacy_support._REPAIR_MEMORY_LIMIT, PERMANENT_FIX  # noqa: SLF001
-    assert release_rows._REPAIR_THREAD_COUNT == legacy_support._REPAIR_THREAD_COUNT, PERMANENT_FIX  # noqa: SLF001
-    assert (
-        release_rows._REPAIR_TEMP_DIRECTORY_SIZE == legacy_support._REPAIR_TEMP_DIRECTORY_SIZE  # noqa: SLF001
-    ), PERMANENT_FIX
+    assert release_rows._REPAIR_SQL == legacy_support._REPAIR_SQL, PERMANENT_FIX
+    assert release_rows._REPAIR_MEMORY_LIMIT == legacy_support._REPAIR_MEMORY_LIMIT, PERMANENT_FIX
+    assert release_rows._REPAIR_THREAD_COUNT == legacy_support._REPAIR_THREAD_COUNT, PERMANENT_FIX
+    assert release_rows._REPAIR_TEMP_DIRECTORY_SIZE == legacy_support._REPAIR_TEMP_DIRECTORY_SIZE, PERMANENT_FIX
     assert release_rows.DIRECT_FEATURE_ID_PREFIX == legacy_rows.DIRECT_FEATURE_ID_PREFIX, PERMANENT_FIX
 
 

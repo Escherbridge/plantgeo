@@ -13,7 +13,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any
 
-import httpx
 import rasterio  # type: ignore[import-untyped]
 from rasterio.warp import transform_bounds  # type: ignore[import-untyped]
 
@@ -32,6 +31,8 @@ from agri_data_service.pipeline.lanes.crop_cover.products import (
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
+
+    import httpx
 
 MAX_TILE_BYTES = 64 * 1024 * 1024
 MAX_METADATA_BYTES = 8 * 1024 * 1024
@@ -105,7 +106,7 @@ class CaptureConfig:
             raise fail("workers must be 1-8 and time budget 1-14400 seconds")
 
 
-def _get(
+def _get(  # noqa: PLR0913 - every argument is one bounded-transfer fact
     client: httpx.Client,
     url: str,
     *,

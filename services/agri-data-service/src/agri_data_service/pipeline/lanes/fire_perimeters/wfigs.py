@@ -242,7 +242,9 @@ class FirePerimeterSnapshot:
 
 def _bbox(envelope: RegionEnvelope) -> str:
     """The region's camera envelope as an ArcGIS `bbox` value, e.g. `-125,42,-111,49`."""
-    return ",".join(format_javascript_number(value) for value in (envelope.west, envelope.south, envelope.east, envelope.north))
+    return ",".join(
+        format_javascript_number(value) for value in (envelope.west, envelope.south, envelope.east, envelope.north)
+    )
 
 
 def _support_digest(bbox: str) -> str:
@@ -375,7 +377,9 @@ def _snapshot_payload(responses: Sequence[SourceResponse]) -> FirePerimeterSnaps
 class WfigsFirePerimetersStrategy:
     """One `_Current` snapshot per turn: `probe_edge` decides whether one is owed; `fetch` publishes it."""
 
-    async def probe_edge(self, client: ProviderClient, window: ProbeWindow) -> ProviderEdge:
+    async def probe_edge(  # noqa: PLR0911 - one return per honest probe classification
+        self, client: ProviderClient, window: ProbeWindow
+    ) -> ProviderEdge:
         """Read `editingInfo.lastEditDate` off the cheap layer resource; classify every way it can fail.
 
         ONE small GET, never the ~11 MB `_Current` walk: this is the probe-time saving `plan_requests`
@@ -405,22 +409,32 @@ class WfigsFirePerimetersStrategy:
         try:
             payload = json.loads(response.body)
         except ValueError as error:
-            return ProviderEdge(status="invalid", window=window, detail=f"the layer resource did not answer JSON: {error}")
+            return ProviderEdge(
+                status="invalid", window=window, detail=f"the layer resource did not answer JSON: {error}"
+            )
         if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
             message = _arcgis_error_message(payload["error"])
             if BUSY_MESSAGE_PATTERN.search(message) is not None:
                 return ProviderEdge(
-                    status="deferred", window=window, detail=f"the layer resource reported a busy ArcGIS throttle: {message}"
+                    status="deferred",
+                    window=window,
+                    detail=f"the layer resource reported a busy ArcGIS throttle: {message}",
                 )
-            return ProviderEdge(status="invalid", window=window, detail=f"the layer resource answered an error body: {message}")
+            return ProviderEdge(
+                status="invalid", window=window, detail=f"the layer resource answered an error body: {message}"
+            )
         if not isinstance(payload, dict):
             return ProviderEdge(
-                status="invalid", window=window, detail=f"the layer resource answered a non-object body: {str(payload)[:200]}"
+                status="invalid",
+                window=window,
+                detail=f"the layer resource answered a non-object body: {str(payload)[:200]}",
             )
         editing_info = payload.get("editingInfo")
         last_edit = editing_info.get("lastEditDate") if isinstance(editing_info, dict) else None
         if last_edit == _NO_TRACKED_EDITS:
-            return ProviderEdge(status="blind", window=window, detail="editingInfo.lastEditDate reports no tracked edit")
+            return ProviderEdge(
+                status="blind", window=window, detail="editingInfo.lastEditDate reports no tracked edit"
+            )
         watermark_instant = epoch_milliseconds_to_iso(last_edit)
         if watermark_instant is None:
             return ProviderEdge(
@@ -513,10 +527,10 @@ __all__ = [
     "PUBLISHED_STATUS",
     "QUERY_ENDPOINT",
     "SNAPSHOT_UNIT",
+    "STRATEGY",
     "FirePerimeterSnapshot",
     "FirePerimetersSnapshotTruncatedError",
     "GeometryRepair",
-    "STRATEGY",
     "WfigsFirePerimetersStrategy",
     "content_digest",
 ]

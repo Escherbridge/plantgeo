@@ -8,6 +8,8 @@ module docstring), so the two test files pin the two copies to stay byte-identic
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 
 from agri_data_service.pipeline.lanes.drought.geometry import (
@@ -15,7 +17,9 @@ from agri_data_service.pipeline.lanes.drought.geometry import (
     drought_geometry_session,
     repair_drought_areas_to_wkb,
 )
-from agri_data_service.pipeline.lanes.drought.source_protocol import DroughtAreaPayload
+
+if TYPE_CHECKING:
+    from agri_data_service.pipeline.lanes.drought.source_protocol import DroughtAreaPayload
 
 
 def _area(drought_intensity_class: int, geometry: dict[str, object]) -> DroughtAreaPayload:

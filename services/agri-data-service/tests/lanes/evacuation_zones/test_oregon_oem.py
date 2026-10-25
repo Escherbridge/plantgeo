@@ -205,7 +205,11 @@ async def test_an_unchanged_capture_short_circuits_before_a_second_fetch(monkeyp
     calls = 0
 
     async def fake_fetch(
-        bbox: str, *, retry_attempts: int, retry_base_seconds: float, retry_max_seconds: float
+        bbox: str,  # noqa: ARG001 - the fake mirrors fetch_evacuation_zones_snapshot's keyword signature
+        *,
+        retry_attempts: int,  # noqa: ARG001
+        retry_base_seconds: float,  # noqa: ARG001
+        retry_max_seconds: float,  # noqa: ARG001
     ) -> EvacuationZonesSource:
         nonlocal calls
         calls += 1
@@ -292,7 +296,9 @@ async def test_a_published_day_ahead_of_the_capture_is_a_soft_unavailable_not_a_
     store.publish(STREAM, future_day, evacuation_zones_table(seeded, snapshot_day=future_day))
 
     # A different population, captured "now" (TODAY) -- behind the already-published future day.
-    monkeypatch.setattr(oregon_oem, "fetch_evacuation_zones_snapshot", _fetch_returning(captured("{B}", fetched_at=NOW)))
+    monkeypatch.setattr(
+        oregon_oem, "fetch_evacuation_zones_snapshot", _fetch_returning(captured("{B}", fetched_at=NOW))
+    )
     strategy = OregonOemEvacuationZonesStrategy(store_factory=lambda: strategy_store)
 
     exit_code, report = await run(spec_for(_lane(), mode="forward"), _ports(strategy, store))
@@ -332,7 +338,11 @@ async def test_republish_current_takes_a_fresh_capture_through_a_fresh_strategy_
     calls = 0
 
     async def fake_fetch(
-        bbox: str, *, retry_attempts: int, retry_base_seconds: float, retry_max_seconds: float
+        bbox: str,  # noqa: ARG001 - the fake mirrors fetch_evacuation_zones_snapshot's keyword signature
+        *,
+        retry_attempts: int,  # noqa: ARG001
+        retry_base_seconds: float,  # noqa: ARG001
+        retry_max_seconds: float,  # noqa: ARG001
     ) -> EvacuationZonesSource:
         nonlocal calls
         calls += 1
@@ -342,9 +352,7 @@ async def test_republish_current_takes_a_fresh_capture_through_a_fresh_strategy_
     strategy = OregonOemEvacuationZonesStrategy(store_factory=lambda: strategy_store)
     assert strategy._captured is None  # fresh instance; probe_edge is never reached by this path
 
-    exit_code, report = await run(
-        spec_for(_lane(), mode="forward", republish_current=True), _ports(strategy, store)
-    )
+    exit_code, report = await run(spec_for(_lane(), mode="forward", republish_current=True), _ports(strategy, store))
 
     assert calls == 1  # fetch()'s capture-is-None branch took its own fresh capture
     assert strategy._captured is None  # probe_edge truly never ran; the cache stays untouched
@@ -355,7 +363,13 @@ async def test_republish_current_takes_a_fresh_capture_through_a_fresh_strategy_
 def _fetch_returning(source: EvacuationZonesSource) -> Callable[..., Awaitable[EvacuationZonesSource]]:
     """An async `fetch_evacuation_zones_snapshot` stand-in that always answers with `source`."""
 
-    async def fake(bbox: str, *, retry_attempts: int, retry_base_seconds: float, retry_max_seconds: float) -> EvacuationZonesSource:
+    async def fake(
+        bbox: str,  # noqa: ARG001 - the fake mirrors fetch_evacuation_zones_snapshot's keyword signature
+        *,
+        retry_attempts: int,  # noqa: ARG001
+        retry_base_seconds: float,  # noqa: ARG001
+        retry_max_seconds: float,  # noqa: ARG001
+    ) -> EvacuationZonesSource:
         return source
 
     return fake

@@ -117,7 +117,8 @@ async def test_a_page_the_host_refuses_as_oversized_halves_until_it_answers() ->
 
     assert exit_code == 0, payload
     assert world.pages_for(2018) == [(0, 50), (0, 25), (25, 25)]
-    assert store.tables[(STREAM, RELEASES[2018])].num_rows == 30
+    expected_rows_after_halving = 30  # 25 + 5: the two pages the halved walk lands
+    assert store.tables[(STREAM, RELEASES[2018])].num_rows == expected_rows_after_halving
     assert RELEASES[2018].isoformat() not in unwritten_by_day(payload)
 
 
@@ -163,7 +164,8 @@ async def test_a_cohort_ending_exactly_on_a_page_asks_one_more_page_and_still_pu
 
     assert exit_code == 0, payload
     assert world.pages_for(2018) == [(0, 50), (50, 50)]
-    assert store.tables[(STREAM, RELEASES[2018])].num_rows == 50
+    exactly_one_full_page = 50  # the cohort's own count: no trailing-empty-page row loss
+    assert store.tables[(STREAM, RELEASES[2018])].num_rows == exactly_one_full_page
 
 
 async def test_a_fire_added_between_the_count_and_the_paging_fails_loud() -> None:
@@ -193,7 +195,8 @@ async def test_a_capture_short_of_the_service_count_is_never_published() -> None
     assert short["reason"] == "strategy_error"
     assert "service counts 4" in str(short["detail"])
     assert (STREAM, RELEASES[2018]) not in store.statuses
-    assert store.tables[(STREAM, RELEASES[2020])].num_rows == 2
+    surviving_cohort_rows = 2  # the 2020 cohort untouched by 2018's short page
+    assert store.tables[(STREAM, RELEASES[2020])].num_rows == surviving_cohort_rows
 
 
 async def test_the_daily_forward_fire_owes_nothing_between_governed_releases() -> None:

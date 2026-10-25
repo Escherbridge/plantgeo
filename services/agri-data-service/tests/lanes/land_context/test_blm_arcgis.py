@@ -20,7 +20,7 @@ from typing import Final
 import pytest
 
 from agri_data_service.execution.lane_specs import LANE_SPECS
-from agri_data_service.foundation.lane_config import load_lane_configs
+from agri_data_service.foundation.lane_config import LaneConfig, LaneConfigSet, load_lane_configs
 from agri_data_service.foundation.region import load_region
 from agri_data_service.pipeline.lanes.land_context import blm_arcgis
 from agri_data_service.pipeline.lanes.land_context.products import (
@@ -53,11 +53,11 @@ class _FakeClient:
         return ProviderResponse(body=self.body, request_url=f"https://gis.blm.gov/{endpoint}", retrieved_at=NOW)
 
 
-def _lane_set():
+def _lane_set() -> LaneConfigSet:
     return load_lane_configs(REAL_LANES_DIRECTORY, load_region("pnw"))
 
 
-def _lane(lane_id: str):
+def _lane(lane_id: str) -> LaneConfig:
     configs = _lane_set()
     assert dict(configs.quarantined) == {}, dict(configs.quarantined)
     return configs.lanes[lane_id], load_region("pnw")

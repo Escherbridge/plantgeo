@@ -165,7 +165,7 @@ async def test_probe_edge_classifies_untracked_editing_as_blind() -> None:
 async def test_probe_edge_lets_a_429_propagate_to_the_runners_own_cooldown_ladder() -> None:
     """M1 (corrected after ring review): `turn.py::_spend_probe` owns Retry-After, not this function."""
 
-    def _answer(endpoint: str, params: dict[str, str], probe: bool) -> bytes:
+    def _answer(endpoint: str, params: dict[str, str], probe: bool) -> bytes:  # noqa: ARG001 - the fake mirrors ProviderClient.get
         raise SourceThrottledError("upstream request failed with status 429")
 
     with pytest.raises(SourceThrottledError):
@@ -173,7 +173,7 @@ async def test_probe_edge_lets_a_429_propagate_to_the_runners_own_cooldown_ladde
 
 
 async def test_probe_edge_lets_a_transport_failure_propagate_to_the_runners_own_ladder() -> None:
-    def _answer(endpoint: str, params: dict[str, str], probe: bool) -> bytes:
+    def _answer(endpoint: str, params: dict[str, str], probe: bool) -> bytes:  # noqa: ARG001 - the fake mirrors ProviderClient.get
         raise SourceUnavailableError("connection reset")
 
     with pytest.raises(SourceUnavailableError):

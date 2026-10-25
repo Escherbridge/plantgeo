@@ -76,8 +76,10 @@ def test_release_days_owes_nothing_outside_any_admitted_edition() -> None:
 def test_plan_requests_asks_one_catalogue_unit_per_admitted_release_day() -> None:
     """Request planning: one unit per release day, on the shared catalogue endpoint, never a tile."""
     lane, region = _shipped_lane()
-    days = STRATEGY.release_days(date(2022, 1, 1), date(2025, 12, 31))
+    days = STRATEGY.release_days(date(2022, 1, 1), date(2026, 12, 31))
     requests = STRATEGY.plan_requests(days, lane, region)
+    # Editions are CROP years (CDL_RELEASE_DATES): the 2022 edition releases 2023-01-30, the 2025
+    # edition 2026-02-27 -- a unit is never named after its release day's year.
     assert [request.unit for request in requests] == [
         "edition:2022",
         "edition:2023",
@@ -126,7 +128,8 @@ async def test_settle_writes_once_the_catalogue_names_exactly_one_matching_raste
 
     assert isinstance(settlement, Written)
     assert (settlement.expected_units, settlement.present_units) == (1, 1)
-    assert settlement.expected_unit_ids == frozenset({"edition:2023"})
+    # Release day 2023-01-30 IS the 2022 crop-year edition (CDL_RELEASE_DATES[2022]).
+    assert settlement.expected_unit_ids == frozenset({"edition:2022"})
 
 
 async def test_settle_refuses_an_ambiguous_raster_identity_rather_than_guessing() -> None:
@@ -134,7 +137,7 @@ async def test_settle_refuses_an_ambiguous_raster_identity_rather_than_guessing(
     lane, region = _shipped_lane()
     day = date(2023, 1, 30)
     [request] = STRATEGY.plan_requests([day], lane, region)
-    upstream = _catalog_upstream(years=(2022, 2023), duplicate=2023)
+    upstream = _catalog_upstream(years=(2022, 2023), duplicate=2022)
     response = await STRATEGY.fetch(request, upstream)
 
     with pytest.raises(PipelineOperationError):
@@ -152,7 +155,8 @@ async def test_rows_emits_exactly_one_edition_identity_row() -> None:
 
     assert table.num_rows == 1
     row = table.to_pylist()[0]
-    assert (row["observed_year"], row["release_day"], row["object_id"]) == (2024, day, 1000 + 2024)
+    # Release day 2024-01-31 carries the 2023 crop-year edition, so the row observes 2023.
+    assert (row["observed_year"], row["release_day"], row["object_id"]) == (2023, day, 1000 + 2023)
 
 
 def test_the_shipped_lane_is_dark_and_resolves_its_own_strategy() -> None:

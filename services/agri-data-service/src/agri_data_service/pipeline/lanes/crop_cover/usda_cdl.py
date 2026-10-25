@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 import pyarrow as pa  # type: ignore[import-untyped]
 
+from agri_data_service.pipeline.errors import PipelineOperationError
 from agri_data_service.pipeline.lanes.crop_cover.products import RELEASE_DAYS
 from agri_data_service.pipeline.lanes.crop_cover.source import canonical_bytes, catalog_record, sha256
 from agri_data_service.pipeline.runner.contract import SourceRequest, SourceResponse, Unsettled, Written
@@ -109,9 +110,7 @@ class UsdaCdlEditionIdentityStrategy:
         """Only the admitted CDL release days inside `[first, last]`; every other day is never owed."""
         return sorted(day for day in RELEASE_DAYS.values() if first <= day <= last)
 
-    def plan_requests(  # noqa: ARG002 - the Protocol's lane and region
-        self, days: Sequence[date], lane: LaneConfig, region: Region
-    ) -> list[SourceRequest]:
+    def plan_requests(self, days: Sequence[date], lane: LaneConfig, region: Region) -> list[SourceRequest]:  # noqa: ARG002
         """One catalogue-identity unit per asked release day; the runner only ever asks `release_days` values."""
         requests: list[SourceRequest] = []
         for day in sorted(set(days)):
@@ -154,7 +153,9 @@ class UsdaCdlEditionIdentityStrategy:
     def rows(self, day: date, responses: Sequence[SourceResponse]) -> pa.Table:
         """One edition-identity row; called only after `settle` already proved this day's one record."""
         year = _year_for_release_day(day)
-        record = _matching_record(year, responses)  # type: ignore[arg-type] - settle already proved `year` is not None
+        if year is None:
+            raise PipelineOperationError(f"rows() ran on {day.isoformat()}, which names no admitted CDL edition")
+        record = _matching_record(year, responses)
         return pa.table(
             {
                 "observed_year": pa.array([year], pa.int32()),

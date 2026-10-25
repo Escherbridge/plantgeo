@@ -100,6 +100,9 @@ async def _turn(
     lane: LaneConfig, world: ReleaseWorld, store: MemoryLaneStore, *, now: datetime = NOW
 ) -> tuple[int, dict[str, object]]:
     clock = ManualClock(now)
+    # The shipped lane as G6 will flip it: `executor = "config"`, so a real (non-compare) turn may run
+    # past turn.py's dark-lane guard.
+    lane = lane.model_copy(update={"executor": "config"})
     ports = ports_for(resolve_strategy(lane), store, upstream=ScriptedUpstream(answer=world.answer), clock=clock)
     spec = spec_for(lane)
     return await run(spec, ports)
@@ -166,8 +169,8 @@ def test_the_shipped_lane_is_dark_release_series_on_legacy_with_the_narrowed_cro
     assert lane.schedule.gap_fill_enabled_at_gate == "G6"
     assert lane.days is not None
     assert lane.days.floor == date(2022, 8, 9)
-    assert lane.days.publication_lag_days == 4
-    assert lane.days.absence_recheck_days == 56
+    assert lane.days.publication_lag_days == 4  # noqa: PLR2004 - S18 literal registration pin
+    assert lane.days.absence_recheck_days == 56  # noqa: PLR2004 - legacy DROUGHT_ABSENCE_RECHECK_WEEKS * 7
     assert lane.days.partial_day == "refuse"
     assert [stream.slug for stream in lane.streams] == [STREAM]
 

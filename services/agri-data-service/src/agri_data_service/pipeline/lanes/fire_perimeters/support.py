@@ -200,7 +200,9 @@ def repair_perimeter_geometries_to_wkb(
     finally:
         session.unregister("raw_fire_perimeters")
     if len(rows) != len(geometries):
-        raise FirePerimeterGeometryError(f"the DuckDB repair returned {len(rows)} shapes for {len(geometries)} perimeters")
+        raise FirePerimeterGeometryError(
+            f"the DuckDB repair returned {len(rows)} shapes for {len(geometries)} perimeters"
+        )
     converted: list[RepairedPerimeterGeometry] = []
     for expected_position, (position, wkb, is_valid, is_empty, was_repaired, area_change) in enumerate(rows):
         if int(position) != expected_position:

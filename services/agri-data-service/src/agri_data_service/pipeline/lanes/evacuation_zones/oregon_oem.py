@@ -55,7 +55,8 @@ spell already recorded), never a blind one. `forward.py` already made this same 
 ## How the quiet-day and ladder-absence semantics land on THIS runner's absence machinery
 
 `settle()` returns `Absent(reason=..., proof=...)` when the capture holds zero areas; it does nothing
-else. The ladder write (every zoom tier, coarse rungs first, base last) is `writer.py::ObjectStoreLaneWriter.write_absence`
+else. The ladder write (every zoom tier, coarse rungs first, base last) is
+`writer.py::ObjectStoreLaneWriter.write_absence`
 -> `pipeline/parquet/derivation.py::govern_day_absent`, not this package -- the generic runner writes
 the WHOLE ladder for every `Absent` settlement, so this strategy needs no `_ABSENCE_LADDER_TIERS`
 loop of its own (contrast `pipeline/direct/evacuation_zones/adapter.py::_govern_quiet_day`, which has

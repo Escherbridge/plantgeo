@@ -426,3 +426,28 @@ follows a redirect (`ingest/AGENTS.md`, provider_client.py). `tests/runner/test_
 drives the real client through `main` over `httpx.MockTransport`: the key reaches the customer
 host and nothing else (report, stderr, `request_url`, checkpoints), and an empty or rejected key
 exits 78.
+
+## Static freshness is DAY-GRAIN, and three lanes documented the same wall (consolidated 2026-10-25)
+
+`turn.py::_static_forward` decides currency by `served_day >= watermark_day` -- a bare `date`
+comparison. Three Phase 4 slices hit the consequence independently and each wrote it up in its own
+docs before this section consolidated them:
+
+- **fire-perimeters** (hourly active-fire updates): at most ONE version per UTC day serves; later
+  same-day edits are invisible until rollover (`pipeline/lanes/fire_perimeters/wfigs.py` module
+  docstring; its H1 pinning test).
+- **evacuation-zones** (life-safety): a same-UTC-day stand-down is masked until rollover
+  (`pipeline/lanes/evacuation_zones/oregon_oem.py`; `docs/lanes/evacuation-zones.md` §8.5; its
+  masking test).
+- **watersheds**: same-day revisions are unreachable; legacy's bracketed-watermark detection has no
+  runner equivalent (`docs/lanes/watersheds.md` §8).
+
+Related grain limits found by the same reviews: `_compare`/`canonical_digest` hash the WHOLE
+conformed table (volatile columns like `ingested_at`/`updated_at` always delta, so G6's compare
+cannot run for migrated lanes as-is), and `PER_UNIT_FETCH_CAP_SECONDS` is a module constant that
+cancels legitimate multi-minute walk-shaped units. The decision bundle (instant-resolution static
+freshness, volatile-column-aware compare, per-lane unit-cap override, provider path-segment
+transport, writer origin hook) lives in the track metadata's `owner_go_steps` --
+`static_freshness_contract`, `path_segment_transport`, `CQ-9` -- and is an OWNER decision before
+G6. Strategies must not paper over the grain locally; pin it with a masking test and cite this
+section, as the three lanes above do.

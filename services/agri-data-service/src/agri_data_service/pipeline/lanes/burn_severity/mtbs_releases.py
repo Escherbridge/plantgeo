@@ -148,8 +148,8 @@ async def _query(client: ProviderClient, parameters: Parameters) -> tuple[dict[s
     response = await client.get(ENDPOINT, dict(parameters))
     try:
         payload = json.loads(response.body)
-    except ValueError as error:
-        raise MtbsTruncatedCaptureError("MTBS answered a body that is not JSON") from error
+    except ValueError as decode_error:
+        raise MtbsTruncatedCaptureError("MTBS answered a body that is not JSON") from decode_error
     if not isinstance(payload, dict):
         raise MtbsTruncatedCaptureError("MTBS answered a JSON document that is not an object")
     error = payload.get("error")
@@ -172,9 +172,7 @@ async def _page(
     """
     while True:
         try:
-            payload, response = await _query(
-                client, page_parameters(ignition_year, envelope, offset=offset, size=size)
-            )
+            payload, response = await _query(client, page_parameters(ignition_year, envelope, offset=offset, size=size))
         except (OversizedPageError, UpstreamPayloadTooLargeError) as error:
             if size > MIN_PAGE_SIZE:
                 size = max(MIN_PAGE_SIZE, size // 2)

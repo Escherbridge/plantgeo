@@ -9,7 +9,7 @@
         "tests",
         "scripts"
       ],
-      "duration_seconds": 0.056,
+      "duration_seconds": 0.494,
       "name": "format",
       "status": "pass"
     },
@@ -21,7 +21,7 @@
         "tests",
         "scripts"
       ],
-      "duration_seconds": 0.055,
+      "duration_seconds": 0.063,
       "name": "lint",
       "status": "pass"
     },
@@ -31,7 +31,7 @@
         "src",
         "scripts"
       ],
-      "duration_seconds": 1.348,
+      "duration_seconds": 1.664,
       "name": "mypy",
       "status": "pass"
     },
@@ -40,19 +40,14 @@
         "pytest",
         "-q"
       ],
-      "duration_seconds": 0.0,
+      "duration_seconds": 318.492,
       "name": "pytest",
-      "status": "waived",
-      "waiver": {
-        "operator": "owner:atoozmc",
-        "reason": "2026-10-25 same owner go ('skip tests' 2026-10-24, third use, ratification pending): suite 6925/6927 green, both errors the recurring WinError 10055 socket-buffer class at loop setup (log .tmp/check-freeze.log); structural fix (session-scoped pytest-asyncio loops) queued",
-        "waived_at": "2026-10-25T02:08:15.080596Z"
-      }
+      "status": "pass"
     }
   ],
   "digest_domain": "plantgeo.agri-data-service.quality-receipt.v2",
-  "digest_file_count": 1207,
-  "generated_at": "2026-10-25T02:08:18.829968Z",
+  "digest_file_count": 1248,
+  "generated_at": "2026-10-25T03:34:41.862102Z",
   "schema_version": 3,
   "tools": {
     "mypy": "mypy 2.3.0 (compiled: yes)",
@@ -61,5 +56,5 @@
     "ruff": "ruff 0.15.22",
     "uv": "uv 0.9.18 (0cee76417 2025-12-16)"
   },
-  "tree_digest": "sha256:87176d70c3b3f6f474dd700f60a6423a81031a9271561cba9e001a945b5736aa"
+  "tree_digest": "sha256:08334cef6fc3698b2bdda9e727f333f08f2d1826018b36999780dab98dc8c050"
 }
