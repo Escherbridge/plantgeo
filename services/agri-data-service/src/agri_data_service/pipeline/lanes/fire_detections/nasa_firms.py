@@ -96,6 +96,13 @@ complete, not a loud refusal -- worse, not better, and exactly the failure mode
 `products_covering_span` into this strategy (or an equivalent `SourceCoverageStrategy`) is the
 prerequisite for ever flipping `gap_fill_enabled` here; tracked, not fixed, in this slice.
 
+The pinned constellation has a FORWARD-path cost too (ring review, 2026-10-25): if NASA retires or
+renames one of the three NRT tokens, that product fails every fetch, and on a `refuse` lane a day
+with any failed unit never reaches `settle()` -- every day is held `upstream_unavailable` forever,
+indistinguishable from a transient 503. The same availability-aware fan-out (or an alert on a
+persistent single-product failure streak) is therefore a G6 prerequisite for the FORWARD path as
+well, not only for gap-fill.
+
 **The 10,000-record cap, surfaced as an explicit UNWRITTEN day, never a silent partial.**
 `docs/lanes/fire-detections.md` section 5.1 ("THE HEADLINE TRAP") documents `INGEST_MAX_SOURCE_
 RECORDS` defaulting to 10,000 and the legacy ROLLING forward job silently keeping only the newest
@@ -166,6 +173,7 @@ if TYPE_CHECKING:
 
     from agri_data_service.foundation.lane_config.models import LaneConfig
     from agri_data_service.foundation.region.manifest import Region
+    from agri_data_service.ingest.records import FeatureWrite
     from agri_data_service.pipeline.runner.contract import DayContext, ProviderClient, Settlement
 
 #: Matches `lanes/_providers/nasa-firms.toml`'s `[endpoints.area-csv-dated]` declaration.
@@ -267,13 +275,15 @@ class NasaFirmsForwardStrategy:
         """A missing member or a capped response never settles as complete; zero-of-three is an immediate absence."""
         if not responses:
             return Unsettled("upstream_unavailable", f"no VIIRS NRT product answered for {day.isoformat()}")
-        capped = sorted({_product_of(response) for response in responses if _record_count(response) >= FIRMS_RESPONSE_RECORD_CAP})
+        capped = sorted(
+            {_product_of(response) for response in responses if _record_count(response) >= FIRMS_RESPONSE_RECORD_CAP}
+        )
         if capped:
             return Unsettled(
                 "unsettled",
                 f"{', '.join(capped)} returned >= {FIRMS_RESPONSE_RECORD_CAP} record(s) for {day.isoformat()}; a "
                 "response at FIRMS' own silent per-request truncation point can never be proven complete -- see "
-                "this module's docstring (\"The 10,000-record cap\") and docs/lanes/fire-detections.md section 5.1",
+                'this module\'s docstring ("The 10,000-record cap") and docs/lanes/fire-detections.md section 5.1',
             )
         present_units = len(responses)
         expected_units = len(FIRMS_VIIRS_SOURCES)
@@ -293,7 +303,7 @@ class NasaFirmsForwardStrategy:
 
     def rows(self, day: date, responses: Sequence[SourceResponse]) -> pa.Table:
         """One row per valued 0.005-degree cell; any identity or geometry defect refuses the whole day."""
-        writes: dict[str, object] = {}
+        writes: dict[str, FeatureWrite] = {}
         rejected = 0
         for response in responses:
             features = response.payload if isinstance(response.payload, list) else []
@@ -319,7 +329,8 @@ class NasaFirmsForwardStrategy:
             geometry = write.properties.get("geometry")
             coordinates = geometry.get("coordinates") if isinstance(geometry, Mapping) else None
             if not isinstance(coordinates, list) or len(coordinates) < _POINT_COORDINATE_COUNT:
-                raise ValueError(f"FIRMS detection {write.external_id!r} has no point coordinates for {day.isoformat()}")
+                msg = f"FIRMS detection {write.external_id!r} has no point coordinates for {day.isoformat()}"
+                raise ValueError(msg)
             longitude = _finite_decimal(coordinates[0], field="longitude", external_id=write.external_id)
             latitude = _finite_decimal(coordinates[1], field="latitude", external_id=write.external_id)
             cell = (_floor_cell(longitude), _floor_cell(latitude))
@@ -334,8 +345,7 @@ class NasaFirmsForwardStrategy:
                 held.frp_observation_count += 1
             if write.properties.get("confidenceNormalized") == "high":
                 held.high_confidence_detection_count += 1
-            if observed_at > held.newest_observed_at:
-                held.newest_observed_at = observed_at
+            held.newest_observed_at = max(held.newest_observed_at, observed_at)
         table_rows = [
             {
                 "cell_longitude": float(longitude),

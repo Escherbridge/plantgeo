@@ -16,11 +16,25 @@ from agri_data_service.foundation.lane_config import load_lane_configs
 from agri_data_service.foundation.region import load_region
 from agri_data_service.ingest.firms import FIRMS_VIIRS_SOURCES
 from agri_data_service.ingest.policy import PACIFIC_NORTHWEST_COVERAGE_BBOX
-from agri_data_service.pipeline.lanes.fire_detections.nasa_firms import FIRMS_RESPONSE_RECORD_CAP, FORWARD_ENDPOINT, STRATEGY
+from agri_data_service.pipeline.lanes.fire_detections.nasa_firms import (
+    FIRMS_RESPONSE_RECORD_CAP,
+    FORWARD_ENDPOINT,
+    STRATEGY,
+)
 from agri_data_service.pipeline.runner.contract import SourceUnavailableError
 from agri_data_service.pipeline.runner.resolve import resolve_strategy
 from tests.lane_config.builders import REAL_LANES_DIRECTORY
-from tests.runner.fakes import NOW, TODAY, ManualClock, MemoryLaneStore, ScriptedUpstream, ports_for, run, spec_for, unwritten_by_day
+from tests.runner.fakes import (
+    NOW,
+    TODAY,
+    ManualClock,
+    MemoryLaneStore,
+    ScriptedUpstream,
+    ports_for,
+    run,
+    spec_for,
+    unwritten_by_day,
+)
 
 if TYPE_CHECKING:
     from agri_data_service.foundation.lane_config.models import LaneConfig
@@ -35,7 +49,12 @@ WINDOW_FIRST = EDGE - timedelta(days=4)
 
 
 def _row(
-    *, lat: float = 45.1, lon: float = -120.2, satellite: str = "N20", acq_date: str = "2026-09-18", acq_time: str = "0512"
+    *,
+    lat: float = 45.1,
+    lon: float = -120.2,
+    satellite: str = "N20",
+    acq_date: str = "2026-09-18",
+    acq_time: str = "0512",
 ) -> str:
     return f"{lat},{lon},330.5,n,12.3,{satellite},{acq_date},{acq_time}"
 
@@ -49,6 +68,7 @@ class FirmsWorld:
 
     def __init__(self) -> None:
         self.rows: dict[tuple[str, str], list[str]] = {}
+        self.asked: list[tuple[str, str]] = []
 
     def publish(self, day: date, product: str, rows: list[str]) -> None:
         self.rows[(day.isoformat(), product)] = rows
@@ -56,6 +76,7 @@ class FirmsWorld:
     def answer(self, endpoint: str, parameters: dict[str, str], probe: bool) -> bytes:  # noqa: ARG002 - the ScriptedUpstream shape
         assert endpoint == FORWARD_ENDPOINT
         key = (parameters["start_date"], parameters["source"])
+        self.asked.append(key)
         return _csv(self.rows.get(key, []))
 
 
@@ -214,6 +235,30 @@ async def test_an_initially_absent_day_is_re_asked_and_its_absence_retracted(
 
 
 @pytest.mark.asyncio
+async def test_an_already_written_day_is_never_re_asked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A `refuse` lane's forward fan-out is owed days plus absences only (`census.owed_days()`): once a day
+    holds data, no later turn asks FIRMS for it again -- late NRT revisions are deliberately out of scope."""
+    store, world = MemoryLaneStore(), FirmsWorld()
+    written_day = EDGE
+    world.publish(written_day, "VIIRS_SNPP_NRT", [_row(lat=45.1, lon=-120.2, satellite="SNPP")])
+    lane = _config_lane()
+
+    first_exit, _first_report = await _turn(lane, store, world, monkeypatch)
+    assert first_exit == 0
+    assert store.status(STREAM, written_day) == "data"
+    asked_before = [key for key in world.asked if key[0] == written_day.isoformat()]
+    assert asked_before, "the first turn must actually have asked for the day it wrote"
+
+    second_exit, _second_report = await _turn(lane, store, world, monkeypatch)
+
+    assert second_exit == 0
+    asked_after = [key for key in world.asked if key[0] == written_day.isoformat()]
+    assert asked_after == asked_before  # not one additional request for the written day
+
+
+@pytest.mark.asyncio
 async def test_a_response_at_the_10000_record_cap_is_never_written_as_if_complete(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -242,7 +287,7 @@ async def test_a_missing_constellation_member_refuses_the_whole_day_never_a_quie
     world.publish(EDGE, "VIIRS_SNPP_NRT", [_row(satellite="SNPP")])
     down_product = "VIIRS_NOAA21_NRT"
 
-    def flaky_answer(endpoint: str, parameters: dict[str, str], probe: bool) -> bytes:  # noqa: ARG001 - the ScriptedUpstream shape
+    def flaky_answer(endpoint: str, parameters: dict[str, str], probe: bool) -> bytes:
         if parameters["start_date"] == EDGE.isoformat() and parameters["source"] == down_product:
             raise SourceUnavailableError("upstream 503")
         return world.answer(endpoint, parameters, probe)

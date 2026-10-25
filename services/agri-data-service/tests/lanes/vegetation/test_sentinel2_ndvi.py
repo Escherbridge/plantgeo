@@ -321,7 +321,13 @@ async def test_a_window_with_no_matching_scene_walks_nothing(monkeypatch: pytest
     exit_code, payload = await _turn(_config_lane(), MemoryLaneStore(), ScriptedUpstream(answer=_stac_probe(None)))
 
     assert exit_code == 0, payload
-    assert payload["probe_status"] == "blind"
+    # The REPORT carries the strategy's raw status ("ok"); "blind" is the runner's effective
+    # derivation (windows.py::effective_probe_status), observable as every day held probe_blind.
+    assert payload["probe_status"] == "ok"
+    assert payload["days_written"] == 0
+    held = unwritten_by_day(payload)
+    assert held, "a blind window must hold its days, not drop them"
+    assert all("probe_blind" in str(entry) for entry in held.values())
     assert asked == []
 
 

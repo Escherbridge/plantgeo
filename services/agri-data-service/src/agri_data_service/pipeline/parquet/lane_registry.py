@@ -1072,7 +1072,7 @@ _HAND_WRITTEN_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
         history_floor=date(2026, 8, 1),
         complete_history_floor=_MEASURED_COMPLETE_HISTORY_FLOORS[WEATHER_OBSERVATIONS_STREAM],
         complete_floor_basis=_complete_floor_basis(WEATHER_OBSERVATIONS_STREAM, date(2026, 8, 1)),
-        publication_lag_days=2,
+        publication_lag_days=1,
         nature="daily_series",
         floor_basis=(
             "NATURE daily_series, SOURCE-DIRECT since 2026-09-07, NOT forecastable: no "
@@ -1083,8 +1083,10 @@ _HAND_WRITTEN_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
             "SIGNAL stream, already registered above. The producer THIS lane exports -- ingest/open_meteo.py's "
             "WEATHER_LAYER current-conditions poll into geo.features -- has no contract content at all: no "
             "declared cadence, horizon, historical depth or known-gaps list. 2026-08-01 is a conservative "
-            "recent floor chosen so a wrong guess costs a few dozen phantom gap-days instead of thousands, and "
-            "lag 2 is borrowed from the hourly ingest-all tick. WRITE THAT HALF OF THE CONTRACT, then measure "
+            "recent floor chosen so a wrong guess costs a few dozen phantom gap-days instead of thousands. "
+            "Lag 1 (was 2, borrowed from the hourly ingest-all tick) is the O1-clamped config-runner edge: "
+            "windows.py::candidate_edge pins every write_and_recheck lane to yesterday UTC, and the dark TOML "
+            "mirrors it (S18, amended together 2026-10-25). WRITE THAT HALF OF THE CONTRACT, then measure "
             "min(geo.feature_observation_day) for this layer and replace both numbers -- BEFORE geo.features "
             "is dropped, because that measurement is only available while the table exists and this lane no "
             "longer reads it for anything else."

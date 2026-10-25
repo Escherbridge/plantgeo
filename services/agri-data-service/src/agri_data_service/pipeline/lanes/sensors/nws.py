@@ -131,7 +131,7 @@ def day_source_digest(rows: Sequence[Mapping[str, object]]) -> str:
         canonical_json_text(dict(row), sort_keys=True, separators=COMPACT_SEPARATORS, allow_nan=True, default=str)
         for row in sorted(
             rows,
-            key=lambda row: (str(row["sensor_id"]), row["observed_day"].isoformat(), str(row["measurement_name"])),  # type: ignore[union-attr]
+            key=lambda row: (str(row["sensor_id"]), str(row["observed_day"]), str(row["measurement_name"])),
         )
     )
 

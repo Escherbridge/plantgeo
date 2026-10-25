@@ -248,6 +248,15 @@ continuous field sample.
 
 ## 5. Known gaps and traps
 
+> **Config-lane cap difference (owner decision before G6).** The config strategy
+> (`pipeline/lanes/fire_detections/nasa_firms.py`) holds a possibly-truncated day as `Unsettled` at
+> **10,000 records per product per day** — stricter than the legacy writer's 50,000 **merged**
+> ceiling (`pipeline/direct/fire_detections/products.py:23`). A historic mega-fire day legacy would
+> have written can stay permanently unsettled post-cutover (re-asked every turn, never written,
+> no alert). Ring review 2026-10-25 judged the failure direction an improvement (legacy CRASHES the
+> whole hourly turn in a retry loop at its cap); the per-product threshold itself still needs an
+> owner call.
+
 ### 5.1 THE HEADLINE TRAP — the 10,000-record cap drops data silently, and looks identical to a healthy no-op
 
 **Mechanics.** `INGEST_MAX_SOURCE_RECORDS` defaults to **10,000** (min 1,000,

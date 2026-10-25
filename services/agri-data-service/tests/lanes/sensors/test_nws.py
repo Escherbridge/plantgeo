@@ -266,6 +266,6 @@ async def test_a_malformed_roster_page_refuses_every_day_as_a_strategy_error_and
     payload = await _turn(store, nws, monkeypatch)
 
     unwritten = unwritten_by_day(payload)
-    assert {unwritten[day.isoformat()]["outcome"] for day in WINDOW} == {"strategy_error"}
+    assert {unwritten[day.isoformat()]["reason"] for day in WINDOW} == {"strategy_error"}
     assert nws.polled == []
     assert store.writes() == []

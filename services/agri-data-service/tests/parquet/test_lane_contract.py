@@ -605,7 +605,8 @@ LITERAL_REGISTRATION_FACTS: Final[dict[str, str]] = {
     "water-gauges": "daily_series|2026-05-24|1990-09-30|2|1|0|water_gauges|2026-09-01|1ea91c8f|0e73d705",
     "watersheds": "static_lookup|2026-08-07|2026-08-07|0|1|0|-|-|6fffdb1e|6fffdb1e",
     "weather-forecast": "release_series|2026-09-18|2026-09-18|0|1|0|-|-|94a50fab|94a50fab",
-    "weather-observations": "daily_series|2026-08-01|2018-01-01|2|1|0|-|-|25d1cffc|70a9ca37",
+    # lag 2->1: S18 amendment with the dark TOML, 2026-10-25 (O1-clamped edge).
+    "weather-observations": "daily_series|2026-08-01|2018-01-01|1|1|0|-|-|0010692c|70a9ca37",
 }
 
 
