@@ -24,9 +24,13 @@ entrypoint today; reviving one means removing its entry here and wiring it throu
 factory. `execution/geospatial_capture.py`, `ingest/mtbs.py` (which also keeps its own separate
 `USER_AGENT`, unaffected by `default_user_agent`) and `scripts/capture_sensor_evidence.py` are
 operator-only tools run by hand rather than by a scheduled lane.
-`pipeline/lanes/crop_cover/source.py` (moved by p4-extract) is SHADOW; `s-crop-cover` (a
-different track) moves it. Landed 2026-09-27, the day before this slice (git log `56467bd4`), and not
-in the design record: `pipeline/direct/soil_properties/{capture,maintain,verify}.py` and
+`pipeline/lanes/crop_cover/source.py` (moved by p4-extract) was SHADOW until `s-crop-cover` --
+this SAME track's own Phase 4 swarm slice, not a different one -- moved its two raw `httpx.Client`
+sends onto `upstream_sync_client` and removed this entry; it is now ordinary metered code, exactly
+the shim-reappearing residual the `burn_severity/capture.py` note below guards against.
+
+Landed 2026-09-27, the day before this slice (git log `56467bd4`), and not in the design record:
+`pipeline/direct/soil_properties/{capture,maintain,verify}.py` and
 `pipeline/direct/soil_survey/__main__.py` sit outside this partition's owns/reads-only list
 (`o3-ingest-meter`'s note field: "FORBIDDEN: every other ingest/* file and pipeline/** except
 burn_severity/capture.py"), so this slice cannot wire them through `upstream_sync_client`/
@@ -58,7 +62,6 @@ ALLOWED_SRC_FILE_COUNTS: Final[dict[str, int]] = {
     "execution/weather_observations/nasa_power.py": 1,
     "execution/geospatial_capture.py": 1,
     "ingest/mtbs.py": 1,
-    "pipeline/lanes/crop_cover/source.py": 2,
     "pipeline/direct/soil_properties/capture.py": 1,
     "pipeline/direct/soil_properties/maintain.py": 1,
     "pipeline/direct/soil_properties/verify.py": 1,

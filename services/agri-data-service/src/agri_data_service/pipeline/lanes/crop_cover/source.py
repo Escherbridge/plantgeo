@@ -17,6 +17,7 @@ import httpx
 import rasterio  # type: ignore[import-untyped]
 from rasterio.warp import transform_bounds  # type: ignore[import-untyped]
 
+from agri_data_service.ingest.http import upstream_sync_client
 from agri_data_service.pipeline.errors import PipelineOperationError
 from agri_data_service.pipeline.lanes.crop_cover.products import (
     BASE_CELL_METRES,
@@ -42,6 +43,10 @@ MAX_CAPTURE_WORKERS = 8
 MAX_CAPTURE_SECONDS = 14400
 PROJECTED_EPSG = 5070
 PIXEL_SUPPORT_TOLERANCE = 1e-6
+# Timeouts passed per-request to `upstream_sync_client`'s client (GL-2 metered, construction-time
+# kwargs only): a tile export is one large transfer; the catalogue/legend/metadata sends are small.
+TILE_TIMEOUT_SECONDS = 120.0
+METADATA_TIMEOUT_SECONDS = 60.0
 
 
 class CaptureByteBudget:
@@ -106,12 +111,13 @@ def _get(
     *,
     params: dict[str, str] | None,
     cap: int,
+    timeout: float,
     account: Callable[[int], None] | None = None,
 ) -> bytes:
     """Bound decoded HTTP bytes and refuse error documents masquerading as source pixels."""
     chunks: list[bytes] = []
     total = 0
-    with client.stream("GET", url, params=params) as response:
+    with client.stream("GET", url, params=params, timeout=timeout) as response:
         response.raise_for_status()
         for chunk in response.iter_bytes():
             total += len(chunk)
@@ -123,8 +129,8 @@ def _get(
     return b"".join(chunks)
 
 
-def _json_get(client: httpx.Client, suffix: str, **params: str) -> tuple[dict[str, Any], bytes]:
-    raw = _get(client, CDL_SERVICE + suffix, params={"f": "json", **params}, cap=MAX_METADATA_BYTES)
+def _json_get(client: httpx.Client, suffix: str, *, timeout: float, **params: str) -> tuple[dict[str, Any], bytes]:
+    raw = _get(client, CDL_SERVICE + suffix, params={"f": "json", **params}, cap=MAX_METADATA_BYTES, timeout=timeout)
     value = json.loads(raw)
     if not isinstance(value, dict) or "error" in value:
         raise fail(f"USDA refused metadata operation {suffix}: {value}")
@@ -223,8 +229,15 @@ def _capture_tile(
         if path.stat().st_size > MAX_TILE_BYTES or sha256(path.read_bytes()) != previous["sha256"]:
             raise fail(f"Cached tile failed its byte receipt: {path.name}")
     else:
-        with httpx.Client(timeout=120, follow_redirects=False) as client:
-            raw = _get(client, CDL_SERVICE + "/exportImage", params=params, cap=MAX_TILE_BYTES, account=budget.account)
+        with upstream_sync_client(follow_redirects=False) as client:
+            raw = _get(
+                client,
+                CDL_SERVICE + "/exportImage",
+                params=params,
+                cap=MAX_TILE_BYTES,
+                timeout=TILE_TIMEOUT_SECONDS,
+                account=budget.account,
+            )
         temporary = path.with_suffix(".partial")
         temporary.write_bytes(raw)
         verify_tiff(temporary, bounds, config.resolution_m)
@@ -267,13 +280,20 @@ def capture(config: CaptureConfig) -> Path:
         started_at = datetime.now(UTC)
         journal_path.write_bytes(canonical_bytes({"identity": identity, "started_at": started_at.isoformat()}))
     deadline = time.monotonic() + config.time_budget_seconds
-    with httpx.Client(timeout=60, follow_redirects=False) as client:
+    with upstream_sync_client(follow_redirects=False) as client:
         catalog, catalog_bytes = _json_get(
-            client, "/query", where="1=1", outFields="OBJECTID,Name", returnGeometry="false"
+            client,
+            "/query",
+            timeout=METADATA_TIMEOUT_SECONDS,
+            where="1=1",
+            outFields="OBJECTID,Name",
+            returnGeometry="false",
         )
         record = catalog_record(catalog, config.year)
-        legend, legend_bytes = _json_get(client, "/rasterAttributeTable")
-        metadata = _get(client, metadata_url(config.year), params=None, cap=MAX_METADATA_BYTES)
+        legend, legend_bytes = _json_get(client, "/rasterAttributeTable", timeout=METADATA_TIMEOUT_SECONDS)
+        metadata = _get(
+            client, metadata_url(config.year), params=None, cap=MAX_METADATA_BYTES, timeout=METADATA_TIMEOUT_SECONDS
+        )
     match = re.search(rb'<meta\s+name="dc.date"\s+content="(\d{8})"', metadata)
     publication = date.fromisoformat(match[1].decode()) if match else None
     if publication != RELEASE_DAYS[config.year]:
