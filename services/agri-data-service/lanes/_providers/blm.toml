@@ -1,0 +1,41 @@
+# Bureau of Land Management ArcGIS Server: the facts every lane on this provider shares (spec S3).
+# Data only. Schema: foundation/lane_config/models.py::ProviderConfig. Authoring: lanes/AGENTS.md.
+# Sources: pipeline/lanes/land_context/products.py::SURFACE_ORWA / SURFACE_IDAHO / FIELD_OFFICES (their
+# `endpoint` layer URLs) and pipeline/lanes/land_context/source.py, which reads each layer's metadata
+# (`f=json`) and pages `<layer>/query`. Shipped inert: no lane names it yet (s-land-context; spec §7 shadow).
+
+id = "blm"
+display_name = "Bureau of Land Management ArcGIS Server"
+# Keyless and uncharged: no api_key_env, no [weight], no [budget]. The capture sends no key or token
+# (pipeline/lanes/land_context/source.py builds `f`, `where`, the spatial filter and paging only).
+weighted = false
+# Rate posture: unpublished; the legacy capture pages 200 features at a time
+# (pipeline/lanes/land_context/source.py::PAGE_SIZE).
+# TODO(s-land-context): verify any request-rate limit against the live probe.
+# NOT HERE: the land-context capture also reads `census-state-context` from
+# tigerweb.geo.census.gov (products.py::CENSUS_STATES), a different publisher; it needs its own
+# provider file and host rule if the strategy keeps it.
+
+[endpoints.or-ownership-layer]
+host = "gis.blm.gov"
+path = "/orarcgis/rest/services/Land_Status/BLM_OR_Ownership/MapServer/0"
+
+[endpoints.or-ownership-query]
+host = "gis.blm.gov"
+path = "/orarcgis/rest/services/Land_Status/BLM_OR_Ownership/MapServer/0/query"
+
+[endpoints.national-sma-layer]
+host = "gis.blm.gov"
+path = "/arcgis/rest/services/lands/BLM_Natl_SMA_LimitedScale/MapServer/1"
+
+[endpoints.national-sma-query]
+host = "gis.blm.gov"
+path = "/arcgis/rest/services/lands/BLM_Natl_SMA_LimitedScale/MapServer/1/query"
+
+[endpoints.field-offices-layer]
+host = "gis.blm.gov"
+path = "/arcgis/rest/services/admin_boundaries/BLM_Natl_AdminUnit/MapServer/3"
+
+[endpoints.field-offices-query]
+host = "gis.blm.gov"
+path = "/arcgis/rest/services/admin_boundaries/BLM_Natl_AdminUnit/MapServer/3/query"

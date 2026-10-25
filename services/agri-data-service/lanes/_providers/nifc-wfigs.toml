@@ -1,0 +1,23 @@
+# NIFC WFIGS interagency fire perimeters (ArcGIS Online): the facts every lane on this provider
+# shares (spec S3). Data only. Schema: foundation/lane_config/models.py::ProviderConfig.
+# Sources: ingest/wfigs.py::WFIGS_QUERY_URL; docs/lanes/fire-perimeters.md section 1 ("Endpoint",
+# "Auth"). Shipped inert: no lane names it yet (s-fire-perimeters).
+
+id = "nifc-wfigs"
+display_name = "NIFC WFIGS Interagency Perimeters (ArcGIS Online)"
+# Keyless and uncharged: no api_key_env, no [weight], no [budget].
+weighted = false
+# Rate posture: ArcGIS Online throttles (429 or a busy HTTP-200 `error` body); production crashed
+# hourly under a sustained throttle from 2026-08-10 until the retry budget widened
+# (ingest/AGENTS.md, the WFIGS retry section; ingest/wfigs.py::MAX_ATTEMPTS,
+# RETRY_WALL_CLOCK_CEILING_SECONDS). The meter labels the host `arcgis-online`.
+
+[endpoints.query]
+host = "services3.arcgis.com"
+path = "/T4QMspbfLg3qTGWY/arcgis/rest/services/WFIGS_Interagency_Perimeters_Current/FeatureServer/0/query"
+
+# The layer resource that carries `editingInfo.lastEditDate`, the spec §7 watermark.
+# TODO(s-fire-perimeters): verify against the live probe; nothing in the tree reads this resource yet.
+[endpoints.layer]
+host = "services3.arcgis.com"
+path = "/T4QMspbfLg3qTGWY/arcgis/rest/services/WFIGS_Interagency_Perimeters_Current/FeatureServer/0"

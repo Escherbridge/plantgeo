@@ -1,0 +1,20 @@
+# NOAA National Weather Service API: the facts every lane on this provider shares (spec S3).
+# Data only. Schema: foundation/lane_config/models.py::ProviderConfig. Authoring: lanes/AGENTS.md.
+# Sources: ingest/sensors.py::NWS_API_BASE_URL / NWS_STATIONS_URL / observation_url;
+# docs/lanes/sensors.md section 1 ("Endpoint", "Auth"). Shipped inert: no lane names it yet (s-sensors).
+
+id = "nws"
+display_name = "NOAA National Weather Service API"
+# Keyless and uncharged: no api_key_env, no [weight], no [budget].
+weighted = false
+# Auth: none. api.weather.gov issues no key; it asks only that a caller identify itself by User-Agent
+# (ingest/sensors.py::NWS_USER_AGENT_VARIABLE, `NWS_API_USER_AGENT`, an identity and not a credential,
+# so it is not an api_key_env). WQ-5: NWS keeps its own required User-Agent format.
+# Rate posture: unpublished. The legacy poller bounds itself at 8 concurrent station requests
+# (ingest/sensors.py::MAX_CONCURRENT_STATION_REQUESTS).
+
+# The station roster (`GET /stations`) and, beneath it, each station's observations
+# (`/stations/{id}/observations` and `/observations/latest`, ingest/sensors.py::observation_url).
+[endpoints.stations]
+host = "api.weather.gov"
+path = "/stations"

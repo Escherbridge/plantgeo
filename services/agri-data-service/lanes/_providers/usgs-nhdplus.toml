@@ -1,0 +1,20 @@
+# USGS NHDPlus HR on The National Map (ArcGIS Server): the facts every lane on this provider shares
+# (spec S3). Data only. Schema: foundation/lane_config/models.py::ProviderConfig.
+# Sources: ingest/watersheds.py::WBDHU12_LAYER_ID / WBDHU12_QUERY_ENDPOINT; docs/lanes/watersheds.md
+# section 1 ("Endpoint", "Query mechanism", "Auth"). Shipped inert (s-watersheds; spec §7 marks the
+# lane `lifecycle = "discontinued"`).
+
+id = "usgs-nhdplus"
+display_name = "USGS NHDPlus HR (The National Map)"
+# Keyless and uncharged: no api_key_env, no [weight], no [budget]. Requests carry only
+# `Accept: application/json` (docs/lanes/watersheds.md "Auth").
+weighted = false
+# Rate posture: the measured constraint is shape, not rate: sorting while returning geometry answers
+# HTTP 500 over the PNW envelope, so the fetch is two-phase (ids, then 200-id geometry batches;
+# docs/lanes/watersheds.md "Query mechanism").
+# TODO(s-watersheds): verify any request-rate limit against the live probe; nothing in the tree records one.
+
+# Layer 12, WBD HU-12 (never layer 2, NHDPoint: ingest/watersheds.py).
+[endpoints.wbd-hu12-query]
+host = "hydro.nationalmap.gov"
+path = "/arcgis/rest/services/NHDPlus_HR/MapServer/12/query"

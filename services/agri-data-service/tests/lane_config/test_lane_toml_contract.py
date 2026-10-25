@@ -77,6 +77,15 @@ _KEYED_QUERY: Final = re.compile(r"(?i)[?&](api_?key|apikey|key|token|access_tok
 #: allow/deny list, and that false-positive rate was judged worse than the residual gap.
 _RAW_TOKEN: Final = re.compile(r"[A-Za-z0-9]+")
 
+#: An `endpoints.<id>.path` value (review finding, p4-contract-freeze blocker): a URL path is long,
+#: mixed-case and digit-bearing AS A WHOLE STRING by nature (an ArcGIS route like
+#: `/orarcgis/rest/services/Land_Status/BLM_OR_Ownership/MapServer/0/query`), so judging it with
+#: `_looks_like_a_secret` on the full value false-positives on every such route. A path is not
+#: exempted outright, though: a pasted secret (e.g. a 32-hex FIRMS MAP_KEY) embedded in one must
+#: still be caught, so this reuses the raw-text pass's own per-run mechanism (`_RAW_TOKEN` split on
+#: non-alnum, then `_looks_like_a_secret_token` per run) instead of a bespoke check.
+_ENDPOINT_PATH_WHERE: Final = re.compile(r"^endpoints\.[^.]+\.path$")
+
 
 def _looks_like_a_secret(value: str) -> bool:
     if re.fullmatch(rf"[0-9a-fA-F]{{{_MIN_HEX_KEY_LENGTH},}}", value):
@@ -84,6 +93,11 @@ def _looks_like_a_secret(value: str) -> bool:
     if len(value) < _MIN_TOKEN_LENGTH or re.search(r"\s", value):
         return False
     return bool(re.search(r"[a-z]", value) and re.search(r"[A-Z]", value) and re.search(r"[0-9]", value))
+
+
+def _looks_like_a_secret_in_path(value: str) -> bool:
+    """`endpoints.*.path`'s own check: each `[A-Za-z0-9]+` run judged alone, never the whole path."""
+    return any(_looks_like_a_secret_token(match.group()) for match in _RAW_TOKEN.finditer(value))
 
 
 def _looks_like_a_secret_token(token: str) -> bool:
@@ -154,7 +168,11 @@ def raw_file_violations(path: Path) -> list[str]:
             violations.append(f"{path.name}:{where}: api_key_env must NAME a *_KEY variable, not hold a value")
         if len(value) <= _MAX_DECLARED_STRING_LENGTH and _REGION_MARKER.search(value):
             violations.append(f"{path.name}:{where}: region footprint marker {value!r}")
-        if _looks_like_a_secret(value) or _KEYED_QUERY.search(value):
+        if key == "path" and _ENDPOINT_PATH_WHERE.match(where):
+            is_secret_shaped = _looks_like_a_secret_in_path(value)
+        else:
+            is_secret_shaped = _looks_like_a_secret(value)
+        if is_secret_shaped or _KEYED_QUERY.search(value):
             violations.append(f"{path.name}:{where}: key-shaped value")
     violations.extend(raw_text_violations(path, text))
     return violations
@@ -207,7 +225,7 @@ def test_every_lane_and_provider_file_in_the_landed_tree_loads(landed: LaneConfi
     assert dict(landed.provider_failures) == {}
     assert set(landed.lanes) == lane_files
     assert set(landed.providers) == provider_files
-    assert {"open-meteo", "nasa-power"} <= provider_files
+    assert {"open-meteo", "nasa-power", "usgs-water-data"} <= provider_files
 
 
 def test_every_landed_lane_honours_the_strategy_enable_and_probe_contract(landed: LaneConfigSet) -> None:
@@ -317,6 +335,33 @@ def test_the_raw_file_scan_passes_a_real_shaped_lane(tmp_path: Path) -> None:
     lane.write_text(to_toml(settled_soil_lane()), encoding="utf-8")
 
     assert raw_file_violations(lane) == []
+
+
+def test_the_raw_file_scan_passes_an_arcgis_rest_path(tmp_path: Path) -> None:
+    """Blocker regression: an ArcGIS REST path is long, mixed-case and digit-bearing AS ONE STRING,
+    but no individual `[A-Za-z0-9]+` run inside it is secret-shaped; `endpoints.*.path` must judge
+    runs, not the whole value, or every landed ArcGIS provider false-positives."""
+    planted = tmp_path / "planted.toml"
+    planted.write_text(
+        '[endpoints.query]\nhost = "gis.blm.gov"\n'
+        'path = "/orarcgis/rest/services/Land_Status/BLM_OR_Ownership/MapServer/0/query"\n',
+        encoding="utf-8",
+    )
+
+    assert raw_file_violations(planted) == []
+
+
+def test_the_raw_file_scan_still_catches_a_secret_pasted_inside_a_path(tmp_path: Path) -> None:
+    """The path check is not a blanket exemption: a 32-hex run (a pasted FIRMS-shaped MAP_KEY) sitting
+    inside an otherwise ordinary ArcGIS-style path must still read as key-shaped."""
+    planted = tmp_path / "planted.toml"
+    planted.write_text(
+        '[endpoints.area-csv]\nhost = "firms.example.gov"\n'
+        'path = "/api/area/csv/0123456789abcdef0123456789abcdef/VIIRS_SNPP_NRT/USA/1"\n',
+        encoding="utf-8",
+    )
+
+    assert "key-shaped value" in " | ".join(raw_file_violations(planted))
 
 
 @pytest.mark.parametrize(

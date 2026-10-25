@@ -323,6 +323,32 @@ serving (`parquet_ops/authorized_serving.py`) and coverage list the stream like 
   (`_literal_registration_disagreement`): until a lane cuts over, its literal registration stays the
   served fact and the TOML must agree with it.
 
+### S18 climate rows: staged as `CLIMATE_STREAM_ROWS`, spliced by `s-climate` (p4-contract-freeze)
+The 24 climate streams of spec §6.1 are written once, in `config_stream_registrations.py::
+CLIMATE_STREAM_ROWS`, and are NOT yet in `CONFIG_STREAM_ROWS`. Three checks refuse a row before its
+lane exists, each correctly: `config_stream_mirror_violations` (a row must mirror a LOADED TOML
+entry), `tests/parquet/test_tier_derivation.py` (every registered slug needs a schema module and a
+tier derivation) and the census count pin. `evidence/contract-freeze.md` was never written, so these
+rows ARE the frozen stream contract the climate lanes code against.
+- **The splice is `s-climate`'s, in ONE commit:** `lanes/meteorology*.toml` + `lanes/shortwave*.toml`
+  (each `[[streams]]` entry equal to its row), `warehouse/schemas/{meteorology,shortwave}_*.py`, and
+  `CONFIG_STREAM_ROWS = (<water row>, *CLIMATE_STREAM_ROWS)`. The mirror test then holds every field.
+- **A19.** The splice moves `CALENDAR_HISTORY_FLOOR` from `water-gauges-daily`'s 1990-09-30 to the
+  ERA5 floor 1984-01-01, and the calendar's `floor_basis` names the seven `meteorology-era5-*` and
+  seven `meteorology-*` streams. The days before 1990 appear at the calendar's next version (about
+  yearly, `_calendar_watermark`). Checked 2026-10-25: nothing reads `layer=calendar` (every
+  `calendar_day` hit outside the writer is a request-parameter parser), so no one-off export is owed.
+  `tests/parquet/test_lane_contract.py` "S18 climate rows" pins the splice outcome, the precedence
+  routing the slugs must satisfy and the floors the transforms inherit.
+- **Provisional pruning vs census debt (OPEN, owner decision before the splice).** §4.6 pruning
+  retracts a provisional IFS day that carries no absence marker, while the gap census and coverage
+  owe every day back to `claimed_history_floor` 2026-07-01 regardless. After G6 that reads as a
+  growing gap the census reports every run, and a gap-fill or forward turn could keep re-buying and
+  re-pruning the same days in a paid loop. Two candidate resolutions: give provisional streams a
+  rolling-window census treatment (owe only the trailing window pruning actually retains), or have
+  pruning write a GOVERNED absence instead of a bare retraction, so the census sees a settled fact
+  rather than a hole. `s-climate` must not splice until the owner picks one.
+
 ## `gap_fill.py` — the bounded driver the executor invokes
 
 ### Six modules since 2026-09-18, and `gap_fill.py` is now only `run_gap_fill`

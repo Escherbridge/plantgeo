@@ -282,7 +282,22 @@ def provider_endpoint_request(
         raise ProviderConfigError("API keys must come from the provider environment, not request parameters")
     query = urlencode(sorted(parameters.items()))
     credential_free = f"https://{declared.host}{declared.path}?{query}"
-    if (declared.customer_host is None and not declared.optional_api_key) or provider.api_key_env is None:
+    if declared.customer_host is None and not declared.optional_api_key:
+        # Only a QUERY-transport key is stranded here: it rides the customer host's send URL, so with
+        # no customer_host it can never be attached (nasa-firms' path-segment key is this shape). A
+        # HEADER-transport key (usgs-water-data's X-Api-Key) attaches at send time regardless, below.
+        if provider.api_key_env is not None and provider.api_key_transport == "query":
+            raise ProviderConfigError(
+                f"provider {provider.id!r} endpoint {endpoint!r} declares api_key_env "
+                f"{provider.api_key_env!r} with query transport but has no customer_host and is not "
+                "optional_api_key; the key can never be attached, so this endpoint must either gain "
+                "a customer_host, opt into optional_api_key, or stop naming a key the strategy must "
+                "place itself"
+            )
+        # The opt-in contract holds for BOTH transports (see ingest/AGENTS.md, Optional same-host
+        # keys): an endpoint that neither opted in nor carries a customer host sends keyless.
+        return ProviderEndpointRequest(request_url=credential_free, send_url=KeyedRequestUrl(credential_free))
+    if provider.api_key_env is None:
         return ProviderEndpointRequest(request_url=credential_free, send_url=KeyedRequestUrl(credential_free))
     source = os.environ if environment is None else environment
     key = source.get(provider.api_key_env, "").strip()

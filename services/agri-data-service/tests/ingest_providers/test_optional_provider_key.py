@@ -190,6 +190,26 @@ def test_optional_key_requires_endpoint_opt_in() -> None:
     assert resolved.send_headers.reveal() == {}
 
 
+def test_an_endpoint_with_no_customer_host_and_no_optional_opt_in_refuses_a_declared_key() -> None:
+    """m3: nasa-firms names api_key_env but its endpoint can carry no key (no customer_host) and is
+    not optional_api_key -- silently answering keyless would hide that the key never attaches."""
+    with pytest.raises(ProviderConfigError, match=r"nasa-firms.*area-csv.*NASA_FIRMS_KEY") as caught:
+        provider_endpoint_request(providers()["nasa-firms"], "area-csv", {}, environment={"NASA_FIRMS_KEY": "x"})
+    assert "nasa-firms" in str(caught.value)
+    assert "area-csv" in str(caught.value)
+    assert "NASA_FIRMS_KEY" in str(caught.value)
+
+
+def test_the_new_refusal_never_fires_for_a_keyless_or_an_optional_key_provider() -> None:
+    """A provider with no api_key_env at all (usdm) and one whose endpoint opts into optional_api_key
+    (usgs-water-data) both still answer from the free host instead of raising."""
+    usdm = provider_endpoint_request(providers()["usdm"], "release-json", {}, environment={})
+    assert usdm.send_url.reveal() == usdm.request_url
+
+    usgs = provider_endpoint_request(providers()["usgs-water-data"], "daily", {}, environment={})
+    assert usgs.send_url.reveal() == usgs.request_url
+
+
 @pytest.mark.parametrize("parameter", ["api_key", "apikey", "API_KEY"])
 def test_caller_cannot_put_credentials_into_checkpoint_identity(parameter: str) -> None:
     key = secrets.token_hex(16)

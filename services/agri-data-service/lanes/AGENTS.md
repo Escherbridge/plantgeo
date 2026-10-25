@@ -17,6 +17,12 @@ Only top-level `*.toml` files are lanes. `_providers/` holds `open-meteo.toml` (
 historical-forecast, each with a keyed customer host; weighted; the paid monthly budget),
 `nasa-power.toml` (keyless, unweighted, `time_standard = "UTC"`) and `usgs-water-data.toml` (optional key,
 unweighted; the `daily` and `monitoring-locations` collections; `water-gauges-daily`, spec §7a).
+`p4-contract-freeze` added the rest of `metadata.json` → `provider_files`, all unweighted and named by no
+lane yet: `nws`, `nasa-firms` (`NASA_FIRMS_KEY`, which travels as a URL path segment no transport
+describes; the strategy places it), `earth-search`, `usdm`, `oregon-oem`, `nifc-wfigs`, `mtbs-edw`,
+`usgs-nhdplus`, `blm` and `usda-cdl`. Each header cites the legacy module the host and auth were read
+from; a keyless file states its rate posture in a comment (the schema has no field for it), and a fact
+the tree does not record is a `TODO(s-<lane>)` for that slice's live probe.
 
 ## Rules a lane file must satisfy
 

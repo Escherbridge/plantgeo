@@ -56,7 +56,8 @@ def test_a_healthy_tree_loads_every_lane_against_its_provider_and_lattice(tmp_pa
     assert dict(config.quarantined) == {}
     assert dict(config.provider_failures) == {}
     assert set(config.lanes) == {SOIL, WEATHER, "soil-vpd-precedence"}
-    assert set(config.providers) == {"open-meteo", "nasa-power", "usgs-water-data"}
+    # `write_lane_tree` copies the real provider files, so every one of them must load beside the lanes.
+    assert set(config.providers) == {path.stem for path in (REAL_LANES_DIRECTORY / "_providers").glob("*.toml")}
     soil = config.lanes[SOIL]
     provider = config.provider_of(soil)
     assert provider is not None

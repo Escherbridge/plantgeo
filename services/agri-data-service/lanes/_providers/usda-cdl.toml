@@ -1,0 +1,28 @@
+# USDA NASS Cropland Data Layer: the facts every lane on this provider shares (spec S3).
+# Data only. Schema: foundation/lane_config/models.py::ProviderConfig. Authoring: lanes/AGENTS.md.
+# Sources: pipeline/lanes/crop_cover/products.py::CDL_SERVICE / METADATA_BASE / metadata_url and
+# pipeline/lanes/crop_cover/source.py (service metadata `?f=json`, then `/exportImage` tiles).
+# Shipped inert: no lane names it yet (s-crop-cover; spec §7 shadow).
+
+id = "usda-cdl"
+display_name = "USDA NASS Cropland Data Layer"
+# Keyless and uncharged: no api_key_env, no [weight], no [budget]. The capture sends no key.
+weighted = false
+# Rate posture: unpublished. The legacy capture bounds bytes, not rate: 64 MiB per tile and 8 MiB per
+# metadata document under a per-capture byte budget (pipeline/lanes/crop_cover/source.py::MAX_TILE_BYTES,
+# MAX_METADATA_BYTES, CaptureByteBudget).
+# TODO(s-crop-cover): verify any request-rate limit against the live probe.
+
+# The CDL ImageServer (the USDA SCINet PDI host): service metadata at the root.
+[endpoints.image-service]
+host = "pdi.scinet.usda.gov"
+path = "/image/rest/services/CDL_WM/ImageServer"
+
+[endpoints.export-image]
+host = "pdi.scinet.usda.gov"
+path = "/image/rest/services/CDL_WM/ImageServer/exportImage"
+
+# The annual FGDC metadata pages: `<path><filename>` (products.py::metadata_url).
+[endpoints.edition-metadata]
+host = "www.nass.usda.gov"
+path = "/Research_and_Science/Cropland/metadata/"

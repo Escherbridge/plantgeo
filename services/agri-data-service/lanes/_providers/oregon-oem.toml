@@ -1,0 +1,25 @@
+# Oregon OEM evacuation areas (an ArcGIS Online hosted view): the facts every lane on this provider
+# shares (spec S3). Data only. Schema: foundation/lane_config/models.py::ProviderConfig.
+# Sources: ingest/evacuation_zones.py::EVACUATION_ZONES_QUERY_URL (re-exported by
+# pipeline/lanes/evacuation_zones/products.py::DIRECT_QUERY_URL); docs/lanes/evacuation-zones.md
+# section 1 ("Endpoint", "Auth"). Shipped inert: no lane names it yet (s-evacuation-zones).
+
+id = "oregon-oem"
+display_name = "Oregon OEM Fire Evacuation Areas (ArcGIS Online)"
+# Keyless and uncharged: no api_key_env, no [weight], no [budget]. The `_Public` view sends no key.
+weighted = false
+# Rate posture: ArcGIS Online throttles with a 429 or an HTTP-200 body carrying an `error` object;
+# the legacy walk retries both on its own ladder (ingest/evacuation_zones.py::MAX_ATTEMPTS,
+# RETRY_WALL_CLOCK_CEILING_SECONDS; ingest/AGENTS.md on the busy-200 payload). The meter labels the
+# host `arcgis-online` (foundation/observability/usage.py).
+
+[endpoints.query]
+host = "services.arcgis.com"
+path = "/uUvqNMGPm7axC2dD/arcgis/rest/services/Fire_Evacuation_Areas_Public/FeatureServer/0/query"
+
+# The layer resource that carries `editingInfo.dataLastEditDate`, the spec §7 watermark.
+# TODO(s-evacuation-zones): verify against the live probe; the legacy watermark is a content digest
+# (pipeline/lanes/evacuation_zones/watermark.py) and never reads this resource today.
+[endpoints.layer]
+host = "services.arcgis.com"
+path = "/uUvqNMGPm7axC2dD/arcgis/rest/services/Fire_Evacuation_Areas_Public/FeatureServer/0"

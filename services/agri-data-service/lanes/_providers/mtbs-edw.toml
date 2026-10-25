@@ -1,0 +1,22 @@
+# MTBS burned-area boundaries on the USDA Forest Service Enterprise Data Warehouse (ArcGIS Server):
+# the facts every lane on this provider shares (spec S3). Data only. Schema:
+# foundation/lane_config/models.py::ProviderConfig. Sources: ingest/mtbs.py::MTBS_FEATURE_SERVICE_QUERY_URL
+# / MTBS_REQUEST_HEADERS / MTBS_BOUNDS; docs/lanes/burn-severity.md section 1 ("Endpoint", "Auth").
+# Shipped inert: no lane names it yet (s-burn-severity).
+
+id = "mtbs-edw"
+display_name = "MTBS on USFS EDW ArcGIS Server"
+# Keyless and uncharged: no api_key_env, no [weight], no [budget]. Requests carry only User-Agent and
+# Accept (ingest/mtbs.py::MTBS_REQUEST_HEADERS); WQ-5: MTBS keeps its own required User-Agent format.
+# The Esri ArcGIS Online mirror of this layer is deliberately NOT used, so no ArcGIS Online terms
+# attach to the capture (docs/lanes/burn-severity.md "Endpoint").
+weighted = false
+# Rate posture: unpublished. The host answers an oversized page with HTTP 500 rather than truncating,
+# so the legacy walk pages 50 rows and halves down to 5 (ingest/mtbs.py::DEFAULT_PAGE_SIZE,
+# MIN_PAGE_SIZE), retrying 429/5xx up to 4 attempts with Retry-After capped at 60 s
+# (MAX_REQUEST_ATTEMPTS, MAX_RETRY_DELAY_SECONDS).
+
+# Layer 63, "Burned Area Boundaries (All Years)".
+[endpoints.burned-area-query]
+host = "apps.fs.usda.gov"
+path = "/arcx/rest/services/EDW/EDW_MTBS_01/MapServer/63/query"

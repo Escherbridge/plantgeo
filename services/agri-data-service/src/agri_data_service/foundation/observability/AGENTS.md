@@ -167,14 +167,17 @@ is no other coupling between them.
 -> `open-meteo`/`open-meteo-free`; `firms.modaps.eosdis.nasa.gov` -> `firms`/`firms`;
 `waterservices.usgs.gov` or `api.waterdata.usgs.gov` -> `usgs-water-data`/`usgs-water-data`;
 `power.larc.nasa.gov` -> `nasa-power`/`nasa-power`; `api.weather.gov` -> `nws`/`nws`;
-`services*.arcgis.com` -> `arcgis-online`/`arcgis-online`; anything else is `None`. Order
+`services*.arcgis.com` -> `arcgis-online`/`arcgis-online`; and one rule per remaining keyless
+provider file (p4-contract-freeze), provider = pool = the file id: `earth-search`, `usdm`, `mtbs-edw`,
+`usgs-nhdplus`, `blm`, `usda-cdl` (two hosts); anything else is `None`. Order
 matters -- the `customer-` rule is checked first, or a paid host would also match the free rule.
 The table is `usage.py::_HOST_RULES`; `tests/lane_config/test_provider_hosts.py` fails when a host in any
 `lanes/_providers/*.toml` matches no rule.
 
-The last three pools are `METERING_ONLY_POOL_LABELS` (`MeteringOnlyPoolLabel`), deliberately NOT
-`vocabulary.PoolLabel`: keyless, unbudgeted providers the usage report labels in its per-lane x host
-section only, so a host there stops reading `provider None`. `PoolLabel` is the set the month-to-date
+Every pool but `open-meteo-*`, `firms` and `usgs-water-data` is a `METERING_ONLY_POOL_LABELS`
+entry (`MeteringOnlyPoolLabel`), deliberately NOT `vocabulary.PoolLabel`: keyless, unbudgeted
+providers the usage report labels in its per-lane x host section only, so a host there stops
+reading `provider None`. `PoolLabel` is the set the month-to-date
 section walks; adding a metering-only label there would list it beside the pools WQ-4 budgets.
 
 `open_meteo_request_weight(locations, days, variables)` is a **byte-identical duplicate** of

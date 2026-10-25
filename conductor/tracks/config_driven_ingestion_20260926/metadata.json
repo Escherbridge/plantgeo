@@ -252,7 +252,8 @@
     "G9R-n": "G9D-n + 1 clean day: jobs-retire-definition dry run (lists every incident --resolve-open-incidents would close), owner review, --apply for the pinned names (n=1: water, mtbs-forward, the six :gap-repair names, the CQ-10 names; n=2: climate); owner unsets FIRE_FORWARD_*, WATER_GAUGES_LAYER_ID and each env variable the orphan census proved unreachable; census",
     "G9Q-2": "census; brake climate-nasa-power-direct-forward (RC-6 green first); G9V-2 (tokens out, soak of one fire of each of the five successor definitions and their :gap-fill); zero open claims under the 11 frozen roots; drain; terminal-day receipts; quiescent push of 7Q-2; T+1 census",
     "G9S": "push 7S (c7-scaffold + c7-docs-final, one Python and web sweep); owner unsets MAX_LANES_PER_TICK (zero readers) and, per CQ-3, the S16 variables; per CQ-7 the owner exports then unregisters the three retired-path local tasks; T5 census 7 days later; tracks.md status flipped and the retrospective row written",
-    "G9X": "never scheduled: any ledger purge, object/partition/checkpoint/calendar-version/pending-claim delete, any geo.* DELETE, deleting a Railway service, deleting a branch or worktree, deleting .agri-local-runs/ or plans/ content, unregistering any other local task; needs a separate written owner decision naming the rows or resources"
+    "G9X": "never scheduled: any ledger purge, object/partition/checkpoint/calendar-version/pending-claim delete, any geo.* DELETE, deleting a Railway service, deleting a branch or worktree, deleting .agri-local-runs/ or plans/ content, unregistering any other local task; needs a separate written owner decision naming the rows or resources",
+    "s_climate_splice_prerequisite": "BEFORE s-climate splice: decide IFS provisional pruning vs census debt (reviews.phase4 p4-contract-freeze MAJOR; pipeline/parquet/AGENTS.md 'S18 climate rows')"
   },
   "partitions": {
     "computed_at": "2026-09-26T00:00:00+00:00",
@@ -1534,6 +1535,16 @@
           {
             "path": "docs/lanes/shortwave.md",
             "status": "future"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/config_stream_registrations.py",
+            "status": "existing",
+            "note": "the SPLICE: CONFIG_STREAM_ROWS = (<water row>, *CLIMATE_STREAM_ROWS); rows staged by p4-contract-freeze 2026-10-25"
+          },
+          {
+            "path": "services/agri-data-service/tests/parquet_ops/test_coverage_census.py",
+            "status": "existing",
+            "note": "EXPECTED_REGISTERED_CENSUS_LANES 36 -> 60 in the same commit as the splice"
           }
         ],
         "reads_only": [
@@ -4553,7 +4564,8 @@
       "findings": "B1 regionalSurfaceName rode warehouseLayerName==surface-name equality; M1 streamflow coverage key hardcoded legacy slug; m1 popup day/unit; m2 alert tense; m3 stale comments; m4 phantom parity test; m5 record owner history-depth waiver"
     },
     "phase4": {
-      "p4-extract": "APPROVED 2026-10-24 (opus quality-reviewer, fresh context): 0 blockers, 0 majors, 8 minors; byte-identity verified on all 22 moves; minors 1,2,3,5,6,7 fixed same wave (guard reach to lanes/evacuation_zones, strategy-name reservation + leaves paragraph in lanes/AGENTS.md, lane_registry+source_bindings docstrings, shim-walker spellings+typing, lattice test re-point); minor 4 (AGENTS.md rationale moves before 7D deletes pipeline/direct/AGENTS.md) logged below; minor 8 info (check.py batch map gap, fails safe)"
+      "p4-extract": "APPROVED 2026-10-24 (opus quality-reviewer, fresh context): 0 blockers, 0 majors, 8 minors; byte-identity verified on all 22 moves; minors 1,2,3,5,6,7 fixed same wave (guard reach to lanes/evacuation_zones, strategy-name reservation + leaves paragraph in lanes/AGENTS.md, lane_registry+source_bindings docstrings, shim-walker spellings+typing, lattice test re-point); minor 4 (AGENTS.md rationale moves before 7D deletes pipeline/direct/AGENTS.md) logged below; minor 8 info (check.py batch map gap, fails safe)",
+      "p4-contract-freeze": "CHANGES-REQUIRED 2026-10-25 (opus, fresh context) -> fix batch applied same wave. Blocker: key-shape gate false-positives on 12 ArcGIS REST paths (fix the gate per-token, never exempt paths). MAJOR deferred to the splice: IFS provisional pruning vs census debt (prune retracts with no absence marker while coverage owes from floor 2026-07-01 -> growing gap + paid re-buy/prune loop risk; OWNER DECISION before s-climate splices: rolling-window census for provisional streams, or prune writes a governed absence). Minors: FIRMS keyless-URL fail-loud, parity test keyed climate comparison + [a-z0-9-] keys, frozen-value pins, named provider floor, date labels, broad host-rule comments. CONFIRMED by the reviewer: 24 rows match spec 6.1/6.3/O1/O3/O7; staging gates real (mirror, tier-derivation, census 36->60); manifest bindings genuinely cannot ship dark (plan wording wrong, deviation stands); independent A19 verdict CONFIRMED: no reader joins layer=calendar, no one-off export owed."
     },
     "g4_followup_density_and_lane_id": {
       "date": "2026-10-25",
@@ -4590,5 +4602,12 @@
       "test_no_module_in_this_package_ever_constructs_terminal_evidence lost reach (walks direct/evacuation_zones shims, not lanes/)",
       "stale comments citing old products.py paths in scripts/build_*, ingest/*, warehouse/schemas/watersheds.py"
     ]
+  },
+  "p4_contract_freeze_20261025": {
+    "status": "authored, review pending",
+    "frozen_contract": "evidence/contract-freeze.md was never written; CLIMATE_STREAM_ROWS in config_stream_registrations.py (staged tuple, 24 rows) IS the freeze: ERA5 floor 1984-01-01 lag 6, IFS floor 2026-07-01 lag 1, POWER shortwave floor 2022-04-30 lag 6, transforms lag 1; strategy keys meteorology.open_meteo_era5 / meteorology.open_meteo_ifs / shortwave.nasa_power are the author's spec-derived choices",
+    "plan_deviation_manifest_bindings": "the plan's 'additive meteorology-*/shortwave-* manifest bindings' cannot ship dark (a binding implies a platform layer in PLATFORM_LAYER_SLUGS across both trees and shows as bound in layer availability); deferred to p6-climate-rebind's G8 re-source of the existing climate-field-* bindings; pnw.json/pnw.ts untouched; OWNER VISIBILITY requested",
+    "outside_owns": "foundation/observability/usage.py (host rules+pools, required same-commit by lanes/AGENTS.md), tests/lane_config/test_loader.py + test_provider_hosts.py (derive provider set instead of hardcoding), three AGENTS.md docs",
+    "open_question_pnw_binding": "pnw.json still binds water-gauges to usgs_nwis (spec COM1-14 says KEEP) despite spec 7a's usgs_water_data; left alone"
   }
 }

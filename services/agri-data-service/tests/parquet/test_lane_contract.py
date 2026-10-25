@@ -19,12 +19,14 @@ day-resolution answer was a life-safety defect rather than a staleness annoyance
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, get_args
 
 import pytest
 
+from agri_data_service.agent.surfaces import SURFACE_PARQUET_LANES, WATER_GAUGES_SERVED_STREAM
 from agri_data_service.foundation.parquet.calendar import CALENDAR_STREAM
 from agri_data_service.foundation.parquet.lane_contract import (
     LANE_NATURES,
@@ -52,7 +54,17 @@ from agri_data_service.parquet_ops.coverage import (
     registered_census_lanes,
 )
 from agri_data_service.parquet_ops.freshness import measure_lane_freshness
-from agri_data_service.pipeline.parquet.config_stream_registrations import CONFIG_STREAM_ROWS
+from agri_data_service.pipeline.lanes.calendar import build_calendar_table
+from agri_data_service.pipeline.lanes.transforms.precedence import route_input_stream
+from agri_data_service.pipeline.parquet.config_stream_registrations import (
+    CLIMATE_STREAM_ROWS,
+    CONFIG_STREAM_ROWS,
+    ERA5_SETTLED_LANE,
+    IFS_PROVISIONAL_LANE,
+    METEOROLOGY_TRANSFORM_LANE,
+    POWER_SHORTWAVE_SETTLED_LANE,
+    SHORTWAVE_TRANSFORM_LANE,
+)
 from agri_data_service.pipeline.parquet.lane_ceiling import (
     CeilingEdgeSource,
     allowed_source_ceiling,
@@ -63,6 +75,7 @@ from agri_data_service.pipeline.parquet.lane_registry import (
     LANE_REGISTRATIONS,
     LANE_REGISTRY,
     registered_lane_slugs,
+    registrations_with_config_streams,
 )
 from agri_data_service.pipeline.runner.contract import EdgeSource
 from tests.parquet_ops.fakes import FakeListing
@@ -716,3 +729,228 @@ def test_freshness_judged_against_a_probed_edge_clears_a_false_alarm_and_raises_
     )
     assert (by_lag.behind_provider, by_lag.horizon_edge_source) == (False, "lag_fallback")
     assert (by_probe.behind_provider, by_probe.horizon_edge_source) == (True, "probe")
+
+
+# --- S18 climate rows: the frozen stream contract the climate lanes code against (p4-contract-freeze) --
+#
+# `CLIMATE_STREAM_ROWS` is staged until `s-climate` lands the lane TOMLs and schemas and splices it
+# (`pipeline/parquet/AGENTS.md` "S18 climate rows"), so these drive the pure splice and the real
+# precedence router rather than the shipped registry. On splice the mirror test takes over field parity.
+
+#: Spec §6.1: each transform's `inputs`, settled before provisional (S7). `s-climate`'s TOMLs repeat these.
+CLIMATE_TRANSFORM_INPUTS: Final[dict[str, tuple[str, ...]]] = {
+    METEOROLOGY_TRANSFORM_LANE: (ERA5_SETTLED_LANE, IFS_PROVISIONAL_LANE),
+    SHORTWAVE_TRANSFORM_LANE: (POWER_SHORTWAVE_SETTLED_LANE, IFS_PROVISIONAL_LANE),
+}
+#: O3: the five meteorology layers re-pull to this day, which is what moves the calendar (A19).
+ERA5_REPULL_FLOOR: Final = date(1984, 1, 1)
+
+
+def _climate_slugs(lane_id: str) -> tuple[str, ...]:
+    return tuple(row.slug for row in CLIMATE_STREAM_ROWS if row.lane_id == lane_id)
+
+
+def test_every_climate_transform_output_routes_from_one_stream_of_each_input_and_inherits_its_deepest_floor() -> None:
+    """S7 routes by slug shape, so a renamed or dropped climate stream is a day-one `strategy_error`.
+
+    Every output must find one stream in each input lane, every ingest stream must feed some output
+    (an unrouted one is written and never served), and an output's floor and lag are its deepest
+    input's floor and freshest input's lag: later loses history, earlier owes days nothing can fill.
+    """
+    rows = {row.slug: row for row in CLIMATE_STREAM_ROWS}
+    routed_inputs: set[str] = set()
+    for transform, inputs in CLIMATE_TRANSFORM_INPUTS.items():
+        for output in _climate_slugs(transform):
+            sources = [route_input_stream(output, _climate_slugs(input_lane)) for input_lane in inputs]
+            assert None not in sources, (output, sources)
+            fed_by = [rows[source] for source in sources if source is not None]
+            routed_inputs.update(row.slug for row in fed_by)
+
+            assert rows[output].history_floor == min(row.history_floor for row in fed_by), output
+            assert rows[output].publication_lag_days == min(row.publication_lag_days for row in fed_by), output
+
+    ingest_slugs = {row.slug for row in CLIMATE_STREAM_ROWS if row.lane_id not in CLIMATE_TRANSFORM_INPUTS}
+    assert routed_inputs == ingest_slugs
+
+
+def test_the_climate_rows_are_spec_6_1s_twenty_four_new_streams_over_one_variable_set() -> None:
+    """7 ERA5 + 7 IFS + `shortwave-ifs` + `shortwave-power` + 7 meteorology + `shortwave-radiation`.
+
+    The three meteorology families must carry the same seven variables, or one layer silently loses
+    its settled or provisional half; and no new lane may write a legacy `climate-field-*` stream.
+    """
+    families = {
+        prefix: {slug.removeprefix(prefix) for slug in _climate_slugs(lane)}
+        for prefix, lane in (
+            ("meteorology-era5-", ERA5_SETTLED_LANE),
+            ("meteorology-", METEOROLOGY_TRANSFORM_LANE),
+        )
+    }
+    provisional = set(_climate_slugs(IFS_PROVISIONAL_LANE))
+
+    assert len(CLIMATE_STREAM_ROWS) == len({row.slug for row in CLIMATE_STREAM_ROWS}) == 24  # noqa: PLR2004 - spec 6.1
+    assert families["meteorology-era5-"] == families["meteorology-"]
+    assert provisional == {f"meteorology-ifs-{variable}" for variable in families["meteorology-"]} | {"shortwave-ifs"}
+    assert _climate_slugs(POWER_SHORTWAVE_SETTLED_LANE) == ("shortwave-power",)
+    assert _climate_slugs(SHORTWAVE_TRANSFORM_LANE) == ("shortwave-radiation",)
+    assert not [row.slug for row in CLIMATE_STREAM_ROWS if row.slug.startswith("climate-field-")]
+
+
+#: m5 (adversarial review, p4-contract-freeze): the frozen floor/lag per climate lane family, pinned
+#: to a LITERAL beside its spec citation -- never read back from `_ERA5_FLOOR`/`_IFS_FLOOR`/etc., or
+#: this would restate the source instead of freezing it. `expected_floor=None` for the two transform
+#: lanes is deliberate: each borrows its floor from a DIFFERENT settled input (ERA5 vs POWER, already
+#: pinned above by `test_every_climate_transform_output_routes_from_one_stream_of_each_input_and_
+#: inherits_its_deepest_floor`), so only their shared lag is an independent frozen fact here.
+_CLIMATE_FROZEN_FACTS: Final[tuple[tuple[str, date | None, int, str], ...]] = (
+    (ERA5_SETTLED_LANE, date(1984, 1, 1), 6, "O3: all five meteorology layers are re-pulled from this day"),
+    (IFS_PROVISIONAL_LANE, date(2026, 7, 1), 1, "spec section 6.3: the provisional historical-forecast bootstrap"),
+    (POWER_SHORTWAVE_SETTLED_LANE, date(2022, 4, 30), 6, "O7: the mandatory POWER solar re-grid's gap-fill start"),
+    (METEOROLOGY_TRANSFORM_LANE, None, 1, "O1: a settled-over-provisional transform owes through yesterday UTC"),
+    (SHORTWAVE_TRANSFORM_LANE, None, 1, "O1: a settled-over-provisional transform owes through yesterday UTC"),
+)
+
+
+@pytest.mark.parametrize(("lane_id", "expected_floor", "expected_lag", "citation"), _CLIMATE_FROZEN_FACTS)
+def test_the_frozen_climate_contract_pins_its_floor_and_lag_to_the_spec(
+    lane_id: str, expected_floor: date | None, expected_lag: int, citation: str
+) -> None:
+    """CLIMATE_STREAM_ROWS IS the freeze: a floor or lag drifting from the spec section that set it
+    must go red here, with that section named in the failure message."""
+    rows = [row for row in CLIMATE_STREAM_ROWS if row.lane_id == lane_id]
+    assert rows, f"no CLIMATE_STREAM_ROWS row names lane_id {lane_id!r}"
+    for row in rows:
+        if expected_floor is not None:
+            assert row.history_floor == expected_floor, f"{lane_id} floor drifted from {citation}: {row.history_floor}"
+        assert row.publication_lag_days == expected_lag, (
+            f"{lane_id} lag drifted from {citation}: {row.publication_lag_days}"
+        )
+
+
+def test_splicing_the_climate_rows_moves_the_calendar_to_1984_and_every_climate_floor_keys_into_it() -> None:
+    """FR-25/A19 at the splice `s-climate` makes: registered beside the literals, calendar floor named.
+
+    The calendar is derived over the mirror, so the ERA5 re-pull floor becomes its floor and its
+    `floor_basis` names the config lane that set it; water's 1990 floor no longer does. Every climate
+    stream's floor must be a day in that calendar version, or it could not key to the dimension.
+    """
+    spliced = {
+        registration.slug: registration
+        for registration in registrations_with_config_streams((*CONFIG_STREAM_ROWS, *CLIMATE_STREAM_ROWS))
+    }
+    calendar = spliced[CALENDAR_STREAM]
+    calendar_days = set(build_calendar_table(TODAY, floor=calendar.history_floor).column("calendar_day").to_pylist())
+
+    assert calendar.history_floor == ERA5_REPULL_FLOOR
+    assert f"(config lane {ERA5_SETTLED_LANE})" in calendar.floor_basis
+    assert "water-gauges-daily" not in calendar.floor_basis
+    for row in CLIMATE_STREAM_ROWS:
+        registration = spliced[row.slug]
+        assert (registration.nature, registration.history_floor) == ("daily_series", row.history_floor)
+        assert registration.history_floor in calendar_days, row.slug
+
+
+# --- Agent surface lanes vs the web client catalogue (G4 review m4) ----------------------------------
+#
+# `agent/surfaces.py::SURFACE_PARQUET_LANES` is a hand copy of the slider capability tables in
+# `src/lib/server/services/parquet-slider-capabilities.ts`. Read as TEXT (no TypeScript toolchain in a
+# Python sweep): every `parquetLanes: [...]` array and every `CLIMATE_PARQUET_LANES` entry is one lane
+# group, and a bare identifier in one (the water switch) is resolved through `src/lib/water-gauges-stream.ts`.
+# Skips outside a monorepo checkout, exactly as the forecast-module section does.
+
+_SLIDER_CAPABILITIES_SOURCE = _MONOREPO_ROOT / "src" / "lib" / "server" / "services" / "parquet-slider-capabilities.ts"
+_WATER_STREAM_SWITCH_SOURCE = _MONOREPO_ROOT / "src" / "lib" / "water-gauges-stream.ts"
+_CAPABILITY_TABLES = re.compile(r"const SOIL_SURVEY_CONTRACT = .*?export const PARQUET_CAPABILITY_CONTRACTS", re.DOTALL)
+_CLIMATE_LANE_TABLE = re.compile(r"const CLIMATE_PARQUET_LANES = \{(?P<body>.*?)\} as const", re.DOTALL)
+_PARQUET_LANES_ARRAY = re.compile(r"parquetLanes:\s*\[(?P<items>[^\]]*)\]")
+#: m4(b): a `ClimateFieldSignalId` key was `[a-z-]+` only; a G8-shaped key carrying a digit (e.g.
+#: `wind-speed-10m`) matched neither branch and the whole entry silently dropped out of the scan,
+#: which read as an "agent_only" group instead of the real bug (a key present on neither side).
+_CLIMATE_LANE_ENTRY = re.compile(
+    r'^\s*(?:"(?P<quoted_key>[a-z0-9-]+)"|(?P<bare_key>[a-z0-9-]+)):\s*\[(?P<items>[^\]]*)\]', re.MULTILINE
+)
+_ARRAY_ITEM = re.compile(r"\"(?P<slug>[a-z0-9-]+)\"|(?P<identifier>[A-Z][A-Z0-9_]*)")
+#: The agent-side prefix a TypeScript `CLIMATE_PARQUET_LANES` key becomes: `agent/surfaces.py` names
+#: `SURFACE_PARQUET_LANES[f"climate-field-{key}"]` for every key this table declares.
+_CLIMATE_FIELD_SURFACE_PREFIX: Final = "climate-field-"
+
+
+def _typescript_constant(name: str, sources: tuple[str, ...]) -> str:
+    """Resolve `export const NAME[: Type] = "slug" | OTHER_NAME;` through the given sources."""
+    for source in sources:
+        declared = re.search(rf"export const {name}(?::\s*\w+)?\s*=\s*(?P<value>[^;]+);", source)
+        if declared is None:
+            continue
+        value = declared.group("value").strip()
+        return value.strip('"') if value.startswith('"') else _typescript_constant(value, sources)
+    raise AssertionError(f"{name} is declared in no TypeScript source this test reads")
+
+
+def _client_catalogue_lane_groups() -> tuple[set[frozenset[str]], dict[str, frozenset[str]]]:
+    """The web capability catalogue's lane groups: unkeyed (the plain `parquetLanes: [...]` tables),
+    and (m4) the `CLIMATE_PARQUET_LANES` entries kept KEYED by their TypeScript field id.
+
+    Keeping climate entries unkeyed in one flat set (the pre-m4 shape) let a whole-group SWAP between
+    two climate surfaces of equal size pass silently: swapping which key owns which array changes
+    nothing about which frozensets exist in the set, only which name owns which. Returning them keyed
+    lets the caller compare each field id's group by NAME, so a swap goes red.
+    """
+    if not _SLIDER_CAPABILITIES_SOURCE.is_file():
+        pytest.skip(
+            f"no web tree at {_SLIDER_CAPABILITIES_SOURCE}; the client catalogue is only checkable in a "
+            "monorepo checkout, never inside the agri Docker image"
+        )
+    capabilities = _SLIDER_CAPABILITIES_SOURCE.read_text(encoding="utf-8")
+    sources = (capabilities, _WATER_STREAM_SWITCH_SOURCE.read_text(encoding="utf-8"))
+    tables = _CAPABILITY_TABLES.search(capabilities)
+    climate = _CLIMATE_LANE_TABLE.search(capabilities)
+    assert tables is not None, "the capability tables moved; re-point this reader"
+    assert climate is not None, "the climate lane table moved; re-point this reader"
+
+    def _slugs(items: str) -> frozenset[str]:
+        return frozenset(
+            item.group("slug") or _typescript_constant(item.group("identifier"), sources)
+            for item in _ARRAY_ITEM.finditer(items)
+        )
+
+    bodies = [match.group("items") for match in _PARQUET_LANES_ARRAY.finditer(tables.group(0))]
+    groups = {_slugs(body) for body in bodies} - {frozenset()}
+    climate_groups = {
+        (match.group("quoted_key") or match.group("bare_key")): _slugs(match.group("items"))
+        for match in _CLIMATE_LANE_ENTRY.finditer(climate.group("body"))
+    }
+    return groups, climate_groups
+
+
+def test_every_agent_surface_lane_group_is_a_client_catalogue_lane_group_and_back() -> None:
+    """A lane renamed on one side only (G8 moves climate to `meteorology-*`) leaves the agent and the map apart.
+
+    Lanes the slider never shows (`NON_SLIDER_REGISTERED_LAYERS`: the ML-written lanes) are excused on
+    the agent side only. The water switch is checked by name too: CA11 flips both sides in one commit.
+    Climate entries are compared KEYED (m4), not folded into the unkeyed group set: a swap between two
+    climate surfaces' lane groups must go red even when the two groups are the same size and shape.
+    """
+    client_groups, client_climate_groups = _client_catalogue_lane_groups()
+    agent_climate_keys = {
+        lane_id.removeprefix(_CLIMATE_FIELD_SURFACE_PREFIX)
+        for lane_id in SURFACE_PARQUET_LANES
+        if lane_id.startswith(_CLIMATE_FIELD_SURFACE_PREFIX)
+    }
+    agent_groups = {
+        frozenset(lanes)
+        for lane_id, lanes in SURFACE_PARQUET_LANES.items()
+        if not lane_id.startswith(_CLIMATE_FIELD_SURFACE_PREFIX) and not set(lanes) <= NON_SLIDER_REGISTERED_LAYERS
+    }
+
+    assert {
+        "agent_only": sorted(sorted(group) for group in agent_groups - client_groups),
+        "client_only": sorted(sorted(group) for group in client_groups - agent_groups),
+    } == {"agent_only": [], "client_only": []}
+    assert agent_climate_keys == set(client_climate_groups), (
+        "the climate-field-* surface keys and the TypeScript CLIMATE_PARQUET_LANES keys must name the same fields"
+    )
+    for key, client_lanes in client_climate_groups.items():
+        agent_lanes = frozenset(SURFACE_PARQUET_LANES[f"{_CLIMATE_FIELD_SURFACE_PREFIX}{key}"])
+        assert agent_lanes == client_lanes, key
+    water_switch = (_WATER_STREAM_SWITCH_SOURCE.read_text(encoding="utf-8"),)
+    assert _typescript_constant("WATER_GAUGES_STREAM", water_switch) == WATER_GAUGES_SERVED_STREAM

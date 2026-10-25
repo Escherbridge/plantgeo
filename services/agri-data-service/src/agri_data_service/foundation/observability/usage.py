@@ -48,7 +48,17 @@ _WEIGHTED_POOLS: Final[frozenset[PoolLabel]] = frozenset({"open-meteo-paid", "op
 #: Metering-and-report labels for keyless, unbudgeted providers. Deliberately NOT `vocabulary.PoolLabel`:
 #: that set is what the usage report's month-to-date section walks, and WQ-4 enforces no budget on
 #: these, so they label hosts in the per-lane x host section only (and stop it reading `provider None`).
-MeteringOnlyPoolLabel = Literal["nasa-power", "nws", "arcgis-online"]
+MeteringOnlyPoolLabel = Literal[
+    "nasa-power",
+    "nws",
+    "arcgis-online",
+    "earth-search",
+    "usdm",
+    "mtbs-edw",
+    "usgs-nhdplus",
+    "blm",
+    "usda-cdl",
+]
 METERING_ONLY_POOL_LABELS: Final[frozenset[MeteringOnlyPoolLabel]] = frozenset(get_args(MeteringOnlyPoolLabel))
 
 
@@ -70,6 +80,15 @@ _HOST_RULES: Final[tuple[tuple[re.Pattern[str], str, PoolLabel | MeteringOnlyPoo
     (re.compile(r"^power\.larc\.nasa\.gov$"), "nasa-power", "nasa-power"),
     (re.compile(r"^api\.weather\.gov$"), "nws", "nws"),
     (re.compile(r"^services[0-9]*\.arcgis\.com$"), "arcgis-online", "arcgis-online"),
+    # p4-contract-freeze: the remaining keyless provider files (`lanes/_providers/<pool>.toml`).
+    (re.compile(r"^earth-search\.aws\.element84\.com$"), "earth-search", "earth-search"),
+    (re.compile(r"^droughtmonitor\.unl\.edu$"), "usdm", "usdm"),
+    # Whole-host rule; a future non-MTBS USFS lane on this same host must narrow this by path-owning provider.
+    (re.compile(r"^apps\.fs\.usda\.gov$"), "mtbs-edw", "mtbs-edw"),
+    (re.compile(r"^hydro\.nationalmap\.gov$"), "usgs-nhdplus", "usgs-nhdplus"),
+    (re.compile(r"^gis\.blm\.gov$"), "blm", "blm"),
+    # Whole-host rule; a future non-CDL NASS lane on this same host must narrow this by path-owning provider.
+    (re.compile(r"^(pdi\.scinet|www\.nass)\.usda\.gov$"), "usda-cdl", "usda-cdl"),
 )
 
 

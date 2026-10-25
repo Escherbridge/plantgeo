@@ -1,0 +1,18 @@
+# Element84 Earth Search (STAC over AWS's public Sentinel-2 L2A COG mirror): the facts every lane on
+# this provider shares (spec S3). Data only. Schema: foundation/lane_config/models.py::ProviderConfig.
+# Sources: ingest/vegetation.py::EARTH_SEARCH_URL / SENTINEL2_L2A_COLLECTION / SEARCH_PAGE_SIZE;
+# docs/lanes/vegetation.md section 1 ("Distribution path", "Auth"). Shipped inert (s-vegetation).
+
+id = "earth-search"
+display_name = "Element84 Earth Search"
+# Keyless and uncharged: no api_key_env, no [weight], no [budget].
+weighted = false
+# Rate posture: unpublished. The legacy reader pages STAC 100 items at a time
+# (ingest/vegetation.py::SEARCH_PAGE_SIZE) under a 24 MiB / 60 s bound (STAC_BOUNDS).
+# TODO(s-vegetation): the COG pixel reads go to the asset hrefs the STAC items publish (the
+# `sentinel-cogs` bucket), whose host is not a literal anywhere in the tree; verify it against the
+# live probe and declare it here, with its host rule, before the strategy fetches pixels.
+
+[endpoints.search]
+host = "earth-search.aws.element84.com"
+path = "/v1/search"

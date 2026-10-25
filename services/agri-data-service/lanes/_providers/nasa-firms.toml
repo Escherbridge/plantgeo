@@ -1,0 +1,31 @@
+# NASA FIRMS area API: the facts every lane on this provider shares (spec S3).
+# Data only. Schema: foundation/lane_config/models.py::ProviderConfig. Authoring: lanes/AGENTS.md.
+# Sources: ingest/firms.py::FIRMS_API_KEY_VARIABLE, FIRMS_AREA_CSV_TEMPLATE and
+# FIRMS_AVAILABILITY_CSV_TEMPLATE; docs/lanes/fire-detections.md "Endpoint(s)" and "Auth".
+# Shipped inert: no lane names it yet (s-fire-detections).
+
+id = "nasa-firms"
+display_name = "NASA FIRMS"
+# Uncharged by weight: no [weight], no [budget] (WQ-4 declined a FIRMS pool). A turn is capped in
+# logical requests; the meter labels this host's pool `firms` (foundation/observability/vocabulary.py).
+weighted = false
+# REQUIRED MAP_KEY (ingest/firms.py::_require_api_key raises when it is unset). The NAME only.
+# The schema DEFAULTS api_key_transport to "query" (foundation/lane_config/models.py ProviderConfig)
+# whether or not this file names it, but that default is moot here: the key actually rides a URL
+# PATH SEGMENT (`/api/area/csv/{api_key}/...`), a shape neither "query" nor "header" transport can
+# express, so the provider client attaches nothing regardless: the strategy must place it itself,
+# and must never log the URL (docs/lanes/fire-detections.md "Auth").
+# TODO(s-fire-detections): a `path` key transport needs a schema decision before the strategy lands.
+api_key_env = "NASA_FIRMS_KEY"
+# TODO(s-fire-detections): verify the MAP_KEY transaction limit against the live probe; nothing in
+# the tree records it.
+
+# Current and dated windows: `/api/area/csv/{api_key}/{source}/{area}/{day_range}[/{start_date}]`.
+[endpoints.area-csv]
+host = "firms.modaps.eosdis.nasa.gov"
+path = "/api/area/csv"
+
+# Per-product coverage windows, read before every history walk: `/api/data_availability/csv/{api_key}/all`.
+[endpoints.data-availability]
+host = "firms.modaps.eosdis.nasa.gov"
+path = "/api/data_availability/csv"
