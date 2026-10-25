@@ -1,0 +1,65 @@
+# Burn severity (spec 7): MTBS burned-area boundaries per governed fire-year release, one partition per
+# release day. Data only; behaviour is pipeline/lanes/burn_severity/mtbs_releases.py. Authoring:
+# lanes/AGENTS.md. Lane notes, budget arithmetic and the CA7 verdict: pipeline/lanes/burn_severity/AGENTS.md
+# and docs/lanes/burn-severity.md section 8.
+#
+# DARK: executor = "legacy", so the legacy daily command (execution/lane_specs.py, the same lane id) keeps
+# running BOTH halves of this lane: the historical releases AND the weekly current capture with its
+# daily eligible-stage publication. This file's strategy covers the historical releases only. The
+# current capture has no successor on the config path (CA7 "no successor", routed as CQ-9), so flipping
+# this file to executor = "config" would stop the current capture: under the CQ-9 carve-out this lane
+# stays legacy through G6 and moves to a later cohort.
+
+id = "burn-severity-direct-forward"
+kind = "ingest"
+nature = "release_series"
+enabled = true
+executor = "legacy"
+strategy = "burn_severity.mtbs_releases"
+
+[source]
+provider = "mtbs-edw"
+endpoint = "burned-area-query"
+coverage = "regional"
+iso_country_codes = ["US"]
+# The governed release table opens on the 2018 fire year's completion; MTBS itself maps from 1984, but a
+# fire year without a dated completion is a governance gap, not history a gap-fill could walk.
+history = { capability = "archive", earliest = "2020-11-24" }
+lifecycle = "active"
+
+[schedule]
+# The legacy daily fire, kept so a later cut-over changes the executor and nothing else.
+forward_cron = "55 8 * * *"
+# Once a day is ample: the governed set grows only by a code change, never with time.
+gap_fill_cron = "25 9 * * *"
+catch_up = "coalesce_latest"
+
+[days]
+floor = "2020-11-24"
+floor_basis = "lane_registry.py BURN_SEVERITY_STREAM registration: the first governed MTBS release day (fire year 2018)"
+# Must equal the literal registration's lag (S18 mirror): the legacy weekly lane's seven days.
+publication_lag_days = 7
+# Only governed release days are owed (release_days), so a short window costs one census and no send.
+absence_recheck_days = 14
+partial_day = "refuse"
+
+[budget]
+# Unweighted provider: the caps count logical requests. One release day is one unit sending, per cohort,
+# one returnCountOnly plus floor(count / page) + 1 GeoJSON pages (the short or empty page proves the end),
+# plus one send per halving when the host refuses a page as oversized (50, 25, 12, 6, 5).
+# Measured basis: the 2026-08-05 load held 478 rows over four cohorts, about 120 a cohort (the reviewed
+# worst-case cohort is about 134 fires). Typical day: 1 + 3 = 4 sends. Worst case, a 134-fire cohort paged at 5 rows after four
+# halvings: 1 + 4 + (134 / 5 rounded down + 1) = 32 sends. A runner retry re-sends seen requests at no
+# budget cost. Forward: one newly governed day at that worst case leaves margin; the cap breaches when one
+# day needs more than 60 sends, a cohort above about 275 fires at 5-row pages or 2,950 at 50-row pages.
+forward_max_weighted_calls = 60
+# Gap-fill: the five governed release days at the worst case, 5 x 32; it breaches only when all five do.
+gap_fill_max_weighted_calls = 160
+# MTBS publishes no rate limit; the legacy walk is strictly sequential.
+max_concurrency = 1
+turn_timeout_seconds = 1800
+
+[[streams]]
+slug = "burn-severity"
+history_floor = "2020-11-24"
+floor_basis = "lane_registry.py BURN_SEVERITY_STREAM registration: the first governed MTBS release day (fire year 2018)"
