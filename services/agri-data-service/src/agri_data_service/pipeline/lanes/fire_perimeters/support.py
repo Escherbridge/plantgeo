@@ -9,15 +9,47 @@ move this module here because fire-perimeters' modules were not shared with any 
 (`metadata.json` slice `s-fire-perimeters`), unlike `pipeline/lanes/evacuation_zones/support.py`,
 which IS the moved original of the byte-identical chain below.
 
-THE CHAIN ITSELF IS NOT A NEW DESIGN DECISION. It is `geo.sync_feature_geom_from_properties`'s
-(`drizzle/0000_baseline.sql:106-159`) BEFORE INSERT OR UPDATE trigger, restated for DuckDB four times
-over in this codebase (`pipeline/direct/{fire_perimeters,evacuation_zones,burn_severity}/support.py`,
-`pipeline/lanes/evacuation_zones/support.py`): a valid shape passes untouched; an invalid one is
-`ST_MakeValid`-ed, then `ST_CollectionExtract(..., 3)`-ed when the repair produced a
-GEOMETRYCOLLECTION; only what is STILL invalid or empty is refused (the trigger's SQLSTATE 22023);
-a repaired row is flagged. See `pipeline/direct/fire_perimeters/AGENTS.md`, "Geometry repair", for
-the history and measurement (41 of 99 live perimeters invalid on 2026-09-15) that made the refusal
-of every invalid shape untenable and this chain necessary.
+THE CHAIN ITSELF IS NOT A NEW DESIGN DECISION, BUT IT IS NOT ONE UNIFORM CHAIN EITHER (corrected,
+re-read after ring review: an earlier revision of this docstring overstated the identity across all
+four restatements). All four trace to `geo.sync_feature_geom_from_properties`'s
+(`drizzle/0000_baseline.sql:106-159`) BEFORE INSERT OR UPDATE trigger, but the trigger's two call
+sites diverged, and the DuckDB restatements each follow their OWN call site -- there are TWO
+variants in this codebase, not one:
+
+- **Pass-through-and-flag** (THIS module, `pipeline/direct/fire_perimeters/support.py`,
+  `pipeline/direct/evacuation_zones/support.py`, `pipeline/lanes/evacuation_zones/support.py`): a
+  shape that is already valid passes UNTOUCHED -- `CASE WHEN was_valid THEN parsed ELSE
+  ST_CollectionExtract(ST_MakeValid(parsed), 3) END` below -- and a repaired row is flagged
+  (`was_repaired`/`area_change`, surfaced per row by `RepairedPerimeterGeometry`). No `ST_Multi`
+  normalisation: `require_polygon_geometry` (`ingest/arcgis.py`) already admits only Polygon /
+  MultiPolygon, so there is nothing left for `ST_Multi` to normalise onto a MultiPolygon shape that
+  `ST_CollectionExtract` has not already produced.
+- **Always-repair, no flag** (`pipeline/direct/burn_severity/support.py`): EVERY shape, valid or not,
+  runs the full `ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_GeomFromGeoJSON(geojson)), 3))` chain
+  unconditionally -- no `was_valid` branch, no pass-through, and no repaired/area-change tracking at
+  all (that module's own `_REPAIR_SQL` returns only `fire_id, wkb, is_empty`). MTBS's national-scale
+  class polygons self-intersect routinely enough at that resolution that burn-severity's own author
+  judged the pass-through not worth keeping; this module's author (WFIGS incident perimeters, a
+  different source at a different scale) judged the opposite, for the reason named just below.
+
+Only what is STILL invalid or empty after either chain is refused (the trigger's SQLSTATE 22023).
+THIS module's choice is a pass-through because `_encode`/`content_digest` in
+`pipeline/direct/fire_perimeters/forward.py` (and this module's own strategy's `content_digest`)
+digest the geometry bytes: an unconditional `ST_MakeValid` may renumber a valid ring's vertices
+byte-for-byte identically in practice, but nothing guarantees it, and a repair that touched every
+VALID shape too would read as "changed" on a byte comparison even when nothing upstream moved. See
+`pipeline/direct/fire_perimeters/AGENTS.md`, "Geometry repair", for the history and measurement (41
+of 99 live perimeters invalid on 2026-09-15) that made refusing every invalid shape untenable and a
+repair chain necessary in the first place.
+
+**Consolidating the two variants into one parameterised helper is a candidate for `c7-scaffold` (7S,
+plan.md "c7-scaffold"/"7.1 Slices"), not this dark slice.** 7S already owns the docs/styleguide
+rewrite once `pipeline/direct/**` is deleted whole; folding BOTH restatements (the pass-through-and-
+flag variant here and in `evacuation_zones`, and burn-severity's always-repair variant) into one
+shared, parameter-switched module under `foundation` (never under one lane's own `pipeline/lanes/
+<layer>/` package, which strategies may not import from each other -- `lanes/AGENTS.md`) belongs
+there, where the decision whether MTBS's flagging gap is itself a bug can be made with the legacy
+packages' full history in view rather than guessed at from this slice.
 
 SRID IS CARRIED BY CONVENTION, NOT BY BYTES, ON BOTH SIDES -- same reasoning as the restated module:
 `ST_AsWKB` emits standard WKB with no SRID header, every row is `geometry(GEOMETRY,4326)`
