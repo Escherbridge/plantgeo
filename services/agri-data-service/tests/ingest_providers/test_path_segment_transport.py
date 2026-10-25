@@ -101,8 +101,12 @@ async def test_the_availability_endpoint_needs_no_request_value_beyond_the_key(
 
 @pytest.mark.parametrize(
     ("status", "error_type"),
-    [(401, ProviderConfigurationError), (403, ProviderConfigurationError), (404, UpstreamHttpError),
-     (503, SourceUnavailableError)],
+    [
+        (401, ProviderConfigurationError),
+        (403, ProviderConfigurationError),
+        (404, UpstreamHttpError),
+        (503, SourceUnavailableError),
+    ],
 )
 async def test_a_refused_firms_send_never_carries_the_key_into_its_error(
     monkeypatch: pytest.MonkeyPatch,

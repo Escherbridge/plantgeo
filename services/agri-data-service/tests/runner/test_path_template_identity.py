@@ -77,8 +77,10 @@ def test_a_firms_checkpoint_identity_is_the_reported_url_with_the_key_marker() -
 
     identity = TurnCheckpoints(store=None, lane_id="fire-detections-forward", provider=firms).identity(request)
 
-    assert identity.request_url == reported.request_url == (
-        "https://firms.modaps.eosdis.nasa.gov/api/area/csv/{api_key}/VIIRS_SNPP_NRT/-125,41,-116,49/1"
+    assert (
+        identity.request_url
+        == reported.request_url
+        == ("https://firms.modaps.eosdis.nasa.gov/api/area/csv/{api_key}/VIIRS_SNPP_NRT/-125,41,-116,49/1")
     )
     assert key in reported.send_url.reveal()
     assert key not in repr(identity)

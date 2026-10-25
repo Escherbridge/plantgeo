@@ -167,17 +167,13 @@ class ProviderEndpoint(_FrozenModel):
         """Whether the template carries the reserved `{api_key}` segment."""
         return API_KEY_PLACEHOLDER in self.path_placeholders()
 
-    def split_parameters(
-        self, items: Iterable[tuple[str, str]]
-    ) -> tuple[dict[str, str], tuple[tuple[str, str], ...]]:
+    def split_parameters(self, items: Iterable[tuple[str, str]]) -> tuple[dict[str, str], tuple[tuple[str, str], ...]]:
         """A request's parameters as (path placeholder values, the remaining query items, in order)."""
         pairs = tuple(items)
         names = set(self.path_placeholders()) - {API_KEY_PLACEHOLDER}
         return {name: value for name, value in pairs if name in names}, tuple(p for p in pairs if p[0] not in names)
 
-    def request_url(
-        self, host: str, path_values: Mapping[str, str], query: str, *, api_key: str | None = None
-    ) -> str:
+    def request_url(self, host: str, path_values: Mapping[str, str], query: str, *, api_key: str | None = None) -> str:
         """`https://host/path?query`; a templated endpoint drops a bare `?` (the legacy URL shape)."""
         if self.path_template is None:
             return f"https://{host}{self.path}?{query}"

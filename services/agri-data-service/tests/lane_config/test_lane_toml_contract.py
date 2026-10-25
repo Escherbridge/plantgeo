@@ -140,7 +140,7 @@ def _safe_provider_key_metadata(path: Path, where: str, value: object) -> bool:
     if where == "api_key_parameter":
         return value in ("apikey", "api_key")
     if where == "api_key_transport":
-        return value in ("query", "header")
+        return value in ("query", "header", "path")
     if where == "api_key_header":
         return value == "X-Api-Key"
     return bool(re.fullmatch(r"endpoints\.[a-z0-9-]+\.optional_api_key", where)) and isinstance(value, bool)
