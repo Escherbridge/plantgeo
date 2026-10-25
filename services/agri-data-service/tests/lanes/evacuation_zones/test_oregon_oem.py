@@ -36,7 +36,17 @@ from agri_data_service.pipeline.runner.contract import EdgeProbingStrategy, Inge
 from agri_data_service.pipeline.runner.resolve import resolve_strategy
 from tests.lane_config.builders import REAL_LANES_DIRECTORY
 from tests.parquet.test_objectstore_writer import RecordingBackend
-from tests.runner.fakes import NOW, TODAY, ManualClock, MemoryLaneStore, ScriptedUpstream, ports_for, run, spec_for
+from tests.runner.fakes import (
+    NOW,
+    TODAY,
+    ManualClock,
+    MemoryLaneStore,
+    ScriptedUpstream,
+    ports_for,
+    run,
+    spec_for,
+    unwritten_by_day,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -256,6 +266,90 @@ async def test_a_same_utc_day_stand_down_is_masked_until_the_day_rolls_over(monk
     # The morning's zones are still served, unreplaced -- the residual named above, not a crash.
     assert store.status(STREAM, TODAY) == "data"
     assert store.tables[(STREAM, TODAY)].column("global_id").to_pylist() == ["{A}"]
+
+
+# --- the clock-skew guard: a published day ahead of the capture is a soft "unavailable", not a crash
+
+
+@pytest.mark.asyncio
+async def test_a_published_day_ahead_of_the_capture_is_a_soft_unavailable_not_a_crash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fix-batch item 2 (ring review). `_watermark_day` refuses a published day stamped ahead of this
+    capture's own day (mirroring `forward.py:252-261`, which legacy left uncaught -- a process crash).
+    `OregonOemStrategyError` is none of `probe_edge`'s own caught exceptions, so it propagates to
+    `turn.py::_Turn._spend_probe`'s generic handler; `fetch.classify_fetch_error` has no typed case
+    for it, falls through to `"strategy"`, and `_spend_probe` maps that to `status="unavailable"` --
+    never the `"config"` branch that would re-raise and end the turn. The day is reported
+    `unwritten`/`upstream_unavailable`, and nothing is written or governed absent.
+    """
+    monkeypatch.setenv("INGEST_BBOX", BBOX)
+    future_day = date(2026, 9, 25)
+    seeded = captured("{A}", fetched_at=datetime(2026, 9, 25, 8, 0, tzinfo=UTC))
+    strategy_store = ObjectStore(RecordingBackend())
+    seed_published(strategy_store, day=future_day, source=seeded)
+    store = MemoryLaneStore()
+    store.publish(STREAM, future_day, evacuation_zones_table(seeded, snapshot_day=future_day))
+
+    # A different population, captured "now" (TODAY) -- behind the already-published future day.
+    monkeypatch.setattr(oregon_oem, "fetch_evacuation_zones_snapshot", _fetch_returning(captured("{B}", fetched_at=NOW)))
+    strategy = OregonOemEvacuationZonesStrategy(store_factory=lambda: strategy_store)
+
+    exit_code, report = await run(spec_for(_lane(), mode="forward"), _ports(strategy, store))
+
+    assert exit_code == 0
+    assert report["probe_status"] == "unavailable"
+    assert unwritten_by_day(report)[TODAY.isoformat()]["reason"] == "upstream_unavailable"
+    # The strategy refused to guess a day: the future version is untouched, nothing new is written.
+    assert store.status(STREAM, future_day) == "data"
+    assert store.writes() == []
+
+
+# --- CA17 --republish-current: a fresh strategy instance never sees probe_edge ----------------------
+
+
+@pytest.mark.asyncio
+async def test_republish_current_takes_a_fresh_capture_through_a_fresh_strategy_instance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fix-batch item 3 (ring review). `turn.py::_Turn._republish_current` builds its own synthetic
+    `ProviderEdge` and calls `_fan_out` directly: `probe_edge` is never reached, so a FRESH strategy
+    instance's `_captured` is `None` when `fetch()` runs. Proves `fetch()`'s capture-is-None branch
+    takes its own fresh capture (the upstream fake's call count) and that the digest-verify
+    (`reader.canonical_digest`, the whole table, retrieval-instant columns included) actually agrees
+    and republishes -- using the SAME recorded `fetched_at` on both sides, exactly as an operator
+    re-running the capture at the recorded instant would, which is what makes the two tables
+    byte-identical rather than a restated mock-echo.
+    """
+    monkeypatch.setenv("INGEST_BBOX", BBOX)
+    served_day = date(2026, 9, 10)
+    source = captured("{A}", fetched_at=datetime(2026, 9, 10, 8, 0, tzinfo=UTC))
+    strategy_store = ObjectStore(RecordingBackend())
+    table = seed_published(strategy_store, day=served_day, source=source)
+    store = MemoryLaneStore()
+    store.publish(STREAM, served_day, table)
+
+    calls = 0
+
+    async def fake_fetch(
+        bbox: str, *, retry_attempts: int, retry_base_seconds: float, retry_max_seconds: float
+    ) -> EvacuationZonesSource:
+        nonlocal calls
+        calls += 1
+        return source
+
+    monkeypatch.setattr(oregon_oem, "fetch_evacuation_zones_snapshot", fake_fetch)
+    strategy = OregonOemEvacuationZonesStrategy(store_factory=lambda: strategy_store)
+    assert strategy._captured is None  # fresh instance; probe_edge is never reached by this path
+
+    exit_code, report = await run(
+        spec_for(_lane(), mode="forward", republish_current=True), _ports(strategy, store)
+    )
+
+    assert calls == 1  # fetch()'s capture-is-None branch took its own fresh capture
+    assert strategy._captured is None  # probe_edge truly never ran; the cache stays untouched
+    assert exit_code == 0
+    assert report["republish"] == {"republished": served_day.isoformat(), "streams": [STREAM]}
 
 
 def _fetch_returning(source: EvacuationZonesSource) -> Callable[..., Awaitable[EvacuationZonesSource]]:
