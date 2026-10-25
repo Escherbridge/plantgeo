@@ -15,7 +15,7 @@ import structlog
 
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.parquet_ops import faults
-from agri_data_service.pipeline.direct.climate.products import CLIMATE_DIRECT_WRITER_START_DAY
+from agri_data_service.warehouse.field_products.climate import CLIMATE_DIRECT_WRITER_START_DAY
 from agri_data_service.warehouse.parquet.schema import SIGNAL_PLANE_SCHEMA, get_stream_schema
 from agri_data_service.warehouse.parquet.snapshot_signal_product import SOIL_TEMPERATURE_FIELDS
 

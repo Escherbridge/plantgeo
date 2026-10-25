@@ -58,6 +58,14 @@ SERVER_ERROR_BASE_SECONDS: Final = 2.0
 SERVER_ERROR_MAX_SECONDS: Final = 30.0
 #: SOFT-8: a stated Retry-After is waited up to this multiple of the series step; past it, the circuit opens.
 RETRY_AFTER_CEILING_FACTOR: Final = 2.0
+#: A ceiling on one strategy fetch await, independent of the between-attempt deadline checks below.
+#: `ingest/http.py::fetch_bounded` already retries a stalled connection `TRANSPORT_RETRY_ATTEMPTS` (3) times at
+#: the full provider timeout (300 s, `CONFIG_PROVIDER_BOUNDS`) with a short backoff between them:
+#: 300 + 2 + 300 + 4 + 300 ~= 906 s can elapse inside ONE `await self.strategy.fetch(...)`, invisible to the
+#: deadline checks at the top of the loop and before each backoff. 330.0 s (one provider timeout plus a 30 s
+#: margin) is the smallest cap that still lets a single clean slow attempt finish while never letting a second
+#: stuck attempt ride inside the same await.
+PER_UNIT_FETCH_CAP_SECONDS: Final = 330.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,9 +230,23 @@ class UnitFetcher:
                 return self._failed(request, "deferred_quota", detail, attempts)
             if self.clock.monotonic() >= self.deadline:
                 return self._failed(request, "deferred_budget", "the turn's time budget ran out", attempts)
+            remaining = self.deadline - self.clock.monotonic()
+            if remaining <= 0.0:
+                # The check above just passed, so this is only reachable on a clock that moved between the
+                # two reads; let the top-of-loop check record the same `deferred_budget` outcome it always does
+                # rather than calling `wait_for` with a timeout of zero (which would be `upstream_unavailable`).
+                continue
             attempts += 1
+            timeout = min(PER_UNIT_FETCH_CAP_SECONDS, remaining)
             try:
-                response = await self.strategy.fetch(request, self.client)
+                try:
+                    response = await asyncio.wait_for(self.strategy.fetch(request, self.client), timeout=timeout)
+                except TimeoutError as error:
+                    # Classify exactly as `UpstreamTimeoutError` would: the outer ladder (and the caller
+                    # reading `classify_fetch_error`) never sees a new fault class, only a bounded one.
+                    raise UpstreamTimeoutError(
+                        f"the per-unit fetch cap ({timeout:.0f}s) elapsed before the upstream answered"
+                    ) from error
             except Exception as error:
                 kind = classify_fetch_error(error)
                 if kind == "config":
@@ -286,6 +308,7 @@ class UnitFetcher:
 
 __all__ = [
     "DEFAULT_FETCH_RETRY_POLICY",
+    "PER_UNIT_FETCH_CAP_SECONDS",
     "RETRY_AFTER_CEILING_FACTOR",
     "THROTTLE_SERIES_SECONDS",
     "FetchRetryPolicy",

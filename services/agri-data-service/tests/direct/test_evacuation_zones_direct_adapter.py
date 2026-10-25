@@ -33,6 +33,7 @@ from agri_data_service.pipeline.direct.evacuation_zones.products import (
 )
 from agri_data_service.pipeline.direct.evacuation_zones.rows import evacuation_zones_table
 from agri_data_service.pipeline.direct.evacuation_zones.source import EvacuationZonesSource
+from agri_data_service.pipeline.lanes import evacuation_zones as lanes_evacuation_zones
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from tests.parquet.test_objectstore_writer import RecordingBackend
 
@@ -227,7 +228,11 @@ def test_no_module_in_this_package_ever_constructs_terminal_evidence() -> None:
     the type at all: never constructing it is a stronger guarantee than never passing the keyword.
     """
     banned = {"TerminalEvidence", "provenance"}
-    for module in Path(package.__file__).parent.glob("*.py"):
+    # p4-extract moved the shared modules to pipeline/lanes/evacuation_zones (this package keeps
+    # shims), so the guard walks BOTH homes -- the lanes package is where the s-evacuation-zones
+    # strategy will land, which is exactly the code most likely to slip (review 2026-10-24, minor 1).
+    roots = (Path(package.__file__).parent, Path(lanes_evacuation_zones.__file__).parent)
+    for module in (candidate for root in roots for candidate in root.glob("*.py")):
         # Parsed rather than grepped: this package's own docstrings DESCRIBE the trap at length, and
         # a substring search would fail on the prose that exists to prevent it.
         tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))

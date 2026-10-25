@@ -13,7 +13,7 @@ import pyarrow.parquet as pq  # type: ignore[import-untyped]
 from agri_data_service.foundation.canonical import sha256_digest
 from agri_data_service.foundation.parquet.completion import PartitionCompletion
 from agri_data_service.foundation.parquet.paths import absence_marker_path, day_prefix
-from agri_data_service.pipeline.direct.sensors.adapter import merge_sensors_day
+from agri_data_service.pipeline.lanes.sensors.merge import merge_sensors_day
 from agri_data_service.pipeline.parquet.availability_extension import (
     FinalizedLaneDay,
     LaneDaySource,

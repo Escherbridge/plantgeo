@@ -18,7 +18,6 @@ from agri_data_service.pipeline.direct.evacuation_zones.products import (
     DIRECT_QUERY_URL,
     DIRECT_SOURCE_LITERAL,
     EVACUATION_ZONES_DIRECT_KIND,
-    MAX_ROWS_PER_PART,
     EvacuationZonesCoverageError,
     bbox_unconfigured_reason,
     refuse_uncovered_state,
@@ -88,18 +87,3 @@ def test_the_identity_constants_are_the_ingest_modules_own_and_not_a_second_copy
     assert DIRECT_SOURCE_LITERAL == ingest_module.EVACUATION_ZONES_PROPERTY_SOURCE
     assert DIRECT_QUERY_URL == ingest_module.EVACUATION_ZONES_QUERY_URL
     assert EVACUATION_ZONES_DIRECT_KIND == "observed"
-
-
-def test_the_part_row_bound_matches_the_lane_it_replaces() -> None:
-    """Restated rather than imported, so this is what stops the restatement from drifting.
-
-    SKIPS ONCE THE POSTGRES LANE IS DELETED, deliberately: the restatement exists precisely so this
-    package survives that deletion, and a test that hard-imported the removed module would turn the
-    successful removal into a red sweep. While both exist, the two numbers must agree.
-    """
-    postgres_lane = pytest.importorskip(
-        "agri_data_service.pipeline.lanes.evacuation_zones",
-        reason="the Postgres evacuation-zones lane has been deleted; the restated bound stands alone",
-    )
-
-    assert MAX_ROWS_PER_PART == postgres_lane.MAX_ROWS_PER_PART

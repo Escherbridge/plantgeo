@@ -4,9 +4,52 @@ Every name kept importable only so an existing importer does not break, with the
 which it is deleted. `engineering-principles.md` §2 forbids a disabled-but-kept name with no owner
 and no tracking; this file is that tracking. A shim not listed here is a defect.
 
-No shim is currently live. The two `source.py` re-export modules (below) were the last ones and are
-now deleted; the three module-level `__getattr__` shims were deleted on 2026-09-18 and are recorded
-further down so the removal is not re-litigated.
+Twenty-three re-export shims are live, all created by `p4-extract` (track
+`config_driven_ingestion_20260926`, Phase 4) and listed in the next section. Every earlier shim is
+deleted; those are recorded further down so the removals are not re-litigated.
+
+## Live: the `p4-extract` shims (created 2026-10-24, CA14)
+
+`p4-extract` moved what non-lane modules and the shadow strategies import out of `pipeline/direct/**`
+-- the field-product catalogues to `warehouse/field_products/`, and each layer's source protocol,
+source and products leaves to `pipeline/lanes/<layer>/` -- because Phase 7 deletes `pipeline/direct/**`
+and a strategy may not import it (`pipeline/lanes/AGENTS.md`). Each legacy file is a plain re-export
+module in the 2026-09-18 style: it enumerates its names in `__all__` and binds the SAME objects, so
+`isinstance`, `except` and identity hold across both spellings. A monkeypatch must target the new
+module: patching a shim rebinds only the shim's name, never the global the moved code reads.
+
+**Removal condition, every row: deleted at 7D-n of the supersession cleanup lane.**
+`tests/test_direct_extraction_shims.py` holds each row to its new home (identity) and to this table.
+
+| Shim (legacy module) | Moved to |
+|---|---|
+| `agri_data_service.pipeline.direct.climate.products` | `warehouse/field_products/climate.py` |
+| `agri_data_service.pipeline.direct.soil.products` | `warehouse/field_products/soil.py` |
+| `agri_data_service.pipeline.direct.vegetation.products` | `warehouse/field_products/vegetation.py` |
+| `agri_data_service.pipeline.direct.burn_severity.source_protocol` | `pipeline/lanes/burn_severity/source_protocol.py` |
+| `agri_data_service.pipeline.direct.burn_severity.mtbs` | `pipeline/lanes/burn_severity/mtbs.py` |
+| `agri_data_service.pipeline.direct.burn_severity.products` | `pipeline/lanes/burn_severity/products.py` |
+| `agri_data_service.pipeline.direct.drought.source_protocol` | `pipeline/lanes/drought/source_protocol.py` |
+| `agri_data_service.pipeline.direct.drought.usdm` | `pipeline/lanes/drought/usdm.py` |
+| `agri_data_service.pipeline.direct.drought.products` | `pipeline/lanes/drought/products.py` |
+| `agri_data_service.pipeline.direct.evacuation_zones.watermark` | `pipeline/lanes/evacuation_zones/watermark.py` |
+| `agri_data_service.pipeline.direct.evacuation_zones.products` | `pipeline/lanes/evacuation_zones/products.py` |
+| `agri_data_service.pipeline.direct.evacuation_zones.rows` | `pipeline/lanes/evacuation_zones/rows.py` |
+| `agri_data_service.pipeline.direct.evacuation_zones.source` | `pipeline/lanes/evacuation_zones/source.py` |
+| `agri_data_service.pipeline.direct.evacuation_zones.support` | `pipeline/lanes/evacuation_zones/support.py` |
+| `agri_data_service.pipeline.direct.watersheds.watermark` | `pipeline/lanes/watersheds/watermark.py` |
+| `agri_data_service.pipeline.direct.watersheds.source` | `pipeline/lanes/watersheds/source.py` |
+| `agri_data_service.pipeline.direct.crop_cover.source_protocol` | `pipeline/lanes/crop_cover/source_protocol.py` |
+| `agri_data_service.pipeline.direct.crop_cover.source` | `pipeline/lanes/crop_cover/source.py` |
+| `agri_data_service.pipeline.direct.crop_cover.products` | `pipeline/lanes/crop_cover/products.py` |
+| `agri_data_service.pipeline.direct.land_context.source_protocol` | `pipeline/lanes/land_context/source_protocol.py` |
+| `agri_data_service.pipeline.direct.land_context.source` | `pipeline/lanes/land_context/source.py` |
+| `agri_data_service.pipeline.direct.land_context.products` | `pipeline/lanes/land_context/products.py` |
+| `agri_data_service.pipeline.direct.sensors.adapter` (partial: `merge_sensors_day`, `DirectSensorsMerge`, `DirectSensorsError` only) | `pipeline/lanes/sensors/merge.py` |
+
+The sensors row is the one partial shim: `adapter.py` keeps the lock-holding
+`DirectSensorsForwardAdapter` (it prints to stderr, which a lane module may not) and re-exports only
+the merge unit. The adapter itself goes with `pipeline/direct/sensors/` in Phase 7.
 
 ## Deleted 2026-09-18 (N8 — wave-4 deletion list closed)
 

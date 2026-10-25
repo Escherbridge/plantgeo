@@ -21,7 +21,7 @@ from agri_data_service.foundation.parquet.completion import CompletedPart, Parti
 from agri_data_service.foundation.parquet.paths import partition_path
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.pipeline import source_bindings
-from agri_data_service.pipeline.direct.land_context import forward, source
+from agri_data_service.pipeline.direct.land_context import forward
 from agri_data_service.pipeline.direct.land_context.products import (
     ARCHIVE_ROOT,
     CENSUS_STATES,
@@ -43,6 +43,7 @@ from agri_data_service.pipeline.direct.land_context.source import (
 )
 from agri_data_service.pipeline.direct.land_context.watermark import STATE_KEY, read_state
 from agri_data_service.pipeline.errors import PipelineOperationError
+from agri_data_service.pipeline.lanes.land_context import source
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from agri_data_service.warehouse.parquet.tiers import derivation_session, derive_tier
 from agri_data_service.warehouse.schemas.land_context import BOUNDARIES_STREAM, CONTACTS_STREAM, OFFICES_STREAM

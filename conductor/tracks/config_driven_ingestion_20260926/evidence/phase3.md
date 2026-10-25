@@ -508,3 +508,18 @@ lane code.
 | receipt waiver | owner go 2026-10-24 (verbatim: "skip tests") implemented as a sanctioned gate door: `check.py --waive pytest --waive-operator owner:atoozmc --waive-reason ...` records the waiver in the receipt and `verify_quality_receipt.py::_entry_passes` accepts ONLY a named+reasoned waiver (never a bare `waived` or a `fail`); five flow tests in `tests/scripts/test_check_receipt_guards.py`; receipt `sha256:23f56e4c...` over 1,156 files, verified | DONE; reviewer verdict on the gate diff pending at writing |
 | CA18 legacy pause | pause `plantgeo.executor.water-gauges-direct-forward` AFTER a legacy turn whose report shows owed-claim retry drained; else record open claims under `layer=water-gauges/` for 7R | OPEN -- after the push |
 | gap-fill drain | first released turn (20:39Z) again exceeded the 2100 s command budget with no stderr -- the pre-outage hang is credential-independent. Diagnosis slice `w0-gapfill-hang` queued beside p4-extract; drain, and with it the waived history row, blocks on it | OPEN -- defect |
+
+### w0-gapfill-hang: diagnosis (2026-10-24, read-only architect pass)
+
+Mechanism, verified with file:line citations: `ingest/http.py::fetch_bounded` retries a stalled request
+3x at the full 300 s provider bound (~906 s per call) with no deadline parameter; `runner/fetch.py`
+checks the fetch deadline only BETWEEN attempts and its own ladder wraps up to three such ordeals;
+`asyncio.gather` lets one stuck unit stall the whole turn; and `runner/turn.py`'s write phase
+(`_publish`/`_write_rows`/`_write_absence`) has NO deadline check at all (the guard exists only in
+`_repair_ladders`). Either path ends in the 2100 s SIGKILL mid-await with empty stderr. Forward mode
+survives on slack (32 vs 112 calls/turn). Fixes commissioned (slice `w0-gapfill-fix`, runner files
+only): per-unit `asyncio.wait_for` cap in fetch.py + the repair-ladder deadline pattern on the write
+path; no throughput cost (drain ≈ 9 days at 4 fires/day once clean). **Caveat for the drain
+timeline:** `windows.py::gap_fill_window` reaches at most 366 days behind the forward edge, so the
+13k-day history drain also rides on revision-block advancement -- the waived history-depth row's
+closure date is NOT simply "9 days"; re-estimate after the fix lands.

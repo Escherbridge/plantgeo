@@ -34,11 +34,11 @@ if TYPE_CHECKING:
 
     from agri_data_service.foundation.region.manifest import Region
     from agri_data_service.foundation.region.source_coverage import SourceCoverageClaim
-    from agri_data_service.pipeline.direct.burn_severity.source_protocol import BurnSeveritySource
-    from agri_data_service.pipeline.direct.crop_cover.source_protocol import CropCoverSource
-    from agri_data_service.pipeline.direct.drought.source_protocol import DroughtSource
-    from agri_data_service.pipeline.direct.land_context.source_protocol import LandContextSource
     from agri_data_service.pipeline.direct.soil_survey.source_protocol import SoilSurveySource
+    from agri_data_service.pipeline.lanes.burn_severity.source_protocol import BurnSeveritySource
+    from agri_data_service.pipeline.lanes.crop_cover.source_protocol import CropCoverSource
+    from agri_data_service.pipeline.lanes.drought.source_protocol import DroughtSource
+    from agri_data_service.pipeline.lanes.land_context.source_protocol import LandContextSource
 
 #: The manifest layer slugs this module resolves sources for. Spelled once so a resolver, the
 #: protocol map and a failure message cannot drift apart.
@@ -130,17 +130,17 @@ class SourceRegistry:
         The boot check's argument. The protocol classes are imported INSIDE so they exist at
         runtime for the `isinstance` second assertion, not merely as `TYPE_CHECKING` names.
         """
-        from agri_data_service.pipeline.direct.burn_severity.source_protocol import (  # noqa: PLC0415
-            BurnSeveritySource as BurnSeveritySourceProtocol,
-        )
-        from agri_data_service.pipeline.direct.crop_cover.source_protocol import CropCoverSource  # noqa: PLC0415
-        from agri_data_service.pipeline.direct.drought.source_protocol import (  # noqa: PLC0415
-            DroughtSource as DroughtSourceProtocol,
-        )
-        from agri_data_service.pipeline.direct.land_context.source_protocol import LandContextSource  # noqa: PLC0415
         from agri_data_service.pipeline.direct.soil_survey.source_protocol import (  # noqa: PLC0415
             SoilSurveySource as SoilSurveySourceProtocol,
         )
+        from agri_data_service.pipeline.lanes.burn_severity.source_protocol import (  # noqa: PLC0415
+            BurnSeveritySource as BurnSeveritySourceProtocol,
+        )
+        from agri_data_service.pipeline.lanes.crop_cover.source_protocol import CropCoverSource  # noqa: PLC0415
+        from agri_data_service.pipeline.lanes.drought.source_protocol import (  # noqa: PLC0415
+            DroughtSource as DroughtSourceProtocol,
+        )
+        from agri_data_service.pipeline.lanes.land_context.source_protocol import LandContextSource  # noqa: PLC0415
 
         return LayerSourceContracts(
             protocol_by_layer={
@@ -160,14 +160,15 @@ def _source_registry() -> SourceRegistry:
     The three source modules are imported INSIDE this function on purpose. Each pulls its layer's
     ingest transport (`httpx`) and lane registry, and the callers are the boot check in `app.py`
     and the two `resolve_*_source` functions below; importing them at module scope would make
-    merely naming this registry pay for the whole of `pipeline/direct/` and would put extra import
+    merely naming this registry pay for every bound source package (`pipeline/direct/`,
+    `pipeline/lanes/` and `warehouse/field_products/` since p4-extract) and would put extra import
     edges into `app.py`'s import graph.
     """
-    from agri_data_service.pipeline.direct.burn_severity.mtbs import MTBS_BURN_SEVERITY_SOURCE  # noqa: PLC0415
-    from agri_data_service.pipeline.direct.crop_cover.source_protocol import USDA_CROP_COVER_SOURCE  # noqa: PLC0415
-    from agri_data_service.pipeline.direct.drought.usdm import USDM_DROUGHT_SOURCE  # noqa: PLC0415
-    from agri_data_service.pipeline.direct.land_context.source_protocol import BLM_LAND_CONTEXT_SOURCE  # noqa: PLC0415
     from agri_data_service.pipeline.direct.soil_survey.ssurgo import SSURGO_SOIL_SURVEY_SOURCE  # noqa: PLC0415
+    from agri_data_service.pipeline.lanes.burn_severity.mtbs import MTBS_BURN_SEVERITY_SOURCE  # noqa: PLC0415
+    from agri_data_service.pipeline.lanes.crop_cover.source_protocol import USDA_CROP_COVER_SOURCE  # noqa: PLC0415
+    from agri_data_service.pipeline.lanes.drought.usdm import USDM_DROUGHT_SOURCE  # noqa: PLC0415
+    from agri_data_service.pipeline.lanes.land_context.source_protocol import BLM_LAND_CONTEXT_SOURCE  # noqa: PLC0415
 
     return SourceRegistry(
         drought={USDM_DROUGHT_SOURCE.source_slug: USDM_DROUGHT_SOURCE},

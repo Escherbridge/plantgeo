@@ -386,9 +386,14 @@ def test_the_source_protocol_layers_obey_the_pipeline_layer_lattice() -> None:
     violations: list[str] = []
 
     for lane in FEDERATED_SOURCE_LAYER_LANES:
-        lane_dir = pkg_root / "pipeline" / "direct" / lane
-        assert lane_dir.is_dir(), f"{lane} is not a package under pipeline/direct"
-        for py_file in sorted(lane_dir.glob("**/*.py")):
+        # p4-extract (2026-10-24) moved the shared leaves to pipeline/lanes/<lane>; the direct
+        # package keeps shims plus any writer that has not moved, so BOTH homes are held to the rule.
+        lane_dirs = [pkg_root / "pipeline" / "direct" / lane]
+        extracted = pkg_root / "pipeline" / "lanes" / lane
+        if extracted.is_dir():
+            lane_dirs.append(extracted)
+        assert lane_dirs[0].is_dir(), f"{lane} is not a package under pipeline/direct"
+        for py_file in sorted(py for lane_dir in lane_dirs for py in lane_dir.glob("**/*.py")):
             violations.extend(
                 f"{py_file.relative_to(pkg_root)}:{line_no} imports '{imp}' (forbidden in 'pipeline')"
                 for line_no, imp in _get_imports(py_file)

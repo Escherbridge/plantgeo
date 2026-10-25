@@ -55,7 +55,11 @@ revision_days_per_turn = 31
 # Logical requests (unweighted provider): 8 tiles x (1 daily-values chunk + 1 monitoring-locations)
 # for the forward window, and the same again for the revision block.
 forward_max_weighted_calls = 32
-# 366 days = 12 chunks of 31 days x 8 tiles + 8 monitoring-locations units = 104.
+# windows.py::plan_gap_fill asks at most GAP_FILL_MAX_DAYS_PER_TURN (366) days; usgs_water_data.py's
+# plan_requests splits them into ceil(366/31) = 12 chunks per tile (contiguous_chunks, MAX_DAYS_PER_REQUEST
+# = 31), so 12 chunks x 8 tiles + 8 monitoring-locations units (one per tile) = 104 is the real unit count.
+# The configured cap below is 104 + 8 headroom = 112; the extra 8 is not derived from any known retry or
+# partial-chunk case, so treat it as an unexplained margin, not a proven requirement, if this is revisited.
 gap_fill_max_weighted_calls = 112
 # Gentle on an unpublished keyless rate limit (P4).
 max_concurrency = 2

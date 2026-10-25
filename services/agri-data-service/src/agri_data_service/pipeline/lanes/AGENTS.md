@@ -56,3 +56,17 @@ do not, the Phase-2 re-freeze should move routing into the lane TOML rather than
 watermark; the fifth, the precedence transform, is this directory's real one. They resolve through
 the same S14 resolver (`resolve_strategy(package="tests.runner")`) and are driven through
 `run_turn` in `tests/runner/test_conformance.py`.
+
+## Extracted source leaves are NOT strategies (p4-extract, 2026-10-24)
+
+The modules p4-extract moved in from `pipeline/direct/**` (`burn_severity/{source_protocol,mtbs,
+products}.py`, `drought/{source_protocol,usdm,products}.py`, `evacuation_zones/*`, `watersheds/*`,
+`sensors/merge.py`, `crop_cover/*`, `land_context/*`) are shared source/product leaves, not
+strategies: they predate the ProviderClient rule and may still use `upstream_client`, `pipeline.
+errors`, `pipeline.constants` or (crop-cover, allow-listed) raw `httpx`. The s-* slices decide per
+lane what migrates onto the provider client.
+
+**Reserved module names:** `drought/usdm.py` and `burn_severity/mtbs.py` are moved SOURCE modules
+with no `STRATEGY`. A lane TOML's `strategy = "<layer>.<leaf>"` resolves to
+`pipeline/lanes/<layer>/<leaf>.py::STRATEGY`, so the s-drought / s-burn-severity strategies must use
+a distinct leaf name (e.g. `drought.usdm_releases`), never bolt a `STRATEGY` onto the source module.

@@ -364,6 +364,12 @@ class _Turn:
         """The monotonic instant fetching stops; the remainder of the turn timeout is kept for writes."""
         return self.started + self.spec.lane.budget.turn_timeout_seconds * FETCH_SHARE_OF_TURN_TIMEOUT
 
+    @property
+    def write_deadline(self) -> float:
+        """The monotonic instant writing must stop: the whole turn budget (writing may spend all fetch left,
+        never past it), mirroring `_repair_ladders`' own deadline."""
+        return self.started + self.spec.lane.budget.turn_timeout_seconds
+
     @contextlib.contextmanager
     def phase(self, name: str) -> Iterator[None]:
         """Time one phase into `phase_seconds_<name>`."""
@@ -1055,15 +1061,27 @@ class _Turn:
     # --- writing ------------------------------------------------------------------------------
 
     async def _publish(self, settled: Sequence[_SettledDay], census: LaneCensus, *, force: bool) -> None:
-        """Apply S11 to every settled stream-day and write what it says to write (compare: diff instead)."""
+        """Apply S11 to every settled stream-day and write what it says to write (compare: diff instead).
+
+        H1's guard, mirrored for the write phase: once `write_deadline` passes, a settled day already
+        fetched and answered is still `deferred_budget` rather than silently dropped from the report.
+        """
         with self.phase("write"):
             for answered in settled:
                 if self.spec.compare:
                     self._compare(answered, census)
+                elif self.ports.clock.monotonic() >= self.write_deadline:
+                    self._defer_write(answered)
                 elif isinstance(answered.settlement, Absent):
                     await self._write_absence(answered, answered.settlement, census)
                 else:
                     await self._write_rows(answered, answered.settlement, census, force=force)
+
+    def _defer_write(self, answered: _SettledDay) -> None:
+        """The turn's whole time budget ran out before this settled day could be written (its streams only)."""
+        streams = tuple(answered.tables) if answered.tables else self.streams
+        for stream in streams:
+            self.unwritten(answered.day, "deferred_budget", "the turn's time ran out before its write", stream=stream)
 
     async def _write_rows(self, answered: _SettledDay, written: Written, census: LaneCensus, *, force: bool) -> None:
         writer = self._writer()

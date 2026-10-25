@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date, timedelta
 
 import pytest
 
+from agri_data_service.pipeline.runner import fetch as fetch_module
 from agri_data_service.pipeline.runner.contract import (
     ProviderConfigurationError,
     SourceThrottledError,
@@ -119,3 +121,37 @@ async def test_a_rejected_key_is_a_configuration_error_for_the_whole_turn() -> N
 
     with pytest.raises(ProviderConfigurationError):
         await _fetcher(upstream, ManualClock()).fetch_all(_units(), concurrency=1)
+
+
+async def test_a_stalled_fetch_is_cancelled_at_the_per_unit_cap_and_classified_like_a_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A `fetch` that never resolves is cancelled at the per-unit cap, not the ladder's own deadline.
+
+    The ladder treats it exactly like a transport timeout: three capped ordeals, then `upstream_unavailable`
+    (same class, same backoff schedule, as `test_one_failed_unit_never_discards_its_siblings`), never riding
+    the real 300 s x 3 provider timeout inside one await.
+    """
+    monkeypatch.setattr("agri_data_service.pipeline.runner.fetch.random.random", lambda: 0.5)
+    monkeypatch.setattr(fetch_module, "PER_UNIT_FETCH_CAP_SECONDS", 0.01)
+
+    #: A loose wall-clock ceiling proving the three ordeals were capped (patched 0.01 s), not 300 s.
+    wall_clock_ceiling_seconds = 5.0
+
+    async def hangs(self: object, request: object, client: object) -> object:  # noqa: ARG001 - never resolves
+        await asyncio.sleep(99_999)
+
+    monkeypatch.setattr(GridRefuseStrategy, "fetch", hangs)
+    upstream = ScriptedUpstream(GridWorld().answer)  # never actually reached by the stalled strategy
+    clock = ManualClock()
+
+    started = asyncio.get_running_loop().time()
+    outcome = await _fetcher(upstream, clock).fetch_unit(_units()[0])
+    elapsed = asyncio.get_running_loop().time() - started
+
+    assert outcome.reason == "upstream_unavailable"
+    assert outcome.attempts == POLICY.server_error_attempts
+    assert clock.slept == [2.0, 4.0]
+    assert upstream.sends == []
+    # Three capped ordeals at the (patched) 0.01 s cap, not three real 300 s provider timeouts.
+    assert elapsed < wall_clock_ceiling_seconds

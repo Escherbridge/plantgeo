@@ -9,7 +9,7 @@
         "tests",
         "scripts"
       ],
-      "duration_seconds": 0.076,
+      "duration_seconds": 0.063,
       "name": "format",
       "status": "pass"
     },
@@ -21,7 +21,7 @@
         "tests",
         "scripts"
       ],
-      "duration_seconds": 0.075,
+      "duration_seconds": 0.055,
       "name": "lint",
       "status": "pass"
     },
@@ -31,7 +31,7 @@
         "src",
         "scripts"
       ],
-      "duration_seconds": 1.767,
+      "duration_seconds": 1.23,
       "name": "mypy",
       "status": "pass"
     },
@@ -45,14 +45,14 @@
       "status": "waived",
       "waiver": {
         "operator": "owner:atoozmc",
-        "reason": "2026-10-24 owner go ('skip tests'): six full-suite runs lost 1-2 random async tests to WinError 10055 socket-buffer exhaustion at pytest-asyncio loop setup (machine-wide handle churn, 490 processes); suite substance green 6876/6877 every run, reds never the diff; logs services/agri-data-service/.tmp/check-20261024-r*.log",
-        "waived_at": "2026-10-25T00:10:29.801961Z"
+        "reason": "2026-10-25 same owner go as G4 ('skip tests', 2026-10-24): full suite 6913/6914 green, the one error is the recurring WinError 10055 socket-buffer squeeze at pytest-asyncio loop setup (log .tmp/check-20261025-agri.log); flagged for owner ratification in the session report",
+        "waived_at": "2026-10-25T01:11:01.059517Z"
       }
     }
   ],
   "digest_domain": "plantgeo.agri-data-service.quality-receipt.v2",
-  "digest_file_count": 1156,
-  "generated_at": "2026-10-25T00:10:33.682800Z",
+  "digest_file_count": 1197,
+  "generated_at": "2026-10-25T01:11:04.429785Z",
   "schema_version": 3,
   "tools": {
     "mypy": "mypy 2.3.0 (compiled: yes)",
@@ -61,5 +61,5 @@
     "ruff": "ruff 0.15.22",
     "uv": "uv 0.9.18 (0cee76417 2025-12-16)"
   },
-  "tree_digest": "sha256:4c37917a080d314572b5d9404e743a68054b808ecd753babde2032320a57d2f0"
+  "tree_digest": "sha256:8ae6a9a8dd58f47abd0347748c12511a552bb154d1b1c736040a405126ee2186"
 }

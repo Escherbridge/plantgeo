@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from agri_data_service.pipeline.direct.watersheds import source as source_module
 from agri_data_service.pipeline.direct.watersheds.source import WatershedsSourceError, fetch_watersheds_snapshot
+from agri_data_service.pipeline.lanes.watersheds import source as source_module
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

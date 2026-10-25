@@ -204,7 +204,8 @@
     "lanes/_providers/usda-cdl.toml"
   ],
   "open_questions": [
-    "m4 (G4 review 2026-10-24): no test ties agent/surfaces.py SURFACE_PARQUET_LANES to the web client catalogue (the cited test_the_agent_surface_lanes_match_the_client_catalogue never existed). Fold a real parity expectation into p4-contract-freeze's stream-registry/lane-contract tests."
+    "m4 (G4 review 2026-10-24): no test ties agent/surfaces.py SURFACE_PARQUET_LANES to the web client catalogue (the cited test_the_agent_surface_lanes_match_the_client_catalogue never existed). Fold a real parity expectation into p4-contract-freeze's stream-registry/lane-contract tests.",
+    "c7/7D-n prerequisite (p4-extract review minor 4): move the rationale sections of pipeline/direct/AGENTS.md into the lanes/<layer>/AGENTS.md files BEFORE 7D deletes the direct tree"
   ],
   "evidence_flags": {
     "F1": "resolved: solar re-grid mandatory (O7)",
@@ -4550,6 +4551,16 @@
       "reviewer": "quality-reviewer (opus, fresh context)",
       "verdict": "CHANGES-REQUIRED -> fix batch applied same wave",
       "findings": "B1 regionalSurfaceName rode warehouseLayerName==surface-name equality; M1 streamflow coverage key hardcoded legacy slug; m1 popup day/unit; m2 alert tense; m3 stale comments; m4 phantom parity test; m5 record owner history-depth waiver"
+    },
+    "phase4": {
+      "p4-extract": "APPROVED 2026-10-24 (opus quality-reviewer, fresh context): 0 blockers, 0 majors, 8 minors; byte-identity verified on all 22 moves; minors 1,2,3,5,6,7 fixed same wave (guard reach to lanes/evacuation_zones, strategy-name reservation + leaves paragraph in lanes/AGENTS.md, lane_registry+source_bindings docstrings, shim-walker spellings+typing, lattice test re-point); minor 4 (AGENTS.md rationale moves before 7D deletes pipeline/direct/AGENTS.md) logged below; minor 8 info (check.py batch map gap, fails safe)"
+    },
+    "g4_followup_density_and_lane_id": {
+      "date": "2026-10-25",
+      "reviewer": "same fresh-context opus lane, third pass",
+      "verdict": "CHANGES-REQUIRED -> both candidate fixes REVERTED per prescription",
+      "resolution": "applyDensityFloor reverted wholesale (wrong metric: run-length vs readings/day; no 21-day clustering; backward walk could amputate years on absence-broken lanes like fire-detections; the 1990 day on the daily stream is a REAL daily mean, honestly selectable). Water fixture updated to daily truth (1990-09-30 selectable, 32-year hole LISTED, rule warehouse_coverage). data-intervention id kept 'water-gauges' (community vocabulary stored in geo.features properties.dataDetails.lane; my 'no intervention tables' safety check had queried the wrong storage); parity test maps WATER_GAUGES_STREAM -> WATER_GAUGES_SURFACE like the botanical-occurrences precedent.",
+      "lesson": "a straggler-filter port must recover the ORIGINAL rule's source (git show <sha>^:path) before reimplementing; and 'is this id stored anywhere' is answered by the write path (insert call sites), not by table names"
     }
   },
   "owner_decisions_20261024_campaign": {
@@ -4560,6 +4571,24 @@
     "superseded_runs": [
       "def7f7a6-7ae7-4f86-96c8-0d6edb09fd87 (water-gauges-daily:gap-fill)",
       "baecb000-ace0-4a5e-9164-6b0a94b489f9 (water-gauges-daily forward)"
+    ]
+  },
+  "p4_extract_execution_20261024": {
+    "status": "authored, review pending",
+    "monkeypatch_repoints": [
+      "tests/direct/test_evacuation_zones_direct_watermark.py",
+      "tests/direct/test_watersheds_direct_source.py",
+      "tests/direct/test_watersheds_direct_watermark.py",
+      "tests/direct/test_land_context_direct.py"
+    ],
+    "deviation_to_ratify": "deleted tests/direct/test_evacuation_zones_direct_products.py::test_the_part_row_bound_matches_the_lane_it_replaces (permanently skipped since 2026-09-06; would now AttributeError on the new package)",
+    "new_files_beyond_owns": "7 pipeline/lanes/<layer>/AGENTS.md + warehouse/field_products/AGENTS.md (brief-requested)",
+    "residuals": [
+      "lane_registry.py still imports pipeline.direct land_context.watermark + soil_properties.watermark; source_bindings.py still imports soil_survey.* (not in move list; Phase 7 or a later slice)",
+      "lanes/evacuation_zones/watermark.py imports pipeline.constants; crop_cover/land_context source.py import pipeline.errors (recorded in their AGENTS.md for the s-* slices)",
+      "lane_registry.py docstring claims five direct imports (now two); error strings cite old direct paths",
+      "test_no_module_in_this_package_ever_constructs_terminal_evidence lost reach (walks direct/evacuation_zones shims, not lanes/)",
+      "stale comments citing old products.py paths in scripts/build_*, ingest/*, warehouse/schemas/watersheds.py"
     ]
   }
 }

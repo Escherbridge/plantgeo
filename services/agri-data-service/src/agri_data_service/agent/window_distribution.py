@@ -33,8 +33,8 @@ from agri_data_service.parquet_ops.warehouse_reader import (
     spatial_support,
 )
 from agri_data_service.parquet_ops.wire import GovernedAbsenceDay
-from agri_data_service.pipeline.direct.climate.products import CLIMATE_FIELD_PRODUCT_BY_STREAM
-from agri_data_service.pipeline.direct.soil.products import SOIL_FIELD_PRODUCT_BY_STREAM
+from agri_data_service.warehouse.field_products.climate import CLIMATE_FIELD_PRODUCT_BY_STREAM
+from agri_data_service.warehouse.field_products.soil import SOIL_FIELD_PRODUCT_BY_STREAM
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence

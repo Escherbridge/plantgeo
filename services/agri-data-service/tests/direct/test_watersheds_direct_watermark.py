@@ -14,11 +14,11 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from agri_data_service.pipeline.direct.watersheds import source as source_module
 from agri_data_service.pipeline.direct.watersheds.watermark import (
     WatershedsWatermarkError,
     read_watersheds_source_watermark,
 )
+from agri_data_service.pipeline.lanes.watersheds import source as source_module
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY, LaneRegistration, LaneRegistryError
 
 if TYPE_CHECKING:

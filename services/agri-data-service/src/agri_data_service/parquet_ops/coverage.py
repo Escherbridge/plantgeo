@@ -31,9 +31,9 @@ from agri_data_service.pipeline.constants import (
     DIRECT_HOURLY_REFRESH_INTERVAL_SECONDS,
     SOIL_DIRECT_REFRESH_INTERVAL_SECONDS,
 )
-from agri_data_service.pipeline.direct.climate.products import CLIMATE_FIELD_PRODUCTS
-from agri_data_service.pipeline.direct.soil.products import SOIL_FIELD_PRODUCTS
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRATIONS
+from agri_data_service.warehouse.field_products.climate import CLIMATE_FIELD_PRODUCTS
+from agri_data_service.warehouse.field_products.soil import SOIL_FIELD_PRODUCTS
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence

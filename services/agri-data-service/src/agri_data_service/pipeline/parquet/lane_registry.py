@@ -10,11 +10,12 @@ environmental lanes, the two lanes `services/plantgeo-ml-service` writes and thi
 PostgreSQL adapter or fallback; the direct source packages own writes and this registry refuses
 generic exports, and the two foreign lanes refuse with a message naming the service that writes them.
 
-IT IMPORTS EXACTLY FIVE MODULES FROM `pipeline/direct/`, AND NOTHING ELSE FROM ANY OF THOSE PACKAGES:
-`climate/products.py`, `soil/products.py` and `vegetation/products.py` for floors and lags, and
-`watersheds/watermark.py` + `evacuation_zones/watermark.py` for the two static lanes whose version
-clock is now the source rather than `geo.features`. Every one of those reaches only `foundation`,
-`warehouse`, `ingest` or its own package's leaves. NEVER a `forward.py`, an `adapter.py` or a
+IT IMPORTS EXACTLY SEVEN SHARED-LANE MODULES, AND NOTHING ELSE FROM THOSE TREES (p4-extract,
+2026-10-24): `warehouse/field_products/{climate,soil,vegetation}.py` for floors and lags;
+`pipeline/lanes/{watersheds,evacuation_zones}/watermark.py` for the two static lanes whose version
+clock is the source rather than `geo.features`; and `pipeline/direct/{land_context,soil_properties}/
+watermark.py`, the two watermarks Phase 7 still owes a move. Every one of those reaches only
+`foundation`, `warehouse`, `ingest` or its own package's leaves. NEVER a `forward.py`, an `adapter.py` or a
 `products.py` that reads `LANE_REGISTRY`: those close a cycle back through this half-initialised
 module, which is also why each package `__init__` is deliberately empty of re-exports, and why
 `evacuation_zones/registration.py` exists to hold that package's one edge back here.
@@ -62,28 +63,28 @@ from agri_data_service.pipeline.constants import (
     LANE_BASE_ZOOM_TIER,
     WATER_GAUGES_DIRECT_WRITER_START_DAY,
 )
-from agri_data_service.pipeline.direct.climate.products import (
-    CLIMATE_FIELD_PRODUCTS,
-    CLIMATE_METEOROLOGY_PUBLICATION_LAG_DAYS,
-    CLIMATE_SHORTWAVE_RADIATION_PUBLICATION_LAG_DAYS,
-    SHORTWAVE_LAG_MEASUREMENT_EVIDENCE,
-)
-from agri_data_service.pipeline.direct.evacuation_zones.watermark import read_evacuation_zones_source_watermark
 from agri_data_service.pipeline.direct.land_context.watermark import read_land_context_source_watermark
-from agri_data_service.pipeline.direct.soil.products import (
-    ERA5_LAND_ARCHIVE_PUBLICATION_LAG_DAYS,
-    SOIL_FIELD_PRODUCTS,
-)
 from agri_data_service.pipeline.direct.soil_properties.watermark import read_soil_properties_source_watermark
-from agri_data_service.pipeline.direct.vegetation.products import VEGETATION_DIRECT_WRITER_START_DAY
-from agri_data_service.pipeline.direct.watersheds.watermark import read_watersheds_source_watermark
 from agri_data_service.pipeline.lanes.calendar import export_calendar_version
+from agri_data_service.pipeline.lanes.evacuation_zones.watermark import read_evacuation_zones_source_watermark
+from agri_data_service.pipeline.lanes.watersheds.watermark import read_watersheds_source_watermark
 from agri_data_service.pipeline.parquet.config_stream_registrations import CONFIG_STREAM_ROWS, ConfigStreamRow
 from agri_data_service.pipeline.parquet.objectstore import (
     AbsenceWriteReceipt,
     ParquetWriteReceipt,
 )
 from agri_data_service.warehouse.crop_cover_releases import CDL_RELEASE_DATES
+from agri_data_service.warehouse.field_products.climate import (
+    CLIMATE_FIELD_PRODUCTS,
+    CLIMATE_METEOROLOGY_PUBLICATION_LAG_DAYS,
+    CLIMATE_SHORTWAVE_RADIATION_PUBLICATION_LAG_DAYS,
+    SHORTWAVE_LAG_MEASUREMENT_EVIDENCE,
+)
+from agri_data_service.warehouse.field_products.soil import (
+    ERA5_LAND_ARCHIVE_PUBLICATION_LAG_DAYS,
+    SOIL_FIELD_PRODUCTS,
+)
+from agri_data_service.warehouse.field_products.vegetation import VEGETATION_DIRECT_WRITER_START_DAY
 from agri_data_service.warehouse.parquet.schema import SIGNAL_PLANE_STREAM
 from agri_data_service.warehouse.schemas.burn_severity import BURN_SEVERITY_STREAM
 from agri_data_service.warehouse.schemas.drought import DROUGHT_STREAM
@@ -105,9 +106,9 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from agri_data_service.foundation.lane_config import LaneConfig, LaneConfigSet, LaneStream
-    from agri_data_service.pipeline.direct.climate.products import ClimateFieldProduct
-    from agri_data_service.pipeline.direct.soil.products import SoilFieldProduct
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
+    from agri_data_service.warehouse.field_products.climate import ClimateFieldProduct
+    from agri_data_service.warehouse.field_products.soil import SoilFieldProduct
 
 
 class LaneRegistryError(RuntimeError):
