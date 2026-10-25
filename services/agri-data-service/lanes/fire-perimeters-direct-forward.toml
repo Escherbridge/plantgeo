@@ -1,0 +1,62 @@
+# Fire perimeters (spec §7 row; plan Phase 4, `s-fire-perimeters`): NIFC WFIGS `_Current` interagency
+# perimeters, re-registered `static_lookup` 2026-09-04 -- one snapshot per source change, never a day
+# loop (warehouse/schemas/fire_perimeters.py). Data only; behaviour is
+# pipeline/lanes/fire_perimeters/wfigs.py (AGENTS.md there explains why this TOML carries no watermark
+# ladder). Authoring: lanes/AGENTS.md. Source facts: docs/lanes/fire-perimeters.md §8.
+#
+# DARK: executor = "legacy" keeps pipeline/direct/fire_perimeters/forward.py -- hourly at :10,
+# production-live since the 2026-09-15 geometry-repair fix (pipeline/direct/fire_perimeters/AGENTS.md
+# "Geometry repair") -- as the implementation the executor actually drives. This file is authored and
+# reviewed ahead of the G6 cut-over (plan Phase 5); flipping to executor = "config" is that gate's job,
+# not this slice's.
+
+id = "fire-perimeters-direct-forward"
+kind = "ingest"
+nature = "static_lookup"
+enabled = true
+executor = "legacy"
+strategy = "fire_perimeters.wfigs"
+
+[source]
+provider = "nifc-wfigs"
+endpoint = "query"
+coverage = "regional"
+iso_country_codes = ["US"]
+# `_Current` is a live mutable snapshot, not a release archive WFIGS lets this lane page through
+# (docs/lanes/fire-perimeters.md §3: a real history service exists but publishes no
+# uniqueFireIdentifier, so it cannot deepen this producer's identity). The one "version" a static
+# lookup owes is always today's.
+history = { capability = "none" }
+lifecycle = "active"
+
+# [days] is deliberately absent: a static_lookup lane has no time axis to declare
+# (foundation/lane_config/models.py:387-388 permits this; agent/day_tolerance.py:71, "a day has no
+# meaning"). publication_lag_days/absence_recheck_days/partial_day would all assert a calendar this
+# lane does not have; the watermark probe (wfigs.py::probe_edge) is the only edge concept it needs.
+
+[schedule]
+# The cadence the `_Current` poller this lane replaces already ran at
+# (pipeline/direct/AGENTS.md:1728); not a new cost.
+forward_cron = "10 * * * *"
+# gap_fill ships off by default (S12) and stays off: a version stamp has no owed day to repair
+# (execution/gap_repair_contract.py:180, "fire-perimeters": "static_lookup: a version stamp has no
+# owed day to repair").
+gap_fill_enabled = false
+catch_up = "coalesce_latest"
+
+[budget]
+# 1 probe (the cheap `layer` resource's editingInfo.lastEditDate) + 1 fetch. The fetch is ONE logical
+# request under this lane's "ONE FETCH PER TURN" rule even though it walks many ArcGIS pages
+# internally (pipeline/direct/fire_perimeters/source.py's module docstring; wfigs.py's own module
+# docstring, deviation 1): the generic per-unit budget counts units, not the HTTP attempts inside
+# ingest.wfigs.fetch_fire_perimeters_walk's adaptive walk.
+forward_max_weighted_calls = 2
+gap_fill_max_weighted_calls = 0
+max_concurrency = 1
+# pipeline/direct/fire_perimeters/forward.py::FIRE_PERIMETERS_DEFAULT_TIME_BUDGET_SECONDS: sized for
+# one ~11 MB WFIGS walk plus a DuckDB repair of ~23 MB of polygon.
+turn_timeout_seconds = 900
+
+[[streams]]
+slug = "fire-perimeters"
+floor_basis = "static_lookup: no time axis to float a history floor over (foundation/parquet/lane_contract.py; agent/day_tolerance.py:71); the generic driver still reads pipeline/parquet/lane_registry.py's own registered floor, unedited by this TOML"
