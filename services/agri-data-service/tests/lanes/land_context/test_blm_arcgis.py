@@ -186,6 +186,9 @@ async def test_fetch_parses_a_real_shaped_object_id_inventory() -> None:
 
 
 _REFUSED_BODY: Final = json.dumps({"error": {"code": 400, "message": "Invalid or missing input parameters."}})
+#: A real-shaped ArcGIS truncation: a PARTIAL objectIds list still rides alongside the flag
+#: (`source.py::CaptureSession.query` checks this before `object_ids()` ever sees the payload).
+_TRUNCATED_BODY: Final = json.dumps({"objectIds": [1, 2], "exceededTransferLimit": True})
 
 
 @pytest.mark.parametrize(
@@ -193,6 +196,7 @@ _REFUSED_BODY: Final = json.dumps({"error": {"code": 400, "message": "Invalid or
     [
         pytest.param(b"not json", id="unparseable"),
         pytest.param(_REFUSED_BODY, id="refused"),
+        pytest.param(_TRUNCATED_BODY, id="exceeded-transfer-limit"),
         pytest.param(json.dumps({"objectIds": [1, 1, 2]}), id="duplicate-id"),
         pytest.param(json.dumps({"objectIds": [1, "2"]}), id="non-integer-id"),
     ],
@@ -204,6 +208,17 @@ async def test_fetch_refuses_a_malformed_object_inventory(body: str | bytes) -> 
     client = _FakeClient(raw)
 
     with pytest.raises(ValueError, match=request.unit):
+        await blm_arcgis.STRATEGY.fetch(request, client)
+
+
+async def test_fetch_truncation_refusal_matches_the_legacy_wording() -> None:
+    """Pins the exact phrase `source.py::CaptureSession.query` raises for the same condition, not just
+    that SOME ValueError fired: a server-truncated inventory is a partial population, never complete."""
+    lane, region = _lane("land-context-blm-forward")
+    request = blm_arcgis.STRATEGY.plan_requests([ASKED_DAY], lane, region)[0]
+    client = _FakeClient(_TRUNCATED_BODY.encode("utf-8"))
+
+    with pytest.raises(ValueError, match=r"ArcGIS truncated .*; refusing a partial population"):
         await blm_arcgis.STRATEGY.fetch(request, client)
 
 

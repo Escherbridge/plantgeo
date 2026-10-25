@@ -55,7 +55,25 @@ guessed fourth provider file.
 **`plan_requests`/`fetch` are real, `settle`/`rows` are not.** `plan_requests` builds the same
 object-ID inventory ask `source.py::capture_product`'s first call does for each admitted service
 (tested in `tests/lanes/land_context/test_blm_arcgis.py` against `products.py`'s own `where`/`envelope`
-values, no restated literals); `fetch` validates the ArcGIS JSON the same way. `settle`/`rows` raise
-`NotImplementedError` naming the deferred decision — a guessed stream/turn-mode mapping would be
-unreviewed behaviour, which is worse than an honest gap given the method-presence-only check
-`tests/lane_config/test_lane_toml_contract.py::lane_contract_violations` runs.
+values, no restated literals); `fetch`'s `_object_ids` applies the same FOUR refusal shapes
+`source.py` does, across TWO of its functions — `CaptureSession.query`'s JSON-readability, `"error"`
+and `exceededTransferLimit` checks (`source.py:90-96`), then `object_ids`'s list-shape, duplicate and
+record-ceiling checks (`source.py:99-105`) — restated rather than imported, same reason as above.
+`settle`/`rows` raise `NotImplementedError` naming the deferred decision — a guessed stream/turn-mode
+mapping would be unreviewed behaviour, which is worse than an honest gap given the method-presence-only
+check `tests/lane_config/test_lane_toml_contract.py::lane_contract_violations` runs.
+
+**`probe_edge` does not exist here either, and the loader's silence about that proves nothing.**
+`pipeline/runner/turn.py`'s own `_validate` demands `EdgeProbingStrategy` for ANY `static_lookup` lane
+unconditionally: `if lane.nature == "static_lookup" and not isinstance(ports.strategy,
+EdgeProbingStrategy): raise TurnConfigurationError(...)` (`turn.py:277-278`). That is a DIFFERENT,
+stricter gate than `foundation/lane_config/models.py::lane_requires_probe_edge`, which the loader and
+`tests/lane_config/test_lane_toml_contract.py::lane_contract_violations` actually run, and which
+returns `False` outright once `not provider.weighted` — true for the unweighted `blm` provider, so none of these three
+TOMLs is ever flagged for a missing `probe_edge` today. Passing the contract test therefore proves
+nothing about whether a real turn could run: flip any of these three TOMLs to `executor = "config"`
+and the loader/contract test would still pass, then the FIRST real turn would fail closed with
+`TurnConfigurationError`, because `BlmArcgisStrategy` implements no `probe_edge`. What this
+snapshot-capture source's watermark even IS — it has no natural per-day structure for a probe window
+to read — is bound up in the same deferred activation decision as `settle`/`rows` above, not a
+separate gap to close in isolation.

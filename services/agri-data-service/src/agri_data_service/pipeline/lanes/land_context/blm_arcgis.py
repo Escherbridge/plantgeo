@@ -87,14 +87,17 @@ def _support_digest(product: ArcgisProduct) -> str:
     return hashlib.sha256(binds.encode("utf-8")).hexdigest()
 
 
-def _object_ids(body: bytes, *, unit: str) -> tuple[int, ...]:
-    """Validate one service's object-ID inventory: readable JSON, no refusal, a clean bounded ID set.
+def _object_ids(body: bytes, *, unit: str, endpoint: str) -> tuple[int, ...]:
+    """Validate one service's object-ID inventory: readable JSON, no refusal, no truncation, a clean
+    bounded ID set -- the same FOUR refusal shapes `source.py` checks, across TWO of its functions.
 
-    Mirrors `source.py::object_ids`'s checks without importing it: that function reads an already
-    PARSED payload and raises through `pipeline/errors.py`, which this strategy leaf does not import
-    (module docstring). A malformed or refused answer is an unclassified fault (never one of
-    `contract.py`'s typed fetch errors), so the turn fails closed rather than settling a day from a
-    population ArcGIS never actually returned.
+    `CaptureSession.query` (`source.py:90-96`) checks JSON-readability, `"error"` and
+    `exceededTransferLimit` BEFORE `object_ids()` ever sees the payload; `object_ids` (`source.py:99-105`)
+    then checks the list shape, duplicate identifiers and the record ceiling. This leaf restates all
+    four rather than importing either function, because both raise through `pipeline/errors.py`, which
+    this strategy leaf does not import (module docstring). Missing the `exceededTransferLimit` check
+    would accept a server-truncated, partial inventory as a complete population -- exactly the gap
+    `source.py` closes unconditionally before `object_ids()` runs at all.
     """
     try:
         parsed = json.loads(body)
@@ -102,6 +105,8 @@ def _object_ids(body: bytes, *, unit: str) -> tuple[int, ...]:
         raise ValueError(f"{unit}: ArcGIS object-inventory response is not valid JSON") from error
     if not isinstance(parsed, dict) or "error" in parsed:
         raise ValueError(f"{unit}: ArcGIS refused the object-inventory ask")
+    if parsed.get("exceededTransferLimit"):
+        raise ValueError(f"{unit}: ArcGIS truncated {endpoint}; refusing a partial population")
     values = parsed.get("objectIds")
     if not isinstance(values, list) or any(isinstance(value, bool) or not isinstance(value, int) for value in values):
         raise ValueError(f"{unit}: ArcGIS object inventory is missing or malformed")
@@ -132,9 +137,10 @@ class BlmArcgisStrategy:
         ]
 
     async def fetch(self, request: SourceRequest, client: ProviderClient) -> SourceResponse:
-        """ONE send per service: the same object-ID inventory validation `source.py::object_ids` applies."""
+        """ONE send per service: `_object_ids` applies the same four refusal shapes `source.py` does,
+        across `CaptureSession.query` and `object_ids` (see that function's docstring)."""
         response = await client.get(request.endpoint, request.query())
-        inventory = _object_ids(response.body, unit=request.unit)
+        inventory = _object_ids(response.body, unit=request.unit, endpoint=request.endpoint)
         return SourceResponse(
             request=request,
             body=response.body,
