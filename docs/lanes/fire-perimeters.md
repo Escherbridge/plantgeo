@@ -299,3 +299,97 @@ Per `layer-lanes.md` §2 ("A lane that genuinely cannot forecast declares `horiz
 **no** `method/monte_carlo/<slug>.py`... An empty forecast module is worse than an absent one"): **no
 `method/monte_carlo/fire-perimeters.py` should be written.** Projected quantity: zero forecast rows,
 by design, not by omission.
+
+## 8. `fire-perimeters-direct-forward`: the dark config lane (config-driven ingestion, spec §7)
+
+Everything above this section predates track `config_driven_ingestion_20260926` and describes the
+PostgreSQL-era `geo.features` design that lane has since left behind (§4's "what is actually held
+today" and §5's cold-TOAST findings are historical evidence, not the current write path). This
+section is `s-fire-perimeters`'s (plan Phase 4) addition: the lane TOML and strategy that will
+eventually replace `pipeline/direct/fire_perimeters/forward.py`, authored and reviewed dark.
+
+### 8.1 Why this lane is dark, not a design gap
+
+`lanes/fire-perimeters-direct-forward.toml` ships with `executor = "legacy"`. The direct writer it
+leaves in place is production-live, hourly at `:10`, since the 2026-09-15 geometry-repair fix
+(`pipeline/direct/fire_perimeters/AGENTS.md` "Geometry repair"; before that fix the lane refused
+every invalid shape and failed on 41 of 99 live perimeters). Nothing in this section changes what
+serves `/layers` today. The flip to `executor = "config"` is the G6 cut-over's job (plan Phase 5),
+gated on a `--mode forward --compare` run showing no unexplained delta between the two writers.
+
+### 8.2 The lane
+
+- **Nature.** `static_lookup`: one snapshot per source change, never a day loop
+  (`warehouse/schemas/fire_perimeters.py`'s own re-registration note, 2026-09-04). `[days]` is
+  omitted entirely — `foundation/lane_config/models.py:387-388` permits this for a `static_lookup`,
+  and `agent/day_tolerance.py:71` states why: "a day has no meaning" for this nature.
+- **Source.** `lanes/_providers/nifc-wfigs.toml`'s `query` endpoint for the fetch, `layer` endpoint
+  for the watermark probe; keyless, unweighted. `history = { capability = "none" }`: `_Current` is a
+  live mutable snapshot with no release archive this lane can page through (§3 above).
+- **Budget.** `forward_max_weighted_calls = 2` (one probe send, one fetch "unit" — the fetch's own
+  internal multi-page ArcGIS walk counts as ONE logical request under this lane's "ONE FETCH PER
+  TURN" rule, `pipeline/direct/fire_perimeters/source.py`'s module docstring).
+  `gap_fill_max_weighted_calls = 0`: a version stamp has no owed day to repair or fill
+  (`execution/gap_repair_contract.py:180`).
+- **Cron.** `10 * * * *` — the cadence the `_Current` poller this lane replaces already ran at
+  (`pipeline/direct/AGENTS.md:1728`); not a new cost against WFIGS.
+
+### 8.3 The strategy: `pipeline/lanes/fire_perimeters/wfigs.py`
+
+This module is smaller than the legacy package it will replace because the generic runner already
+does, for every `static_lookup` config lane, what `pipeline/direct/fire_perimeters/watermark.py`
+built by hand: "the probe returns the source watermark as the one valued day; the lane owes a
+snapshot dated there when the served snapshot is older, and nothing when it is current"
+(`pipeline/runner/AGENTS.md` "Static lookup"). This strategy therefore carries:
+
+- **`probe_edge`** — one small GET against the `layer` resource's `editingInfo.lastEditDate`
+  (spec §7's named watermark field), classified into the G0 probe taxonomy: `ok` (a readable
+  instant), `invalid` (unreadable, missing, or an ArcGIS error body), `blind`
+  (`lastEditDate == 0`: editor tracking disabled, answered but naming no edit at all — NOT the UNIX
+  epoch), `unavailable` (a transport failure after the client's own retries), `deferred` (429 /
+  provider throttle).
+- **`plan_requests`** — one unit (`SourceRequest(unit="snapshot", endpoint="query", ...)`) over the
+  region's `default_camera_envelope`, passing the runner-resolved day through unchanged: a static
+  lookup has no calendar of its own to consult.
+- **`fetch`** — walks the whole `_Current` feed via `ingest.wfigs.fetch_fire_perimeters_walk` and
+  conforms it (identity, severity, geometry repair) in one pass, refusing a clipped answer by name
+  (`FirePerimetersSnapshotTruncatedError`) rather than publishing a snapshot that would read every
+  missed perimeter as extinguished.
+- **`settle`** — `Written(expected_units=1, present_units=1, source_digest=content_digest(...))`
+  when at least one perimeter conformed, else `Unsettled`. `content_digest` excludes only the
+  retrieval instant (`updated_at`), so a pure refetch of an unchanged population digests identically
+  — the property that lets the runner's S11 rewrite rule skip republishing an identical ~23 MB
+  version every tick.
+- **`rows`** — stamps the conformed population with whichever day the turn resolved (the probed
+  watermark day) and builds the base rung, sorted by `FIRE_PERIMETERS_GRAIN`.
+
+**Two deviations, named for the Phase 4 per-lane review and the Phase 6 QA round, not hidden:**
+
+1. `fetch` does not send through the `client: ProviderClient` the runner hands it; it opens its own
+   HTTP session (`ingest.http.upstream_client`) and runs WFIGS's own adaptive, byte-bounded page
+   walk and retry ladder, exactly as the extracted-but-not-yet-threaded leaves
+   (`pipeline/lanes/evacuation_zones/**`, `pipeline/lanes/watersheds/**`) do today. `lanes/AGENTS.md`
+   "Extracted source leaves are NOT strategies" names this as a per-lane decision, not a mandate; this
+   slice's decision is NOT YET.
+2. Geometry repair (`pipeline/lanes/fire_perimeters/support.py`) is RESTATED from
+   `pipeline/direct/fire_perimeters/support.py`'s identical `ST_MakeValid` /
+   `ST_CollectionExtract` chain, not imported — a strategy may import only its own
+   `pipeline/lanes/<layer>/` package, never `pipeline/direct/**` (Phase 7 deletes that whole tree).
+
+### 8.4 What this section does not settle
+
+- **The `layer` endpoint has never been read in production.** `lanes/_providers/nifc-wfigs.toml`'s
+  own comment: "TODO(s-fire-perimeters): verify against the live probe; nothing in the tree reads
+  this resource yet." This slice could not run a live probe (Wave O rules: no network access, no
+  test runs); the field name, the epoch-millisecond shape and the `editingInfo.lastEditDate == 0`
+  "tracking disabled" reading are all standard ArcGIS FeatureServer conventions, asserted from the
+  provider contract rather than confirmed against the live service.
+- **Compare-step parity (G6).** `feature_id` keeps the legacy writer's `direct:<uniqueFireIdentifier>`
+  namespace, and `status`/`data_available_at` keep its constants, specifically so the G6
+  `--mode forward --compare` run (plan Phase 5) can show zero unexplained delta between this
+  strategy's rows and the legacy writer's for the same snapshot.
+- **The geometry-repair round trip is implemented, not executed, by this slice.** It is a real
+  DuckDB conversion over a live-fetched ~23 MB population; `tests/lanes/fire_perimeters/test_wfigs.py`
+  exercises `probe_edge`'s fault classification, `plan_requests`, and `content_digest`'s stability
+  directly, but not a fetched-and-repaired population end to end. See
+  `pipeline/lanes/fire_perimeters/AGENTS.md`, "What this slice did not port".
