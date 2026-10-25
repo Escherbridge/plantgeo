@@ -8,6 +8,7 @@ import {
 } from '@/lib/regional-intelligence';
 import { buildRegionalMeasurementFacts, type RegionalMeasurementFacts } from './regional-measurement-facts';
 import { isLayerToggleId, LAYER_REGISTRY } from '@/lib/map/layer-registry';
+import { WATER_GAUGES_SURFACE } from '@/lib/water-gauges-stream';
 import { analysisDateRange, DEFAULT_ANALYSIS_WINDOW, isAnalysisCalendarDay } from '@/lib/regional-analysis-selection';
 import { UpstreamHttpError } from '@/lib/server/http/bounded-upstream';
 import { selectionTile } from './regional-map-evidence';
@@ -104,8 +105,15 @@ const SOURCE_SURFACE: Record<string, string> = {
   fireDetections: 'fire-detections', firePerimeters: 'fire-perimeters', mtbsPerimeters: 'burn-severity',
 };
 
+/**
+ * Toggles whose agent surface name does not follow `warehouseLayerName` (CA11): only `water` today
+ * -- G4 moved its served stream to `water-gauges-daily` while the agent's surface vocabulary kept
+ * `water-gauges` (agent/surfaces.py `FEATURE_SURFACE_NAMES`). See `water-gauges-stream.ts::WATER_GAUGES_SURFACE`.
+ */
+const SURFACE_NAME_OVERRIDES: Readonly<Record<string, string>> = { water: WATER_GAUGES_SURFACE };
+
 export function regionalSurfaceName(layer: string): string {
-  return isLayerToggleId(layer) ? LAYER_REGISTRY[layer].warehouseLayerName ?? layer : layer;
+  return isLayerToggleId(layer) ? SURFACE_NAME_OVERRIDES[layer] ?? LAYER_REGISTRY[layer].warehouseLayerName ?? layer : layer;
 }
 
 export function regionalEvidenceDay(temporal: TemporalContext, source: string): string {
@@ -114,7 +122,7 @@ export function regionalEvidenceDay(temporal: TemporalContext, source: string): 
     .find(([layer]) => regionalSurfaceName(layer) === source)?.[1];
   if (selected) return selected;
   return temporal.readings.find((row) => row.layer === source
-    || (isLayerToggleId(row.layer) && LAYER_REGISTRY[row.layer].warehouseLayerName === source)
+    || (isLayerToggleId(row.layer) && regionalSurfaceName(row.layer) === source)
     || SOURCE_SURFACE[row.evidenceSource ?? ''] === source)?.viewedDate
     ?? Object.values(temporal.analysisSelection?.layerDays ?? {}).sort().at(-1)
     ?? temporal.viewedDates.at(-1) ?? temporal.serverCurrentDate;

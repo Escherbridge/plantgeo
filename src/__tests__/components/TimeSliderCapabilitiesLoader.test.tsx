@@ -37,7 +37,7 @@ const CAPABILITIES: SliderCapabilities = {
   streamsUnavailable: false,
   layers: [
     {
-      layerName: "water-gauges",
+      layerName: "water-gauges-daily",
       temporalKind: "daily_series",
       forecastHorizonDays: 0,
       forecastVariants: [],
@@ -121,7 +121,7 @@ describe("TimeSliderCapabilitiesLoader", () => {
 
     const state = useTimeSliderStore.getState();
     expect(state.capabilities).toEqual(CAPABILITIES);
-    // `water` -> "water-gauges", which published up to 2026-08-03.
+    // `water` -> "water-gauges-daily" (G4, owner go 2026-10-24), which published up to 2026-08-03.
     expect(resolveLayerDate(state.layerDates, state.capabilities, "water")).toBe("2026-08-03");
     // `fire-perimeters` published up to 2026-07-21 -- a different day, from the same payload.
     expect(resolveLayerDate(state.layerDates, state.capabilities, "fire-perimeters")).toBe(

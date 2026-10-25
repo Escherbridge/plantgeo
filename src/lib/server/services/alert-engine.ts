@@ -7,7 +7,7 @@ import {
   getParquetFireDetections,
 } from "@/lib/server/services/parquet-trpc-readers";
 import { DROUGHT_CATEGORY_LABELS } from "@/lib/server/services/usdm-drought";
-import { WATER_GAUGES_STREAM } from "@/lib/water-gauges-stream";
+import { WATER_GAUGES_STREAM, WATER_GAUGES_STREAM_FACT } from "@/lib/water-gauges-stream";
 
 export type AlertSeverity = "info" | "warning" | "critical";
 
@@ -344,13 +344,21 @@ export async function checkStreamflowAlerts(
 
   if (!nearest || nearestDist > 200) return [];
 
+  // A daily mean names the day its own record is for, not an instant being reported right now --
+  // reword past-tense with that day so the copy stays honest on either stream
+  // (`src/lib/water-gauges-stream.ts`).
+  const readingLabel = WATER_GAUGES_STREAM_FACT.readingLabel.toLowerCase();
+  const readingVerb = WATER_GAUGES_STREAM_FACT.showsMeasuredInstant
+    ? `is reporting a critically low ${readingLabel}`
+    : `reported a critically low ${readingLabel}${nearest.observedDay ? ` on ${nearest.observedDay}` : ""}`;
+
   return [
     {
       userId,
       alertType: "streamflow_critical",
       severity: "warning",
       title: `Critically low streamflow at ${nearest.siteName ?? `USGS ${nearest.siteNo}`}`,
-      body: `USGS gauge ${nearest.siteName ?? nearest.siteNo} (${Math.round(nearestDist)} km away) is reporting critically low streamflow${nearest.flowCfs !== null ? ` (${nearest.flowCfs?.toFixed(1)} cfs)` : ""}. Drought stress conditions likely.`,
+      body: `USGS gauge ${nearest.siteName ?? nearest.siteNo} (${Math.round(nearestDist)} km away) ${readingVerb}${nearest.flowCfs !== null ? ` (${nearest.flowCfs?.toFixed(1)} ${WATER_GAUGES_STREAM_FACT.readingUnit})` : ""}. Drought stress conditions likely.`,
       metadata: {
         watchedLocationId: locationId,
         source: `warehouse:${WATER_GAUGES_STREAM}`,

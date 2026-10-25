@@ -16,10 +16,31 @@ from quality_receipt import (
     RECEIPT_PATH,
     RECEIPT_REWRITE_COMMAND,
     REQUIRED_CHECK_COMMANDS,
+    WAIVABLE_CHECKS,
     ReceiptError,
     compute_tree_digest,
     read_receipt,
 )
+
+
+def _entry_passes(entry: dict[str, object]) -> bool:
+    """A check entry is acceptable when it passed, or when a NAMED operator waived it with a reason.
+
+    The waiver is the gate's one sanctioned door (owner request 2026-10-24, "skip tests"): `check.py
+    --waive CHECK --waive-operator WHO --waive-reason WHY --write-receipt` records it, and this
+    verifier accepts it only with both strings present. A bare "waived" status, or a `fail`, still
+    refuses the tree -- a waiver is an accountable decision, never a default.
+    """
+    status = entry.get("status")
+    if status == "pass":
+        return True
+    if status != "waived" or entry.get("name") not in WAIVABLE_CHECKS:
+        return False
+    waiver = entry.get("waiver")
+    if not isinstance(waiver, dict):
+        return False
+    values = (waiver.get(key) for key in ("operator", "reason"))
+    return all(isinstance(value, str) and bool(value.strip()) for value in values)
 
 
 def _recorded_failures(receipt: dict[str, object]) -> list[str]:
@@ -33,7 +54,7 @@ def _recorded_failures(receipt: dict[str, object]) -> list[str]:
         if not isinstance(entry, dict):
             raise ReceiptError(f"receipt check entry is not an object: {entry!r}")
         recorded_commands.append((entry.get("name"), entry.get("command")))
-        if entry.get("status") != "pass":
+        if not _entry_passes(entry):
             failures.append(str(entry.get("name", "(unnamed)")))
     expected_commands = [(name, list(command)) for name, command in REQUIRED_CHECK_COMMANDS]
     if recorded_commands != expected_commands:

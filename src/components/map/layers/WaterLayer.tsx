@@ -464,19 +464,22 @@ export function WaterLayer({
       import("maplibre-gl").then(({ Popup }) => {
         if (popupRef.current) popupRef.current.remove();
         const flow = finiteNumber(props.flowCfs);
-        // A daily mean names a day, not an instant, so only an instantaneous stream prints one
-        // (`src/lib/water-gauges-stream.ts`).
+        // An instantaneous stream prints the instant it was measured; a daily mean names no
+        // instant, so it prints the day its own record names instead (`WaterDetails.tsx` mirrors
+        // this; `src/lib/water-gauges-stream.ts`).
         const measured = WATER_GAUGES_STREAM_FACT.showsMeasuredInstant
           ? formatTimestampWithRelative(toIsoTimestamp(props.updatedAt))
           : null;
+        const observedDay = !WATER_GAUGES_STREAM_FACT.showsMeasuredInstant ? gauge?.observedDay ?? null : null;
         // No condition badge, no percentile row, no trend arrow: neither water stream carries
         // any of the three. The discharge reading and when it was taken are what this gauge
         // actually reported.
         const html = `
           <div style="font-size:12px;min-width:180px">
             <strong style="display:block;margin-bottom:4px">${escapeHtml(props.siteName ?? "Unknown")}</strong>
-            <div>${escapeHtml(WATER_GAUGES_STREAM_FACT.readingLabel)}: <strong>${flow !== null ? `${escapeHtml(flow.toFixed(1))} cfs` : "not reported"}</strong></div>
+            <div>${escapeHtml(WATER_GAUGES_STREAM_FACT.readingLabel)}: <strong>${flow !== null ? `${escapeHtml(flow.toFixed(1))} ${WATER_GAUGES_STREAM_FACT.readingUnit}` : "not reported"}</strong></div>
             ${measured ? `<div class="map-popup-meta">Measured: ${escapeHtml(measured)}</div>` : ""}
+            ${observedDay ? `<div class="map-popup-meta">Observed: ${escapeHtml(observedDay)}</div>` : ""}
             <div class="map-popup-meta">USGS #${escapeHtml(props.siteNo)}</div>
           </div>
         `;

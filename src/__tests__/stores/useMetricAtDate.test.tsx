@@ -21,12 +21,13 @@ import { useTimeSliderStore } from "@/stores/time-slider-store";
 import type { MetricAtDateCollection, SliderCapabilities } from "@/types/time-slider";
 
 /**
- * `water`'s capability -- `warehouseLayerNameFor` maps the `water` toggle to `water-gauges`,
- * see `src/lib/map/layer-registry.ts`. Both scrubbed-to days below stay inside this axis, so
- * the store's own clamp (`clampDateToDomain`) never rewrites what this test asks for.
+ * `water`'s capability -- `warehouseLayerNameFor` maps the `water` toggle to `water-gauges-daily`
+ * since G4 (owner go 2026-10-24), see `src/lib/map/layer-registry.ts`. Both scrubbed-to days below
+ * stay inside this axis, so the store's own clamp (`clampDateToDomain`) never rewrites what this
+ * test asks for.
  */
 const WATER_CAPABILITY: SliderCapabilities["layers"][number] = {
-  layerName: "water-gauges",
+  layerName: "water-gauges-daily",
   temporalKind: "daily_series",
   forecastHorizonDays: 0,
   forecastVariants: [],

@@ -15,7 +15,7 @@ vi.mock('openai', () => ({
     chat = { completions: { stream: mocks.completionStream } };
   },
 }));
-import { bindRegionalEvidenceArguments, boundedEvidence, buildLiteratureServerContext, evidenceResultStatus, literatureSiteFacts, literatureUserQuestion, MAX_LITERATURE_RESULTS, prepareRegionalAnalysis, REGIONAL_ANALYSIS_THEMES, regionalEvidenceAuditCall, regionalEvidenceDay, regionalEvidenceLimitations, regionalEvidenceStageStatus, regionalFactsForRead, regionalInitialSurfaces, siteFactObservationsForRead, STRATEGY_SCREENING } from '@/lib/server/services/regional-analysis-workflow';
+import { bindRegionalEvidenceArguments, boundedEvidence, buildLiteratureServerContext, evidenceResultStatus, literatureSiteFacts, literatureUserQuestion, MAX_LITERATURE_RESULTS, prepareRegionalAnalysis, REGIONAL_ANALYSIS_THEMES, regionalEvidenceAuditCall, regionalEvidenceDay, regionalEvidenceLimitations, regionalEvidenceStageStatus, regionalFactsForRead, regionalInitialSurfaces, regionalSurfaceName, siteFactObservationsForRead, STRATEGY_SCREENING } from '@/lib/server/services/regional-analysis-workflow';
 import { buildReportView, laneIdFor } from '@/lib/regional-evidence-presentation';
 import { RegionalEvidenceArgumentError } from '@/lib/server/services/regional-evidence-tools';
 import { UpstreamHttpError } from '@/lib/server/http/bounded-upstream';
@@ -237,7 +237,10 @@ describe('regional evidence graph', () => {
 
   it('admits every switchable map surface as an evidence citation regardless of visibility', () => {
     for (const layer of Object.values(LAYER_REGISTRY)) {
-      expect(REGIONAL_TOOL_EVIDENCE_SOURCES).toContain(layer.warehouseLayerName ?? layer.toggleId);
+      // Through `regionalSurfaceName`, the same mapping the workflow itself resolves by: for
+      // `water` that is "water-gauges" (the agent's stable surface name), not the served stream's
+      // `warehouseLayerName` ("water-gauges-daily"), which `REGIONAL_TOOL_EVIDENCE_SOURCES` never names.
+      expect(REGIONAL_TOOL_EVIDENCE_SOURCES).toContain(regionalSurfaceName(layer.toggleId));
     }
   });
 });

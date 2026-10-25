@@ -23,6 +23,7 @@ from quality_receipt import (
     RECEIPT_SCHEMA_VERSION,
     REQUIRED_CHECK_COMMANDS,
     SERVICE_ROOT,
+    WAIVABLE_CHECKS,
     compute_digest,
     compute_tree_digest,
     digest_input_paths,
@@ -297,6 +298,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     _configure_selection(parser)
     parser.add_argument("--only", metavar="CHECK[,CHECK...]", help="Run only the named checks.")
+    parser.add_argument(
+        "--waive",
+        metavar="CHECK",
+        action="append",
+        help="With --write-receipt: record the named check as waived by an operator instead of running it; "
+        "requires --waive-operator and --waive-reason, both recorded verbatim in the receipt.",
+    )
+    parser.add_argument("--waive-operator", help="Who authorizes the waiver; recorded in the receipt.")
+    parser.add_argument(
+        "--waive-reason", help="Why the waived check may be skipped this once; recorded in the receipt."
+    )
     parser.add_argument("--list", action="store_true", help="List available check names and exit.")
     parser.add_argument(
         "--write-receipt",
@@ -414,8 +426,20 @@ def _tool_version(tool: str, uv_path: str) -> str:
     return completed.stdout.strip().splitlines()[0] if completed.stdout.strip() else "unreadable: no output"
 
 
-def build_receipt(results: Sequence[CheckResult], uv_path: str, digest: tuple[str, int]) -> dict[str, object]:
-    """Build the receipt payload locking this tree to this sweep's result."""
+def build_receipt(
+    results: Sequence[CheckResult],
+    uv_path: str,
+    digest: tuple[str, int],
+    waivers: Mapping[str, dict[str, str]] | None = None,
+) -> dict[str, object]:
+    """Build the receipt payload locking this tree to this sweep's result.
+
+    Every member of ``CHECKS`` appears exactly once, in order, with its canonical command --
+    ``verify_quality_receipt.py`` compares that list verbatim -- so a waived check keeps its row and
+    carries the waiver block instead of a run result.
+    """
+    waived = dict(waivers or {})
+    results_by_name = {result.name: result for result in results}
     tree_digest, file_count = digest
     return {
         "schema_version": RECEIPT_SCHEMA_VERSION,
@@ -430,12 +454,20 @@ def build_receipt(results: Sequence[CheckResult], uv_path: str, digest: tuple[st
         },
         "checks": [
             {
-                "name": result.name,
+                "name": check.name,
                 "command": list(check.command),
-                "status": "pass" if result.returncode == 0 else "fail",
-                "duration_seconds": round(result.duration_seconds, 3),
+                "status": "waived",
+                "duration_seconds": 0.0,
+                "waiver": waived[check.name],
             }
-            for check, result in zip(CHECKS, results, strict=True)
+            if check.name in waived
+            else {
+                "name": check.name,
+                "command": list(check.command),
+                "status": "pass" if results_by_name[check.name].returncode == 0 else "fail",
+                "duration_seconds": round(results_by_name[check.name].duration_seconds, 3),
+            }
+            for check in CHECKS
         ],
     }
 
@@ -615,8 +647,7 @@ def _run_selected_checks(
 
 
 def _write_receipt(
-    results: Sequence[CheckResult],
-    uv_path: str,
+    receipt_factory: Callable[[tuple[str, int]], dict[str, object]],
     digest_before: tuple[str, int],
     service_root: Path,
     index_reader: IndexReader,
@@ -642,10 +673,36 @@ def _write_receipt(
         print("\n" + describe_verdict(verdict))
         return 1
 
-    receipt = build_receipt(results, uv_path, digest_after)
+    receipt = receipt_factory(digest_after)
     write_receipt(receipt, service_root / RECEIPT_FILE_NAME)
     print(f"\nWrote {RECEIPT_FILE_NAME}: {receipt['tree_digest']} over {receipt['digest_file_count']} files.")
     return 0
+
+
+def _parse_waivers(arguments: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[str, dict[str, str]]:
+    """Validate the gate's one sanctioned door: every waiver is named, reasoned and receipt-recorded.
+
+    `verify_quality_receipt.py::_entry_passes` refuses a recorded waiver missing either string, so
+    the two halves hold the same line.
+    """
+    waived_names = tuple(dict.fromkeys(arguments.waive or ()))
+    if not waived_names:
+        return {}
+    known_names = {check.name for check in CHECKS}
+    unknown = [name for name in waived_names if name not in known_names]
+    if unknown:
+        parser.error(f"--waive names unknown checks: {', '.join(unknown)}")
+    unwaivable = [name for name in waived_names if name not in WAIVABLE_CHECKS]
+    if unwaivable:
+        parser.error(f"--waive permits only {sorted(WAIVABLE_CHECKS)}; refused: {', '.join(unwaivable)}")
+    if not arguments.write_receipt:
+        parser.error("--waive is only meaningful with --write-receipt")
+    operator = (arguments.waive_operator or "").strip()
+    reason = (arguments.waive_reason or "").strip()
+    if not operator or not reason:
+        parser.error("--waive requires --waive-operator and --waive-reason")
+    waived_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    return {name: {"operator": operator, "reason": reason, "waived_at": waived_at} for name in waived_names}
 
 
 def main(
@@ -677,12 +734,17 @@ def main(
     if arguments.write_receipt and selected_checks != CHECKS:
         print("Refusing to write a receipt: --write-receipt requires every check, not --only.")
         return 1
+    waivers = _parse_waivers(arguments, parser)
+    if waivers:
+        selected_checks = tuple(check for check in selected_checks if check.name not in waivers)
 
     # Digested before the sweep as well as after it: a file written during those minutes would
     # otherwise be certified by a run that never read it. `None` exactly when no receipt was asked for.
     digest_before = compute_tree_digest(service_root) if arguments.write_receipt else None
     uv_path, results = _run_selected_checks(selected_checks, check_runner)
     print_report(results)
+    for waived_name, waiver in waivers.items():
+        print(f"WAIVED: {waived_name} by {waiver['operator']}: {waiver['reason']}")
     failed = any(result.returncode != 0 for result in results)
 
     if digest_before is None:
@@ -690,7 +752,11 @@ def main(
     if failed or uv_path is None:
         print("\nRefusing to write a receipt: the sweep was not green.")
         return 1
-    return _write_receipt(results, uv_path, digest_before, service_root, index_reader)
+
+    def receipt_factory(digest_after: tuple[str, int]) -> dict[str, object]:
+        return build_receipt(results, uv_path, digest_after, waivers)
+
+    return _write_receipt(receipt_factory, digest_before, service_root, index_reader)
 
 
 if __name__ == "__main__":

@@ -25,6 +25,9 @@ VERIFY = load_scripts_module("verify_quality_receipt.py", "plantgeo_verify_quali
 
 SOURCE_RELATIVE_PATH = "src/module.py"
 
+#: argparse's fixed exit code for `parser.error`.
+PARSER_ERROR_EXIT = 2
+
 
 def _tree_with_one_source(root: Path, content: bytes = b"value = 1\n") -> None:
     """Create the smallest tree the digest covers: one file under src/."""
@@ -403,3 +406,199 @@ def test_staged_blob_ids_resolves_an_ordinary_stage_zero_index(tmp_path: Path) -
     blob_ids = CHECK._staged_blob_ids(tmp_path, git_output=lambda _arguments, _root: fake_output)
 
     assert blob_ids == {SOURCE_RELATIVE_PATH: "4444444444444444444444444444444444444d"}
+
+
+def _runner_forbidding(forbidden_name: str) -> Any:
+    """Pass every check except the named one, which must never start: it was waived, not run."""
+
+    def run(check: Any, uv_path: str) -> Any:
+        if check.name == forbidden_name:
+            message = f"{forbidden_name} was waived and must not run"
+            raise AssertionError(message)
+        return _green_runner(check, uv_path)
+
+    return run
+
+
+_WAIVER_ARGUMENTS = (
+    "--waive",
+    "pytest",
+    "--waive-operator",
+    "owner:test",
+    "--waive-reason",
+    "socket-buffer infra flake; suite green out of band",
+)
+
+
+def test_an_operator_waiver_skips_the_check_writes_the_receipt_and_the_verifier_accepts_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The gate's one sanctioned door: a named, reasoned waiver rides the receipt end to end."""
+    _tree_with_one_source(tmp_path)
+    _stub_tooling(monkeypatch)
+
+    exit_code = CHECK.main(
+        ["--write-receipt", *_WAIVER_ARGUMENTS],
+        service_root=tmp_path,
+        check_runner=_runner_forbidding("pytest"),
+        index_reader=_reader_returning(_snapshot_matching(tmp_path)),
+    )
+
+    assert exit_code == 0
+    receipt = json.loads(_receipt_path(tmp_path).read_text(encoding="utf-8"))
+    entries = {entry["name"]: entry for entry in receipt["checks"]}
+    assert [entry["name"] for entry in receipt["checks"]] == [check.name for check in CHECK.CHECKS]
+    assert entries["pytest"]["status"] == "waived"
+    assert entries["pytest"]["command"] == list(next(c.command for c in CHECK.CHECKS if c.name == "pytest"))
+    assert entries["pytest"]["waiver"]["operator"] == "owner:test"
+    assert "infra flake" in entries["pytest"]["waiver"]["reason"]
+    assert entries["lint"]["status"] == "pass"
+    # The verifier is the Docker build's judge; the waived receipt must satisfy it verbatim.
+    assert "quality receipt verified" in VERIFY.verify(_receipt_path(tmp_path))
+
+
+def test_a_waiver_missing_its_reason_is_refused_before_any_check_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A waiver is an accountable decision: no reason, no run, no receipt."""
+    _tree_with_one_source(tmp_path)
+    _stub_tooling(monkeypatch)
+
+    with pytest.raises(SystemExit) as excinfo:
+        CHECK.main(
+            ["--write-receipt", "--waive", "pytest", "--waive-operator", "owner:test"],
+            service_root=tmp_path,
+            check_runner=_forbidden_runner,
+            index_reader=_reader_returning(_snapshot_matching(tmp_path)),
+        )
+
+    assert excinfo.value.code == PARSER_ERROR_EXIT
+    assert "--waive requires --waive-operator and --waive-reason" in capsys.readouterr().err
+    assert not _receipt_path(tmp_path).exists()
+
+
+def test_only_the_test_suite_is_waivable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The door is exactly as wide as the owner's request: static gates can never be waived."""
+    _tree_with_one_source(tmp_path)
+    _stub_tooling(monkeypatch)
+
+    with pytest.raises(SystemExit) as excinfo:
+        CHECK.main(
+            ["--write-receipt", "--waive", "lint", "--waive-operator", "owner:test", "--waive-reason", "no"],
+            service_root=tmp_path,
+            check_runner=_forbidden_runner,
+            index_reader=_reader_returning(_snapshot_matching(tmp_path)),
+        )
+
+    assert excinfo.value.code == PARSER_ERROR_EXIT
+    assert "permits only" in capsys.readouterr().err
+    assert not _receipt_path(tmp_path).exists()
+
+
+def test_the_verifier_refuses_a_waiver_whose_reason_was_emptied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A recorded waiver that loses its reason downgrades to a failing check at verify time."""
+    _tree_with_one_source(tmp_path)
+    _stub_tooling(monkeypatch)
+    CHECK.main(
+        ["--write-receipt", *_WAIVER_ARGUMENTS],
+        service_root=tmp_path,
+        check_runner=_runner_forbidding("pytest"),
+        index_reader=_reader_returning(_snapshot_matching(tmp_path)),
+    )
+    receipt = json.loads(_receipt_path(tmp_path).read_text(encoding="utf-8"))
+    for entry in receipt["checks"]:
+        if entry["name"] == "pytest":
+            entry["waiver"]["reason"] = "   "
+    QUALITY_RECEIPT.write_receipt(receipt, _receipt_path(tmp_path))
+
+    with pytest.raises(QUALITY_RECEIPT.ReceiptError, match="pytest"):
+        VERIFY.verify(_receipt_path(tmp_path))
+
+
+def test_a_waiver_without_a_receipt_request_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Waivers exist to unblock the receipt, never to quietly skip checks in an ordinary run."""
+    _tree_with_one_source(tmp_path)
+    _stub_tooling(monkeypatch)
+
+    with pytest.raises(SystemExit) as excinfo:
+        CHECK.main(
+            [*_WAIVER_ARGUMENTS],
+            service_root=tmp_path,
+            check_runner=_forbidden_runner,
+            index_reader=_reader_returning(None),
+        )
+
+    assert excinfo.value.code == PARSER_ERROR_EXIT
+
+
+def _drop_waiver_block(entry: dict) -> None:
+    del entry["waiver"]
+
+
+def _blank_operator(entry: dict) -> None:
+    entry["waiver"]["operator"] = ""
+
+
+def _non_string_reason(entry: dict) -> None:
+    entry["waiver"]["reason"] = 7
+
+
+def _move_waiver_to_lint(entry: dict) -> None:
+    entry["status"] = "pass"  # pytest row reverts; the mutation below waives lint instead
+
+
+@pytest.mark.parametrize(
+    ("description", "mutate"),
+    [
+        ("no waiver block", _drop_waiver_block),
+        ("blank operator", _blank_operator),
+        ("non-string reason", _non_string_reason),
+    ],
+)
+def test_the_verifier_refuses_malformed_waivers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, description: str, mutate: Any
+) -> None:
+    """Every malformed waiver downgrades to a failing check at verify time."""
+    assert description  # names the row in failure output
+    _tree_with_one_source(tmp_path)
+    _stub_tooling(monkeypatch)
+    CHECK.main(
+        ["--write-receipt", *_WAIVER_ARGUMENTS],
+        service_root=tmp_path,
+        check_runner=_runner_forbidding("pytest"),
+        index_reader=_reader_returning(_snapshot_matching(tmp_path)),
+    )
+    receipt = json.loads(_receipt_path(tmp_path).read_text(encoding="utf-8"))
+    for entry in receipt["checks"]:
+        if entry["name"] == "pytest":
+            mutate(entry)
+    QUALITY_RECEIPT.write_receipt(receipt, _receipt_path(tmp_path))
+
+    with pytest.raises(QUALITY_RECEIPT.ReceiptError, match="pytest"):
+        VERIFY.verify(_receipt_path(tmp_path))
+
+
+def test_the_verifier_refuses_a_waiver_on_a_static_gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A hand-moved waiver onto lint fails verification even with operator and reason intact."""
+    _tree_with_one_source(tmp_path)
+    _stub_tooling(monkeypatch)
+    CHECK.main(
+        ["--write-receipt", *_WAIVER_ARGUMENTS],
+        service_root=tmp_path,
+        check_runner=_runner_forbidding("pytest"),
+        index_reader=_reader_returning(_snapshot_matching(tmp_path)),
+    )
+    receipt = json.loads(_receipt_path(tmp_path).read_text(encoding="utf-8"))
+    entries = {entry["name"]: entry for entry in receipt["checks"]}
+    entries["lint"]["status"] = "waived"
+    entries["lint"]["waiver"] = dict(entries["pytest"]["waiver"])
+    entries["pytest"]["status"] = "pass"
+    del entries["pytest"]["waiver"]
+    QUALITY_RECEIPT.write_receipt(receipt, _receipt_path(tmp_path))
+
+    with pytest.raises(QUALITY_RECEIPT.ReceiptError, match="lint"):
+        VERIFY.verify(_receipt_path(tmp_path))

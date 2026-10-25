@@ -45,7 +45,8 @@ export const DAY_MS = 86_400_000;
 /** Attribution that must be shown wherever each lane's values are drawn; see services/AGENTS.md §lane-attributions. */
 export const LANE_ATTRIBUTIONS = {
   "fire-detections": "NASA FIRMS (LANCE/ESDIS)",
-  // The served stream's attribution: NWIS until G4 flips `src/lib/water-gauges-stream.ts`.
+  // The served stream's attribution: follows `WATER_GAUGES_STREAM`, flipped to the daily stream
+  // by G4 (owner go 2026-10-24); see `src/lib/water-gauges-stream.ts`.
   "water-gauges": WATER_GAUGES_STREAM_FACT.attribution,
   "weather-observations": "Open-Meteo",
   vegetation: "Copernicus Sentinel-2 surface reflectance",

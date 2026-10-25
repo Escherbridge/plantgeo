@@ -191,7 +191,7 @@ function sliderCapabilities() {
         describedFromDay: FIRE_DESCRIBED_FROM_DAY,
       },
       {
-        layerName: "water-gauges",
+        layerName: "water-gauges-daily",
         temporalKind: "daily_series",
         forecastHorizonDays: 0,
         forecastVariants: [],

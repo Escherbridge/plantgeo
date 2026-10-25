@@ -172,7 +172,8 @@ const attributionIndex = [
       "Fire evacuation areas, statewide. Oregon only: no government-run aggregator exists for Washington, Idaho or western Montana, and the one vendor feed that reaches them carries no timestamp we could honestly publish.",
     note: "Hourly",
   },
-  // The served water stream's source (`src/lib/water-gauges-stream.ts`): NWIS until G4.
+  // The served water stream's source (`src/lib/water-gauges-stream.ts`): USGS Water Data daily
+  // values since G4 (owner go 2026-10-24); rollback is the same line back.
   {
     term: WATER_GAUGES_STREAM_FACT.sourceTerm,
     description: WATER_GAUGES_STREAM_FACT.sourceDescription,

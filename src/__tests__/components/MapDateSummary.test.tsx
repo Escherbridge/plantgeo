@@ -38,7 +38,7 @@ const CAPABILITIES: SliderCapabilities = {
       describedFromDay: null,
     },
     {
-      layerName: "water-gauges",
+      layerName: "water-gauges-daily",
       temporalKind: "daily_series",
       forecastHorizonDays: 0,
       forecastVariants: [],

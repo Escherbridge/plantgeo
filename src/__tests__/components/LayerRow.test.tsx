@@ -64,7 +64,7 @@ const CAPABILITIES: SliderCapabilities = {
   streamsUnavailable: false,
   layers: [
     {
-      layerName: "water-gauges",
+      layerName: "water-gauges-daily",
       temporalKind: "daily_series",
       forecastHorizonDays: 0,
       forecastVariants: [],
@@ -749,7 +749,7 @@ describe("LayerRow coverage evidence caption", () => {
         streamsUnavailable: false,
         layers: [
           {
-            layerName: "water-gauges",
+            layerName: "water-gauges-daily",
             temporalKind: "daily_series",
             forecastHorizonDays: 0,
             forecastVariants: [],
@@ -791,7 +791,7 @@ describe("LayerRow coverage evidence caption", () => {
         streamsUnavailable: false,
         layers: [
           {
-            layerName: "water-gauges",
+            layerName: "water-gauges-daily",
             temporalKind: "daily_series",
             forecastHorizonDays: 0,
             forecastVariants: [],

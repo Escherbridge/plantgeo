@@ -46,7 +46,7 @@ import {
   getParquetWeatherObservations,
 } from "@/lib/server/services/parquet-trpc-readers";
 import { readWaterGaugeStream } from "@/lib/server/services/parquet-trpc-readers/water-gauges";
-import { DAILY_WATER_GAUGES_STREAM } from "@/lib/water-gauges-stream";
+import { DAILY_WATER_GAUGES_STREAM, LEGACY_WATER_GAUGES_STREAM } from "@/lib/water-gauges-stream";
 
 const mockedDay = vi.mocked(getParquetLayerDay);
 const mockedWindow = vi.mocked(getParquetLayerDayWindow);
@@ -773,17 +773,10 @@ describe("Parquet tRPC state adapter", () => {
 
   it("maps a published water-gauge day to ready and resolves the shared zoom tier", async () => {
     mockedWindow.mockResolvedValue([
-      published("2026-08-19", [
-        {
-          ...waterRow(),
-          observed_at: "2026-08-19T23:30:00Z",
-          observed_day: "2026-08-19",
-          flow_cfs: 90,
-        },
-      ]),
+      published("2026-08-19", [{ ...dailyWaterRow("2026-08-19", 90), observed_at: "2026-08-19T23:30:00Z" }]),
       published("2026-08-20", [
-        { ...waterRow(), observed_at: "2026-08-20T17:15:00Z", flow_cfs: 100 },
-        waterRow(),
+        { ...dailyWaterRow("2026-08-20", 100), observed_at: "2026-08-20T07:00:00Z" },
+        { ...dailyWaterRow("2026-08-20", 122), observed_at: "2026-08-20T17:15:00Z" },
       ]),
     ]);
 
@@ -793,9 +786,11 @@ describe("Parquet tRPC state adapter", () => {
       nowMs: Date.parse("2026-08-20T20:00:00Z"),
     });
 
+    // The daily mean's current-day window looks back `DAILY_MEAN_LIVE_LOOKBACK_DAYS` (3), not the
+    // legacy stream's 1 day, since a daily mean is never published for today or yesterday.
     expect(mockedWindow).toHaveBeenCalledWith({
-      layer: "water-gauges",
-      firstDay: "2026-08-19",
+      layer: "water-gauges-daily",
+      firstDay: "2026-08-17",
       lastDay: "2026-08-20",
       zoomTier: 9,
       bbox: "-125,42,-111,49",
@@ -804,11 +799,11 @@ describe("Parquet tRPC state adapter", () => {
       state: "ready",
       requestedDay: "2026-08-20",
       servedDay: "2026-08-20",
-      data: [{ siteNumber: "13042500", flowCfs: 122 }],
+      data: [{ siteNumber: "13206000", flowCfs: 122 }],
     });
     // Above the base rung the derivation nulls `site_number` and `site_name`, so a row stands for
-    // a CELL of gauges rather than one gauge. `contributorCount` is the two fresh readings this
-    // envelope folded -- measured by the fold, not assumed, because the lane publishes no count.
+    // a CELL of gauges rather than one gauge. `contributorCount` is the two readings this cell
+    // folded -- measured by the fold, not assumed, because the lane publishes no count.
     expect(readyData(result)[0].support).toMatchObject({
       zoomTier: 9,
       supportKind: "aggregate_cell",
@@ -818,7 +813,7 @@ describe("Parquet tRPC state adapter", () => {
       // gauges this cell folded. How many folded is `contributorCount` on the line below.
       aggregationMethod: "mean",
       contributorCount: 2,
-      provenance: { sourceLayer: "water-gauges", attribution: "U.S. Geological Survey NWIS" },
+      provenance: { sourceLayer: "water-gauges-daily", attribution: "U.S. Geological Survey Water Data daily values" },
     });
   });
 
@@ -828,7 +823,7 @@ describe("Parquet tRPC state adapter", () => {
    * publishing a cell size for one would license a renderer to draw a square around a gauge.
    */
   it("serves a real gauge as a raw point with no cell size at the detail rung", async () => {
-    mockedDay.mockResolvedValue(published("2026-08-19", [waterRow()]));
+    mockedDay.mockResolvedValue(published("2026-08-19", [dailyWaterRow()]));
 
     const result = await getParquetWaterGauges({
       bbox: "-125,42,-111,49",
@@ -840,7 +835,7 @@ describe("Parquet tRPC state adapter", () => {
     expect(support).toMatchObject({
       zoomTier: 13,
       supportKind: "raw_point",
-      supportId: "13042500",
+      supportId: "13206000",
       origin: "cell_center",
       aggregationMethod: "none",
       contributorCount: 1,
@@ -982,7 +977,13 @@ describe("Parquet tRPC state adapter", () => {
 });
 
 describe("lane day and release semantics", () => {
-  it("retains today's not-generated state when yesterday has no fresh water row", async () => {
+  /**
+   * The legacy stream's freshness window, named explicitly: `getParquetWaterGauges` serves the
+   * daily mean today (G4), which has no freshness cutoff at all -- any published day in its
+   * lookback counts, so this 6 h-staleness rule has no daily analogue. The reader still accepts
+   * the legacy stream by name (`readWaterGaugeStream`), so the behavior stays covered through it.
+   */
+  it("retains today's not-generated state when yesterday has no fresh water row (legacy stream)", async () => {
     mockedWindow.mockResolvedValue([
       published("2026-08-19", [
         {
@@ -995,7 +996,7 @@ describe("lane day and release semantics", () => {
     ]);
 
     await expect(
-      getParquetWaterGauges({
+      readWaterGaugeStream(LEGACY_WATER_GAUGES_STREAM, {
         bbox: "-125,42,-111,49",
         date: "2026-08-20",
         mapZoom: 13,
@@ -1008,7 +1009,11 @@ describe("lane day and release semantics", () => {
     });
   });
 
-  it("labels a fresh midnight-rollover water row with its publisher day", async () => {
+  /**
+   * Same reason as above: the daily mean has no sub-day instant to roll over at midnight, and no
+   * freshness window to test against one. Kept on the legacy stream by name.
+   */
+  it("labels a fresh midnight-rollover water row with its publisher day (legacy stream)", async () => {
     mockedWindow.mockResolvedValue([
       published("2026-08-19", [
         {
@@ -1021,7 +1026,7 @@ describe("lane day and release semantics", () => {
     ]);
 
     await expect(
-      getParquetWaterGauges({
+      readWaterGaugeStream(LEGACY_WATER_GAUGES_STREAM, {
         bbox: "-125,42,-111,49",
         date: "2026-08-20",
         mapZoom: 13,
@@ -1036,10 +1041,11 @@ describe("lane day and release semantics", () => {
   });
 
   /**
-   * The web switch is PREPARED behind `src/lib/water-gauges-stream.ts` and still names the legacy
-   * stream (the rows above). These two drive the stream G4 flips to through the same reader.
+   * G4 (owner go 2026-10-24) flipped the web switch (`src/lib/water-gauges-stream.ts`), so this is
+   * now `getParquetWaterGauges`'s own default stream; these two drive it through the same reader
+   * by naming it explicitly, the way the legacy-stream cases above do for the stream it replaced.
    */
-  it("reads the prepared daily stream's extra columns under that stream's own attribution", async () => {
+  it("reads the daily stream's extra columns under that stream's own attribution", async () => {
     mockedDay.mockResolvedValue(published("2026-08-19", [dailyWaterRow()]));
 
     const result = await readWaterGaugeStream(DAILY_WATER_GAUGES_STREAM, {

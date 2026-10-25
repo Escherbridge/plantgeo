@@ -44,7 +44,7 @@ const capabilities: SliderCapabilities = {
       describedFromDay: FIRE_DESCRIBED_FROM_DAY,
     },
     {
-      layerName: "water-gauges",
+      layerName: "water-gauges-daily",
       temporalKind: "daily_series",
       forecastHorizonDays: 0,
       forecastVariants: [],
@@ -161,7 +161,7 @@ describe("posting the days the user is viewing with an analysis request", () => 
     const fetchMock = refusingFetch();
     vi.stubGlobal('fetch', fetchMock);
     mocks.useViewedLayerDays.mockReturnValue([
-      { layerId: 'water', warehouseLayerName: 'water-gauges', date: '2026-08-08', isOnLatest: true },
+      { layerId: 'water', warehouseLayerName: 'water-gauges-daily', date: '2026-08-08', isOnLatest: true },
       // Visible but not dated in this payload: no window.
       { layerId: 'soil-survey', warehouseLayerName: 'soil-survey', date: '2026-08-09', isOnLatest: true },
     ]);
@@ -227,7 +227,7 @@ describe("posting the days the user is viewing with an analysis request", () => 
       },
       {
         layerId: "water",
-        warehouseLayerName: "water-gauges",
+        warehouseLayerName: "water-gauges-daily",
         date: "2026-08-08",
         isOnLatest: true,
       },
@@ -367,7 +367,7 @@ describe("posting the days the user is viewing with an analysis request", () => 
     mocks.useViewedLayerDays.mockReturnValue([
       {
         layerId: "water",
-        warehouseLayerName: "water-gauges",
+        warehouseLayerName: "water-gauges-daily",
         date: "2026-08-08",
         isOnLatest: true,
       },
@@ -377,7 +377,7 @@ describe("posting the days the user is viewing with an analysis request", () => 
     mocks.useViewedLayerDays.mockReturnValue([
       {
         layerId: "water",
-        warehouseLayerName: "water-gauges",
+        warehouseLayerName: "water-gauges-daily",
         date: "2025-04-01",
         isOnLatest: false,
       },

@@ -295,7 +295,9 @@ async def test_surface_temporal_neighbors_clamp_an_over_wide_window_and_report_i
 async def test_feature_value_near_point_dates_features_by_the_partition_the_map_asks_for() -> None:
     """One day rule, shared not re-derived, or the agent dates a feature differently from the tiles."""
     source = FakeAgentWarehouse()
-    source.listing_store.write_day("water-gauges", "observed", 13, SELECTED_DATE)
+    # G4 (2026-10-24): the `water-gauges` SURFACE is served by the daily lane; the surface name in
+    # the query below stays stable while the addressed partition follows WATER_GAUGES_SERVED_STREAM.
+    source.listing_store.write_day("water-gauges-daily", "observed", 13, SELECTED_DATE)
     source.answer(
         POINT_LANE_MARKER,
         [
@@ -322,7 +324,7 @@ async def test_feature_value_near_point_dates_features_by_the_partition_the_map_
 
     addressed = source.part_uris_for(POINT_LANE_MARKER)
     assert len(addressed) == 1
-    assert "layer=water-gauges" in addressed[0]
+    assert "layer=water-gauges-daily" in addressed[0]
     assert "year=2026/month=03/day=14" in addressed[0]
     payload = json.loads(raw)
     nearest = payload["features"][0]

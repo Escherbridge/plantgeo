@@ -453,7 +453,7 @@ const sliderCapabilities: SliderCapabilities = {
   layers: [
     // Its newest day IS the server's today, which is the one case that must send no date.
     publishedLayer("fire-detections", SERVER_CURRENT_DATE),
-    publishedLayer("water-gauges", "2026-07-30"),
+    publishedLayer("water-gauges-daily", "2026-07-30"),
     publishedLayer("vegetation", "2026-06-14"),
     publishedLayer("weather-observations", "2026-08-02"),
     publishedLayer("fire-perimeters", "2026-07-21"),

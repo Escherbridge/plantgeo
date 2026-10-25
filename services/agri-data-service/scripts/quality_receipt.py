@@ -23,6 +23,12 @@ RECEIPT_PATH: Final = SERVICE_ROOT / RECEIPT_FILE_NAME
 #: Bumped to 3 when recorded gate commands became structured argv arrays.
 RECEIPT_SCHEMA_VERSION: Final = 3
 
+#: The only checks an operator may waive (`check.py --waive`), shared with the verifier so a waived
+#: row for any other check fails verification. Static gates are cheap and deterministic, so only the
+#: test suite -- the one check a machine-level flake can deny -- has a sanctioned door (owner
+#: request 2026-10-24).
+WAIVABLE_CHECKS: Final = frozenset({"pytest"})
+
 #: The one command that produces a valid receipt; quoted in every refusal.
 RECEIPT_REWRITE_COMMAND: Final = "uv run --no-sync python scripts/check.py --write-receipt"
 

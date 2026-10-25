@@ -24,7 +24,7 @@ const SERVER_CURRENT_DATE = "2026-08-04";
  * exist so each one opens on its own newest day instead of on a hole.
  */
 const waterLayerCapability: SliderLayerCapability = {
-  layerName: "water-gauges",
+  layerName: "water-gauges-daily",
   temporalKind: "daily_series",
   forecastHorizonDays: 0,
   forecastVariants: [],
@@ -519,7 +519,7 @@ describe("useViewedLayerDays", () => {
     expect(result.current).toEqual([
       {
         layerId: "water",
-        warehouseLayerName: "water-gauges",
+        warehouseLayerName: "water-gauges-daily",
         date: "2026-08-02",
         isOnLatest: true,
       },
@@ -547,7 +547,7 @@ describe("useViewedLayerDays", () => {
 
     expect(byLayer.get("water")).toEqual({
       layerId: "water",
-      warehouseLayerName: "water-gauges",
+      warehouseLayerName: "water-gauges-daily",
       date: "2026-07-20",
       isOnLatest: false,
     });

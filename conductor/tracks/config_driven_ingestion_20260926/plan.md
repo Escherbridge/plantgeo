@@ -1164,7 +1164,7 @@ authors in the service tree until G4's push (O-R3-3).
   - **history depth: the census holds no owed day in [1990-09-30 (or the A14-lowered floor), edge].**
 - [ ] Task: **QA rows:** ≥72 h of forward turns with exit 0 and a correct S5 report; the re-pull
       progressing within budget.
-- [ ] Task: **G4 (owner go), only when every validation row passes, history depth included:** flip
+- [x] Task (closed 2026-10-24; owner WAIVED the history-depth row while gap-fill drains -- evidence/phase3.md "G4 closeout"): **G4 (owner go), only when every validation row passes, history depth included:** flip
       the stream-name constant and the attribution (sweep + receipt + push), then pause the legacy
       `water-gauges-direct-forward` through the ledger verb. **CA18 (go text):** pause the legacy
       lane only after a legacy turn whose report shows its owed-claim retry drained; otherwise record

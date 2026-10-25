@@ -83,9 +83,9 @@ AGENT_SURFACE_NAMES: Final = tuple(
 )
 
 #: CA11 (config-driven ingestion spec §4.8.9): the stream the `water-gauges` surface is served from.
-#: G4 flips it to "water-gauges-daily" in the same commit as the web's one switch,
-#: `src/lib/water-gauges-stream.ts::WATER_GAUGES_STREAM`; until then the legacy stream serves.
-WATER_GAUGES_SERVED_STREAM: Final = "water-gauges"
+#: G4 (owner go 2026-10-24) flipped it to "water-gauges-daily" in the same commit as the web's one
+#: switch, `src/lib/water-gauges-stream.ts::WATER_GAUGES_STREAM`. Rollback is the same line back.
+WATER_GAUGES_SERVED_STREAM: Final = "water-gauges-daily"
 
 # --- Which Parquet lanes serve each surface ----------------------------------------
 #
@@ -93,8 +93,10 @@ WATER_GAUGES_SERVED_STREAM: Final = "water-gauges"
 # `DIRECT_PARQUET_CAPABILITIES` / `CLIMATE_PARQUET_LANES` / `SIGNAL_PARQUET_CAPABILITIES` tables are
 # the client-catalogue ownership contract. A second, differently-shaped mapping here is how the
 # agent would answer about a lane the map never asks for -- so this table is copied from that one
-# rather than re-derived, and `test_the_agent_surface_lanes_match_the_client_catalogue` compares
-# them name by name.
+# rather than re-derived. No test compares the two name by name across the Python/TypeScript
+# boundary today (`test_every_catalogue_surface_is_mapped_or_explicitly_refused`, tests/
+# test_agent_parquet_tools.py, only checks internal consistency within this file); parity is
+# enforced by review at the point a lane is added or renamed on either side.
 #
 # A surface backed by SEVERAL lanes is covered only where every one of its lanes is: the map's
 # `commonPublishedRanges` intersects them for the same reason. Three examples carry that weight --

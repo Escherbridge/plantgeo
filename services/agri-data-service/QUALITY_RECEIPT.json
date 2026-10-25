@@ -9,7 +9,7 @@
         "tests",
         "scripts"
       ],
-      "duration_seconds": 0.672,
+      "duration_seconds": 0.076,
       "name": "format",
       "status": "pass"
     },
@@ -21,7 +21,7 @@
         "tests",
         "scripts"
       ],
-      "duration_seconds": 0.068,
+      "duration_seconds": 0.075,
       "name": "lint",
       "status": "pass"
     },
@@ -31,7 +31,7 @@
         "src",
         "scripts"
       ],
-      "duration_seconds": 4.683,
+      "duration_seconds": 1.767,
       "name": "mypy",
       "status": "pass"
     },
@@ -40,21 +40,26 @@
         "pytest",
         "-q"
       ],
-      "duration_seconds": 356.574,
+      "duration_seconds": 0.0,
       "name": "pytest",
-      "status": "pass"
+      "status": "waived",
+      "waiver": {
+        "operator": "owner:atoozmc",
+        "reason": "2026-10-24 owner go ('skip tests'): six full-suite runs lost 1-2 random async tests to WinError 10055 socket-buffer exhaustion at pytest-asyncio loop setup (machine-wide handle churn, 490 processes); suite substance green 6876/6877 every run, reds never the diff; logs services/agri-data-service/.tmp/check-20261024-r*.log",
+        "waived_at": "2026-10-25T00:10:29.801961Z"
+      }
     }
   ],
   "digest_domain": "plantgeo.agri-data-service.quality-receipt.v2",
-  "digest_file_count": 1153,
-  "generated_at": "2026-10-10T20:33:32.941276Z",
+  "digest_file_count": 1156,
+  "generated_at": "2026-10-25T00:10:33.682800Z",
   "schema_version": 3,
   "tools": {
     "mypy": "mypy 2.3.0 (compiled: yes)",
     "pytest": "pytest 9.1.1",
-    "python": "3.12.10",
+    "python": "3.12.9",
     "ruff": "ruff 0.15.22",
     "uv": "uv 0.9.18 (0cee76417 2025-12-16)"
   },
-  "tree_digest": "sha256:529f01cb29e7ef86719f3a3f34b8272c358dbecb3950a25ba0e3050f24c074cc"
+  "tree_digest": "sha256:4c37917a080d314572b5d9404e743a68054b808ecd753babde2032320a57d2f0"
 }

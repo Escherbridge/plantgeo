@@ -2,8 +2,8 @@
  * The ONE switch naming the Parquet stream the `water-gauges` layer is served from (config-driven
  * ingestion spec §7a). The UI layer key stays `water-gauges`; only the stream behind it moves.
  *
- * G4 (owner go, after every validation row passes) flips `WATER_GAUGES_STREAM` to
- * `DAILY_WATER_GAUGES_STREAM` in the same commit as the agent's
+ * G4 (owner go 2026-10-24) flipped `WATER_GAUGES_STREAM` to `DAILY_WATER_GAUGES_STREAM` in the
+ * same commit as the agent's
  * `services/agri-data-service/src/agri_data_service/agent/surfaces.py::WATER_GAUGES_SERVED_STREAM`.
  * Rollback is the same line back. See `docs/lanes/water-gauges.md` "The web switch".
  */
@@ -14,7 +14,16 @@ export const DAILY_WATER_GAUGES_STREAM = "water-gauges-daily";
 export type WaterGaugesStream = typeof LEGACY_WATER_GAUGES_STREAM | typeof DAILY_WATER_GAUGES_STREAM;
 
 /** The stream every water reader, capability, attribution and alert names today. */
-export const WATER_GAUGES_STREAM: WaterGaugesStream = LEGACY_WATER_GAUGES_STREAM;
+export const WATER_GAUGES_STREAM: WaterGaugesStream = DAILY_WATER_GAUGES_STREAM;
+
+/**
+ * The AGENT SURFACE name the `water-gauges` layer answers as. This is the stable layer identity
+ * and deliberately does NOT follow `WATER_GAUGES_STREAM`: the agent's surface vocabulary is fixed
+ * (`services/agri-data-service/src/agri_data_service/agent/surfaces.py::FEATURE_SURFACE_NAMES`
+ * names it "water-gauges" regardless of which Parquet lane answers for it), while the stream above
+ * only names which lane that is.
+ */
+export const WATER_GAUGES_SURFACE = "water-gauges";
 
 export interface WaterGaugesStreamFacts {
   /** Shown wherever the stream's values are drawn (`parquet-trpc-readers/shared.ts::LANE_ATTRIBUTIONS`). */

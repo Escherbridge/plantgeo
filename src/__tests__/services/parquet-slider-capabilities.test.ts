@@ -9,6 +9,7 @@ import {
   CLIMATE_FIELD_SIGNAL_IDS,
   climateFieldStreamName,
 } from "@/lib/environmental/climate-field";
+import { WATER_GAUGES_STREAM_FACT } from "@/lib/water-gauges-stream";
 import { UpstreamHttpError, UpstreamPayloadError, UpstreamTimeoutError } from "@/lib/server/http/bounded-upstream";
 import { ParquetPlaneContractError } from "@/lib/server/services/parquet-plane-client";
 import type {
@@ -370,7 +371,7 @@ describe("getParquetSliderCapabilities", () => {
       "drought-areas",
       "fire-detections",
       "fire-perimeters",
-      "water-gauges",
+      "water-gauges-daily",
       "weather-observations",
       "sensors",
       "watersheds",
@@ -400,7 +401,7 @@ describe("getParquetSliderCapabilities", () => {
       "drought",
       "fire-detections",
       "fire-perimeters",
-      "water-gauges",
+      "water-gauges-daily",
       "weather-observations",
       "sensors",
       "watersheds",
@@ -734,17 +735,17 @@ describe("getParquetSliderCapabilities", () => {
   ] as const)("withholds a direct lane whose z0 evidence is $name", async ({ mutate, reason }) => {
     setCoverage(
       completeCoverage().map((entry) =>
-        entry.layer === "water-gauges" && entry.zoomTier === 0 ? mutate(entry) : entry
+        entry.layer === "water-gauges-daily" && entry.zoomTier === 0 ? mutate(entry) : entry
       )
     );
 
     const result = await getParquetSliderCapabilities();
 
     expect(result.withheldParquetCapabilities).toContainEqual({
-      layerName: "water-gauges",
-      parquetLanes: ["water-gauges"],
+      layerName: "water-gauges-daily",
+      parquetLanes: ["water-gauges-daily"],
       reason,
-      missingEvidence: [{ parquetLane: "water-gauges", zoomTier: 0 }],
+      missingEvidence: [{ parquetLane: "water-gauges-daily", zoomTier: 0 }],
     });
   });
 
@@ -768,7 +769,7 @@ describe("getParquetSliderCapabilities", () => {
   it("withholds a physical lane whose nature differs from its reader contract", async () => {
     setCoverage(
       completeCoverage().map((entry) =>
-        entry.layer === "water-gauges" && entry.zoomTier === 9
+        entry.layer === "water-gauges-daily" && entry.zoomTier === 9
           ? { ...entry, nature: "release_series" }
           : entry
       )
@@ -777,10 +778,10 @@ describe("getParquetSliderCapabilities", () => {
     const result = await getParquetSliderCapabilities();
 
     expect(result.withheldParquetCapabilities).toContainEqual({
-      layerName: "water-gauges",
-      parquetLanes: ["water-gauges"],
+      layerName: "water-gauges-daily",
+      parquetLanes: ["water-gauges-daily"],
       reason: "lane_nature_mismatch",
-      missingEvidence: [{ parquetLane: "water-gauges", zoomTier: 9 }],
+      missingEvidence: [{ parquetLane: "water-gauges-daily", zoomTier: 9 }],
     });
   });
 
@@ -845,7 +846,7 @@ describe("getParquetSliderCapabilities", () => {
   it("authors an ungoverned tail when a product ends before the server current day", async () => {
     const result = await getParquetSliderCapabilities();
 
-    expect(result.layers.find((layer) => layer.layerName === "water-gauges")?.coverageGaps).toEqual(
+    expect(result.layers.find((layer) => layer.layerName === "water-gauges-daily")?.coverageGaps).toEqual(
       [{ from: "2026-08-21", to: "2026-08-28" }]
     );
   });
@@ -949,7 +950,7 @@ describe("getParquetSliderCapabilities", () => {
   it("keeps legacy water facts auditable without stretching the selectable daily series", async () => {
     setCoverage(
       completeCoverage().map((entry) =>
-        entry.layer === "water-gauges"
+        entry.layer === "water-gauges-daily"
           ? {
               ...entry,
               earliestDay: "1990-09-30",
@@ -964,7 +965,7 @@ describe("getParquetSliderCapabilities", () => {
     );
 
     const result = await getParquetSliderCapabilities();
-    const water = result.layers.find((layer) => layer.layerName === "water-gauges");
+    const water = result.layers.find((layer) => layer.layerName === "water-gauges-daily");
 
     expect(water).toMatchObject({
       earliestObservedDate: FIRST_DAY,
@@ -1142,7 +1143,7 @@ describe("getParquetSliderCapabilities", () => {
       missingEvidence: [{ parquetLane: "vegetation", zoomTier: null }],
     });
     // Every other row is untouched: withholding is per lane, not a census-wide kill switch.
-    expect(result.layers.some((layer) => layer.layerName === "water-gauges")).toBe(true);
+    expect(result.layers.some((layer) => layer.layerName === "water-gauges-daily")).toBe(true);
   });
 
   it("reports the wire's first-declared reason when rungs of one lane disagree", async () => {
@@ -1228,7 +1229,7 @@ describe("getParquetSliderCapabilities", () => {
       result.withheldParquetCapabilities.find((entry) => entry.layerName === "vegetation")?.reason
     ).toBe("availability_unpublished");
     expect(
-      result.withheldParquetCapabilities.find((entry) => entry.layerName === "water-gauges")?.reason
+      result.withheldParquetCapabilities.find((entry) => entry.layerName === "water-gauges-daily")?.reason
     ).toBe("coverage_not_current");
   });
 
@@ -1377,7 +1378,7 @@ describe("getParquetSliderCapabilities", () => {
   it("reports an availability-backed row as such when every rung read the index", async () => {
     const result = await getParquetSliderCapabilities();
 
-    expect(result.layers.find((layer) => layer.layerName === "water-gauges")).toMatchObject({
+    expect(result.layers.find((layer) => layer.layerName === "water-gauges-daily")).toMatchObject({
       coverageAuthority: "availability",
       sourceCeilingDay: null,
       // Nothing bounds the source, so the tail ran to the coverage end and the row is described
@@ -1681,40 +1682,18 @@ describe("region layer bindings on the capability payload", () => {
 });
 
 /**
- * The web half of the water cut-over is PREPARED behind `src/lib/water-gauges-stream.ts` and still
- * names the legacy stream (every `water-gauges` row above). This is G4's flip, rehearsed: with the
- * switch naming the daily stream, the capability, its floor and the registry's stream move together,
- * and the toggle's manifest binding stays on the UI layer key.
+ * G4 (owner go 2026-10-24) flipped the web switch (`src/lib/water-gauges-stream.ts`), so the water
+ * capability's `layerName`/`parquetLanes` moving to the daily stream is now the real world, pinned
+ * by the catalogue assertion above rather than a rehearsal mock. The one fact that assertion does
+ * not reach -- the daily stream's own attribution and selectable floor -- is what this test keeps.
  */
-describe("the prepared water stream switch (spec 7a, G4)", () => {
-  it("moves the water capability, its floor and the registry's stream together, and keeps the binding", async () => {
-    vi.resetModules();
-    vi.doMock("@/lib/water-gauges-stream", async (importOriginal) => {
-      const actual = await importOriginal<typeof import("@/lib/water-gauges-stream")>();
-      return {
-        ...actual,
-        WATER_GAUGES_STREAM: actual.DAILY_WATER_GAUGES_STREAM,
-        WATER_GAUGES_STREAM_FACT: actual.WATER_GAUGES_STREAM_FACTS[actual.DAILY_WATER_GAUGES_STREAM],
-      };
-    });
-    try {
-      const flipped = await import("@/lib/server/services/parquet-slider-capabilities");
-      const registry = await import("@/lib/map/layer-registry");
-      const binding = await import("@/lib/map/layer-region-binding");
-
-      const water = flipped.PARQUET_CAPABILITY_CONTRACTS.find((contract) =>
-        contract.parquetLanes.some((lane) => lane.startsWith("water-gauges"))
-      );
-      expect(water).toMatchObject({
-        layerName: "water-gauges-daily",
-        parquetLanes: ["water-gauges-daily"],
-        selectableHistoryFloor: "1990-09-30",
-      });
-      expect(registry.LAYER_REGISTRY.water.warehouseLayerName).toBe("water-gauges-daily");
-      expect(binding.regionLayerSlugForToggle("water")).toBe("water-gauges");
-    } finally {
-      vi.doUnmock("@/lib/water-gauges-stream");
-      vi.resetModules();
-    }
-  });
+it("serves the daily water stream's own attribution and selectable floor", () => {
+  const water = PARQUET_CAPABILITY_CONTRACTS.find((contract) =>
+    contract.parquetLanes.some((lane) => lane.startsWith("water-gauges"))
+  );
+  // Narrowed with `in`: the contract union's snapshot variants never declare a floor.
+  expect(water !== undefined && "selectableHistoryFloor" in water ? water.selectableHistoryFloor : null).toBe(
+    "1990-09-30"
+  );
+  expect(WATER_GAUGES_STREAM_FACT.attribution).toBe("U.S. Geological Survey Water Data daily values");
 });

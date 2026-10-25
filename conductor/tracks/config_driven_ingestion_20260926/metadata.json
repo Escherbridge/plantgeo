@@ -203,7 +203,9 @@
     "lanes/_providers/blm.toml",
     "lanes/_providers/usda-cdl.toml"
   ],
-  "open_questions": [],
+  "open_questions": [
+    "m4 (G4 review 2026-10-24): no test ties agent/surfaces.py SURFACE_PARQUET_LANES to the web client catalogue (the cited test_the_agent_surface_lanes_match_the_client_catalogue never existed). Fold a real parity expectation into p4-contract-freeze's stream-registry/lane-contract tests."
+  ],
   "evidence_flags": {
     "F1": "resolved: solar re-grid mandatory (O7)",
     "F2": "resolved: explicit ERA5 nodes (S10)",
@@ -255,7 +257,7 @@
     "computed_at": "2026-09-26T00:00:00+00:00",
     "computed_at_commit": "85c4b8f4",
     "confidence": "planned",
-    "revised_note": "revised 2026-09-26 for review loops 2 and 3; still computed against 85c4b8f4 (HEAD unchanged); no worktrees (O-R3-3); revised 2026-09-27 for the owner's cleanup-lane request (spec 4.8, 18): d7-legacy-shared and d7-legacy-lane-modules replaced by ten c7-* slices, amendments CA1-CA20 folded into earlier slices, sequenced_co_owners and shared_writes extended, tripwires 0/6/12 replaced and c7-1..c7-16 appended; stamps kept at 85c4b8f4 per the writer brief (c7 owns verified at d37c202f; i-coordinator recomputes before the first c7 launch); revised 2026-09-27 for the owner's Wave O request (spec 4.9, 19): seven o* slices (GL-1..GL-5) chained o1 -> o3 -> o2a -> o5a -> o4 -> o2b -> o5b ahead of f1-config, GL-6 (o2c/o5c) folded into f1-executor (WQ-3), select_provider_usage.sql transferred from f1-executor to o4-usage-report, c7 owns extended only for Wave O's legacy parts (spec 4.9.5), sequenced_co_owners and shared_writes extended, tripwires wave-o-1..wave-o-11 appended (no index changed); stamps kept at 85c4b8f4; every Wave O owns list is re-grepped at launch (wave-o-9)",
+    "revised_note": "revised 2026-09-26 for review loops 2 and 3; still computed against 85c4b8f4 (HEAD unchanged); no worktrees (O-R3-3); revised 2026-09-27 for the owner's cleanup-lane request (spec 4.8, 18): d7-legacy-shared and d7-legacy-lane-modules replaced by ten c7-* slices, amendments CA1-CA20 folded into earlier slices, sequenced_co_owners and shared_writes extended, tripwires 0/6/12 replaced and c7-1..c7-16 appended; stamps kept at 85c4b8f4 per the writer brief (c7 owns verified at d37c202f; i-coordinator recomputes before the first c7 launch); revised 2026-09-27 for the owner's Wave O request (spec 4.9, 19): seven o* slices (GL-1..GL-5) chained o1 -> o3 -> o2a -> o5a -> o4 -> o2b -> o5b ahead of f1-config, GL-6 (o2c/o5c) folded into f1-executor (WQ-3), select_provider_usage.sql transferred from f1-executor to o4-usage-report, c7 owns extended only for Wave O's legacy parts (spec 4.9.5), sequenced_co_owners and shared_writes extended, tripwires wave-o-1..wave-o-11 appended (no index changed); stamps kept at 85c4b8f4; every Wave O owns list is re-grepped at launch (wave-o-9); re-verified 2026-10-24 at HEAD 0fb993be for p4-extract/p4-contract-freeze only (agent re-grep): all owned files present, no owned file touched since the stamp, ONE amendment (window_distribution.py appended to p4-extract owns); s-* owns lists still owe their launch-time re-grep; stamp date label corrected: 85c4b8f4 is 2026-09-20, not 2026-09-26",
     "slices": [
       {
         "id": "i-coordinator",
@@ -1401,6 +1403,11 @@
             "path": "services/agri-data-service/tests/test_no_raw_http_clients.py",
             "status": "future",
             "note": "created by o3-ingest-meter; re-point the crop-cover allow-list entry to its moved path only; never add an entry"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/agent/window_distribution.py",
+            "status": "existing",
+            "note": "re-point only: imports CLIMATE_FIELD_PRODUCT_BY_STREAM and SOIL_FIELD_PRODUCT_BY_STREAM from pipeline.direct (added 8f1e2294, after the 85c4b8f4 stamp); found by the 2026-10-24 re-verify"
           }
         ],
         "model": "opus",
@@ -4385,7 +4392,15 @@
       "wave-o-10: no new raw httpx.Client(, httpx.AsyncClient(, cdsapi.Client( or urllib.request under src/ or scripts/ outside ingest/http.py and the reasoned allow-list (tests/test_no_raw_http_clients.py); p4-extract only re-points and s-crop-cover only removes the crop-cover entry; no lane module or runner code prints; config lanes log through foundation/observability",
       "wave-o-11: the monthly usage receipt writes only under receipts/source-usage/ in the existing bucket; it is data the cleanup lane never deletes (c7-1) and prefix-census classifies receipts/ as known-infra"
     ],
-    "integration_slice": "i-coordinator"
+    "integration_slice": "i-coordinator",
+    "p4_reverify_20261024": {
+      "head": "0fb993be",
+      "verdict": "valid_with_one_amendment",
+      "scope": [
+        "p4-extract",
+        "p4-contract-freeze"
+      ]
+    }
   },
   "reviews": {
     "usgs_optional_key_20261002": {
@@ -4529,6 +4544,22 @@
       "sweep": "on 14abe742: format, lint, mypy, pytest (272 s) PASS; receipt sha256:451f271b over 976 files",
       "pushed": "f2a27473 at 2026-09-27 20:20Z (owner: 'merge the prs in we want to test things live'; the G0 24 h precondition and the ~500-line seam split were waived by that go; non-test diff 2,900 lines)",
       "verdict": "LANDED; smoke read row 3 PASS (evidence/phase0.md §GL-1)"
+    },
+    "g4_serve_switch": {
+      "date": "2026-10-24",
+      "reviewer": "quality-reviewer (opus, fresh context)",
+      "verdict": "CHANGES-REQUIRED -> fix batch applied same wave",
+      "findings": "B1 regionalSurfaceName rode warehouseLayerName==surface-name equality; M1 streamflow coverage key hardcoded legacy slug; m1 popup day/unit; m2 alert tense; m3 stale comments; m4 phantom parity test; m5 record owner history-depth waiver"
     }
+  },
+  "owner_decisions_20261024_campaign": {
+    "g4_closeout": "supersede + retire now on forward-health evidence; history-depth validation row deferred while gap-fill drains under the config lane (explicit owner deviation from the G4-as-written history prerequisite)",
+    "deploy_topology": "dark-on-main per gate: worktree agent branches merge into short-lived toml-swap; coordinator merges to main at each G-gate after sweep+receipt; Railway keeps watching main; no staging environment",
+    "scope": "full c7 chain (through c7-docs-final)",
+    "swarm_review": "cross-review ring (each agent reviews its ring neighbor, never itself) + dedicated fresh-context reviewers on s-climate, s-vegetation, s-burn-severity, s-sensors",
+    "superseded_runs": [
+      "def7f7a6-7ae7-4f86-96c8-0d6edb09fd87 (water-gauges-daily:gap-fill)",
+      "baecb000-ace0-4a5e-9164-6b0a94b489f9 (water-gauges-daily forward)"
+    ]
   }
 }

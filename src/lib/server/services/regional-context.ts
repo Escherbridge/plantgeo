@@ -52,6 +52,7 @@ import { DATE_FILTERABLE_TILE_LAYER_TOGGLE_IDS } from "@/lib/map/tile-layer-date
 import { resolveZoomTier, zoomTierPathSegment } from "@/lib/map/zoom-tiers";
 import { hasSelectableDay, isDayDescribed } from "@/stores/time-slider-store";
 import { SLIDER_STREAM_LAYER_NAMES } from "@/types/time-slider";
+import { WATER_GAUGES_STREAM } from "@/lib/water-gauges-stream";
 
 /** Half-width of the context window around the requested point, in degrees. */
 const CONTEXT_RADIUS_DEGREES = 0.25;
@@ -411,7 +412,7 @@ const COVERAGE_LAYER_BY_EVIDENCE_SOURCE: Partial<
   fireDetections: "fire-detections",
   firePerimeters: "fire-perimeters",
   mtbsPerimeters: "burn-severity",
-  streamflow: "water-gauges",
+  streamflow: WATER_GAUGES_STREAM,
   weatherObservations: "weather-observations",
   drought: SLIDER_STREAM_LAYER_NAMES.drought,
 };

@@ -487,3 +487,24 @@ Captures: `production-verification/acceptance-7bae4944.json`, the matching HTTP 
 `production-verification/usgs-key-construction-7bae4944.json`, and
 `executor-7bae4944-startup.json` under the ignored research root. G4 and the later phases
 remain open with the limitations recorded above.
+
+## G4 closeout, 2026-10-24 (owner go: "supersede + retire now")
+
+Owner decision 2026-10-24 (campaign grilling Q1, recorded in `metadata.json`
+`owner_decisions_20261024_campaign`): close G4 on forward-health evidence; **the history-depth
+validation row ("no owed day in [1990-09-30, edge]") is explicitly WAIVED for the switch** and
+remains open as a drain-tracking row, not a gate. Context: Railway's 2026-10-21 credential rotation
+had failed every lane turn from 10-21 23:16Z to the 10-24 19:32Z redeploy (root cause:
+`.omc/research/lane-audits/2026-10-24.md`); every exit-70 failure in the window is that outage, not
+lane code.
+
+| row | evidence | state |
+| --- | --- | --- |
+| gap-fill release | `jobs-supersede-run` dry-run then `--apply`, incident `45124e5f-934e-4dbd-ae5e-c90223335850`, run `def7f7a6`, operator `owner:atoozmc` | DONE 2026-10-24 ~20:30Z |
+| forward release | same verb, run `baecb000` | DONE (recorded) |
+| serve switch | `src/lib/water-gauges-stream.ts::WATER_GAUGES_STREAM -> DAILY_WATER_GAUGES_STREAM` + `agent/surfaces.py::WATER_GAUGES_SERVED_STREAM -> "water-gauges-daily"`, same commit | in this push |
+| adversarial review | quality-reviewer (opus, fresh context): CHANGES-REQUIRED -> B1 (surface name rode the stream slug; fixed via `WATER_GAUGES_SURFACE` + `SURFACE_NAME_OVERRIDES` in `regional-analysis-workflow.ts`, plus the `regionalEvidenceDay` direct-compare bypass), M1 (`regional-context.ts` streamflow coverage key follows `WATER_GAUGES_STREAM`), m1-m5; verdict row `reviews.g4_serve_switch` | fix batch applied, re-swept |
+| sweep | web: tsc 0, full vitest 0, data-boundary 0; python: format/lint/mypy PASS, pytest 6,876/6,877 green across six full runs whose only reds were WinError 10055 socket-buffer infra flakes (logs `services/agri-data-service/.tmp/check-20261024-r*.log`) | GREEN in substance; receipt via waiver below |
+| receipt waiver | owner go 2026-10-24 (verbatim: "skip tests") implemented as a sanctioned gate door: `check.py --waive pytest --waive-operator owner:atoozmc --waive-reason ...` records the waiver in the receipt and `verify_quality_receipt.py::_entry_passes` accepts ONLY a named+reasoned waiver (never a bare `waived` or a `fail`); five flow tests in `tests/scripts/test_check_receipt_guards.py`; receipt `sha256:23f56e4c...` over 1,156 files, verified | DONE; reviewer verdict on the gate diff pending at writing |
+| CA18 legacy pause | pause `plantgeo.executor.water-gauges-direct-forward` AFTER a legacy turn whose report shows owed-claim retry drained; else record open claims under `layer=water-gauges/` for 7R | OPEN -- after the push |
+| gap-fill drain | first released turn (20:39Z) again exceeded the 2100 s command budget with no stderr -- the pre-outage hang is credential-independent. Diagnosis slice `w0-gapfill-hang` queued beside p4-extract; drain, and with it the waived history row, blocks on it | OPEN -- defect |

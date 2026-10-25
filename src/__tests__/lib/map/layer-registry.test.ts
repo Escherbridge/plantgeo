@@ -100,7 +100,10 @@ describe('layer registry derivations', () => {
   it('translates every geo.layers name that has a renderer, and no others', () => {
     expect(toggleIdForWarehouseLayerName('fire-detections')).toBe('fire')
     expect(toggleIdForWarehouseLayerName('fire-perimeters')).toBe('fire-perimeters')
-    expect(toggleIdForWarehouseLayerName('water-gauges')).toBe('water')
+    // G4 (owner go 2026-10-24) moved the served stream to the daily lane; the legacy slug is no
+    // longer any toggle's `warehouseLayerName`, so the reverse lookup must answer null for it.
+    expect(toggleIdForWarehouseLayerName('water-gauges-daily')).toBe('water')
+    expect(toggleIdForWarehouseLayerName('water-gauges')).toBeNull()
     expect(toggleIdForWarehouseLayerName('weather-observations')).toBe('weather')
     expect(toggleIdForWarehouseLayerName('vegetation')).toBe('vegetation')
     expect(toggleIdForWarehouseLayerName('interventions')).toBe('interventions')
