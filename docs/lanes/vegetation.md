@@ -342,13 +342,13 @@ built against the Phase 4 runner contract. Full rationale: `pipeline/lanes/veget
   900 s for one day, so a heavy day can be cancelled and restarted (CQ-9's per-lane unit cap is the fix).
 - **The floor covers 2026-09-01..05.** `[days] floor = "2026-09-01"`, below the legacy writer floor
   2026-09-06, so G6's gap-fill enable (`gap_fill_enabled_at_gate = "G6"`, cap 5 = legacy
-  `VEGETATION_MAX_DAYS`) fills those known-missing days. Before G6, check `backfill.py` has not filled
-  them from Postgres in the meantime: they sit in the range the legacy guard `refuse_pre_ownership_day`
-  hands to backfill.
-- **Support needs an owner-go read.** The rows key on `agri.spatial_cell.id` (random UUIDs), and a
-  strategy has no database session. `support.py` reads a pinned `support_cells.json` (the legacy
-  `_SUPPORT_CELLS_SQL` columns), checked against the region's `analysis-0p25` lattice. The file is not
-  committed: generating it is a production read. Until it exists the probe reports `unavailable`.
+  `VEGETATION_MAX_DAYS`) fills those known-missing days. `backfill.py` was removed in `fd602901`, so
+  it cannot have filled them; before G6, check the bucket status of 2026-09-01..05 directly (they sit
+  in the range the legacy guard `refuse_pre_ownership_day` used to hand to backfill).
+- **Support is pinned and committed.** The rows key on `agri.spatial_cell.id` (random UUIDs), and a
+  strategy has no database session. `support.py` reads the committed `support_cells.json` (the legacy
+  `_SUPPORT_CELLS_SQL` columns, 1,568 rows), checked against the region's `analysis-0p25` lattice at
+  `plan_requests` time (`require_lattice_agreement`; pipeline/lanes/vegetation/AGENTS.md "Support").
 - **Volatile column.** `data_available_at` (stamped from the fetch's capture instant). The compare test
   checks the legacy fetch+rows path against this strategy and finds them equal apart from that column.
 - **Promotion target, confirmed.** The legacy verb reads the forward lane's `kind=observed` base rung

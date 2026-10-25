@@ -9,9 +9,17 @@
 # read (execution/lane_catalogue.py::build_lane_catalogue), so the flip is p5-cutover's G6 commit.
 # enabled = true mirrors the live legacy lane.
 #
-# NOT RUNNABLE ON THE CONFIG PATH YET: the support's agri.spatial_cell identities are read from a
-# pinned snapshot (pipeline/lanes/vegetation/support.py) that needs an owner-go production read to
-# generate; until it exists the probe reports `unavailable` and nothing is written.
+# SUPPORT IS COMMITTED: the agri.spatial_cell identities pinned in
+# pipeline/lanes/vegetation/support.py's support_cells.json (1,568 rows) are committed and verified
+# against the region's analysis-0p25 lattice (pipeline/lanes/vegetation/AGENTS.md "Support";
+# tests/lanes/vegetation/test_support.py). `plan_requests` checks that agreement on every call. The
+# config path's only remaining gate is the G6 executor cut-over above, not a missing support file.
+#
+# G6 PRECONDITION (written, not an open item): measure the legacy walk's p95 day-walk time from the
+# sentinel2_ndvi_grid_sampled logs before flipping executor at G6, and do NOT flip while that p95
+# exceeds roughly 250s, until the per-lane PER_UNIT_FETCH_CAP_SECONDS override (CQ-9) lands below --
+# the 330s cap cancels and restarts a long walk whole, and a restarted walk re-enters the fan-out's
+# oldest-first queue at the head, which can starve every day behind the slow one.
 
 id = "vegetation-sentinel2-ndvi-direct-forward"
 kind = "ingest"
@@ -64,7 +72,10 @@ partial_day = "refuse"
 # Logical requests (earth-search is unweighted): 1 probe + every day of the 14-day window, so the
 # window is always affordable and an absence recheck can never starve a newer owed day of the cap
 # (the runner fans out oldest first). The real STAC page + COG sends of a day walk are one unit
-# (Wave O, pipeline/lanes/vegetation/AGENTS.md).
+# (Wave O, pipeline/lanes/vegetation/AGENTS.md). G6 PRECONDITION (header above,
+# pipeline/lanes/vegetation/AGENTS.md "Wave O"): do not flip executor while the legacy walk's
+# measured p95 exceeds ~250s and PER_UNIT_FETCH_CAP_SECONDS=330 can still cancel-and-restart a long
+# walk at the head of this cap's oldest-first queue.
 forward_max_weighted_calls = 15
 # Ships off (S12). The legacy repair cap, pipeline/direct/vegetation/forward.py VEGETATION_MAX_DAYS
 # = 5: one G6 gap-fill fire covers 2026-09-01..05 when the turn's time allows.

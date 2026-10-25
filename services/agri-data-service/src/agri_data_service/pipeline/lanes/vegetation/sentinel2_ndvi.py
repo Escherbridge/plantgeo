@@ -170,6 +170,10 @@ class Sentinel2NdviStrategy:
                         support.bbox, start, end, limit=SEARCH_PAGE_SIZE, sortby="+properties.eo:cloud_cover"
                     ),
                     # Never checkpointed: a replay would re-walk the network (AGENTS.md "Wave O fetch").
+                    # Checkpoint-ineligible BY CONSTRUCTION, and it must stay that way: adding
+                    # requested_parameters here would make `restore()` try to replay this unit from a
+                    # checkpoint, which still means hitting the network (`fetch` ignores `client` and
+                    # re-walks `collect_ndvi_grid_records` regardless), not actually restoring anything.
                     requested_parameters=frozenset(),
                     support_digest=support.digest_label,
                 )
