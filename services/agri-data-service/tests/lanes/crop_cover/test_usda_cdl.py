@@ -15,6 +15,8 @@ from typing import Final
 
 import pytest
 
+from agri_data_service.execution.lane_catalogue import build_lane_catalogue
+from agri_data_service.execution.lane_specs import LANE_SPECS
 from agri_data_service.foundation.lane_config.loader import load_lane_configs
 from agri_data_service.foundation.region import load_region
 from agri_data_service.pipeline.errors import PipelineOperationError
@@ -23,7 +25,7 @@ from agri_data_service.pipeline.lanes.crop_cover.usda_cdl import (
     EDITION_IDENTITY_ENDPOINT,
     SCRATCH_DIR_ENVIRONMENT_VARIABLE,
     STRATEGY,
-    runner_scratch_dir,
+    _runner_scratch_dir,
 )
 from agri_data_service.pipeline.runner.contract import Unsettled, Written
 from agri_data_service.pipeline.runner.resolve import resolve_strategy
@@ -158,22 +160,44 @@ def test_the_shipped_lane_is_dark_and_resolves_its_own_strategy() -> None:
     lane, _region = _shipped_lane()
     assert lane.enabled is False
     assert lane.nature == "release_series"
-    assert lane.executor == "config"
+    assert lane.executor == "legacy"
     assert lane.source.provider == "usda-cdl"
     assert resolve_strategy(lane) is STRATEGY
 
 
+def test_the_shipped_toml_keeps_the_legacy_maintain_lane_on_its_dispatch_path() -> None:
+    """Load-bearing: `executor = "legacy"` must leave `lane_specs.py`'s real spec dispatchable.
+
+    `execution/lane_catalogue.py::build_lane_catalogue` takes a lane id OFF `legacy_specs` the
+    instant a TOML with that id loads with `executor = "config"`, regardless of `enabled`
+    (`lane_catalogue.py:292-304`) -- so asserting `lane.executor == "legacy"` on the parsed TOML
+    alone is not enough to prove the legacy cron survives. This drives the REAL catalogue the
+    executor builds from the REAL `LANE_SPECS`, the observable consequence
+    (`tests/lanes/burn_severity/test_mtbs_releases.py`'s identical shape for its own CQ-9 carve-out).
+    """
+    configs = load_lane_configs(REAL_LANES_DIRECTORY, load_region("pnw"))
+
+    catalogue = build_lane_catalogue(legacy_specs=LANE_SPECS, configs=configs, environment={})
+
+    assert LANE_ID not in catalogue.quarantined
+    assert LANE_ID not in catalogue.config_lanes
+    legacy = catalogue.legacy_specs[LANE_ID]
+    assert legacy.command is not None
+    assert "maintain" in legacy.command
+    assert "agri_data_service.pipeline.direct.crop_cover" in legacy.command
+
+
 def test_runner_scratch_dir_resolves_under_the_os_temp_root_by_default() -> None:
     """The no-/tmp rule: the default root is derived from `tempfile`, never a hardcoded POSIX path."""
-    assert runner_scratch_dir({}) == Path(tempfile.gettempdir()) / "agri-crop-cover"
+    assert _runner_scratch_dir({}) == Path(tempfile.gettempdir()) / "agri-crop-cover"
 
 
 def test_runner_scratch_dir_honours_an_explicit_override() -> None:
     override = str(Path(tempfile.gettempdir()) / "a-different-crop-cover-root")
-    resolved = runner_scratch_dir({SCRATCH_DIR_ENVIRONMENT_VARIABLE: override})
+    resolved = _runner_scratch_dir({SCRATCH_DIR_ENVIRONMENT_VARIABLE: override})
     assert resolved == Path(override)
 
 
 def test_runner_scratch_dir_falls_back_on_a_blank_override() -> None:
-    resolved = runner_scratch_dir({SCRATCH_DIR_ENVIRONMENT_VARIABLE: "   "})
+    resolved = _runner_scratch_dir({SCRATCH_DIR_ENVIRONMENT_VARIABLE: "   "})
     assert resolved == Path(tempfile.gettempdir()) / "agri-crop-cover"
