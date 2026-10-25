@@ -63,10 +63,32 @@ forward_max_weighted_calls = 1
 # cap, rather than 0, in case an operator ever drives --mode gap-fill by hand.
 gap_fill_max_weighted_calls = 1
 max_concurrency = 1
-# No --time-budget-seconds knob exists on the legacy writer this mirrors (pipeline/direct/
-# AGENTS.md "Entry point"): the executor's own command timeout is the only bound on a turn, and
-# this TOML keeps the same 1800 s.
-turn_timeout_seconds = 1800
+# RE-DERIVED, not the legacy writer's inherited 1800 s: it does not fit the NEW runner's hard
+# cancel-and-restart hazard (nhdplus.py's module docstring, "A SINGLE FLAKY BATCH CAN CANCEL AND
+# RESTART THE WHOLE WALK"; docs/lanes/watersheds.md section 8). Arithmetic:
+#   - Probe walk: uncapped by the runner (turn.py::_Turn._spend_probe carries no asyncio.wait_for),
+#     but NOT measured anywhere in this tree as a total duration -- the only measured figure is
+#     "a few seconds" for the 9,396-id phase (docs/lanes/watersheds.md section 1). Estimating the
+#     ~47 geometry batches generously at ~10 s each under normal conditions (well inside
+#     WBDHU12_BOUNDS's 120 s page timeout, which is a ceiling, not a typical duration) gives
+#     ~480 s. This is an ESTIMATE, not a measurement.
+#   - Fetch cancel-retry worst case: pipeline/runner/fetch.py wraps the whole ~47-batch fetch() in
+#     one asyncio.wait_for(timeout=min(PER_UNIT_FETCH_CAP_SECONDS, remaining)) (fetch.py:243, cap
+#     330.0 s at fetch.py:68) and retries the WHOLE unit, not one batch, up to
+#     SERVER_ERROR_ATTEMPTS = 3 total attempts (fetch.py:56, fetch.py:282) before giving up as
+#     upstream_unavailable -- 3 attempts, not 4: the loop gives up the moment the 3rd failure is
+#     recorded, so no 4th attempt is ever sent. Worst case: 3 x 330 s + two short backoffs
+#     (server_error_delay(1)+(2), each under 10 s with jitter) ~= 1000 s.
+#   - Total: ~480 s (probe) + ~1000 s (fetch ladder) = ~1480 s. That must fit inside
+#     turn_timeout_seconds x FETCH_SHARE_OF_TURN_TIMEOUT (0.8, pipeline/runner/turn.py), so the
+#     floor is 1480 / 0.8 = 1850 s. The prior 1800 s does NOT clear that floor
+#     (1800 x 0.8 = 1440 s < 1480 s): a turn hitting this hazard could run out of its own time
+#     budget mid-ladder and report deferred_budget rather than completing the retry series.
+# CHOSEN: 2400 s, leaving ~550 s of margin over the 1850 s floor and reserving
+# 2400 x (1 - 0.8) = 480 s for the write phase (ample for one DuckDB geometry conversion plus the
+# write of ~9,400 basins). The real fix is a per-lane PER_UNIT_FETCH_CAP_SECONDS override at the
+# contract level, not this number; see nhdplus.py's module docstring.
+turn_timeout_seconds = 2400
 
 [[streams]]
 slug = "watersheds"

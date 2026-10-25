@@ -496,6 +496,27 @@ module.
   phases; see `nhdplus.py`'s module docstring for why that cache is not safe to copy onto a
   process-wide strategy singleton, and why the measured one-load-day history (§2) makes the doubled
   cost immaterial in practice.
+- **A single flaky batch can cancel and restart the WHOLE walk, not just that batch.**
+  `pipeline/runner/fetch.py::UnitFetcher.fetch_unit` wraps this strategy's entire ~47-batch
+  `fetch()` call in one `asyncio.wait_for(..., timeout=min(PER_UNIT_FETCH_CAP_SECONDS, remaining))`
+  (`fetch.py:243`; the cap is `fetch.py:68`, `PER_UNIT_FETCH_CAP_SECONDS = 330.0`), because the
+  runner treats this strategy's one planned unit as the retry grain. Every one of the ~47
+  sequential batches inside that call already carries its own `ingest/http.py::fetch_bounded`
+  transport-retry series (`TRANSPORT_RETRY_ATTEMPTS = 3` at up to `WBDHU12_BOUNDS`'s own 120 s page
+  timeout), so a single flaky batch can by itself push the whole `fetch()` call past 330 s. When it
+  does, the runner's `wait_for` CANCELS the coroutine mid-walk — discarding every batch already
+  fetched — and converts the timeout into `UpstreamTimeoutError`; the runner's own outer ladder
+  then retries the WHOLE unit, not the one slow batch, from batch 1, up to
+  `SERVER_ERROR_ATTEMPTS = 3` (`fetch.py:56`) attempts total before giving up as
+  `upstream_unavailable`. This bites ONLY the fetch/republish path — `probe_edge` carries no
+  `asyncio.wait_for` cap at all (`turn.py::_Turn._spend_probe`), so a slow probe just runs long,
+  uncapped, while a slow fetch gets cancelled and restarted from zero, up to three times.
+  `lanes/watersheds-direct-forward.toml`'s `turn_timeout_seconds` is sized to survive one full
+  cancel-retry cycle on top of an estimated probe walk — see that TOML's own `[budget]` comment for
+  the arithmetic. The structural fix is a per-lane override of `PER_UNIT_FETCH_CAP_SECONDS` at the
+  contract level (`foundation/lane_config/models.py::LaneBudget`) for a strategy whose one planned
+  unit is known to be this heavy, not a workaround in this lane's TOML; track it under the owner's
+  cross-lane `static_freshness_contract` row once one exists.
 - **`feature_id` MUST equal the legacy writer's `direct:<huc12>` prefix exactly**
   (`nhdplus.py::DIRECT_FEATURE_ID_PREFIX`, duplicated by value from
   `pipeline/direct/watersheds/rows.py::DIRECT_FEATURE_ID_PREFIX` since a strategy may never import

@@ -34,6 +34,30 @@ snapshot into a later, unrelated turn. The measured cost of being wrong about th
 today -- this layer has exactly ONE load day in its entire history
 (`docs/lanes/watersheds.md` section 2) -- so the doubled walk is paid at most once a day, and only
 on the rare day WBD actually republishes.
+
+A SINGLE FLAKY BATCH CAN CANCEL AND RESTART THE WHOLE WALK, NOT JUST THAT BATCH.
+`pipeline/runner/fetch.py::UnitFetcher.fetch_unit` wraps this strategy's ENTIRE ~47-batch `fetch()`
+call in one `asyncio.wait_for(..., timeout=min(PER_UNIT_FETCH_CAP_SECONDS, remaining))`
+(`fetch.py:243`; the cap itself is `fetch.py:68`, `PER_UNIT_FETCH_CAP_SECONDS = 330.0`), because the
+runner treats this strategy's one planned unit as the retry grain -- the same choice
+`pipeline/direct/watersheds/forward.py` makes for its own retry series (see "ONE REQUEST, WHOLE
+WALK" above). Every one of the ~47 sequential batches inside that one `fetch()` call already
+carries its OWN `ingest/http.py::fetch_bounded` transport-retry series
+(`TRANSPORT_RETRY_ATTEMPTS = 3` at up to that page's own timeout, `WBDHU12_BOUNDS` = 120 s here) --
+so a SINGLE flaky batch can, by itself, push the whole `fetch()` call past 330 s. When that
+happens, the runner's `wait_for` CANCELS the coroutine mid-walk, discarding every batch already
+fetched, and converts the timeout into `UpstreamTimeoutError`. The runner's own OUTER ladder then
+retries the WHOLE unit -- not the one slow batch -- from batch 1, up to
+`SERVER_ERROR_ATTEMPTS = 3` (`fetch.py:56`) attempts total before giving up as
+`upstream_unavailable`. THIS BITES ONLY ON THE FETCH/REPUBLISH PATH: `probe_edge` is never wrapped
+in `asyncio.wait_for` at all (`turn.py::_Turn._spend_probe` has no such cap), so a slow probe just
+runs long, uncapped; a slow FETCH gets cancelled and restarted from zero, up to three times.
+`lanes/watersheds-direct-forward.toml`'s `turn_timeout_seconds` is sized to survive one full
+cancel-retry cycle on top of an estimated probe walk; see that TOML's own `[budget]` comment for
+the arithmetic. The structural fix -- a per-lane override of `PER_UNIT_FETCH_CAP_SECONDS` for a
+strategy whose own planned unit is known to be this heavy -- belongs at the contract level
+(`foundation/lane_config/models.py::LaneBudget`), not as a workaround in this lane's TOML; track it
+under the owner's cross-lane `static_freshness_contract` row once one exists.
 """
 
 from __future__ import annotations
