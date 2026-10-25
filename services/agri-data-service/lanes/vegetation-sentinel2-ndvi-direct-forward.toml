@@ -1,0 +1,87 @@
+# vegetation-sentinel2-ndvi-direct-forward: Sentinel-2 L2A NDVI cell-day means, migrated in place
+# (spec §7 vegetation row; plan Phase 4 swarm slice `s-vegetation`). Behaviour:
+# pipeline/lanes/vegetation/sentinel2_ndvi.py; rationale: pipeline/lanes/vegetation/AGENTS.md;
+# source facts: docs/lanes/vegetation.md section 8. Authoring: lanes/AGENTS.md.
+#
+# MIGRATED LANE, DARK: executor = "legacy" keeps the live executor lane of this same id on its path
+# (python -m agri_data_service.pipeline.direct.vegetation, execution/lane_specs.py
+# VEGETATION_DIRECT_LANE_ID). A "config" value would de-path that live cron before `enabled` is ever
+# read (execution/lane_catalogue.py::build_lane_catalogue), so the flip is p5-cutover's G6 commit.
+# enabled = true mirrors the live legacy lane.
+#
+# NOT RUNNABLE ON THE CONFIG PATH YET: the support's agri.spatial_cell identities are read from a
+# pinned snapshot (pipeline/lanes/vegetation/support.py) that needs an owner-go production read to
+# generate; until it exists the probe reports `unavailable` and nothing is written.
+
+id = "vegetation-sentinel2-ndvi-direct-forward"
+kind = "ingest"
+nature = "daily_series"
+enabled = true
+executor = "legacy"
+strategy = "vegetation.sentinel2_ndvi"
+# The 1,568-cell 0.25-degree half-step lattice the history was written on (prefix sentinel2-ndvi-0p25deg:).
+grid = "analysis-0p25"
+
+[source]
+provider = "earth-search"
+endpoint = "search"
+# Sentinel-2 L2A is a global collection; the region supplies the footprint.
+coverage = "global"
+# The collection's own declared start, 2015-06-27 (docs/lanes/vegetation.md section 3).
+history = { capability = "archive", earliest = "2015-06-27" }
+lifecycle = "active"
+
+[schedule]
+# Mirrors the legacy cadence exactly: execution/lane_specs.py VEGETATION_DIRECT_LANE_ID
+# schedule "5 * * * *" (phase_offset_seconds 300). Most fires are cheap: the probe is one STAC
+# request and a written day is never re-settled.
+forward_cron = "5 * * * *"
+# Pre-declared, inert while gap_fill_enabled = false. Once a UTC day; offset from the forward :05
+# and the shadow promotion's :25. The G6 flip of gap_fill_enabled fills 2026-09-01..05 (see [days]).
+gap_fill_cron = "45 4 * * *"
+gap_fill_enabled = false
+gap_fill_enabled_at_gate = "G6"
+catch_up = "coalesce_latest"
+
+[days]
+# DELIBERATELY BELOW the legacy writer floor (2026-09-06 = VEGETATION_DIRECT_WRITER_START_DAY + 1,
+# warehouse/field_products/vegetation.py; lane_specs.py writer_floor): the five days 2026-09-01..05
+# fell between the stopped Postgres owner and the direct writer and are known-missing. Spec §7
+# vegetation row and plan G6: the G6 gap-fill enable fills exactly those days.
+floor = "2026-09-01"
+floor_basis = "spec section 7 vegetation row: the floor includes 2026-09-01..05 so the G6 gap-fill enable fills those known-missing days; the legacy writer floor is 2026-09-06"
+# pipeline/parquet/lane_registry.py LANE_REGISTRY["vegetation"]: publication_lag_days = 7, the
+# measured median 7-day gap between observation days (docs/lanes/vegetation.md section 2).
+publication_lag_days = 7
+# The legacy forward's own re-examination window: pipeline/direct/vegetation/forward.py
+# VEGETATION_ABSENCE_RECHECK_DAYS = 14 (> lag 7, as lanes/AGENTS.md requires).
+absence_recheck_days = 14
+# A sparse day is never partial: settle states Written(expected = present = cells filled), so
+# "refuse" only ever refuses a strategy fault (pipeline/lanes/vegetation/AGENTS.md "partial-day").
+partial_day = "refuse"
+
+[budget]
+# Logical requests (earth-search is unweighted): 1 probe + every day of the 14-day window, so the
+# window is always affordable and an absence recheck can never starve a newer owed day of the cap
+# (the runner fans out oldest first). The real STAC page + COG sends of a day walk are one unit
+# (Wave O, pipeline/lanes/vegetation/AGENTS.md).
+forward_max_weighted_calls = 15
+# Ships off (S12). The legacy repair cap, pipeline/direct/vegetation/forward.py VEGETATION_MAX_DAYS
+# = 5: one G6 gap-fill fire covers 2026-09-01..05 when the turn's time allows.
+gap_fill_max_weighted_calls = 5
+# One day walk at a time, as the legacy writer: each walk already fans its COG reads out itself.
+max_concurrency = 1
+# The legacy default turn budget: pipeline/direct/vegetation/forward.py
+# VEGETATION_DEFAULT_TIME_BUDGET_SECONDS = 900. Days the 720 s fetch share does not reach are
+# deferred_budget and owed again next fire (hourly).
+turn_timeout_seconds = 900
+
+[[streams]]
+slug = "vegetation"
+# Repeats the literal registration (S18): pipeline/parquet/lane_registry.py LANE_REGISTRY["vegetation"].
+history_floor = "2022-08-05"
+floor_basis = "pipeline/parquet/lane_registry.py LANE_REGISTRY['vegetation']: the governed plane holds 2022-08-05 onward (docs/lanes/vegetation.md section 3)"
+# G6 --compare leaves capture-time columns out of its digest (pipeline/runner/AGENTS.md "Volatile columns"):
+# pipeline/lanes/vegetation/sentinel2_ndvi.py, the strategy's rows(), stamps `data_available_at`
+# from `responses[0].retrieved_at`, the fetch's capture instant.
+volatile_columns = ["data_available_at"]

@@ -1,0 +1,55 @@
+# vegetation-ndvi-governed-plane-promotion: the SHADOW governed-plane promotion as a DISABLED transform
+# (spec §7 row "A disabled transform. The output target is confirmed by the author"; plan Phase 4
+# swarm slice `s-vegetation`). Behaviour: pipeline/lanes/vegetation/governed_plane_promotion.py;
+# rationale: pipeline/lanes/vegetation/AGENTS.md "Governed-plane promotion". Authoring: lanes/AGENTS.md.
+#
+# NOTHING IS ARMED HERE. The legacy verb (execution/vegetation_partition_promotion.py, lane_specs.py
+# VEGETATION_NDVI_PROMOTION_LANE_ID) is registered but has never been armed in production: it is
+# absent from PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES on purpose. executor = "legacy" leaves it exactly
+# there (a "config" value would claim the id before `enabled` is read), and enabled = false records
+# that it has never run.
+#
+# CONFIRMED OUTPUT TARGET (read from the legacy verb, not assumed):
+#   input  = the forward lane's `layer=vegetation/kind=observed` base-rung day partition
+#            (vegetation_partition_promotion.py::read_day_partition_cell_values, PROMOTABLE_KIND);
+#   output = Postgres `agri.forecast_observation` (plus its agri.data_source / source_release /
+#            release_set / forecast_series rows), written by
+#            execution/vegetation_ndvi_plane.py::register_governed_partition_plane through
+#            sql/execution/insert_partition_observations.sql, keyed by the partition's content SHA,
+#            with a promotion receipt beside the partition in the object store.
+# A config transform's output is a Parquet [[streams]] entry, and the only Parquet stream involved,
+# `vegetation`, belongs to the forward lane (S18), so this lane declares NO [[streams]] and its
+# strategy refuses every day naming that target.
+
+id = "vegetation-ndvi-governed-plane-promotion"
+kind = "transform"
+nature = "daily_series"
+enabled = false
+executor = "legacy"
+strategy = "vegetation.governed_plane_promotion"
+inputs = ["vegetation-sentinel2-ndvi-direct-forward"]
+
+[schedule]
+# Mirrors the legacy registration: lane_specs.py VEGETATION_NDVI_PROMOTION_LANE_ID schedule
+# "25 * * * *" (phase_offset_seconds 1500), trailing the forward writer's :05. No gap_fill_cron: a
+# transform has no gap-fill mode (execution/lane_catalogue.py quarantines one that declares it).
+forward_cron = "25 * * * *"
+gap_fill_enabled = false
+
+[days]
+# The legacy registration's writer_floor: VEGETATION_DIRECT_WRITER_START_DAY + 1 day.
+floor = "2026-09-06"
+floor_basis = "execution/lane_specs.py VEGETATION_NDVI_PROMOTION_LANE_ID writer_floor = VEGETATION_DIRECT_WRITER_START_DAY + 1 day"
+# The legacy registration's declared lag: lane_registry.py LANE_REGISTRY["vegetation"] = 7.
+publication_lag_days = 7
+# The input lane's own recheck window, so a re-published input day is seen as dirty here too.
+absence_recheck_days = 14
+partial_day = "refuse"
+
+[budget]
+# A transform sends nothing upstream.
+forward_max_weighted_calls = 0
+gap_fill_max_weighted_calls = 0
+max_concurrency = 1
+# The legacy registration's timeout_seconds = 900.
+turn_timeout_seconds = 900

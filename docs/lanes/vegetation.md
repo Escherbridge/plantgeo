@@ -307,3 +307,53 @@ reshape.
 `sentinel2-ndvi-0p25deg` grid cell (up to 1,568 cells, PNW extent — §4), per calendar day, 1 to 30
 days ahead of a publisher-named cutoff day, as p10/median/p90 today — or, after the reshape in the
 table above, as whichever quantile/draw layout wave 2 settles on.
+
+## 8. Config-lane strategy (`s-vegetation`, track `config_driven_ingestion_20260926`)
+
+Two dark TOMLs and their strategies now sit beside the legacy writer and the shadow promotion,
+built against the Phase 4 runner contract. Full rationale: `pipeline/lanes/vegetation/AGENTS.md`.
+
+- **Files.** `services/agri-data-service/lanes/vegetation-sentinel2-ndvi-direct-forward.toml`
+  (`executor = "legacy"`, `enabled = true`, strategy `vegetation.sentinel2_ndvi`);
+  `services/agri-data-service/lanes/vegetation-ndvi-governed-plane-promotion.toml` (`kind = "transform"`,
+  `executor = "legacy"`, `enabled = false`, strategy `vegetation.governed_plane_promotion`);
+  `pipeline/lanes/vegetation/{sentinel2_ndvi,governed_plane_promotion,support}.py`. Behaviour is
+  re-derived from `pipeline/direct/vegetation/**`, never imported.
+- **Partial-day policy, derived from the legacy forward.** `partial_day = "refuse"`, and an NDVI day
+  is never partial: any filled cell writes the whole day (`Written(expected = present = cells filled)`,
+  `direct/vegetation/source.py::is_governed_absence`); zero cells with a later published day is a
+  governed absence (`adapter.py` 116-118 + `forward.py::_mirrored_past_day`, read through
+  `DayContext.later_published_day`); zero cells with nothing later is `unsettled` and asked again next
+  turn (`adapter.py` 118-127, `forward.py` 454-462). Claiming the 1,568-cell support as the expectation
+  would make every real day `refused_partial`.
+- **Deliberate deviation.** A truncated walk, an off-lattice `cellKey`, a malformed record field or an
+  unreadable STAC page is now that day's `strategy_error`, and the turn writes its other days. The
+  legacy writer retried such a day and then failed the whole turn (`forward.py` 446-450, 489).
+- **The STAC probe is the edge.** One keyless request through the provider client (`earth-search`
+  `search`): the legacy item search over the probe window, `limit=1`, sorted newest first. Every window
+  day up to the newest scene's UTC day counts as answerable, scene or not, so a day with no scene is
+  still walked and governed absent the legacy way instead of being held for the whole window.
+  `sortby=-properties.datetime` is the one request shape the legacy reader never sent: verify it live
+  before G6.
+- **Wave O fetch.** A day walk (STAC paging plus COG `Range` reads on per-scene hrefs) is one runner
+  unit, fetched through `ingest/vegetation.py::collect_ndvi_grid_records` on its own `upstream_client`,
+  as legacy `source.py` does; the provider client cannot express it. Never checkpointed (a replay
+  would re-walk the network). The 330 s per-unit cap wraps the whole walk; the legacy turn budgeted
+  900 s for one day, so a heavy day can be cancelled and restarted (CQ-9's per-lane unit cap is the fix).
+- **The floor covers 2026-09-01..05.** `[days] floor = "2026-09-01"`, below the legacy writer floor
+  2026-09-06, so G6's gap-fill enable (`gap_fill_enabled_at_gate = "G6"`, cap 5 = legacy
+  `VEGETATION_MAX_DAYS`) fills those known-missing days. Before G6, check `backfill.py` has not filled
+  them from Postgres in the meantime: they sit in the range the legacy guard `refuse_pre_ownership_day`
+  hands to backfill.
+- **Support needs an owner-go read.** The rows key on `agri.spatial_cell.id` (random UUIDs), and a
+  strategy has no database session. `support.py` reads a pinned `support_cells.json` (the legacy
+  `_SUPPORT_CELLS_SQL` columns), checked against the region's `analysis-0p25` lattice. The file is not
+  committed: generating it is a production read. Until it exists the probe reports `unavailable`.
+- **Volatile column.** `data_available_at` (stamped from the fetch's capture instant). The compare test
+  checks the legacy fetch+rows path against this strategy and finds them equal apart from that column.
+- **Promotion target, confirmed.** The legacy verb reads the forward lane's `kind=observed` base rung
+  and writes Postgres `agri.forecast_observation` (plus its release and series rows) through
+  `execution/vegetation_ndvi_plane.py::register_governed_partition_plane`. A config transform can only
+  output Parquet `[[streams]]`, and `vegetation` belongs to the forward lane (S18), so the transform
+  declares no streams and `derive` refuses every day. A real port needs a Parquet governed output or a
+  runner hook for Postgres targets: an owner decision.
