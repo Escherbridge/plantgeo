@@ -45,12 +45,15 @@ partial_day = "refuse"
 
 [budget]
 # Unweighted provider: the caps count logical requests. One release day is one unit sending, per cohort,
-# one returnCountOnly plus ceil(count / 50) GeoJSON pages, more when the host refuses a 50-row page and
-# the window halves to 25, 12, 6 then 5. Measured layer: 541 fires over five cohorts, about 108 a cohort,
-# so 1 + 3 = 4 sends a day; the worst case (every page at 5 rows, about 130 fires, four halvings) is 32.
-# Forward: one newly governed release day reaching the window, worst case 32, plus margin.
-forward_max_weighted_calls = 40
-# Gap-fill: the five governed release days at the worst case, 5 x 32.
+# one returnCountOnly plus floor(count / page) + 1 GeoJSON pages (the short or empty page proves the end),
+# plus one send per halving when the host refuses a page as oversized (50, 25, 12, 6, 5).
+# Measured basis: the 2026-08-05 load held 478 rows over four cohorts, about 120 a cohort (the reviewed
+# worst-case cohort is about 134 fires). Typical day: 1 + 3 = 4 sends. Worst case, a 134-fire cohort paged at 5 rows after four
+# halvings: 1 + 4 + (134 / 5 rounded down + 1) = 32 sends. A runner retry re-sends seen requests at no
+# budget cost. Forward: one newly governed day at that worst case leaves margin; the cap breaches when one
+# day needs more than 60 sends, a cohort above about 275 fires at 5-row pages or 2,950 at 50-row pages.
+forward_max_weighted_calls = 60
+# Gap-fill: the five governed release days at the worst case, 5 x 32; it breaches only when all five do.
 gap_fill_max_weighted_calls = 160
 # MTBS publishes no rate limit; the legacy walk is strictly sequential.
 max_concurrency = 1
