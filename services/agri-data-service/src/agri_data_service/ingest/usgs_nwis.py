@@ -14,10 +14,8 @@ from agri_data_service.ingest.http import (
     UpstreamError,
     UpstreamPayloadError,
     fetch_bounded_json,
-    upstream_client,
 )
 from agri_data_service.ingest.identity import (
-    USGS_NWIS_PRODUCER,
     MissingNativeKeyError,
     build_streamflow_gauge_identity,
     format_javascript_fixed,
@@ -30,21 +28,15 @@ from agri_data_service.ingest.policy import (
     parse_bbox,
 )
 from agri_data_service.ingest.records import FeatureWrite
-from agri_data_service.ingest.source import (
-    FetchRequest,
-    FreshnessRule,
-    FunctionSource,
-    HistoryCapability,
-    HistoryWindow,
-)
 from agri_data_service.ingest.upstream_retry import RetryLadder, UpstreamRetryPolicy, retry_upstream
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Mapping, Sequence
+    from collections.abc import Awaitable, Callable, Mapping
 
     import httpx
 
-    from agri_data_service.ingest.source import UpstreamRecord
+    from agri_data_service.ingest.source import HistoryWindow
+
 
 logger = structlog.get_logger()
 
@@ -70,8 +62,6 @@ STREAMFLOW_QUERY_TEMPLATE: Final = (
 # counted against the same host `ingest/http.py`'s own request meter already resolves from the URL.
 NWIS_HOST: Final = "waterservices.usgs.gov"
 
-USGS_STREAMFLOW_ARCHIVE_SOURCE: Final = "usgs-streamflow-archive"
-
 # The DAILY-values service, not the instantaneous one the forward path uses, and that is the
 # whole reason a history walk needs its own source token.
 #
@@ -87,12 +77,6 @@ DAILY_VALUES_QUERY_TEMPLATE: Final = (
     "https://waterservices.usgs.gov/nwis/dv/?format=json&bBox={tile}&parameterCd=00060&siteType=ST"
     "&startDT={start_day}&endDT={end_day}"
 )
-
-# USGS DV nominally reaches the 1890s for a few gauges. The floor is set at the vegetation
-# layer's own earliest observed day instead, because that is the axis the slider actually draws
-# and a deeper walk would spend hours on years no other layer can populate. `ingest-backfill
-# --since` may still name any day at or after this; the floor only refuses a walk outright.
-USGS_DAILY_VALUES_EARLIEST: Final = datetime(2022, 8, 5, tzinfo=UTC)
 
 # NWIS's missing-value sentinel. It arrives as an ordinary numeric string, so an unguarded
 # parse writes -999999 ft3/s as a real reading and every downstream percentile and colour ramp
@@ -550,52 +534,3 @@ async def fetch_streamflow_history(
                 seen.add(key)
                 gauge_days.append(record)
     return gauge_days
-
-
-async def fetch_streamflow_history_records(
-    request: FetchRequest,
-    window: HistoryWindow,
-) -> Sequence[UpstreamRecord]:
-    """Fetch one past chunk of daily gauge values, owning a client only when the walk supplied none."""
-    if request.client is None:
-        async with upstream_client(NWIS_ARCHIVE_BOUNDS) as owned_client:
-            return await fetch_streamflow_history(owned_client, request.bbox, window)
-    return await fetch_streamflow_history(request.client, request.bbox, window)
-
-
-def build_gauge_history_write(record: UpstreamRecord, _request: FetchRequest) -> FeatureWrite | None:
-    """Map one archived gauge-day through the same builder the forward path uses."""
-    return build_gauge_write(record, resolve_water_gauges_layer_name())
-
-
-def usgs_streamflow_archive_source() -> FunctionSource:
-    """Compose the USGS source used for history walks over the daily-values service.
-
-    A second source token over the same producer, layer and identity contract as
-    `usgs-streamflow` -- not a second producer. It exists as its own token for the reason the
-    FIRMS archive does: the two read different endpoints with different retention, so
-    `ingest-backfill` must not be able to ask the instantaneous job for a past window, nor this
-    walk for the current one.
-    """
-    return FunctionSource(
-        source_name=USGS_STREAMFLOW_ARCHIVE_SOURCE,
-        producer=USGS_NWIS_PRODUCER,
-        channel=USGS_CHANNEL,
-        # No maximum age -- a history walk's window IS its age bound. Undated records stay
-        # refused: a daily value that names no day is not a day's observation.
-        freshness=FreshnessRule(max_observation_age=None, accepts_undated_records=False),
-        resolve_layer_reference=resolve_water_gauges_layer_name,
-        fetch_current_records=_refuse_current_window,
-        build_feature_write=build_gauge_history_write,
-        history=HistoryCapability(supported=True, earliest=USGS_DAILY_VALUES_EARLIEST),
-        fetch_history_records=fetch_streamflow_history_records,
-        shape="feature",
-    )
-
-
-async def _refuse_current_window(_request: FetchRequest) -> Sequence[UpstreamRecord]:
-    """Refuse a current-window fetch: the direct Parquet forward writer owns that path and reads the live IV feed."""
-    raise NotImplementedError(
-        "usgs-streamflow-archive serves history only; the current window belongs to "
-        "agri_data_service.pipeline.parquet.water_gauges_forward"
-    )

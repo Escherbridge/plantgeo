@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final
 
@@ -15,10 +14,8 @@ from agri_data_service.ingest.http import (
     UpstreamBounds,
     UpstreamPayloadError,
     fetch_bounded_text,
-    upstream_client,
 )
 from agri_data_service.ingest.identity import (
-    FIRMS_PRODUCER,
     MissingNativeKeyError,
     build_firms_identity,
     format_javascript_timestamp,
@@ -26,28 +23,19 @@ from agri_data_service.ingest.identity import (
 from agri_data_service.ingest.layer_binding import LayerBinding
 from agri_data_service.ingest.policy import is_fresh_observation, javascript_parse_float
 from agri_data_service.ingest.records import FeatureWrite
-from agri_data_service.ingest.source import (
-    FetchRequest,
-    FreshnessRule,
-    FunctionSource,
-    HistoryCapability,
-    HistoryWindow,
-)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     import httpx
 
-    from agri_data_service.ingest.source import UpstreamRecord
 
 logger = structlog.get_logger()
 
 # The forward token `nasa-firms` and its `run_fire_ingestion_job` were DELETED 2026-09-06: FIRMS
 # forward days belong to `pipeline/direct/fire_detections/`, which writes Parquet and reuses the
-# fetch/parse/identity code below. This archive token survives because `jobs-firms-archive` is still
-# an active durable lane and is the only producer of days below the direct writer's floor.
-FIRMS_ARCHIVE_SOURCE: Final = "nasa-firms-archive"
+# fetch/parse/identity code below. `jobs-firms-archive` -- the durable lane that once produced days
+# below the direct writer's floor -- was itself deleted 2026-09-12; no archive producer remains.
 FIRMS_PROPERTY_SOURCE: Final = "NASA FIRMS"
 
 FIRMS_LAYER: Final = LayerBinding(
@@ -97,27 +85,10 @@ MAX_FIRMS_DAY_RANGE: Final = 5
 # record -- that rejection is separate and unconditional.
 UNBOUNDED_OBSERVATION_AGE: Final = timedelta(days=100 * 365)
 
-# MODIS_SP's own published `min_date`, read from the live availability table on 2026-08-05 and the
-# oldest floor any FIRMS_HISTORY_SOURCES member offers (VIIRS_SNPP_SP starts 2012-01-20). It bounds
-# only whether a walk is refused outright; per-day coverage is still decided from the live table.
-FIRMS_ARCHIVE_EARLIEST_OBSERVATION: Final = datetime(2000, 11, 1, tzinfo=UTC)
-FIRMS_ARCHIVE_CURRENT_REFUSAL: Final = (
-    "nasa-firms-archive serves past windows only; the current window belongs to the direct Parquet "
-    "writer `agri_data_service.pipeline.direct.fire_detections`, which replaced the deleted "
-    "`ingest-firms` verb on 2026-09-06."
-)
-
 MIN_CSV_LINES: Final = 2
 MIN_CSV_COLUMNS: Final = 4
 DEFAULT_CONFIDENCE: Final = "nominal"
 
-# The property that records which product's published coverage this record was drawn under, so a
-# leakage-sensitive query gates on a field rather than on prose. `data_available_at` is the governed
-# concept this stands in for until geo.features has a column to model publication lag: the FIRMS
-# archive's SP series carries a months-long lag between `observedAt` (acquisition) and the day the
-# product actually published, and the availability table's `max_date` is the only figure upstream
-# gives for it. Absent on a forward-path record, where the product's coverage is "now" by construction.
-PRODUCT_COVERAGE_THROUGH_PROPERTY: Final = "productCoverageThrough"
 # Names the near-real-time product a standard-processing record displaced, when a walk saw both.
 SUPERSEDED_PRODUCT_PROPERTY: Final = "supersededProduct"
 SPATIAL_SUPPORT_PROPERTY: Final = "spatialSupportMeters"
@@ -462,108 +433,6 @@ def build_fire_detection_write(
     )
 
 
-def history_day_spans(window: HistoryWindow) -> tuple[tuple[date, int], ...]:
-    """Cut one chunk into `(start_day, day_range)` requests no wider than the five days FIRMS allows.
-
-    Days come from the window bounds' own UTC calendar dates, so a chunk boundary lands on the day the
-    publisher names rather than on whatever local date a recast would produce. The end bound is
-    exclusive, matching `HistoryWindow`, so a chunk ending at midnight does not fetch the next day.
-    """
-    first_day = window.start.astimezone(UTC).date()
-    last_day = (window.end.astimezone(UTC) - timedelta(microseconds=1)).date()
-    spans: list[tuple[date, int]] = []
-    cursor = first_day
-    while cursor <= last_day:
-        remaining = (last_day - cursor).days + 1
-        span = min(MAX_FIRMS_DAY_RANGE, remaining)
-        spans.append((cursor, span))
-        cursor += timedelta(days=span)
-    return tuple(spans)
-
-
-@dataclass(frozen=True, slots=True)
-class HistorySpanFetch:
-    """One dated span's answer: its records, the products that failed, and whether any product covered it."""
-
-    records: list[dict[str, object]]
-    unavailable: tuple[str, ...]
-    covered: bool
-
-
-def _stamp_product_coverage(records: Sequence[dict[str, object]], coverage_through: date) -> None:
-    """Record the coverage frontier the answering product published under, on every row it answered with."""
-    for record in records:
-        properties = record.get("properties")
-        if isinstance(properties, dict):
-            properties[PRODUCT_COVERAGE_THROUGH_PROPERTY] = coverage_through.isoformat()
-
-
-async def _fetch_history_span(
-    client: httpx.AsyncClient,
-    area: str,
-    availability: Mapping[str, ProductAvailability],
-    start_day: date,
-    day_range: int,
-) -> HistorySpanFetch:
-    """Fetch one dated span from every product publishing any of its days, reporting what failed and what covered it."""
-    products = products_covering_span(availability, start_day, day_range)
-    if not products:
-        return HistorySpanFetch(records=[], unavailable=(), covered=False)
-    collections = await asyncio.gather(
-        *(fetch_active_fires(client, area, day_range, product, start_day) for product in products),
-        return_exceptions=True,
-    )
-    records: list[dict[str, object]] = []
-    unavailable: list[str] = []
-    for product, collection in zip(products, collections, strict=True):
-        if isinstance(collection, BaseException):
-            unavailable.append(product)
-            continue
-        _stamp_product_coverage(collection, availability[product].latest)
-        records.extend(collection)
-    return HistorySpanFetch(records=records, unavailable=tuple(unavailable), covered=True)
-
-
-async def fetch_firms_history_records(request: FetchRequest, window: HistoryWindow) -> Sequence[UpstreamRecord]:
-    """Fetch one past chunk from every FIRMS product whose live availability window covers each of its days.
-
-    A product that answers with a header and no rows is NOT evidence the sky was empty -- VIIRS_SNPP_SP
-    answered exactly that for 2022-08-05 while VIIRS_NOAA20_SP returned 1,649 detections for the same
-    five days. The walk therefore never treats one product's silence as coverage; it queries every
-    product the availability table says publishes the day and merges what answered.
-    """
-    if request.client is None:
-        async with upstream_client(FIRMS_BOUNDS) as owned_client:
-            return await _walk_history(owned_client, request, window)
-    return await _walk_history(request.client, request, window)
-
-
-async def _walk_history(
-    client: httpx.AsyncClient,
-    request: FetchRequest,
-    window: HistoryWindow,
-) -> Sequence[UpstreamRecord]:
-    """Walk one chunk's five-day spans against a single availability read, merging every product's answer."""
-    availability = await fetch_product_availability(client)
-    records: list[dict[str, object]] = []
-    unavailable: list[str] = []
-    uncovered: list[str] = []
-    for start_day, day_range in history_day_spans(window):
-        span = await _fetch_history_span(client, request.bbox, availability, start_day, day_range)
-        records.extend(span.records)
-        unavailable.extend(span.unavailable)
-        if not span.covered:
-            uncovered.append(f"{start_day.isoformat()}+{day_range}")
-    if unavailable:
-        logger.warning("firms_history_products_unavailable", unavailable=sorted(set(unavailable)))
-    if uncovered:
-        # No product publishes these days at all, so the walk answered zero records for a reason that is
-        # NOT "no fires". Unnamed, that reads as a clean empty week -- the "gap certified as complete"
-        # failure the availability table exists to prevent.
-        logger.warning("firms_history_spans_uncovered", spans=uncovered, candidates=list(FIRMS_HISTORY_SOURCES))
-    return collapse_history_records(records)
-
-
 def processing_tier(product: object) -> int:
     """Rank a FIRMS product's processing tier: standard processing outranks near-real-time."""
     if isinstance(product, str) and product.endswith(STANDARD_PROCESSING_SUFFIX):
@@ -636,37 +505,3 @@ def collapse_history_records(records: Sequence[dict[str, object]]) -> list[dict[
             continue
         merged[key] = _supersede(record, held)
     return [*merged.values(), *unkeyable]
-
-
-def build_firms_history_write(record: UpstreamRecord, request: FetchRequest) -> FeatureWrite | None:
-    """Map one archive detection through the same builder the forward path uses, without its rolling window."""
-    return build_fire_detection_write(record, resolve_firms_layer_name(), None, request.now)
-
-
-def firms_archive_source() -> FunctionSource:
-    """Compose the FIRMS source used for history walks, pinning its floor to the oldest product on offer.
-
-    `earliest` is deliberately a static floor rather than the availability table's own minimum: reading
-    the table needs a client, and `HistoryCapability` is consulted before any fetch happens. The table
-    is still authoritative per chunk -- a day no product covers simply yields no records -- so this
-    constant only decides whether the walk is refused outright.
-    """
-    return FunctionSource(
-        source_name=FIRMS_ARCHIVE_SOURCE,
-        producer=FIRMS_PRODUCER,
-        channel=FIRMS_CHANNEL,
-        # No maximum age: a history walk's window IS its age bound, and the write builder keeps the
-        # future-skew guard. Undated records stay refused -- FIRMS always names an acquisition instant.
-        freshness=FreshnessRule(max_observation_age=None, accepts_undated_records=False),
-        resolve_layer_reference=resolve_firms_layer_name,
-        fetch_current_records=_refuse_current_window,
-        build_feature_write=build_firms_history_write,
-        history=HistoryCapability(supported=True, earliest=FIRMS_ARCHIVE_EARLIEST_OBSERVATION),
-        fetch_history_records=fetch_firms_history_records,
-        shape="feature",
-    )
-
-
-async def _refuse_current_window(_request: FetchRequest) -> Sequence[UpstreamRecord]:
-    """Refuse a current-window fetch: `ingest-firms` owns that path and reports partial-constellation outages."""
-    raise NotImplementedError(FIRMS_ARCHIVE_CURRENT_REFUSAL)
