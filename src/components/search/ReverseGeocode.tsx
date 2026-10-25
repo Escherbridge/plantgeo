@@ -2,12 +2,11 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import maplibregl from "maplibre-gl";
-import { Copy, Navigation } from "lucide-react";
+import { Copy } from "lucide-react";
 import { useMap } from "@/lib/map/map-context";
 import { MapPopup, MapPopupBody } from "@/components/ui/map-popup";
 import { cn } from "@/lib/utils";
 import { readGeocodingResults } from "@/lib/geocoding";
-import { useRoutingStore } from "@/stores/routing-store";
 import { TOUCH_TARGET } from "@/components/ui/touch-target";
 
 interface PopupState {
@@ -160,11 +159,6 @@ export function ReverseGeocode() {
     navigator.clipboard.writeText(text).catch(() => {});
   }, [popup]);
 
-  const handleDirections = useCallback(() => {
-    if (!popup) return;
-    useRoutingStore.getState().setDestination({ lat: popup.lat, lon: popup.lon, label: `${popup.lat.toFixed(4)}, ${popup.lon.toFixed(4)}` });
-  }, [popup]);
-
   if (!popup) return null;
 
   return (
@@ -209,19 +203,6 @@ export function ReverseGeocode() {
                 >
                   <Copy className="h-3 w-3" />
                   Copy coordinates
-                </button>
-                <button
-                  onClick={handleDirections}
-                  className={cn(
-                    "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium",
-                    "bg-[hsl(var(--muted))] text-[hsl(var(--muted-foreground))]",
-                    "hover:bg-[hsl(var(--accent))] hover:text-[hsl(var(--accent-foreground))]",
-                    "transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]",
-                    TOUCH_TARGET
-                  )}
-                >
-                  <Navigation className="h-3 w-3" />
-                  Directions to here
                 </button>
               </div>
             </div>

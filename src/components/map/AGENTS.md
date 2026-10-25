@@ -1615,3 +1615,5 @@ within one cell neither restarts the 400 ms wait nor blanks the line (before 202
 (`distributionSignalName`: the selected air-temperature variant, weather's `air_temperature`) and
 show the lane matching it, else the first lane. Fetch and cache: services/AGENTS.md
 §window-distribution.
+
+Removed 2026-10-25: `src/hooks/useDeckLayers.ts` and `src/lib/map/deck-config.ts` -- zero callers (dead-code audit); the `@deck.gl/*` packages they were the last importers of were also dropped from package.json.

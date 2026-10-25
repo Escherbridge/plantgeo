@@ -384,3 +384,6 @@ Rules when editing a body in here:
 - **Adding the floor is never a reason to remove one.** Three buttons in `WeatherHistoryReport`
   already carried an unconditional `min-h-11`; rescoping those to `max-sm:` would lower them to
   26px for desktop touchscreens, which is this pass running backwards.
+
+Removed 2026-10-25: `UserPanel.tsx` -- zero callers and its password-change handler posted to a route (`/api/auth/password`) that does not exist (dead-code audit).
+Removed 2026-10-25: `LayerUpload.tsx` and the `layers.create` mutation it was the only caller of -- zero callers (dead-code audit).
