@@ -13,18 +13,29 @@ import json
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
 
+import pytest
+
 from agri_data_service.foundation.lane_config import load_lane_configs
 from agri_data_service.foundation.region import load_region
 from agri_data_service.pipeline.lanes.fire_perimeters.wfigs import (
     DIRECT_FEATURE_ID_PREFIX,
+    GEOMETRY_REPAIRED_AREA_CHANGE_KEY,
+    GEOMETRY_REPAIRED_KEY,
     LAYER_ENDPOINT,
     PUBLISHED_STATUS,
     QUERY_ENDPOINT,
     SNAPSHOT_UNIT,
     STRATEGY,
+    FirePerimeterSnapshot,
     content_digest,
 )
-from agri_data_service.pipeline.runner.contract import ProbeWindow, SourceThrottledError, SourceUnavailableError
+from agri_data_service.pipeline.runner.contract import (
+    ProbeWindow,
+    SourceRequest,
+    SourceResponse,
+    SourceThrottledError,
+    SourceUnavailableError,
+)
 from agri_data_service.pipeline.runner.resolve import resolve_strategy
 from tests.lane_config.builders import REAL_LANES_DIRECTORY
 from tests.runner.fakes import NOW, ScriptedUpstream
@@ -117,12 +128,28 @@ async def test_probe_edge_classifies_a_non_json_body_as_invalid() -> None:
     assert edge.status == "invalid"
 
 
-async def test_probe_edge_classifies_an_arcgis_error_body_as_invalid() -> None:
+async def test_probe_edge_classifies_a_genuinely_malformed_arcgis_error_body_as_invalid() -> None:
+    """A real schema/parameter fault (not a busy throttle) stays `invalid`, never masked as `deferred`."""
     upstream = _edge_upstream(
         lambda endpoint, params, probe: _layer_body({"error": {"code": 400, "message": "Invalid or missing input"}})  # noqa: ARG005
     )
     edge = await STRATEGY.probe_edge(upstream, WINDOW)
     assert edge.status == "invalid"
+
+
+async def test_probe_edge_classifies_a_200_busy_arcgis_body_as_deferred() -> None:
+    """ArcGIS throttles INSIDE an HTTP 200 body (`lanes/_providers/nifc-wfigs.toml`'s own note; M1).
+
+    A `SourceThrottledError` can only model an HTTP 429 -- this upstream never raises one, so a
+    throttle this shape could only ever surface by reading the body, which is what `probe_edge` must
+    do rather than folding every error body into `invalid`.
+    """
+    upstream = _edge_upstream(
+        lambda endpoint, params, probe: _layer_body({"error": {"code": 500, "message": "Too many requests"}})  # noqa: ARG005
+    )
+    edge = await STRATEGY.probe_edge(upstream, WINDOW)
+    assert edge.status == "deferred"
+    assert edge.valued_days == frozenset()
 
 
 async def test_probe_edge_classifies_untracked_editing_as_blind() -> None:
@@ -135,26 +162,63 @@ async def test_probe_edge_classifies_untracked_editing_as_blind() -> None:
     assert edge.valued_days == frozenset()
 
 
-async def test_probe_edge_classifies_a_429_as_deferred() -> None:
+async def test_probe_edge_lets_a_429_propagate_to_the_runners_own_cooldown_ladder() -> None:
+    """M1 (corrected after ring review): `turn.py::_spend_probe` owns Retry-After, not this function."""
+
     def _answer(endpoint: str, params: dict[str, str], probe: bool) -> bytes:
         raise SourceThrottledError("upstream request failed with status 429")
 
-    edge = await STRATEGY.probe_edge(_edge_upstream(_answer), WINDOW)
-    assert edge.status == "deferred"
+    with pytest.raises(SourceThrottledError):
+        await STRATEGY.probe_edge(_edge_upstream(_answer), WINDOW)
 
 
-async def test_probe_edge_classifies_a_transport_failure_as_unavailable() -> None:
+async def test_probe_edge_lets_a_transport_failure_propagate_to_the_runners_own_ladder() -> None:
     def _answer(endpoint: str, params: dict[str, str], probe: bool) -> bytes:
         raise SourceUnavailableError("connection reset")
 
-    edge = await STRATEGY.probe_edge(_edge_upstream(_answer), WINDOW)
-    assert edge.status == "unavailable"
+    with pytest.raises(SourceUnavailableError):
+        await STRATEGY.probe_edge(_edge_upstream(_answer), WINDOW)
+
+
+async def test_probe_edge_masks_a_second_same_utc_day_edit_until_rollover() -> None:
+    """H1 pinning test (re-read after ring review): the masking mechanism, made concrete here.
+
+    `editingInfo.lastEditDate` at 01:00Z and at 21:00Z on the SAME UTC day report the identical
+    `valued_days`/`edge`, which is exactly what lets `pipeline/runner/turn.py::_static_forward`'s
+    `served_day >= watermark_day` gate call a second, genuinely different same-day edit "already
+    current" without this strategy's `settle`/`content_digest` ever being consulted. This is not a
+    bug in `probe_edge` to fix -- a day-granularity watermark cannot do otherwise -- it is the
+    mechanism `docs/lanes/fire-perimeters.md` §8's H1 item and the owner register row
+    `static_freshness_contract` name as an open residual.
+    """
+    morning_ms = 1_786_323_600_000  # 2026-08-10T01:00:00Z
+    evening_ms = 1_786_395_600_000  # 2026-08-10T21:00:00Z
+
+    async def _edge_for(last_edit_ms: int):  # noqa: ANN202 - local helper, inferred return type
+        upstream = _edge_upstream(
+            lambda endpoint, params, probe: _layer_body({"editingInfo": {"lastEditDate": last_edit_ms}})  # noqa: ARG005
+        )
+        return await STRATEGY.probe_edge(upstream, WINDOW)
+
+    morning = await _edge_for(morning_ms)
+    evening = await _edge_for(evening_ms)
+
+    assert morning.status == evening.status == "ok"
+    assert morning.valued_days == evening.valued_days == frozenset({date(2026, 8, 10)})
+    assert morning.edge == evening.edge == date(2026, 8, 10)
 
 
 # --- watermark-unchanged short-circuit (content_digest stability) ----------------------------------
 
 
-def _row(unique_fire_identifier: str, *, updated_at: datetime, gis_acres: float = 120.0) -> dict[str, object]:
+def _row(
+    unique_fire_identifier: str,
+    *,
+    updated_at: datetime,
+    gis_acres: float = 120.0,
+    repaired: bool = False,
+    area_change: float | None = None,
+) -> dict[str, object]:
     return {
         "feature_id": f"{DIRECT_FEATURE_ID_PREFIX}:{unique_fire_identifier}",
         "unique_fire_identifier": unique_fire_identifier,
@@ -173,6 +237,8 @@ def _row(unique_fire_identifier: str, *, updated_at: datetime, gis_acres: float 
         "data_available_at": None,
         "updated_at": updated_at,
         "geometry_wkb": b"\x01\x02\x03",
+        GEOMETRY_REPAIRED_KEY: repaired,
+        GEOMETRY_REPAIRED_AREA_CHANGE_KEY: area_change,
     }
 
 
@@ -201,3 +267,44 @@ def test_content_digest_is_order_independent() -> None:
     first = content_digest([_row("2026-OR-A-1", updated_at=NOW), _row("2026-OR-B-2", updated_at=NOW)])
     reordered = content_digest([_row("2026-OR-B-2", updated_at=NOW), _row("2026-OR-A-1", updated_at=NOW)])
     assert first == reordered
+
+
+# --- restored repair reporting (L3) ----------------------------------------------------------------
+
+
+def test_snapshot_repairs_lists_only_the_repaired_rows_with_their_area_change() -> None:
+    """`FirePerimeterSnapshot.repairs` restores the legacy writer's `.repairs` property (L3)."""
+    snapshot = FirePerimeterSnapshot(
+        rows=(
+            _row("2026-OR-UNCHANGED-1", updated_at=NOW, repaired=False, area_change=None),
+            _row("2026-OR-REPAIRED-2", updated_at=NOW, repaired=True, area_change=0.015),
+        ),
+        fetched_at=NOW,
+        perimeters_seen=2,
+        rejected=0,
+        collapsed=0,
+    )
+
+    repairs = snapshot.repairs
+
+    assert len(repairs) == 1
+    assert (repairs[0].unique_fire_identifier, repairs[0].area_change) == ("2026-OR-REPAIRED-2", 0.015)
+
+
+def test_rows_strips_the_repair_audit_keys_before_building_the_arrow_table() -> None:
+    """`rows()` whitelists schema columns (L3): the repair-audit keys never leak into the base rung."""
+    snapshot = FirePerimeterSnapshot(
+        rows=(_row("2026-OR-REPAIRED-3", updated_at=NOW, repaired=True, area_change=-0.02),),
+        fetched_at=NOW,
+        perimeters_seen=1,
+        rejected=0,
+        collapsed=0,
+    )
+    request = SourceRequest(unit=SNAPSHOT_UNIT, endpoint=QUERY_ENDPOINT, days=(date(2026, 8, 10),))
+    response = SourceResponse(request=request, body=b"{}", retrieved_at=NOW, payload=snapshot)
+
+    table = STRATEGY.rows(date(2026, 8, 10), [response])
+
+    assert GEOMETRY_REPAIRED_KEY not in table.column_names
+    assert GEOMETRY_REPAIRED_AREA_CHANGE_KEY not in table.column_names
+    assert table.num_rows == 1
