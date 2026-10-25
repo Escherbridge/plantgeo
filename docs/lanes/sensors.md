@@ -344,29 +344,29 @@ Phase 4 "frozen" runner contract.
   `Unsettled(reason="retention_exceeded", ...)`, reusing the shared `UnwrittenReason` word the same
   way `pipeline/lanes/watersheds/nhdplus.py:201` sets the precedent for constructing `strategy_error`
   directly rather than raising.
-- **`absence_recheck_days = 6`, matching the retention window exactly** (`[days]` in the TOML): the
-  forward window is `[edge - 5, edge]` with `edge = today - 1` (write_and_recheck forces that cap),
-  six calendar days. The calendar window and the strategy's own rolling check can still disagree by
-  up to the turn's own clock instant inside a day (the window is calendar-grained, the retention
-  floor is not) — `settle`'s check is the real boundary; the TOML sizing only keeps that disagreement
-  small.
+- **`absence_recheck_days = 5`, one day short of the retention window on purpose** (`[days]` in
+  the TOML): the forward window is `[edge - 4, edge]` with `edge = today - 1`. With 6, the oldest
+  window day would be clamped to start at `now - 6 days`, so stations whose last report that day
+  precedes the turn's clock time drop out of coverage, read as `coverage_lost`, and refuse a day
+  behind the edge on every turn. With 5 every window day starts after `now - 6 days`.
+- **One report per station-day request (`limit=1`, 64 KiB cap)**, restated from the legacy writer:
+  an un-limited 5-minute station-day is 312 features / 1.2 MB, past `OBSERVATION_BOUNDS`' 1 MiB.
 - **No row-level merge with the previously published day, unlike `merge.py`.** A strategy cannot
-  read back the prior partition (`DayContext` hands it day lists and digests only), so `nws.py::rows`
-  always returns the turn's own complete sweep. The anti-regression property `merge.py`'s block-merge
-  gives the legacy writer — a later, smaller poll cannot silently erase a station's last measurements
-  — is recovered generically instead: `settle`'s `Written.expected_unit_ids`/`present_unit_ids` are
-  keyed by station identifier, and the runner's own S11 "fewer units never written" rule (`pipeline/
-  runner/AGENTS.md`, "Writer") refuses to rewrite a day with FEWER present stations than a previous
-  turn wrote, the same protection by a different, generic mechanism.
-- **Known gap: the roster itself is not a stable partition, unlike `water_gauges`' fixed tiles.**
-  `UsgsWaterDataDailyStrategy.source_unit_ids` is deterministic from the region's camera envelope
-  alone; the sensors roster is discovered fresh every turn (`SENSOR_STATION_STATES`/
-  `SENSOR_MAX_STATIONS`/NWS's own roster churn all vary it). The S11 rule above, built for a STABLE
-  tile set, can therefore misread an ordinary roster shrink (a station NWS retires) as a failed poll
-  and refuse to settle a day that genuinely has fewer stations now, not fewer successful requests.
-  The legacy writer has no equivalent failure mode (its merge keeps a retired station's last block
-  forever). Flagged for the per-lane adversarial review before G6; a fix would need `DayContext` to
-  expose the PREVIOUS turn's `present_unit_ids`, which it does not today.
+  read back the prior partition, so `nws.py::rows` always returns the turn's own complete sweep.
+  The anti-regression property is recovered through coverage instead: `present_unit_ids` is the
+  stations that ANSWERED their poll (not the stations with rows). A failed poll makes the day
+  partial and the runner's S11 rules (`pipeline/runner/writer.py::_coverage_refusal`) refuse it as
+  `fewer_units`/`coverage_lost`, never erasing a station served last turn; a fully answered sweep
+  reaches the digest rule, so a station's newer report rewrites the day.
+- **A roster shrink freezes only in-window days; it never wedges the lane.** The roster is
+  rediscovered every turn, unlike `water_gauges`' fixed tiles. The runner already compares this
+  turn's `present_unit_ids` against the PREVIOUS receipt's (`_coverage_refusal`, re-checked under
+  the lane-day lock in `ObjectStoreLaneWriter.write_day`), so a retired station makes the days
+  already written with it refuse as `coverage_lost` until they leave the 5-day window; newer days
+  have no receipt and write fresh.
+- **A degraded roster refuses the sweep.** A state whose roster page failed is reported in
+  `unavailable_states`; sweeping without it would drop whole states from both expected and present
+  coverage, so `source.py::_sweep` raises and the unit becomes `strategy_error`.
 - **No `volatile_columns` declared — evidence, not an omission.** No `SENSORS_SCHEMA` column is
   stamped from this strategy's own fetch/retrieval instant: `observed_at` is the winning report's OWN
   instant (content), and `data_available_at` is always null content, never a capture-time stamp.
@@ -374,9 +374,8 @@ Phase 4 "frozen" runner contract.
   `updated_at`.
 - **No addition owed to `tests/lanes/test_direct_feature_id_parity.py`.** `source.py` mints the same
   `direct:` prefix `pipeline/direct/sensors/rows.py::_feature_id` already uses, never a new one.
-- **The runner's own turn clock is not threaded into the retention check.** `nws.py::fetch` calls
-  `fetch_sensors_day_snapshot` with no `now=`, so it always reads the real wall clock rather than the
-  turn's (test) clock — harmless in production, but it means no `run_turn` flow test can
-  deterministically exercise the real boundary end-to-end; `tests/lanes/sensors/test_nws.py` pins the
-  boundary arithmetic directly against `source.py` instead, and drives `run_turn` through a
-  monkeypatched snapshot for the flow-level cases.
+- **The turn clock is injected.** `NwsSensorsStrategy.now` feeds the retention check, so `run_turn`
+  tests in `tests/lanes/sensors/test_nws.py` pass the turn's `ManualClock` and drive the real
+  `source.py` sweep through a scripted transport.
+- **`history_floor = "2026-07-29"`** is declared on the stream, matching
+  `pipeline/parquet/lane_registry.py`'s registration, so the mirror parity check runs before G6.

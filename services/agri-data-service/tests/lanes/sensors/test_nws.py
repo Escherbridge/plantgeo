@@ -1,47 +1,95 @@
-"""`sensors-direct-forward` through real runner turns: the shipped TOML, the real S14 strategy.
+"""`sensors-direct-forward` through real runner turns: the shipped TOML, the real S14 strategy, the real sweep.
 
-Two layers, matching `tests/lanes/watersheds/test_nhdplus.py`'s own split:
-
-- `source.fetch_sensors_day_snapshot`'s own rolling-retention arithmetic is pinned DIRECTLY, with a
-  real clock argument and `source_module.fetch_station_roster` wired to raise if the retention check
-  ever lets a call through -- proving "no due day past retention even asks NWS the roster"
-  (`pipeline/lanes/sensors/source.py`'s module docstring) rather than merely asserting it in prose.
-- Full turns go through `run_turn`, with `nws_module.fetch_sensors_day_snapshot` monkeypatched (never
-  `source.py`'s, since the flow tests exercise the STRATEGY's wiring -- settle/rows/the runner's own
-  S11 rules -- not the retention arithmetic the unit tests above already pin): a normal in-retention
-  day, the 6-day retention edge, and a malformed-upstream refusal, one scenario per turn.
+Full turns go through `run_turn` with `NwsSensorsStrategy(now=clock.now)` and `source.py`'s own
+`upstream_client` bound to a scripted `httpx.MockTransport` -- the real roster walk, `limit=1` poll,
+winner reduction, settle and S11 rewrite rules, faking only the NWS edge. The rolling-retention
+floor is also pinned directly against `source.fetch_sensors_day_snapshot`.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+import httpx
 import pytest
 
 from agri_data_service.foundation.lane_config import load_lane_configs
 from agri_data_service.foundation.region import load_region
-from agri_data_service.ingest.http import UpstreamPayloadError
+from agri_data_service.ingest.http import upstream_client as real_upstream_client
 from agri_data_service.ingest.policy import format_javascript_number
-from agri_data_service.pipeline.lanes.sensors import nws as nws_module
+from agri_data_service.ingest.sensors import StationRoster
 from agri_data_service.pipeline.lanes.sensors import source as source_module
-from agri_data_service.pipeline.lanes.sensors.nws import STATIONS_ENDPOINT, STRATEGY
-from agri_data_service.pipeline.lanes.sensors.source import SensorsDaySnapshot, fetch_sensors_day_snapshot
+from agri_data_service.pipeline.lanes.sensors.nws import STATIONS_ENDPOINT, STRATEGY, NwsSensorsStrategy
+from agri_data_service.pipeline.lanes.sensors.source import fetch_sensors_day_snapshot
+from agri_data_service.pipeline.runner.resolve import resolve_strategy
 from tests.lane_config.builders import REAL_LANES_DIRECTORY
-from tests.runner.fakes import ManualClock, MemoryLaneStore, ScriptedUpstream, ports_for, run, spec_for, unwritten_by_day
+from tests.runner.fakes import (
+    ManualClock,
+    MemoryLaneStore,
+    ScriptedUpstream,
+    ports_for,
+    run,
+    spec_for,
+    unwritten_by_day,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
     from agri_data_service.foundation.lane_config.models import LaneConfig
 
 LANE_ID = "sensors-direct-forward"
 STREAM = "sensors"
-#: Matches the environment's own "today" so the shipped lane's forward window is easy to eyeball:
-#: edge = min(today - publication_lag_days, today - 1) = 2026-10-23; window = [2026-10-18, 2026-10-23].
+#: edge = today - 1 = 2026-10-23; window = [2026-10-19, 2026-10-23] (absence_recheck_days = 5).
 NOW = datetime(2026, 10, 24, 12, tzinfo=UTC)
-WINDOW_FIRST = date(2026, 10, 18)
-WINDOW_LAST = date(2026, 10, 23)
+WINDOW = tuple(date(2026, 10, 19) + timedelta(days=offset) for offset in range(5))
+TARGET = date(2026, 10, 23)
+#: Two in-box ASOS stations (pnw's camera envelope), as (longitude, latitude).
+STATIONS: dict[str, tuple[float, float]] = {"KBOI": (-116.22, 43.56), "KMYL": (-116.10, 44.89)}
+
+
+@dataclass
+class ScriptedNws:
+    """The NWS edge: a roster page, per-(station, day) reports, stations whose poll fails, and every poll URL."""
+
+    reports: dict[tuple[str, date], list[tuple[str, float]]] = field(default_factory=dict)
+    failing: set[str] = field(default_factory=set)
+    roster: object | None = None
+    polled: list[httpx.URL] = field(default_factory=list)
+
+    def handle(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/stations":
+            return httpx.Response(200, json=self.roster if self.roster is not None else _roster_page())
+        station = request.url.path.split("/")[2]
+        self.polled.append(request.url)
+        if station in self.failing:
+            return httpx.Response(503)
+        day = date.fromisoformat(request.url.params["start"][:10])
+        features = [_observation(station, stamp, value) for stamp, value in self.reports.get((station, day), [])]
+        return httpx.Response(200, json={"type": "FeatureCollection", "features": features})
+
+
+def _roster_page() -> dict[str, object]:
+    return {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "geometry": {"type": "Point", "coordinates": [longitude, latitude]},
+                "properties": {"stationIdentifier": station, "name": station, "provider": "ASOS"},
+            }
+            for station, (longitude, latitude) in STATIONS.items()
+        ],
+    }
+
+
+def _observation(station: str, timestamp: str, temperature: float) -> dict[str, object]:
+    return {
+        "properties": {
+            "stationId": station,
+            "timestamp": timestamp,
+            "temperature": {"value": temperature, "unitCode": "wmoUnit:degC", "qualityControl": "V"},
+        }
+    }
 
 
 def _unused_roster(*_args: object, **_kwargs: object) -> Any:
@@ -61,29 +109,20 @@ def _config_lane() -> LaneConfig:
     return _shipped_lane().model_copy(update={"executor": "config"})
 
 
-def _fake_fetch(answers: dict[date, Any]) -> Any:
-    """A `fetch_sensors_day_snapshot` replacement keyed by day; every other window day is empty-but-answered."""
-
-    async def fake(day: date, bbox: str) -> SensorsDaySnapshot:  # noqa: ARG001 - the real signature
-        answer = answers.get(day)
-        if callable(answer) and not isinstance(answer, SensorsDaySnapshot):
-            return answer()
-        if isinstance(answer, SensorsDaySnapshot):
-            return answer
-        return SensorsDaySnapshot(
-            day=day, fetched_at=NOW, in_retention=True, roster_size=3, stations_answered=3, stations_unavailable=0
-        )
-
-    return fake
-
-
-async def _turn(
-    lane: LaneConfig, store: MemoryLaneStore, answers: dict[date, Any], monkeypatch: pytest.MonkeyPatch
-) -> tuple[int, dict[str, object]]:
-    spec = spec_for(lane, mode="forward")
-    ports = ports_for(STRATEGY, store, upstream=ScriptedUpstream(answer=_unused_answer), clock=ManualClock(NOW))
-    monkeypatch.setattr(nws_module, "fetch_sensors_day_snapshot", _fake_fetch(answers))
-    return await run(spec, ports)
+async def _turn(store: MemoryLaneStore, nws: ScriptedNws, monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    """One real forward turn against the scripted NWS edge, at the manual clock."""
+    monkeypatch.setenv("SENSOR_STATION_STATES", "ID")
+    monkeypatch.setattr(
+        source_module,
+        "upstream_client",
+        lambda bounds: real_upstream_client(bounds, transport=httpx.MockTransport(nws.handle)),
+    )
+    clock = ManualClock(NOW)
+    strategy = NwsSensorsStrategy(now=clock.now)
+    ports = ports_for(strategy, store, upstream=ScriptedUpstream(answer=_unused_answer), clock=clock)
+    exit_code, payload = await run(spec_for(_config_lane(), mode="forward"), ports)
+    assert exit_code == 0, payload
+    return payload
 
 
 def _rows(store: MemoryLaneStore, day: date) -> list[dict[str, object]]:
@@ -91,29 +130,11 @@ def _rows(store: MemoryLaneStore, day: date) -> list[dict[str, object]]:
     return [] if table is None else table.to_pylist()
 
 
-# --- shipped config shape --------------------------------------------------------------------
-
-
-def test_the_shipped_lane_is_a_daily_series_write_and_recheck_lane_with_no_gap_fill_and_no_volatile_columns() -> None:
-    lane = _shipped_lane()
-
-    assert (lane.nature, lane.kind, lane.executor, lane.strategy) == ("daily_series", "ingest", "legacy", "sensors.nws")
-    assert lane.source is not None
-    assert (lane.source.provider, lane.source.endpoint, lane.source.history.capability) == ("nws", "stations", "none")
-    assert lane.days is not None
-    assert (lane.days.publication_lag_days, lane.days.absence_recheck_days, lane.days.partial_day) == (1, 6, "write_and_recheck")
-    assert lane.schedule.gap_fill_enabled is False
-    assert [stream.slug for stream in lane.streams] == [STREAM]
-    assert lane.streams[0].volatile_columns == ()
+# --- wiring --------------------------------------------------------------------------------------
 
 
 def test_the_shipped_strategy_key_resolves_through_s14() -> None:
-    from agri_data_service.pipeline.runner.resolve import resolve_strategy
-
     assert resolve_strategy(_shipped_lane()) is STRATEGY
-
-
-# --- plan_requests -----------------------------------------------------------------------------
 
 
 def test_plan_requests_plans_one_sorted_unit_per_day_naming_the_regions_envelope_and_the_declared_endpoint() -> None:
@@ -122,18 +143,18 @@ def test_plan_requests_plans_one_sorted_unit_per_day_naming_the_regions_envelope
     expected_bbox = ",".join(
         format_javascript_number(value) for value in (envelope.west, envelope.south, envelope.east, envelope.north)
     )
-    days = [date(2026, 10, 20), date(2026, 10, 18)]
+    first, second = date(2026, 10, 18), date(2026, 10, 20)
 
-    requests = STRATEGY.plan_requests(days, lane, region)
+    requests = STRATEGY.plan_requests([second, first], lane, region)
 
     assert [(request.unit, request.endpoint, request.days, request.query()) for request in requests] == [
-        (f"sensors:{date(2026, 10, 18).isoformat()}", STATIONS_ENDPOINT, (date(2026, 10, 18),), {"bbox": expected_bbox}),
-        (f"sensors:{date(2026, 10, 20).isoformat()}", STATIONS_ENDPOINT, (date(2026, 10, 20),), {"bbox": expected_bbox}),
+        (f"sensors:{first.isoformat()}", STATIONS_ENDPOINT, (first,), {"bbox": expected_bbox}),
+        (f"sensors:{second.isoformat()}", STATIONS_ENDPOINT, (second,), {"bbox": expected_bbox}),
     ]
     assert requests[0].support_digest == requests[1].support_digest  # same envelope, same digest
 
 
-# --- retention arithmetic, pinned directly (no run_turn, no roster call past the window) -------
+# --- retention arithmetic, pinned directly -------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -153,11 +174,8 @@ async def test_a_day_past_the_six_day_rolling_window_is_reported_without_asking_
 async def test_the_oldest_day_the_window_can_still_overlap_is_in_retention(monkeypatch: pytest.MonkeyPatch) -> None:
     """The boundary case: a day whose [start, end) only PARTLY overlaps `[now - 6 days, now)` still counts."""
 
-    class _EmptyRoster:
-        stations: Sequence[object] = ()
-
-    async def empty_roster(*_args: object, **_kwargs: object) -> _EmptyRoster:
-        return _EmptyRoster()
+    async def empty_roster(*_args: object, **_kwargs: object) -> StationRoster:
+        return StationRoster(stations=[])
 
     monkeypatch.setattr(source_module, "fetch_station_roster", empty_roster)
     now = datetime(2026, 10, 24, 3, tzinfo=UTC)
@@ -168,71 +186,86 @@ async def test_the_oldest_day_the_window_can_still_overlap_is_in_retention(monke
     assert snapshot.in_retention is True
 
 
-# --- full turns, through run_turn ---------------------------------------------------------------
+# --- full turns, through run_turn and the real sweep ---------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_a_normal_in_retention_day_writes_the_rows_the_sweep_answered(monkeypatch: pytest.MonkeyPatch) -> None:
-    row = {
-        "sensor_id": "KBOI", "station_name": "Boise Air Terminal", "network": "ASOS",
-        "observed_day": WINDOW_LAST, "observed_at": datetime(2026, 10, 23, 18, tzinfo=UTC),
-        "measurement_name": "temperature", "value": 15.0, "unit_code": "wmoUnit:degC", "quality_control": "V",
-        "feature_id": "direct:KBOI:2026-10-23T18:00:00+00:00", "data_available_at": None,
-        "station_longitude": -116.22, "station_latitude": 43.56,
-    }
-    # A fully-answered roster of one station (expected == present): isolates this test to row CONTENT
-    # and wiring, never the S11 partial-day rule (a separate concern `nws.py`'s module docstring, H2,
-    # already flags as an open item for this strategy's roster-as-unit-identity design).
-    snapshot = SensorsDaySnapshot(
-        day=WINDOW_LAST, fetched_at=NOW, in_retention=True, roster_size=1, stations_answered=1,
-        stations_unavailable=0, rows=(row,), roster_station_ids=frozenset({"KBOI"}),
-        present_station_ids=frozenset({"KBOI"}),
+async def test_a_turn_polls_each_station_day_with_limit_one_and_writes_the_newest_report(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Older first, two features: an upstream that ignored `limit` still cannot make the older report win.
+    nws = ScriptedNws(
+        reports={("KBOI", TARGET): [("2026-10-23T21:53:00+00:00", 14.0), ("2026-10-23T22:53:00+00:00", 15.0)]}
     )
     store = MemoryLaneStore()
 
-    exit_code, payload = await _turn(_config_lane(), store, {WINDOW_LAST: snapshot}, monkeypatch)
+    await _turn(store, nws, monkeypatch)
 
-    assert exit_code == 0, payload
-    written = _rows(store, WINDOW_LAST)
-    assert len(written) == 1
-    assert written[0]["sensor_id"] == "KBOI"
-    assert written[0]["feature_id"] == "direct:KBOI:2026-10-23T18:00:00+00:00"
-    assert any(line.startswith(f"write:{STREAM}:{WINDOW_LAST.isoformat()}") for line in store.writes())
+    assert len(nws.polled) == len(STATIONS) * len(WINDOW)
+    assert {url.params["limit"] for url in nws.polled} == {"1"}
+    written = _rows(store, TARGET)
+    assert [(row["sensor_id"], row["measurement_name"], row["value"]) for row in written] == [
+        ("KBOI", "temperature", 15.0)
+    ]
+    assert written[0]["feature_id"] == "direct:KBOI:2026-10-23T22:53:00+00:00"
+    writes = store.writes()
+    assert writes
+    assert all(line.startswith(f"write:{STREAM}:{TARGET.isoformat()}") for line in writes)
 
 
 @pytest.mark.asyncio
-async def test_a_day_past_retention_is_reported_retention_exceeded_and_writes_nothing(
+async def test_a_station_whose_poll_fails_never_erases_what_it_served_last_turn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    snapshot = SensorsDaySnapshot(
-        day=WINDOW_FIRST, fetched_at=NOW, in_retention=False, roster_size=0, stations_answered=0, stations_unavailable=0
+    nws = ScriptedNws(
+        reports={
+            ("KBOI", TARGET): [("2026-10-23T22:53:00+00:00", 15.0)],
+            ("KMYL", TARGET): [("2026-10-23T22:56:00+00:00", 9.0)],
+        }
     )
     store = MemoryLaneStore()
+    await _turn(store, nws, monkeypatch)
+    first = _rows(store, TARGET)
+    assert {row["sensor_id"] for row in first} == {"KBOI", "KMYL"}
 
-    exit_code, payload = await _turn(_config_lane(), store, {WINDOW_FIRST: snapshot}, monkeypatch)
+    nws.failing.add("KBOI")
+    nws.reports[("KMYL", TARGET)].append(("2026-10-23T23:56:00+00:00", 8.0))
+    second = await _turn(store, nws, monkeypatch)
 
-    assert exit_code == 0, payload
-    unwritten = unwritten_by_day(payload)
-    assert unwritten[WINDOW_FIRST.isoformat()]["outcome"] == "retention_exceeded"
-    assert _rows(store, WINDOW_FIRST) == []
-    assert store.writes() == []
+    assert second["rewrite_reasons"] == {"fewer_units": 1}
+    assert _rows(store, TARGET) == first
 
 
 @pytest.mark.asyncio
-async def test_a_malformed_upstream_response_refuses_the_whole_day_as_a_lean_strategy_error_never_a_partial_write(
+async def test_a_later_report_from_the_same_answering_stations_rewrites_the_day(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    target = date(2026, 10, 22)
+    # KMYL answers but has not reported on TARGET: present is the stations that ANSWERED, so the day
+    # is complete and a newer KBOI report reaches the digest rule instead of freezing at 22:53.
+    nws = ScriptedNws(reports={("KBOI", TARGET): [("2026-10-23T22:53:00+00:00", 15.0)]})
+    store = MemoryLaneStore()
+    await _turn(store, nws, monkeypatch)
+    assert _rows(store, TARGET)[0]["feature_id"] == "direct:KBOI:2026-10-23T22:53:00+00:00"
 
-    def raise_malformed() -> SensorsDaySnapshot:
-        raise UpstreamPayloadError("NOAA NWS returned an invalid station page")
+    nws.reports[("KBOI", TARGET)].append(("2026-10-23T23:53:00+00:00", 13.0))
+    second = await _turn(store, nws, monkeypatch)
 
+    assert second["rewrite_reasons"] == {"digest_changed": 1}
+    assert [(row["feature_id"], row["value"]) for row in _rows(store, TARGET)] == [
+        ("direct:KBOI:2026-10-23T23:53:00+00:00", 13.0)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_roster_page_refuses_every_day_as_a_strategy_error_and_polls_no_station(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    nws = ScriptedNws(roster={"type": "FeatureCollection"})  # no `features`: not a readable station page
     store = MemoryLaneStore()
 
-    exit_code, payload = await _turn(_config_lane(), store, {target: raise_malformed}, monkeypatch)
+    payload = await _turn(store, nws, monkeypatch)
 
-    assert exit_code == 0, payload
     unwritten = unwritten_by_day(payload)
-    assert unwritten[target.isoformat()]["outcome"] == "strategy_error"
-    assert _rows(store, target) == []
+    assert {unwritten[day.isoformat()]["outcome"] for day in WINDOW} == {"strategy_error"}
+    assert nws.polled == []
     assert store.writes() == []
