@@ -455,3 +455,77 @@ this lane needs to write to object storage a second time. This is a
 recommendation grounded in the existing architecture's own division of
 concern, offered for whoever plans S18/S19 to confirm or override — it is not
 asserted here as settled.
+
+## 8. Config-lane strategy (`s-watersheds`, track `config_driven_ingestion_20260926`)
+
+**Phase 4, dark.** `services/agri-data-service/lanes/watersheds-direct-forward.toml` ships
+`executor = "legacy"` and `nature = "static_lookup"`, same id as the already-live legacy executor
+lane (`execution/lane_ids.py::WATERSHEDS_DIRECT_LANE_ID`, dispatched daily at 03:00 UTC through
+`pipeline/direct/watersheds/forward.py`). The TOML changes nothing about that path today; it
+registers the config-lane strategy this lane cuts over to at G6, where the plan names it one of
+the "10 migrated active lanes" the `--compare` check runs against (plan.md Phase 5).
+
+**Strategy key `watersheds.nhdplus`**
+(`pipeline/lanes/watersheds/nhdplus.py::WatershedsNhdplusStrategy`). It wraps the SAME
+`source.py`/`watermark.py` surface §1-§7 above describe, in the runner's `IngestStrategy` +
+`EdgeProbingStrategy` Protocols (`pipeline/runner/contract.py`), without rewriting either extracted
+module.
+
+- **`probe_edge` is mandatory here, not optional.** `pipeline/runner/turn.py::_validate` refuses to
+  build a turn for ANY `static_lookup` lane whose strategy does not implement `probe_edge` — the
+  runner's `_static_forward` reads the version it owes entirely from the probe, not from
+  `plan_requests`. This strategy's `probe_edge` is a thin wrapper over
+  `watermark.py::read_watersheds_source_watermark`.
+- **One logical unit per turn, by necessity, not convenience.** NHDPlus_HR's own two-phase,
+  dynamically-batched query shape (§1 above) cannot be pre-planned into one `SourceRequest` per
+  batch, because `plan_requests` is synchronous and the batch count is unknowable before the id
+  phase has already answered over the network. `nhdplus.py::plan_requests` therefore plans exactly
+  ONE "snapshot" unit, and its `fetch` reuses `source.py::fetch_watersheds_snapshot` (which already
+  owns the whole walk) to answer it — matching the legacy writer's own documented choice that "the
+  whole walk is the retry unit" (`pipeline/direct/watersheds/forward.py`'s `--retry-attempts` note).
+- **Fetches bypass the turn's governed `ProviderClient` on purpose.** This is the Wave O-named
+  alternative ("fetches only through the provider client OR the existing source module's
+  upstream_client"): `usgs-nhdplus` is `weighted = false`
+  (`lanes/_providers/usgs-nhdplus.toml`), so the runner's own budget ledger only ever sees this ONE
+  logical unit; the real ~47-request network cost is invisible to it by design.
+- **A stale turn pays for the walk twice, a current one once.** `_static_forward` always calls
+  `probe_edge` first; only when the watermark it reports is newer than what is served does it call
+  `plan_requests`/`fetch`, paying for the SAME ~9,400-basin walk a second time (there is no cheaper
+  attribute-only probe — §1's "Query mechanism" again). Unlike the legacy writer's
+  `_WatershedsSnapshotCache`, this strategy does not try to share one fetch across the two runner
+  phases; see `nhdplus.py`'s module docstring for why that cache is not safe to copy onto a
+  process-wide strategy singleton, and why the measured one-load-day history (§2) makes the doubled
+  cost immaterial in practice.
+- **`feature_id` MUST equal the legacy writer's `direct:<huc12>` prefix exactly**
+  (`nhdplus.py::DIRECT_FEATURE_ID_PREFIX`, duplicated by value from
+  `pipeline/direct/watersheds/rows.py::DIRECT_FEATURE_ID_PREFIX` since a strategy may never import
+  `pipeline/direct/**`), or G6's `--compare` parity check sees a delta on every row of the already-
+  published extent.
+- **Geometry conversion is also a deliberate duplicate**, in `pipeline/lanes/watersheds/geometry.py`:
+  the same bare `ST_GeomFromGeoJSON`/`ST_AsWKB` DuckDB-spatial round trip as
+  `pipeline/direct/watersheds/support.py`, with the identical no-repair-chain and
+  empty-geometry-refuses-the-whole-population rules, for the same reason — byte-identical WKB is
+  what the G6 compare needs, and `pipeline/direct/**` is not importable from a strategy.
+
+**What this leaves open, honestly recorded rather than silently worked around:**
+
+1. **The same-day revision case is not reachable through this runner path.** The legacy writer
+   brackets a watermark read before and after its write specifically to catch a source change
+   landing on the SAME watermark day (`foundation/parquet/lane_contract.py::_resolve_watermark_day`,
+   comparing export instant against watermark instant). The NEW config-lane `_static_forward`
+   decides currency by a coarser day-only comparison
+   (`served_day >= watermark_day`, `pipeline/runner/turn.py`), which the runner owns and this
+   strategy cannot change. A genuinely same-day revision — a basin whose `loaddate` moves within the
+   calendar day already served — would read as `current` and never be re-fetched under the config
+   executor, unlike under the legacy one. This repo has never observed that case in production (§3's
+   measured one-load-day history), so it is recorded here as a design gap in the new runner's
+   `static_lookup` path generically, not something `nhdplus.py` can or should paper over.
+2. **The NHDPlus_HR rate-limit TODO in `lanes/_providers/usgs-nhdplus.toml` is left open.** No
+   evidence of an undocumented request-rate limit exists anywhere in this tree beyond the measured
+   payload/timeout ceilings already recorded in §1; the TODO is left for whoever next probes the
+   live endpoint to resolve, per the brief's own instruction not to invent evidence that is not
+   there.
+3. **The CA17 `--republish-current` flag and its owner-approval gate (spec §18.5 CQ-8) are a
+   different task's work**, landing in `pipeline/runner/turn.py`/`__main__.py` at G1 (already present
+   in the tree as of this slice, generically for every `static_lookup` lane) — this slice ships no
+   changes to that mechanism and relies on it unmodified.
