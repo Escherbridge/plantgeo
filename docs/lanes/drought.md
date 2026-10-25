@@ -74,3 +74,48 @@ by design; the caller records the absence rather than working around the refusal
   a wrong floor invents years of phantom gap-days.
 - `dm_category` is expected to be D0–D4 (0–4); **the repo does not constrain it**, so a reader
   should not assume the range without checking.
+
+## 8. Config-lane strategy (`s-drought`, track `config_driven_ingestion_20260926`)
+
+A dark `release_series` TOML and strategy now sit beside the legacy direct writer, built against the
+Phase 4 "frozen" runner contract:
+
+- **Files.** `services/agri-data-service/lanes/drought-direct-forward.toml` (new, `executor =
+  "legacy"`, `enabled = true`); `pipeline/lanes/drought/usdm_releases.py` (strategy key
+  `drought.usdm_releases`; `usdm.py` is a **reserved** moved source module with no `STRATEGY`, so the
+  strategy lives in this distinct leaf); `pipeline/lanes/drought/geometry.py` (the base-rung DuckDB
+  spatial repair chain, duplicated — not imported — from `pipeline/direct/drought/support.py`, since
+  this package may never import `pipeline/direct/**`).
+- **404 is `unsettled`, never `absent`, in the runner's own vocabulary.** USDM's documented "not
+  published yet" 404 is caught inside `fetch()` itself and returned as an ordinary successful
+  `SourceResponse` (`payload=None`) — it never reaches `pipeline/runner/fetch.py::classify_fetch_error`,
+  which has no 404 case and would otherwise fold it into the generic `"strategy_error"` bucket (an
+  upstream/code-fault word, wrong for an entirely expected weekly state). `settle()` then applies the
+  contract's own vocabulary: `Unsettled(reason="unsettled")` when nothing proves USDM's cadence moved
+  past this Tuesday, or `Absent(...)` — the release_series "mirrored-past" pattern, read via the
+  contract's `DayContext.later_published_day` — when a later Tuesday is already published. Either way
+  the exit code stays 0 (`pipeline/runner/exits.py`: unwritten days are a report fact, never an exit
+  code).
+- **Cron narrowed to the release window.** The legacy lane fires hourly every day
+  (`execution/lane_specs.py` `"45 * * * *"`); the new TOML keeps the hourly `:45` minute but narrows
+  the day-of-week field to Thursday–Saturday UTC (`"45 * * * 4,5,6"`), matching USDM's Thursday
+  release for the preceding Tuesday plus the slack `publication_lag_days = 4` already budgets
+  (Tuesday + 4 = Saturday). Trade-off stated rather than hidden: a release delayed past Saturday
+  waits for the following Thursday window rather than being retried every hour through the rest of
+  that week; accepted given the registration's own measured 209/209 continuous weekly releases
+  (2022-08-09..2026-08-18) and because `absence_recheck_days = 56` (matching the legacy writer's own
+  `DROUGHT_ABSENCE_RECHECK_WEEKS = 8`) keeps re-examining an unsettled Tuesday across several release
+  windows, not only the one it first came up owed in.
+- **Known gap: USDM's per-release resource is a dated URL PATH segment**
+  (`ingest/usdm.py::usdm_source_url`), never a query parameter. `pipeline/runner/binding.py::
+  ConfigProviderClient` and `ingest/provider_client.py::provider_endpoint_request` build every
+  request URL as a provider's declared (fixed) `path` plus a `?query` string — there is no
+  declared-endpoint shape that can express a path segment varying per request. This is the identical
+  gap `lanes/_providers/nasa-firms.toml`'s own TODO names for FIRMS's path-segment API key. The
+  strategy is otherwise complete and tested (`tests/lanes/drought/test_usdm_releases.py`), but the
+  TOML cannot move to `executor = "config"` until a provider-client path-segment transport is added —
+  out of this slice's owned files (`pipeline/runner/binding.py`, `ingest/provider_client.py` are
+  framework files no swarm lane may edit). Reported to `i-coordinator`.
+- **No probe_edge needed.** `lanes/_providers/usdm.toml` declares `weighted = false`; S19's probe_edge
+  rule (`foundation/lane_config/models.py::lane_requires_probe_edge`) binds only a `refuse` lane on a
+  *weighted* provider, so drought is exempt despite its forward cron firing more than once a day.
