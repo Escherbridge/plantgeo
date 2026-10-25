@@ -291,12 +291,14 @@ that genuinely cannot forecast declares `horizon: none` and ships no
   release days of §3 (`MTBS_ANNUAL_RELEASE_DATES`), one unit per day, every cohort of the day counted
   and paged whole inside the region's `burn_severity` envelope; a cohort with no fire in the envelope is
   a governed absence. Lag 7 and a 14-day recheck keep the daily forward fire at zero sends; the governed
-  days are gap-fill's once a gate enables it (caps 40 forward, 160 gap-fill, in logical requests).
+  days are gap-fill's once a gate enables it (caps 60 forward, 160 gap-fill, in logical requests).
 - **What it does not cover: the weekly current capture** (`mtbs-current-snapshot/v1`, published the UTC
   day after capture). **CA7 verdict: no successor**, routed to the owner as CQ-9. The frozen runner
-  contract cannot stamp the `mtbs-current-snapshot` source binding serving requires for every
-  burn-severity day from 2026-09-11, has no port for the archived response graph and manifest, and can
-  only date a capture on the day it ran. Under the CQ-9 carve-out this lane stays legacy through G6.
+  contract has no sanctioned port for what the capture needs: its writer cannot stamp the
+  `mtbs-current-snapshot` source binding serving requires for every burn-severity day from 2026-09-11;
+  it hands a strategy no evidence store for the archived response graph and manifest (reaching the bucket
+  through `pipeline/parquet` directly would bypass the write permit, `--compare` and checkpoints); and it
+  can only date a capture on the day it ran. Under the CQ-9 carve-out this lane stays legacy through G6.
   Full argument and the operational consequences: `pipeline/lanes/burn_severity/AGENTS.md`, "CA7: no
   capture successor".
 - **Watch item for fire years 2023 and 2024**: their completion releases will be dated after
@@ -304,3 +306,8 @@ that genuinely cannot forecast declares `horizon: none` and ships no
   config strategy refuses those days before any send and reports them every fire; how a completed
   cohort dated in the snapshot era is served is an owner decision, needed before either year is added
   to `MTBS_ANNUAL_RELEASE_DATES`.
+- **Pre-cut-over check**: production `INGEST_BBOX` must equal the region's
+  `sub_envelopes["burn_severity"]` (`-125,42,-111,49`). The legacy historical forward pulls inside
+  `INGEST_BBOX` while the config strategy pulls inside the region envelope; if they differ, the G6
+  compare shows a delta on every governed day and every day the config path re-asks is rewritten with a
+  different footprint. (The legacy daily command already refuses unless the two are equal.)

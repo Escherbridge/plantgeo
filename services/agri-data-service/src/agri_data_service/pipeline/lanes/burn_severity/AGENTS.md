@@ -14,7 +14,9 @@ The `s-burn-severity` swarm slice builds the config-lane strategy beside these m
 | `mtbs_releases.py` | `STRATEGY` for `lanes/burn-severity-direct-forward.toml` (`burn_severity.mtbs_releases`): historical releases only |
 | `release_rows.py` | one release day's base-rung table and its DuckDB polygon repair (the config-lane successor of legacy `rows.py` + `support.py`) |
 
-Imports: `foundation`, `ingest`, `warehouse`, `pipeline/parquet` and this package only.
+Imports: `foundation`, `ingest`, `warehouse`, `pipeline/parquet` and this package; `mtbs_releases.py`
+also imports `execution.contracts` (`MAX_SOURCE_GEOJSON_FEATURES`) and `pipeline/runner/contract.py`,
+both of which the layer contract permits (`pipeline` forbids only `planes` and `interface`; S14).
 Never another layer's `pipeline/lanes/<layer>/` and never `pipeline/direct/**`
 (`tests/test_direct_extraction_shims.py`, `tests/test_layer_import_contract.py`).
 **Monkeypatch the module here, never its shim**: patching the shim rebinds only the shim's name.
@@ -47,13 +49,22 @@ collide with it, hence `mtbs_releases.py`.
   on `lanes/_providers/mtbs-edw.toml`. The legacy `ingest/mtbs.py::fetch_release_features` takes a raw
   `httpx.AsyncClient`, so the paging is restated here over `ProviderClient`, with the same three
   truncation signals (the service count, `exceededTransferLimit`, the short page), the same duplicate
-  Fire_ID refusal and the same caps (`MAX_RELEASE_PAGES`, `MAX_SOURCE_GEOJSON_FEATURES`). One
-  difference: a page ending exactly on the authoritative count stops without a trailing empty page.
-- **The host's oversized-page 500 halves the window** (50 -> 25 -> 12 -> 6 -> 5) inside the unit,
-  because that refusal is a response-size limit, not an outage: `_page` catches the client's
-  `SourceUnavailableError` and asks a narrower page. At 5 rows it re-raises, and the runner's ladder
-  takes over (3 attempts, then `upstream_unavailable`). An ArcGIS error document carrying a 5xx `code`
-  reads as the same refusal; any other error document is a strategy refusal, never an empty cohort.
+  Fire_ID refusal, the same caps (`MAX_RELEASE_PAGES`, `MAX_SOURCE_GEOJSON_FEATURES`) and legacy's stop
+  rule (a short page with no service flag). A page ending exactly on the count therefore asks one more,
+  empty page: that page is what catches a fire added between the count and the paging with the
+  truncation flag off (`test_a_fire_added_between_the_count_and_the_paging_fails_loud`). A cheaper
+  "stop at the count" rule was tried and dropped in review because it published that case silently.
+- **Only an oversized-page signal halves the window** (50 -> 25 -> 12 -> 6 -> 5) inside the unit: an
+  ArcGIS error document with a 5xx `code` (`OversizedPageError`) or the client's byte cap
+  (`ingest/http.py::UpstreamPayloadTooLargeError`). At 5 rows the document case re-raises as
+  `SourceUnavailableError` and the runner's ladder takes over (3 attempts, then `upstream_unavailable`).
+  A 5xx STATUS or a transport failure is an outage and goes to the runner's ladder at once, never
+  narrowing a page. Any other error document is a strategy refusal, never an empty cohort.
+  **Watch before cut-over:** `ingest/mtbs.py` records that the live host refuses an oversized window
+  with HTTP 500 status, which `ProviderClient` reports as the same `SourceUnavailableError` as a real
+  outage (it carries no status). The legacy walk halves on that; this strategy cannot tell it apart, so
+  a cohort heavier than the measured 50-row safe page (10.7 MB on the 2020 cohort) would read
+  `upstream_unavailable` here. A status on `SourceUnavailableError` is a contract change, not this slice's.
 - **An honest zero is a governed absence**: `returnCountOnly` = 0 for every cohort of the day settles
   `Absent` with that proof (the legacy adapter's rule: a cohort with no fire inside the envelope is a
   permanent fact, never "come back later"). No page is requested for a zero count.
@@ -70,17 +81,25 @@ collide with it, hence `mtbs_releases.py`.
 `release_rows.py` restates legacy `pipeline/direct/burn_severity/rows.py` and `support.py` (same
 columns, same MakeValid -> CollectionExtract(3) -> Multi chain, same DuckDB caps with spilling
 disabled, same whole-day refusal on an empty repair or a Fire_ID repeated across cohorts) because no
-`pipeline/lanes/**` module may import `pipeline/direct/**`. The two copies coexist until 7D deletes the
-legacy package; after that this is the only one. `allowed_client_exposure` stays a hard `False`.
+`pipeline/lanes/**` module may import `pipeline/direct/**`. `allowed_client_exposure` stays a hard `False`.
+Nothing structural ties the two copies, so `tests/lanes/burn_severity/test_release_rows_parity.py` pins
+them: the SQL, the three DuckDB caps and the feature-id prefix are equal, and both builders produce an
+equal table for the same records. **Cleanup item (7S):** move the legacy `rows.py` + `support.py` here
+and leave re-export shims (CA14), which retires the parity test; not done mid-swarm because it crosses
+the `pipeline/direct/**` boundary this slice only reads. No module here constructs `TerminalEvidence`
+(`tests/lanes/burn_severity/test_no_terminal_evidence.py`); the legacy `publish_snapshot.py` does, legitimately.
 
 ### Budget and cadence arithmetic
 
-Unweighted provider: the caps count logical requests. Per release day: per cohort, 1 count + ceil(n/50)
-pages, plus one send per halving. Measured layer: 541 fires over five cohorts (`docs/lanes/burn-severity.md`
-§5), about 108 a cohort, so a typical day is 1 + 3 = 4 sends. Worst case (about 130 fires, every page
-halved to 5 rows, four halvings): 1 + 26 + 4 + slack = 32. Forward cap 40 = one newly governed day at the
-worst case plus margin; gap-fill cap 160 = the five governed days at the worst case. Today's spend: forward
-0 a day (no governed day in its window); a full gap-fill re-pull of all five days ~20 sends, once.
+Unweighted provider: the caps count logical requests. Per release day: per cohort, 1 count +
+floor(n/page) + 1 pages (the short or empty page proves the end), plus one send per halving. Measured
+basis: the 2026-08-05 load held 478 rows over four cohorts (`docs/lanes/burn-severity.md` §5), about 120
+a cohort, so a typical day is 1 + 3 = 4 sends. Worst case, a 134-fire cohort paged at 5 rows after four
+halvings: 1 + 4 + 27 = 32. A runner retry re-sends already-charged requests at no budget cost. Forward
+cap 60: one newly governed day at the worst case with margin; it breaches when one day needs more than
+60 sends (a cohort above about 275 fires at 5-row pages, or 2,950 at 50-row pages). Gap-fill cap 160 =
+the five governed days at the worst case. Today's spend: forward 0 a day (no governed day in its
+window); a full gap-fill re-pull of all five days ~20 sends, once.
 
 ### Known limits, recorded rather than hidden
 
@@ -102,9 +121,9 @@ worst case plus margin; gap-fill cap 160 = the five governed days at the worst c
 ## CA7: no capture successor
 
 **Verdict: no successor; routed to the owner as CQ-9** (spec §4.8.9 CA7). The weekly current capture
-(`pipeline/direct/burn_severity/{capture,current_snapshot,stage,publish_snapshot,daily}.py`) cannot be
-carried by the frozen runner contract without a receipt or descriptor change, which CA7 forbids. The
-surfaces that refuse it, in order of severity:
+(`pipeline/direct/burn_severity/{capture,current_snapshot,stage,publish_snapshot,daily}.py`) has no
+sanctioned port in the frozen runner contract: carrying it needs a receipt or descriptor change, which
+CA7 forbids. The surfaces that refuse it, in order of severity:
 
 1. **The served source binding.** Serving admits a burn-severity day on or after 2026-09-11 only when
    its base source export has `origin = "mtbs-current-snapshot"` and a `mtbs-current-snapshot-binding/v1`
@@ -112,10 +131,12 @@ surfaces that refuse it, in order of severity:
    `parquet_ops/mtbs_snapshot_catalog.py::_source`). The runner's writer stamps every day through
    `pipeline/parquet/gap_fill_day.py` with the generic `POSTGRES_DAY_EXPORT_ORIGIN` and a fixed detail;
    `Written`/`rows` carry no origin or detail. Every config-written snapshot would be refused at read.
-2. **No storage port for evidence.** The capture must durably archive every decoded response entity
+2. **No sanctioned port for evidence.** The capture must durably archive every decoded response entity
    (`mtbs-staging/blobs/<sha>`), the source manifest the catalogue re-reads (`mtbs-snapshots/manifest=`),
-   the CAS stage queue (`_STAGED.json`) and check records. A strategy imports only `contract.py` and
-   holds only a `ProviderClient`.
+   the CAS stage queue (`_STAGED.json`) and check records. The contract hands a strategy only a
+   `ProviderClient`. A strategy could physically reach the bucket by importing `pipeline/parquet`
+   (`ObjectStore`, `BotoAvailabilityStorage`), but those writes would bypass the runner's write permit,
+   `--compare` (which must never write) and checkpoint discipline, so it is not a port this slice may use.
 3. **Day semantics.** A snapshot is dated the UTC day AFTER capture closes, and serving requires its rows'
    `observed_day` and `data_available_at` to equal that day (`serving.py::_snapshot_rows`). The runner
    settles days at or before its edge from answers fetched in the same turn, so it could only date a
