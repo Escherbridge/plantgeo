@@ -109,7 +109,7 @@ async def test_a_gap_fill_turn_publishes_each_governed_release_day_as_its_whole_
 
 
 async def test_a_page_the_host_refuses_as_oversized_halves_until_it_answers() -> None:
-    """The host 500s a 50-row page; the window halves to 25 and the cohort still completes in one turn."""
+    """The host refuses a 50-row page as oversized; the window halves to 25 and the cohort completes in one turn."""
     world = MtbsWorld(fires={2018: cohort(2018, 30)}, max_page_rows=25)
     store = MemoryLaneStore()
 
@@ -119,6 +119,66 @@ async def test_a_page_the_host_refuses_as_oversized_halves_until_it_answers() ->
     assert world.pages_for(2018) == [(0, 50), (0, 25), (25, 25)]
     assert store.tables[(STREAM, RELEASES[2018])].num_rows == 30
     assert RELEASES[2018].isoformat() not in unwritten_by_day(payload)
+
+
+async def test_an_oversized_page_halves_to_five_rows_then_hands_the_unit_to_the_runner_ladder() -> None:
+    """The host refuses even a 5-row page: 50 -> 25 -> 12 -> 6 -> 5, then `upstream_unavailable` after the ladder."""
+    world = MtbsWorld(fires={2018: cohort(2018, 30)}, max_page_rows=4)
+    store = MemoryLaneStore()
+
+    exit_code, payload = await _turn(_cut_over(gap_fill=True), world, store, mode="gap-fill")
+
+    assert exit_code == 0, payload
+    ladder = [(0, 50), (0, 25), (0, 12), (0, 6), (0, 5)]
+    pages = world.pages_for(2018)
+    # Each runner attempt walks the same halving again; a narrowed window never re-widens within one.
+    assert pages[: len(ladder)] == ladder
+    assert set(pages) == set(ladder)
+    assert len(pages) % len(ladder) == 0
+    assert len(pages) > len(ladder)
+    assert unwritten_by_day(payload)[RELEASES[2018].isoformat()]["reason"] == "upstream_unavailable"
+    assert (STREAM, RELEASES[2018]) not in store.statuses
+
+
+async def test_a_real_page_outage_never_narrows_the_window() -> None:
+    """A 503 is an outage, not an oversized page: every attempt re-asks the same 50-row page, then gives up."""
+    world = MtbsWorld(fires={2018: cohort(2018, 30)}, page_outage_status=503)
+    store = MemoryLaneStore()
+
+    exit_code, payload = await _turn(_cut_over(gap_fill=True), world, store, mode="gap-fill")
+
+    assert exit_code == 0, payload
+    pages = world.pages_for(2018)
+    assert pages
+    assert set(pages) == {(0, 50)}
+    assert unwritten_by_day(payload)[RELEASES[2018].isoformat()]["reason"] == "upstream_unavailable"
+
+
+async def test_a_cohort_ending_exactly_on_a_page_asks_one_more_page_and_still_publishes() -> None:
+    """Exactly 50 fires: the full page is not taken as the end; the empty page after it is."""
+    world = MtbsWorld(fires={2018: cohort(2018, 50)})
+    store = MemoryLaneStore()
+
+    exit_code, payload = await _turn(_cut_over(gap_fill=True), world, store, mode="gap-fill")
+
+    assert exit_code == 0, payload
+    assert world.pages_for(2018) == [(0, 50), (50, 50)]
+    assert store.tables[(STREAM, RELEASES[2018])].num_rows == 50
+
+
+async def test_a_fire_added_between_the_count_and_the_paging_fails_loud() -> None:
+    """Counted 50, paged 51 with no truncation flag: the page after the full one exposes it; nothing is written."""
+    world = MtbsWorld(fires={2018: cohort(2018, 51)}, count_overrides={2018: 50})
+    store = MemoryLaneStore()
+
+    exit_code, payload = await _turn(_cut_over(gap_fill=True), world, store, mode="gap-fill")
+
+    assert exit_code == 0, payload
+    assert world.pages_for(2018) == [(0, 50), (50, 50)]
+    moved = unwritten_by_day(payload)[RELEASES[2018].isoformat()]
+    assert moved["reason"] == "strategy_error"
+    assert "paged 51 features but the service counts 50" in str(moved["detail"])
+    assert (STREAM, RELEASES[2018]) not in store.statuses
 
 
 async def test_a_capture_short_of_the_service_count_is_never_published() -> None:

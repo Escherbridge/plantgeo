@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final
 
 from agri_data_service.execution.contracts import MAX_SOURCE_GEOJSON_FEATURES
+from agri_data_service.ingest.http import UpstreamPayloadTooLargeError
 from agri_data_service.ingest.mtbs import (
     DEFAULT_PAGE_SIZE,
     MAX_RELEASE_PAGES,
@@ -71,6 +72,10 @@ Parameters = tuple[tuple[str, str], ...]
 
 class BurnSeverityReleaseError(RuntimeError):
     """A release day this strategy will not ask MTBS for, or an answer it cannot attribute to one."""
+
+
+class OversizedPageError(Exception):
+    """The host refused a page as too large (an ArcGIS error document with a 5xx `code`): narrow and re-ask."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,7 +144,7 @@ def release_unit(day: date) -> str:
 
 
 async def _query(client: ProviderClient, parameters: Parameters) -> tuple[dict[str, Any], ProviderResponse]:
-    """One send; an ArcGIS error document with a 5xx code reads as `SourceUnavailableError`, any other as a refusal."""
+    """One send; an ArcGIS error document with a 5xx code is `OversizedPageError`, any other a refusal."""
     response = await client.get(ENDPOINT, dict(parameters))
     try:
         payload = json.loads(response.body)
@@ -151,7 +156,7 @@ async def _query(client: ProviderClient, parameters: Parameters) -> tuple[dict[s
     if error:
         code = error.get("code") if isinstance(error, dict) else None
         if isinstance(code, int) and not isinstance(code, bool) and code >= ARCGIS_SERVER_ERROR_MINIMUM:
-            raise SourceUnavailableError(f"MTBS answered an ArcGIS error document with code {code}")
+            raise OversizedPageError(f"MTBS answered an ArcGIS error document with code {code}")
         raise MtbsTruncatedCaptureError(f"MTBS answered an ArcGIS error document with code {code!r}")
     return payload, response
 
@@ -159,17 +164,26 @@ async def _query(client: ProviderClient, parameters: Parameters) -> tuple[dict[s
 async def _page(
     client: ProviderClient, ignition_year: int, envelope: Parameters, *, offset: int, size: int
 ) -> tuple[list[dict[str, Any]], bool, int, ProviderResponse]:
-    """One page, halving the window down to `MIN_PAGE_SIZE` while the host refuses an oversized polygon answer."""
+    """One page, halving the window down to `MIN_PAGE_SIZE` only on an oversized-page signal.
+
+    The two signals are the ArcGIS error document (`OversizedPageError`) and the client's byte cap
+    (`UpstreamPayloadTooLargeError`). A 5xx status or a transport failure is an outage: it propagates at
+    once to the runner's ladder, never narrowing a page.
+    """
     while True:
         try:
             payload, response = await _query(
                 client, page_parameters(ignition_year, envelope, offset=offset, size=size)
             )
-        except SourceUnavailableError:
-            if size <= MIN_PAGE_SIZE:
-                raise
-            size = max(MIN_PAGE_SIZE, size // 2)
-            continue
+        except (OversizedPageError, UpstreamPayloadTooLargeError) as error:
+            if size > MIN_PAGE_SIZE:
+                size = max(MIN_PAGE_SIZE, size // 2)
+                continue
+            if isinstance(error, OversizedPageError):
+                raise SourceUnavailableError(
+                    f"MTBS still refused a {MIN_PAGE_SIZE}-row page at offset {offset} as oversized"
+                ) from error
+            raise
         features = payload.get("features") or []
         if not isinstance(features, list):
             raise MtbsTruncatedCaptureError(f"MTBS page at offset {offset} returned a non-list `features` member")
@@ -178,9 +192,9 @@ async def _page(
 
 
 async def _page_cohort(
-    client: ProviderClient, ignition_year: int, envelope: Parameters, *, count: int
+    client: ProviderClient, ignition_year: int, envelope: Parameters
 ) -> tuple[list[dict[str, Any]], datetime | None]:
-    """Page a cohort of `count` features to completion behind the count, the service flag and the short page."""
+    """Page a cohort to completion behind the service flag and the short page; the caller holds it to the count."""
     features: list[dict[str, Any]] = []
     seen: set[str] = set()
     offset, size, previous_truncated = 0, DEFAULT_PAGE_SIZE, False
@@ -204,8 +218,9 @@ async def _page_cohort(
         features.extend(page)
         offset += len(page)
         previous_truncated = truncated
-        # The count is authoritative, so a page ending exactly on it needs no trailing empty page to prove the end.
-        if not truncated and (len(page) < size or offset >= count):
+        # Legacy's stop rule: a short page AND no service flag. A page ending exactly on the count still asks
+        # one more page, because that page is what catches a fire added between the count and the paging.
+        if len(page) < size and not truncated:
             break
     else:
         raise MtbsTruncatedCaptureError(
@@ -229,7 +244,7 @@ async def _fetch_cohort(
     features: list[dict[str, Any]] = []
     retrieved_at = response.retrieved_at
     if count:
-        features, paged_at = await _page_cohort(client, ignition_year, envelope, count=count)
+        features, paged_at = await _page_cohort(client, ignition_year, envelope)
         retrieved_at = paged_at or retrieved_at
     if len(features) != count:
         raise MtbsTruncatedCaptureError(
@@ -347,6 +362,7 @@ __all__ = [
     "BurnSeverityReleaseError",
     "CohortAnswer",
     "MtbsReleaseStrategy",
+    "OversizedPageError",
     "ReleaseDayAnswer",
     "count_parameters",
     "envelope_parameters",

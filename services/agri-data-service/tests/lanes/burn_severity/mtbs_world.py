@@ -2,8 +2,9 @@
 
 The provider edge is the only thing faked: the real `ConfigProviderClient` sends to it through the real
 `lanes/_providers/mtbs-edw.toml`. It answers `returnCountOnly` with the cohort's count and a GeoJSON page
-by `resultOffset`/`resultRecordCount` in `fire_id` order, and refuses a page wider than `max_page_rows`
-with HTTP 500, as the live host refuses an oversized polygon answer (`ingest/mtbs.py::DEFAULT_PAGE_SIZE`).
+by `resultOffset`/`resultRecordCount` in `fire_id` order. A page wider than `max_page_rows` is refused
+with an HTTP 200 ArcGIS error document (code 500), the host's oversized-page answer; `page_outage_status`
+makes every page request fail with that HTTP status instead, a real outage.
 """
 
 from __future__ import annotations
@@ -55,11 +56,12 @@ def cohort(ignition_year: int, size: int) -> list[dict[str, object]]:
 
 @dataclass
 class MtbsWorld:
-    """The upstream: each fire year's features, an optional lying count, and the widest page the host serves."""
+    """The upstream: each fire year's features, an optional stale count, the widest page served, an outage."""
 
     fires: dict[int, list[dict[str, object]]] = field(default_factory=dict)
     count_overrides: dict[int, int] = field(default_factory=dict)
     max_page_rows: int = 50
+    page_outage_status: int | None = None
     requests: list[httpx.Request] = field(default_factory=list)
 
     def handler(self, request: httpx.Request) -> httpx.Response:
@@ -72,9 +74,11 @@ class MtbsWorld:
         features = sorted(self.fires.get(year, []), key=_fire_id)
         if params.get("returnCountOnly") == "true":
             return httpx.Response(200, json={"count": self.count_overrides.get(year, len(features))})
+        if self.page_outage_status is not None:
+            return httpx.Response(self.page_outage_status, content=b"Service Unavailable")
         offset, size = int(params["resultOffset"]), int(params["resultRecordCount"])
         if size > self.max_page_rows:
-            return httpx.Response(500, json={"error": {"code": 500, "message": "Error performing query operation"}})
+            return httpx.Response(200, json={"error": {"code": 500, "message": "Error performing query operation"}})
         return httpx.Response(200, json={"type": "FeatureCollection", "features": features[offset : offset + size]})
 
     def sends_for(self, ignition_year: int) -> list[httpx.QueryParams]:
