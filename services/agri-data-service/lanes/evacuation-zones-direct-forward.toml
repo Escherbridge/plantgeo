@@ -1,0 +1,102 @@
+# Oregon OEM evacuation areas, the config-lane strategy (track config_driven_ingestion_20260926,
+# Phase 4, slice s-evacuation-zones; spec §7 row, spec FR-16). `static_lookup`, watermarked by the
+# CONTENT of one statewide capture, because Oregon publishes no date field that tells the truth
+# (pipeline/lanes/evacuation_zones/watermark.py module docstring: created_date never moves when a
+# level is raised, last_edited_date is re-stamped on unchanged areas every few minutes). Behaviour:
+# pipeline/lanes/evacuation_zones/oregon_oem.py. Authoring: lanes/AGENTS.md. Doc:
+# docs/lanes/evacuation-zones.md section 8.
+#
+# DARK: executor = "legacy" keeps this lane on pipeline/direct/evacuation_zones/forward.py, hourly
+# at :35 (execution/lane_specs.py::EVACUATION_ZONES_DIRECT_LANE_ID, schedule "35 * * * *"). This file
+# only parses and catalogues; nothing dispatches through the config runner before the owner's
+# p5-cutover go (plan Phase 5, which names evacuation-zones among the ten lanes flipped to
+# executor = "config"). Before then, --compare is the only way to run this lane through the runner
+# (turn.py::_validate: a non-compare turn on a legacy-executor lane is refused, exit 78).
+
+id = "evacuation-zones-direct-forward"
+kind = "ingest"
+nature = "static_lookup"
+enabled = true
+executor = "legacy"
+strategy = "evacuation_zones.oregon_oem"
+
+[source]
+provider = "oregon-oem"
+endpoint = "query"
+# Oregon OEM's Fire_Evacuation_Areas_Public is a single state agency's feed; no equivalent
+# government-run aggregator exists for Washington, Idaho or western Montana
+# (pipeline/lanes/evacuation_zones/products.py::COVERED_STATE, docs/lanes/evacuation-zones.md
+# section 5). Coverage is checked on ISO country codes, not geometry
+# (foundation/region/AGENTS.md "Source coverage claims"), so this is the same regional/US claim
+# MTBS, USDM and SSURGO already carry under this manifest -- state-level precision has no field
+# here (foundation/region/AGENTS.md: "a single state's own portal, so regional despite not being
+# one of the styleguide's example sources").
+coverage = "regional"
+iso_country_codes = ["US"]
+# Oregon OEM publishes a current-state view only: no archive, no reconstructable past evacuation
+# level (docs/lanes/evacuation-zones.md section 3; ingest/evacuation_zones.py's own
+# HistoryCapability(supported=False)).
+history = { capability = "none" }
+lifecycle = "active"
+
+[schedule]
+# Hourly at :35, the cadence the legacy forward writer already runs
+# (execution/lane_specs.py::EVACUATION_ZONES_DIRECT_LANE_ID, "35 * * * *": the cadence of the
+# retired postgres-evacuation-zones poller it replaced).
+forward_cron = "35 * * * *"
+gap_fill_enabled = false
+catch_up = "coalesce_latest"
+
+# No [days]: a static_lookup declares none (foundation/lane_config/models.py
+# LaneConfig._kind_decides_source_inputs_and_pruning only requires [days] for every OTHER nature;
+# tests/runner/fakes.py::static_lane sets the same `days = None`). Oregon publishes no archive a
+# second version could come from -- there is no day axis to bound
+# (pipeline/direct/evacuation_zones/forward.py::EVACUATION_ZONES_MAX_DAYS: "this lane is a
+# static_lookup with exactly one current state").
+
+[budget]
+# One logical snapshot request is planned per turn (oregon_oem.py::plan_requests returns exactly
+# one SourceRequest). This is NOT a cap on the real upstream traffic: oregon_oem.py's fetch()
+# reuses the already-metered (GL-2) pipeline/lanes/evacuation_zones/source.py::
+# fetch_evacuation_zones_snapshot adaptive paged walk rather than threading it through client.get()
+# -- see oregon_oem.py's module docstring "Why fetch() never calls client.get()". The real ceilings
+# are source.py's own: 16 MiB / 20 s per page request, a 20-page ceiling, INGEST_MAX_SOURCE_RECORDS,
+# and a 64 MiB total transfer budget per walk. forward_max_weighted_calls is therefore a nominal
+# unit count the schema requires, not a real HTTP-traffic cap; the runner's own S5
+# requests/weighted_calls/fetch_attempts facts will under-report this lane's real send count for
+# the same reason (named for the per-lane adversarial review, spec FR-38).
+forward_max_weighted_calls = 1
+# Dead for this nature: turn.py::_Turn.run dispatches on lane.nature before mode, so a static_lookup
+# lane always runs _static_forward and never _gap_fill, in forward OR gap-fill mode. Kept equal to
+# the forward cap only because LaneBudget requires a value.
+gap_fill_max_weighted_calls = 1
+max_concurrency = 1
+# RE-DERIVED from the legacy writer's 300s (post-hoc skip model) for the new runner's HARD
+# cancellation of fetch() (pipeline/runner/fetch.py::UnitFetcher.fetch_unit wraps every fetch() in
+# asyncio.wait_for(timeout=min(PER_UNIT_FETCH_CAP_SECONDS, remaining-of-the-fetch-share))); the fetch
+# share is 80% of this field (turn.py::_Turn.fetch_deadline). oregon_oem.py's own
+# CAPTURE_RETRY_ATTEMPTS=5 series (base 5s, max 60s) can itself approach the old 240s fetch share:
+# backoff alone sums to min(60,5*2^0)+min(60,5*2^1)+min(60,5*2^2)+min(60,5*2^3) = 5+10+20+40 = 75s,
+# +25% max jitter = ~94s, and each of the 5 attempts can cost up to ~40s of real request time at the
+# current (~116-area, ~480 KB) population scale -- two EVACUATION_ZONES_BOUNDS-timeout (20s) pages,
+# generously, not the full 20-page/400s structural ceiling source.py bounds the walk to, which this
+# lane's population is nowhere near. Realistic worst case: 5*40 + 94 = ~294s. A series that exceeds
+# the fetch share is cancelled mid-retry and RETRIED WHOLESALE by the runner's own outer ladder
+# (oregon_oem.py::CAPTURE_RETRY_ATTEMPTS's own comment calls this "retry-of-retries"), which is why
+# the fix here is the per-lane budget field (the contract-level mechanism this track already gives
+# every lane; execution/AGENTS.md "Each runs the runner CLI... with the TOML's turn_timeout_seconds")
+# rather than a runner code change. 420 puts the fetch share at 420*0.8 = 336s, ~42s (~14%) of margin
+# over the 294s realistic worst case; re-derive both together if either changes.
+turn_timeout_seconds = 420
+
+[[streams]]
+slug = "evacuation-zones"
+# No history_floor/complete_history_floor here: both comparisons in
+# pipeline/parquet/lane_registry.py::_literal_registration_disagreement run only when this TOML
+# declares them, so omitting them repeats the EXISTING literal registration
+# (pipeline/parquet/lane_registry.py EVACUATION_ZONES_STREAM: history_floor 2025-04-14,
+# publication_lag_days 0) rather than adding a second, config_stream_registrations.py mirror row --
+# which a static_lookup stream may not have anyway (registration_from_config_stream_row refuses one:
+# "a version-stamped stream keys to a source watermark, which a data row cannot carry"). The day
+# axis itself does not exist for this nature; see docs/lanes/evacuation-zones.md section 3.
+floor_basis = "static_lookup, no day axis: the literal registration (pipeline/parquet/lane_registry.py) already carries the real floor and basis; this entry repeats it rather than adding a second one"

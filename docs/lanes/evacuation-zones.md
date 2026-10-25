@@ -322,3 +322,130 @@ against this layer's specific facts:
    though, per §5's correction above, `evacuation-zones` is technically
    `kind="time_series"` in the validation catalogue and does get an active
    staleness check that those layers do not.
+
+## 8. `evacuation-zones-direct-forward`: the config-lane strategy (config-driven ingestion, spec §7)
+
+Track `config_driven_ingestion_20260926`, Phase 4 (slice `s-evacuation-zones`). This section covers
+the swarm's dark TOML and strategy only; sections 1–7 above (and the direct writer they describe,
+`pipeline/direct/evacuation_zones/forward.py`) are unchanged and still serve `evacuation-zones` in
+production. **DARK**: `executor = "legacy"` in the shipped TOML, so nothing in this section
+dispatches before the owner's p5-cutover go (plan Phase 5).
+
+| piece | where |
+|---|---|
+| lane TOML | `services/agri-data-service/lanes/evacuation-zones-direct-forward.toml` |
+| provider TOML | `services/agri-data-service/lanes/_providers/oregon-oem.toml` (shipped inert by `p4-contract-freeze`, 2026-10-25) |
+| strategy (S14) | `pipeline/lanes/evacuation_zones/oregon_oem.py::STRATEGY` |
+| landed leaves (p4-extract) | `pipeline/lanes/evacuation_zones/{watermark,products,rows,source,support}.py` |
+| schema | `warehouse/schemas/evacuation_zones.py::EVACUATION_ZONES_SCHEMA` (unchanged; the config lane writes the same stream) |
+| registration (S18) | none added: §8.2 explains why a `static_lookup` stream stays on its EXISTING literal registration (`pipeline/parquet/lane_registry.py`) rather than gaining a `config_stream_registrations.py` mirror row |
+| tests | `services/agri-data-service/tests/lanes/evacuation_zones/test_oregon_oem.py` |
+
+### 8.1 Why this lane needed its own kind of `static_lookup` strategy
+
+Every other `static_lookup` this track ships reads one cheap upstream metadata field as its
+watermark (watersheds' `max(loaddate)`, fire-perimeters' `editingInfo.lastEditDate`), so
+`probe_edge` is a tiny read and the generic `pipeline/runner/contract.py::EdgeProbingStrategy`
+Protocol fits it cleanly: probe cheaply, fetch the full population only once a new version is
+owed. Oregon OEM publishes no such field at all — §1–§5 above already established this, and
+`pipeline/lanes/evacuation_zones/watermark.py`'s module docstring works through it in full —
+`created_date` never moves when a level is raised, and `last_edited_date` is re-stamped on
+unchanged areas every few minutes. The only honest change test is a CONTENT DIGEST of a full
+statewide capture, and deciding that watermark structurally requires the same full capture
+`fetch` would otherwise make. `oregon_oem.py::probe_edge` therefore does that capture itself and
+caches it (`self._captured`) so the turn's later `fetch` call, when one happens, never re-asks
+Oregon a second time for the same state a few seconds apart — see the module's own docstring,
+"Why `probe_edge` does the whole statewide capture", for the full reasoning and its citation of
+`forward.py`'s "one capture per turn" invariant.
+
+### 8.2 Why no S18 mirror row
+
+`pipeline/parquet/config_stream_registrations.py::registration_from_config_stream_row` refuses a
+mirror row whose `nature` is `static_lookup` outright ("a version-stamped stream keys to a source
+watermark, which a data row cannot carry, so it is registered by hand" —
+`tests/parquet/test_config_stream_registrations.py::test_the_checker_names_each_unmirrored...
+[id=static-lookup-row]` pins this). `evacuation-zones` has carried a literal
+`LaneRegistration` since 2026-09-06 (`pipeline/parquet/lane_registry.py`, `history_floor
+2025-04-14`, `publication_lag_days 0`), and `_literal_registration_disagreement` only compares a
+`[[streams]]` entry's `history_floor`/`complete_history_floor` when the TOML actually declares
+them. The shipped TOML's `[[streams]]` entry therefore declares neither, repeating the literal
+registration with zero possible disagreement rather than adding a second registration this stream
+structurally cannot have. `publication_lag_days` compares `0 if lane.days is None else
+lane.days.publication_lag_days` against the registration's own `0` — equal by construction, since
+every `static_lookup` registration is required to declare lag `0`
+(`lane_registry.py::LaneRegistration.__post_init__`).
+
+### 8.3 Fetch stays off the generic provider client
+
+`oregon_oem.py::fetch` never calls the `ProviderClient.get(endpoint, parameters)` the
+`SourceRequest`/`fetch` Protocol is built around. Oregon OEM's real contract is
+`source.py::fetch_evacuation_zones_snapshot`'s adaptive, byte- and page-bounded, paged walk
+(`ingest/evacuation_zones.py::fetch_evacuation_zones`, already GL-2 metered through
+`ingest/http.py::upstream_client`), which that module's own docstring warns against
+re-deriving: "Re-implementing it would fork the 64 MiB per-run transfer budget, the 20-page
+ceiling and the `INGEST_MAX_SOURCE_RECORDS` record ceiling." The strategy calls it directly
+instead. **Residual, named for the per-lane adversarial review (spec FR-38):** the runner's own
+per-turn ledger (`requests`/`weighted_calls`/`fetch_attempts` in the S5 report) never sees these
+sends, because they never pass through the `BudgetedClient` wrapping `client`. This is a
+documentation/observability gap, not a cost-control one: Oregon OEM is unweighted and keyless
+(`lanes/_providers/oregon-oem.toml`), so no dollar budget is at risk, and `source.py`'s own
+ceilings are the real cap regardless of what the S5 report shows. `lanes/evacuation-zones-direct
+-forward.toml`'s `[budget]` comment states this inline.
+
+### 8.4 The quiet-day and ladder-absence semantics, mapped onto this runner
+
+`oregon_oem.py::settle` returns `Absent(reason=..., proof=...)` whenever a capture holds zero
+areas — a real, valued answer, never a failed read (diverging deliberately from
+`watermark.py::watermark_for_capture`'s `day=None`/`source_empty` rule, which backs the legacy,
+absence-blind `resolve_static_lane` census and predates `Absent` settlements entirely; see the
+strategy's own docstring, "Why this diverges from `watermark.py`'s `day=None`"). From there the
+runner's OWN generic absence machinery does the rest, and the strategy does nothing else:
+
+- **The ladder write** (every zoom tier, coarse rungs first, base last) is
+  `pipeline/runner/writer.py::ObjectStoreLaneWriter.write_absence` →
+  `pipeline/parquet/derivation.py::govern_day_absent`. Contrast
+  `pipeline/direct/evacuation_zones/adapter.py::_govern_quiet_day`, which has to loop over
+  `_ABSENCE_LADDER_TIERS` itself because the legacy driver has no generic absence writer; this
+  strategy needs no such loop.
+- **The same-day stand-down refusal** — the legacy adapter's own pinned test,
+  `tests/direct/test_evacuation_zones_direct_adapter.py::
+  test_a_same_day_stand_down_is_refused_rather_than_deleting_a_published_snapshot` — is likewise
+  generic here: `pipeline/runner/writer.py::_decide_unverified_rewrite`'s `Absent` branch refuses
+  whenever `census.status(stream, day) == "data"`, returning `"data_never_retracted_by_absence"`
+  and never writing; `turn.py::_Turn._write_absence` logs
+  `plantgeo_lane_turn_absence_over_data_refused` for exactly that case, and the strategy never has
+  to name it.
+- **A repeated quiet day** reads `"absence_unchanged"` the same way, also for free.
+
+### 8.5 A documented residual: the day-granular "current" check
+
+`turn.py::_Turn._static_forward` fast-paths a `static_lookup` turn by comparing DAYS
+(`served >= watermark`, `served` from `LaneReader.newest_data_day`) before ever calling `settle`.
+Every other `static_lookup` this track ships can trust that comparison because its watermark is a
+real upstream clock. This lane's watermark is a DERIVED day stamp — today's UTC capture date,
+whenever the content changes — so two *different* statewide states captured hours apart on the
+*same* UTC day both decide `watermark = today`. If an earlier turn that day already wrote zones,
+the fast path reads `served == today == watermark` as "current" and never calls `settle`/`rows`
+again: a same-day stand-down (a fire contained in the afternoon) is silently not checked until the
+UTC day rolls over, at which point the new day's watermark finally differs from `served` and the
+quiet state is written. No data is lost and no absence is ever written over live data — the
+collision the legacy adapter's refusal test protects against structurally cannot reach
+`decide_rewrite` at all here, because the fast path intercepts it first — but a same-day stand-down
+is up to one UTC day later to show. `tests/lanes/evacuation_zones/test_oregon_oem.py::
+test_a_same_utc_day_stand_down_is_masked_until_the_day_rolls_over` pins this as the lane's current,
+reachable behaviour rather than leaving it undiscovered. `ProviderEdge.valued_days` is
+`frozenset[date]` with no sub-day resolution, so nothing in `oregon_oem.py` can route around this;
+fixing it, if the owner wants to, is a `pipeline/runner/turn.py` change outside this slice's file
+boundary, and the same question applies to any other same-day-volatile `static_lookup` a later
+slice ships.
+
+### 8.6 Gates (owner)
+
+- **Before any `executor = "config"` cutover**, the owner should see §8.5's residual and decide
+  whether a same-day stand-down's up-to-24-hour visibility lag is acceptable for a life-safety
+  layer, or whether `turn.py`'s fast path needs a follow-up change first (tracked here, not fixed
+  by this slice: out of `s-evacuation-zones`'s file boundary).
+- **p5-cutover** (plan Phase 5) flips `executor = "config"` on this lane alongside burn-severity,
+  drought, fire-detections, fire-perimeters, sensors, soil, vegetation, watersheds and
+  weather-observations, in one commit, after a `--compare` run shows no unexplained delta against
+  the legacy writer (G6).
