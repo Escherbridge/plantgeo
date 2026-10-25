@@ -25,7 +25,7 @@ class DroughtAreaPayload(Protocol):
 
     `geometry` is a GeoJSON mapping in WGS84 (`federation.md` §2), the datum every geometry lane in
     this tree stores and serves in. A source publishing in a projected CRS reprojects inside its own
-    implementation; the lane's repair chain (`support.py::repair_drought_areas_to_wkb`) assumes 4326
+    implementation; the lane's repair chain (`geometry.py::repair_drought_areas_to_wkb`) assumes 4326
     and has no CRS argument to tell it otherwise.
     """
 

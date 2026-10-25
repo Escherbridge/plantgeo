@@ -1,12 +1,12 @@
 """`water-gauges-daily`: USGS Water Data daily mean discharge, per tile, on the named day the source serves.
 
-Strategy key `water_gauges.usgs_water_data` (spec S14, §7a). Imports only `ingest`, `warehouse` and
-`pipeline/runner/contract.py`. Why each rule holds: `pipeline/lanes/water_gauges/AGENTS.md`.
+Strategy key `water_gauges.usgs_water_data` (spec S14, §7a). Imports only `ingest`, `warehouse`,
+`pipeline/parquet`, `pipeline/lanes/_shared` and `pipeline/runner/contract.py`. Why each rule holds:
+`pipeline/lanes/water_gauges/AGENTS.md`.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections import Counter
 from dataclasses import dataclass
@@ -30,6 +30,12 @@ from agri_data_service.ingest.usgs_water_data import (
     parse_daily_values,
     parse_monitoring_locations,
     tile_boxes,
+)
+from agri_data_service.pipeline.lanes._shared.digest import (
+    COMPACT_SEPARATORS,
+    canonical_json_text,
+    sha256_hex,
+    sha256_hex_of_lines,
 )
 from agri_data_service.pipeline.parquet.source_checkpoint import CHECKPOINT_MAX_BODY_BYTES
 from agri_data_service.pipeline.runner.contract import SourceRequest, SourceResponse, Unsettled, Written
@@ -135,7 +141,7 @@ def _tile_of(request: SourceRequest) -> str:
 
 def _support_digest(tile: TileBox) -> str:
     """Binds a checkpoint to the tile it was planned over (`SourceRequest.support_digest`)."""
-    return hashlib.sha256(tile.bbox.encode("utf-8")).hexdigest()
+    return sha256_hex(tile.bbox.encode("utf-8"))
 
 
 def _answers[AnswerType](responses: Sequence[SourceResponse], kind: type[AnswerType]) -> list[AnswerType]:
@@ -218,8 +224,11 @@ def day_view(day: date, responses: Sequence[SourceResponse]) -> DayView:
 
 def day_source_digest(gauge_days: Sequence[GaugeDay]) -> str:
     """SHA-256 of the day's row facts minus retrieval instants: a value or approval change moves it (S11)."""
-    canonical = "\n".join(json.dumps(item.digest_facts(), separators=(",", ":")) for item in gauge_days)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    # Unsorted keys, compact: the frozen per-row rendering; never normalise it to `sort_keys=True`.
+    return sha256_hex_of_lines(
+        canonical_json_text(item.digest_facts(), sort_keys=False, separators=COMPACT_SEPARATORS, allow_nan=True)
+        for item in gauge_days
+    )
 
 
 def _observed_at(day: date, location: MonitoringLocation | None, fallback_offset: str) -> datetime:

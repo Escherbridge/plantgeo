@@ -19,7 +19,8 @@ against `tigerweb.geo.census.gov` -- a DIFFERENT publisher with no provider file
 (`lanes/_providers/blm.toml` says so explicitly in its own header). `PLANNED_PRODUCTS` below omits it
 on purpose; that query stays on the legacy `pipeline/direct/land_context` path.
 
-Imports only `pipeline/runner/contract.py` (S14) and this package's own `products.py`; never
+Imports only `pipeline/runner/contract.py` (S14), `pipeline/lanes/_shared` (the envelope verdict and
+digest helpers `source.py` uses too) and this package's own `products.py`; never
 `pipeline/errors.py` (`pipeline/lanes/land_context/AGENTS.md` names it "a residual the strategy
 should drop") and never a local scratch directory -- every answer flows through `SourceRequest` /
 `SourceResponse` and the runner's own ports, never a temp file.
@@ -27,11 +28,12 @@ should drop") and never a local scratch directory -- every answer flows through 
 
 from __future__ import annotations
 
-import hashlib
 import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
+from agri_data_service.pipeline.lanes._shared.arcgis import ArcgisEnvelopeFault, arcgis_envelope_fault
+from agri_data_service.pipeline.lanes._shared.digest import sha256_hex
 from agri_data_service.pipeline.lanes.land_context.products import FIELD_OFFICES, SURFACE_IDAHO, SURFACE_ORWA
 from agri_data_service.pipeline.runner.contract import SourceRequest, SourceResponse
 
@@ -84,7 +86,7 @@ def _inventory_parameters(product: ArcgisProduct) -> tuple[tuple[str, str], ...]
 def _support_digest(product: ArcgisProduct) -> str:
     """Binds a checkpoint to the exact filter it was planned over (`SourceRequest.support_digest`)."""
     binds = f"{product.slug}:{product.where}:{product.envelope or ''}"
-    return hashlib.sha256(binds.encode("utf-8")).hexdigest()
+    return sha256_hex(binds.encode("utf-8"))
 
 
 def _object_ids(body: bytes, *, unit: str, endpoint: str) -> tuple[int, ...]:
@@ -103,9 +105,10 @@ def _object_ids(body: bytes, *, unit: str, endpoint: str) -> tuple[int, ...]:
         parsed = json.loads(body)
     except json.JSONDecodeError as error:
         raise ValueError(f"{unit}: ArcGIS object-inventory response is not valid JSON") from error
-    if not isinstance(parsed, dict) or "error" in parsed:
+    fault = arcgis_envelope_fault(parsed)
+    if fault in {ArcgisEnvelopeFault.NOT_AN_OBJECT, ArcgisEnvelopeFault.SERVICE_ERROR}:
         raise ValueError(f"{unit}: ArcGIS refused the object-inventory ask")
-    if parsed.get("exceededTransferLimit"):
+    if fault is ArcgisEnvelopeFault.TRUNCATED:
         raise ValueError(f"{unit}: ArcGIS truncated {endpoint}; refusing a partial population")
     values = parsed.get("objectIds")
     if not isinstance(values, list) or any(isinstance(value, bool) or not isinstance(value, int) for value in values):

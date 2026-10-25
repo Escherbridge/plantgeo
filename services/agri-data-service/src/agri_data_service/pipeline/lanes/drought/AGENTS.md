@@ -13,7 +13,7 @@ blocks the flip).
 | `source_protocol.py` | `DroughtSource` and its payload Protocols; `pipeline/source_bindings.py` binds the implementation |
 | `usdm.py` | `USDM_DROUGHT_SOURCE`: the USDM implementation; a 404 means not yet, never absent. **Reserved**: a moved source leaf with no `STRATEGY` (see below) |
 | `products.py` | the Tuesday release calendar and `drought_lane_registration()` |
-| `geometry.py` | **(s-drought)** the base-rung DuckDB spatial repair chain, duplicated from `pipeline/direct/drought/support.py` (never imported -- this package may not import `pipeline/direct/**`) |
+| `geometry.py` | **(s-drought)** the base-rung DuckDB spatial repair: `_shared/geometry.py`'s `"always_multi"` chain mode, byte-identical to `pipeline/direct/drought/support.py` (never imported -- this package may not import `pipeline/direct/**`) |
 | `usdm_releases.py` | **(s-drought)** `STRATEGY`: `lanes/drought-direct-forward.toml`'s `drought.usdm_releases` strategy -- plan/fetch/settle/rows plus `release_days` (S19); the 404-unsettled and mirrored-past-absence mapping lives here |
 
 Imports: `foundation`, `ingest`, `warehouse`, `pipeline/parquet`, `pipeline/runner/contract.py`

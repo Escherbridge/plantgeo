@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import re
@@ -18,6 +17,7 @@ from rasterio.warp import transform_bounds  # type: ignore[import-untyped]
 
 from agri_data_service.ingest.http import upstream_sync_client
 from agri_data_service.pipeline.errors import PipelineOperationError
+from agri_data_service.pipeline.lanes._shared.digest import COMPACT_SEPARATORS, canonical_json_bytes, sha256_hex
 from agri_data_service.pipeline.lanes.crop_cover.products import (
     BASE_CELL_METRES,
     CDL_SERVICE,
@@ -70,13 +70,13 @@ def fail(message: str, *, code: str = "source_invalid") -> PipelineOperationErro
 
 
 def canonical_bytes(value: object) -> bytes:
-    """Serialize capture evidence deterministically."""
-    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    """Serialize capture evidence deterministically (sorted, compact; NaN admitted, as it always was)."""
+    return canonical_json_bytes(value, sort_keys=True, separators=COMPACT_SEPARATORS, allow_nan=True)
 
 
 def sha256(payload: bytes) -> str:
     """Name exact source bytes."""
-    return hashlib.sha256(payload).hexdigest()
+    return sha256_hex(payload)
 
 
 @dataclass(frozen=True)

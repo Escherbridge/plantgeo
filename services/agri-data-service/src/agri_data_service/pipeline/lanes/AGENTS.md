@@ -2,7 +2,8 @@
 
 Every module and every subpackage here is ONE lane: `tests/test_layer_import_contract.py::_lane_names`
 names them, and `test_lanes_do_not_import_each_other` fails the moment one lane imports another
-(`layer-lanes.md` §1). Shared needs move DOWN the lattice, never beside the lanes.
+(`layer-lanes.md` §1). Shared needs move DOWN the lattice, never beside the lanes -- with ONE
+sanctioned exception, `_shared/` (below), which is a library, not a lane.
 
 ## Config-lane strategies (track `config_driven_ingestion_20260926`, spec §4.2, S14)
 
@@ -13,13 +14,27 @@ and `probe_edge` where S6 requires it; the runner owns everything else. The Prot
 `pipeline/runner/contract.py` (a draft until the Phase-2 re-freeze).
 
 A strategy module imports only: `foundation`, `warehouse` (incl. `field_products`), `ingest`,
-`pipeline/runner/contract.py` (never any other runner module), `pipeline/parquet`, and its OWN
-`pipeline/lanes/<layer>/` package. Never another layer's package, and never `pipeline/direct/**`,
-which the Phase-7 cleanup lane deletes. It fetches only through the `ProviderClient` it is handed,
-logs through `foundation/observability`, and never calls `print` (FR-38).
+`pipeline/runner/contract.py` (never any other runner module), `pipeline/parquet`,
+`pipeline/lanes/_shared` (the shared lane library), and its OWN `pipeline/lanes/<layer>/` package.
+Never another layer's package, and never `pipeline/direct/**`, which the Phase-7 cleanup lane
+deletes. It fetches only through the `ProviderClient` it is handed, logs through
+`foundation/observability`, and never calls `print` (FR-38).
 
-**Nothing shared lives here** except `transforms/` and this file (plan 1B). `__init__.py` and
-`calendar.py` are the pre-existing Parquet dimension lane and are untouched by the config track.
+**Nothing shared lives here** except `transforms/`, `_shared/` and this file (plan 1B). `__init__.py`
+and `calendar.py` are the pre-existing Parquet dimension lane and are untouched by the config track.
+
+## `_shared/` — the lane library (framework-adjacent, not a lane)
+
+The owner's direction for the config pipeline is one library of functions rewritten out of the
+legacy lanes and reused by every strategy. `_shared/` is that library: the DuckDB spatial session and
+named geometry repair chains, the canonical-JSON digest pair, and the ArcGIS envelope verdict. Any
+lane may import it; it imports no lane (only `foundation` and third-party), and it holds NO
+lane-specific logic -- no lane's refusal policy, exception type, resource caps, field exclusions or
+error messages. Those stay at the call site and are passed in as parameters. Rules and rationale:
+`_shared/AGENTS.md`. The leading underscore keeps S14 from ever resolving a strategy there.
+
+`tests/test_layer_import_contract.py::_sibling_module_violations` must exempt `_shared` as an import
+TARGET (it still polices `_shared` importing a lane); that edit belongs to the import-contract owner.
 
 ## `transforms/`
 

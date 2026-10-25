@@ -11,7 +11,7 @@ The `s-watersheds` swarm slice (below) built the config-lane strategy beside the
 | `source.py` | the NHDPlus HR WBDHU12 fetch and its `WatershedRecord` identity (p4-extract) |
 | `watermark.py` | the `max(loaddate)` source watermark `lane_registry.py` imports (p4-extract) |
 | `nhdplus.py` | the `watersheds.nhdplus` config-lane `STRATEGY` (s-watersheds): wraps `source.py`/`watermark.py` in the runner contract, dark behind `watersheds-direct-forward.toml`'s `executor = "legacy"` |
-| `geometry.py` | `nhdplus.py`'s own DuckDB spatial GeoJSON-to-WKB conversion -- a deliberate duplicate of `pipeline/direct/watersheds/support.py`'s, never an import of it (see its own module docstring) |
+| `geometry.py` | `nhdplus.py`'s GeoJSON-to-WKB conversion: `_shared/geometry.py`'s `"bare"` chain mode with this lane's caps and refusal rule, byte-identical to `pipeline/direct/watersheds/support.py` (never an import of it) |
 
 Imports: `foundation`, `ingest`, `warehouse`, `pipeline/parquet` and this package only.
 Never another layer's `pipeline/lanes/<layer>/` and never `pipeline/direct/**`

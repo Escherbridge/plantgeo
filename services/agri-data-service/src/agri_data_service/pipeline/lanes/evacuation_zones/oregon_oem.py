@@ -82,10 +82,10 @@ state this turn actually saw."
 from __future__ import annotations
 
 import asyncio
-import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final
 
+from agri_data_service.pipeline.lanes._shared.digest import DEFAULT_SEPARATORS, canonical_json_bytes
 from agri_data_service.pipeline.lanes.evacuation_zones.products import bbox_unconfigured_reason, resolve_coverage_bbox
 from agri_data_service.pipeline.lanes.evacuation_zones.rows import (
     apply_carried_forward_updated_at,
@@ -201,7 +201,7 @@ def _descriptor_bytes(capture: _ProbedCapture) -> bytes:
     which is opaque to the runner. This exists so `digests.py::responses_digest` (the absence
     receipt's `source_digest`) and checkpoint bookkeeping see a stable value per capture.
     """
-    return json.dumps(
+    return canonical_json_bytes(
         {
             "bbox": capture.source.bbox,
             "captured_digest": capture.digest,
@@ -209,7 +209,9 @@ def _descriptor_bytes(capture: _ProbedCapture) -> bytes:
             "zone_count": capture.source.zone_count,
         },
         sort_keys=True,
-    ).encode("utf-8")
+        separators=DEFAULT_SEPARATORS,
+        allow_nan=True,
+    )
 
 
 def _quiet_day_absence(capture: _ProbedCapture) -> Absent:
