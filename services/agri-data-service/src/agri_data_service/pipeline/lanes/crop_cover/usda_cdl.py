@@ -53,7 +53,7 @@ CATALOGUE_QUERY_PARAMETERS: Final[tuple[tuple[str, str], ...]] = (
 _YEAR_BY_RELEASE_DAY: Final[Mapping[Any, int]] = {release_day: year for year, release_day in RELEASE_DAYS.items()}
 
 #: Env override for a future activation's local capture scratch root; unset resolves under the OS temp
-#: directory. See `runner_scratch_dir`.
+#: directory. See `_runner_scratch_dir`.
 SCRATCH_DIR_ENVIRONMENT_VARIABLE: Final = "AGRI_CROP_COVER_SCRATCH_DIR"
 
 #: This lane's own subdirectory of the OS temp root, never a bare `tempfile.gettempdir()` (every other
@@ -79,7 +79,7 @@ def _matching_record(year: int, responses: Sequence[SourceResponse]) -> dict[str
     return catalog_record(dict(catalog), year)
 
 
-def runner_scratch_dir(environment: Mapping[str, str] | None = None) -> Path:
+def _runner_scratch_dir(environment: Mapping[str, str] | None = None) -> Path:
     """Where a future activation would stage one annual capture; env override, else the OS temp root.
 
     `source.py::capture()` already takes its output directory from its OWN caller (`CaptureConfig.output`,
@@ -88,6 +88,13 @@ def runner_scratch_dir(environment: Mapping[str, str] | None = None) -> Path:
     carve-out) inherits ONE answer to "where", resolved the same portable way every other local-scratch
     caller in this service already resolves it (`tempfile.gettempdir()`/`mkdtemp`) -- never a hardcoded
     `/tmp` path, which is also simply wrong on this service's own Windows development hosts.
+
+    PRIVATE and deliberately NOT a public answer: it names "where", never "how" -- it does not say,
+    and this slice does not decide, how a config-lane `fetch()` would ever drive the existing
+    14,400-second / 4-GiB regional tile capture (`source.py::MAX_CAPTURE_SECONDS`, `MAX_CAPTURE_BYTES`)
+    inside this TOML's own `turn_timeout_seconds = 300`. That mismatch is part of the same deferred
+    activation decision this package's own `AGENTS.md` ("usda_cdl.py and the dark TOML") already
+    defers; this function is a stub for whichever future slice resolves it, not working surface today.
     """
     source = os.environ if environment is None else environment
     override = source.get(SCRATCH_DIR_ENVIRONMENT_VARIABLE, "").strip()
@@ -166,5 +173,4 @@ __all__ = [
     "SCRATCH_DIR_ENVIRONMENT_VARIABLE",
     "STRATEGY",
     "UsdaCdlEditionIdentityStrategy",
-    "runner_scratch_dir",
 ]
