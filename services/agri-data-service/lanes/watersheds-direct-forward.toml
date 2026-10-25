@@ -1,0 +1,73 @@
+# Watersheds, NHDPlus HR WBDHU12 direct forward (track config_driven_ingestion_20260926, spec S7
+# per-lane migration table row; Phase 4 "The swarm", slice s-watersheds). Behaviour lives in
+# pipeline/lanes/watersheds/nhdplus.py; the extracted source/watermark modules it wraps are
+# pipeline/lanes/watersheds/{source,watermark}.py (landed by p4-extract, EXTENDED here, never
+# rewritten). Authoring: lanes/AGENTS.md. Source facts: docs/lanes/watersheds.md.
+#
+# MIGRATED LANE, DARK: ships executor = "legacy" like every other Phase-4 swarm TOML (plan.md
+# Phase 4 "The swarm": "All TOMLs ship executor = 'legacy' (migrated) or enabled = false
+# (new/shadow)"). The legacy executor lane of this same id already runs daily at 03:00 UTC through
+# pipeline/direct/watersheds/forward.py (pipeline/direct/AGENTS.md "Watersheds" / "Entry point");
+# this TOML does not change that path -- it only prepares this lane's G6 cut-over to
+# executor = "config", where it is named one of the "10 migrated active lanes" the compare runs
+# against (plan.md Phase 5, G6).
+#
+# lifecycle = "discontinued" (spec S7 row): NHDPlus HR / WBD legacy maintenance stopped 2024. The
+# same row's note records a naming mismatch elsewhere in this codebase, not a fact this TOML
+# repeats: the region manifest still binds the display name "hydrosheds" (the unrelated, live
+# environmental.getWatersheds tRPC proxy over src/lib/server/services/hydrosheds.ts, docs/lanes/
+# watersheds.md section 5 trap 2) while this [source] records the REAL upstream this lane reads.
+
+id = "watersheds-direct-forward"
+kind = "ingest"
+nature = "static_lookup"
+enabled = true
+executor = "legacy"
+strategy = "watersheds.nhdplus"
+
+[source]
+provider = "usgs-nhdplus"
+endpoint = "wbd-hu12-query"
+coverage = "regional"
+iso_country_codes = ["US"]
+# "n/a" in spec S7's history column: a static_lookup has no archive and no history endpoint to
+# declare -- the only "history" this source carries is the version stamp watermark.py re-reads
+# every turn (docs/lanes/watersheds.md section 3: "no backfill verb... there is no series to walk").
+history = { capability = "none" }
+lifecycle = "discontinued"
+
+[schedule]
+# Mirrors the legacy executor lane's own cadence exactly (pipeline/direct/AGENTS.md "Watersheds":
+# "daily at 03:00 UTC... offset an hour so the two never opened the same fetch minute during the
+# parity bake"). Hourly would pay the ~47-request NHDPlus_HR walk 24x a day to detect a change
+# that has happened once in this layer's measured history (docs/lanes/watersheds.md section 2).
+forward_cron = "0 3 * * *"
+gap_fill_enabled = false
+# No gap_fill_cron: a static_lookup lane's gap-fill mode is unreachable at the runner
+# (pipeline/runner/turn.py `_Turn.run` dispatches every static_lookup lane to `_static_forward`
+# before it ever checks `spec.mode == "gap-fill"`), so there is no calendar hole for a gap-fill
+# fire to walk.
+
+[budget]
+# This lane's real network cost -- NHDPlus_HR's own ~9,400-basin, ~47-request id+batch walk
+# (docs/lanes/watersheds.md "Query mechanism") -- happens INSIDE the one logical unit
+# plan_requests/probe_edge plan, through pipeline/lanes/watersheds/source.py's own
+# upstream_client, never through this turn's governed ProviderClient (Wave O: fetches only
+# through the provider client OR the existing source module's upstream_client). usgs-nhdplus is
+# `weighted = false`, so the runner's cap counts LOGICAL requests, and plan_requests plans exactly
+# ONE per turn -- the whole snapshot is the retry unit, matching pipeline/direct/watersheds/
+# forward.py's own `--retry-attempts` note: "one turn is one ~9,400-basin, ~47-request NHDPlus_HR
+# walk, and the whole walk is the retry unit".
+forward_max_weighted_calls = 1
+# static_lookup's gap-fill mode is unreachable (see [schedule]); kept at parity with the forward
+# cap, rather than 0, in case an operator ever drives --mode gap-fill by hand.
+gap_fill_max_weighted_calls = 1
+max_concurrency = 1
+# No --time-budget-seconds knob exists on the legacy writer this mirrors (pipeline/direct/
+# AGENTS.md "Entry point"): the executor's own command timeout is the only bound on a turn, and
+# this TOML keeps the same 1800 s.
+turn_timeout_seconds = 1800
+
+[[streams]]
+slug = "watersheds"
+floor_basis = "static_lookup: this lane is a version snapshot, not a time series (docs/lanes/watersheds.md sections 3 and 7); there is no calendar floor to declare."
