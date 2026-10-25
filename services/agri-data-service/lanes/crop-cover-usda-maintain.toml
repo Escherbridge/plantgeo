@@ -1,0 +1,58 @@
+# USDA NASS Cropland Data Layer (CDL), shadow lane (spec §7 "crop-cover-usda-maintain (shadow)";
+# plan Phase 4 swarm, Wave O). Data only; behaviour is pipeline/lanes/crop_cover/usda_cdl.py.
+# Authoring: lanes/AGENTS.md. Legacy cadence: pipeline/direct/crop_cover/AGENTS.md "Schedule
+# maintenance daily for forward refresh and gap repair" -- the config lane mirrors that daily
+# check, even though a release itself publishes once a year.
+#
+# Dark by design (enabled = false): this strategy proves EDITION IDENTITY only (the settle
+# semantics spec §7 names) from the USDA catalogue's lightweight metadata query; the bulk
+# multi-gigabyte tile capture stays pipeline/lanes/crop_cover/source.py::capture()'s job, run
+# today only by the legacy pipeline/direct/crop_cover/forward.py `maintain` operator. Whether a
+# future activation ever drives that capture from this lane -- and, if it does, where its local
+# working directory comes from -- is undecided (an O7-style carve-out); any future answer
+# resolves it the portable way every other local scratch root in this service already does
+# (tempfile.gettempdir()/mkdtemp(), as pipeline/direct/burn_severity/daily.py does), never a
+# literal "/tmp" path, which is also simply wrong on this service's own Windows hosts.
+
+id = "crop-cover-usda-maintain"
+kind = "ingest"
+nature = "release_series"
+enabled = false
+executor = "config"
+strategy = "crop_cover.usda_cdl"
+
+[source]
+provider = "usda-cdl"
+endpoint = "export-image"
+coverage = "regional"
+iso_country_codes = ["US"]
+# The admitted history is exactly the four released editions (warehouse/crop_cover_releases.py);
+# no endpoint serves anything before the 2022 edition's publication.
+history = { capability = "archive", earliest = "2023-01-30" }
+lifecycle = "active"
+
+[schedule]
+# Daily, matching the legacy maintain cadence; only the four admitted release days are ever owed
+# (strategy ReleaseCalendarStrategy.release_days), so almost every fire asks nothing.
+forward_cron = "35 10 * * *"
+
+[days]
+floor = "2023-01-30"
+floor_basis = "warehouse/crop_cover_releases.py::CDL_RELEASE_DATES[2022]; the earliest admitted CDL edition"
+publication_lag_days = 0
+absence_recheck_days = 1
+partial_day = "refuse"
+
+[budget]
+# One lightweight, unweighted catalogue query per admitted release day actually asked this turn
+# (at most 4, almost always 0): no tile is ever fetched through this contract.
+forward_max_weighted_calls = 4
+gap_fill_max_weighted_calls = 0
+max_concurrency = 1
+turn_timeout_seconds = 300
+
+[[streams]]
+slug = "crop-cover"
+history_floor = "2023-01-30"
+complete_history_floor = "2023-01-30"
+floor_basis = "warehouse/crop_cover_releases.py::CDL_RELEASE_DATES; provisional -- the real stream binding for the bulk capture is decided at activation"
