@@ -4695,5 +4695,18 @@
     "vegetation_promotion": "OWNER DELEGATED; picked: Parquet governed-output stream (consistent with the 2026-08-22 Parquet/DuckDB pivot \u2014 Postgres out of the serving path), retiring the agri.forecast_observation target when the transform is ported for real; port scheduled after the flips, not blocking",
     "b1a_review": "owner ordered the outstanding independent adversarial review of the compare slice \u2014 launched 2026-10-25",
     "vegetation_p95_measured": "MEASURED 2026-10-25 from agri.job_run (652 succeeded runs, 30d): whole-turn p50 6.4s, p95 15.8s, max 85.3s \u2014 the 330s PER_UNIT_FETCH_CAP has ~4x headroom over the worst observed TURN (the day-walk alone is smaller still). The 'do not flip while p95 > ~250s' precondition is SATISFIED; CQ-9 per-lane cap override not needed for vegetation at current walk sizes. Script: .omc/research/lane-audits/raw/veg-p95.mjs"
+  },
+  "cleanup_wave_20261025": {
+    "pushed": "web 0df6e227+c16d643d (-2,080 lines: routing UI cluster, deck.gl remnants + 3 deps, useWebSocket, UserPanel (called a nonexistent route), LayerUpload + layers.create, places/visualization/tracking-admin routers; full npm sweep 3,495 tests + build green); service 3dc92f60 merge (-677 lines: _JOBS_SPECS empty-generator, run_mtbs/fire_perimeters_ingestion_job orphans, FIRMS+USGS archive chains, doc lies corrected; receipt green)",
+    "protected": "pipeline/direct/** live writers (removal is per-lane post-G6 via CA amendments); MTBS paging walk (config lane engine); backfill.py operator tools; registered-dark specs; p4-extract shims; documented scaffolding routers (alerts/analytics/strategy); ModerationPanel; water-gauges legacy rollback branch (G4 + a few weeks)",
+    "owner_questions_open": [
+      "execution/historical_* + execution/weather_observations/** (~6,000 lines, zero CLI reachability, real tests, self-described 'template for the other ten domains'): is RUNBOOK 0.25.5's historical-backfill phase still planned?",
+      "ModerationPanel.tsx: docs say deliberately preserved despite being unmounted and buggy \u2014 delete or keep?",
+      "Places / Visualization / Tracking-admin panels: deleted their zero-caller routers as unused; restore-from-git is trivial if any was 'built ahead of UI' on purpose",
+      "Alerts / Environmental Analytics scaffolding routers: keep awaiting panel return, or finally remove?",
+      "mtbs-forward spec: registered, not in allow-list, 0 runs since 09-09 \u2014 retire the spec or re-activate (CA7/CQ-9)",
+      "_run_mtbs_job/build_mtbs_source in ingest/mtbs.py: zero-caller orphans left under a scope guardrail; stale shell scripts referencing nasa-firms-archive",
+      "getRouteHistory in services/tracking.ts: unreferenced after router removal"
+    ]
   }
 }
