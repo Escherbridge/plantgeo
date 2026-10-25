@@ -14,14 +14,28 @@ from typing import TYPE_CHECKING, Final
 
 import pyarrow as pa  # type: ignore[import-untyped]
 
-from agri_data_service.ingest.identity import FeatureIdentity, MissingNativeKeyError, build_weather_observation_identity
-from agri_data_service.ingest.open_meteo import CURRENT_FIELDS, OPEN_METEO_PROPERTY_SOURCE, bounded_sample_points, parse_current_weather
+from agri_data_service.ingest.identity import (
+    FeatureIdentity,
+    MissingNativeKeyError,
+    build_weather_observation_identity,
+)
+from agri_data_service.ingest.open_meteo import (
+    CURRENT_FIELDS,
+    OPEN_METEO_PROPERTY_SOURCE,
+    bounded_sample_points,
+    parse_current_weather,
+)
 from agri_data_service.ingest.policy import (
     MAX_WEATHER_SAMPLE_POINTS,
     format_javascript_number,
     resolve_weather_sample_spacing_degrees,
 )
-from agri_data_service.pipeline.lanes._shared.digest import COMPACT_SEPARATORS, canonical_json_text, sha256_hex, sha256_hex_of_lines
+from agri_data_service.pipeline.lanes._shared.digest import (
+    COMPACT_SEPARATORS,
+    canonical_json_text,
+    sha256_hex,
+    sha256_hex_of_lines,
+)
 from agri_data_service.pipeline.runner.contract import SourceRequest, SourceResponse, Unsettled, Written
 from agri_data_service.warehouse.schemas.weather_observations import (
     WEATHER_OBSERVATIONS_GRAIN,
@@ -78,7 +92,9 @@ class PointReading:
 
 
 def _bbox(envelope: RegionEnvelope) -> str:
-    """The region's camera envelope as Open-Meteo's `west,south,east,north`; mirrors `fire_perimeters/wfigs.py::_bbox`."""
+    """The region's camera envelope as Open-Meteo's `west,south,east,north`; mirrors
+    `fire_perimeters/wfigs.py::_bbox`.
+    """
     return ",".join(
         format_javascript_number(value) for value in (envelope.west, envelope.south, envelope.east, envelope.north)
     )
@@ -186,7 +202,9 @@ def day_source_digest(points: Iterable[PointReading]) -> str:
     """SHA-256 of the day's reading facts, excluding `ingested_at` (S11); reuses `pipeline/lanes/_shared/digest.py`."""
     ordered = sorted(points, key=lambda point: (point.latitude, point.longitude))
     return sha256_hex_of_lines(
-        canonical_json_text(_reading_digest_facts(point), sort_keys=False, separators=COMPACT_SEPARATORS, allow_nan=True)
+        canonical_json_text(
+            _reading_digest_facts(point), sort_keys=False, separators=COMPACT_SEPARATORS, allow_nan=True
+        )
         for point in ordered
     )
 
@@ -242,7 +260,9 @@ class OpenMeteoCurrentConditionsStrategy:
         ]
 
     async def fetch(self, request: SourceRequest, client: ProviderClient) -> SourceResponse:
-        """One send per point; a stale, out-of-range or malformed reading fails this UNIT only (the day stays partial)."""
+        """One send per point; a stale, out-of-range or malformed reading fails this UNIT only (the
+        day stays partial).
+        """
         response = await client.get(request.endpoint, request.query())
         payload = json.loads(response.body)
         observation = parse_current_weather(payload, response.retrieved_at)

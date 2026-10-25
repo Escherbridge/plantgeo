@@ -61,9 +61,19 @@ gap_fill_enabled = false
 # history_floor (2026-08-01), but mirroring it here would imply a gap-fill walk this lane can never
 # perform; see [[streams]] below for where that registration fact is mirrored instead (S18).
 #
-# publication_lag_days = 0: the forward edge is always `today` -- there is no settled day to lag
-# behind (pipeline/direct/weather_observations/source.py module docstring, same citation as above).
-publication_lag_days = 0
+# publication_lag_days = 1: NOT because there is a settled day to lag behind -- there isn't; see
+# [source].history above. `pipeline/runner/windows.py::candidate_edge` clamps EVERY
+# `write_and_recheck` lane's edge to `min(edge, today - 1)` (the O1 invariant: "a write_and_recheck
+# lane never reaches past yesterday UTC", `pipeline/runner/AGENTS.md:80-83`). With lag = 0 that
+# clamp bit silently -- the field claimed the edge was `today`, the runner always overrode it to
+# `today - 1`, "today" was never fanned out, and this was the only lane in the repo where the gap
+# between the field's claim and the clamp's result was non-empty. lag = 1 states the O1-clamped edge
+# honestly instead of relying on the clamp to correct a false claim; `candidate_edge` still computes
+# the SAME `today - 1` either way, so the effective window is UNCHANGED: `[today - 2, today - 1]`
+# (absence_recheck_days = 2, below, is untouched). See
+# `pipeline/lanes/weather_observations/AGENTS.md` "Same-day freshness at G6" for the freshness
+# consequence this carries into a future cut-over -- an OWNER decision, not resolved here.
+publication_lag_days = 1
 # absence_recheck_days = 2, basis = cited: WEATHER_OBSERVATIONS_MAX_DAYS
 # (pipeline/direct/weather_observations/forward.py) caps one poll at the newest TWO day buckets it
 # can ever produce -- today, and (within MAX_OBSERVATION_AGE = 3h of UTC midnight,
