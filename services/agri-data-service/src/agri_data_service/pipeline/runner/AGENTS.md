@@ -294,7 +294,36 @@ redeploy exits 70 on the first v2 receipt it reads, until it runs this code.
 `digests.py::table_digest` hashes the Arrow IPC stream of `combine_chunks()`, so chunking never
 changes the answer. `reader.canonical_digest` conforms a table to its stream schema first (column
 order, types, grain sort), so a built table and the published copy of the same rows agree. That is
-what S11's written-day digest, compare mode and CA17 compare.
+what S11's written-day digest, compare mode and CA17 compare. Only compare passes `excluding`
+(below); every other caller digests the whole conformed table.
+
+## Volatile columns
+
+A `[[streams]]` entry may declare `volatile_columns = ["ingested_at"]`: columns a strategy's `rows()`
+stamps from `retrieved_at` or the clock rather than from source content. `turn.py::_Turn._compare`
+(G6's cutover proof) drops them from BOTH the built and the published table before digesting, via
+`reader.canonical_digest(..., excluding=...)`, so a rebuilt day whose content matches the legacy
+writer's tallies `days_equal` instead of differing on its capture instant. The drop happens AFTER
+`conform_to_stream_schema` (which selects every schema column and would refuse a pre-dropped table)
+and after the grain sort, which is why a grain column can never be volatile.
+
+Load-time check: `foundation/lane_config/loader.py::load_lane_configs(..., stream_contract=...)`
+quarantines (S8) a lane whose volatile column is not a column of the stream's registered schema, is
+a grain (`sort_columns`) column, or names an unregistered stream. `foundation` may not import
+`warehouse`, so the registry is injected: `reader.py::registered_stream_contract` is the production
+resolver. A loader called without it skips the check; the compare digest still refuses loudly
+(`Table.drop_columns` raises on an absent name), never a silent no-op.
+
+Declare conservatively: a content column wrongly declared volatile blinds G6 to real drift, so a
+column is listed only when the strategy's `rows()` provably stamps it from the capture instant (each
+TOML cites the symbol). Columns carried forward from the published snapshot (evacuation-zones'
+`feature_updated_at`) are NOT volatile: on an unchanged row they equal the published value.
+
+Deliberately NOT volatile-aware: `source_digest`, the transform receipts' input digests, the S11
+written-day digest and `turn.py::_Turn._republish_current`'s CA17 digest check. That last one has the
+same blindness (a static lane's capture-time column makes every refetch mismatch, so CA17 refuses or,
+under a day-grain watermark, versions churn daily); it is left to the owner's day-grain
+`static_freshness_contract` decision (track metadata `owner_go_steps`), not fixed here.
 
 ## Writer
 
@@ -442,9 +471,10 @@ docs before this section consolidated them:
 - **watersheds**: same-day revisions are unreachable; legacy's bracketed-watermark detection has no
   runner equivalent (`docs/lanes/watersheds.md` §8).
 
-Related grain limits found by the same reviews: `_compare`/`canonical_digest` hash the WHOLE
-conformed table (volatile columns like `ingested_at`/`updated_at` always delta, so G6's compare
-cannot run for migrated lanes as-is), and `PER_UNIT_FETCH_CAP_SECONDS` is a module constant that
+Related grain limits found by the same reviews: `_compare`/`canonical_digest` hashed the WHOLE
+conformed table (volatile columns like `ingested_at`/`updated_at` always delta); compare is now
+volatile-column-aware ("Volatile columns" above), though day alignment for static lanes still is
+not, and `PER_UNIT_FETCH_CAP_SECONDS` is a module constant that
 cancels legitimate multi-minute walk-shaped units. The decision bundle (instant-resolution static
 freshness, volatile-column-aware compare, per-lane unit-cap override, provider path-segment
 transport, writer origin hook) lives in the track metadata's `owner_go_steps` --

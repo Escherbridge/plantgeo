@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
     from agri_data_service.pipeline.runner.census import LaneCensus
     from agri_data_service.pipeline.runner.receipts import DayReceipt, TurnReceipts
+    from agri_data_service.warehouse.parquet.schema import ParquetStreamSchema
 
 
 class LaneReader(Protocol):
@@ -42,7 +43,7 @@ class LaneReader(Protocol):
 
     def newest_data_day(self, stream: str) -> date | None: ...
 
-    def canonical_digest(self, stream: str, table: pa.Table) -> str: ...
+    def canonical_digest(self, stream: str, table: pa.Table, *, excluding: Sequence[str] = ()) -> str: ...
 
     def is_verified(self, stream: str, day: date) -> bool: ...
 
@@ -87,13 +88,19 @@ class ObjectStoreLaneReader:
         keys = self.store.list_partition_keys(stream, CONFIG_LANE_KIND, LANE_BASE_ZOOM_TIER)
         return newest_data_day(layer=stream, kind=CONFIG_LANE_KIND, zoom=LANE_BASE_ZOOM_TIER, keys=keys)
 
-    def canonical_digest(self, stream: str, table: pa.Table) -> str:
-        """The digest of `table` as the store would hold it: conformed to the stream schema and sorted to its grain."""
-        return table_digest(conform_to_stream_schema(table, get_stream_schema(stream, CONFIG_LANE_KIND)))
+    def canonical_digest(self, stream: str, table: pa.Table, *, excluding: Sequence[str] = ()) -> str:
+        """The digest of `table` as the store would hold it (conformed, grain-sorted), less the `excluding` columns."""
+        conformed = conform_to_stream_schema(table, get_stream_schema(stream, CONFIG_LANE_KIND))
+        return table_digest(conformed.drop_columns(list(excluding)) if excluding else conformed)
 
     def is_verified(self, stream: str, day: date) -> bool:
         """True when the stream's verified-days register names `day` (one GET per stream per turn)."""
         return verified_days_for(self.store, lane=stream, kind=CONFIG_LANE_KIND).is_verified(day)
 
 
-__all__ = ["LaneReader", "ObjectStoreLaneReader"]
+def registered_stream_contract(stream: str) -> ParquetStreamSchema:
+    """The loader's `stream_contract` resolver: a config stream's registered schema, `LookupError` when none."""
+    return get_stream_schema(stream, CONFIG_LANE_KIND)
+
+
+__all__ = ["LaneReader", "ObjectStoreLaneReader", "registered_stream_contract"]

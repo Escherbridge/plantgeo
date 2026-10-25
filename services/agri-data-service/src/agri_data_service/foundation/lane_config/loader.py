@@ -11,14 +11,14 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Protocol
 
 from pydantic import BaseModel, ValidationError
 
 from agri_data_service.foundation.lane_config.models import LaneConfig, ProviderConfig, lane_requires_probe_edge
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping
+    from collections.abc import Callable, Iterable, Mapping
 
     from agri_data_service.foundation.region.manifest import Region
 
@@ -31,6 +31,16 @@ LANE_FILE_GLOB: Final = "*.toml"
 #: holds `lanes/` in the repo (`services/agri-data-service/`) and in both images (`/app`,
 #: `/app/agri-service`), because `uv sync` installs the project editable from `src/`.
 _SERVICE_ROOT_PARENT_INDEX: Final = 4
+
+
+class StreamContract(Protocol):
+    """The two facts of a registered stream schema a `volatile_columns` declaration is checked against."""
+
+    @property
+    def column_names(self) -> tuple[str, ...]: ...
+
+    @property
+    def sort_columns(self) -> tuple[str, ...]: ...
 
 
 class LaneDirectoryError(RuntimeError):
@@ -175,6 +185,24 @@ def _region_and_provider_reasons(
     return reasons
 
 
+def _volatile_column_reasons(lane: LaneConfig, stream_contract: Callable[[str], StreamContract]) -> Iterable[str]:
+    """Every `volatile_columns` entry must be a registered, non-grain column of its stream (G6 compare)."""
+    for stream in lane.streams:
+        if not stream.volatile_columns:
+            continue
+        try:
+            contract = stream_contract(stream.slug)
+        except LookupError as error:
+            yield f"stream {stream.slug!r} declares volatile_columns but has no registered schema: {error}"
+            continue
+        unknown = [column for column in stream.volatile_columns if column not in contract.column_names]
+        if unknown:
+            yield f"stream {stream.slug!r} volatile_columns {unknown} are not columns of its registered schema"
+        grain = [column for column in stream.volatile_columns if column in contract.sort_columns]
+        if grain:
+            yield f"stream {stream.slug!r} volatile_columns {grain} are grain columns, which are never volatile"
+
+
 def _asymmetric_conflicts(lanes: Mapping[str, LaneConfig], lane_files: Iterable[str]) -> Iterable[tuple[str, str]]:
     """`conflicts_with` must be symmetric; only the declaring lane is quarantined (S8; see `AGENTS.md`)."""
     known = set(lane_files)
@@ -221,11 +249,14 @@ def _unresolved_inputs(lanes: Mapping[str, LaneConfig], quarantine: _Quarantine)
         yield lane_id, f"inputs {list(lanes[lane_id].inputs)} never resolve: a cycle, or downstream of one"
 
 
-def load_lane_configs(directory: Path, region: Region) -> LaneConfigSet:
+def load_lane_configs(
+    directory: Path, region: Region, *, stream_contract: Callable[[str], StreamContract] | None = None
+) -> LaneConfigSet:
     """Load every lane and provider TOML under `directory`, checked against `region` (spec §4.1).
 
     Never raises for a lane's content: a lane that fails a rule is returned in `quarantined` with
     every reason, and the rest load (S8). Raises `LaneDirectoryError` only when `directory` is absent.
+    `stream_contract` (`pipeline/runner/AGENTS.md` "Volatile columns") checks every `volatile_columns` entry.
     """
     if not directory.is_dir():
         raise LaneDirectoryError(f"lanes directory {directory} does not exist; set {LANES_DIRECTORY_ENV_VAR}")
@@ -244,6 +275,9 @@ def load_lane_configs(directory: Path, region: Region) -> LaneConfigSet:
         parsed[lane_id] = lane
         for reason in _region_and_provider_reasons(lane, region, providers, provider_failures):
             quarantine.add(lane_id, path, reason)
+        if stream_contract is not None:
+            for reason in _volatile_column_reasons(lane, stream_contract):
+                quarantine.add(lane_id, path, reason)
     for lane_id, reason in (*_asymmetric_conflicts(parsed, paths), *_duplicate_streams(parsed)):
         quarantine.add(lane_id, paths[lane_id], reason)
     for lane_id, reason in tuple(_unresolved_inputs(parsed, quarantine)):
@@ -266,6 +300,7 @@ __all__ = [
     "LaneDirectoryError",
     "LaneQuarantine",
     "ProviderLoadFailure",
+    "StreamContract",
     "default_lanes_directory",
     "load_lane_configs",
 ]

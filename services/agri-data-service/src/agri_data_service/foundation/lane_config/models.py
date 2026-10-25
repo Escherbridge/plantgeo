@@ -67,6 +67,8 @@ UrlPath = Annotated[str, StringConstraints(pattern=r"^/[A-Za-z0-9/_.-]*$")]
 GateName = Annotated[str, StringConstraints(pattern=r"^G[0-9][0-9A-Za-z.-]*$")]
 CronText = Annotated[str, AfterValidator(_validate_cron)]
 StreamSlug = Annotated[str, AfterValidator(_validate_stream_slug)]
+#: A stream schema column, spelled as every registered `ParquetStreamSchema` spells one.
+ColumnName = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]*$")]
 
 LaneKind = Literal["ingest", "transform"]
 LaneExecutor = Literal["legacy", "config"]
@@ -340,12 +342,20 @@ class LaneStream(_FrozenModel):
     history_floor: date | None = None
     complete_history_floor: date | None = None
     floor_basis: str = Field(min_length=1)
+    #: Capture-time columns `--compare` leaves out of its digest; the loader checks them against the schema.
+    volatile_columns: tuple[ColumnName, ...] = ()
 
     @model_validator(mode="after")
     def _complete_floor_is_not_before_the_floor(self) -> LaneStream:
         floor, complete = self.history_floor, self.complete_history_floor
         if floor is not None and complete is not None and complete < floor:
             raise ValueError(f"complete_history_floor {complete} precedes history_floor {floor}")
+        return self
+
+    @model_validator(mode="after")
+    def _volatile_columns_are_distinct(self) -> LaneStream:
+        if len(set(self.volatile_columns)) != len(self.volatile_columns):
+            raise ValueError(f"stream {self.slug!r} repeats a volatile_columns entry")
         return self
 
 

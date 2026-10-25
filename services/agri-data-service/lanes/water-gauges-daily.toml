@@ -70,3 +70,6 @@ slug = "water-gauges-daily"
 history_floor = "1990-09-30"
 complete_history_floor = "1990-09-30"
 floor_basis = "lane_registry.py::_MEASURED_COMPLETE_HISTORY_FLOORS['water-gauges'] (spec 7a, N5); P4 2026-09-28: all 10 probed gauges serve 1990-09-30"
+# G6 --compare leaves capture-time columns out of its digest (pipeline/runner/AGENTS.md "Volatile columns"):
+# pipeline/lanes/water_gauges/usgs_water_data.py::_row stamps `ingested_at` from the response's `retrieved_at`.
+volatile_columns = ["ingested_at"]
