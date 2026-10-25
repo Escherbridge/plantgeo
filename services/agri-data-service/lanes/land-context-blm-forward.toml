@@ -1,0 +1,85 @@
+# Land-context BLM reference snapshots: PNW surface management (OR/WA + Idaho SMA) and field-office
+# jurisdictions, served as three static_lookup streams (land-context-boundaries, land-context-offices,
+# land-context-contacts). Data only; behaviour is pipeline/lanes/land_context/blm_arcgis.py.
+# Authoring: lanes/AGENTS.md. Source facts: pipeline/lanes/land_context/products.py and
+# pipeline/direct/land_context/AGENTS.md (the legacy package these leaves were moved from, p4-extract).
+#
+# CLASS E SHADOW (spec.md section 4.8.1): clock start "never (Q-21)" inside config_driven_ingestion_20260926.
+# executor = "legacy" on purpose: this id is one of the three pinned LEGACY_LANE_IDS entries
+# (tests/execution/test_lane_catalogue.py) and lane_specs.py's LAND_CONTEXT_FORWARD_LANE_ID still owns
+# the production cron. Flipping this file to executor = "config" would silently take the id OFF the
+# legacy path the moment it loads (execution/lane_catalogue.py::build_lane_catalogue), REGARDLESS of
+# `enabled` -- so that cut-over, and which of forward/reconcile/backfill maps onto the runner's
+# forward/gap-fill turn modes, is exactly the "reconcile mapping decided at activation" this file
+# defers (O7). gap_fill_cron is absent on purpose too: a static_lookup lane has no gap-fill turn
+# (execution/lane_catalogue.py::_NO_GAP_FILL_NATURES).
+#
+# TIGERweb residual: the legacy capture also reads census-state-context from a DIFFERENT publisher,
+# tigerweb.geo.census.gov (products.py::CENSUS_STATES) -- lanes/_providers/blm.toml says so in its own
+# header. This strategy's plan_requests asks the three BLM ArcGIS services only (ownership, national
+# SMA, field offices); the TIGERweb query stays on the legacy pipeline/direct/land_context path.
+#
+# Streams: this file is the only land-context-blm-* TOML declaring [[streams]] (S18: one owner per
+# slug); reconcile and backfill below share the same source and strategy but declare none, pending
+# the same deferred activation decision.
+
+id = "land-context-blm-forward"
+kind = "ingest"
+nature = "static_lookup"
+enabled = false
+executor = "legacy"
+strategy = "land_context.blm_arcgis"
+
+[source]
+provider = "blm"
+# A representative endpoint for provider/region validation only (AGENTS.md); the strategy also asks
+# national-sma-query and field-offices-query for the other two admitted services.
+endpoint = "or-ownership-query"
+coverage = "regional"
+iso_country_codes = ["US"]
+# No retrospective date and no forecast: a current mutable snapshot, never a dated archive.
+history = { capability = "none" }
+lifecycle = "active"
+
+[schedule]
+# Legacy lane_specs.py: LAND_CONTEXT_FORWARD_LANE_ID fires "refresh" at hour 9 UTC.
+forward_cron = "0 9 * * *"
+catch_up = "coalesce_latest"
+
+[days]
+floor = "2026-09-20"
+floor_basis = "pipeline/parquet/lane_registry.py land-context-* registration: PNW BLM source admission 2026-09-20; current captured reference, no inferred history."
+publication_lag_days = 0
+absence_recheck_days = 1
+partial_day = "refuse"
+
+[budget]
+# 3 logical requests (BLM is unweighted): one object-ID inventory ask per admitted ArcGIS service
+# (SURFACE_ORWA, SURFACE_IDAHO, FIELD_OFFICES). This covers only plan_requests' current step; the full
+# ID-paged feature walk source.py::capture_product performs (up to source.py::MAX_REQUESTS = 600
+# across all three services, plus metadata/count checks) is not yet expressed here and must resize
+# this cap at activation.
+forward_max_weighted_calls = 3
+# static_lookup has no gap-fill turn; kept at 0 rather than omitted (the field is required).
+gap_fill_max_weighted_calls = 0
+# Conservative: lanes/_providers/blm.toml's own TODO says any request-rate limit is unverified.
+max_concurrency = 1
+turn_timeout_seconds = 3900
+
+[[streams]]
+slug = "land-context-boundaries"
+history_floor = "2026-09-20"
+complete_history_floor = "2026-09-20"
+floor_basis = "pipeline/parquet/lane_registry.py land-context-boundaries registration: PNW BLM source admission 2026-09-20; current captured reference, no inferred history."
+
+[[streams]]
+slug = "land-context-offices"
+history_floor = "2026-09-20"
+complete_history_floor = "2026-09-20"
+floor_basis = "pipeline/parquet/lane_registry.py land-context-offices registration: PNW BLM source admission 2026-09-20; current captured reference, no inferred history."
+
+[[streams]]
+slug = "land-context-contacts"
+history_floor = "2026-09-20"
+complete_history_floor = "2026-09-20"
+floor_basis = "pipeline/parquet/lane_registry.py land-context-contacts registration: PNW BLM source admission 2026-09-20; current captured reference, no inferred history."
