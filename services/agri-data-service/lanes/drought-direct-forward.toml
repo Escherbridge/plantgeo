@@ -1,0 +1,93 @@
+# drought-direct-forward: USDM weekly drought-class release, migrated in place (spec §7 drought row;
+# plan Phase 4 swarm `s-drought`). Dark at launch: ships `executor = "legacy"` so the existing
+# `pipeline.direct.drought` writer keeps running unchanged; flipping to `executor = "config"` is
+# `p5-cutover`'s G6 commit (metadata.json p5-cutover: that commit edits only executor/enabled/
+# gap_fill_enabled/pruning/gap_fill_max_weighted_calls -- gap_fill_cron and gap_fill_enabled_at_gate
+# below must already be correct). Behaviour: pipeline/lanes/drought/usdm_releases.py. Authoring:
+# lanes/AGENTS.md.
+#
+# KNOWN GAP (see usdm_releases.py's module docstring and docs/lanes/drought.md section 8): USDM's
+# per-release resource is a dated URL PATH segment (ingest/usdm.py::usdm_source_url), which
+# pipeline/runner/binding.py::ConfigProviderClient's declared-endpoint URL builder cannot express --
+# the identical gap lanes/_providers/nasa-firms.toml's TODO names for its own path-segment API key.
+# This lane cannot move to `executor = "config"` until that gap is closed; reported to i-coordinator.
+
+id = "drought-direct-forward"
+kind = "ingest"
+nature = "release_series"
+enabled = true
+executor = "legacy"
+strategy = "drought.usdm_releases"
+
+[source]
+provider = "usdm"
+endpoint = "release-json"
+coverage = "regional"
+iso_country_codes = ["US"]
+# USDM's own archive start (ingest/usdm_history.py::USDM_ARCHIVE_START); the registered floor below
+# is narrower (measured completeness, not raw source capability).
+history = { capability = "archive", earliest = "2000-01-04" }
+lifecycle = "active"
+
+[schedule]
+# Narrowed to the release window (the s-drought task): USDM releases Thursday for the preceding
+# Tuesday (ingest/usdm.py module docstring; products.py::newest_settled_tuesday). Hourly at :45,
+# matching the legacy lane's own minute (execution/lane_specs.py DROUGHT_DIRECT_LANE_ID schedule
+# "45 * * * *"), but only Thursday-Saturday UTC (day-of-week 4-6; foundation/lane_config/cron.py:
+# 0 and 7 are Sunday, 1 is Monday, ...), covering the typical release day plus the slack
+# publication_lag_days=4 below already budgets (Tuesday + 4 days = Saturday).
+#
+# TRADE-OFF, stated rather than hidden: a release genuinely delayed past Saturday is not re-checked
+# again until the FOLLOWING Thursday window opens (up to six days later), rather than every hour
+# through the rest of that week as the legacy all-week hourly cron does. Accepted given the
+# registration's own measured history (209/209 continuous weekly releases, 2022-08-09..2026-08-18,
+# zero gaps) and because absence_recheck_days below keeps re-examining an unsettled Tuesday across
+# several release windows regardless, not only the one it first came up owed in.
+forward_cron = "45 * * * 4,5,6"
+# Pre-declared (inert while gap_fill_enabled = false) for p5-cutover's G6 flip; see the header note.
+# Once a UTC day is plenty: the full floor-to-settled backlog is already written by the legacy lane,
+# so gap-fill here is a rare-gap safety net, never a live backfill.
+gap_fill_cron = "30 4 * * *"
+gap_fill_enabled = false
+gap_fill_enabled_at_gate = "G6"
+catch_up = "coalesce_latest"
+
+[days]
+# pipeline/parquet/lane_registry.py LANE_REGISTRY["drought"] (NATURE release_series; measured against
+# production 2026-08-22): min(valid_date) = 2022-08-09, 209 distinct releases through 2026-08-18, no
+# gap observed.
+floor = "2022-08-09"
+floor_basis = "pipeline/parquet/lane_registry.py LANE_REGISTRY['drought']: measured 2022-08-09..2026-08-18, 209/209 continuous Tuesday releases, no gap observed"
+# Same registration: USDM releases Thursday for the preceding Tuesday; the lag already covers that
+# plus slack (products.py::newest_settled_tuesday).
+publication_lag_days = 4
+# Matches the legacy writer's own measured recheck window exactly: DROUGHT_ABSENCE_RECHECK_WEEKS = 8
+# weeks (pipeline/direct/drought/forward.py), so a week initially unsettled keeps being re-examined
+# for 8 weeks before the window ages out, rather than re-litigating ancient history every turn.
+absence_recheck_days = 56
+# One HTTP answer is the whole national GeoJSON file: a day is either the complete release (Written
+# 1/1) or it refuses (strategy_error on a malformed or empty-repair body) -- never a short file.
+# Settle semantics to preserve (spec §7 drought row).
+partial_day = "refuse"
+
+[budget]
+# Logical requests (unweighted provider): at most 1 new release plus up to absence_recheck_days / 7
+# = 8 weeks of recheck candidates in one forward window, + 3 headroom for a delayed week straddling
+# two recheck cycles.
+forward_max_weighted_calls = 12
+# Gap-fill ships off (S12). Sizing is a PLANNING ESTIMATE, not a measured one -- the floor-to-settled
+# window is already fully written by the legacy lane, so this is a rare-gap safety net, never a live
+# backfill: one year of weekly releases per turn against the 2022-08-09..today backlog.
+gap_fill_max_weighted_calls = 52
+# Gentle on a keyless, unpublished-rate-limit public server (matches water-gauges-daily.toml's choice
+# for the identical reason).
+max_concurrency = 2
+# Matches the legacy writer's own time budget exactly (pipeline/direct/drought/forward.py::
+# DROUGHT_DEFAULT_TIME_BUDGET_SECONDS).
+turn_timeout_seconds = 300
+
+[[streams]]
+slug = "drought"
+history_floor = "2022-08-09"
+complete_history_floor = "2022-08-09"
+floor_basis = "pipeline/parquet/lane_registry.py LANE_REGISTRY['drought']: measured 2022-08-09..2026-08-18, 209/209 continuous Tuesday releases, no gap observed"
