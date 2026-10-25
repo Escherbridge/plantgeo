@@ -329,7 +329,13 @@ def load_config_lanes() -> LaneConfigSet:
     key = (directory, region.slug)
     cached = _CONFIG_SET_CACHE.get(key)
     if cached is None:
-        cached = load_lane_configs(directory, region)
+        # The same resolver the runner CLI injects: a bad volatile_columns entry quarantines the lane
+        # here, at dispatch build, instead of crash-looping its cron (`runner/AGENTS.md` "Volatile columns").
+        from agri_data_service.pipeline.runner.reader import (  # noqa: PLC0415 - lazy by design
+            registered_stream_contract,
+        )
+
+        cached = load_lane_configs(directory, region, stream_contract=registered_stream_contract)
         _CONFIG_SET_CACHE[key] = cached
     return cached
 

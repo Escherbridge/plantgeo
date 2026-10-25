@@ -65,14 +65,15 @@ COMPARE PARITY WITH THE LEGACY WRITER IS NOT ACHIEVABLE TODAY (H2, re-read after
 earlier revision of this module's own report claimed `--mode forward --compare` would show zero
 unexplained delta against the legacy writer because `feature_id`/`status`/`data_available_at` are
 kept byte-identical; that claim is WRONG and is corrected rather than repeated here. Two separate
-problems survive those three constants matching: (1) a full-row digest still includes `updated_at`,
-which is each writer's OWN capture instant, so even an identical population diffs on every row
-between any two independent fetches; (2) the two writers resolve DIFFERENT days for the same version
--- this strategy's day comes from `editingInfo.lastEditDate` (§7's named watermark), while the legacy
-writer's comes from `source.fetched_at.date()` (the instant ITS turn happened to run), and those two
-clocks need not agree, especially across a UTC-midnight boundary. Compare parity REQUIRES a contract
-fix neither writer owns alone (a volatile-column-aware compare plus day alignment) and MUST NOT be
-attempted for this lane before that fix lands; see `AGENTS.md`'s "Known residuals (H1/H2/H3)".
+problems survive those three constants matching: (1) RESOLVED (wave B1a) -- `updated_at` is each
+writer's OWN capture instant, so this lane's TOML declares it in `[[streams]]` `volatile_columns` and
+G6 `_compare` drops it before digesting (`pipeline/runner/AGENTS.md` "Volatile columns"); (2) STILL
+OPEN -- the two writers resolve DIFFERENT days for the same version: this strategy's day comes from
+`editingInfo.lastEditDate` (§7's named watermark), while the legacy writer's comes from
+`source.fetched_at.date()` (the instant ITS turn happened to run), and those two clocks need not
+agree, especially across a UTC-midnight boundary. Day alignment is part of the owner's
+`static_freshness_contract` decision; compare MUST NOT be attempted for this lane before it lands;
+see `AGENTS.md`'s "Known residuals (H1/H2/H3)".
 
 THE WATERMARK FIELD ITSELF HAS NEVER BEEN READ IN PRODUCTION (H3). `lanes/_providers/nifc-wfigs.toml`
 states this is unverified against the live service. If `editingInfo.lastEditDate` turns out not to

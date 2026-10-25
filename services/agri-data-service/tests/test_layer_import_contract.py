@@ -228,13 +228,18 @@ def _lane_of(path: Path, lane_dir: Path) -> str:
     return relative.parts[0] if len(relative.parts) > 1 else path.stem
 
 
+#: Subpackages a lane MAY import despite living beside it: shared libraries, not lanes (`lanes/_shared/AGENTS.md`).
+#: The library itself is still checked the other way -- `_shared` importing a lane stays a violation.
+SHARED_LANE_LIBRARIES: dict[str, frozenset[str]] = {"pipeline/lanes": frozenset({"_shared"})}
+
+
 def _sibling_module_violations(pkg_root: Path, directory: str) -> list[str]:
     """Return every import of one lane by a sibling lane in the same directory."""
     lane_dir = pkg_root / directory
     if not lane_dir.is_dir():
         return []
     package = f"agri_data_service.{directory.replace('/', '.')}"
-    lanes = _lane_names(lane_dir)
+    lanes = _lane_names(lane_dir) - SHARED_LANE_LIBRARIES.get(directory, frozenset())
     # Keyed by (file, line): `_resolved_imports` reports one `from X import a` twice on purpose,
     # and a reader wants the offending LINE named once, not once per matching form.
     violations: dict[tuple[str, int], str] = {}

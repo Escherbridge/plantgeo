@@ -56,13 +56,12 @@ two DIFFERENT digests over two DIFFERENT inputs (release content minus the insta
 conformed table including it) serving two different callers; excluding the instant from one says
 nothing about the other. This is NOT drought-specific -- it is the `direct:`-row convention's general
 shape: any lane whose schema carries a retrieval-instant column (`ingested_at`, `fetched_at`, ...) hits
-the identical false delta the moment it reaches G6 compare. The fix lives OUTSIDE this slice's owned
-files (`pipeline/runner/turn.py`, `reader.py`, `digests.py` are framework files no swarm lane may
-edit): `_compare`/`canonical_digest` need to become volatile-column-aware (e.g. a schema-declared
-exclusion set, or preferring a stored `source_digest` over a raw table hash where one exists) before
-G6 can run against this lane -- or against ANY other lane sharing the same schema shape. Recorded as a
-G6 prerequisite with `i-coordinator`; see `docs/lanes/drought.md` section 8 and this package's
-`AGENTS.md` for the same disclosure.
+the identical false delta the moment it reaches G6 compare. RESOLVED at the framework level (wave
+B1a): this lane's TOML declares `volatile_columns = ["ingested_at"]` on its `[[streams]]` entry, and
+`_compare` digests through `reader.canonical_digest(stream, table, excluding=...)`, which drops the
+declared columns AFTER conforming and grain-sorting (`pipeline/runner/AGENTS.md` "Volatile columns").
+`_source_digest` below is still this strategy's OWN S11 revision digest and remains a different digest
+over a different input; the two stay deliberately separate.
 """
 
 from __future__ import annotations

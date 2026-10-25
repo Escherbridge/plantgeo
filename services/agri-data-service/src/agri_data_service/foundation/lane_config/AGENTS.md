@@ -44,6 +44,9 @@ rule; `LANE_REGISTRY` and friends are read at import, so nothing there may call 
 - **S8.** A lane that fails any rule lands in `quarantined` with every reason; the rest load. Only a
   missing directory raises (`LaneDirectoryError`): that is a packaging fault for every lane, and it
   must be loud (CA4) rather than look like an empty catalogue.
+- **`volatile_columns`** (per `[[streams]]`): capture-time columns G6 `--compare` ignores. Checked only
+  when the caller injects `stream_contract` (production does; `foundation` cannot import the warehouse
+  itself) — see `pipeline/runner/AGENTS.md` "Volatile columns".
 - **Identity is the file stem.** A declared `id` must equal it, which makes ids unique and keys a
   broken file's quarantine under its own name, never under a sibling's id.
 - **Cross-file rules**, in order: provider/endpoint existence, lattice-in-region, coverage contains

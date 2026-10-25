@@ -108,6 +108,7 @@ async def _run(
     from agri_data_service.foundation.region import load_region  # noqa: PLC0415 - lazy by design
     from agri_data_service.pipeline.runner.binding import production_ports  # noqa: PLC0415 - lazy by design
     from agri_data_service.pipeline.runner.clock import SystemClock  # noqa: PLC0415 - lazy by design
+    from agri_data_service.pipeline.runner.reader import registered_stream_contract  # noqa: PLC0415 - lazy by design
     from agri_data_service.pipeline.runner.resolve import resolve_strategy  # noqa: PLC0415 - lazy by design
     from agri_data_service.pipeline.runner.turn import TurnSpec, run_turn  # noqa: PLC0415 - lazy by design
 
@@ -115,7 +116,7 @@ async def _run(
         region = load_region()
     except ValueError as error:
         raise TurnConfigurationError(str(error)) from error
-    configs = load_lane_configs(default_lanes_directory(), region)
+    configs = load_lane_configs(default_lanes_directory(), region, stream_contract=registered_stream_contract)
     lane = configs.lanes.get(arguments.lane)
     if lane is None:
         quarantine = configs.quarantined.get(arguments.lane)

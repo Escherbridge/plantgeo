@@ -2,7 +2,8 @@
 
 Strategy key `burn_severity.mtbs_releases` (spec S14, §7). Imports `execution.contracts`, `ingest`, `warehouse`,
 `pipeline/lanes/_shared`, this package and `pipeline/runner/contract.py` only. The Friday current capture is NOT
-here and has no successor (CA7): `pipeline/lanes/burn_severity/AGENTS.md`, "CA7: no capture successor", says which contract surface refuses it.
+here and has no successor (CA7): `pipeline/lanes/burn_severity/AGENTS.md`, "CA7: no capture successor",
+says which contract surface refuses it.
 """
 
 from __future__ import annotations

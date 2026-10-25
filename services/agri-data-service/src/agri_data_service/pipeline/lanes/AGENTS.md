@@ -33,8 +33,11 @@ lane-specific logic -- no lane's refusal policy, exception type, resource caps, 
 error messages. Those stay at the call site and are passed in as parameters. Rules and rationale:
 `_shared/AGENTS.md`. The leading underscore keeps S14 from ever resolving a strategy there.
 
-`tests/test_layer_import_contract.py::_sibling_module_violations` must exempt `_shared` as an import
-TARGET (it still polices `_shared` importing a lane); that edit belongs to the import-contract owner.
+`tests/test_layer_import_contract.py::_sibling_module_violations` exempts `_shared` as an import
+TARGET via `SHARED_LANE_LIBRARIES` (it still polices `_shared` importing a lane).
+
+A stream's capture-time columns (`ingested_at` and kin) are declared in the lane TOML's `[[streams]]`
+`volatile_columns` so G6 `--compare` ignores them; see `pipeline/runner/AGENTS.md` "Volatile columns".
 
 ## `transforms/`
 

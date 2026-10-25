@@ -91,12 +91,14 @@ class CaptureSession:
         self.responses.append({"url": endpoint, "params": params, "sha256": identity, "bytes": len(body)})
         parsed = json.loads(body)
         fault = arcgis_envelope_fault(parsed)
-        if fault is ArcgisEnvelopeFault.NOT_AN_OBJECT:
-            raise refuse(f"ArcGIS refused {endpoint}: not an object")
         if fault is ArcgisEnvelopeFault.SERVICE_ERROR:
             raise refuse(f"ArcGIS refused {endpoint}: {parsed.get('error')}")
         if fault is ArcgisEnvelopeFault.TRUNCATED:
             raise refuse(f"ArcGIS truncated {endpoint}; refusing a partial population")
+        # NOT_AN_OBJECT and the isinstance are one condition: the isinstance repeats the fault's own
+        # test so mypy sees the dict narrow the enum cannot carry.
+        if fault is ArcgisEnvelopeFault.NOT_AN_OBJECT or not isinstance(parsed, dict):
+            raise refuse(f"ArcGIS refused {endpoint}: not an object")
         return parsed
 
 
@@ -235,7 +237,8 @@ class ReplaySession:
         if stored is None or digest(stored.payload) != receipt["sha256"] or len(stored.payload) != receipt["bytes"]:
             raise refuse("Archived BLM response hash/size verification failed")
         parsed = json.loads(stored.payload)
-        if arcgis_envelope_fault(parsed) is not None:
+        # The isinstance repeats NOT_AN_OBJECT's own test so mypy sees the dict narrow.
+        if arcgis_envelope_fault(parsed) is not None or not isinstance(parsed, dict):
             raise refuse("Archived BLM source response is refused or truncated")
         return parsed
 
