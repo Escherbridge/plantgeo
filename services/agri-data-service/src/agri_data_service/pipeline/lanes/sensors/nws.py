@@ -27,12 +27,11 @@ legacy writer's own "gap walk" never reaches past the SAME 6-day window either (
 sensors/AGENTS.md`, "Ask once per day"), so there is no DEEPER historical backfill duty to port.
 
 MALFORMED UPSTREAM IS LEAN: WHATEVER ESCAPES `fetch()` REFUSES THE WHOLE DAY, NOTHING PARTIAL.
-`source.py`'s two isolation layers (per-state roster, per-station poll) absorb every failure shape
-the legacy writer itself absorbs; what is left to reach `fetch()` uncaught is a code fault or an
-upstream shape change neither isolation layer anticipated, and that becomes this unit's
-`strategy_error` with no `Written` ever constructed (`pipeline/runner/AGENTS.md`, "A strategy fault
-... is that day's strategy_error"). `tests/lanes/sensors/test_nws.py` exercises this by making the
-fetch seam raise directly, proving the wiring rather than a specific NWS failure mode.
+`source.py` isolates a per-station poll failure; a degraded roster (a state's roster page failed or
+was malformed), the roster call itself raising, or a code fault escapes `fetch()` and becomes this
+unit's `strategy_error` with no `Written` ever constructed (`pipeline/runner/AGENTS.md`, "A strategy
+fault ... is that day's strategy_error"). `tests/lanes/sensors/test_nws.py` drives this through a
+scripted transport serving a malformed roster page.
 
 NO VOLATILE COLUMN IS DECLARED, UNLIKE EVERY SIBLING STRATEGY (H1, flag for the per-lane review).
 `warehouse/schemas/sensors.py::SENSORS_SCHEMA` has no column this strategy stamps from the fetch's
@@ -44,36 +43,47 @@ but for the opposite reason (its `ingested_at` column is NOT part of the digest 
 dropped from it). `lanes/sensors-direct-forward.toml`'s `[[streams]]` carries no
 `volatile_columns` entry; this is evidence, not an omission.
 
-THE ROSTER ITSELF IS NOT A STABLE PARTITION, UNLIKE `water_gauges`' FIXED TILES (H2, flag for the
-per-lane review). `UsgsWaterDataDailyStrategy.source_unit_ids` is deterministic from the region's
-camera envelope alone; `source.py::fetch_sensors_day_snapshot` discovers the roster fresh every
-turn (`SENSOR_STATION_STATES`/`SENSOR_MAX_STATIONS`/NWS's own roster churn all vary it turn to
-turn). `settle`'s `expected_unit_ids` is therefore THIS TURN's roster, not a registered constant, so
-the S11 "fewer units never written" rule it leans on (module docstring, `source.py`) can read an
-ORDINARY roster shrink (NWS retires a station) as if it were a failed poll, and refuse to settle a
-day that is, in truth, simply reporting on fewer stations now. The legacy writer has no equivalent
-failure mode (its merge keeps a retired station's last block forever, by never being asked to drop
-it). Left open rather than fixed here: a corrected rule would need to compare against the PREVIOUS
-turn's receipt's `present_unit_ids`, not `expected_unit_ids`, which `DayContext` does not expose
-today (`short_day_units` reads `present_units`/`expected_units` counts only, not the identity sets).
+COVERAGE IS THE STATIONS THAT ANSWERED, NOT THE STATIONS WITH ROWS. `settle`'s
+`present_unit_ids` is `source.py`'s `present_station_ids` -- every station whose `limit=1` poll
+returned, with or without a report for the day. So "partial" means exactly "a poll failed", which
+is what the runner's S11 partial-day rules assume (`pipeline/runner/writer.py::_coverage_refusal`):
+a failed poll refuses (`fewer_units`/`coverage_lost`) and never erases the station it served last
+turn, while a fully answered sweep reaches the digest rule, so a station's newer report rewrites the
+day. Keying coverage by stations-with-rows instead froze every partial day at its first winner:
+`_decide_unverified_rewrite` rewrites a partial day only on strictly more units.
+
+A ROSTER SHRINK FREEZES ONLY IN-WINDOW DAYS; IT NEVER WEDGES THE LANE. The roster is discovered
+fresh every turn (`SENSOR_STATION_STATES`/`SENSOR_MAX_STATIONS`/NWS's own churn), unlike
+`water_gauges`' fixed tiles. The runner already compares this turn's `present_unit_ids` against the
+PREVIOUS receipt's (`writer.py::_coverage_refusal`, re-checked under the lock in
+`ObjectStoreLaneWriter.write_day`), so when NWS retires a station, days already written with it refuse
+as `coverage_lost` until they leave the 5-day window; every newer day has no receipt and writes
+fresh. See `pipeline/lanes/sensors/AGENTS.md`, "Coverage is stations that answered".
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final
 
 import pyarrow as pa  # type: ignore[import-untyped]
 
 from agri_data_service.ingest.policy import format_javascript_number
 from agri_data_service.ingest.sensors import NWS_OBSERVATION_RETENTION
-from agri_data_service.pipeline.lanes._shared.digest import COMPACT_SEPARATORS, canonical_json_bytes, canonical_json_text, sha256_hex, sha256_hex_of_lines
+from agri_data_service.pipeline.lanes._shared.digest import (
+    COMPACT_SEPARATORS,
+    canonical_json_bytes,
+    canonical_json_text,
+    sha256_hex,
+    sha256_hex_of_lines,
+)
 from agri_data_service.pipeline.lanes.sensors.source import SensorsDaySnapshot, fetch_sensors_day_snapshot
 from agri_data_service.pipeline.runner.contract import SourceRequest, SourceResponse, Unsettled, Written
 from agri_data_service.warehouse.schemas.sensors import SENSORS_GRAIN, SENSORS_SCHEMA
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
     from datetime import date
 
     from agri_data_service.foundation.lane_config.models import LaneConfig
@@ -83,6 +93,11 @@ if TYPE_CHECKING:
 #: The provider's one declared endpoint (`lanes/_providers/nws.toml`). `fetch` never sends through
 #: it (module docstring); it is named only so every planned unit carries a valid endpoint key.
 STATIONS_ENDPOINT: Final = "stations"
+
+
+def _utc_now() -> datetime:
+    """The real wall clock, in UTC."""
+    return datetime.now(UTC)
 
 
 class SensorsRowsRequestedWithNoSnapshotError(RuntimeError):
@@ -123,7 +138,15 @@ def day_source_digest(rows: Sequence[Mapping[str, object]]) -> str:
 
 @dataclass(frozen=True)
 class NwsSensorsStrategy:
-    """One whole-roster sweep per owed day; `fetch` bypasses the governed client (Wave O, module docstring)."""
+    """One whole-roster sweep per owed day; `fetch` bypasses the governed client (Wave O, module docstring).
+
+    Checkpoint-ineligible by construction: `plan_requests` sets no `requested_parameters`, so
+    `SourceResponse.checkpoint_eligible` is always False (`pipeline/runner/contract.py`). It must stay
+    so -- `fetch` ignores the handed client, so a replayed checkpoint could never reach this sweep.
+    """
+
+    #: The retention clock; tests pass the turn's `ManualClock.now`.
+    now: Callable[[], datetime] = field(default=_utc_now)
 
     def plan_requests(self, days: Sequence[date], lane: LaneConfig, region: Region) -> list[SourceRequest]:  # noqa: ARG002 - the Protocol's lane
         """One unit per asked day, over the region's camera envelope; the roster is discovered inside `fetch`."""
@@ -144,7 +167,7 @@ class NwsSensorsStrategy:
         """Sweep the whole roster for this unit's one day through `source.py`'s own `upstream_client`."""
         day = request.days[0]
         bbox = request.query()["bbox"]
-        snapshot = await fetch_sensors_day_snapshot(day, bbox)
+        snapshot = await fetch_sensors_day_snapshot(day, bbox, now=self.now())
         body = canonical_json_bytes(
             {
                 "day": day.isoformat(),
@@ -162,7 +185,7 @@ class NwsSensorsStrategy:
         return SourceResponse(request=request, body=body, retrieved_at=snapshot.fetched_at, payload=snapshot)
 
     def settle(self, day: date, responses: Sequence[SourceResponse], context: DayContext) -> Settlement:  # noqa: ARG002 - the Protocol's day and context
-        """Written from whichever stations contributed a row; retention/upstream-outage/empty-poll named distinctly."""
+        """Written over the stations that answered; retention/upstream-outage/empty-poll named distinctly."""
         snapshot = _snapshot_payload(responses)
         if snapshot is None:
             return Unsettled("strategy_error", "fetch returned no sensors day snapshot")

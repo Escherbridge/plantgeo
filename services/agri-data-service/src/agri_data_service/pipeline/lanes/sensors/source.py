@@ -9,36 +9,42 @@ therefore plans exactly ONE unit per day and this module fetches it whole, throu
 provider client OR the existing source module's upstream_client"). `nws.toml` needs no per-station
 `path_template` endpoint as a result; see `pipeline/lanes/sensors/AGENTS.md`.
 
-FAILURE ISOLATION MIRRORS THE LEGACY WRITER, AT TWO LAYERS, NOT ONE. `ingest.sensors.
-fetch_station_roster` already isolates a per-STATE roster-page failure (`unavailable_states`,
-never a raise); `_poll_station` below isolates a per-STATION observation-request failure the same
-way `pipeline/direct/sensors/source.py::_sweep_day` does (`sweep.unavailable`, never fatal to the
-day). Only a fault that defeats BOTH layers -- the roster call itself raising, or a code fault in
-this module -- escapes `fetch_sensors_day_snapshot` uncaught, and becomes that unit's
-`strategy_error` (`pipeline/runner/AGENTS.md` "A strategy fault in settle/rows/derive is that day's
-strategy_error"; `pipeline/runner/fetch.py` extends the same classification to a `fetch()` raise).
-Per `pipeline/direct/sensors/AGENTS.md`, "a specialized type is reserved for a tested semantic
-branch rather than a lane-specific wrapper name" -- no new exception type is minted here; whatever
-`ingest.sensors`/`ingest.http` raises (e.g. `UpstreamPayloadError` for a roster page that is not a
-readable FeatureCollection) propagates verbatim.
+ONE REPORT PER STATION-DAY REQUEST (`limit=1`), RESTATED FROM THE LEGACY WRITER. NWS answers a
+bounded `start`/`end` window newest-first, so `limit=1` is the day's winner. Measured 2026-10-03 on
+KBOI: one 5-minute station-day without `limit` is 312 features and 1.2 MB, past `ingest/sensors.py::
+OBSERVATION_BOUNDS`' 1 MiB cap; with `limit=1` it is 5.4 KB. `_limited_observation_url` and
+`SENSORS_OBSERVATION_BOUNDS` (64 KiB) restate `pipeline/direct/sensors/source.py`'s identically
+named pair, never import it (`pipeline/direct/**` is forbidden to this package).
 
-THE WINNING-REPORT REDUCTION IS RESTATED, NEVER IMPORTED, FROM `pipeline/direct/sensors/rows.py`
-(`pipeline/direct/**` is forbidden to this package). `_day_winner` is the same `max()` over
-(timestamp text, producer_local_id), both DESC, as that module's `_winning_write` -- the literal
-Python form of `sql/pipeline/direct/sensors/postgres_day_counts.sql`'s
-`ORDER BY observedAt DESC, feature.id DESC` `DISTINCT ON` reduction. `feature_id` carries the SAME
-`direct:` prefix that module mints (never a new one), so no entry is owed to
-`tests/lanes/test_direct_feature_id_parity.py`.
+FAILURE ISOLATION IS PER STATION; A DEGRADED ROSTER REFUSES THE WHOLE SWEEP. `_poll_station` below
+isolates a per-STATION observation failure (any `UpstreamError`) the way
+`pipeline/direct/sensors/source.py::_sweep_day` does: that station is reported unanswered, never
+fatal to the day. A per-STATE roster failure is different: `ingest.sensors.fetch_station_roster`
+reports it as `unavailable_states` rather than raising, and a sweep over that roster would be
+missing whole states from BOTH `expected_unit_ids` and `present_unit_ids` -- a day that reads
+complete while it is not. `_sweep` therefore raises on `roster.degraded` (the signal legacy reads at
+`pipeline/direct/sensors/source.py::poll_recent_sensor_readings`). That raise, the roster call
+itself raising, or a code fault in this module escapes `fetch_sensors_day_snapshot` and becomes that
+unit's `strategy_error` (`pipeline/runner/AGENTS.md` "A strategy fault in settle/rows/derive is that
+day's strategy_error"; `pipeline/runner/fetch.py` extends the same classification to a `fetch()`
+raise). No new exception type is minted: the degraded roster raises the base `UpstreamError`.
+
+THE WINNING-REPORT REDUCTION IS RESTATED, NEVER IMPORTED, FROM `pipeline/direct/sensors/rows.py`.
+`_day_winner` is the same `max()` over (timestamp text, producer_local_id), both DESC, as that
+module's `_winning_write` -- the literal Python form of `sql/pipeline/direct/sensors/
+postgres_day_counts.sql`'s `ORDER BY observedAt DESC, feature.id DESC` `DISTINCT ON` reduction.
+With `limit=1` it normally sees one record; it still reduces, so an upstream that ignores `limit`
+cannot pick an older report. `feature_id` carries the SAME `direct:` prefix that module mints
+(never a new one), so no entry is owed to `tests/lanes/test_direct_feature_id_parity.py`.
 
 NO ROW-LEVEL MERGE WITH THE PREVIOUSLY PUBLISHED DAY HAPPENS HERE, UNLIKE
-`pipeline/lanes/sensors/merge.py`. A strategy cannot read back the previous partition's rows (the
-runner only ever hands it day lists and digests, `pipeline/runner/contract.py::DayContext`), so
+`pipeline/lanes/sensors/merge.py`. A strategy cannot read back the previous partition's rows, so
 `rows()` always returns this turn's own complete sweep. The anti-regression property legacy's
 block-merge gave -- a later poll cannot silently erase a station's measurements -- is recovered
-generically instead, through `Written.expected_unit_ids`/`present_unit_ids` keyed by station
-identifier (`nws.py::settle`) and the runner's own S11 "fewer units never written" rule
-(`pipeline/runner/AGENTS.md` "Writer"). See `nws.py`'s module docstring for the one way this
-genuinely differs from a static tile partition: the roster itself can change turn to turn.
+generically instead: `present_station_ids` is the set of stations that ANSWERED (not the set with
+rows), so a failed poll makes the day partial and the runner's S11 rules refuse it, while a fully
+answered sweep reaches the digest rule and a newer report rewrites the day. See
+`pipeline/lanes/sensors/AGENTS.md`, "Coverage is stations that answered".
 """
 
 from __future__ import annotations
@@ -48,15 +54,22 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Final
 
-from agri_data_service.ingest.http import upstream_client
+from agri_data_service.ingest.http import (
+    UpstreamBounds,
+    UpstreamError,
+    UpstreamPayloadError,
+    fetch_bounded_json,
+    upstream_client,
+)
 from agri_data_service.ingest.identity import MissingNativeKeyError
 from agri_data_service.ingest.sensors import (
     MAX_CONCURRENT_STATION_REQUESTS,
     NWS_OBSERVATION_RETENTION,
-    OBSERVATION_BOUNDS,
     build_sensor_reading_identity,
-    fetch_station_observations,
     fetch_station_roster,
+    nws_request_headers,
+    observation_url,
+    parse_observation,
 )
 from agri_data_service.ingest.source import HistoryWindow
 
@@ -71,6 +84,13 @@ if TYPE_CHECKING:
 #: Mirrors `pipeline/direct/sensors/rows.py`'s own exclusion: free text, not a measurement value.
 _EXCLUDED_MEASUREMENT_KEY: Final = "textDescription"
 _ONE_DAY: Final = timedelta(days=1)
+_ISO_DAY_LENGTH: Final = len("YYYY-MM-DD")
+
+#: Reports asked for per request; NWS answers newest-first, so one is the day's winner (module docstring).
+SENSORS_REPORTS_PER_REQUEST: Final = 1
+
+#: Per-request cap: a `limit=1` answer is about 5.4 KB, a whole un-limited day 1.2 MB (module docstring).
+SENSORS_OBSERVATION_BOUNDS: Final = UpstreamBounds(max_bytes=64 * 1024, timeout_seconds=15.0)
 
 
 def _day_start(day: date) -> datetime:
@@ -83,14 +103,25 @@ def _day_end(day: date) -> datetime:
     return _day_start(day) + _ONE_DAY
 
 
+def _limited_observation_url(station_identifier: str, window: HistoryWindow) -> str:
+    """`observation_url` for a bounded window, asking only for the newest `SENSORS_REPORTS_PER_REQUEST`."""
+    return f"{observation_url(station_identifier, window)}&limit={SENSORS_REPORTS_PER_REQUEST}"
+
+
+def _collection_features(payload: object) -> list[object]:
+    """A history FeatureCollection's features, refusing a body that is not one."""
+    features = payload.get("features") if isinstance(payload, dict) else None
+    if not isinstance(features, list):
+        raise UpstreamPayloadError("NOAA NWS returned an invalid observation collection")
+    return features
+
+
 @dataclass(frozen=True, slots=True)
 class SensorsDaySnapshot:
     """One day's roster sweep: whether NWS could still serve it, and every station's winning rows.
 
-    `roster_station_ids`/`present_station_ids` are this turn's own answer to "what did the roster
-    look like, and which of it answered" -- see this module's docstring, "no row-level merge", for
-    why these two sets (not a merged table) are how this strategy protects previously published
-    stations from a station that merely failed to answer THIS turn.
+    `roster_station_ids` is the roster this turn asked; `present_station_ids` is the part of it that
+    answered (with or without a report for the day) -- the coverage `nws.py::settle` hands the runner.
     """
 
     day: date
@@ -104,28 +135,31 @@ class SensorsDaySnapshot:
     present_station_ids: frozenset[str] = frozenset()
 
 
-def _day_winner(
-    records: Sequence[dict[str, object]], *, day: date
-) -> tuple[dict[str, object], FeatureIdentity] | None:
+@dataclass(frozen=True, slots=True)
+class _DaySweep:
+    """What one day's sweep asks: the day, the coverage box, its clamped poll window, and the turn's clock."""
+
+    day: date
+    bbox: str
+    window: HistoryWindow
+    fetched_at: datetime
+
+
+def _day_winner(records: Sequence[dict[str, object]], *, day: date) -> tuple[dict[str, object], FeatureIdentity] | None:
     """The day's winning report: `max` over (raw timestamp text, producer_local_id), both DESC.
 
-    Restated from `pipeline/direct/sensors/rows.py::_winning_write`; see this module's docstring.
-    A record whose own timestamp prefix names a DIFFERENT day than `day` is dropped here -- the
-    bounded poll window can straddle a neighbour day at its edges, and only this day's own reports
-    may win it (`pipeline/direct/sensors/rows.py`'s module docstring, "THE DAY KEY IS AN ISO-STRING
+    A record whose own timestamp prefix names a DIFFERENT day than `day` is dropped -- only this
+    day's own reports may win it (`pipeline/direct/sensors/rows.py`, "THE DAY KEY IS AN ISO-STRING
     PREFIX").
     """
-    candidates: list[tuple[str, str, dict[str, object], object]] = []
+    candidates: list[tuple[str, str, dict[str, object], FeatureIdentity]] = []
     for record in records:
         timestamp = record.get("timestamp")
-        if not isinstance(timestamp, str) or len(timestamp) < 10:  # noqa: PLR2004 - len("YYYY-MM-DD")
+        if not isinstance(timestamp, str) or len(timestamp) < _ISO_DAY_LENGTH:
             continue
         try:
-            if date.fromisoformat(timestamp[:10]) != day:
+            if date.fromisoformat(timestamp[:_ISO_DAY_LENGTH]) != day:
                 continue
-        except ValueError:
-            continue
-        try:
             identity = build_sensor_reading_identity(record)
         except (MissingNativeKeyError, ValueError):
             continue
@@ -137,12 +171,7 @@ def _day_winner(
 
 
 def _measurement_rows(record: dict[str, object], identity: FeatureIdentity, *, day: date) -> list[dict[str, object]]:
-    """Fan out one winning report's already-validated readings into base rows at the registered grain.
-
-    `readings` entries are already shape-checked by `ingest.sensors.observation_readings`/
-    `_measurement` (finite numeric value; `unitCode`/`qualityControl` present only when NWS sent
-    them) -- restated here is only the fan-out, not the per-measurement validation.
-    """
+    """Fan out one winning report's already-validated readings into base rows at the registered grain."""
     readings = record.get("readings")
     if not isinstance(readings, dict):
         return []
@@ -161,8 +190,7 @@ def _measurement_rows(record: dict[str, object], identity: FeatureIdentity, *, d
                 "value": measurement["value"],
                 "unit_code": measurement.get("unitCode"),
                 "quality_control": measurement.get("qualityControl"),
-                # Same `direct:` prefix `pipeline/direct/sensors/rows.py::_feature_id` mints; never a
-                # new one (module docstring).
+                # Same `direct:` prefix as `pipeline/direct/sensors/rows.py::_feature_id`.
                 "feature_id": f"direct:{identity.producer_local_id}",
                 "data_available_at": None,
                 "station_longitude": record.get("longitude"),
@@ -173,59 +201,67 @@ def _measurement_rows(record: dict[str, object], identity: FeatureIdentity, *, d
 
 
 async def _poll_station(
-    client: httpx.AsyncClient, station: SensorStation, window: HistoryWindow, *, day: date
+    client: httpx.AsyncClient, station: SensorStation, sweep: _DaySweep
 ) -> tuple[list[dict[str, object]], bool]:
-    """One station's bounded poll: `(rows, answered)`. `answered=False` means the request raised -- isolated."""
+    """One station's `limit=1` poll: `(rows, answered)`; an `UpstreamError` is isolated as unanswered."""
     try:
-        records = await fetch_station_observations(client, station, window)
-    except Exception:  # noqa: BLE001 - isolated per station, never fatal to the day (module docstring)
+        payload = await fetch_bounded_json(
+            client,
+            _limited_observation_url(station.station_identifier, sweep.window),
+            SENSORS_OBSERVATION_BOUNDS,
+            nws_request_headers(),
+        )
+        features = _collection_features(payload)
+    except UpstreamError:
         return [], False
-    winner = _day_winner(records, day=day)
+    records = [record for feature in features if (record := parse_observation(feature, station)) is not None]
+    winner = _day_winner(records, day=sweep.day)
     if winner is None:
         return [], True
     record, identity = winner
-    return _measurement_rows(record, identity, day=day), True
+    return _measurement_rows(record, identity, day=sweep.day), True
 
 
-async def _sweep(
-    client: httpx.AsyncClient, *, day: date, bbox: str, start: datetime, end: datetime, fetched_at: datetime
-) -> SensorsDaySnapshot:
-    """Drain the roster, then poll every station for `day`'s bounded window, isolating per-station faults."""
-    roster = await fetch_station_roster(client, bbox)
+async def _sweep(client: httpx.AsyncClient, sweep: _DaySweep) -> SensorsDaySnapshot:
+    """Drain the roster (refusing a degraded one), then poll every station for the day's window."""
+    roster = await fetch_station_roster(client, sweep.bbox)
+    if roster.degraded:
+        raise UpstreamError(
+            f"NWS station roster is degraded: states {', '.join(roster.unavailable_states)} unavailable"
+        )
     stations = roster.stations
     if not stations:
         return SensorsDaySnapshot(
-            day=day, fetched_at=fetched_at, in_retention=True, roster_size=0, stations_answered=0, stations_unavailable=0
+            day=sweep.day,
+            fetched_at=sweep.fetched_at,
+            in_retention=True,
+            roster_size=0,
+            stations_answered=0,
+            stations_unavailable=0,
         )
-    window = HistoryWindow(start=start, end=end)
     concurrency = asyncio.Semaphore(MAX_CONCURRENT_STATION_REQUESTS)
 
     async def poll(station: SensorStation) -> tuple[list[dict[str, object]], bool]:
         async with concurrency:
-            return await _poll_station(client, station, window, day=day)
+            return await _poll_station(client, station, sweep)
 
     results = await asyncio.gather(*(poll(station) for station in stations))
     rows: list[dict[str, object]] = []
-    present: set[str] = set()
-    answered = unavailable = 0
+    answered: set[str] = set()
     for station, (station_rows, ok) in zip(stations, results, strict=True):
         if ok:
-            answered += 1
-        else:
-            unavailable += 1
-        if station_rows:
-            present.add(station.station_identifier)
-            rows.extend(station_rows)
+            answered.add(station.station_identifier)
+        rows.extend(station_rows)
     return SensorsDaySnapshot(
-        day=day,
-        fetched_at=fetched_at,
+        day=sweep.day,
+        fetched_at=sweep.fetched_at,
         in_retention=True,
         roster_size=len(stations),
-        stations_answered=answered,
-        stations_unavailable=unavailable,
+        stations_answered=len(answered),
+        stations_unavailable=len(stations) - len(answered),
         rows=tuple(rows),
         roster_station_ids=frozenset(station.station_identifier for station in stations),
-        present_station_ids=frozenset(present),
+        present_station_ids=frozenset(answered),
     )
 
 
@@ -235,27 +271,32 @@ async def fetch_sensors_day_snapshot(
     """Sweep one day's whole roster, or answer `in_retention=False` with zero NWS requests when it has rolled out.
 
     Mirrors `pipeline/direct/sensors/source.py::_rolling_window`: the floor is `now - 6 days`,
-    resolved at call time because it rolls forward every day, never a frozen constant. `now`
-    defaults to the real clock; tests pass a fixed one (`pipeline/lanes/sensors/nws.py`'s fetch
-    calls this with no `now`, so the runner's own turn clock is NOT threaded through here today --
-    see `AGENTS.md` for why that is an open item, not a correctness bug, at this sketch's scope).
+    resolved at call time because it rolls. `now` defaults to the real clock; `nws.py::fetch` passes
+    the strategy's injected clock.
     """
     fetched_at = now if now is not None else datetime.now(UTC)
     window_start, window_end = fetched_at - NWS_OBSERVATION_RETENTION, fetched_at
     day_s, day_e = _day_start(day), _day_end(day)
-    in_retention = day_e > window_start and day_s < window_end
-    if not in_retention:
+    if not (day_e > window_start and day_s < window_end):
         return SensorsDaySnapshot(
-            day=day, fetched_at=fetched_at, in_retention=False, roster_size=0, stations_answered=0, stations_unavailable=0
+            day=day,
+            fetched_at=fetched_at,
+            in_retention=False,
+            roster_size=0,
+            stations_answered=0,
+            stations_unavailable=0,
         )
-    start, end = max(day_s, window_start), min(day_e, window_end)
+    window = HistoryWindow(start=max(day_s, window_start), end=min(day_e, window_end))
+    sweep = _DaySweep(day=day, bbox=bbox, window=window, fetched_at=fetched_at)
     if client is not None:
-        return await _sweep(client, day=day, bbox=bbox, start=start, end=end, fetched_at=fetched_at)
-    async with upstream_client(OBSERVATION_BOUNDS) as owned_client:
-        return await _sweep(owned_client, day=day, bbox=bbox, start=start, end=end, fetched_at=fetched_at)
+        return await _sweep(client, sweep)
+    async with upstream_client(SENSORS_OBSERVATION_BOUNDS) as owned_client:
+        return await _sweep(owned_client, sweep)
 
 
 __all__ = [
+    "SENSORS_OBSERVATION_BOUNDS",
+    "SENSORS_REPORTS_PER_REQUEST",
     "SensorsDaySnapshot",
     "fetch_sensors_day_snapshot",
 ]

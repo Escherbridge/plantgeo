@@ -43,37 +43,40 @@ catch_up = "coalesce_latest"
 # No fixed floor: a rolling 6-day source has no calendar day before which asking is pointless in
 # the way an archive's accretion-start floor means (contrast water-gauges-daily.toml's 1990-09-30).
 publication_lag_days = 1
-# [edge - 5, edge] with edge = today - 1 (write_and_recheck forces that cap): six calendar days,
-# matching NWS_OBSERVATION_RETENTION exactly. Sized so every window day STARTS inside retention;
-# `settle()`'s own rolling check (nws.py) is still the real boundary enforcement, since the exact
-# cutoff depends on the turn's own clock instant, not the calendar alone.
-absence_recheck_days = 6
-# write_and_recheck: every window day is re-asked each turn, and a short day (fewer stations
-# answered than a previous turn's roster) is rewritten only on strictly more units (S11) -- the
-# generic recovery of the legacy writer's own "never erase a station's last block" property; see
-# nws.py's module docstring, "no row-level merge", for why this is a strategy-level set comparison
-# rather than a row merge.
+# [edge - 4, edge] with edge = today - 1 (write_and_recheck forces that cap): five calendar days,
+# ONE FEWER than NWS_OBSERVATION_RETENTION on purpose. With six, the oldest window day (today - 6)
+# would be clamped to start at now - 6 days, so a station whose last report that day precedes the
+# turn's clock time would drop out -> `coverage_lost` -> a refused day behind the edge every turn.
+# With five, every window day starts after now - 6 days and is polled whole.
+absence_recheck_days = 5
+# write_and_recheck: every window day is re-asked each turn. Coverage is the stations that ANSWERED
+# (nws.py's module docstring, "Coverage is the stations that answered"): a failed poll refuses the
+# day (S11, never erasing the station it served last turn), a fully answered sweep rewrites it on a
+# digest change.
 partial_day = "write_and_recheck"
 
 [budget]
 # One unit per window day (pipeline/lanes/sensors/nws.py: `fetch` sweeps the whole roster for one
-# day in a single call, bypassing the governed client -- Wave O). 6 window days x 1 unit = 6;
+# day in a single call, bypassing the governed client -- Wave O). 5 window days x 1 unit = 5;
 # `write_and_recheck` re-asks the whole window every turn, so this is the per-turn ceiling, not a
 # historical backlog bound.
-forward_max_weighted_calls = 6
+forward_max_weighted_calls = 5
 gap_fill_max_weighted_calls = 0
 # Each unit's own internal roster sweep already fans out to MAX_CONCURRENT_STATION_REQUESTS (8)
 # stations at once (ingest/sensors.py); running multiple days' sweeps concurrently on top of that
 # would multiply pressure on a provider with an "unpublished" rate posture (lanes/_providers/nws.toml).
 max_concurrency = 1
 # Legacy's own time-budget ceiling (pipeline/direct/sensors/forward.py::SENSORS_MAX_TIME_BUDGET_SECONDS),
-# sized for the same worst case this strategy now spends sequentially across up to 6 day-units
+# sized for the same worst case this strategy now spends sequentially across up to 5 day-units
 # instead of one resumable poll: each unit's own roster walk must still fit the generic per-unit
 # fetch cap (pipeline/runner/fetch.py::PER_UNIT_FETCH_CAP_SECONDS = 330s).
 turn_timeout_seconds = 900
 
 [[streams]]
 slug = "sensors"
+# The literal registration at pipeline/parquet/lane_registry.py (SENSORS_STREAM, history_floor), so the
+# mirror parity check runs now rather than at the G6 flip.
+history_floor = "2026-07-29"
 floor_basis = "no archive floor: NWS's own rolling 6-day retention (ingest/sensors.py::NWS_OBSERVATION_RETENTION) is the only history this source has ever had; see [source].history above and docs/lanes/sensors.md §3"
 # No volatile_columns: nothing in SENSORS_SCHEMA is stamped from this strategy's own fetch/retrieval
 # instant -- `observed_at` is the winning report's OWN instant (content, from FeatureIdentity.
