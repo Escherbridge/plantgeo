@@ -39,6 +39,30 @@ are both framework files no swarm lane may edit). Reported to `i-coordinator`; s
 `docs/lanes/drought.md` section 8 and this package's `AGENTS.md`. The tests below exercise this
 strategy's own logic against a fake `ProviderClient` (never the real `ConfigProviderClient`'s URL
 construction), which is the honest scope given the gap above.
+
+**A second known gap (ring review, s-drought fix batch): G6's `--mode forward --compare` cannot run
+against this lane either, and the earlier G6-parity claims below were half true.** `_source_digest`
+excludes `ingested_at` so an UNCHANGED recheck never reads as a revision inside THIS strategy's own
+`settle()` (S11) -- that claim holds. But G6's actual compare path is
+`pipeline/runner/turn.py::_Turn._compare`, which diffs `reader.canonical_digest(stream, built)`
+against `reader.canonical_digest(stream, published)`; `reader.py::ObjectStoreLaneReader.canonical_digest`
+conforms the WHOLE table to the stream schema and hashes it with `digests.py::table_digest` (the
+table's Arrow IPC bytes, every column, no exclusion mechanism). `ingested_at` IS a `DROUGHT_SCHEMA`
+column (`warehouse/schemas/drought.py`) and `rows()` below stamps it with the CURRENT fetch's
+`retrieved_at` -- so comparing a freshly built table against ANY already-published day (written by the
+legacy lane, or by this lane on an earlier turn, with that write's OWN `ingested_at`) deltas on that
+column alone, every time, for every already-settled day. `_source_digest` and `canonical_digest` are
+two DIFFERENT digests over two DIFFERENT inputs (release content minus the instant, vs. the whole
+conformed table including it) serving two different callers; excluding the instant from one says
+nothing about the other. This is NOT drought-specific -- it is the `direct:`-row convention's general
+shape: any lane whose schema carries a retrieval-instant column (`ingested_at`, `fetched_at`, ...) hits
+the identical false delta the moment it reaches G6 compare. The fix lives OUTSIDE this slice's owned
+files (`pipeline/runner/turn.py`, `reader.py`, `digests.py` are framework files no swarm lane may
+edit): `_compare`/`canonical_digest` need to become volatile-column-aware (e.g. a schema-declared
+exclusion set, or preferring a stored `source_digest` over a raw table hash where one exists) before
+G6 can run against this lane -- or against ANY other lane sharing the same schema shape. Recorded as a
+G6 prerequisite with `i-coordinator`; see `docs/lanes/drought.md` section 8 and this package's
+`AGENTS.md` for the same disclosure.
 """
 
 from __future__ import annotations
@@ -76,8 +100,12 @@ VALID_DATE_PARAMETER: Final = "valid_date"
 #: matches `tests/runner/fixtures/release_series.py::NOT_PUBLISHED_AT`'s identical sentinel choice.
 NOT_PUBLISHED_AT: Final = datetime(1970, 1, 1, tzinfo=UTC)
 #: Matches `pipeline/direct/drought/rows.py::DIRECT_AREA_ID_PREFIX`/`direct_area_id` byte-for-byte
-#: (restated, not imported -- this package may never import `pipeline/direct/**`), so the G6 compare
-#: gate sees no delta in `area_id` when the executor flips from legacy to config.
+#: (restated, not imported -- this package may never import `pipeline/direct/**`): this COLUMN alone
+#: contributes no delta at G6 compare when the executor flips from legacy to config. CORRECTED (ring
+#: review, s-drought fix batch): that is NOT the same as "the G6 compare gate sees no delta" overall
+#: -- `ingested_at` still will, on every already-published day, regardless of this column's fidelity.
+#: See this module's docstring, "A second known gap", for the compare-path mechanism and why the fix
+#: is out of scope here.
 _DIRECT_AREA_ID_PREFIX: Final = "direct"
 
 
@@ -99,6 +127,13 @@ def _source_digest(release: DroughtRelease) -> str:
     recheck of an unchanged release would read as a revision and rewrite the day for no reason
     (`Written.source_digest`'s own docstring: "a strategy whose rows carry a retrieval instant must set
     it, or every refetch reads as a revision").
+
+    CORRECTED SCOPE (ring review, s-drought fix batch): this governs ONLY that one S11 rewrite
+    decision, internal to this strategy's own `settle()`. It is a different digest over a different
+    input than `pipeline/runner/turn.py::_compare`'s `reader.canonical_digest`, which hashes the WHOLE
+    written table -- `ingested_at` included -- with no exclusion. Excluding the instant here does
+    NOT make this lane's output immune to a false delta at G6 compare; see this module's docstring,
+    "A second known gap".
     """
     canonical = json.dumps(
         {

@@ -26,12 +26,14 @@ from agri_data_service.foundation.lane_config import load_lane_configs
 from agri_data_service.foundation.lane_config.models import lane_requires_probe_edge
 from agri_data_service.foundation.region import load_region
 from agri_data_service.ingest.http import HTTP_NOT_FOUND, UpstreamHttpError
+from agri_data_service.pipeline.lanes.drought import usdm_releases
 from agri_data_service.pipeline.lanes.drought.products import release_weeks
 from agri_data_service.pipeline.lanes.drought.usdm_releases import (
     RELEASE_ENDPOINT,
     STRATEGY,
     VALID_DATE_PARAMETER,
 )
+from agri_data_service.pipeline.runner.contract import ProviderResponse
 from agri_data_service.pipeline.runner.resolve import resolve_strategy
 from agri_data_service.warehouse.schemas.drought import DROUGHT_GRAIN, DROUGHT_STREAM
 from tests.lane_config.builders import REAL_LANES_DIRECTORY
@@ -41,6 +43,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from agri_data_service.foundation.lane_config.models import LaneConfig
+    from agri_data_service.pipeline.runner.contract import SourceRequest
 
 LANE_ID: Final = "drought-direct-forward"
 STREAM: Final = DROUGHT_STREAM
@@ -249,6 +252,49 @@ async def test_a_published_tuesday_writes_the_whole_five_class_cohort_in_one_uni
     assert all(isinstance(row["geom"], bytes) and len(row["geom"]) > 0 for row in rows)
     receipt = store.receipts[(STREAM, NEWEST_TUESDAY)]
     assert (receipt.present_units, receipt.expected_units) == (1, 1)
+
+
+# --- digest stability (S11), and the G6 compare gap it does NOT close --------------------------
+
+
+@dataclass
+class _FixedBodyClient:
+    """A `ProviderClient` double answering the same body at a caller-chosen retrieval instant --
+    the two-fetches-at-different-times shape `_source_digest` must and does ignore."""
+
+    body: bytes
+    retrieved_at: datetime
+
+    async def get(self, endpoint: str, parameters: Mapping[str, str], *, probe: bool = False) -> ProviderResponse:
+        del endpoint, parameters, probe
+        return ProviderResponse(body=self.body, request_url="https://test.invalid/", retrieved_at=self.retrieved_at)
+
+
+def _release_request(day: date) -> SourceRequest:
+    [request] = STRATEGY.plan_requests([day], _shipped_lane(), load_region("pnw"))
+    return request
+
+
+async def test_source_digest_is_stable_across_refetches_but_reacts_to_a_real_content_change() -> None:
+    """The direct test the docstring's claim substitutes for: two fetches of byte-identical release
+    content at different retrieval instants digest equal; a fetch of genuinely different content
+    digests different. This is `_source_digest`'s own S11 scope (`usdm_releases.py`'s "A second known
+    gap") -- it says nothing about `pipeline/runner/turn.py::_Turn._compare`'s separate, whole-table
+    `canonical_digest`, which DOES see `ingested_at` and is NOT exercised here."""
+    request = _release_request(NEWEST_TUESDAY)
+    body = _release_body(classes=(0, 4))
+
+    first = await STRATEGY.fetch(request, _FixedBodyClient(body=body, retrieved_at=datetime(2026, 9, 18, tzinfo=UTC)))
+    second = await STRATEGY.fetch(request, _FixedBodyClient(body=body, retrieved_at=datetime(2026, 9, 19, tzinfo=UTC)))
+
+    assert first.retrieved_at != second.retrieved_at
+    assert usdm_releases._source_digest(first.payload) == usdm_releases._source_digest(second.payload)
+
+    changed = await STRATEGY.fetch(
+        request, _FixedBodyClient(body=_release_body(classes=(0, 1, 4)), retrieved_at=second.retrieved_at)
+    )
+
+    assert usdm_releases._source_digest(first.payload) != usdm_releases._source_digest(changed.payload)
 
 
 def test_a_written_release_day_is_never_re_settled_by_a_later_forward_turn() -> None:

@@ -38,3 +38,19 @@ key. `usdm_releases.py` is otherwise a complete, tested `IngestStrategy` + `Rele
 moving to `executor = "config"` needs a provider-client path-segment transport added first (out of
 scope for this slice: `pipeline/runner/binding.py` and `ingest/provider_client.py` are framework
 files no swarm lane may edit). See `docs/lanes/drought.md` section 8.
+
+**Known gap #2 (ring review, s-drought fix batch): G6 compare cannot run against this lane either.**
+`_source_digest` (`usdm_releases.py`) excludes `ingested_at` so a recheck of unchanged content never
+reads as a revision inside this strategy's OWN `settle()` -- that is the whole and only scope of that
+exclusion. G6's `--mode forward --compare` is a different path:
+`pipeline/runner/turn.py::_Turn._compare` diffs `reader.canonical_digest(stream, built)` against
+`reader.canonical_digest(stream, published)`, and `canonical_digest` (`reader.py`) hashes the WHOLE
+conformed table (`digests.py::table_digest`, Arrow IPC bytes, every column) with no exclusion
+mechanism at all. `ingested_at` is a `DROUGHT_SCHEMA` column `rows()` stamps with the fetch's own
+`retrieved_at`, so a freshly built table deltas against ANY already-published day's table on that
+column alone -- a false delta, not a real one, on every already-settled day. Not drought-specific:
+any lane whose schema carries a retrieval-instant column hits this the moment it reaches G6 compare.
+The fix is OUTSIDE this slice's owned files (`pipeline/runner/turn.py`, `reader.py`, `digests.py`):
+`_compare`/`canonical_digest` need to become volatile-column-aware before G6 can run here. Recorded
+as a G6 prerequisite with `i-coordinator`; see `docs/lanes/drought.md` section 8 and
+`usdm_releases.py`'s module docstring, "A second known gap", for the same disclosure.

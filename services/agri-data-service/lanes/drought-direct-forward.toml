@@ -37,12 +37,22 @@ lifecycle = "active"
 # 0 and 7 are Sunday, 1 is Monday, ...), covering the typical release day plus the slack
 # publication_lag_days=4 below already budgets (Tuesday + 4 days = Saturday).
 #
-# TRADE-OFF, stated rather than hidden: a release genuinely delayed past Saturday is not re-checked
-# again until the FOLLOWING Thursday window opens (up to six days later), rather than every hour
-# through the rest of that week as the legacy all-week hourly cron does. Accepted given the
-# registration's own measured history (209/209 continuous weekly releases, 2022-08-09..2026-08-18,
-# zero gaps) and because absence_recheck_days below keeps re-examining an unsettled Tuesday across
-# several release windows regardless, not only the one it first came up owed in.
+# TRADE-OFF, stated rather than hidden: a release genuinely delayed past Saturday's last fire
+# (23:45 UTC) is not re-checked again until the FOLLOWING Thursday's first fire (00:45 UTC) -- about
+# 4 days 1 hour later, touching 5 calendar dates (Sun, Mon, Tue, Wed, Thu), not "up to six days" as
+# an earlier draft of this comment overstated (ring review, s-drought fix batch).
+#
+# The alternative weighed and declined -- running all week, the legacy cron's shape -- costs ZERO
+# extra HTTP requests in the common case: a no-op forward turn (nothing newly owed) never sends, and
+# a written Tuesday is never re-settled by a later turn
+# (tests/lanes/drought/test_usdm_releases.py::
+# test_a_written_release_day_is_never_re_settled_by_a_later_forward_turn), so all-week-hourly and
+# narrowed-hourly make the identical few sends once a release actually appears. All-week's only real
+# win is catching a delayed release within the hour rather than waiting for Thursday; narrowing's only
+# real win is 96 fewer no-op scheduler invocations a week (168 -> 72), not fewer HTTP sends. Accepted
+# given the registration's own measured history (209/209 continuous weekly releases,
+# 2022-08-09..2026-08-18, zero gaps) and because absence_recheck_days below keeps re-examining an
+# unsettled Tuesday across several release windows regardless, not only the one it first came up owed in.
 forward_cron = "45 * * * 4,5,6"
 # Pre-declared (inert while gap_fill_enabled = false) for p5-cutover's G6 flip; see the header note.
 # Once a UTC day is plenty: the full floor-to-settled backlog is already written by the legacy lane,
