@@ -72,6 +72,8 @@ VALUE: Final = 0.5
 #: One day's fan-out (31 x 50 + 18 locations) plus the 2-location, 14-day probe.
 DAY_WEIGHT: Final = 1568
 PROBE_WEIGHT: Final = 2
+#: Chunk requests per day: 31 full 50-cell chunks + 1 partial (18-cell) chunk.
+DAY_CHUNK_COUNT: Final = 32
 _ID_NAMESPACE: Final = uuid.UUID("00000000-0000-4000-8000-000000000000")
 
 
@@ -217,7 +219,7 @@ async def test_a_settled_day_writes_1470_cells_to_every_stream_for_one_day_of_bu
 
     assert exit_code == 0
     assert {stream: store.tables[(stream, day)].num_rows for stream in STREAMS} == dict.fromkeys(STREAMS, 1470)
-    assert len(upstream.fan_out_sends) == 32
+    assert len(upstream.fan_out_sends) == DAY_CHUNK_COUNT
     assert report["weighted_calls"] == DAY_WEIGHT + PROBE_WEIGHT
     held = unwritten_by_day(report)[EDGE.isoformat()]
     assert (held["reason"], held["detail"], held["behind_edge"]) == ("unsettled", "newer_than_probed_edge", False)
@@ -335,7 +337,7 @@ async def test_the_1600_cap_buys_one_day_and_defers_the_next_whole() -> None:
     assert sorted(statuses.values()) == ["data", "missing"]
     deferred = next(day for day, status in statuses.items() if status == "missing")
     assert unwritten_by_day(report)[deferred.isoformat()]["reason"] == "deferred_budget"
-    assert len(upstream.fan_out_sends) == 32
+    assert len(upstream.fan_out_sends) == DAY_CHUNK_COUNT
     assert report["weighted_calls"] == DAY_WEIGHT + PROBE_WEIGHT <= _config_lane().budget.forward_max_weighted_calls
 
 
@@ -360,7 +362,7 @@ async def test_an_all_null_day_is_absent_only_when_every_stream_publishes_a_late
     exit_code, report = await run(spec, ports_for(SOIL, store, upstream=upstream))
 
     assert exit_code == 0
-    assert len(upstream.fan_out_sends) == 32
+    assert len(upstream.fan_out_sends) == DAY_CHUNK_COUNT
     if later_day_published:
         assert {store.status(stream, hole) for stream in STREAMS} == {"absent"}
     else:

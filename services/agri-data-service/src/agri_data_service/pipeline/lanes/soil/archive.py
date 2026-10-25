@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass
-from datetime import date
 from typing import TYPE_CHECKING, Final
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
@@ -24,6 +23,7 @@ from agri_data_service.warehouse.field_products.soil import SOIL_SOURCE_PARAMETE
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+    from datetime import date
 
 #: The provider endpoint every soil request names (`lanes/_providers/open-meteo.toml [endpoints.archive]`).
 ARCHIVE_ENDPOINT: Final = "archive"
