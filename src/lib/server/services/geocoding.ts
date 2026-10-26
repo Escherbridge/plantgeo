@@ -81,9 +81,12 @@ export const ReverseGeocodeQuerySchema = z
   })
   .strict();
 
-export type GeocodingResult = z.infer<typeof PhotonResponseSchema>;
-export type ResultType = GeocodingResultType;
-export type { NormalizedGeocodingResult } from "@/lib/geocoding";
+// Internal only: every caller imports `NormalizedGeocodingResult` directly from `@/lib/geocoding`
+// (see `src/hooks/useGeocode.ts`, `src/stores/search-store.ts`), never through this module, so
+// neither of these needs to be exported, and the `NormalizedGeocodingResult` re-export below
+// them was a dead second path to the same type.
+type GeocodingResult = z.infer<typeof PhotonResponseSchema>;
+type ResultType = GeocodingResultType;
 
 function endpoint(path: "/api" | "/reverse"): URL {
   const url = providerUrl("PHOTON_URL", "http://localhost:2322");

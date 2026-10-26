@@ -1,10 +1,12 @@
 "use client";
 
-import { Box, Globe, Mountain, type LucideIcon } from "lucide-react";
+import { useState } from "react";
+import { Box, ChevronDown, ChevronRight, Globe, Mountain, Share2, type LucideIcon } from "lucide-react";
 import { ControlDockSection } from "@/components/map/layer-panel/ControlDockSection";
 import StyleSwitcher from "@/components/map/StyleSwitcher";
 import { Slider } from "@/components/ui/slider";
 import { useMapStore } from "@/stores/map-store";
+import EmbedCodeGenerator from "@/components/embed/EmbedCodeGenerator";
 
 /** The View section's own title. Named for what it changes: how the map is drawn, not what. */
 export const VIEW_SECTION_LABEL = "Map view";
@@ -58,16 +60,57 @@ function RenderModeRow({
 }
 
 /**
- * Render mode, as a section of the manager: basemap, terrain, projection, tilt.
+ * A local disclosure (not `ControlDockSection` -- this is a row WITHIN the View section, not a
+ * second top-level section) that mounts `EmbedCodeGenerator` on demand. Collapsed by default:
+ * `EmbedCodeGenerator` reads live camera/style state on mount, so an always-rendered copy would
+ * be dead weight on every view of this section for the (common) case nobody shares a link.
  *
- * These four were a floating bar across the bottom of the canvas until 2026-08-09
- * (`MapControls`, with `TerrainControl` and `GlobeToggle` inside it). Two things were wrong
- * with that, and only one of them was that it was a second surface. The other was its fifth
- * button: a 3D-footprints switch writing the same `activeLayers` entry the layer tree's own
- * row wrote, one of them always out of sight. That button is not here. **Nothing in this
- * section touches `activeLayers`** -- changing how the map is lit must never add or drop a
- * layer, which is the rule in src/components/map/AGENTS.md, and keeping render mode in a
- * section that owns no layer switch is what makes that structural instead of remembered.
+ * Lives here, not as its own `DockSectionId`, because the two things it reads to build an embed
+ * URL -- camera and basemap style -- are exactly what the rest of this section already owns;
+ * see the module doc above. A `DockSectionId` would also need `DockDetailsId`/`DETAILS_LABELS`
+ * entries it does not need: this section issues no warehouse query, embed included.
+ */
+function ShareViewRow() {
+  const [isOpen, setIsOpen] = useState(false);
+  return (
+    <div className="flex flex-col gap-1 pt-1">
+      <button
+        type="button"
+        aria-expanded={isOpen}
+        onClick={() => setIsOpen((open) => !open)}
+        className="flex min-h-8 w-full items-center justify-between gap-2 rounded-md px-1 py-1 text-left text-xs text-[hsl(var(--foreground))] transition-colors hover:bg-[hsl(var(--muted)/0.4)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] max-sm:min-h-11"
+      >
+        <span className="flex min-w-0 items-center gap-1.5">
+          <Share2 aria-hidden="true" className="h-3.5 w-3.5 shrink-0 opacity-70" />
+          <span className="truncate">Share this view</span>
+        </span>
+        {isOpen ? (
+          <ChevronDown aria-hidden="true" className="h-3.5 w-3.5 shrink-0 opacity-70" />
+        ) : (
+          <ChevronRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 opacity-70" />
+        )}
+      </button>
+      {isOpen && (
+        <div className="px-1 pb-2">
+          <EmbedCodeGenerator />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Render mode, as a section of the manager: basemap, terrain, projection, tilt, and -- since
+ * 2026-10-26 -- sharing the resulting view as an `/embed` link. These four render-mode controls
+ * were a floating bar across the bottom of the canvas until 2026-08-09 (`MapControls`, with
+ * `TerrainControl` and `GlobeToggle` inside it). Two things were wrong with that, and only one
+ * of them was that it was a second surface. The other was its fifth button: a 3D-footprints
+ * switch writing the same `activeLayers` entry the layer tree's own row wrote, one of them
+ * always out of sight. That button is not here. **Nothing in this section touches
+ * `activeLayers`** -- changing how the map is lit must never add or drop a layer, which is the
+ * rule in src/components/map/AGENTS.md, and keeping render mode in a section that owns no layer
+ * switch is what makes that structural instead of remembered. `ShareViewRow` holds to the same
+ * rule: it reads camera and basemap style, never `activeLayers` -- see its own doc for why.
  */
 export function ViewDockSection() {
   // Per-field selectors: this section reads no viewport field, so a whole-store destructure
@@ -116,6 +159,7 @@ export function ViewDockSection() {
 
         <RenderModeRow icon={Globe} label="Globe" isOn={isGlobeView} onToggle={toggleGlobe} />
         <RenderModeRow icon={Box} label="3D tilt" isOn={is3DEnabled} onToggle={toggle3D} />
+        <ShareViewRow />
       </div>
     </ControlDockSection>
   );

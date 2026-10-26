@@ -557,13 +557,81 @@ describe("interventions lifecycle transitions", () => {
       contributorSession({ platformRole: "admin" })
     );
 
-    const rows = await caller.listLifecycle({});
+    const { items, nextCursor } = await caller.listLifecycle({});
 
-    expect(rows.map(({ id, fromStage, nextStages }) => ({ id, fromStage, nextStages }))).toEqual([
+    expect(items.map(({ id, fromStage, nextStages }) => ({ id, fromStage, nextStages }))).toEqual([
       { id: "a", fromStage: "published", nextStages: ["active"] },
       { id: "b", fromStage: "active", nextStages: ["monitored"] },
       { id: "c", fromStage: "monitored", nextStages: [] },
       { id: "d", fromStage: null, nextStages: [] },
+    ]);
+    // Exactly four rows came back, matching the `limit + 1` fetch: no fifth row to pull a
+    // `nextCursor` boundary from.
+    expect(nextCursor).toBeNull();
+  });
+
+  it("pages by a keyset cursor, requesting strictly-after the last row the caller saw", async () => {
+    // Cursor exchange is a tRPC INPUT (`listLifecycle({ cursor })`), so the id must satisfy the
+    // same `.uuid()` shape `transitionLifecycleState.interventionId` already requires -- unlike
+    // the plain "a"/"b"/"c" ids the sibling test above uses for mapping-logic ids, which are
+    // never re-submitted as input.
+    const ROW_A = "aaaaaaaa-0000-4aaa-8aaa-000000000001";
+    const ROW_B = "bbbbbbbb-0000-4bbb-8bbb-000000000002";
+    const ROW_C = "cccccccc-0000-4ccc-8ccc-000000000003";
+    const pageOneUpdatedAt = new Date("2026-10-20T00:00:00.000Z");
+    const calls: BuilderCall[] = [];
+    const caller = callerWith(
+      [
+        [{ id: LAYER_ID }],
+        // Three rows for a `limit: 2` query: the third is the lookahead row that produces
+        // `nextCursor`, and is never rendered.
+        [
+          { id: ROW_A, name: "Newest", stage: "published", updatedAt: pageOneUpdatedAt },
+          { id: ROW_B, name: "Cursor boundary", stage: "active", updatedAt: pageOneUpdatedAt },
+          { id: ROW_C, name: "Lookahead only", stage: "monitored", updatedAt: pageOneUpdatedAt },
+        ],
+      ],
+      contributorSession({ platformRole: "admin" }),
+      calls
+    );
+
+    const firstPage = await caller.listLifecycle({ limit: 2 });
+
+    expect(firstPage.items.map((item) => item.id)).toEqual([ROW_A, ROW_B]);
+    expect(firstPage.nextCursor).toEqual({ updatedAt: pageOneUpdatedAt, id: ROW_B });
+
+    const secondPageCalls: BuilderCall[] = [];
+    const secondCaller = callerWith(
+      [
+        [{ id: LAYER_ID }],
+        // A real database would already exclude ROW_A and ROW_B via the keyset WHERE asserted
+        // below; the scripted rows model that exclusion directly.
+        [{ id: ROW_C, name: "Next page", stage: "monitored", updatedAt: pageOneUpdatedAt }],
+      ],
+      contributorSession({ platformRole: "admin" }),
+      secondPageCalls
+    );
+
+    const secondPage = await secondCaller.listLifecycle({ limit: 2, cursor: firstPage.nextCursor });
+
+    expect(secondPage.items.map((item) => item.id)).toEqual([ROW_C]);
+    const firstPageIds = new Set(firstPage.items.map((item) => item.id));
+    expect(secondPage.items.some((item) => firstPageIds.has(item.id))).toBe(false);
+    expect(secondPage.nextCursor).toBeNull();
+
+    // The keyset boundary itself: "updatedAt before the cursor's, OR tied on updatedAt and
+    // id before the cursor's id" -- `firstPage.nextCursor`'s own two field values appear
+    // twice each (once per side of the OR). The LAST `.where()` recorded: the first belongs
+    // to `resolveInterventionsLayerId`'s own select, which runs before this one.
+    const whereCalls = secondPageCalls.filter((entry) => entry.method === "where");
+    const condition = new PgDialect().sqlToQuery(whereCalls[whereCalls.length - 1]?.args[0] as SQL);
+    expect(condition.params).toEqual([
+      LAYER_ID,
+      "published",
+      "request",
+      pageOneUpdatedAt,
+      pageOneUpdatedAt,
+      ROW_B,
     ]);
   });
 });
