@@ -40,9 +40,8 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
-# The forward token `usgs-streamflow` and its `run_water_ingestion_job` were DELETED 2026-09-06:
-# water-gauges forward days belong to `pipeline/parquet/water_gauges_forward.py`, which writes
-# Parquet through the same `fetch_streamflow_gauges`/`build_gauge_write` pair kept below.
+# The PostgreSQL-targeting ingestion was DELETED 2026-09-06; see the deletion table near the top
+# of ingest/AGENTS.md. `pipeline/parquet/water_gauges_forward.py` reuses the fetch/write pair below.
 USGS_PROPERTY_SOURCE: Final = "USGS NWIS"
 
 WATER_GAUGES_LAYER: Final = LayerBinding(

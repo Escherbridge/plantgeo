@@ -1,17 +1,10 @@
 """NOAA NWS ground-station upstream: the keyless observation-station puller behind the sensors layer.
 
-The PostgreSQL job this puller used to feed -- `run_sensor_ingestion_job` and its `_run_sensor_job`
-body -- was DELETED on 2026-09-07, once `sensors-direct-forward` went ACTIVE (2,361 rows in one part,
-`outcome: complete`, `availability_extended: 1`) and `parquet-sensors`, the only exporter that read
-`geo.features` for this layer, was retired from the active set.
-
-Everything else here survived because it is the SOURCE, not the Postgres sink.
-`pipeline/direct/sensors/source.py` imports `fetch_station_roster`, `collect_sensor_records` and
-`nws_sensor_source` for the identical roster walk and record contract, and `nws_sensor_source` is
-also the `nws-sensors` token `ingest-backfill` resolves. `build_sensor_reading_write` therefore
-stays too: it is `nws_sensor_source().build_feature_write`, so the direct lane runs it through
-`select_writes` on every poll. See the removal packet under
-`conductor/tracks/environmental_postgres_retirement_20260904/evidence/`.
+The PostgreSQL ingestion job this puller used to feed was deleted 2026-09-07; see the deletion table
+near the top of `ingest/AGENTS.md`. Everything else here survives because it is the SOURCE, not the
+Postgres sink: `pipeline/direct/sensors/source.py` reads `fetch_station_roster`,
+`collect_sensor_records`, `nws_sensor_source` and `build_sensor_reading_write` for the direct-forward
+lane's roster walk, record contract and feature write.
 """
 
 from __future__ import annotations

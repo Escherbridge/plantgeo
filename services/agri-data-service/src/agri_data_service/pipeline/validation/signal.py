@@ -15,8 +15,8 @@ Two independent checks, deliberately not one:
      (`exported_signal_row_counts`, computed from the actual exported `pa.Table`) against what the
      SOURCE holds, reusing `execution.coverage_contract`'s already-proven per-signal reconciliation
      over `agri.signal_observation` and `agri.signal_coverage_audit`. This is independent evidence,
-     not the exporter's own SQL re-run: `execution.historical_writer.*` populates those two tables
-     at ingest time, on a completely different code path than `pipeline/lanes/signal.py`'s export.
+     not the exporter's own SQL re-run: the ingest-time writers under `pipeline/direct/` populate
+     those two tables on a completely different code path than `pipeline/lanes/signal.py`'s export.
 
 `docs/lanes/weather-observations.md` section 5 item 1 names the ready-made test case this module
 must catch: `surface_shortwave_radiation` carrying zero rows for NASA POWER in July 2026 while every

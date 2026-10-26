@@ -35,8 +35,15 @@ host (`ingest/AGENTS.md:88-91`):
   walk): `https://firms.modaps.eosdis.nasa.gov/api/data_availability/csv/{api_key}/all`
   (`firms.py:78`).
 
-**Two access paths, one producer.** `nasa-firms` (current window, three-satellite
-VIIRS NRT fan-out) and `nasa-firms-archive` (past windows, NRT+SP+MODIS) are two
+**CORRECTED 2026-10-26: `ingest-backfill` and the `jobs-run --lane firms-archive` durable lane
+below are both gone.** `agri-service data ingest-backfill` is no longer a registered CLI verb and
+`jobs-firms-archive` was deleted 2026-09-12; the `--source`/`--lane` invocations in this document
+describe how the two tokens related to one producer at the time they existed, not a current CLI
+surface. FIRMS forward days are served by `pipeline/direct/fire_detections/`; no archive producer
+remains.
+
+**Two access paths, one producer (historical).** `nasa-firms` (current window, three-satellite
+VIIRS NRT fan-out) and `nasa-firms-archive` (past windows, NRT+SP+MODIS) were two
 `--source` tokens over the *same* producer, layer, channel and identity contract
 — not two producers (`ingest/AGENTS.md:86-91`). The forward job explicitly
 refuses archive-style dated requests and vice versa (`firms.py:789-791`,

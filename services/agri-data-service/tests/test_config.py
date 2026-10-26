@@ -36,18 +36,6 @@ def test_enabled_receiver_requires_credential_identity() -> None:
         )
 
 
-def test_enabled_historical_receiver_requires_a_distinct_credential_identity() -> None:
-    with pytest.raises(ValidationError, match="HISTORICAL_PROMOTION_ACTOR"):
-        _settings(historical_promotion_receiver_enabled=True, historical_promotion_token=_TOKEN)
-
-    configured = _settings(
-        historical_promotion_receiver_enabled=True,
-        historical_promotion_token=_TOKEN,
-        historical_promotion_actor="  historical-promoter  ",
-    )
-    assert configured.historical_promotion_actor == "historical-promoter"
-
-
 def test_receiver_actor_is_normalized_and_bounded() -> None:
     configured = _settings(
         local_publication_receiver_enabled=True,

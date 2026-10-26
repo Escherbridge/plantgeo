@@ -541,6 +541,13 @@ scheduled invocation do it; it is a no-op on every other day.
 `nasa-firms-archive` token; the scheduled tasks were retired 2026-08-11. The text below is the
 original cutover record.
 
+**2026-10-26 (later the same day):** `durable-archive-backfill.sh` itself was deleted. It drove the
+`agri-service data ingest-backfill` verb, which `root.py` no longer registers, and the one token it
+still accepted (`usgs-streamflow-archive`) named a lane with no CLI surface left either — re-verified
+with `git grep -w` over `src/` immediately before deletion. The forward/parquet lanes named throughout
+this runbook (`cron-archive-firms`, `cron-archive-streamflow`, `pipeline/direct/`,
+`pipeline/parquet/water_gauges_forward.py`) are unaffected; they never called this script.
+
 **At the time of writing the two bash drivers are still on disk and still running.** Stopping them
 is a deliberate operator step, not something this change did:
 

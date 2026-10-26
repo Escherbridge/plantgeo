@@ -312,12 +312,6 @@ def _increment_float(entry: dict[str, object], key: str, amount: float) -> None:
     entry[key] = (current if isinstance(current, (int, float)) else 0.0) + amount
 
 
-def _int_field(entry: dict[str, object], key: str) -> int:
-    """Read an integer counter back out of a `dict[str, object]`, narrowed rather than force-cast."""
-    current = entry.get(key, 0)
-    return current if isinstance(current, int) else 0
-
-
 def _host_entry(host: str) -> dict[str, object]:
     """Get-or-create this process's per-host counters in `usage._host_counters` (the GL-2 hook point).
 

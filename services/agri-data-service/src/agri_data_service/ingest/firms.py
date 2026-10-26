@@ -32,10 +32,9 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
-# The forward token `nasa-firms` and its `run_fire_ingestion_job` were DELETED 2026-09-06: FIRMS
-# forward days belong to `pipeline/direct/fire_detections/`, which writes Parquet and reuses the
-# fetch/parse/identity code below. `jobs-firms-archive` -- the durable lane that once produced days
-# below the direct writer's floor -- was itself deleted 2026-09-12; no archive producer remains.
+# The PostgreSQL-targeting ingestion and its durable archive lane were DELETED 2026-09-06 and
+# 2026-09-12 respectively; see the deletion table near the top of ingest/AGENTS.md. FIRMS forward
+# days belong to `pipeline/direct/fire_detections/`, which reuses the fetch/parse/identity code below.
 FIRMS_PROPERTY_SOURCE: Final = "NASA FIRMS"
 
 FIRMS_LAYER: Final = LayerBinding(

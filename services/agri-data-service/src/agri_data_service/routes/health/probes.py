@@ -18,16 +18,9 @@ from agri_data_service.routes.health.queries import MIGRATION_STATEMENT, READINE
 def receiver_identity_ready(profile: str) -> bool:
     """True unless this is the receiver profile without a fully configured publish identity."""
     return profile != "receiver_writer" or bool(
-        (
-            settings.local_publication_receiver_enabled
-            and settings.local_publish_token is not None
-            and settings.local_publish_actor is not None
-        )
-        or (
-            settings.historical_promotion_receiver_enabled
-            and settings.historical_promotion_token is not None
-            and settings.historical_promotion_actor is not None
-        )
+        settings.local_publication_receiver_enabled
+        and settings.local_publish_token is not None
+        and settings.local_publish_actor is not None
     )
 
 

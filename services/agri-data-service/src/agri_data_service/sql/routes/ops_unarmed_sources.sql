@@ -136,8 +136,7 @@
 --     enforces, and this panel exists partly to argue for arming the very step that grows
 --     agri.forecast_observation -- so the shape should be expected to age. The forecast rollup is
 --     currently a parallel sequential scan of the whole plane, about 9,706 buffers (~76 MB) and
---     20 ms warm, and ops_forecast_state.sql independently counts the same table on the same page
---     load. The rollup wins only while that plane holds FEW DISTINCT source_release_id values --
+--     20 ms warm. The rollup wins only while that plane holds FEW DISTINCT source_release_id values --
 --     today exactly one, which is also why a per-release probe degenerates into a full scan there
 --     (the planner's selectivity estimate for one distinct value is 100% of the table, correctly).
 --     Once the registration step is armed and the plane carries many releases, that estimate falls,
