@@ -46,7 +46,6 @@ if TYPE_CHECKING:
 
     import pyarrow as pa  # type: ignore[import-untyped]
 
-    from agri_data_service.config import ObjectStoreCredentials
     from agri_data_service.foundation.parquet.paths import PartitionDayStatus, PartitionKind
     from agri_data_service.foundation.parquet.zoom import ZoomTier
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
@@ -107,11 +106,6 @@ def evacuation_zones_scan_pattern(*, root: str, kind: PartitionKind, zoom: ZoomT
     normalized_root = root if root.endswith("/") else f"{root}/"
     stream_at_tier = zoom_prefix(EVACUATION_ZONES_STREAM, validate_partition_kind(kind), zoom)
     return f"{normalized_root}{stream_at_tier}**/*.parquet"
-
-
-def bucket_object_root(*, credentials: ObjectStoreCredentials, store: ObjectStore) -> str:
-    """Return the production scan root: the bucket URI plus the store's own key prefix, if any."""
-    return f"s3://{credentials.bucket}/{store.prefix}" if store.prefix else f"s3://{credentials.bucket}/"
 
 
 def read_evacuation_zones_forecast(

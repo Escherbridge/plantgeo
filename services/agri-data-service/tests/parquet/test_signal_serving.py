@@ -1,9 +1,8 @@
-"""The signal lane's two remaining artifacts: the serving read and source-system validation.
+"""The signal lane's one remaining artifact: the serving read (`planes/signal.py`).
 
-Two sections, one per module, since this is the one test file the signal lane's wave-2 slice
-owns (`conductor/code_styleguides/layer-lanes.md` section 1 puts one file per layer per lane, but
-a single lane's test coverage lives together rather than splitting two ways for no reader's
-benefit). The Monte Carlo forecast section left on 2026-09-18 with the forecaster itself; it is
+The source-system validation section left on 2026-10-26 with `pipeline/validation/signal.py`, which
+reconciled a Postgres export that the greenfield Parquet cutover deleted. The Monte Carlo forecast
+section left on 2026-09-18 with the forecaster itself; it is
 `services/plantgeo-ml-service/tests/test_signal_forecast.py` now.
 """
 
@@ -17,17 +16,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from agri_data_service.config import ObjectStoreCredentials
-from agri_data_service.execution.coverage_contract import DayCoverage, DayState
 from agri_data_service.foundation.parquet.paths import partition_path
-from agri_data_service.pipeline.parquet.objectstore import ObjectStore
-from agri_data_service.pipeline.validation.signal import (
-    WRITTEN_ZOOM_TIER,
-    SignalLaneOutcome,
-    SignalValidationError,
-    classify_signal_day,
-    exported_signal_row_counts,
-    find_missing_export_partitions,
-)
 from agri_data_service.planes.signal import (
     MAX_TIME_WINDOW_DAYS,
     SignalPlaneReadError,
@@ -36,12 +25,10 @@ from agri_data_service.planes.signal import (
     read_signal_value_on_day,
 )
 from agri_data_service.warehouse.parquet.schema import SIGNAL_PLANE_SCHEMA, SIGNAL_PLANE_STREAM
-from tests.parquet.test_governed_absence import sample_absence
 from tests.parquet.test_objectstore_writer import (
     BASE_TIER,
     DETAIL_TIER,
     UNPUBLISHED_ZOOM,
-    RecordingBackend,
     with_forecast_provenance,
 )
 
@@ -268,205 +255,6 @@ class TestSignalPlaneServingRead:
         assert source.root_uri == "s3://plantgeo-warehouse/sandbox/"
         assert source.storage_options["aws_endpoint_url"] == "https://storage.example.com"
         assert source.storage_options["aws_access_key_id"] == "access-key-value"
-
-
-# === pipeline/validation/signal.py: reconcile against the source system ==========================
-
-
-class TestClassifySignalDay:
-    def test_a_fully_covered_day_matches_cleanly(self) -> None:
-        coverage = DayCoverage(
-            day=A_DAY,
-            state=DayState.COVERED,
-            observed_cell_count=EXPECTED_FULL_LATTICE_CELLS,
-            expected_cell_count=EXPECTED_FULL_LATTICE_CELLS,
-        )
-
-        finding = classify_signal_day(
-            day=A_DAY,
-            source_key="nasa-power-daily",
-            signal_name="air_temperature_mean",
-            coverage=coverage,
-            exported_row_count=EXPECTED_FULL_LATTICE_CELLS,
-        )
-
-        assert finding.outcome is SignalLaneOutcome.MATCHED
-        assert not finding.is_reportable_gap
-
-    def test_the_radiation_hole_is_flagged_as_an_unexplained_source_gap(self) -> None:
-        """docs/lanes/weather-observations.md section 5 item 1's ready-made first test case."""
-        coverage = DayCoverage(
-            day=A_DAY, state=DayState.MISSING, observed_cell_count=0, expected_cell_count=EXPECTED_FULL_LATTICE_CELLS
-        )
-
-        finding = classify_signal_day(
-            day=A_DAY,
-            source_key="nasa-power-daily",
-            signal_name="surface_shortwave_radiation",
-            coverage=coverage,
-            exported_row_count=0,
-        )
-
-        assert finding.outcome is SignalLaneOutcome.UNEXPLAINED_SOURCE_GAP
-        assert finding.is_reportable_gap
-        description = finding.describe()
-        assert A_DAY.isoformat() in description
-        assert "nasa-power-daily" in description
-        assert "surface_shortwave_radiation" in description
-
-    def test_export_shortfall_when_the_lane_wrote_fewer_rows_than_the_source_holds(self) -> None:
-        coverage = DayCoverage(
-            day=A_DAY,
-            state=DayState.COVERED,
-            observed_cell_count=EXPECTED_FULL_LATTICE_CELLS,
-            expected_cell_count=EXPECTED_FULL_LATTICE_CELLS,
-        )
-
-        finding = classify_signal_day(
-            day=A_DAY,
-            source_key="nasa-power-daily",
-            signal_name="air_temperature_mean",
-            coverage=coverage,
-            exported_row_count=300,
-        )
-
-        assert finding.outcome is SignalLaneOutcome.EXPORT_SHORTFALL
-        assert finding.is_reportable_gap
-
-    def test_export_excess_is_flagged_even_on_an_otherwise_missing_day(self) -> None:
-        coverage = DayCoverage(
-            day=A_DAY, state=DayState.MISSING, observed_cell_count=0, expected_cell_count=EXPECTED_FULL_LATTICE_CELLS
-        )
-
-        finding = classify_signal_day(
-            day=A_DAY,
-            source_key="nasa-power-daily",
-            signal_name="surface_shortwave_radiation",
-            coverage=coverage,
-            exported_row_count=5,
-        )
-
-        assert finding.outcome is SignalLaneOutcome.EXPORT_EXCESS
-
-    def test_a_governed_absence_is_not_a_reportable_gap(self) -> None:
-        coverage = DayCoverage(
-            day=A_DAY, state=DayState.ABSENT, observed_cell_count=0, expected_cell_count=EXPECTED_FULL_LATTICE_CELLS
-        )
-
-        finding = classify_signal_day(
-            day=A_DAY,
-            source_key="open-meteo-era5-land-archive",
-            signal_name="vapor_pressure_deficit",
-            coverage=coverage,
-            exported_row_count=0,
-        )
-
-        assert finding.outcome is SignalLaneOutcome.GOVERNED_ABSENT
-        assert not finding.is_reportable_gap
-
-    def test_a_partial_source_day_is_reported_but_not_treated_as_a_defect(self) -> None:
-        coverage = DayCoverage(
-            day=A_DAY, state=DayState.THIN, observed_cell_count=150, expected_cell_count=EXPECTED_FULL_LATTICE_CELLS
-        )
-
-        finding = classify_signal_day(
-            day=A_DAY,
-            source_key="nasa-power-daily",
-            signal_name="soil_wetness_surface",
-            coverage=coverage,
-            exported_row_count=150,
-        )
-
-        assert finding.outcome is SignalLaneOutcome.SOURCE_PARTIAL
-        assert finding.is_reportable_gap
-
-
-class TestExportedSignalRowCounts:
-    def test_counts_rows_per_signal_name(self) -> None:
-        table = pa.concat_tables(
-            [
-                _signal_table(day=A_DAY, cell_ids=["c1", "c2"], signal_name="air_temperature_mean"),
-                _signal_table(day=A_DAY, cell_ids=["c1"], signal_name="precipitation"),
-            ]
-        )
-
-        counts = exported_signal_row_counts(table, day=A_DAY)
-
-        assert counts == {"air_temperature_mean": 2, "precipitation": 1}
-
-    def test_an_empty_table_counts_nothing(self) -> None:
-        empty = SIGNAL_PLANE_SCHEMA.arrow_schema.empty_table()
-
-        assert exported_signal_row_counts(empty, day=A_DAY) == {}
-
-    def test_a_table_mixing_days_is_refused(self) -> None:
-        mixed = pa.concat_tables(
-            [
-                _signal_table(day=A_DAY, cell_ids=["c1"]),
-                _signal_table(day=A_DAY + timedelta(days=1), cell_ids=["c1"]),
-            ]
-        )
-
-        with pytest.raises(SignalValidationError, match="other than"):
-            exported_signal_row_counts(mixed, day=A_DAY)
-
-
-class TestFindMissingExportPartitions:
-    def test_a_day_with_neither_data_nor_absence_is_missing(self) -> None:
-        backend = RecordingBackend()
-        store = ObjectStore(backend)
-        table = _signal_table(day=A_DAY, cell_ids=["c1"])
-        store.write_partition(table, layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=A_DAY)
-
-        missing = find_missing_export_partitions(
-            store, kind="observed", first_day=A_DAY, last_day=A_DAY + timedelta(days=2)
-        )
-
-        assert missing == (A_DAY + timedelta(days=1), A_DAY + timedelta(days=2))
-
-    def test_a_governed_absence_marker_counts_as_not_missing(self) -> None:
-        backend = RecordingBackend()
-        store = ObjectStore(backend)
-        marked_day = A_DAY + timedelta(days=1)
-        table = _signal_table(day=A_DAY, cell_ids=["c1"])
-        store.write_partition(table, layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=A_DAY)
-        store.write_absence(
-            sample_absence(), layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=BASE_TIER, day=marked_day
-        )
-
-        missing = find_missing_export_partitions(store, kind="observed", first_day=A_DAY, last_day=marked_day)
-
-        assert missing == ()
-
-    def test_a_backwards_window_is_refused(self) -> None:
-        backend = RecordingBackend()
-        store = ObjectStore(backend)
-
-        with pytest.raises(SignalValidationError, match="backwards"):
-            find_missing_export_partitions(store, kind="observed", first_day=A_DAY, last_day=A_DAY - timedelta(days=1))
-
-    def test_a_kind_never_reported_via_the_other_kinds_listing(self) -> None:
-        """A forecast partition must never satisfy an observed-day gap check, or vice versa."""
-        backend = RecordingBackend()
-        store = ObjectStore(backend)
-        table = with_forecast_provenance(_signal_table(day=A_DAY, cell_ids=["c1"]), issued_on=A_DAY)
-        store.write_partition(table, layer=SIGNAL_PLANE_STREAM, kind="forecast", zoom=BASE_TIER, day=A_DAY)
-
-        missing = find_missing_export_partitions(store, kind="observed", first_day=A_DAY, last_day=A_DAY)
-
-        assert missing == (A_DAY,)
-
-    def test_a_derived_coarse_rung_never_satisfies_a_base_tier_export_gap(self) -> None:
-        """The coarse rung is DOWNSTREAM of the base one; counting it as evidence is exactly backwards."""
-        backend = RecordingBackend()
-        store = ObjectStore(backend)
-        table = _signal_table(day=A_DAY, cell_ids=["c1"])
-        store.write_partition(table, layer=SIGNAL_PLANE_STREAM, kind="observed", zoom=DETAIL_TIER, day=A_DAY)
-
-        missing = find_missing_export_partitions(store, kind="observed", first_day=A_DAY, last_day=A_DAY)
-
-        assert missing == (A_DAY,)
-        assert WRITTEN_ZOOM_TIER != DETAIL_TIER, "the pinned tier is the base rung, not a derived one"
 
 
 class TestSignalPlaneZoomAxis:

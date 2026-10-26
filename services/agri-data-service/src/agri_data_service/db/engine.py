@@ -123,20 +123,6 @@ async def local_source_loader_pool(database_url: str) -> AsyncIterator[AsyncEngi
 
 
 @asynccontextmanager
-async def local_source_loader_engine(database_url: str) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    """Yield one session factory for a whole loader command, so a per-cell loop pays one handshake, not thousands.
-
-    `local_source_loader_session` below is the single-shot form and builds its engine per `async with` on
-    purpose: `ingest/commands.py` and `ingest/archive_walk.py` both bind once per slice *because* that is
-    expensive. A command that persists once per cell or once per chunk should hold this factory across its
-    loop and open a session per unit of work from it -- the per-unit transaction boundary is unchanged, but
-    the TCP+TLS+auth handshake and asyncpg's prepared-statement cache are paid for once instead of per unit.
-    """
-    async with local_source_loader_pool(database_url) as loader_engine:
-        yield async_sessionmaker(loader_engine, class_=AsyncSession, expire_on_commit=False)
-
-
-@asynccontextmanager
 async def local_source_loader_session(database_url: str) -> AsyncIterator[AsyncSession]:
     """Yield one session pinned to one checked-out loader connection for its full context."""
     async with (
@@ -153,39 +139,3 @@ async def ingest_session() -> AsyncIterator[AsyncSession]:
     database_url = settings.require_local_source_loader_database_url()
     async with local_source_loader_session(database_url) as session:
         yield session
-
-
-@asynccontextmanager
-async def forecast_mv_refresh_session(database_url: str) -> AsyncIterator[AsyncSession]:
-    """Yield one isolated session for the reviewed forecast MV refresher DSN."""
-    refresh_engine = create_async_engine(
-        database_url,
-        pool_size=1,
-        max_overflow=0,
-        pool_pre_ping=True,
-        echo=False,
-    )
-    refresh_session = async_sessionmaker(refresh_engine, class_=AsyncSession, expire_on_commit=False)
-    try:
-        async with refresh_session() as session:
-            yield session
-    finally:
-        await refresh_engine.dispose()
-
-
-@asynccontextmanager
-async def forecast_iteration_session(database_url: str) -> AsyncIterator[AsyncSession]:
-    """Yield one isolated session for local evaluation-only forecast iterations."""
-    iteration_engine = create_async_engine(
-        database_url,
-        pool_size=1,
-        max_overflow=0,
-        pool_pre_ping=True,
-        echo=False,
-    )
-    iteration_session = async_sessionmaker(iteration_engine, class_=AsyncSession, expire_on_commit=False)
-    try:
-        async with iteration_session() as session:
-            yield session
-    finally:
-        await iteration_engine.dispose()

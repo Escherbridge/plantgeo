@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from agri_data_service.db.extensions import REQUIRED_EXTENSIONS
-from agri_data_service.db.revisions import UnknownAlembicRevisionError, revision_is_at_least
 from agri_data_service.execution.contracts import (
     SHA256_PATTERN,
     canonical_json_bytes,
@@ -461,27 +460,6 @@ class PromotionManifest(PromotionModel):
         return self
 
 
-class PromotionTargetPreflight(PromotionModel):
-    """Reviewed private target evidence required before restore planning."""
-
-    target_label: str = Field(min_length=1, max_length=255)
-    target_service_id: str | None = Field(default=None, min_length=1, max_length=255)
-    private_control_plane: Literal[True]
-    postgres_major: int = Field(ge=16, le=18)
-    alembic_revision: str = Field(pattern=r"^[A-Za-z0-9_.-]{1,100}$")
-    extension_versions: dict[str, str]
-
-    @field_validator("target_label", "target_service_id")
-    @classmethod
-    def require_opaque_identity(cls, value: str | None) -> str | None:
-        return _require_opaque_identity(value)
-
-    @field_validator("extension_versions")
-    @classmethod
-    def require_required_extensions(cls, value: dict[str, str]) -> dict[str, str]:
-        return PromotionSourceMetadata.require_required_extensions(value)
-
-
 class ExistingReleaseSet(PromotionModel):
     """The target release-set state needed for idempotent semantic planning."""
 
@@ -666,25 +644,6 @@ def load_promotion_archive(source: Path) -> tuple[PromotionArchive, PromotionMan
     if manifest.row_counts != _row_counts(archive):
         raise PromotionError("promotion manifest row counts do not match archive content")
     return archive, manifest
-
-
-def validate_target_preflight(archive: PromotionArchive, target: PromotionTargetPreflight) -> None:
-    """Require an already migrated private target before semantic restore planning."""
-    normalized = _normalize_archive(archive)
-    if target.postgres_major < normalized.source.postgres_major:
-        raise PromotionError("target PostgreSQL major must not be older than the source archive")
-    # A floor, not an equality: the 2026-08-25 greenfield collapse restamps a byte-identical schema
-    # from `20260817_0025` to `20260825_0000`, and an equality here refused every bundle exported
-    # before that stamp. `revision_is_at_least` orders the archived chain and the baseline together
-    # and raises on any id this build has never heard of, so an unknown revision still fails closed.
-    try:
-        target_is_current_enough = revision_is_at_least(target.alembic_revision, normalized.source.alembic_revision)
-    except UnknownAlembicRevisionError as exc:
-        raise PromotionError(f"target Alembic revision cannot be ordered against the source archive: {exc}") from exc
-    if not target_is_current_enough:
-        raise PromotionError("target Alembic revision must be at least the source archive's before restore")
-    if set(target.extension_versions) != REQUIRED_EXTENSION_NAMES:
-        raise PromotionError("target must expose all required installed extensions")
 
 
 def _normalize_archive(archive: PromotionArchive) -> PromotionArchive:

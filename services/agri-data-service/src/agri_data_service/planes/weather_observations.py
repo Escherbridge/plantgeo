@@ -40,9 +40,7 @@ from agri_data_service.warehouse.schemas.weather_observations import (
 if TYPE_CHECKING:
     from datetime import date
 
-    from agri_data_service.config import ObjectStoreCredentials
     from agri_data_service.foundation.parquet.zoom import ZoomTier
-    from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 
 # The only partition kind this side lane ever writes. Baked in here rather than accepted as a
 # parameter so nothing calling this module can ask for "forecast" and get a silently-wrong answer.
@@ -83,11 +81,6 @@ def weather_observations_scan_pattern(*, root: str, zoom: ZoomTier) -> str:
     """Return the glob `read_weather_observations_window` scans: `kind=observed` at exactly one tier."""
     normalized_root = root if root.endswith("/") else f"{root}/"
     return f"{normalized_root}{zoom_prefix(WEATHER_OBSERVATIONS_STREAM, OBSERVED_KIND, zoom)}**/*.parquet"
-
-
-def bucket_object_root(*, credentials: ObjectStoreCredentials, store: ObjectStore) -> str:
-    """Return the production scan root: the bucket URI plus the store's own key prefix, if any."""
-    return f"s3://{credentials.bucket}/{store.prefix}" if store.prefix else f"s3://{credentials.bucket}/"
 
 
 def read_weather_observations_window(

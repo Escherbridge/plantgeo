@@ -3,45 +3,30 @@
 Validation reads the governed source and the published object plane independently. A clean report
 must not be inferred from the writer's own intermediate counts.
 
-## Exact vegetation parity
+## Module verdicts (audit 2026-10-26)
 
-`vegetation.py` retains the inexpensive day/status and duplicate-release audit.
-`vegetation_exact.py` is the production completion gate: it compares all 12 z13 fields in canonical
-`(cell_id, observed_day)` order, validates completion receipts against physical parts and rows, then
-re-derives and exactly compares z9/z5/z0. Canonical Arrow row digests are evidence summaries; Parquet
-file bytes are deliberately not compared because writer metadata can differ without changing rows.
+No module here except `soil_survey.py` has a production caller. Each one was judged against the
+config runner, which now owns most of this work: its census reports missing, incomplete and
+conflicting days (`pipeline/runner/census.py`), gap-fill settles each owed day against the live
+source as either written or a governed absence, and G6 `--compare` rebuilds a day from upstream and
+diffs it against the bucket (`pipeline/runner/turn.py::_Turn._compare`, `reader.canonical_digest`).
 
-The promoted source boundary and settled absence boundary are distinct. Source-backed days through
-the promoted cutoff must exist even when they are newer than publication lag; source-empty days are
-required to carry absence evidence only through the settled boundary.
+| Module | Verdict | Evidence |
+|---|---|---|
+| `soil_survey.py` | **wired**, keep | `pipeline/direct/soil_survey/__main__.py` `validate` verb |
+| `vegetation.py` | **unwired; candidate ops check**, kept | `reconcile_against_source` is pure and tested. Its duplicate-source-release audit against `agri.forecast_observation` has no runner equivalent, because vegetation is not a config lane. Wiring it would be a new job and needs the owner's approval. |
+| `drought.py` | superseded, deleted | Runner census plus gap-fill on `drought-direct-forward` gives the same written / absent / conflict / incomplete / source-gap verdicts per release Tuesday |
+| `evacuation_zones.py` | superseded, deleted | The source keeps current state only, so `--compare` on `evacuation-zones-direct-forward` (today vs. live feed) is the whole honest check |
+| `sensors.py` | dead, deleted | No callers and no tests. Its existence-only check over NWS's 6-day window is what the forward census already does for `sensors-direct-forward` |
+| `fire_detections.py` | superseded, deleted | No callers and no tests. It read a legacy `IngestionJobResult` cap signal; `pipeline/lanes/fire_detections` now settles capped days explicitly |
+| `signal.py` | superseded, deleted | It reconciled a Postgres-to-Parquet export (`pipeline/lanes/signal.py`) that was deleted in the 2026-09-12 greenfield cutover |
+| `water_gauges.py` | superseded, deleted | Its only "caller" was a parity assertion in a test. The NWIS reconciliation is replaced by `--compare` on `water-gauges-daily`, and the named-day rule now lives in `ingest/usgs_water_data.py::publisher_named_day` |
+| `weather_observations.py` | superseded, deleted | No callers and no tests. It validated the legacy `geo.features` current-conditions export, not the config lane's output |
+| `watersheds.py` | not assessed | Outside this audit's scope. It is test-only today |
 
-The exact gate treats every object after the settled boundary as an assertion too: a source-empty
-day must remain missing there, while a source-backed day must hold data. For settled empty days it
-downloads every absence marker so malformed or divergent evidence cannot pass on key presence.
-The gate takes opening and closing per-day SHA-256 snapshots of the exact 12-column source projection;
-this detects changes to mutable dimensions and release ordering as well as appended observation keys
-without a second per-day database walk after the object-plane audit.
-The public exact entry point holds the vegetation-wide session advisory barrier across the opening
-census, all per-day reads and object comparisons, and the closing snapshot. Governed promotion uses the
-same key transactionally, so continuous raw ingestion may proceed while governed registration waits;
-the audit has a fixed source rather than an endless moving target.
-
-## Exact current-weather parity
-
-`weather_observations_exact.py` compares only the registry-governed current-conditions window. It
-reports any earlier objects as an excluded Historical Forecast prefix so those rows cannot silently
-expand the lane contract. For each governed day it hashes canonical Arrow rows from PostgreSQL and
-z13, derives z9/z5/z0 from the PostgreSQL base with the pure tier function, and validates each
-completion or absence marker. The opening source snapshot supplies exact z13 and derived-tier
-expectations; after the object walk a new repeatable-read transaction reprojects every governed day.
-Aggregate row and Arrow digests, plus per-day change findings, prevent a moving PostgreSQL source from
-producing a clean gate. A source-empty day requires governed-absence evidence at z13 and intentionally
-empty coarse rungs: the existing ladder driver explicitly does not mint three new governed statements
-from one base marker. Physically stricter nullability remains read-compatible with the registered
-schema, but relaxed required fields, type drift, or field-order drift fail. The audit re-lists every
-zoom prefix and re-reads canonical rows and marker bodies, so both same-key overwrites and key-set
-changes fail. The JSON contains relative scope/count/hash evidence and redacted exception classes only,
-never a database URL, bucket name, endpoint, access key, secret, or provider error text.
+The former `vegetation_exact.py` and `weather_observations_exact.py` gates were deleted with the
+2026-09-12 greenfield Parquet cutover (`fd602901`), so their sections are gone from this file too.
+Other AGENTS files that still name them, or the deleted modules above, are stale on that point.
 
 ## Soil-survey candidate validation (SSURGO port, slice S2)
 
