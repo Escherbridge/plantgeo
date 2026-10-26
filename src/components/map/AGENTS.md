@@ -1497,6 +1497,21 @@ These are bounded code-level lifecycle regressions. Scientific rendering, servin
 legends, accessibility, agent parity and production first-enable evidence remain separate
 obligations and are not established here.
 
+## LayerManager structure
+
+Split 2026-10-26 with no behaviour change; `LayerManager.characterization.test.tsx` pins the ordered
+map-call, read and child-prop log the split had to reproduce. `LayerManager.tsx` is now composition
+plus the ref/effect block (style.load / styledata registration and the four reactive appliers),
+which stays inline because its registration order IS the contract (§Style.load listener order).
+The hooks are called in the order the inline code ran, so the hook sequence is unchanged.
+
+- `layer-manager/useSettledLayerDays.ts` -- every per-layer settled day plus the four tile toggles' `hasSelectableDay` booleans.
+- `layer-manager/useParquetLayerReads.ts` -- `useDroughtRead`, `useStyleBakedParquetReads` (the five wave-C source reads + their lane reports), `useWaterReads`, `useVegetationRead`, `useWeatherRead` (incl. the retained-frame withholding).
+- `layer-manager/useSoilLayerReads.ts` -- the SSURGO survey read, the three ERA5-Land soil-field reads and their painted-depth publication.
+- `layer-manager/live-layer-day-reports.ts` -- pure `buildLiveLayerDayReports`: the drawn-day table handed to `usePublishedDrawnLayerDays`.
+- `layer-manager/style-layer-appliers.ts` -- pure writers for Parquet source data, intervention drafts, visibility, opacity and the date filter (+ the drift check); LayerManager wraps each in a `[]`-deps `useCallback`.
+- `layer-manager/parquet-layer-faults.ts`, `layer-manager/useLandContextViewportBoundaries.ts` -- see the next section.
+
 ## LayerManager's extracted seams (2026-09-18)
 
 `LayerManager.tsx` was 1,727 lines against `federation.md` §3's ~600-line ceiling, and style
