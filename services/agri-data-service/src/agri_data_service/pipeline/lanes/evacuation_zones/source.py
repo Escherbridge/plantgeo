@@ -19,17 +19,16 @@ What is imported, and why each one rather than a local restatement:
 
 from __future__ import annotations
 
-import asyncio
-import random
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from agri_data_service.ingest.evacuation_zones import EVACUATION_ZONES_BOUNDS, fetch_evacuation_zones
 from agri_data_service.ingest.http import upstream_client
+from agri_data_service.pipeline.lanes._shared.retry import retry_with_backoff
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Mapping
+    from collections.abc import Mapping
 
 
 class EvacuationZonesSourceError(RuntimeError):
@@ -98,47 +97,18 @@ async def fetch_evacuation_zones_snapshot(
             )
         return EvacuationZonesSource(bbox=bbox, fetched_at=datetime.now(UTC), zones=tuple(zones))
 
-    return await _retry_async(
-        "Oregon OEM evacuation-area snapshot fetch",
+    # A truncation refusal is NOT retried inside the turn (`never_retry` below): re-walking the same
+    # pages against the same ceilings asks the same question and gets the same answer, and the
+    # ceilings are per-run budgets that a second walk inside one turn would not reset.
+    return await retry_with_backoff(
         fetch_once,
         attempts=retry_attempts,
         base_seconds=retry_base_seconds,
         max_seconds=retry_max_seconds,
+        exhausted=EvacuationZonesSourceError,
+        label="Oregon OEM evacuation-area snapshot fetch",
+        never_retry=(EvacuationZonesTruncatedError,),
     )
-
-
-async def _retry_async[T](
-    label: str,
-    operation: Callable[[], Awaitable[T]],
-    *,
-    attempts: int,
-    base_seconds: float,
-    max_seconds: float,
-) -> T:
-    """Retry a transport-bound coroutine with jittered exponential backoff, raising the last error.
-
-    A truncation refusal is NOT retried inside the turn: re-walking the same pages against the same
-    ceilings asks the same question and gets the same answer, and the ceilings are per-run budgets
-    that a second walk inside one turn would not reset.
-    """
-    last_error: Exception | None = None
-    for attempt in range(1, attempts + 1):
-        try:
-            return await operation()
-        except EvacuationZonesTruncatedError:
-            raise
-        except Exception as error:  # every transport/parse failure is retried the same way
-            last_error = error
-            if attempt >= attempts:
-                break
-            await asyncio.sleep(_retry_delay(attempt, base_seconds=base_seconds, max_seconds=max_seconds))
-    assert last_error is not None  # attempts >= 1 is enforced by the caller's config validation
-    raise EvacuationZonesSourceError(f"{label} failed after {attempts} attempts") from last_error
-
-
-def _retry_delay(attempt: int, *, base_seconds: float, max_seconds: float) -> float:
-    ceiling = min(max_seconds, base_seconds * (2 ** max(0, attempt - 1)))
-    return float(ceiling + random.uniform(0.0, min(1.0, ceiling / 4)))
 
 
 __all__ = [

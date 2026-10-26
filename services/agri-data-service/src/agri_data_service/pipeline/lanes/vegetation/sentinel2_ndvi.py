@@ -119,7 +119,7 @@ def search_parameters(
         ("bbox", bbox),
         ("datetime", f"{format_javascript_timestamp(start)}/{format_javascript_timestamp(end)}"),
         ("limit", str(limit)),
-        ("query", json.dumps({"eo:cloud_cover": {"lt": MAX_SCENE_CLOUD_COVER_PERCENT}}, separators=(",", ":"))),
+        ("query", json.dumps({"eo:cloud_cover": {"lt": MAX_SCENE_CLOUD_COVER_PERCENT}}, separators=COMPACT_SEPARATORS)),
         ("sortby", sortby),
     )
 

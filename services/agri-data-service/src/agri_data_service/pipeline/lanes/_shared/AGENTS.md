@@ -97,6 +97,24 @@ signal), and reads `exceededTransferLimit` as a paging CONTINUATION signal, not 
 `ingest/` already. Follow-up outside this package: `ingest/mtbs.py`'s private paging walk vs
 `ingest/arcgis.py`.
 
+## Retry (`retry.py`)
+
+`jittered_backoff_delay(attempt, base_seconds=, max_seconds=)` is the formula three lanes restated
+byte-for-byte: `min(max_seconds, base_seconds * 2 ** (attempt - 1))` plus up to a quarter of that
+ceiling in uniform jitter. `retry_with_backoff(operation, attempts=, base_seconds=, max_seconds=,
+exhausted=, label=, never_retry=(), sleep=None)` is the loop around it: every exception retries
+except the types listed in `never_retry` (which propagate on first sight, unretried), and exhaustion
+raises `exhausted(f"{label} failed after {attempts} attempts")` with `__cause__` set to the last
+error. `sleep` defaults to `asyncio.sleep`, resolved lazily so importing this module needs no running
+loop; a test injects a no-op to skip real wall-clock delay.
+
+**Lane-specific, kept at the call site:** the exception type `exhausted` constructs (each lane's own
+`...SourceError`/`...FetchError`), the `label` text (each lane names its own unit), and which
+exceptions are exempt from retry (only `evacuation_zones` has one: a truncated statewide walk is a
+refusal, not a transient failure, so `EvacuationZonesTruncatedError` rides `never_retry` and is never
+retried inside one turn). `burn_severity/mtbs.py` and `drought/usdm.py` pass no `never_retry` —
+every exception they see is retried identically.
+
 ## The `direct:` feature-id prefix
 
 Not extracted: each lane must equal its OWN legacy twin under `pipeline/direct/<lane>/rows.py`, which
