@@ -767,9 +767,7 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
         publication_lag_days=None,
         publication_cadence_days=None,
         publication_lag_source="current capture D+1 UTC with no extra lag (historical cohorts: mtbs-forward)",
-        selection_policy=(
-            "daily earliest eligible staged snapshot; weekly bounded current capture"
-        ),
+        selection_policy=("daily earliest eligible staged snapshot; weekly bounded current capture"),
         timeout_seconds=int(BURN_SEVERITY_MAX_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS,
         description=(
             "Daily 08:55 UTC eligible-stage check and weekly bounded current MTBS capture. "

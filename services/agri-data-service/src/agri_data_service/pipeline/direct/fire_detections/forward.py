@@ -26,6 +26,7 @@ from agri_data_service.pipeline.direct import (
     USAGE_ERROR_ON_UNCONFIGURED_BBOX,
     DirectWriterContract,
 )
+from agri_data_service.pipeline.direct.retry import retry_delay
 from agri_data_service.pipeline.errors import PipelineOperationError
 from agri_data_service.pipeline.parquet.availability_extension import AvailabilityExtensionTally
 from agri_data_service.pipeline.parquet.availability_index import BotoAvailabilityStorage
@@ -66,7 +67,6 @@ from .support import (
     emit,
     pending_days,
     retry_async,
-    retry_delay,
     tier_status_counts,
     tier_status_day,
     tier_status_window,
