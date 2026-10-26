@@ -16,9 +16,7 @@ export async function startJobs(): Promise<void> {
     return;
   }
 
-  // Nightly at 2am UTC. `registerBullmqCron`'s `upsertJobScheduler` call replaces the
-  // getRepeatableJobs/removeRepeatableByKey cleanup this job used to hand-roll on every start —
-  // see `src/lib/server/AGENTS.md` §jobs.
+  // Nightly at 2am UTC; see `src/lib/server/AGENTS.md` §jobs.
   const registration = registerBullmqCron({
     queueName: QUEUE_NAME,
     jobName: "recompute",
@@ -31,6 +29,15 @@ export async function startJobs(): Promise<void> {
 
   queue = registration.queue;
   worker = registration.worker;
+
+  // Drop the pre-scheduler `queue.add(..., { repeat })` entry so it never fires beside the scheduler.
+  try {
+    for (const job of await queue.getRepeatableJobs()) {
+      if (job.key !== `${QUEUE_NAME}-daily`) await queue.removeRepeatableByKey(job.key);
+    }
+  } catch {
+    // Non-fatal — Redis may not be available during build
+  }
 
   worker.on("completed", () => {
     console.log("[priority-zone-refresh] Priority zones recomputed successfully");
