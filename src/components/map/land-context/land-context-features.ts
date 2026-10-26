@@ -33,7 +33,7 @@ export type BoundaryResult = LandContextResult & { geometry: GeoJSON.Geometry | 
  * an EMPTY GeometryCollection: MapLibre draws nothing for it, the accessible list and the panel
  * still list it, and no shape the source did not provide is ever fabricated.
  */
-export const NO_GEOMETRY: GeoJSON.GeometryCollection = { type: "GeometryCollection", geometries: [] };
+const NO_GEOMETRY: GeoJSON.GeometryCollection = { type: "GeometryCollection", geometries: [] };
 
 const FAMILY_TO_GROUP: Record<string, LandContextGroupId> = {
   parcel: "parcels-land-use",
@@ -43,7 +43,7 @@ const FAMILY_TO_GROUP: Record<string, LandContextGroupId> = {
   state_managed_land: "state-managed-lands",
 };
 
-export function groupForResult(result: LandContextResult): LandContextGroupId | null {
+function groupForResult(result: LandContextResult): LandContextGroupId | null {
   const familyType = result.sourceFeature?.familyType;
   if (!familyType) return null;
   return FAMILY_TO_GROUP[familyType] ?? null;

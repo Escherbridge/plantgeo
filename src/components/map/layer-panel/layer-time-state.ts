@@ -7,7 +7,6 @@ import {
   findLayerCapability,
   isCalendarDate,
   sliderDomain,
-  type SliderDomain,
 } from "@/stores/time-slider-store";
 import type { SliderCapabilities, SliderLayerCapability } from "@/types/time-slider";
 
@@ -70,7 +69,7 @@ export interface WithheldLayerCapability {
 const WITHHOLDING_REASON_SET: ReadonlySet<string> = new Set(LAYER_WITHHOLDING_REASONS);
 
 /** True for a wire string this client knows how to word. */
-export function isLayerWithholdingReason(value: unknown): value is LayerWithholdingReason {
+function isLayerWithholdingReason(value: unknown): value is LayerWithholdingReason {
   return typeof value === "string" && WITHHOLDING_REASON_SET.has(value);
 }
 
@@ -477,18 +476,3 @@ function describeUnusableAxis(
   };
 }
 
-/**
- * The axis for a layer in the `ready` state, or null for every other state.
- *
- * A convenience for the one caller that needs both the state and the domain and must not let them
- * disagree: asking `resolveLayerTimeState` and `sliderDomain` separately is two chances to get a
- * different answer from one payload.
- */
-export function readyLayerDomain(
-  state: LayerTimeState,
-  capabilities: SliderCapabilities | null,
-  warehouseLayerName: string | null
-): SliderDomain | null {
-  if (state.kind !== "ready" || warehouseLayerName === null) return null;
-  return sliderDomain(capabilities, warehouseLayerName);
-}

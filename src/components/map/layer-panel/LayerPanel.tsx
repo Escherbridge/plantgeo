@@ -35,7 +35,7 @@ import {
 const LAYER_PANEL_WIDTH_PX = 304;
 
 /** The manager's own DOM id, so a shortcut's `aria-controls` can name the region it opens. */
-export const MAP_MANAGER_DOCK_ID = "map-manager-dock";
+const MAP_MANAGER_DOCK_ID = "map-manager-dock";
 
 /**
  * The map's reaction to the manager, and what it deliberately is NOT.
