@@ -33,8 +33,8 @@ keyed source that fails without its variable set says so explicitly.
 
 | Source | Keyed? | Environment variable | Where to get it | What breaks without it |
 | --- | --- | --- | --- | --- |
-| NASA POWER daily (`historical-nasa-backfill`) | No | — | Public API, no registration | Nothing; serves keylessly |
-| U.S. Drought Monitor (`ingest-drought`, `historical-usdm-backfill`, `ingest-drought-history`) | No | — | Public shapefile/JSON endpoints | Nothing |
+| NASA POWER daily (live lane `climate-nasa-power-direct-forward`) | No | — | Public API, no registration | Nothing; served by `pipeline/direct/climate` lane |
+| U.S. Drought Monitor (live lane `drought-direct-forward`; operator repair `python -m agri_data_service.pipeline.direct.drought.backfill`) | No | — | Public shapefile/JSON endpoints | Nothing; served by `pipeline/direct/drought/` |
 | MTBS burned area (`ingest-mtbs`) | No | — | Public USDA/USGS ArcGIS service | Nothing |
 | Open-Meteo weather (`ingest-weather`) | No | — | Public API, no registration | Nothing |
 | USGS NWIS streamflow (`ingest-streamflow`) | No | — | Public water services API | Nothing |
@@ -43,29 +43,18 @@ keyed source that fails without its variable set says so explicitly.
 | NIFC fire perimeters (`ingest-fire-perimeters`) | No | — | Public ArcGIS feature service | Nothing |
 | Evacuation zones (`ingest-evacuation-zones`) | No | `EVACUATION_ZONES_LAYER_ID` *(optional)* | Not a key — a layer label override | Nothing; uses a default layer name |
 | **NASA FIRMS active fire** (`ingest-firms`, and `ingest-all`) | **Yes** | `NASA_FIRMS_KEY` | Free MAP_KEY from [firms.modaps.eosdis.nasa.gov](https://firms.modaps.eosdis.nasa.gov/api/area/) | The verb raises `NASA_FIRMS_KEY environment variable is not set` and exits. `ingest-all` fails with it |
-| **ERA5-Land** (`historical-era5-backfill`) | **Yes** | `CDSAPI_URL` **and** `CDSAPI_KEY` | Free account at [cds.climate.copernicus.eu](https://cds.climate.copernicus.eu/), then accept the dataset licence in the browser | The command refuses to contact the provider: "ERA5-Land requires accepted CDS web terms plus CDSAPI_URL and CDSAPI_KEY in the local operator environment or services/agri-data-service/.env" |
-| ERA5-Land via Open-Meteo (`historical-open-meteo-backfill`) | Optional | `OPEN_METEO_API_KEY` *(optional)* | A paid Open-Meteo subscription; the lane works without one | Nothing breaks. Absent, the lane calls the keyless free host and is subject to its minute/hour/day quotas — a full 1,568-cell crawl walls repeatedly. Present, the request goes to the Professional host instead |
+| **ERA5-Land** (live lane `soil-era5-land-direct-forward`) | **No** | — | Published by NASA data pool, no registration | Served by `pipeline/direct/soil` lane; CDS CLI backfill removed 2026-10-26 |
+| Open-Meteo weather (config-driven lanes via `pipeline/runner`) | Optional | `OPEN_METEO_API_KEY` *(optional)* | A paid Open-Meteo subscription for keyed endpoints; keyless endpoints work free | Absent, calls the free public host; keyed endpoints with empty key error (exit 78). Config runner reads `OPEN_METEO_API_KEY` directly from shell export, not `.env` |
 
 So: two credentials are *required* by a lane, and only one of them needs a
 hosted account with a browser step. `OPEN_METEO_API_KEY` is the only optional
 credential — it buys quota, not access. Everything else on the list is keyless.
 
-Two facts about these variables bite every time:
+One key fact about the surviving variable:
 
-- **`CDSAPI_URL` and `CDSAPI_KEY` may live in `.env`** as of 2026-08-08.
-  `_require_cds_credentials()` used to read `os.environ` only, which made a
-  `.env` entry inert; `Settings` now carries both. A real environment variable
-  still wins over `.env`, and a blank export is treated as unset:
-
-  ```powershell
-  $env:CDSAPI_URL = 'https://cds.climate.copernicus.eu/api'
-  $env:CDSAPI_KEY = '<your-cds-key>'
-  ```
-
-- **`OPEN_METEO_API_KEY` is exported the same way, and is never stored.** It is
-  not part of the Open-Meteo plan and does not enter `plan_checksum`, so adding
-  or removing it never orphans a checkpoint or the local raw cache. The
-  warehouse records the host that answered, never the key.
+- **`OPEN_METEO_API_KEY` is exported, never stored, and read only by the config
+  runner.** It is not part of any plan and does not enter `plan_checksum`. The
+  warehouse records the host that answered, never the key:
 
 - **The FIRMS recent-days API is keyed; the archive is a separate product.**
   `NASA_FIRMS_KEY` covers the bounded recent-detections endpoint that
@@ -218,12 +207,11 @@ Honest limits, and the local substitute for each:
   served from a bucket behind a domain that only the account owner controls.
   Substitute: point the map at your own PMTiles or a public basemap style, and
   serve dynamic tiles from local Martin (`npm run tiles:serve`).
-- **A Copernicus account.** `CDSAPI_KEY` requires registration *and* accepting
-  the ERA5-Land dataset licence in a browser — no automated path exists.
-  Substitute: skip `historical-era5-backfill`. The NASA POWER soil-wetness
-  parameters (`GWETTOP`, `GWETROOT`, `GWETPROF`) are a keyless soil-moisture
-  stream, though they are a degree of saturation rather than a volumetric water
-  content, so they are not a drop-in replacement for the ERA5 volumetric path.
+- **A Copernicus account.** ERA5-Land is now published by the live lane
+  `soil-era5-land-direct-forward` and does not require credentials locally.
+  The CLI backfill verb was removed 2026-10-26. The NASA POWER soil-wetness
+  parameters (`GWETTOP`, `GWETROOT`, `GWETPROF`) from `climate-nasa-power-direct-forward`
+  are a keyless stream but measure saturation, not volumetric water content.
 - **Data already persisted in the maintainer's production database.** Row counts
   you may see referenced in docs or reports reflect completed runs there.
   Substitute: rebuild locally; the plans and verbs above are the whole recipe.
