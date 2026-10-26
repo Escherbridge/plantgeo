@@ -6,8 +6,8 @@
 # NAME TRAP (read before touching this file): "weather-observations" is overloaded in this repo.
 # This lane is the CURRENT-CONDITIONS poll (`ingest/open_meteo.py`'s `WEATHER_LAYER`, the `current`
 # endpoint), NOT the governed NASA-POWER/ERA5-Land historical archive that backs
-# `agri.signal_observation` under the SAME stream name (`execution/weather_observations/AGENTS.md`
-# "Traps that will otherwise be rediscovered"; `docs/lanes/weather-observations.md` section 5 item 3,
+# `agri.signal_observation` under the SAME stream name (its producer, `execution/weather_observations/`,
+# was purged 2026-10-26; the rows remain; `docs/lanes/weather-observations.md` section 5 item 3,
 # which describes that OTHER producer). This TOML's `strategy`/`[[streams]].slug` target the
 # `geo.features`-shaped producer only.
 #

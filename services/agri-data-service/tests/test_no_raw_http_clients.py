@@ -17,11 +17,9 @@ Reasoned per design §2.1 and plan 0W.2's `o3-ingest-meter` task text, in prose 
 list so ERA001 does not mistake this comment for commented-out code. `agent/**` holds another
 session's own LLM tool calls, not upstream data sources, and stays an unbounded PREFIX allow (not a
 pinned count) both because it is a different kind of client entirely and because another session edits
-that tree concurrently with this one. `execution/publisher.py` and `execution/historical_export.py`
-are internal endpoints. `execution/historical_era5.py`, `execution/historical_usdm.py`,
-`execution/plan_continuation.py` and `execution/weather_observations/nasa_power.py` have no live
-entrypoint today; reviving one means removing its entry here and wiring it through the metered
-factory. `execution/geospatial_capture.py`, `ingest/mtbs.py` (which also keeps its own separate
+that tree concurrently with this one. `execution/publisher.py` is an internal endpoint (the
+historical backfill modules once pinned here were purged 2026-10-26).
+`execution/geospatial_capture.py`, `ingest/mtbs.py` (which also keeps its own separate
 `USER_AGENT`, unaffected by `default_user_agent`) and `scripts/capture_sensor_evidence.py` are
 operator-only tools run by hand rather than by a scheduled lane.
 `pipeline/lanes/crop_cover/source.py` (moved by p4-extract) was SHADOW until `s-crop-cover` --
@@ -55,11 +53,6 @@ if TYPE_CHECKING:
 # client/sender constructions `_raw_client_count` finds in that file today.
 ALLOWED_SRC_FILE_COUNTS: Final[dict[str, int]] = {
     "execution/publisher.py": 1,
-    "execution/historical_export.py": 1,
-    "execution/historical_era5.py": 1,
-    "execution/historical_usdm.py": 1,
-    "execution/plan_continuation.py": 2,
-    "execution/weather_observations/nasa_power.py": 1,
     "execution/geospatial_capture.py": 1,
     "ingest/mtbs.py": 1,
     "pipeline/direct/soil_properties/capture.py": 1,

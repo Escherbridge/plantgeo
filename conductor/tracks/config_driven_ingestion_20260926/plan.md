@@ -1654,7 +1654,7 @@ lookaheads.
 |---|---|---|---|
 | G-1 | import forms of `pipeline.direct.(P)`, `water_gauges_forward`, `ingest[./]usgs_nwis`, `validation[./]water_gauges` | only inside the 7D-n set | zero, except the allow-list |
 | G-1b | path literals `["']pipeline/direct/(P)` and `"direct"` segments | only in the deletion set and `c7-delete-1`'s pins | zero, except the `tmp_path` fixtures |
-| G-2 | cohort `_DIRECT_LANE_ID`, `MTBS_FORWARD_LANE_ID`, `"mtbs-forward"` | zero | zero |
+| G-2 | cohort `_DIRECT_LANE_ID` (**2026-10-26 owner amendment:** `MTBS_FORWARD_LANE_ID` and `"mtbs-forward"` are EXCLUDED -- `mtbs-forward` DISPATCHED (not retired); it is the history-only lane id, daily.py historical call removed so burn-severity-direct-forward is capture-only -- resolves the CQ-9 history/capture split hazard) | zero | zero |
 | G-3 | `RepairAuthoringClock\|REPAIR_BINDINGS\|REPAIR_LANE_IDS\|jobs[-_]plan[-_]gap[-_]repair\|REPAIR_INTERVAL\|gap_repair` over the scope **plus `src/**/AGENTS.md`** | zero after 7Q-1a, except the env-vars "held at 0" row | zero |
 | G-4 | `build_streamflow_gauge_identity\|fetch_source_day_from_nwis\|FIRE_FORWARD_\|usgs_nwis\.py` | — | zero, except the frozen schema comments (allow-listed) |
 | G-5 | `source_checkpoint` | — | zero after S1 |
@@ -1776,7 +1776,7 @@ dry-run output and its digest. `c7-*` sub-agents never touch production.
 | **G9V-1a** | `REPAIR_INTERVAL=0` (permanent); **applied brake drill** on watersheds and `watersheds:gap-fill`; drain the six `:gap-repair` names | owner (variable, drill go); owner or i-coordinator (drain) | variable → redeploy; ledger | drill: resume; drain: `--restore` for the flags (cancelled items stay cancelled) |
 | G9Q-1a | push 7Q-1a (`c7-repair-retire` + `c7-docs-banners`); T+1 census | i-coordinator | deploy | revert |
 | **G9V-1b** | cohort-1 tokens out; **soak until every cohort lane and each `<L>:gap-fill` has fired once after the change** (exit 0, CA1 marker); supersede and brake probes | owner; i-coordinator (reads) | variable → redeploy | re-set the value |
-| G9Q-1b | brake `mtbs-forward` if needed; drain water and `mtbs-forward`; water terminal receipt after its pending prefix is empty; push 7Q-1b; T+1 census | owner / i-coordinator | ledger, deploy | spec §4.8.6 rule 3 |
+| G9Q-1b | ~~brake `mtbs-forward` if needed; drain water and `mtbs-forward`~~ drain water (**2026-10-26 owner amendment:** `mtbs-forward` DISPATCHED (not retired); it is the history-only lane id, daily.py historical call removed so burn-severity-direct-forward is capture-only -- resolves the CQ-9 history/capture split hazard); water terminal receipt after its pending prefix is empty; push 7Q-1b; T+1 census | owner / i-coordinator | ledger, deploy | spec §4.8.6 rule 3 |
 | G9D-n | **closes the rollback window** for the named lanes; push 7D-n after 7O-n | i-coordinator | deploy | only by a new go |
 | G9R-n | retire the pinned names (n=1 adds the six repair names and the CQ-10 names); unset variables after the reachable-reader proof | owner / i-coordinator | ledger flags, variables | `--restore`; re-set values |
 | G9Q-2 | brake climate (RC-6 green); G9V-2 + soak; claims empty under 11 roots; drain; receipts; push 7Q-2 | owner / i-coordinator | ledger, variables, deploy | spec §4.8.6 rule 3 |

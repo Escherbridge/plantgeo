@@ -90,3 +90,12 @@ Reports expose `source_unsettled_days`, `unsettled_frontier_days`, `probe_status
 and the run-level `weighted_calls`/`fetch_attempts`/`http_requests`/`probe` block, and the product
 outcome names what materially happened (`published`, the stopping budget, `source_unsettled` or
 `idempotent_noop`) rather than treating every non-empty backlog as a publication.
+
+## `archive_contract.py`: the archive lane and acceptance table (moved 2026-10-26)
+
+`OPEN_METEO_ARCHIVE_LANE`, `OPEN_METEO_ARCHIVE_NATIVE_GRID_DEGREES` and
+`OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS` moved verbatim from the purged historical
+`execution/weather_observations/era5_land.py`. The lane label and `cache_directory_name` are kept
+byte-identical because they prefix every error message and name the raw-cache directory; the
+per-variable `model` field is what stops a variable only ERA5 publishes from being requested under
+`models=era5_land` (`tests/direct/soil/test_archive_contract.py`).

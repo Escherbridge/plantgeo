@@ -22,8 +22,8 @@ Imports: `ingest`, `warehouse`, `pipeline/lanes/_shared` (the digest pair) and
 `weather-observations` is overloaded in this repo: this package's producer is the Open-Meteo
 **current-conditions** poll (`ingest/open_meteo.py`'s `WEATHER_LAYER`, the `current` endpoint,
 historically written into `geo.features`), **not** the governed NASA-POWER/ERA5-Land historical
-archive that backs `agri.signal_observation` under the same stream name
-(`execution/weather_observations/AGENTS.md` "Traps that will otherwise be rediscovered";
+archive that backs `agri.signal_observation` under the same stream name (that archive's producer,
+`execution/weather_observations/`, was purged 2026-10-26; its rows remain;
 `docs/lanes/weather-observations.md` section 5 item 3 — that document describes the OTHER
 producer). Confirm which one a change is aimed at before touching either.
 

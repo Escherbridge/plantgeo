@@ -6,6 +6,10 @@ status: planned
 
 # Plan
 
+> **2026-10-26 owner rule:** legacy historical modules purged; AgERA5/CEMS/CAMS/GloFAS history to
+> be built as config-driven TOML lanes with a `history_floor`. Every "reuse `historical_era5.py`"
+> step below is superseded; the module is readable only in git history (`git show 1f908a25:<path>`).
+
 See [`./spec.md`](./spec.md) for the measured findings this plan implements against.
 
 Three phases, strictly ordered by credential cost, not by product importance. Phase 1 (AgERA5)

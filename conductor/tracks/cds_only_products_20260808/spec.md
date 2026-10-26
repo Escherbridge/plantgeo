@@ -231,8 +231,11 @@ open-question capture, not implementation.
 - **The `asyncio.gather`-over-periods concurrency change named in finding 2.** Recorded as the only
   real parallelization lever available, not adopted here — it is a behavioral change to shared
   replay code, out of scope unless a phase explicitly takes it on.
-- **Deleting, refactoring, or moving `historical_era5.py` or its credential contract.** It is the
-  template this whole track reuses; it stays exactly where it is.
+- ~~**Deleting, refactoring, or moving `historical_era5.py` or its credential contract.** It is the
+  template this whole track reuses; it stays exactly where it is.~~ **SUPERSEDED 2026-10-26 owner
+  rule:** legacy historical modules purged; AgERA5/CEMS/CAMS/GloFAS history to be built as
+  config-driven TOML lanes with a `history_floor`. The `historical_era5.py` citations above are
+  history, readable via `git show 1f908a25:<path>`; `cdsapi_url`/`cdsapi_key` in `config.py` remain.
 
 ## Open questions — owner input required
 

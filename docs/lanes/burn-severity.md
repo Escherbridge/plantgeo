@@ -60,12 +60,18 @@ would confirm it.
   before MTBS calls it complete (`mtbs.py:101-107`; confirmed range in
   `docs/reports/evidence/mtbs-release-announcements-2026-08-10.md` — e.g. fire year 2019 opened
   2021-04-21 and closed 2021-09-27, fire year 2020 spanned 2022-02-15→2022-04-28).
-- **The executor lane `mtbs-forward` runs weekly**, `55 7 * * 2` (Tuesdays 07:55 UTC),
-  with command `agri-service data ingest-mtbs` — chosen specifically to
-  pick up a new quarterly release within a week while staying far cheaper than the daily lanes
-  (`ingest/AGENTS.md:317`). Re-running is cheap and idempotent: the writer's diff rejects an
-  unchanged payload, and the geometry adapter confirms an unchanged shape when nothing moved
-  (`mtbs.py:1154-1156`).
+- **Two executor lanes split the work (owner 2026-10-26), both running
+  `python -m agri_data_service.pipeline.direct.burn_severity`:**
+  - **`mtbs-forward` — historical census, weekly**, `55 7 * * 2` (Tuesdays 07:55 UTC), no flag:
+    `forward.main` walks the governed release days (`ingest/mtbs.py::MTBS_ANNUAL_RELEASE_DATES`) and
+    publishes any unfilled one to Parquet `layer=burn-severity/kind=observed`, one release day per
+    lane-day lock. Weekly picks up a new quarterly release within a week; re-running is idempotent
+    because a fully written release day owes nothing.
+  - **`burn-severity-direct-forward` — current capture, daily**, `55 8 * * *`,
+    `--current-snapshots`: `burn_severity/daily.py` publishes the earliest eligible staged snapshot
+    and, at most weekly, captures the live MTBS service into the staging queue. It does NOT walk the
+    historical census (removed 2026-10-26; it had duplicated `mtbs-forward`'s work).
+  The old `agri-service data ingest-mtbs` path that wrote `geo.features` no longer runs under either id.
 - **Observed lag has three layers, and they compound:**
   1. MTBS's own mapping lag, ignition → publication, averages roughly 18 months and is
      enforced to be **at least 180 days** by `MIN_RELEASE_LEAD`

@@ -1122,9 +1122,8 @@ def test_the_ceiling_fields_name_the_declared_lag_the_bound_is_actually_applied_
     """A reader must re-derive the verdict from the report, and the names must not claim a probe.
 
     `ceiling_declared_lag_day` is `today - publication_lag_days`, a LANE_REGISTRY constant. Nothing
-    in this turn queries the provider, so nothing here may be called a frontier: this directory
-    already spends that word on `plan_continuation.probe_provider_frontier`, which really does probe
-    (STYLE-REVIEW-W10 S1).
+    in this turn queries the provider, so nothing here may be called a frontier: that word names a
+    measured provider probe (STYLE-REVIEW-W10 S1).
     """
     ceiling = ceiling_behind_today(days_behind=16)
 

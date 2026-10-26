@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Final
 import pytest
 
 from agri_data_service.execution.open_meteo_lane import canonical_location_document
-from agri_data_service.execution.weather_observations.era5_land import (
+from agri_data_service.pipeline.direct.soil.archive_contract import (
     OPEN_METEO_ARCHIVE_LANE,
     OPEN_METEO_ARCHIVE_NATIVE_GRID_DEGREES,
 )

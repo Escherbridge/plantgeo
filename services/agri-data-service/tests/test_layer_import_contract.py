@@ -63,10 +63,6 @@ SIBLING_MODULE_DIRECTORIES: tuple[str, ...] = (
 )
 
 DOMAIN_PARENT_SHARED_SUBPACKAGES: dict[str, set[str]] = {
-    # Organised per source over shared internals (`_shared`, `_results`, `_release_sets`) that
-    # CAMS, GloFAS and USDM all use; splitting it would export private modules across packages.
-    # See execution/weather_observations/AGENTS.md.
-    "execution": {"historical_writer"},
     # Cross-source ingest validation models, not one source's producer.
     "ingest": {"validation"},
 }
@@ -316,7 +312,7 @@ def test_the_cross_lane_rule_actually_fires(tmp_path: Path) -> None:
 
 
 def test_domain_isolation_catches_an_absolute_and_a_relative_sibling_import(tmp_path: Path) -> None:
-    """Prove the rule fires. With one real domain the check above can only ever pass vacuously."""
+    """Prove the rule fires; with no real domain package left (2026-10-26) the live check is vacuous."""
     parent_dir = tmp_path / "execution"
     for domain in ("weather_observations", "fire_detections"):
         (parent_dir / domain).mkdir(parents=True)
@@ -336,23 +332,12 @@ def test_domain_isolation_catches_an_absolute_and_a_relative_sibling_import(tmp_
     assert any("firms.py:1" in v and "weather_observations" in v for v in violations)
 
 
-def test_domain_isolation_actually_has_domains_to_police() -> None:
-    """A default-deny rule that silently matches nothing is indistinguishable from no rule at all."""
-    pkg_root = Path(__file__).resolve().parents[1] / "src" / "agri_data_service"
-    discovered = {parent: _domain_packages(pkg_root, parent) for parent in DOMAIN_PARENTS}
-
-    assert "weather_observations" in discovered["execution"], (
-        f"the first domain package is missing; discovered {discovered}"
-    )
-
-
 #: The three layers `federation.md` section 5 step 3 gave a source protocol. Each is a LANE package in
 #: `pipeline/direct`, so the walks above already police it -- but only if the walk actually sees it.
 #: `soil_survey` is the trap: it sits beside the older `soil` lane (the ERA5-Land soil FIELD writer,
 #: an entirely different layer), and a prefix-matched sibling rule that treated `direct.soil.products`
 #: as an import of `soil_survey` -- or the reverse -- would either fire falsely forever or stop firing
-#: at all. Naming the three keeps the lane discovery honest the way
-#: `test_domain_isolation_actually_has_domains_to_police` does for domains.
+#: at all. Naming the three keeps the lane discovery honest.
 FEDERATED_SOURCE_LAYER_LANES: Final[tuple[str, ...]] = ("burn_severity", "drought", "soil_survey")
 
 

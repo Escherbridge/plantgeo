@@ -5,7 +5,7 @@ all eight streams was written from `open-meteo-era5-land-archive` at support `er
 (`scripts/build_soil_moisture_from_canonical_snapshot.py` SOURCE_KEY/SUPPORT_KEY,
 `scripts/soil_temperature_snapshot_breakdown.py` EXPECTED_SOURCE_KEY/EXPECTED_SUPPORT_KEY,
 `scripts/vpd_snapshot_breakdown.py` ProductContract). The retired CDS lane
-(`execution/historical_era5.py`) fetched a 1.0-degree OUTPUT grid, needs a credential, has no
+(`execution/historical_era5.py`, purged 2026-10-26) fetched a 1.0-degree OUTPUT grid, needs a credential, has no
 variable for VPD at all, and carries only soil-water layer 1 of the three this product family
 serves -- so a forward writer built on it would extend none of these histories comparably, and
 `agri.data_source` has no `era5-land` key for it to write under. See `pipeline/direct/AGENTS.md`,
@@ -85,8 +85,8 @@ ERA5_LAND_ARCHIVE_FRONTIER_LOOKBACK_DAYS: Final = 4
 
 #: The `agri.signal_observation.support_key` every row of these eight streams carries. It names the
 #: SOURCE's native 0.1-degree lattice, not the 0.25-degree analysis lattice the cells sit on; the two
-#: are different facts and both are recorded. `execution/weather_observations/era5_land.py`
-#: OPEN_METEO_ARCHIVE_SUPPORT_KEY.
+#: are different facts and both are recorded. Byte-identical to the purged (2026-10-26) historical
+#: lane's OPEN_METEO_ARCHIVE_SUPPORT_KEY.
 ERA5_LAND_SUPPORT_KEY: Final = "era5-land-0.1deg"
 
 #: The `agri.data_source.key` of the upstream, byte-identical to the value every historical row of

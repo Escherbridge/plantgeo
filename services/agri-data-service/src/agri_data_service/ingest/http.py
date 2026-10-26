@@ -603,9 +603,8 @@ def retry_after_seconds_for_response(status: int, headers: Mapping[str, str]) ->
     present -- parsing every status would let an unrelated answer steer a caller's retry ladder, so
     the STATUS decides whether it is even worth looking at the header, not only the header's own
     presence. Only the delta-seconds form (all-digit) is parsed; an HTTP-date value is ignored,
-    matching this service's other `Retry-After` readers (`execution/historical_usdm.py::_retry_delay`,
-    `execution/weather_observations/nasa_power.py`, `ingest/mtbs.py`) rather than adding a third date
-    parser.
+    matching this service's other `Retry-After` reader (`ingest/mtbs.py::_get_query`) rather than
+    adding a second date parser.
     """
     if status != HTTP_TOO_MANY_REQUESTS and status < HTTP_SERVER_ERROR_MINIMUM:
         return None

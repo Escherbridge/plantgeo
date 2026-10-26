@@ -43,6 +43,9 @@ forcing with no independent skill — request `era5` for wind rather than paying
 
 - **Flood API** (GloFAS river discharge) — feeds the water layer directly and would give it real
   history, rather than the point observations USGS NWIS provides.
+  **2026-10-26 owner rule:** legacy historical modules purged (`execution/historical_glofas.py`
+  included); GloFAS history is to be built as a config-driven TOML lane with a `history_floor`. The
+  status below is the historical record.
   **Status (2026-08-06, `upstream_dataset_expansion_20260806` slice C):** lane built —
   `ingest/open_meteo_flood.py` + `execution/historical_glofas.py` validate, fetch, chunk, checkpoint
   and cache end to end (CLI: `historical-glofas-status` / `historical-glofas-backfill`). **Warehouse
@@ -56,6 +59,8 @@ forcing with no independent skill — request `era5` for wind rather than paying
 - **Air Quality API** (CAMS) — PM2.5/PM10 and dust. Notably wildfire *smoke*, which pairs with
   FIRMS detections and burn severity to describe downwind impact, something no ingested source
   covers.
+  **2026-10-26 owner rule:** `execution/historical_cams.py` purged; CAMS history is to be a
+  config-driven TOML lane with a `history_floor`. The status below is the historical record.
   **Status (2026-08-06, slice C):** lane built alongside GloFAS — `ingest/open_meteo_air_quality.py`
   + `execution/historical_cams.py` (CLI: `historical-cams-status` / `historical-cams-backfill`). Same
   persistence blocker as GloFAS: no CAMS equivalents of the `historical_writer.py` persist/finalize
@@ -121,12 +126,13 @@ Open-Meteo today and verified rendering to users.
 
 No data was dropped because **this lane never persisted a warehouse row**: `agri.data_source`
 holds no `era5-land` key, and the only residue is a git-ignored `.agri-local-runs/historical-era5/`
-cache whose two checkpoints never reached `validated`. The code stays too — `historical_era5.py`
-is the one working CDS integration template, and every product below reuses its shape.
+cache whose two checkpoints never reached `validated`. The code did not stay: `historical_era5.py`
+(the one working CDS integration template) was purged 2026-10-26 with the other legacy historical
+modules; it remains readable in git history. AgERA5/CEMS history is to be built as config-driven
+TOML lanes with a `history_floor`.
 
 The obsolete service-local plan artifacts and generators were removed. The national sampling
-plans under `infra/local-warehouse/plans/` and the reusable CDS integration code remain as
-historical implementation evidence; they are not an active soil-state serving path.
+plans under `infra/local-warehouse/plans/` remain as historical implementation evidence; they are not an active soil-state serving path.
 
 ### What CDS is still the only route to
 

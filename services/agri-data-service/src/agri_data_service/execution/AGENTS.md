@@ -192,10 +192,10 @@ availability query is issued (§1b lists "the availability query" among what a l
 `Protocol` owns; vegetation's `pipeline/direct/vegetation/source.py` exposes only
 `fetch_vegetation_day`, a per-day scene fetch), no source watermark is read, and the whole change
 from the first 14-day bound amounts to moving the refusal from `today - 14` to `today - 21` and
-reporting the eight `ceiling_*` fields listed below. The word "frontier" is already spent in this directory on the measured thing:
-`plan_continuation.py:288 probe_provider_frontier` HTTP-probes the provider per cell, and
-`ProviderFrontier` carries `mode: "declared" | "measured"` plus a `measured_at`
-(`plan_continuation.py:147-160, 277-286`). Promotion's constant had neither a mode nor a
+reporting the eight `ceiling_*` fields listed below. The word "frontier" was spent in this directory on the measured thing:
+`plan_continuation.py::probe_provider_frontier` HTTP-probed the provider per cell, and its
+`ProviderFrontier` carried `mode: "declared" | "measured"` plus a `measured_at` (module purged
+2026-10-26; the naming rule stands). Promotion's constant had neither a mode nor a
 measurement, so it may not carry that name (`engineering-principles.md` §1, one canonical definition
 per concept).
 

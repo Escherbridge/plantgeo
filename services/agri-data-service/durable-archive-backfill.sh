@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 # Durable, resumable driver for an `ingest-backfill` archive walk.
 #
-# Distinct from durable-backfill.sh, which drives the PLAN-based historical lanes
+# Distinct from the deleted (2026-10-26) durable-backfill.sh, which drove the PLAN-based historical lanes
 # (era5/nasa/open-meteo) through their own checkpoint tables. `ingest-backfill` has no
 # checkpoint table at all -- `history_chunks` anchors chunks at the window start with a
 # fixed step, so the same window always yields the same grid and an operator resumes by
 # naming a boundary. A cursor file is therefore the whole of the durability contract here.
 #
 # Usage: ./durable-archive-backfill.sh <source-token> [earliest-day]
-#   source-token: nasa-firms-archive | usgs-streamflow-archive
+#   source-token: usgs-streamflow-archive
+#
+# The `nasa-firms-archive` token was deleted with its lane; its case and its two wrappers
+# (`firms-archive-full.sh`, `fill-firms-gap.sh`) were removed 2026-10-26.
 #
 # Built to be re-invoked on a schedule and to make progress every time. One invocation
 # walks until it finishes or is killed; the next picks up from the cursor. Re-walking is
@@ -18,27 +21,11 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 
-SOURCE_TOKEN="${1:?source token required: nasa-firms-archive | usgs-streamflow-archive}"
+SOURCE_TOKEN="${1:?source token required: usgs-streamflow-archive}"
 
 # Per-source walk shape. The two differ in every number that matters, and each is a measured
 # value rather than a preference -- see the comments on each case.
 case "$SOURCE_TOKEN" in
-  nasa-firms-archive)
-    SLUG="firms-archive"
-    # Matches the vegetation layer's earliest observed day, so the fire layer can fill the
-    # same four-year axis the slider already draws.
-    DEFAULT_FLOOR="2022-08-05"
-    # One day per fetched chunk, always. Peak PNW fire season runs ~21k detections/day, so
-    # the default 7-day chunk overruns even the 50000 ceiling -- and an overrun does NOT
-    # thin the sample, it drops the OLDEST days of the chunk whole and writes nothing. A
-    # too-large chunk is a silent hole in the record. Measured 2026-08-06: a 5-day July
-    # chunk saw 23,651 records and wrote 0.
-    CHUNK_DAYS=1
-    # Small, because peak-season days are slow: one 2026-07-23 chunk took 11.5 minutes.
-    # A window is the unit a killed run redoes, so it is kept near an hour of work.
-    WINDOW_DAYS=5
-    NEEDS_FIRMS_KEY=1
-    ;;
   usgs-streamflow-archive)
     SLUG="streamflow-archive"
     # The daily-values service reaches the 1890s, but USGS_DAILY_VALUES_EARLIEST refuses a
@@ -99,7 +86,7 @@ if [ -f "$DONE" ]; then
   exit 0
 fi
 
-# mkdir is atomic, so it doubles as lock acquisition -- same idiom as durable-backfill.sh.
+# mkdir is atomic, so it doubles as lock acquisition -- same idiom the deleted durable-backfill.sh used.
 # This is what makes the script safe to put on a schedule: a tick that fires while the
 # previous one is still walking exits immediately instead of starting a second walk over
 # the same window. A lock whose recorded PID is gone is stale (killed run, reboot) and is

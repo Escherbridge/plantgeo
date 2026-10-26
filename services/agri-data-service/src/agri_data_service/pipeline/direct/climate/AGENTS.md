@@ -181,3 +181,10 @@ frontier for part of most days; that is what the one-turn frontier skip above ab
 The lag stays at the measured 6 -- raising it to the worst reading would hold every settled day
 back by the jitter, whereas the skip costs nothing while the frontier is settled. Re-measure before
 moving it, and add the reading here.
+
+## `nasa_power.py`: the POWER URL and value guards (moved 2026-10-26)
+
+`nasa_power_daily_point_url`, `extract_nasa_power_parameter_values` and `nasa_power_observed_value`
+are the only parts of the purged historical backfill (`execution/weather_observations/nasa_power.py`)
+this lane used. They moved here verbatim so `source.py` and `edge.py` keep one definition of the
+canonical URL and of the `<= -900` fill-value rule; nothing else from that module survives.

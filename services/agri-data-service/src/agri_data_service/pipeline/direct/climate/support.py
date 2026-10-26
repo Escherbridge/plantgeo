@@ -14,8 +14,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-#: `agri.spatial_cell.grid_name` for the POWER lattice; `execution/weather_observations/nasa_power.py`
-#: NASA_POWER_GRID_NAME and every `LaneCoverageContract` that names this source. THE LABEL NAMES THE
+#: `agri.spatial_cell.grid_name` for the POWER lattice, the one every `LaneCoverageContract` that names
+#: this source uses. THE LABEL NAMES THE
 #: POWER PRODUCT RESOLUTION, NOT THE SAMPLE SPACING. See `pipeline/direct/AGENTS.md`, "The grid_name
 #: misnomer": the cells below sit on a one-degree step, and the database value is never renamed.
 NASA_POWER_GRID_NAME: Final = "nasa-power-0.5-degree"

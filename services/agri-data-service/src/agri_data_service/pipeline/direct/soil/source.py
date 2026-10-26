@@ -1,12 +1,10 @@
 """One bounded Open-Meteo archive request per support chunk-day, shared by every product of that day.
 
 WHY THE REUSE STOPS WHERE IT DOES. The historical lane's whole parse
-(`execution/weather_observations/era5_land.py::parse_open_meteo_archive_payload`) is reachable only
-through a `HistoricalOpenMeteoArchivePlan`, whose `window` is a `HistoricalBackfillWindow` -- and
-that contract REFUSES any span that is not exactly four calendar years
-(`execution/backfill_types.py::require_exact_four_calendar_years`). A forward writer asks for one
-settled day, so it cannot build that plan, and re-declaring the window rule to get around it would
-be a second definition of the historical contract.
+(`execution/weather_observations/era5_land.py::parse_open_meteo_archive_payload`, purged 2026-10-26)
+was reachable only through a four-calendar-year `HistoricalOpenMeteoArchivePlan`; a forward writer
+asks for one settled day, so it never reused that parse. The lane, lattice and acceptance table it
+did share now live in `soil/archive_contract.py`.
 
 What it reuses instead is every governed guard underneath that plan, all of them public and all of
 them the same objects the history was normalized through: `archive_daily_request` (the credentialed
@@ -14,8 +12,8 @@ URL) and `archive_daily_url` (the keyless one that is recorded), `fetch_archive_
 rate-limit bound), `fetch_lane_capture` (the retry and 429 policy), `canonical_location_document`,
 `ordered_locations`, `validated_grid_point`, `max_grid_offset_degrees`, `nearest_native_grid_point`,
 `bounded_numeric_series`, and `OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS` for units and acceptance
-ranges. Only the three checks the historical module keeps private -- its `daily` block, its named-day
-axis and its provider-unit assertion -- are restated here, each beside a comment naming its sibling.
+ranges. The three checks the historical module kept private -- its `daily` block, its named-day
+axis and its provider-unit assertion -- are restated here.
 """
 
 from __future__ import annotations
@@ -37,11 +35,6 @@ from agri_data_service.execution.open_meteo_lane import (
     ordered_locations,
     validated_grid_point,
 )
-from agri_data_service.execution.weather_observations.era5_land import (
-    OPEN_METEO_ARCHIVE_LANE,
-    OPEN_METEO_ARCHIVE_NATIVE_GRID_DEGREES,
-    OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS,
-)
 from agri_data_service.foundation.canonical import canonical_json, sha256_digest
 from agri_data_service.ingest.http import upstream_client
 from agri_data_service.ingest.open_meteo import (
@@ -53,6 +46,11 @@ from agri_data_service.ingest.open_meteo import (
     fetch_archive_daily,
 )
 from agri_data_service.ingest.open_meteo_endpoint import OpenMeteoProductRequest
+from agri_data_service.pipeline.direct.soil.archive_contract import (
+    OPEN_METEO_ARCHIVE_LANE,
+    OPEN_METEO_ARCHIVE_NATIVE_GRID_DEGREES,
+    OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS,
+)
 from agri_data_service.pipeline.direct.soil.products import (
     SOIL_DIRECT_SNAPSHOT_PREFIX,
     SOIL_SOURCE_PARAMETERS,
@@ -886,8 +884,7 @@ async def probe_soil_edge(  # noqa: PLR0913 - the support, window bounds, cache 
 def _daily_block(location: Mapping[str, object], *, cell: Era5LandSupportCell, day: date) -> dict[str, object]:
     """Read the `daily` block, refusing a location that omits a requested variable.
 
-    Mirrors `execution/weather_observations/era5_land.py::_archive_daily_block`, which is private to
-    the four-year plan path.
+    Mirrors the purged (2026-10-26) historical lane's `_archive_daily_block`.
     """
     daily = location.get("daily")
     if not isinstance(daily, dict):
