@@ -183,8 +183,8 @@ the session server-side and redirects before rendering anything — a non-expert
 hitting the URL directly gets sent to `/`, not a broken or empty shell. That
 gate is presentation only. `contributionsRouter`'s `expertProcedure`
 (`src/lib/server/trpc/init.ts`) is the actual authority and is re-checked on
-every query and mutation `ContributionQueue` makes, independent of how it got
-mounted.
+every query and mutation `ContributionQueue` (and `ModerationPanel`) makes,
+independent of how it got mounted.
 
 `rejectContribution` writes a `reviewNote` that the submitter later sees on
 their own rejected recommendation (`CommunityDetails`'s
@@ -193,30 +193,45 @@ whoever submitted it, so the queue disables the Reject button until the
 reviewer types one — this is enforced client-side only, as a UX nudge; the
 router's `reviewNote` field stays optional server-side.
 
-## ModerationPanel states an absent estimate; it never fabricates one
+## Moderation — one review queue, one lifecycle manager (resolved 2026-10-26)
 
-**2026-09-02.** `ModerationPanel` (mounted by `src/app/moderation/page.tsx`, which renders it and
-not `ContributionQueue`) used to render a "Causal Benefit Score (tau_est)" card reading
-`+18% [11%, 25%]` beside Approve & Publish / Reject / Set ACTIVE. Those three numbers were
-literals assigned inside the `.map()` under the comment "Simulated ML causal benefit score" — no
-evaluated result, no provenance, and `interventions.listProposed` returns no effect field at all.
-A moderator publishing to the public map was reading an invented benefit as if it were evidence.
+`/moderation` (`src/app/moderation/page.tsx`, expert/admin server gate) mounts two surfaces with
+disjoint jobs, so there is never a second queue over the same rows:
 
-The rule that replaced it: **absence is a rendered value, not a gap and not a stand-in.** The card
-is now `EffectEvidenceNotice`, driven by a typed `EffectEvidence` discriminated union whose only
-member today is `{ kind: "unavailable", reason: "no_evaluated_estimate" }`. It is deliberately
-zinc, not emerald — a moderator must not read the notice as a positive signal. When a real
-estimate exists it arrives as a new union member with its own provenance and evaluation window,
-and the `if (evidence.kind === "unavailable")` branch stops being the only one; no tRPC field is
-wired for that yet, so nothing here reads server state it cannot justify.
+| Surface | Reads | Writes | Owns |
+|---|---|---|---|
+| `ContributionQueue` | `contributions.listPendingReview` | `publishContribution` / `rejectContribution` | `features.status`: `pending_review` -> `published` / `rejected` |
+| `ModerationPanel` | `interventions.listLifecycle` | `interventions.transitionLifecycleState` | `properties.lifecycleStage`: `published` -> `active` -> `monitored` |
 
-Do not re-add a number, a bar, a range or a percentage to this panel from any source that cannot
-name the evaluation that produced it. `interventions.proposeIntervention` used to default
-`causalTauEst: input.causalTauEst ?? 0.15` on submission; that default was removed on 2026-09-02,
-so a proposal now carries an estimate only when a caller supplied one. **Rows already written with
-the invented `0.15` are still in the table and are still suspect** -- the removal stops new ones,
-it does not clean up old ones, and this panel may render neither.
-Pinned by `src/__tests__/components/ModerationPanel.test.tsx`.
+"Approve & publish" lives only in `ContributionQueue` and writes `status='published'`, the one value
+`geo.intervention_tiles` serves. Before 2026-10-26 `ModerationPanel` had its own "Approve & Publish"
+over `interventions.listProposed` that called `castModerationVote` and wrote `status='approved'` —
+published nothing (2026-09-13 correction). That vote path, and the uncalled `proposeIntervention`,
+were deleted; `listProposed` stays because `/feed` and the drafts overlay read it.
+
+**Why the lifecycle is a property, not a status.** Writing `features.status='active'` would drop the
+row off `geo.intervention_tiles`, `getInterventionDetail`'s public arm and `wildfire.getInterventions`
+(all `status='published'`). So `status` stays `published` and the stage lives in
+`properties.lifecycleStage` (absent = `published`). `contributions.submitObservation` reserves the key.
+
+**State machine** (`INTERVENTION_LIFECYCLE_TRANSITIONS` in `routers/interventions.ts`), forward-only:
+`published -> active -> monitored`. The client sends `fromStage` (what it saw) and `toStage`:
+- illegal pair -> `BAD_REQUEST`, before any query;
+- the UPDATE is conditioned on `status='published'`, not a strategy request, and
+  `coalesce(lifecycleStage,'published') = fromStage` (optimistic concurrency) -> two racing
+  moderators get one transition and one `CONFLICT`; a missing row is `NOT_FOUND`.
+`listLifecycle` returns `nextStages` from the same map, so the panel renders only legal moves and
+never mirrors the vocabulary. Both procedures are `expertProcedure` (same expert/admin set as before).
+
+**Effect evidence.** The panel used to render an invented `tau_est` (2026-09-02). It now shows no
+effect number at all; do not add one from any source that cannot name the evaluation that produced
+it. Rows written with the old `causalTauEst: 0.15` default are still suspect.
+
+Known gaps: the machine-ingress upsert (`intervention-store.ts`) spreads partner `properties`, so a
+re-ingest can overwrite or reset `lifecycleStage`; no lifecycle history/audit row is kept; no backward
+move (e.g. `monitored -> active`) exists. `getInterventionDetail` does not surface the stage yet.
+Pinned by `src/__tests__/trpc/interventions.test.ts` ("interventions lifecycle transitions") and
+`src/__tests__/components/ModerationPanel.test.tsx`.
 
 ## Published analysis controls — 2026-09-10
 
@@ -247,13 +262,8 @@ Their backend workflows remain separate and unchanged. Community forms, submissi
 intervention map rendering remain supported; captions state review/publication and privacy rules
 without describing internal database systems or asserting the map must always be empty.
 
-**Correction, 2026-09-13.** `ModerationPanel` was unmounted from `/moderation` again. Its "Approve
-& Publish" button calls `interventions.castModerationVote`, which sets `status="approved"`, not
-`"published"` — only `contributions.publishContribution` (called by `ContributionQueue`) does
-that, and Martin's `geo.intervention_tiles` only serves `status='published'` rows. With both
-panels mounted, a reviewer had two queues on one page and picking `ModerationPanel` silently
-published nothing. `ContributionQueue` is the sole reachable moderation surface again; the
-component and its pinned test above are untouched.
+**Resolved, 2026-10-26.** The 2026-09-13 unmount (two queues, one of which published nothing) is
+superseded: see "Moderation — one review queue, one lifecycle manager" above.
 
 ## Private chat controls (2026-09-10)
 

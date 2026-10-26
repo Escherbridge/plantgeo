@@ -3,6 +3,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
   contributorProcedure,
+  expertProcedure,
   protectedProcedure,
   publicProcedure,
   router,
@@ -50,7 +51,9 @@ import {
  *   - `src/app/api/ingest/interventions/route.ts`: INGEST_SECRET bearer-token
  *     machine ingress for a future automated/partner feed, untouched here;
  *   - `contributions.publishContribution` / `rejectContribution`
- *     (expertProcedure): the only transitions out of review.
+ *     (expertProcedure): the only transitions out of review;
+ *   - `listLifecycle` / `transitionLifecycleState` (expertProcedure): stage
+ *     moves on an already-published row, never touching `features.status`.
  *
  * No row is ever authored by this module itself: the layer stays empty until a
  * signed-in contributor submits their own recommendation.
@@ -89,6 +92,37 @@ const REQUEST_STATUS = "published";
  * a missing `kind` as a recommendation rather than failing on it.
  */
 const REQUEST_KIND = "request";
+
+/** `features.status` of a row on the public map (`geo.intervention_tiles` serves only this). */
+const PUBLISHED_STATUS = "published";
+
+/**
+ * Post-publication lifecycle stages, stored in `properties.lifecycleStage` (absent = `published`)
+ * so `features.status` stays `published` and the row stays on the map.
+ * See src/components/panels/AGENTS.md §moderation.
+ */
+export const INTERVENTION_LIFECYCLE_STAGES = ["published", "active", "monitored"] as const;
+export type InterventionLifecycleStage = (typeof INTERVENTION_LIFECYCLE_STAGES)[number];
+const InterventionLifecycleStageSchema = z.enum(INTERVENTION_LIFECYCLE_STAGES);
+
+/** Finite state machine: the only legal lifecycle moves, forward-only. */
+export const INTERVENTION_LIFECYCLE_TRANSITIONS: Readonly<
+  Record<InterventionLifecycleStage, readonly InterventionLifecycleStage[]>
+> = {
+  published: ["active"],
+  active: ["monitored"],
+  monitored: [],
+};
+
+function isInterventionLifecycleStage(value: unknown): value is InterventionLifecycleStage {
+  return (INTERVENTION_LIFECYCLE_STAGES as readonly unknown[]).includes(value);
+}
+
+/** A row's current lifecycle stage; a row never transitioned reads as `published`. */
+const lifecycleStageExpression = sql<string>`coalesce(${features.properties} ->> 'lifecycleStage', 'published')`;
+
+/** Strategy requests share the layer and the `published` status but have no lifecycle. */
+const notStrategyRequest = sql`coalesce(${features.properties} ->> 'kind', 'intervention') <> ${REQUEST_KIND}`;
 
 const MAX_SUBMISSION_DESCRIPTION_LENGTH = 2_000;
 
@@ -638,7 +672,7 @@ export const interventionsRouter = router({
             string | null
           >`${features.properties} ->> 'description'`,
           // The drawn shape as submitted. NULL for a row authored by a path that
-          // records no geometry (`proposeIntervention`); the client says so
+          // records no geometry (the retired `proposeIntervention`); the client says so
           // rather than drawing something that was never submitted.
           geometry: sql<
             GeoJSON.Geometry | null
@@ -695,155 +729,124 @@ export const interventionsRouter = router({
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
         // `reviewNote` is written by `contributions.rejectContribution` and is
-        // only meaningful on a rejected row; `castModerationVote` stamps the same
-        // column with a non-authoritative vote string, which no reader honours.
+        // only meaningful on a rejected row (the retired `castModerationVote`
+        // also stamped vote strings into it; such notes are legacy, not review).
         reviewNote: row.status === "rejected" ? row.reviewNote : null,
         hasFullGeometry: Boolean(row.geometry),
       };
     }),
 
-  /** Propose a community intervention (lat/lon + strategy cell); deliberately geometry-less, guarded by a regression test in interventions.test.ts. */
-  proposeIntervention: contributorProcedure
+  /**
+   * The post-publication lifecycle queue: every published drawn intervention
+   * (never a strategy request) with its current stage and the stages it may move
+   * to next. `nextStages` comes from `INTERVENTION_LIFECYCLE_TRANSITIONS`, so the
+   * panel renders only what `transitionLifecycleState` will accept.
+   * See src/components/panels/AGENTS.md §moderation.
+   */
+  listLifecycle: expertProcedure
     .input(
-      z.object({
-        title: z.string().min(3).max(255),
-        strategyType: z.string().refine(
-          (type) => !isDataInterventionType(type),
-          "Data interventions must use the validated data submission form",
-        ),
-        lat: z.number().min(-90).max(90),
-        lon: z.number().min(-180).max(180),
-        cellId: z.string().optional(),
-        causalTauEst: z.number().optional(),
-        description: z.string().optional(),
-      }).strict()
+      z
+        .object({ limit: z.number().int().min(1).max(100).default(50) })
+        .default({})
     )
-    .mutation(async ({ ctx, input }) => {
-      const userId = currentUserId(ctx.session);
+    .query(async ({ ctx, input }) => {
       const layerId = await resolveInterventionsLayerId(ctx);
-
-      const [proposed] = await ctx.db
-        .insert(features)
-        .values({
-          layerId,
-          status: "proposed",
-          properties: {
-            name: input.title,
-            type: input.strategyType,
-            description: input.description ?? null,
-            cellId: input.cellId ?? null,
-            // Absent, never defaulted: until 2026-09-02 an omitted estimate was persisted as
-            // 0.15, so a row nobody had estimated was indistinguishable from one somebody had.
-            // The key is simply not written when the submitter supplied nothing.
-            ...(input.causalTauEst === undefined
-              ? {}
-              : { causalTauEst: input.causalTauEst }),
-            submittedByUserId: userId,
-            dataOrigin: "community",
-            publicationConsent: true,
-          },
+      const rows = await ctx.db
+        .select({
+          id: features.id,
+          name: sql<string | null>`${features.properties} ->> 'name'`,
+          type: sql<string | null>`${features.properties} ->> 'type'`,
+          stage: sql<string>`${lifecycleStageExpression}`,
+          longitude: sql<number | null>`ST_X(ST_Centroid(${features.geom}))`,
+          latitude: sql<number | null>`ST_Y(ST_Centroid(${features.geom}))`,
+          updatedAt: features.updatedAt,
         })
-        .returning(submissionProjection);
+        .from(features)
+        .where(
+          and(
+            eq(features.layerId, layerId),
+            eq(features.status, PUBLISHED_STATUS),
+            notStrategyRequest
+          )
+        )
+        .orderBy(desc(features.updatedAt))
+        .limit(input.limit);
 
-      return proposed;
+      // `fromStage` is null for a stage outside the vocabulary (e.g. a value a
+      // machine-ingress upsert wrote): shown, but offered no transition.
+      return rows.map((row) => {
+        const fromStage = isInterventionLifecycleStage(row.stage) ? row.stage : null;
+        return {
+          ...row,
+          fromStage,
+          nextStages: fromStage ? [...INTERVENTION_LIFECYCLE_TRANSITIONS[fromStage]] : [],
+        };
+      });
     }),
 
   /**
-   * Expert voting procedure for moderation queue.
+   * Advance one published intervention's lifecycle stage.
+   *
+   * The caller names the stage it saw (`fromStage`) as well as the one it wants:
+   * an illegal pair is refused before any query (BAD_REQUEST), and the UPDATE is
+   * conditional on the row still being at `fromStage` (optimistic concurrency),
+   * so two moderators racing on one row produce one transition and one CONFLICT.
+   * `features.status` is never touched -- it stays `published`, which is what
+   * keeps the row on `geo.intervention_tiles`.
    */
-  castModerationVote: contributorProcedure
+  transitionLifecycleState: expertProcedure
     .input(
       z.object({
         interventionId: z.string().uuid(),
-        vote: z.enum(["approve", "reject", "request_revision"]),
-        note: z.string().optional(),
+        fromStage: InterventionLifecycleStageSchema,
+        toStage: InterventionLifecycleStageSchema,
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const role = (ctx.session?.user as { platformRole?: string } | undefined)?.platformRole;
-      if (!role || !["expert", "admin"].includes(role)) {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Expert or Admin role required" });
+      const allowed: readonly InterventionLifecycleStage[] =
+        INTERVENTION_LIFECYCLE_TRANSITIONS[input.fromStage];
+      if (!allowed.includes(input.toStage)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `An intervention cannot move from ${input.fromStage} to ${input.toStage}`,
+        });
       }
 
-      const [feature] = await ctx.db
-        .select()
-        .from(features)
-        .where(eq(features.id, input.interventionId))
-        .limit(1);
-
-      if (!feature) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "Intervention not found" });
-      }
-
-      const newStatus = input.vote === "approve" ? "approved" : input.vote === "reject" ? "rejected" : "pending_review";
+      const layerId = await resolveInterventionsLayerId(ctx);
+      const identity = and(
+        eq(features.id, input.interventionId),
+        eq(features.layerId, layerId)
+      );
 
       const [updated] = await ctx.db
         .update(features)
         .set({
-          status: newStatus,
-          reviewNote: input.note ?? `Vote cast: ${input.vote}`,
+          properties: sql`jsonb_set(${features.properties}, '{lifecycleStage}', to_jsonb(${input.toStage}::text))`,
           updatedAt: new Date(),
         })
-        // `layer_id` pins the update to the one partition already found above,
-        // instead of an update-by-id probing every partition.
         .where(
-          and(eq(features.id, input.interventionId), eq(features.layerId, feature.layerId))
+          and(
+            identity,
+            eq(features.status, PUBLISHED_STATUS),
+            notStrategyRequest,
+            sql`${lifecycleStageExpression} = ${input.fromStage}`
+          )
         )
-        .returning(submissionProjection);
+        .returning({ id: features.id, stage: sql<string>`${lifecycleStageExpression}` });
+      if (updated) return updated;
 
-      // The SELECT above prunes; it does not prove the row survived to the UPDATE. A delete
-      // racing between the two matches nothing, and that must error rather than resolve.
-      if (!updated) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "Intervention not found" });
-      }
-
-      return updated;
-    }),
-
-  /**
-   * State machine transition for intervention lifecycle (`proposed` -> `approved` -> `active` -> `monitored`).
-   */
-  transitionLifecycleState: contributorProcedure
-    .input(
-      z.object({
-        interventionId: z.string().uuid(),
-        targetState: z.enum(["proposed", "approved", "active", "monitored"]),
-      })
-    )
-    .mutation(async ({ ctx, input }) => {
-      const role = (ctx.session?.user as { platformRole?: string } | undefined)?.platformRole;
-      if (!role || !["expert", "admin"].includes(role)) {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Expert or Admin role required" });
-      }
-
-      // Resolved first so the update below can pin `layer_id` and touch one
-      // partition instead of probing every partition for a bare `id` match.
-      const [feature] = await ctx.db
-        .select({ layerId: features.layerId })
+      // Zero rows: tell a missing row apart from one whose state moved on.
+      const [existing] = await ctx.db
+        .select({ id: features.id })
         .from(features)
-        .where(eq(features.id, input.interventionId))
+        .where(identity)
         .limit(1);
-      if (!feature) {
+      if (!existing) {
         throw new TRPCError({ code: "NOT_FOUND", message: "Intervention not found" });
       }
-
-      const [updated] = await ctx.db
-        .update(features)
-        .set({
-          status: input.targetState,
-          updatedAt: new Date(),
-        })
-        .where(
-          and(eq(features.id, input.interventionId), eq(features.layerId, feature.layerId))
-        )
-        .returning(submissionProjection);
-
-      // Kept from before the pre-flight SELECT existed: the SELECT prunes the UPDATE to one
-      // partition, it does not stand in for checking that the UPDATE matched a row.
-      if (!updated) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "Intervention not found" });
-      }
-
-      return updated;
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: "This intervention is no longer at the stage you saw. Your change was not applied.",
+      });
     }),
 });

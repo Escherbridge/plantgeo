@@ -4,9 +4,9 @@ import type { ReactElement } from "react";
 
 /**
  * ModerationPage is a server component: called directly as an async function,
- * not rendered through a Next request. ContributionQueue is stubbed so this test
- * exercises only the route's role gate (redirect-before-render), which is the
- * thing this file owns -- the queue's own behavior has its own test file.
+ * not rendered through a Next request. ContributionQueue and ModerationPanel are
+ * stubbed so this test exercises only the route's role gate (redirect-before-render)
+ * and that both moderation surfaces mount behind it -- each has its own test file.
  */
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
@@ -17,6 +17,9 @@ vi.mock("@/lib/server/auth", () => ({ getServerSession: mocks.getServerSession }
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
 vi.mock("@/components/panels/ContributionQueue", () => ({
   ContributionQueue: () => <div data-testid="contribution-queue-stub" />,
+}));
+vi.mock("@/components/panels/ModerationPanel", () => ({
+  ModerationPanel: () => <div data-testid="lifecycle-panel-stub" />,
 }));
 
 import ModerationPage from "@/app/moderation/page";
@@ -48,7 +51,7 @@ describe("moderation route access", () => {
     expect(result).toBeNull();
   });
 
-  it("mounts the queue for an expert without redirecting", async () => {
+  it("mounts the review queue and lifecycle panel for an expert without redirecting", async () => {
     mocks.getServerSession.mockResolvedValue(sessionFor("expert"));
 
     const result = await ModerationPage();
@@ -56,9 +59,10 @@ describe("moderation route access", () => {
     expect(mocks.redirect).not.toHaveBeenCalled();
     render(result as ReactElement);
     expect(screen.getByTestId("contribution-queue-stub")).toBeTruthy();
+    expect(screen.getByTestId("lifecycle-panel-stub")).toBeTruthy();
   });
 
-  it("mounts the queue for an admin without redirecting", async () => {
+  it("mounts the review queue and lifecycle panel for an admin without redirecting", async () => {
     mocks.getServerSession.mockResolvedValue(sessionFor("admin"));
 
     const result = await ModerationPage();
@@ -66,5 +70,6 @@ describe("moderation route access", () => {
     expect(mocks.redirect).not.toHaveBeenCalled();
     render(result as ReactElement);
     expect(screen.getByTestId("contribution-queue-stub")).toBeTruthy();
+    expect(screen.getByTestId("lifecycle-panel-stub")).toBeTruthy();
   });
 });

@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { PgDialect } from "drizzle-orm/pg-core";
+import type { SQL } from "drizzle-orm";
 
 vi.mock("@/lib/server/db", () => ({ db: {} }));
 vi.mock("@/lib/server/auth", () => ({ getServerSession: vi.fn() }));
@@ -357,52 +359,6 @@ describe("interventions.submitIntervention", () => {
   });
 });
 
-describe("interventions.proposeIntervention input schema", () => {
-  /**
-   * Regression guard for
-   * `conductor/tracks/intervention_drawing_visibility_20260912`: geometry
-   * only ever flows through `submitIntervention`. `proposeIntervention` is
-   * the older, unauthenticated-drawing-tool click flow (a lat/lon point plus
-   * a strategy cell, no polygon), and it must stay that way even if a future
-   * edit tries to bolt geometry onto it. We introspect the actual Zod shape
-   * rather than trusting the TypeScript input type, since a stray `.extend()`
-   * would still type-check.
-   */
-  it("has no geometry key", () => {
-    const inputSchema = (
-      interventionsRouter.proposeIntervention as unknown as {
-        _def: { inputs: Array<{ shape?: Record<string, unknown> }> };
-      }
-    )._def.inputs[0];
-
-    expect(inputSchema).toBeDefined();
-    expect(inputSchema?.shape).toBeDefined();
-    expect(Object.keys(inputSchema?.shape ?? {})).not.toContain("geometry");
-  });
-
-  it("rejects a payload that smuggles a geometry field", () => {
-    const inputSchema = (
-      interventionsRouter.proposeIntervention as unknown as {
-        _def: {
-          inputs: Array<{
-            strict: () => { safeParse: (value: unknown) => { success: boolean } };
-          }>;
-        };
-      }
-    )._def.inputs[0];
-
-    const result = inputSchema.strict().safeParse({
-      title: "Riverside reforestation pilot",
-      strategyType: "reforestation",
-      lat: 45.5152,
-      lon: -122.6784,
-      geometry: VALID_POINT_GEOMETRY,
-    });
-
-    expect(result.success).toBe(false);
-  });
-});
-
 describe("community data intervention submission", () => {
   const collectionDetails = { lane: "water-gauges", collectionMethod: "Record staff gauge height" };
   const submittedDetails = { ...collectionDetails, observedOn: "2024-02-29", dataUrl: "https://example.org/gauges.csv" };
@@ -455,13 +411,6 @@ describe("community data intervention submission", () => {
       geometry: { type: "Polygon", coordinates: [squareRingOfSide(3000)] },
     }))).rejects.toMatchObject({ code: "BAD_REQUEST" });
   });
-
-  it.each(["data_collection", "data_submission"])("rejects %s through the legacy proposal bypass", async (strategyType) => {
-    const calls: BuilderCall[] = [];
-    const caller = callerWith([], contributorSession(), calls);
-    await expect(caller.proposeIntervention({ title: "Observe the stream", strategyType, lat: 1, lon: 1 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
-    expect(calls).toHaveLength(0);
-  });
 });
 
 describe("interventions.listProposed", () => {
@@ -505,5 +454,116 @@ describe("interventions.listProposed", () => {
       collectionMethod: "Staff gauge reading",
     });
     expect(proposal.dataDetails).not.toHaveProperty("dataUrl");
+  });
+});
+
+/**
+ * The post-publication lifecycle state machine (src/components/panels/AGENTS.md §moderation).
+ * Driven through the router caller with the scripted database: the assertions are on what
+ * the procedure refuses, what it writes, and what its UPDATE is conditioned on.
+ */
+describe("interventions lifecycle transitions", () => {
+  const INTERVENTION_ID = "44444444-4444-4444-8444-444444444444";
+  const expertSession = () => contributorSession({ platformRole: "expert" });
+
+  function whereAfterSet(calls: BuilderCall[]) {
+    const setIndex = calls.findIndex((entry) => entry.method === "set");
+    const where = calls.slice(setIndex).find((entry) => entry.method === "where");
+    return {
+      written: calls[setIndex]?.args[0] as Row,
+      condition: new PgDialect().sqlToQuery(where?.args[0] as SQL),
+    };
+  }
+
+  it("advances active to monitored with an UPDATE bound to the stage the moderator saw", async () => {
+    const calls: BuilderCall[] = [];
+    const caller = callerWith(
+      [[{ id: LAYER_ID }], [{ id: INTERVENTION_ID, stage: "monitored" }]],
+      expertSession(),
+      calls
+    );
+
+    await expect(
+      caller.transitionLifecycleState({ interventionId: INTERVENTION_ID, fromStage: "active", toStage: "monitored" })
+    ).resolves.toEqual({ id: INTERVENTION_ID, stage: "monitored" });
+
+    const { written, condition } = whereAfterSet(calls);
+    // Identity, partition, still-published, not a request, still at the seen stage.
+    expect(condition.params).toEqual([INTERVENTION_ID, LAYER_ID, "published", "request", "active"]);
+    // The lifecycle lives in properties; `features.status` must stay `published` for the tiles.
+    expect(written).not.toHaveProperty("status");
+    expect(new PgDialect().sqlToQuery(written.properties as SQL).params).toEqual(["monitored"]);
+  });
+
+  it.each([
+    { fromStage: "published", toStage: "monitored" },
+    { fromStage: "active", toStage: "published" },
+    { fromStage: "monitored", toStage: "active" },
+    { fromStage: "active", toStage: "active" },
+  ] as const)("refuses the illegal move $fromStage -> $toStage before touching the database", async (move) => {
+    const calls: BuilderCall[] = [];
+    const caller = callerWith([], expertSession(), calls);
+    await expect(
+      caller.transitionLifecycleState({ interventionId: INTERVENTION_ID, ...move })
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("lets the first of two racing moderators win and refuses the stale second with CONFLICT", async () => {
+    const caller = callerWith(
+      [
+        [{ id: LAYER_ID }], [{ id: INTERVENTION_ID, stage: "active" }],
+        [{ id: LAYER_ID }], [], [{ id: INTERVENTION_ID }],
+      ],
+      expertSession()
+    );
+    const move = { interventionId: INTERVENTION_ID, fromStage: "published", toStage: "active" } as const;
+
+    await expect(caller.transitionLifecycleState(move)).resolves.toMatchObject({ stage: "active" });
+    await expect(caller.transitionLifecycleState(move)).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+
+  it("reports a missing intervention as NOT_FOUND rather than a conflict", async () => {
+    const caller = callerWith([[{ id: LAYER_ID }], [], []], expertSession());
+    await expect(
+      caller.transitionLifecycleState({ interventionId: INTERVENTION_ID, fromStage: "published", toStage: "active" })
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it.each([
+    { session: null, label: "signed-out" },
+    { session: contributorSession(), label: "contributor" },
+  ])("denies a $label caller both lifecycle procedures before any query", async ({ session }) => {
+    const calls: BuilderCall[] = [];
+    const caller = callerWith([], session, calls);
+    await expect(
+      caller.transitionLifecycleState({ interventionId: INTERVENTION_ID, fromStage: "published", toStage: "active" })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(caller.listLifecycle({})).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("offers each published intervention only the moves the state machine allows", async () => {
+    const caller = callerWith(
+      [
+        [{ id: LAYER_ID }],
+        [
+          { id: "a", name: "Never moved", stage: "published" },
+          { id: "b", name: "Running", stage: "active" },
+          { id: "c", name: "Done", stage: "monitored" },
+          { id: "d", name: "Ingress wrote junk", stage: "paused" },
+        ],
+      ],
+      contributorSession({ platformRole: "admin" })
+    );
+
+    const rows = await caller.listLifecycle({});
+
+    expect(rows.map(({ id, fromStage, nextStages }) => ({ id, fromStage, nextStages }))).toEqual([
+      { id: "a", fromStage: "published", nextStages: ["active"] },
+      { id: "b", fromStage: "active", nextStages: ["monitored"] },
+      { id: "c", fromStage: "monitored", nextStages: [] },
+      { id: "d", fromStage: null, nextStages: [] },
+    ]);
   });
 });
