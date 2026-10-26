@@ -13,9 +13,6 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
 from agri_data_service.execution.contracts import MAX_SOURCE_GEOJSON_FEATURES
-from agri_data_service.foundation.geography.bounding_box import (
-    BoundingBox as BoundingBox,  # noqa: PLC0414 - public compatibility re-export
-)
 from agri_data_service.foundation.region import load_region
 from agri_data_service.ingest.http import UpstreamBounds
 from agri_data_service.ingest.identity import (
@@ -29,6 +26,8 @@ from agri_data_service.warehouse.mtbs_releases import (
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+
+    from agri_data_service.foundation.geography.bounding_box import BoundingBox
 
 
 Sleep = Callable[[float], Awaitable[None]]

@@ -36,7 +36,8 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import date
 
-    from agri_data_service.ingest.mtbs import BoundingBox, MtbsBurnSeverityRecord
+    from agri_data_service.foundation.geography.bounding_box import BoundingBox
+    from agri_data_service.ingest.mtbs import MtbsBurnSeverityRecord
     from agri_data_service.pipeline.lanes.burn_severity.source_protocol import BurnSeveritySource
 
 #: The region manifest's `source_slug` for this implementation (`foundation/region/pnw.json`).

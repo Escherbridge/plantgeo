@@ -40,7 +40,7 @@ unknown-attribute checking under `mypy.ini`'s `strict = true` while its `Depreca
 filtered out of a deployed process anyway (STYLE-REVIEW-W4 S3; `DEPRECATED_ALIASES.md` records the
 removal). Read them from this module.
 
-`ingest.mtbs.BoundingBox` was never behind that warning and still is not -- it is a bare type alias
+`ingest.mtbs.BoundingBox` (re-export removed 2026-10-26; import `foundation.geography.bounding_box.BoundingBox`) was never behind that warning and still is not -- it is a bare type alias
 with no runtime behaviour, re-exported plainly (`from
 agri_data_service.foundation.geography.bounding_box import BoundingBox as BoundingBox`) so
 `ingest/mtbs.py`'s own function signatures, which use it throughout, keep resolving (`from __future__
