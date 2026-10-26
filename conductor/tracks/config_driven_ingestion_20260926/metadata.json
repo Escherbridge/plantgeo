@@ -4707,6 +4707,33 @@
       "mtbs-forward spec: registered, not in allow-list, 0 runs since 09-09 \u2014 retire the spec or re-activate (CA7/CQ-9)",
       "_run_mtbs_job/build_mtbs_source in ingest/mtbs.py: zero-caller orphans left under a scope guardrail; stale shell scripts referencing nasa-firms-archive",
       "getRouteHistory in services/tracking.ts: unreferenced after router removal"
+    ],
+    "owner_answers_20261026": {
+      "historical_backfill_package": "owner: purge unless superseded/not-yet-done -> every domain superseded or already done; purged 2026-10-26 (~8.5k src + ~4.1k tests); CAMS/GloFAS/AgERA5/CEMS history recorded as future config-lane backlog; models/historical_promotion.py ORM kept (migration-contract pinned)",
+      "panels_and_features": "owner: finish panels+features, keep alerts+analytics -> moderation (one queue + lifecycle state machine), tracking admin (/admin/tracking), alerts dock section, analytics page; visualization = point-intervention heatmap (polygon centroids need a tile-function migration + Martin restart: follow-up); places BLOCKED on geocoder choice (PHOTON_URL unset in prod)",
+      "mtbs_forward": "owner: dispatch, don't retire -> added to PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES 2026-10-26 10:56Z (executor redeploy SUCCESS); daily.py historical call removed so mtbs-forward is the sole historical census and burn-severity-direct-forward is capture-only (CQ-9 split hazard resolved)",
+      "getRouteHistory": "live again via restored tracking router"
+    }
+  },
+  "quality_loop_20261026": {
+    "pushed": "78d74092 (36 commits; service receipt green, web 3518 tests + tsc + build green; deploy SUCCESS x3 12:39Z)",
+    "reviews": {
+      "backend": "CHANGES-REQUIRED -> fixed (mtbs dispatch already live; spec text, release-json retired, domain set pinned)",
+      "web": "CHANGES-REQUIRED -> fixed (heatmap vertex inflation, ingest row lock, geofence bounds)"
+    },
+    "sweep_catches": [
+      "pytz dropped with cdsapi (DuckDB TIMESTAMPTZ) -> declared directly",
+      "fire forward retry_delay re-export (mypy)"
+    ],
+    "round3_in_flight": [
+      "docs-truth pass",
+      "embed finish-or-delete + lifecycle keyset pagination + web orphans",
+      "infra dead code + pipeline/validation verdicts"
+    ],
+    "deferred": [
+      "LayerManager split (needs characterization tests first)",
+      "intervention centroid source-layer (prod migration + Martin restart)",
+      "places geocoder (owner choice)"
     ]
   }
 }
