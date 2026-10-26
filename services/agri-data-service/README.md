@@ -16,7 +16,7 @@ ways a first run goes sideways.
 4. [Environment variables](#4-environment-variables)
 5. [Credentials](#5-credentials)
 6. [First run](#6-first-run)
-7. [The durable-lane workflow](#7-the-durable-lane-workflow)
+7. [The job executor](#7-the-job-executor)
 8. [Full CLI verb inventory](#8-full-cli-verb-inventory)
 9. [Known failure modes](#9-known-failure-modes)
 10. [Where things live](#10-where-things-live)
@@ -35,31 +35,37 @@ web app you "start" to ingest data; ingestion happens by running individual `agr
 source APIs (NASA FIRMS, USGS NWIS, Open-Meteo, WFIGS, USDM, Sentinel-2, ...)
         |
         v
-  agri-service data ingest-*  /  agri-service ops jobs-*  (this service)
+  agri-service ops jobs-executor  ->  python -m agri_data_service.pipeline.direct.<lane>  (this service)
         |
         v
-  PostgreSQL: geo.* tables (forward/current data) + agri.* tables (lineage, job ledger)
+  Governed Parquet on R2 (object store) + PostgreSQL agri.* tables (job ledger, lineage)
         |
         v
-  Martin tile server + the Next.js tRPC API
+  parquet-api / `agri-service data parquet *` reads + the Next.js tRPC API
         |
         v
   PlantGeo map (src/components/map/)
 ```
 
-Two schemas, two migration owners, one physical database: the Next.js app's Drizzle migrations
-own `geo.*` (the tables the map reads), and this service's Alembic migrations own `agri.*` (source
-lineage, job ledger, forecasting). The `ingest-*` verbs write `geo.*` directly
-(`src/agri_data_service/ingest/writer.py:88,111,122`); the plan-based `historical-*` verbs write
-`agri.*` lineage tables.
+**CORRECTED 2026-10-26: this diagram and paragraph described the pre-cutover architecture.**
+"Complete greenfield Parquet cutover" (`fd602901`, 2026-09-12) deleted the entire `ingest-*`/
+`jobs-plan-lane`/`jobs-run`/`jobs-status`/`jobs-reconcile-lane`/`validate-streams`/`pipeline-status`
+CLI family and the `geo.*`-writing `ingest/writer.py` it called — there is no CLI verb or module at
+that path any more. Every source today is a direct-to-Parquet writer module
+(`pipeline/direct/<lane>/forward.py`), registered as a lane in `execution/lane_specs.py` and
+`execution/lane_ids.py`, dispatched by the continuous `agri-service ops jobs-executor` service under
+the `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` allow-list (`execution/AGENTS.md` "Lane activation"). `agri.*`
+is Postgres-only now — the job ledger, lineage and lane-audit state the executor itself reads via
+`LOCAL_SOURCE_LOADER_DATABASE_URL` (§3.1) — nothing in this service writes `geo.*` any more.
 
 Related docs, so this file doesn't duplicate them:
 - [`docs/rebuilding-the-dataset.md`](../../docs/rebuilding-the-dataset.md) — a from-a-clone
-  recipe for the *current-conditions* verbs. It predates the durable-lane runtime in §7 of this
-  document, so use this README for anything involving `jobs-*`.
+  recipe, now updated for the direct-to-Parquet writers (§7/§8A here). Still predates the
+  2026-08-22 architecture pivot's own written-up guide, which does not exist yet.
 - [`docs/runbooks/durable-backfill-lanes.md`](../../docs/runbooks/durable-backfill-lanes.md) —
-  the deep operator reference for the `jobs-*` ledger: why it exists, the full Railway deployment
-  story, and how to requeue a dead letter. §7 here is the short version.
+  **historical.** It documents the per-window `jobs-*` ledger deleted 2026-09-12; read it for why a
+  durable ledger exists at all, not for working commands. `execution/AGENTS.md` is the current
+  design reference for `ops jobs-executor`; §7 here is the short operator version.
 - [`infra/local-warehouse/README.md`](../../infra/local-warehouse/README.md) and
   [`infra/local-warehouse/AGENTS.md`](../../infra/local-warehouse/AGENTS.md) — standing up the
   local warehouse this service ingests into.
@@ -211,13 +217,16 @@ one.** Getting this wrong doesn't usually error loudly — it silently targets t
 
 | What you're doing | Variable it reads | Falls back to `DATABASE_URL`? |
 |---|---|---|
-| `ingest-*` / `jobs-*` / `validate-streams` (any ingestion verb) | `LOCAL_SOURCE_LOADER_DATABASE_URL` | **Never** (`config.py:161-165`) |
+| Any direct writer module (`python -m agri_data_service.pipeline.direct.<lane>`) / `ops jobs-executor` / `ops lane-audit` / `ops jobs-usage-report` | `LOCAL_SOURCE_LOADER_DATABASE_URL` | **Never** (`config.py:161-165`) |
 | `alembic upgrade` / `db-upgrade` / `db-status` (migrations) | `DATABASE_URL_SYNC` | **Never** (`alembic/env.py:14`) |
 | The Sanic HTTP API in `combined_local` profile | `DATABASE_URL` | n/a — this is its own variable |
 
 ### 3.1 The loader DSN: `LOCAL_SOURCE_LOADER_DATABASE_URL` (optional since 2026-08-08)
 
-`ingest_session()`, the only session every `ingest-*`/`jobs-*` verb opens, calls
+`ingest_session()` (`db/engine.py`) is the session the job ledger side (`ops jobs-executor`,
+`ops lane-audit`, `ops jobs-usage-report`, `ops jobs-supersede-run`, `ops jobs-plan-gap-repair`,
+`ops jobs-set-lane-enabled`) opens; every direct writer module
+(`pipeline/direct/<lane>/forward.py`) calls the same resolver directly. Both paths call
 `settings.require_local_source_loader_database_url()` and nothing else. That resolver is now
 two lines: return `LOCAL_SOURCE_LOADER_DATABASE_URL` if set, otherwise `DATABASE_URL`, and
 raise only when neither is set.
@@ -235,7 +244,7 @@ command somewhere else.
 
 ```bash
 # Nothing to export — .env's DATABASE_URL is used.
-uv run agri-service data ingest-sensors
+uv run python -m agri_data_service.pipeline.direct.sensors
 
 # Or aim one command at a different database:
 export LOCAL_SOURCE_LOADER_DATABASE_URL='postgresql+asyncpg://plantgeo_owner:<password>@127.0.0.1:5442/plantgeo_scratch'
@@ -261,21 +270,24 @@ export LOCAL_SOURCE_LOADER_DATABASE_URL='postgresql+asyncpg://plantgeo_owner:<pa
 > **Local work targets production through the proxy DSN**, which is what was actually happening
 > anyway: `run-backfill.sh` sources `services/agri-data-service/.env` and pins
 > `LOCAL_SOURCE_LOADER_DATABASE_URL` to whatever `DATABASE_URL` is defined there. That is why the
-> durable lanes show real completed windows in production (§7) while the local role was unusable —
-> nobody was running ingestion against `infra/local-warehouse` day to day.
+> durable lanes of that era showed real completed windows in production — see
+> [`docs/runbooks/durable-backfill-lanes.md`](../../docs/runbooks/durable-backfill-lanes.md), now
+> historical — while the local role was unusable: nobody was running ingestion against
+> `infra/local-warehouse` day to day.
 >
 > **What this means for you, practically:**
-> - `db-status`, `db-upgrade`, and `pipeline-status` are unaffected — they use a different DSN
->   variable (`DATABASE_URL_SYNC`) or, for `pipeline-status`, only validate the DSN *string* and
->   never open a connection (§6).
+> - `db-status` and `db-upgrade` are unaffected — they read `DATABASE_URL_SYNC`, a different
+>   variable, never `LOCAL_SOURCE_LOADER_DATABASE_URL` (§3.3). `pipeline-status`, the DSN-string-only
+>   health check this bullet used to cite, no longer exists (deleted 2026-09-12); see §6 for the
+>   current equivalent.
 > - A local isolated ingestion write is still not a reviewed path, but it is no longer blocked by
 >   a role: point `DATABASE_URL` (or the loader override) at your own 5442 warehouse with the
 >   owner credential and it is accepted.
-> - **`plantgeo_loader` still exists in production** and the deployed cron and in-flight archive
->   walks still authenticate as it. Nothing here changes those jobs; the role simply is not
->   managed or required by any repository code any more.
-> - Every window `run-backfill.sh` plans, runs, or reconciles lands in the **production** ledger.
->   Read `jobs-reconcile-lane`'s dry-run output (§7) carefully before ever passing `--apply`.
+> - **`plantgeo_loader` still existed in production at the time of this ruling**; the `jobs-plan-lane`/
+>   `jobs-reconcile-lane --apply` workflow this bullet used to warn about is itself deleted along
+>   with the rest of the per-window ledger (§7, 2026-09-12). Any direct writer module you run locally
+>   still writes to whatever `DATABASE_URL`/`LOCAL_SOURCE_LOADER_DATABASE_URL` names — check it before
+>   running one, the same caution this bullet always meant.
 
 ### 3.3 The migration DSN: `DATABASE_URL_SYNC`, and why overriding `DATABASE_URL` does nothing
 
@@ -330,12 +342,12 @@ long-running container without restarting it (`src/agri_data_service/ingest/AGEN
 
 | Variable | Required? | Default | What breaks without it |
 |---|---|---|---|
-| `LOCAL_SOURCE_LOADER_DATABASE_URL` | Optional override for `ingest-*`/`jobs-*`/`validate-streams`; falls back to `DATABASE_URL` (§3.1) | `DATABASE_URL` | Nothing, unless `DATABASE_URL` is also unset |
-| `DATABASE_URL` | Required unless every command carries its own override; also the `combined_local` HTTP profile's DSN | none | Every ingestion verb refuses to start (§3.1) |
+| `LOCAL_SOURCE_LOADER_DATABASE_URL` | Optional override for any direct writer module / `ops jobs-executor` and its sibling ledger verbs; falls back to `DATABASE_URL` (§3.1) | `DATABASE_URL` | Nothing, unless `DATABASE_URL` is also unset |
+| `DATABASE_URL` | Required unless every command carries its own override; also the `combined_local` HTTP profile's DSN | none | Every direct writer refuses to start (§3.1) |
 | `DATABASE_URL_SYNC` | Required for migrations | `postgresql://geo:plantgeo@localhost:5432/plantgeo` (not the local warehouse!) | Silently migrates the wrong database (§3.2) |
 | `INGEST_BBOX` | **Effectively required** | none | Unset ⇒ every job reports `skipped`, not `failed` — looks clean, writes nothing (§9) |
-| `NASA_FIRMS_KEY` | Required for `jobs-run --lane firms-archive` and the direct fire-detections writer (`ingest-firms` was deleted 2026-09-06) | none | FIRMS jobs fail; the archive lane permanently dead-letters every window it claims (§5, §9) |
-| `CDSAPI_URL`, `CDSAPI_KEY` | Required for `historical-era5-backfill` only; `.env` is enough, a real export wins (see §5) | none | ERA5-Land backfill refuses with a clear message |
+| `NASA_FIRMS_KEY` | Required for the direct fire-detections writer (`python -m agri_data_service.pipeline.direct.fire_detections`, lane `fire-detections-direct-forward`) | none | The writer fails; the lane cannot land a fire-detections row without it (§5, §9) |
+| `CDSAPI_URL`, `CDSAPI_KEY` | **CORRECTED 2026-10-26: no longer read by anything.** `historical-era5-backfill` and `historical_era5.py` are deleted; `cdsapi` was dropped from the dependency lock with them. ERA5-Land is now served keylessly by the `soil-era5-land-direct-forward` lane. | none | Nothing — these variables are inert |
 | `INGEST_MAX_SOURCE_RECORDS` | Optional — **never set on an archive lane** | `10_000`, clamped `[1_000, 50_000]` | Silently drops the *oldest* days of an over-cap chunk while still reporting success (§9) |
 | `FIRMS_DAY_RANGE` | Optional | `2`, clamped ≤ `5` | Values above 5 get a `400 Invalid day range` from FIRMS |
 | `WEATHER_SAMPLE_SPACING_DEGREES` | Optional | `1.0`, clamped `[0.25, 5.0]`; grid capped at 150 points | Controls Open-Meteo fan-out density |
@@ -355,7 +367,7 @@ long-running container without restarting it (`src/agri_data_service/ingest/AGEN
 | `WATERSHEDS_LAYER_ID` | Optional | `watersheds` | Which layer USGS WBD writes to |
 | `BURN_SEVERITY_LAYER_ID` | Optional | `burn-severity` | Which layer MTBS writes to |
 | `EVACUATION_ZONES_LAYER_ID` | Optional | `evacuation-zones` | Which layer evacuation zones write to |
-| `RAILWAY_REPLICA_ID` | Optional | none; falls back to `jobs-run:<uuid4>` | Names the lease owner for `jobs-run` |
+| `RAILWAY_REPLICA_ID` | Optional | none; falls back to `<hostname>:<pid>` | Part of the worker identity `job-executor:<identity>:<lane_id>` the executor uses per tick (`_worker_id`, `execution/job_executor_service.py`) |
 | `AGRI_ALEMBIC_CONFIG` | Optional | `<service>/alembic.ini` | Path override for Alembic's config file |
 | `AGRI_TEST_DATABASE_URL` | Test-only | none | Real-DB tests skip silently if unset. A libpq DSN, not a SQLAlchemy URL, and never a database named `plantgeo` — see `db/AGENTS.md` §Provisioning the disposable database for the full recipe |
 
@@ -363,12 +375,12 @@ long-running container without restarting it (`src/agri_data_service/ingest/AGEN
 > **`FIRES_LAYER_ID` vs `FIRE_PERIMETERS_LAYER_ID` — setting the wrong one is a silent no-op.**
 > The repo-root `.env.example` documents `FIRES_LAYER_ID` (`.env.example:202`, read by the
 > Next.js push route at `src/app/api/ingest/fires/route.ts`). This Python service's
-> `ingest-fire-perimeters` verb reads a **different** variable,
-> `FIRE_PERIMETERS_LAYER_ID` (`src/agri_data_service/ingest/wfigs.py:50-51,93`), which appears in
-> **neither** `.env.example` file. If you rename the fire-perimeters layer and only set
-> `FIRES_LAYER_ID` (the documented one), the TypeScript push route follows the rename but this
-> service's `ingest-fire-perimeters` keeps writing to the old `fire-perimeters` layer — silently
-> splitting one logical layer across two IDs. Set both, kept equal, if you ever touch this.
+> `fire-perimeters-direct-forward` lane (`python -m agri_data_service.pipeline.direct.fire_perimeters`)
+> reads a **different** variable, `FIRE_PERIMETERS_LAYER_ID` (`src/agri_data_service/ingest/wfigs.py:48,144`),
+> which appears in **neither** `.env.example` file. If you rename the fire-perimeters layer and only
+> set `FIRES_LAYER_ID` (the documented one), the TypeScript push route follows the rename but this
+> service's direct writer keeps writing to the old `fire-perimeters` layer — silently splitting one
+> logical layer across two IDs. Set both, kept equal, if you ever touch this.
 
 **Twelve of the optional variables above appear in neither `.env.example` file** (root or
 service): `INGEST_MAX_SOURCE_RECORDS`, `WEATHER_SAMPLE_SPACING_DEGREES`,
@@ -386,17 +398,17 @@ against `config.py` and every `os.environ`/`getenv` call under `src/`.
 
 | Credential | Needed for | Where it comes from |
 |---|---|---|
-| `NASA_FIRMS_KEY` | `jobs-run --lane firms-archive`, `python -m agri_data_service.pipeline.direct.fire_detections` | Free MAP_KEY from `firms.modaps.eosdis.nasa.gov/api/area/`. **Lives only on the cron/production service, not in any local `.env`** (`src/agri_data_service/ingest/lanes.py:209-210`). |
-| `CDSAPI_URL` + `CDSAPI_KEY` | `historical-era5-backfill` only | A Copernicus Climate Data Store account, **plus accepting the CDS web licence terms in a browser** before the key works. |
+| `NASA_FIRMS_KEY` | `python -m agri_data_service.pipeline.direct.fire_detections` (lane `fire-detections-direct-forward`) | Free MAP_KEY from `firms.modaps.eosdis.nasa.gov/api/area/`. **Lives only on the production job-executor service, not in any local `.env`.** |
+| `CDSAPI_URL` + `CDSAPI_KEY` | **CORRECTED 2026-10-26: nothing.** `historical-era5-backfill` is deleted; no verb reads these any more (§4). | N/A |
 
 > [!WARNING]
-> **`jobs-run --lane firms-archive` without `NASA_FIRMS_KEY` permanently dead-letters every
-> window it claims — before you ever run it, set the key.** The lane deliberately dead-letters on
-> a missing credential rather than parking gracefully
-> (`src/agri_data_service/ingest/archive_walk.py:643-651`, comment: "it burns the attempt budget
-> and dead-letters rather than parking"). Eight attempts, doubling backoff, all burned, for every
-> window `jobs-run` touches, and requeuing needs a manual SQL `UPDATE` (§7). Set the key *before*
-> `jobs-plan-lane --lane firms-archive`, not after you notice windows dead-lettering.
+> **The old `jobs-run --lane firms-archive` ledger and its dead-letter/requeue workflow are gone**
+> (deleted in the 2026-09-12 Parquet cutover, §7). Today a missing `NASA_FIRMS_KEY` raises
+> `NASA_FIRMS_KEY environment variable is not set` straight out of the `fire-detections-direct-forward`
+> lane's command, every tick, until the key is set. A repeated failure streak opens an
+> `agri.job_incident` row and, past the breaker threshold, the executor withholds the lane until an
+> operator clears it with `ops jobs-supersede-run` or pauses it with `ops jobs-set-lane-enabled
+> --disabled` (`execution/AGENTS.md` "Soft failure"). Set the key before the lane is ever activated.
 
 **Optional, buys convenience not access:** `OPEN_METEO_API_KEY` (raises your Open-Meteo quota),
 `NWS_API_USER_AGENT` (a contact string NWS asks for, not a real credential).
@@ -419,8 +431,13 @@ doing a first local smoke test, pick one of these — see §6.
 
 ## 6. First run
 
-This proves the plumbing — config, DSN, migrations — without needing a credential. The
-single owner credential runs all four steps; there are no grants to apply first (§3.2).
+**CORRECTED 2026-10-26: `pipeline-status`, `ingest-sensors`, and `validate-streams` below are
+all deleted (2026-09-12 Parquet cutover).** This section now proves the two pieces that survived
+the cutover — the ledger DSN and the lane inventory — without needing a credential. A real
+Parquet write additionally needs object-store credentials (`OBJECT_STORE_ENDPOINT_URL`,
+`OBJECT_STORE_BUCKET`, `OBJECT_STORE_ACCESS_KEY_ID`, `OBJECT_STORE_SECRET_ACCESS_KEY`,
+`OBJECT_STORE_REGION`; `config.py::require_object_store`) that the local-warehouse bootstrap in
+§2 does not provision — that part is intentionally outside this smoke test.
 
 ```bash
 cd services/agri-data-service
@@ -428,10 +445,8 @@ export INGEST_BBOX='-125,42,-111,49'    # Pacific Northwest coverage box, ingest
 export DATABASE_URL='postgresql+asyncpg://plantgeo_owner:<owner-password>@127.0.0.1:5442/plantgeo'
 export DATABASE_URL_SYNC='postgresql://plantgeo_owner:<owner-password>@127.0.0.1:5442/plantgeo'
 
-uv run agri-service ops db-status          # proves DATABASE_URL_SYNC points where you think
-uv run agri-service ops pipeline-status    # proves a loader DSN resolves at all
-uv run agri-service data ingest-sensors     # no credential needed; the fastest surviving real write
-uv run agri-service ops validate-streams --format markdown --output /tmp/streams.md
+uv run agri-service ops db-status              # proves DATABASE_URL_SYNC points where you think
+uv run agri-service ops jobs-executor --inventory   # proves the lane table loads and the allow-list parses
 ```
 
 ```powershell
@@ -441,228 +456,177 @@ $env:DATABASE_URL = 'postgresql+asyncpg://plantgeo_owner:<owner-password>@127.0.
 $env:DATABASE_URL_SYNC = 'postgresql://plantgeo_owner:<owner-password>@127.0.0.1:5442/plantgeo'
 
 uv run agri-service ops db-status
-uv run agri-service ops pipeline-status
-uv run agri-service data ingest-sensors
-uv run agri-service ops validate-streams --format markdown --output $env:TEMP\streams.md
+uv run agri-service ops jobs-executor --inventory
 ```
 
 Expected output, in order:
 1. `db-status` — Alembic's normal revision report, e.g. a line like
    `Current revision(s) for postgresql://...: <hash> (head)`. No hash means you haven't migrated
    yet; go back to §2.
-2. `pipeline-status` — a JSON object with `"local_bulk_ingestion": "runnable with a reviewed plan
-   and payload"` if the DSN string is well-formed, or `"blocked: <the specific config error>"` if
-   not.
-3. `ingest-sensors` — one JSON line, `IngestionJobResult.to_summary()`, with
-   `"records_seen"`/`"records_written"` counts. A `permission denied for schema geo` here means
-   the DSN names a login other than the owner credential (§3.2).
-4. `validate-streams` — writes a markdown report to the given path; the command itself prints one
-   JSON summary line to stdout.
+2. `jobs-executor --inventory` — one JSON object naming every registered lane and whether it is
+   active or quarantined under `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES`; it prints and exits before
+   opening any DSN or object-store connection, so it is the fastest "does the code even load" check.
 
-> [!WARNING]
-> `pipeline-status` **only validates the loader DSN string** — it never opens a connection
-> (`src/agri_data_service/interface/cli/commands.py:3571`). Its other fields (`"state": "inactive"`,
-> `"active_jobs": 0`, `"preaggregation_forecasts_training": "blocked pending separate
-> implementation and evaluation"`) are **hardcoded literals**, not live checks
-> (`interface/cli/commands.py:3581-3591`). A clean-looking `pipeline-status` output tells you nothing about whether
-> your bbox is set, your credentials are valid, your migrations are current, or the database is
-> even reachable. Don't treat it as a general health check.
+To prove an actual write locally, once object-store credentials are set, run one direct writer
+module directly — the NWS sensors lane needs no API key:
 
-If another agent has added an `/ops/backfill` dashboard to the Next.js app by the time you read
-this, it gives a friendlier view of the same underlying data as `jobs-status`/`validate-streams`
-— check for it, but the CLI verbs above always work and don't depend on the web app being up.
+```bash
+uv run python -m agri_data_service.pipeline.direct.sensors
+```
+
+A `permission denied for schema geo`-style error cannot happen here any more — these writers don't
+touch `geo.*`; a credential problem on this path surfaces as an `S3`/boto error against
+`OBJECT_STORE_*`, or a `require_local_source_loader_database_url` `ValueError` if neither DSN
+variable is set.
 
 ---
 
-## 7. The durable-lane workflow
+## 7. The job executor
 
-Two sources — NASA FIRMS fire archive and USGS streamflow archive — have a **durable job ledger**
-behind their backfills, so a killed or interrupted walk resumes exactly where it left off instead
-of silently losing windows. This replaced a bash driver that skipped 169 of 298 windows and still
-reported success (full story:
-[`docs/runbooks/durable-backfill-lanes.md`](../../docs/runbooks/durable-backfill-lanes.md)).
+**CORRECTED 2026-10-26: the per-window ledger this section used to describe (`ingest/lanes.py`,
+`jobs-plan-lane`, `jobs-run`, `jobs-status`, `jobs-reconcile-lane`, `firms-archive`/
+`streamflow-archive`) is gone.** It was deleted in the 2026-09-12 "Complete greenfield Parquet
+cutover" (`fd602901`), the same push that deleted the `ingest-*` verbs in §8A/§8B.
+[`docs/runbooks/durable-backfill-lanes.md`](../../docs/runbooks/durable-backfill-lanes.md) is now a
+historical record of that deleted system — read it for the "why a durable ledger exists at all"
+story, not for working commands.
 
-The model: **one lane → one `JobRun` → one work item per time window → one handler call per
-chunk.** A lane (`src/agri_data_service/ingest/lanes.py`) declares a source, a floor date, a
-window size, and a chunk size:
-
-| Lane | Source | Chunk size | Window size | Credential |
-|---|---|---|---|---|
-| `firms-archive` | NASA FIRMS | 1 day | 5 days | `NASA_FIRMS_KEY` |
-| `streamflow-archive` | USGS daily values | 10 days | 30 days | none |
-
-**Use `streamflow-archive` for any first attempt at this workflow — it needs no credential.**
-
-> [!WARNING]
-> Everything in this section writes real rows, and `.env`'s `DATABASE_URL` points at
-> **production**, so that is what they write to unless you override it (§3.1). Read every
-> `jobs-reconcile-lane` dry-run output before you ever pass `--apply`, and never plan
-> `firms-archive` before `NASA_FIRMS_KEY` is set (§5).
+What replaced it: **one continuous scheduler process, `agri-service ops jobs-executor`, dispatches
+every registered lane on its own cadence.** A lane (`execution/lane_specs.py`, ids in
+`execution/lane_ids.py`) declares a shell command — almost always
+`python -m agri_data_service.pipeline.direct.<name>` — plus a cadence, phase offset, timeout, and
+catch-up policy. Deployment activation is one env var, `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` (an
+allow-list; an unlisted lane stays in shadow mode and never dispatches), plus the kill-switch
+`PLANTGEO_JOB_EXECUTOR_STOPPED_LANES`. Full design: `execution/AGENTS.md`.
 
 ```bash
-uv run agri-service ops jobs-plan-lane      --lane streamflow-archive
-uv run agri-service ops jobs-reconcile-lane --lane streamflow-archive          # dry run — read the span
-uv run agri-service ops jobs-reconcile-lane --lane streamflow-archive --apply  # settles already-landed windows
-uv run agri-service ops jobs-run            --lane streamflow-archive          # one bounded slice
-uv run agri-service ops jobs-status
+uv run agri-service ops jobs-executor --inventory    # print the lane table and exit; no DSN opened
+uv run agri-service ops jobs-executor --once          # run one leader-elected tick and exit
+uv run agri-service ops jobs-executor                 # run continuously (what Railway's cron-free `plantgeo-job-executor` service does)
 ```
 
-```powershell
-uv run agri-service ops jobs-plan-lane      --lane streamflow-archive
-uv run agri-service ops jobs-reconcile-lane --lane streamflow-archive
-uv run agri-service ops jobs-reconcile-lane --lane streamflow-archive --apply
-uv run agri-service ops jobs-run            --lane streamflow-archive
-uv run agri-service ops jobs-status
+To run one lane's writer directly, bypassing the scheduler entirely — the sensors lane needs no
+credential:
+
+```bash
+uv run python -m agri_data_service.pipeline.direct.sensors
 ```
 
-**Or, via the repo's own launcher** (sources `.env`, pins the loader DSN to it, exports
-CDS credentials): `./run-backfill.sh ops jobs-status`, `./run-backfill.sh ops jobs-plan-lane --lane
-streamflow-archive`, etc.
+Operator verbs over the executor's own state (all under `ops`, all reading
+`LOCAL_SOURCE_LOADER_DATABASE_URL`, §3.1):
 
-What each verb actually does to the ledger:
-
-| Verb | What it does | Exit code |
-|---|---|---|
-| `jobs-plan-lane --lane <token> [--floor DATE] [--until DATE]` | Fans the lane's date range out into work-item rows. **Idempotent — safe to re-run daily**; `ON CONFLICT DO NOTHING` on both the run and each window. `--floor` mints a *second* run rather than editing the first. | Always `0` |
-| `jobs-run --lane <token> [--budget-seconds N] [--worker-id S]` | Claims one window, walks one bounded slice, checkpoints, exits. **This is what a cron tick invokes.** | `0` unless a window dead-lettered this slice or the process raised |
-| `jobs-status [--lane <token>]` | Per-state window counts, oldest outstanding window, dead-lettered shard keys with their failure class. Your primary "is this healthy" check. | Always `0` |
-| `jobs-reconcile-lane --lane <token> [--apply]` | Checks what days already landed in the warehouse (via `geo.feature_observation_day`) and marks fully-covered windows `succeeded` without re-walking them. **Dry run by default** — `--apply` is required to write. | Always `0` |
-| `validate-streams [--format json\|markdown] [--output PATH]` | The cross-stream completeness/validity report — the only verb that reports row counts per layer. | `1` only if a stream is `invalid` |
-
-**Why `jobs-run` exits `0` while thousands of windows are still queued:** a healthy multi-week
-backfill is incomplete by definition — FIRMS' full archive is ~1,900 windows. The only thing that
-fails a slice is a window exhausting all 8 attempts and going `dead_letter` — a real loss that
-needs a human. Everything else (`retried`, `deferred`, `yielded`, `abandoned`) is a normal park
-that the next tick resumes.
-
-**A dead-lettered window doesn't retry itself.** Requeuing is a deliberate manual step — read
-`last_error_class` from `jobs-status` first, because requeuing blind just burns another 8
-attempts:
-
-| `last_error_class` | Action |
+| Verb | What it does |
 |---|---|
-| `upstream_unavailable` | Requeue; it usually succeeds on retry. |
-| `all_records_rejected` | Investigate first — usually an upstream schema/format change. |
-| `record_cap_truncation` | You hit `INGEST_MAX_SOURCE_RECORDS`. Narrow the lane's `chunk_days`, then requeue. |
-| `walk_skipped` | `INGEST_BBOX` was unset. Set it, then requeue. |
-| `missing_credential` | The lane's credential variable (e.g. `NASA_FIRMS_KEY`) is unset. Set it, then requeue. |
+| `lane-audit` | Read-only per-lane audit: declared limits, coverage, last turn, usage, open incidents. Your primary "is this healthy" check. |
+| `jobs-usage-report` | Month-to-date spend, per-lane × host rates, open incidents. |
+| `jobs-set-lane-enabled --definition <name> --enabled/--disabled --operator <who> --reason <why> [--apply]` | Pause or resume one executor definition; preview by default, `--apply` to write. |
+| `jobs-supersede-run --lane <id> --run-id <id> ...` | Clears a lane's failed-checkpoint hold so the executor resumes dispatching it. |
+| `jobs-plan-gap-repair [--lane <id> ...] [--max-days N]` | Hands each named lane's own gap-repair binding a bounded re-walk of missing days. |
 
-```sql
--- requeue one dead-lettered window (there is no CLI verb for this yet — deliberately manual)
-UPDATE agri.job_work_item
-SET status = 'queued', completed_at = NULL, next_attempt_at = now(),
-    attempt_count = 0, last_error_class = NULL, last_error_summary = NULL
-WHERE job_run_id = (SELECT id FROM agri.job_run WHERE logical_run_key = 'archive-walk:<lane>:<floor>')
-  AND shard_key  = '<shard-key-from-jobs-status>';
-```
-
-Full detail — the Railway deployment topology, the 30-minute cadence rationale, the cutover from
-the old bash drivers — lives in
-[`docs/runbooks/durable-backfill-lanes.md`](../../docs/runbooks/durable-backfill-lanes.md).
+**There is no per-window dead-letter ledger any more.** A lane that keeps failing opens an
+`agri.job_incident` row every tick and, past a breaker threshold, the executor withholds it —
+visible in `lane-audit` — until an operator runs `jobs-supersede-run` or `jobs-set-lane-enabled
+--disabled` (`execution/AGENTS.md` "Soft failure"). There is no SQL `UPDATE` requeue step; the
+breaker and the lane state are the whole mechanism.
 
 > [!NOTE]
-> **`GloFAS`, `CAMS`, and the ensemble forecast lane are separate, plan-based, and fetch-only —
-> see §8D and §9.** They are not part of this ledger; they use `--plan <file>.json` arguments and
-> currently have no persist step at all.
+> **GloFAS, CAMS, and the plan-based `historical-*`/ensemble-forecast family no longer exist at
+> all** — see §8D for what replaced ERA5-Land, NASA POWER, Open-Meteo and USDM.
 
 ---
 
 ## 8. Full CLI verb inventory
 
-All commands are `uv run agri-service <group> <verb>` from `services/agri-data-service`. Every `ingest-*`/
-`jobs-*` verb prints **one JSON summary line per job to stdout only**; operational logging goes to
-stderr, so a cron log parser can read stdout as a clean JSON-lines stream.
+**CORRECTED 2026-10-26: every `data ingest-*`, `ops jobs-plan-lane`/`jobs-run`/`jobs-status`/
+`jobs-reconcile-lane`, `ops validate-streams`, `ops pipeline-status`, `data historical-*`,
+`data source-ingest*`, `ops local *`, and `forecast *` verb this section used to list was deleted
+in the 2026-09-12 "Complete greenfield Parquet cutover" (`fd602901`) or the later
+2026-10-26 cleanup. None of them are registered — confirmed against every `@click.command` and
+`register_commands(...)` call under `interface/cli/` and `execution/`.** The current CLI surface is
+exactly three groups, `uv run agri-service <group> <verb>` from `services/agri-data-service`:
 
-### A. Forward ingest (hourly/daily-shaped; take `--bbox WEST,SOUTH,EAST,NORTH` unless noted)
+- **`data`** — `data parquet day|window|release|coverage` (read governed Parquet; see
+  `interface/cli/parquet.py`) and `data availability-bootstrap|availability-publish|
+  availability-reconcile-physical|availability-digest-trusted|availability-verify-days|
+  availability-release-verified-days` (operate the availability index; `interface/cli/availability.py`).
+- **`ops`** — `ops seed`, `ops db-status`, `ops db-upgrade [REVISION=head]`,
+  `ops job-logs-maintain [--retention-days 30] [--future-days 7]`, `ops jobs-executor [--once]
+  [--inventory]` (§7), `ops jobs-supersede-run`, `ops jobs-plan-gap-repair`,
+  `ops jobs-set-lane-enabled`, `ops jobs-usage-report`, `ops lane-audit`, `ops export-expert-labels`
+  (`interface/cli/ops.py`).
+- **`agent`** — `agent list-tools`, `agent probe`, `agent call-tool`, `agent ask`, `agent mcp-serve`
+  (the location-analysis MCP tool surface; `interface/cli/agent.py`).
 
-**Five verbs were DELETED on 2026-09-06** — `ingest-firms`, `ingest-streamflow`, `ingest-weather`,
-`ingest-drought` and `ingest-ndvi` — under the owner directive "the ingestion should be going to
-parquet, remove the code for ingestion into the DB". Each of those five layers already had a
-direct-to-Parquet writer, so its PostgreSQL producer was the removable half of a pair. Their
-replacements are lanes that run a module rather than a `data` verb:
+### A. The direct writers (what actually lands rows today)
 
-| Deleted verb | Layer | Replacement (direct-to-Parquet) |
-|---|---|---|
-| `data ingest-firms` | `fire-detections` | `python -m agri_data_service.pipeline.direct.fire_detections` |
-| `data ingest-streamflow` | `water-gauges` | `python -m agri_data_service.pipeline.parquet.water_gauges_forward` |
-| `data ingest-weather` | `weather-observations` | `python -m agri_data_service.pipeline.direct.weather_observations` |
-| `data ingest-drought` | `drought` | `python -m agri_data_service.pipeline.direct.drought` |
-| `data ingest-ndvi` | `vegetation` | `python -m agri_data_service.pipeline.direct.vegetation` |
+There is no `data ingest-*` verb family. Every layer below is a lane in `execution/lane_specs.py`,
+run either by the continuous `ops jobs-executor` in production or by hand locally as
+`python -m agri_data_service.pipeline.direct.<module>` (§7):
 
-| Verb | Source | Layer written | Credential |
+| Layer | Live lane id | Module | Credential |
 |---|---|---|---|
-| `data ingest-fire-perimeters` | WFIGS/NIFC | `fire-perimeters` | none |
-| `data ingest-sensors` | NWS | `sensors` | none |
-| `data ingest-evacuation-zones` | Oregon OEM | `evacuation-zones` | none |
-| `data ingest-watersheds` | USGS WBD HUC12 | `watersheds` | none — run once, no scheduled cadence |
-| `data ingest-mtbs [--release-year N ...]` | MTBS | `burn-severity` | none — no schedule, deliberately excluded from `data ingest-all` |
-| `data ingest-geometry-repair [--batch-size 200] [--max-features N]` | — | geometry repair pass | none |
-| `data ingest-all` | fire-perimeters, sensors, evacuation-zones | — | no credential |
+| Fire detections | `fire-detections-direct-forward` | `pipeline.direct.fire_detections` | `NASA_FIRMS_KEY` |
+| Water gauges | `water-gauges-direct-forward` | `pipeline.parquet.water_gauges_forward` | none |
+| MTBS historical census | `mtbs-forward` | `pipeline.direct.burn_severity` (no flags) | none |
+| MTBS current capture | `burn-severity-direct-forward` | `pipeline.direct.burn_severity --current-snapshots --time-budget-seconds 1800` | none |
+| Climate (NASA POWER) | `climate-nasa-power-direct-forward` | `pipeline.direct.climate` | none |
+| Soil (ERA5-Land) | `soil-era5-land-direct-forward` | `pipeline.direct.soil` | none |
+| Vegetation (Sentinel-2 NDVI) | `vegetation-sentinel2-ndvi-direct-forward` | `pipeline.direct.vegetation` | none |
+| Weather observations | `weather-observations-direct-forward` | `pipeline.direct.weather_observations` | none |
+| Drought (USDM) | `drought-direct-forward` | `pipeline.direct.drought` | none |
+| Fire perimeters | `fire-perimeters-direct-forward` | `pipeline.direct.fire_perimeters` | none |
+| Sensors (NWS) | `sensors-direct-forward` | `pipeline.direct.sensors` | none |
+| Watersheds | `watersheds-direct-forward` | `pipeline.direct.watersheds` | none |
+| Evacuation zones | `evacuation-zones-direct-forward` | `pipeline.direct.evacuation_zones` | none |
+| Land context (BLM) | `land-context-blm-forward`/`-reconcile`/`-backfill` | `pipeline.direct.land_context --mode refresh\|reconcile\|backfill` | none |
+| Crop cover (USDA) | `crop-cover-usda-maintain` | `pipeline.direct.crop_cover` | none |
 
-These four are what is left because they are the layers with **no** direct-to-Parquet writer yet:
-their generic `parquet-*` exporters still read `geo.features`, so deleting their producers would stop
-the layer rather than finish its cutover. `ingest-geometry-repair` stays for the same reason — those
-same exporters join through `geo.geometry`.
+There is no composite "run every lane" verb — each module is its own failure domain, dispatched
+independently by the executor.
 
-`ingest-all` runs WFIGS → sensors → evacuation-zones, then geometry-repair **last**, sequentially
-(not concurrently) so one source's failure can never mask another's
-(`src/agri_data_service/ingest/runner.py`).
+### B. Backfill / repair modules
 
-### B. Non-durable backfill
+There is no generic `data ingest-backfill --source TOKEN` verb and no `data ingest-geometry-repair`
+(nothing here writes `geo.geometry` any more). Where a lane needs a bounded historical walk or
+repair pass, it ships its own module, run the same way:
+`python -m agri_data_service.pipeline.direct.<lane>.backfill` — confirmed present for
+`drought`, `burn_severity`, and `vegetation` (`pipeline/direct/<lane>/backfill.py`).
 
-**CORRECTED 2026-10-26: `data ingest-backfill` is gone.** `root.py` no longer registers it; the
-row below describes a verb and token list that existed in the past, not a current CLI surface.
+### C. The job executor — see §7 for the full workflow
 
-| Verb (historical) | What it did |
-|---|---|
-| `data ingest-backfill --source TOKEN [--since ISO] [--until ISO] [--years 2] [--chunk-days 7] [--bbox]` | Walked one source across a date range with no ledger — a bad `--source` printed the valid token list. Accepted tokens: `nws-sensors`, `nasa-firms-archive`, `usgs-streamflow-archive`. The `sentinel2-ndvi` token was removed 2026-09-06 with `ingest-ndvi`; `pipeline/direct/vegetation/backfill.py` owns that window now. |
+`ops jobs-executor [--once] [--inventory]`, plus the operator verbs over its state:
+`ops lane-audit`, `ops jobs-usage-report`, `ops jobs-set-lane-enabled`, `ops jobs-supersede-run`,
+`ops jobs-plan-gap-repair`. There is no `--lane`/`--definition` ambiguity to worry about any more —
+`jobs-set-lane-enabled` takes `--definition`, the others take `--lane`, and both are validated
+against the code-owned registry (`execution/lane_catalogue.py`), not joined loosely.
 
-`data ingest-drought-history` was deleted 2026-09-06 with the rest of the drought write path;
-`pipeline/direct/drought/backfill.py` walks the same release-week calendar into Parquet.
+### D. Historical backfill families — all gone
 
-### C. Durable archive lanes (`jobs-*`) — see §7 for the full workflow
-
-`ops jobs-plan-lane`, `ops jobs-run`, `ops jobs-status`, `ops jobs-reconcile-lane`, `ops validate-streams`. Registered
-lanes: `firms-archive`, `streamflow-archive` only. **Always pass `--lane`, never `--definition`**
-— a hand-spelled definition name joins to nothing while still exiting `0`
-(`src/agri_data_service/ingest/commands.py:610-622`).
-
-### D. Plan-based historical lanes (all take `--plan PATH`, a checksum-governed JSON file under `plans/`)
-
-| Family | Verbs | Persists to the warehouse? |
-|---|---|---|
-| NASA POWER | `data historical-nasa-backfill`, `-status`, `-materialize-parquet`, `-finalize` | Yes, via `-finalize` |
-| ERA5-Land (CDS) | `data historical-era5-backfill`, `-persist`, `-materialize-parquet`, `-finalize` | Yes |
-| Open-Meteo archive | `data historical-open-meteo-status`, `-backfill [--max-chunks] [--concurrency 1-4]`, `-persist` | Yes |
-| USDM | `data historical-usdm-backfill`, `-finalize`, `-status` | Yes, via `-finalize` |
-| GloFAS | `data historical-glofas-status`, `-backfill [--max-chunks] [--concurrency]` | **No — fetch-only, no persist verb exists** |
-| CAMS | `data historical-cams-status`, `-backfill [--max-chunks] [--concurrency]` | **No — fetch-only, no persist verb exists** |
-| Ensemble forecast | none — `execution/ensemble_forecast.py` and its verbs were deleted 2026-10-26 (test-only since fd602901) | **No** |
-
-Plus `data historical-promotion-spool --release-set-key --minimum-target-revision` and
-`data historical-promotion-upload --spool-directory` for pushing a finalized release to the promotion
-receiver.
-
-> [!WARNING]
-> **GloFAS, CAMS, and the ensemble lane will run for hours, cost real upstream quota, and produce
-> nothing a query can read.** Confirmed against `interface/cli/commands.py`: ERA5 and Open-Meteo each have a
-> `-persist` verb; GloFAS and CAMS do not; the ensemble lane's manifest hardcoded
-> `"warehouse_persistence": "blocked_forecast_method_check"` before the module was deleted
-> (2026-10-26). Don't run these expecting rows to land.
+**NASA POWER, ERA5-Land (CDS), Open-Meteo archive, USDM, GloFAS, CAMS, and the ensemble forecast
+lane's plan-based `data historical-*` verbs no longer exist.** Confirmed: no `historical` token
+appears in any `@click.command` name under `interface/cli/` or `execution/`. ERA5-Land is now
+served keylessly by the `soil-era5-land-direct-forward` lane (§8A); NASA POWER by
+`climate-nasa-power-direct-forward`; there is no current replacement producer for the Open-Meteo
+archive, USDM historical backfill, GloFAS, CAMS, or the ensemble forecast lane — if you need one of
+those, it does not exist on `HEAD` today. `data historical-promotion-spool`/`-upload` are gone with
+the rest of this family.
 
 ### E. Migrations, seeding, and everything else
 
 | Verb | What it does |
 |---|---|
-| `ops db-status` / `ops db-upgrade [REVISION=head]` | Alembic status / migrate, reading `DATABASE_URL_SYNC` (§3.2) |
+| `ops db-status` / `ops db-upgrade [REVISION=head]` | Alembic status / migrate, reading `DATABASE_URL_SYNC` (§3.3) |
 | `ops seed` | Seeds strategy rows |
-| `ops pipeline-status [--checkpoint PATH]` | DSN-string validation only — see the warning in §6 |
-| `data source-ingest --plan --payload` / `data source-ingest-status CHECKPOINT` | Lower-level plan/payload ingestion primitive that the `data historical-*` verbs build on |
-| `ops job-logs-maintain [--retention-days 30] [--future-days 7]` | Prunes old job log rows |
-| `ops local init\|status\|checkpoint\|interrupt\|resume\|register-output\|finalize\|publish` | The local-execution-run lifecycle for phase-one ETL/model runs |
-| `forecast refresh-ml-daily`, `forecast run-iteration`, `forecast reconcile-actuals` | Forecasting/ML evaluation loop — evaluation-only, no publication path |
-| `forecast vegetation-register\|vegetation-simulate\|vegetation-evaluate` | NDVI forecast evaluation harness |
-| *(removed 2026-09-18)* `ml strategy-label-map-preflight` / `ml strategy-train` | Moved to `services/plantgeo-ml-service` as `plantgeo-ml strategy-label-map-preflight` / `plantgeo-ml strategy-train` (track `plantgeo_ml_service_20260918`) |
+| `ops job-logs-maintain [--retention-days 30] [--future-days 7]` | Prunes old job log rows and maintains their UTC partitions |
+| `ops export-expert-labels` | One-time export of the reviewed label plane to the ML service's bucket prefix (operational verb, no schedule) |
+| `agent list-tools` / `agent probe` / `agent call-tool` / `agent ask` / `agent mcp-serve` | The location-analysis MCP tool surface — see `interface/cli/agent.py` |
+
+`ops pipeline-status`, `data source-ingest`/`source-ingest-status`, `ops local init|status|...`,
+`forecast refresh-ml-daily|run-iteration|reconcile-actuals`, and `forecast vegetation-register|
+vegetation-simulate|vegetation-evaluate` are all gone — none of these groups/verbs are registered
+on `HEAD`. The `ml strategy-label-map-preflight`/`ml strategy-train` move to
+`services/plantgeo-ml-service` (noted here historically as "removed 2026-09-18") is the one claim in
+this old table that is still accurate.
 
 ---
 
@@ -671,35 +635,43 @@ receiver.
 | Symptom | What it actually means | Fix |
 |---|---|---|
 | Every job reports `skipped`, exit 0, zero rows, nothing looks wrong | `INGEST_BBOX` is unset. `resolve_bounded_bbox()` returns `None` and the job is a **typed skip, not a failure**, deliberately, so an unconfigured deployment doesn't go red (`src/agri_data_service/ingest/policy.py:39,86`) | Set `INGEST_BBOX` or pass `--bbox` |
-| `permission denied for schema geo` / `for table job_definition` | You are connecting as the old `plantgeo_loader` login, which never had `geo` or `agri.job_*` privileges (§3.2) | Point the loader DSN at the owner credential, or at production through the proxy |
 | `set LOCAL_SOURCE_LOADER_DATABASE_URL or DATABASE_URL` on any verb | Neither variable is set; the loader DSN falls back to `DATABASE_URL` and there is nothing to fall back to | Set `DATABASE_URL` in `.env` (§3.1) |
-| `alembic upgrade` migrated a database you didn't expect | It read `DATABASE_URL_SYNC` from the CWD's `.env`, not the `DATABASE_URL` you set (§3.2) | Set `DATABASE_URL_SYNC` explicitly and echo it back before upgrading |
-| `ERA5-Land requires accepted CDS web terms plus CDSAPI_URL and CDSAPI_KEY...` even though your `.env` has them | Was the 2026-08-08 `.env`-is-inert bug; `Settings` now resolves both. If it still fires, one of the two is genuinely blank/whitespace in both the environment and `.env` | Set both non-blank in `.env`, or export both |
+| `alembic upgrade` migrated a database you didn't expect | It read `DATABASE_URL_SYNC` from the CWD's `.env`, not the `DATABASE_URL` you set (§3.3) | Set `DATABASE_URL_SYNC` explicitly and echo it back before upgrading |
+| `CDSAPI_URL`/`CDSAPI_KEY`-related error messages anywhere | **HISTORICAL — these variables are no longer read at all (2026-10-26).** `historical-era5-backfill` and `cdsapi` are deleted; ERA5-Land is served by `soil-era5-land-direct-forward` with no credential | N/A — neither variable does anything today |
 | `400 Invalid day range. Expects [1..5]` from FIRMS | `FIRMS_DAY_RANGE` was set above 5 | Leave it unset (default `2`) |
-| `jobs-run --lane firms-archive` dead-letters every window | `NASA_FIRMS_KEY` unset; the lane dead-letters on purpose rather than parking (§5) | Set the key *before* planning/running the lane |
-| `jobs-run` exits `0` with thousands of windows still `queued` | Correct and healthy — a multi-week backfill is incomplete by definition (§7) | Not an incident |
-| `validate-streams` exits `1` | At least one stream is `invalid` — rows that exist are *wrong* (null geometry, unlinked geometry, a duplicate identity, USGS's `-999999` sentinel served as a real reading). `incomplete` never fails the run. | Read that stream's evidence lines in the report |
-| A chunk reports `records_seen=21000, records_written=0` and still "succeeds" | `INGEST_MAX_SOURCE_RECORDS` got bitten; the writer keeps the *newest* records and drops whole *oldest* days | Never set `INGEST_MAX_SOURCE_RECORDS` on an archive lane; the lane pins its own 50,000 ceiling |
+| `NASA_FIRMS_KEY environment variable is not set`, every tick | The `fire-detections-direct-forward` lane has no key; it opens an `agri.job_incident` row every failing tick (§7) | Set the key before activating the lane |
+| A lane's `lane-audit` row shows a withheld/breaker-tripped state | Past-threshold repeated failures; the executor withholds the lane until an operator clears it (§7, `execution/AGENTS.md` "Soft failure") | `ops jobs-supersede-run` or `ops jobs-set-lane-enabled --disabled` to investigate, then re-enable |
+| A chunk reports `records_seen=21000, records_written=0` and still "succeeds" | `INGEST_MAX_SOURCE_RECORDS` got bitten; the writer keeps the *newest* records and drops whole *oldest* days | Never set `INGEST_MAX_SOURCE_RECORDS` on an archive lane |
 | Redis connection refused, but the run continues | Realtime publish is best-effort; the publisher marks itself unavailable on the first `OSError` and just counts drops | Safe to ignore locally |
-| GloFAS/CAMS/ensemble backfills run for hours and produce zero rows | These three lanes are fetch-only — no persist verb exists yet (§8D) | Expected; don't wait for rows |
 | A weekly or 5-day-cadence stream (e.g. `drought_areas`, `vegetation`) reported a gap whose `days` was far larger than its `missing_day_count` | HISTORICAL (2026-08-08 to 2026-10-26): the gap walk ran on the stream's declared `publication_cadence_days` in `ingest/validation/completeness.py`, which has since been deleted as zero-caller dead code along with the rest of the validity-report stack (`ingest/AGENTS.md`'s deletion table). No gap walk reads a stream's cadence today. | N/A — kept as history only |
-| `validate-streams`'s bbox-related checks silently do nothing | `INGEST_BBOX` isn't set in the environment `validate-streams` runs in — that check is unevaluated, not passing | Set `INGEST_BBOX` locally too, not just on ingest verbs |
+
+`validate-streams`, `pipeline-status`, and the old `jobs-run`/`jobs-plan-lane` dead-letter rows that
+used to appear here described verbs deleted in the 2026-09-12 cutover; see §7 and §8 for what
+replaced them.
 
 ---
 
 ## 10. Where things live
 
-Under `src/agri_data_service/`: **`ingest/`** holds every `ingest-*`/`jobs-*` forward and
-archive-lane producer plus the writer that lands rows in `geo.*` (`ingest/AGENTS.md` is the
-550-line design rationale for *why* each producer works the way it does); **`execution/`** holds
-the plan-based `historical-*`/`forecast-*` machinery (ERA5, NASA POWER, Open-Meteo, GloFAS, CAMS,
-ensemble, and the ML/forecast evaluation loop) that writes `agri.*` lineage tables;
-**`jobs/`** is the durable ledger runtime behind `jobs-*` (`jobs/AGENTS.md` covers the design
-intent beyond the operator view in §7); **`db/`** is the SQLAlchemy engine/session plumbing and
-DSN validators (`config.py` lives one level up, at `src/agri_data_service/`); **`models/`** are
-the SQLAlchemy ORM models Alembic's autogenerate reads; **`routes/`** is the small Sanic HTTP
-surface (local publication receiver, historical promotion receiver); **`seed/`** is one-time
-strategy seed data; **`schemas/`** holds request/response schemas for the HTTP routes.
+Under `src/agri_data_service/`: **`ingest/`** no longer holds a `geo.*` writer or a CLI-registered
+producer — it is now a library of per-source fetch/parse helpers (`firms.py`, `sensors.py`,
+`wfigs.py`, `mtbs.py`, `usdm.py`, `policy.py` for bbox resolution, …) that the `pipeline/direct/*`
+writers import (`ingest/AGENTS.md` is the design rationale for *why* each source parser works the
+way it does, including the pre-cutover history); **`pipeline/direct/`** holds the current
+Parquet-writing lane modules (§8A), one package per layer, each with a `forward.py` and (where one
+exists) a `backfill.py`; **`execution/`** is the job executor runtime — `job_executor_service.py`,
+`lane_specs.py`, `lane_ids.py`, the operator verbs in §8C-E — plus the surviving forecast/ML
+evaluation modules; it does not write `agri.*` lineage for a plan-based `historical-*` family any
+more, since that family is deleted. **`jobs/`** (`dispatch.py`, `lease.py`, `registry.py`,
+`scheduler.py`, `worker.py`) is runtime plumbing the current executor still uses, not the deleted
+per-window ledger (`jobs/AGENTS.md` covers the design intent); **`db/`** is the SQLAlchemy
+engine/session plumbing and DSN validators (`config.py` lives one level up, at
+`src/agri_data_service/`); **`models/`** are the SQLAlchemy ORM models Alembic's autogenerate
+reads; **`routes/`** is the small Sanic HTTP surface — `agent_analysis.py`, `agent_tools.py`,
+`ops.py`, `strategies.py` today, not the "local publication receiver, historical promotion
+receiver" this paragraph used to describe (those routes are gone with the plan-based ingestion
+system); **`seed/`** is one-time strategy seed data; **`schemas/`** holds request/response schemas
+for the HTTP routes.
 
 Three separate things all named some variant of "sql" or "db", easy to conflate:
 

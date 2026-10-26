@@ -20,10 +20,11 @@ Two planes stay separate throughout:
 - the **local warehouse**, a dedicated PostgreSQL container on loopback port
   `5442`, managed by Alembic, which holds every governed environmental source.
 
-Ingestion writes only to the warehouse, and only through a constrained loader
-role. It never writes as the database owner and never reuses the application
-DSN — `require_local_source_loader_database_url()` fails closed if the loader
-DSN is unset or equal to `DATABASE_URL`.
+Ingestion writes only to the warehouse. **Stale as of 2026-08-08:** the loader role
+and the "must differ from `DATABASE_URL`" distinctness check described here were
+retired in revision `20260808_0019` — `require_local_source_loader_database_url()`
+now simply falls back to `DATABASE_URL` and raises only when both are unset (see
+`services/agri-data-service/README.md` §3.1 for the full story).
 
 ## Credentials by source
 
@@ -35,14 +36,14 @@ keyed source that fails without its variable set says so explicitly.
 | --- | --- | --- | --- | --- |
 | NASA POWER daily (live lane `climate-nasa-power-direct-forward`) | No | — | Public API, no registration | Nothing; served by `pipeline/direct/climate` lane |
 | U.S. Drought Monitor (live lane `drought-direct-forward`; operator repair `python -m agri_data_service.pipeline.direct.drought.backfill`) | No | — | Public shapefile/JSON endpoints | Nothing; served by `pipeline/direct/drought/` |
-| MTBS burned area (`ingest-mtbs`) | No | — | Public USDA/USGS ArcGIS service | Nothing |
-| Open-Meteo weather (`ingest-weather`) | No | — | Public API, no registration | Nothing |
-| USGS NWIS streamflow (`ingest-streamflow`) | No | — | Public water services API | Nothing |
-| NWS observations (`ingest-sensors`) | No | `NWS_API_USER_AGENT` *(optional)* | Not a key — a contact string | Nothing; defaults to `plantgeo-agri-data-service`. Set a real contact before running at volume |
-| Sentinel-2 / NDVI (`ingest-ndvi`) | No | — | Public Earth Search STAC API | Nothing |
-| NIFC fire perimeters (`ingest-fire-perimeters`) | No | — | Public ArcGIS feature service | Nothing |
-| Evacuation zones (`ingest-evacuation-zones`) | No | `EVACUATION_ZONES_LAYER_ID` *(optional)* | Not a key — a layer label override | Nothing; uses a default layer name |
-| **NASA FIRMS active fire** (`ingest-firms`, and `ingest-all`) | **Yes** | `NASA_FIRMS_KEY` | Free MAP_KEY from [firms.modaps.eosdis.nasa.gov](https://firms.modaps.eosdis.nasa.gov/api/area/) | The verb raises `NASA_FIRMS_KEY environment variable is not set` and exits. `ingest-all` fails with it |
+| MTBS burned area (live lane `mtbs-forward`; forward capture `burn-severity-direct-forward`) | No | — | Public USDA/USGS ArcGIS service | Nothing; served by `pipeline/direct/burn_severity` |
+| Open-Meteo weather (live lane `weather-observations-direct-forward`) | No | — | Public API, no registration | Nothing; served by `pipeline/direct/weather_observations` |
+| USGS NWIS streamflow (live lane `water-gauges-direct-forward`) | No | — | Public water services API | Nothing; served by `pipeline/parquet/water_gauges_forward` |
+| NWS observations (live lane `sensors-direct-forward`) | No | `NWS_API_USER_AGENT` *(optional)* | Not a key — a contact string | Nothing; defaults to `plantgeo-agri-data-service`. Set a real contact before running at volume |
+| Sentinel-2 / NDVI (live lane `vegetation-sentinel2-ndvi-direct-forward`) | No | — | Public Earth Search STAC API | Nothing; served by `pipeline/direct/vegetation` |
+| NIFC fire perimeters (live lane `fire-perimeters-direct-forward`) | No | — | Public ArcGIS feature service | Nothing; served by `pipeline/direct/fire_perimeters` |
+| Evacuation zones (live lane `evacuation-zones-direct-forward`) | No | `EVACUATION_ZONES_LAYER_ID` *(optional)* | Not a key — a layer label override | Nothing; uses a default layer name; served by `pipeline/direct/evacuation_zones` |
+| **NASA FIRMS active fire** (live lane `fire-detections-direct-forward`) | **Yes** | `NASA_FIRMS_KEY` | Free MAP_KEY from [firms.modaps.eosdis.nasa.gov](https://firms.modaps.eosdis.nasa.gov/api/area/) | The writer raises `NASA_FIRMS_KEY environment variable is not set` and exits; served by `pipeline/direct/fire_detections` |
 | **ERA5-Land** (live lane `soil-era5-land-direct-forward`) | **No** | — | Published by NASA data pool, no registration | Served by `pipeline/direct/soil` lane; CDS CLI backfill removed 2026-10-26 |
 | Open-Meteo weather (config-driven lanes via `pipeline/runner`) | Optional | `OPEN_METEO_API_KEY` *(optional)* | A paid Open-Meteo subscription for keyed endpoints; keyless endpoints work free | Absent, calls the free public host; keyed endpoints with empty key error (exit 78). Config runner reads `OPEN_METEO_API_KEY` directly from shell export, not `.env` |
 
@@ -57,9 +58,10 @@ One key fact about the surviving variable:
   warehouse records the host that answered, never the key:
 
 - **The FIRMS recent-days API is keyed; the archive is a separate product.**
-  `NASA_FIRMS_KEY` covers the bounded recent-detections endpoint that
-  `ingest-firms` calls. Longer fire history comes from MTBS
-  (`ingest-mtbs`), which needs no key.
+  `NASA_FIRMS_KEY` covers the bounded recent-detections endpoint that the
+  `fire-detections-direct-forward` lane (`pipeline/direct/fire_detections`) calls.
+  Longer fire history comes from MTBS (`mtbs-forward`, `pipeline/direct/burn_severity`),
+  which needs no key.
 
 `NASA_FIRMS_KEY` is already present in the root `.env.example`, and both it and
 `NWS_API_USER_AGENT` are described in [env-vars.md](./env-vars.md).
@@ -100,14 +102,17 @@ including backup and restore, is in
    `LOCAL_SOURCE_LOADER_DATABASE_URL` is an optional override that falls back to
    the value above. Nothing is validated, so confirm the target yourself.
 
-Confirm the wiring without starting any work:
+Confirm the wiring without starting any work. `ops pipeline-status` no longer exists
+(removed with the rest of the pre-Parquet ingestion CLI); the current equivalent is
+the lane inventory the job executor itself prints:
 
 ```powershell
-uv run agri-service ops pipeline-status
+uv run agri-service ops jobs-executor --inventory
 ```
 
-It reports `inactive`, `runnable`, or `blocked` and names the reason, which makes
-it the fastest way to catch a missing or rejected loader DSN.
+It prints the code-owned lane table (every `LANE_SPECS` entry, active or quarantined)
+and exits without running a tick — the fastest local way to catch a missing loader DSN
+or an allow-list typo before `jobs-executor` is left running continuously.
 
 ## Retired PostgreSQL-era replay plans
 
@@ -140,40 +145,46 @@ override per run.
 
 ### Current-conditions layers
 
-These are the hourly-shaped verbs that populate the live map layers.
+There is no `data ingest-*` CLI family any more — it was deleted in the "Complete
+greenfield Parquet cutover" (`fd602901`, 2026-09-12). Every current-conditions layer
+is now a direct-to-Parquet writer registered as a lane in
+`execution/lane_specs.py`/`execution/lane_ids.py`. In production, the continuous
+`agri-service ops jobs-executor` service dispatches each lane on its own cadence,
+gated by the `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` allow-list. Locally, run one lane's
+writer module directly:
 
 ```powershell
 Set-Location services/agri-data-service
 
-uv run agri-service data ingest-weather
-uv run agri-service data ingest-drought
-uv run agri-service data ingest-streamflow
-uv run agri-service data ingest-sensors
-uv run agri-service data ingest-ndvi
-uv run agri-service data ingest-fire-perimeters
-uv run agri-service data ingest-evacuation-zones
-uv run agri-service data ingest-firms            # needs NASA_FIRMS_KEY
+uv run python -m agri_data_service.pipeline.direct.weather_observations
+uv run python -m agri_data_service.pipeline.direct.drought
+uv run python -m agri_data_service.pipeline.parquet.water_gauges_forward
+uv run python -m agri_data_service.pipeline.direct.sensors
+uv run python -m agri_data_service.pipeline.direct.vegetation
+uv run python -m agri_data_service.pipeline.direct.fire_perimeters
+uv run python -m agri_data_service.pipeline.direct.evacuation_zones
+uv run python -m agri_data_service.pipeline.direct.fire_detections   # needs NASA_FIRMS_KEY
 ```
 
-`uv run agri-service data ingest-all` runs every one of those in turn and exits non-zero
-if any failed. It includes FIRMS, so it needs `NASA_FIRMS_KEY`.
+There is no composite "run every lane" verb any more — each module above is its own
+failure domain; run the ones you need.
 
-`ingest-mtbs` is deliberately excluded from `ingest-all`: MTBS publishes
-quarterly, so it is run per fire-year cohort rather than hourly.
+MTBS (`mtbs-forward`) publishes a weekly historical-cohort census; the same package
+also runs the daily current-snapshot capture with `--current-snapshots` (this is what
+the `burn-severity-direct-forward` lane passes — see `execution/lane_specs.py`):
 
 ```powershell
-uv run agri-service data ingest-mtbs
+uv run python -m agri_data_service.pipeline.direct.burn_severity
+uv run python -m agri_data_service.pipeline.direct.burn_severity --current-snapshots --time-budget-seconds 1800
 ```
 
-Two maintenance verbs exist alongside these:
-
-```powershell
-uv run agri-service data ingest-backfill --source <source-token>
-uv run agri-service data ingest-geometry-repair
-```
-
-`ingest-backfill` covers sources that declare a usable history capability; run it
-without a valid `--source` to have it print the accepted tokens.
+Per-lane backfill/repair modules exist alongside the forward writers where a source
+needs one, e.g. `pipeline/direct/drought/backfill.py`, `pipeline/direct/burn_severity/backfill.py`,
+`pipeline/direct/vegetation/backfill.py` — run them the same way, as
+`python -m agri_data_service.pipeline.direct.<lane>.backfill`. There is no single
+generic `ingest-backfill --source` verb any more; the old PostgreSQL-era
+`ingest-geometry-repair` pass has no Parquet-era equivalent because nothing here
+writes `geo.geometry` today.
 
 Order matters for ERA5. The enforced prerequisite is not the checksum but the
 spatial cells: `_require_era5_spatial_cells` raises "ERA5 persistence requires
@@ -189,12 +200,11 @@ re-requesting the provider.
 
 ### One-off reviewed GeoJSON
 
-To publish a single reviewed GeoJSON release you have already downloaded:
-
-```powershell
-uv run agri-service data source-ingest --plan <plan.json> --payload <payload.geojson>
-uv run agri-service data source-ingest-status <checkpoint>
-```
+**Gone.** `data source-ingest` / `data source-ingest-status` were deleted in the same
+2026-09-12 cutover as the rest of this section. `execution/source_ingestion.py` still
+holds the plan/payload primitives those verbs called, but no CLI command and no
+registered HTTP route invokes it any more — there is no current path to publish a
+one-off reviewed GeoJSON release through this service.
 
 ## What you cannot reproduce from a clone
 

@@ -92,9 +92,10 @@ backfill depends on, and the honest limits are all in one place:
 
 **[docs/rebuilding-the-dataset.md](./docs/rebuilding-the-dataset.md)**
 
-Read it before running any `agri-service data ingest-*` or `agri-service data historical-*` verb. Most
-sources need no credential at all; exactly one hosted account (Copernicus, for
-ERA5-Land) requires a licence accepted in a browser.
+Read it before running any lane's direct writer (`python -m agri_data_service.pipeline.direct.<lane>`,
+dispatched in production by `agri-service ops jobs-executor`). Most sources need no credential at
+all; ERA5-Land is served keylessly today, and no source in this service needs a Copernicus account
+any more.
 
 ## Verification
 

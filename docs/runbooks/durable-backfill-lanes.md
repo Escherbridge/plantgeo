@@ -1,6 +1,20 @@
-# Runbook: Durable archive backfill lanes (`agri.job_*` ledger)
+# Runbook: Durable archive backfill lanes (`agri.job_*` ledger) — HISTORICAL
 
-> **Scheduler owner directive, 2026-09-02:** `plantgeo-job-executor` is the sole approved scheduler
+> **CORRECTED 2026-10-26: the model below is gone, not just its launcher.** The 2026-09-02 note
+> directly below claimed "the durable lane definitions, work items, leases, checkpoints, retries and
+> dead letters remain current; only their launcher changes." That stopped being true on 2026-09-12:
+> "Complete greenfield Parquet cutover" (`fd602901`) deleted `ingest/lanes.py`, `ingest/commands.py`,
+> `ingest/runner.py`, `ingest/archive_walk.py` and the `jobs-plan-lane`/`jobs-run`/`jobs-status`/
+> `jobs-reconcile-lane`/`validate-streams` verbs this runbook documents, along with the
+> `firms-archive`/`streamflow-archive` lanes themselves. There is no `agri.job_work_item` ledger to
+> requeue against any more. Everything from here down is a historical record of a deleted system —
+> read it for *why* a durable ledger was built, not for working commands. The current scheduler is
+> `agri-service ops jobs-executor`, driven by `execution/lane_specs.py` and
+> `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES`; see `execution/AGENTS.md` and
+> `services/agri-data-service/README.md` §7 for the live model.
+
+> **Scheduler owner directive, 2026-09-02 (superseded further by the note above):**
+> `plantgeo-job-executor` is the sole approved scheduler
 > and durable invocation owner. Every instruction below to create, enable, repair, restore, retain or
 > configure a Railway cron service is superseded historical evidence and must not be executed. The
 > durable lane definitions, work items, leases, checkpoints, retries and dead letters remain
