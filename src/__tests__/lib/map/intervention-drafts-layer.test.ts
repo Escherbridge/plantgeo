@@ -18,7 +18,6 @@ import {
   getSources,
   INTERVENTION_DRAFTS_SOURCE_ID,
 } from "@/lib/map/sources";
-import { LAYER_REGISTRY, styleBackedLayerEntries } from "@/lib/map/layer-registry";
 
 // Narrowed to their concrete spec types: `getLayers()` and the exported constants are typed as
 // the union `LayerSpecification`, whose members (fill/line/circle/...) share no `paint`/`filter`/
@@ -32,29 +31,8 @@ describe("intervention-drafts overlay: registration under the merged toggle", ()
   // ("intervention-drafts") from the intervention_drawing_visibility track until the
   // unified_intervention_layer track's OQ-1 folded its three style layer ids into the
   // `interventions` entry. The LAYER SPECS below are untouched by that merge -- only the second
-  // switch is gone -- which is exactly what this file still pins.
-  it("draws under the single interventions toggle, with no entry of its own", () => {
-    const interventions = LAYER_REGISTRY.interventions;
-
-    expect(interventions.styleLayerIds).toEqual([
-      "interventions",
-      "interventions-outline",
-      "interventions-points",
-      "intervention-drafts-fill",
-      "intervention-drafts-outline",
-      "intervention-drafts-points",
-    ]);
-    expect(interventions.renderKind).toBe("style");
-    expect(styleBackedLayerEntries().map((e) => e.toggleId)).not.toContain("intervention-drafts");
-  });
-
-  it("carries a tooltip description distinct from its short label", () => {
-    const interventions = LAYER_REGISTRY.interventions;
-    expect(interventions.description).toBeDefined();
-    expect(interventions.description).not.toBe(interventions.label);
-    expect(interventions.description).toContain("review");
-  });
-
+  // switch is gone -- which is exactly what this file still pins. The merged-toggle registration
+  // itself is pinned once, in unified-intervention-layer.test.ts.
   it("uses its own plain GeoJSON source, distinct from the Martin intervention_tiles source", () => {
     expect(interventionDraftsFillLayer.source).toBe(INTERVENTION_DRAFTS_SOURCE);
     expect(interventionDraftsOutlineLayer.source).toBe(INTERVENTION_DRAFTS_SOURCE);

@@ -35,10 +35,6 @@ vi.mock('@/lib/server/auth', () => ({
 import { layersRouter } from '@/lib/server/trpc/routers/layers'
 
 describe('layersRouter', () => {
-  it('is defined', () => {
-    expect(layersRouter).toBeDefined()
-  })
-
   it('has expected procedures', () => {
     const procedures = Object.keys(layersRouter._def.procedures)
     expect(procedures).toContain('list')

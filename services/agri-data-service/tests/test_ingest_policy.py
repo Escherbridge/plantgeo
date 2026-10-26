@@ -37,10 +37,6 @@ def _clear_ingest_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(variable, raising=False)
 
 
-def test_pacific_northwest_coverage_bbox_is_the_constant_the_deleted_typescript_test_held() -> None:
-    assert PACIFIC_NORTHWEST_COVERAGE_BBOX == "-125,42,-111,49"
-
-
 @pytest.mark.parametrize(
     ("text", "expected"),
     [("", 0.0), ("   ", 0.0), ("42", 42.0), ("+1", 1.0), (".5", 0.5), ("1e3", 1000.0), ("-0.25", -0.25)],

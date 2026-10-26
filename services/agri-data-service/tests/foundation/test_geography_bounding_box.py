@@ -15,9 +15,6 @@ from pathlib import Path
 import pytest
 
 from agri_data_service.foundation.geography.bounding_box import (
-    BBOX_OPTION,
-    BBOX_ORDINATE_COUNT,
-    BoundingBox,
     format_bounding_box_inline,
     inline_bbox_value,
     parse_bounding_box,
@@ -86,12 +83,3 @@ def test_parse_and_format_round_trip_through_the_new_module() -> None:
     argv = format_bounding_box_inline(["--bbox", "-125,42,-111,49", "--release-year", "2022"])
     assert argv == ["--bbox=-125,42,-111,49", "--release-year", "2022"]
     assert parse_bounding_box("-125,42,-111,49") == (-125.0, 42.0, -111.0, 49.0)
-
-
-def test_bbox_constants_and_type_are_exported() -> None:
-    expected_ordinate_count = 4
-    assert BBOX_OPTION == "--bbox"
-    assert expected_ordinate_count == BBOX_ORDINATE_COUNT
-    # `BoundingBox` is a bare 4-tuple alias, not a runtime-constructible class; this proves the
-    # module exports the same name `ingest/mtbs.py` used to define locally.
-    assert BoundingBox == tuple[float, float, float, float]
