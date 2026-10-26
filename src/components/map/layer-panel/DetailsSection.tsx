@@ -19,6 +19,12 @@ interface DetailsSectionProps {
   label: string;
   /** Drawn before the label on a section that has no layer rows to identify it. */
   icon?: ReactNode;
+  /**
+   * Drawn after the label, e.g. an unread count. Re-added 2026-10-26 for the "alerts" pivot
+   * section only -- the rest of the removal note in `src/components/map/AGENTS.md` still holds:
+   * this is a per-row fact beside the section's own name, never a second rail-level bell.
+   */
+  badge?: ReactNode;
 }
 
 /**
@@ -39,7 +45,7 @@ interface DetailsSectionProps {
  * `DockDetailsBody`, so it cannot be an instance of this component, but the dock's carets must
  * still be one control vocabulary rather than two that merely look alike.
  */
-export function DetailsSection({ id, label, icon }: DetailsSectionProps) {
+export function DetailsSection({ id, label, icon, badge }: DetailsSectionProps) {
   const isExpanded = useDetailsExpanded(id);
   const toggleDetails = usePanelStore((state) => state.toggleDetails);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -65,6 +71,7 @@ export function DetailsSection({ id, label, icon }: DetailsSectionProps) {
         )}
         {icon}
         <span className="min-w-0 flex-1 truncate">{label}</span>
+        {badge}
       </button>
 
       {isExpanded && (

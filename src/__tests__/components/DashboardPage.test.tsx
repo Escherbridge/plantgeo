@@ -12,6 +12,7 @@ describe("Dashboard published entrypoints", () => {
     expect(screen.getByRole("link", { name: /Explore the map/ }).getAttribute("href")).toBe("/");
     expect(screen.getByRole("link", { name: /Organization/ }).getAttribute("href")).toBe("/dashboard/org");
     expect(screen.getByRole("link", { name: /AI Conversations/ }).getAttribute("href")).toBe("/dashboard/conversations");
+    expect(screen.getByRole("link", { name: /Analytics/ }).getAttribute("href")).toBe("/dashboard/analytics");
     expect(dashboardWidget).not.toHaveBeenCalled();
     expect(screen.queryByText("Fleet Overview")).toBeNull();
     expect(screen.queryByText("Map Preview")).toBeNull();

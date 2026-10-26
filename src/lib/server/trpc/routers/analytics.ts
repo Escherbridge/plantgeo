@@ -7,11 +7,6 @@ import {
   getRecentActivity,
   getSystemStats,
 } from "@/lib/server/services/analytics";
-import {
-  type PrioritySubregion,
-  type RegionalRiskSummary,
-  type TrendPoint,
-} from "@/lib/server/db/analytics";
 import { parseBoundingBox } from "@/lib/server/security/bbox";
 import {
   activityGridToFeatureCollection,
@@ -45,41 +40,6 @@ export const analyticsRouter = router({
   systemStats: publicProcedure.query(async ({ ctx }) => {
     return getSystemStats(ctx.db);
   }),
-
-  /**
-   * Still closed: every field of RegionalRiskSummary is a non-nullable number or
-   * trend, and no published risk aggregate exists to fill them. Returning zeros
-   * would fabricate a confident "no risk" answer — see src/lib/server/db/analytics.ts.
-   */
-  getRegionalRiskSummary: publicProcedure
-    .input(z.object({ bbox: z.string().max(100) }))
-    .query((): RegionalRiskSummary => {
-      throw new TRPCError({
-        code: "NOT_FOUND",
-        message:
-          "No regional risk aggregate is published. The predictive tables this reads " +
-          "(agri.danger_prediction, agri.strategy_effect) do not exist in any schema yet.",
-      });
-    }),
-
-  /**
-   * Open and empty: no environmental time-series aggregate is published yet, so the
-   * honest series is no points. It fills in as soon as one is.
-   */
-  getTrendData: publicProcedure
-    .input(
-      z.object({
-        bbox: z.string(),
-        metric: z.enum(["fire", "drought", "ndvi", "water"]),
-        days: z.number().int().min(1).max(365).default(30),
-      })
-    )
-    .query((): TrendPoint[] => []),
-
-  /** Open and empty until a ranked-subregion release exists to read. */
-  getPrioritySubregions: publicProcedure
-    .input(z.object({ bbox: z.string() }))
-    .query((): PrioritySubregion[] => []),
 
   /** Community request density, aggregated server-side onto a coarse grid. */
   getDemandDensity: protectedProcedure

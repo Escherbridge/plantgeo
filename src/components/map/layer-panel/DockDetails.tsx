@@ -70,6 +70,10 @@ const OfflinePanel = dynamic(
   () => import("@/components/panels/OfflinePanel").then((m) => ({ default: m.OfflinePanel })),
   { ssr: false, loading: DetailsLoading }
 );
+const AlertsDetails = dynamic(
+  () => import("@/components/panels/AlertsDetails").then((m) => ({ default: m.AlertsDetails })),
+  { ssr: false, loading: DetailsLoading }
+);
 
 function FireDetailsBody() {
   // The centre, not the bbox: the weather cards read the nearest published observation to one
@@ -145,6 +149,21 @@ function OfflineDetailsBody() {
   return <OfflinePanel />;
 }
 
+function AlertsDetailsBody() {
+  // Same derivation `CommunityDetailsBody` passes as its default submission point, so "Add
+  // watched location" defaults to where the reader is already looking.
+  const latitude = useMapStore((state) => state.viewport.latitude);
+  const longitude = useMapStore((state) => state.viewport.longitude);
+  const mapCenter = useMemo(() => ({ lat: latitude, lon: longitude }), [latitude, longitude]);
+  // The same click-capture `SoilDetailsBody` arms for its point query: active only while this
+  // section is mounted, so collapsing it (or closing the dock) disarms capture and drops the pin.
+  const map = useMap();
+  const { queryPoint, clearQueryPoint } = useMapQueryPoint(map, true);
+  return (
+    <AlertsDetails mapCenter={mapCenter} queryPoint={queryPoint} onClearQueryPoint={clearQueryPoint} />
+  );
+}
+
 /** Exhaustive over `DockDetailsId`: a new section fails to compile rather than rendering blank. */
 const DETAILS_BODIES: Record<DockDetailsId, () => React.ReactNode> = {
   fire: FireDetailsBody,
@@ -155,6 +174,7 @@ const DETAILS_BODIES: Record<DockDetailsId, () => React.ReactNode> = {
   community: CommunityDetailsBody,
   team: TeamDetailsBody,
   offline: OfflineDetailsBody,
+  alerts: AlertsDetailsBody,
 };
 
 /** One details region, mounted by its section only while that section is expanded. */

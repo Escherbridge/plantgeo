@@ -19,6 +19,11 @@ const DASHBOARD_SECTIONS = [
     title: "AI Conversations",
     description: "Revisit your saved location analyses.",
   },
+  {
+    href: "/dashboard/analytics",
+    title: "Analytics",
+    description: "Published layer and feature counts across the platform.",
+  },
 ] as const;
 
 /** Working account destinations; see AGENTS.md for deferred analytics widgets. */
