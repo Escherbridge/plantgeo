@@ -4734,6 +4734,18 @@
       "LayerManager split (needs characterization tests first)",
       "intervention centroid source-layer (prod migration + Martin restart)",
       "places geocoder (owner choice)"
-    ]
+    ],
+    "rounds_3_to_5": {
+      "round3": "ac37b690 + hotfix 4a74b08e: embed share row, lifecycle keyset pagination (review BLOCKER: raw Date bound into sql -> driver throw; ms-truncated ties -> exact microsecond sort key compared as a row, verified on real Postgres), web orphans, infra dead code (~2.7k), pipeline/validation verdicts, docs-truth pass of operator docs",
+      "round4": "f144dbc3: LayerManager 1258->639 behind 7 characterization tests (identical ordered call log), dead mtbs ingest chain + source_ingestion, coverage census, snapshot forward-coverage chain, FORECAST_* settings; pre-push review: no blocker, --compare-on-legacy wording corrected",
+      "round5": "edb2dfbf: audits of src/lib, ml+strategy-knowledge, infra, test tautologies -> 3 dead vegetation exports, request-budget doc closed items, infra inventory (+plantgeo-ml, +strategy-knowledge; parquet-drain confirmed deleted), 4 tautological tests removed, ML forecaster essays -> AGENTS.md",
+      "diminishing_returns": "round-5 audits found only low-severity items across all remaining areas; the suite was judged unusually disciplined",
+      "open_owner_items": [
+        "places geocoder (PHOTON_URL unset in prod)",
+        "intervention centroid source-layer (prod migration + Martin restart)",
+        "root docker-compose keep/remove",
+        "2 stray python processes from a test-audit agent (PIDs 34400/56104) - agent was denied taskkill; left for owner"
+      ]
+    }
   }
 }
