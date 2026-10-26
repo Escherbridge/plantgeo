@@ -52,7 +52,7 @@ function isCoarsePointer(): boolean {
 }
 
 /** True when this layer answers a click on the CURRENT pointer (before the suppression check). */
-export function layerOwnsClickOnThisPointer(layerId: string): boolean {
+function layerOwnsClickOnThisPointer(layerId: string): boolean {
   if (DEDICATED_CLICK_LAYER_IDS.has(layerId)) return true;
   return TAP_ONLY_LAYER_IDS.has(layerId) && isCoarsePointer();
 }

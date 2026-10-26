@@ -120,7 +120,7 @@ function dayStanding(day: string, serverCurrentDate: string | null): ViewedDaySt
  * honest answer. `useViewedLayerDays` has already dropped every layer whose day cannot be
  * named, so an empty list here means exactly "nothing dated is drawn".
  */
-export function summariseViewedDays(
+function summariseViewedDays(
   viewed: DrawnViewedLayerDay[],
   serverCurrentDate: string | null
 ): ViewedDateSummary | null {
@@ -174,7 +174,7 @@ function describeShowingEarlierDay(pendingCount: number): string {
  * reader. This is the escape hatch that keeps the visible surface small: the span says THAT the
  * days differ, this says exactly which layer is on which day, without a dozen rows on canvas.
  */
-export function describeViewedDays(
+function describeViewedDays(
   viewed: DrawnViewedLayerDay[],
   summary: ViewedDateSummary
 ): string {

@@ -256,7 +256,7 @@ function CommentRow({
  * "You" wins over the viewer's own resolved name (sub-decision (c)); anyone
  * else is their `users.name`, falling back to the id fragment when unset.
  */
-export function authorLabel(
+function authorLabel(
   authorUserId: string,
   isOwn: boolean,
   resolvedName: string | null

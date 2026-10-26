@@ -63,7 +63,7 @@ export const useLayerWindowStore = create<LayerWindowState>()(
 );
 
 /** This layer's preset, falling back to the default. */
-export function layerWindowPresetFor(
+function layerWindowPresetFor(
   presets: Partial<Record<LayerToggleId, LayerWindowPreset>>,
   layerId: LayerToggleId
 ): LayerWindowPreset {

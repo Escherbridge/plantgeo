@@ -330,7 +330,7 @@ function Field({ label, value }: { label: string; value: string | null }) {
  * intervention, and three call sites re-deriving that default is how the two
  * would eventually disagree.
  */
-export function isRequestRecord(record: InterventionDetailRecord): boolean {
+function isRequestRecord(record: InterventionDetailRecord): boolean {
   return record.kind === "request";
 }
 
@@ -394,7 +394,7 @@ function StatusPill({
  * renders as its polygon and a multi-point submission as each of its points --
  * a centroid pin would be exactly the thing FR-2 forbids.
  */
-export function GeometryPreview({
+function GeometryPreview({
   record,
   size,
 }: {

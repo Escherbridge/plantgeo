@@ -27,7 +27,7 @@ import { useMapStore } from "@/stores/map-store";
 import { useSearchStore } from "@/stores/search-store";
 
 /** The Search section's own title. Named for what it finds, not for the control. */
-export const SEARCH_SECTION_LABEL = "Search places";
+const SEARCH_SECTION_LABEL = "Search places";
 
 /**
  * The DOM id of the section's text field, so the Ctrl/Cmd+K shortcut can focus it.
