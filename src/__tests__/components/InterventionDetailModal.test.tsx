@@ -204,8 +204,8 @@ describe("InterventionDetailCard", () => {
     );
     unmount();
 
-    // The same note present on a published row is `castModerationVote`'s dead
-    // vocabulary, not a reviewer decision the map honours: it stays hidden.
+    // A review note on a published row is not a reviewer decision the map
+    // honours: it stays hidden.
     renderCard({ record: { ...rejected, status: "published" } });
     expect(screen.queryByTestId("intervention-review-note")).toBeNull();
   });

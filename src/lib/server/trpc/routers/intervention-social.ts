@@ -23,9 +23,9 @@ import {
  *
  * This module is strictly additive social state. It never reads or writes
  * `features.status` / `features.reviewNote` -- the review vocabulary owned by
- * `contributions.publishContribution` / `rejectContribution`, and shadowed by
- * the non-authoritative `interventions.castModerationVote` /
- * `transitionLifecycleState` pair. `features.status` is consulted here only as
+ * `contributions.publishContribution` / `rejectContribution` (lifecycle moves
+ * live in `properties.lifecycleStage` via `interventions.transitionLifecycleState`).
+ * `features.status` is consulted here only as
  * a read-side visibility predicate; no procedure in this file issues an UPDATE
  * against `geo.features` at all.
  */

@@ -22,9 +22,8 @@ export interface InterventionDetailRecord {
   category: string | null;
   /**
    * Read exactly as `contributions.publishContribution` / `rejectContribution`
-   * write it (`published` / `rejected` / `pending_review`). The parallel
-   * `castModerationVote` vocabulary (`approved`/`active`/`monitored`) is not
-   * honoured by `geo.intervention_tiles` and is never presented as live state.
+   * write it (`published` / `rejected` / `pending_review`). Post-publication
+   * lifecycle lives in `properties.lifecycleStage`, never in `status`.
    */
   status: string;
   /**

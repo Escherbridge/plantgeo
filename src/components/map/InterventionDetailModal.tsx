@@ -507,7 +507,7 @@ function categoryLabel(category: string | null): string {
   );
 }
 
-/** The served vocabulary only: `castModerationVote`'s parallel states are not live state. */
+/** The served review vocabulary only (`published` / `rejected` / `pending_review`). */
 function statusLabel(status: string): string {
   if (status === "pending_review") return INTERVENTION_PENDING_REVIEW_LABEL;
   if (status === "published") return "Published";
