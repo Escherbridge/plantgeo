@@ -179,6 +179,24 @@ Three surfaces went, and the shared reason is that each could only ever render i
 
 **No stubs were left behind.** Removing the layer took `panelId: PanelId | null` down to `panelId: PanelId` and took the ungoverned "Basemap" bucket (`UNGOVERNED_GROUP_KEY`, `UNCATEGORISED_LAYER_TOGGLE_IDS`) with it — that bucket existed for exactly one layer. `DockDetailsId` lost `"alerts"`, `PanelId` lost `"analytics"`, and `DetailsSection` lost its `badge` prop, whose only user was the unread count.
 
+**Correction, 2026-10-26: Alerts rejoined, Analytics did not.** `alertsRouter` was always real CRUD
+over `environmentalAlerts`/`watchedLocations`/`alertSubscriptions` with zero UI callers (not a
+stub), and `src/lib/server/jobs/alert-dispatcher.ts` populates it every 30 minutes via
+`checkFireProximityAlerts`/`checkDroughtAlerts`/`checkStreamflowAlerts`, publishing to the SSE
+channel `alerts:${userId}` (`src/app/api/stream/[layerId]/route.ts`). The section's old reachable
+state — "No alerts" — was never the honest ceiling, so `src/components/panels/AlertsDetails.tsx`
+rejoined `DockDetailsId` as a pivot section exactly like `offline` (`DOCK_PIVOT_SECTIONS` in
+`layer-panel/dock-sections.ts`), and `DetailsSection` got its `badge` prop back for this ONE
+section's unread count — see `src/components/panels/AGENTS.md` §Alerts panel.
+`getRegionalRiskSummary`/`getTrendData`/`getPrioritySubregions` are still genuinely closed: the
+predictive tables they would read (`agri.danger_prediction`, `agri.strategy_effect`,
+`agri.opportunity_candidate`) exist in no schema, so those three procedures and the orphan charts
+built for them (`PriorityTable`, `RiskSummaryWidget`, `TrendChart`, plus `ForecastBandChart` and
+`PieChart`, all zero-importer) were deleted rather than kept as a stub. `featureCounts` and
+`recentActivity` ARE real (the one public, relational `interventions` layer) and are now consumed
+at `/dashboard/analytics` (`src/components/dashboard/SpatialStats.tsx`), not in this dock —
+nothing here reads `analyticsRouter`.
+
 Martin publishes only `intervention_tiles`. Any future building layer requires a newly admitted
 source and a complete client registration.
 

@@ -142,6 +142,27 @@ export const alertsRouter = router({
   }),
 
   /**
+   * List the caller's own saved subscriptions for one watched location, so the panel can show
+   * the toggles' real state instead of a default that may not match what was last saved.
+   */
+  getSubscriptions: protectedProcedure
+    .input(z.object({ locationId: z.string().uuid() }))
+    .query(async ({ ctx, input }) => {
+      const userId = (ctx.session.user as { id?: string } | undefined)?.id;
+      if (!userId) return [];
+
+      return ctx.db
+        .select()
+        .from(alertSubscriptions)
+        .where(
+          and(
+            eq(alertSubscriptions.userId, userId),
+            eq(alertSubscriptions.watchedLocationId, input.locationId)
+          )
+        );
+    }),
+
+  /**
    * Upsert an alert subscription for a watched location.
    */
   updateSubscription: protectedProcedure

@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Bell,
   Building2,
   CloudRain,
   CloudSun,
@@ -92,6 +93,8 @@ const DOCK_SECTION_ICON_COMPONENTS: Record<DockSectionKey, LucideIcon> = {
   // Carried over from the bottom-right floating toggle it replaced, so a reader who knew that
   // corner finds the same mark in the dock.
   offline: HardDrive,
+  // The mark the rail's bell wore before the alerts feature was removed on 2026-08-15.
+  alerts: Bell,
 };
 
 /** Decorative by design: the section's text label is what names it. */

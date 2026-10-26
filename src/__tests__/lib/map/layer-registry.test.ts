@@ -208,12 +208,14 @@ describe('layer registry derivations', () => {
     }
   })
 
-  // Teams owns no layer, so the registry cannot order it and it gets no group; Offline is not
-  // a registry concept at all -- `DockDetailsId` is `PanelId | "offline"`, so it is the one
-  // `getLayersForPanel` cannot even be asked about. Both are still reachable, as the dock's
-  // layerless sections -- which is what stopped the rail's removal from orphaning them.
+  // Teams owns no layer, so the registry cannot order it and it gets no group; Offline and
+  // Alerts are not registry concepts at all -- `DockDetailsId` is `PanelId | "offline" |
+  // "alerts"`, so both are sections `getLayersForPanel` cannot even be asked about. All three
+  // are still reachable, as the dock's layerless sections -- which is what stopped the rail's
+  // removal from orphaning Team/Offline, and the same reasoning Alerts rejoined under on
+  // 2026-10-26 (see src/components/map/AGENTS.md).
   it('keeps the layerless reports reachable as their own dock sections', () => {
-    expect(DOCK_PIVOT_SECTIONS).toEqual(['team', 'offline'])
+    expect(DOCK_PIVOT_SECTIONS).toEqual(['team', 'offline', 'alerts'])
     expect(getLayersForPanel('team')).toEqual([])
     expect(DOCK_LAYER_GROUPS.some((group) => group.key === 'team')).toBe(false)
   })

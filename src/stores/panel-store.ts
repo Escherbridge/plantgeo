@@ -43,8 +43,14 @@ export type PanelId =
  * Every member has a REPORT behind it -- `DETAILS_LABELS` and `DETAILS_BODIES` are both
  * exhaustive over this union, so a new member is a compile error in two files until it has a
  * title and a body. That is why "search" and "view" are not in here: see `DockSectionId`.
+ *
+ * "alerts" rejoined 2026-10-26, this time as a `DockDetailsId` like "offline" rather than a
+ * floating bell: `alertsRouter` is real CRUD over `environmentalAlerts`/`watchedLocations`, and
+ * `alert-dispatcher.ts` actually populates it (a fire/drought/streamflow check every 30 minutes),
+ * so the section's report is no longer only "No alerts". Its unread count is a per-row badge on
+ * `DetailsSection`, not a rail bell -- the rail is gone and stays gone.
  */
-export type DockDetailsId = PanelId | "offline";
+export type DockDetailsId = PanelId | "offline" | "alerts";
 
 /**
  * Anything the manager can expand and scroll to, which is a wider set than the reports.

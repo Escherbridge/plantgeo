@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
+import { useSession } from "next-auth/react";
 import { DetailsSection } from "@/components/map/layer-panel/DetailsSection";
 import {
   DETAILS_LABELS,
@@ -55,6 +56,33 @@ export function soilRasterUnavailableReasons({
           : "No live PMTiles release is published for this SoilGrids property.";
       return [[toggleId, reason]];
     })
+  );
+}
+
+/**
+ * The alerts pivot section's own count, beside its label whether or not the report under it is
+ * expanded -- same reasoning as a group's `n of m`, for a section that owns no layer rows to
+ * count instead. Mounted unconditionally by `DOCK_PIVOT_SECTIONS` below, so it reads
+ * `enabled: authenticated` itself rather than depending on the report being open; the collapsed
+ * row needs the number before anyone expands the section.
+ */
+function UnreadAlertsBadge() {
+  const { status } = useSession();
+  const authenticated = status === "authenticated";
+  const { data: unreadCount } = trpc.alerts.getUnreadCount.useQuery(undefined, {
+    enabled: authenticated,
+    refetchInterval: 60_000,
+  });
+
+  if (!authenticated || !unreadCount) return null;
+
+  return (
+    <span
+      data-testid="alerts-unread-badge"
+      className="ml-1 inline-flex min-w-[1.25rem] shrink-0 items-center justify-center rounded-full bg-emerald-500 px-1.5 text-[10px] font-semibold text-white"
+    >
+      {unreadCount > 99 ? "99+" : unreadCount}
+    </span>
   );
 }
 
@@ -262,6 +290,7 @@ export function DockSections() {
             id={id}
             label={DETAILS_LABELS[id]}
             icon={<DockSectionIcon sectionKey={id} className="h-3.5 w-3.5 shrink-0 opacity-70" />}
+            badge={id === "alerts" ? <UnreadAlertsBadge /> : undefined}
           />
         ))}
       </div>

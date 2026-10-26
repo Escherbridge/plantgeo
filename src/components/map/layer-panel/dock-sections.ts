@@ -54,6 +54,8 @@ export const DETAILS_LABELS: Record<DockDetailsId, string> = {
   // in `MapView` until 2026-08-14, when it joined the dock as the reviewer-mandated fix for
   // the second control surface the map had grown outside "One manager, no floating surfaces".
   offline: "Offline & Sync",
+  // Rejoined 2026-10-26 as a pivot section (see `DOCK_PIVOT_SECTIONS`), not a rail bell.
+  alerts: "Environmental Alerts",
 };
 
 /**
@@ -116,7 +118,7 @@ export const DOCK_LAYER_GROUPS: DockLayerGroup[] = buildLayerGroups();
  * bottom-right floating toggle used to open before it joined the dock. They sit below the
  * layer groups, where a reader who has finished with the layer list finds them.
  */
-export const DOCK_PIVOT_SECTIONS: DockDetailsId[] = ["team", "offline"];
+export const DOCK_PIVOT_SECTIONS: DockDetailsId[] = ["team", "offline", "alerts"];
 
 /**
  * Every layer the dock renders a row for.

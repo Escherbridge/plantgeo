@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, within } from "@testing-library/react";
 import { QueryClient } from "@tanstack/react-query";
 import { httpBatchLink } from "@trpc/client";
@@ -27,7 +27,18 @@ import { DEFAULT_SOIL_FIELD_DEPTHS } from "@/lib/environmental/soil-field";
  * them (see `src/components/map/layer-panel/LayerPanel.tsx`).
  */
 
-/** `DockSections`' `UnreadAlertBadge` reads through tRPC, so every render here needs a client -- the same wrapping `LayerPanel.test.tsx` uses for the same reason. */
+/**
+ * `DockSections`' pivot sections always mount, so `UnreadAlertsBadge` always calls
+ * `useSession()` -- which throws without a `<SessionProvider>` (same trap
+ * `viewport-proxied-query-sharing.test.tsx` and `LayerManager.test.tsx` mock around). Mocked
+ * unauthenticated rather than wrapped: this file is about the mobile tap-target floor, not
+ * about the badge's own query gating, which `AlertsDetails.test.tsx` covers.
+ */
+vi.mock("next-auth/react", () => ({
+  useSession: () => ({ data: null, status: "unauthenticated" }),
+}));
+
+/** `DockSections`' `UnreadAlertsBadge` reads through tRPC, so every render here needs a client -- the same wrapping `LayerPanel.test.tsx` uses for the same reason. */
 function renderWithTrpc(ui: ReactElement) {
   const trpcClient = trpc.createClient({
     links: [httpBatchLink({ url: "http://localhost/api/trpc", transformer: superjson })],

@@ -387,3 +387,37 @@ Rules when editing a body in here:
 
 Removed 2026-10-25: `UserPanel.tsx` -- zero callers and its password-change handler posted to a route (`/api/auth/password`) that does not exist (dead-code audit).
 Removed 2026-10-25: `LayerUpload.tsx` and the `layers.create` mutation it was the only caller of -- zero callers (dead-code audit).
+
+## Alerts panel (2026-10-26 rejoin)
+
+`AlertsDetails.tsx` is the map dock's Alerts section: the caller's own unread alerts (mark one or
+all read), the locations they watch (add the current map centre or a clicked point, same
+`useMapQueryPoint` arming `SoilDetails` uses — see `src/components/map/AGENTS.md` "Picking a
+point to query"), and per-location/per-type email + in-app subscription toggles. It is the
+front end for `alertsRouter`, which was already real CRUD with zero UI callers before this
+change — `src/lib/server/jobs/alert-dispatcher.ts` produces the rows every 30 minutes by checking
+fire proximity, drought escalation and critically low streamflow against each watched location,
+and also publishes to the SSE channel `alerts:${userId}` that `/api/stream/[layerId]` serves;
+this panel does not open that stream itself, since `getAlerts`/`getUnreadCount` already refetch on
+their own interval and a live feed is a reasonable follow-up rather than required for a first cut.
+
+**Every query is `protectedProcedure`, so a signed-out reader gets a sign-in prompt and issues no
+query at all** — `enabled: authenticated` from `useSession()`, the same contract
+`InterventionLikeButton` holds for `interventionSocial.getLikeState`. The unread count repeats as
+a small badge on the section's own collapsed row (`DetailsSection`'s re-added `badge` prop,
+wired only for `"alerts"` in `DockSections.tsx`'s `UnreadAlertsBadge`), because a reader should
+see there is something waiting before they expand the section, not only after.
+
+**`getSubscriptions` is a new, narrow read**, added alongside the panel rather than guessed
+around: `alertsRouter` had `addWatchedLocation`/`updateSubscription` (an upsert) but nothing to
+read a location's EXISTING subscription rows, so a toggle UI would otherwise either fabricate a
+"saved" state or ask the reader to re-decide settings they already set. It returns the caller's
+own `alertSubscriptions` rows for one `locationId`, gated the same way as every other procedure
+here.
+
+**Deferred, named rather than silently dropped**: deleting a watched location (the router has no
+`deleteWatchedLocation`); a live SSE subscription feeding the badge/list without a manual
+refetch; and reconciling the shared `queryPoint` between this section and `SoilDetails` if both
+are expanded at once — both arm `useMapQueryPoint(map, true)` independently, which is the
+existing multi-consumer design the hook was built for, but a click while both sections are open
+sets the one shared pin for both rather than asking which panel it was meant for.
