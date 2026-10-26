@@ -74,8 +74,9 @@ forcing with no independent skill — request `era5` for wind rather than paying
   `infra/cron-air-quality/railway.json` is staged but inert for the same reasons as the flood config.
 - **Ensemble API** — probabilistic members. The most direct route to genuine forecast uncertainty,
   which the platform currently has no upstream source for.
-  **Status (2026-08-06, slice D):** lane built — `ingest/open_meteo_ensemble.py` +
-  `execution/ensemble_forecast.py` fetch, bound, cache, parse and reduce ensemble members into the
+  **Status (2026-08-06, slice D; execution half deleted 2026-10-26 as test-only):** lane built —
+  `ingest/open_meteo_ensemble.py` + the since-deleted `execution/ensemble_forecast.py` fetched, bounded,
+  cached, parsed and reduced ensemble members into the
   exact `ForecastReceipt.quantile_levels` / `ForecastValue.quantile_values` shape (CLI:
   `agri-service forecast ensemble-status` / `agri-service forecast ensemble-fetch`). Output today is a local checksummed
   staged-receipt document, not warehouse rows. The quantile columns themselves need no migration,

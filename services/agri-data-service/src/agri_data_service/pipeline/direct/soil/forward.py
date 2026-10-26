@@ -6,7 +6,6 @@ import argparse
 import asyncio
 import json
 import math
-import random
 import sys
 import time
 import uuid
@@ -33,6 +32,7 @@ from agri_data_service.pipeline.direct import (
     TIME_BUDGET_EXHAUSTED,
     DirectWriterContract,
 )
+from agri_data_service.pipeline.direct.retry import retry_delay
 from agri_data_service.pipeline.direct.soil.adapter import (
     SOIL_DIRECT_KIND,
     DirectSoilFieldAdapter,
@@ -650,7 +650,9 @@ async def _publish_day_with_retries(  # noqa: PLR0913 - one lane-day coordinate 
                 f"lane-day contention for {product.stream} {day.isoformat()} exceeded "
                 f"{config.contention_timeout_seconds:g}s"
             )
-        delay = min(remaining, _retry_delay(1, config=config))
+        delay = min(
+            remaining, retry_delay(1, base_seconds=config.retry_base_seconds, max_seconds=config.retry_max_seconds)
+        )
         emit(
             {
                 "event": "soil_forward_contention",
@@ -773,7 +775,10 @@ async def _publish_locked_day(  # noqa: PLR0913, PLR0911 - one lane-day coordina
                 f"{product.stream} {day.isoformat()} did not publish a complete four-rung ladder after "
                 f"{attempt} attempt(s): outcome={outcome}, detail={detail}, verification={verification_detail}"
             )
-        delay = min(_retry_delay(attempt, config=config), max(0.0, deadline - time.monotonic()))
+        delay = min(
+            retry_delay(attempt, base_seconds=config.retry_base_seconds, max_seconds=config.retry_max_seconds),
+            max(0.0, deadline - time.monotonic()),
+        )
         if delay <= 0:
             return _stopped_day(
                 day,
@@ -947,12 +952,6 @@ def _mirrored_past_proof(product: SoilFieldProduct, *, day: date, mirrored_past:
         f"{product.stream} is published with values for {mirrored_past.isoformat()}, which is later than "
         f"{day.isoformat()}, so the ERA5-Land mirror has moved past this day and its all-null answer is settled"
     )
-
-
-def _retry_delay(attempt: int, *, config: SoilForwardConfig) -> float:
-    """Return a jittered, capped exponential wait so concurrent turns do not resynchronise."""
-    ceiling = min(config.retry_max_seconds, config.retry_base_seconds * (2 ** max(0, attempt - 1)))
-    return float(ceiling + random.uniform(0.0, min(1.0, ceiling / 4)))
 
 
 def _validate_config(config: SoilForwardConfig) -> None:

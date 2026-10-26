@@ -112,10 +112,11 @@ WATER_GAUGES_SCHEMA: Final = register_stream_schema(
     )
 )
 
-# Both latitude and longitude are NULLABLE (water_gauges.py:56-57); derive_tier drops null-coordinate
-# rows from derived tiers automatically (_derive_grid_tier drops them with .drop_nulls(coordinates)),
-# so coarse rungs carry only the subset of gauges that published a location. The base rung keeps them
-# all, matching this schema's deliberate "kept rather than filtered" decision (water_gauges.py:80-85).
+# Both latitude and longitude are NULLABLE (`WATER_GAUGES_SCHEMA`'s `latitude`/`longitude` fields);
+# derive_tier drops null-coordinate rows from derived tiers automatically (_derive_grid_tier drops them
+# with .drop_nulls(coordinates)), so coarse rungs carry only the subset of gauges that published a
+# location. The base rung keeps them all, matching this schema's deliberate "kept rather than
+# filtered" decision (`WATER_GAUGES_SCHEMA`'s `geometry_linked` field).
 WATER_GAUGES_TIER_DERIVATION: Final = register_tier_derivation(
     TierDerivation(
         stream=WATER_GAUGES_STREAM,

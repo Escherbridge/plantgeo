@@ -14,15 +14,22 @@ transaction that is rolled back, so the database is left exactly as it was found
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
+from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.execution.vegetation_ndvi_plane import (
     DATA_SOURCE_KEY,
+    ENTITY_TYPE,
     GRID_NAME,
+    METRIC_NAME,
+    METRIC_UNIT,
+    PARTIAL_SELECTION_REASON,
+    SERIES_KEY_PREFIX,
+    PartialGovernedReleaseError,
     UnregisteredPartitionCellsError,
     all_requested_cells_materialised,
     forward_release_set_logical_key,
@@ -34,6 +41,8 @@ SEEDED_CELL_KEYS = ("43.1250:-116.1250", "43.3750:-116.3750")
 # Deliberately absent from agri.spatial_cell: the re-keyed-upstream case the guard exists for.
 UNREGISTERED_CELL_KEYS = ("99.8750:-179.8750",)
 CELL_RESOLUTION_M = 27750
+# A transform version that is not ours, so a series under it squats our series key without joining.
+SQUATTER_TRANSFORM_VERSION = "retired-ndvi-transform-v0"
 
 _INSERT_FIXTURE_CELL = """
 INSERT INTO agri.spatial_cell (cell_key, grid_name, resolution_m, geometry, centroid, coverage_fraction)
@@ -205,6 +214,67 @@ async def test_unregistered_cells_are_refused_before_any_release_is_written(
 
                 assert caught.value.cell_keys == UNREGISTERED_CELL_KEYS
                 assert await _release_count(session) == 0
+            finally:
+                await transaction.rollback()
+    finally:
+        await engine.dispose()
+
+
+async def _squat_series_key(session: AsyncSession, *, cell_key: str) -> None:
+    """Hold one cell's `ndvi-daily:` series key under a foreign transform, as a stale series would."""
+    data_source = await session.execute(
+        text("SELECT id FROM agri.data_source WHERE key = :key"), {"key": DATA_SOURCE_KEY}
+    )
+    await session.execute(
+        text(load_query_sql("execution/insert_forecast_series.sql")),
+        {
+            "series_key_prefix": SERIES_KEY_PREFIX,
+            "source_variant_key": SQUATTER_TRANSFORM_VERSION,
+            "data_source_id": data_source.scalar_one(),
+            "transform_version": SQUATTER_TRANSFORM_VERSION,
+            "entity_type": ENTITY_TYPE,
+            "metric_name": METRIC_NAME,
+            "metric_unit": METRIC_UNIT,
+            "grid_name": GRID_NAME,
+            "prefixed_cell_keys": [f"{GRID_NAME}:{cell_key}"],
+            "metadata_json": "{}",
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_partial_landing_is_refused_and_a_healthy_repeat_still_succeeds(
+    agri_db_async_dsn: str,
+) -> None:
+    """One of two cells lands -> PartialGovernedReleaseError; an untouched day's repeat stays green."""
+    engine = create_async_engine(agri_db_async_dsn)
+    try:
+        async with AsyncSession(bind=engine, expire_on_commit=False) as session:
+            transaction = await session.begin()
+            try:
+                await _seed_lattice_cells(session)
+                earlier_day = OBSERVED_DAY - timedelta(days=1)
+                landed_cell, squatted_cell = SEEDED_CELL_KEYS
+                earlier_values = ((landed_cell, 0.31),)
+                await register_governed_partition_plane(session, observed_day=earlier_day, cell_values=earlier_values)
+                await _squat_series_key(session, cell_key=squatted_cell)
+
+                with pytest.raises(PartialGovernedReleaseError) as caught:
+                    await register_governed_partition_plane(
+                        session,
+                        observed_day=OBSERVED_DAY,
+                        cell_values=((landed_cell, 0.42), (squatted_cell, 0.43)),
+                    )
+                assert caught.value.reason_code == PARTIAL_SELECTION_REASON
+                assert caught.value.requested_cell_count == len(SEEDED_CELL_KEYS)
+                assert caught.value.materialised_cell_count == 1
+
+                repeated = await register_governed_partition_plane(
+                    session, observed_day=earlier_day, cell_values=earlier_values
+                )
+                # The insert writes nothing on a repeat; the gate reads the first pass's rows instead.
+                assert repeated.observation_count == 0
+                assert repeated.selection.series_count == len(earlier_values)
             finally:
                 await transaction.rollback()
     finally:

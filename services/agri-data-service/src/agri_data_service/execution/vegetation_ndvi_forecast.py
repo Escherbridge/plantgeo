@@ -15,8 +15,6 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 METHOD_NAME: Final = "ndvi_seasonal_anomaly_bootstrap_v1"
-PURPOSE_FORWARD_SIMULATION: Final = "forward_simulation"
-PURPOSE_HOLDOUT_EVALUATION: Final = "holdout_evaluation"
 GAP_POLICY: Final = "strict"
 DAYS_PER_SEASONAL_CYCLE: Final = 366
 SEASONAL_WINDOW_DAYS: Final = 15

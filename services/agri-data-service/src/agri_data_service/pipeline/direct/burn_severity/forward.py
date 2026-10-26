@@ -28,7 +28,6 @@ import argparse
 import asyncio
 import json
 import math
-import random
 import sys
 import time
 import uuid
@@ -62,6 +61,7 @@ from agri_data_service.pipeline.direct.burn_severity.products import (
     governed_release_days,
     release_days_by_ignition_year,
 )
+from agri_data_service.pipeline.direct.retry import retry_delay
 from agri_data_service.pipeline.parquet.availability_extension import AvailabilityExtensionTally
 from agri_data_service.pipeline.parquet.availability_index import BotoAvailabilityStorage
 from agri_data_service.pipeline.parquet.gap_fill import (
@@ -347,7 +347,7 @@ async def _publish_release_day_with_retries(  # noqa: PLR0913 - one caller-suppl
                 f"lane-day contention for {day} exceeded {config.contention_timeout_seconds:g}s"
             )
         delay = min(
-            remaining, _retry_delay(1, base_seconds=config.retry_base_seconds, max_seconds=config.retry_max_seconds)
+            remaining, retry_delay(1, base_seconds=config.retry_base_seconds, max_seconds=config.retry_max_seconds)
         )
         emit(
             {
@@ -456,9 +456,7 @@ async def _publish_locked_release_day_with_retries(  # noqa: PLR0913
                 f"burn-severity {day} did not publish a complete four-tier ladder after {write_attempt} "
                 f"attempt(s): outcome={outcome}, detail={detail}{suffix}"
             )
-        delay = _retry_delay(
-            write_attempt, base_seconds=config.retry_base_seconds, max_seconds=config.retry_max_seconds
-        )
+        delay = retry_delay(write_attempt, base_seconds=config.retry_base_seconds, max_seconds=config.retry_max_seconds)
         emit(
             {
                 "event": "burn_severity_forward_r2_retry",
@@ -625,7 +623,7 @@ async def _retry_async[T](
             last_error = error
             if attempt >= attempts:
                 break
-            delay = _retry_delay(attempt, base_seconds=base_seconds, max_seconds=max_seconds)
+            delay = retry_delay(attempt, base_seconds=base_seconds, max_seconds=max_seconds)
             emit(
                 {
                     "event": "burn_severity_forward_retry",
@@ -638,11 +636,6 @@ async def _retry_async[T](
             await asyncio.sleep(delay)
     assert last_error is not None  # attempts >= 1 is enforced by `_validate_config`
     raise DirectBurnSeverityError(f"{label} failed after {attempts} attempts") from last_error
-
-
-def _retry_delay(attempt: int, *, base_seconds: float, max_seconds: float) -> float:
-    ceiling = min(max_seconds, base_seconds * (2 ** max(0, attempt - 1)))
-    return float(ceiling + random.uniform(0.0, min(1.0, ceiling / 4)))
 
 
 def _validate_config(config: BurnSeverityForwardConfig) -> None:

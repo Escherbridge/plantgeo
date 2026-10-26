@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Final, Protocol
 
-from agri_data_service.execution.contracts import canonical_json_bytes
+from agri_data_service.execution.contracts import canonical_json_bytes, require_aware_utc
 from agri_data_service.ingest.http import UpstreamError, upstream_client
 from agri_data_service.ingest.open_meteo import OpenMeteoRateLimitError
 
@@ -100,13 +100,6 @@ class ChunkReceipt(Protocol):
     """The one field the shared checkpoint merge needs from a lane's own receipt model."""
 
     chunk_key: str
-
-
-def require_aware_utc(value: datetime, field_name: str) -> datetime:
-    """Refuse a naive timestamp and normalize an aware one to UTC."""
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise ValueError(f"{field_name} must include a timezone")
-    return value.astimezone(UTC)
 
 
 def date_range(start: date, end: date) -> Iterator[date]:

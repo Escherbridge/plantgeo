@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
@@ -197,14 +196,6 @@ def checkpoint_path(root: Path, plan: SourceIngestionPlan, payload_checksum: str
     """Derive a collision-resistant local checkpoint path from immutable release identity."""
     identity = f"{source_ingestion_plan_checksum(plan)}:{payload_checksum}".encode()
     return root / "source-ingestion" / f"{hashlib.sha256(identity).hexdigest()}.json"
-
-
-def write_checkpoint(path: Path, checkpoint: SourceIngestionCheckpoint) -> None:
-    """Atomically persist a resumable state transition on the operator machine."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
-    temporary.write_bytes(canonical_json_bytes(checkpoint.model_dump(mode="json")))
-    os.replace(temporary, path)
 
 
 def load_checkpoint(path: Path) -> SourceIngestionCheckpoint:

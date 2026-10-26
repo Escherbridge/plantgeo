@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import UTC, datetime, time, timedelta
+from datetime import datetime, time, timedelta
 from typing import Literal, Self
 
 from pydantic import Field, field_validator, model_validator
 
-from agri_data_service.execution.contracts import SHA256_PATTERN, ContractModel, canonical_json_bytes
+from agri_data_service.execution.contracts import (
+    SHA256_PATTERN,
+    ContractModel,
+    canonical_json_bytes,
+    require_aware_utc,
+)
 
 HOT_PROJECTION_SCHEMA_VERSION: Literal[1] = 1
 HOT_PROJECTION_FORMAT: Literal["plantgeo-railway-hot-projection-v1"] = "plantgeo-railway-hot-projection-v1"
@@ -23,14 +28,8 @@ SOURCE_KEY_PATTERN = r"^[a-z0-9][a-z0-9-]{1,98}$"
 RECEIPT_KEY_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$"
 
 
-def _require_aware_utc(value: datetime, field_name: str) -> datetime:
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise ValueError(f"{field_name} must include a timezone")
-    return value.astimezone(UTC)
-
-
 def _require_utc_midnight(value: datetime, field_name: str) -> datetime:
-    normalized = _require_aware_utc(value, field_name)
+    normalized = require_aware_utc(value, field_name)
     if normalized.timetz().replace(tzinfo=None) != time.min:
         raise ValueError(f"{field_name} must be an exact UTC day boundary")
     return normalized
@@ -99,7 +98,7 @@ class HotProjectionForecastReceipt(ContractModel):
     @field_validator("issued_at")
     @classmethod
     def require_aware_issued_at(cls, value: datetime) -> datetime:
-        return _require_aware_utc(value, "issued_at")
+        return require_aware_utc(value, "issued_at")
 
     @field_validator("valid_from", "valid_until")
     @classmethod

@@ -16,11 +16,9 @@ from agri_data_service.execution.promotion import (
     MAX_TOTAL_INLINE_ARTIFACT_BYTES,
     ArtifactRecord,
     DataSourceRecord,
-    ExistingReleaseSet,
     PromotionArchive,
     PromotionError,
     PromotionSourceMetadata,
-    PromotionTargetPreflight,
     PromotionTargetSnapshot,
     ReleaseSetItemRecord,
     ReleaseSetRecord,
@@ -45,21 +43,6 @@ def _source_metadata() -> PromotionSourceMetadata:
         extension_versions={
             "postgis": "3.4.0",
             "vector": "0.7.4",
-            "pgcrypto": "1.3",
-        },
-    )
-
-
-def _preflight() -> PromotionTargetPreflight:
-    return PromotionTargetPreflight(
-        target_label="plantgeo-spatiotemporal-db",
-        target_service_id="1e166530-9c8a-4d4a-b685-a70c801fc449",
-        private_control_plane=True,
-        postgres_major=18,
-        alembic_revision="20260719_0001",
-        extension_versions={
-            "postgis": "3.5.0",
-            "vector": "0.8.0",
             "pgcrypto": "1.3",
         },
     )
@@ -163,28 +146,6 @@ def _archive() -> PromotionArchive:
         artifacts=[artifact],
         release_sets=[release_set],
         release_set_items=[item],
-    )
-
-
-def _exact_target(archive: PromotionArchive) -> PromotionTargetSnapshot:
-    release_set = archive.release_sets[0]
-    return PromotionTargetSnapshot(
-        data_sources=archive.data_sources,
-        source_releases=archive.source_releases,
-        artifacts=archive.artifacts,
-        release_sets=[
-            ExistingReleaseSet(
-                id=release_set.id,
-                logical_key=release_set.logical_key,
-                as_of_time=release_set.as_of_time,
-                manifest_checksum=release_set.manifest_checksum,
-                state="validated",
-                description=release_set.description,
-                validated_at=release_set.validated_at,
-                created_at=release_set.created_at,
-            )
-        ],
-        release_set_items=archive.release_set_items,
     )
 
 

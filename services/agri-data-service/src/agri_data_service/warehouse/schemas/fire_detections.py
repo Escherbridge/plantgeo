@@ -2,12 +2,13 @@
 
 Layer L1: may import `foundation`; may NOT import method, pipeline, planes, or interface.
 
-SOURCE CONFIRMATION: the sole producer is `ingest/firms.py`, both access paths (`nasa-firms` current
-window and `nasa-firms-archive` past windows -- `ingest/AGENTS.md` "firms.py", `docs/lanes/
-fire-detections.md` section 1) writing one shared identity contract into `geo.features` under layer
-`fire-detections` (`FIRMS_LAYER.default`, `ingest/firms.py:63-68`) through `ingest/writer.py::
-ingest_features` -- never a dedicated `geo.fire_detections` table, which held zero rows and zero
-producer writes and was dropped (`drizzle/0021_drop_fire_detections.sql`).
+SOURCE CONFIRMATION: the producer is the direct forward writer `pipeline/direct/fire_detections/`
+(the shipped TOML's `executor = "legacy"`), with the config-lane strategy
+`pipeline/lanes/fire_detections/nasa_firms.py::STRATEGY` authored beside it for the cut-over. Both
+parse NASA FIRMS through `ingest/firms.py` (`parse_firms_csv`, `build_fire_detection_write`) and
+write this stream's Parquet partitions. The `geo.features` path is no longer a producer, and the
+dedicated `geo.fire_detections` table held zero rows and was dropped
+(`drizzle/0021_drop_fire_detections.sql`).
 
 GRAIN DECISION -- why this is a cell-day aggregate, not the raw per-detection row:
 

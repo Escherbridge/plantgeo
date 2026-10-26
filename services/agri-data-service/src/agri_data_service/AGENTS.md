@@ -29,7 +29,7 @@ What this leaves behind is deliberate: **this service is observed-only.** It rea
 `LaneRegistration.forecast_module` stem therefore names a module in the ML service, not a file
 under this tree. `execution/vegetation_ndvi_forecast.py` is NOT the module that left: it is a
 separate retained copy on the observed NDVI release path that `execution/vegetation_ndvi_plane.py`
-and `execution/vegetation_partition_promotion.py` import, and the four `insert_forecast_*` /
-`reconcile_forecast_iteration_actuals` SQL files it loads stayed with it. `models/forecasting.py`,
+imports for its NDVI bounds; the iteration-writing SQL went with the dead holdout chain on 2026-10-26
+(execution/AGENTS.md §The ML lane left this directory). `models/forecasting.py`,
 `models/strategy_selection.py` and `scripts/readiness.py`'s `agri.strategy_selection_receipt` probe
 also stayed; they belong to a separate `models/` cleanup, not to this cut.
