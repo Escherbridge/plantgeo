@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure } from "@/lib/server/trpc/init";
 import {
   environmentalAlerts,
@@ -111,7 +112,7 @@ export const alertsRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const userId = (ctx.session.user as { id?: string } | undefined)?.id;
-      if (!userId) throw new Error("User ID required");
+      if (!userId) throw new TRPCError({ code: "UNAUTHORIZED", message: "User ID required" });
 
       const [inserted] = await ctx.db
         .insert(watchedLocations)
@@ -181,7 +182,7 @@ export const alertsRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const userId = (ctx.session.user as { id?: string } | undefined)?.id;
-      if (!userId) throw new Error("User ID required");
+      if (!userId) throw new TRPCError({ code: "UNAUTHORIZED", message: "User ID required" });
 
       // Verify the location belongs to the user
       const [location] = await ctx.db
@@ -195,7 +196,7 @@ export const alertsRouter = router({
         )
         .limit(1);
 
-      if (!location) throw new Error("Watched location not found");
+      if (!location) throw new TRPCError({ code: "NOT_FOUND", message: "Watched location not found" });
 
       // Upsert: check for existing subscription
       const [existing] = await ctx.db

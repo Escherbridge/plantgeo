@@ -168,13 +168,13 @@ describe("alerts.addWatchedLocation", () => {
     expect(calls.some((call) => call.method === "values")).toBe(false);
   });
 
-  it("surfaces a malformed session (no user id) as a server error rather than a silent no-op", async () => {
+  it("refuses a malformed session (no user id) as UNAUTHORIZED rather than a silent no-op", async () => {
     const calls: BuilderCall[] = [];
     const caller = callerWith([], sessionFor(undefined), calls);
 
     await expect(
       caller.addWatchedLocation({ name: "Boise foothills", lat: 43.6, lon: -116.2 })
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     expect(calls.some((call) => call.method === "values")).toBe(false);
   });
 });
