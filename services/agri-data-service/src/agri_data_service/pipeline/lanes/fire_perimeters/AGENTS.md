@@ -89,6 +89,127 @@ but exercised in this slice only through `tests/lanes/fire_perimeters/` unit cov
 population is untested here (Wave O rules: no test runs) and should be a named item in the Phase 4
 per-lane adversarial review and the Phase 6 QA round before G6.
 
+## Rationale relocated from `wfigs.py`'s module docstring
+
+The module docstring itself now carries only a one-line summary and a pointer here; the sections
+below are its full original text, moved verbatim so the code stays terse per this repo's
+directory-doc convention. (The H1/H2/H3 residuals and the two deliberate deviations the docstring
+covered are ALSO already stated above in "Why this strategy carries no watermark ladder" and
+"Known residuals (H1/H2/H3)"; this section restates them in the docstring's own original words for
+completeness, plus the two pieces those sections above do not cover: the "snapshot never
+partitions by day" note and the legacy-casting-rules note below, UPDATED to reflect the
+`_named_day` parity fix landed alongside this move.)
+
+### Strategy key and DARK status
+
+Strategy key `fire_perimeters.wfigs` (spec S14, §7). DARK: the shipped lane TOML still carries
+`executor = "legacy"` (`lanes/fire-perimeters-direct-forward.toml`), so
+`pipeline/direct/fire_perimeters/forward.py` is what the executor actually drives today, hourly at
+`:10` (`pipeline/direct/AGENTS.md:1728`). This module is authored and reviewed ahead of the G6
+cut-over (plan Phase 5); nothing here runs in production until that flip.
+
+### Two deliberate deviations (left for the per-lane adversarial review and Phase 6 QA to weigh before G6)
+
+1. **`fetch` does not send through the `client: ProviderClient` it is handed.** The adaptive,
+   byte-bounded, oversized-record-skipping page walk (`ingest.wfigs.fetch_fire_perimeters_walk`) does
+   not know its own page count ahead of `plan_requests` time, which is the model every other unit in
+   this codebase assumes ("A request unit is the retry grain... one failed unit never discards its
+   siblings", `pipeline/runner/contract.py`). `lanes/AGENTS.md` "Extracted source leaves are NOT
+   strategies" names this exact tension for the modules `p4-extract` already moved and states "the
+   s-* slices decide per lane what migrates onto the provider client" -- this slice's decision is NOT
+   YET, for the same reason those extracted leaves stayed on `upstream_client`. The whole walk
+   (`ingest.http.upstream_client` + `ingest.wfigs.fetch_fire_perimeters_walk`) runs inside `fetch` on
+   its OWN already-adequate retry ladder (`ingest.wfigs.WFIGS_RETRY`, widened 2026-08-10 after the
+   production throttle incident); layering the runner's per-unit ladder on top would double the
+   backoff rather than improve it. `probe_edge`, by contrast, IS one send and threads the real
+   `client` cleanly.
+2. **Geometry repair is restated, not imported, from `pipeline/direct/fire_perimeters/support.py`.**
+   `pipeline/lanes/fire_perimeters/support.py` carries the identical `ST_MakeValid` /
+   `ST_CollectionExtract` chain `evacuation_zones/support.py` already restates (see that module's own
+   docstring for why: a strategy may import its own `pipeline/lanes/<layer>/` package and never
+   `pipeline/direct/**`, which Phase 7 deletes whole).
+
+### A snapshot never partitions by day
+
+`plan_requests` ignores the day(s) the runner asks about beyond passing them through on the one
+unit: a `static_lookup`'s only question is "what does `_Current` look like right now", and
+`probe_edge` already decided a newer version is owed before `plan_requests` is ever called
+(`pipeline/runner/AGENTS.md`'s probe gate). `rows` stamps every row with whichever day the runner
+resolved the turn's `day` to (the probed watermark day), exactly as
+`pipeline/direct/fire_perimeters/rows.py::fire_perimeters_table` stamps `snapshot_day` from the
+watermark rather than from any row's own timestamp.
+
+### The legacy-casting-rules divergence (L1) — NARROWED by the `_named_day` parity fix
+
+An earlier revision of this docstring described TWO small, deliberate divergences from legacy's
+casting rules, both argued unreachable rather than fixed. That is now only ONE: this module has no
+casting helpers that raise on an unexpected type, where legacy's `_optional_text`/`_optional_float`
+do. This divergence is left as-is because it cannot be exercised: legacy's helpers read
+PostgreSQL's untyped-at-rest jsonb document, where a wrong-shaped value is a real possibility worth
+stopping for; this module's `perimeter` dicts come from `ingest.wfigs.parse_perimeter_collection`,
+which already runs every field through
+`ingest.arcgis.optional_text`/`optional_number`/`epoch_milliseconds_to_iso` -- none of which can
+pass a wrong type through. Restating legacy's guards here would be dead code defending against a
+shape this module's own upstream producer cannot produce; if that producer's contract ever widens,
+the right fix is at that producer, not a second guard here.
+
+The SECOND divergence this docstring used to describe -- `_named_day` continuing to the next key
+on an empty string, where legacy's `publisher_named_day` STOPS the chain on any string, empty
+included -- is CLOSED, not merely narrowed: `_named_day` now stops on any `str` value exactly as
+legacy does, and additionally enforces legacy's strict `_ISO_DAY_PATTERN`
+(`\d{4}-\d{2}-\d{2}` fullmatch) before calling `date.fromisoformat`, which otherwise also accepts
+ISO week dates (`2026-W01-1`) the legacy SQL regex rejects. `tests/lanes/fire_perimeters/
+test_named_day_parity.py` table-drives both functions over the same inputs so a future edit
+reintroducing either divergence fails loudly here rather than at a G6 compare.
+
+### The repair-audit keys (`GEOMETRY_REPAIRED_KEY`/`GEOMETRY_REPAIRED_AREA_CHANGE_KEY`)
+
+Restored (L3, re-read after ring review): the trigger's `geometry_repaired: true` stamp, named
+identically to `pipeline/direct/fire_perimeters/rows.py:71-73`'s `GEOMETRY_REPAIRED_KEY` /
+`GEOMETRY_REPAIRED_AREA_CHANGE_KEY`. Carried on `FirePerimeterSnapshot.rows` so the fact is
+computed and inspectable (`FirePerimeterSnapshot.repairs`, tested directly), but NOT a schema
+column -- `rows()` projects onto `FIRE_PERIMETERS_SCHEMA.column_names` before building the Arrow
+table, exactly as the legacy `fire_perimeters_table` does, for the identical reason: the L1 schema
+is frozen. Unlike the legacy writer's terminal report and
+`fire_perimeters_forward_geometry_repaired` stderr event, nothing in the generic runner's S5
+report surfaces this per-incident detail today -- "Known residuals (H1/H2/H3)" and "What this
+slice did not port" above name that gap rather than inventing a misleading home for it (e.g.
+`Written.dropped_rows`, which means ROWS NEVER WRITTEN, not rows written-but-repaired).
+
+### Why `_OBSERVATION_DAY_KEYS` is narrower than legacy's `OBSERVATION_DAY_KEYS`
+
+The observation-day COALESCE is narrowed to the two keys `ingest.wfigs.parse_perimeter_collection`
+ever actually produces. The legacy `rows.py::publisher_named_day` restates all four of
+`geo.feature_observation_day`'s keys because it reads the stored PostgreSQL jsonb document, which
+could structurally grow `observedAt`/`updatedAt`; this module's input is this package's OWN,
+narrower dict shape (`ingest.wfigs.parse_perimeter_collection`'s output), which never carries
+those two keys at all, so restating them here would assert a possibility that cannot arise.
+
+### `probe_edge`'s classification table (ONE small GET, never the `_Current` walk)
+
+`probe_edge` reads `editingInfo.lastEditDate` off the cheap layer resource; this is the probe-time
+saving `plan_requests`/`fetch` do not need to re-earn. The answers the function returns directly:
+
+- a non-JSON body, a 200 body carrying an ArcGIS error that does NOT read as a busy throttle, a
+  non-object body, or an `editingInfo.lastEditDate` that is missing, null or not a finite
+  epoch-millisecond number -> `invalid`;
+- a 200 body carrying an ArcGIS error whose message matches
+  `ingest.upstream_retry.BUSY_MESSAGE_PATTERN` ("too many requests|busy|try again") -> `deferred`:
+  ArcGIS reports throttling INSIDE an HTTP 200 body (`lanes/_providers/nifc-wfigs.toml`'s own "busy
+  HTTP-200 `error` body" note -- the exact production incident `BUSY_MESSAGE_PATTERN` exists for),
+  so this can never raise `SourceThrottledError` and must be classified here instead of folded into
+  `invalid`;
+- editor tracking disabled (`lastEditDate == 0`, `_NO_TRACKED_EDITS`) -> `blind`: answered, but
+  names no edit at all;
+- a readable instant -> `ok`, with that instant's UTC date as the one valued day.
+
+A transport failure or an HTTP 429 (`SourceUnavailableError` / `SourceThrottledError`) is NOT
+caught here (M1, re-read after ring review): it PROPAGATES to
+`pipeline/runner/turn.py::_spend_probe`, which owns the Retry-After cooldown
+(`exceeds_ladder`/`hold_stated_wait`) for every probing strategy. Catching either exception in this
+function would quietly bypass that ladder and answer `unavailable`/`deferred` without ever
+persisting a stated wait.
+
 **The per-incident repair detail (L3, restored after ring review) is computed but not reported.**
 `FirePerimeterSnapshot.rows` carries `GEOMETRY_REPAIRED_KEY`/`GEOMETRY_REPAIRED_AREA_CHANGE_KEY` per
 row again (`wfigs.py`, matching `pipeline/direct/fire_perimeters/rows.py:319-320`'s legacy keys),
