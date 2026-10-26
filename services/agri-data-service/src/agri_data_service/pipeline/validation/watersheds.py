@@ -14,9 +14,8 @@ Nothing invokes this automatically today (docs/lanes/watersheds.md section 6); i
 reconciliation pass, not a registered cron.
 
 UNWIRED: no production caller; kept as a candidate ops check (see `pipeline/validation/AGENTS.md`).
-`watersheds-direct-forward` ships `executor = "legacy"`, so the config runner's G6 `--compare` does
-not run against it either -- `compare_against_source`'s live USGS WBD diff is not duplicated by
-anything else that runs today.
+Nothing scheduled runs a live-source check on `watersheds-direct-forward` (legacy); an on-demand
+`--compare` can, but this module's per-basin vintage diff is finer-grained.
 
 THE TIER IS PINNED, NOT A PARAMETER: `WRITTEN_ZOOM_TIER`, the rung the exporter lands on. Both
 checks depend on it. `check_tohuc_integrity` walks `huc12 -> tohuc` edges within one release, and a

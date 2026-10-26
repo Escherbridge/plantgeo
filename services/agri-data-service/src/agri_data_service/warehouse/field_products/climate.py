@@ -92,7 +92,7 @@ SHORTWAVE_RADIATION_SNAPSHOT_LAST_DAY: Final = date(2026, 5, 31)
 #: snapshot's last day. Shortwave radiation derives its own from its own last built day.
 CLIMATE_DIRECT_WRITER_START_DAY: Final = date(2026, 8, 7)
 
-#: The measured NASA POWER meteorology publication lag, `execution/coverage_census.py`
+#: The measured NASA POWER meteorology publication lag, `execution/coverage_census.py` (deleted 2026-10-26; `git show 2f8600a8^:`)
 #: PUBLICATION_LAG_DAYS["nasa-power-daily"] = 5. Applies to every MERRA-2-derived parameter.
 CLIMATE_METEOROLOGY_PUBLICATION_LAG_DAYS: Final = 5
 

@@ -12,20 +12,21 @@ settles each owed day against the live source as either written or a governed ab
 `--compare` rebuilds a day from upstream and diffs it against the bucket
 (`pipeline/runner/turn.py::_Turn._compare`, `reader.canonical_digest`). **`water-gauges-daily` is the
 only lane below on `executor = "config"`**; `drought-direct-forward`, `evacuation-zones-direct-forward`,
-`fire-detections` (no config TOML), `sensors-direct-forward`, `weather-observations` and
-`watersheds-direct-forward` all stay `executor = "legacy"`, so their G6 `--compare` (where one runs at
-all) only diffs config output against the legacy adapter's own output -- never against the live
-upstream source the deleted module checked. For those lanes "no lane lost an active check" means
-exactly that and no more: it is not a claim that an equivalent live-source check now exists.
+`fire-detections-direct-forward`, `sensors-direct-forward`, `weather-observations-direct-forward` and
+`watersheds-direct-forward` stay `executor = "legacy"`. `--compare` is still allowed on them
+(`turn.py` admits a legacy lane for `--compare` only): it fetches the live upstream through the
+lane's config strategy and diffs that rebuild against the bucket the legacy adapter wrote. So a
+live-source check exists ON DEMAND for every lane here -- but nothing schedules it. "No lane lost an
+active check" means exactly that: none of the removed modules ever ran in production.
 
 | Module | Verdict | Evidence |
 |---|---|---|
 | `soil_survey.py` | **wired**, keep | `pipeline/direct/soil_survey/__main__.py` `validate` verb |
 | `vegetation.py` | **unwired; candidate ops check**, kept | `reconcile_against_source` is pure and tested. Its duplicate-source-release audit against `agri.forecast_observation` has no runner equivalent, because vegetation is not a config lane. Wiring it would be a new job and needs the owner's approval. |
-| `watersheds.py` | **unwired; candidate ops check**, kept | `compare_against_source` is pure and tested. `watersheds-direct-forward` is `executor = "legacy"`, so no `--compare` runs against it either; the live USGS WBD diff this module performs has no runner equivalent. Wiring it would be a new job and needs the owner's approval. |
-| `drought.py` | UNWIRED, REMOVED | No production caller since creation in `abf777ff`; no lane lost an active check. `drought-direct-forward` stays `executor = "legacy"`, so no `--compare` diffs it against the live USDM feed either. |
+| `watersheds.py` | **unwired; candidate ops check**, kept | `compare_against_source` is pure and tested. `watersheds-direct-forward` is `executor = "legacy"`; an on-demand `--compare` can diff a live rebuild against the bucket, but nothing schedules one, and this module's per-basin vintage diff is finer-grained. Wiring it would be a new job and needs the owner's approval. |
+| `drought.py` | UNWIRED, REMOVED | No production caller since creation in `abf777ff`; no lane lost an active check. An on-demand `--compare` on `drought-direct-forward` (legacy) rebuilds from the live USDM feed; nothing schedules it. |
 | `evacuation_zones.py` | UNWIRED, REMOVED | No production caller since creation in `abf777ff`; no lane lost an active check. `evacuation-zones-direct-forward` stays `executor = "legacy"`. |
-| `sensors.py` | UNWIRED, REMOVED | No callers and no tests; no production caller since creation in `abf777ff`. `sensors-direct-forward` stays `executor = "legacy"`, so no `--compare` diffs it against the live NWS feed either. |
+| `sensors.py` | UNWIRED, REMOVED | No callers and no tests; no production caller since creation in `abf777ff`. An on-demand `--compare` on `sensors-direct-forward` (legacy) rebuilds from the live NWS feed; nothing schedules it. |
 | `fire_detections.py` | UNWIRED, REMOVED | No callers and no tests; no production caller since creation in `abf777ff`; no lane lost an active check. |
 | `signal.py` | superseded, deleted | It reconciled a Postgres-to-Parquet export (`pipeline/lanes/signal.py`) that was deleted in the 2026-09-12 greenfield cutover |
 | `water_gauges.py` | superseded, deleted | Its only "caller" was a parity assertion in a test. `water-gauges-daily` is `executor = "config"`, so the NWIS reconciliation genuinely is replaced by `--compare` against the live source, and the named-day rule now lives in `ingest/usgs_water_data.py::publisher_named_day` |
