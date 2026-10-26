@@ -16,11 +16,11 @@ afterEach(() => {
 });
 
 describe("InterventionVisualizationModeControl", () => {
-  it("renders three mutually exclusive options with 'off' checked by default", () => {
+  it("renders two mutually exclusive options with 'off' checked by default", () => {
     render(<InterventionVisualizationModeControl />);
 
     const radios = screen.getAllByRole("radio");
-    expect(radios).toHaveLength(3);
+    expect(radios).toHaveLength(2);
     expect(screen.getByTestId("intervention-visualization-mode-off").getAttribute("aria-checked")).toBe("true");
     expect(screen.getByTestId("intervention-visualization-mode-heatmap").getAttribute("aria-checked")).toBe("false");
   });
@@ -35,14 +35,13 @@ describe("InterventionVisualizationModeControl", () => {
     expect(screen.getByTestId("intervention-visualization-mode-off").getAttribute("aria-checked")).toBe("false");
   });
 
-  it("switching between two non-off modes only ever leaves one option checked", () => {
+  it("returning to off unchecks the heatmap so the map stops drawing it", () => {
     render(<InterventionVisualizationModeControl />);
 
     fireEvent.click(screen.getByTestId("intervention-visualization-mode-heatmap"));
-    fireEvent.click(screen.getByTestId("intervention-visualization-mode-points"));
+    fireEvent.click(screen.getByTestId("intervention-visualization-mode-off"));
 
-    expect(useInterventionVisualizationStore.getState().mode).toBe("points");
+    expect(useInterventionVisualizationStore.getState().mode).toBe("off");
     expect(screen.getByTestId("intervention-visualization-mode-heatmap").getAttribute("aria-checked")).toBe("false");
-    expect(screen.getByTestId("intervention-visualization-mode-points").getAttribute("aria-checked")).toBe("true");
   });
 });

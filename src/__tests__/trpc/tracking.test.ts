@@ -140,4 +140,15 @@ describe("tracking: geofence lifecycle", () => {
     const deleted = await caller.deleteGeofence({ id: GEOFENCE_ID });
     expect(deleted).toEqual({ success: true });
   });
+
+  it("refuses a geofence whose ring is not closed before any write", async () => {
+    const caller = adminCaller([]);
+
+    await expect(
+      caller.createGeofence({
+        name: "Open ring",
+        geometry: { type: "Polygon", coordinates: [[[-105, 39], [-104, 39], [-104, 40], [-105, 40]]] },
+      })
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
 });

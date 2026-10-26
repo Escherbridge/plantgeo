@@ -3,7 +3,7 @@
 import { useCallback, useEffect } from "react";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { useLayerToggle } from "@/lib/map/layer-toggle-context";
-import { MARTIN_SOURCE_BY_LAYER_TOGGLE, INTERVENTION_STATUS_COLOR } from "@/lib/map/layers";
+import { MARTIN_SOURCE_BY_LAYER_TOGGLE } from "@/lib/map/layers";
 import {
   useInterventionVisualizationStore,
   type InterventionVisualizationMode,
@@ -14,7 +14,6 @@ const INTERVENTIONS_SOURCE_ID = MARTIN_SOURCE_BY_LAYER_TOGGLE.interventions ?? "
 const INTERVENTIONS_SOURCE_LAYER = "interventions";
 
 const HEATMAP_LAYER_ID = "interventions-visualization-heatmap";
-const POINTS_LAYER_ID = "interventions-visualization-points";
 
 interface InterventionVisualizationLayerProps {
   map: MapLibreMap | null;
@@ -28,7 +27,7 @@ function visibilityFor(
 }
 
 /**
- * Opt-in heatmap/points renderings over the shared `intervention_tiles` Martin source, drawn only
+ * Opt-in point-intervention heatmap over the shared `intervention_tiles` Martin source, drawn only
  * while the `interventions` toggle is on. See src/components/map/AGENTS.md "Interventions
  * visualization modes".
  */
@@ -45,6 +44,8 @@ export function InterventionVisualizationLayer({ map }: InterventionVisualizatio
         source: INTERVENTIONS_SOURCE_ID,
         "source-layer": INTERVENTIONS_SOURCE_LAYER,
         minzoom: 6,
+        // Point interventions only: a polygon would contribute one point per vertex.
+        filter: ["==", ["geometry-type"], "Point"],
         layout: { visibility: "none" },
         paint: {
           "heatmap-weight": 1,
@@ -64,28 +65,12 @@ export function InterventionVisualizationLayer({ map }: InterventionVisualizatio
         },
       });
     }
-    if (!m.getLayer(POINTS_LAYER_ID)) {
-      m.addLayer({
-        id: POINTS_LAYER_ID,
-        type: "circle",
-        source: INTERVENTIONS_SOURCE_ID,
-        "source-layer": INTERVENTIONS_SOURCE_LAYER,
-        minzoom: 6,
-        layout: { visibility: "none" },
-        paint: {
-          "circle-radius": ["interpolate", ["linear"], ["zoom"], 6, 3, 14, 9],
-          "circle-color": INTERVENTION_STATUS_COLOR,
-          "circle-stroke-width": 1,
-          "circle-stroke-color": "#ffffff",
-        },
-      });
-    }
   }, []);
 
   // Never removes the shared Martin source: the base interventions layers read it too.
   const removeAllLayers = useCallback((m: MapLibreMap) => {
     if (!m.getStyle()) return;
-    for (const id of [HEATMAP_LAYER_ID, POINTS_LAYER_ID]) {
+    for (const id of [HEATMAP_LAYER_ID]) {
       if (m.getLayer(id)) m.removeLayer(id);
     }
   }, []);
@@ -106,13 +91,8 @@ export function InterventionVisualizationLayer({ map }: InterventionVisualizatio
   useEffect(() => {
     if (!map) return;
     const apply = () => {
-      for (const [id, target] of [
-        [HEATMAP_LAYER_ID, "heatmap"],
-        [POINTS_LAYER_ID, "points"],
-      ] as const) {
-        if (map.getLayer(id)) {
-          map.setLayoutProperty(id, "visibility", shouldRender ? visibilityFor(mode, target) : "none");
-        }
+      if (map.getLayer(HEATMAP_LAYER_ID)) {
+        map.setLayoutProperty(HEATMAP_LAYER_ID, "visibility", shouldRender ? visibilityFor(mode, "heatmap") : "none");
       }
     };
     apply();

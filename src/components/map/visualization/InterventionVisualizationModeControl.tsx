@@ -11,10 +11,9 @@ import {
 const MODE_OPTIONS: ReadonlyArray<{ value: InterventionVisualizationMode; label: string }> = [
   { value: "off", label: "Off" },
   { value: "heatmap", label: "Heatmap" },
-  { value: "points", label: "Points" },
 ];
 
-/** Off/heatmap/points radio group for the `interventions` row; see src/components/map/AGENTS.md "Interventions visualization modes". */
+/** Off/heatmap radio group for the `interventions` row; see src/components/map/AGENTS.md "Interventions visualization modes". */
 export function InterventionVisualizationModeControl() {
   const mode = useInterventionVisualizationStore((state) => state.mode);
   const setMode = useInterventionVisualizationStore((state) => state.setMode);
@@ -31,7 +30,7 @@ export function InterventionVisualizationModeControl() {
         className="flex flex-wrap items-center gap-1"
       >
         <span id={descriptionId} className="sr-only">
-          Choose an extra rendering for the interventions layer: off, heatmap or points.
+          Choose an extra rendering for the interventions layer: off or heatmap of point interventions.
         </span>
         {MODE_OPTIONS.map((option) => {
           const isSelected = mode === option.value;

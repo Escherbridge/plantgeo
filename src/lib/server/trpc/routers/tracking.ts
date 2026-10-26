@@ -15,11 +15,30 @@ const assetUpdateSchema = assetCreateSchema.partial().extend({
   id: z.string().uuid(),
 });
 
+const MAX_GEOFENCE_RINGS = 16;
+const MAX_GEOFENCE_RING_VERTICES = 2_000;
+
+/** A GeoJSON linear ring repeats its first position as its last. */
+function isClosedRing(ring: [number, number][]): boolean {
+  const first = ring[0];
+  const last = ring[ring.length - 1];
+  return first[0] === last[0] && first[1] === last[1];
+}
+
 const geofenceCreateSchema = z.object({
   name: z.string().min(1).max(100),
   geometry: z.object({
     type: z.literal("Polygon"),
-    coordinates: z.array(z.array(z.tuple([z.number(), z.number()]))),
+    coordinates: z
+      .array(
+        z
+          .array(z.tuple([z.number().min(-180).max(180), z.number().min(-90).max(90)]))
+          .min(4)
+          .max(MAX_GEOFENCE_RING_VERTICES)
+          .refine(isClosedRing, "each ring must end on its first vertex")
+      )
+      .min(1)
+      .max(MAX_GEOFENCE_RINGS),
   }),
   alertOnEnter: z.boolean().default(true),
   alertOnExit: z.boolean().default(true),

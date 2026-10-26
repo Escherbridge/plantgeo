@@ -1639,17 +1639,17 @@ Removed 2026-10-25: `src/hooks/useDeckLayers.ts` and `src/lib/map/deck-config.ts
 ## Interventions visualization modes
 
 Added 2026-10-26 (owner: "finish the panel and features"). The `interventions` row in the layer
-panel gains an **off / heatmap / points** control (`InterventionVisualizationModeControl`, shown
-only while the row's eye is on). Default **off**, unpersisted (`intervention-visualization-store`),
-so nothing changes for a reader who never opens it.
+panel gains an **off / heatmap** control (`InterventionVisualizationModeControl`, shown only while
+the row's eye is on). Default **off**, unpersisted (`intervention-visualization-store`).
 
-**Both modes read the existing `intervention_tiles` Martin source** (`InterventionVisualizationLayer`):
-`geo.intervention_tiles()` already projects `kind`/`category`/`status`, so heatmap is MapLibre's own
-density aggregation and points paint from `INTERVENTION_STATUS_COLOR` (one colour authority). No tRPC
-read, no second copy of data already on the wire. The restored `visualization.getHeatmapData` /
-`getPointData` procedures were therefore NOT restored, and a **flow** mode was cut: no intervention
-carries a source/target pair, so `getFlowData` could only ever return empty -- revisit when a
-producer writes inter-site links.
+**The heatmap reads the existing `intervention_tiles` Martin source, filtered to Point geometry.**
+MapLibre's circle/heatmap buckets emit one point per polygon VERTEX, so an unfiltered heatmap lets a
+200-vertex drawn polygon outweigh 199 point interventions (independent review 2026-10-26). Polygons
+need a centroid source-layer in `geo.intervention_tiles()` (a tile-function migration + Martin
+restart) before they can join the heatmap -- tracked as follow-up. A "points" mode was cut: filtered
+to Points it duplicates the base `interventionsPointsLayer`. A "flow" mode was cut: no intervention
+carries a source/target pair. The `visualization` tRPC router was therefore not restored (it read
+coordinates from `properties`, not geometry).
 
 **Mounted beside `LayerManager` in `MapView.tsx`**, not inside the dock: the dock tree unmounts while
 collapsed, and map rendering must not depend on sidebar visibility. Mounting after `LayerManager`

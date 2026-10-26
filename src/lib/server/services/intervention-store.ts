@@ -45,7 +45,9 @@ export async function upsertInterventionFeature(input: InterventionFeatureInput)
           eq(sql<string>`${features.properties} ->> 'id'`, input.featureId)
         )
       )
-      .limit(1);
+      .limit(1)
+      // Row lock: a moderator's lifecycle move waits for (or is seen by) this re-ingest.
+      .for("update");
 
     if (!existing) {
       const [inserted] = await tx

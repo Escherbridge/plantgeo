@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { devtools } from "zustand/middleware";
 
 /** Which extra rendering the `interventions` layer draws; "off" (the default) changes nothing. */
-export type InterventionVisualizationMode = "off" | "heatmap" | "points";
+export type InterventionVisualizationMode = "off" | "heatmap";
 
 interface InterventionVisualizationState {
   mode: InterventionVisualizationMode;

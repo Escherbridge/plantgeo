@@ -7,7 +7,11 @@ const state = vi.hoisted(() => ({
 }));
 
 function selectChain(rows: () => unknown[]) {
-  const chain = { from: () => chain, where: () => chain, limit: async () => rows() };
+  const chain = {
+    from: () => chain,
+    where: () => chain,
+    limit: () => Object.assign(Promise.resolve(rows()), { for: async () => rows() }),
+  };
   return chain;
 }
 
