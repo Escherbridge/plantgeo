@@ -1,45 +1,7 @@
-"""Deterministic seasonal-hurdle Monte Carlo for the fire-detections cell-day aggregate.
+"""Seasonal-hurdle Monte Carlo for cell-day fire detection counts, bootstrapped jointly.
 
-Layer L1 (method/monte_carlo): pure domain computation, no I/O, no SQLAlchemy, no httpx. May NOT
-import `plantgeo_ml_service.warehouse` (or `method.ml`) -- see `tests/test_layer_import_contract.py`.
-
-WHY A HURDLE MODEL, NOT A GAUSSIAN ANOMALY BOOTRAP: `detection_count` is a non-negative integer and
-heavily zero-inflated -- the exported cell-day stream (`warehouse/schemas/fire_detections.py`) only
-ever carries a row where at least one detection landed; every other monitored day at that cell is an
-implicit, un-materialized zero. A Gaussian innovation added to a seasonal level (the NDVI approach in
-`vegetation_ndvi_forecast.py`) can and will draw a negative "count", which is not a measurement error
-to clip away, it is proof the distributional family is wrong for this variable. A hurdle model -- a
-Bernoulli "does anything ignite" stage, then a magnitude stage strictly conditioned on the first stage
-firing -- is the standard treatment for zero-inflated counts precisely because the two questions
-("will it happen" and "how big if it does") have different variance structure here: ignition is rare
-and seasonal, magnitude among fires is skewed and instrument-driven. This module estimates BOTH stages
-from one cell's own governed history and refuses when that history cannot support the estimate, rather
-than fabricating a rate from too little evidence.
-
-WHY THE MAGNITUDE STAGE IS A JOINT HISTORICAL ROW, NOT FOUR INDEPENDENT DRAWS: `detection_count`,
-`frp_sum`, `frp_observation_count` and `high_confidence_detection_count` are not independent -- the
-observed schema's own null-handling rule (`frp_sum` is NULL exactly when no detection that day
-published FRP, never a fabricated 0.0) only survives forecasting if all four columns for one simulated
-day come from ONE actually-observed historical cell-day, sampled together. Drawing each column
-separately would let a magnitude draw pair a positive `frp_sum` with a `high_confidence_detection_count`
-that never happened together, and could just as easily invent a non-null `frp_sum` for a day whose own
-history recorded none. Every value below is a value some historical day of THIS cell actually reported.
-
-WHY DETECTION_COUNT CAN NEVER GO NEGATIVE: the hurdle stage emits exactly 0 (an integer literal) when
-the Bernoulli draw misses, and the magnitude stage only ever emits `detection_count` values copied
-verbatim from `ObservedCellDay` rows, which are constructed to reject anything less than 1
-(`ObservedCellDay.__post_init__`). The output space of one simulated cell-day is therefore
-`{0} | {n : n is some historical day's observed detection_count}` -- a finite set of non-negative
-integers by construction, never an interpolated or synthesized value.
-
-WHY QUANTILES ARE A NEAREST-RANK ORDER STATISTIC, NOT A LINEAR-INTERPOLATED PERCENTILE: linear
-interpolation between two ensemble draws (`vegetation_ndvi_forecast.py`'s `numpy.percentile(...,
-method="linear")`) can synthesize a `detection_count` no draw ever produced, and worse, an
-interpolated point between two DIFFERENT historical rows would recombine mismatched `frp_sum`/
-`detection_count` pairs, reintroducing exactly the joint-consistency problem the row-level bootstrap
-above exists to avoid. `numpy.argsort` plus a nearest-rank index selects one WHOLE simulated draw --
-every reported quantile row is therefore internally consistent and reproduces values this method
-actually simulated.
+See AGENTS.md §fire_detections.py for the hurdle-vs-Gaussian, joint-row, non-negative,
+and quantile-methodology rationale.
 """
 
 from __future__ import annotations

@@ -1,34 +1,6 @@
-"""Deterministic per-signal seasonal Monte Carlo forecaster for the governed weather-signal plane.
+"""Per-signal seasonal Monte Carlo with two bootstrap kinds: additive-anomaly and empirical-resample.
 
-Layer L1 (method/monte_carlo): pure domain computation, no I/O, no SQLAlchemy, no httpx. Every one
-of the 19 `agri.signal_observation` signals (docs/lanes/weather-observations.md section 4) is
-forecast independently, per cell, through `simulate_signal_forecast`. Two resampling strategies
-are dispatched by `SignalSeriesSpec.bootstrap_kind`:
-
-  * ADDITIVE_ANOMALY -- day-of-year climatology + a persistence-decayed anchor anomaly + a
-    resampled seasonal innovation, then clipped to the series' own physical bounds. The shape
-    `method/monte_carlo/vegetation_ndvi_forecast.py` already uses for NDVI, generalised here to an
-    arbitrary bounded series.
-  * EMPIRICAL_SEASONAL_RESAMPLE -- precipitation only. Precipitation is zero-inflated and
-    right-skewed; adding a symmetric anomaly to a seasonal mean can and does draw negative
-    rainfall. Resampling REAL seasonally matched historical values instead makes a negative draw
-    structurally impossible, at the cost of never projecting a value the record has not shown for
-    that time of year.
-
-Every `kind=forecast` row this module's output eventually becomes carries all six provenance
-columns `conductor/code_styleguides/layer-lanes.md` section 3 requires: `forecast_run_id`,
-`random_seed`, `ensemble_size`, `horizon_days`, `issued_on`, and `quantile` -- see
-`SignalForecastRun`. The RNG is seeded directly from the caller-supplied, recorded
-`SimulationRequest.seed`; `forecast_run_id` is a separate sha256 fingerprint of the whole
-parameter set (including that seed), never the seed itself, so "what reproduces the run" and
-"what identifies the run" stay two distinct, both-recorded facts.
-
-`issued_on` must respect each signal's own producer lag (section 2 of the same doc): NASA-POWER
-signals anchor at `today - 5d`, Open-Meteo ERA5-Land signals at `today - 9d`, and
-`surface_shortwave_radiation` carries its own measured ~2-month ceiling rather than inheriting
-NASA's blanket 5-day constant. `SIGNAL_SERIES_SPECS` declares all three; `issued_on_for` is the
-one place that turns a lag into an issue day, and it is pure -- callers pass `today` in rather
-than this module calling `datetime.now()` itself.
+See AGENTS.md §signal.py for resampling choice, method provenance separation, and issued_on lag rationale.
 """
 
 from __future__ import annotations
