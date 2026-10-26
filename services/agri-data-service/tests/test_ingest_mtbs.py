@@ -7,27 +7,20 @@ never contribute a silent skip to the sweep gate in ``conftest.pytest_sessionfin
 # ruff: noqa: PLR2004
 
 import asyncio
-import json
 from datetime import UTC, date, datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 
 from agri_data_service.execution.contracts import MAX_SOURCE_GEOJSON_FEATURES
-from agri_data_service.execution.source_ingestion import SourceIngestionPlan
 from agri_data_service.foundation.geography.bounding_box import format_bounding_box_inline, parse_bounding_box
 from agri_data_service.foundation.region import load_region
 from agri_data_service.ingest.identity import MissingNativeKeyError, build_burn_severity_identity
 from agri_data_service.ingest.mtbs import (
-    INLINE_PUBLICATION_BYTE_LIMIT,
     MIN_PUBLICATION_AGE,
     MIN_RELEASE_LEAD,
     MTBS_ANNUAL_RELEASE_DATES,
-    MTBS_CITATION,
-    MTBS_LICENSE_NAME,
-    MTBS_LICENSE_URL,
     SEVERITY_CLASS_BY_CODE,
     MtbsBurnSeverityRecord,
     MtbsDuplicateFeatureError,
@@ -37,25 +30,14 @@ from agri_data_service.ingest.mtbs import (
     MtbsReleaseWindowError,
     MtbsTruncatedCaptureError,
     MtbsUnknownSeverityCodeError,
-    SourceReview,
-    bounding_box_token,
     build_mtbs_record,
-    build_release_identifier,
-    build_release_payload,
-    build_source_ingestion_plan,
     burn_severity_bounding_box,
-    capture_release,
     fetch_release_features,
     parse_mtbs_ignition_date,
-    requires_object_storage,
     resolve_burn_severity_class,
     resolve_data_available_at,
-    resolve_requested_years,
     validate_release_window,
 )
-
-# The `license_snapshot` column that `publish_source_release` copies `license_name` into.
-LICENSE_SNAPSHOT_COLUMN_LENGTH = 255
 
 # Recorded verbatim on 2026-08-03 from the live authoritative service,
 # https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_MTBS_01/MapServer/63/query, with
@@ -528,131 +510,6 @@ def test_a_non_polygon_geometry_raises_rather_than_being_stored() -> None:
         build_mtbs_record(missing, 2022)
 
 
-def test_the_governed_license_snapshot_fits_the_column_it_is_copied_into() -> None:
-    assert 0 < len(MTBS_LICENSE_NAME) <= LICENSE_SNAPSHOT_COLUMN_LENGTH
-    # Both instruments must be named: the federal data licence and the separate hosting terms.
-    assert "public domain" in MTBS_LICENSE_NAME
-    assert "hosting terms are separate" in MTBS_LICENSE_NAME
-    assert MTBS_LICENSE_URL.startswith("https://")
-    assert "10.5066/P9IED7RZ" in MTBS_CITATION
-
-
-def test_the_sidecar_carries_the_release_date_and_the_ignition_window_separately() -> None:
-    review = SourceReview(reviewed_at=datetime(2026, 8, 3, tzinfo=UTC), reviewed_by="operator@example.test")
-    plan = build_source_ingestion_plan(
-        2022,
-        burn_severity_bounding_box(),
-        review=review,
-        observation_window=(datetime(2022, 6, 29, tzinfo=UTC), datetime(2022, 9, 8, tzinfo=UTC)),
-    )
-
-    assert isinstance(plan, SourceIngestionPlan)
-    assert plan.source.key == "mtbs-burn-severity"
-    assert plan.source.retention_days is None
-    assert plan.source.license_name == MTBS_LICENSE_NAME
-    assert plan.release.source_version == build_release_identifier(2022)
-    assert plan.release.data_available_at == datetime(2024, 8, 22, tzinfo=UTC)
-    # `observed_*` is when it happened; `data_available_at` is when we could have known.
-    assert plan.release.observed_to == datetime(2022, 9, 8, tzinfo=UTC)
-    assert plan.release.data_available_at > plan.release.observed_to
-    assert plan.release.query_parameters["orderByFields"] == "fire_id"
-    assert plan.release.query_parameters["where"] == "year = 2022"
-
-
-def test_capture_writes_the_payload_and_only_writes_a_sidecar_the_operator_reviewed(tmp_path: Path) -> None:
-    service = RecordedMtbsService(_cohort(5))
-
-    async def run(review: SourceReview | None) -> Any:
-        async with service.client() as client:
-            return await capture_release(
-                2022,
-                bounding_box=burn_severity_bounding_box(),
-                output_root=tmp_path,
-                client=client,
-                review=review,
-            )
-
-    unreviewed = asyncio.run(run(None))
-    assert unreviewed.authoritative_count == unreviewed.paged_feature_count == 5
-    assert unreviewed.record_count == 5
-    assert unreviewed.payload_path.exists()
-    assert unreviewed.sidecar_path is None
-    assert unreviewed.sidecar_skipped_reason is not None
-    payload = json.loads(unreviewed.payload_path.read_bytes())
-    assert payload["type"] == "FeatureCollection"
-    assert len(payload["features"]) == 5
-    assert unreviewed.data_available_at == datetime(2024, 8, 22, tzinfo=UTC)
-    assert unreviewed.observed_to < unreviewed.data_available_at
-
-    review = SourceReview(reviewed_at=datetime(2026, 8, 3, tzinfo=UTC), reviewed_by="operator@example.test")
-    reviewed = asyncio.run(run(review))
-    assert reviewed.sidecar_path is not None
-    assert reviewed.sidecar_skipped_reason is None
-    sidecar = SourceIngestionPlan.model_validate_json(reviewed.sidecar_path.read_bytes())
-    assert sidecar.release.data_available_at == datetime(2024, 8, 22, tzinfo=UTC)
-    assert sidecar.source.reviewed_by == "operator@example.test"
-
-
-def test_two_extents_of_one_release_do_not_overwrite_each_other(tmp_path: Path) -> None:
-    # Same release identifier, different bounding box: different immutable content, so neither the
-    # capture path nor the release-set key may collide.
-    wider = (-125.0, 24.0, -93.0, 49.0)
-    service = RecordedMtbsService(_cohort(4))
-
-    async def run(bounding_box: tuple[float, float, float, float]) -> Any:
-        async with service.client() as client:
-            return await capture_release(
-                2022,
-                bounding_box=bounding_box,
-                output_root=tmp_path,
-                client=client,
-            )
-
-    narrow_capture = asyncio.run(run(burn_severity_bounding_box()))
-    wide_capture = asyncio.run(run(wider))
-
-    assert narrow_capture.release_identifier == wide_capture.release_identifier
-    assert narrow_capture.payload_path != wide_capture.payload_path
-    assert narrow_capture.payload_path.exists()
-    assert wide_capture.payload_path.exists()
-    assert bounding_box_token(burn_severity_bounding_box()) != bounding_box_token(wider)
-
-    review = SourceReview(reviewed_at=datetime(2026, 8, 3, tzinfo=UTC), reviewed_by="operator@example.test")
-    narrow_plan = build_source_ingestion_plan(
-        2022,
-        burn_severity_bounding_box(),
-        review=review,
-        observation_window=(datetime(2022, 1, 3, tzinfo=UTC), datetime(2022, 10, 18, tzinfo=UTC)),
-    )
-    wide_plan = build_source_ingestion_plan(
-        2022,
-        wider,
-        review=review,
-        observation_window=(datetime(2022, 1, 3, tzinfo=UTC), datetime(2022, 10, 18, tzinfo=UTC)),
-    )
-    assert narrow_plan.release_set_key != wide_plan.release_set_key
-    # The upstream release itself is the same product regardless of how much of it we pulled.
-    assert narrow_plan.release.source_version == wide_plan.release.source_version
-
-
-def test_capturing_an_unreleased_fire_year_raises_before_any_network_call(tmp_path: Path) -> None:
-    service = RecordedMtbsService(_cohort(3))
-
-    async def run() -> None:
-        async with service.client() as client:
-            await capture_release(
-                2023,
-                bounding_box=burn_severity_bounding_box(),
-                output_root=tmp_path,
-                client=client,
-            )
-
-    with pytest.raises(MtbsReleaseNotPublishedError):
-        asyncio.run(run())
-    assert service.count_requests == 0
-    assert not list(tmp_path.rglob("*.geojson"))
-
-
 def test_the_cli_reads_a_negative_bbox_as_a_value_rather_than_a_flag() -> None:
     assert format_bounding_box_inline(["--bbox", "-125,42,-111,49", "--release-year", "2022"]) == [
         "--bbox=-125,42,-111,49",
@@ -706,22 +563,3 @@ def test_a_server_error_that_never_clears_still_fails_loudly() -> None:
 
     with pytest.raises(httpx.HTTPStatusError):
         asyncio.run(run())
-
-
-def test_a_real_sized_release_is_flagged_for_object_storage_not_inline_publication() -> None:
-    # A real PNW cohort is roughly 20 MB of full-resolution polygon, four times the
-    # `database_inline` artifact budget. The capture must still be written -- refusing it would
-    # mean no MTBS data at all -- but it must be flagged so nobody inlines it into Postgres.
-    assert requires_object_storage(b"x" * (INLINE_PUBLICATION_BYTE_LIMIT + 1)) is True
-    assert requires_object_storage(b"x" * INLINE_PUBLICATION_BYTE_LIMIT) is False
-    payload = build_release_payload(_recorded_features())
-    assert json.loads(payload)["type"] == "FeatureCollection"
-    assert len(json.loads(payload)["features"]) == len(RECORDED_2022_PNW_PROPERTIES)
-    assert requires_object_storage(payload) is False
-
-
-def test_all_releases_selects_exactly_the_years_with_an_established_release_date() -> None:
-    assert resolve_requested_years(None, all_releases=True) == sorted(MTBS_ANNUAL_RELEASE_DATES)
-    assert resolve_requested_years([2022, 2018, 2022], all_releases=False) == [2018, 2022]
-    with pytest.raises(SystemExit):
-        resolve_requested_years(None, all_releases=False)

@@ -96,9 +96,10 @@ class UsgsWaterDataPayloadError(UpstreamPayloadError):
 def publisher_named_day(raw_time: str) -> date:
     """The first ten characters of the served `time` string, as a date: never parsed, converted, then truncated.
 
-    The same rule as `pipeline/validation/water_gauges.py::publisher_named_day`, restated here because a
-    strategy may not import `pipeline/validation`; `tests/lanes/water_gauges/test_usgs_water_data.py`
-    holds the two equal.
+    This is now the only copy of the rule: `pipeline/validation/water_gauges.py`, which once held a
+    restatement kept equal to this one by `tests/lanes/water_gauges/test_usgs_water_data.py`, was
+    deleted 2026-09-12 in the greenfield Parquet cutover (`pipeline/validation/AGENTS.md`'s verdict
+    table) once `water-gauges-daily`'s `--compare` against the live NWIS source replaced it.
     """
     return date.fromisoformat(raw_time[:_NAMED_DAY_LENGTH])
 

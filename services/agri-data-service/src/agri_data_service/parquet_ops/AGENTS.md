@@ -75,17 +75,23 @@ In dependency order, each importing only the ones above it:
 | module | holds |
 | --- | --- |
 | `snapshot_product_catalog.py` | `SnapshotProduct`, the frozen product table, column tuples, pinned Arrow schemas, and the object-key grammar (`_DAILY_PART`, `_MONTHLY_PART`, the three checkpoint patterns) plus the key→day parsers |
-| `snapshot_store.py` | the `SnapshotStore` protocol, `ObjectStoreSnapshotStore`, and the value types the later stages pass around (`SnapshotEvidence`, `SnapshotObjectReceipt`, `SnapshotCoverage*`, `ForwardAvailability*`), with the bounded JSON read and the one-object digest |
+| `snapshot_store.py` | the `SnapshotStore` protocol, `ObjectStoreSnapshotStore`, and the value types the later stages pass around (`SnapshotEvidence`, `SnapshotObjectReceipt`), with the bounded JSON read and the one-object digest |
 | `snapshot_receipts.py` | the fail-closed receipt graph: daily and monthly serving receipts, the checkpoint lineage digest, and the identity checks that bind each part to the rung-day it claims |
 | `snapshot_evidence.py` | `load_snapshot_evidence` and its bounded, per-key-locked memo of one manifest read per product |
-| `snapshot_forward_edge.py` | the live half: the days written past `forward_first_day`, read from the availability index when the policy allows and from a listing otherwise |
 | `snapshot_contiguity.py` | which manifest days a product may call selectable — declared, grid-complete, and rung-consistent |
-| `snapshot_coverage.py` | the join: the closed manifest half against the live half, and `SnapshotCoverageCache` |
 
-The cut follows the order a coverage request already runs in: name the product, read an object, prove
-its receipts, memoise the evidence, find its live edge, then census it. `snapshot_receipts.py` (775
-lines) is the one module still above the ~600 soft ceiling: it is one fail-closed graph, and
-splitting it further would put a check in a different file from the thing it checks.
+**`snapshot_forward_edge.py` and `snapshot_coverage.py` (with `SnapshotCoverageCache`,
+`SnapshotForwardAvailability` in `availability_coverage.py`, and `ForwardAvailability`/
+`ForwardAvailabilityWithheld`/`ForwardAvailabilityPort` in `snapshot_store.py`) were deleted
+2026-10-26: `build_snapshot_coverage`'s whole-product coverage census had no production entry
+point -- no HTTP route, CLI, or cron ever called it, and `git log -S` found no pending track
+claiming it. `resolve_snapshot_product` (the per-day read in `snapshot_products.py`) already
+proves the forward/closed split per request and never depended on this chain.**
+
+The cut follows the order a request already runs in: name the product, read an object, prove its
+receipts, memoise the evidence, read it. `snapshot_receipts.py` (775 lines) is the one module still
+above the ~600 soft ceiling: it is one fail-closed graph, and splitting it further would put a check
+in a different file from the thing it checks.
 
 `_MONTHLY_PART`, `_lineage_digest`, `_duckdb_type_for_arrow` and `clear_snapshot_evidence_cache` are
 in `__all__` because `tests/parquet_ops/test_snapshot_products.py` reaches for them by module

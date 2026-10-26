@@ -156,7 +156,8 @@ class UsdmReleaseSeriesStrategy:
         """Every USDM release Tuesday in `[first, last]`; a `release_series` owes only these (S19).
 
         Delegates to `products.py::release_weeks`, the SAME canonical Tuesday walk the legacy
-        `forward.py`/`backfill.py` and `pipeline/validation/drought.py` all trust, so the runner's
+        `forward.py`/`backfill.py` trust (`pipeline/validation/drought.py` once trusted it too, but
+        that module was deleted 2026-09-12 in the greenfield Parquet cutover), so the runner's
         `_release_filter` (`pipeline/runner/turn.py`) never treats a non-Tuesday day as owed.
         """
         return release_weeks(first, last)

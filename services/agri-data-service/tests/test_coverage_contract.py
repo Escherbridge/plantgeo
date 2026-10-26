@@ -448,7 +448,7 @@ def test_contracts_for_source_cannot_tell_an_uncontracted_lane_from_a_typo() -> 
     # A real lane with no contract yet. Empty is the honest answer.
     assert contracts_for_source("sentinel2-ndvi-l2a") == ()
     # A typo of a lane that IS contracted. Also empty -- indistinguishable here, which is exactly
-    # the incident recorded at the top of LANE_COVERAGE_CONTRACTS. `contracts_for_keys` in
-    # coverage_census.py is what raises on an unknown key; every caller that can afford to refuse
-    # must go through that instead of this.
+    # the incident recorded at the top of LANE_COVERAGE_CONTRACTS. (`contracts_for_keys`, which
+    # raised on an unknown key instead of answering `()`, lived in `execution/coverage_census.py`
+    # and was deleted 2026-10-26 with that module -- it had no production caller of its own.)
     assert contracts_for_source("open-meteo-era5-land") == ()

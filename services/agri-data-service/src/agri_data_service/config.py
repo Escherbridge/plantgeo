@@ -70,16 +70,12 @@ class Settings(BaseSettings):
     # Optional overrides that let one command target a database other than DATABASE_URL. Each
     # falls back to DATABASE_URL when unset and may name the same DSN; see the resolver below.
     local_source_loader_database_url: str | None = None
-    forecast_mv_refresh_database_url: str | None = None
-    forecast_iteration_database_url: str | None = None
 
     @field_validator(
         "database_url",
         "receiver_writer_database_url",
         "published_reader_database_url",
         "local_source_loader_database_url",
-        "forecast_mv_refresh_database_url",
-        "forecast_iteration_database_url",
     )
     @classmethod
     def fix_database_url_schema(cls, value: str | None) -> str | None:
@@ -299,20 +295,6 @@ class Settings(BaseSettings):
         return self._require_command_database_url(
             self.local_source_loader_database_url,
             "LOCAL_SOURCE_LOADER_DATABASE_URL",
-        )
-
-    def require_forecast_mv_refresh_database_url(self) -> str:
-        """Return the DSN the forecast materialized-view refresh connects with."""
-        return self._require_command_database_url(
-            self.forecast_mv_refresh_database_url,
-            "FORECAST_MV_REFRESH_DATABASE_URL",
-        )
-
-    def require_forecast_iteration_database_url(self) -> str:
-        """Return the DSN the evaluation-only forecast iteration writes connect with."""
-        return self._require_command_database_url(
-            self.forecast_iteration_database_url,
-            "FORECAST_ITERATION_DATABASE_URL",
         )
 
     # Local clients need the URL/token; the receiver additionally needs its gate/actor.

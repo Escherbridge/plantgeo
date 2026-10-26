@@ -21,9 +21,7 @@ from agri_data_service.parquet_ops.snapshot_product_catalog import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
-    from datetime import date
 
-    from agri_data_service.parquet_ops.wire import CoverageWithholding, LaneCoverage
     from agri_data_service.pipeline.parquet.objectstore import ObjectStoreBackend
 
 
@@ -95,52 +93,6 @@ class SnapshotObjectReceipt:
     byte_count: int
     sha256: str
     row_count: int | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class SnapshotCoverageWithholding:
-    """Why one product is absent from coverage without being called never-written."""
-
-    layer: str
-    code: str
-    message: str
-
-
-@dataclass(frozen=True, slots=True)
-class ForwardAvailability:
-    """One product's forward half, proven from its lane's availability index and never by listing."""
-
-    published_days: frozenset[date]
-    absent_days: frozenset[date]
-    source_ceiling: date
-    generation_sha256: str
-    pointer_key: str
-
-
-@dataclass(frozen=True, slots=True)
-class ForwardAvailabilityWithheld:
-    """Why a product's forward half may not be published, in the census's own withholding vocabulary."""
-
-    reason: CoverageWithholding
-    detail: str
-
-
-class ForwardAvailabilityPort(Protocol):
-    """How this module asks for a forward half without importing the reader that answers.
-
-    Declared HERE and implemented in `parquet_ops/availability_coverage.py`, because `coverage.py`
-    already imports this module -- an import back the other way at module scope would close a cycle.
-    """
-
-    def forward_days(self, *, layer: str, first_day: date) -> ForwardAvailability | ForwardAvailabilityWithheld: ...
-
-
-@dataclass(frozen=True, slots=True)
-class SnapshotCoverageCensus:
-    """Healthy rung evidence plus exact product-local reasons withheld from the frozen wire."""
-
-    lanes: tuple[LaneCoverage, ...]
-    withheld: tuple[SnapshotCoverageWithholding, ...]
 
 
 def _required_json_bytes(store: SnapshotStore, key: str, product: SnapshotProduct) -> bytes:

@@ -6,23 +6,30 @@ must not be inferred from the writer's own intermediate counts.
 ## Module verdicts (audit 2026-10-26)
 
 No module here except `soil_survey.py` has a production caller. Each one was judged against the
-config runner, which now owns most of this work: its census reports missing, incomplete and
-conflicting days (`pipeline/runner/census.py`), gap-fill settles each owed day against the live
-source as either written or a governed absence, and G6 `--compare` rebuilds a day from upstream and
-diffs it against the bucket (`pipeline/runner/turn.py::_Turn._compare`, `reader.canonical_digest`).
+config runner, which now owns most of this work for a lane that actually runs `executor = "config"`:
+its census reports missing, incomplete and conflicting days (`pipeline/runner/census.py`), gap-fill
+settles each owed day against the live source as either written or a governed absence, and G6
+`--compare` rebuilds a day from upstream and diffs it against the bucket
+(`pipeline/runner/turn.py::_Turn._compare`, `reader.canonical_digest`). **`water-gauges-daily` is the
+only lane below on `executor = "config"`**; `drought-direct-forward`, `evacuation-zones-direct-forward`,
+`fire-detections` (no config TOML), `sensors-direct-forward`, `weather-observations` and
+`watersheds-direct-forward` all stay `executor = "legacy"`, so their G6 `--compare` (where one runs at
+all) only diffs config output against the legacy adapter's own output -- never against the live
+upstream source the deleted module checked. For those lanes "no lane lost an active check" means
+exactly that and no more: it is not a claim that an equivalent live-source check now exists.
 
 | Module | Verdict | Evidence |
 |---|---|---|
 | `soil_survey.py` | **wired**, keep | `pipeline/direct/soil_survey/__main__.py` `validate` verb |
 | `vegetation.py` | **unwired; candidate ops check**, kept | `reconcile_against_source` is pure and tested. Its duplicate-source-release audit against `agri.forecast_observation` has no runner equivalent, because vegetation is not a config lane. Wiring it would be a new job and needs the owner's approval. |
-| `drought.py` | superseded, deleted | Runner census plus gap-fill on `drought-direct-forward` gives the same written / absent / conflict / incomplete / source-gap verdicts per release Tuesday |
-| `evacuation_zones.py` | superseded, deleted | The source keeps current state only, so `--compare` on `evacuation-zones-direct-forward` (today vs. live feed) is the whole honest check |
-| `sensors.py` | dead, deleted | No callers and no tests. Its existence-only check over NWS's 6-day window is what the forward census already does for `sensors-direct-forward` |
-| `fire_detections.py` | superseded, deleted | No callers and no tests. It read a legacy `IngestionJobResult` cap signal; `pipeline/lanes/fire_detections` now settles capped days explicitly |
+| `watersheds.py` | **unwired; candidate ops check**, kept | `compare_against_source` is pure and tested. `watersheds-direct-forward` is `executor = "legacy"`, so no `--compare` runs against it either; the live USGS WBD diff this module performs has no runner equivalent. Wiring it would be a new job and needs the owner's approval. |
+| `drought.py` | UNWIRED, REMOVED | No production caller since creation in `abf777ff`; no lane lost an active check. `drought-direct-forward` stays `executor = "legacy"`, so no `--compare` diffs it against the live USDM feed either. |
+| `evacuation_zones.py` | UNWIRED, REMOVED | No production caller since creation in `abf777ff`; no lane lost an active check. `evacuation-zones-direct-forward` stays `executor = "legacy"`. |
+| `sensors.py` | UNWIRED, REMOVED | No callers and no tests; no production caller since creation in `abf777ff`. `sensors-direct-forward` stays `executor = "legacy"`, so no `--compare` diffs it against the live NWS feed either. |
+| `fire_detections.py` | UNWIRED, REMOVED | No callers and no tests; no production caller since creation in `abf777ff`; no lane lost an active check. |
 | `signal.py` | superseded, deleted | It reconciled a Postgres-to-Parquet export (`pipeline/lanes/signal.py`) that was deleted in the 2026-09-12 greenfield cutover |
-| `water_gauges.py` | superseded, deleted | Its only "caller" was a parity assertion in a test. The NWIS reconciliation is replaced by `--compare` on `water-gauges-daily`, and the named-day rule now lives in `ingest/usgs_water_data.py::publisher_named_day` |
-| `weather_observations.py` | superseded, deleted | No callers and no tests. It validated the legacy `geo.features` current-conditions export, not the config lane's output |
-| `watersheds.py` | not assessed | Outside this audit's scope. It is test-only today |
+| `water_gauges.py` | superseded, deleted | Its only "caller" was a parity assertion in a test. `water-gauges-daily` is `executor = "config"`, so the NWIS reconciliation genuinely is replaced by `--compare` against the live source, and the named-day rule now lives in `ingest/usgs_water_data.py::publisher_named_day` |
+| `weather_observations.py` | UNWIRED, REMOVED | No callers and no tests; no production caller since creation in `abf777ff`; no lane lost an active check. |
 
 The former `vegetation_exact.py` and `weather_observations_exact.py` gates were deleted with the
 2026-09-12 greenfield Parquet cutover (`fd602901`), so their sections are gone from this file too.

@@ -51,9 +51,10 @@ def release_weeks(first_day: date, last_day: date) -> tuple[date, ...]:
     """Every USDM release Tuesday in `[first_day, last_day]`, oldest first.
 
     Delegates to `ingest.usdm_history.usdm_release_weeks` -- the SAME canonical Tuesday walk
-    `pipeline/validation/drought.py` trusts for reconciliation and `ingest/usdm_history.py` trusts
-    for the (now-dead) Postgres backfill -- rather than re-deriving "what counts as a release week"
-    a fourth time.
+    `pipeline/validation/drought.py` trusts for reconciliation and `pipeline/direct/drought/backfill.py`
+    trusts for the live Parquet backfill (the Postgres backfill that used to live in
+    `ingest/usdm_history.py` itself was deleted 2026-09-06; see that module's docstring) -- rather
+    than re-deriving "what counts as a release week" a fourth time.
     """
     return tuple(week.release_date for week in usdm_release_weeks(first_day, last_day))
 

@@ -633,12 +633,18 @@ exact reconciliation below audits fully complete ladders without making them rec
 work. A closing source census catches late promotions that raced the locked object work. The default
 is a locked dry-run, retries are bounded, and written markers are the per-rung resume checkpoint.
 
-`pipeline/validation/vegetation_exact.py` is the final source-of-truth gate. Day-marker census is
-necessary but insufficient: release duplication can change `release_count`, and an old file can be
-schema-valid while carrying stale values. The exact gate reads the governed export projection in
-the established 200-cell batches, compares all 12 z13 fields in canonical grain order, re-derives
-z9/z5/z0 with the production transform, and checks each marker's part and row counts against the
-physical objects. It also checks settled source-empty days across all tiers. The source's promoted
+**`pipeline/validation/vegetation_exact.py` was the final source-of-truth gate; it was deleted
+2026-09-12 in the greenfield Parquet cutover (`fd602901`) along with `weather_observations_exact.py`
+(`pipeline/validation/AGENTS.md` notes both deletions explicitly).** Day-marker census is necessary
+but insufficient: release duplication can change `release_count`, and an old file can be schema-valid
+while carrying stale values; that exact gate used to close that hole and nothing today replaces it.
+`pipeline/validation/vegetation.py::reconcile_against_source` survives as the nearest equivalent, but
+it is UNWIRED -- no production caller, kept only as a candidate ops check
+(`pipeline/validation/AGENTS.md`'s verdict table) -- so running it is a manual operator step, not a
+standing gate. What the deleted exact gate did: read the governed export projection in the
+established 200-cell batches, compare all 12 z13 fields in canonical grain order, re-derive z9/z5/z0
+with the production transform, and check each marker's part and row counts against the physical
+objects. It also checked settled source-empty days across all tiers. The source's promoted
 last day and the lane's settled coverage last day are separate inputs so publication lag never
 hides promoted leading-edge rows or asserts premature absences. Source-empty days after that settled
 boundary must remain missing at every tier: data, absence, conflicts, or incomplete objects there are

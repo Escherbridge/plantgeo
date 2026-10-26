@@ -21,10 +21,6 @@ from typing import TYPE_CHECKING, Final
 from agri_data_service.foundation.parquet.paths import day_prefix
 from agri_data_service.parquet_ops import faults
 from agri_data_service.parquet_ops.serving import WINDOW_ROW_BUDGET, day_status_sets, read_absence_evidence
-from agri_data_service.parquet_ops.snapshot_coverage import (
-    SnapshotCoverageCache,
-    build_snapshot_coverage,
-)
 from agri_data_service.parquet_ops.snapshot_evidence import (
     clear_snapshot_evidence_cache,
     load_snapshot_evidence,
@@ -55,12 +51,7 @@ from agri_data_service.parquet_ops.snapshot_product_catalog import (
 )
 from agri_data_service.parquet_ops.snapshot_receipts import _verify_bound_parts
 from agri_data_service.parquet_ops.snapshot_store import (
-    ForwardAvailability,
-    ForwardAvailabilityPort,
-    ForwardAvailabilityWithheld,
     ObjectStoreSnapshotStore,
-    SnapshotCoverageCensus,
-    SnapshotCoverageWithholding,
     SnapshotEvidence,
     SnapshotStore,
     _lineage_digest,
@@ -428,19 +419,12 @@ __all__ = [
     "SOIL_TEMPERATURE_COLUMNS",
     "SOIL_WETNESS_COLUMNS",
     "_MONTHLY_PART",
-    "ForwardAvailability",
-    "ForwardAvailabilityPort",
-    "ForwardAvailabilityWithheld",
     "ObjectStoreSnapshotStore",
-    "SnapshotCoverageCache",
-    "SnapshotCoverageCensus",
-    "SnapshotCoverageWithholding",
     "SnapshotEvidence",
     "SnapshotProduct",
     "SnapshotStore",
     "_duckdb_type_for_arrow",
     "_lineage_digest",
-    "build_snapshot_coverage",
     "clear_snapshot_evidence_cache",
     "load_snapshot_evidence",
     "load_snapshot_scope_evidence",

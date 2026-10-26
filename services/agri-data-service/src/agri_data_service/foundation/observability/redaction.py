@@ -94,8 +94,6 @@ _SECRET_ENV_EXACT_NAMES: Final = frozenset(
         # no suffix and no exact name).
         "RECEIVER_WRITER_DATABASE_URL",
         "PUBLISHED_READER_DATABASE_URL",
-        "FORECAST_MV_REFRESH_DATABASE_URL",
-        "FORECAST_ITERATION_DATABASE_URL",
         "PGPASSWORD",
         "DATABASE_PUBLIC_URL",
         "REDIS_URL",

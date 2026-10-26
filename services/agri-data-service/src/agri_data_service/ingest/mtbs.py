@@ -2,39 +2,19 @@
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import hashlib
-import json
-import sys
 from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime, timedelta
-from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Final, Literal
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
-from agri_data_service.config import settings
-from agri_data_service.execution.contracts import (
-    MAX_SOURCE_GEOJSON_BYTES,
-    MAX_SOURCE_GEOJSON_FEATURES,
-    canonical_json_bytes,
-)
-from agri_data_service.execution.source_ingestion import (
-    SourceDefinition,
-    SourceIngestionPlan,
-    SourceReleasePlan,
-)
+from agri_data_service.execution.contracts import MAX_SOURCE_GEOJSON_FEATURES
 from agri_data_service.foundation.geography.bounding_box import (
     BoundingBox as BoundingBox,  # noqa: PLC0414 - public compatibility re-export
-)
-from agri_data_service.foundation.geography.bounding_box import (
-    format_bounding_box_inline as _format_bounding_box_inline,
-)
-from agri_data_service.foundation.geography.bounding_box import (
-    parse_bounding_box as _parse_bounding_box,
 )
 from agri_data_service.foundation.region import load_region
 from agri_data_service.ingest.http import UpstreamBounds
@@ -59,7 +39,6 @@ BurnSeverityClass = Literal["unburned", "low", "moderate", "high", "increased_gr
 # and does not appear in that org's 862-service catalogue. See `ingest/AGENTS.md` "mtbs.py".
 MTBS_FEATURE_SERVICE_QUERY_URL: Final = "https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_MTBS_01/MapServer/63/query"
 MTBS_FEATURE_SERVICE_HOST: Final = "apps.fs.usda.gov"
-MTBS_LAYER_NAME: Final = "Burned Area Boundaries (All Years)"
 
 
 def burn_severity_bounding_box() -> BoundingBox:
@@ -100,42 +79,6 @@ MAPPING_REVISION_FIELD_NAMES: Final = ("map_id", "asmnt_type", "pre_id", "post_i
 
 POLYGON_GEOMETRY_TYPES: Final = frozenset({"Polygon", "MultiPolygon"})
 
-
-MTBS_SOURCE_KEY: Final = "mtbs-burn-severity"
-MTBS_SOURCE_NAME: Final = "MTBS Burned Area Boundaries"
-MTBS_SOURCE_OWNER: Final = "U.S. Geological Survey EROS and USDA Forest Service GTAC"
-# `license_snapshot` on `agri.source_release` is varchar(255), copied verbatim from this string by
-# `publish_source_release`, and a governed source is immutable once written. Both instruments named.
-MTBS_LICENSE_NAME: Final = (
-    "USGS/USFS MTBS data release; U.S. federal public domain (FGDC access constraints None, use "
-    "constraints: no restrictions beyond reasonable and proper acknowledgement of sources). "
-    "Obtained via the USDA FS EDW ArcGIS Server; hosting terms are separate."
-)
-MTBS_LICENSE_URL: Final = "https://doi.org/10.5066/P9IED7RZ"
-MTBS_CITATION: Final = (
-    "U.S. Geological Survey, USDA Forest Service, Nelson, K., 2021, Monitoring Trends in Burn "
-    "Severity (ver. 12.0, April 2025): U.S. Geological Survey data release, "
-    "https://doi.org/10.5066/P9IED7RZ."
-)
-MTBS_PURPOSE: Final = (
-    "Burned-area boundaries for every large wildland fire mapped by the Monitoring Trends in Burn "
-    "Severity program (fires over 1,000 acres in the western U.S. and over 500 acres in the "
-    "eastern U.S., 1984 onward), captured one ignition-year cohort at a time so each capture "
-    "carries a single honest publication date. The underlying product is a U.S. federal public "
-    "domain data release of the USGS EROS and USDA Forest Service GTAC partnership, distributed "
-    "under FGDC use constraints of 'no restrictions on use, except for reasonable and proper "
-    "acknowledgement of information sources' and access constraints of 'None'. We obtain it "
-    "through the USDA Forest Service Enterprise Data Warehouse ArcGIS Server at "
-    f"{MTBS_FEATURE_SERVICE_HOST}, a separate hosting instrument from the data licence itself; an "
-    "Esri-hosted ArcGIS Online mirror of the same layer exists and is deliberately not used, so no "
-    "ArcGIS Online terms of service attach to this capture. `allowed_client_exposure` stays false: "
-    "nothing MTBS-derived may reach a public CDN without a fresh licensing review."
-)
-MTBS_RELEASE_SCHEMA_VERSION: Final = "edw-mtbs-01-burned-area-boundaries-v1"
-
-# `publish_source_release` stores an artifact with `storage_class="database_inline"`, so this is the
-# ceiling for that path only -- not for a local capture, which this lane writes to disk regardless.
-INLINE_PUBLICATION_BYTE_LIMIT: Final = MAX_SOURCE_GEOJSON_BYTES
 
 # The service advertises `maxRecordCount: 2000`, but an MTBS perimeter is a full-resolution polygon
 # and the host refuses an oversized response with HTTP 500 rather than truncating it. Measured on
@@ -255,37 +198,6 @@ class PageWindow(BaseModel):
 
     offset: int = Field(ge=0)
     size: int = Field(ge=1, le=MAX_PAGE_SIZE)
-
-
-class SourceReview(BaseModel):
-    """The operator-supplied governance review that a `SourceDefinition` may not fabricate."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    reviewed_at: datetime
-    reviewed_by: str = Field(min_length=1, max_length=255)
-
-
-class MtbsReleaseCapture(BaseModel):
-    """What one ignition-year capture wrote to disk and the counts that prove it was complete."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    ignition_year: int
-    release_identifier: str
-    data_available_at: datetime
-    observed_from: datetime
-    observed_to: datetime
-    authoritative_count: int
-    paged_feature_count: int
-    record_count: int
-    payload_path: Path
-    payload_bytes: int
-    payload_checksum: str
-    # True means "publish this to object storage, never as a `database_inline` artifact".
-    requires_object_storage: bool
-    sidecar_path: Path | None = None
-    sidecar_skipped_reason: str | None = None
 
 
 def _first_present(properties: Mapping[str, object], field_names: Sequence[str]) -> object:
@@ -509,82 +421,6 @@ def _midnight_utc(day: date) -> datetime:
     return datetime(day.year, day.month, day.day, tzinfo=UTC)
 
 
-def build_mtbs_source_definition(review: SourceReview) -> SourceDefinition:
-    """Build the governed MTBS source identity; the review fields are the operator's, not this module's."""
-    return SourceDefinition(
-        key=MTBS_SOURCE_KEY,
-        name=MTBS_SOURCE_NAME,
-        owner=MTBS_SOURCE_OWNER,
-        purpose=MTBS_PURPOSE,
-        license_name=MTBS_LICENSE_NAME,
-        license_url=MTBS_LICENSE_URL,
-        citation=MTBS_CITATION,
-        base_url=MTBS_FEATURE_SERVICE_QUERY_URL,
-        # Every annual release is kept forever: the plan's retention rule for MTBS.
-        retention_days=None,
-        reviewed_at=review.reviewed_at,
-        reviewed_by=review.reviewed_by,
-    )
-
-
-def build_release_query_parameters(ignition_year: int, bounding_box: BoundingBox, page_size: int) -> dict[str, Any]:
-    """Record exactly how a cohort was requested, without the credentials the contract forbids."""
-    west, south, east, north = bounding_box
-    return {
-        "layer_url": MTBS_FEATURE_SERVICE_QUERY_URL,
-        "layer_name": MTBS_LAYER_NAME,
-        "where": _release_where_clause(ignition_year),
-        "geometry": f"{west},{south},{east},{north}",
-        "geometryType": "esriGeometryEnvelope",
-        "inSR": 4326,
-        "spatialRel": "esriSpatialRelIntersects",
-        "outSR": 4326,
-        "outFields": "*",
-        "orderByFields": "fire_id",
-        "resultRecordCount": page_size,
-    }
-
-
-def build_source_ingestion_plan(
-    ignition_year: int,
-    bounding_box: BoundingBox,
-    *,
-    review: SourceReview,
-    observation_window: tuple[datetime, datetime],
-    page_size: int = DEFAULT_PAGE_SIZE,
-) -> SourceIngestionPlan:
-    """Build the reviewed sidecar a later lane hands to the warehouse; this lane persists nothing."""
-    observed_from, observed_to = observation_window
-    release_identifier = build_release_identifier(ignition_year)
-    data_available_at = resolve_data_available_at(ignition_year)
-    return SourceIngestionPlan(
-        source=build_mtbs_source_definition(review),
-        release=SourceReleasePlan(
-            source_version=release_identifier,
-            schema_version=MTBS_RELEASE_SCHEMA_VERSION,
-            data_available_at=data_available_at,
-            observed_from=observed_from,
-            observed_to=observed_to,
-            query_parameters=build_release_query_parameters(ignition_year, bounding_box, page_size),
-        ),
-        # The release set identifies one captured extent of one release: a second bounding box over
-        # the same release is different immutable content and must not claim the same key.
-        release_set_key=f"{release_identifier}-bbox-{bounding_box_token(bounding_box)}",
-        release_set_as_of=data_available_at,
-        description=(
-            f"MTBS burned-area boundaries for fire year {ignition_year}, captured over the bounding "
-            f"box {bounding_box}. `data_available_at` is the publication date of the release that "
-            "completed this fire year, never an ignition date."
-        ),
-    )
-
-
-def bounding_box_token(bounding_box: BoundingBox) -> str:
-    """Fingerprint a capture extent so two extents of one release cannot overwrite each other."""
-    rendered = ",".join(f"{ordinate:.4f}" for ordinate in bounding_box)
-    return hashlib.sha256(rendered.encode("utf-8")).hexdigest()[:12]
-
-
 def _release_where_clause(ignition_year: int) -> str:
     """Partition the service by ignition-year cohort so each capture carries one honest release date."""
     if not MIN_IGNITION_YEAR <= ignition_year <= MAX_IGNITION_YEAR:
@@ -802,129 +638,12 @@ async def fetch_release_features(
     return features, authoritative_count
 
 
-def build_release_payload(features: Sequence[Mapping[str, Any]]) -> bytes:
-    """Serialise the captured cohort deterministically so its checksum is stable across runs."""
-    return canonical_json_bytes({"type": "FeatureCollection", "features": list(features)})
-
-
-def requires_object_storage(payload: bytes) -> bool:
-    """Report whether a release is too large to be published as a `database_inline` artifact.
-
-    A real PNW MTBS cohort is roughly 20 MB of full-resolution polygon, four times the inline
-    budget, so this is the normal answer rather than an error. The capture is still written: this
-    lane emits and does not persist, and the plan routes anything over 1 MB to object storage.
-    Refusing to capture here would only mean no MTBS data at all. See `ingest/AGENTS.md` "mtbs.py".
-    """
-    return len(payload) > INLINE_PUBLICATION_BYTE_LIMIT
-
-
 def release_observation_window(records: Sequence[MtbsBurnSeverityRecord]) -> tuple[datetime, datetime]:
     """Return the cohort's first and last ignition -- when it happened, never when we could know."""
     if not records:
         raise MtbsFeatureShapeError("an observation window needs at least one normalised record")
     ignition_dates = [record.ignition_date for record in records]
     return _midnight_utc(min(ignition_dates)), _midnight_utc(max(ignition_dates))
-
-
-async def capture_release(
-    ignition_year: int,
-    *,
-    bounding_box: BoundingBox,
-    output_root: Path,
-    client: httpx.AsyncClient,
-    review: SourceReview | None = None,
-) -> MtbsReleaseCapture:
-    """Capture one ignition-year cohort and emit its payload and sidecar; nothing here writes to a database."""
-    data_available_at = resolve_data_available_at(ignition_year)
-    release_identifier = build_release_identifier(ignition_year)
-    features, authoritative_count = await fetch_release_features(
-        ignition_year,
-        bounding_box,
-        client=client,
-    )
-    records = [build_mtbs_record(feature, ignition_year) for feature in features]
-    observed_from, observed_to = release_observation_window(records)
-    validate_release_window(data_available_at, observed_to)
-
-    payload = build_release_payload(features)
-    release_root = output_root / "mtbs" / release_identifier / f"bbox-{bounding_box_token(bounding_box)}"
-    release_root.mkdir(parents=True, exist_ok=True)
-    payload_path = release_root / f"{release_identifier}.geojson"
-    payload_path.write_bytes(payload)
-
-    sidecar_path: Path | None = None
-    sidecar_skipped_reason: str | None = None
-    if review is None:
-        sidecar_skipped_reason = (
-            "no operator review supplied; `SourceDefinition.reviewed_at`/`reviewed_by` are governance "
-            "facts this module may not fabricate. Re-run with --reviewed-by to emit the sidecar."
-        )
-    else:
-        plan = build_source_ingestion_plan(
-            ignition_year,
-            bounding_box,
-            review=review,
-            observation_window=(observed_from, observed_to),
-        )
-        sidecar_path = release_root / f"{release_identifier}-ingestion-plan.json"
-        sidecar_path.write_bytes(canonical_json_bytes(plan.model_dump(mode="json")))
-
-    return MtbsReleaseCapture(
-        ignition_year=ignition_year,
-        release_identifier=release_identifier,
-        data_available_at=data_available_at,
-        observed_from=observed_from,
-        observed_to=observed_to,
-        authoritative_count=authoritative_count,
-        paged_feature_count=len(features),
-        record_count=len(records),
-        payload_path=payload_path,
-        payload_bytes=len(payload),
-        payload_checksum=hashlib.sha256(payload).hexdigest(),
-        requires_object_storage=requires_object_storage(payload),
-        sidecar_path=sidecar_path,
-        sidecar_skipped_reason=sidecar_skipped_reason,
-    )
-
-
-async def ingest_mtbs(
-    ignition_years: Sequence[int],
-    *,
-    bounding_box: BoundingBox | None = None,
-    output_root: Path | None = None,
-    review: SourceReview | None = None,
-    client: httpx.AsyncClient | None = None,
-) -> list[MtbsReleaseCapture]:
-    """Capture every requested MTBS release; `ingest/commands.py` owns its CLI adapter.
-
-    An omitted `bounding_box` resolves to `burn_severity_bounding_box()` inside this call, so the
-    region manifest is read per invocation rather than frozen into a default at import.
-    """
-    if not ignition_years:
-        raise ValueError("ingest_mtbs requires at least one ignition year")
-    requested_bounding_box = bounding_box if bounding_box is not None else burn_severity_bounding_box()
-    root = output_root if output_root is not None else settings.local_execution_root
-    owns_client = client is None
-    if client is None:
-        client = httpx.AsyncClient(
-            headers={"User-Agent": USER_AGENT, "Accept": "application/geo+json, application/json"},
-            follow_redirects=False,
-            timeout=REQUEST_TIMEOUT_SECONDS,
-        )
-    try:
-        return [
-            await capture_release(
-                ignition_year,
-                bounding_box=requested_bounding_box,
-                output_root=root,
-                client=client,
-                review=review,
-            )
-            for ignition_year in ignition_years
-        ]
-    finally:
-        if owns_client:
-            await client.aclose()
 
 
 # --- Layer binding and release-year resolution -----------------------------------------------
@@ -949,100 +668,10 @@ def resolve_burn_severity_layer_name() -> str:
 def resolve_release_years(release_years: Sequence[int] | None) -> list[int]:
     """Choose the cohorts one job run ingests, defaulting to every year with an established release date.
 
-    Distinct from `resolve_requested_years`, which serves the capture CLI and refuses to default:
-    a capture writes a governed artifact per cohort and must be told which, while the job is the
-    hourly-shaped verb every other producer exposes and has to do something sensible with no
-    arguments at all. An explicitly requested year with no release date still raises through
-    `resolve_data_available_at`, here as there.
+    Unlike the retired capture CLI's resolver (which refused to default), this is the hourly-shaped
+    verb every other producer exposes and has to do something sensible with no arguments at all. An
+    explicitly requested year with no release date still raises through `resolve_data_available_at`.
     """
     if not release_years:
         return sorted(MTBS_ANNUAL_RELEASE_DATES)
     return sorted(set(release_years))
-
-
-def parse_reviewed_at(value: str) -> datetime:
-    """Parse the operator's review timestamp, which must carry an explicit UTC offset."""
-    try:
-        moment = datetime.fromisoformat(value.strip())
-    except ValueError as error:
-        raise argparse.ArgumentTypeError("--reviewed-at must be an ISO-8601 instant") from error
-    if moment.tzinfo is None or moment.utcoffset() is None:
-        raise argparse.ArgumentTypeError("--reviewed-at must include a timezone")
-    return moment.astimezone(UTC)
-
-
-def build_argument_parser() -> argparse.ArgumentParser:
-    """Describe the capture verb registered by `ingest/commands.py` as `ingest-mtbs`."""
-    parser = argparse.ArgumentParser(
-        prog="agri-ingest-mtbs",
-        description="Capture MTBS burned-area boundaries one annual release at a time.",
-    )
-    # Evaluated here, not at import: the parser is built inside `main()`, so `--bbox` defaults to the
-    # manifest envelope as it reads at parse time.
-    parser.add_argument("--bbox", type=_parse_bounding_box, default=burn_severity_bounding_box())
-    parser.add_argument("--release-year", type=int, action="append", dest="release_years")
-    parser.add_argument("--all-releases", action="store_true")
-    parser.add_argument("--output-root", type=Path, default=None)
-    parser.add_argument("--reviewed-by", default=None)
-    parser.add_argument("--reviewed-at", type=parse_reviewed_at, default=None)
-    return parser
-
-
-def resolve_requested_years(release_years: Sequence[int] | None, *, all_releases: bool) -> list[int]:
-    """Choose the cohorts to capture, defaulting to every year with an established release date."""
-    if all_releases:
-        return sorted(MTBS_ANNUAL_RELEASE_DATES)
-    if release_years:
-        return sorted(set(release_years))
-    raise SystemExit("specify --release-year YEAR (repeatable) or --all-releases")
-
-
-def build_review(reviewed_by: str | None, reviewed_at: datetime | None) -> SourceReview | None:
-    """Build the governance review only from what the operator actually supplied."""
-    if reviewed_by is None:
-        return None
-    return SourceReview(reviewed_at=reviewed_at or datetime.now(UTC), reviewed_by=reviewed_by)
-
-
-def main() -> None:
-    """Capture reviewed MTBS releases to the local run root without opening a database connection."""
-    parser = build_argument_parser()
-    args = parser.parse_args(_format_bounding_box_inline(sys.argv[1:]))
-    years = resolve_requested_years(args.release_years, all_releases=args.all_releases)
-    captures = asyncio.run(
-        ingest_mtbs(
-            years,
-            bounding_box=args.bbox,
-            output_root=args.output_root,
-            review=build_review(args.reviewed_by, args.reviewed_at),
-        )
-    )
-    summary = {
-        "bbox": list(args.bbox),
-        "releases": [
-            {
-                "ignition_year": capture.ignition_year,
-                "release_identifier": capture.release_identifier,
-                "data_available_at": capture.data_available_at.isoformat(),
-                "observed_from": capture.observed_from.isoformat(),
-                "observed_to": capture.observed_to.isoformat(),
-                "authoritative_count": capture.authoritative_count,
-                "paged_feature_count": capture.paged_feature_count,
-                "counts_agree": capture.authoritative_count == capture.paged_feature_count,
-                "payload_path": str(capture.payload_path),
-                "payload_bytes": capture.payload_bytes,
-                "payload_checksum": capture.payload_checksum,
-                "requires_object_storage": capture.requires_object_storage,
-                "sidecar_path": None if capture.sidecar_path is None else str(capture.sidecar_path),
-                "sidecar_skipped_reason": capture.sidecar_skipped_reason,
-            }
-            for capture in captures
-        ],
-        "total_authoritative_count": sum(capture.authoritative_count for capture in captures),
-        "total_paged_feature_count": sum(capture.paged_feature_count for capture in captures),
-    }
-    print(json.dumps(summary, sort_keys=True, indent=2))
-
-
-if __name__ == "__main__":
-    main()
