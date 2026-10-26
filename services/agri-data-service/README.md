@@ -610,9 +610,12 @@ same exporters join through `geo.geometry`.
 
 ### B. Non-durable backfill
 
-| Verb | What it does |
+**CORRECTED 2026-10-26: `data ingest-backfill` is gone.** `root.py` no longer registers it; the
+row below describes a verb and token list that existed in the past, not a current CLI surface.
+
+| Verb (historical) | What it did |
 |---|---|
-| `data ingest-backfill --source TOKEN [--since ISO] [--until ISO] [--years 2] [--chunk-days 7] [--bbox]` | Walks one source across a date range with no ledger — a bad `--source` prints the valid token list. Accepted tokens: `nws-sensors`, `nasa-firms-archive`, `usgs-streamflow-archive`. The `sentinel2-ndvi` token was removed 2026-09-06 with `ingest-ndvi`; `pipeline/direct/vegetation/backfill.py` owns that window now. |
+| `data ingest-backfill --source TOKEN [--since ISO] [--until ISO] [--years 2] [--chunk-days 7] [--bbox]` | Walked one source across a date range with no ledger — a bad `--source` printed the valid token list. Accepted tokens: `nws-sensors`, `nasa-firms-archive`, `usgs-streamflow-archive`. The `sentinel2-ndvi` token was removed 2026-09-06 with `ingest-ndvi`; `pipeline/direct/vegetation/backfill.py` owns that window now. |
 
 `data ingest-drought-history` was deleted 2026-09-06 with the rest of the drought write path;
 `pipeline/direct/drought/backfill.py` walks the same release-week calendar into Parquet.
@@ -679,7 +682,7 @@ receiver.
 | A chunk reports `records_seen=21000, records_written=0` and still "succeeds" | `INGEST_MAX_SOURCE_RECORDS` got bitten; the writer keeps the *newest* records and drops whole *oldest* days | Never set `INGEST_MAX_SOURCE_RECORDS` on an archive lane; the lane pins its own 50,000 ceiling |
 | Redis connection refused, but the run continues | Realtime publish is best-effort; the publisher marks itself unavailable on the first `OSError` and just counts drops | Safe to ignore locally |
 | GloFAS/CAMS/ensemble backfills run for hours and produce zero rows | These three lanes are fetch-only — no persist verb exists yet (§8D) | Expected; don't wait for rows |
-| A weekly or 5-day-cadence stream (e.g. `drought_areas`, `vegetation`) reports a gap whose `days` is far larger than its `missing_day_count` | Not a defect: since 2026-08-08 the gap walk runs on the stream's declared `publication_cadence_days`, so `days` is the calendar silence (what the verdict compares against the cadence) while `missing_day_count` counts the releases actually owed inside it — one skipped weekly release reads as 13 days and 1 missed publication (`src/agri_data_service/ingest/validation/completeness.py`) | Read `missing_day_count`, not `days`, when asking what the stream failed to publish |
+| A weekly or 5-day-cadence stream (e.g. `drought_areas`, `vegetation`) reported a gap whose `days` was far larger than its `missing_day_count` | HISTORICAL (2026-08-08 to 2026-10-26): the gap walk ran on the stream's declared `publication_cadence_days` in `ingest/validation/completeness.py`, which has since been deleted as zero-caller dead code along with the rest of the validity-report stack (`ingest/AGENTS.md`'s deletion table). No gap walk reads a stream's cadence today. | N/A — kept as history only |
 | `validate-streams`'s bbox-related checks silently do nothing | `INGEST_BBOX` isn't set in the environment `validate-streams` runs in — that check is unevaluated, not passing | Set `INGEST_BBOX` locally too, not just on ingest verbs |
 
 ---

@@ -43,10 +43,9 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
-# The forward token `open-meteo` and its `run_weather_ingestion_job` were DELETED 2026-09-06:
-# weather-observations forward polls belong to `pipeline/direct/weather_observations/forward.py`,
-# which writes Parquet. The fetch/parse code below stays -- that writer, the ERA5-Land soil writer
-# and the historical archive lanes all read it.
+# The PostgreSQL-targeting ingestion was DELETED 2026-09-06; see the deletion table near the top
+# of ingest/AGENTS.md. The fetch/parse code below stays -- `pipeline/direct/weather_observations/`
+# and other readers still use it.
 OPEN_METEO_PROPERTY_SOURCE: Final = "Open-Meteo"
 
 WEATHER_LAYER: Final = LayerBinding(

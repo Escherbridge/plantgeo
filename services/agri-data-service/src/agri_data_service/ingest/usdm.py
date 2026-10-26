@@ -1,8 +1,8 @@
 """US Drought Monitor source adapter: fetch one dated release file and parse it into validated areas.
 
-THE POSTGIS STORE AND THE WEEKLY RETENTION PRUNE THAT LIVED HERE WERE DELETED 2026-09-06 (owner
-directive, "remove the code for ingestion into the DB"). What is left is pure: no session, no SQL, no
-writer. `pipeline/direct/drought/` is the only consumer that persists anything, and it writes Parquet.
+The PostGIS store and retention prune that lived here were DELETED 2026-09-06; see the deletion
+table near the top of ingest/AGENTS.md. `pipeline/direct/drought/` is the only consumer that
+persists anything today.
 """
 
 from __future__ import annotations
@@ -28,10 +28,8 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
-# The source token `usdm-drought`, `PostgresDroughtStore`, `run_drought_ingestion_job`, the newest-release
-# candidate walk and the release retention window were DELETED 2026-09-06: `geo.drought_areas` has no
-# Python producer any more. `pipeline/direct/drought/` owns the full floor-to-settled window and writes
-# Parquet, reusing the dated-archive fetch and the release parser kept below.
+# The PostgreSQL-targeting producer was DELETED 2026-09-06; see the deletion table near the top of
+# ingest/AGENTS.md. `pipeline/direct/drought/` reuses the dated-archive fetch and release parser below.
 USDM_BASE_URL: Final = "https://droughtmonitor.unl.edu/data/json"
 
 # The national collection is ~19 MB of full-resolution MultiPolygon rings.

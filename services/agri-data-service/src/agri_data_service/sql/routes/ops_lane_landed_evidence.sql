@@ -22,12 +22,13 @@
 --
 -- The lanes table beside it is reconstructed entirely from the agri.job_* ledger. That is sound
 -- only while a lane's driver still writes to the ledger, and for the two archive walks it no
--- longer does: since 2026-08-07 durable-archive-backfill.sh tracks its own position in a local
--- cursor file and calls the bare `ingest-backfill` verb, which enqueues nothing. Their ledger
--- rows are therefore frozen mid-campaign -- succeeded counts, completion, throughput and the
--- "last recorded activity" stamp all stopped moving -- while the walks themselves keep writing
--- real rows. A dashboard reading only the ledger presents those frozen numbers as current state,
--- and an operator concludes the lane died a day ago.
+-- longer did: from 2026-08-07 until its deletion 2026-10-26, durable-archive-backfill.sh tracked
+-- its own position in a local cursor file and called the bare `ingest-backfill` verb, which
+-- enqueued nothing. Their ledger rows were therefore frozen mid-campaign -- succeeded counts,
+-- completion, throughput and the "last recorded activity" stamp all stopped moving -- while the
+-- walks themselves kept writing real rows at the time. A dashboard reading only the ledger
+-- presents those frozen numbers as current state, and an operator concludes the lane died a day
+-- ago.
 --
 -- This asks the opposite question, the same way ops_data_streams.sql and ops_historical_walks
 -- .sql already do for the loads the ledger cannot see at all: not "what work is queued" but

@@ -5,11 +5,10 @@ Executes the same logical inserts as the vetted-but-blocked
 (data_source -> source_release -> release_set -> release_set_item -> 3 artifacts),
 but reads the three frozen local files as client-side bytes rather than through
 `pg_read_binary_file`, which cannot reach a remote server's filesystem. All three
-artifacts use `storage_class = 'local_raw_cache'` with `content_bytes = NULL`,
-the same reference-plus-checksum mode `historical_writer/era5.py`'s
-`_ensure_era5_artifact` uses for its ZIPs -- `agri.artifact`'s
-`ck_artifact_inline_artifact_has_content` CHECK only demands `content_bytes` when
-`storage_class = 'database_inline'`, so no payload ever crosses the wire here.
+artifacts use `storage_class = 'local_raw_cache'` with `content_bytes = NULL`, a
+reference-plus-checksum mode: `agri.artifact`'s `ck_artifact_inline_artifact_has_content`
+CHECK only demands `content_bytes` when `storage_class = 'database_inline'`, so no
+payload ever crosses the wire here.
 See `lineage-receipt-2026-08-14.md` in the track directory for the storage-mode
 rationale and the executed run's row counts and keys, and
 `conductor/retros/restoration_ag_demo_20260726/receipts/kaggle-ghisaconus-v1.json`
@@ -298,9 +297,8 @@ async def _ensure_ghisaconus_release_set(
 ) -> tuple[ReleaseSet, bool]:
     """Create-or-return the one-member GHISACONUS release set, validating it only after its item lands.
 
-    Mirrors `historical_writer/_release_sets.py`'s freeze-after-validate ordering using only the public
-    `provenance.py` helpers, scoped to this loader's single release rather than the historical lanes'
-    multi-release reconciliation.
+    A freeze-after-validate ordering built on the public `provenance.py` helpers, scoped to this
+    loader's single release rather than a multi-release reconciliation.
     """
     await advisory_lock(session, f"public-evaluation-lineage:{release_set_fields['logical_key']}")
     release_set = await find_release_set(

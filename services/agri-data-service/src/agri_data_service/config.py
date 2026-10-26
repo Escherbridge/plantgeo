@@ -449,30 +449,7 @@ class Settings(BaseSettings):
             timeout_seconds=self.agent_llm_timeout_seconds,
         )
 
-    # Typed historical promotion is a distinct, private receiver from phase-one publication.
-    historical_promotion_api_url: str | None = None
-    historical_promotion_token: SecretStr | None = None
-    historical_promotion_receiver_enabled: bool = False
-    historical_promotion_actor: str | None = Field(default=None, max_length=255)
-    historical_promotion_max_manifest_bytes: int = 8_000_000
-    historical_promotion_max_chunk_bytes: int = 8_000_000
-    historical_promotion_max_artifact_bytes: int = 8_000_000
-    historical_promotion_request_overhead_bytes: int = 64_000
-    historical_promotion_retry_attempts: int = 5
-    historical_promotion_retry_base_seconds: float = 0.5
-
-    def require_historical_promotion_client(self) -> tuple[str, str]:
-        """Return the explicit secure receiver coordinates for a local promotion client."""
-        if self.historical_promotion_api_url is None or self.historical_promotion_token is None:
-            raise ValueError(
-                "historical promotion requires HISTORICAL_PROMOTION_API_URL and HISTORICAL_PROMOTION_TOKEN"
-            )
-        parsed = urlsplit(self.historical_promotion_api_url)
-        if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
-            raise ValueError("HISTORICAL_PROMOTION_API_URL must be a credential-free HTTPS URL")
-        return self.historical_promotion_api_url.rstrip("/"), self.historical_promotion_token.get_secret_value()
-
-    @field_validator("local_publish_actor", "historical_promotion_actor", mode="before")
+    @field_validator("local_publish_actor", mode="before")
     @classmethod
     def normalize_publish_actor(cls, value: object) -> object:
         if value is None:
@@ -497,9 +474,6 @@ class Settings(BaseSettings):
         return max(
             self.local_publish_max_manifest_bytes,
             self.local_publish_max_upload_request_bytes,
-            self.historical_promotion_max_manifest_bytes,
-            self.historical_promotion_max_chunk_bytes + self.historical_promotion_request_overhead_bytes,
-            self.historical_promotion_max_artifact_bytes + self.historical_promotion_request_overhead_bytes,
             64_000,
         )
 
@@ -516,10 +490,6 @@ class Settings(BaseSettings):
             "LOCAL_PUBLISH_MAX_RUN_ARTIFACT_BYTES": self.local_publish_max_run_artifact_bytes,
             "LOCAL_PUBLISH_MAX_RUN_VALIDATION_BYTES": self.local_publish_max_run_validation_bytes,
             "LOCAL_PUBLISH_REQUEST_OVERHEAD_BYTES": self.local_publish_request_overhead_bytes,
-            "HISTORICAL_PROMOTION_MAX_MANIFEST_BYTES": self.historical_promotion_max_manifest_bytes,
-            "HISTORICAL_PROMOTION_MAX_CHUNK_BYTES": self.historical_promotion_max_chunk_bytes,
-            "HISTORICAL_PROMOTION_MAX_ARTIFACT_BYTES": self.historical_promotion_max_artifact_bytes,
-            "HISTORICAL_PROMOTION_REQUEST_OVERHEAD_BYTES": self.historical_promotion_request_overhead_bytes,
         }
         invalid_limit = next((name for name, value in byte_limits.items() if value <= 0), None)
         if invalid_limit:
@@ -534,10 +504,6 @@ class Settings(BaseSettings):
             raise ValueError("the aggregate validation quota cannot be below the per-file quota")
         if self.local_publish_retry_base_seconds < 0:
             raise ValueError("LOCAL_PUBLISH_RETRY_BASE_SECONDS cannot be negative")
-        if self.historical_promotion_retry_attempts <= 0:
-            raise ValueError("HISTORICAL_PROMOTION_RETRY_ATTEMPTS must be positive")
-        if self.historical_promotion_retry_base_seconds < 0:
-            raise ValueError("HISTORICAL_PROMOTION_RETRY_BASE_SECONDS cannot be negative")
         if self.local_publish_token is not None:
             token = self.local_publish_token.get_secret_value()
             if (
@@ -553,26 +519,6 @@ class Settings(BaseSettings):
             self.local_publish_token is None or self.local_publish_actor is None
         ):
             raise ValueError("enabled local publication receiver requires LOCAL_PUBLISH_TOKEN and LOCAL_PUBLISH_ACTOR")
-        if self.historical_promotion_token is not None:
-            token = self.historical_promotion_token.get_secret_value()
-            if (
-                len(token) < _MIN_TOKEN_LENGTH
-                or token != token.strip()
-                or any(character.isspace() for character in token)
-                or len(set(token)) < _MIN_TOKEN_DIVERSITY
-            ):
-                raise ValueError(
-                    "HISTORICAL_PROMOTION_TOKEN must contain at least 32 diverse non-whitespace characters"
-                )
-        if self.historical_promotion_actor is not None and self.historical_promotion_token is None:
-            raise ValueError("HISTORICAL_PROMOTION_ACTOR requires HISTORICAL_PROMOTION_TOKEN")
-        if self.historical_promotion_receiver_enabled and (
-            self.historical_promotion_token is None or self.historical_promotion_actor is None
-        ):
-            raise ValueError(
-                "enabled historical promotion receiver requires HISTORICAL_PROMOTION_TOKEN "
-                "and HISTORICAL_PROMOTION_ACTOR"
-            )
         if self.service_profile == "receiver_writer" and self.published_reader_database_url is not None:
             raise ValueError("receiver_writer profile must not receive PUBLISHED_READER_DATABASE_URL")
         if self.service_profile == "published_reader" and self.receiver_writer_database_url is not None:

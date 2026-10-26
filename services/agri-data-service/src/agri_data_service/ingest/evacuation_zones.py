@@ -1,13 +1,8 @@
 """Oregon OEM evacuation-area upstream: the ArcGIS FeatureServer adapter and its retrying, bounded, paged walk.
 
-The PostgreSQL job this adapter used to feed -- `run_evacuation_zones_ingestion_job` and the
-`build_evacuation_zone_write` that shaped its rows -- was DELETED on 2026-09-07, once
-`evacuation-zones-direct-forward` went ACTIVE and `parquet-evacuation-zones` (the only exporter that
-read `geo.features` for this layer) was retired from the active set. The adapter itself stayed
-because it is not the Postgres half of that pair: `pipeline/direct/evacuation_zones/source.py` calls
-`fetch_evacuation_zones` for the very same 64 MiB-budgeted adaptive walk, so deleting this module
-would have broken the lane the removal was cleaning up after. See the removal packet under
-`conductor/tracks/environmental_postgres_retirement_20260904/evidence/`.
+The PostgreSQL job this adapter used to feed was DELETED 2026-09-07; see the deletion table near
+the top of ingest/AGENTS.md. `pipeline/direct/evacuation_zones/source.py` calls `fetch_evacuation_zones`
+below for the same adaptive walk.
 """
 
 from __future__ import annotations

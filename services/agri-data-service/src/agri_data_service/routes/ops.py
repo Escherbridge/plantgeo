@@ -40,18 +40,21 @@ _DATA_STREAMS_SQL: Final = text(load_query_sql("routes/ops_data_streams.sql"))
 _LANE_EVIDENCE_SQL: Final = text(load_query_sql("routes/ops_lane_landed_evidence.sql")).bindparams(
     bindparam("stream_names", type_=ARRAY(Text))
 )
-# The three backend-health panels. Each reads tables no ledger row describes, so each is loaded
-# through `_optional_rows` rather than beside the ledger statements: see the savepoint note there.
-_FORECAST_STATE_SQL: Final = text(load_query_sql("routes/ops_forecast_state.sql"))
+# The two remaining backend-health panels. Each reads tables no ledger row describes, so each is
+# loaded through `_optional_rows` rather than beside the ledger statements: see the savepoint note
+# there. The forecast panel's own statement (`ops_forecast_state.sql`) was deleted once forecast
+# serving moved to the governed Parquet plane; `_load_snapshot` below now hardcodes that panel to
+# an empty row set and a `panel_errors["forecast-state"] = "parquet_only"` marker instead of reading
+# the retired PostgreSQL forecast tables.
 _PLATFORM_ACTIVITY_SQL: Final = text(load_query_sql("routes/ops_platform_activity.sql"))
 _UNARMED_SOURCES_SQL: Final = text(load_query_sql("routes/ops_unarmed_sources.sql"))
 
 # Every statement this page issues is bounded by the transaction-local timeout sql.md prescribes
-# for direct SQL. Three of them scan whole tables and those tables only grow -- finishing the FIRMS
-# archive walk this panel exists to watch multiplies its layer of geo.features roughly twentyfold --
-# and `/ops` is unauthenticated, so an unbounded scan is a way for anyone who can reach the route to
-# pin a production connection indefinitely. Crossing this raises; `_load_snapshot` catches it and the
-# page shows the timeout in its error banner, which is a loud failure rather than a silent one.
+# for direct SQL. Several of them scan whole tables and those tables only grow -- the FIRMS archive
+# layer of geo.features alone is in the tens of millions of rows -- and `/ops` is unauthenticated,
+# so an unbounded scan is a way for anyone who can reach the route to pin a production connection
+# indefinitely. Crossing this raises; `_load_snapshot` catches it and the page shows the timeout in
+# its error banner, which is a loud failure rather than a silent one.
 # SET LOCAL stays inline here per sql/AGENTS.md: one line, no bind parameter (SET LOCAL cannot take
 # one), and it bakes in the constant above it.
 _STATEMENT_TIMEOUT_SECONDS: Final = 120
@@ -106,24 +109,25 @@ _STREAM_AGING_DAYS: Final = 30
 #                 minute is far short of the six hours that make a lane's ledger read stale,
 #                 so the cross-check never flips on cache age alone.
 #
-# The three backend-health panels are the same argument at smaller cost. Measured server-side
-# against production 2026-08-09 on warm buffers: forecast state 82 ms (nineteen scalar aggregates
-# over tables no larger than 184k rows), platform activity 102 ms, unarmed sources 247 ms (one
-# index probe per source release, 1,811 of them). None of that is expensive per read and all of it
-# is pointless twelve times a minute per connected operator, which is the only reason they are
-# cached at all. Their windows are chosen by how long each answer may lag before it misleads:
+# The two remaining backend-health panels are the same argument at smaller cost. Measured
+# server-side against production 2026-08-09 on warm buffers: platform activity 102 ms, unarmed
+# sources 247 ms (one index probe per source release, 1,811 of them). None of that is expensive
+# per read and all of it is pointless twelve times a minute per connected operator, which is the
+# only reason they are cached at all. Their windows are chosen by how long each answer may lag
+# before it misleads:
 #
-#   forecast state ~90 s -- the plane's newest write is days old. Nothing here moves inside a
-#                  minute, and the panel exists to report exactly that.
 #   platform       ~60 s -- this one is a liveness signal, so it is the panel that most needs to
 #                  change soon after the world does; a minute is the shortest window worth the
 #                  scan.
 #   sources        ~60 s -- a zero-landing release must become visible while the lane that wrote
 #                  it is still running, not after it finishes.
+#
+# The forecast panel has no cache window of its own: it is hardcoded to an empty read (see the
+# forecast-panel note above the two backend-health statements), so there is no live statement left
+# to amortize.
 _STREAMS_CACHE_SECONDS: Final = 300
 _WALKS_CACHE_SECONDS: Final = 60
 _LANE_EVIDENCE_CACHE_SECONDS: Final = 60
-_FORECAST_CACHE_SECONDS: Final = 90
 _PLATFORM_CACHE_SECONDS: Final = 60
 _SOURCES_CACHE_SECONDS: Final = 60
 _STREAMS_CACHE_KEY: Final = "data-streams"

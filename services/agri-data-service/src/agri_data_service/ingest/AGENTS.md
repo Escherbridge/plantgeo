@@ -306,7 +306,14 @@ The API key env var is `NASA_FIRMS_KEY` (`nasa-firms.ts:104`) — not `FIRMS_API
 
 ## firms.py: the archive is the same endpoint with a date, and the product is the discriminator
 
-`nasa-firms-archive` is a second `--source` token over the **same** producer, layer, channel and identity
+**CORRECTED 2026-10-26: `ingest-backfill` and both `--source` tokens below are gone.** `nasa-firms`
+and `nasa-firms-archive` were tokens the now-deleted `agri-service data ingest-backfill` verb
+accepted; `root.py` no longer registers that verb at all (see the deletion table near the top of
+this file). The paragraphs below describe how the two tokens related to one producer at the time
+they existed; read them as history, not as a current CLI surface. The underlying measurement about
+FIRMS's day-range ceiling is still true and still governs `firms_day_range()`.
+
+`nasa-firms-archive` was a second `--source` token over the **same** producer, layer, channel and identity
 contract as `nasa-firms` — not a second producer. FIRMS has no separate archive host: `/api/area/csv/…`
 takes an optional trailing start date, and how far back you can reach is a property of the *product*, not
 of the URL. Four things about it are load-bearing.
@@ -930,56 +937,16 @@ exact name and requires exactly the declared count, rather than summarizing what
 
 ## validation.py
 
-**It is a package, and the layout follows the seams rather than the line count.** `constants.py` holds
-the values mirrored from `src/lib/server/services/environmental-read-model.ts` (the two axis rules, the
-USGS sentinel, the published status), the scan bounds and the validity vocabulary; `errors.py` the two
-typed refusals; `models.py` the stream catalog and every `to_summary()`; `completeness.py` the pure day
-algebra (gap walk, continuity clustering, density floor, verdict) with no I/O and no SQLAlchemy import at
-all, which is what makes it the most reusable code in `ingest/`; `report.py` the assembly of one stream's
-row; `queries.py` the seven `sql/ingest/*.sql` bindings plus the two inline `SET LOCAL` statements;
-`rows.py` the typed column readers; `markdown.py` the renderer.
-
-**The `geo.historical_*` scan is gone, and the way it survived is the lesson.** `historical_vegetation`,
-`historical_fire_data` and `historical_water_drought` lost their `StreamDefinition`s on 2026-08-15,
-because the three tables they named have no producer anywhere in the tree. The two statements that read
-them were left in place, and one of them — `historical_validity_counts.sql`, an aggregate with no
-`GROUP BY` per branch — returned *three rows whatever the tables contained*, by its own documented
-design. `build_validation_report` computes `unknown_streams` as every observed stream not in `declared`,
-so from that day every scheduled `validate-streams` tick reported three streams under the heading
-"These hold rows but have no `StreamDefinition`" — a standing false anomaly inside the report whose one
-job is separating real anomalies from noise. **The suite could not see it because the repair had been
-applied to the fixture instead of the query**: `tests/test_ingest_validation.py` scripted
-`historical_validity_counts: []` for a statement that cannot return `[]`. Both constants, both `.sql`
-files, the `store="historical_table"` member of `StreamStore` and the fixture keys were deleted on
-2026-09-04, and `test_no_statement_the_report_issues_names_a_geo_historical_table` now asserts against
-the statements the report actually issues rather than against a fixture key — the only shape of guard
-that could have caught the original defect.
-
-**The async scan band stays in `__init__.py` on purpose, and moving it is a silent test defeat.**
-`tests/test_ingest_validation.py` rebinds `MAX_OBSERVED_DAY_ROWS` with `monkeypatch.setattr` on the
-package to prove a day series that reaches its cap is refused rather than truncated. A reader defined in a
-submodule resolves its own module global, so the patch would land on a name nothing reads and the test
-would pass while exercising the 200,000-row default. The same rule governs `routes/health/`. Everything
-else is re-exported from `__init__.py`, including the private names the tests reach by attribute
-(`_SERVER_DAY` and its eight siblings), so no importer changed when the module became a package.
-
-**The gap walk runs on the stream's declared cadence, not on the calendar.** A daily grid is only correct
-for a daily stream. Against `drought_areas` -- one USDM release every Tuesday -- it counted the six
-ordinary days between consecutive releases as missing, so a stream that had published every release it
-ever owed reported roughly 6/7 of the calendar absent (54 phantom days across ten on-time releases), and
-`vegetation` reported 4/5 of it on its five-day Sentinel-2 revisit. Those phantom days drowned the real
-ones. `find_observation_gaps` now takes `publication_cadence_days` (defaulting to 1, so a stream that
-declares no cadence is walked exactly as before) and opens a gap only when the silence runs past one whole
-cadence period; what it counts is the grid points `last publication + n * cadence` that passed with
-nothing published.
-
-**A gap therefore carries two numbers, and they mean different things.** `ObservationGap.days` stays the
-calendar length of the silence, because that is what `decide_verdict` compares against the declared
-cadence -- a weekly stream that skips one release is still INCOMPLETE on 13 days of silence against a
-7-day cadence. `ObservationGap.missed_publications` is what the stream actually owed inside that silence
-and is what `CompletenessReport.missing_day_count` sums, so one skipped weekly release reads as 1, not 13.
-On a daily cadence the two are equal by construction, which is why the JSON gap triple and the Markdown
-gap line are unchanged for every daily stream: both renderers name the second number only when it differs.
+**It is a package holding only the stream catalog now; the report stack it used to carry is DELETED.**
+`constants.py` holds the two Literal vocabularies a stream can declare (`StreamKind`, `StreamStore`);
+`models.py` holds `StreamDefinition` and the `DEFAULT_STREAM_DEFINITIONS` catalog `routes/ops.py` reads
+to map a lane to the stream it fills; `source_manifests.py` holds the North America intervention-evidence
+manifest registry `execution/geospatial_pilot.py` reads. `errors.py`, `completeness.py` (the day algebra:
+gap walk, continuity clustering, density floor, verdict), `report.py` (one stream's assembled row) and
+`markdown.py` (the renderer) were removed as zero-caller dead code once nothing published or consumed the
+Markdown/JSON validity report they built — see the deletion table near the top of this file. A
+`validation/queries.py` this section used to describe never existed in the tree by the time this pass
+ran; do not go looking for it.
 
 ## layer_binding.py
 
@@ -1224,65 +1191,17 @@ from the retired TypeScript -- they are deviations from the stated intent of thi
   `supported=False` instead would have been a false refusal under the max-available-per-layer policy; the guard that keeps the
   declaration honest is `FunctionSource.history_capability()`, which refuses a source claiming history with no history fetcher.
 
-## One gap rule
+## One gap rule (HISTORICAL — the modules this describes are gone)
 
-There were two, and the weaker one was the settler. `validation/completeness.py` walked a stream's own
-publication cadence; `reconcile.window_coverage` had its own day-by-day comparison with the cadence
-implicitly fixed at 1. That second implementation was a strictly weaker special case of the first --
-correct only while every registered lane's stream published daily, and wrong in the SETTLING direction the
-moment one did not. A five-day window of the five-day-revisit `vegetation` stream that published once owes
-nothing more; the cadence-blind rule called it partial and would have left it queued forever, and the
-symmetric failure (a wider cadence marking a real hole covered) is the one that writes a silent lie.
-
-`_silences` in `completeness.py` is now the single walk. It returns each run of calendar days nothing was
-published in, together with the first cadence grid point inside that run, and two renderers sit on it:
-`find_observation_gaps` (the report's calendar runs, unchanged public signature) and
-`missing_publication_days` (the individual owed days a backfill lane has to re-plan). `window_coverage`
-calls the second one, so the report and the settler cannot drift into two meanings of "missing". Both
-lanes registered today declare a daily cadence and `lane_publication_cadence_days` defaults to daily for a
-lane no stream claims, so this substitution changed no current behaviour -- it removed the trap, not a
-live bug. The default direction is deliberate: too SHORT a cadence demands more coverage and costs a
-re-walk, too long settles a window over days nothing ever published.
-
-The day census under both of them is also one statement now. `sql/ingest/observed_layer_days.sql` and
-`sql/ingest/feature_observed_days.sql` were the same three filters at two scopes, agreeing by inspection
-and by a comment asking the next reader to keep them agreeing. They are one file, `observed_days.sql`,
-whose single `{layer_scope}` slot is filled at import from two constants in `validation/queries.py` --
-the same load-time slot `store_drought_area.sql` uses for its replace predicate, and NOT a bound
-parameter, because an "either the parameter is null or the column matches it" predicate cannot use the
-index whose leading column is `layer_id` under a generic plan. `sql/AGENTS.md`'s LOADED rule is what
-forces the shape: a file may be loaded by exactly one `load_query_sql` call, so `queries.py` loads it,
-formats it twice, and `reconcile.py` imports `OBSERVED_DAYS_FOR_LAYER` rather than reading the file again.
-
-### The census was sharded for one day, and the sharding was the wrong fix (2026-08-15 to 2026-08-16)
-
-`observed_days.sql` over the firms layer's whole span measured 81 to 101 seconds on prod against the 120s
-transaction statement timeout `apply_statement_timeout` pins, so the census did not merely run slowly, it
-failed outright whenever anything else was competing for the database. The response was a fan-out:
-`observed_day_shards` cut the lane's floor-to-today span into 730-day pieces, `observed_layer_days`
-gathered them behind an `asyncio.Lock` (one `AsyncSession` is one connection, and SQLAlchemy refuses two
-concurrent executes on it), and `jobs-pulse` grew a `_probe_census_shards` helper that re-read the whole
-census a second time, per lane, per tick, to report `census shards=N slowest_shard_seconds=S`.
-
-**The slowness was a missing index, not a missing partition.** `geo.feature_observation_day` is IMMUTABLE
-and PARALLEL SAFE, so it can carry an expression index; `ix_features_layer_observation_day` over
-`(layer_id, geo.feature_observation_day(properties))` now exists in production and the planner uses it as
-an Index Cond on the day predicate. Re-measured against prod on 2026-08-16 with that index present: ONE
-statement 68.7s, thirteen shards 95.3s, `shared_blks_read` a wash (331,152 against 332,076). Sharding
-never reduced the work; it added roughly 27 seconds of per-statement overhead on top of it. 68.7s is 57%
-of the timeout. So the fan-out, the lock, the shard constant and the probe are all gone.
-
-**What survived, and why it must keep surviving.** The day BOUNDS are the point of the revert, not a
-casualty of it: `{day_scope}` in `observed_days.sql` and `_DAY_RANGE_SCOPE` in `validation/queries.py`
-are exactly the predicate the new index serves, and the map's date slider wants a bounded range for the
-same reason. `_DAY_RANGE_SCOPE` is inclusive at BOTH ends. What was removed is the SHARDED CENSUS; what
-was never in question is bounded querying. The row-cap refusal is likewise unchanged and is still per
-EXECUTION of the statement -- there simply is only ever one execution now.
-
-The lesson worth keeping is the diagnostic one. A statement that is slow because it reads too many rows
-and a statement that is slow because it reads the right rows the wrong way look identical from the
-application side; only `shared_blks_read` told them apart, and it was not measured until after the
-fan-out shipped. Measure the buffers before partitioning anything.
+This section documented a 2026-08 cadence-aware gap walk shared by the since-deleted `validation/
+completeness.py` and `reconcile.window_coverage`, and a shared day census (`observed_days.sql`) loaded
+through a `validation/queries.py` that this pass confirmed never existed in the tree (`queries.py` is a
+typo this section carried for the module that loaded `sql/ingest/observed_days.sql` at the time). Both
+`reconcile.py` and the whole `jobs-plan-gaps`/day-census machinery below were removed in an earlier wave;
+nothing in `ingest/` reads `observed_days.sql`, `observed_layer_days.sql` or `feature_observed_days.sql`
+today. The index lesson is still worth keeping: a statement slow because it reads too many rows and one
+slow because it reads the right rows the wrong way look identical from the application side, and only
+`shared_blks_read` told them apart on this incident — measure the buffers before partitioning anything.
 
 ## jobs-plan-gaps: the half of the loop that was missing
 

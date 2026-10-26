@@ -52,14 +52,14 @@ marked **UNVERIFIED** with what would confirm it.
   2026-08-06 alone" (`drizzle/0038_tile_low_zoom_routing.sql:55-59`), consistent with ASOS's
   hourly METAR plus irregular SPECI (special) reports. There is no per-station guarantee that a
   reading lands every hour, and none is enforced anywhere in this code.
-- **This lane's own `StreamDefinition` declares no cadence.** `ingest/validation/models.py:142`:
+- **This lane's own `StreamDefinition` declares no cadence.** `ingest/validation/models.py:114`:
   `StreamDefinition(stream="sensors", kind="snapshot", store="features", cadence_basis=None)`. Every
   other feature-backed time-series lane in that table cites historical cadence provenance;
-  `sensors` cites nothing.
-  `lane_publication_cadence_days` (`ingest/validation/models.py:168-178`) falls back to the daily
-  default for an unclaimed lane rather than failing, so gap detection currently treats `sensors` as
-  if it published once a day — an assumption nobody measured against the actual per-station rate
-  above.
+  `sensors` cites nothing. The validity-report stack that once derived a daily gap-detection default
+  from this catalog (`lane_publication_cadence_days` and the rest of `ingest/validation/report.py`,
+  `completeness.py`, `markdown.py`, `rows.py`, `errors.py`) was deleted as zero-caller dead code; this
+  `StreamDefinition` entry is read today only by `routes/ops.py`'s lane-to-stream map, and no gap walk
+  reads `sensors`' cadence at all.
 - **Observed lag**: not separately measured. The forward job polls the `/latest` endpoint per
   station once an hour and writes whatever NWS has published by then
   (`ingest/sensors.py:583-585`, `fetch_current_sensor_records`); how stale NWS's own `/latest`

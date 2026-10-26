@@ -970,10 +970,5 @@ def build_ndvi_write(record: Mapping[str, object], layer_name: str) -> FeatureWr
     )
 
 
-# `_sample_grid`, `fetch_current_ndvi_records`, `fetch_history_ndvi_records`, `build_vegetation_write`,
-# `build_vegetation_source` and the `sentinel2-ndvi` source token WERE HERE AND ARE DELETED 2026-09-06.
-# They composed this module's pure sampling code into an `IngestionSource` that `ingest-ndvi` and
-# `ingest-backfill --source sentinel2-ndvi` drove into `geo.features`. `pipeline/direct/vegetation/`
-# owns both halves of the layer now -- `source.py` calls `collect_ndvi_grid_records` above directly and
-# writes Parquet, and `backfill.py` republishes what Postgres already holds through the unchanged
-# `LANE_REGISTRY['vegetation']` adapter. Nothing below the sampling layer changed.
+# The PostgreSQL-targeting ingestion built on this sampling code was DELETED 2026-09-06; see the
+# deletion table near the top of ingest/AGENTS.md. `pipeline/direct/vegetation/` owns the layer now.

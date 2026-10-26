@@ -115,7 +115,6 @@ async def test_readiness_requires_enabled_receiver_identity(
     monkeypatch.setattr(health_route, "receiver_writer_session", _session_factory(session))
     monkeypatch.setattr(health_route.settings, "service_profile", "receiver_writer")
     monkeypatch.setattr(health_route.settings, "local_publication_receiver_enabled", False)
-    monkeypatch.setattr(health_route.settings, "historical_promotion_receiver_enabled", False)
     monkeypatch.setattr(health_route.settings, "local_publish_actor", None)
 
     response = await health_route.readiness_check(None)  # type: ignore[arg-type]
@@ -165,9 +164,7 @@ async def test_published_reader_readiness_does_not_require_receiver_identity(
     monkeypatch.setattr(health_route, "published_reader_session", _session_factory(session))
     monkeypatch.setattr(health_route.settings, "service_profile", "published_reader")
     monkeypatch.setattr(health_route.settings, "local_publication_receiver_enabled", False)
-    monkeypatch.setattr(health_route.settings, "historical_promotion_receiver_enabled", False)
     monkeypatch.setattr(health_route.settings, "local_publish_actor", None)
-    monkeypatch.setattr(health_route.settings, "historical_promotion_actor", None)
 
     response = await health_route.readiness_check(None)  # type: ignore[arg-type]
     payload = json.loads(response.body)

@@ -109,8 +109,6 @@ WFIGS_RETRY: Final = UpstreamRetryPolicy(
     exhausted_message="WFIGS retry loop ended without a response",
 )
 MAX_ATTEMPTS: Final = WFIGS_RETRY.ladder.max_attempts
-RETRY_BASE_DELAY_SECONDS: Final = WFIGS_RETRY.ladder.base_delay_seconds
-RETRY_MAX_DELAY_SECONDS: Final = WFIGS_RETRY.ladder.max_delay_seconds
 RETRY_WALL_CLOCK_CEILING_SECONDS: Final = WFIGS_RETRY.ladder.wall_clock_ceiling_seconds
 
 # WFIGS' IRWIN-integrated interagency perimeter record begins with the 2020 fire year, which is what
