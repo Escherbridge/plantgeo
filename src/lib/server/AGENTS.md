@@ -72,6 +72,24 @@ Every BullMQ job registration (`jobs/*.ts`) parses `REDIS_URL` through the singl
 own copy with slightly different fallback shapes before this pass; `alert-dispatcher.ts` was
 always the correct example to copy.
 
+## jobs
+
+`jobs/shared.ts`'s `registerBullmqCron({ queueName, jobName, cronPattern, handler })` is the one
+lazy-require-`bullmq`-in-try/catch + `Queue` + scheduler + `Worker` registration path for the
+simple daily cron jobs (`conversation-cleanup.ts`, `email-digest.ts`, `priority-zone-refresh.ts`);
+each used to hand-roll its own copy. `priority-zone-refresh.ts` previously called
+`queue.getRepeatableJobs()` + `removeRepeatableByKey()` on every `startJobs()` before re-adding
+the repeatable job. All three now register through `upsertJobScheduler` (idempotent by scheduler
+id, `${queueName}-daily`), which was already how `conversation-cleanup.ts` and `email-digest.ts`
+registered. `priority-zone-refresh.ts` still sweeps every repeat entry whose key is not that
+scheduler id after registering: its old `queue.add(..., { repeat })` entry lives under a different
+key in Redis, and without the sweep it would keep firing beside the new scheduler (a double nightly
+recompute). `priority-zone-refresh.ts` keeps its
+own `startJobs`/`stopJobs` exports, the `PRIORITY_ZONE_RECOMPUTATION_STATE` disable guard, and its
+`completed`/`failed` worker listeners around the shared call, since those are specific to that
+job, not boilerplate. `alert-dispatcher.ts` (30-minute cadence, its own `startAlertDispatcherWorker`
+export) is intentionally untouched — a different shape, not covered by this helper.
+
 `db/schema/land-context/shared.ts`'s `PNW_STATE_CODES`/`PnwStateCode` moved behind
 `getRegion().adminCodes` in the `federation.md` §5 step 2 push; both names stay as deprecated
 aliases, and new code should read `RegionAdminCode` (`src/lib/region/region.ts`) directly.

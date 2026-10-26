@@ -1,7 +1,7 @@
 import { db } from "@/lib/server/db";
 import { apiKeys, teamMembers } from "@/lib/server/db/schema";
 import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
-import Redis from "ioredis";
+import { getRedis } from "@/lib/server/redis";
 import { NextResponse } from "next/server";
 import {
   hashApiKey,
@@ -14,22 +14,7 @@ import {
 } from "@/lib/server/api-keys";
 import { verifyPassword } from "@/lib/server/password";
 
-const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-let redis: Redis | null = null;
-
-function getRedis(): Redis {
-  if (!redis) {
-    redis = new Redis(REDIS_URL, {
-      maxRetriesPerRequest: 3,
-      retryStrategy(times) {
-        return Math.min(times * 50, 2000);
-      },
-    });
-  }
-  return redis;
-}
 
 interface ApiKeyPrincipal {
   keyId: string;
@@ -117,7 +102,8 @@ export async function validateApiKey(
 
   let record = records[0];
 
-  // See docs/deployment.md §API-key digest migration.
+  // ALLOW_LEGACY_BCRYPT_API_KEYS lets a caller present a pre-migration bcrypt key via
+  // x-legacy-api-key-id; on success the key is rehashed to SHA-256 so this path is one-time per key.
   const legacyKeyId = request.headers.get("x-legacy-api-key-id");
   if (
     !record &&

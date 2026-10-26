@@ -1,11 +1,8 @@
-// npm install bullmq
 import {
   PRIORITY_ZONE_RECOMPUTATION_STATE,
   recomputePriorityZones,
 } from "@/lib/server/services/priority-zones";
-// Canonical REDIS_URL parsing lives here; see `src/lib/server/AGENTS.md`
-// §trpc / db / auth for why every job shares one parser.
-import { getRedisConnection } from "@/lib/server/redis";
+import { registerBullmqCron } from "@/lib/server/jobs/shared";
 import type { Queue as BullQueue, Worker as BullWorker } from "bullmq";
 
 const QUEUE_NAME = "priority-zone-refresh";
@@ -19,44 +16,28 @@ export async function startJobs(): Promise<void> {
     return;
   }
 
-  let bullmq: typeof import("bullmq") | undefined;
-
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    bullmq = require("bullmq");
-  } catch {
-    // bullmq not installed — skip job registration
-    return;
-  }
-
-  if (!bullmq) return;
-
-  const connection = getRedisConnection();
-
-  queue = new bullmq.Queue(QUEUE_NAME, { connection });
-
-  // Remove existing repeatable jobs and register fresh
-  const repeatableJobs = await queue.getRepeatableJobs();
-  for (const job of repeatableJobs) {
-    await queue.removeRepeatableByKey(job.key);
-  }
-
-  // Schedule nightly at 2am UTC
-  await queue.add(
-    "recompute",
-    {},
-    {
-      repeat: { pattern: "0 2 * * *" },
-    }
-  );
-
-  worker = new bullmq.Worker(
-    QUEUE_NAME,
-    async () => {
+  // Nightly at 2am UTC; see `src/lib/server/AGENTS.md` §jobs.
+  const registration = registerBullmqCron({
+    queueName: QUEUE_NAME,
+    jobName: "recompute",
+    cronPattern: "0 2 * * *",
+    handler: async () => {
       await recomputePriorityZones();
     },
-    { connection }
-  );
+  });
+  if (!registration) return; // bullmq not installed — skip job registration
+
+  queue = registration.queue;
+  worker = registration.worker;
+
+  // Drop the pre-scheduler `queue.add(..., { repeat })` entry so it never fires beside the scheduler.
+  try {
+    for (const job of await queue.getRepeatableJobs()) {
+      if (job.key !== `${QUEUE_NAME}-daily`) await queue.removeRepeatableByKey(job.key);
+    }
+  } catch {
+    // Non-fatal — Redis may not be available during build
+  }
 
   worker.on("completed", () => {
     console.log("[priority-zone-refresh] Priority zones recomputed successfully");

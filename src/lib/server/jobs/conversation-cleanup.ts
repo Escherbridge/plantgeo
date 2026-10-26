@@ -5,7 +5,7 @@
 import { db } from "@/lib/server/db";
 import { aiConversations } from "@/lib/server/db/schema";
 import { lt, sql } from "drizzle-orm";
-import { getRedisConnection } from "@/lib/server/redis";
+import { registerBullmqCron } from "@/lib/server/jobs/shared";
 
 /**
  * Deletes ai_conversations rows where updated_at < NOW() - 30 days.
@@ -32,40 +32,11 @@ export async function runConversationCleanup(): Promise<{ deleted: number }> {
 // ---------------------------------------------------------------------------
 
 if (typeof window === "undefined") {
-  let bullmq: typeof import("bullmq") | undefined;
-
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    bullmq = require("bullmq");
-  } catch {
-    // bullmq not installed — skip
-  }
-
-  if (bullmq) {
-    // Canonical REDIS_URL parsing lives in `@/lib/server/redis`; see its
-    // rationale pointer in `src/lib/server/AGENTS.md` §trpc / db / auth.
-    const connection = getRedisConnection();
-
-    const QUEUE_NAME = "conversation-cleanup";
-    const queue = new bullmq.Queue(QUEUE_NAME, { connection });
-
-    // Daily at 3am UTC — BullMQ cron pattern
-    queue
-      .upsertJobScheduler(
-        "conversation-cleanup-daily",
-        { pattern: "0 3 * * *" },
-        { name: "cleanup" }
-      )
-      .catch(() => {
-        // Non-fatal — Redis may not be available during build
-      });
-
-    new bullmq.Worker(
-      QUEUE_NAME,
-      async () => {
-        return runConversationCleanup();
-      },
-      { connection }
-    );
-  }
+  // Daily at 3am UTC. See `src/lib/server/jobs/shared.ts` for the registration helper.
+  registerBullmqCron({
+    queueName: "conversation-cleanup",
+    jobName: "cleanup",
+    cronPattern: "0 3 * * *",
+    handler: async () => runConversationCleanup(),
+  });
 }
