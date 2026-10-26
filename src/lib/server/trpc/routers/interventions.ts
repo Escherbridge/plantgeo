@@ -762,6 +762,8 @@ export const interventionsRouter = router({
     .query(async ({ ctx, input }) => {
       const layerId = await resolveInterventionsLayerId(ctx);
       const cursor = input.cursor;
+      // `updated_at` is nullable: sort and page on one null-safe key, matching the epoch the cursor carries.
+      const sortedAt = sql<Date>`coalesce(${features.updatedAt}, 'epoch'::timestamptz)`;
       const rows = await ctx.db
         .select({
           id: features.id,
@@ -780,15 +782,15 @@ export const interventionsRouter = router({
             notStrategyRequest,
             cursor
               ? or(
-                  lt(features.updatedAt, cursor.updatedAt),
-                  and(eq(features.updatedAt, cursor.updatedAt), lt(features.id, cursor.id))
+                  lt(sortedAt, cursor.updatedAt),
+                  and(eq(sortedAt, cursor.updatedAt), lt(features.id, cursor.id))
                 )
               : undefined
           )
         )
         // Stable tie-break on `id`: without it, two rows sharing one `updatedAt` could both
         // straddle a page boundary, and the keyset condition above would drop or repeat one.
-        .orderBy(desc(features.updatedAt), desc(features.id))
+        .orderBy(desc(sortedAt), desc(features.id))
         // One extra row beyond the page size is how `hasMore`/`nextCursor` are known without a
         // second COUNT query.
         .limit(input.limit + 1);

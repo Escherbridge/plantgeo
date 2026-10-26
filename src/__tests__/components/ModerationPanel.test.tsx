@@ -48,7 +48,7 @@ const PUBLISHED = [
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.transitionError = null;
-  mocks.listLifecycleQuery.mockReturnValue({ data: PUBLISHED, isLoading: false, error: null });
+  mocks.listLifecycleQuery.mockReturnValue({ data: { items: PUBLISHED, nextCursor: null }, isLoading: false, isFetching: false, error: null });
 });
 
 describe("ModerationPanel lifecycle controls", () => {
@@ -86,7 +86,7 @@ describe("ModerationPanel lifecycle controls", () => {
   });
 
   it("says when nothing is published rather than drawing an empty list", () => {
-    mocks.listLifecycleQuery.mockReturnValue({ data: [], isLoading: false, error: null });
+    mocks.listLifecycleQuery.mockReturnValue({ data: { items: [], nextCursor: null }, isLoading: false, isFetching: false, error: null });
     renderWithProviders(<ModerationPanel />);
 
     expect(screen.getByText("No published interventions yet.")).toBeTruthy();
