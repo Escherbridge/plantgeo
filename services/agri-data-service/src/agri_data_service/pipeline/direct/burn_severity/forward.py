@@ -734,7 +734,7 @@ async def main(argv: Sequence[str] | None = None) -> int:
     config = parse_args(argv)
     try:
         if config.current_snapshots:
-            from agri_data_service.pipeline.direct.burn_severity.daily import (  # noqa: PLC0415 - daily imports this module
+            from agri_data_service.pipeline.direct.burn_severity.daily import (  # noqa: PLC0415 - only the capture branch needs the daily module
                 run_daily,
             )
 

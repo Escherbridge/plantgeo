@@ -82,9 +82,7 @@ if TYPE_CHECKING:
 
 #: `date.weekday()` where Monday is 0 (`ingest/usdm.py::TUESDAY`; `products.py::USDM_RELEASE_WEEKDAY`).
 _TUESDAY: Final = 1
-#: Matches `lanes/_providers/usdm.toml`'s `[endpoints.release]` `path_template` declaration -- the
-#: per-request PATH segment, not the fixed-path `release-json` endpoint the dark strategy named before
-#: this transport landed (`AGENTS.md`'s consolidated note).
+#: `lanes/_providers/usdm.toml`'s `[endpoints.release]`: the release day rides as a PATH segment.
 RELEASE_ENDPOINT: Final = "release"
 #: The template's one placeholder: `[endpoints.release]`'s `path_template` fills it into the path,
 #: never the query (`foundation/lane_config/models.py::ProviderEndpoint.split_parameters`).

@@ -502,7 +502,7 @@ migrates every lane. Evidence and the round log: `.omc/research/ingestion-grill-
   - an NDVI 2026-09-01..05 gap at the historical/direct handoff;
   - NHDPlus HR (watersheds' only source) discontinued by USGS;
   - `/admin/jobs` error column always null;
-  - shadow `mtbs-forward` duplicates burn-severity without `conflicts_with`;
+  - `mtbs-forward` DISPATCHED 2026-10-26 (owner) as the sole historical-census lane; `burn-severity-direct-forward` is capture-only, so the old duplication is gone;
   - five lanes log successes on stderr (Railway tags them `level:error`).
 
 **Review ledger (track):**

@@ -211,6 +211,19 @@ def test_domain_packages_do_not_import_each_other() -> None:
     assert not violations, "Domain isolation violations found:\n" + "\n".join(violations)
 
 
+def test_domain_parents_currently_hold_no_domain_package() -> None:
+    """Pins today's empty domain set, so the first new domain package forces a re-read of the rule.
+
+    The historical-backfill purge (2026-10-26) removed the last domain package; the isolation test above
+    then polices nothing real, and only the tmp_path test proves it can fire.
+    """
+    pkg_root = Path(__file__).resolve().parents[1] / "src" / "agri_data_service"
+
+    assert {parent: _domain_packages(pkg_root, parent) for parent in DOMAIN_PARENTS} == {
+        parent: [] for parent in DOMAIN_PARENTS
+    }
+
+
 def _lane_names(lane_dir: Path) -> set[str]:
     """Name every lane in one directory: each flat module, and each subpackage as a single lane."""
     modules = {path.stem for path in lane_dir.glob("*.py") if path.stem != "__init__"}

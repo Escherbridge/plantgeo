@@ -661,13 +661,9 @@ _HAND_WRITTEN_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
         # `python -m agri_data_service.pipeline.direct.burn_severity` and by nothing else. The adapter
         # refuses a generic export and names that package.
         #
-        # `mtbs-forward`/`ingest-mtbs` IS STILL ACTIVE, AND THAT IS NOT A SECOND WRITER OF THIS STREAM.
-        # It writes `geo.features` (`ingest/mtbs.py:947`); the direct lane writes Parquet -- different
-        # stores, and the audit that checked
-        # (`conductor/tracks/environmental_postgres_retirement_20260904/evidence/`
-        # `layer-uniformity-audit-20260907.md`) refuted the double-write alarm outright. What the swap
-        # DOES do is finish emptying `mtbs-forward`'s consumer set: `parquet-burn-severity` read those
-        # rows through this adapter, and after this edit no lane does.
+        # `mtbs-forward` (weekly, no flags) runs the same package's historical release-day census into
+        # this stream; `burn-severity-direct-forward` (`--current-snapshots`) owns current capture only
+        # (2026-10-26 split; see pipeline/direct/AGENTS.md §Burn severity).
         #
         # NO `writer_ceiling`, and none is possible to cite: `forward.py` (newest-first) and
         # `backfill.py` (oldest-first) walk ONE candidate set, `products.governed_release_days()`, and

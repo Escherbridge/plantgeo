@@ -766,17 +766,17 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
         schedule="55 8 * * *",
         publication_lag_days=None,
         publication_cadence_days=None,
-        publication_lag_source="mixed: historical registered cohorts; current capture D+1 UTC with no extra lag",
+        publication_lag_source="current capture D+1 UTC with no extra lag (historical cohorts: mtbs-forward)",
         selection_policy=(
-            "daily earliest eligible staged snapshot; weekly bounded current capture; five historical cohorts retained"
+            "daily earliest eligible staged snapshot; weekly bounded current capture"
         ),
         timeout_seconds=int(BURN_SEVERITY_MAX_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS,
         description=(
             "Daily 08:55 UTC eligible-stage check and weekly bounded current MTBS capture. "
             "Current snapshots become eligible the UTC day after capture and replace the current "
             "2018-2026 footprint; 2023-2026 mapping remains partial. Identical source content records "
-            "a check without another release. Historical five-cohort repair retains its registered "
-            "release dates and lag. The fixed year horizon refuses 2027 until reviewed."
+            "a check without another release. The historical release-day census is mtbs-forward's "
+            "(weekly). The fixed year horizon refuses 2027 until reviewed."
         ),
         # The direct writer's own floor, not a boundary: `products.governed_release_days()` opens at
         # 2020-11-24, which is exactly the day this registration's floor cites (measured 2026-09-06,

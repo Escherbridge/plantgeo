@@ -21,7 +21,7 @@ strategy = "drought.usdm_releases"
 
 [source]
 provider = "usdm"
-endpoint = "release-json"
+endpoint = "release"
 coverage = "regional"
 iso_country_codes = ["US"]
 # USDM's own archive start (ingest/usdm_history.py::USDM_ARCHIVE_START); the registered floor below
