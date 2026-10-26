@@ -43,7 +43,12 @@ export function ModerationPanel() {
     if (!data) return;
     // `cursor === null` is the first page of a (re)load -- replace rather than append, so an
     // invalidated first page cannot be concatenated onto itself.
-    setItems((previous) => (cursor === null ? data.items : [...previous, ...data.items]));
+    // A refetch of a later page re-delivers rows already held: keep the first copy of each id.
+    setItems((previous) => {
+      if (cursor === null) return data.items;
+      const held = new Set(previous.map((item) => item.id));
+      return [...previous, ...data.items.filter((item) => !held.has(item.id))];
+    });
   }, [data, cursor]);
 
   function resetToFirstPage() {
@@ -103,7 +108,8 @@ export function ModerationPanel() {
     <div className="flex flex-col gap-3 p-4">
       {failureAlert}
       <h2 className="text-sm font-semibold text-zinc-100">
-        Published interventions ({items.length})
+        Published interventions ({items.length}
+        {data?.nextCursor ? "+" : ""})
       </h2>
       {items.map((item) => (
         <div

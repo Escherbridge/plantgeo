@@ -49,6 +49,7 @@ export default function EmbedCodeGenerator() {
   const [style, setStyle] = useState<MapStyle>(initialStyle);
   const [markers, setMarkers] = useState("");
   const [width, setWidth] = useState("800");
+  const [showPreview, setShowPreview] = useState(false);
   const [height, setHeight] = useState("500");
   const [copied, setCopied] = useState(false);
 
@@ -77,7 +78,7 @@ export default function EmbedCodeGenerator() {
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1">
           <label className="block text-sm font-medium text-[hsl(var(--foreground))]">
             Latitude
@@ -190,20 +191,23 @@ export default function EmbedCodeGenerator() {
       </div>
 
       <div className="space-y-2">
-        <p className="text-sm font-medium text-[hsl(var(--foreground))]">Preview</p>
-        <div
-          className="overflow-hidden rounded-md border border-[hsl(var(--border))]"
-          style={{ height: Math.min(Number(height) || 500, 400) }}
+        {/* Opt-in: the preview is a second WebGL map running inside the dock. */}
+        <button
+          type="button"
+          onClick={() => setShowPreview((shown) => !shown)}
+          aria-expanded={showPreview}
+          className={`text-sm font-medium text-[hsl(var(--foreground))] underline-offset-2 hover:underline ${TOUCH_TARGET}`}
         >
-          <iframe
-            src={embedSrc}
-            width="100%"
-            height="100%"
-            frameBorder="0"
-            allowFullScreen
-            style={{ border: 0 }}
-          />
-        </div>
+          {showPreview ? "Hide preview" : "Show preview"}
+        </button>
+        {showPreview && (
+          <div
+            className="overflow-hidden rounded-md border border-[hsl(var(--border))]"
+            style={{ height: Math.min(Number(height) || 500, 400) }}
+          >
+            <iframe src={embedSrc} width="100%" height="100%" allowFullScreen style={{ border: 0 }} />
+          </div>
+        )}
       </div>
     </div>
   );

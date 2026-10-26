@@ -579,6 +579,8 @@ describe("interventions lifecycle transitions", () => {
     const ROW_B = "bbbbbbbb-0000-4bbb-8bbb-000000000002";
     const ROW_C = "cccccccc-0000-4ccc-8ccc-000000000003";
     const pageOneUpdatedAt = new Date("2026-10-20T00:00:00.000Z");
+    // Microsecond epoch key: two rows tied at .123456 must not collapse to a millisecond Date.
+    const tiedSortKey = "1792454400123456";
     const calls: BuilderCall[] = [];
     const caller = callerWith(
       [
@@ -586,9 +588,9 @@ describe("interventions lifecycle transitions", () => {
         // Three rows for a `limit: 2` query: the third is the lookahead row that produces
         // `nextCursor`, and is never rendered.
         [
-          { id: ROW_A, name: "Newest", stage: "published", updatedAt: pageOneUpdatedAt },
-          { id: ROW_B, name: "Cursor boundary", stage: "active", updatedAt: pageOneUpdatedAt },
-          { id: ROW_C, name: "Lookahead only", stage: "monitored", updatedAt: pageOneUpdatedAt },
+          { id: ROW_A, name: "Newest", stage: "published", updatedAt: pageOneUpdatedAt, sortKey: tiedSortKey },
+          { id: ROW_B, name: "Cursor boundary", stage: "active", updatedAt: pageOneUpdatedAt, sortKey: tiedSortKey },
+          { id: ROW_C, name: "Lookahead only", stage: "monitored", updatedAt: pageOneUpdatedAt, sortKey: tiedSortKey },
         ],
       ],
       contributorSession({ platformRole: "admin" }),
@@ -598,7 +600,7 @@ describe("interventions lifecycle transitions", () => {
     const firstPage = await caller.listLifecycle({ limit: 2 });
 
     expect(firstPage.items.map((item) => item.id)).toEqual([ROW_A, ROW_B]);
-    expect(firstPage.nextCursor).toEqual({ updatedAt: pageOneUpdatedAt, id: ROW_B });
+    expect(firstPage.nextCursor).toEqual({ sortKey: tiedSortKey, id: ROW_B });
 
     const secondPageCalls: BuilderCall[] = [];
     const secondCaller = callerWith(
@@ -606,7 +608,7 @@ describe("interventions lifecycle transitions", () => {
         [{ id: LAYER_ID }],
         // A real database would already exclude ROW_A and ROW_B via the keyset WHERE asserted
         // below; the scripted rows model that exclusion directly.
-        [{ id: ROW_C, name: "Next page", stage: "monitored", updatedAt: pageOneUpdatedAt }],
+        [{ id: ROW_C, name: "Next page", stage: "monitored", updatedAt: pageOneUpdatedAt, sortKey: tiedSortKey }],
       ],
       contributorSession({ platformRole: "admin" }),
       secondPageCalls
@@ -619,19 +621,12 @@ describe("interventions lifecycle transitions", () => {
     expect(secondPage.items.some((item) => firstPageIds.has(item.id))).toBe(false);
     expect(secondPage.nextCursor).toBeNull();
 
-    // The keyset boundary itself: "updatedAt before the cursor's, OR tied on updatedAt and
-    // id before the cursor's id" -- `firstPage.nextCursor`'s own two field values appear
-    // twice each (once per side of the OR). The LAST `.where()` recorded: the first belongs
-    // to `resolveInterventionsLayerId`'s own select, which runs before this one.
+    // The keyset boundary is one row comparison `(sortKey, id) < (cursor.sortKey, cursor.id)`, and
+    // every bound value is a string: a raw Date bound into `sql` reaches postgres-js unencoded and
+    // throws, which a mocked database cannot see. The LAST `.where()` is this query's own.
     const whereCalls = secondPageCalls.filter((entry) => entry.method === "where");
     const condition = new PgDialect().sqlToQuery(whereCalls[whereCalls.length - 1]?.args[0] as SQL);
-    expect(condition.params).toEqual([
-      LAYER_ID,
-      "published",
-      "request",
-      pageOneUpdatedAt,
-      pageOneUpdatedAt,
-      ROW_B,
-    ]);
+    expect(condition.params).toEqual([LAYER_ID, "published", "request", tiedSortKey, ROW_B]);
+    expect(condition.params.every((param) => typeof param === "string")).toBe(true);
   });
 });

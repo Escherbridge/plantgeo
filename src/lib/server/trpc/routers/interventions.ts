@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
   contributorProcedure,
@@ -755,15 +755,16 @@ export const interventionsRouter = router({
            * boundary never does, because every page asks "strictly after the last row I saw"
            * instead of "skip N rows of whatever order holds right now".
            */
-          cursor: z.object({ updatedAt: z.date(), id: z.string().uuid() }).nullish(),
+          cursor: z.object({ sortKey: z.string().regex(/^-?\d+$/), id: z.string().uuid() }).nullish(),
         })
         .default({})
     )
     .query(async ({ ctx, input }) => {
       const layerId = await resolveInterventionsLayerId(ctx);
       const cursor = input.cursor;
-      // `updated_at` is nullable: sort and page on one null-safe key, matching the epoch the cursor carries.
-      const sortedAt = sql<Date>`coalesce(${features.updatedAt}, 'epoch'::timestamptz)`;
+      // Null-safe `updated_at` as exact epoch microseconds: a JS Date would truncate to ms and skip
+      // tied rows at a page edge, and a raw Date bound into `sql` bypasses drizzle's encoder.
+      const sortKey = sql<string>`(extract(epoch from coalesce(${features.updatedAt}, 'epoch'::timestamptz)) * 1000000)::bigint`;
       const rows = await ctx.db
         .select({
           id: features.id,
@@ -773,6 +774,7 @@ export const interventionsRouter = router({
           longitude: sql<number | null>`ST_X(ST_Centroid(${features.geom}))`,
           latitude: sql<number | null>`ST_Y(ST_Centroid(${features.geom}))`,
           updatedAt: features.updatedAt,
+          sortKey: sql<string>`${sortKey}::text`,
         })
         .from(features)
         .where(
@@ -781,16 +783,13 @@ export const interventionsRouter = router({
             eq(features.status, PUBLISHED_STATUS),
             notStrategyRequest,
             cursor
-              ? or(
-                  lt(sortedAt, cursor.updatedAt),
-                  and(eq(sortedAt, cursor.updatedAt), lt(features.id, cursor.id))
-                )
+              ? sql`(${sortKey}, ${features.id}) < (${cursor.sortKey}::bigint, ${cursor.id}::uuid)`
               : undefined
           )
         )
         // Stable tie-break on `id`: without it, two rows sharing one `updatedAt` could both
         // straddle a page boundary, and the keyset condition above would drop or repeat one.
-        .orderBy(desc(sortedAt), desc(features.id))
+        .orderBy(desc(sortKey), desc(features.id))
         // One extra row beyond the page size is how `hasMore`/`nextCursor` are known without a
         // second COUNT query.
         .limit(input.limit + 1);
@@ -812,7 +811,7 @@ export const interventionsRouter = router({
 
       return {
         items,
-        nextCursor: hasMore && last ? { updatedAt: last.updatedAt ?? new Date(0), id: last.id } : null,
+        nextCursor: hasMore && last ? { sortKey: last.sortKey, id: last.id } : null,
       };
     }),
 
