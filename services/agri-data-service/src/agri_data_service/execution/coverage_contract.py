@@ -1,24 +1,24 @@
 """Declare how far back each lane must be complete, and reconcile that claim against the record.
 
-The missing half of the backfill story. The service could already walk a fixed window
-(`historical-*-backfill`) and extend a completed walk forward to the live edge
-(`historical-plan-continue`), and `ops_data_streams.sql` could already report that a stream has
-`missing_days` -- but nothing connected the two. A hole in the middle of a lane was visible on a
-dashboard and unreachable by any verb: the only way to refill 2024-03-14 was to hand-author a
-plan naming it. This module is what turns "there are 37 missing days" into the list of 37 days,
-so a filler has something to act on.
+The missing half of the backfill story. The service could already walk a fixed window and extend
+a completed walk forward to the live edge (both verbs purged 2026-10-26 with the legacy historical
+modules; history is now a config-driven TOML lane's `history_floor`), and `ops_data_streams.sql`
+could already report that a stream has `missing_days` -- but nothing connected the two. A hole in
+the middle of a lane was visible on a dashboard and unreachable by any verb: the only way to
+refill 2024-03-14 was to hand-author a plan naming it. This module is what turns "there are 37
+missing days" into the list of 37 days, so a filler has something to act on.
 
 Three fills, and they are not the same operation:
 
-  * BACK   -- the initial fixed-window walk. Already exists.
-  * FORWARD -- extend a finished walk to today. Already exists (`plan_continuation`).
+  * BACK   -- the initial fixed-window walk. A lane's `history_floor` bootstrap.
+  * FORWARD -- extend a finished walk to today. Each lane's forward writer.
   * GAP    -- refill interior days the record is missing. This module.
 
 A day is MISSING only if the lane is contracted to hold it, the warehouse has no observation
 for it, and no governed absence explains it. That third clause is the one that keeps a filler
 from grinding forever against days upstream never published: `agri.signal_coverage_audit`
 already records `status='no_data'` for a window we asked for and the provider answered nothing
-to -- written by `historical_backfill.py` and `historical_cams.py` -- and until now nothing
+to -- written by the (since purged) historical backfill walks -- and until now nothing
 read it back. An absence is evidence, not a hole.
 
 See `src/agri_data_service/execution/AGENTS.md` §coverage-contract.

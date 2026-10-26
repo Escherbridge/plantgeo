@@ -12,7 +12,7 @@ forecast endpoint (`https://api.open-meteo.com/v1/forecast`, not the archive hos
 `FeatureWrite` rows through `ingest/writer.py::ingest_features` into `geo.features`
 (`ingest/open_meteo.py:399-419`), never `agri.signal_observation`. Confirmed by reading
 `ingest/open_meteo.py:399-419` (`build_weather_write` returns a `FeatureWrite`, not a signal-plane
-row) and `execution/weather_observations/AGENTS.md:49-51` (the same trap, stated independently).
+row); the historical producer's own AGENTS.md stated the same trap before it was purged 2026-10-26.
 """
 
 from __future__ import annotations

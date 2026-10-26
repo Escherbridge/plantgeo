@@ -39,7 +39,7 @@ OPEN_METEO_AIR_QUALITY_CUSTOMER_BASE_URL: Final[OpenMeteoAirQualityBaseUrl] = (
 
 # CAMS is served hourly, not daily, so a request carries 24 values per variable per cell per day.
 # The ceiling bounds one cell block x one day block; the day block is what the plan tunes to stay
-# under it, never this constant. See the chunking rule in execution/historical_cams.py.
+# under it, never this constant.
 OPEN_METEO_AIR_QUALITY_BOUNDS: Final = UpstreamBounds(max_bytes=32 * 1024 * 1024, timeout_seconds=300.0)
 
 # `require_base_url` on this endpoint IS the air-quality host rule; there is deliberately no

@@ -8,7 +8,6 @@ import hashlib
 import json
 import sys
 from collections.abc import Awaitable, Callable
-from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from types import MappingProxyType
@@ -42,22 +41,8 @@ from agri_data_service.ingest.http import UpstreamBounds
 from agri_data_service.ingest.identity import (
     MTBS_PRODUCER,
     build_burn_severity_identity,
-    format_javascript_timestamp,
 )
 from agri_data_service.ingest.layer_binding import LayerBinding
-from agri_data_service.ingest.policy import (
-    parse_bbox,
-    resolve_max_source_records,
-)
-from agri_data_service.ingest.records import FeatureWrite
-from agri_data_service.ingest.results import IngestionJobResult
-from agri_data_service.ingest.source import (
-    FetchRequest,
-    FreshnessRule,
-    FunctionSource,
-    HistoryCapability,
-    select_writes,
-)
 from agri_data_service.warehouse.mtbs_releases import (
     MTBS_ANNUAL_RELEASE_DATES as MTBS_ANNUAL_RELEASE_DATES,  # noqa: PLC0414 - public compatibility reexport
 )
@@ -65,9 +50,6 @@ from agri_data_service.warehouse.mtbs_releases import (
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from agri_data_service.ingest.identity import FeatureIdentity
-    from agri_data_service.ingest.records import FeatureWriter
-    from agri_data_service.ingest.source import UpstreamRecord
 
 Sleep = Callable[[float], Awaitable[None]]
 BurnSeverityClass = Literal["unburned", "low", "moderate", "high", "increased_greenness"]
@@ -945,23 +927,10 @@ async def ingest_mtbs(
             await client.aclose()
 
 
-# --- The `ingest-mtbs` job -----------------------------------------------------------------------
+# --- Layer binding and release-year resolution -----------------------------------------------
 #
-# Everything above emits: it captures a cohort to disk and writes a reviewed `SourceIngestionPlan`
-# sidecar beside it. Everything below persists the same cohorts into `geo.features` through the one
-# shared writer, which is also what maintains the Type-2 `geo.geometry` chain for each fire.
-#
-# The two are separate entry points on purpose, and the warehouse path is deliberately NOT the
-# `source-ingest` verb: `validate_phase_one_geojson_payload` accepts only `Point` geometry
-# (`execution/contracts.py:725-726`) and MTBS is polygons, and `publish_source_release` stores an
-# artifact as `database_inline` while a real cohort is tens of megabytes. Both refusals are correct
-# and neither is this module's to widen; see `ingest/AGENTS.md` "mtbs.py".
-
-# The job token an operator reads in a cron summary and the governed source key name the same thing;
-# two spellings of it would be two things to keep reconciled.
-MTBS_SOURCE: Final = MTBS_SOURCE_KEY
-MTBS_PROPERTY_SOURCE: Final = "MTBS Burned Area Boundaries"
-
+# The geo.features job path (`_run_mtbs_job`/`build_mtbs_source`) was removed 2026-10-26 with zero
+# callers; burn severity is published to Parquet by `pipeline/direct/burn_severity/`.
 BURN_SEVERITY_LAYER: Final = LayerBinding(
     variable="BURN_SEVERITY_LAYER_ID",
     default="burn-severity",
@@ -970,18 +939,6 @@ BURN_SEVERITY_LAYER: Final = LayerBinding(
 MTBS_CHANNEL: Final = BURN_SEVERITY_LAYER.channel
 BURN_SEVERITY_LAYER_VARIABLE: Final = BURN_SEVERITY_LAYER.variable
 DEFAULT_BURN_SEVERITY_LAYER_NAME: Final = BURN_SEVERITY_LAYER.default
-
-# The key each normalised record travels under, so the upstream-record mapping has one spelling.
-MTBS_RECORD_FIELD: Final = "record"
-
-MTBS_NO_HISTORY_REASON: Final = (
-    "MTBS's ingestible history is exactly the set of fire years carrying an established release "
-    "publication date, and every run of this job captures all of them. The fire years absent from "
-    "MTBS_ANNUAL_RELEASE_DATES are a governance gap awaiting a dated release announcement, not a "
-    "past window a backfill could walk."
-)
-
-MISSING_CLIENT_REASON: Final = "an MTBS fetch needs an upstream client; the job opens one for the whole run"
 
 
 def resolve_burn_severity_layer_name() -> str:
@@ -1001,138 +958,6 @@ def resolve_release_years(release_years: Sequence[int] | None) -> list[int]:
     if not release_years:
         return sorted(MTBS_ANNUAL_RELEASE_DATES)
     return sorted(set(release_years))
-
-
-def build_mtbs_identity(record: MtbsBurnSeverityRecord) -> FeatureIdentity:
-    """Key a burned-area boundary through lane A's builder and date it by its release publication.
-
-    `build_burn_severity_identity` returns `observed_at=None` because the identity contract cannot see
-    a release date; supplying one has always been this producer's job. The instant is
-    `data_available_at` -- *when we could have known* -- and never `ig_date`, which is when the fire
-    burned and would backdate the geometry version by the whole ~18-month mapping lag.
-
-    One consequence is worth stating rather than discovering: a cohort's release date is fixed, so a
-    fire re-mapped after its own cohort was declared complete carries no instant later than its open
-    version's `version_valid_from`. `geometry.py` then records it as `undatable`, leaves the chain
-    alone and logs the key, rather than cutting the chain at an invented boundary. Correcting that is
-    a governance action -- move the year's entry in MTBS_ANNUAL_RELEASE_DATES to the release that
-    re-mapped it -- and never a tolerance or a run-clock fallback here.
-    """
-    identity = build_burn_severity_identity({"Fire_ID": record.producer_local_id})
-    return replace(identity, observed_at=record.data_available_at)
-
-
-def build_mtbs_write(record: UpstreamRecord, request: FetchRequest) -> FeatureWrite | None:
-    """Build one burned-area boundary's warehouse write from its already-normalised record."""
-    del request
-    burn = record[MTBS_RECORD_FIELD]
-    if not isinstance(burn, MtbsBurnSeverityRecord):
-        raise MtbsFeatureShapeError("an MTBS upstream record must carry a normalised MtbsBurnSeverityRecord")
-    identity = build_mtbs_identity(burn)
-    # The read model dates a row from COALESCE(observedAt, updatedAt, polygonDateTime), so this is
-    # what puts a fire on the time slider. It is the identity's own instant re-rendered, exactly as
-    # `evacuation_zones.py` does, so the stored date and the geometry version boundary cannot drift.
-    observed_at = format_javascript_timestamp(burn.data_available_at)
-    return FeatureWrite(
-        layer_reference=resolve_burn_severity_layer_name(),
-        identity=identity,
-        properties={
-            "observedAt": observed_at,
-            "fireId": burn.producer_local_id,
-            "fireName": burn.fire_name,
-            "fireYear": burn.ignition_year,
-            "ignitionDate": burn.ignition_date.isoformat(),
-            "fireType": burn.fire_type,
-            "assessmentType": burn.assessment_type,
-            "acres": burn.acres,
-            # `None` means this layer publishes no polygon-level severity class, never "unburned".
-            "severityClass": burn.severity_class,
-            "severityThresholds": burn.severity_thresholds.model_dump(mode="json"),
-            "releaseIdentifier": burn.release_identifier,
-            # The Type-2 change signal. `writer.py`'s refresh diff compares stored against candidate
-            # properties with `geometry` stripped from both sides, so a re-mapped fire is seen as
-            # changed only because this composite moved; geometry floats are never compared.
-            "mappingRevision": burn.mapping_revision,
-            "source": MTBS_PROPERTY_SOURCE,
-            "geometry": burn.geometry,
-        },
-        channel=MTBS_CHANNEL,
-    )
-
-
-async def fetch_mtbs_records(
-    request: FetchRequest,
-    *,
-    release_years: Sequence[int] | None = None,
-    page_size: int = DEFAULT_PAGE_SIZE,
-) -> list[UpstreamRecord]:
-    """Page every requested cohort to completion and normalise it, one record per burned-area boundary."""
-    if request.client is None:
-        raise MtbsIngestError(MISSING_CLIENT_REASON)
-    bounding_box = parse_bbox(request.bbox)
-    records: list[UpstreamRecord] = []
-    for ignition_year in resolve_release_years(release_years):
-        features, _ = await fetch_release_features(
-            ignition_year,
-            bounding_box,
-            client=request.client,
-            page_size=page_size,
-        )
-        cohort = [build_mtbs_record(feature, ignition_year) for feature in features]
-        if cohort:
-            # The same two tripwires the capture applies, on the same functions: a release date that
-            # does not lead its cohort's last ignition is an ignition-shaped date, and one landing on
-            # `now()` is a clock reading wearing a release date. Either stops the run. An empty
-            # cohort -- a fire year with no mapped fires inside the box -- is not an error.
-            _, observed_to = release_observation_window(cohort)
-            validate_release_window(resolve_data_available_at(ignition_year), observed_to)
-        records.extend({MTBS_RECORD_FIELD: record} for record in cohort)
-    return records
-
-
-def build_mtbs_source(*, release_years: Sequence[int] | None = None) -> FunctionSource:
-    """Compose the MTBS ingestion source from this module's own callables, binding the cohorts to fetch."""
-
-    async def fetch_current(request: FetchRequest) -> Sequence[UpstreamRecord]:
-        return await fetch_mtbs_records(request, release_years=release_years)
-
-    return FunctionSource(
-        source_name=MTBS_SOURCE,
-        producer=MTBS_PRODUCER,
-        channel=MTBS_CHANNEL,
-        # No maximum age: the 2020 release is still the current published mapping of fire year 2020,
-        # and an age rule would refuse the entire point of a burn-history layer. Undated records are
-        # refused because `build_mtbs_identity` always supplies a release date, so an undated MTBS
-        # record could only mean the release table had been bypassed.
-        freshness=FreshnessRule(max_observation_age=None, accepts_undated_records=False),
-        resolve_layer_reference=resolve_burn_severity_layer_name,
-        fetch_current_records=fetch_current,
-        build_feature_write=build_mtbs_write,
-        history=HistoryCapability(supported=False, reason=MTBS_NO_HISTORY_REASON),
-    )
-
-
-async def _run_mtbs_job(
-    write_features: FeatureWriter,
-    area: str,
-    client: httpx.AsyncClient,
-    *,
-    release_years: Sequence[int] | None,
-    now: datetime | None,
-) -> IngestionJobResult:
-    """Capture every requested cohort over the bounded box and write it through the shared writer."""
-    source = build_mtbs_source(release_years=release_years)
-    request = FetchRequest(bbox=area, max_records=resolve_max_source_records(), now=now, client=client)
-    records = await source.fetch_current(request)
-    selection = select_writes(source, records, request)
-    return IngestionJobResult(
-        source=MTBS_SOURCE,
-        status="ingested",
-        records_seen=len(records),
-        records_written=await write_features(selection.writes),
-        truncated=selection.truncated,
-        details={"releases": len(resolve_release_years(release_years)), "rejected": selection.rejected},
-    )
 
 
 def parse_reviewed_at(value: str) -> datetime:

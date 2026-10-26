@@ -8,11 +8,11 @@ PARQUET day. The lane module survives the swap because
 `pipeline/validation/burn_severity.py` still calls its `read_burn_severity_release_day` for the D1
 reconciliation; only the export half is now unreachable.
 
-`mtbs-forward` / `ingest-mtbs` IS STILL ACTIVE and still writes `geo.features`
-(`docs/lanes/burn-severity.md` section 2); stopping it is an owner-confirmed Railway variable edit
-this package never performs. That is not a second writer of this stream -- different store -- but
-after the swap it is Postgres work with no Parquet consumer left, since `parquet-burn-severity` was
-the reader of those rows and is retired.
+Two lanes run this module (owner 2026-10-26). `mtbs-forward` (weekly, Tue 07:55 UTC, no flag) is the
+sole owner of the historical release-day census into Parquet `layer=burn-severity/kind=observed`.
+`burn-severity-direct-forward` (daily, `--current-snapshots`) hands off to `daily.py`, which owns
+current capture and staged-snapshot publication only. Neither writes `geo.features`; see
+`docs/lanes/burn-severity.md` section 2.
 
 There is no "settled through today" computation the way `drought/products.py::newest_settled_tuesday`
 has one: a release day is not a step on a calendar cadence, it is whatever
@@ -741,7 +741,7 @@ async def main(argv: Sequence[str] | None = None) -> int:
     config = parse_args(argv)
     try:
         if config.current_snapshots:
-            from agri_data_service.pipeline.direct.burn_severity.daily import (  # noqa: PLC0415 - reuses historical forward
+            from agri_data_service.pipeline.direct.burn_severity.daily import (  # noqa: PLC0415 - daily imports this module
                 run_daily,
             )
 

@@ -10,6 +10,11 @@
     "evidence": "execution/historical_agera5.py (77 lines) and execution/historical_cems.py (89 lines) exist -- contract classes and signal specifications only (Agera5Period, AGERA5_SIGNAL_SPECIFICATIONS, AGERA5_DATASET_ID/VERSION). The unwired plan-generator scaffolds were removed with the retired service-local plan tree. No CLI verbs reference agera5/cems in cli.py or ingest/commands.py, no test file exists for either lane, no data_source registration or backfill run is evidenced. This is materially short of even Phase 1's acceptance criteria (a real backfill run landing governed rows). Last touched in commit 7d917d0 (2026-08-14), which is the same 'seasonal/label/forecast wave' commit that also shipped agri_sdk_layering's Phase 3 -- these two contract files most likely rode along with that wave rather than being purpose-built for this track.",
     "rescoping_note": "Whatever persistence layer this track eventually targets should be Parquet lanes, not a Postgres warehouse row -- the same redirection every other Postgres-writing upstream-ingestion track needs post-pivot. AgERA5/CEMS are weather-adjacent and most likely fold into the weather-observations lane per §0.24.2, but this was not confirmed against the lane's AGENTS.md and should be before Phase 1 resumes."
   },
+  "owner_rule_20261026": {
+    "decided_at": "2026-10-26",
+    "rule": "legacy historical modules purged; AgERA5/CEMS/CAMS/GloFAS history to be built as config-driven TOML lanes with a history_floor",
+    "supersedes": "every 'reuse historical_era5.py / historical_agera5.py / historical_cems.py' protection and template reference in description, informed_by, dependency_mode and the spec.md out-of-scope list; those modules are readable only via git show 1f908a25:<path>"
+  },
   "informed_by": [
     "docs/unused-upstream-datasets.md",
     "services/agri-data-service/src/agri_data_service/execution/historical_era5.py",

@@ -8,8 +8,8 @@ type: lane-contract
 governed historical archive (NASA POWER + Open-Meteo ERA5-Land) backing `agri.signal_observation`.
 This document describes the Open-Meteo **current-conditions** poll — `ingest/open_meteo.py`'s
 `WEATHER_LAYER`, historically written into `geo.features` — which shares the bare stream name
-`weather-observations` with that other producer (`execution/weather_observations/AGENTS.md`
-"Traps that will otherwise be rediscovered"; `docs/lanes/weather-observations.md` section 5 item
+`weather-observations` with that other producer (whose code, `execution/weather_observations/`,
+was purged 2026-10-26 while its rows remain; `docs/lanes/weather-observations.md` section 5 item
 3). This document is filed under a disambiguated path so it does not overwrite that unrelated,
 pre-existing content; see `pipeline/lanes/weather_observations/AGENTS.md` "Deviations" for the
 open item this leaves for an owner.

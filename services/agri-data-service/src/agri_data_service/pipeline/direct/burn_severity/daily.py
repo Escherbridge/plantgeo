@@ -1,4 +1,4 @@
-"""Daily eligible-stage publication and weekly bounded MTBS source refresh."""
+"""Daily eligible-stage publication and weekly bounded MTBS current capture; history is `mtbs-forward`'s."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ import shutil
 import tempfile
 import threading
 import time
-from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -21,7 +20,6 @@ from agri_data_service.ingest.mtbs import burn_severity_bounding_box
 from agri_data_service.ingest.policy import parse_bbox, resolve_bounded_bbox
 from agri_data_service.pipeline.direct.burn_severity.capture import YEARS, capture_snapshot, prepare_capture
 from agri_data_service.pipeline.direct.burn_severity.current_snapshot import digest
-from agri_data_service.pipeline.direct.burn_severity.forward import run_burn_severity_forward
 from agri_data_service.pipeline.direct.burn_severity.publish_snapshot import publish_stage
 from agri_data_service.pipeline.direct.burn_severity.stage import (
     capture_due,
@@ -83,7 +81,11 @@ async def run_daily(config: BurnSeverityForwardConfig) -> dict[str, object]:
 
 
 async def _run_daily_owned(config: BurnSeverityForwardConfig) -> dict[str, object]:
-    """Keep historical cohorts, staged current snapshots and weekly checks on one bounded schedule."""
+    """Publish an eligible staged snapshot, then capture when due; never the historical census.
+
+    The release-day census is the weekly `mtbs-forward` lane's alone (owner 2026-10-26); see
+    `pipeline/direct/AGENTS.md` §Burn severity.
+    """
     today = config.today or datetime.now(UTC).date()
     if today != datetime.now(UTC).date() or today.year > YEARS[-1]:
         raise ValueError("MTBS daily dispatcher needs the actual current day and a reviewed year horizon")
@@ -128,9 +130,4 @@ async def _run_daily_owned(config: BurnSeverityForwardConfig) -> dict[str, objec
     ):
         raise ValueError("MTBS scratch cleanup escaped the owned temporary directory")
     shutil.rmtree(root)
-    # Current source work owns priority; historical census uses only the remaining budget.
-    remaining = deadline - time.monotonic()
-    historical = None
-    if remaining > 0:
-        historical = await run_burn_severity_forward(replace(config, time_budget_seconds=min(300.0, remaining)))
-    return {"status": "checked", "publication": publication, "historical": historical, "source": staged}
+    return {"status": "checked", "publication": publication, "source": staged}

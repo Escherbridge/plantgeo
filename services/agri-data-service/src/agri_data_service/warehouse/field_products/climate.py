@@ -246,7 +246,7 @@ CLIMATE_FIELD_PRODUCTS: Final[tuple[ClimateFieldProduct, ...]] = (
     # parameter it was asked for, so these three cost the fan-out nothing beyond three more
     # parameters on a URL. They report a DEGREE OF SATURATION, not a volumetric water content, and
     # name their depth in the signal rather than in `support_key`
-    # (`execution/weather_observations/nasa_power.py` NASA_POWER_SIGNAL_SPECIFICATIONS). Their
+    # (the same naming the 2026-10-26-purged historical POWER signal table used). Their
     # `snapshot_lane` row shape is a third one, frozen by `scripts/soil_wetness_snapshot_breakdown.py`.
     ClimateFieldProduct(
         stream=SOIL_WETNESS_SURFACE_STREAM,

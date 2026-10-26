@@ -343,7 +343,7 @@ parameter the URL asked for. Publishing them from a second writer would mean a s
 fan-out over the same lattice on the same day for values the first fan-out could have carried for
 free. They report a DEGREE OF SATURATION, not a volumetric water content, and name their depth in
 the `signal_name` rather than in `support_key`
-(`execution/weather_observations/nasa_power.py` NASA_POWER_SIGNAL_SPECIFICATIONS) -- which is what
+(`climate/products.py` CLIMATE_FIELD_PRODUCTS; the 2026-10-26-purged historical POWER table agreed) -- which is what
 keeps them distinct from the ERA5-Land `soil_water_content_layer_N` series below.
 
 **The eleven-parameter body has no real capture.** `.omc/research/nasa-power-point-response-2026-09-02.json`
@@ -352,9 +352,9 @@ returns only what the URL lists. The real capture is still parsed, against the e
 was really asked for, and the eleven-parameter shape is covered by
 `tests/direct/climate/fixtures/nasa-power-point-response-soil-wetness-synthetic.json` -- the same
 body with three series added, carrying a `_fixture_provenance` block that says which values are
-invented. Take a live eleven-parameter capture and this fixture can be retired. The only NASA
-POWER ingestion in the tree is `execution/weather_observations/nasa_power.py`, a retired local
-backfill verb with no scheduler owner writing into PostgreSQL `agri.signal_observation`, and the
+invented. Take a live eleven-parameter capture and this fixture can be retired. The retired local
+NASA POWER backfill verb that wrote PostgreSQL `agri.signal_observation` was purged 2026-10-26 (its
+URL and value guards live on in `climate/nasa_power.py`), and the
 Parquet days these streams hold were built ONCE from the immutable canonical snapshot by
 `scripts/build_*_from_canonical_snapshot.py`. The production assessment of 2026-09-01 measured the
 result: a 27-day tail on five products and a 94-day tail on shortwave radiation.
@@ -668,9 +668,8 @@ stuck, not draining.
 ### Ownership, and why the registered adapter refuses
 
 `pipeline/parquet/lane_registry.py` registers all eight streams with `_refuse_source_direct_export`.
-There is no PostgreSQL producer to register and there never was: the only NASA POWER ingestion in the
-tree is `execution/weather_observations/nasa_power.py`, a retired local backfill verb with no
-scheduler owner, and the Parquet days these streams hold today were built ONCE from the immutable
+There is no PostgreSQL producer to register and there never was: the only other NASA POWER ingestion
+was a retired local backfill verb with no scheduler owner (purged 2026-10-26), and the Parquet days these streams hold today were built ONCE from the immutable
 canonical snapshot by `scripts/build_*_from_canonical_snapshot.py`. Nothing produced a new climate
 day, which is why the production browser showed a 27-day tail on five products and a 94-day tail on
 shortwave radiation (RUNBOOK, "Production timeline evidence"). A lane with no registration is a
@@ -726,7 +725,8 @@ toggles: every one of those streams stops at 2026-08-02 and nothing in the tree 
 
 ### The upstream is Open-Meteo, and why it is not the CDS
 
-The obvious writer to build was one over `execution/historical_era5.py`, the Copernicus CDS lane. It
+The obvious writer to build was one over the Copernicus CDS lane (`execution/historical_era5.py`,
+purged 2026-10-26). It
 would have been wrong on all three products, and the evidence is in the artifacts that wrote the
 history:
 
@@ -1015,14 +1015,15 @@ going oldest-first beside a forward walker going newest-first contends for the s
 `burn_severity/` is the SECOND geometry-lane direct writer, built the same shape as `drought/`
 (DuckDB spatial repair before the base rung, no `TerminalEvidence`/`provenance=`, an adapter substituted
 via `replace(lane, adapter=...)`) but adapted to a source with no "not yet published" state at all.
-**CORRECTED 2026-10-25: `mtbs-forward` is not active.** The `mtbs-forward` lane spec remains
-REGISTERED in `execution/lane_specs.py` (`MTBS_FORWARD_LANE_ID`), but it is absent from the deployed
-`PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` allow-list and has had 0 runs since 2026-09-09. Its underlying
-daily refresh stays live by a DIFFERENT path: `burn_severity/daily.py:135` calls
-`run_burn_severity_forward` directly, outside the lane-executor mechanism the spec would otherwise
-drive. The spec's own future -- reactivate it, or formally retire it -- is an open owner decision
-(tracked as CA7/CQ-9); it is NOT deleted here, since a registered-but-inactive spec and a dead one are
-different facts. Separately, since 2026-09-07 the Postgres-reading export half is no longer a writer
+**Two lanes, one package, split by job (owner 2026-10-26: "dispatch, don't retire").**
+`mtbs-forward` (`MTBS_FORWARD_LANE_ID`, weekly Tue 07:55 UTC, `forward.main` with no flag) is the
+SOLE owner of the historical release-day census into Parquet `layer=burn-severity/kind=observed`; it
+was added to the deployed `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` on 2026-10-26 after 0 runs since
+2026-09-09. `burn-severity-direct-forward` (daily 08:55 UTC, `--current-snapshots`, `daily.py`) owns
+current capture and staged-snapshot publication ONLY: until 2026-10-26 `daily.py` also spent its
+leftover budget on `run_burn_severity_forward`, duplicating `mtbs-forward`'s census under a second
+lane id -- the CQ-9 history/capture split hazard. That call is removed, and
+`tests/direct/test_burn_severity_daily.py` fails if it returns. Separately, since 2026-09-07 the Postgres-reading export half is no longer a writer
 anything reads: `LANE_REGISTRY['burn-severity'].adapter` was `_fill_burn_severity`,
 reading `geo.features` through `pipeline/lanes/burn_severity.py::export_burn_severity_release_day`,
 and is now a `_source_direct_refusal` naming this package, so no Parquet lane consumes those rows.
@@ -1147,15 +1148,10 @@ grows only through a governance code change, and because `forward.py`'s per-turn
 sized for that cadence (see "Known simplifications" below). IT SHIPPED SHADOW and is now ACTIVE, with
 `parquet-burn-severity` retired; `LANE_REGISTRY['burn-severity'].adapter` was routed to a source-direct
 refusal on 2026-09-07. The two conditions this section recorded were (1) `parity.py` proving D1 parity
-against what `geo.features` holds and (2) the owner stopping `mtbs-forward`/`ingest-mtbs`. **CORRECTED
-2026-10-25:** condition (2) is effectively satisfied, not merely moot -- the `mtbs-forward` lane spec
-is absent from the deployed `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` allow-list and has had 0 runs since
-2026-09-09, though the spec itself remains registered (an owner-gated CA7/CQ-9 decision, not deleted;
-see "Burn severity" above). The swap did not need it stopped to be safe regardless, because it writes
-`geo.features` while this package writes Parquet -- the layer was never served by both. What the swap
-DID change is that `mtbs-forward`'s underlying daily refresh (`run_burn_severity_forward`, now driven
-by `burn_severity/daily.py:135` rather than the lane spec) has no Parquet consumer at all, which is the
-argument for retiring the spec formally, not a reason the swap was unsafe. The registration carries no
+against what `geo.features` holds and (2) the owner stopping `mtbs-forward`/`ingest-mtbs`. **SUPERSEDED
+2026-10-26:** `mtbs-forward` no longer runs `ingest-mtbs` or writes `geo.features`; it runs this
+package's `forward.main` and is the dispatched history-only lane (see "Burn severity" above), while
+`daily.py` no longer calls `run_burn_severity_forward`. The registration carries no
 `writer_ceiling`, because `forward.py` and `backfill.py` between them claim the whole governed release
 set the generic lane covered; `conflicts_with` against `parquet-burn-severity` is what keeps a
 re-activation of that retired lane off, and the refusal is what it hits if anyone tries.
@@ -1927,8 +1923,8 @@ a store-only resolver on request, and nobody has asked for one yet.
 
 `burn_severity/daily.py` runs the complete lifecycle in one bounded child with its own
 hard deadline, including when the caller disappears. Daily checks first publish the
-earliest eligible queued capture; source capture runs at most weekly and precedes
-historical cohort repair. A failed phase retains immutable evidence and the pending
+earliest eligible queued capture; source capture runs at most weekly. Historical cohort
+repair is NOT this lifecycle's: it is the weekly `mtbs-forward` lane's (2026-10-26). A failed phase retains immutable evidence and the pending
 queue for a governed retry. The capture itself retains its 600-second/400-request
 limits. The fixed 2018–2026 query horizon explicitly refuses calendar year 2027.
 

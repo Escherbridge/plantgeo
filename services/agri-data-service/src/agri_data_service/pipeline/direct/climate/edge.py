@@ -9,11 +9,11 @@ from datetime import timedelta
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Final
 
-from agri_data_service.execution.weather_observations.nasa_power import (
+from agri_data_service.ingest.http import UpstreamError, fetch_bounded, upstream_client
+from agri_data_service.pipeline.direct.climate.nasa_power import (
     nasa_power_daily_point_url,
     nasa_power_observed_value,
 )
-from agri_data_service.ingest.http import UpstreamError, fetch_bounded, upstream_client
 from agri_data_service.pipeline.direct.climate.source import (
     NASA_POWER_POINT_BOUNDS,
     ClimateProviderDeferredError,

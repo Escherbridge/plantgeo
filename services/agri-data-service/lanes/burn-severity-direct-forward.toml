@@ -3,12 +3,13 @@
 # lanes/AGENTS.md. Lane notes, budget arithmetic and the CA7 verdict: pipeline/lanes/burn_severity/AGENTS.md
 # and docs/lanes/burn-severity.md section 8.
 #
-# DARK: executor = "legacy", so the legacy daily command (execution/lane_specs.py, the same lane id) keeps
-# running BOTH halves of this lane: the historical releases AND the weekly current capture with its
-# daily eligible-stage publication. This file's strategy covers the historical releases only. The
-# current capture has no successor on the config path (CA7 "no successor", routed as CQ-9), so flipping
-# this file to executor = "config" would stop the current capture: under the CQ-9 carve-out this lane
-# stays legacy through G6 and moves to a later cohort.
+# DARK: executor = "legacy", so the legacy daily command (execution/lane_specs.py, the same lane id) runs
+# ONLY the weekly current capture with its daily eligible-stage publication; since 2026-10-26 the
+# historical releases are the legacy `mtbs-forward` lane's alone (owner: "dispatch, don't retire").
+# This file's strategy covers the historical releases only -- i.e. `mtbs-forward`'s job, not this lane
+# id's legacy job. The current capture has no successor on the config path (CA7 "no successor", routed
+# as CQ-9), so flipping this file to executor = "config" would stop the current capture AND duplicate
+# `mtbs-forward`'s census: under the CQ-9 carve-out this lane stays legacy and moves to a later cohort.
 
 id = "burn-severity-direct-forward"
 kind = "ingest"

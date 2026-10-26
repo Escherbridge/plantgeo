@@ -105,7 +105,7 @@ would confirm it.
 
 - **Entity**: one cell of the `sentinel2-ndvi-0p25deg` grid — **1,568 cells total**, keyed
   `sentinel2-ndvi-0p25deg:{latitude:.4f}:{longitude:.4f}`
-  (`services/agri-data-service/tests/test_historical_open_meteo.py:77`; example key
+  (`services/agri-data-service/tests/test_historical_open_meteo.py:77`, deleted 2026-10-26; example key
   `sentinel2-ndvi-0p25deg:43.1250:-116.3750`). Measured lattice bounds are pinned in
   `pipeline/direct/soil/support.py`: latitude **42.1250 to 48.8750**, longitude **-124.8750 to -111.1250** — the Pacific
   Northwest, matching the registered purpose text *"Pacific Northwest 0.25-degree vegetation lattice"*

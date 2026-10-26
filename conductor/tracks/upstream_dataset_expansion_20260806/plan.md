@@ -6,6 +6,11 @@ status: planned
 
 # Plan
 
+> **2026-10-26 owner rule:** legacy historical modules purged; AgERA5/CEMS/CAMS/GloFAS history to
+> be built as config-driven TOML lanes with a `history_floor`. The "leave `historical_era5.py` in
+> place" protections and every `historical_glofas.py`/`historical_cams.py`/`historical_open_meteo.py`
+> step below are superseded; those modules are readable only in git history.
+
 See [`./spec.md`](./spec.md) for the measured findings this plan implements against.
 
 Five phases. Phase 0 fixes the existing lane and ships first. Phases 1-4 each add one

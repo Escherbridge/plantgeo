@@ -100,8 +100,8 @@ async def fetch_burn_severity_release_day(  # noqa: PLR0913 - drought's fetch pl
                 )
                 cohort = [build_mtbs_record(feature, ignition_year) for feature in features]
                 if cohort:
-                    # The same two tripwires `capture_release`/`fetch_mtbs_records` apply
-                    # (`ingest/mtbs.py:1079-1084`): a release date that does not lead its cohort's
+                    # The same two tripwires `ingest/mtbs.py::capture_release` applies:
+                    # a release date that does not lead its cohort's
                     # last ignition by the governed floor is ignition-shaped, and one landing on
                     # `now()` is a clock reading wearing a release date.
                     _observed_from, observed_to = release_observation_window(cohort)

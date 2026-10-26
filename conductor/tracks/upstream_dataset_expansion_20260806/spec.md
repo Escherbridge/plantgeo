@@ -195,6 +195,8 @@ Concrete, in scope for Phase 0:
   `docs/unused-upstream-datasets.md`, CDS remains the only route to AgERA5
   agrometeorological indicators, CEMS fire danger indices, and seasonal forecasts, none of
   which Open-Meteo redistributes. The code stays; the soil-state invocation of it stops.
+  **SUPERSEDED 2026-10-26 owner rule:** legacy historical modules purged; AgERA5/CEMS/CAMS/GloFAS
+  history to be built as config-driven TOML lanes with a `history_floor`.
 - The historical Open-Meteo replacement plan for soil temperature was evidence that the
   retirement was already underway in intent, not merely proposed here.
 
@@ -221,9 +223,10 @@ not a whitelist entry on this one.
 - **Any new map layer or UI for the three cron datasets.** This track ingests; serving is a
   separate decision, matching precedent — vegetation has been ingested with no reader for
   some time, and that gap belongs to a different track.
-- **Deleting or refactoring `historical_era5.py` or the CDS client.** CDS is retired for
+- ~~**Deleting or refactoring `historical_era5.py` or the CDS client.** CDS is retired for
   soil state only; the code and its credential contract stay for AgERA5, CEMS, and seasonal
-  forecasts.
+  forecasts.~~ **SUPERSEDED 2026-10-26 owner rule:** legacy historical modules purged;
+  AgERA5/CEMS/CAMS/GloFAS history to be built as config-driven TOML lanes with a `history_floor`.
 - **Resolving any other track's open question**, including the community-submission ML
   label bridge.
 - **Building the durable historical-archive lane for Flood or Air Quality in this track.**

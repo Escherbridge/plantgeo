@@ -537,6 +537,10 @@ scheduled invocation do it; it is a no-op on every other day.
 
 ## Historical cutover from the bash drivers
 
+**2026-10-26:** `firms-archive-full.sh` (and `fill-firms-gap.sh`) were deleted with the
+`nasa-firms-archive` token; the scheduled tasks were retired 2026-08-11. The text below is the
+original cutover record.
+
 **At the time of writing the two bash drivers are still on disk and still running.** Stopping them
 is a deliberate operator step, not something this change did:
 

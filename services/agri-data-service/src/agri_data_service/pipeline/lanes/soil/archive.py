@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 #: The provider endpoint every soil request names (`lanes/_providers/open-meteo.toml [endpoints.archive]`).
 ARCHIVE_ENDPOINT: Final = "archive"
 
-#: ERA5-Land's native lattice (`execution/weather_observations/era5_land.py` OPEN_METEO_ARCHIVE_NATIVE_GRID_DEGREES).
+#: ERA5-Land's native lattice (`pipeline/direct/soil/archive_contract.py` OPEN_METEO_ARCHIVE_NATIVE_GRID_DEGREES).
 NATIVE_GRID_DEGREES: Final = 0.1
 
 #: Half a native box plus a float epsilon (`execution/open_meteo_lane.py::max_grid_offset_degrees`).
@@ -37,7 +37,7 @@ MAX_GRID_OFFSET_DEGREES: Final = NATIVE_GRID_DEGREES / 2 + 1e-6
 #: The provider's one nondeterministic body field (`open_meteo_lane.NONDETERMINISTIC_RESPONSE_FIELDS`).
 NONDETERMINISTIC_FIELDS: Final = frozenset({"generationtime_ms"})
 
-#: Reviewed acceptance range per variable (`era5_land.py` OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS min/max).
+#: Reviewed acceptance range per variable (`archive_contract.py` OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS min/max).
 VALUE_RANGES: Final[Mapping[str, tuple[float, float]]] = {
     "soil_moisture_0_to_7cm_mean": (0.0, 1.0),
     "soil_moisture_7_to_28cm_mean": (0.0, 1.0),

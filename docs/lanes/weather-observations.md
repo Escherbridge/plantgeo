@@ -4,6 +4,13 @@ type: lane-contract
 
 # `weather-observations` lane
 
+> **2026-10-26 owner rule:** legacy historical modules purged — `execution/historical_*.py`,
+> `execution/weather_observations/**` and `execution/plan_continuation.py` no longer exist, so every
+> citation into them below is historical evidence, readable via `git show 1f908a25:<path>`. The
+> POWER URL/value guards moved to `pipeline/direct/climate/nasa_power.py`; the ERA5-Land archive
+> lane and acceptance table to `pipeline/direct/soil/archive_contract.py`. New history is built as
+> config-driven TOML lanes with a `history_floor`.
+
 Scope of this document, stated up front because the name is ambiguous in the repo (see §5): this
 lane is **the governed historical weather archive backing `agri.signal_observation`** — NASA POWER
 daily point data plus the Open-Meteo ERA5-Land archive — per the RUNBOOK's
@@ -92,7 +99,7 @@ serves, and its extent was not part of this session's 46,068,872-row measurement
 and freshness as **UNVERIFIED** — confirm with a direct count against `data_source.key =
 'open-meteo-era5-archive'` before assuming it contributes meaningfully.
 
-### The CDS-direct path exists but is dormant — do not resurrect it
+### The CDS-direct path was dormant and is now purged (2026-10-26) — do not resurrect it
 
 `historical_era5.py` is a first-party Copernicus CDS integration (`cdsapi`, credentials
 `CDSAPI_URL`/`CDSAPI_KEY`) that predates the Open-Meteo lane above. It is explicitly **superseded for
@@ -285,9 +292,9 @@ has been filtered.
    Don't design storage or validation around the historical 1.8× collapse; it will not recur going
    forward at that rate (verified facts, this session).
 
-8. **The CDS-direct path (`historical_era5.py`) never persisted a warehouse row and is superseded —
-   do not resurrect it or its plans** (§1). It remains only as an integration template for other,
-   genuinely CDS-only products.
+8. **The CDS-direct path (`historical_era5.py`) never persisted a warehouse row and was purged
+   2026-10-26 — do not resurrect it or its plans** (§1). CDS-only products get config-driven TOML
+   lanes instead.
 
 9. **`allowed_client_exposure` reads `False` on every governed row of this plane while the map already
    serves this data.** Unresolved in the repo — treat any exposure gate built on this column as

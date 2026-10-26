@@ -12,13 +12,13 @@ from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Final
 
-from agri_data_service.execution.weather_observations.nasa_power import (
+from agri_data_service.foundation.canonical import canonical_json, sha256_digest
+from agri_data_service.ingest.http import UpstreamBounds, UpstreamError, fetch_bounded, upstream_client
+from agri_data_service.pipeline.direct.climate.nasa_power import (
     extract_nasa_power_parameter_values,
     nasa_power_daily_point_url,
     nasa_power_observed_value,
 )
-from agri_data_service.foundation.canonical import canonical_json, sha256_digest
-from agri_data_service.ingest.http import UpstreamBounds, UpstreamError, fetch_bounded, upstream_client
 from agri_data_service.pipeline.direct.climate.products import (
     CLIMATE_DIRECT_SNAPSHOT_PREFIX,
     CLIMATE_SOURCE_PARAMETERS,

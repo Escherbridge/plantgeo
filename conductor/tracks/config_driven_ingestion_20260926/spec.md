@@ -188,7 +188,7 @@ reporting, and each got a different piece wrong:
 | O4 | **Code-error holds alert through an `agri.job_incident` row only**, visible in `/admin/jobs`. No webhook, no email. | §4.4, FR-8 |
 | O5 | **The extent shrink to the 0.25° lattice (42.125–48.875 N) is ACCEPTED.** | §6.2 |
 | O6 | **`OPEN_METEO_API_KEY` is set by the owner.** It is empty on the executor today. *Timing superseded by O8: the key is set only after G0's push and 24-h observation.* | §6.3, O8 |
-| O7 | **Dropped:** the solar re-grid question (it is now mandatory); land-context reconcile (decided at activation); `mtbs-forward` (**deleted** under the 2026-08-03 clean-up-as-you-go rule); IFS cadence (a one-field change; default one turn a day). | §7, FR-17 |
+| O7 | **Dropped:** the solar re-grid question (it is now mandatory); land-context reconcile (decided at activation); `mtbs-forward` (**deleted** under the 2026-08-03 clean-up-as-you-go rule; **2026-10-26 owner amendment:** `mtbs-forward` DISPATCHED (not retired); it is the history-only lane id, daily.py historical call removed so burn-severity-direct-forward is capture-only -- resolves the CQ-9 history/capture split hazard); IFS cadence (a one-field change; default one turn a day). | §7, FR-17 |
 
 ### 3.4 Owner decisions after review loop 2 (SETTLED 2026-09-26)
 
@@ -574,7 +574,7 @@ The spine is **risk-first-staged** (judged 38 vs 36 vs 32; §18.1). Three kinds 
 | A: migrated in place | the 10 `*-direct-forward` batch lanes | the same id on the runner | G6 deploy |
 | B: replaced | `water-gauges-direct-forward` | `water-gauges-daily` | G4 deploy |
 | C: re-sourced | `climate-nasa-power-direct-forward` (soil wetness is retired) | the five climate definitions from the landed TOMLs | G8 deploy, after the browser check |
-| D: deleted | `mtbs-forward` | none, or the CA7 capture successor | burn-severity's T0 |
+| D: deleted | `mtbs-forward` (**2026-10-26 owner amendment:** DISPATCHED, not retired -- the history-only lane id; `daily.py`'s historical call removed so `burn-severity-direct-forward` is capture-only; resolves the CQ-9 history/capture split hazard; class D no longer applies) | none, or the CA7 capture successor | burn-severity's T0 |
 | E: shadow | crop-cover, land-context-blm-*, ndvi-promotion | none in this track | never (Q-21) |
 | F: unprefixed legacy-path definitions | names the T0 census classifies `legacy-path-to-retire` (e.g. the archive walks) | none | the T0 census (CQ-10) |
 
@@ -612,7 +612,7 @@ G9 gates (plan "Owner gates").**
 |---|---|
 | `plantgeo.executor.water-gauges-direct-forward` | `water-gauges-daily` is READY; every §7a row passes as a conjunction; no runs since G4; the legacy stream is still registered, with coverage equal to its terminal-day receipt; **no owed or quarantined claim under `layer=water-gauges/`** (CA18 drained them at G4; otherwise they are recovered at 7R with `agri-service data availability-reconcile-physical` under a go, and the terminal-day receipt is recorded only after that); RC-6 green for water; **the CQ-6 acknowledgement recorded at 7R, before water entered cohort 1**. Without it, water never enters cohort 1. |
 | `plantgeo.executor.climate-nasa-power-direct-forward` | All five climate successors READY; RC-6 green before the G9Q-2 brake; **no open claim under any of the 8 `climate-field-*` and 3 `soil-wetness-*` roots at brake + one fire interval**, including `climate-field-shortwave-radiation` (frozen since G1; its claims are recovered at 7R); no new partitions across 7O-2; a terminal-day receipt per stream, written only after its pending prefix is empty; the frozen schema modules still serve one pre-freeze day per stream. |
-| `plantgeo.executor.mtbs-forward` | Its token is out and it has no runs in 30 days, or it has been braked since the G6 go; burn-severity is READY; the importer grep is clean. |
+| `plantgeo.executor.mtbs-forward` | ~~Its token is out and it has no runs in 30 days, or it has been braked since the G6 go; burn-severity is READY; the importer grep is clean.~~ **2026-10-26 owner amendment:** `mtbs-forward` DISPATCHED (not retired); it is the history-only lane id, daily.py historical call removed so burn-severity-direct-forward is capture-only -- resolves the CQ-9 history/capture split hazard. No retire precondition applies. |
 | sensor absence correction (`pipeline/parquet/sensor_absence_correction.py`, `scripts/correct_sensor_absences.py`) | SC-1: the retirement condition is recorded; SC-2: `prefix-census` finds no open `availability/repairs/` journal; SC-3: no operator workflow cites it. On failure, sensors is a carve-out for this path. |
 | class-F unprefixed names (CQ-10) | The T0 census classifies each one `legacy-path-to-retire` with a reason; no code path still dispatches it (`jobs/dispatch.py::LANE_DISPATCH` and executor specs); it has no non-terminal work; a critic verdict on the classification is recorded. |
 
@@ -660,7 +660,7 @@ G9 gates (plan "Owner gates").**
 
 #### 4.8.7 Out of scope (enforced by tripwires and the FORBIDDEN lists)
 
-- Shadow lanes; `execution/weather_observations/**`; other `pipeline/direct` lanes, including
+- Shadow lanes; `execution/weather_observations/**` (purged 2026-10-26 by owner rule: legacy historical modules purged; AgERA5/CEMS/CAMS/GloFAS history to be built as config-driven TOML lanes with a `history_floor`); other `pipeline/direct` lanes, including
   `vegetation_type/**`; the frozen schema modules; `warehouse/field_products/**`;
   `warehouse/mtbs_snapshots.py`; `parquet_ops/mtbs_snapshot_catalog.py`; every `layer=*/` object;
   calendar versions; credentials; `src/lib/server/services/usgs-water.ts`; the manifest-pinned
@@ -1400,7 +1400,7 @@ P0 = required to ship; P1 = required before deprecation.
 | Revision sweeps, ERA5 + ERA5-Land (90 d, monthly) | 2 × 1,568 × 90 / 14 | 20,160 / month |
 | **Soil gap-fill** (enabled at G6; cap 1,600 per turn, one daily fire) | ≤ 1,600 × 30 | ≤ 48,000 / month; expected = hole-runs × 1,568 (the G0 hole-count row, refreshed at G6) |
 | weather-observations after its cut-over (customer forecast host) | measured in Phase 0 | W / month |
-| Owner-run local scripts (`execution/historical_era5*`) | unscheduled | stated before each run |
+| ~~Owner-run local scripts (`execution/historical_era5*`)~~ purged 2026-10-26 (owner rule: legacy historical modules purged; CDS history to be config-driven TOML lanes with a `history_floor`, budgeted when authored) | -- | 0 |
 | **Steady state after cut-over** | 47,760 + 47,040 + 47,760 + 20,160 | **162,720 + W / month (3.3% + W)**; ≤ 210,720 + W with soil gap-fill at its cap |
 | **Worst single month** (every ceiling stacked: 14 interim days + 16 capped-soil days + one failure episode + compares + re-pull + bootstrap + soil gap-fill cap + a full steady month) | 14 × 43,960 + 16 × 6,280 + 23,550 + 1,569 + 1,747,648 + 12,320 + 48,000 + 162,720 = 615,440 + 100,480 + 23,550 + 1,569 + 1,747,648 + 12,320 + 48,000 + 162,720 | **≈ 2,711,727 + W₁ + W (≈ 54.2% + W₁ + W)** |
 | An all-interim month (Phase 1–2 run long) | 30 × 43,960 | 1,318,800 (26.4%) |
@@ -1440,7 +1440,7 @@ P0 = required to ship; P1 = required before deprecation.
 | weather-observations-direct-forward | Open-Meteo forecast `current=` | `past_days` ≤ 92 | write_and_recheck | Rows per tick; emits `unwritten` | Lag and floor are cited or marked `basis = "uncited"`. It moves to the customer host at cut-over (W). Exempt from the `probe_edge` rule (write_and_recheck). |
 | crop-cover-usda-maintain (shadow) | USDA NASS CDL | annual editions | refuse | Edition identity | `enabled = false`; runner scratch dir. Its source protocol (`CropCoverSource`, `USDA_CROP_COVER_SOURCE`) and the `source.py`/`products.py` it imports move in `p4-extract`. |
 | land-context-blm-* (shadow) | BLM ArcGIS | per service | refuse | Watermark per service | `enabled = false`. The reconcile mapping is decided at activation (O7). Its source protocol (`LandContextSource`, `BLM_LAND_CONTEXT_SOURCE`) and the `source.py`/`products.py` it imports move in `p4-extract`. |
-| mtbs-forward (shadow) | — | — | — | — | **Deleted** in Phase 7 (O7; executor F7): braked at G6 when CA7 names a successor, drained at G9Q-1b, retired at G9R-1 with `--successor none` or the successor; its written snapshots stay (burn-severity reads them). |
+| mtbs-forward | — | — | — | — | ~~**Deleted** in Phase 7 (O7; executor F7): braked at G6 when CA7 names a successor, drained at G9Q-1b, retired at G9R-1 with `--successor none` or the successor; its written snapshots stay (burn-severity reads them).~~ **2026-10-26 owner amendment:** `mtbs-forward` DISPATCHED (not retired); it is the history-only lane id (weekly, Tue 07:55 UTC, release-day census into `layer=burn-severity/kind=observed`), daily.py historical call removed so burn-severity-direct-forward is capture-only -- resolves the CQ-9 history/capture split hazard. Not braked, drained or retired at G9Q-1b/G9R-1. |
 | vegetation-ndvi-governed-plane-promotion (shadow) | `execution/vegetation_partition_promotion.py` | — | — | Checksum per day-partition SHA | A disabled transform. The output target is confirmed by the author. |
 
 ### 7a. Water gauges, early lane (O2, D9, reviews M4, N5)
