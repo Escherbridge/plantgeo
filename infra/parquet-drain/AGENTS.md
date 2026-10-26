@@ -1,5 +1,8 @@
 # `plantgeo-parquet-drain`
 
+> **2026-10-26: confirmed deleted.** The Railway project's service list no longer contains
+> `plantgeo-parquet-drain` (or any ingest-cron service). Everything below is history.
+
 ## Current owner directive — 2026-09-02
 
 This service is retired scheduler history. It was not present in the authoritative 14-service

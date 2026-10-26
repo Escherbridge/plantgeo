@@ -14,6 +14,8 @@ environment `b7cfa813-8a5c-4fcd-80f2-cab736d840a7`.
 | `plantgeo-spatiotemporal-db` | Transactional state, job control, interventions, and bounded lookups |
 | `plantgeo-Redis` | Cache and pub/sub |
 | `plantgeo-parquet` | Governed Parquet object storage |
+| `plantgeo-ml` | ML service (fire-risk + KNN; Python + Mojo, zero Postgres) |
+| `plantgeo-strategy-knowledge` | Strategy-knowledge store (Chroma vectors + passages) behind the MCP tools |
 
 `aevani-web`, `Aevani-Postgress`, and `aevani-images` share the Railway project but are outside
 PlantGeo ownership.
