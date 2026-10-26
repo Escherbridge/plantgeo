@@ -6,11 +6,11 @@
 # below must already be correct). Behaviour: pipeline/lanes/drought/usdm_releases.py. Authoring:
 # lanes/AGENTS.md.
 #
-# KNOWN GAP (see usdm_releases.py's module docstring and docs/lanes/drought.md section 8): USDM's
-# per-release resource is a dated URL PATH segment (ingest/usdm.py::usdm_source_url), which
-# pipeline/runner/binding.py::ConfigProviderClient's declared-endpoint URL builder cannot express --
-# the identical gap lanes/_providers/nasa-firms.toml's TODO names for its own path-segment API key.
-# This lane cannot move to `executor = "config"` until that gap is closed; reported to i-coordinator.
+# Both gaps that used to block `executor = "config"` are closed (see pipeline/lanes/drought/AGENTS.md
+# for the consolidated note): the path-segment transport landed (wave B2) and usdm_releases.py's plan
+# now uses it (endpoint "release", path_template-filled), and ingested_at is handled via this file's
+# own volatile_columns declaration below (wave B1a). Staying dark past both closures is the
+# `p5-cutover` G6 flip's own schedule, not a remaining technical blocker.
 
 id = "drought-direct-forward"
 kind = "ingest"

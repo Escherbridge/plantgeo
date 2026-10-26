@@ -220,9 +220,15 @@ def test_an_endpoint_with_no_customer_host_and_no_optional_opt_in_refuses_a_decl
 
 def test_the_new_refusal_never_fires_for_a_keyless_or_an_optional_key_provider() -> None:
     """A provider with no api_key_env at all (usdm) and one whose endpoint opts into optional_api_key
-    (usgs-water-data) both still answer from the free host instead of raising."""
-    usdm = provider_endpoint_request(providers()["usdm"], "release-json", {}, environment={})
-    assert usdm.send_url.reveal() == usdm.request_url
+    (usgs-water-data) both still answer from the free host instead of raising. Checked against BOTH
+    usdm endpoints: the fixed-path `release-json` and the `path_template`d `release`
+    (`usdm_releases.py`'s now-used `RELEASE_ENDPOINT`), since a templated endpoint's path-value fill
+    is a different code path (`ProviderEndpoint.split_parameters`/`request_url`) from a fixed path's."""
+    usdm_fixed = provider_endpoint_request(providers()["usdm"], "release-json", {}, environment={})
+    assert usdm_fixed.send_url.reveal() == usdm_fixed.request_url
+
+    usdm_templated = provider_endpoint_request(providers()["usdm"], "release", {"release": "20260915"}, environment={})
+    assert usdm_templated.send_url.reveal() == usdm_templated.request_url
 
     usgs = provider_endpoint_request(providers()["usgs-water-data"], "daily", {}, environment={})
     assert usgs.send_url.reveal() == usgs.request_url

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from typing import Protocol
 
 
@@ -41,9 +41,4 @@ def utc_today(clock: TurnClock) -> date:
     return clock.now().astimezone(UTC).date()
 
 
-def utc_yesterday(clock: TurnClock) -> date:
-    """Yesterday's UTC date on `clock`: the newest day a provisional lane may write (O1)."""
-    return utc_today(clock) - timedelta(days=1)
-
-
-__all__ = ["SystemClock", "TurnClock", "utc_today", "utc_yesterday"]
+__all__ = ["SystemClock", "TurnClock", "utc_today"]

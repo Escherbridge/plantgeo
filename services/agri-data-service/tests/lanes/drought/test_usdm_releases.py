@@ -26,12 +26,14 @@ from agri_data_service.foundation.lane_config import load_lane_configs
 from agri_data_service.foundation.lane_config.models import lane_requires_probe_edge
 from agri_data_service.foundation.region import load_region
 from agri_data_service.ingest.http import HTTP_NOT_FOUND, UpstreamHttpError
+from agri_data_service.ingest.provider_client import provider_endpoint_request
+from agri_data_service.ingest.usdm import usdm_source_url
 from agri_data_service.pipeline.lanes.drought import usdm_releases
 from agri_data_service.pipeline.lanes.drought.products import release_weeks
 from agri_data_service.pipeline.lanes.drought.usdm_releases import (
     RELEASE_ENDPOINT,
+    RELEASE_PATH_PARAMETER,
     STRATEGY,
-    VALID_DATE_PARAMETER,
 )
 from agri_data_service.pipeline.runner.contract import ProviderResponse
 from agri_data_service.pipeline.runner.resolve import resolve_strategy
@@ -89,7 +91,8 @@ class ReleaseWorld:
 
     def answer(self, endpoint: str, parameters: Mapping[str, str], probe: bool) -> bytes:  # noqa: ARG002 - the ScriptedUpstream shape
         assert endpoint == RELEASE_ENDPOINT
-        valid_date = date.fromisoformat(parameters[VALID_DATE_PARAMETER])
+        raw = parameters[RELEASE_PATH_PARAMETER]  # YYYYMMDD, matching the real path_template fill
+        valid_date = date(int(raw[0:4]), int(raw[4:6]), int(raw[6:8]))
         self.requested.append(valid_date)
         if valid_date not in self.releases:
             raise UpstreamHttpError(HTTP_NOT_FOUND)
@@ -137,6 +140,18 @@ def test_release_days_is_every_usdm_tuesday_in_the_window_matching_the_lane_cale
 def test_plan_requests_refuses_a_non_tuesday_day_rather_than_silently_requesting_it() -> None:
     with pytest.raises(ValueError, match="non-Tuesday"):
         STRATEGY.plan_requests([date(2026, 9, 16)], _shipped_lane(), load_region("pnw"))
+
+
+def test_plan_requests_renders_the_exact_legacy_usdm_url_for_a_known_tuesday() -> None:
+    """The behaviour fix this plan exists for: `RELEASE_ENDPOINT`/`RELEASE_PATH_PARAMETER`, filled
+    through the REAL shipped provider file's `path_template`, render byte-for-byte the same URL the
+    legacy writer builds (`ingest/usdm.py::usdm_source_url`) -- never a `?valid_date=` query string."""
+    usdm_provider = load_lane_configs(REAL_LANES_DIRECTORY, load_region("pnw")).providers["usdm"]
+    [request] = STRATEGY.plan_requests([NEWEST_TUESDAY], _shipped_lane(), load_region("pnw"))
+
+    rendered = provider_endpoint_request(usdm_provider, request.endpoint, request.query(), environment={})
+
+    assert rendered.request_url == usdm_source_url(NEWEST_TUESDAY.isoformat())
 
 
 async def test_a_forward_turn_only_ever_requests_release_tuesdays_inside_its_window() -> None:

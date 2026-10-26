@@ -11,6 +11,7 @@ import duckdb
 import pyarrow as pa  # type: ignore[import-untyped]
 
 from agri_data_service.foundation.parquet.duckdb_extensions import extension_directory_setting
+from agri_data_service.pipeline.lanes._shared.digest import COMPACT_SEPARATORS
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
@@ -114,7 +115,9 @@ def convert_geojson_to_wkb(
         {
             "position": list(range(len(geometries))),
             # `allow_nan=False` refuses a non-finite ordinate here rather than letting DuckDB read `NaN`.
-            "geojson": [json.dumps(geometry, allow_nan=False, separators=(",", ":")) for geometry in geometries],
+            "geojson": [
+                json.dumps(geometry, allow_nan=False, separators=COMPACT_SEPARATORS) for geometry in geometries
+            ],
         }
     )
     session.register(_REGISTERED_TABLE, frame)

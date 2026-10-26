@@ -21,14 +21,11 @@ if TYPE_CHECKING:
 
     from agri_data_service.pipeline.runner.contract import DayContext, Derivation
 
-#: The one input: the forward lane's base-rung `layer=vegetation/kind=observed` day partition.
-INPUT_LANE_ID: Final = "vegetation-sentinel2-ndvi-direct-forward"
 INPUT_STREAM: Final = VEGETATION_PRODUCT.stream
 INPUT_KIND: Final = VEGETATION_DIRECT_KIND
 #: The confirmed output: `register_governed_partition_plane` writes the governed forecast plane in Postgres.
 OUTPUT_TARGET: Final = "postgres:agri.forecast_observation"
-#: The legacy verb's module and register seam, recorded for the parity check in the lane's tests.
-LEGACY_PROMOTION_MODULE: Final = "agri_data_service.execution.vegetation_partition_promotion"
+#: The legacy verb's register seam, recorded for the parity check in the lane's tests.
 LEGACY_REGISTER_VERB: Final = "agri_data_service.execution.vegetation_ndvi_plane.register_governed_partition_plane"
 
 
@@ -53,9 +50,7 @@ STRATEGY: Final = GovernedPlanePromotionStrategy()
 
 __all__ = [
     "INPUT_KIND",
-    "INPUT_LANE_ID",
     "INPUT_STREAM",
-    "LEGACY_PROMOTION_MODULE",
     "LEGACY_REGISTER_VERB",
     "OUTPUT_TARGET",
     "STRATEGY",

@@ -11,8 +11,6 @@ importing the write path.
 
 from __future__ import annotations
 
-import asyncio
-import random
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final
@@ -20,10 +18,10 @@ from typing import TYPE_CHECKING, Final
 from agri_data_service.foundation.region.source_coverage import SourceCoverageClaim
 from agri_data_service.ingest.http import upstream_client
 from agri_data_service.ingest.usdm import USDM_BOUNDS, fetch_drought_release
+from agri_data_service.pipeline.lanes._shared.retry import retry_with_backoff
 from agri_data_service.pipeline.lanes.drought.products import release_weeks
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
     from datetime import date
 
     from agri_data_service.ingest.usdm import DroughtRelease
@@ -69,40 +67,14 @@ async def fetch_drought_day(
             release = await fetch_drought_release(client, day.isoformat())
         return DroughtDaySource(day=day, release=release, fetched_at=datetime.now(UTC))
 
-    return await _retry_async(
-        f"USDM {day.isoformat()} source fetch",
+    return await retry_with_backoff(
         fetch_once,
         attempts=retry_attempts,
         base_seconds=retry_base_seconds,
         max_seconds=retry_max_seconds,
+        exhausted=DroughtSourceError,
+        label=f"USDM {day.isoformat()} source fetch",
     )
-
-
-async def _retry_async[T](
-    label: str,
-    operation: Callable[[], Awaitable[T]],
-    *,
-    attempts: int,
-    base_seconds: float,
-    max_seconds: float,
-) -> T:
-    """Retry a transport-bound coroutine with jittered exponential backoff, raising the last error."""
-    last_error: Exception | None = None
-    for attempt in range(1, attempts + 1):
-        try:
-            return await operation()
-        except Exception as error:  # every transport/parse failure is retried the same way
-            last_error = error
-            if attempt >= attempts:
-                break
-            await asyncio.sleep(_retry_delay(attempt, base_seconds=base_seconds, max_seconds=max_seconds))
-    assert last_error is not None  # attempts >= 1 is enforced by the caller's config validation
-    raise DroughtSourceError(f"{label} failed after {attempts} attempts") from last_error
-
-
-def _retry_delay(attempt: int, *, base_seconds: float, max_seconds: float) -> float:
-    ceiling = min(max_seconds, base_seconds * (2 ** max(0, attempt - 1)))
-    return float(ceiling + random.uniform(0.0, min(1.0, ceiling / 4)))
 
 
 class UsdmDroughtSource:

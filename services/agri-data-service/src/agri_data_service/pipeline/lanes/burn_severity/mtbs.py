@@ -12,8 +12,6 @@ Importing the pure fetch/parse functions is not importing the write path.
 
 from __future__ import annotations
 
-import asyncio
-import random
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final
@@ -28,13 +26,14 @@ from agri_data_service.ingest.mtbs import (
     resolve_data_available_at,
     validate_release_window,
 )
+from agri_data_service.pipeline.lanes._shared.retry import retry_with_backoff
 from agri_data_service.pipeline.lanes.burn_severity.products import (
     governed_release_days,
     release_days_by_ignition_year,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Sequence
+    from collections.abc import Sequence
     from datetime import date
 
     from agri_data_service.ingest.mtbs import BoundingBox, MtbsBurnSeverityRecord
@@ -122,40 +121,14 @@ async def fetch_burn_severity_release_day(  # noqa: PLR0913 - drought's fetch pl
             fetched_at=datetime.now(UTC),
         )
 
-    return await _retry_async(
-        f"MTBS release day {day.isoformat()} fetch",
+    return await retry_with_backoff(
         fetch_once,
         attempts=retry_attempts,
         base_seconds=retry_base_seconds,
         max_seconds=retry_max_seconds,
+        exhausted=BurnSeverityFetchError,
+        label=f"MTBS release day {day.isoformat()} fetch",
     )
-
-
-async def _retry_async[T](
-    label: str,
-    operation: Callable[[], Awaitable[T]],
-    *,
-    attempts: int,
-    base_seconds: float,
-    max_seconds: float,
-) -> T:
-    """Retry a transport-bound coroutine with jittered exponential backoff, raising the last error."""
-    last_error: Exception | None = None
-    for attempt in range(1, attempts + 1):
-        try:
-            return await operation()
-        except Exception as error:  # every transport/parse failure is retried the same way
-            last_error = error
-            if attempt >= attempts:
-                break
-            await asyncio.sleep(_retry_delay(attempt, base_seconds=base_seconds, max_seconds=max_seconds))
-    assert last_error is not None  # attempts >= 1 is enforced by the caller's config validation
-    raise BurnSeverityFetchError(f"{label} failed after {attempts} attempts") from last_error
-
-
-def _retry_delay(attempt: int, *, base_seconds: float, max_seconds: float) -> float:
-    ceiling = min(max_seconds, base_seconds * (2 ** max(0, attempt - 1)))
-    return float(ceiling + random.uniform(0.0, min(1.0, ceiling / 4)))
 
 
 class MtbsBurnSeveritySource:

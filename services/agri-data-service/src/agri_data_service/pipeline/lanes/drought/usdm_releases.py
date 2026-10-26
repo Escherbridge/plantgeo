@@ -25,20 +25,11 @@ form of the legacy adapter's `mirrored_past_proof` callback (`pipeline/direct/dr
 `tests/runner/fixtures/release_series.py::ReleaseSeriesStrategy.fetch` catches the identical 404 the
 identical way (that fixture does not implement the mirrored-past branch).
 
-**A known gap, why `executor` stays `"legacy"`.** USDM's per-release resource is a dated URL PATH
-segment (`ingest/usdm.py::usdm_source_url`), not a query parameter. `pipeline/runner/binding.py::
-ConfigProviderClient` and `ingest/provider_client.py::provider_endpoint_request` build every request
-URL as the provider's declared (fixed) `path` plus a `?query` string -- there is no declared-endpoint
-shape that can express a path segment that varies per request. This is the IDENTICAL gap
-`lanes/_providers/nasa-firms.toml` names in its own TODO for FIRMS's path-segment API key: "the
-provider client attaches nothing regardless: the strategy must place it itself" -- but `fetch()` here
-is handed only `ProviderClient.get(endpoint, parameters)`, which has no seam for that either. This
-lane therefore CANNOT move to `executor = "config"` until a provider-client path-segment transport is
-added (out of this slice's owned files: `pipeline/runner/binding.py` and `ingest/provider_client.py`
-are both framework files no swarm lane may edit). Reported to `i-coordinator`; see
-`docs/lanes/drought.md` section 8 and this package's `AGENTS.md`. The tests below exercise this
-strategy's own logic against a fake `ProviderClient` (never the real `ConfigProviderClient`'s URL
-construction), which is the honest scope given the gap above.
+**Why `executor` still stays `"legacy"`, despite the plan below now matching the live provider
+file.** See `AGENTS.md`'s consolidated note for the closed path-segment-transport gap and the
+`ingested_at` G6-compare gap; staying dark past both closures is the `p5-cutover` G6 flip's own
+schedule, not a remaining technical blocker. The tests below exercise this strategy's own logic
+against a fake `ProviderClient` (never the real `ConfigProviderClient`'s URL construction).
 
 **A second known gap (ring review, s-drought fix batch): G6's `--mode forward --compare` cannot run
 against this lane either, and the earlier G6-parity claims below were half true.** `_source_digest`
@@ -91,20 +82,18 @@ if TYPE_CHECKING:
 
 #: `date.weekday()` where Monday is 0 (`ingest/usdm.py::TUESDAY`; `products.py::USDM_RELEASE_WEEKDAY`).
 _TUESDAY: Final = 1
-#: Matches `lanes/_providers/usdm.toml`'s `[endpoints.release-json]` declaration.
-RELEASE_ENDPOINT: Final = "release-json"
-#: The one parameter a release unit settles: the whole release, named rather than left implicit.
-VALID_DATE_PARAMETER: Final = "valid_date"
+#: Matches `lanes/_providers/usdm.toml`'s `[endpoints.release]` `path_template` declaration -- the
+#: per-request PATH segment, not the fixed-path `release-json` endpoint the dark strategy named before
+#: this transport landed (`AGENTS.md`'s consolidated note).
+RELEASE_ENDPOINT: Final = "release"
+#: The template's one placeholder: `[endpoints.release]`'s `path_template` fills it into the path,
+#: never the query (`foundation/lane_config/models.py::ProviderEndpoint.split_parameters`).
+RELEASE_PATH_PARAMETER: Final = "release"
 #: A 404 carries no retrieval instant of its own (`ProviderResponse` is never constructed for one);
 #: matches `tests/runner/fixtures/release_series.py::NOT_PUBLISHED_AT`'s identical sentinel choice.
 NOT_PUBLISHED_AT: Final = datetime(1970, 1, 1, tzinfo=UTC)
 #: Matches `pipeline/direct/drought/rows.py::DIRECT_AREA_ID_PREFIX`/`direct_area_id` byte-for-byte
-#: (restated, not imported -- this package may never import `pipeline/direct/**`): this COLUMN alone
-#: contributes no delta at G6 compare when the executor flips from legacy to config. CORRECTED (ring
-#: review, s-drought fix batch): that is NOT the same as "the G6 compare gate sees no delta" overall
-#: -- `ingested_at` still will, on every already-published day, regardless of this column's fidelity.
-#: See this module's docstring, "A second known gap", for the compare-path mechanism and why the fix
-#: is out of scope here.
+#: (restated, not imported -- this package may never import `pipeline/direct/**`).
 _DIRECT_AREA_ID_PREFIX: Final = "direct"
 
 
@@ -127,12 +116,13 @@ def _source_digest(release: DroughtRelease) -> str:
     (`Written.source_digest`'s own docstring: "a strategy whose rows carry a retrieval instant must set
     it, or every refetch reads as a revision").
 
-    CORRECTED SCOPE (ring review, s-drought fix batch): this governs ONLY that one S11 rewrite
-    decision, internal to this strategy's own `settle()`. It is a different digest over a different
-    input than `pipeline/runner/turn.py::_compare`'s `reader.canonical_digest`, which hashes the WHOLE
-    written table -- `ingested_at` included -- with no exclusion. Excluding the instant here does
-    NOT make this lane's output immune to a false delta at G6 compare; see this module's docstring,
-    "A second known gap".
+    SCOPE: this governs ONLY that one S11 rewrite decision, internal to this strategy's own
+    `settle()`. It is a different digest over a different input than `pipeline/runner/turn.py::
+    _compare`'s `reader.canonical_digest`, which hashes the WHOLE written table -- `ingested_at`
+    included. That separate G6-compare path is volatile-column-aware (`AGENTS.md`'s consolidated
+    note, wave B1a): this lane's TOML declares `volatile_columns = ["ingested_at"]`, which drops the
+    column from `canonical_digest` too, so the two digests stay deliberately separate without either
+    seeing a false delta.
     """
     canonical = canonical_json_bytes(
         {
@@ -196,8 +186,10 @@ class UsdmReleaseSeriesStrategy:
                 unit=f"release:{day.isoformat()}",
                 endpoint=RELEASE_ENDPOINT,
                 days=(day,),
-                parameters=((VALID_DATE_PARAMETER, day.isoformat()),),
-                requested_parameters=frozenset({VALID_DATE_PARAMETER}),
+                # YYYYMMDD, matching `ingest/usdm.py::usdm_source_url`'s own `valid_date.replace("-", "")`
+                # byte-for-byte: the legacy writer's URL and this plan's rendered URL must be identical.
+                parameters=((RELEASE_PATH_PARAMETER, day.strftime("%Y%m%d")),),
+                requested_parameters=frozenset({RELEASE_PATH_PARAMETER}),
             )
             for day in days
         ]
@@ -296,7 +288,7 @@ STRATEGY: Final = UsdmReleaseSeriesStrategy()
 __all__ = [
     "NOT_PUBLISHED_AT",
     "RELEASE_ENDPOINT",
+    "RELEASE_PATH_PARAMETER",
     "STRATEGY",
-    "VALID_DATE_PARAMETER",
     "UsdmReleaseSeriesStrategy",
 ]

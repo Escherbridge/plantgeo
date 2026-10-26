@@ -29,28 +29,28 @@ it (or `usdm.py`, which imports it): that edge closes a cycle through a half-ini
 `usdm.py` is a moved SOURCE module with no `STRATEGY`. The config-lane strategy therefore lives in a
 distinct leaf, `usdm_releases.py`, never bolted onto `usdm.py`.
 
-**Known gap, why `drought-direct-forward.toml` ships `executor = "legacy"`**: USDM's per-release
-resource is a dated URL PATH segment (`ingest/usdm.py::usdm_source_url`), not a query parameter.
-`pipeline/runner/binding.py::ConfigProviderClient` builds every request URL as a provider's declared
-(fixed) `path` plus a `?query` string, which cannot express a path segment that varies per request --
-the identical gap `lanes/_providers/nasa-firms.toml`'s own TODO names for FIRMS's path-segment API
-key. `usdm_releases.py` is otherwise a complete, tested `IngestStrategy` + `ReleaseCalendarStrategy`;
-moving to `executor = "config"` needs a provider-client path-segment transport added first (out of
-scope for this slice: `pipeline/runner/binding.py` and `ingest/provider_client.py` are framework
-files no swarm lane may edit). See `docs/lanes/drought.md` section 8.
+**Status: both gaps that used to block `executor = "config"` are closed; the TOML still ships
+`executor = "legacy"` on the `p5-cutover` G6 flip's own schedule, not a remaining technical blocker.**
 
-**Known gap #2 (ring review, s-drought fix batch): G6 compare cannot run against this lane either.**
-`_source_digest` (`usdm_releases.py`) excludes `ingested_at` so a recheck of unchanged content never
-reads as a revision inside this strategy's OWN `settle()` -- that is the whole and only scope of that
-exclusion. G6's `--mode forward --compare` is a different path:
-`pipeline/runner/turn.py::_Turn._compare` diffs `reader.canonical_digest(stream, built)` against
-`reader.canonical_digest(stream, published)`, and `canonical_digest` (`reader.py`) hashes the WHOLE
-conformed table (`digests.py::table_digest`, Arrow IPC bytes, every column) with no exclusion
-mechanism at all. `ingested_at` is a `DROUGHT_SCHEMA` column `rows()` stamps with the fetch's own
-`retrieved_at`, so a freshly built table deltas against ANY already-published day's table on that
-column alone -- a false delta, not a real one, on every already-settled day. Not drought-specific:
-any lane whose schema carries a retrieval-instant column hits this the moment it reaches G6 compare.
-The fix is OUTSIDE this slice's owned files (`pipeline/runner/turn.py`, `reader.py`, `digests.py`):
-`_compare`/`canonical_digest` need to become volatile-column-aware before G6 can run here. Recorded
-as a G6 prerequisite with `i-coordinator`; see `docs/lanes/drought.md` section 8 and
-`usdm_releases.py`'s module docstring, "A second known gap", for the same disclosure.
+- **Path-segment transport landed (wave B2) and `usdm_releases.py` now uses it.** USDM's per-release
+  resource is a dated URL PATH segment (`ingest/usdm.py::usdm_source_url`), which used to have no
+  declared-endpoint shape to express (the identical gap `lanes/_providers/nasa-firms.toml`'s own TODO
+  still names for FIRMS's path-segment API key). `foundation/lane_config/models.py::ProviderEndpoint`
+  now declares `path_template`, and `lanes/_providers/usdm.toml`'s `[endpoints.release]` uses it
+  (`path_template = "/data/json/usdm_{release}.json"`). `usdm_releases.py::UsdmReleaseSeriesStrategy
+  .plan_requests` plans `RELEASE_ENDPOINT = "release"` with a `release` parameter
+  (`day.strftime("%Y%m%d")`), which `ProviderEndpoint.split_parameters` routes into the path rather
+  than the query -- rendering the IDENTICAL URL `ingest/usdm.py::usdm_source_url` builds for the
+  legacy writer, byte-for-byte.
+- **`ingested_at` handled via `volatile_columns` (wave B1a).** `_source_digest` (`usdm_releases.py`)
+  excludes `ingested_at` from this strategy's OWN S11 revision digest -- a different digest over a
+  different input than G6's `--mode forward --compare`, which diffs
+  `pipeline/runner/turn.py::_Turn._compare`'s `reader.canonical_digest(stream, built)` against
+  `reader.canonical_digest(stream, published)`. That path is now volatile-column-aware:
+  `drought-direct-forward.toml`'s `[[streams]]` entry declares `volatile_columns = ["ingested_at"]`,
+  and `canonical_digest` drops the declared columns after conforming and grain-sorting
+  (`pipeline/runner/AGENTS.md` "Volatile columns"), so neither digest sees a false delta on an
+  already-settled day. Not drought-specific: any lane whose schema carries a retrieval-instant column
+  gets the identical protection once its stream declares `volatile_columns`.
+
+See `docs/lanes/drought.md` section 8 for the lane-level summary.
