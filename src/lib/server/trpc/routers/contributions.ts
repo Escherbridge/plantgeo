@@ -19,12 +19,14 @@ const APPLICATION_CONTRIBUTION_LAYERS = ["interventions"];
  * from `properties`, distinct from the `features.status` column this
  * endpoint always sets to `pending_review`) and `id` (the machine-ingress
  * upsert key in `intervention-store.ts`; a client-chosen value can capture a
- * partner feature's future upsert as an UPDATE instead of an INSERT).
+ * partner feature's future upsert as an UPDATE instead of an INSERT), plus
+ * `lifecycleStage` (written only by `interventions.transitionLifecycleState`).
  */
 const RESERVED_CONTRIBUTION_PROPERTIES = [
   "dataOrigin", "provenance", "source", "sourceType", "dataDetails",
   "submittedByUserId", "submittedByTeamId",
   "geometry", "category", "kind", "publicationConsent", "id", "status",
+  "lifecycleStage",
 ];
 
 /** Canonical pending-only review errors; see src/lib/server/AGENTS.md. */

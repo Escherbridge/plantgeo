@@ -29,9 +29,11 @@ async function resolveInterventionLayerId(layerReference: string): Promise<strin
 /** Stores one user-authored intervention and emits its realtime invalidation. */
 export async function upsertInterventionFeature(input: InterventionFeatureInput): Promise<boolean> {
   const layerId = await resolveInterventionLayerId(input.layerId);
-  const properties = { ...input.properties, id: input.featureId };
+  // `lifecycleStage` is moderator-owned (see `routers/interventions.ts` lifecycle transitions); ingress never sets it.
+  const { lifecycleStage: _ignoredStage, ...incoming } = input.properties;
+  const ingressProperties = { ...incoming, id: input.featureId };
 
-  const writtenId = await db.transaction(async (tx) => {
+  const written = await db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`${layerId}:${input.featureId}`}))`);
 
     const [existing] = await tx
@@ -48,10 +50,15 @@ export async function upsertInterventionFeature(input: InterventionFeatureInput)
     if (!existing) {
       const [inserted] = await tx
         .insert(features)
-        .values({ layerId, properties })
+        .values({ layerId, properties: ingressProperties })
         .returning({ id: features.id });
-      return inserted?.id ?? null;
+      return inserted ? { id: inserted.id, properties: ingressProperties } : null;
     }
+
+    // A re-ingest replaces partner fields but must not reset a moderator's lifecycle move.
+    const storedStage = (existing.properties as Record<string, unknown> | null)?.lifecycleStage;
+    const properties =
+      storedStage === undefined ? ingressProperties : { ...ingressProperties, lifecycleStage: storedStage };
 
     const [updated] = await tx
       .update(features)
@@ -64,14 +71,14 @@ export async function upsertInterventionFeature(input: InterventionFeatureInput)
         )
       )
       .returning({ id: features.id });
-    return updated?.id ?? null;
+    return updated ? { id: updated.id, properties } : null;
   });
 
-  if (!writtenId) return false;
+  if (!written) return false;
   await publish("layer:interventions", {
     type: "Feature",
-    id: writtenId,
-    properties,
+    id: written.id,
+    properties: written.properties,
     geometry: (input.properties.geometry as object) ?? null,
   });
   return true;

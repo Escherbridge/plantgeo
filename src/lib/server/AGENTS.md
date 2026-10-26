@@ -117,7 +117,7 @@ distinction. The evidence link (`dataUrl`) is withheld while a row is pending: t
 submitter, their team, or an expert/admin (published rows show it to everyone). Missing
 historical provenance is not inferred from publication status.
 
-The legacy `proposeIntervention` flow and machine intervention ingress reject data types; they
+Machine intervention ingress rejects data types (the legacy `proposeIntervention` flow was deleted 2026-10-26); it
 cannot omit the validated data payload. The generic `contributions.submitObservation` procedure
 accepts only the global `interventions` application layer, refuses environmental and team-layer
 targets, rejects provenance/authorship claims and data-workflow payloads, and stamps authenticated

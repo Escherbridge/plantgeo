@@ -2,10 +2,11 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getServerSession } from "@/lib/server/auth";
 import { ContributionQueue } from "@/components/panels/ContributionQueue";
+import { ModerationPanel } from "@/components/panels/ModerationPanel";
 
 export const metadata: Metadata = {
   title: "Moderation - PlantGeo",
-  description: "Review community-submitted intervention recommendations before they publish to the map.",
+  description: "Review community-submitted intervention recommendations before they publish to the map, and track published interventions through their lifecycle.",
 };
 
 const MODERATION_ROLES = ["expert", "admin"];
@@ -26,6 +27,12 @@ export default async function ModerationPage() {
           <h1 id="community-review-title" className="text-lg font-semibold text-zinc-100">Community recommendations</h1>
           <p className="mt-1 mb-3 text-sm text-zinc-400">Review submitted sites and approve suitable recommendations for the public map.</p>
           <ContributionQueue />
+        </section>
+        {/* Post-publication only: publishing happens in the queue above, never here. */}
+        <section aria-labelledby="intervention-lifecycle-title" className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4 shadow-2xl">
+          <h2 id="intervention-lifecycle-title" className="text-lg font-semibold text-zinc-100">Intervention lifecycle</h2>
+          <p className="mt-1 mb-3 text-sm text-zinc-400">Advance published interventions from published to active to monitored.</p>
+          <ModerationPanel />
         </section>
       </div>
     </div>

@@ -101,7 +101,7 @@ describe("ContributionQueue row identification", () => {
     expect(screen.getByText("Community collected data")).toBeTruthy();
     expect(screen.getByText("Water gauges")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Open dataset or evidence" }).getAttribute("href")).toBe("https://example.org/gauge.csv");
-    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    fireEvent.click(screen.getByRole("button", { name: "Approve & publish" }));
     expect(mocks.publishMutate).toHaveBeenCalledWith({ featureId: "feature-1" });
     expect(screen.queryByText("Verified source data")).toBeNull();
   });
@@ -170,7 +170,7 @@ describe("ContributionQueue reject-note requirement", () => {
 
   it("does not require a note to approve", () => {
     renderWithProviders(<ContributionQueue />);
-    const approveButton = screen.getByRole("button", { name: "Approve" }) as HTMLButtonElement;
+    const approveButton = screen.getByRole("button", { name: "Approve & publish" }) as HTMLButtonElement;
     expect(approveButton.disabled).toBe(false);
 
     fireEvent.click(approveButton);
@@ -180,7 +180,7 @@ describe("ContributionQueue reject-note requirement", () => {
 
 
 describe("ContributionQueue refused decisions", () => {
-  it.each(["Approve", "Reject"])("shows a stale %s refusal and refreshes without clearing the rejection draft", (action) => {
+  it.each(["Approve & publish", "Reject"])("shows a stale %s refusal and refreshes without clearing the rejection draft", (action) => {
     mocks.reviewError = { data: { code: "CONFLICT" } };
     const view = renderWithProviders(<ContributionQueue />);
     const note = screen.getByPlaceholderText("Rejection note (required to reject)") as HTMLInputElement;
@@ -199,7 +199,7 @@ describe("ContributionQueue refused decisions", () => {
   it("keeps an unexpected review failure visible instead of presenting success", () => {
     mocks.reviewError = { data: { code: "INTERNAL_SERVER_ERROR" } };
     renderWithProviders(<ContributionQueue />);
-    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    fireEvent.click(screen.getByRole("button", { name: "Approve & publish" }));
     expect(screen.getByRole("alert").textContent).toContain("Could not confirm this review decision");
     expect(mocks.invalidate).toHaveBeenCalledTimes(1);
   });

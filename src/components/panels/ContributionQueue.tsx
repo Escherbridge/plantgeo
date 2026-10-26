@@ -213,7 +213,7 @@ export function ContributionQueue() {
                 disabled={publishMutation.isPending}
                 className={`flex-1 rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 px-2 py-1 text-xs font-medium text-white transition-colors ${TOUCH_TARGET}`}
               >
-                Approve
+                Approve &amp; publish
               </button>
               <button
                 onClick={() =>
