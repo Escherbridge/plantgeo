@@ -70,18 +70,18 @@ describe("AssetsPanel", () => {
 
   it("renders the already-registered asset from listAssets", () => {
     render(<AssetsPanel />);
-    expect(screen.getByText("Crew truck 1")).toBeInTheDocument();
+    expect(screen.getByText("Crew truck 1")).toBeTruthy();
   });
 
   it("disables the add-asset submit button until a name is entered", () => {
     render(<AssetsPanel />);
     const submitButton = screen.getByRole("button", { name: /Add asset/ });
-    expect(submitButton).toBeDisabled();
+    expect((submitButton as HTMLButtonElement).disabled).toBe(true);
 
     fireEvent.change(screen.getByLabelText("New asset name"), {
       target: { value: "Crew truck 2" },
     });
-    expect(submitButton).not.toBeDisabled();
+    expect((submitButton as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("submits the typed name, type and status to createAsset and invalidates the list", () => {

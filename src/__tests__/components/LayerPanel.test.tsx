@@ -26,6 +26,11 @@ import { useVegetationStore } from "@/stores/vegetation-store";
 import type { SliderCapabilities } from "@/types/time-slider";
 import { soilRasterUnavailableReasons } from "@/components/map/layer-panel/DockSections";
 
+// `DockSections`' `UnreadAlertsBadge` reads the session; signed-out keeps its query disabled.
+vi.mock("next-auth/react", () => ({
+  useSession: () => ({ data: null, status: "unauthenticated" }),
+}));
+
 /**
  * Every class that makes an element a scroll container. `overflow-y-auto` is in here on its
  * own because that is the whole point: per CSS Overflow 3 §3.1, setting one axis to something

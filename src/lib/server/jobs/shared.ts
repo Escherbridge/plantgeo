@@ -45,7 +45,8 @@ export function registerBullmqCron<DataType = unknown, ResultType = unknown>(
   const connection = getRedisConnection();
   const queue = new bullmq.Queue<DataType>(queueName, { connection });
 
-  queue
+  // The untyped view: BullMQ's typed Queue narrows scheduler ids to the job-name union.
+  (queue as BullQueue)
     .upsertJobScheduler(`${queueName}-daily`, { pattern: cronPattern }, { name: jobName })
     .catch(() => {
       // Non-fatal — Redis may not be available during build

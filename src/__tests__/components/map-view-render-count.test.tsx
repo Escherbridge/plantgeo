@@ -136,6 +136,9 @@ vi.mock("@/components/map/HoverTooltip", () => ({ default: stub }));
 vi.mock("@/components/map/MapDateSummary", () => ({ MapDateSummary: stub }));
 vi.mock("@/components/map/TimeSliderCapabilitiesLoader", () => ({ default: stub }));
 vi.mock("@/components/map/ServiceAreaLayer", () => ({ ServiceAreaLayer: stub }));
+vi.mock("@/components/map/visualization/InterventionVisualizationLayer", () => ({
+  InterventionVisualizationLayer: stub,
+}));
 vi.mock("@/components/map/AgentInteraction", () => ({ AgentInteraction: stub }));
 vi.mock("@/components/map/layer-panel/ManagerRail", () => ({ ManagerRail: stub }));
 vi.mock("@/components/map/layer-panel/LayerPanel", () => ({ LayerPanel: stub }));

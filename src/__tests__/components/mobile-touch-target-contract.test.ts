@@ -38,7 +38,7 @@ const REPO_ROOT = path.resolve(__dirname, "../../..");
 const SCANNED_DIRECTORIES = [
   "src/components/panels",
   "src/components/dashboard",
-  "src/components/charts",
+  "src/components/admin",
   "src/components/map/layer-panel",
 ];
 

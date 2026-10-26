@@ -65,7 +65,7 @@ export default function AssetRouteMap({ positions, stops }: AssetRouteMapProps) 
       (position): [number, number] => [position.metadata.lon, position.metadata.lat]
     );
 
-    function paint() {
+    function paint(map: maplibregl.Map) {
       const routeGeoJson: GeoJSON.Feature<GeoJSON.LineString> = {
         type: "Feature",
         properties: {},
@@ -121,9 +121,9 @@ export default function AssetRouteMap({ positions, stops }: AssetRouteMapProps) 
     }
 
     if (map.isStyleLoaded()) {
-      paint();
+      paint(map);
     } else {
-      map.once("load", paint);
+      map.once("load", () => paint(map));
     }
   }, [positions, stops]);
 

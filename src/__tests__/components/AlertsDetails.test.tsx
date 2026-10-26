@@ -17,9 +17,10 @@ const mocks = vi.hoisted(() => ({
   markReadMutate: vi.fn(),
   markAllReadMutate: vi.fn(),
   invalidate: {
-    getAlerts: vi.fn(),
-    getUnreadCount: vi.fn(),
-    getWatchedLocations: vi.fn(),
+    getAlerts: { invalidate: vi.fn() },
+    getUnreadCount: { invalidate: vi.fn() },
+    getWatchedLocations: { invalidate: vi.fn() },
+    getSubscriptions: { invalidate: vi.fn() },
   },
 }));
 
@@ -113,8 +114,8 @@ describe("AlertsDetails signed-in", () => {
     fireEvent.click(screen.getByLabelText("Mark as read"));
 
     expect(mocks.markReadMutate).toHaveBeenCalledWith({ alertId: "alert-1" });
-    expect(mocks.invalidate.getAlerts).toHaveBeenCalledTimes(1);
-    expect(mocks.invalidate.getUnreadCount).toHaveBeenCalledTimes(1);
+    expect(mocks.invalidate.getAlerts.invalidate).toHaveBeenCalledTimes(1);
+    expect(mocks.invalidate.getUnreadCount.invalidate).toHaveBeenCalledTimes(1);
   });
 
   it("shows an empty state instead of a false zero when there are no alerts yet", () => {

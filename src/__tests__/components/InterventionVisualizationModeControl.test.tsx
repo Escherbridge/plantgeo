@@ -16,19 +16,13 @@ afterEach(() => {
 });
 
 describe("InterventionVisualizationModeControl", () => {
-  it("renders four mutually exclusive options with 'off' checked by default", () => {
+  it("renders three mutually exclusive options with 'off' checked by default", () => {
     render(<InterventionVisualizationModeControl />);
 
     const radios = screen.getAllByRole("radio");
-    expect(radios).toHaveLength(4);
-    expect(screen.getByTestId("intervention-visualization-mode-off")).toHaveAttribute(
-      "aria-checked",
-      "true"
-    );
-    expect(screen.getByTestId("intervention-visualization-mode-heatmap")).toHaveAttribute(
-      "aria-checked",
-      "false"
-    );
+    expect(radios).toHaveLength(3);
+    expect(screen.getByTestId("intervention-visualization-mode-off").getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByTestId("intervention-visualization-mode-heatmap").getAttribute("aria-checked")).toBe("false");
   });
 
   it("selecting a mode writes the shared store and flips which option is checked", () => {
@@ -37,14 +31,8 @@ describe("InterventionVisualizationModeControl", () => {
     fireEvent.click(screen.getByTestId("intervention-visualization-mode-heatmap"));
 
     expect(useInterventionVisualizationStore.getState().mode).toBe("heatmap");
-    expect(screen.getByTestId("intervention-visualization-mode-heatmap")).toHaveAttribute(
-      "aria-checked",
-      "true"
-    );
-    expect(screen.getByTestId("intervention-visualization-mode-off")).toHaveAttribute(
-      "aria-checked",
-      "false"
-    );
+    expect(screen.getByTestId("intervention-visualization-mode-heatmap").getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByTestId("intervention-visualization-mode-off").getAttribute("aria-checked")).toBe("false");
   });
 
   it("switching between two non-off modes only ever leaves one option checked", () => {
@@ -54,13 +42,7 @@ describe("InterventionVisualizationModeControl", () => {
     fireEvent.click(screen.getByTestId("intervention-visualization-mode-points"));
 
     expect(useInterventionVisualizationStore.getState().mode).toBe("points");
-    expect(screen.getByTestId("intervention-visualization-mode-heatmap")).toHaveAttribute(
-      "aria-checked",
-      "false"
-    );
-    expect(screen.getByTestId("intervention-visualization-mode-points")).toHaveAttribute(
-      "aria-checked",
-      "true"
-    );
+    expect(screen.getByTestId("intervention-visualization-mode-heatmap").getAttribute("aria-checked")).toBe("false");
+    expect(screen.getByTestId("intervention-visualization-mode-points").getAttribute("aria-checked")).toBe("true");
   });
 });
