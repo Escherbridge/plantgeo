@@ -226,7 +226,11 @@ def _lane_of(path: Path, lane_dir: Path) -> str:
 
 #: Subpackages a lane MAY import despite living beside it: shared libraries, not lanes (`lanes/_shared/AGENTS.md`).
 #: The library itself is still checked the other way -- `_shared` importing a lane stays a violation.
-SHARED_LANE_LIBRARIES: dict[str, frozenset[str]] = {"pipeline/lanes": frozenset({"_shared"})}
+SHARED_LANE_LIBRARIES: dict[str, frozenset[str]] = {
+    "pipeline/lanes": frozenset({"_shared"}),
+    # One pure helper (`retry_delay`) every direct writer shares; it imports nothing but `random`.
+    "pipeline/direct": frozenset({"retry"}),
+}
 
 
 def _sibling_module_violations(pkg_root: Path, directory: str) -> list[str]:

@@ -222,11 +222,13 @@ stub — RUNBOOK §0.24.8). What exists is **internal-consistency checking**, an
 question than the contract requires:
 
 1. **What's already built proves the write path agrees with itself, not that Postgres agrees with
-   Earth Search.** `register_governed_plane`'s `_corpus_digest` step fingerprints what is already *in*
-   Postgres (`sql/execution/corpus_digest.sql`, `sql/execution/load_observations.sql:105-168`), and
-   `release_holds_claimed_corpus`/`all_requested_cells_materialised`
-   (`execution/vegetation_ndvi_plane.py:250-266`) check that one registration pass's own writes match
-   its own digest. That is a real and useful guard against a partial write silently reading as
+   Earth Search.** `register_governed_partition_plane` (`execution/vegetation_ndvi_plane.py`) fingerprints
+   the in-memory Parquet day partition it was handed, then refuses the pass inside its own
+   transaction on two selection-scoped measurements: `empty_materialisation_reason` (nothing landed
+   -> `EmptyGovernedReleaseError`) and `all_requested_cells_materialised` (some but not all cells
+   landed -> `PartialGovernedReleaseError`, reason `requested_cells_missing_observation`).
+   `release_holds_claimed_corpus` is reporting only, never a gate (execution/AGENTS.md §Vegetation
+   NDVI). That is a real and useful guard against a partial write silently reading as
    complete — but it is not a reconciliation against the source system, which
    `conductor/code_styleguides/layer-lanes.md` §4 requires: *"reconciles what the lane wrote against
    what the source system holds — not against the lane's own intermediate state, which only proves
@@ -285,8 +287,8 @@ live schema (`agri.forecast_iteration`/`agri.forecast_iteration_value`,
 
 | contract column | current state | gap |
 |---|---|---|
-| `forecast_run_id` | No column of this name. `iteration_key` (`varchar(255)`, unique, built deterministically from method+series+cutoff+horizon+simulation_count+seed — `iteration_key_for`, `execution/vegetation_ndvi_plane.py:885-890`) plus the row's `id` (uuid) jointly serve this role. | Naming/mapping gap. Also a **semantic** one: `iteration_key` is content-addressed — identical inputs always produce the identical key (idempotent by design, guarding the semi-manual promotion step in §5.1) — which is a different notion of "run" than a fresh id per invocation. Decide explicitly which semantics the Parquet `forecast_run_id` should carry before mapping this through. |
-| `random_seed` | `simulation_seed` (bigint) exists and passes `SimulationRequest.seed` straight through (`_write_iteration`, `execution/vegetation_ndvi_plane.py:842`). | **Real gap, not cosmetic**: the value actually fed to `PCG64` is `int(parameter_checksum, 16)`, not `request.seed` directly — the seed is only one of ~25 inputs hashed into that checksum. Recording `simulation_seed` alone does not let someone reproduce the draws without also replaying the full canonical-text construction. Either document this explicitly (the checksum *is* the reproducibility key) or restructure so one recorded value suffices, per the contract's *"an unseeded Monte Carlo is irreproducible"* requirement (`layer-lanes.md` §3). |
+| `forecast_run_id` | No column of this name. `iteration_key` (`varchar(255)`, unique, built deterministically from method+series+cutoff+horizon+simulation_count+seed by the retired `iteration_key_for`; the agri-data-service iteration writer was deleted 2026-10-26 and the ML service owns iterations now) plus the row's `id` (uuid) jointly serve this role. | Naming/mapping gap. Also a **semantic** one: `iteration_key` is content-addressed — identical inputs always produce the identical key (idempotent by design, guarding the semi-manual promotion step in §5.1) — which is a different notion of "run" than a fresh id per invocation. Decide explicitly which semantics the Parquet `forecast_run_id` should carry before mapping this through. |
+| `random_seed` | `simulation_seed` (bigint) exists and passes `SimulationRequest.seed` straight through (the retired agri-data-service `_write_iteration`; the repository history is the archive). | **Real gap, not cosmetic**: the value actually fed to `PCG64` is `int(parameter_checksum, 16)`, not `request.seed` directly — the seed is only one of ~25 inputs hashed into that checksum. Recording `simulation_seed` alone does not let someone reproduce the draws without also replaying the full canonical-text construction. Either document this explicitly (the checksum *is* the reproducibility key) or restructure so one recorded value suffices, per the contract's *"an unseeded Monte Carlo is irreproducible"* requirement (`layer-lanes.md` §3). |
 | `ensemble_size` | `simulation_count` (int, CHECK 100-10,000) is the direct equivalent. | Naming only. |
 | `horizon_days` | Exists **twice with different meanings**: `agri.forecast_iteration.horizon_days` is the iteration's total requested horizon (1-366, default 30); each row's specific offset is `agri.forecast_iteration_value.horizon_step` (1..N). | The contract's per-row `horizon_days` ("1-30; how far out this row was projected") maps to `horizon_step`, not to the iteration-level field of the same name — resolve the naming collision explicitly when reshaping into per-row form. |
 | `issued_on` | No column of this name. `agri.forecast_iteration.cutoff_time` (the publisher-named day the training history was cut off at) is the direct equivalent. | Naming/mapping only. |
@@ -298,10 +300,9 @@ RNG seed is exposed so a run is reproducible from *recorded* values alone, not f
 25-field canonicalisation, (c) reshaping the wide p10/p50/p90-as-columns storage into a row-per-
 quantile-or-draw shape, and (d) mapping the existing iteration-level vocabulary (`iteration_key`,
 `cutoff_time`, iteration-level `horizon_days`, `simulation_count`) onto the contract's names. None of
-this requires touching the simulation mathematics itself, and the existing holdout-evaluation
-machinery (`summarize_holdout`, `_error_metrics`,
-`execution/vegetation_ndvi_plane.py:1029-1094`) can keep validating the method unchanged through the
-reshape.
+this requires touching the simulation mathematics itself. The agri-data-service holdout-evaluation
+machinery (`simulate_cells`, `reconcile_actuals`, `summarize_holdout`) had no caller and was deleted
+2026-10-26; holdout validation of the method belongs to `services/plantgeo-ml-service/`.
 
 **Projected quantity**: NDVI index (dimensionless, physically bounded `[-1, 1]`) per
 `sentinel2-ndvi-0p25deg` grid cell (up to 1,568 cells, PNW extent — §4), per calendar day, 1 to 30

@@ -634,7 +634,7 @@ lanes: `firms-archive`, `streamflow-archive` only. **Always pass `--lane`, never
 | USDM | `data historical-usdm-backfill`, `-finalize`, `-status` | Yes, via `-finalize` |
 | GloFAS | `data historical-glofas-status`, `-backfill [--max-chunks] [--concurrency]` | **No — fetch-only, no persist verb exists** |
 | CAMS | `data historical-cams-status`, `-backfill [--max-chunks] [--concurrency]` | **No — fetch-only, no persist verb exists** |
-| Ensemble forecast | `forecast ensemble-status`, `forecast ensemble-fetch [--max-chunks] [--concurrency]` | **No — hardcoded `"blocked_forecast_method_check"`** |
+| Ensemble forecast | none — `execution/ensemble_forecast.py` and its verbs were deleted 2026-10-26 (test-only since fd602901) | **No** |
 
 Plus `data historical-promotion-spool --release-set-key --minimum-target-revision` and
 `data historical-promotion-upload --spool-directory` for pushing a finalized release to the promotion
@@ -643,10 +643,9 @@ receiver.
 > [!WARNING]
 > **GloFAS, CAMS, and the ensemble lane will run for hours, cost real upstream quota, and produce
 > nothing a query can read.** Confirmed against `interface/cli/commands.py`: ERA5 and Open-Meteo each have a
-> `-persist` verb; GloFAS and CAMS do not; the ensemble lane's own release manifest hardcodes
-> `"warehouse_persistence": "blocked_forecast_method_check"`
-> (`src/agri_data_service/execution/ensemble_forecast.py:92,601`). Don't run these three
-> expecting rows to land.
+> `-persist` verb; GloFAS and CAMS do not; the ensemble lane's manifest hardcoded
+> `"warehouse_persistence": "blocked_forecast_method_check"` before the module was deleted
+> (2026-10-26). Don't run these expecting rows to land.
 
 ### E. Migrations, seeding, and everything else
 

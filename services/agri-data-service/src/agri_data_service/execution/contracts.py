@@ -112,7 +112,7 @@ class ValidationReport(ContractModel):
     @field_validator("validated_at")
     @classmethod
     def require_aware_validation_time(cls, value: datetime) -> datetime:
-        return _require_aware_utc(value, "validated_at")
+        return require_aware_utc(value, "validated_at")
 
     @field_validator("metrics")
     @classmethod
@@ -141,7 +141,7 @@ class LocalCheckpoint(ContractModel):
     @field_validator("written_at")
     @classmethod
     def require_aware_written_time(cls, value: datetime) -> datetime:
-        return _require_aware_utc(value, "written_at")
+        return require_aware_utc(value, "written_at")
 
 
 class LocalOutput(ContractModel):
@@ -169,7 +169,7 @@ class LocalOutput(ContractModel):
     @field_validator("validated_at")
     @classmethod
     def require_aware_validation_time(cls, value: datetime) -> datetime:
-        return _require_aware_utc(value, "validated_at")
+        return require_aware_utc(value, "validated_at")
 
     @field_validator("covered_shards", "covered_partitions")
     @classmethod
@@ -210,7 +210,7 @@ class RunValidationReport(ContractModel):
     @field_validator("validated_at")
     @classmethod
     def require_aware_validation_time(cls, value: datetime) -> datetime:
-        return _require_aware_utc(value, "validated_at")
+        return require_aware_utc(value, "validated_at")
 
     @field_validator("metrics")
     @classmethod
@@ -241,7 +241,7 @@ class PublicationProgress(ContractModel):
     @field_validator("published_at")
     @classmethod
     def require_aware_published_time(cls, value: datetime | None) -> datetime | None:
-        return _require_aware_utc(value, "published_at") if value is not None else None
+        return require_aware_utc(value, "published_at") if value is not None else None
 
     @model_validator(mode="after")
     def validate_published_state(self) -> "PublicationProgress":
@@ -286,7 +286,7 @@ class LocalRunManifest(ContractModel):
     @field_validator("scheduled_for", "created_at", "updated_at")
     @classmethod
     def require_aware_times(cls, value: datetime, info: Any) -> datetime:
-        return _require_aware_utc(value, info.field_name)
+        return require_aware_utc(value, info.field_name)
 
     @field_validator("partitions", "expected_shards")
     @classmethod
@@ -543,7 +543,7 @@ def deterministic_run_identity(  # noqa: PLR0913
     expected_outputs: list[ExpectedOutput],
 ) -> tuple[str, uuid.UUID, str]:
     """Derive an idempotency key and UUID from immutable run inputs."""
-    scheduled_utc = _require_aware_utc(scheduled_for, "scheduled_for")
+    scheduled_utc = require_aware_utc(scheduled_for, "scheduled_for")
     normalized_partitions = sorted(set(partitions))
     identity = {
         "schema_version": 2,
@@ -614,7 +614,8 @@ def canonical_json_bytes(value: Any) -> bytes:
     ).encode("utf-8")
 
 
-def _require_aware_utc(value: datetime, field_name: str) -> datetime:
+def require_aware_utc(value: datetime, field_name: str) -> datetime:
+    """Refuse a naive timestamp and normalize an aware one to UTC."""
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError(f"{field_name} must include a timezone")
     return value.astimezone(UTC)

@@ -11,7 +11,6 @@ import argparse
 import asyncio
 import json
 import math
-import random
 import sys
 import time
 import uuid
@@ -39,6 +38,7 @@ from agri_data_service.pipeline.direct import (
     UNRESOLVED_DAY_BUDGET_EXHAUSTED,
     DirectWriterContract,
 )
+from agri_data_service.pipeline.direct.retry import retry_delay
 from agri_data_service.pipeline.direct.vegetation.adapter import (
     DirectVegetationAdapter,
     DirectVegetationError,
@@ -491,7 +491,10 @@ async def _publish_locked_day(  # noqa: PLR0913, PLR0911 - one lane-day coordina
                 f"vegetation {day.isoformat()} did not publish a complete four-rung ladder after {attempt} "
                 f"attempt(s): outcome={outcome}, detail={detail}, verification={verification_detail}"
             )
-        delay = min(_retry_delay(attempt, config=config), max(0.0, deadline - time.monotonic()))
+        delay = min(
+            retry_delay(attempt, base_seconds=config.retry_base_seconds, max_seconds=config.retry_max_seconds),
+            max(0.0, deadline - time.monotonic()),
+        )
         if delay <= 0:
             return _stopped_day(
                 day,
@@ -640,12 +643,6 @@ def _mirrored_past_proof(*, day: date, mirrored_past: date | None) -> str | None
         f"vegetation is published with values for {mirrored_past.isoformat()}, which is later than "
         f"{day.isoformat()}, so Earth Search's catalogue has moved past this day and its zero-cell answer is settled"
     )
-
-
-def _retry_delay(attempt: int, *, config: VegetationForwardConfig) -> float:
-    """Return a jittered, capped exponential wait so concurrent turns do not resynchronise."""
-    ceiling = min(config.retry_max_seconds, config.retry_base_seconds * (2 ** max(0, attempt - 1)))
-    return float(ceiling + random.uniform(0.0, min(1.0, ceiling / 4)))
 
 
 def _validate_config(config: VegetationForwardConfig) -> None:

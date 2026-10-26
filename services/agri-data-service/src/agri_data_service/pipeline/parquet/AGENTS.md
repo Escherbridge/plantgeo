@@ -26,17 +26,7 @@ the archived false-absence claim as current truth.
 
 ## Signal coordinate preview
 
-`signal_coordinate_preview.py` adds the two cell centroid columns to the exact approved legacy
-signal schema, using a checksum-pinned canonical spatial-cell dimension. Every dimension row must
-have unique identities/grid keys and an explicit finite EPSG:4326 EWKB Point, including unused cells.
-The Arrow IPC digest of the original ten columns must agree after projection from the candidate;
-existing values, order, counts, timestamps, coverage and exposure flags are never recalculated.
-Coarse candidates use the ordinary `derive_tier` rules and deterministic row ordering.
-
-This module is pure candidate construction. It grants no rewrite or bootstrap authority, takes no
-publication lock, and cannot write bucket objects. A future repair must separately archive originals,
-revalidate their full identities under the lane-day/publication barriers, and respect existing
-bootstrap-marker/head state. A missing head with a surviving bootstrap marker is not a new bootstrap.
+`signal_coordinate_preview.py` was deleted in fd602901 (greenfield Parquet cutover); the history is the archive.
 
 ## Source response checkpoints
 
@@ -627,45 +617,9 @@ clears the completion marker as it uploads `part-0`, so any day mid-re-export re
 inside the sweep's window — and the sweep lists once, at the start of the layer. Everything else is
 `orphaned`, reported, and kept unless asked for by name.
 
-## `vegetation_rewrite.py` — the current-layout exception is pinned and schema-specific
+## `vegetation_rewrite.py` — deleted
 
-The 2026-08-25 vegetation repair is not the pre-zoom retirement above. Its stale objects already
-live in the current `zoom=NN` layout, but their z13 Parquet schema predates the required
-`cell_longitude`/`cell_latitude` fields. Deriving z9/z5/z0 from those bases fails; the governed
-PostgreSQL exporter can now add the coordinates, so those exact days must become `missing` and pass
-through the ordinary export drain again.
-
-`parquet-rewrite-vegetation` is deliberately narrower than a general admin delete:
-
-- the manifest is strict JSON for `vegetation` / `observed`, sorted unique days only, and its raw
-  bytes must match both an independently supplied count and SHA-256;
-- no flag can select another layer, kind, date range, or tier subset;
-- dry-run is the default, and even dry-run acquires `_lane_day_lock_key` before listing or reading;
-- a completed z13 day is eligible only when its Arrow schema is exactly the previous coordinate-less
-  schema, including the old non-null `cell_id` and `observation_checksum` fields. Current-schema
-  data, an absence, a conflict, an incomplete upload, and marker-only residue are refusals rather
-  than broadening rules;
-- an exactly empty z13 prefix is the resumable checkpoint. It is accepted because an interrupted
-  earlier run may already have removed the base while z9/z5/z0 remain; all-empty is idempotent
-  success;
-- apply order is z13, z9, z5, z0. Each rung goes through `ObjectStore.retract_partition_tier`, so
-  the completion marker is cleared before parts are deleted. Each object operation has a bounded
-  exponential retry budget, every day emits structured progress, and the session transaction
-  opened by the advisory lock is rolled back at the day boundary.
-
-An incomplete z13 prefix is never treated as a resume checkpoint. It could be a crashed exporter,
-an externally interrupted delete, or an unknown mixture; only exact missing is unambiguous enough
-for this destructive command. Such a day requires inspection rather than a wider retry predicate.
-
-**Marker-only residue is still named, and it now lives inside `incomplete`.** A completion marker
-whose parts are gone used to classify `missing`, so the refusal that names it hung off the
-`missing`-with-keys branch. Since `classify_partition_day` stopped reading a bare assertion as a
-finished rung, that layout classifies `incomplete` alongside a genuinely truncated upload, and the
-specific refusal became unreachable — every unapproved rung answered `state is incomplete`.
-`_unapproved_rung_detail` restores the distinction from the listing the preflight already holds:
-residue WITH part files is a truncated export, residue without them is marker-only. Both are still
-refusals; only the sentence the operator reads differs, and it has to differ because the two need
-different repairs.
+`vegetation_rewrite.py` and its `parquet-rewrite-vegetation` verb were deleted in fd602901 (greenfield Parquet cutover).
 
 ## Vegetation completion: absence ladders and exact reconciliation
 
@@ -700,56 +654,9 @@ must be after that cutoff. The command proves the governed source remains empty,
 whole-ladder lock, and removes z13/z9/z5/z0 with bounded retries and per-rung verification. Dry-run
 is the default, and a partially completed apply resumes from the surviving markers.
 
-## `vegetation_forward.py` — persisted NDVI to the full governed ladder
+## `vegetation_forward.py` — deleted
 
-The NDVI ingest callback promotes only the exact deduplicated cell-day pairs accepted by that run.
-Registration commits before object publication, then the affected-day query reads those pairs back
-from the new source release; a caller-provided day is never enough evidence to author Parquet.
-Each day goes through `fill_one_lane_day`, so z13 and z9/z5/z0 share the ordinary whole-ladder
-session advisory lock, pruning order and completion-marker rules.
-
-Forward work is bounded twice: registration batches both cells and days, while publication caps
-non-checkpointed days and checks its 600-second budget before starting each additional day. All four tier markers must carry at least the monotonic
-governed observation-count revision before a day is skipped. That revision is read after the
-registration commit, so concurrent releases cannot give a later day rewrite an older checkpoint
-than a release already visible to its full-day export. Contention and failures retry with a bounded
-exponential delay; subsequent callbacks resume from the markers. The affected-day query
-can only return a governed data day, so the forward path never invents calendar absences beyond the
-governed source.
-
-A marker payload alone is not a forward checkpoint. While holding the lane-day lock, every rung
-must classify as physical `data`, its part indexes must be exactly `0..part_count-1`, and its marker
-revision must be current. Marker-only, truncated, surplus and absence-conflict rungs are rewritten
-or fail loudly; none can strand a touched day behind a false resume signal.
-
-`agri.vegetation_publication_day` is the durable handoff between governed promotion and object
-publication. The shared registration choke point fingerprints all 12 exact exported fields for
-every affected day and enqueues those fingerprints in the same transaction that inserts governed
-observations. The hourly catch-up revalidates the ingestion timestamp lookback (`through_day - 45
-days` through `through_day`, up to 46 UTC dates). Once an exact clean audit has enrolled the full
-history, it also recomputes exact fingerprints globally so a later centroid, exposure, lineage or
-series-metadata change cannot hide outside that window. It then drains every pending row globally.
-Pending selection is least-recently-attempted first and then
-oldest day, so a 25-day cap cannot repeatedly choose the newest 25 and strand the oldest days.
-
-Completion run ids use `vegetation-forward-v2:<per-day source fingerprint>`. Existing v1 markers remain usable
-only when their global observation-count revision reaches the current global count; the defensive
-pass therefore preserves current legacy ladders while force-enqueuing the stale five-day tail that
-motivated this contract. A row is compare-and-acknowledged only after all four physical rungs and
-their markers verify, and only while the queued fingerprint still equals the verified fingerprint.
-
-The stable key in `db/advisory_keys.py` is shared by governed registration (transaction lock), every
-vegetation publication path (session lock), and exact audit (session lock). The loader engine's
-single-connection pool is a precondition just as it is for lane-day locks: the barrier must survive
-the commits and rollbacks used by a long audit. Lock order is vegetation barrier, shared lane
-publication barrier, then exclusive lane-day.
-
-`parquet-repair-audit-vegetation` holds that barrier across an opening exact audit, force-enqueue of
-source-backed finding days, repair through this same writer, and a fresh closing audit. No raw row is
-deleted and ingestion remains enabled; registration merely waits while the stable audit is running.
-The corpus is digested again after materialisation and the transaction refuses if it moved between
-the two reads, so a READ COMMITTED registration cannot label observations from one raw revision
-with another revision's source-release checksum.
+`vegetation_forward.py` was deleted in fd602901; the forward NDVI writer is `pipeline/direct/vegetation/forward.py`, and the `agri.vegetation_publication_day` queue and barrier key it described live on in `db/vegetation_publication.py` and `db/advisory_keys.py`.
 
 ## The publication barrier is a leaf
 

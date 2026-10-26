@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-import random
 import sys
 from datetime import date
 from typing import TYPE_CHECKING, TypeVar
 
 from agri_data_service.foundation.parquet.paths import PartitionDayStatus, partition_day_statuses
 from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
+from agri_data_service.pipeline.direct.retry import retry_delay
 from agri_data_service.pipeline.errors import PipelineOperationError
 from agri_data_service.warehouse.parquet.tiers import DERIVED_ZOOM_TIERS
 from agri_data_service.warehouse.schemas.fire_detections import FIRE_DETECTIONS_STREAM
@@ -29,12 +29,6 @@ T = TypeVar("T")
 def emit(payload: Mapping[str, object]) -> None:
     """Emit a structured progress event without contaminating the terminal stdout report."""
     print(json.dumps(payload, sort_keys=True), file=sys.stderr, flush=True)
-
-
-def retry_delay(attempt: int, *, base_seconds: float, max_seconds: float) -> float:
-    """Return the bounded jittered retry delay used for source, R2, and write retries."""
-    ceiling = min(max_seconds, base_seconds * (2 ** max(0, attempt - 1)))
-    return float(ceiling + random.uniform(0.0, min(1.0, ceiling / 4)))
 
 
 async def retry_async[T](

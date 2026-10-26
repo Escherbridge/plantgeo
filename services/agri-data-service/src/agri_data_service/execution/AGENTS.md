@@ -55,10 +55,11 @@ are not ported anywhere and are re-expressed against Parquet in phase 2 of track
 restore a module from it to re-add a database-backed training lane.
 
 The vegetation modules that remain are NOT part of that lane. `vegetation_ndvi_forecast.py` here is
-the retained observed-release copy imported by `vegetation_ndvi_plane.py` and
-`vegetation_partition_promotion.py`; the copy that moved was `method/monte_carlo/`'s. The four
-`sql/execution/insert_forecast_series|insert_forecast_iteration|insert_forecast_iteration_value|
-reconcile_forecast_iteration_actuals` files stayed with it for the same reason.
+the retained copy `vegetation_ndvi_plane.py` imports (only for `NDVI_LOWER_BOUND`/`NDVI_UPPER_BOUND`
+since 2026-10-26); the copy that moved was `method/monte_carlo/`'s. The iteration writer and holdout
+chain (`simulate_cells`, `reconcile_actuals`, `summarize_holdout` and their nine
+`sql/execution/` statements) had no caller and were deleted 2026-10-26; only
+`insert_forecast_series.sql` stayed, because partition registration still mints series.
 
 ## Lane activation
 
@@ -1130,10 +1131,41 @@ did not find forward registrations before this change either.
 **What it refuses, in its own vocabulary.** Every refusal is a `PartitionRegistrationError`
 subclass, never a bare `ValueError`, because the scheduled lane must be able to render a failure as
 a turn report: `EmptyPartitionRegistrationError`, `DuplicatePartitionCellError`,
-`NonFinitePartitionValueError`, `UnregisteredPartitionCellsError`, plus the pre-existing
-`EmptyGovernedReleaseError` and `ReleaseSetManifestConflictError`, now rooted in the same base. The
+`NonFinitePartitionValueError`, `UnregisteredPartitionCellsError`, `PartialGovernedReleaseError`,
+plus the pre-existing `EmptyGovernedReleaseError` and `ReleaseSetManifestConflictError`, now rooted in
+the same base. The
 base class is the ONE exception type `run_vegetation_promotion` catches, and it renders as the
 `registration_refused` day entry and terminal status above.
+
+**Materialisation gates: selection-scoped, both halves (2026-10-26).** After the inserts the verb
+measures twice. `measure_release_materialisation` counts the whole release and is REPORTING only;
+`measure_selection_materialisation` counts the rows reachable through THIS pass's cell keys (the
+loader's own join chain) and is the gate. Two predicates read it, in order:
+
+1. `empty_materialisation_reason` -> `EmptyGovernedReleaseError` when no requested cell landed
+   (commit 9e7c9529: a selection resolving to nothing would otherwise finalize against a release an
+   earlier pass already filled).
+2. `all_requested_cells_materialised` -> `PartialGovernedReleaseError`
+   (`reason_code="requested_cells_missing_observation"`, `requested_cell_count`,
+   `materialised_cell_count`) when SOME landed. Same bug class: 300 of 397 cells used to finish as
+   success. Reachable even after the unregistered-cell pre-check, because both inserts are
+   `ON CONFLICT DO NOTHING`: a cell whose `ndvi-daily:<cell_key>` series key is already held by a
+   row with another transform version gets no series of ours, so its observation joins nothing
+   (the real-DB test drives exactly this).
+
+`release_holds_claimed_corpus` is deliberately NOT a gate. It answers "is this release the whole
+fingerprinted partition", and the release identity (`data_source_id, source_version,
+payload_checksum, transform_version`) does not include the day while `partition_payload_checksum`
+hashes `[[cell_key, value], ...]` only — two days with byte-identical content share one source
+release, so the release legitimately holds MORE than one day's digest and the predicate would fail a
+healthy pass. It cannot add detection power either: the selection is a subset of the release and
+`requested_cell_count` equals the digest's cell count, so "every requested cell materialised"
+already implies "the release holds at least the claimed corpus". A healthy idempotent repeat passes
+both gates: the inserts return 0, but the measurements read the rows the first pass wrote.
+
+Known residue: the selection count is release-scoped, not day-scoped, so in the shared-release case
+a cell holding the OTHER day's row counts as materialised. Fix by adding the day to the selection
+SQL if two content-identical days ever matter; today it needs every cell value to repeat exactly.
 
 `register_governed_forward_plane` and its `PartitionSourceNotSuppliedError` were a one-commit
 refusal shim, kept only so the promoter's import stayed green while the two halves of this change

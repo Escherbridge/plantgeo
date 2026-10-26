@@ -79,7 +79,6 @@ STATUS_OK: Final = "ok"
 #: A flag-free lane whose coverage or ledger could not be read: "ok" would be a claim nothing proved.
 STATUS_UNKNOWN: Final = "unknown"
 FORMAT_CHOICES: Final = ("table", "json")
-LANE_AUDIT_COMMAND: Final = "agri-service ops lane-audit"
 
 # --- Thresholds: every number a flag compares against, named once ---------------------------------
 

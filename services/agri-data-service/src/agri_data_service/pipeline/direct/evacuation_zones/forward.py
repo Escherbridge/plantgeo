@@ -51,7 +51,6 @@ import argparse
 import asyncio
 import json
 import math
-import random
 import sys
 import time
 import uuid
@@ -96,6 +95,7 @@ from agri_data_service.pipeline.direct.evacuation_zones.rows import (
 )
 from agri_data_service.pipeline.direct.evacuation_zones.source import fetch_evacuation_zones_snapshot
 from agri_data_service.pipeline.direct.evacuation_zones.watermark import PublishedSnapshot, read_published_snapshot
+from agri_data_service.pipeline.direct.retry import retry_delay
 from agri_data_service.pipeline.parquet.availability_extension import AvailabilityExtensionTally
 from agri_data_service.pipeline.parquet.availability_index import BotoAvailabilityStorage
 from agri_data_service.pipeline.parquet.gap_fill import (
@@ -405,7 +405,7 @@ async def _publish_version_with_retries(  # noqa: PLR0913 - one caller-supplied 
                 f"lane-day contention for {day} exceeded {config.contention_timeout_seconds:g}s"
             )
         delay = min(
-            remaining, _retry_delay(1, base_seconds=config.retry_base_seconds, max_seconds=config.retry_max_seconds)
+            remaining, retry_delay(1, base_seconds=config.retry_base_seconds, max_seconds=config.retry_max_seconds)
         )
         emit(
             {
@@ -493,9 +493,7 @@ async def _publish_locked_version_with_retries(  # noqa: PLR0913
                 f"evacuation-zones {day} did not publish a complete four-tier ladder after "
                 f"{write_attempt} attempt(s): outcome={outcome}, detail={detail}{suffix}"
             )
-        delay = _retry_delay(
-            write_attempt, base_seconds=config.retry_base_seconds, max_seconds=config.retry_max_seconds
-        )
+        delay = retry_delay(write_attempt, base_seconds=config.retry_base_seconds, max_seconds=config.retry_max_seconds)
         emit(
             {
                 "event": "evacuation_zones_forward_r2_retry",
@@ -692,7 +690,7 @@ async def _retry_async[T](
             last_error = error
             if attempt >= attempts:
                 break
-            delay = _retry_delay(attempt, base_seconds=base_seconds, max_seconds=max_seconds)
+            delay = retry_delay(attempt, base_seconds=base_seconds, max_seconds=max_seconds)
             emit(
                 {
                     "event": "evacuation_zones_forward_retry",
@@ -705,11 +703,6 @@ async def _retry_async[T](
             await asyncio.sleep(delay)
     assert last_error is not None  # attempts >= 1 is enforced by `_validate_config`
     raise DirectEvacuationZonesError(f"{label} failed after {attempts} attempts") from last_error
-
-
-def _retry_delay(attempt: int, *, base_seconds: float, max_seconds: float) -> float:
-    ceiling = min(max_seconds, base_seconds * (2 ** max(0, attempt - 1)))
-    return float(ceiling + random.uniform(0.0, min(1.0, ceiling / 4)))
 
 
 def _validate_config(config: EvacuationZonesForwardConfig) -> None:

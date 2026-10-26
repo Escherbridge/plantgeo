@@ -105,6 +105,16 @@ would WIDEN the query past the published coverage contract. `usage_error` (fire-
 national release -- a `--bbox` there would not narrow a query, it would change the SUPPORT the day is
 written against, which is the one change that makes a day incomparable with its own history.
 
+## Shared retry
+
+`retry.py::retry_delay` is the one bounded jittered backoff (`min(max, base * 2**(attempt-1))` plus
+`uniform(0, min(1, ceiling/4))`) that eight writers used to copy as a private `_retry_delay`
+(deduplicated 2026-10-26, byte-identical semantics; the `config=` variants now pass
+`config.retry_base_seconds`/`config.retry_max_seconds` explicitly). `fire_detections/support.py`
+re-exports it. It is a shared leaf, not a lane: `tests/test_layer_import_contract.py`'s
+`SHARED_LANE_LIBRARIES` and `tests/direct/test_direct_writer_contract.py`'s `NON_WRITER_MODULES`
+both name it, so it must keep importing nothing but `random`.
+
 ## Water gauges
 
 water_gauges.py partitions NWIS instantaneous values by the publisher-named day: the first ten

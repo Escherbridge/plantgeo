@@ -24,7 +24,6 @@ write, so a clipped walk fails the turn by name and the previous version keeps s
 from __future__ import annotations
 
 import asyncio
-import random
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -36,6 +35,7 @@ from agri_data_service.ingest.wfigs import (
     fetch_fire_perimeters_walk,
     oversized_refusal_reason,
 )
+from agri_data_service.pipeline.direct.retry import retry_delay
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -175,14 +175,9 @@ async def _retry_async[T](
             last_error = error
             if attempt >= attempts:
                 break
-            await asyncio.sleep(_retry_delay(attempt, base_seconds=base_seconds, max_seconds=max_seconds))
+            await asyncio.sleep(retry_delay(attempt, base_seconds=base_seconds, max_seconds=max_seconds))
     assert last_error is not None  # attempts >= 1 is enforced by the caller's config validation
     raise FirePerimetersSourceError(f"{label} failed after {attempts} attempts") from last_error
-
-
-def _retry_delay(attempt: int, *, base_seconds: float, max_seconds: float) -> float:
-    ceiling = min(max_seconds, base_seconds * (2 ** max(0, attempt - 1)))
-    return float(ceiling + random.uniform(0.0, min(1.0, ceiling / 4)))
 
 
 __all__ = [

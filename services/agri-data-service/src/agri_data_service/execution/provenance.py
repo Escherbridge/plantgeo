@@ -43,14 +43,6 @@ async def find_data_source(session: AsyncSession, source_key: str) -> DataSource
     return (await session.execute(select(DataSource).where(DataSource.key == source_key))).scalar_one_or_none()
 
 
-async def require_active_data_source(session: AsyncSession, source_key: str, *, inactive_message: str) -> DataSource:
-    """Return the data source only when it is both approved and active."""
-    source = await find_data_source(session, source_key)
-    if source is None or source.review_state != SourceReviewState.APPROVED or not source.is_active:
-        raise ValueError(inactive_message)
-    return source
-
-
 async def ensure_data_source(
     session: AsyncSession,
     candidate: DataSource,
@@ -104,12 +96,6 @@ async def ensure_source_release(
         return candidate, False
     assert_contract_fields(existing, expected, conflict_message=conflict_message)
     return existing, True
-
-
-def require_validation_timestamp(release: SourceRelease, *, message: str) -> None:
-    """Refuse a release that claims validity without recording when it was validated."""
-    if release.validated_at is None:
-        raise ValueError(message)
 
 
 async def ensure_artifact(

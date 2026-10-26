@@ -91,6 +91,8 @@ NON_WRITER_MODULES: Final[dict[str, str]] = {
     "botanical_species_profiles": "an offline, reviewed static reference release publisher, not an environmental "
     "forward lane: it consumes pinned source files, preserves explicit trait gaps and publishes by release ID. "
     "It does not own day/bbox ingestion, a cron or a lane-day outcome.",
+    "retry": "a shared leaf helper, not a writer: it holds only `retry_delay`, the bounded jittered "
+    "backoff every direct writer imports, so it has no `parser()`, no turn and no outcome to report.",
     "water_gauges": "a TRANSFORMER, not a writer: it holds `publisher_named_day`, "
     "`tables_by_publisher_day` and `merge_water_gauges_day`, which the water-gauges gap-fill lane "
     "calls. It has no `parser()`, no turn, and no bounded run to report an outcome for, so every "
