@@ -7,7 +7,7 @@ import { db } from "@/lib/server/db";
 import { environmentalAlerts, users } from "@/lib/server/db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import { sendDigestEmail } from "@/lib/server/services/email";
-import { getRedisConnection } from "@/lib/server/redis";
+import { registerBullmqCron } from "@/lib/server/jobs/shared";
 
 /**
  * Aggregate unread alerts per user and send digest emails.
@@ -79,40 +79,11 @@ export async function runEmailDigestJob(): Promise<{ sent: number }> {
 // ---------------------------------------------------------------------------
 
 if (typeof window === "undefined") {
-  let bullmq: typeof import("bullmq") | undefined;
-
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    bullmq = require("bullmq");
-  } catch {
-    // bullmq not installed — skip
-  }
-
-  if (bullmq) {
-    // Canonical REDIS_URL parsing lives in `@/lib/server/redis`; see its
-    // rationale pointer in `src/lib/server/AGENTS.md` §trpc / db / auth.
-    const connection = getRedisConnection();
-
-    const QUEUE_NAME = "email-digest";
-    const queue = new bullmq.Queue(QUEUE_NAME, { connection });
-
-    // Daily at 8am UTC
-    queue
-      .upsertJobScheduler(
-        "email-digest-daily",
-        { pattern: "0 8 * * *" },
-        { name: "digest" }
-      )
-      .catch(() => {
-        // Non-fatal — Redis may not be available during build
-      });
-
-    new bullmq.Worker(
-      QUEUE_NAME,
-      async () => {
-        return runEmailDigestJob();
-      },
-      { connection }
-    );
-  }
+  // Daily at 8am UTC. See `src/lib/server/jobs/shared.ts` for the registration helper.
+  registerBullmqCron({
+    queueName: "email-digest",
+    jobName: "digest",
+    cronPattern: "0 8 * * *",
+    handler: async () => runEmailDigestJob(),
+  });
 }

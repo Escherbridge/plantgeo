@@ -1,32 +1,9 @@
 /**
- * Client-safe types for the land-context bounded readers.
- *
- * Moved out of `src/lib/server/services/land-context/types.ts` (which stays as the module the
- * server-side readers import) because it is (near enough) pure type declarations, yet
- * browser components need to import from it too -- `useLandContextQuery.ts` and the panel/adapter
- * files reshape `LandContextResult` into the UI-facing store shape. `scripts/check-client-server-imports.mjs`
- * enforces that browser code never reach into `@/lib/server/**`, deliberately without a type-only
- * exemption (see its `TYPE_ONLY_ALLOWLIST`, a narrow, explicit list rather than a blanket rule) --
- * so a shared type used by both sides belongs in a module outside that boundary, not on an
- * allowlist. `src/lib/server/services/land-context/types.ts` re-exports everything here so its five
- * existing server-side importers are unaffected.
- *
- * See `conductor/tracks/pnw_land_context_reference_plane_20260911/spec.md`
- * ("Reference records and identity", "Bounded readers and agent contract")
- * and `conductor/tracks/pnw_land_contact_experience_20260911/spec.md`
- * ("Contact and help claims", "Agent parity") for the contract these types
- * encode. Nothing here claims a capability the source spec did not admit.
+ * Client-safe types for the land-context bounded readers. See `src/lib/environmental/AGENTS.md`
+ * §land-context-contract for the move rationale and the client/server boundary this file sits on.
  */
 
 import type { RegionSubdivisionCode } from "@/lib/region/region";
-
-// TODO(worker-1): import row shapes from
-// `@/lib/server/db/schema/land-context` once that module lands
-// (boundary_versions, organizations_offices, public_contact_routes,
-// place_office_topic_relationships, source_releases). Until then this file
-// declares the minimal reader-facing shape this service depends on, matching
-// the five relations documented in the reference-plane spec's "Reference
-// records and identity" section.
 
 /**
  * WA/OR/ID only, per the reference-plane spec's admitted scope — derived from the region manifest's

@@ -175,3 +175,30 @@ Origin and review status are separate. `community` means community collected dat
 expert publication. `verified_source` names independently governed provider data; no community
 form offers that choice. Historical rows lacking an origin remain unspecified. The browser and
 server use the same validation and labels, and the server exclusively assigns stored origin.
+
+## §land-context-contract
+
+`land-context-contract.ts` was moved out of `src/lib/server/services/land-context/types.ts`
+(which stays as the module the server-side readers import) because it is (near enough) pure
+type declarations, yet browser components need to import from it too -- `useLandContextQuery.ts`
+and the panel/adapter files reshape `LandContextResult` into the UI-facing store shape.
+`scripts/check-client-server-imports.mjs` enforces that browser code never reach into
+`@/lib/server/**`, deliberately without a type-only exemption (see its `TYPE_ONLY_ALLOWLIST`,
+a narrow, explicit list rather than a blanket rule) -- so a shared type used by both sides
+belongs in a module outside that boundary, not on an allowlist.
+`src/lib/server/services/land-context/types.ts` re-exports everything here so its five existing
+server-side importers are unaffected.
+
+See `conductor/tracks/pnw_land_context_reference_plane_20260911/spec.md` ("Reference records
+and identity", "Bounded readers and agent contract") and
+`conductor/tracks/pnw_land_contact_experience_20260911/spec.md` ("Contact and help claims",
+"Agent parity") for the contract these types encode. Nothing here claims a capability the
+source spec did not admit.
+
+Its reader-facing row shapes (`BoundaryVersionRef`, `OrganizationOfficeRef`,
+`PublicContactRouteRef`, `PlaceOfficeTopicRelationshipRef`, `SourceReleaseRef`) are declared by
+hand rather than imported from `@/lib/server/db/schema/land-context` (which landed in e48f8d15):
+that schema module is Drizzle table defs — snake_case columns, server-only types — and importing
+it here would both violate the client/server boundary above and pull in shapes that don't match
+this file's camelCase reader contract. The five interfaces intentionally restate only the
+relations the reference-plane spec's "Reference records and identity" section documents.
