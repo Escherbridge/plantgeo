@@ -8,6 +8,7 @@ import { LayerSwatch } from "@/components/map/layer-panel/LayerSwatch";
 import { LayerTimeSlider } from "@/components/map/layer-panel/LayerTimeSlider";
 import { LayerWindowChip } from "@/components/map/layer-panel/LayerWindowChip";
 import { describeCoverageEvidence } from "@/components/map/layer-panel/layer-coverage-track";
+import { InterventionVisualizationModeControl } from "@/components/map/visualization/InterventionVisualizationModeControl";
 import { LayerOpacitySlider } from "@/components/ui/layer-opacity-slider";
 import {
   layerLegendSpec,
@@ -534,6 +535,12 @@ export function LayerRow({
             showCaption={false}
             inertReason={legendlessReason}
           />
+          {/* The ONE per-layer-id control on this otherwise generic row -- see
+              src/components/map/AGENTS.md "Interventions visualization modes". It is additive to
+              the always-on fill/outline/points this toggle already draws, defaults to "off", and
+              is gated on the same `isActive` this whole block already requires, so switching the
+              row's own eye off also stops the extra rendering. */}
+          {layerId === "interventions" && <InterventionVisualizationModeControl />}
           {/* Wrapped so the decision this row makes -- does this layer say anything about time
               at all -- is observable without reaching into the slider's own markup. The gate is
               the contract here; what the block then says, axis or status, belongs to

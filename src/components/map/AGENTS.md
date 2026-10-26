@@ -1617,3 +1617,23 @@ show the lane matching it, else the first lane. Fetch and cache: services/AGENTS
 §window-distribution.
 
 Removed 2026-10-25: `src/hooks/useDeckLayers.ts` and `src/lib/map/deck-config.ts` -- zero callers (dead-code audit); the `@deck.gl/*` packages they were the last importers of were also dropped from package.json.
+
+## Interventions visualization modes
+
+Added 2026-10-26 (owner: "finish the panel and features"). The `interventions` row in the layer
+panel gains an **off / heatmap / points** control (`InterventionVisualizationModeControl`, shown
+only while the row's eye is on). Default **off**, unpersisted (`intervention-visualization-store`),
+so nothing changes for a reader who never opens it.
+
+**Both modes read the existing `intervention_tiles` Martin source** (`InterventionVisualizationLayer`):
+`geo.intervention_tiles()` already projects `kind`/`category`/`status`, so heatmap is MapLibre's own
+density aggregation and points paint from `INTERVENTION_STATUS_COLOR` (one colour authority). No tRPC
+read, no second copy of data already on the wire. The restored `visualization.getHeatmapData` /
+`getPointData` procedures were therefore NOT restored, and a **flow** mode was cut: no intervention
+carries a source/target pair, so `getFlowData` could only ever return empty -- revisit when a
+producer writes inter-site links.
+
+**Mounted beside `LayerManager` in `MapView.tsx`**, not inside the dock: the dock tree unmounts while
+collapsed, and map rendering must not depend on sidebar visibility. Mounting after `LayerManager`
+registers its `style.load` re-add after LayerManager's, so the overlay stacks above the base layers
+("Style.load listener order" above). It never removes the shared Martin source on unmount.
