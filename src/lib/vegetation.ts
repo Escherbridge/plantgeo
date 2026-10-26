@@ -9,10 +9,6 @@ export interface NDVIColorStop {
   label: string;
 }
 
-// Activation requires a database-backed, immutable publication catalog.
-// Still false: no first-party tile release (NBR, NLCD land cover) is published.
-export const ENVIRONMENTAL_TILES_CONFIGURED = false;
-
 export function getEnvironmentalTileTemplate(_path: string): string {
   return "";
 }
@@ -100,16 +96,6 @@ export const NDVI_COLOR_RAMP: NDVIColorStop[] = [
   { value: 1.0, color: "#003c30", label: "Maximum greenness" },
 ];
 
-/** NDWI color ramp: low water content (red) → high water content (blue) */
-export const NDWI_COLOR_RAMP: NDVIColorStop[] = [
-  { value: -0.5, color: "#d73027", label: "Severe water stress" },
-  { value: -0.2, color: "#f46d43", label: "High water stress" },
-  { value: 0.0, color: "#fee08b", label: "Moderate stress" },
-  { value: 0.2, color: "#abd9e9", label: "Adequate moisture" },
-  { value: 0.4, color: "#74add1", label: "High moisture" },
-  { value: 0.6, color: "#4575b4", label: "Water body" },
-];
-
 /**
  * Returns the NASA GIBS NDVI tile template, or an empty string when unavailable.
  * "anomaly" is always empty: GIBS publishes absolute NDVI only, and deriving an
@@ -151,9 +137,3 @@ export const NDWI_UNAVAILABLE_REASON =
 export const NDVI_ANOMALY_UNAVAILABLE_REASON =
   "GIBS publishes absolute NDVI only; no climatological baseline is published to compute an anomaly.";
 
-/**
- * Compatibility alias for the first-party published NDVI tile template.
- */
-export function getCopernicusNDVITileUrl(year: number, month: number): string {
-  return getNDVITileUrl(year, month, "absolute");
-}

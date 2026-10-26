@@ -206,25 +206,22 @@ globals mid-suite.
 
 ## Six mechanisms this is meant to eventually subsume
 
-None of the edits below are made in this file's own change -- this module ships standalone by
-design (see the file-boundary note in the PR/task this shipped under). Left here as the map for
-whoever wires or extends it next:
+Status as of 2026-10-26: only item 1 is still open.
 
 1. **`query-persister.ts`'s SWR revalidation queue** (`MAX_CONCURRENT_REVALIDATIONS`,
-   `acquireRevalidationSlot`, `releaseRevalidationSlot`, lines 213-244) could become
+   `acquireRevalidationSlot`, `releaseRevalidationSlot`) could become
    `runBudgeted("swr-revalidation", () => queryFn(context))`, dropping its private semaphore
    entirely. Deliberately not done automatically: background revalidation may deserve its own
    tier/lane treatment rather than a silent merge, which is a decision worth making on purpose.
-2. **`useOfflineSync.ts`'s `runSync` loop** (`:80`, fetch at `:89-98`) -- the primary motivating
-   case; wire via `createBudgetedFetch("offline-sync")` or a `runBudgeted` wrapper per iteration.
-3. **`tile-cache.ts`'s no-SW `prefetchTiles` fallback** (`:80-104`, fetch at `:90`) -- same
-   treatment, lane `"tile-prefetch"`.
+2. ~~**`useOfflineSync.ts`'s `runSync` loop**~~ Closed: wired via `createBudgetedFetch("offline-sync")`.
+3. ~~**`tile-cache.ts`'s no-SW `prefetchTiles` fallback**~~ Closed: wired via `createBudgetedFetch("tile-prefetch")`.
 4. ~~**`useFireData.ts`'s raw fetch** -- `createBudgetedFetch("fires")`.~~ Closed 2026-09-02 by
    deletion, not by wiring: the hook and `/api/fires` are gone and the map's fire read is
    `wildfire.getFireDetections`, which item 5 below already covers. No `"fires"` lane exists or
    should be reintroduced -- lanes here are plain strings, so nothing in `request-budget.ts`
    needed removing.
-5. **The ~16 tRPC-routed layer queries** -- one edit, `trpcLinks()` in `src/lib/trpc/client.ts`.
+5. ~~**The ~16 tRPC-routed layer queries**~~ Closed: `src/lib/trpc/client.ts` passes
+   `fetch: createBudgetedFetch("trpc")` (see "Both transports" above).
 6. **`useDebounce` / `SCRUB_SETTLE_MS` / `PREFETCH_RADIUS_DAYS` and the SSE/WS reconnect
    backoff** -- explicitly NOT subsumed; see "Non-goals" above. Listed here only because the
    audit that motivated this module named them, not because they belong in it.
