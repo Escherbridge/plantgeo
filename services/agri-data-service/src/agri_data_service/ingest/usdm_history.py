@@ -4,8 +4,10 @@ THE POSTGRES HISTORY WALK THAT LIVED HERE WAS DELETED 2026-09-06 (owner directiv
 ingestion into the DB"): `run_usdm_history_backfill`, `ingest_release_week`, `PostgresStoredReleaseIndex`,
 `HistoryBackfillPlan` and the `ingest-drought-history` verb all wrote `geo.drought_areas`.
 `pipeline/direct/drought/backfill.py` owns that window now and writes Parquet. What survives is the pure
-calendar -- `usdm_release_weeks` -- which `pipeline/direct/drought/products.py` and
-`pipeline/validation/drought.py` both read.
+calendar -- `usdm_release_weeks` -- which `pipeline/lanes/drought/products.py` reads (not
+`pipeline/direct/drought/products.py`, a different module of the same name). `pipeline/validation/drought.py`
+also used to read it, but that module was deleted 2026-09-12 in the greenfield Parquet cutover; see
+`pipeline/validation/AGENTS.md`'s verdict table.
 """
 
 from __future__ import annotations

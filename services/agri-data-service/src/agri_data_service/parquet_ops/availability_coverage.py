@@ -14,11 +14,6 @@ from agri_data_service.foundation.parquet.lane_contract import nature_has_time_a
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.parquet_ops.coverage import LaneDays, close_lane_coverage
 from agri_data_service.parquet_ops.freshness import PUBLICATION_GRACE_DAYS, measure_lane_freshness, with_freshness
-from agri_data_service.parquet_ops.snapshot_products import (
-    FORWARD_PARTITION_KIND,
-    ForwardAvailability,
-    ForwardAvailabilityWithheld,
-)
 from agri_data_service.parquet_ops.wire import (
     COVERAGE_AUTHORITY_AVAILABILITY,
     WITHHELD_AVAILABILITY_CHECKSUM_INVALID,
@@ -304,117 +299,6 @@ class AvailabilityCoverageReaderHolder:
         if self._held is None:
             self._held = AvailabilityCoverageReader(BotoAvailabilityStorage.from_settings(source))
         return self._held
-
-
-@dataclass(frozen=True, slots=True)
-class SnapshotForwardAvailability:
-    """Prove a snapshot product's FORWARD half from its own availability index, never by listing.
-
-    The port `parquet_ops/snapshot_products.py` declares and this module implements, wired that way
-    round because `coverage.py` already imports `snapshot_products` -- an import back the other way
-    at module scope would close the cycle.
-    """
-
-    reader: AvailabilityCoverageReader
-    now: datetime
-    #: The same warehouse rollup the direct lanes use. A product's forward half is an ordinary
-    #: availability lane root, so one entry serves both halves of the coverage answer.
-    rollup: CoverageRollup | None = None
-
-    def forward_days(self, *, layer: str, first_day: date) -> ForwardAvailability | ForwardAvailabilityWithheld:
-        """Return the product's forward-half day sets, or the exact reason none may be published."""
-        root = availability_lane_root(layer, FORWARD_PARTITION_KIND)
-        cached = self._forward_from_rollup(root=root, layer=layer, first_day=first_day)
-        if cached is not None:
-            return cached
-        try:
-            index = self.reader.read_lane_root(
-                lane_root=root,
-                lane=layer,
-                nature="daily_series",
-                # A product's forward half has no registration to read a cadence off, so it is judged
-                # on presence alone; the row still carries `source_ceiling_day` for a client to see.
-                oldest_believable_ceiling=None,
-                now=self.now,
-            )
-        except AvailabilityChecksumError as exc:
-            return ForwardAvailabilityWithheld(reason=WITHHELD_AVAILABILITY_CHECKSUM_INVALID, detail=str(exc))
-        except AvailabilityMalformedError as exc:
-            return ForwardAvailabilityWithheld(reason=WITHHELD_AVAILABILITY_MALFORMED, detail=str(exc))
-        except AvailabilityUnavailableError as exc:
-            reason: CoverageWithholding = (
-                WITHHELD_AVAILABILITY_UNPUBLISHED if exc.code == "availability_missing" else WITHHELD_AVAILABILITY_STALE
-            )
-            return ForwardAvailabilityWithheld(reason=reason, detail=str(exc))
-        ceiling = index.pointer.source_ceiling
-        selectable = frozenset(day for day in index.selectable_days() if first_day <= day <= ceiling)
-        published = frozenset(
-            row.day for row in index.rows if row.day in selectable and row.terminal_state == "published"
-        )
-        return ForwardAvailability(
-            published_days=published,
-            absent_days=selectable - published,
-            source_ceiling=ceiling,
-            generation_sha256=index.pointer.generation_sha256,
-            pointer_key=availability_pointer_key(root),
-        )
-
-    def _forward_from_rollup(
-        self,
-        *,
-        root: str,
-        layer: str,
-        first_day: date,
-    ) -> ForwardAvailability | None:
-        """Answer one product's forward half from a rollup entry its own pointer still vouches for.
-
-        `None` means "no cheap answer", never "no coverage": the caller then reads the index in full
-        and keeps sole ownership of the four withholding verdicts. The entry's day sets are already
-        clipped at the ceiling, so only `first_day` remains to be applied here -- the same clip the
-        full path applies to `selectable_days()`.
-        """
-        if self.rollup is None:
-            return None
-        entry = self.rollup.entry_for(root)
-        if entry is None:
-            return None
-        try:
-            pointer = self.reader.read_pointer_for_root(
-                lane_root=root,
-                lane=layer,
-                nature="daily_series",
-                # A product's forward half has no registration to read a cadence off, exactly as on
-                # the full path below; presence is what it is judged on.
-                oldest_believable_ceiling=None,
-            )
-        except Exception as exc:
-            logger.info(
-                "coverage_rollup_probe_deferred",
-                layer=layer,
-                kind=FORWARD_PARTITION_KIND,
-                fault=type(exc).__name__,
-                reason="the pointer that would prove this entry could not be read, so the half is read in full",
-            )
-            return None
-        if not entry.answers(pointer):
-            logger.warning(
-                "coverage_rollup_entry_stale",
-                layer=layer,
-                kind=FORWARD_PARTITION_KIND,
-                entry_generation_sha256=entry.generation_sha256,
-                pointer_generation_sha256=pointer.generation_sha256,
-                reason="the rollup entry does not describe the generation this product's pointer names",
-            )
-            return None
-        published = frozenset(day for day in entry.published_days() if day >= first_day)
-        absent = frozenset(day for day in entry.absent_days() if day >= first_day)
-        return ForwardAvailability(
-            published_days=published,
-            absent_days=absent,
-            source_ceiling=entry.source_ceiling,
-            generation_sha256=entry.generation_sha256,
-            pointer_key=availability_pointer_key(root),
-        )
 
 
 def resolve_availability_lanes(

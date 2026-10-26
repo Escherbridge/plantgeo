@@ -196,7 +196,11 @@ store **both**, in the sense that the observed-day reduction is derived, not pri
   whether serving actual readings is in scope for this wave before investing in per-measurement
   forecasting.
 - **No source-reconciling validation exists for this lane today.** `pipeline/validation/sensors.py`
-  does not yet exist (it is this wave's deliverable). The only existing check is `validate-streams`,
+  was built at some point after this doc was written, but had no production caller and no tests, so
+  it was deleted 2026-10-26 as dead code (`pipeline/validation/AGENTS.md`'s verdict table). Building
+  it is still this wave's deliverable; a rebuild should check that table for what changed underneath
+  it (e.g. `sensors-direct-forward` is `executor = "legacy"`, so the config runner's own `--compare`
+  does not cover this lane either). The only existing check is `validate-streams`,
   which compares the warehouse against its own stored census, not against NOAA
   (`conductor/RUNBOOK.md:1015-1017`: "`validate-streams` detects and reports gaps for all registered
   streams every hour. For the other nine layers nothing converts a detected hole into a claimable
@@ -247,7 +251,7 @@ store **both**, in the sense that the observed-day reduction is derived, not pri
 
 ## 6. Validation approach
 
-Nothing source-reconciling exists for this lane yet (see §5). What layer-lanes.md §4 requires of
+Nothing source-reconciling exists for this lane today, again (see §5). What layer-lanes.md §4 requires of
 `pipeline/validation/sensors.py` maps onto this source's specific shape as follows:
 
 - **Reconcile against api.weather.gov itself**, not against the Parquet the lane just wrote — e.g.

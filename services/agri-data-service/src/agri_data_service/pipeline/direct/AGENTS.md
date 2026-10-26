@@ -597,7 +597,8 @@ default"). A `SIGKILL` at that ceiling would land while the lane holds a session
 
 ### Lags and floors, both measured
 
-Meteorology lag is 5, NASA POWER's measured value in `execution/coverage_census.py`. Shortwave
+Meteorology lag is 5, NASA POWER's measured value (formerly tracked in `execution/coverage_census.py`,
+deleted 2026-10-26 as dead code with no production caller). Shortwave
 radiation's is 6, MEASURED on 2026-09-15 against POWER's own live edge at five PNW points
 (`products.SHORTWAVE_LAG_MEASUREMENT_EVIDENCE` = `.omc/research/runbook-20260915-shortwave/`):
 `ALLSKY_SFC_SW_DWN` real through 2026-09-11, `T2M` through 2026-09-12, no interior fill days across
@@ -606,7 +607,8 @@ products are ONE day apart.
 
 **The margin is the edge's observed jitter, not a copy of the meteorology constant's.** The in-tree
 5 was measured on 2026-08-11 with NO margin -- POWER's newest day was then 5 days back
-(`coverage_census.py` PUBLICATION_LAG_DAYS). The same edge read 3 days back on 2026-09-15. The edge
+(formerly `coverage_census.py` PUBLICATION_LAG_DAYS, since deleted). The same edge read 3 days back
+on 2026-09-15. The edge
 moves a couple of days between measurements; 6 is the measured 4 plus that jitter, which is roughly
 0-1 day over the September solar reading -- about what 5 carries over meteorology today. Do not read
 "5 is 2 past its edge, so 6 is 2 past ours": the 3-day edge is the September observation, not the
@@ -970,21 +972,19 @@ a governed absence is ALWAYS re-examined on a backfill turn, never bounded to a 
 because a full-history walk is already paying the census cost and an old wrongly-governed absence would
 otherwise never be revisited by anything.
 
-### `parity.py`: the one module in this package that reads Postgres, and only reads it
+### `parity.py` and `pipeline/validation/drought.py` are both gone; nothing here reads Postgres
 
-`parity.py::build_drought_parity_receipt` is the D1 parity receipt
+`parity.py::build_drought_parity_receipt` was the D1 parity receipt
 (`conductor/tracks/environmental_postgres_retirement_20260904/spec.md`, "a counted comparison showing
 the Parquet twin covers at least every day and row the PostgreSQL relation holds"): one inline,
 one-table, no-join query (`SELECT valid_date, count(*) ... GROUP BY valid_date`, per
 `code_styleguides/sql.md`'s convention for a query this small) against `geo.drought_areas`, compared
-day-by-day and row-by-row against the written z13 rung's own completion markers. It is read-only --
-`main()` explicitly rolls the Postgres session back rather than ever committing -- and it is the ONLY
-module here `forward.py`/`backfill.py` never import from and never call: the write path must keep
-working the day `geo.drought_areas` is dropped, and `parity.py` importing cleanly on its own is the
-proof that dependency direction holds. A day with parts but no completion marker is reported as
-`parquet_incomplete_days`, counted toward neither coverage nor a row total, matching
-`pipeline/validation/drought.py::written_release_span`'s identical refusal to trust a half-finished
-export as evidence.
+day-by-day and row-by-row against the written z13 rung's own completion markers, read-only and never
+imported by `forward.py`/`backfill.py`. **It was deleted 2026-09-12 in the greenfield Parquet cutover
+(`fd602901`), along with `pipeline/validation/drought.py` (superseded, deleted per
+`pipeline/validation/AGENTS.md`'s verdict table) and every other Postgres read in this package.**
+Nothing in `pipeline/direct/drought/` reads `geo.drought_areas` today; `backfill.py` reaches parity by
+re-fetching USDM directly (see above), not by comparing against the dropped Postgres relation.
 
 ### Entry points
 
@@ -995,8 +995,6 @@ export as evidence.
 - `python -m agri_data_service.pipeline.direct.drought.backfill` -- the oldest-first walker over the
   full floor-to-settled window, sharing every locked publish-and-verify function `forward.py` defines;
   it differs only in which weeks it selects and in which direction.
-- `python -m agri_data_service.pipeline.direct.drought.parity` -- the read-only receipt; exits 1 when
-  `parity_achieved` is false, so an operator or a CI gate can use the exit code directly.
 
 The 2026-09-04 join registered `drought-direct-forward`, hourly at **:45**, alongside the climate writer's
 :40 and the fire/water writers' :15, SHADOW, with `conflicts_with` declared against the generic
@@ -1464,28 +1462,21 @@ This package still ships no `backfill.py`. Until 2026-09-07 it did not need one:
 
 **That mechanism is gone.** `LANE_REGISTRY['weather-observations'].adapter` is now a
 `_source_direct_refusal`, so the same `parquet-drain` invocation raises instead of exporting. The
-lane module and `sql/pipeline/weather_observations_day_export.sql` still exist -- only because
-`pipeline/validation/weather_observations_exact.py` reads them for the D2 audit -- but nothing
-SCHEDULES or DRIVES an export any more. Any settled Postgres day this stream has not already
-published is now reachable only by a one-off retract-and-re-export, the same shape
-`evidence/sensors-stranded-days-20260906.md` describes for sensors, and it must happen BEFORE
-`geo.features` is dropped. Measure the gap with `parity.py` first: if it reports full coverage there
-is nothing to move and this note is discharged.
+lane module and `sql/pipeline/weather_observations_day_export.sql` still exist, but nothing reads
+the SQL file and nothing SCHEDULES or DRIVES an export any more. Any settled Postgres day this
+stream has not already published is now reachable only by a one-off retract-and-re-export, the same
+shape `evidence/sensors-stranded-days-20260906.md` describes for sensors, and it must happen BEFORE
+`geo.features` is dropped.
 
-### The parity receipt
+### The parity receipt is gone too
 
-`parity.py::build_parity_receipt` is READ-ONLY on both sides -- it opens a PostgreSQL session and the
-object store, counts, and writes to neither. Postgres is the ground list (D2 only requires Parquet to
-cover what Postgres ALREADY holds; a Parquet-only day, such as any day this writer publishes after
-Postgres ingestion stopped, is not under-coverage and is deliberately not computed, since doing so
-would require a whole-stream `list_partition_keys()` -- the exact A4 tripwire this track's acceptance
-criteria forbid, for a number D2 does not ask for). Its `_POSTGRES_DAY_COUNTS_SQL` mirrors
-`sql/pipeline/weather_observations_day_export.sql`'s WHERE clause and key-presence guard exactly, so
-the count matches precisely what the Postgres adapter exported before the 2026-09-07 swap. That
-query file survives the swap: `pipeline/validation/weather_observations_exact.py` still loads it
-through `pipeline/lanes/weather_observations.py::read_weather_observations_day`. Run it with
-`python -m agri_data_service.pipeline.direct.weather_observations.parity`; it exits 1 on
-`under_coverage` so an operator's drop-packet script can gate on it directly.
+This package's `parity.py::build_parity_receipt` and `pipeline/validation/weather_observations_exact.py`
+(the D2 audit that read Postgres and the object store independently, counted both and diffed them)
+were both deleted 2026-09-12 in the greenfield Parquet cutover (`fd602901`), per
+`pipeline/validation/AGENTS.md`'s own note that "other AGENTS files that still name them...are stale
+on that point." Nothing in this package reads `geo.features` or `sql/pipeline/weather_observations_day_export.sql`
+today; measuring a stranded-days gap before dropping `geo.features` now needs a one-off script, not
+a standing `parity.py` entry point.
 
 ### Entry point
 

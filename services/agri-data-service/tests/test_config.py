@@ -144,13 +144,13 @@ def test_combined_local_database_url_is_explicit_and_profile_bound() -> None:
     assert _settings(database_url=database_url).require_combined_local_database_url() == database_url
 
 
-# The three command DSNs share one resolver, `Settings._require_command_database_url`: an
-# optional override, DATABASE_URL as the fallback, blank/whitespace treated as unset, and the
-# shared completeness guard as the one remaining rejection. See db/AGENTS.md for the ruling.
+# The command DSN shares one resolver, `Settings._require_command_database_url`: an optional
+# override, DATABASE_URL as the fallback, blank/whitespace treated as unset, and the shared
+# completeness guard as the one remaining rejection. See db/AGENTS.md for the ruling. (The forecast
+# MV-refresh/iteration overrides this table used to parametrize were removed 2026-10-26: their
+# session helpers were deleted first and no Railway service ever set the env vars.)
 _COMMAND_DSN_RESOLVERS = [
     ("local_source_loader_database_url", "require_local_source_loader_database_url"),
-    ("forecast_mv_refresh_database_url", "require_forecast_mv_refresh_database_url"),
-    ("forecast_iteration_database_url", "require_forecast_iteration_database_url"),
 ]
 
 

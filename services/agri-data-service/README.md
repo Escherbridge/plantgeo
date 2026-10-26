@@ -319,13 +319,11 @@ not a loud failure — it quietly targets that default instead. And Pydantic Set
 
 ### 3.4 Other DSN-shaped settings, for completeness
 
-All of these refuse to inherit `DATABASE_URL` the same way the loader DSN does, and are unrelated
-to day-to-day ingestion:
+These are unrelated to day-to-day ingestion. (The forecast materialized-view-refresh and
+iteration-writes overrides once documented here, `FORECAST_MV_REFRESH_DATABASE_URL` and
+`FORECAST_ITERATION_DATABASE_URL`, were deleted 2026-10-26: their session helpers were gone first
+and no Railway service ever set either variable.)
 
-- `FORECAST_MV_REFRESH_DATABASE_URL` — a dedicated forecast materialized-view refresh login;
-  must not share a username with `DATABASE_URL` (`config.py:206-235`).
-- `FORECAST_ITERATION_DATABASE_URL` — evaluation-only forecast iteration writes; allowlisted to
-  `(127.0.0.1, 5442, plantgeo_local_developer)` or the production proxy (`config.py:237-280`).
 - `RECEIVER_WRITER_DATABASE_URL` / `PUBLISHED_READER_DATABASE_URL` — only valid under the
   matching `SERVICE_PROFILE` (`config.py:79-101`); irrelevant unless you're standing up a
   production HTTP profile.
