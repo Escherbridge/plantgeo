@@ -2,14 +2,51 @@
 
 import { useState } from "react";
 import { NO_IOS_FOCUS_ZOOM, TOUCH_TARGET } from "@/components/ui/touch-target";
+import { useMapStore } from "@/stores/map-store";
+import type { MapStyle } from "@/types/map";
 
-type MapStyle = "dark" | "light" | "satellite";
+/**
+ * Builds the `/embed` iframe URL and HTML snippet from editable fields.
+ *
+ * Pure, and kept separate from the component, so a test can assert the exact query string
+ * `EmbedMap.tsx` parses (`center`, `zoom`, `style`, `markers`) without rendering React. The
+ * three params this writes are the only ones `EmbedMap.tsx` reads -- see that file's
+ * `parseCenter`/`parseMarkers` and the `styleParam` lookup; a layers param was never wired
+ * because `/embed` renders the basemap and markers only, never a data layer (no tRPC provider
+ * in `src/app/embed/layout.tsx`).
+ */
+export function buildEmbedSnippet(params: {
+  baseUrl: string;
+  lat: string;
+  lng: string;
+  zoom: string;
+  style: MapStyle;
+  markers: string;
+  width: string;
+  height: string;
+}): { embedSrc: string; iframeCode: string } {
+  const query = new URLSearchParams();
+  query.set("center", `${params.lat},${params.lng}`);
+  query.set("zoom", params.zoom);
+  query.set("style", params.style);
+  if (params.markers.trim()) query.set("markers", params.markers.trim());
+
+  const embedSrc = `${params.baseUrl}/embed?${query.toString()}`;
+  const iframeCode = `<iframe\n  src="${embedSrc}"\n  width="${params.width}"\n  height="${params.height}"\n  frameborder="0"\n  allowfullscreen\n  style="border:0"\n></iframe>`;
+  return { embedSrc, iframeCode };
+}
 
 export default function EmbedCodeGenerator() {
-  const [lat, setLat] = useState("37.7749");
-  const [lng, setLng] = useState("-122.4194");
-  const [zoom, setZoom] = useState("10");
-  const [style, setStyle] = useState<MapStyle>("dark");
+  // Seeded from the live camera and basemap, not a hardcoded default: sharing a link shares
+  // THIS view. Read once into local state rather than live-bound, so editing a field (e.g. to
+  // widen the zoom before copying) cannot be overwritten by the next pan tick.
+  const initialViewport = useMapStore((state) => state.viewport);
+  const initialStyle = useMapStore((state) => state.currentStyle);
+
+  const [lat, setLat] = useState(() => initialViewport.latitude.toFixed(4));
+  const [lng, setLng] = useState(() => initialViewport.longitude.toFixed(4));
+  const [zoom, setZoom] = useState(() => initialViewport.zoom.toFixed(1));
+  const [style, setStyle] = useState<MapStyle>(initialStyle);
   const [markers, setMarkers] = useState("");
   const [width, setWidth] = useState("800");
   const [height, setHeight] = useState("500");
@@ -20,14 +57,16 @@ export default function EmbedCodeGenerator() {
       ? `${window.location.protocol}//${window.location.host}`
       : "";
 
-  const params = new URLSearchParams();
-  params.set("center", `${lat},${lng}`);
-  params.set("zoom", zoom);
-  params.set("style", style);
-  if (markers.trim()) params.set("markers", markers.trim());
-
-  const embedSrc = `${baseUrl}/embed?${params.toString()}`;
-  const iframeCode = `<iframe\n  src="${embedSrc}"\n  width="${width}"\n  height="${height}"\n  frameborder="0"\n  allowfullscreen\n  style="border:0"\n></iframe>`;
+  const { embedSrc, iframeCode } = buildEmbedSnippet({
+    baseUrl,
+    lat,
+    lng,
+    zoom,
+    style,
+    markers,
+    width,
+    height,
+  });
 
   function handleCopy() {
     navigator.clipboard.writeText(iframeCode).then(() => {

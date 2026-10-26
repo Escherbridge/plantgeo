@@ -3,7 +3,8 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/server/db";
 import { assets, positions } from "@/lib/server/db/schema";
 
-export interface TrackingPositionInput {
+/** Internal only: every caller (`persistVerifiedPosition`'s one importer, `/api/ws`) builds this shape inline rather than naming the type. */
+interface TrackingPositionInput {
   assetId: string;
   lat: number;
   lon: number;

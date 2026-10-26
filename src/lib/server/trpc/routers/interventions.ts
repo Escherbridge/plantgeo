@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
   contributorProcedure,
@@ -746,11 +746,22 @@ export const interventionsRouter = router({
   listLifecycle: expertProcedure
     .input(
       z
-        .object({ limit: z.number().int().min(1).max(100).default(50) })
+        .object({
+          limit: z.number().int().min(1).max(100).default(50),
+          /**
+           * Keyset cursor: the last row's `(updatedAt, id)` from the previous page, in the same
+           * `updatedAt DESC, id DESC` order rows are returned in. A plain OFFSET loses or
+           * repeats a row whenever a lifecycle move re-sorts the queue between pages; a keyset
+           * boundary never does, because every page asks "strictly after the last row I saw"
+           * instead of "skip N rows of whatever order holds right now".
+           */
+          cursor: z.object({ updatedAt: z.date(), id: z.string().uuid() }).nullish(),
+        })
         .default({})
     )
     .query(async ({ ctx, input }) => {
       const layerId = await resolveInterventionsLayerId(ctx);
+      const cursor = input.cursor;
       const rows = await ctx.db
         .select({
           id: features.id,
@@ -766,15 +777,29 @@ export const interventionsRouter = router({
           and(
             eq(features.layerId, layerId),
             eq(features.status, PUBLISHED_STATUS),
-            notStrategyRequest
+            notStrategyRequest,
+            cursor
+              ? or(
+                  lt(features.updatedAt, cursor.updatedAt),
+                  and(eq(features.updatedAt, cursor.updatedAt), lt(features.id, cursor.id))
+                )
+              : undefined
           )
         )
-        .orderBy(desc(features.updatedAt))
-        .limit(input.limit);
+        // Stable tie-break on `id`: without it, two rows sharing one `updatedAt` could both
+        // straddle a page boundary, and the keyset condition above would drop or repeat one.
+        .orderBy(desc(features.updatedAt), desc(features.id))
+        // One extra row beyond the page size is how `hasMore`/`nextCursor` are known without a
+        // second COUNT query.
+        .limit(input.limit + 1);
+
+      const hasMore = rows.length > input.limit;
+      const page = hasMore ? rows.slice(0, input.limit) : rows;
+      const last = page[page.length - 1];
 
       // `fromStage` is null for a stage outside the vocabulary (e.g. a value a
       // machine-ingress upsert wrote): shown, but offered no transition.
-      return rows.map((row) => {
+      const items = page.map((row) => {
         const fromStage = isInterventionLifecycleStage(row.stage) ? row.stage : null;
         return {
           ...row,
@@ -782,6 +807,11 @@ export const interventionsRouter = router({
           nextStages: fromStage ? [...INTERVENTION_LIFECYCLE_TRANSITIONS[fromStage]] : [],
         };
       });
+
+      return {
+        items,
+        nextCursor: hasMore && last ? { updatedAt: last.updatedAt ?? new Date(0), id: last.id } : null,
+      };
     }),
 
   /**

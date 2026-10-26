@@ -638,9 +638,17 @@ than making a wrong service-area claim.
 MapLibre's `fitBounds` would choose. It exists so an initial camera and a later `fitBounds` to the
 same bbox agree closely enough that the second can be instant rather than animated.
 
-## drawing.ts
+## drawing.ts (removed 2026-10-26)
 
-`douglasPeucker` implements Ramer-Douglas-Peucker line simplification on planar degrees: https://en.wikipedia.org/wiki/Ramer%E2%80%93Douglas%E2%80%93Peucker_algorithm . The link lives here, not in the source, because `check:data-boundary` rejects bare URLs in `src/**`.
+Held a generic point/line/polygon/rectangle/circle/freehand MapLibre click-handler toolkit
+(`douglasPeucker` line simplification included) that `InterventionDrawControl` never ended up
+calling -- it grew its own narrower drawing logic instead, and nothing else in `src/` ever
+imported this module (reference-traced: zero importers of any of its six exported handler
+factories, going back to the file's first commit). Deleted rather than left as a second,
+unreachable drawing path; if a generic multi-shape drawing tool is wanted again, this is the
+algorithm to reach for: Ramer-Douglas-Peucker line simplification on planar degrees
+(https://en.wikipedia.org/wiki/Ramer%E2%80%93Douglas%E2%80%93Peucker_algorithm -- the link lives
+here, not in source, because `check:data-boundary` rejects bare URLs in `src/**`).
 
 ## rung-selection.ts
 
