@@ -1,13 +1,9 @@
 # Tracking admin UI
 
-**2026-10-26, owner decision: finish the tracking-admin feature.** `routers/tracking.ts` and
-`routers/visualization.ts` were deleted on 2026-10-25 as zero-caller dead code (no UI reached
-either) — see `conductor/tracks/config_driven_ingestion_20260926/metadata.json`,
-`cleanup_wave_20261025.owner_questions_open`: *"Places / Visualization / Tracking-admin panels:
-deleted their zero-caller routers as unused; restore-from-git is trivial if any was 'built ahead
-of UI' on purpose."* Tracking was. Both routers were restored verbatim from `0df6e227^` (the
-commit before that removal) and re-registered in `src/lib/server/trpc/router.ts`, which this
-directory's components are the first and only caller of.
+**2026-10-26, owner decision: finish the tracking-admin feature.** `routers/tracking.ts` was deleted
+on 2026-10-25 as zero-caller (no UI reached it), restored verbatim from `0df6e227^`, and re-registered
+in `src/lib/server/trpc/router.ts`; this directory is its only caller. (`routers/visualization.ts` was
+not kept: the interventions map modes read Martin tiles instead — see src/components/map/AGENTS.md.)
 
 No `AGENTS.md` carried a dated removal note naming `tracking.ts`/`visualization.ts` specifically
 (unlike `useWebSocket.ts`, `UserPanel.tsx`, `LayerUpload.tsx`, each of which got one in their own
