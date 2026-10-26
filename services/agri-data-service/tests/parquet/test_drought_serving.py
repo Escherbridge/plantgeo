@@ -1,7 +1,7 @@
-"""The drought plane's serving read and its USDM reconciliation, exercised with no network and no bucket.
+"""The drought plane's serving read, exercised with no network and no bucket.
 
-Both `planes/drought.py` and `pipeline/validation/drought.py` land in this one file because
-`tests/parquet/test_drought_serving.py` is the only test file this slice may add. `RecordingBackend`
+`planes/drought.py` is the subject (its USDM reconciliation, `pipeline/validation/drought.py`, was
+deleted 2026-10-26: the config runner's census and gap-fill own that check). `RecordingBackend`
 (`tests/parquet/test_objectstore_writer.py`) stands in for the bucket for every listing operation;
 Polars reads real Parquet bytes mirrored onto local disk, since a Python dict backend has no bytes
 to serve over `s3://`. A hand-rolled little-endian WKB MultiPolygon encoder stands in for what USDM
@@ -17,15 +17,9 @@ from typing import TYPE_CHECKING
 import pyarrow as pa  # type: ignore[import-untyped]
 import pytest
 
-from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.completion import PartitionCompletion
-from agri_data_service.foundation.parquet.paths import absence_marker_path, partition_path
+from agri_data_service.foundation.parquet.paths import partition_path
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
-from agri_data_service.pipeline.validation.drought import (
-    WRITTEN_ZOOM_TIER,
-    reconcile_drought_releases,
-    written_release_span,
-)
 from agri_data_service.planes.drought import (
     DROUGHT_KIND,
     DroughtServingError,
@@ -323,92 +317,6 @@ def test_a_future_point_request_answers_with_no_release_at_all(tmp_path: Path) -
 
     assert answer.valid_date is None
     assert answer.dm_category is None
-
-
-# --- pipeline/validation/drought.py: reconciliation against the SOURCE SYSTEM -------------------
-
-
-@pytest.mark.asyncio
-async def test_reconcile_classifies_every_week_and_only_asks_usdm_when_the_listing_cannot_answer() -> None:
-    backend = RecordingBackend()
-    store = ObjectStore(backend)
-    written_day = date(2026, 7, 7)
-    recorded_absent_day = date(2026, 7, 14)
-    conflict_day = date(2026, 7, 21)
-    incomplete_day = date(2026, 7, 28)
-    source_gap_day = date(2026, 8, 4)
-    unrecorded_absence_day = date(2026, 8, 11)
-
-    _write_complete_release(
-        store, day=written_day, categories={0: _multipolygon_wkb(_BIG_SQUARE)}, zoom=WRITTEN_ZOOM_TIER
-    )
-    store.write_absence(
-        GovernedAbsence(
-            reason="USDM did not publish this week",
-            upstream_response="HTTP 404",
-            recorded_at=datetime(2026, 7, 16, tzinfo=UTC),
-            run_id="run-1",
-        ),
-        layer=DROUGHT_STREAM,
-        kind="observed",
-        zoom=WRITTEN_ZOOM_TIER,
-        day=recorded_absent_day,
-    )
-    # A conflict is never produced by the write path (both calls above refuse it); injected directly
-    # into the backend's listing to prove the classifier surfaces one if a manual admin action makes one.
-    backend.objects[partition_path(DROUGHT_STREAM, "observed", WRITTEN_ZOOM_TIER, conflict_day)] = b"not-real-parquet"
-    backend.objects[absence_marker_path(DROUGHT_STREAM, "observed", WRITTEN_ZOOM_TIER, conflict_day)] = b"{}"
-    # An incomplete write: partition exists but no completion marker.
-    backend.objects[partition_path(DROUGHT_STREAM, "observed", WRITTEN_ZOOM_TIER, incomplete_day)] = b"not-real-parquet"
-
-    source = _FakeSourceCheck(published=frozenset({source_gap_day}))
-
-    report = await reconcile_drought_releases(store, source, first_day=written_day, last_day=unrecorded_absence_day)
-
-    verdicts = {week.valid_date: week for week in report.weeks}
-    assert verdicts[written_day].status == "written"
-    assert verdicts[recorded_absent_day].status == "recorded_absence"
-    assert verdicts[conflict_day].status == "conflict"
-    assert verdicts[incomplete_day].status == "warehouse_incomplete"
-    assert verdicts[source_gap_day].status == "source_gap"
-    assert verdicts[unrecorded_absence_day].status == "unrecorded_absence"
-    assert report.gaps == (verdicts[source_gap_day],)
-    assert report.conflicts == (verdicts[conflict_day],)
-    assert report.incomplete_writes == (verdicts[incomplete_day],)
-    # The four already-settled weeks (written, recorded-absent, conflict, incomplete) never touch the source.
-    assert sorted(source.checked) == [source_gap_day, unrecorded_absence_day]
-
-
-@pytest.mark.asyncio
-async def test_a_gap_names_the_release_date_the_lane_and_the_source_response() -> None:
-    backend = RecordingBackend()
-    store = ObjectStore(backend)
-    source_gap_day = date(2026, 7, 28)
-    source = _FakeSourceCheck(published=frozenset({source_gap_day}))
-
-    report = await reconcile_drought_releases(store, source, first_day=source_gap_day, last_day=source_gap_day)
-
-    assert len(report.gaps) == 1
-    gap = report.gaps[0]
-    assert gap.valid_date == source_gap_day
-    assert report.lane == DROUGHT_STREAM
-    assert "USDM" in gap.source_response
-    assert source_gap_day.isoformat() in gap.source_response
-
-
-def test_written_release_span_reads_the_object_store_never_a_hardcoded_floor() -> None:
-    backend = RecordingBackend()
-    store = ObjectStore(backend)
-    assert written_release_span(store) is None
-
-    _write_complete_release(
-        store, day=date(2022, 8, 9), categories={0: _multipolygon_wkb(_BIG_SQUARE)}, zoom=WRITTEN_ZOOM_TIER
-    )
-    _write_complete_release(
-        store, day=date(2026, 8, 18), categories={0: _multipolygon_wkb(_BIG_SQUARE)}, zoom=WRITTEN_ZOOM_TIER
-    )
-
-    assert written_release_span(store) == (date(2022, 8, 9), date(2026, 8, 18))
 
 
 # --- the zoom axis: one rung per read, and a blend that is not expressible ------------------------

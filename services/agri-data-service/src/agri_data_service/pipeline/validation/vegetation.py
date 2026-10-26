@@ -7,6 +7,8 @@ See `conductor/code_styleguides/layer-lanes.md` section 4 and `docs/lanes/vegeta
 5.1-5.3 and 6 for the sparse/cloud-gated grain and the known release-duplication defect this module
 must surface rather than be fooled by.
 
+UNWIRED: no production caller; kept as a candidate ops check (see `pipeline/validation/AGENTS.md`).
+
 THE TIER IS PINNED, NOT A PARAMETER. `written_partition_keys` is whatever the caller listed, and
 this module decides which of those keys count: only the rung the exporter actually writes. That
 matters even though the caller supplies the keys -- a caller that listed generously would otherwise

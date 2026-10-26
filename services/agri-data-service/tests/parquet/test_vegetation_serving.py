@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa  # type: ignore[import-untyped]
 import pytest
 
-from agri_data_service.config import ObjectStoreCredentials
 from agri_data_service.foundation.parquet.paths import (
     MAX_GAP_WINDOW_DAYS,
     PartitionPathError,
@@ -41,7 +40,6 @@ from agri_data_service.pipeline.vegetation_source import (
 )
 from agri_data_service.planes.vegetation import (
     VegetationServingError,
-    bucket_object_root,
     read_vegetation_partition,
     read_vegetation_window,
     vegetation_scan_pattern,
@@ -108,24 +106,6 @@ def test_vegetation_scan_pattern_starts_inside_the_requested_kind_and_tier() -> 
     assert "kind=forecast" not in pattern
     # The wildcard begins AFTER `zoom=`, so it can never expand into a sibling rung.
     assert pattern.index("zoom=13") < pattern.index("**")
-
-
-def test_bucket_object_root_honors_an_empty_or_set_store_prefix() -> None:
-    credentials = ObjectStoreCredentials(
-        endpoint_url="https://storage.example.com",
-        region="sjc",
-        bucket="plantgeo-parquet",
-        access_key_id="access-key",
-        secret_access_key="secret-key",
-    )
-
-    assert (
-        bucket_object_root(credentials=credentials, store=ObjectStore(RecordingBackend())) == "s3://plantgeo-parquet/"
-    )
-    assert (
-        bucket_object_root(credentials=credentials, store=ObjectStore(RecordingBackend(), prefix="sandbox"))
-        == "s3://plantgeo-parquet/sandbox/"
-    )
 
 
 def test_read_vegetation_partition_returns_only_the_requested_kind_and_window(tmp_path: Path) -> None:

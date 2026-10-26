@@ -32,10 +32,8 @@ from agri_data_service.warehouse.schemas.vegetation import VEGETATION_PLANE_SCHE
 if TYPE_CHECKING:
     from datetime import date
 
-    from agri_data_service.config import ObjectStoreCredentials
     from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.foundation.parquet.zoom import ZoomTier
-    from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 
 
 def _typed_empty_schema(kind: PartitionKind) -> pl.Schema:
@@ -81,18 +79,13 @@ def vegetation_scan_pattern(*, root: str, kind: PartitionKind, zoom: ZoomTier) -
     """Return the glob `read_vegetation_partition` scans for one kind at one tier, rooted at `root`.
 
     `root` is everything before the frozen `layer=.../kind=.../zoom=.../` layout:
-    `s3://<bucket>/<prefix>` in production (see `bucket_object_root`), or a local directory in tests.
+    `s3://<bucket>/<prefix>` in production, or a local directory in tests.
     The returned pattern starts INSIDE `zoom=NN/`, so neither the other kind's bytes nor any other
     rung's are even listed, let alone opened.
     """
     normalized_root = root if root.endswith("/") else f"{root}/"
     stream_at_tier = zoom_prefix(VEGETATION_PLANE_STREAM, validate_partition_kind(kind), zoom)
     return f"{normalized_root}{stream_at_tier}**/*.parquet"
-
-
-def bucket_object_root(*, credentials: ObjectStoreCredentials, store: ObjectStore) -> str:
-    """Return the production scan root: the bucket URI plus the store's own key prefix, if any."""
-    return f"s3://{credentials.bucket}/{store.prefix}" if store.prefix else f"s3://{credentials.bucket}/"
 
 
 def read_vegetation_partition(  # noqa: PLR0913 - one argument per read-scoping dimension, none foldable

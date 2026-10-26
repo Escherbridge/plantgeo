@@ -80,7 +80,6 @@ _INSERT_FORECAST_SERIES = text(load_query_sql("execution/insert_forecast_series.
 _INSERT_PARTITION_OBSERVATIONS = text(load_query_sql("execution/insert_partition_observations.sql"))
 _RELEASE_MATERIALISATION = text(load_query_sql("execution/release_materialisation.sql"))
 _SELECTION_MATERIALISATION = text(load_query_sql("execution/selection_materialisation.sql"))
-_LOAD_GOVERNED_PLANE = text(load_query_sql("execution/load_governed_plane.sql"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -780,34 +779,4 @@ async def register_governed_partition_plane(
         observation_count=observation_count,
         materialisation=materialisation,
         selection=selection,
-    )
-
-
-async def load_governed_plane(session: AsyncSession, *, cutoff_day: date) -> GovernedPlane:
-    """Return the already registered governed plane for one publisher-day cutoff."""
-    logical_key = release_set_logical_key(cutoff_day)
-    result = await session.execute(
-        _LOAD_GOVERNED_PLANE,
-        {"logical_key": logical_key, "data_source_key": DATA_SOURCE_KEY},
-    )
-    row = result.mappings().one_or_none()
-    if row is None:
-        raise ValueError(f"no governed NDVI release set exists for publisher-day cutoff {cutoff_day.isoformat()}")
-    if str(row["state"]) not in {"validated", "published"}:
-        raise ValueError(f"governed NDVI release set {logical_key} is {row['state']!s}, not validated")
-    observed_from: datetime = row["observed_from"]
-    observed_to: datetime = row["observed_to"]
-    quality_summary = row["quality_summary"]
-    summary = quality_summary if isinstance(quality_summary, dict) else json.loads(str(quality_summary))
-    return GovernedPlane(
-        data_source_id=uuid.UUID(str(row["data_source_id"])),
-        source_release_id=uuid.UUID(str(row["source_release_id"])),
-        release_set_id=uuid.UUID(str(row["release_set_id"])),
-        release_manifest_checksum=str(row["manifest_checksum"]),
-        payload_checksum=str(row["payload_checksum"]),
-        corpus_cell_count=int(summary.get("corpusCellCount", 0)),
-        corpus_cell_day_count=int(summary.get("corpusCellDayCount", 0)),
-        corpus_row_count=int(summary.get("corpusSourceRowCount", 0)),
-        first_observed_day=observed_from.date(),
-        last_observed_day=(observed_to - timedelta(days=1)).date(),
     )

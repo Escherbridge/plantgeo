@@ -38,7 +38,6 @@ from agri_data_service.pipeline.runner.exits import TurnConfigurationError
 from agri_data_service.pipeline.runner.receipts import DayReceipt
 from agri_data_service.pipeline.runner.resolve import resolve_strategy
 from agri_data_service.pipeline.runner.windows import revision_rotation_days
-from agri_data_service.pipeline.validation import water_gauges as legacy_validation
 from tests.lane_config.builders import REAL_LANES_DIRECTORY
 from tests.lanes.water_gauges.usgs_world import BOISE, DALLES, MERIDIAN, Gauge, Reading, UsgsWaterDataWorld
 from tests.parquet.availability_documents import MemoryAvailabilityStorage
@@ -277,9 +276,8 @@ async def test_the_named_day_is_the_served_time_prefix_never_a_utc_conversion() 
     "served",
     ["2026-09-10", "2026-09-10T23:30:00-07:00", "2026-09-10T00:30:00+05:00", "1990-09-30T23:59:59Z"],
 )
-def test_the_named_day_rule_equals_the_legacy_validator(served: str) -> None:
-    """Spec §7a: the strategy's rule is `pipeline/validation/water_gauges.py::publisher_named_day` verbatim."""
-    assert publisher_named_day(served) == legacy_validation.publisher_named_day(served)
+def test_the_named_day_rule_is_the_first_ten_characters(served: str) -> None:
+    """Spec §7a: the named day is the served string's first ten characters, never an offset-shifted date."""
     assert publisher_named_day(served) == date.fromisoformat(served[:10])
 
 

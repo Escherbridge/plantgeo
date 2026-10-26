@@ -1123,10 +1123,10 @@ single pointer re-read and `AvailabilityPartitionConflictError` (`layer-lanes.md
 `vegetation_partition_promotion.day_partition_content_sha256` (same `foundation.canonical` routine,
 same sorted `[[cell_key, value], …]` document), pinned by
 `tests/execution/test_vegetation_partition_registration.py`. The promoter imports this module, so
-the equality is held by a test rather than by a shared import. One consequence worth knowing: the
-release-set logical key is always the payload-versioned form, so `load_governed_plane(cutoff_day)`,
-which looks up the UNVERSIONED `release_set_logical_key`, does not find partition registrations. It
-did not find forward registrations before this change either.
+the equality is held by a test rather than by a shared import. The release-set logical key is
+always the payload-versioned form; the old `load_governed_plane(cutoff_day)` reader, which looked up
+the UNVERSIONED `release_set_logical_key` and so never found these registrations, had no caller and
+was deleted 2026-10-26.
 
 **What it refuses, in its own vocabulary.** Every refusal is a `PartitionRegistrationError`
 subclass, never a bare `ValueError`, because the scheduled lane must be able to render a failure as

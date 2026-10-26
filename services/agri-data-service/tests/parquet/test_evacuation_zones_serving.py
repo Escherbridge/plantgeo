@@ -11,15 +11,12 @@ from typing import TYPE_CHECKING
 import pyarrow as pa  # type: ignore[import-untyped]
 import pytest
 
-from agri_data_service.config import ObjectStoreCredentials
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.completion import PartitionCompletion
 from agri_data_service.foundation.parquet.paths import absence_marker_path, partition_path
 from agri_data_service.pipeline.parquet.objectstore import ABSENCE_CONTENT_TYPE, PARQUET_CONTENT_TYPE, ObjectStore
-from agri_data_service.pipeline.validation.evacuation_zones import validate_evacuation_zones_snapshot
 from agri_data_service.planes.evacuation_zones import (
     EvacuationZonesServingError,
-    bucket_object_root,
     classify_evacuation_zones_coverage,
     evacuation_zones_scan_pattern,
     read_evacuation_zones_forecast,
@@ -86,16 +83,6 @@ AUGUST_TENTH = date(2026, 8, 10)
 TWO_ZONES = 2
 
 
-def _fake_credentials() -> ObjectStoreCredentials:
-    return ObjectStoreCredentials(
-        endpoint_url="https://storage.example.com",
-        region="auto",
-        bucket="plantgeo-warehouse",
-        access_key_id="test-access-key",
-        secret_access_key="test-secret-key",
-    )
-
-
 def _write_local_snapshot(  # noqa: PLR0913 - one parameter per partition coordinate; a fixture builder names them all
     tmp_path: Path,
     store: ObjectStore,
@@ -141,14 +128,9 @@ def test_classify_coverage_is_oregon_only_and_case_insensitive() -> None:
     assert classify_evacuation_zones_coverage("Montana") == "no_coverage"
 
 
-def test_bucket_object_root_and_scan_pattern_shape() -> None:
-    credentials = _fake_credentials()
-    store = ObjectStore(RecordingBackend(), prefix="sandbox")
+def test_scan_pattern_shape() -> None:
+    pattern = evacuation_zones_scan_pattern(root="s3://plantgeo-warehouse/sandbox", kind="observed", zoom=BASE_TIER)
 
-    root = bucket_object_root(credentials=credentials, store=store)
-    pattern = evacuation_zones_scan_pattern(root=root, kind="observed", zoom=BASE_TIER)
-
-    assert root == "s3://plantgeo-warehouse/sandbox/"
     assert pattern == "s3://plantgeo-warehouse/sandbox/layer=evacuation-zones/kind=observed/zoom=13/**/*.parquet"
     # The wildcard begins AFTER `zoom=`, so it can never expand into a sibling rung.
     assert pattern.index("zoom=13") < pattern.index("**")
@@ -399,37 +381,3 @@ def test_an_incomplete_snapshot_is_not_the_newest_answerable_day(tmp_path: Path)
     assert answer.status == "observed"
     assert answer.answered_by_snapshot_day == AUGUST_FIRST  # not AUGUST_SIXTH
     assert answer.zone_count == TWO_ZONES
-
-
-@pytest.mark.asyncio
-async def test_validator_fails_an_incomplete_snapshot_rather_than_passing_it(tmp_path: Path) -> None:
-    """The validator must report a failure for an incomplete snapshot (part files but no completion
-    marker), not let it pass as a clean day with written=None.
-    """
-    backend = RecordingBackend()
-    store = ObjectStore(backend)
-
-    # Manually create an incomplete snapshot: part file but no completion marker
-    incomplete_part_path = partition_path(EVACUATION_ZONES_STREAM, "observed", BASE_TIER, AUGUST_SIXTH)
-    table = pa.Table.from_pylist([zone_row(0)])
-    table = table.set_column(
-        table.schema.get_field_index("snapshot_day"), "snapshot_day", pa.array([AUGUST_SIXTH], pa.date32())
-    )
-    incomplete_key = store.key_for(incomplete_part_path)
-    backend.put(incomplete_key, table.to_batches()[0].serialize().to_pybytes(), content_type=PARQUET_CONTENT_TYPE)
-
-    # The validator should report this as a failure, not pass it silently
-    report = await validate_evacuation_zones_snapshot(
-        store,
-        root=tmp_path.as_posix(),
-        snapshot_day=AUGUST_SIXTH,
-        today=AUGUST_SIXTH,
-        bbox=None,  # skip live comparison
-        storage_options=None,
-        fetch_live=None,
-    )
-
-    assert not report.ok
-    assert report.partition_status == "incomplete"
-    assert len(report.failure_reasons) == 1
-    assert "part files but no completion marker" in report.failure_reasons[0]

@@ -23,7 +23,7 @@ refuses the persistent `plantgeo` warehouse. NOTHING HERE WRITES: advisory locks
 memory, so this test leaves no row, no object and no schema change behind.
 
 Each session gets its own `pool_size=1, max_overflow=0` engine, mirroring `db/engine.py`'s
-`local_source_loader_engine`. That pin is a PRECONDITION of the lock, not an incidental setting:
+`local_source_loader_pool`. That pin is a PRECONDITION of the lock, not an incidental setting:
 a session lock belongs to one BACKEND, SQLAlchemy returns the connection to the pool on every
 rollback, and this driver rolls back between acquire and release -- so with a larger pool the unlock
 would land on a different backend, the original would hold the lock for its lifetime, and every
