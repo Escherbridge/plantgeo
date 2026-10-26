@@ -1620,67 +1620,20 @@ Removed 2026-10-25: `src/hooks/useDeckLayers.ts` and `src/lib/map/deck-config.ts
 
 ## Interventions visualization modes
 
-Added 2026-10-26, restoring `visualization.getHeatmapData`/`getPointData`/`getFlowData`
-(`src/lib/server/trpc/routers/visualization.ts`) a UI. All three were zero-caller the day before;
-only `getFlowData` has a caller now -- see below for why.
+Added 2026-10-26 (owner: "finish the panel and features"). The `interventions` row in the layer
+panel gains an **off / heatmap / points** control (`InterventionVisualizationModeControl`, shown
+only while the row's eye is on). Default **off**, unpersisted (`intervention-visualization-store`),
+so nothing changes for a reader who never opens it.
 
-**off/heatmap/points/flow, additive, default off.** `useInterventionVisualizationStore`
-(`src/components/map/visualization/intervention-visualization-store.ts`) holds the one mode,
-ephemeral like `vegetation-store.mode`. The default is "off", so a reader who never opens the
-control sees exactly the `interventions` toggle's existing fill/outline/points rendering --
-nothing about that base rendering changes for any other mode either; a selected mode draws ON TOP
-of it, never instead of it. The control
-(`InterventionVisualizationModeControl.tsx`) is mounted in `LayerRow` only for
-`layerId === "interventions"`, inside the same `isActive` block that already gates the opacity and
-time sliders, so the extra rendering is reachable only while that row's own eye is on and stops
-the moment it is switched off (`InterventionVisualizationLayer` reads `useLayerToggle
-("interventions")` itself and gates on it independently, since the control and the renderer live
-in different parts of the tree and must agree without a shared prop).
+**Both modes read the existing `intervention_tiles` Martin source** (`InterventionVisualizationLayer`):
+`geo.intervention_tiles()` already projects `kind`/`category`/`status`, so heatmap is MapLibre's own
+density aggregation and points paint from `INTERVENTION_STATUS_COLOR` (one colour authority). No tRPC
+read, no second copy of data already on the wire. The restored `visualization.getHeatmapData` /
+`getPointData` procedures were therefore NOT restored, and a **flow** mode was cut: no intervention
+carries a source/target pair, so `getFlowData` could only ever return empty -- revisit when a
+producer writes inter-site links.
 
-**Heatmap and points read the Martin tile source directly; only flow calls tRPC.**
-`geo.intervention_tiles()` (`drizzle/0005_intervention_tiles_kind.sql`) already projects `kind`,
-`category`, `status` -- everything `INTERVENTION_STATUS_COLOR` needs -- and MapLibre's own
-`heatmap` layer type aggregates point density for free. Asking `getHeatmapData`/`getPointData` for
-the same rows over tRPC would be a second, costlier read of data already on the wire as vector
-tiles, so `InterventionVisualizationLayer.tsx` adds a native `heatmap` layer and a native `circle`
-layer over the EXISTING `intervention_tiles` source/`"interventions"` source-layer (no new
-`addSource`; that source is baked into the style itself via `createMartinDynamicSources`, see
-`sources.ts`). Both procedures are therefore unused by this UI -- a candidate for the router to
-drop, per the owner's note that this UI should say which ones are. `getFlowData` is the one
-exception: no intervention feature carries a `source`/`target` property today (there is no
-"flow between sites" concept yet), so there is no tile data for a flow mode to read, and it alone
-is wired to `useInterventionFlowData` (`src/components/map/visualization/useInterventionFlowData.ts`),
-which fills a private GeoJSON source (`interventions-visualization-flow-source`) from the
-procedure's viewport-bbox answer. Until a producer starts writing those two properties, flow mode
-draws an empty line layer -- the same "an empty feed is not a hidden layer" rule the rest of this
-file states for every other viewport-proxied read, not a bug in this wiring.
-
-**The viewport reaches the flow query debounced, on top of an already-moveend-only bbox.**
-`useViewportBounds()` only changes on `moveend`/`load`/`resize` (`MapView`'s `publishViewport`
-wiring), so `useInterventionFlowData` is not throttling continuous pan frames -- it is coalescing a
-BURST of rapid moveend events (a `flyTo`'s intermediate stops, a fast pinch-pan) into one request,
-the same shape `useGeocode` already applies to keystrokes. `bboxTupleForFlowQuery`
-(`intervention-flow-viewport.ts`) is the pure parse from the debounced "west,south,east,north"
-string into the tuple the router's `viewportQuerySchema.bbox` accepts, reusing
-`canonicalViewportBbox`'s own ordering/range refinement so a degenerate viewport is caught on the
-client rather than round-tripping to a `BAD_REQUEST`. The router caps each read at `limit` with no
-separate truncation flag (`.limit(input.limit)`), so `isPossiblyTruncated` is inferred the same way
-every other viewport-capped reader does: a response landing exactly on the cap.
-
-**Mount point not owned by this change.** `InterventionVisualizationLayer` needs the live
-`maplibregl.Map` instance and must stay mounted regardless of the layer-panel's open/collapsed
-state (the panel's `DetailsSection`/`LayerRow` tree unmounts while the manager is collapsed -- see
-"Mounting is what 'open' means now" above -- and tying map rendering to sidebar visibility would
-hide an opted-in mode the moment a reader closes the dock). The correct mount is therefore a
-sibling of `LayerManager` in `MapView.tsx`, matching `LandContextLayer`'s own `map={mapInstance}`
-prop pattern:
-
-```tsx
-<LayerManager />
-<InterventionVisualizationLayer map={mapInstance} />
-```
-
-right after the existing `<LayerManager />` line, so its `style.load` listener registers after
-LayerManager's and this opt-in overlay stacks above the base rendering (`"Style.load listener
-order"` above). This line was not added as part of this change -- `MapView.tsx` was out of scope
-for the agent that built this feature.
+**Mounted beside `LayerManager` in `MapView.tsx`**, not inside the dock: the dock tree unmounts while
+collapsed, and map rendering must not depend on sidebar visibility. Mounting after `LayerManager`
+registers its `style.load` re-add after LayerManager's, so the overlay stacks above the base layers
+("Style.load listener order" above). It never removes the shared Martin source on unmount.

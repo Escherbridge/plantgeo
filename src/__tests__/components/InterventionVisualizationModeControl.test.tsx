@@ -50,15 +50,15 @@ describe("InterventionVisualizationModeControl", () => {
   it("switching between two non-off modes only ever leaves one option checked", () => {
     render(<InterventionVisualizationModeControl />);
 
+    fireEvent.click(screen.getByTestId("intervention-visualization-mode-heatmap"));
     fireEvent.click(screen.getByTestId("intervention-visualization-mode-points"));
-    fireEvent.click(screen.getByTestId("intervention-visualization-mode-flow"));
 
-    expect(useInterventionVisualizationStore.getState().mode).toBe("flow");
-    expect(screen.getByTestId("intervention-visualization-mode-points")).toHaveAttribute(
+    expect(useInterventionVisualizationStore.getState().mode).toBe("points");
+    expect(screen.getByTestId("intervention-visualization-mode-heatmap")).toHaveAttribute(
       "aria-checked",
       "false"
     );
-    expect(screen.getByTestId("intervention-visualization-mode-flow")).toHaveAttribute(
+    expect(screen.getByTestId("intervention-visualization-mode-points")).toHaveAttribute(
       "aria-checked",
       "true"
     );

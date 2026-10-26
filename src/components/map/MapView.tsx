@@ -20,6 +20,7 @@ import MapKeyboardShortcuts from "./MapKeyboardShortcuts";
 import { ManagerRail } from "./layer-panel/ManagerRail";
 import { LayerPanel } from "./layer-panel/LayerPanel";
 import LayerManager from "./LayerManager";
+import { InterventionVisualizationLayer } from "@/components/map/visualization/InterventionVisualizationLayer";
 import HoverTooltip from "./HoverTooltip";
 import { MapDateSummary } from "./MapDateSummary";
 import TimeSliderCapabilitiesLoader from "./TimeSliderCapabilitiesLoader";
@@ -488,6 +489,8 @@ export default function MapView() {
                 first -- see the ordering note in ServiceAreaLayer.tsx. */}
             <ServiceAreaLayer map={mapInstance} />
             <LayerManager />
+            {/* Opt-in interventions heatmap/points; after LayerManager so it stacks above. */}
+            <InterventionVisualizationLayer map={mapInstance} />
             {/* PNW land-context reference plane (parcels/land-use, electric utility
                 territories, BLM lands, state-managed lands). Controller bridges the
                 bounded tRPC reader into the store; Layer renders native MapLibre

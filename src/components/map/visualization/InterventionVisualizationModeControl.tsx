@@ -12,21 +12,9 @@ const MODE_OPTIONS: ReadonlyArray<{ value: InterventionVisualizationMode; label:
   { value: "off", label: "Off" },
   { value: "heatmap", label: "Heatmap" },
   { value: "points", label: "Points" },
-  { value: "flow", label: "Flow" },
 ];
 
-/**
- * off/heatmap/points/flow radio group for the `interventions` row's extra rendering. Mounted only
- * while that row's own eye is on -- see `LayerRow`'s `isActive` gate -- matching the opacity and
- * time sliders beside it, which likewise appear "only for a layer that is actually on" (a control
- * that adjusts nothing withheld is the fabricated affordance `layer-legends.ts` exists to
- * prevent).
- *
- * Writes `useInterventionVisualizationStore` only; the map-side renderer
- * (`InterventionVisualizationLayer`) reads the same store independently, since the two live in
- * different parts of the tree (this control inside the sidebar dock, the renderer always-mounted
- * beside `LayerManager`) -- see src/components/map/AGENTS.md "Interventions visualization modes".
- */
+/** Off/heatmap/points radio group for the `interventions` row; see src/components/map/AGENTS.md "Interventions visualization modes". */
 export function InterventionVisualizationModeControl() {
   const mode = useInterventionVisualizationStore((state) => state.mode);
   const setMode = useInterventionVisualizationStore((state) => state.setMode);
@@ -43,7 +31,7 @@ export function InterventionVisualizationModeControl() {
         className="flex flex-wrap items-center gap-1"
       >
         <span id={descriptionId} className="sr-only">
-          Choose an extra rendering for the interventions layer: off, heatmap, points or flow.
+          Choose an extra rendering for the interventions layer: off, heatmap or points.
         </span>
         {MODE_OPTIONS.map((option) => {
           const isSelected = mode === option.value;
