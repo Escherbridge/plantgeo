@@ -23,11 +23,16 @@ decimal places, and at most 100,000 cells. BigInt decimal arithmetic checks befo
 Zero origin with pitch 0.0001 fails; pitch 0.0002 or a 0.00005 shifted origin at pitch 0.0001
 preserves exact identities.
 
-This is loader foundation, not production admission. `regionIdentityVerdict` still compares
-slugs only; equal slugs with different content remain undetected. Canonical content identity
-in serving/capabilities/cache namespaces, source configuration, scheduling, and published
-selected-day evidence remain requirements before enabling a custom region. This change
-activates no region or data lane.
+`identity.ts` implements the service's `plantgeo-region-v1` typed-token encoding and SHA-256
+using the declared `@noble/hashes` dependency. Numbers are finite IEEE754 big-endian hex,
+negative zero is normalized, strings count UTF-8 bytes, and object keys sort by UTF-8 bytes.
+The package's `identity_vectors.fixture.json` pins cross-runtime tokens and manifest digests.
+Geography and definition have separate domains; display labels do not alter identity. The
+public helper accepts mutable manifests and therefore does not memoize by object reference.
+
+`regionIdentityVerdict` checks both slug and definition. Missing identity remains compatible
+only with packaged deployments; custom deployments require it. This still activates no region
+or data lane: source admission, scheduling and published selected-day evidence remain required.
 
 `conductor/code_styleguides/federation.md` §1 wants one typed manifest per deployment. The service
 tree owns the frozen Pydantic model and the data

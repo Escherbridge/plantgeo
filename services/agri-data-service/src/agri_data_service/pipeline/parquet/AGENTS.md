@@ -1859,3 +1859,26 @@ registration. Source verification still proves each edition's publisher metadata
 the calendar cannot substitute for capture evidence. Coverage retains actual edition
 days rather than synthesizing daily carry, and missing admitted editions remain
 detectable even when older annual data has been published.
+
+
+## Custom region namespace admission
+
+Custom geography uses exactly `regions/v1/<geography_sha256>`. `_region_namespace.json` is an
+immutable, at-most-16KiB claim containing the identity version, geography digest and canonical
+geography token hex. Canonical tokens make equivalent negative-zero/numeric definitions reusable.
+Only explicit `create_namespace_receipt` reserves it with If-None-Match; reads never create it.
+Receipt creation is a namespace reservation primitive, not authorization to reuse observations.
+No operator CLI exposes it yet. Changed geography cannot reuse an old prefix or receipt.
+
+Boto object operations and conditional availability operations verify the receipt before data I/O;
+runner binding checks before opening source clients/writers. Even a valid receipt then refuses
+`region_source_support_not_admitted`: custom stream proof, isolated executor state and source
+admission remain unfinished. This deliberate gate prevents relabeling old warehouse objects,
+completion markers or absences. Packaged regions retain legacy behavior. A future implementation
+must replace this gate with checked per-stream support proof, not remove it upon receipt creation.
+
+
+Namespace get/read/close transport failures are sanitized to `region_namespace_unavailable`
+without exception context. Stream cleanup always runs; a cleanup fault does not replace an
+existing missing/malformed/mismatched receipt refusal. A close-only failure refuses admission.
+The expected bounded receipt is constructed before opening the remote body.

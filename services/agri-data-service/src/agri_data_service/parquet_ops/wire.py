@@ -360,6 +360,9 @@ class WarehouseCoverage:
     #: WHOSE footprint the bindings and lanes above describe: the serving side's region manifest.
     region_slug: str | None = None
     region_display_name: str | None = None
+    region_definition_sha256: str | None = None
+    region_geography_sha256: str | None = None
+    region_identity_version: str | None = None
 
     def to_wire(self) -> dict[str, object]:
         """Render the census.
@@ -392,6 +395,9 @@ class WarehouseCoverage:
             "layer_bindings": [binding.to_wire() for binding in self.layer_bindings],
             "region_slug": self.region_slug,
             "region_display_name": self.region_display_name,
+            "region_definition_sha256": self.region_definition_sha256,
+            "region_geography_sha256": self.region_geography_sha256,
+            "region_identity_version": self.region_identity_version,
         }
 
 

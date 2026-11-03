@@ -10,6 +10,7 @@ import sys
 import time
 import uuid
 from dataclasses import replace
+from importlib import resources
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final
 
@@ -325,3 +326,19 @@ async def test_publication_debt_is_kept_alongside_the_new_usage_fold(monkeypatch
     assert outcome.metrics["publication_debt"] == PUBLICATION_DEBT
     assert outcome.metrics["exit_class"] == "ok"
     assert outcome.metrics["turn_outcome"] == "incomplete", "publication debt alone still owes work (PD)"
+
+
+@pytest.mark.asyncio
+async def test_custom_region_refuses_legacy_command_before_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
+    fixture = (
+        resources.files("agri_data_service.foundation.region").joinpath("custom_colorado.fixture.json").read_text()
+    )
+    monkeypatch.setenv("PLANTGEO_REGION_MANIFEST_JSON", fixture)
+    monkeypatch.setenv("PLANTGEO_REGION", "custom-colorado")
+
+    def never_resolve() -> None:
+        pytest.fail("custom work must refuse before catalogue or provider resolution")
+
+    monkeypatch.setattr(job_executor_service, "_tick_catalogue", never_resolve)
+    outcome = await run_scheduled_command(_invocation({"lane_id": "weather-observations"}))
+    assert outcome.metrics["spawned"] is False

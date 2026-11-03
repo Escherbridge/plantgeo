@@ -131,5 +131,8 @@
     {"layer": "soil-survey", "binding": "unbound", "source": null, "reason": "no_source_bound_in_region"}
   ],
   "region_slug": null,
-  "region_display_name": null
+  "region_display_name": null,
+  "region_definition_sha256": null,
+  "region_geography_sha256": null,
+  "region_identity_version": null
 }

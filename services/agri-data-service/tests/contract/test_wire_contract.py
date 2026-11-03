@@ -70,6 +70,31 @@ def test_coverage_fixture_round_trips(name: str) -> None:
     assert WireCoverage.model_validate(raw).model_dump(mode="json", by_alias=True, exclude_unset=True) == raw
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("region_definition_sha256", "not-a-digest"),
+        ("region_geography_sha256", "A" * 64),
+        ("region_definition_sha256", 123),
+        ("region_identity_version", "unknown-version"),
+        ("unknown_identity_field", "value"),
+    ],
+)
+def test_coverage_identity_extension_keeps_the_wire_contract_strict(field: str, value: object) -> None:
+    raw = load("coverage.json")
+    raw[field] = value
+    with pytest.raises(ValidationError, match=field):
+        WireCoverage.model_validate(raw)
+
+
+def test_legacy_coverage_without_identity_remains_parseable() -> None:
+    raw = load("coverage.json")
+    for field in ("region_definition_sha256", "region_geography_sha256", "region_identity_version"):
+        del raw[field]
+    parsed = WireCoverage.model_validate(raw)
+    assert parsed.region_definition_sha256 is None
+
+
 @pytest.mark.parametrize("name", ["coverage.json", "coverage_availability.json"])
 def test_every_coverage_payload_states_which_shape_it_holds(name: str) -> None:
     """A cached body outlives the deploy that produced it, so it must say which field set it carries."""

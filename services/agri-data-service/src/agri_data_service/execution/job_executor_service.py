@@ -162,6 +162,8 @@ from agri_data_service.foundation.observability.vocabulary import (
     LogLevel,
     TurnOutcome,
 )
+from agri_data_service.foundation.region.identity import is_custom_region
+from agri_data_service.foundation.region.manifest import load_region
 from agri_data_service.jobs import (
     JobDefinitionRecord,
     JobHandlerOutcome,
@@ -5008,6 +5010,12 @@ async def run_scheduled_command(  # noqa: PLR0911, PLR0912, PLR0915 - each termi
         attempt=invocation.attempt_number,
         probe=_PROBE_TURN.get(),
     )
+    if is_custom_region(load_region()):
+        return _pre_spawn_failure(
+            turn,
+            failure_class="region_source_support_not_admitted",
+            reason="custom-region executor source support is not admitted",
+        )
     if invocation.kind not in EXECUTOR_WORK_ITEM_KINDS:
         return _pre_spawn_failure(
             turn, failure_class="unknown_work_item_kind", reason=f"unexpected kind {invocation.kind!r}"
@@ -5532,6 +5540,8 @@ def jobs_executor(once: bool, inventory_only: bool) -> None:
         click.echo(json.dumps(inventory, sort_keys=True))
         if inventory_only:
             return
+        if is_custom_region(load_region()):
+            raise ExecutorConfigurationError("custom-region executor source support is not admitted")
         log_quarantined_lanes(activation, catalogue)
         executor_settings = ExecutorSettings.from_environment()
         with suppress(Exception):

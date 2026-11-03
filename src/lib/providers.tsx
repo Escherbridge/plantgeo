@@ -1,13 +1,18 @@
 "use client";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { regionCacheScope } from "@/lib/cache/region-cache-scope";
 import { SessionProvider } from "next-auth/react";
 import { trpc, trpcLinks } from "@/lib/trpc/client";
 import { createIndexedDbLayerQueryPersister } from "@/lib/cache/query-persister";
 import { useHydrateSyncIndex } from "@/stores/sync-index-store";
 
 export function Providers({ children }: { children: React.ReactNode }) {
+  return <ScopedProviders key={regionCacheScope()}>{children}</ScopedProviders>;
+}
+
+function ScopedProviders({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(() => {
     // The persister is handed `(queryFn, context, query)` and never a QueryClient, but it has
     // to publish a background-revalidated payload back into THIS client or the layer renders a
@@ -30,6 +35,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     client = created;
     return created;
   });
+  useEffect(() => () => { void queryClient.cancelQueries(); queryClient.clear(); }, [queryClient]);
 
   // One cursor walk of the query cache per app mount, so every layer's "synced days" track can
   // be answered from memory instead of scanning IndexedDB per render.

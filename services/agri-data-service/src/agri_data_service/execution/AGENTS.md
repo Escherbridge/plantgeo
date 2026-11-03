@@ -1260,3 +1260,14 @@ These definitions are initially shadow registrations. Add their four lane IDs to
 active-lane allowlist only after the PR's code is deployed and the initial production readback
 is verified. Existing deployed code cannot execute these new definitions. The crop working
 directory is disposable; verified original source captures remain in immutable object storage.
+
+
+## Custom region acquisition gate
+
+Executor startup refuses non-packaged regions before service ticks/ledger work (inventory remains
+read-only). The shared scheduled-command handler also refuses before config/legacy resolution,
+so neither executor path can fetch providers merely because publication will later refuse.
+Config runner production binding has its own gate. Direct legacy ingestion CLI commands remain
+unsupported for custom regions: commands bypassing this executor may contact providers before
+hitting storage refusal. Do not expose them as custom bootstrap commands; source-specific admission
+must gate those direct entry points before any acquisition in a later batch.

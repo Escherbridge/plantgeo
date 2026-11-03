@@ -11,6 +11,8 @@ import contextlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
+from agri_data_service.foundation.region.identity import is_custom_region
+from agri_data_service.foundation.region.manifest import load_region
 from agri_data_service.ingest.http import (
     HTTP_FORBIDDEN,
     HTTP_SERVER_ERROR_MINIMUM,
@@ -20,6 +22,7 @@ from agri_data_service.ingest.http import (
     UpstreamHttpError,
     upstream_client,
 )
+from agri_data_service.pipeline.parquet.region_admission import guard_custom_operation
 from agri_data_service.pipeline.runner.contract import (
     ProviderConfigurationError,
     ProviderResponse,
@@ -109,6 +112,8 @@ async def production_ports(
     try:
         store = ObjectStore.from_settings()
         availability = BotoAvailabilityStorage.from_settings()
+        if is_custom_region(load_region()):
+            guard_custom_operation(availability.client, availability.bucket, availability.prefix + "_runner")
         loader_url = None if spec.compare else settings.require_local_source_loader_database_url()
     except ValueError as error:
         raise TurnConfigurationError(f"the runner's storage settings are incomplete: {error}") from error

@@ -15,8 +15,12 @@ import duckdb
 from agri_data_service.foundation.parquet.duckdb_extensions import (
     SERVING_EXTENSION_DIRECTORY as _SERVING_EXTENSION_DIRECTORY,
 )
+from agri_data_service.foundation.region.identity import is_custom_region
+from agri_data_service.foundation.region.manifest import load_region
 from agri_data_service.parquet_ops import faults
 from agri_data_service.parquet_ops.read_telemetry import observe_read, stage
+from agri_data_service.pipeline.parquet.objectstore import BotoObjectStoreBackend
+from agri_data_service.pipeline.parquet.region_admission import guard_custom_operation
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -155,6 +159,9 @@ async def run_serving_read[T](  # noqa: PLR0913 - existing read scope plus expli
     cancelled = threading.Event()
 
     def with_session() -> T:
+        if is_custom_region(load_region()):
+            backend = BotoObjectStoreBackend.from_credentials(credentials)
+            guard_custom_operation(backend.client, backend.bucket, prefix.rstrip("/") + "/_serving")
         with observe_read(enabled=telemetry, operation=operation, cancelled=cancelled):
             with stage("session"):
                 session = _open_serving_session(credentials, prefix=prefix)

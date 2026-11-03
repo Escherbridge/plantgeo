@@ -117,7 +117,8 @@ export function layerBindingInRegion(
   layerSlug: string
 ): LayerRegionBinding {
   const payloadDescribesThisRegion =
-    regionIdentityVerdict(capabilities?.servedRegionSlug).kind !== "mismatch";
+    regionIdentityVerdict(capabilities?.servedRegionSlug, capabilities?.servedRegionDefinitionSha256).kind !== "mismatch";
+  if (!payloadDescribesThisRegion) return "unbound";
   const stated = payloadDescribesThisRegion
     ? capabilities?.layerBindings?.find((binding) => binding.layerSlug === layerSlug)
     : undefined;

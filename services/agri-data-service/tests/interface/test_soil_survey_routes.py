@@ -18,6 +18,8 @@ import pytest
 from sanic.request.parameters import RequestParameters
 
 from agri_data_service.foundation.parquet.zoom import serving_zoom_tier
+from agri_data_service.foundation.region import load_region
+from agri_data_service.foundation.region.identity import IDENTITY_VERSION, definition_digest, geography_digest
 from agri_data_service.foundation.soil_survey.receipts import digest
 from agri_data_service.foundation.soil_survey.release import NATIVE_RUNG, release_key
 from agri_data_service.interface.http.soil_survey import point_soil_survey, query_soil_survey, status_soil_survey
@@ -116,7 +118,7 @@ def _overview_storage(
     storage = _MapStorage(objects)
     module = "agri_data_service.interface.http.soil_survey"
     monkeypatch.setattr(f"{module}._overview_cache", {})
-    monkeypatch.setattr(f"{module}.load_region", lambda: SimpleNamespace(slug="pnw"))
+    monkeypatch.setattr(f"{module}.load_region", lambda: load_region("pnw"))
     monkeypatch.setattr(f"{module}.is_layer_bound", lambda _region, _slug: True)
     monkeypatch.setattr(
         f"{module}.settings",
@@ -270,7 +272,7 @@ class _StatusStorage:
 
 def _configure_status(monkeypatch: pytest.MonkeyPatch, storage: _StatusStorage, pin: str) -> None:
     module = "agri_data_service.interface.http.soil_survey"
-    monkeypatch.setattr(f"{module}.load_region", lambda: SimpleNamespace(slug="pnw"))
+    monkeypatch.setattr(f"{module}.load_region", lambda: load_region("pnw"))
     monkeypatch.setattr(f"{module}.is_layer_bound", lambda _region, _slug: True)
     monkeypatch.setattr(
         f"{module}.settings",
@@ -299,6 +301,9 @@ async def test_status_verifies_only_the_pinned_index_and_retains_static_partial_
         "availability": "published",
         "reason": None,
         "regionSlug": "pnw",
+        "regionDefinitionSha256": definition_digest(load_region("pnw")),
+        "regionGeographySha256": geography_digest(load_region("pnw")),
+        "regionIdentityVersion": IDENTITY_VERSION,
         "requiredRungs": [13],
         "temporalScope": {"kind": "static_reference", "selectedDaySupported": False},
         "publication": {
@@ -317,7 +322,7 @@ async def test_status_unbound_or_unadmitted_never_opens_storage(
     monkeypatch: pytest.MonkeyPatch, *, bound: bool
 ) -> None:
     module = "agri_data_service.interface.http.soil_survey"
-    monkeypatch.setattr(f"{module}.load_region", lambda: SimpleNamespace(slug="pnw"))
+    monkeypatch.setattr(f"{module}.load_region", lambda: load_region("pnw"))
     monkeypatch.setattr(f"{module}.is_layer_bound", lambda _region, _slug: bound)
     monkeypatch.setattr(
         f"{module}.settings", SimpleNamespace(ssurgo_admitted_release_sha256=None, require_object_store=_refuse)

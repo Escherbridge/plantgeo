@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, renderHook } from "@testing-library/react";
 import type { QueryFunctionContext } from "@tanstack/react-query";
-import { getAllEntries, setEntry } from "@/lib/cache/indexeddb-store";
+import { getAllEntries, setEntry } from "./scoped-cache-fixtures";
 import {
   CACHEABLE_LAYER_QUERIES,
   CACHE_SCHEMA_VERSION,

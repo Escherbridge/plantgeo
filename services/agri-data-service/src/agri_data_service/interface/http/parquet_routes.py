@@ -17,6 +17,8 @@ from sanic.response import HTTPResponse  # noqa: TC002 - sanic-ext evaluates han
 
 from agri_data_service.config import settings
 from agri_data_service.foundation.region import load_region, region_layer_availability
+from agri_data_service.foundation.region.identity import IDENTITY_VERSION, definition_digest, geography_digest
+from agri_data_service.interface.http.region_identity import install_region_identity
 from agri_data_service.parquet_ops import faults
 from agri_data_service.parquet_ops.authorized_serving import (
     SERVING_CLIENT_CONFIG,
@@ -73,6 +75,7 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 parquet_bp = Blueprint("parquet", url_prefix="/parquet")
+install_region_identity(parquet_bp)
 
 HTTP_OK: Final = 200
 HTTP_BAD_REQUEST: Final = 400
@@ -371,6 +374,9 @@ async def _build_coverage_payload(generated_at: datetime) -> dict[str, object]:
             lanes=direct_rows,
             layer_bindings=region_layer_bindings(region),
             region_slug=region.slug,
+            region_definition_sha256=definition_digest(region),
+            region_geography_sha256=geography_digest(region),
+            region_identity_version=IDENTITY_VERSION,
             region_display_name=region.display_name,
         ).to_wire()
 

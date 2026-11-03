@@ -202,3 +202,6 @@ class WireCoverage(_Frozen):
     #: a body recorded before the field existed states no region, which is what it knew.
     region_slug: str | None = None
     region_display_name: str | None = None
+    region_definition_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$", strict=True)] | None = None
+    region_geography_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$", strict=True)] | None = None
+    region_identity_version: Literal["plantgeo-region-v1"] | None = None

@@ -12,7 +12,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { QueryFunctionContext } from "@tanstack/react-query";
-import { getAllEntries, getEntry } from "@/lib/cache/indexeddb-store";
+import { getAllEntries, getEntry } from "./scoped-cache-fixtures";
 import { resetLayerCachePolicyForTests } from "@/lib/cache/layer-cache-policy-store";
 import {
   CACHE_SCHEMA_VERSION,
@@ -161,7 +161,7 @@ describe("SSURGO release pin: the excluded unavailable answer", () => {
     // Written directly rather than through the persister, to model an entry stored BEFORE this
     // rule existed (the write-path exclusion above means the persister itself can no longer
     // produce one) -- the read path must reject it independently.
-    const { setEntry } = await import("@/lib/cache/indexeddb-store");
+    const { setEntry } = await import("./scoped-cache-fixtures");
     await setEntry(STORE_CONFIG, cacheKey, stale);
 
     const freshPayload = publishedAnswer("a".repeat(64));

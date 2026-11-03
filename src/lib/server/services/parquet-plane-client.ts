@@ -1,7 +1,9 @@
 import { mtbsSnapshotWireSchema, normalizeMtbsSnapshot } from "@/lib/server/services/mtbs-snapshot-contract";
 import { z } from "zod";
 import { isReusableSliderCoverage } from "@/lib/environmental/slider-policy";
-import { fetchBoundedJson, providerUrl } from "@/lib/server/http/bounded-upstream";
+import { providerUrl } from "@/lib/server/http/bounded-upstream";
+import { fetchRegionJson, serverRegionScope } from "@/lib/server/http/region-identity";
+import { isCustomRegion } from "@/lib/region/identity";
 import { getRegion, regionIdentityVerdict } from "@/lib/region/region";
 import type { ZoomTier } from "@/lib/map/zoom-tiers";
 import type { DayRange, LaneFreshness } from "@/types/time-slider";
@@ -126,6 +128,17 @@ let coverageRequest: Promise<ParquetWarehouseCoverage> | null = null;
  * the first says nothing has been asked yet, the second is `unstated` and renders.
  */
 let lastStatedRegionSlug: string | null | undefined = undefined;
+let lastStatedDefinition: string | null | undefined;
+let identityScope = "";
+
+function ensureIdentityScope(): string {
+  const scope = serverRegionScope();
+  if (scope !== identityScope) {
+    resetParquetCoverageCacheForTests();
+    identityScope = scope;
+  }
+  return scope;
+}
 
 /**
  * How long a row read stops trying to learn the served region after an attempt left nothing behind.
@@ -459,6 +472,9 @@ export interface ParquetWarehouseCoverage {
    * path gives a serving side that predates it.
    */
   regionSlug?: string | null;
+  regionDefinitionSha256?: string | null;
+  regionGeographySha256?: string | null;
+  regionIdentityVersion?: string | null;
   /** The serving region's display name, for the sentence a mismatch has to be explained in. */
   regionDisplayName?: string | null;
 }
@@ -645,6 +661,9 @@ const wireCoverageSchema = z.object({
   // Optional for the same reason, and read as "no claim" rather than "the pilot" when absent; see
   // `ParquetWarehouseCoverage.regionSlug`.
   region_slug: z.string().nullable().optional(),
+  region_definition_sha256: z.string().nullable().optional(),
+  region_geography_sha256: z.string().nullable().optional(),
+  region_identity_version: z.string().nullable().optional(),
   region_display_name: z.string().nullable().optional(),
 });
 
@@ -831,6 +850,9 @@ function decodeCoverage(payload: unknown): ParquetWarehouseCoverage {
     })),
     layerBindings: parsed.data.layer_bindings ?? [],
     regionSlug: parsed.data.region_slug ?? null,
+    regionDefinitionSha256: parsed.data.region_definition_sha256 ?? null,
+    regionGeographySha256: parsed.data.region_geography_sha256 ?? null,
+    regionIdentityVersion: parsed.data.region_identity_version ?? null,
     regionDisplayName: parsed.data.region_display_name ?? null,
   };
 }
@@ -875,7 +897,7 @@ interface ReadBounds {
 
 /** GET with the shared bounds. */
 async function readJson(url: URL, bounds: ReadBounds): Promise<unknown> {
-  return fetchBoundedJson(
+  return fetchRegionJson(
     url,
     { method: "GET", headers: { Accept: "application/json" } },
     {
@@ -939,13 +961,14 @@ async function readJson(url: URL, bounds: ReadBounds): Promise<unknown> {
  * than duplicated so exactly one place decides what a mismatch means.
  */
 export async function assertServedRegionMatchesBundle(): Promise<void> {
+  ensureIdentityScope();
   if (lastStatedRegionSlug === undefined) {
     await learnServedRegion();
     // Still unlearned: the census did not answer, or answered something that did not decode. Both
     // are silence rather than a claim, so the read proceeds -- reported, not retried here.
-    if (lastStatedRegionSlug === undefined) return;
+    if (lastStatedRegionSlug === undefined && !isCustomRegion(getRegion())) return;
   }
-  const verdict = regionIdentityVerdict(lastStatedRegionSlug);
+  const verdict = regionIdentityVerdict(lastStatedRegionSlug, lastStatedDefinition);
   if (verdict.kind !== "mismatch") return;
   console.error(
     "Parquet row read refused: the plane names a region this bundle was not compiled for",
@@ -1082,10 +1105,11 @@ export interface ServedRegionGuardStatus {
  * `statedRegionSlug !== undefined`.
  */
 export function servedRegionGuardStatus(): ServedRegionGuardStatus {
+  ensureIdentityScope();
   // `unstated` is the one verdict that can never become a refusal (`region.ts:294-295`), so it is
   // exactly the complement of "can act" -- `agrees` and `mismatch` both mean an identity was
   // stated and compared.
-  const armed = regionIdentityVerdict(lastStatedRegionSlug).kind !== "unstated";
+  const armed = regionIdentityVerdict(lastStatedRegionSlug, lastStatedDefinition).kind !== "unstated";
   return {
     armed,
     statedRegionSlug: lastStatedRegionSlug,
@@ -1182,6 +1206,7 @@ export async function getParquetLatestRelease(
  * Same-day stale reads may return during revalidation; see services/AGENTS.md section coverage-recovery.
  */
 export async function getParquetWarehouseCoverage(): Promise<ParquetWarehouseCoverage> {
+  const scope = ensureIdentityScope();
   const now = Date.now();
   const held = cachedCoverage;
   const canReuse = held !== null && isReusableSliderCoverage(held.value, now);
@@ -1199,10 +1224,12 @@ export async function getParquetWarehouseCoverage(): Promise<ParquetWarehouseCov
       timeoutMs: COVERAGE_TIMEOUT_MS,
     });
     const value = decodeCoverage(payload);
+    if (scope !== serverRegionScope()) throw new Error("region_identity_mismatch");
     cachedCoverage = { value, receivedAt: Date.now() };
     // Every decoded census restates whose region it describes, so the row-read guard follows a
     // serving-side redeploy without a read of its own.
     lastStatedRegionSlug = value.regionSlug ?? null;
+    lastStatedDefinition = value.regionDefinitionSha256 ?? null;
     return value;
   })();
   const request = coverageRequest;
@@ -1221,6 +1248,7 @@ export async function getParquetWarehouseCoverage(): Promise<ParquetWarehouseCov
 
 /** Clears process-local coverage state between isolated transport tests. */
 export function resetParquetCoverageCacheForTests(): void {
+  lastStatedDefinition = undefined;
   cachedCoverage = null;
   coverageRequest = null;
   lastStatedRegionSlug = undefined;

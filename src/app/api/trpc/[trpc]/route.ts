@@ -1,4 +1,6 @@
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
+import { getRegion } from "@/lib/region/region";
+import { definitionDigest, isCustomRegion, EXPECTED_REGION_HEADER, SERVED_REGION_HEADER } from "@/lib/region/identity";
 import { appRouter } from "@/lib/server/trpc/router";
 import { createTRPCContext } from "@/lib/server/trpc/init";
 import {
@@ -12,6 +14,11 @@ import {
  * for the buffered bytes rather than carrying a chunked or stale declaration.
  */
 const REFRAMED_HEADERS = ["content-length", "transfer-encoding"];
+
+function stampDefinition(response: Response): Response {
+  response.headers.set(SERVED_REGION_HEADER, definitionDigest(getRegion()));
+  return response;
+}
 
 /**
  * Buffer a mutation body under a byte ceiling before tRPC hands it to Zod.
@@ -43,15 +50,25 @@ async function withBoundedBody(request: Request): Promise<Request | Response> {
 }
 
 const handler = async (req: Request) => {
+  const region = getRegion();
+  const definition = definitionDigest(region);
+  const expected = req.headers.get(EXPECTED_REGION_HEADER);
+  if ((expected !== null && expected !== definition) || (expected === null && isCustomRegion(region))) {
+    return stampDefinition(Response.json({ error: { message: "region_identity_mismatch" } }, { status: 409 }));
+  }
   const bounded = await withBoundedBody(req);
-  if (bounded instanceof Response) return bounded;
+  if (bounded instanceof Response) return stampDefinition(bounded);
 
-  return fetchRequestHandler({
+  const response = await fetchRequestHandler({
     endpoint: "/api/trpc",
     req: bounded,
     router: appRouter,
     createContext: createTRPCContext,
   });
+  if (definition !== definitionDigest(getRegion())) {
+    return stampDefinition(Response.json({ error: { message: "region_identity_mismatch" } }, { status: 409 }));
+  }
+  return stampDefinition(response);
 };
 
 export { handler as GET, handler as POST };

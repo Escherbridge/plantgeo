@@ -227,7 +227,8 @@ export async function fetchBounded(
 export async function fetchBoundedJson(
   url: string | URL,
   init: RequestInit,
-  options: BoundedJsonOptions
+  options: BoundedJsonOptions,
+  validateHeaders?: (headers: Headers) => void
 ): Promise<unknown> {
   const result = await fetchBounded(url, { ...init, ...cachePolicyInit(options) }, options);
 
@@ -235,6 +236,7 @@ export async function fetchBoundedJson(
   // as an UpstreamHttpError so retry/backoff signalling survives. The body text rides along
   // (when it was actually readable) so a caller can inspect a structured error shape of its own.
   if (!result.ok) throw new UpstreamHttpError(result.status, result.bodyError ? undefined : result.text);
+  validateHeaders?.(result.headers);
   if (result.bodyError) throw result.bodyError;
   const contentType = result.headers.get("content-type");
   if (contentType && !contentType.toLowerCase().includes("json")) {

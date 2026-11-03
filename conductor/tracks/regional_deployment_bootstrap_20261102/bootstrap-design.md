@@ -18,3 +18,7 @@ Fail requested unsupported combinations explicitly with stable reasons such as `
 Tie storage and executor isolation to `identity-design.md`: geographic namespace, stream support proof and web/service agreement have distinct identities. Database-backed lane leases/jobs need isolation in addition to object prefixes. The activation seams remain `execution/lane_specs.py` and `job_executor_service.py`. Do not emit an executable custom production activation bundle until identity enforcement and source admission exist.
 
 Completion still requires a fresh non-PNW multi-layer run and a second region proving isolation. A working compiler or water-only run is an intermediate milestone.
+
+## Existing local startup coverage
+
+The root `docker-compose.yml` starts PostGIS, Redis and Martin, but neither the web application nor the Python API/executor. `infra/local-warehouse/compose.yaml` starts only an isolated PostGIS warehouse on port 5442. The service-local compose starts its database, Redis, Martin and a development API, but no executor or web application. None is presently an end-to-end regional bootstrap. A generated deployment bundle must specify which processes it starts, how the web build receives the public manifest, and how API and executor share the admitted region and isolated state; merely pointing an operator at an existing compose file does not satisfy the setup requirement.

@@ -577,7 +577,23 @@ wired into the live agent loop by `ai-prompt.ts` `streamRegionalIntelligence`.
   and percent-encoding `(`/`)` in the source URL so cited wording cannot reinterpret as formatting or
   truncate the link.
 
-## Region identity on row reads
+## Definition identity on row reads
+
+The current identity contract supersedes the historical slug-only policy below. Shared bounded
+transport sends `X-PlantGeo-Expected-Region-Definition` and validates
+`X-PlantGeo-Region-Definition` on the actual response. Packaged regions accept legacy silence;
+custom regions refuse missing identity, including a cold census failure. Explicit disagreement
+is always refused. Coverage and soil-status caches include the resolved upstream endpoint and
+definition; late old-scope coverage cannot publish into current guard state. Dedicated soil
+status and query paths use the same transport. Capability and layer-binding checks carry the
+definition alongside the slug.
+
+Browser tRPC requests and web responses use those same headers, closing the old-bundle/new-web
+server gap before data reaches browser persistence. Public cache scope uses only public origin
+and definition; it never exposes the server-only upstream URL. Source admission remains a
+separate backend proof; matching definition is necessary but does not manufacture published data.
+
+### Historical slug-only behavior
 
 Style review W9, S4. W9-A put `region_slug`/`region_display_name` on the coverage payload and a
 three-way verdict behind `regionIdentityVerdict()` (`src/lib/region/region.ts`), then enforced it on

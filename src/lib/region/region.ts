@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { definitionDigest, isCustomRegion } from "./identity";
 import { KENYA_HIGHLANDS, KENYA_HIGHLANDS_ADMIN_CODES } from "@/lib/region/kenya_highlands";
 import { PNW, PNW_ADMIN_CODES } from "@/lib/region/pnw";
 import { CUSTOM_REGION_CACHE_SIZE, decodeCustomRegionManifest } from "@/lib/region/custom-region-manifest";
@@ -365,8 +366,13 @@ export type RegionIdentityVerdict =
   | { kind: "unstated"; compiledSlug: string }
   | { kind: "mismatch"; compiledSlug: string; servedSlug: string };
 
-export function regionIdentityVerdict(servedRegionSlug: string | null | undefined): RegionIdentityVerdict {
-  const compiledSlug = getRegion().slug;
+export function regionIdentityVerdict(servedRegionSlug: string | null | undefined, servedDefinition?: string | null): RegionIdentityVerdict {
+  const region = getRegion();
+  const compiledSlug = region.slug;
+  if ((servedDefinition != null && servedDefinition !== definitionDigest(region)) ||
+      (isCustomRegion(region) && (!servedDefinition || !servedRegionSlug))) {
+    return { kind: "mismatch", compiledSlug, servedSlug: servedRegionSlug ?? "unstated" };
+  }
   if (servedRegionSlug === null || servedRegionSlug === undefined || servedRegionSlug === "") {
     return { kind: "unstated", compiledSlug };
   }

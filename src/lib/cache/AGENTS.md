@@ -1,5 +1,22 @@
 # src/lib/cache -- IndexedDB-backed query persistence
 
+## Deployment identity scope
+
+Schema 3 keys include the public tRPC origin and canonical region definition digest for every
+region, including PNW. Payload and metadata share that key; old unscoped records are misses and
+are never relabelled. Existing policy regressions use explicit scoped storage fixture helpers;
+identity regressions exercise raw IndexedDB keys. The one database and global byte budget still
+account for all scopes, while synced-day projections, clearing and retention select only the
+active scope. Destructive queued operations capture their invocation scope and abort on change.
+
+Generation pins and operational refresh/fetched timestamps carry the same scope. User policy
+preferences may remain shared. Cold fetches, background revalidation and observer publication
+check scope after asynchronous work; an old result cannot publish into the new QueryClient.
+The provider keys its client lifetime by scope and cancels/clears its previous client on unmount.
+Scope switches reset the synced-day projection before hydration. Physical storage changes under
+an identical definition retain ordinary TTL/revalidation semantics; current capability gates
+continue to determine layer eligibility.
+
 ## What this is
 
 `indexeddb-store.ts` is a tiny hand-rolled typed wrapper over IndexedDB (open, get, set,

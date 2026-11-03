@@ -25,6 +25,7 @@ import {
   type ClimateFieldSignalId,
 } from "@/lib/environmental/climate-field";
 import { regionIdentityVerdict } from "@/lib/region/region";
+import { serverRegionScope } from "@/lib/server/http/region-identity";
 import { WATER_GAUGES_STREAM, WATER_GAUGES_STREAM_FACT } from "@/lib/water-gauges-stream";
 import {
   getParquetSoilSurveyStatus,
@@ -111,6 +112,7 @@ export interface ParquetSliderCapabilities extends ResolvedSliderCapabilities {
    * reading another region's bindings as its own; null is "no claim", never "the pilot".
    */
   servedRegionSlug: string | null;
+  servedRegionDefinitionSha256?: string | null;
 }
 
 /** Withhold the day-census rows without making a claim about separate static release evidence. */
@@ -986,7 +988,7 @@ async function getDayPartitionedCapabilities(): Promise<ParquetSliderCapabilitie
     };
   }
   const serverCurrentDate = new Date().toISOString().slice(0, 10);
-  const regionIdentity = regionIdentityVerdict(coverage.regionSlug);
+  const regionIdentity = regionIdentityVerdict(coverage.regionSlug, coverage.regionDefinitionSha256);
   if (regionIdentity.kind === "mismatch") {
     // Fail closed on a STATED disagreement: every lane in this census describes another region's
     // footprint, so drawing any of it would render the wrong region silently. The bindings are
@@ -1010,6 +1012,7 @@ async function getDayPartitionedCapabilities(): Promise<ParquetSliderCapabilitie
       withheldParquetCapabilities: withholdEveryCapability("region_identity_mismatch"),
       layerBindings: [],
       servedRegionSlug: regionIdentity.servedSlug,
+      servedRegionDefinitionSha256: coverage.regionDefinitionSha256,
     };
   }
   const evidence = buildEvidenceIndex(coverage.lanes);
@@ -1035,21 +1038,23 @@ async function getDayPartitionedCapabilities(): Promise<ParquetSliderCapabilitie
     ),
     layerBindings: toSliderLayerBindings(coverage.layerBindings),
     servedRegionSlug: coverage.regionSlug ?? null,
+    servedRegionDefinitionSha256: coverage.regionDefinitionSha256,
   };
 }
 
 /** How long one answered SSURGO status serves later slider payloads; a failed read is never kept. */
 export const SOIL_SURVEY_STATUS_CACHE_MS = 60_000;
 
-let soilSurveyStatusCache: { expiresAt: number; status: Promise<ParquetSoilSurveyStatus> } | null = null;
+let soilSurveyStatusCache: { scope: string; expiresAt: number; status: Promise<ParquetSoilSurveyStatus> } | null = null;
 
 /** One in-flight or answered status read per minute, shared by concurrent payloads (AGENTS.md §soil-survey). */
 function cachedSoilSurveyStatus(): Promise<ParquetSoilSurveyStatus> {
   const now = Date.now();
-  if (soilSurveyStatusCache !== null && soilSurveyStatusCache.expiresAt > now) {
+  const scope = serverRegionScope();
+  if (soilSurveyStatusCache !== null && soilSurveyStatusCache.scope === scope && soilSurveyStatusCache.expiresAt > now) {
     return soilSurveyStatusCache.status;
   }
-  const entry = { expiresAt: now + SOIL_SURVEY_STATUS_CACHE_MS, status: getParquetSoilSurveyStatus() };
+  const entry = { scope, expiresAt: now + SOIL_SURVEY_STATUS_CACHE_MS, status: getParquetSoilSurveyStatus() };
   soilSurveyStatusCache = entry;
   entry.status.catch(() => {
     if (soilSurveyStatusCache === entry) soilSurveyStatusCache = null;
@@ -1074,7 +1079,7 @@ async function soilSurveyCapabilityProof(): Promise<CapabilityProof> {
     });
     return missing(SOIL_SURVEY_CONTRACT, "soil_survey_status_unavailable", []);
   }
-  if (regionIdentityVerdict(status.regionSlug).kind === "mismatch") {
+  if (regionIdentityVerdict(status.regionSlug, status.regionDefinitionSha256).kind === "mismatch") {
     return missing(SOIL_SURVEY_CONTRACT, "region_identity_mismatch", []);
   }
   if (status.availability === "unavailable") {
@@ -1123,7 +1128,7 @@ export async function getParquetSliderCapabilities(): Promise<ParquetSliderCapab
     getDayPartitionedCapabilities(),
     soilSurveyCapabilityProof(),
   ]);
-  const proof = regionIdentityVerdict(census.servedRegionSlug).kind === "mismatch"
+  const proof = regionIdentityVerdict(census.servedRegionSlug, census.servedRegionDefinitionSha256).kind === "mismatch"
     ? missing(SOIL_SURVEY_CONTRACT, "region_identity_mismatch", [])
     : soilProof;
   if (proof.capability !== null) census.layers.push(proof.capability);

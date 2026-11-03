@@ -5,6 +5,7 @@
  * test put in.
  */
 import { readFileSync } from "node:fs";
+import { regionCacheScope } from "@/lib/cache/region-cache-scope";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -246,6 +247,7 @@ describe("persistence", () => {
             "not-a-layer": { refreshMode: "manual" },
             watersheds: { refreshMode: "whenever" },
           },
+          operationalScope: regionCacheScope(),
           refreshRequestedAt: { fire: -1, vegetation: 1_700_000_000_000 },
           lastFetchedAt: { fire: "yesterday" },
         },

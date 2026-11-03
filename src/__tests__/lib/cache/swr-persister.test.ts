@@ -1,6 +1,7 @@
+import { scopedQueryKey } from "@/lib/cache/region-cache-scope";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, type QueryFunctionContext } from "@tanstack/react-query";
-import { setEntry, getEntry } from "@/lib/cache/indexeddb-store";
+import { setEntry, getEntry } from "./scoped-cache-fixtures";
 import {
   CACHE_SCHEMA_VERSION,
   REVALIDATION_MIN_INTERVAL_MS,
@@ -151,7 +152,7 @@ describe("SWR IndexedDB DW Reconciliation & Throttling", () => {
       vi.fn().mockResolvedValue(corrected),
       FAKE_CONTEXT,
       key,
-      "swr-historical-write",
+      scopedQueryKey("swr-historical-write"),
       stored
     );
 
@@ -180,7 +181,7 @@ describe("SWR IndexedDB DW Reconciliation & Throttling", () => {
       vi.fn().mockResolvedValue({ type: "FeatureCollection", features: [{ id: 7 }] }),
       FAKE_CONTEXT,
       key,
-      "swr-unheld",
+      scopedQueryKey("swr-unheld"),
       stored,
       () => queryClient
     );
@@ -220,7 +221,7 @@ describe("SWR IndexedDB DW Reconciliation & Throttling", () => {
       vi.fn().mockResolvedValue({ type: "FeatureCollection", features: [{ id: "overtaken" }] }),
       FAKE_CONTEXT,
       key,
-      "swr-generation",
+      scopedQueryKey("swr-generation"),
       staleSnapshot,
       () => queryClient
     );
@@ -270,7 +271,7 @@ describe("SWR IndexedDB DW Reconciliation & Throttling", () => {
     const freshData = { type: "FeatureCollection", features: [{ id: 99 }] };
     const queryFn = vi.fn().mockResolvedValue(freshData);
 
-    const result = await revalidateAgainstDW(queryFn, FAKE_CONTEXT, key, "swr-update", storedEntry);
+    const result = await revalidateAgainstDW(queryFn, FAKE_CONTEXT, key, scopedQueryKey("swr-update"), storedEntry);
 
     expect(result).toEqual(freshData);
     const updated = await getEntry<StoredLayerQueryEntry>(STORE_CONFIG, "swr-update");
@@ -300,9 +301,9 @@ describe("SWR IndexedDB DW Reconciliation & Throttling", () => {
     const fn2 = () => p2Promise;
     const fn3 = () => p3Promise;
 
-    const p1 = revalidateAgainstDW(fn1, FAKE_CONTEXT, key, "k1", baseEntry);
-    const p2 = revalidateAgainstDW(fn2, FAKE_CONTEXT, key, "k2", baseEntry);
-    const p3 = revalidateAgainstDW(fn3, FAKE_CONTEXT, key, "k3", baseEntry);
+    const p1 = revalidateAgainstDW(fn1, FAKE_CONTEXT, key, scopedQueryKey("k1"), baseEntry);
+    const p2 = revalidateAgainstDW(fn2, FAKE_CONTEXT, key, scopedQueryKey("k2"), baseEntry);
+    const p3 = revalidateAgainstDW(fn3, FAKE_CONTEXT, key, scopedQueryKey("k3"), baseEntry);
 
     expect(getActiveRevalidationsCount()).toBe(2);
 

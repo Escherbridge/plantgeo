@@ -95,3 +95,23 @@ or substitutes for the future immutable botanical profile Parquet product. Popul
 remain `unverified_authoring`, including Boolean defaults; `reviewed_authoring_database` names the
 governed surface and does not approve each field. Missing fields are `unknown/not_reported`. Only companion rows whose
 modeled review state is `approved` are returned, with their existing evidence and reviewer fields.
+
+
+## Region identity exchange
+
+Both environmental blueprints install `region_identity` request middleware before endpoint caches.
+Requests may send `X-PlantGeo-Expected-Region-Definition`; it is mandatory for custom regions.
+Mismatches return HTTP409 and a sanitized error code. Responses, including empty/unavailable and
+refused exchanges, carry `X-PlantGeo-Region-Definition` captured at request admission. Builtins
+accept legacy requests without the expected header. Custom requests verify their namespace then
+remain refused until source support admission exists. No cached census can bypass this gate.
+Coverage adds `region_definition_sha256`, `region_geography_sha256`, `region_identity_version`;
+soil status adds `regionDefinitionSha256`, `regionGeographySha256`, `regionIdentityVersion`.
+Direct DuckDB serving also refuses custom access before session creation. Cache scope work is
+required before lifting custom admission; this batch grants no custom production activation.
+
+
+Namespace verification shares the bounded serving worker pool without opening DuckDB. Admission
+uses zero wait: a full pool returns `region_namespace_at_capacity` immediately, with no queued
+worker. Cancellation or the request deadline does not release a slot until the synchronous
+worker actually finishes. Namespace clients retain bounded connect/read timeouts and no retries.

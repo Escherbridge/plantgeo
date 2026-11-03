@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { fetchBoundedJson, providerUrl } from "@/lib/server/http/bounded-upstream";
+import { providerUrl } from "@/lib/server/http/bounded-upstream";
+import { fetchRegionJson } from "@/lib/server/http/region-identity";
 import {
   ParquetPlaneContractError,
   ParquetPlaneRequestError,
@@ -203,6 +204,9 @@ const publication = z.object({
 
 const releaseStatus = z.object({
   regionSlug: z.string().min(1),
+  regionDefinitionSha256: z.string().nullable().optional(),
+  regionGeographySha256: z.string().nullable().optional(),
+  regionIdentityVersion: z.string().nullable().optional(),
   temporalScope,
   requiredRungs: z.tuple([z.literal(NATIVE_SERVED_ZOOM)]),
 }).and(z.discriminatedUnion("availability", [
@@ -224,7 +228,7 @@ export async function getParquetSoilSurveyStatus(signal?: AbortSignal): Promise<
   const url = providerUrl("AGRI_PARQUET_SERVICE_URL", "http://localhost:8000");
   url.pathname = `${url.pathname.replace(/\/$/, "")}/api/v1/soil-survey/status`;
   url.search = "";
-  const payload = await fetchBoundedJson(
+  const payload = await fetchRegionJson(
     url,
     { method: "GET", headers: { Accept: "application/json" } },
     {
@@ -263,7 +267,7 @@ export async function getParquetSoilSurvey(input: {
   url.search = "";
   url.searchParams.set("bbox", input.bbox);
   url.searchParams.set("zoom", String(Math.floor(input.zoom ?? NATIVE_SERVED_ZOOM)));
-  const payload = await fetchBoundedJson(
+  const payload = await fetchRegionJson(
     url,
     { method: "GET", headers: { Accept: "application/json" } },
     {

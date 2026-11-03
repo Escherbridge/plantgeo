@@ -5,6 +5,18 @@ type: architecture
 
 Status: independently investigated design; not implemented by the manifest foundation batch.
 
+## Implementation contract under construction
+
+The next batch uses a versioned typed byte encoding with finite IEEE754 big-endian hexadecimal numbers (negative zero normalized), UTF-8 byte-length strings and UTF-8-sorted object keys. Integer inputs outside the binary64 safe-integer range are refused. Shared golden vectors must prove Python/browser agreement before admission.
+
+Requests carry `X-PlantGeo-Expected-Region-Definition`; responses carry `X-PlantGeo-Region-Definition`, including legitimate empty/unavailable responses. Definition/namespace mismatches return sanitized HTTP 409 refusals. Coverage adds `region_definition_sha256`, `region_geography_sha256`, and `region_identity_version`; dedicated soil status uses the camelCase equivalents.
+
+Server caches bind the resolved data-service endpoint plus expected definition. Browser persistence binds the public tRPC origin plus definition, without exposing the server-only data-service URL. Physical storage moves under the same proven definition retain ordinary historical-cache TTL/revalidation semantics; current capability eligibility remains authoritative. This does not authorize reassigning legacy unscoped entries to a custom definition.
+
+New browser persistence must be scoped for packaged regions as well as custom ones: a packaged manifest can change in a later code release. Prefer a cache-schema migration that treats old unscoped records as misses over assuming they belonged to the currently compiled definition. Refilling a device cache reads the governed serving plane, not upstream providers. Global retained-byte accounting still includes old scopes and bounds their cleanup.
+
+These are coordinated implementation decisions, not a claim that enforcement or custom source admission is finished.
+
 ## Three identities
 
 Use a geography digest for the immutable storage namespace, a per-stream support digest for observation/absence reuse, and a definition digest for web/service agreement and response caches. Geography includes the actual footprint, source-relevant camera envelope, subdivision envelopes, country/admin membership, timezone and CRS semantics. Stream support adds the binding, analysis lattice and source/product/schema contract versions. Definition includes geography and sorted selected bindings/support identities.

@@ -6,7 +6,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { QueryFunctionContext } from "@tanstack/react-query";
-import { getAllEntryKeys, setEntry } from "@/lib/cache/indexeddb-store";
+import { getAllEntryKeys, setEntry } from "./scoped-cache-fixtures";
 import { MANUAL_TTL_MS } from "@/lib/cache/layer-cache-policy";
 import {
   layerCachePolicyFor,

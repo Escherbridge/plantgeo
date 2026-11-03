@@ -88,3 +88,12 @@ against the same strict contract and compares the interval to the real scheduler
 Edit the `WIRE` block, `wire_contract.py`, and the fixtures **in one change**, and expect both test
 suites to fail until all three agree. That is the point. A lane that needs a new field asks for the
 contract change first; it does not add the field and discover the mismatch at the join.
+
+
+## Region identity additive fields
+
+Coverage snapshots explicitly include nullable `region_definition_sha256`, `region_geography_sha256`
+and `region_identity_version`. Null preserves the historical fixtures' unstated region identity;
+it does not authorize custom serving. WireCoverage still forbids unknown fields and validates
+stated digests as lowercase64-character hexadecimal and version as `plantgeo-region-v1`.
+Old packaged responses may omit these additive fields; custom admission requires actual proof.

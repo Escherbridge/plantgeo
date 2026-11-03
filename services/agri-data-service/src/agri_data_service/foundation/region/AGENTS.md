@@ -347,3 +347,27 @@ would be a decision made by a manifest author rather than by the work that needs
 partitions, PMTiles archives or ingest schedules for this footprint; all of those are empty. What
 it proves is that the platform BOOTS under it and that every surface answers "not available in
 this region" instead of drawing an empty map that reads as an outage.
+
+
+## Identity protocol v1
+
+`identity.py` is pure and reads no environment. `identity_vectors.fixture.json` is the shared
+Python/TypeScript golden corpus. SHA-256 hashes the typed token for
+`["plantgeo-region-v1", domain, value]`; domains are `geography`, `definition`, and
+`stream-support` (`golden` is test-only). Tokens are ASCII except UTF-8 string contents:
+null `n`, true `t`, false `f`, number `d` followed by 16 lowercase hex digits of the
+big-endian IEEE754 binary64 value, string `s<byte-length>:<bytes>`, array
+`a<element-count>:<concatenated tokens>`, map `m<pair-count>:<key/value tokens>`.
+Numbers must be finite; integral numbers outside +/-9007199254740991 are refused in both
+runtimes, including float inputs. Negative zero becomes positive zero. Map keys are strings
+sorted by unsigned UTF-8 bytes, not JavaScript UTF-16 order. Unicode surrogates and unsupported
+types fail with sanitized codes. String contents are not Unicode-normalized.
+
+Geography contains envelope, camera envelope, sub-envelopes, CRS, timezone and sorted country/admin
+memberships. Slug and display label are excluded. Definition includes geography digest, slug,
+derived lattice pitch/origin, sorted platform vocabulary/bindings and named analysis lattices.
+History, credentials and schedules are not manifest identity inputs. Definition identity describes
+manifest behavior; it does not certify source support. An explicit stream descriptor adds source,
+product, source contract version, schema version and actual grid/point/mask support. Its digest
+ignores unrelated layers. Future admitted support registries must bind these descriptors to
+publication; a matching manifest alone never grants source admission.

@@ -1,0 +1,160 @@
+{
+  "identity_version": "plantgeo-region-v1",
+  "domain": "golden",
+  "vectors": [
+    {
+      "value": null,
+      "token_hex": "6e",
+      "sha256": "285f97f37966365a5f709ebf4470b550b017a7c97abb64f4c3a73b2b3e45f261"
+    },
+    {
+      "value": true,
+      "token_hex": "74",
+      "sha256": "43d3d94474a00d044377765ad28003772988eac7c439de9198029c9ab9203f6c"
+    },
+    {
+      "value": false,
+      "token_hex": "66",
+      "sha256": "12370621124ff8df3c5e6a9433de51e189bf7f8c5c9d548bddd37dfd1072ac09"
+    },
+    {
+      "value": 0,
+      "token_hex": "6430303030303030303030303030303030",
+      "sha256": "a7423489763fb12947c03941c7b12afd3d09b87df1f77c3ab11fd9f18cad4d94"
+    },
+    {
+      "value": -0.0,
+      "token_hex": "6430303030303030303030303030303030",
+      "sha256": "a7423489763fb12947c03941c7b12afd3d09b87df1f77c3ab11fd9f18cad4d94"
+    },
+    {
+      "value": 1,
+      "token_hex": "6433666630303030303030303030303030",
+      "sha256": "9ab237992336af0d78cadebf084285a759573f08e12303e822397452ff556c62"
+    },
+    {
+      "value": 1.5,
+      "token_hex": "6433666638303030303030303030303030",
+      "sha256": "d15e1df4e5de2bff3eb75a0efe41e84cc62f23d93708d7ccf2a436588465379b"
+    },
+    {
+      "value": 1e-07,
+      "token_hex": "6433653761643766323961626361663438",
+      "sha256": "31bc5ce8e07f2e1816c4686ea4b28b5b397f0020048b814e6251ef557823a882"
+    },
+    {
+      "value": 9007199254740991,
+      "token_hex": "6434333366666666666666666666666666",
+      "sha256": "5a181f618a9e7da35830a50382003744325e08dbed3f734ab3bf59f6a94ee6fe"
+    },
+    {
+      "value": "\u00e9\ud83c\udf31",
+      "token_hex": "73363ac3a9f09f8cb1",
+      "sha256": "78416b80e9485ace2d25e30059d446e9c211b8eeb1a9652acd298779d48e548e"
+    },
+    {
+      "value": {
+        "z": [
+          0,
+          null
+        ],
+        "a": "x"
+      },
+      "token_hex": "6d323a73313a6173313a7873313a7a61323a64303030303030303030303030303030306e",
+      "sha256": "36e24add1775bbd01bfd7fe9c31ce31038f72e339cdf82632ee4dd1f6d1e5851"
+    },
+    {
+      "value": {
+        "\ud83d\ude00": 1,
+        "\ue000": 2
+      },
+      "token_hex": "6d323a73333aee8080643430303030303030303030303030303073343af09f98806433666630303030303030303030303030",
+      "sha256": "9d83f5383037e0171a20c26037bb32ae80712da99eda601d73c83eec63ac71af"
+    }
+  ],
+  "manifest": {
+    "slug": "custom-colorado",
+    "display_name": "Colorado test region",
+    "envelope": {
+      "west": -108,
+      "south": 38,
+      "east": -106,
+      "north": 40
+    },
+    "default_camera_envelope": {
+      "west": -108,
+      "south": 38,
+      "east": -106,
+      "north": 40
+    },
+    "sub_envelopes": {
+      "test_scope": {
+        "west": -108,
+        "south": 38,
+        "east": -107,
+        "north": 39
+      }
+    },
+    "crs": 4326,
+    "lattice_pitch_degrees": 0.01,
+    "lattice_origin_rule": "floor_to_cell_origin",
+    "timezone": "America/Denver",
+    "iso_country_codes": [
+      "US"
+    ],
+    "admin_codes": [
+      "US-CO"
+    ],
+    "platform_layers": [
+      "burn-severity",
+      "crop-cover",
+      "drought",
+      "evacuation-zones",
+      "fire-detections",
+      "fire-perimeters",
+      "fire-risk",
+      "land-context",
+      "sensors",
+      "climate-field-air-temperature",
+      "climate-field-dew-point",
+      "climate-field-precipitation",
+      "climate-field-relative-humidity",
+      "climate-field-shortwave-radiation",
+      "climate-field-soil-wetness-profile",
+      "climate-field-soil-wetness-root-zone",
+      "climate-field-soil-wetness-surface",
+      "climate-field-wind-speed",
+      "soil-field-moisture",
+      "soil-field-temperature",
+      "soil-field-vpd",
+      "soil-survey",
+      "vegetation",
+      "water-gauges",
+      "watersheds",
+      "weather-forecast",
+      "weather-observations"
+    ],
+    "enabled_layers": [
+      {
+        "layer_slug": "weather-observations",
+        "source_slug": "open_meteo",
+        "coverage": "global"
+      }
+    ],
+    "analysis_lattices": {
+      "analysis-0p25": {
+        "pitch_degrees": 0.25,
+        "origin_rule": "half_step",
+        "envelope": {
+          "west": -108,
+          "south": 38,
+          "east": -106,
+          "north": 40
+        },
+        "cell_key_prefix": "test-region:"
+      }
+    }
+  },
+  "geography_sha256": "c4f03711df5733487e3ce7d0492645b06c48481c3fe8c0f94a8a976c38b941c5",
+  "definition_sha256": "5819b43019c5ee2c2f9bffff475e8ccc3caa975186bf6b38a9a59a8ebe87fe48"
+}

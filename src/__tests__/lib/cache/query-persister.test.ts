@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { QueryFunctionContext } from "@tanstack/react-query";
-import { getAllEntries, getEntry, setEntry } from "@/lib/cache/indexeddb-store";
+import { getAllEntries, getEntry, setEntry } from "./scoped-cache-fixtures";
 import {
   CACHE_SCHEMA_VERSION,
   HISTORICAL_TTL_MS,

@@ -368,6 +368,7 @@ export interface SliderCapabilities {
    * withholds every Parquet row with `region_identity_mismatch` (STYLE-REVIEW-W8 S1).
    */
   servedRegionSlug?: string | null;
+  servedRegionDefinitionSha256?: string | null;
 }
 
 /** Metrics whose public day reader is explicitly owned by PostgreSQL fire-perimeter data. */

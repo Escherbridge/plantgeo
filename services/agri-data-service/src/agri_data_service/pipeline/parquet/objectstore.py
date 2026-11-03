@@ -97,6 +97,7 @@ from agri_data_service.foundation.parquet.paths import (
     year_prefix,
     zoom_prefix,
 )
+from agri_data_service.pipeline.parquet.region_admission import guard_custom_operation
 from agri_data_service.warehouse.parquet.schema import ParquetStreamSchema, get_stream_schema
 from agri_data_service.warehouse.parquet.tiers import BASE_ZOOM_TIER, base_non_null_columns
 
@@ -505,14 +506,17 @@ class BotoObjectStoreBackend:
 
     def put(self, key: str, payload: bytes, *, content_type: str) -> None:
         """Upload one object, overwriting any object already at `key`."""
+        guard_custom_operation(self.client, self.bucket, key)
         self.client.put_object(Bucket=self.bucket, Key=key, Body=payload, ContentType=content_type)
 
     def delete(self, key: str) -> None:
         """Remove one object; S3 treats deleting an absent key as success, and so does this."""
+        guard_custom_operation(self.client, self.bucket, key)
         self.client.delete_object(Bucket=self.bucket, Key=key)
 
     def list_objects(self, prefix: str) -> Iterator[ListedObject]:
         """Yield every object under `prefix`, following continuation tokens to the end of the listing."""
+        guard_custom_operation(self.client, self.bucket, prefix)
         token: str | None = None
         while True:
             request: dict[str, object] = {"Bucket": self.bucket, "Prefix": prefix}
@@ -532,6 +536,7 @@ class BotoObjectStoreBackend:
         vanished between a listing and this read is a concurrent prune, which is a normal race in a
         store two writers share, not a fault worth ending a lane over.
         """
+        guard_custom_operation(self.client, self.bucket, key)
         try:
             response = self.client.get_object(Bucket=self.bucket, Key=key)
         except ClientError as exc:
@@ -546,6 +551,7 @@ class BotoObjectStoreBackend:
 
     def size_of(self, key: str) -> int | None:
         """Return the object's byte count, or `None` when it does not exist."""
+        guard_custom_operation(self.client, self.bucket, key)
         try:
             response = self.client.head_object(Bucket=self.bucket, Key=key)
         except ClientError as exc:

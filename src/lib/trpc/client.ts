@@ -5,6 +5,7 @@ import { createTRPCReact } from "@trpc/react-query";
 import superjson from "superjson";
 import type { AppRouter } from "@/lib/server/trpc/router";
 import { createBudgetedFetch } from "@/lib/net/request-budget";
+import { withRegionIdentity } from "@/lib/net/region-identity-fetch";
 
 /**
  * The react-query tRPC hooks. `abortOnUnmount` is what makes every `signal` the routers thread
@@ -33,8 +34,9 @@ export type { AppRouter };
  * router in the future.
  */
 export function trpcLinks(): TRPCLink<AppRouter>[] {
+  const budgeted = createBudgetedFetch("trpc");
   return [
-    httpBatchLink({ url: "/api/trpc", transformer: superjson, fetch: createBudgetedFetch("trpc") }),
+    httpBatchLink({ url: "/api/trpc", transformer: superjson, fetch: withRegionIdentity(budgeted) }),
   ];
 }
 

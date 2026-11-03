@@ -11,6 +11,7 @@
  */
 
 import { useEffect } from "react";
+import { keyBelongsToCurrentScope, regionCacheScope } from "@/lib/cache/region-cache-scope";
 import { create } from "zustand";
 import { devtools } from "zustand/middleware";
 import {
@@ -226,6 +227,7 @@ function scheduleExpiryPrune(byLayer: ReadonlyMap<LayerToggleId, LayerSyncState>
 /** The projection this module registers on the cache; the cache never imports the store back. */
 const cacheIndexObserver = {
   entryStored(event: CacheIndexEntryEvent): void {
+    if (!keyBelongsToCurrentScope(event.cacheKey)) return;
     if (writesDuringWalk !== null) writesDuringWalk.push(event);
     const previous = useSyncIndexStore.getState().byLayer;
     const byLayer = withRecordedEntry(previous, event);
@@ -234,6 +236,7 @@ const cacheIndexObserver = {
     scheduleExpiryPrune(byLayer);
   },
   entryDropped(event: CacheIndexDropEvent): void {
+    if (!keyBelongsToCurrentScope(event.cacheKey)) return;
     const previous = useSyncIndexStore.getState().byLayer;
     const byLayer = withDroppedEntry(previous, event);
     if (byLayer === previous) return;
@@ -262,7 +265,9 @@ export const useSyncIndexStore = create<SyncIndexState>()(
         if (status === "hydrating" || status === "ready") return;
         set({ status: "hydrating" }, false, "sync-index/hydrating");
         writesDuringWalk = [];
+        const scope = regionCacheScope();
         const scan = await scanSyncedDays();
+        if (scope !== regionCacheScope()) return;
         const replay = writesDuringWalk ?? [];
         writesDuringWalk = null;
         if (scan === null) {
@@ -280,7 +285,9 @@ export const useSyncIndexStore = create<SyncIndexState>()(
       },
 
       clearLayer: async (layerId) => {
+        const scope = regionCacheScope();
         const index = await clearLayerEntries(layerId);
+        if (scope !== regionCacheScope()) return;
         // `null` means the store could not be read, so the reset cannot be claimed: leaving the
         // index alone under-reports nothing and never asserts a deletion that did not happen.
         if (index === null) return;
@@ -348,9 +355,11 @@ export async function clearLayerSyncedDays(layerId: LayerToggleId): Promise<void
 
 /** Called once near the app root -- see `Providers` in src/lib/providers.tsx. */
 export function useHydrateSyncIndex(): void {
+  const scope = regionCacheScope();
   useEffect(() => {
+    resetSyncIndexForTests();
     void useSyncIndexStore.getState().hydrate();
-  }, []);
+  }, [scope]);
 }
 
 /** Exported for tests only: forgets the index and unregisters the cache observer. */

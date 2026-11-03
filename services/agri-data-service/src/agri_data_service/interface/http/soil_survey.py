@@ -26,6 +26,7 @@ from agri_data_service.config import settings
 from agri_data_service.foundation.observability.logging import get_logger
 from agri_data_service.foundation.region import UNBOUND_REASON_NO_SOURCE, is_layer_bound, load_region
 from agri_data_service.foundation.soil_survey.receipts import SoilSurveyError
+from agri_data_service.interface.http.region_identity import install_region_identity
 from agri_data_service.parquet_ops.duckdb_session import (
     SERVING_MAX_CONCURRENT_READS,
     ServingSession,
@@ -55,6 +56,7 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 soil_survey_bp = Blueprint("soil_survey", url_prefix="/soil-survey")
+install_region_identity(soil_survey_bp)
 
 #: This platform layer's slug in `foundation/region/layer_availability.py`'s catalogue.
 _LAYER_SLUG: Final = "soil-survey"
@@ -225,13 +227,21 @@ async def status_soil_survey(request: Request) -> HTTPResponse:
     region = load_region()
     if not is_layer_bound(region, _LAYER_SLUG):
         return json(
-            render_soil_survey_status(region_slug=region.slug, reason=UNBOUND_REASON_NO_SOURCE),
+            render_soil_survey_status(
+                region_slug=region.slug,
+                region_identity=region,
+                reason=UNBOUND_REASON_NO_SOURCE,
+            ),
             headers={"Cache-Control": "no-store"},
         )
     admitted = settings.ssurgo_admitted_release_sha256
     if not admitted:
         return json(
-            render_soil_survey_status(region_slug=region.slug, reason="soil_survey_release_not_admitted"),
+            render_soil_survey_status(
+                region_slug=region.slug,
+                region_identity=region,
+                reason="soil_survey_release_not_admitted",
+            ),
             headers={"Cache-Control": "no-store"},
         )
     try:
@@ -242,7 +252,12 @@ async def status_soil_survey(request: Request) -> HTTPResponse:
         if release.scope.region != region.slug:
             raise SoilSurveyError("admitted SSURGO release belongs to another region")
         return json(
-            render_soil_survey_status(region_slug=region.slug, release=release, admitted_sha256=admitted),
+            render_soil_survey_status(
+                region_slug=region.slug,
+                region_identity=region,
+                release=release,
+                admitted_sha256=admitted,
+            ),
             headers={"Cache-Control": "no-store"},
         )
     except _READ_FAULTS as error:

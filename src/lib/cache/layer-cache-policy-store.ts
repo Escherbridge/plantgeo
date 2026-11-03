@@ -18,6 +18,7 @@
 
 import { create } from "zustand";
 import { devtools, persist } from "zustand/middleware";
+import { regionCacheScope } from "./region-cache-scope";
 import type { LayerToggleId } from "@/lib/map/layer-registry";
 import {
   clampRetainedDayLimit,
@@ -38,6 +39,7 @@ interface LayerCachePolicyState {
    * is not currently looking at without deleting them up front.
    */
   refreshRequestedAt: Partial<Record<LayerToggleId, number>>;
+  operationalScope?: string;
   /**
    * When this layer last actually reached the network and wrote an entry. Persisted because a
    * control that says "last fetched" and forgets on reload is answering a different question
@@ -108,6 +110,7 @@ export const useLayerCachePolicyStore = create<LayerCachePolicyState>()(
           ),
 
         requestRefresh: (layerId) => {
+          ensureOperationalScope();
           const at = Date.now();
           set(
             (s) => ({ refreshRequestedAt: { ...s.refreshRequestedAt, [layerId]: at } }),
@@ -117,7 +120,8 @@ export const useLayerCachePolicyStore = create<LayerCachePolicyState>()(
           return at;
         },
 
-        recordFetched: (layerId, at) =>
+        recordFetched: (layerId, at) => {
+          ensureOperationalScope();
           set(
             (s) =>
               (s.lastFetchedAt[layerId] ?? 0) >= at
@@ -125,7 +129,8 @@ export const useLayerCachePolicyStore = create<LayerCachePolicyState>()(
                 : { lastFetchedAt: { ...s.lastFetchedAt, [layerId]: at } },
             false,
             "layer-cache-policy/fetched"
-          ),
+          );
+        },
       }),
       {
         // Follows layer-store's precedent: devtools(persist) with an explicit `partialize` and a
@@ -135,18 +140,20 @@ export const useLayerCachePolicyStore = create<LayerCachePolicyState>()(
         version: 1,
         partialize: (s) => ({
           overrides: s.overrides,
+          operationalScope: s.operationalScope,
           refreshRequestedAt: s.refreshRequestedAt,
           lastFetchedAt: s.lastFetchedAt,
         }),
         merge: (persisted, current) => {
           const blob = persisted as
-            | { overrides?: unknown; refreshRequestedAt?: unknown; lastFetchedAt?: unknown }
+            | { operationalScope?: string; overrides?: unknown; refreshRequestedAt?: unknown; lastFetchedAt?: unknown }
             | undefined;
           return {
             ...current,
             overrides: sanitizeLayerCacheOverrides(blob?.overrides),
-            refreshRequestedAt: sanitizeLayerTimestamps(blob?.refreshRequestedAt),
-            lastFetchedAt: sanitizeLayerTimestamps(blob?.lastFetchedAt),
+            operationalScope: regionCacheScope(),
+            refreshRequestedAt: blob?.operationalScope === regionCacheScope() ? sanitizeLayerTimestamps(blob.refreshRequestedAt) : {},
+            lastFetchedAt: blob?.operationalScope === regionCacheScope() ? sanitizeLayerTimestamps(blob.lastFetchedAt) : {},
           };
         },
       }
@@ -154,6 +161,13 @@ export const useLayerCachePolicyStore = create<LayerCachePolicyState>()(
     { name: "layer-cache-policy" }
   )
 );
+
+function ensureOperationalScope(): void {
+  const scope = regionCacheScope();
+  if (useLayerCachePolicyStore.getState().operationalScope !== scope) {
+    useLayerCachePolicyStore.setState({ operationalScope: scope, refreshRequestedAt: {}, lastFetchedAt: {} });
+  }
+}
 
 /* --------------------------------------------------------------------------------------------
  * Non-React accessors. `query-persister.ts` is not a component and runs on the cache path, so
@@ -178,6 +192,7 @@ export function isSupersededByRefreshRequest(
   layerId: LayerToggleId | null,
   createdAt: number
 ): boolean {
+  ensureOperationalScope();
   if (layerId === null) return false;
   const requestedAt = useLayerCachePolicyStore.getState().refreshRequestedAt[layerId];
   return requestedAt !== undefined && createdAt < requestedAt;
@@ -220,7 +235,7 @@ export function useLayerCachePolicyOverridden(layerId: LayerToggleId): boolean {
 
 /** Epoch ms of the last real network fetch for this layer, or `null` if it has never fetched. */
 export function useLayerLastFetchedAt(layerId: LayerToggleId): number | null {
-  return useLayerCachePolicyStore((s) => s.lastFetchedAt[layerId] ?? null);
+  return useLayerCachePolicyStore((s) => s.operationalScope === regionCacheScope() ? s.lastFetchedAt[layerId] ?? null : null);
 }
 
 /** Exported for tests only: forgets every preference AND the persisted blob behind it. */

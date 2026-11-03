@@ -29,6 +29,7 @@ from agri_data_service.pipeline.parquet.availability_primitives import (
     _require_object_key,
 )
 from agri_data_service.pipeline.parquet.objectstore import BotoObjectStoreBackend
+from agri_data_service.pipeline.parquet.region_admission import guard_custom_operation
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -235,7 +236,9 @@ class BotoAvailabilityStorage:
 
     def _key(self, key: str) -> str:
         _require_object_key(key, "availability key")
-        return f"{self.prefix}{key}"
+        full_key = f"{self.prefix}{key}"
+        guard_custom_operation(self.client, self.bucket, full_key)
+        return full_key
 
 
 def _read_receipt_snapshot(

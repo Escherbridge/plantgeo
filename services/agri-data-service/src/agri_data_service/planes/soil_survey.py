@@ -45,6 +45,7 @@ from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.foundation.observability.logging import get_logger
 from agri_data_service.foundation.parquet.paths import completed_partition_days, try_parse_partition_path
 from agri_data_service.foundation.parquet.zoom import MAX_REQUEST_ZOOM, MIN_REQUEST_ZOOM, serving_zoom_tier
+from agri_data_service.foundation.region.identity import IDENTITY_VERSION, definition_digest, geography_digest
 from agri_data_service.foundation.soil_survey.receipts import (
     WGS84_MAX_LATITUDE,
     WGS84_MAX_LONGITUDE,
@@ -84,6 +85,7 @@ if TYPE_CHECKING:
     from agri_data_service.config import ObjectStoreCredentials
     from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.foundation.parquet.zoom import ZoomTier
+    from agri_data_service.foundation.region.manifest import Region
     from agri_data_service.foundation.soil_survey.release import Bounds, Part, ShardRef
     from agri_data_service.pipeline.parquet.availability_storage import AvailabilityStorage
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
@@ -543,13 +545,21 @@ def load_admitted_release(storage: AvailabilityStorage, admitted_sha256: str) ->
 
 
 def render_soil_survey_status(
-    *, region_slug: str, release: Release | None = None, admitted_sha256: str | None = None, reason: str | None = None
+    *,
+    region_slug: str,
+    release: Release | None = None,
+    admitted_sha256: str | None = None,
+    reason: str | None = None,
+    region_identity: Region | None = None,
 ) -> dict[str, object]:
     """Describe a verified static release index without claiming viewport or temporal coverage."""
     return {
         "availability": "published" if release is not None else "unavailable",
         "reason": reason,
         "regionSlug": region_slug,
+        "regionDefinitionSha256": None if region_identity is None else definition_digest(region_identity),
+        "regionGeographySha256": None if region_identity is None else geography_digest(region_identity),
+        "regionIdentityVersion": None if region_identity is None else IDENTITY_VERSION,
         "temporalScope": {"kind": "static_reference", "selectedDaySupported": False},
         "requiredRungs": [NATIVE_RUNG],
         "publication": None

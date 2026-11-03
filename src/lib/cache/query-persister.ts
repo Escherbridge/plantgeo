@@ -25,6 +25,7 @@
  * way it already reads `useTimeSliderStore`.
  */
 import type { QueryClient, QueryPersister } from "@tanstack/react-query";
+import { keyBelongsToCurrentScope, regionCacheScope, scopedQueryKey, unscopedQueryHash } from "./region-cache-scope";
 import {
   DEFAULT_CLIMATE_FIELD_SIGNAL,
   climateFieldToggleId,
@@ -72,7 +73,7 @@ export const STORE_CONFIG: IndexedDbStoreConfig = {
  * v2 (2026-10-13): drought's unchanged query key now serves the z9/z13 rungs, not the cracked z5/z0
  * ones (src/lib/map/AGENTS.md §drought-rungs).
  */
-export const CACHE_SCHEMA_VERSION = 2;
+export const CACHE_SCHEMA_VERSION = 3;
 
 /**
  * How long a past calendar day's answer is served from disk before the cache stops trusting it.
@@ -330,7 +331,7 @@ export function attributeQueryKey(queryKey: readonly unknown[]): QueryKeyAttribu
  */
 function attributionFromCacheKey(cacheKey: string): QueryKeyAttribution {
   try {
-    const parsed: unknown = JSON.parse(cacheKey);
+    const parsed: unknown = JSON.parse(unscopedQueryHash(cacheKey));
     if (!Array.isArray(parsed)) return { layerId: null, day: undefined };
     return attributeQueryKey(parsed);
   } catch {
@@ -490,7 +491,7 @@ export function resolveEntryGeneration(
  * against it. Module state, not IndexedDB: the check must be synchronous on the hit path, and a
  * pin that resets on reload is the SAFE direction (an unknown generation never masks an entry).
  */
-const latestSeenGeneration = new Map<LayerToggleId, string>();
+const latestSeenGeneration = new Map<string, string>();
 
 /** Exported for tests only: forgets the learned pins, as a fresh page load would. */
 export function resetGenerationPinsForTests(): void {
@@ -501,7 +502,7 @@ export function resetGenerationPinsForTests(): void {
 function recordSeenGeneration(layerId: LayerToggleId | null, value: unknown): void {
   if (layerId === null) return;
   const generation = resolveEntryGeneration(value, layerId);
-  if (generation !== null) latestSeenGeneration.set(layerId, generation);
+  if (generation !== null) latestSeenGeneration.set(`${regionCacheScope()}:${layerId}`, generation);
 }
 
 /**
@@ -516,7 +517,7 @@ function recordSeenGeneration(layerId: LayerToggleId | null, value: unknown): vo
  */
 function isSupersededGeneration(layerId: LayerToggleId | null, value: unknown): boolean {
   if (layerId === null) return false;
-  const current = latestSeenGeneration.get(layerId);
+  const current = latestSeenGeneration.get(`${regionCacheScope()}:${layerId}`);
   if (current === undefined) return false;
   const stored = resolveEntryGeneration(value, layerId);
   if (stored === null) return false;
@@ -736,7 +737,9 @@ function commitWalkTotal(liveBytes: number, committed: boolean): void {
 /** Folds walked metadata into the per-layer, per-day index the sync track reads. */
 function buildSyncedDayIndex(records: readonly CacheEntryFacts[]): SyncedDayIndex {
   const index: SyncedDayIndex = new Map();
+  const scope = regionCacheScope();
   for (const record of records) {
+    if (!keyBelongsToCurrentScope(record.key, scope)) continue;
     if (record.layerId === null || record.day === undefined) continue;
     let days = index.get(record.layerId);
     if (days === undefined) {
@@ -800,7 +803,7 @@ function notifyEntryStored(
   byteDelta: number,
   isNewEntry: boolean
 ): void {
-  if (cacheIndexObserver === null) return;
+  if (cacheIndexObserver === null || !keyBelongsToCurrentScope(cacheKey)) return;
   if (attribution.layerId === null || attribution.day === undefined) return;
   try {
     cacheIndexObserver.entryStored({
@@ -821,7 +824,7 @@ function notifyEntryDropped(
   attribution: QueryKeyAttribution,
   approxByteSize: number
 ): void {
-  if (cacheIndexObserver === null) return;
+  if (cacheIndexObserver === null || !keyBelongsToCurrentScope(cacheKey)) return;
   if (attribution.layerId === null || attribution.day === undefined) return;
   try {
     cacheIndexObserver.entryDropped({
@@ -916,14 +919,17 @@ async function persistEntry(
   attribution: QueryKeyAttribution,
   isNewEntry: boolean
 ): Promise<void> {
+  if (!keyBelongsToCurrentScope(cacheKey)) return;
   let written = await putEntryWithMetadata(STORE_CONFIG, cacheKey, entry, metadata);
   if (!written) {
     learnQuotaCeilingFromRefusal();
     await ensureCapacityFor(metadata.approxByteSize);
+    if (!keyBelongsToCurrentScope(cacheKey)) return;
     written = await putEntryWithMetadata(STORE_CONFIG, cacheKey, entry, metadata);
   }
   if (!written) return;
   recordByteDelta(byteDelta);
+  if (!keyBelongsToCurrentScope(cacheKey)) return;
   notifyEntryStored(cacheKey, attribution, metadata.expiresAt, byteDelta, isNewEntry);
   if (attribution.layerId === null) return;
   // Every path into this function follows a real network answer -- a cold write or a background
@@ -943,12 +949,14 @@ async function persistEntry(
  * entries and not by their size, which is what lets it run on every app mount.
  */
 export async function scanSyncedDays(): Promise<SyncedDayScan | null> {
+  const scope = regionCacheScope();
   if (!isIndexedDbAvailable()) return null;
   return serializeFullPass(async () => {
     try {
       const walk = await walkCache();
       const committed = await deleteEntries(STORE_CONFIG, walk.deadKeys);
       commitWalkTotal(walk.liveBytes, committed);
+      if (scope !== regionCacheScope()) return null;
       return { index: buildSyncedDayIndex(walk.live), coveredKeys: walk.coveredKeys };
     } catch {
       walkInFlight = false;
@@ -963,17 +971,22 @@ export async function scanSyncedDays(): Promise<SyncedDayScan | null> {
  * the index the store is left in, or `null` when the store could not be read.
  */
 export async function clearLayerEntries(layerId: LayerToggleId): Promise<SyncedDayIndex | null> {
+  const scope = regionCacheScope();
   if (!isIndexedDbAvailable()) return null;
   return serializeFullPass(async () => {
     try {
       const walk = await walkCache();
-      const doomedKeys = walk.live.filter((r) => r.layerId === layerId).map((r) => r.key);
+      if (scope !== regionCacheScope()) {
+        commitWalkTotal(walk.liveBytes, true);
+        return null;
+      }
+      const doomedKeys = walk.live.filter((r) => r.layerId === layerId && keyBelongsToCurrentScope(r.key, scope)).map((r) => r.key);
       const committed = await deleteEntries(STORE_CONFIG, [...walk.deadKeys, ...doomedKeys]);
       if (!committed) {
         commitWalkTotal(walk.liveBytes, false);
         return null;
       }
-      const survivors = walk.live.filter((r) => r.layerId !== layerId);
+      const survivors = walk.live.filter((r) => !doomedKeys.includes(r.key));
       commitWalkTotal(
         survivors.reduce((sum, record) => sum + record.approxByteSize, 0),
         true
@@ -1020,6 +1033,7 @@ export interface RetentionSweepResult {
 export async function enforceLayerRetention(
   layerId: LayerToggleId
 ): Promise<RetentionSweepResult | null> {
+  const scope = regionCacheScope();
   if (!isIndexedDbAvailable()) return null;
   const limit = layerCachePolicyFor(layerId).retainedDayLimit;
   if (limit === null) return null;
@@ -1027,7 +1041,12 @@ export async function enforceLayerRetention(
     try {
       const walk = await walkCache();
       const byDay = new Map<string, { keys: string[]; lastAccessedAt: number; bytes: number }>();
+      if (scope !== regionCacheScope()) {
+        commitWalkTotal(walk.liveBytes, true);
+        return null;
+      }
       for (const record of walk.live) {
+        if (!keyBelongsToCurrentScope(record.key, scope)) continue;
         if (record.layerId !== layerId || record.day === undefined) continue;
         const existing = byDay.get(record.day);
         if (existing === undefined) {
@@ -1235,14 +1254,17 @@ export async function revalidateAgainstDW<TContext>(
   stored: StoredLayerQueryEntry,
   getQueryClient: QueryClientAccessor = () => null
 ): Promise<unknown> {
+  const scope = regionCacheScope();
   await acquireRevalidationSlot();
   try {
     const result = await queryFn(context);
+    if (scope !== regionCacheScope() || !keyBelongsToCurrentScope(cacheKey)) return stored.value;
     // Computed before the cacheability check (moved up from just below it) so a SSURGO
     // `unavailable` answer can be told from every other layer's own, cacheable `unavailable`.
     const attribution = attributeQueryKey(queryKey);
     if (isCacheableResult(result, attribution.layerId)) {
       if (!(await isStillTheSameGeneration(cacheKey, stored))) return stored.value;
+      if (scope !== regionCacheScope()) return stored.value;
       const now = Date.now();
       const approxByteSize = estimateByteSize(result);
       // Same rule as the cold path: this answer came back through the server's pointer, so it
@@ -1275,6 +1297,7 @@ export async function revalidateAgainstDW<TContext>(
       };
       if (byteDelta > 0) await ensureCapacityFor(byteDelta);
       await persistEntry(cacheKey, updatedEntry, metadata, byteDelta, attribution, false);
+      if (scope !== regionCacheScope()) return stored.value;
       publishToQueryClient(getQueryClient, queryKey, result);
       return result;
     } else if (isSoilSurveyRollbackAnswer(attribution.layerId, result)) {
@@ -1309,15 +1332,19 @@ export function createIndexedDbLayerQueryPersister(
   getQueryClient: QueryClientAccessor
 ): QueryPersister {
   return async (queryFn, context, query) => {
+    const scope = regionCacheScope();
     const queryKey = query.queryKey as readonly unknown[];
     if (!isIndexedDbAvailable() || !isPersistableQueryKey(queryKey)) {
-      return queryFn(context);
+      const result = await queryFn(context);
+      if (scope !== regionCacheScope()) throw new Error("region_cache_scope_changed");
+      return result;
     }
 
-    const cacheKey = query.queryHash;
+    const cacheKey = scopedQueryKey(query.queryHash);
 
     try {
       const stored = await getEntry<unknown>(STORE_CONFIG, cacheKey);
+      if (scope !== regionCacheScope()) throw new Error("region_cache_scope_changed");
       if (stored !== null && isStoredLayerQueryEntry(stored)) {
         const attribution = attributeStoredRow(stored, cacheKey);
         // Three independent ways an entry stops being servable, checked together because they all
@@ -1377,6 +1404,7 @@ export function createIndexedDbLayerQueryPersister(
     }
 
     const result = await queryFn(context);
+    if (scope !== regionCacheScope()) throw new Error("region_cache_scope_changed");
     // Computed before the cacheability check, same reordering as `revalidateAgainstDW`, so a
     // SSURGO `unavailable` answer can be told from every other layer's own cacheable one.
     const coldAttribution = attributeQueryKey(queryKey);
@@ -1425,6 +1453,7 @@ export function createIndexedDbLayerQueryPersister(
       // Writing to the cache is best-effort; `result` below is still the real answer.
     }
 
+    if (scope !== regionCacheScope()) throw new Error("region_cache_scope_changed");
     return result;
   };
 }
