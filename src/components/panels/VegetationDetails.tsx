@@ -33,8 +33,8 @@ const VEGETATION_SOURCE_OPTIONS: ReadonlyArray<{
     value: "satellite",
     label: "Satellite (MODIS)",
     description:
-      `NASA GIBS ${GIBS_NDVI_PRODUCT.layerIdentifier.replace(/_/g, " ")}: global and gap-free, ` +
-      `but a proxied composite rather than a reading with a scene behind it. GIBS publishes it ` +
+      `NASA GIBS ${GIBS_NDVI_PRODUCT.layerIdentifier.replace(/_/g, " ")}: a global composite with possible missing imagery, ` +
+      `proxied rather than stored as a reading with a scene behind it. GIBS publishes it ` +
       `no deeper than zoom ${GIBS_NDVI_PRODUCT.maxZoom}, so it softens as you zoom past that.`,
   },
 ];
@@ -142,7 +142,7 @@ export function VegetationDetails() {
         <div className="flex flex-col gap-4">
             {/* Why the vegetation layer has nothing for the selected day, so an empty
                 layer is never mistaken for the toggle being off. */}
-            {vegetationReason !== null && (
+            {!showsComposite && vegetationReason !== null && (
               <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]">
                 {vegetationReason}
               </p>

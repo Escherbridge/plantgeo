@@ -98,6 +98,21 @@ afterEach(() => {
 });
 
 describe("WeatherHistoryReport", () => {
+  it("converts the nearest reading's meter distance to kilometers", () => {
+    queries.getWeatherForBbox.mockReturnValue({
+      data: {
+        state: "ready", requestedDay: DAY, servedDay: DAY, truncated: false,
+        data: [{ ...observation, latitude: 45.6 }, { ...observation, latitude: 44.6 }],
+      },
+    });
+    renderWithProviders(<WeatherHistoryReport bbox="-117,43,-115,46" zoom={13} />);
+
+    expect(screen.getByText("111.2 km from map center")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Mark nearest weather reading on map" }));
+    expect(useMapStore.getState().queryPoint).toEqual({ lat: 44.6, lon: -116.2 });
+    expect(screen.getByText("0.0 km from the selected point")).toBeTruthy();
+  });
+
   it("presents the selected historical day in forecast-style cards without losing measured zero", () => {
     queries.getWeatherForBbox.mockReturnValue({
       data: { state: "ready", requestedDay: DAY, servedDay: DAY, truncated: false, data: [observation] },

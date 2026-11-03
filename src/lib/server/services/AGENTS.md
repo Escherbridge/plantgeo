@@ -1,5 +1,13 @@
 # Service boundaries
 
+## Climate empty views
+
+The climate presentation adapter retains published status, served day and truncation when a
+successful viewport read contains no samples. `empty_viewport` differs from `not_published`;
+`no_renderable_features` means published samples could not form the chosen display. Governed
+absence keeps its source evidence as `governed_absence`, rather than claiming a missing write.
+These statuses describe the returned view, not completeness of the source or its spatial support.
+
 ## Application map evidence
 
 `regional-map-evidence.ts` serves the map's public application sources through the same containing-tile

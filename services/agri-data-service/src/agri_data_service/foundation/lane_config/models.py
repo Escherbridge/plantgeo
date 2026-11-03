@@ -26,7 +26,7 @@ from pydantic import (
 
 from agri_data_service.foundation.lane_config.cron import CronExpression, parse_cron
 from agri_data_service.foundation.parquet.lane_contract import LaneNature  # noqa: TC001 - pydantic field type
-from agri_data_service.foundation.parquet.paths import LAYER_SLUG_PATTERN
+from agri_data_service.foundation.parquet.paths import LAYER_SLUG_PATTERN, MAX_GAP_WINDOW_DAYS
 from agri_data_service.foundation.region.manifest import SourceCoverage  # noqa: TC001 - pydantic field type
 from agri_data_service.foundation.region.source_coverage import SourceCoverageClaim
 
@@ -415,6 +415,22 @@ class LaneDays(_FrozenModel):
         return self
 
 
+class LaneCoverageTarget(_FrozenModel):
+    """Historical data coverage over the selected region's complete source support."""
+
+    first_day: date
+    last_day: date | None = None
+    minimum_fraction: float = Field(default=1.0, gt=0, le=1, allow_inf_nan=False, strict=True)
+
+    @model_validator(mode="after")
+    def _bounded_range(self) -> LaneCoverageTarget:
+        if self.last_day is not None:
+            span = (self.last_day - self.first_day).days + 1
+            if not 1 <= span <= MAX_GAP_WINDOW_DAYS:
+                raise ValueError(f"coverage_target range must contain 1..{MAX_GAP_WINDOW_DAYS} days")
+        return self
+
+
 class LaneBudget(_FrozenModel):
     """Per-turn, per-mode weighted-call caps (S19) and turn bounds; a turn never exceeds its mode's cap."""
 
@@ -478,6 +494,7 @@ class LaneConfig(_FrozenModel):
     source: LaneSource | None = None
     schedule: LaneSchedule
     days: LaneDays | None = None
+    coverage_target: LaneCoverageTarget | None = None
     budget: LaneBudget
     pruning: LanePruning = Field(default_factory=LanePruning)
     streams: tuple[LaneStream, ...] = ()
@@ -512,6 +529,22 @@ class LaneConfig(_FrozenModel):
             raise ValueError("[[streams]] repeats a slug")
         return self
 
+    @model_validator(mode="after")
+    def _coverage_target_has_an_archive(self) -> LaneConfig:
+        target = self.coverage_target
+        if target is None:
+            return self
+        if self.executor != "config" or self.kind != "ingest" or self.nature != "daily_series":
+            raise ValueError("coverage_target requires a config daily_series ingest lane")
+        if self.source is None or self.source.history.capability != "archive" or self.days is None:
+            raise ValueError("coverage_target requires an archive source and [days]")
+        floors = [day for day in (self.days.floor, self.source.history.earliest) if day is not None]
+        if floors and target.first_day < max(floors):
+            raise ValueError("coverage_target first_day precedes the declared lane/source floor")
+        if not self.streams:
+            raise ValueError("coverage_target requires declared streams")
+        return self
+
     @property
     def strategy_module(self) -> str:
         """The module S14 resolves this lane's strategy from; its `STRATEGY` attribute is the strategy."""
@@ -532,6 +565,7 @@ __all__ = [
     "STRATEGY_PACKAGE",
     "LaneBudget",
     "LaneConfig",
+    "LaneCoverageTarget",
     "LaneDays",
     "LanePruning",
     "LaneSchedule",

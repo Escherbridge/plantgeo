@@ -29,6 +29,7 @@ import {
 } from "@/lib/map/layer-toggle-context";
 import { cn } from "@/lib/utils";
 import { hasSelectableDay, useTimeSliderStore } from "@/stores/time-slider-store";
+import { useVegetationStore } from "@/stores/vegetation-store";
 // Contractually-fixed surface from the parallel lane building this store; do not stub it, do not
 // edit it. See src/components/map/AGENTS.md §synced-days-track for the pinned signatures.
 import {
@@ -340,6 +341,9 @@ export function LayerRow({
   catalogUnavailableReason,
 }: LayerRowProps) {
   const entry = LAYER_REGISTRY[layerId];
+  const satelliteVegetation = useVegetationStore(
+    (state) => layerId === "vegetation" && state.source === "satellite"
+  );
   const isToggledOn = useLayerToggle(layerId);
   const toggleLayer = useToggleLayer();
   const opacity = useLayerOpacity(layerId);
@@ -450,8 +454,10 @@ export function LayerRow({
       : [
           withheldReason !== null ? withheldReason : null,
           publicationStanding,
-          isActive && publicationStanding === null ? unavailableReason : null,
-          isActive ? coverageCaption : null,
+          isActive && publicationStanding === null && !satelliteVegetation ? unavailableReason : null,
+          isActive && coverageCaption !== null
+            ? satelliteVegetation ? `Measured-grid history: ${coverageCaption}` : coverageCaption
+            : null,
         ].filter((caption): caption is string => caption !== null);
 
   return (
@@ -556,6 +562,13 @@ export function LayerRow({
               see LayerSyncResetControl's own doc for why that separation matters. */}
           {mountsTimeStatus && (
             <div data-testid={`layer-time-slider-slot-${layerId}`}>
+              {satelliteVegetation && (
+                <p data-testid="vegetation-satellite-history-scope" className="mb-1 text-[10px] leading-relaxed text-[hsl(var(--muted-foreground))]">
+                  Measured-grid date selector: the availability dates, gaps and saved days below
+                  describe the measured grid, not satellite coverage. Satellite NDVI uses the selected
+                  month; this catalogue does not verify its imagery availability or acquisition date.
+                </p>
+              )}
               <LayerTimeSlider layerId={layerId} isFetchingCurrentDay={isFetchingSelectedDay} />
             </div>
           )}

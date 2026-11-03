@@ -51,6 +51,10 @@ partial_day = "write_and_recheck"
 revision_window_days = 550
 revision_days_per_turn = 31
 
+[coverage_target]
+first_day = "1990-09-30"
+minimum_fraction = 1.0
+
 [budget]
 # Logical requests (unweighted provider): 8 tiles x (1 daily-values chunk + 1 monitoring-locations)
 # for the forward window, and the same again for the revision block.

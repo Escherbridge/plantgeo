@@ -19,6 +19,7 @@ import { MapProvider } from "@/lib/map/map-context";
 import { useLayerStore } from "@/stores/layer-store";
 import { useMapStore } from "@/stores/map-store";
 import { useSoilStore } from "@/stores/soil-store";
+import { useVegetationStore } from "@/stores/vegetation-store";
 import { useTimeSliderStore } from "@/stores/time-slider-store";
 import { SCRUB_SETTLE_MS, useDrawnLayerDayStore } from "@/stores/useMetricAtDate";
 import { LAYER_REGISTRY } from "@/lib/map/layer-registry";
@@ -160,7 +161,7 @@ const viewportQueries = vi.hoisted(() => ({
   getGroundwater: vi.fn((): StreamflowQueryResult => ({ data: [] })),
   getVegetationIndex: vi.fn((): ViewportQueryResult => ({ data: undefined })),
   getDroughtClassification: vi.fn((): ViewportQueryResult => ({ data: undefined })),
-  getWeatherForBbox: vi.fn((): StreamflowQueryResult => ({ data: [] })),
+  getWeatherForBbox: vi.fn((): ViewportQueryResult => ({ data: [] })),
   getFireDetections: vi.fn((): ViewportQueryResult => ({ data: undefined })),
   // The five layers that moved off Martin's tile functions across
   // environmental_postgres_retirement_20260904 -- four in wave C, fire perimeters last. They are
@@ -525,6 +526,7 @@ function resetSliderStore() {
 }
 
 beforeEach(() => {
+  useVegetationStore.setState({ source: "measured" });
   useMapStore.setState(INITIAL_MAP_STATE, true);
   useSoilStore.setState(INITIAL_SOIL_STATE, true);
   // Sparse and empty by default -- an absent key means "as authored", so no case here starts
@@ -556,6 +558,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  useVegetationStore.setState({ source: "measured" });
   vi.clearAllMocks();
   dynamicStub.renders.length = 0;
   useMapStore.setState(INITIAL_MAP_STATE, true);
@@ -1922,7 +1925,7 @@ describe("LayerManager holds the previous day while the next one loads", () => {
     expect(lastRenderOf("WeatherLayer")?.data).toEqual([]);
   });
 
-  it("keeps absence and not-generated Parquet states empty without fault notices", () => {
+  it("keeps absence and not-generated states empty with distinct notices, not outage faults", () => {
     useMapStore.setState({ activeLayers: ["vegetation", "weather"] });
     viewportQueries.getVegetationIndex.mockReturnValue(
       landed({
@@ -1950,10 +1953,55 @@ describe("LayerManager holds the previous day while the next one loads", () => {
 
     expect(rendered.queryByTestId("parquet-layer-unavailable-vegetation")).toBeNull();
     expect(rendered.queryByTestId("parquet-layer-unavailable-weather")).toBeNull();
+    expect(rendered.getByTestId("parquet-layer-unavailable-vegetation-absent").textContent).toContain("no clear scene");
+    expect(rendered.getByTestId("parquet-layer-unavailable-weather-not-generated").textContent).toContain("have not been published");
     expect((lastRenderOf("VegetationLayer")?.geojson as GeoJSON.FeatureCollection).features).toEqual(
       []
     );
     expect(lastRenderOf("WeatherLayer")?.data).toEqual([]);
+  });
+
+  it("surfaces weather and measured vegetation transport failures before a typed answer", () => {
+    useMapStore.setState({ activeLayers: ["vegetation", "weather"] });
+    viewportQueries.getVegetationIndex.mockReturnValue({ data: undefined, isError: true });
+    viewportQueries.getWeatherForBbox.mockReturnValue({ data: undefined, isError: true });
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    const rendered = renderLayerManager(fakeMap);
+    for (const layer of ["vegetation", "weather"]) {
+      expect(rendered.getByTestId(`parquet-layer-unavailable-${layer}-request-failed`).textContent).toContain("could not be refreshed");
+    }
+  });
+
+  it("discloses truncation for weather and measured vegetation", () => {
+    useMapStore.setState({ activeLayers: ["vegetation", "weather"] });
+    const result = { state: "ready", requestedDay: "2026-07-28", servedDay: "2026-07-28", truncated: true };
+    viewportQueries.getVegetationIndex.mockReturnValue(landed({ ...result, data: { observations: [], days: [], firstDay: "2026-06-29", lastDay: "2026-07-28" } }));
+    viewportQueries.getWeatherForBbox.mockReturnValue(landed({ ...result, data: [] }));
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    const rendered = renderLayerManager(fakeMap);
+    for (const layer of ["vegetation", "weather"]) {
+      expect(rendered.getByTestId(`parquet-layer-unavailable-${layer}-truncated`).textContent).toContain("read limit");
+    }
+  });
+
+  it.each(["ready", "upstream_unavailable"])("keeps satellite vegetation independent of a measured %s answer", (state) => {
+    useTimeSliderStore.setState({ capabilities: streamBackedCapabilities, layerDates: { vegetation: "2026-06-14" } });
+    useMapStore.setState({ activeLayers: ["vegetation"] });
+    useVegetationStore.setState({ source: "satellite" });
+    viewportQueries.getVegetationIndex.mockReturnValue(landed(state === "ready"
+      ? { state, requestedDay: "2026-06-14", servedDay: "2026-05-20", truncated: true, data: { observations: [], days: [], firstDay: "2026-05-16", lastDay: "2026-06-14" } }
+      : { state, fault: { kind: "timeout", message: "measured source unavailable" } }));
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    const rendered = renderLayerManager(fakeMap);
+    expect(optionsOf(viewportQueries.getVegetationIndex).enabled).toBe(false);
+    expect(useDrawnLayerDayStore.getState().drawnDays.vegetation).toMatchObject({ drawnDate: null, isLoading: false });
+    expect(rendered.queryByTestId("parquet-layer-unavailable-vegetation")).toBeNull();
+    expect(rendered.queryByTestId("parquet-layer-unavailable-vegetation-truncated")).toBeNull();
+    expect(rendered.getByTestId("parquet-layer-unavailable-vegetation-satellite-period").textContent).toContain("Jun 2026");
+    expect(lastRenderOf("VegetationLayer")).toMatchObject({ year: 2026, month: 6, visible: true });
   });
 
   it("rejects a completed weather envelope for a different selected day", () => {

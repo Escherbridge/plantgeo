@@ -474,7 +474,13 @@ async def test_a_held_unresolved_day_spends_no_budget_while_a_scattered_hole_is_
     floor, hole = date(2026, 7, 1), date(2026, 8, 15)
     shipped = _enabled(gap_fill=True)
     assert shipped.days is not None
-    lane = shipped.model_copy(update={"days": shipped.days.model_copy(update={"floor": floor})})
+    assert shipped.coverage_target is not None
+    lane = shipped.model_copy(
+        update={
+            "days": shipped.days.model_copy(update={"floor": floor}),
+            "coverage_target": shipped.coverage_target.model_copy(update={"first_day": floor}),
+        }
+    )
     world = UsgsWaterDataWorld(gauges=[DALLES, MERIDIAN], reading_for=_conflict_on(floor))
     world.tile_overrides[(SECOND_WESTERN_TILE, MERIDIAN.monitoring_location_id)] = "999"
     store = MemoryLaneStore()

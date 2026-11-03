@@ -30,6 +30,7 @@ from agri_data_service.pipeline.runner.budget import (
 )
 from agri_data_service.pipeline.runner.checkpoints import TurnCheckpoints
 from agri_data_service.pipeline.runner.clock import utc_today
+from agri_data_service.pipeline.runner.completeness import coverage_digest
 from agri_data_service.pipeline.runner.contract import (
     PROBE_STATUSES,
     TURN_MODES,
@@ -47,6 +48,7 @@ from agri_data_service.pipeline.runner.contract import (
     Unsettled,
     Written,
 )
+from agri_data_service.pipeline.runner.coverage_target import assess_coverage
 from agri_data_service.pipeline.runner.digests import responses_digest
 from agri_data_service.pipeline.runner.exits import (
     EXIT_COMPLETED,
@@ -644,13 +646,53 @@ class _Turn:
         settled = await self._fan_out(census.lane_data_days(), census, probe=None, revise=True)
         await self._publish(settled, census, force=False)
 
+    def _target_support(self) -> frozenset[str]:
+        """Require explicit regional source support before evaluating a historical target."""
+        if self.spec.lane.coverage_target is None:
+            return frozenset()
+        support = frozenset[str]()
+        strategy = self.ports.strategy
+        if isinstance(strategy, SourceCoverageStrategy):
+            support = strategy.source_unit_ids(self.spec.lane, self.spec.region)
+        if not support:
+            raise TurnConfigurationError("coverage_target requires nonempty source support identities for this region")
+        return support
+
     async def _gap_fill(self) -> int:
         """D3: the census holes before the forward window, oldest first, capped (S12: disabled by default)."""
         ensure_gap_fill_enabled(self.spec.lane)
+        target = self.spec.lane.coverage_target
+        support = self._target_support()
         self.window = window = gap_fill_window(self.spec.lane, today=self._today)
         if window is None:
+            if target is not None:
+                self.report.set(coverage_target={"state": "not_yet_historical", "region": self.spec.region.slug})
             return EXIT_COMPLETED
         census = self._census(self.streams, window)
+        if target is not None:
+            status = assess_coverage(target, census)
+            pending_range = target.last_day is not None and window.last < target.last_day
+            state = status.report()
+            if pending_range:
+                state["state"] = "range_not_yet_historical"
+            elif not status.reached and not census.owed_days():
+                state["state"] = "no_fillable_gaps"
+            self.report.set(
+                coverage_target={
+                    **state,
+                    "region": self.spec.region.slug,
+                    "support_sha256": coverage_digest(support),
+                    "first_day": window.first.isoformat(),
+                    "last_day": window.last.isoformat(),
+                    "declared_last_day": target.last_day.isoformat() if target.last_day else "historical_edge",
+                    "minimum_fraction": target.minimum_fraction,
+                    "assessment": "before_turn",
+                }
+            )
+            if status.reached and not pending_range:
+                self._owed_days(census, window)
+                await self._repair_ladders(census)
+                return EXIT_COMPLETED
         unresolved = census.unresolved_days()
         plan = plan_gap_fill(self.spec.lane, owed=self._owed_days(census, window), last=unresolved)
         self.tally.days_candidate = len(plan.fill) + len(plan.retention_exceeded) + len(plan.overflow) + len(plan.held)

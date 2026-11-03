@@ -1,5 +1,15 @@
 # Panels
 
+Weather-history nearest-sample distances use the shared Haversine helper's meters for ordering
+and convert to kilometers exactly once for the displayed kilometer label.
+
+Climate details distinguish unpublished days, governed absence, published empty viewports and
+samples that cannot form contours. Vegetation's measured coverage warning is hidden when the
+selected source is the independently served satellite composite.
+The satellite description makes no gap-free imagery claim. Its existing date selector is still
+bound to measured history; the map row labels those catalogue dates, gaps and local saved days
+as measured-grid evidence, not verification of satellite coverage.
+
 Evidence checks retain requested dates separately from the reader's served dataset dates.
 For a static snapshot the dataset date is its publication/release day, not a measurement at the
 requested day. Never derive either date by truncating or localizing an observation timestamp.

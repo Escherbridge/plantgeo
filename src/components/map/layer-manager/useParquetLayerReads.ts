@@ -30,6 +30,7 @@ import {
 } from "@/lib/environmental/parquet-presentation";
 import type { ParquetLaneReport } from "@/components/map/layer-manager/parquet-layer-faults";
 import { WORLD_EXTENT_BBOX } from "@/lib/map/world-extent";
+import { useVegetationStore } from "@/stores/vegetation-store";
 
 /** The viewport every read here keys on, from the one `useViewportBounds()` derivation. */
 export interface ParquetReadViewport {
@@ -279,6 +280,8 @@ export function useVegetationRead(
   vegetationDay: DebouncedMapDay
 ) {
   const vegetationEnabled = layerVisibility.vegetation;
+  const vegetationSource = useVegetationStore((state) => state.source);
+  const measuredVegetationEnabled = vegetationEnabled && vegetationSource === "measured";
   // The measured NDVI grid, read from the warehouse: one cell per sampling-grid square,
   // carrying that cell's newest Sentinel-2 reading. Distinct from the GIBS raster
   // VegetationLayer also draws -- that one is a global 8-day composite this platform
@@ -289,7 +292,7 @@ export function useVegetationRead(
   const vegetationQuery = trpc.environmental.getVegetationIndex.useQuery(
     { bbox: bbox ?? WORLD_EXTENT_BBOX, date: vegetationDay.requestDate, zoom },
     {
-      enabled: vegetationEnabled && bbox !== null,
+      enabled: measuredVegetationEnabled && bbox !== null,
       staleTime: 60 * 60 * 1000,
       placeholderData: keepPreviousData,
     }
@@ -303,7 +306,7 @@ export function useVegetationRead(
     () => presentParquetVegetation(vegetationQuery.data),
     [vegetationQuery.data]
   );
-  return { vegetationEnabled, vegetationQuery, vegetationGeoJSON };
+  return { vegetationEnabled, vegetationSource, measuredVegetationEnabled, vegetationQuery, vegetationGeoJSON };
 }
 
 export type VegetationRead = ReturnType<typeof useVegetationRead>;

@@ -14,6 +14,47 @@
  */
 
 import type { ParquetLayerFault } from "@/components/map/ParquetLayerFaultBanner";
+import type { ParquetBrowserReaderResult } from "@/lib/environmental/parquet-presentation";
+
+export interface SampledLaneReport {
+  layerId: "weather" | "vegetation";
+  isDrawn: boolean;
+  result: ParquetBrowserReaderResult<unknown> | undefined;
+  requestFailed: boolean;
+  sampleCount: number;
+}
+
+/** Describe the returned coverage without treating an empty view as an observed absence. */
+function sampledLaneNotices(lane: SampledLaneReport): ParquetLayerFault[] {
+  if (!lane.isDrawn) return [];
+  const subject = lane.layerId === "weather" ? "Weather observations" : "Measured vegetation observations";
+  const notices: ParquetLayerFault[] = [];
+  const result = lane.result;
+  if (lane.requestFailed) {
+    notices.push({
+      layerId: `${lane.layerId}-request-failed`,
+      tone: "fault",
+      message: `${subject} could not be refreshed for this view.${result?.state === "ready" && lane.sampleCount > 0 ? " The retained readings are still shown." : " No readings are shown."}`,
+    });
+  }
+  if (result?.state === "upstream_unavailable") {
+    notices.push({ layerId: lane.layerId, tone: "fault", message: `${subject} are temporarily unavailable from the data service.` });
+  } else if (result?.state === "absent") {
+    notices.push({ layerId: `${lane.layerId}-absent`, tone: "notice", message: `${subject}: the source recorded an absence for the period requested at ${result.requestedDay}. ${result.evidence.reason}` });
+  } else if (result?.state === "not_generated") {
+    notices.push({ layerId: `${lane.layerId}-not-generated`, tone: "notice", message: result.reason === "lane_never_written"
+      ? `${subject} have no published data yet.`
+      : `${subject} have not been published for the period requested at ${result.requestedDay}.` });
+  } else if (result?.state === "ready") {
+    if (result.truncated) {
+      notices.push({ layerId: `${lane.layerId}-truncated`, tone: "notice", message: `A read limit was reached. The ${subject.toLowerCase()} shown may cover only part of this view.` });
+    }
+    if (lane.sampleCount === 0) {
+      notices.push({ layerId: `${lane.layerId}-empty`, tone: "notice", message: `${subject}: no eligible samples were returned for this view and period. This does not establish an observed absence.` });
+    }
+  }
+  return notices;
+}
 
 /** One wave-C Parquet lane's drawn state, reduced to what the stack asks about it. */
 export interface ParquetLaneReport {
@@ -50,10 +91,8 @@ export interface ParquetLayerFaultInput {
   burnSeverityEnabled: boolean;
   burnSnapshot: BurnSeverityCaptureSnapshot | undefined;
   wavecLanes: readonly ParquetLaneReport[];
-  vegetationEnabled: boolean;
-  vegetationUnavailable: boolean;
-  weatherEnabled: boolean;
-  weatherUnavailable: boolean;
+  sampledLanes: readonly SampledLaneReport[];
+  satelliteVegetation: { isDrawn: boolean; period: string | null; unavailableReason: string | null };
   fire: FireLaneReport;
   /** The land-context viewport lane's single caption; see `useLandContextViewportBoundaries`. */
   landContextFault: ParquetLayerFault | null;
@@ -96,19 +135,14 @@ export function buildParquetLayerFaults(input: ParquetLayerFaultInput): ParquetL
           }
         : null
     ),
-    input.vegetationEnabled && input.vegetationUnavailable
+    ...input.sampledLanes.flatMap(sampledLaneNotices),
+    input.satelliteVegetation.isDrawn
       ? {
-          layerId: "vegetation",
-          tone: "fault" as const,
-          message:
-            "Measured vegetation observations are temporarily unavailable from the data service.",
-        }
-      : null,
-    input.weatherEnabled && input.weatherUnavailable
-      ? {
-          layerId: "weather",
-          tone: "fault" as const,
-          message: "Weather observations are temporarily unavailable from the data service.",
+          layerId: "vegetation-satellite-period",
+          tone: "notice" as const,
+          message: input.satelliteVegetation.unavailableReason ?? (input.satelliteVegetation.period === null
+            ? "Satellite NDVI is waiting for a selected period."
+            : `Satellite NDVI requests the ${input.satelliteVegetation.period} composite. Its served acquisition date is not reported; the measured grid's date does not apply.`),
         }
       : null,
     fire.isDrawn && fire.state === "upstream_unavailable"

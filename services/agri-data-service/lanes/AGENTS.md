@@ -54,6 +54,33 @@ tree is quarantined.
   `[[streams]]` slug belongs to exactly one lane (S18).
 - Crons are 5-field numeric UTC: `*`, `a`, `a-b`, `*/n`, `a/n`, `a-b/n`, lists. No names or macros.
 
+## Historical data targets
+
+Config `daily_series` archive ingest lanes may declare `[coverage_target]` with `first_day`,
+optional inclusive `last_day`, and `minimum_fraction` (greater than zero, at most one; default one).
+Omitting `last_day` means the day before the forward recheck window, derived from the configured
+publication lag, never the newest stored row. The target uses the selected region manifest and
+the strategy's full `source_unit_ids`; strategies without that contract refuse target execution.
+`water-gauges-daily` targets its existing 1990-09-30 floor through that rolling historical edge at
+100 percent. Its enabled gap-fill schedule remains enabled. Each fire evaluates fresh evidence;
+at target it makes no source requests, and a later loss of coverage resumes filling automatically.
+
+The numerator requires all streams, every published rung and matching source-completeness proofs.
+Absence markers are reported separately and do not earn data coverage. A target below 100 percent
+intentionally tolerates remaining holes: reports retain their count. `no_fillable_gaps` with an
+unmet target is not success; it means the existing census has no repairable hole (for example,
+only governed absences remain). Marker existence alone is not a new claim of verified absence.
+Changing the source support invalidates old completeness proofs. Census/receipt failures propagate,
+never become target success. Targets over the 20,000-day census bound refuse rather than silently
+discarding older obligations. Fixed end dates not yet historical report that pending state.
+
+Forward refresh and its configured revision rotation run independently of this historical target.
+Revisions outside that rotation are not automatically discovered; enlarge the revision window or
+explicitly reopen affected evidence when a provider announces an older correction. Target idling
+still costs a bounded census and executor invocation; it is not zero object-store traffic. Legacy
+executors and release/static lanes do not support this option. No target changes source retention,
+publication, or an activation gate.
+
 ## Provider files
 
 - `api_key_env` holds the NAME of an environment variable ending in `_KEY`, never a key. The owner

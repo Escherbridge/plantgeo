@@ -21,6 +21,7 @@ python -m agri_data_service.pipeline.runner --lane <id> --mode forward|gap-fill|
 | `census.py` | the full-ladder census |
 | `receipts.py` | per stream-day turn receipts (S11 digests, units, input digests, pruned inputs) |
 | `completeness.py` | bounded yearly proofs of complete source support; absent proof remains source debt |
+| `coverage_target.py` | fresh historical data coverage and explicit remaining-gap counts |
 | `reader.py` / `writer.py` | the read and write ports, and their `pipeline/parquet` bindings |
 | `digests.py` | table and response digests |
 | `turn.py` | `run_turn`: one turn, start to finish |
@@ -121,6 +122,27 @@ weighted lane firing more than once a day without `probe_edge` (S6) is `Strategy
   per-turn cost.
 
 ## Budget
+
+### Historical target idle
+
+Before historical fan-out, a lane with `[coverage_target]` reads the selected region's full-ladder
+census with the strategy's expected support identities. Only complete data days across every
+stream count. Partial support, unresolved identities, missing rungs, and absent markers do not.
+At the configured fraction, the turn reports `coverage_target.state = target_reached` and returns
+without requesting upstream data. Before returning, it still classifies and performs bounded
+source-free ladder repairs; a failed repair remains explicit `ladder_owed` debt even when a
+fractional data target has been met. The next scheduled turn repeats the assessment, so missing data
+or changed source support reopens work automatically when the target falls below its threshold.
+An unmet target with no census debt reports `no_fillable_gaps`, not target success. Absence-marker
+counts describe the existing census, not a new content-validation guarantee. Read failures are
+normal runner failures and cannot produce an idle-success report.
+
+The report binds the region, support digest, evaluated range, declared end, threshold and remaining
+days. It is a **before-turn** assessment; a successful fill is reflected by the next scheduled
+assessment, not an invented post-write percentage. A fixed end beyond the historical edge remains
+`range_not_yet_historical`, even if the eligible subset is complete. Forward and rolling revisions
+are independent. Changing target configuration changes only historical selection, not published
+data, availability, activation, or the source's retention contract.
 
 `mode_cap`: `forward_max_weighted_calls` or `gap_fill_max_weighted_calls`, lowered (never raised)
 by `--weighted-budget` (executor admission, WQ-4, or an operator). On a weighted provider the cap

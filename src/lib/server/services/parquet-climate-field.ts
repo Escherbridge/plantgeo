@@ -334,8 +334,8 @@ export function parquetClimateFieldCollection(
 ): ZoomedClimateFieldCollection {
   const renderForm = tierRenderForm(zoomTier, signal, requestedRenderForm);
   const latticeCellCount = climateFieldLatticeCellCount(bbox, zoomTier);
-  if (result.state !== "ready" || result.data.length === 0) {
-    return emptyCollection(
+  if (result.state !== "ready") {
+    const empty = emptyCollection(
       signal,
       variant,
       renderForm,
@@ -343,26 +343,19 @@ export function parquetClimateFieldCollection(
       latticeCellCount,
       zoomTier
     );
+    return result.state === "absent"
+      ? { ...empty, reason: "governed_absence", absenceReason: result.evidence.reason }
+      : empty;
   }
   const definition = climateFieldSignalDefinition(signal);
   const lattice = servedCellLattice(zoomTier, CLIMATE_FIELD_LANE);
   const rows = result.data.slice(0, CLIMATE_FIELD_MAX_CELLS);
   const features = cellFeatures(signal, renderForm, lattice, rows);
-  if (features.length === 0) {
-    return emptyCollection(
-      signal,
-      variant,
-      renderForm,
-      result.requestedDay,
-      latticeCellCount,
-      zoomTier
-    );
-  }
   return {
     type: "FeatureCollection",
     features,
     availability: "published",
-    reason: null,
+    reason: rows.length === 0 ? "empty_viewport" : features.length === 0 ? "no_renderable_features" : null,
     granularity: granularityForZoomTier(zoomTier),
     zoomTier,
     signal,

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, screen } from "@testing-library/react";
 import { renderWithProviders } from "@/test/utils";
 import { LayerRow } from "@/components/map/layer-panel/LayerRow";
@@ -12,6 +12,7 @@ import {
 import { useLayerStore } from "@/stores/layer-store";
 import { useLayerWindowStore } from "@/stores/layer-window-store";
 import { useMapStore } from "@/stores/map-store";
+import { useVegetationStore } from "@/stores/vegetation-store";
 import { hasSelectableDay, useTimeSliderStore } from "@/stores/time-slider-store";
 import {
   clearLayerSyncedDays,
@@ -41,11 +42,14 @@ const mockUseLayerSyncedBytes = vi.mocked(useLayerSyncedBytes);
 const mockClearLayerSyncedDays = vi.mocked(clearLayerSyncedDays);
 
 beforeEach(() => {
+  useVegetationStore.setState({ source: "measured" });
   mockUseSyncedDays.mockReturnValue(new Set());
   mockUseSyncIndexReady.mockReturnValue(true);
   mockUseLayerSyncedBytes.mockReturnValue(0);
   mockClearLayerSyncedDays.mockReset().mockResolvedValue(undefined);
 });
+
+afterEach(() => { useVegetationStore.setState({ source: "measured" }); });
 
 /**
  * The gate these cases exist for.
@@ -139,6 +143,18 @@ describe("LayerRow time control gate", () => {
 
     expect(timeSliderSlotFor("water")).not.toBeNull();
     expect(screen.getByTestId("layer-time-slider-range-water")).not.toBeNull();
+  });
+
+  it("scopes the existing vegetation timeline to measured history when satellite is selected", () => {
+    useVegetationStore.setState({ source: "satellite" });
+    renderRow("vegetation");
+    expect(screen.getByTestId("vegetation-satellite-history-scope").textContent).toContain("not satellite coverage");
+    expect(timeSliderSlotFor("vegetation")).not.toBeNull();
+  });
+
+  it("does not show the satellite catalogue caveat for measured vegetation", () => {
+    renderRow("vegetation");
+    expect(screen.queryByTestId("vegetation-satellite-history-scope")).toBeNull();
   });
 
   it("offers no time control until the layer is switched on", () => {

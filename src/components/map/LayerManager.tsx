@@ -207,10 +207,27 @@ export default function LayerManager() {
     burnSeverityEnabled,
     burnSnapshot,
     wavecLanes,
-    vegetationEnabled,
-    vegetationUnavailable: vegetationQuery.data?.state === "upstream_unavailable",
-    weatherEnabled,
-    weatherUnavailable: weatherQuery.data?.state === "upstream_unavailable",
+    sampledLanes: [
+      {
+        layerId: "vegetation",
+        isDrawn: vegetationRead.measuredVegetationEnabled,
+        result: vegetationQuery.data,
+        requestFailed: vegetationQuery.isError,
+        sampleCount: vegetationGeoJSON.features.length,
+      },
+      {
+        layerId: "weather",
+        isDrawn: weatherEnabled,
+        result: weatherRead.weatherDrawQuery.data,
+        requestFailed: weatherQuery.isError,
+        sampleCount: weatherData.length,
+      },
+    ],
+    satelliteVegetation: {
+      isDrawn: vegetationEnabled && vegetationRead.vegetationSource === "satellite",
+      period: vegetationMode.compositePeriod,
+      unavailableReason: vegetationMode.compositeUnavailableReason,
+    },
     fire: {
       isDrawn: layerVisibility.fire,
       state: fire.state,

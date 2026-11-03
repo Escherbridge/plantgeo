@@ -54,7 +54,7 @@ export function buildLiveLayerDayReports({
   drought: { droughtQuery },
   styleBaked,
   water: { waterEnabled, streamflowQuery, groundwaterQuery },
-  vegetation: { vegetationEnabled, vegetationQuery },
+  vegetation: { vegetationEnabled, vegetationSource, vegetationQuery },
   soil,
   weather: { weatherEnabled, weatherDrawQuery },
 }: LiveLayerDayReads): LiveLayerDayReport[] {
@@ -93,7 +93,9 @@ export function buildLiveLayerDayReports({
       layerId: "vegetation",
       isDrawn: vegetationEnabled,
       requestedDate: days.vegetationDay.settledDate,
-      ...parquetDrawnDayFlags(vegetationQuery),
+      ...(vegetationSource === "measured"
+        ? parquetDrawnDayFlags(vegetationQuery)
+        : { servedDate: null, isFetching: false, hasLandedForRequestedDate: false, isShowingPreviousDay: false }),
     },
     {
       // No selected day; typed publication availability determines its drawn date.

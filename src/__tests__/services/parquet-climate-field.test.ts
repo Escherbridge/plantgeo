@@ -78,6 +78,28 @@ function ringArea(ring: number[][]): number {
 }
 
 describe("Parquet climate-field collection adapter", () => {
+  it("keeps a published empty viewport distinct from an unpublished day, including read limits", () => {
+    const collection = parquetClimateFieldCollection(
+      { ...ready([]), truncated: true }, "precipitation", "mean", "-74,40,-73,41", 13, "field"
+    );
+    expect(collection).toMatchObject({ availability: "published", reason: "empty_viewport", observedDay: "2026-08-06", requestedDay: "2026-08-06", cellCount: 0, features: [], truncated: true });
+  });
+
+  it("preserves governed absence evidence rather than calling it missing publication", () => {
+    const collection = parquetClimateFieldCollection(
+      { state: "absent", requestedDay: "2026-08-06", servedDay: "2026-08-06", evidence: { reason: "Source returned no observations", upstreamResponse: "empty", recordedAt: "2026-08-07T00:00:00Z", runId: "absence-run" } },
+      "precipitation", "mean", "-116,42,-114,44", 13, "field"
+    );
+    expect(collection).toMatchObject({ availability: "unavailable", reason: "governed_absence", absenceReason: "Source returned no observations", observedDay: null, features: [] });
+  });
+
+  it("does not call published samples unpublished when they cannot form contours", () => {
+    const collection = parquetClimateFieldCollection(
+      ready([row(5)]), "air-temperature", "mean", "-116,42,-114,44", 5, "isoline"
+    );
+    expect(collection).toMatchObject({ availability: "published", reason: "no_renderable_features", observedDay: "2026-08-06", cellCount: 1, features: [] });
+  });
+
   it("preserves the existing GeoJSON contract from an exact Parquet day, keeping a row whose allowedClientExposure is false (export artifact, not a read gate -- owner 2026-10-07)", () => {
     const collection = parquetClimateFieldCollection(
       ready([row(13)]),

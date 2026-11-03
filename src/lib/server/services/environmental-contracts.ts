@@ -86,7 +86,8 @@ export type ClimateFieldFeatureProperties = {
 export interface PublishedClimateFieldCollection
   extends GeoJSON.FeatureCollection<GeoJSON.Polygon | GeoJSON.MultiPolygon | GeoJSON.Point> {
   availability: "published" | "unavailable";
-  reason: "not_published" | "stale" | "not_forecastable" | null;
+  reason: "not_published" | "stale" | "not_forecastable" | "empty_viewport" | "no_renderable_features" | "governed_absence" | null;
+  absenceReason?: string;
   granularity: ZoomGranularity;
   signal: ClimateFieldSignalId;
   variant: AirTemperatureVariant;

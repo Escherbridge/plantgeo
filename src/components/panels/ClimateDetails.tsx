@@ -255,8 +255,28 @@ function ClimateSignalReport({
 
       {field?.reason === "not_published" && (
         <p role="status" aria-live="polite" className={NOTICE_CLASS_NAME}>
-          The NASA POWER {definition.fieldLabel} lane does not cover this view. Blank ground here
-          is missing coverage on our side, not {definition.blankGroundMisreading}.
+          The NASA POWER {definition.fieldLabel} lane has not published the requested day.
+          Blank ground here is missing publication, not {definition.blankGroundMisreading}.
+        </p>
+      )}
+
+      {field?.reason === "empty_viewport" && (
+        <p role="status" aria-live="polite" className={NOTICE_CLASS_NAME}>
+          Data is published for {field.observedDay}, but no samples were returned in this view.
+          Blank ground is not {definition.blankGroundMisreading}.
+        </p>
+      )}
+
+      {field?.reason === "no_renderable_features" && (
+        <p role="status" aria-live="polite" className={NOTICE_CLASS_NAME}>
+          Published samples are available, but they do not form the requested display in this view.
+          Choose a filled view or move the map to see the sampled cells.
+        </p>
+      )}
+
+      {field?.reason === "governed_absence" && (
+        <p role="status" aria-live="polite" className={NOTICE_CLASS_NAME}>
+          The source recorded an absence for {field.requestedDay}: {field.absenceReason ?? "reason unavailable"}.
         </p>
       )}
 

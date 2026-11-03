@@ -17,10 +17,8 @@ function quietInput(overrides: Partial<ParquetLayerFaultInput> = {}): ParquetLay
     burnSeverityEnabled: false,
     burnSnapshot: undefined,
     wavecLanes: [],
-    vegetationEnabled: false,
-    vegetationUnavailable: false,
-    weatherEnabled: false,
-    weatherUnavailable: false,
+    sampledLanes: [],
+    satelliteVegetation: { isDrawn: false, period: null, unavailableReason: null },
     fire: {
       isDrawn: false,
       state: "ready",
@@ -36,6 +34,39 @@ function quietInput(overrides: Partial<ParquetLayerFaultInput> = {}): ParquetLay
 describe("a quiet map says nothing", () => {
   it("returns no entries when every lane is off and every read is clean", () => {
     expect(buildParquetLayerFaults(quietInput())).toEqual([]);
+  });
+});
+
+describe("sampled layers distinguish coverage from publication and request failures", () => {
+  const ready = { state: "ready" as const, requestedDay: "2026-08-06", servedDay: "2026-08-06", data: [], truncated: true };
+
+  it.each(["weather", "vegetation"] as const)("discloses truncated %s even when the returned subset is empty", (layerId) => {
+    const faults = buildParquetLayerFaults(quietInput({ sampledLanes: [{ layerId, isDrawn: true, result: ready, requestFailed: false, sampleCount: 0 }] }));
+    expect(faults).toEqual(expect.arrayContaining([
+      expect.objectContaining({ layerId: `${layerId}-truncated`, tone: "notice" }),
+      expect.objectContaining({ layerId: `${layerId}-empty`, tone: "notice" }),
+    ]));
+    expect(faults.every((fault) => fault.tone === "notice")).toBe(true);
+  });
+
+  it("keeps a refresh failure visible beside retained, truncated readings", () => {
+    const faults = buildParquetLayerFaults(quietInput({ sampledLanes: [{ layerId: "weather", isDrawn: true, result: ready, requestFailed: true, sampleCount: 2 }] }));
+    expect(faults.find((fault) => fault.layerId === "weather-request-failed")).toMatchObject({ tone: "fault", message: expect.stringContaining("retained readings") });
+    expect(faults.find((fault) => fault.layerId === "weather-truncated")).toMatchObject({ tone: "notice" });
+    expect(faults.some((fault) => fault.layerId === "weather-empty")).toBe(false);
+  });
+
+  it("reports transport failure before any typed answer", () => {
+    const faults = buildParquetLayerFaults(quietInput({ sampledLanes: [{ layerId: "vegetation", isDrawn: true, result: undefined, requestFailed: true, sampleCount: 0 }] }));
+    expect(faults).toEqual([expect.objectContaining({ layerId: "vegetation-request-failed", tone: "fault", message: expect.stringContaining("No readings are shown") })]);
+  });
+
+  it("does not announce hidden measured data while satellite vegetation is selected", () => {
+    const faults = buildParquetLayerFaults(quietInput({
+      sampledLanes: [{ layerId: "vegetation", isDrawn: false, result: ready, requestFailed: true, sampleCount: 0 }],
+      satelliteVegetation: { isDrawn: true, period: "Aug 2026", unavailableReason: null },
+    }));
+    expect(faults).toEqual([expect.objectContaining({ layerId: "vegetation-satellite-period", tone: "notice", message: expect.stringContaining("served acquisition date is not reported") })]);
   });
 });
 

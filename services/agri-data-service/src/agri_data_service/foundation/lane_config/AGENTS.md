@@ -30,6 +30,13 @@ does I/O (the loader reads files), and is a ruled exception on the same grounds.
 
 ## Loader
 
+`[coverage_target]` is optional and limited to config-executed daily archive ingest lanes. It declares
+an inclusive historical range and minimum data-day fraction, with the current manifest supplying
+the spatial boundary. The runner refuses a strategy without stable source support identities.
+The range cannot precede either the source or lane floor; explicit ranges cannot exceed the census
+limit. An omitted end is checked against that same limit at runtime. See `lanes/AGENTS.md`
+"Historical data targets" for the distinction between data coverage and governed absence.
+
 Provider endpoints may declare `optional_api_key` only without a customer host, with
 `api_key_env` and the key's name for the provider's `api_key_transport`: `api_key_parameter` for
 `query` (the default; restricted to the redactor's `apikey` and `api_key` spellings) or

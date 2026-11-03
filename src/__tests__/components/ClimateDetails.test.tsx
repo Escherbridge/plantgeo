@@ -23,7 +23,8 @@ type ClimateFieldResult = {
   data:
     | (GeoJSON.FeatureCollection & {
         availability: "published" | "unavailable";
-        reason: "not_published" | "stale" | "not_forecastable" | null;
+        reason: "not_published" | "stale" | "not_forecastable" | "empty_viewport" | "no_renderable_features" | "governed_absence" | null;
+        absenceReason?: string;
         signal: ClimateFieldSignalId;
         variant: string;
         unit: string;
@@ -216,10 +217,24 @@ describe("ClimateDetails notices", () => {
 
     renderPanel();
 
-    expect(screen.getByText(/does not cover this view/)).toBeTruthy();
+    expect(screen.getByText(/has not published the requested day/)).toBeTruthy();
     expect(
       screen.getByText(new RegExp(AIR_TEMPERATURE.blankGroundMisreading))
     ).toBeTruthy();
+  });
+
+  it("describes published data outside the viewport without calling it unpublished", () => {
+    queries.getClimateField.mockReturnValue({ data: collection({ reason: "empty_viewport", cellCount: 0 }) });
+    renderPanel();
+    expect(screen.getByText(/Data is published for.*no samples were returned in this view/)).toBeTruthy();
+    expect(screen.queryByText(/has not published/)).toBeNull();
+  });
+
+  it("quotes governed absence evidence separately from a missing publication", () => {
+    queries.getClimateField.mockReturnValue({ data: collection({ availability: "unavailable", reason: "governed_absence", absenceReason: "source has no settled values", observedDay: null, cellCount: 0 }) });
+    renderPanel();
+    expect(screen.getByText(/source recorded an absence.*source has no settled values/)).toBeTruthy();
+    expect(screen.queryByText(/has not published/)).toBeNull();
   });
 
   it("reports a truncated read as part of the view rather than as the view", () => {

@@ -263,6 +263,13 @@ def gap_fill_window(lane: LaneConfig, *, today: date) -> DayRange | None:
     last = (forward.first if forward is not None else candidate_edge(lane.days, today=today)) - timedelta(days=1)
     earliest = lane.source.history.earliest if lane.source is not None else None
     first = lane.days.floor or earliest
+    target = lane.coverage_target
+    if target is not None:
+        first = target.first_day
+        if target.last_day is not None:
+            last = min(last, target.last_day)
+        if (last - first).days + 1 > MAX_GAP_WINDOW_DAYS:
+            raise GapFillDisabledError("coverage_target exceeds the census limit; narrow the declared range")
     if first is None or first > last:
         return None
     first = max(first, last - timedelta(days=MAX_GAP_WINDOW_DAYS - 1))

@@ -1,0 +1,13 @@
+{
+  "id": "data_coverage_truth_20261102",
+  "title": "Coverage-driven ingestion and truthful serving",
+  "status": "in_progress",
+  "created_on": "2026-11-02",
+  "type": "feature",
+  "release_lane": "data-fixes",
+  "depends_on": [],
+  "related": [
+    "config_driven_ingestion_20260926",
+    "environmental_parquet_serving_20260912"
+  ]
+}

@@ -1277,6 +1277,18 @@ whole-range unknown history has no claimed covered tail, and an unknown suffix i
 This prevents a history ending today from claiming it is only undescribed before tomorrow and
 then announcing no gaps after that nonexistent boundary.
 
+## Sampled-layer read state (2026-11-02)
+
+Weather and measured vegetation disclose read limits, empty viewport results, governed absences,
+missing publication and transport failures separately. A returned subset remains drawable; no
+sample-count claim establishes completeness of the upstream poll. Failed refresh notices preserve
+retained readings without presenting them as a newly successful request.
+
+Satellite vegetation disables the measured query and excludes its date and errors from the drawn
+state. The map names the requested composite period, but has no verified tile acquisition date;
+its drawn-day entry therefore stays null rather than borrowing a measured-grid publication day.
+Measured coverage warnings apply only to the measured source.
+
 ## Weather support fidelity (2026-09-10)
 
 Wind & Weather reads the Open-Meteo current-conditions sampled-model side lane, not

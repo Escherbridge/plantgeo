@@ -170,13 +170,13 @@ export function WeatherHistoryReport({ bbox, zoom }: WeatherHistoryReportProps) 
       }, null),
     [anchor.lat, anchor.lon, rows]
   );
-  const representativeDistance =
+  const representativeDistanceKm =
     representative === null
       ? null
       : haversineDistance(
           [anchor.lon, anchor.lat],
           [representative.longitude, representative.latitude]
-        );
+        ) / 1000;
 
   const temperatureRange = range(rows.map((row) => row.temperatureC));
   const averageTemperature = mean(rows.map((row) => row.temperatureC));
@@ -283,7 +283,7 @@ export function WeatherHistoryReport({ bbox, zoom }: WeatherHistoryReportProps) 
                     {weatherPoint ? "Nearest to selected point" : "Nearest to view center"}
                   </p>
                   <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
-                    {representativeDistance?.toFixed(1)} km from {weatherPoint ? "the selected point" : "map center"}
+                    {representativeDistanceKm?.toFixed(1)} km from {weatherPoint ? "the selected point" : "map center"}
                   </p>
                 </div>
                 <button
