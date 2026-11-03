@@ -1,0 +1,31 @@
+{
+  "slug": "custom-colorado",
+  "display_name": "Colorado test region",
+  "envelope": { "west": -108, "south": 38, "east": -106, "north": 40 },
+  "default_camera_envelope": { "west": -108, "south": 38, "east": -106, "north": 40 },
+  "sub_envelopes": { "test_scope": { "west": -108, "south": 38, "east": -107, "north": 39 } },
+  "crs": 4326,
+  "lattice_pitch_degrees": 0.01,
+  "lattice_origin_rule": "floor_to_cell_origin",
+  "timezone": "America/Denver",
+  "iso_country_codes": ["US"],
+  "admin_codes": ["US-CO"],
+  "platform_layers": [
+    "burn-severity", "crop-cover", "drought", "evacuation-zones", "fire-detections",
+    "fire-perimeters", "fire-risk", "land-context", "sensors", "climate-field-air-temperature",
+    "climate-field-dew-point", "climate-field-precipitation", "climate-field-relative-humidity",
+    "climate-field-shortwave-radiation", "climate-field-soil-wetness-profile",
+    "climate-field-soil-wetness-root-zone", "climate-field-soil-wetness-surface", "climate-field-wind-speed",
+    "soil-field-moisture", "soil-field-temperature", "soil-field-vpd", "soil-survey",
+    "vegetation", "water-gauges", "watersheds", "weather-forecast", "weather-observations"
+  ],
+  "enabled_layers": [{ "layer_slug": "weather-observations", "source_slug": "open_meteo", "coverage": "global" }],
+  "analysis_lattices": {
+    "analysis-0p25": {
+      "pitch_degrees": 0.25,
+      "origin_rule": "half_step",
+      "envelope": { "west": -108, "south": 38, "east": -106, "north": 40 },
+      "cell_key_prefix": "test-region:"
+    }
+  }
+}

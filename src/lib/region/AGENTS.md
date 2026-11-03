@@ -1,5 +1,34 @@
 # `src/lib/region` — the web tree's half of the manifest contract
 
+## Custom deployment manifest foundation
+
+`NEXT_PUBLIC_PLANTGEO_REGION_MANIFEST_JSON` accepts the service's canonical snake_case
+JSON, paired with an explicit matching `NEXT_PUBLIC_PLANTGEO_REGION`. Docker passes both
+into the Next build; these are public configuration, never secrets. Set the corresponding
+service variables to the same selection and document. Exactly empty JSON is absent;
+whitespace, malformed JSON, duplicate keys, unknown fields, payloads over 64 KiB UTF-8,
+and packaged-slug overrides are refused without echoing invalid input.
+
+The adapter maps known field names and preserves dictionary keys. Custom manifests retain
+the complete platform vocabulary; enabled bindings may be a subset. Immutable custom
+documents use a content-keyed eight-entry LRU separate from the packaged cache. Semantic
+checks cover finite WGS84 bounds, containment, unique scope/bindings, country/admin formats,
+and an IANA time zone recognized by the runtime. Browser ICU and Python tzdata can differ;
+the shared Colorado fixture proves a supported case, not every historical timezone alias.
+The fixture lives beside the Python manifests as `custom_colorado.fixture.json`, remains
+unregistered, and is available in service-only checkouts and the existing web parity context.
+
+Analysis lattices require whole cells, pitch and centroids exactly representable at four
+decimal places, and at most 100,000 cells. BigInt decimal arithmetic checks before allocation.
+Zero origin with pitch 0.0001 fails; pitch 0.0002 or a 0.00005 shifted origin at pitch 0.0001
+preserves exact identities.
+
+This is loader foundation, not production admission. `regionIdentityVerdict` still compares
+slugs only; equal slugs with different content remain undetected. Canonical content identity
+in serving/capabilities/cache namespaces, source configuration, scheduling, and published
+selected-day evidence remain requirements before enabling a custom region. This change
+activates no region or data lane.
+
 `conductor/code_styleguides/federation.md` §1 wants one typed manifest per deployment. The service
 tree owns the frozen Pydantic model and the data
 (`services/agri-data-service/src/agri_data_service/foundation/region/`); this directory owns the

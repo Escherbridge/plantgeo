@@ -39,7 +39,7 @@ def test_a_region_that_declares_no_lattice_stays_valid_and_serves_none() -> None
     ("pitch_degrees", "envelope", "fragment"),
     [
         pytest.param(0.3, RegionEnvelope(west=-125.0, south=42.0, east=-111.0, north=49.0), "not a whole number"),
-        pytest.param(0.0, RegionEnvelope(west=-125.0, south=42.0, east=-111.0, north=49.0), "must be > 0"),
+        pytest.param(0.0, RegionEnvelope(west=-125.0, south=42.0, east=-111.0, north=49.0), "greater than 0"),
     ],
 )
 def test_a_lattice_that_does_not_tile_its_envelope_is_refused(

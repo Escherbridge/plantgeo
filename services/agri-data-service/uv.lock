@@ -55,6 +55,7 @@ dependencies = [
     { name = "sanic-ext" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "structlog" },
+    { name = "tzdata" },
     { name = "xarray" },
 ]
 
@@ -105,6 +106,7 @@ requires-dist = [
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
     { name = "structlog", specifier = ">=24.1" },
     { name = "types-psycopg2", marker = "extra == 'dev'", specifier = ">=2.9" },
+    { name = "tzdata", specifier = ">=2024.1" },
     { name = "xarray", specifier = ">=2025.1,<2027" },
 ]
 provides-extras = ["dev"]

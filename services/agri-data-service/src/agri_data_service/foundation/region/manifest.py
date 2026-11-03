@@ -15,15 +15,23 @@ import os
 import re
 from collections.abc import Mapping  # noqa: TC003 - pydantic resolves this at runtime
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, localcontext
+from functools import lru_cache
 from importlib import resources
 from types import MappingProxyType
 from typing import Final, Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+
+from agri_data_service.foundation.region.layer_availability import PLATFORM_LAYER_SLUGS
 
 #: `PLANTGEO_REGION` selects the manifest `load_region` returns; unset defaults to the pilot.
 REGION_ENV_VAR: Final = "PLANTGEO_REGION"
+REGION_MANIFEST_ENV_VAR: Final = "PLANTGEO_REGION_MANIFEST_JSON"
+MAX_REGION_MANIFEST_BYTES: Final = 64 * 1024
+CUSTOM_REGION_CACHE_SIZE: Final = 8
+MAX_ANALYSIS_LATTICE_CELLS: Final = 100_000
 
 LatticeOriginRule = Literal["floor_to_cell_origin"]
 #: `half_step`: centroids sit half a pitch inside the lattice envelope's west/south edge.
@@ -41,10 +49,10 @@ class RegionEnvelope(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    west: float
-    south: float
-    east: float
-    north: float
+    west: float = Field(ge=-180, le=180, allow_inf_nan=False, strict=True)
+    south: float = Field(ge=-90, le=90, allow_inf_nan=False, strict=True)
+    east: float = Field(ge=-180, le=180, allow_inf_nan=False, strict=True)
+    north: float = Field(ge=-90, le=90, allow_inf_nan=False, strict=True)
 
     @model_validator(mode="after")
     def _bounds_are_ordered(self) -> RegionEnvelope:
@@ -53,6 +61,15 @@ class RegionEnvelope(BaseModel):
         if self.south >= self.north:
             raise ValueError(f"envelope south ({self.south}) must be < north ({self.north})")
         return self
+
+    def contains(self, other: RegionEnvelope) -> bool:
+        """Whether this rectangle fully contains another rectangle, including its boundary."""
+        return (
+            self.west <= other.west
+            and other.east <= self.east
+            and self.south <= other.south
+            and other.north <= self.north
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,7 +95,7 @@ class AnalysisLattice(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    pitch_degrees: float
+    pitch_degrees: float = Field(gt=0, allow_inf_nan=False, strict=True)
     origin_rule: AnalysisLatticeOriginRule
     envelope: RegionEnvelope
     cell_key_prefix: str
@@ -89,17 +106,30 @@ class AnalysisLattice(BaseModel):
             raise ValueError(f"pitch_degrees ({self.pitch_degrees}) must be > 0")
         if not self.cell_key_prefix.endswith(":"):
             raise ValueError(f"cell_key_prefix {self.cell_key_prefix!r} must end with ':'")
-        pitch = _decimal(self.pitch_degrees)
-        for axis, low, high in (
-            ("west-east", self.envelope.west, self.envelope.east),
-            ("south-north", self.envelope.south, self.envelope.north),
-        ):
-            span = _decimal(high) - _decimal(low)
-            if span % pitch:
-                raise ValueError(
-                    f"the {axis} span {span} is not a whole number of {pitch}-degree cells; a partial "
-                    "edge column would silently drop cells from the lattice"
-                )
+        with localcontext() as context:
+            context.prec = 400
+            pitch = _decimal(self.pitch_degrees)
+            precision = Decimal("0.0001")
+            if pitch > Decimal(360):
+                raise ValueError("analysis lattice pitch exceeds the WGS84 envelope")
+            if pitch % precision:
+                raise ValueError("analysis lattice pitch must be exactly representable at four decimal places")
+            cell_count = 1
+            for axis, low, high in (
+                ("west-east", self.envelope.west, self.envelope.east),
+                ("south-north", self.envelope.south, self.envelope.north),
+            ):
+                span = _decimal(high) - _decimal(low)
+                if span % pitch:
+                    raise ValueError(
+                        f"the {axis} span {span} is not a whole number of {pitch}-degree cells; a partial "
+                        "edge column would silently drop cells from the lattice"
+                    )
+                if (_decimal(low) + pitch / 2) % precision:
+                    raise ValueError("analysis lattice centroids must be exactly representable at four decimal places")
+                cell_count *= int(span / pitch)
+            if cell_count > MAX_ANALYSIS_LATTICE_CELLS:
+                raise ValueError(f"analysis lattice exceeds {MAX_ANALYSIS_LATTICE_CELLS} cells")
         return self
 
     def cells(self) -> tuple[AnalysisLatticeCell, ...]:
@@ -131,8 +161,8 @@ class LayerBinding(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    layer_slug: str
-    source_slug: str
+    layer_slug: str = Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$", max_length=128)
+    source_slug: str = Field(pattern=r"^[a-z0-9]+(?:[-_][a-z0-9]+)*$", max_length=128)
     coverage: SourceCoverage
 
 
@@ -149,8 +179,8 @@ class Region(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    slug: str
-    display_name: str
+    slug: str = Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$", max_length=64)
+    display_name: str = Field(min_length=1, max_length=256)
     envelope: RegionEnvelope
     #: The narrower opening-camera/burn-envelope box (`FALLBACK_COVERAGE_BBOX` in
     #: `coverage-region.ts`); kept distinct from `envelope` so migrating the manifest in never
@@ -160,8 +190,8 @@ class Region(BaseModel):
     #: `MappingProxyType` so `region.sub_envelopes["x"] = ...` fails even though `frozen=True` only
     #: blocks reassigning the `sub_envelopes` attribute itself, not mutating what it points at.
     sub_envelopes: Mapping[str, RegionEnvelope] = Field(default_factory=lambda: MappingProxyType({}))
-    crs: int | None
-    lattice_pitch_degrees: float
+    crs: int | None = Field(strict=True)
+    lattice_pitch_degrees: float = Field(gt=0, allow_inf_nan=False, strict=True)
     lattice_origin_rule: LatticeOriginRule
     timezone: str
     iso_country_codes: tuple[str, ...]
@@ -190,6 +220,46 @@ class Region(BaseModel):
             )
         return self
 
+    @field_validator("timezone")
+    @classmethod
+    def _timezone_is_known(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as error:
+            raise ValueError("timezone must name an installed IANA time zone") from error
+        return value
+
+    @model_validator(mode="after")
+    def _scope_codes_and_bindings_are_unambiguous(self) -> Region:
+        groups = {
+            "iso_country_codes": self.iso_country_codes,
+            "admin_codes": self.admin_codes,
+            "platform_layers": self.platform_layers,
+            "enabled_layers": tuple(binding.layer_slug for binding in self.enabled_layers),
+        }
+        for name, values in groups.items():
+            if len(values) != len(set(values)):
+                raise ValueError(f"{name} must not contain duplicates")
+        if not self.iso_country_codes or any(
+            re.fullmatch(r"[A-Z]{2}", code) is None for code in self.iso_country_codes
+        ):
+            raise ValueError("iso_country_codes must contain uppercase two-letter country codes")
+        for code in self.admin_codes:
+            if re.fullmatch(r"[A-Z]{2}-[A-Z0-9]{1,3}", code) is None or code[:2] not in self.iso_country_codes:
+                raise ValueError("admin_codes must name subdivisions of the declared countries")
+        if any(_ANALYSIS_LATTICE_KEY_PATTERN.fullmatch(layer) is None for layer in self.platform_layers):
+            raise ValueError("platform_layers must contain safe layer slugs")
+        return self
+
+    @model_validator(mode="after")
+    def _camera_and_sub_envelopes_are_contained(self) -> Region:
+        if not self.envelope.contains(self.default_camera_envelope):
+            raise ValueError("default_camera_envelope reaches outside this manifest's envelope")
+        for key, envelope in self.sub_envelopes.items():
+            if not self.envelope.contains(envelope):
+                raise ValueError(f"sub_envelopes {key!r} reaches outside this manifest's envelope")
+        return self
+
     @field_validator("sub_envelopes", mode="after")
     @classmethod
     def _sub_envelopes_are_immutable(cls, value: Mapping[str, RegionEnvelope]) -> Mapping[str, RegionEnvelope]:
@@ -208,10 +278,7 @@ class Region(BaseModel):
     @model_validator(mode="after")
     def _every_analysis_lattice_sits_inside_the_envelope(self) -> Region:
         for key, lattice in self.analysis_lattices.items():
-            inner, outer = lattice.envelope, self.envelope
-            inside_west_east = outer.west <= inner.west and inner.east <= outer.east
-            inside_south_north = outer.south <= inner.south and inner.north <= outer.north
-            if not (inside_west_east and inside_south_north):
+            if not self.envelope.contains(lattice.envelope):
                 raise ValueError(f"analysis lattice {key!r} reaches outside this manifest's envelope")
         return self
 
@@ -260,25 +327,64 @@ _MANIFEST_FILE_BY_SLUG: Final[Mapping[str, str]] = MappingProxyType(
     }
 )
 
-#: The slugs `load_region()` will resolve; derived from the file registry so the two cannot drift.
+#: Packaged reference slugs, derived from their file registry.
 _KNOWN_REGION_SLUGS: Final[tuple[str, ...]] = tuple(_MANIFEST_FILE_BY_SLUG)
 
 #: Populated lazily, one entry per slug `load_region()` has actually resolved; never read directly.
 _REGION_CACHE: Final[dict[str, Region]] = {}
 
 
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """Refuse ambiguous JSON objects rather than letting later fields replace earlier ones."""
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("region manifest JSON contains a duplicate object key")
+        result[key] = value
+    return result
+
+
+@lru_cache(maxsize=CUSTOM_REGION_CACHE_SIZE)
+def _parse_custom_manifest(payload: str) -> Region:
+    """Parse one bounded canonical-shape manifest; cache identity includes its complete content."""
+    try:
+        raw = json.loads(payload, object_pairs_hook=_unique_json_object)
+    except (json.JSONDecodeError, RecursionError):
+        raise ValueError("region manifest must be valid JSON") from None
+    try:
+        region = Region.model_validate(raw)
+    except ValidationError:
+        raise ValueError("invalid custom region manifest") from None
+    if region.slug in _KNOWN_REGION_SLUGS:
+        raise ValueError("custom region manifests must not shadow packaged regions")
+    if set(region.platform_layers) != set(PLATFORM_LAYER_SLUGS):
+        raise ValueError("custom region manifest must declare the complete platform layer vocabulary")
+    return region
+
+
+def _custom_region(payload: str, explicit_slug: str | None) -> Region:
+    """Require an explicit deployment selection and bounded custom manifest before loading it."""
+    selected = os.environ.get(REGION_ENV_VAR)
+    if not selected:
+        raise ValueError(f"{REGION_MANIFEST_ENV_VAR} requires {REGION_ENV_VAR}")
+    try:
+        size = len(payload.encode("utf-8"))
+    except UnicodeError:
+        raise ValueError("region manifest must contain valid UTF-8 text") from None
+    if size > MAX_REGION_MANIFEST_BYTES:
+        raise ValueError(f"region manifest exceeds {MAX_REGION_MANIFEST_BYTES} UTF-8 bytes")
+    region = _parse_custom_manifest(payload)
+    if selected != region.slug or (explicit_slug is not None and explicit_slug != region.slug):
+        raise ValueError("custom region manifest slug must match the selected region")
+    return region
+
+
 def load_region(slug: str | None = None) -> Region:
-    """Return the named region manifest, defaulting to `PLANTGEO_REGION` and then the PNW pilot.
-
-    The only sanctioned door into this package's data: there is no module-level `Region` constant to
-    import instead, so every caller's dependency on a region is visible in its own call site. Reads
-    `PLANTGEO_REGION` fresh on every call rather than once at import, and caches by resolved slug so
-    repeat calls for the same slug do not re-parse `<slug>.json`.
-
-    Raises `ValueError` for a slug this deployment has no manifest for, rather than falling back
-    silently -- an unrecognised region is a configuration error, not a reason to serve the pilot's
-    footprint under someone else's name.
-    """
+    """Resolve a packaged or selected custom region; see AGENTS.md, Custom deployment manifests."""
+    if slug not in _KNOWN_REGION_SLUGS:
+        custom = os.environ.get(REGION_MANIFEST_ENV_VAR)
+        if custom:
+            return _custom_region(custom, slug)
     resolved_slug = slug or os.environ.get(REGION_ENV_VAR) or _PILOT_REGION_SLUG
     if resolved_slug not in _KNOWN_REGION_SLUGS:
         raise ValueError(f"unknown region {resolved_slug!r}; registered manifests are {sorted(_KNOWN_REGION_SLUGS)}")

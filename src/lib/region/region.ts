@@ -1,14 +1,16 @@
 import { z } from "zod";
 import { KENYA_HIGHLANDS, KENYA_HIGHLANDS_ADMIN_CODES } from "@/lib/region/kenya_highlands";
 import { PNW, PNW_ADMIN_CODES } from "@/lib/region/pnw";
+import { CUSTOM_REGION_CACHE_SIZE, decodeCustomRegionManifest } from "@/lib/region/custom-region-manifest";
+import { containsEnvelope, isAdmissibleAnalysisLattice, isKnownTimeZone, REGION_SLUG_PATTERN } from "@/lib/region/region-semantics";
 
 /** A WGS84 west/south/east/north bounding box; the manifest's own footprint claim. */
 export const regionEnvelopeSchema = z
   .object({
-    west: z.number(),
-    south: z.number(),
-    east: z.number(),
-    north: z.number(),
+    west: z.number().finite().min(-180).max(180),
+    south: z.number().finite().min(-90).max(90),
+    east: z.number().finite().min(-180).max(180),
+    north: z.number().finite().min(-90).max(90),
   })
   .strict()
   .refine((envelope) => envelope.west < envelope.east, {
@@ -38,12 +40,15 @@ export type AnalysisLatticeOriginRule = z.infer<typeof analysisLatticeOriginRule
  */
 export const analysisLatticeSchema = z
   .object({
-    pitchDegrees: z.number().positive(),
+    pitchDegrees: z.number().finite().positive(),
     originRule: analysisLatticeOriginRuleSchema,
     envelope: regionEnvelopeSchema,
     cellKeyPrefix: z.string().endsWith(":"),
   })
-  .strict();
+  .strict()
+  .refine((lattice) => isAdmissibleAnalysisLattice(lattice.envelope, lattice.pitchDegrees), {
+    message: "analysis lattice must have complete cells, exact four-decimal identities and at most 100000 cells",
+  });
 
 export type AnalysisLattice = z.infer<typeof analysisLatticeSchema>;
 
@@ -53,8 +58,8 @@ export type SourceCoverage = z.infer<typeof sourceCoverageSchema>;
 /** One `geo.layers` slug bound to the source that fills it in this region, per `federation.md` §2. */
 export const layerBindingSchema = z
   .object({
-    layerSlug: z.string(),
-    sourceSlug: z.string(),
+    layerSlug: z.string().max(128).regex(REGION_SLUG_PATTERN),
+    sourceSlug: z.string().max(128).regex(/^[a-z0-9]+(?:[-_][a-z0-9]+)*$/),
     coverage: sourceCoverageSchema,
   })
   .strict();
@@ -70,31 +75,31 @@ export type LayerBinding = z.infer<typeof layerBindingSchema>;
  */
 export const regionSchema = z
   .object({
-    slug: z.string(),
-    displayName: z.string(),
+    slug: z.string().max(64).regex(REGION_SLUG_PATTERN),
+    displayName: z.string().min(1).max(256),
     envelope: regionEnvelopeSchema,
     /** The narrower opening-camera/burn-envelope box; see `FALLBACK_COVERAGE_BBOX`'s caller. */
     defaultCameraEnvelope: regionEnvelopeSchema,
     subEnvelopes: z.record(z.string(), regionEnvelopeSchema),
     crs: z.number().int().nullable(),
-    latticePitchDegrees: z.number().positive(),
+    latticePitchDegrees: z.number().finite().positive(),
     latticeOriginRule: latticeOriginRuleSchema,
-    timezone: z.string(),
-    isoCountryCodes: z.array(z.string()),
-    adminCodes: z.array(z.string()),
+    timezone: z.string().refine(isKnownTimeZone, { message: "timezone must name an installed IANA time zone" }),
+    isoCountryCodes: z.array(z.string().regex(/^[A-Z]{2}$/)).min(1),
+    adminCodes: z.array(z.string().regex(/^[A-Z]{2}-[A-Z0-9]{1,3}$/)),
     /**
      * The platform's whole layer vocabulary, mirroring `layer_availability.py`'s
      * `PLATFORM_LAYER_SLUGS`; NOT this region's bindings. `layerBindingInRegion` reads it to tell a
      * governed absence (in the vocabulary, not in `enabledLayers`) from a slug that is not a
      * federated layer at all (STYLE-REVIEW-W5 B1).
      */
-    platformLayers: z.array(z.string()),
+    platformLayers: z.array(z.string().regex(REGION_SLUG_PATTERN)),
     enabledLayers: z.array(layerBindingSchema),
     /**
      * Named analysis lattices, keyed by lattice name (`analysis-0p25`). Optional so a manifest that
      * declares none (`kenya_highlands.ts`) stays valid unedited; see `src/lib/region/AGENTS.md`.
      */
-    analysisLattices: z.record(z.string(), analysisLatticeSchema).optional(),
+    analysisLattices: z.record(z.string().regex(REGION_SLUG_PATTERN), analysisLatticeSchema).optional(),
   })
   .strict()
   .refine(
@@ -103,7 +108,23 @@ export const regionSchema = z
       message: "every enabledLayers binding must name a slug this manifest also lists in platformLayers",
       path: ["enabledLayers"],
     }
-  );
+  )
+  .superRefine((region, context) => {
+    for (const [name, values] of [
+      ["isoCountryCodes", region.isoCountryCodes], ["adminCodes", region.adminCodes],
+      ["platformLayers", region.platformLayers], ["enabledLayers", region.enabledLayers.map((binding) => binding.layerSlug)],
+    ] as const) {
+      if (values.length !== new Set(values).size) context.addIssue({ code: "custom", path: [name], message: "duplicates are not allowed" });
+    }
+    if (region.adminCodes.some((code) => !region.isoCountryCodes.includes(code.slice(0, 2)))) {
+      context.addIssue({ code: "custom", path: ["adminCodes"], message: "subdivisions must belong to declared countries" });
+    }
+    const envelopes = [region.defaultCameraEnvelope, ...Object.values(region.subEnvelopes),
+      ...Object.values(region.analysisLattices ?? {}).map((lattice) => lattice.envelope)];
+    if (envelopes.some((envelope) => !containsEnvelope(region.envelope, envelope))) {
+      context.addIssue({ code: "custom", message: "camera, sub-envelopes and analysis lattices must stay inside the region" });
+    }
+  });
 
 export type Region = z.infer<typeof regionSchema>;
 
@@ -199,6 +220,33 @@ function selectedRegionSlug(): string {
 
 /** Populated lazily, one entry per slug actually resolved; keyed by slug so two regions cannot share one. */
 const parsedRegionBySlug = new Map<string, Region>();
+const parsedCustomRegionByContent = new Map<string, Region>();
+
+function customRegion(payload: string): Region {
+  const selected = process.env.NEXT_PUBLIC_PLANTGEO_REGION;
+  if (!selected) throw new Error("NEXT_PUBLIC_PLANTGEO_REGION_MANIFEST_JSON requires NEXT_PUBLIC_PLANTGEO_REGION");
+  let parsed = parsedCustomRegionByContent.get(payload);
+  if (parsed === undefined) {
+    const result = regionSchema.safeParse(decodeCustomRegionManifest(payload));
+    if (!result.success) throw new Error("invalid custom region manifest semantics");
+    parsed = result.data;
+    if (Object.hasOwn(REGISTERED_MANIFEST_BY_SLUG, parsed.slug)) {
+      throw new Error("custom region manifests must not shadow packaged regions");
+    }
+    const vocabulary = new Set<string>(PNW.platformLayers);
+    if (parsed.platformLayers.length !== vocabulary.size || parsed.platformLayers.some((layer) => !vocabulary.has(layer))) {
+      throw new Error("custom region manifest must declare the complete platform layer vocabulary");
+    }
+    parsed = deepFreeze(parsed);
+  }
+  if (parsed.slug !== selected) throw new Error("custom region manifest slug must match the selected region");
+  parsedCustomRegionByContent.delete(payload);
+  parsedCustomRegionByContent.set(payload, parsed);
+  if (parsedCustomRegionByContent.size > CUSTOM_REGION_CACHE_SIZE) {
+    parsedCustomRegionByContent.delete(parsedCustomRegionByContent.keys().next().value!);
+  }
+  return parsed;
+}
 
 /**
  * Returns this deployment's one region manifest: the slug `NEXT_PUBLIC_PLANTGEO_REGION` selects.
@@ -211,6 +259,8 @@ const parsedRegionBySlug = new Map<string, Region>();
  * parse. See `src/lib/region/AGENTS.md`.
  */
 export function getRegion(): Region {
+  const custom = process.env.NEXT_PUBLIC_PLANTGEO_REGION_MANIFEST_JSON;
+  if (custom) return customRegion(custom);
   const slug = selectedRegionSlug();
   const alreadyParsed = parsedRegionBySlug.get(slug);
   if (alreadyParsed !== undefined) return alreadyParsed;

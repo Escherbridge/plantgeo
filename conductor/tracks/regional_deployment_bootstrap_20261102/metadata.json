@@ -1,0 +1,9 @@
+{
+  "id": "regional_deployment_bootstrap_20261102",
+  "title": "Configuration-driven regional deployment and ingestion policies",
+  "status": "in_progress",
+  "created_on": "2026-11-02",
+  "type": "feature",
+  "release_lane": "data-fixes",
+  "depends_on": ["data_coverage_truth_20261102"]
+}

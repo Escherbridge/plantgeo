@@ -1,5 +1,47 @@
 # `foundation/region` — the manifest, not a fork's ancestor
 
+## Custom deployment manifests
+
+Custom `platform_layers` must equal the complete build vocabulary, with no duplicates;
+`enabled_layers` may be a subset so unsupported layers retain explicit governed absences.
+Named analysis lattices admit at most 100,000 cells before enumeration and require pitch
+and generated centroids to be exactly representable at four decimal places. Decimal
+validation uses precision 400 to preserve even subnormal input offsets during divisibility
+checks; default precision could round an invalid origin into acceptance. The unregistered
+`custom_colorado.fixture.json` is shared with web tests and available in service-only checkouts.
+
+The web accepts the same canonical JSON via `NEXT_PUBLIC_PLANTGEO_REGION_MANIFEST_JSON`,
+paired with `NEXT_PUBLIC_PLANTGEO_REGION` at build time. This loader foundation is not new
+region production admission: current serving identity compares slugs only and cannot detect
+same-slug content changes across runtimes or persisted caches. Content identity, source
+configuration, scheduling and published selected-day evidence must precede activation.
+
+`PLANTGEO_REGION_MANIFEST_JSON` accepts the same snake_case JSON shape as the packaged files,
+up to 65,536 UTF-8 bytes. It requires `PLANTGEO_REGION` to equal the manifest's slug. Custom
+manifests cannot shadow a packaged slug. Missing or exactly empty custom JSON preserves packaged
+defaults; nonempty whitespace, malformed, oversized or mismatched JSON refuses rather than falling back.
+Explicit `load_region("pnw")` or `load_region("kenya-highlands")` always resolves that packaged
+reference, even when deployment custom configuration is invalid. Explicit custom selections
+still require a matching deployment selection.
+
+Parsing happens only on a load call. The bounded eight-entry custom cache keys on complete JSON
+content, so changing a manifest under the same slug never reuses the old footprint. Packaged
+manifests retain their slug cache. Duplicate JSON object keys are refused, including nested keys.
+Validation failures expose only a generic error, because field paths can contain arbitrary
+input dictionary keys. Neither input keys nor values appear in the public error or traceback.
+CRS accepts strict integers or null; strings and booleans are refused without coercion.
+The explicit `tzdata` dependency supplies IANA data on Windows and systems without zone files.
+
+The shared model requires finite WGS84 coordinates, ordered rectangles, finite positive pitches,
+a safe lowercase hyphenated slug, and an installed IANA timezone. Camera, sub-envelopes and
+analysis lattices must be contained within the region envelope; lattices retain their whole-cell
+rule. Country/admin/platform lists and bound layer names must be unique. Country codes use
+uppercase two-letter syntax; subdivision codes must have the declared country prefix and an
+uppercase alphanumeric suffix of one to three characters. These are syntax and consistency
+checks, not a country-boundary or exhaustive ISO subdivision registry. A rectangle crossing the
+antimeridian remains unsupported. The manifest declares geography; it does not certify source
+coverage, generate supports, isolate storage or activate lanes. Those are bootstrap responsibilities.
+
 `federation.md` section 1 rules: one typed region manifest, one place for every footprint literal.
 This package is that place for the service tree. `manifest.py` defines the frozen Pydantic model;
 `pnw.json` is the pilot's only data file, and is the single source of truth the web tree's parity
