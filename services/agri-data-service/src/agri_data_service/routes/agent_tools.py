@@ -18,16 +18,20 @@ from agri_data_service.agent.surfaces import AGENT_SURFACE_NAMES, FEATURE_SURFAC
 from agri_data_service.agent.tool_call_log import tool_call_fields
 from agri_data_service.agent.tools import WAREHOUSE_TOOLS, run_context
 from agri_data_service.foundation.observability.logging import get_logger
+from agri_data_service.interface.http.region_identity import install_region_identity
+from agri_data_service.pipeline.parquet.region_admission import RegionAdmissionError
 
 logger = get_logger(__name__)
 
 agent_tools_bp = Blueprint("agent_tools", url_prefix="/agent-tools")
+install_region_identity(agent_tools_bp)
 
 MAX_REQUEST_BYTES: Final = 32 * 1024
 MAX_RESPONSE_BYTES: Final = 2 * 1024 * 1024
 TOOL_TIMEOUT_SECONDS: Final = 12
 _BAD_REQUEST: Final = 400
 _UNAVAILABLE: Final = 503
+_CONFLICT: Final = 409
 _HEADERS: Final = {"Cache-Control": "no-store"}
 
 
@@ -162,6 +166,10 @@ async def call_agent_tool(request: Request) -> HTTPResponse:
                 result = await tool_by_name(payload.name).call(payload.arguments)
         content = json.loads(result) if isinstance(result, str) else result
         encoded = json.dumps(content, default=str, allow_nan=False)
+    except RegionAdmissionError:
+        code = "region_admission_refused"
+        _log_call(payload.name, payload.arguments, {}, ledger, started, state="error", refusal_code=code)
+        return _refusal(payload.name, code, _CONFLICT)
     except (TimeoutError, TypeError, ValueError) as error:
         timed_out = isinstance(error, TimeoutError)
         code = "tool_read_timeout" if timed_out else "invalid_tool_arguments"

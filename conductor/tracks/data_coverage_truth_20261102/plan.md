@@ -22,6 +22,7 @@ type: implementation-plan
 - [ ] Extend coverage-target adoption to remaining archival writers after source-support/ownership admission.
 - [ ] Deliver a validated arbitrary-US-region bootstrap rather than requiring manual manifest/source/web registration.
 - [ ] Remediate and verify the existing production dependency advisories recorded in `dependency-risk.md`.
-- [ ] Collect the next scheduled coverage-target turn as operational stop/resume evidence; no quota-spending forced run was performed.
+- [x] Collect the next scheduled coverage-target turn without forcing acquisition; the 06:50 UTC run reported 56.9% full-support coverage and `target_unmet` (see `scheduled-history-evidence.md`).
+- [ ] Verify the reached-target idle/resume path operationally; the observed incomplete run does not prove it.
 
 Node zero: HEAD 23e94c80b84be6b861d4e8ff9fec415953e41dc6, no tracked starting diff; unrelated conductor.zip and gapfill-check.mjs preserved.

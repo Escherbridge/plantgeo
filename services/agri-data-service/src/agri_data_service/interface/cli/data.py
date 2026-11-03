@@ -12,6 +12,7 @@ from agri_data_service.interface.cli.availability import (
     availability_verify_days,
 )
 from agri_data_service.interface.cli.parquet import parquet
+from agri_data_service.interface.cli.regional_bootstrap import region_bootstrap, region_preflight
 
 
 @click.group()
@@ -23,6 +24,8 @@ data.add_command(parquet)
 register_commands(
     data,
     (
+        ("region-bootstrap", region_bootstrap),
+        ("region-preflight", region_preflight),
         ("availability-bootstrap", availability_bootstrap),
         ("availability-publish", availability_publish),
         ("availability-reconcile-physical", availability_reconcile_physical),

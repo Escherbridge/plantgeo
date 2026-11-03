@@ -45,4 +45,4 @@ Additional ignored evidence: `live-ui-initial.png`, `live-ui-layers.json`, `live
 
 Satellite evidence is in `live-ui-satellite.json` and `live-ui-satellite.png`, reproduced by `live-ui-satellite.cjs`.
 
-Post-deployment verification of the new notices and distance correction remains required. Tooltip detail, mobile layouts, offline reload behavior and authenticated agent execution were not exercised in this bounded pass.
+Post-deployment verification subsequently passed for the new notices and distance correction; see `release-evidence.md`. Additional rendered checks confirmed water at October 31, fire at November 1 and soil moisture at October 28, with past-day labels and separate source publication ceilings. Evidence is recorded in `.omc/research/regional-baseline-ui.json` and `.omc/research/live-layer-status-pass.json`. Tooltip detail, mobile layouts, offline reload behavior and authenticated agent execution were not exercised in this bounded pass.

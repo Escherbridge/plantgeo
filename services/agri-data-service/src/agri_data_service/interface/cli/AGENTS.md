@@ -84,3 +84,12 @@ The generic `parquet-gap-fill` and `parquet-drain` commands are retired and are 
 under `data`. They were PostgreSQL export surfaces. Direct source packages own acquisition,
 validation and Parquet publication; missing history must be repaired from the upstream source or a
 verified Parquet artifact, with no CLI option for an environmental PostgreSQL fallback.
+
+
+## Regional bundle commands
+
+`data region-bootstrap` and `data region-preflight` delegate to `execution/regional_bootstrap`.
+They are offline and always retain blocked custom production readiness; exit78 accompanies
+useful inactive artifacts as well as safe configuration refusals. See that directory's AGENTS.md
+for the input schema, deterministic files, size bounds and precise unsupported source policies.
+No credentials are copied from environment into the bundle, and no activation is performed.

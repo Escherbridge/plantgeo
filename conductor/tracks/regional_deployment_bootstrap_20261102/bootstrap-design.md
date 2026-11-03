@@ -3,9 +3,9 @@ type: architecture
 ---
 # Operator bootstrap implementation boundary
 
-Status: independently inspected proposal, not implemented.
+Status: inactive compiler and offline preflight implemented, independently inspected and validated; see `bootstrap-evidence.md`. Executable custom deployment admission remains unfinished.
 
-Add `agri-service data region-bootstrap --config deployment.toml --output deployment/` to `interface/cli/data.py`, with strict validation/rendering in `foundation/regional_bootstrap/`. Reuse the canonical region models and the lane loader's existing `PLANTGEO_LANES_DIRECTORY`. Compilation performs no acquisition, scheduler activation or availability publication. Keep the existing SHA-pinned `availability-bootstrap` publication operation separate.
+`agri-service data region-bootstrap --config deployment.toml --output deployment/` and `region-preflight --bundle deployment/` are registered under `interface/cli/data.py`. Strict validation and rendering live in `execution/regional_bootstrap/`, above foundation, because orchestration consumes actual lane/provider schemas and source plans. They reuse canonical region models and `PLANTGEO_LANES_DIRECTORY`. Compilation performs no acquisition, scheduler activation or availability publication. The existing SHA-pinned `availability-bootstrap` publication operation remains separate.
 
 The input declares schema version, deployment id, US bbox/timezone/country/admin membership, requested layers and sources, per-layer temporal mode/history interval/coverage fraction/revision policy, bounded acquisition and repair budgets, credential environment-variable names, and object/database isolation. Provider-specific defaults must be documented; example budget values must not silently become recommendations. Never place credential values in the input or generated bundle.
 
@@ -18,6 +18,8 @@ Fail requested unsupported combinations explicitly with stable reasons such as `
 Tie storage and executor isolation to `identity-design.md`: geographic namespace, stream support proof and web/service agreement have distinct identities. Database-backed lane leases/jobs need isolation in addition to object prefixes. The activation seams remain `execution/lane_specs.py` and `job_executor_service.py`. Do not emit an executable custom production activation bundle until identity enforcement and source admission exist.
 
 Completion still requires a fresh non-PNW multi-layer run and a second region proving isolation. A working compiler or water-only run is an intermediate milestone.
+
+The implemented increment emits deterministic inactive artifacts, role-specific JSON environment templates, and explicit per-layer blockers. Only the existing water lane is schema-compiled, with execution and gap-fill disabled. Both commands return 78 and `production_ready: false` until admission is implemented. Offline preflight checks local consistency and environment presence, not authentication or actual database isolation. Online provider probes, automatic process startup, and activation remain unimplemented. See the package's directory documentation for the exact supported input example and artifact contract.
 
 ## Existing local startup coverage
 

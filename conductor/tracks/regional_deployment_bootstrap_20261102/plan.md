@@ -9,7 +9,8 @@ type: implementation-plan
 - [x] Wire Docker build-time region configuration and prove cross-runtime manifest parity (not production namespace/support identity).
 - [x] Carry canonical region identity through serving responses and persisted cache scopes, with custom operations refused until source admission.
 - [ ] Admit per-stream source support and carry its proof through availability; a geographic namespace reservation alone cannot authorize data.
-- [ ] Build deterministic operator configuration/bootstrap and preflight with explicit layer decisions and state isolation.
+- [x] Build and validate deterministic inactive configuration bundles and offline preflight with explicit layer decisions and isolation requirements.
+- [ ] Complete executable operator startup, source admission and verified state isolation; offline presence checks alone are insufficient.
 - [ ] Generalize core regional support and request footprints; preserve PNW identity compatibility.
 - [ ] Correct current-only timing where required and admit temporal policies per source.
 - [ ] Extend historical coverage targets, independently bounded corrections and source-free repairs at actual executable seams.

@@ -579,6 +579,10 @@ wired into the live agent loop by `ai-prompt.ts` `streamRegionalIntelligence`.
 
 ## Definition identity on row reads
 
+`regional-evidence-tools.ts` uses the same bounded identity transport for catalogue and call.
+An agent catalogue cannot authorize later mismatched tool responses; each exchange is checked.
+Admission 409s remain transport refusals and do not trigger argument-correction retries.
+
 The current identity contract supersedes the historical slug-only policy below. Shared bounded
 transport sends `X-PlantGeo-Expected-Region-Definition` and validates
 `X-PlantGeo-Region-Definition` on the actual response. Packaged regions accept legacy silence;

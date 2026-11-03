@@ -1,10 +1,10 @@
 import { z } from "zod";
 import {
-  fetchBoundedJson,
   providerUrl,
   UpstreamHttpError,
   UpstreamPayloadError,
 } from "@/lib/server/http/bounded-upstream";
+import { fetchRegionJson } from "@/lib/server/http/region-identity";
 import { callLandContextTool, isLandContextTool, landContextTools } from "@/lib/server/services/land-context-tools";
 import { isStrategyKnowledgeTool } from "@/lib/regional-intelligence";
 import { APP_MAP_SURFACES, isAppMapSurface, readBoundedAppMapEvidence } from "./regional-map-evidence";
@@ -136,7 +136,7 @@ function endpoint(path: string): URL {
 export async function loadRegionalEvidenceTools(
   signal?: AbortSignal,
 ): Promise<RegionalEvidenceCatalogue | null> {
-  const wire = await fetchBoundedJson(endpoint(""), {}, {
+  const wire = await fetchRegionJson(endpoint(""), {}, {
     maxBytes: 256 * 1024,
     timeoutMs: 8_000,
     signal,
@@ -203,7 +203,7 @@ export async function callRegionalEvidenceTool(
     if (new TextEncoder().encode(body).byteLength > 32 * 1024) {
       throw new UpstreamPayloadError("Environmental tool request exceeded the byte limit");
     }
-    return fetchBoundedJson(endpoint("call"), {
+    return fetchRegionJson(endpoint("call"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body,

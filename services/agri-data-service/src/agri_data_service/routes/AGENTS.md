@@ -2,6 +2,13 @@
 
 ## Environmental agent tools
 
+The agent catalogue and call blueprint installs the shared region-identity middleware before
+execution, including custom namespace/source admission and served-definition response headers.
+Calls also catch `RegionAdmissionError` before the broader `ValueError` argument handler and
+return a value-free `region_admission_refused` 409. Admission faults are not model argument
+mistakes. Existing request/response limits, selected-day arguments and authentication boundaries
+remain in force.
+
 `agent_tools.py` exposes the provider-independent registry and one bounded tool call at
 `/api/v1/agent-tools/` and `/api/v1/agent-tools/call`. It is mounted only on the read-capable
 profiles and shares the Parquet service's existing private origin. The authenticated Next.js
