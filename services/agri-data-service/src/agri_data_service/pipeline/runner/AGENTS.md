@@ -123,6 +123,37 @@ weighted lane firing more than once a day without `probe_edge` (S6) is `Strategy
 
 ## Budget
 
+### Recurring source evaluation cost
+
+Optional `[recurring_cost]` separates acquisition eligibility from data quality. Its explicit
+`source_contract` must change when interpretation changes; the scheduling identity also binds
+strategy, source selection, geographic definition and expected support identities. History ranges,
+display labels and retry intervals do not invalidate successful evaluations. A strategy without
+nonempty `SourceCoverageStrategy` identities or a bound scheduling store is refused before work.
+
+`unresolved_recheck_days` applies only to fully answered unresolved days with complete ladders.
+Missing/partial support and ladder damage are never deferred by this policy. Ordinary holes retain
+priority, then eligible unresolved days run by oldest successful check and calendar day. Waiting
+days remain `source_unresolved` and the target remains unmet; `source_retry` separately reports
+waiting count and next eligibility. Source-free repair and forward-window checks continue.
+
+`correction_recheck_days` and `correction_max_weighted_calls` are paired. After forward work, the
+oldest eligible published day anchors a calendar block of at most `revision_days_per_turn` days.
+Only due published dates inside that block are offered, with actual planned requests priced by the
+existing budget selector. The correction cap is an additional subcap of the shared forward cap,
+provider quota/cooldown and turn deadline, not additive request allocation. The cadence is a per-day
+minimum interval; backlog, holes, source failures and budgets can delay revisits. There is no fixed
+completion/revisit guarantee or modulo calendar thinning. Absent policy preserves legacy rotation.
+
+`rechecks.py` stores only successful full evaluations after publication or `digest_unchanged`.
+Partial, failed, contended, verified-refused, unattempted and budget-deferred evaluations never
+advance it. Compare mode never writes it. Records batch by stream/year after the publication phase;
+a crash before flushing causes a safe redundant recheck. CAS retries merge other days and retain
+newer legitimate checks, while a trusted current clock permits replacing corrupt future timestamps.
+Missing, malformed or mismatched records make work due. An oversized/unreadable object without a
+usable comparison token is not overwritten; it remains due until repaired. Scheduling evidence
+never grants completeness, changes an absence, or rewrites Parquet merely to record a time.
+
 ### Historical target idle
 
 Before historical fan-out, a lane with `[coverage_target]` reads the selected region's full-ladder

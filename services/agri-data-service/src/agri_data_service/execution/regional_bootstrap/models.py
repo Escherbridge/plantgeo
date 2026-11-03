@@ -36,6 +36,7 @@ class CorrectionPolicy(InputModel):
     window_days: int = Field(gt=14, le=20000, strict=True)
     days_per_turn: int = Field(gt=0, le=366, strict=True)
     max_calls: int | None = Field(default=None, ge=0, le=10000, strict=True)
+    recheck_days: int | None = Field(default=None, gt=0, le=3660, strict=True)
 
 
 class LayerRequest(InputModel):
@@ -44,6 +45,7 @@ class LayerRequest(InputModel):
     history: LaneCoverageTarget | None = None
     budget: LaneBudget
     corrections: CorrectionPolicy | None = None
+    unresolved_recheck_days: int | None = Field(default=None, gt=0, le=3660, strict=True)
     repair_max_days: int | None = Field(default=None, gt=0, le=366, strict=True)
     credential_env: EnvironmentName | None = None
     require_credential: bool = Field(default=False, strict=True)

@@ -78,6 +78,7 @@ class TurnBudget:
     basis: BudgetBasis
     provider: ProviderConfig | None
     ledger: TurnLedger = field(default_factory=TurnLedger)
+    phase_ceiling: float | None = None
 
     @property
     def spent(self) -> float:
@@ -87,7 +88,8 @@ class TurnBudget:
     @property
     def remaining(self) -> float:
         """What is left of the cap."""
-        return max(0.0, self.cap - self.spent)
+        ceiling = self.cap if self.phase_ceiling is None else min(self.cap, self.phase_ceiling)
+        return max(0.0, ceiling - self.spent)
 
     def cost_of_url(self, url: str) -> float:
         """One logical request's cost against the cap."""
@@ -104,7 +106,7 @@ class TurnBudget:
 
     def can_afford(self, cost: float) -> bool:
         """Whether `cost` fits under the cap (a float tolerance, never a rounding past it)."""
-        return self.spent + cost <= self.cap + 1e-9
+        return cost <= self.remaining + 1e-9
 
     def charge(self, endpoint: str, parameters: Mapping[str, str], *, probe: bool) -> None:
         """Charge one send: a new logical request costs its weight; a retry costs only an attempt."""

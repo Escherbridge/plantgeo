@@ -291,6 +291,7 @@ def plan_gap_fill(
     owed: Sequence[date],
     max_days: int = GAP_FILL_MAX_DAYS_PER_TURN,
     last: frozenset[date] = frozenset(),
+    retry_order: Sequence[date] | None = None,
 ) -> GapFillPlan:
     """S12 + D3: the census holes, oldest first, capped by history capability, retention and a per-turn day cap.
 
@@ -307,7 +308,8 @@ def plan_gap_fill(
         else:
             reachable.append(day)
     holes = [day for day in reachable if day not in last]
-    asked = holes or reachable
+    ordered_retries = reachable if retry_order is None else [day for day in retry_order if day in reachable]
+    asked = holes or ordered_retries
     return GapFillPlan(
         fill=tuple(asked[:max_days]),
         retention_exceeded=tuple(retention),

@@ -3,7 +3,7 @@ type: architecture
 ---
 # Separate source retry eligibility from data completeness
 
-Status: inspected implementation proposal, not implemented. Prioritize this after the inactive bootstrap checkpoint and before expanding custom acquisition. The scheduled production evidence is in `../data_coverage_truth_20261102/scheduled-history-evidence.md`.
+Status: implemented and locally validated, pending release. This document records the design requirements; implementation and validation evidence are in `recurring-cost-evidence.md`. The scheduled production evidence is in `../data_coverage_truth_20261102/scheduled-history-evidence.md`.
 
 Current gap-fill prioritizes ordinary holes but falls back to all reachable unresolved days when no ordinary holes remain. Each fire can therefore revisit the oldest unresolved block. Publication receipt time does not record unchanged rechecks; source-response checkpoints are request caches and deliberately do not satisfy served-day recheck obligations.
 

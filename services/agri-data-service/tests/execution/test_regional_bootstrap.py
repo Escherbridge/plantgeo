@@ -137,7 +137,7 @@ def test_independent_policy_and_large_footprint_do_not_emit_a_water_lane() -> No
     raw["region"]["bbox"] = [-125, 25, -70, 49]
     bundle = checked_compile(BootstrapRequest.model_validate(raw))
     reasons = json.loads(bundle.files["readiness.json"])["layers"][0]["reasons"]
-    assert "independent_correction_budget_not_implemented" in reasons
+    assert "independent_correction_requires_cadence_and_cap" in reasons
     assert "independent_repair_budget_not_implemented" in reasons
     assert "footprint_requires_partitioning" in reasons
     assert not any(name.startswith("lanes/") for name in bundle.files)
@@ -153,6 +153,22 @@ def test_output_never_overwrites_different_or_foreign_files(tmp_path: Path) -> N
     with pytest.raises(BootstrapError, match="bundle_output_differs"):
         write_bundle(bundle, output)
     assert foreign.read_text() == "retain me"
+
+
+def test_implemented_recurring_policy_round_trips_without_claiming_source_admission() -> None:
+    raw = _request()
+    policy = {"mode": "independent", "window_days": 550, "days_per_turn": 31, "max_calls": 16, "recheck_days": 30}
+    raw["layers"]["water"].update(unresolved_recheck_days=7, corrections=policy)
+    bundle = checked_compile(BootstrapRequest.model_validate(raw))
+    lane = LaneConfig.model_validate(tomllib.loads(bundle.files["lanes/water-gauges-daily.toml"].decode()))
+    assert lane.recurring_cost is not None
+    assert lane.recurring_cost.correction_recheck_days == policy["recheck_days"]
+    assert lane.recurring_cost.correction_max_weighted_calls == policy["max_calls"]
+    assert lane.recurring_cost.unresolved_recheck_days == raw["layers"]["water"]["unresolved_recheck_days"]
+    assert not lane.enabled
+    readiness = json.loads(bundle.files["readiness.json"])
+    assert readiness["production_ready"] is False
+    assert "region_source_support_not_admitted" in readiness["layers"][0]["reasons"]
 
 
 def test_offline_preflight_never_connects_or_discloses_environment_values(
@@ -215,7 +231,9 @@ def test_cli_valid_config_creates_an_explicitly_inactive_bundle(tmp_path: Path) 
     result = CliRunner().invoke(region_bootstrap, ["--config", str(config), "--output", str(output)])
     not_ready = 78
     assert result.exit_code == not_ready
-    assert json.loads(result.output)["readiness"]["production_ready"] is False
+    payload = json.loads(result.output)
+    assert "readiness" in payload, payload
+    assert payload["readiness"]["production_ready"] is False
     assert (output / "checksums.json").is_file()
 
 

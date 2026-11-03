@@ -66,9 +66,14 @@ Budget numbers illustrate syntax, not recommended costs. Bootstrap caps calls at
 mode, concurrency at 16 and turn duration at 3,600 seconds. Existing LaneBudget and
 LaneCoverageTarget validators still apply. Omitted history last_day means the declared settled
 edge, not an inferred denominator. Fractions below one explicitly report intentional gaps.
-Optional corrections accept `mode="coupled_forward"`, `window_days`, and `days_per_turn`;
-these share the existing forward cap. Independent correction caps or repair-day budgets are
-reported unimplemented and generate no water lane. Every generated schedule remains disabled;
+Optional corrections accept `mode="coupled_forward"`, `window_days`, and `days_per_turn` for
+legacy rotation. `mode="independent"` additionally requires `recheck_days` and `max_calls`:
+the per-successful-day interval and correction subcap inside the shared forward budget, with
+forward work first. `unresolved_recheck_days` is an optional layer field. Water compilation emits
+these actual runner policies and the explicit `usgs-daily-mean-v1` interpretation contract.
+Independent repair-day budgets remain unimplemented and generate no water lane.
+Omitted recurring options preserve legacy behavior rather than inheriting the shipped water policy.
+Every generated schedule remains disabled;
 readiness records intended historical acquisition separately from activation.
 
 ## Artifacts and preflight evidence

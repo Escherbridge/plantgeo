@@ -21,6 +21,7 @@ from agri_data_service.pipeline.runner.census import LaneCensus
 from agri_data_service.pipeline.runner.contract import ProviderResponse
 from agri_data_service.pipeline.runner.digests import table_digest
 from agri_data_service.pipeline.runner.receipts import DayReceipt
+from agri_data_service.pipeline.runner.rechecks import SourceRechecks
 from agri_data_service.pipeline.runner.report import TurnLog, TurnReportBuilder
 from agri_data_service.pipeline.runner.turn import TurnPorts, TurnSpec, run_turn
 from agri_data_service.pipeline.runner.writer import (
@@ -36,6 +37,7 @@ from tests.lane_config.builders import (
     settled_soil_lane,
     transform_lane,
 )
+from tests.parquet.availability_documents import MemoryAvailabilityStorage
 from tests.runner.fixtures.grid_refuse import GRID_STREAM
 from tests.runner.fixtures.point_recheck import POINT_STREAM
 from tests.runner.fixtures.release_series import RELEASE_STREAM
@@ -126,6 +128,7 @@ class MemoryLaneStore:
     """The bucket through the runner's own ports: statuses, base rows, receipts, owed claims, and a journal."""
 
     statuses: dict[tuple[str, date], PartitionDayStatus] = field(default_factory=dict)
+    scheduling: MemoryAvailabilityStorage = field(default_factory=MemoryAvailabilityStorage)
     tables: dict[tuple[str, date], pa.Table] = field(default_factory=dict)
     receipts: dict[tuple[str, date], DayReceipt] = field(default_factory=dict)
     #: Stream-days whose base rung is published but whose coarse rungs are not: ladder work only.
@@ -405,6 +408,7 @@ def ports_for(  # noqa: PLR0913 - one collaborator per keyword
         client=upstream,
         checkpoint_store=checkpoint_store,
         cooldowns=cooldowns,
+        rechecks=SourceRechecks(store.scheduling),
     )
     if fetch_policy is not None:
         ports.fetch_policy = fetch_policy

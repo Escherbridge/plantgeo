@@ -30,6 +30,12 @@ does I/O (the loader reads files), and is a ruled exception on the same grounds.
 
 ## Loader
 
+`[recurring_cost]` is optional on daily ingest lanes. It requires an explicit `source_contract`
+version and accepts a positive unresolved retry interval, plus paired correction interval and
+weighted-call subcap. Corrections require a revision window. The runner additionally requires
+stable regional source support and durable scheduling storage; this schema never grants source
+admission or completeness. See `pipeline/runner/AGENTS.md`, "Recurring source evaluation cost".
+
 `[coverage_target]` is optional and limited to config-executed daily archive ingest lanes. It declares
 an inclusive historical range and minimum data-day fraction, with the current manifest supplying
 the spatial boundary. The runner refuses a strategy without stable source support identities.

@@ -45,15 +45,20 @@ absence_recheck_days = 14
 # day (present/expected tiles), rewritten when more tiles answer, never replaced by fewer (S11).
 partial_day = "write_and_recheck"
 # S11 for late approvals: USGS approves a water year months after it ends, long after the 14-day
-# window. Every forward fire also re-asks one 31-day block of PUBLISHED days up to 550 days behind
-# the edge, each block once every 19 fires (pipeline/runner/windows.py::revision_block), and
-# rewrites a day on a digest change (Provisional -> Approved). Holes stay gap-fill's.
+# window. The recurring-cost policy selects due published days in a bounded calendar block;
+# see lanes/AGENTS.md for cadence and budget guarantees. Holes stay gap-fill's.
 revision_window_days = 550
 revision_days_per_turn = 31
 
 [coverage_target]
 first_day = "1990-09-30"
 minimum_fraction = 1.0
+
+[recurring_cost]
+source_contract = "usgs-daily-mean-v1"
+unresolved_recheck_days = 7
+correction_recheck_days = 30
+correction_max_weighted_calls = 16
 
 [budget]
 # Logical requests (unweighted provider): 8 tiles x (1 daily-values chunk + 1 monitoring-locations)

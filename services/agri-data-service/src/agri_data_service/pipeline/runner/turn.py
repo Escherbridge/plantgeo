@@ -67,6 +67,7 @@ from agri_data_service.pipeline.runner.fetch import (
     stated_retry_after,
 )
 from agri_data_service.pipeline.runner.receipts import DayReceipt, transform_receipt_stream
+from agri_data_service.pipeline.runner.rechecks import due_days, recheck_scope
 from agri_data_service.pipeline.runner.report import UnwrittenEntry
 from agri_data_service.pipeline.runner.windows import (
     PROBE_WINDOW_MAX_DAYS,
@@ -91,7 +92,7 @@ from agri_data_service.pipeline.runner.writer import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
-    from datetime import date
+    from datetime import date, datetime
 
     from agri_data_service.foundation.lane_config.models import LaneConfig, PartialDayPolicy, ProviderConfig
     from agri_data_service.foundation.region.manifest import Region
@@ -110,6 +111,7 @@ if TYPE_CHECKING:
     from agri_data_service.pipeline.runner.cooldown import ProviderCooldowns
     from agri_data_service.pipeline.runner.fetch import FetchRetryPolicy
     from agri_data_service.pipeline.runner.reader import LaneReader
+    from agri_data_service.pipeline.runner.rechecks import SourceRechecks
     from agri_data_service.pipeline.runner.report import TurnLog, TurnReportBuilder
     from agri_data_service.pipeline.runner.writer import LaneWriter, WriteResult
 
@@ -170,6 +172,7 @@ class TurnPorts:
     fetch_policy: FetchRetryPolicy = DEFAULT_FETCH_RETRY_POLICY
     #: Per-host persisted Retry-After waits (`cooldown.py`); `None` keeps a stated wait inside its turn.
     cooldowns: ProviderCooldowns | None = None
+    rechecks: SourceRechecks | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,6 +183,7 @@ class _SettledDay:
     settlement: Written | Absent
     tables: Mapping[str, pa.Table]
     responses_digest: str
+    evaluated_at: datetime | None = None
 
 
 @dataclass(slots=True)
@@ -249,6 +253,11 @@ class _TurnTally:
 def _validate(spec: TurnSpec, ports: TurnPorts) -> None:  # noqa: PLR0912 - one refusal per invalid invocation
     """Refuse (exit 78) every invocation the lane or the options cannot support, before any read or send."""
     lane = spec.lane
+    if lane.recurring_cost is not None:
+        if ports.rechecks is None or not isinstance(ports.strategy, SourceCoverageStrategy):
+            raise TurnConfigurationError("recurring_cost requires source support and a scheduling store")
+        if not ports.strategy.source_unit_ids(lane, spec.region):
+            raise TurnConfigurationError("recurring_cost requires nonempty source support")
     if spec.mode not in TURN_MODES:
         raise TurnConfigurationError(f"mode {spec.mode!r} is not one of {TURN_MODES}")
     if (lane.kind == "transform") != (spec.mode == "transform"):
@@ -335,6 +344,7 @@ class _Turn:
     #: Owed days whose base rung is published: repaired after the fan-out, never asked upstream (H1).
     ladder_days: tuple[date, ...] = ()
     _receipts: dict[tuple[str, date], DayReceipt | None] = field(default_factory=dict)
+    _successful_checks: dict[str, dict[date, datetime]] = field(default_factory=dict)
     _census_views: dict[int, tuple[Mapping[str, tuple[date, ...]], Mapping[str, tuple[date, ...]]]] = field(
         default_factory=dict
     )
@@ -638,6 +648,10 @@ class _Turn:
         days = self.spec.lane.days
         if days is None or self.spec.compare:
             return
+        policy = self.spec.lane.recurring_cost
+        if policy is not None and policy.correction_recheck_days is not None:
+            await self._scheduled_revision(window)
+            return
         block = revision_block(days, window, today=self._today)
         if block is None:
             return
@@ -645,6 +659,65 @@ class _Turn:
         census = self._census(self.streams, block)
         settled = await self._fan_out(census.lane_data_days(), census, probe=None, revise=True)
         await self._publish(settled, census, force=False)
+
+    def _recheck_identity(self) -> str:
+        strategy = self.ports.strategy
+        if not isinstance(strategy, SourceCoverageStrategy):
+            raise TurnConfigurationError("recurring_cost requires source support")
+        return recheck_scope(
+            self.spec.lane, self.spec.region, strategy.source_unit_ids(self.spec.lane, self.spec.region)
+        )
+
+    def _due_rechecks(self, days: Sequence[date], interval: int) -> tuple[tuple[date, ...], dict[date, datetime]]:
+        store = self.ports.rechecks
+        if store is None or not days:
+            return tuple(days), {}
+        checks = store.checked(self.streams, self._recheck_identity(), min(days), max(days))
+        return due_days(days, checks, now=self.ports.clock.now(), interval_days=interval)
+
+    async def _scheduled_revision(self, window: DayRange) -> None:
+        """Recheck one contiguous calendar block anchored at the least recently evaluated due day."""
+        days, policy = self.spec.lane.days, self.spec.lane.recurring_cost
+        if days is None or policy is None or days.revision_window_days is None:
+            return
+        interval, cap = policy.correction_recheck_days, policy.correction_max_weighted_calls
+        if interval is None or cap is None:
+            return
+        first = window.last - timedelta(days=days.revision_window_days - 1)
+        if days.floor is not None:
+            first = max(days.floor, first)
+        last = window.first - timedelta(days=1)
+        if first > last:
+            return
+        census = self._census(self.streams, DayRange(first=first, last=last))
+        due, waiting = self._due_rechecks(census.lane_data_days(), interval)
+        self.report.set(
+            corrections={
+                "due_days": len(due),
+                "waiting_days": len(waiting),
+                "interval_days": interval,
+                "max_weighted_calls": cap,
+                "next_eligible_at": min(waiting.values()).isoformat() if waiting else None,
+            }
+        )
+        if not due:
+            return
+        end = due[0]
+        due_set = frozenset(due)
+        for offset in range(1, days.revision_days_per_turn):
+            candidate = due[0] + timedelta(days=offset)
+            if candidate not in due_set:
+                break
+            end = candidate
+        selected = tuple(due[0] + timedelta(days=offset) for offset in range((end - due[0]).days + 1))
+        self.revision = DayRange(first=due[0], last=end)
+        previous = self.budget.phase_ceiling
+        self.budget.phase_ceiling = self.budget.spent + cap
+        try:
+            settled = await self._fan_out(selected, census, probe=None, revise=True)
+            await self._publish(settled, census, force=False)
+        finally:
+            self.budget.phase_ceiling = previous
 
     def _target_support(self) -> frozenset[str]:
         """Require explicit regional source support before evaluating a historical target."""
@@ -694,7 +767,9 @@ class _Turn:
                 await self._repair_ladders(census)
                 return EXIT_COMPLETED
         unresolved = census.unresolved_days()
-        plan = plan_gap_fill(self.spec.lane, owed=self._owed_days(census, window), last=unresolved)
+        owed = self._owed_days(census, window)
+        owed, retry_order = self._retry_candidates(owed, unresolved)
+        plan = plan_gap_fill(self.spec.lane, owed=owed, last=unresolved, retry_order=retry_order)
         self.tally.days_candidate = len(plan.fill) + len(plan.retention_exceeded) + len(plan.overflow) + len(plan.held)
         for day in plan.retention_exceeded:
             self.unwritten(day, "retention_exceeded", "older than the source's history capability")
@@ -706,6 +781,27 @@ class _Turn:
         exit_code = await self._fan_out_and_publish(plan.fill, census)
         await self._repair_ladders(census)
         return exit_code
+
+    def _retry_candidates(
+        self, owed: list[date], unresolved: frozenset[date]
+    ) -> tuple[list[date], tuple[date, ...] | None]:
+        policy = self.spec.lane.recurring_cost
+        if policy is None or policy.unresolved_recheck_days is None:
+            return owed, None
+        retry_order, waiting = self._due_rechecks(tuple(unresolved), policy.unresolved_recheck_days)
+        eligible = [day for day in owed if day not in waiting]
+        self.report.set(
+            source_retry={
+                "state": "waiting" if waiting and not eligible else "eligible",
+                "waiting_days": len(waiting),
+                "due_unresolved_days": len(retry_order),
+                "interval_days": policy.unresolved_recheck_days,
+                "next_eligible_at": min(waiting.values()).isoformat() if waiting else None,
+            }
+        )
+        for day in sorted(waiting):
+            self.unwritten(day, "source_unresolved", "full evaluation retry is not yet eligible")
+        return eligible, retry_order
 
     async def _static_forward(self) -> int:
         """A static lookup owes one snapshot at its source watermark, read by `probe_edge`, and nothing when current."""
@@ -893,7 +989,7 @@ class _Turn:
         strategy = self.ports.strategy
         if not days or not isinstance(strategy, IngestStrategy) or self.client is None or self.spec.provider is None:
             return []
-        ordered = sorted(set(days))
+        ordered = list(dict.fromkeys(days))
         owe: _Owe = _record_nothing if revise else self.unwritten
         if revise:
             self.tally.days_revised += len(ordered)
@@ -1068,7 +1164,13 @@ class _Turn:
             return None
         if not settlement.source_resolved:
             owe(day, "source_unresolved", _unresolved_detail(settlement))
-        return _SettledDay(day=day, settlement=settlement, tables=tables, responses_digest=digest)
+        return _SettledDay(
+            day=day,
+            settlement=settlement,
+            tables=tables,
+            responses_digest=digest,
+            evaluated_at=self.ports.clock.now(),
+        )
 
     def _tables_by_stream(
         self, produced: object, day: date, *, allow_subset: bool = False, owe: _Owe | None = None
@@ -1118,6 +1220,11 @@ class _Turn:
                     await self._write_absence(answered, answered.settlement, census)
                 else:
                     await self._write_rows(answered, answered.settlement, census, force=force)
+            if self.ports.rechecks is not None and self._successful_checks:
+                scope = self._recheck_identity()
+                for stream, checks in self._successful_checks.items():
+                    self.ports.rechecks.confirm_many(stream, scope, checks, now=self.ports.clock.now)
+                self._successful_checks.clear()
 
     def _defer_write(self, answered: _SettledDay) -> None:
         """The turn's whole time budget ran out before this settled day could be written (its streams only)."""
@@ -1150,6 +1257,8 @@ class _Turn:
             if not decision.writes:
                 if decision.reason in {"coverage_unproven", "coverage_lost"}:
                     self.unwritten(answered.day, "refused_partial", decision.reason, stream=stream)
+                if decision.reason == "digest_unchanged":
+                    self._record_recheck(stream, answered, written)
                 continue
             try:
                 result = await writer.write_day(
@@ -1183,11 +1292,26 @@ class _Turn:
                 self.tally.rewrite_reasons[VERIFIED_REFUSAL] += 1
                 continue
             self.tally.add_write(stream, result)
+            self._record_recheck(stream, answered, written)
             wrote_any = True
         if wrote_any:
             self.tally.days_written += 1
         else:
             self.tally.days_unchanged += 1
+
+    def _record_recheck(self, stream: str, answered: _SettledDay, written: Written) -> None:
+        """Only full successful publication or unchanged evaluation advances scheduling."""
+        if (
+            self.spec.compare
+            or self.spec.lane.recurring_cost is None
+            or self.ports.rechecks is None
+            or written.partial
+            or not written.expected_unit_ids
+            or written.expected_unit_ids != written.present_unit_ids
+            or answered.evaluated_at is None
+        ):
+            return
+        self._successful_checks.setdefault(stream, {})[answered.day] = answered.evaluated_at
 
     async def _write_absence(self, answered: _SettledDay, absence: Absent, census: LaneCensus) -> None:
         writer = self._writer()

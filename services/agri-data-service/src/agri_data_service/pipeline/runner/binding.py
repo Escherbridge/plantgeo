@@ -33,6 +33,7 @@ from agri_data_service.pipeline.runner.cooldown import ProviderCooldowns
 from agri_data_service.pipeline.runner.exits import TurnConfigurationError
 from agri_data_service.pipeline.runner.reader import ObjectStoreLaneReader
 from agri_data_service.pipeline.runner.receipts import TurnReceipts
+from agri_data_service.pipeline.runner.rechecks import SourceRechecks
 from agri_data_service.pipeline.runner.turn import TurnPorts
 from agri_data_service.pipeline.runner.writer import ObjectStoreLaneWriter, WritePermit
 
@@ -148,6 +149,7 @@ async def production_ports(
             client=client,
             checkpoint_store=checkpoint_store,
             cooldowns=cooldowns,
+            rechecks=SourceRechecks(availability),
         )
 
 

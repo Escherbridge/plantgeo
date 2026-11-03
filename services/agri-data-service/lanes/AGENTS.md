@@ -7,6 +7,15 @@ the strategy module a lane names holds BEHAVIOUR. Schema and loader:
 
 ## Layout
 
+Water's explicit recurring cost policy uses seven days between successful full unresolved
+evaluations, and thirty days between successful historical corrections with at most sixteen
+logical correction calls inside the existing thirty-two-call forward turn. These are conservative
+operator cost choices, not scientific freshness claims. The thirty-one-calendar-day correction
+block, shared budgets, deadline and failures determine actual progress; a thirty-day revisit is
+not guaranteed. Coverage remains at 100% full source support and unresolved days remain incomplete.
+Changing source interpretation requires advancing `source_contract`; changing intervals does not
+discard existing source history. Omitting the policy retains legacy recurring behavior.
+
 | path | what | loaded as |
 |---|---|---|
 | `<lane-id>.toml` | one lane; the file stem IS the lane id | `LaneConfig` |

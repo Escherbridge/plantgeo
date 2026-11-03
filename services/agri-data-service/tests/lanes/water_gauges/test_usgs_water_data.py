@@ -36,8 +36,8 @@ from agri_data_service.pipeline.runner.completeness import SourceCompleteness
 from agri_data_service.pipeline.runner.cooldown import ProviderCooldowns
 from agri_data_service.pipeline.runner.exits import TurnConfigurationError
 from agri_data_service.pipeline.runner.receipts import DayReceipt
+from agri_data_service.pipeline.runner.rechecks import SourceRechecks, recheck_scope
 from agri_data_service.pipeline.runner.resolve import resolve_strategy
-from agri_data_service.pipeline.runner.windows import revision_rotation_days
 from tests.lane_config.builders import REAL_LANES_DIRECTORY
 from tests.lanes.water_gauges.usgs_world import BOISE, DALLES, MERIDIAN, Gauge, Reading, UsgsWaterDataWorld
 from tests.parquet.availability_documents import MemoryAvailabilityStorage
@@ -356,13 +356,10 @@ async def test_an_unchanged_complete_forward_day_repairs_its_missing_coarse_rung
 
 
 async def test_a_late_approval_behind_the_forward_window_is_rewritten_by_the_rolling_revision() -> None:
-    """S11 for USGS approvals: a day written Provisional months ago is re-asked by a forward turn's revision
-    block and rewritten Approved within one rotation (every block once per `revision_rotation_days` turns)."""
+    """An old successful check makes the published block due independently of the calendar rotation."""
     lane = _enabled()
     days = lane.days
     assert days is not None
-    rotation = revision_rotation_days(days)
-    assert rotation is not None
     world = UsgsWaterDataWorld(gauges=[DALLES], reading_for=_daily_flow)
     store = MemoryLaneStore()
     late = date(2026, 6, 1)
@@ -371,20 +368,44 @@ async def test_a_late_approval_behind_the_forward_window_is_rewritten_by_the_rol
     assert written["approval_status"] == "Provisional"
     world.readings[(DALLES.monitoring_location_id, late)] = Reading(str(late.day * 1000), approval_status="Approved")
 
-    for elapsed in range(rotation):
-        exit_code, payload = await _turn(lane, world, store, now=NOW + timedelta(days=elapsed))
-        assert exit_code == 0, payload
-        assert payload["requests"] <= lane.budget.forward_max_weighted_calls
-        [row] = _rows(store, late)
-        if row["approval_status"] == "Approved":
-            break
-    else:
-        pytest.fail(f"{late} was not re-asked in {rotation} forward turns")
+    exit_code, payload = await _turn(lane, world, store, now=NOW)
+    assert exit_code == 0, payload
+    assert payload["requests"] <= lane.budget.forward_max_weighted_calls
+    [row] = _rows(store, late)
+    assert row["approval_status"] == "Approved"
 
     revision = (date.fromisoformat(str(payload["revision_first"])), date.fromisoformat(str(payload["revision_last"])))
     assert revision[0] <= late <= revision[1]
     assert payload["rewrite_reasons"]["digest_changed"] == 1  # type: ignore[index]
     assert _unwritten(payload) == []
+
+
+async def test_sparse_due_corrections_finish_one_contiguous_run_before_the_next() -> None:
+    first, middle, last = date(2026, 8, 1), date(2026, 8, 2), date(2026, 8, 3)
+    lane = _enabled(gap_fill=True)
+    assert lane.days is not None
+    assert lane.coverage_target is not None
+    lane = lane.model_copy(
+        update={
+            "days": lane.days.model_copy(update={"floor": first}),
+            "coverage_target": lane.coverage_target.model_copy(update={"first_day": first, "last_day": last}),
+        }
+    )
+    world, store = UsgsWaterDataWorld(gauges=[DALLES], reading_for=_daily_flow), MemoryLaneStore()
+    await _turn(lane, world, store, mode="gap-fill")
+    store.scheduling = MemoryAvailabilityStorage()
+    scope = recheck_scope(lane, load_region("pnw"), SUPPORT_IDS)
+    old = NOW - timedelta(days=40)
+    SourceRechecks(store.scheduling).confirm_many(STREAM, scope, {first: old, middle: NOW, last: old}, now=NOW)
+    world.requests.clear()
+    _, initial = await _turn(lane, world, store)
+    assert initial["revision_first"] == initial["revision_last"] == first.isoformat()
+    assert initial["requests"] <= lane.budget.forward_max_weighted_calls
+    assert SourceRechecks(store.scheduling).checked((STREAM,), scope, first, last)[first] == NOW
+    world.requests.clear()
+    _, following = await _turn(lane, world, store)
+    assert following["revision_first"] == following["revision_last"] == last.isoformat()
+    assert SourceRechecks(store.scheduling).checked((STREAM,), scope, first, last)[last] == NOW
 
 
 async def test_two_values_under_one_identity_are_dropped_counted_and_the_rest_of_the_day_is_written() -> None:
@@ -506,7 +527,8 @@ async def test_a_held_unresolved_day_spends_no_budget_while_a_scattered_hole_is_
     third_exit, third = await _turn(capped, world, store, mode="gap-fill")
 
     assert third_exit == 0, third
-    assert {request.url.params["time"] for request in world.daily_requests()} == {f"{floor}/{floor}"}
+    assert not world.daily_requests()
+    assert third["source_retry"]["waiting_days"] == 1  # type: ignore[index]
     assert _unwritten_reasons(third) == {floor.isoformat(): "source_unresolved"}
 
 

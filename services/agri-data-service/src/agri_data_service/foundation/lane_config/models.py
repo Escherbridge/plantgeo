@@ -431,6 +431,21 @@ class LaneCoverageTarget(_FrozenModel):
         return self
 
 
+class LaneRecurringCost(_FrozenModel):
+    """Minimum successful-check spacing; never evidence of source completeness."""
+
+    source_contract: KebabIdentifier
+    unresolved_recheck_days: int | None = Field(default=None, gt=0, le=3660, strict=True)
+    correction_recheck_days: int | None = Field(default=None, gt=0, le=3660, strict=True)
+    correction_max_weighted_calls: int | None = Field(default=None, ge=0, strict=True)
+
+    @model_validator(mode="after")
+    def _correction_policy_is_paired(self) -> LaneRecurringCost:
+        if (self.correction_recheck_days is None) != (self.correction_max_weighted_calls is None):
+            raise ValueError("correction cadence and cap must be declared together")
+        return self
+
+
 class LaneBudget(_FrozenModel):
     """Per-turn, per-mode weighted-call caps (S19) and turn bounds; a turn never exceeds its mode's cap."""
 
@@ -495,12 +510,18 @@ class LaneConfig(_FrozenModel):
     schedule: LaneSchedule
     days: LaneDays | None = None
     coverage_target: LaneCoverageTarget | None = None
+    recurring_cost: LaneRecurringCost | None = None
     budget: LaneBudget
     pruning: LanePruning = Field(default_factory=LanePruning)
     streams: tuple[LaneStream, ...] = ()
 
     @model_validator(mode="after")
     def _kind_decides_source_inputs_and_pruning(self) -> LaneConfig:
+        if self.recurring_cost is not None:
+            if self.kind != "ingest" or self.nature != "daily_series" or self.days is None:
+                raise ValueError("recurring_cost requires daily ingest days")
+            if self.recurring_cost.correction_recheck_days is not None and self.days.revision_window_days is None:
+                raise ValueError("correction cadence requires revision_window_days")
         if self.kind == "ingest":
             if self.source is None:
                 raise ValueError("an ingest lane declares [source]")

@@ -81,8 +81,13 @@ def _policy_blockers(request: LayerRequest, temporal_mode: str) -> list[str]:
     if request.history is None and temporal_mode == "daily_archive":
         reasons.append("history_target_required")
     correction = request.corrections
-    if correction is not None and (correction.mode != "coupled_forward" or correction.max_calls is not None):
-        reasons.append("independent_correction_budget_not_implemented")
+    if correction is not None:
+        if correction.mode == "independent" and (correction.max_calls is None or correction.recheck_days is None):
+            reasons.append("independent_correction_requires_cadence_and_cap")
+        if correction.mode == "coupled_forward" and (
+            correction.max_calls is not None or correction.recheck_days is not None
+        ):
+            reasons.append("coupled_correction_does_not_accept_independent_policy")
     if request.repair_max_days is not None:
         reasons.append("independent_repair_budget_not_implemented")
     budget = request.budget
@@ -109,9 +114,18 @@ def _water_lane(request: LayerRequest) -> LaneConfig:
     raw["days"]["floor_basis"] = "operator_declared_target_not_measured_coverage"
     raw["days"].pop("revision_window_days", None)
     raw["days"].pop("revision_days_per_turn", None)
+    raw.pop("recurring_cost", None)
+    recurring: dict[str, object] = {"source_contract": "usgs-daily-mean-v1"}
+    if request.unresolved_recheck_days is not None:
+        recurring["unresolved_recheck_days"] = request.unresolved_recheck_days
     if request.corrections is not None:
         raw["days"]["revision_window_days"] = request.corrections.window_days
         raw["days"]["revision_days_per_turn"] = request.corrections.days_per_turn
+        if request.corrections.mode == "independent":
+            recurring["correction_recheck_days"] = request.corrections.recheck_days
+            recurring["correction_max_weighted_calls"] = request.corrections.max_calls
+    if len(recurring) > 1:
+        raw["recurring_cost"] = recurring
     for stream in raw["streams"]:
         stream["history_floor"] = target.first_day
         stream["complete_history_floor"] = target.first_day

@@ -157,6 +157,7 @@ async def test_a_compare_turn_binds_no_writer_and_needs_no_loader_dsn(monkeypatc
         assert ports.writer is None
         assert isinstance(ports.client, ConfigProviderClient)
         assert ports.checkpoint_store is not None
+        assert ports.rechecks is not None
 
 
 async def test_a_writing_turn_without_a_loader_dsn_is_a_configuration_error(monkeypatch: pytest.MonkeyPatch) -> None:
