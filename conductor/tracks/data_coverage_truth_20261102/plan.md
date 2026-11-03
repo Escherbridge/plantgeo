@@ -13,8 +13,15 @@ type: implementation-plan
 - [x] Dev-drive cycle 2: architecture/discriminating + documentation-contracts/discriminating.
 - [x] Resolve cycle 2 findings (none actionable).
 - [x] Run integrated validation; batch-correct failures and record the green full Python receipt and frontend full-plus-focused scope.
-- [ ] Separate reviewed data-only release and post-deploy probes.
+- [x] Separate reviewed data-only release and post-deploy probes (`8119cc05`).
 - [x] Bounded rendered live UI pass through Playwright; evidence and distance defect recorded.
-- [ ] Post-deploy visual verification of changed notices and distance units.
+- [x] Post-deploy visual verification of changed notices and distance units.
+
+## Follow-up beyond the initial release
+
+- [ ] Extend coverage-target adoption to remaining archival writers after source-support/ownership admission.
+- [ ] Deliver a validated arbitrary-US-region bootstrap rather than requiring manual manifest/source/web registration.
+- [ ] Remediate and verify the existing production dependency advisories recorded in `dependency-risk.md`.
+- [ ] Collect the next scheduled coverage-target turn as operational stop/resume evidence; no quota-spending forced run was performed.
 
 Node zero: HEAD 23e94c80b84be6b861d4e8ff9fec415953e41dc6, no tracked starting diff; unrelated conductor.zip and gapfill-check.mjs preserved.
