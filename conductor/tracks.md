@@ -12,6 +12,7 @@ This registry contains planned, active, and blocked work only. Completed impleme
 | Track | State | Outstanding work |
 | --- | --- | --- |
 | [Coverage-driven ingestion and truthful serving](tracks/data_coverage_truth_20261102/plan.md) | in_progress | Coverage targets, historical idle/resume, PNW setup and scoped UI fixes implemented; two dev-drive cycles, bounded live desktop audit and corrected local gates complete. Separate deployment acceptance pending. |
+| [Catalyst PUDL agent capability validation](tracks/catalyst_agent_validation_20261102/plan.md) | in_progress | Capability assessment and pinned actual-row hydro/biomass pilot complete. Separate runtime admission, complementary operational evidence and end-to-end tool validation remain; no energy ingestion activated. |
 | [Environmental Parquet serving](tracks/environmental_parquet_serving_20260912/plan.md) | active | September 13 freshness audit complete; execute the linked recovery plan for missing soil publication, interrupted refresh, historical repair and governed serving acceptance. |
 | [Gapless Parquet publication](tracks/gapless_parquet_publication_20260901/plan.md) | active | Close full historical horizons, governed absences, repair ownership, and sustained forward publication. |
 | [Multiscale polygon surfaces](tracks/multiscale_polygon_surface_20260901/plan.md) | active | Complete low-zoom support geometry, live selected-day rendering, performance, and browser evidence. |

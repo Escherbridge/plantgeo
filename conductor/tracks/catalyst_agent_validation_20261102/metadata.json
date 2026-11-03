@@ -1,0 +1,13 @@
+{
+  "id": "catalyst_agent_validation_20261102",
+  "title": "Catalyst PUDL agent capability validation",
+  "status": "in_progress",
+  "created_on": "2026-11-02",
+  "type": "research",
+  "release_lane": "catalyst-independent",
+  "depends_on": [],
+  "related": [
+    "config_driven_ingestion_20260926",
+    "environmental_parquet_serving_20260912"
+  ]
+}
