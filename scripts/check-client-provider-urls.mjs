@@ -40,6 +40,66 @@ const ALLOWED_PATH_PREFIXES = new Map([
     "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/",
     "public basemap imagery exception",
   ],
+  // Published citations on /site-types. The pages link the source; nothing here is read as a layer.
+  ["https://research.fs.usda.gov/nrs/projects/wuigrowth", "site-type citation: USFS WUI growth"],
+  [
+    "https://www.fs.usda.gov/rds/archive/catalog/RDS-2015-0012-4",
+    "site-type citation: 1990-2020 WUI archive",
+  ],
+  ["https://doi.org/10.2737/RDS-2015-0012-4", "site-type citation: WUI archive DOI"],
+  [
+    "https://www.fs.usda.gov/rds/archive/products/RDS-2015-0012-4/_metadata_RDS-2015-0012-4.html",
+    "site-type citation: WUI archive metadata",
+  ],
+  [
+    "https://www.govinfo.gov/content/pkg/FR-2001-01-04/pdf/01-52.pdf",
+    "site-type citation: 66 Fed. Reg. 751",
+  ],
+  [
+    "https://www.nfpa.org/-/media/Project/Storefront/Catalog/Files/Firewise/Fact-sheets/FirewiseHowToPrepareYourHomeForWildfires.pdf",
+    "site-type citation: Firewise home fact sheet",
+  ],
+  [
+    "https://www.nfpa.org/-/media/Project/Storefront/Catalog/Files/Firewise/Fact-sheets/FirewiseFactSheetsImmediateNoncombustibleZone.pdf",
+    "site-type citation: Firewise immediate zone fact sheet",
+  ],
+  [
+    "https://www.nfpa.org/education-and-research/wildfire/firewise-usa",
+    "site-type citation: Firewise USA program home",
+  ],
+  [
+    "https://www.usgs.gov/national-hydrography/national-hydrography-dataset",
+    "site-type citation: NHD program page",
+  ],
+  ["https://www.usgs.gov/national-hydrography/science/faqs", "site-type citation: NHD FAQs"],
+  [
+    "https://www.usgs.gov/ngp-standards-and-specifications/national-hydrography-dataset-nhd-data-dictionary-feature-classes",
+    "site-type citation: NHD data dictionary",
+  ],
+  ["https://www.usgs.gov/3d-hydrography-program", "site-type citation: 3D Hydrography Program"],
+  [
+    "https://www.epa.gov/sites/default/files/2015-09/documents/2008_04_18_nps_watershed_handbook_handbook-2.pdf",
+    "site-type citation: EPA watershed handbook PDF",
+  ],
+  [
+    "https://www.epa.gov/nps/handbook-developing-watershed-plans-restore-and-protect-our-waters",
+    "site-type citation: EPA watershed handbook landing page",
+  ],
+  ["https://www.epa.gov/hwp", "site-type citation: EPA Healthy Watersheds"],
+  ["https://www.epa.gov/watershedacademy", "site-type citation: EPA Watershed Academy"],
+  ["https://websoilsurvey.nrcs.usda.gov/app/", "site-type citation: Web Soil Survey"],
+  [
+    "https://catalog.data.gov/dataset/soil-survey-geographic-database-ssurgo",
+    "site-type citation: SSURGO data.gov record",
+  ],
+  [
+    "https://www.fs.usda.gov/nrs/pubs/gtr/gtr_nrs122.pdf",
+    "site-type citation: USFS GTR NRS-122",
+  ],
+  [
+    "https://www.nrcs.usda.gov/resources/data-and-reports/soil-survey-geographic-database-ssurgo",
+    "site-type citation: NRCS SSURGO landing page",
+  ],
 ]);
 
 const SOURCE_EXTENSION = /\.(?:[cm]?[jt]sx?)$/;
