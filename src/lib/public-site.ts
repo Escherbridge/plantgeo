@@ -1,7 +1,7 @@
 /** Canonical origin for public URLs. Hardcoded; do not read this from the environment. */
 export const SITE_ORIGIN = "https://plantgeo.aevani.com";
 
-/** Paths Q1 requires in /sitemap.xml. Essay routes are appended by the writing index. */
+/** Paths Q1 requires in /sitemap.xml. Essay routes are added beside this list. */
 export const SITEMAP_PATHS = [
   "/",
   "/contact",

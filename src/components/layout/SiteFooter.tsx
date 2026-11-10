@@ -4,6 +4,7 @@ import { SISTER_SITES } from "@/lib/sister-sites";
 import { cn } from "@/lib/utils";
 
 const FOOTER_LINKS = [
+  { href: "/writing", label: "Notes" },
   { href: "/contact", label: "Contact" },
   { href: "/privacy", label: "Privacy" },
   { href: "/terms", label: "Terms" },
