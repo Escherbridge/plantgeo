@@ -6,6 +6,7 @@ import {
   EditorialProse,
   EditorialSection,
 } from "@/components/ui/editorial";
+import { PLAN_REF_COOKIE, PLAN_REF_MAX_AGE_SECONDS } from "@/lib/plans/ref-code";
 import { AI_GENERATED_DISCLAIMER } from "@/lib/regional-intelligence";
 import {
   OPERATOR_EMAIL,
@@ -236,6 +237,35 @@ export default function PrivacyPage() {
               {OPERATOR_EMAIL}
             </EditorialLink>{" "}
             or by mail to {OPERATOR_MAILING_ADDRESS}.
+          </p>
+        </EditorialProse>
+      </EditorialSection>
+
+      <EditorialSection index="09" title="Site plans" id="plans">
+        <EditorialProse>
+          <p>
+            A site plan stores a title, an optional description, a camera box,
+            an optional invite code, and, when the visitor is signed in, that
+            account&apos;s id. A guest plan stores a SHA-256 hash of its edit
+            token. The raw token is in the private link and is not stored. The
+            sample plan is a demonstration row with no account and no token.
+            Plan picks store the catalog id, the title shown at the time, a
+            quantity, and optional notes. They are not written onto the public
+            map.
+          </p>
+          <p>
+            Opening a sample plan with an invite code stores that code in an
+            httpOnly cookie named <em>{PLAN_REF_COOKIE}</em> for{" "}
+            {PLAN_REF_MAX_AGE_SECONDS / (24 * 60 * 60)} days, so a later plan
+            can keep the same code. The affiliate application stores a name,
+            an email, an optional organization, role, website, and message, and
+            a status of pending. That route is rate-limited with Redis. The
+            key is a SHA-256 digest of the caller address.
+          </p>
+          <p>
+            Plan pages ask this site for the public product list. The server
+            requests that list from aevani.com. The request does not include
+            the visitor&apos;s account, the guest token, or the invite code.
           </p>
         </EditorialProse>
       </EditorialSection>

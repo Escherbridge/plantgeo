@@ -109,6 +109,20 @@ export default function TermsPage() {
           <p>{TERMS_GOVERNING_LAW}</p>
         </EditorialProse>
       </EditorialSection>
+
+      <EditorialSection index="07" title="Site plans" id="plans">
+        <EditorialProse>
+          <p>
+            The sample plan is a demonstration on live map data. It is not a
+            customer site. Starting a plan while signed in attaches it to that
+            account. Starting one while signed out returns a private link, and
+            that link is the edit credential. An application to become an
+            affiliate records the form and waits for review. It does not grant
+            access, and it does not issue a code. Terms will be shared on
+            review. A plan does not check out.
+          </p>
+        </EditorialProse>
+      </EditorialSection>
     </DocumentPage>
   );
 }

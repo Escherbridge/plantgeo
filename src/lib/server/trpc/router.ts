@@ -16,6 +16,8 @@ import { jobsRouter } from "@/lib/server/trpc/routers/jobs";
 import { landContextRouter } from "@/lib/server/trpc/routers/land-context";
 import { layerWindowRouter } from "@/lib/server/trpc/routers/layer-window";
 import { usersRouter } from "@/lib/server/trpc/routers/users";
+import { plansRouter } from "@/lib/server/trpc/routers/plans";
+import { affiliateApplicationsRouter } from "@/lib/server/trpc/routers/affiliate-applications";
 
 export const appRouter = router({
   layers: layersRouter,
@@ -39,6 +41,8 @@ export const appRouter = router({
   landContext: landContextRouter,
   layerWindow: layerWindowRouter,
   users: usersRouter,
+  plans: plansRouter,
+  affiliateApplications: affiliateApplicationsRouter,
 });
 
 export type AppRouter = typeof appRouter;

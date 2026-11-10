@@ -6,6 +6,7 @@ import { trpc } from "@/lib/trpc/client";
 import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
 import { viewportForBbox } from "@/lib/map/coverage-region";
 import { readMapFocus } from "@/lib/map/focus-params";
+import { planCameraIsHeld } from "@/lib/map/plan-camera";
 import { MAP_MAX_ZOOM } from "@/lib/map/camera-limits";
 
 const SOURCE_ID = "ingestion-coverage";
@@ -216,7 +217,9 @@ export function ServiceAreaLayer({ map }: ServiceAreaLayerProps) {
 
     if (!hasFitRef.current) {
       hasFitRef.current = true;
-      if (readMapFocus(new URLSearchParams(window.location.search))) return;
+      // A plan page already opened on its stored bbox. Fitting the regional
+      // coverage box here would pull that camera back out to the whole region.
+      if (readMapFocus(new URLSearchParams(window.location.search)) || planCameraIsHeld()) return;
 
       // The store's DEFAULT_VIEWPORT already opens on an approximation of this
       // bbox (see src/stores/map-store.ts / src/lib/map/coverage-region.ts),
