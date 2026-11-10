@@ -100,16 +100,16 @@ export const SITE_TYPES: readonly SiteTypeArticle[] = [
         text: "The figures on this page are other people’s, with the links left on. Ada County appears only as a sample geography, not as a client.",
       },
       {
-        type: "heading",
-        text: "Hero figures",
+        type: "paragraph",
+        text: "As of 2020, 9.4 percent of the land area of the contiguous United States is in the WUI, and that land is home to **more than 44 million homes — 32 percent of all housing nationwide** (USDA Forest Service, Northern Research Station, “Wildland-Urban Interface Growth in the U.S.”).",
       },
       {
-        type: "list",
-        items: [
-          "**As of 2020, 9.4 percent** of the land area of the contiguous United States is in the WUI, and that land is home to **more than 44 million homes — 32 percent of all housing nationwide** (USDA Forest Service, Northern Research Station, “Wildland-Urban Interface Growth in the U.S.”).",
-          "**Between 1990 and 2020**, the number of homes in the WUI rose **47 percent** and WUI acreage rose **31 percent**; the United States added 179,000 square kilometers of WUI, an area the source compares to the state of Washington. Expansion slowed after 2008, but 2.6 million homes were still built in the WUI between 2010 and 2020. These are national, conterminous-U.S. figures, not an Ada County count and not a prediction.",
-          "**Immediate Zone 0 to 5 feet**, Intermediate Zone 5 to 30 feet, and Extended Zone 30 to 100 feet around the house, from NFPA’s Firewise fact sheet “How to Prepare Your Home for Wildfires,” labeled here as a public standard, not a PlantGeo rating.",
-        ],
+        type: "paragraph",
+        text: "Between 1990 and 2020 , the number of homes in the WUI rose **47 percent** and WUI acreage rose **31 percent**; the United States added 179,000 square kilometers of WUI, an area the source compares to the state of Washington. Expansion slowed after 2008, but 2.6 million homes were still built in the WUI between 2010 and 2020. These are national, conterminous-U.S. figures, not an Ada County count and not a prediction.",
+      },
+      {
+        type: "paragraph",
+        text: "Immediate Zone 0 to 5 feet , Intermediate Zone 5 to 30 feet, and Extended Zone 30 to 100 feet around the house, from NFPA’s Firewise fact sheet “How to Prepare Your Home for Wildfires,” labeled here as a public standard, not a PlantGeo rating.",
       },
       {
         type: "heading",
@@ -160,10 +160,6 @@ export const SITE_TYPES: readonly SiteTypeArticle[] = [
         text: "Sources",
       },
       {
-        type: "paragraph",
-        text: "Every stat on this page is cited.",
-      },
-      {
         type: "sources",
       },
       {
@@ -172,11 +168,11 @@ export const SITE_TYPES: readonly SiteTypeArticle[] = [
       },
       {
         type: "heading",
-        text: "An illustrative scenario",
+        text: "A situation like this",
       },
       {
         type: "paragraph",
-        text: "This is a worked example, not a client, and not a predicted fire. A foothills acre at the edge of Boise has a mapped intermix class and a five-foot gravel skirt. The map can say intermix, and the standard can name the first five feet. Neither one is a forecast of what will happen next summer.",
+        text: "A foothills acre at the edge of Boise has a mapped intermix class and a five-foot gravel skirt. The map can say intermix, and the standard can name the first five feet. Neither one is a forecast of what will happen next summer.",
       },
       {
         type: "heading",
@@ -212,10 +208,8 @@ export const SITE_TYPES: readonly SiteTypeArticle[] = [
         text: "Radeloff, V.C.; Helmers, D.P.; Mockrin, M.H.; Carlson, A.R.; Hawbaker, T.J.; Martinuzzi, S. 2023. “The 1990-2020 wildland-urban interface of the conterminous United States” (4th edition), Forest Service Research Data Archive. Published 9 August 2023. https://www.fs.usda.gov/rds/archive/catalog/RDS-2015-0012-4 — DOI: https://doi.org/10.2737/RDS-2015-0012-4",
         name: "Radeloff, V.C.; Helmers, D.P.; Mockrin, M.H.; Carlson, A.R.; Hawbaker, T.J.; Martinuzzi, S. 2023. “The 1990-2020 wildland-urban interface of the conterminous United States” (4th edition), Forest Service Research Data Archive. Published 9 August 2023.",
         url: "https://www.fs.usda.gov/rds/archive/catalog/RDS-2015-0012-4",
-        sameAs: [
-          "https://doi.org/10.2737/RDS-2015-0012-4",
-        ],
         datePublished: "2023-08-09",
+        sameAs: ["https://doi.org/10.2737/RDS-2015-0012-4"],
       },
       {
         text: "Same dataset, official metadata (published 9 August 2023; metadata updates 16 September 2024). https://www.fs.usda.gov/rds/archive/products/RDS-2015-0012-4/_metadata_RDS-2015-0012-4.html",
@@ -268,16 +262,16 @@ export const SITE_TYPES: readonly SiteTypeArticle[] = [
         text: "The figures on this page are other people’s, with the links left on.",
       },
       {
-        type: "heading",
-        text: "Hero figures",
+        type: "paragraph",
+        text: "High-resolution NHD was mapped at 1:24,000 or larger scale (1:63,360 or larger scale in Alaska) (USGS, National Hydrography Dataset program page).",
       },
       {
-        type: "list",
-        items: [
-          "**High-resolution NHD was mapped at 1:24,000 or larger scale** (1:63,360 or larger scale in Alaska) (USGS, National Hydrography Dataset program page).",
-          "**Legacy medium-resolution NHD**, compiled at 1:100,000 for the conterminous United States: at that scale, **ninety percent of well-defined features are within 167 feet** (0.02 inches at map scale) of their true geographic position (USGS National Hydrography FAQs). That foot-figure is the medium-resolution figure only. A 1:24,000 foot-figure was not given on the opened pages, and is not invented here.",
-          "**As of 1 October 2023, the NHD was retired.** “NHD data will continue to be available, but no longer maintained. The most current data will be available through the 3D Hydrography Program (3DHP).”",
-        ],
+        type: "paragraph",
+        text: "Legacy medium-resolution NHD , compiled at 1:100,000 for the conterminous United States: at that scale, **ninety percent of well-defined features are within 167 feet** (0.02 inches at map scale) of their true geographic position (USGS National Hydrography FAQs). That foot-figure is the medium-resolution figure only. A 1:24,000 foot-figure was not given on the opened pages, and is not invented here.",
+      },
+      {
+        type: "paragraph",
+        text: "As of 1 October 2023, the NHD was retired. “NHD data will continue to be available, but no longer maintained. The most current data will be available through the 3D Hydrography Program (3DHP).”",
       },
       {
         type: "heading",
@@ -328,19 +322,15 @@ export const SITE_TYPES: readonly SiteTypeArticle[] = [
         text: "Sources",
       },
       {
-        type: "paragraph",
-        text: "Every stat on this page is cited.",
-      },
-      {
         type: "sources",
       },
       {
         type: "heading",
-        text: "An illustrative scenario",
+        text: "A situation like this",
       },
       {
         type: "paragraph",
-        text: "This is a worked example, not a client, and not a planting plan. A small parcel along an irrigation lateral looks like a creek on a basemap and is coded canal/ditch in NHD. The useful surprise is the feature type, not a restoration appeal.",
+        text: "A small parcel along an irrigation lateral looks like a creek on a basemap and is coded canal/ditch in NHD. The useful surprise is the feature type, not a restoration appeal.",
       },
       {
         type: "heading",
@@ -432,16 +422,16 @@ export const SITE_TYPES: readonly SiteTypeArticle[] = [
         text: "The figures on this page are other people’s, with the links left on. No Ada County soil-series names, acreages, or yields are invented here; those require an opened survey for a stated area of interest.",
       },
       {
-        type: "heading",
-        text: "Hero figures",
+        type: "paragraph",
+        text: "“NRCS has soil maps and data available online for more than 95 percent of the nation’s counties and anticipates having 100 percent in the near future.” Web Soil Survey “is updated and maintained online as the single authoritative source of soil survey information” (USDA NRCS, Web Soil Survey home).",
       },
       {
-        type: "list",
-        items: [
-          "**“NRCS has soil maps and data available online for more than 95 percent of the nation’s counties** and anticipates having 100 percent in the near future.” Web Soil Survey “is updated and maintained online as the single authoritative source of soil survey information” (USDA NRCS, Web Soil Survey home).",
-          "**“Onsite investigation is needed in some cases, such as soil quality assessments and certain conservation and engineering applications.”** Same official home page. That limit is the point of this guide.",
-          "**Map detail varies by survey area.** Official ISO metadata for SSURGO (revision 2 July 2026) records many representative-fraction denominators, including 8,000; 12,000; 15,000; 15,840; 20,000; 24,000; 25,000; 31,680; 42,240; 48,000; 50,000; 62,500; 63,000; 63,360; 125,000; and 250,000. Do not assume a homestead is mapped at 1:24,000 unless that survey’s own scale has been opened. Ada County’s map-unit list and scale were not pulled from Web Soil Survey for this page, and are not invented.",
-        ],
+        type: "paragraph",
+        text: "“Onsite investigation is needed in some cases, such as soil quality assessments and certain conservation and engineering applications.” Same official home page. That limit is the point of this guide.",
+      },
+      {
+        type: "paragraph",
+        text: "Map detail varies by survey area. Official ISO metadata for SSURGO (revision 2 July 2026) records many representative-fraction denominators, including 8,000; 12,000; 15,000; 15,840; 20,000; 24,000; 25,000; 31,680; 42,240; 48,000; 50,000; 62,500; 63,000; 63,360; 125,000; and 250,000. Do not assume a homestead is mapped at 1:24,000 unless that survey’s own scale has been opened. Ada County’s map-unit list and scale were not pulled from Web Soil Survey for this page, and are not invented.",
       },
       {
         type: "heading",
@@ -488,10 +478,6 @@ export const SITE_TYPES: readonly SiteTypeArticle[] = [
         text: "Sources",
       },
       {
-        type: "paragraph",
-        text: "Every stat on this page is cited.",
-      },
-      {
         type: "sources",
       },
       {
@@ -500,11 +486,11 @@ export const SITE_TYPES: readonly SiteTypeArticle[] = [
       },
       {
         type: "heading",
-        text: "An illustrative scenario",
+        text: "A situation like this",
       },
       {
         type: "paragraph",
-        text: "This is a worked example, not a client, and it uses no invented series names. A two-acre parcel has a house near a map-unit boundary. Treating the colorful polygon under the porch as a lab report would have been the wrong lesson. The unit is a pattern at a stated scale, often a mixture. The test, when you need one, is still a test.",
+        text: "A two-acre parcel has a house near a map-unit boundary. Treating the colorful polygon under the porch as a lab report would have been the wrong lesson. The unit is a pattern at a stated scale, often a mixture. The test, when you need one, is still a test.",
       },
       {
         type: "heading",

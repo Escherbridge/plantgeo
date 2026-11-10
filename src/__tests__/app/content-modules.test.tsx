@@ -198,10 +198,11 @@ describe("news and site types", () => {
       const view = within(container);
       expect(view.getByRole("heading", { level: 1, name: page.h1 })).toBeTruthy();
       expect(view.getByRole("heading", { level: 2, name: "Sources" })).toBeTruthy();
-      expect(view.getByRole("heading", { level: 2, name: "An illustrative scenario" })).toBeTruthy();
+      expect(view.getByRole("heading", { level: 2, name: "A situation like this" })).toBeTruthy();
       const text = container.textContent ?? "";
-      expect(text).toMatch(/Every stat on this page is cited/);
-      expect(text).toMatch(/This is a worked example, not a client/);
+      expect(text).not.toMatch(/Hero figures/);
+      expect(text).not.toMatch(/Every stat on this page is cited/);
+      expect(text).not.toMatch(/An illustrative scenario/);
       expect(text).toMatch(/Author: Escherbridge/);
       expect(text).toMatch(/Last reviewed: 2026-11-10, America\/Denver/);
       expect(text).toMatch(/not for sale yet/);
@@ -378,8 +379,11 @@ describe("field guides", () => {
     expect(text).not.toMatch(/PlantGeo forecasts/i);
     expect(text).not.toMatch(/referral share is \d/i);
     expect(view.getByRole("heading", { level: 2, name: "Sources" })).toBeTruthy();
-    expect(view.getByRole("heading", { level: 2, name: "An illustrative scenario" })).toBeTruthy();
-    expect(text).toMatch(/illustrative, not a customer/);
+    expect(view.getByRole("heading", { level: 2, name: "A situation like this" })).toBeTruthy();
+    expect(text).toMatch(/a worked example, not a customer/);
+    expect(text).not.toMatch(/Hero figures/);
+    expect(text).not.toMatch(/Every stat on this page is cited/);
+    expect(text).not.toMatch(/An illustrative scenario/);
     for (const page of GUIDES) {
       expect(view.getByRole("link", { name: page.crumb }).getAttribute("href")).toBe(`/guides/${page.slug}`);
     }
@@ -433,10 +437,11 @@ describe("field guides", () => {
       const view = within(container);
       expect(view.getByRole("heading", { level: 1, name: page.h1 })).toBeTruthy();
       expect(view.getByRole("heading", { level: 2, name: "Sources" })).toBeTruthy();
-      expect(view.getByRole("heading", { level: 2, name: "An illustrative scenario" })).toBeTruthy();
+      expect(view.getByRole("heading", { level: 2, name: "A situation like this" })).toBeTruthy();
       const text = container.textContent ?? "";
-      expect(text).toMatch(/Every stat on this page is cited/);
-      expect(text).toMatch(/This is a worked example, not a customer/);
+      expect(text).not.toMatch(/Hero figures/);
+      expect(text).not.toMatch(/Every stat on this page is cited/);
+      expect(text).not.toMatch(/An illustrative scenario/);
       expect(text).toMatch(/Author: Escherbridge/);
       expect(text).toMatch(/Last reviewed: 2026-11-10, America\/Denver/);
       expect(text).toMatch(/PlantGeo publishes no forecasts/);
