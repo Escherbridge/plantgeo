@@ -2,6 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
+import { SiteFooter } from "@/components/layout/SiteFooter";
 import TopBar from "@/components/layout/TopBar";
 
 /** Route trees that stay frameless all the way down: auth, onboarding, embeds. */
@@ -35,7 +36,7 @@ export function ApplicationShell({ children }: { children: ReactNode }) {
   }
 
   return (
-    <>
+    <div className="application-shell-with-footer">
       <a
         href="#application-content"
         className="sr-only font-editorial-label text-label uppercase focus:not-sr-only focus:absolute focus:top-0 focus:left-0 focus:z-50 focus:bg-ink focus:px-comfortable focus:py-snug focus:text-paper"
@@ -46,6 +47,7 @@ export function ApplicationShell({ children }: { children: ReactNode }) {
       <div id="application-content" className="application-shell-with-top-bar">
         {children}
       </div>
-    </>
+      <SiteFooter pathname={pathname} />
+    </div>
   );
 }
