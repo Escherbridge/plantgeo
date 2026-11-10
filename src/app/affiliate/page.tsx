@@ -4,9 +4,9 @@ import { DocumentPage } from "@/components/layout/DocumentPage";
 import { EditorialLink, EditorialProse, EditorialSection } from "@/components/ui/editorial";
 
 export const metadata: Metadata = {
-  title: "Become a PlantGeo affiliate - PlantGeo",
+  title: "Invite people to plan a site - PlantGeo",
   description:
-    "Apply to invite people to plan sites on PlantGeo's live map. Terms will be shared on review.",
+    "Affiliates invite a landowner, a grower, a school, or a homestead to plan on the live map. Aevani catalogue items can be added to a plan later. Those items are not for sale yet. Applications are reviewed by hand.",
   alternates: { canonical: "/affiliate" },
 };
 
@@ -14,14 +14,22 @@ export default function AffiliatePage() {
   return (
     <DocumentPage
       eyebrow="Affiliates"
-      title="Become a PlantGeo affiliate."
-      lead="Invite people to plan a site on the live map. Catalog picks from Aevani can be added to a plan. Applications are reviewed by hand."
+      title="Invite people to plan a site."
+      lead={
+        <>
+          Affiliates invite a landowner, a grower, a school, or a homestead to plan on the live
+          map. <EditorialLink href="https://aevani.com">Aevani catalogue items</EditorialLink> can
+          be added to a plan later. Those items are not for sale yet. Applications are reviewed by
+          hand.
+        </>
+      }
     >
       <EditorialSection index="01" title="What this is" id="about">
         <EditorialProse>
           <p>
             An application asks to be reviewed. It does not grant access, and it does not issue a
-            code. Terms will be shared on review. The{" "}
+            code. Terms will be shared on review. A referral share has not been set, so this page
+            does not quote a rate or a payout date. The{" "}
             <EditorialLink href="/plan/sample?ref=ada-demo">sample plan</EditorialLink> is a
             demonstration on real map data, and it is not a customer.
           </p>

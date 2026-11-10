@@ -18,6 +18,15 @@ const ALLOWED_ORIGINS = new Map([
   ["https://plantgeo.io", "first-party application origin"],
   ["https://plantgeo.aevani.com", "first-party public site origin for social cards"],
   ["https://example.org", "non-network form placeholder"],
+  // Editorial sister-site links (footer, body, essays). Not observation sources.
+  ["https://primusneo.com", "sister site: PrimusNeo"],
+  ["https://neos.primusneo.com", "sister site: NEOS"],
+  ["https://azoa.ardanova.com", "sister site: AZOA"],
+  ["https://ardanova.com", "sister site: ArdaNova"],
+  ["https://aevani.com", "sister site: Aevani"],
+  ["https://overseasgenai.com", "sister site: OverseasGenAI"],
+  ["https://glitxz.com", "sister site: Glitxz"],
+  ["https://schema.org", "Organization JSON-LD context"],
 ]);
 
 const ALLOWED_PATH_PREFIXES = new Map([
