@@ -6,6 +6,12 @@ import {
   EditorialSection,
 } from "@/components/ui/editorial";
 import { AI_GENERATED_DISCLAIMER } from "@/lib/regional-intelligence";
+import {
+  OPERATOR_EMAIL,
+  OPERATOR_LEGAL_NAME,
+  OPERATOR_MAILING_ADDRESS,
+  TERMS_GOVERNING_LAW,
+} from "@/lib/site-operator";
 
 export const metadata: Metadata = {
   title: "Terms - PlantGeo",
@@ -82,6 +88,25 @@ export default function TermsPage() {
             an update. The land-context inquiry tool returns a draft string for
             you to copy. That procedure does not send email or submit a form.
           </p>
+        </EditorialProse>
+      </EditorialSection>
+
+      <EditorialSection index="05" title="Operator" id="operator">
+        <EditorialProse>
+          <p>
+            This site is operated by {OPERATOR_LEGAL_NAME}. Questions, privacy
+            requests, and data requests can be sent to{" "}
+            <EditorialLink href={`mailto:${OPERATOR_EMAIL}`} prefetch={false}>
+              {OPERATOR_EMAIL}
+            </EditorialLink>{" "}
+            or by mail to {OPERATOR_MAILING_ADDRESS}.
+          </p>
+        </EditorialProse>
+      </EditorialSection>
+
+      <EditorialSection index="06" title="Governing law" id="governing-law">
+        <EditorialProse>
+          <p>{TERMS_GOVERNING_LAW}</p>
         </EditorialProse>
       </EditorialSection>
     </DocumentPage>
