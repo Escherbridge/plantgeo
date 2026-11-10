@@ -121,6 +121,19 @@ const ALLOWED_PATH_PREFIXES = new Map([
     "https://www.usgs.gov/programs/national-geospatial-program/national-map",
     "guide citation: The National Map",
   ],
+  [
+    "https://www.fema.gov/glossary/base-flood-elevation-bfe",
+    "guide citation: FEMA base flood elevation glossary",
+  ],
+  [
+    "https://www.fema.gov/flood-maps/national-flood-hazard-layer",
+    "guide citation: FEMA National Flood Hazard Layer",
+  ],
+  ["https://www.ready.gov/wildfires", "guide citation: Ready.gov wildfires"],
+  [
+    "https://www.usgs.gov/programs/national-geospatial-program/topographic-maps",
+    "guide citation: USGS topographic maps",
+  ],
 ]);
 
 const SOURCE_EXTENSION = /\.(?:[cm]?[jt]sx?)$/;

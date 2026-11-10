@@ -304,10 +304,51 @@ const GUIDE_FIGURES: Record<string, readonly string[]> = {
     "not a property survey",
     "https://www.usgs.gov/programs/national-geospatial-program/national-map",
   ],
+  "base-flood-elevation": [
+    "1% chance of equaling or exceeding that level in any given year",
+    "5 March 2020",
+    "does not invent a BFE for Zone A",
+    "not insurance or building-code advice",
+    "https://www.fema.gov/glossary/base-flood-elevation-bfe",
+  ],
+  firmette: [
+    "approximately two feet by three feet",
+    "a FIRMette cannot be created for preliminary maps",
+    "Purposing",
+    "https://msc.fema.gov/portal/howto",
+    "https://www.fema.gov/flood-maps/national-flood-hazard-layer",
+  ],
+  "nfhl-preliminary-vs-effective": [
+    "over 90% of the U.S. population",
+    'not "90% of land area."',
+    "not final regulatory products",
+    "Pending is named only as a heading",
+    "returned HTTP 404",
+    "not insurance advice",
+    "https://www.fema.gov/flood-maps/national-flood-hazard-layer",
+    "https://msc.fema.gov/portal/howto",
+  ],
+  "ready-wildfires": [
+    "for at least 30 feet from your home",
+    "for up to five locations nationwide",
+    "which requires no-sign up",
+    "are not merged here",
+    "https://www.ready.gov/wildfires",
+  ],
+  "us-topo": [
+    "primary civilian mapping agency of the United States since 1879",
+    "In 2009",
+    "1:24,000-scale",
+    "7.5-minute",
+    "1884 to 2006",
+    "returned HTTP 404",
+    "not a property survey",
+    "https://www.usgs.gov/programs/national-geospatial-program/topographic-maps",
+  ],
 };
 
 describe("field guides", () => {
-  it("publishes the guides index with five children, sources, and an illustrative label", () => {
+  it("publishes the guides index with ten children, sources, and an illustrative label", () => {
     const { container } = render(<GuidesPage />);
     const view = within(container);
     expect(
@@ -324,8 +365,16 @@ describe("field guides", () => {
     expect(text).toMatch(/Floods are the most common disaster in the United States/);
     expect(text).toMatch(/Flood Map Service Center/);
     expect(text).toMatch(/no accuracy or acreage is stated here/);
+    expect(text).toMatch(/5 March 2020/);
+    expect(text).toMatch(/cannot be created for a preliminary map/);
+    expect(text).toMatch(/over 90% of the U\.S\. population/);
+    expect(text).toMatch(/at least 30 feet/);
+    expect(text).toMatch(/1884 to 2006/);
+    expect(text).toMatch(/not a Firewise or IBHS width/);
     expect(text).not.toMatch(/\$13\.5/);
     expect(text).not.toMatch(/\d[\d,]* acres/i);
+    expect(text).not.toMatch(/90% of land area/);
+    expect(text).not.toMatch(/0 to 5 feet|5 to 30 feet|30 to 100 feet/);
     expect(text).not.toMatch(/PlantGeo forecasts/i);
     expect(text).not.toMatch(/referral share is \d/i);
     expect(view.getByRole("heading", { level: 2, name: "Sources" })).toBeTruthy();
@@ -349,6 +398,11 @@ describe("field guides", () => {
       "https://www.fws.gov/program/national-wetlands-inventory",
       "https://www.usgs.gov/3d-elevation-program",
       "https://www.usgs.gov/programs/national-geospatial-program/national-map",
+      "https://www.fema.gov/glossary/base-flood-elevation-bfe",
+      "https://msc.fema.gov/portal/howto",
+      "https://www.fema.gov/flood-maps/national-flood-hazard-layer",
+      "https://www.ready.gov/wildfires",
+      "https://www.usgs.gov/programs/national-geospatial-program/topographic-maps",
     ]) {
       expect(text).toContain(source);
     }
@@ -362,7 +416,7 @@ describe("field guides", () => {
       itemListElement?: { name?: string; url?: string }[];
     };
     expect(list?.["@type"]).toBe("ItemList");
-    expect(list?.numberOfItems).toBe(5);
+    expect(list?.numberOfItems).toBe(GUIDES.length);
     expect(list?.itemListElement?.map((item) => item.url)).toEqual(
       GUIDES.map((page) => `https://plantgeo.aevani.com/guides/${page.slug}`),
     );
@@ -402,11 +456,23 @@ describe("field guides", () => {
         expect(text).not.toMatch(/\d[\d,]* acres/i);
         expect(text).not.toMatch(/accurate to \d/i);
       }
-      if (page.slug === "national-map") {
+      if (page.slug === "national-map" || page.slug === "us-topo") {
         const growing = view.getByRole("link", { name: "Aevani's growing guides" });
         expect(growing.getAttribute("href")).toBe("https://aevani.com/guides");
         expect(growing.getAttribute("rel") ?? "").not.toMatch(/nofollow/);
         expect(growing.parentElement?.textContent ?? "").toMatch(/not for sale/);
+      }
+      if (page.slug === "ready-wildfires") {
+        expect(text).not.toMatch(/0 to 5 feet|5 to 30 feet|30 to 100 feet/);
+      }
+      const allowedExternal = new Set([
+        ...page.sources.flatMap((source) => [source.url, ...(source.sameAs ?? [])]),
+        "https://aevani.com/guides",
+      ]);
+      for (const link of view.getAllByRole("link")) {
+        const href = link.getAttribute("href") ?? "";
+        if (href.startsWith("/") || href.startsWith("https://plantgeo.aevani.com")) continue;
+        expect(allowedExternal.has(href)).toBe(true);
       }
       expect(text).not.toMatch(/PlantGeo forecasts/i);
       expect(text).not.toMatch(/referral share is \d/i);
@@ -420,10 +486,15 @@ describe("field guides", () => {
       expect(article?.mainEntityOfPage).toBe(`https://plantgeo.aevani.com/guides/${page.slug}`);
       expect(article?.author).toMatchObject({ name: "Escherbridge" });
       expect(article?.publisher).toMatchObject({ name: "Escherbridge", legalName: "Escherbridge, LLC" });
-      const citations = article?.citation as { url?: string; dateModified?: string }[];
+      const citations = article?.citation as {
+        url?: string;
+        dateModified?: string;
+        sameAs?: string[];
+      }[];
       page.sources.forEach((source, index) => {
         expect(citations[index]?.url).toBe(source.url);
         expect(citations[index]?.dateModified).toBe(source.dateModified);
+        expect(citations[index]?.sameAs).toEqual(source.sameAs ? [...source.sameAs] : undefined);
       });
       const crumbItems = crumbs?.itemListElement as { name?: string }[];
       expect(crumbItems.map((item) => item.name)).toEqual(["Home", "Guides", page.crumb]);
@@ -465,6 +536,11 @@ describe("discovery files", () => {
       "https://plantgeo.aevani.com/guides/nwi-wetlands",
       "https://plantgeo.aevani.com/guides/usgs-3dep",
       "https://plantgeo.aevani.com/guides/national-map",
+      "https://plantgeo.aevani.com/guides/base-flood-elevation",
+      "https://plantgeo.aevani.com/guides/firmette",
+      "https://plantgeo.aevani.com/guides/nfhl-preliminary-vs-effective",
+      "https://plantgeo.aevani.com/guides/ready-wildfires",
+      "https://plantgeo.aevani.com/guides/us-topo",
       "https://plantgeo.aevani.com/blog/not-forecast-beyond-today",
       "https://plantgeo.aevani.com/blog/plan-the-land-then-pick-the-tools",
     ]) {
@@ -490,6 +566,11 @@ describe("discovery files", () => {
     expect(rss).toContain("https://plantgeo.aevani.com/guides/nwi-wetlands");
     expect(rss).toContain("https://plantgeo.aevani.com/guides/usgs-3dep");
     expect(rss).toContain("https://plantgeo.aevani.com/guides/national-map");
+    expect(rss).toContain("https://plantgeo.aevani.com/guides/base-flood-elevation");
+    expect(rss).toContain("https://plantgeo.aevani.com/guides/firmette");
+    expect(rss).toContain("https://plantgeo.aevani.com/guides/nfhl-preliminary-vs-effective");
+    expect(rss).toContain("https://plantgeo.aevani.com/guides/ready-wildfires");
+    expect(rss).toContain("https://plantgeo.aevani.com/guides/us-topo");
     expect(rss).not.toContain("railway.app");
     expect(rss).not.toContain("plantgeo.app");
     const feedPage = readFileSync("src/app/feed/page.tsx", "utf8");
