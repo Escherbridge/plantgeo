@@ -65,6 +65,10 @@ export const ESSAYS: readonly Essay[] = [
     sources: [
       { label: "About PlantGeo", href: "https://plantgeo.aevani.com/about" },
       { label: "Become a PlantGeo affiliate", href: "https://plantgeo.aevani.com/affiliate" },
+      {
+        label: "PlantGeo community — public strategy requests",
+        href: "https://plantgeo.aevani.com/community",
+      },
       { label: "Aevani homepage", href: "https://aevani.com" },
     ],
     paragraphs: [

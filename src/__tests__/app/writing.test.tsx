@@ -57,6 +57,11 @@ describe("essays", () => {
       expect(link.getAttribute("href")).toBe("https://aevani.com");
       expect(link.getAttribute("rel") ?? "").not.toMatch(/nofollow/);
     }
+    const community = screen.getByRole("link", {
+      name: "PlantGeo community — public strategy requests",
+    });
+    expect(community.getAttribute("href")).toBe("https://plantgeo.aevani.com/community");
+    expect(community.getAttribute("rel") ?? "").not.toMatch(/nofollow/);
     expect(screen.getByText("validated strategy evidence not published")).toBeTruthy();
   });
 });
