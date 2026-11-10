@@ -105,11 +105,11 @@ export const SITE_TYPES: readonly SiteTypeArticle[] = [
       },
       {
         type: "paragraph",
-        text: "Between 1990 and 2020 , the number of homes in the WUI rose **47 percent** and WUI acreage rose **31 percent**; the United States added 179,000 square kilometers of WUI, an area the source compares to the state of Washington. Expansion slowed after 2008, but 2.6 million homes were still built in the WUI between 2010 and 2020. These are national, conterminous-U.S. figures, not an Ada County count and not a prediction.",
+        text: "Between 1990 and 2020, the number of homes in the WUI rose **47 percent** and WUI acreage rose **31 percent**; the United States added 179,000 square kilometers of WUI, an area the source compares to the state of Washington. Expansion slowed after 2008, but 2.6 million homes were still built in the WUI between 2010 and 2020. These are national, conterminous-U.S. figures, not an Ada County count and not a prediction.",
       },
       {
         type: "paragraph",
-        text: "Immediate Zone 0 to 5 feet , Intermediate Zone 5 to 30 feet, and Extended Zone 30 to 100 feet around the house, from NFPA’s Firewise fact sheet “How to Prepare Your Home for Wildfires,” labeled here as a public standard, not a PlantGeo rating.",
+        text: "Immediate Zone 0 to 5 feet, Intermediate Zone 5 to 30 feet, and Extended Zone 30 to 100 feet around the house, from NFPA’s Firewise fact sheet “How to Prepare Your Home for Wildfires,” labeled here as a public standard, not a PlantGeo rating.",
       },
       {
         type: "heading",
