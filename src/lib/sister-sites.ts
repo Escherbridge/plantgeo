@@ -1,5 +1,3 @@
-import { SITE_ORIGIN } from "@/lib/public-site";
-
 /**
  * Sister sites for the footer block. Anchors are the descriptive phrases from
  * the PlantGeo copy. PlantGeo itself is omitted; each href is that site's own
@@ -35,13 +33,3 @@ export const SISTER_SITES = [
     label: "Glitxz, an artist-led market for work in progress",
   },
 ] as const;
-
-export function organizationJsonLd(): Record<string, unknown> {
-  return {
-    "@context": "https://schema.org",
-    "@type": "Organization",
-    name: "PlantGeo",
-    url: SITE_ORIGIN,
-    sameAs: SISTER_SITES.map((site) => site.href),
-  };
-}

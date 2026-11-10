@@ -26,7 +26,7 @@ const ALLOWED_ORIGINS = new Map([
   ["https://aevani.com", "sister site: Aevani"],
   ["https://overseasgenai.com", "sister site: OverseasGenAI"],
   ["https://glitxz.com", "sister site: Glitxz"],
-  ["https://schema.org", "Organization JSON-LD context"],
+  ["https://schema.org", "JSON-LD context for Organization and WebSite discovery metadata"],
 ]);
 
 const ALLOWED_PATH_PREFIXES = new Map([

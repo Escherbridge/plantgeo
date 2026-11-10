@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import { Archivo, IBM_Plex_Mono, Newsreader } from "next/font/google";
 import { Providers } from "@/lib/providers";
 import { ApplicationShell } from "@/components/layout/ApplicationShell";
-import { OrganizationJsonLd } from "@/components/layout/OrganizationJsonLd";
 import { Toaster } from "@/components/ui/toast";
+import { SiteDiscoveryJsonLd, siteDiscoveryMetadata } from "@/lib/site-discovery";
 import { SITE_ORIGIN } from "@/lib/public-site";
 import "@/styles/globals.css";
 
@@ -37,6 +37,7 @@ const editorialFontVariables = [
 const OG_IMAGE_URL = `${SITE_ORIGIN}/og.png`;
 
 export const metadata: Metadata = {
+  ...siteDiscoveryMetadata,
   title: "PlantGeo - 3D Geospatial Platform",
   description:
     "Open-source 3D mapping platform for wildfire prevention, ecosystem monitoring, and geospatial intelligence",
@@ -49,6 +50,7 @@ export const metadata: Metadata = {
     apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
   },
   openGraph: {
+    ...siteDiscoveryMetadata.openGraph,
     images: [
       {
         url: OG_IMAGE_URL,
@@ -72,7 +74,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning className={editorialFontVariables}>
       <body className="antialiased">
-        <OrganizationJsonLd />
+        <SiteDiscoveryJsonLd />
         <Providers>
           <ApplicationShell>{children}</ApplicationShell>
         </Providers>

@@ -6,8 +6,8 @@ import PrivacyPage from "@/app/privacy/page";
 import TermsPage from "@/app/terms/page";
 import { readFileSync } from "node:fs";
 import { ApplicationShell } from "@/components/layout/ApplicationShell";
-import { OrganizationJsonLd } from "@/components/layout/OrganizationJsonLd";
 import { SiteFooter } from "@/components/layout/SiteFooter";
+import { SiteDiscoveryJsonLd, siteDiscoveryGraph } from "@/lib/site-discovery";
 import { AI_GENERATED_DISCLAIMER } from "@/lib/regional-intelligence";
 import { SISTER_SITES } from "@/lib/sister-sites";
 
@@ -131,21 +131,25 @@ describe("site footer", () => {
 });
 
 describe("organization JSON-LD", () => {
-  it("names PlantGeo and lists the sister origins as sameAs", () => {
-    const { container } = render(<OrganizationJsonLd />);
-    const script = container.querySelector('script[type="application/ld+json"]');
-    const data = JSON.parse(script?.textContent ?? "{}") as {
-      name?: string;
-      url?: string;
-      sameAs?: string[];
+  it("keeps the sister origins on the single discovery graph", () => {
+    const { container } = render(<SiteDiscoveryJsonLd />);
+    const scripts = container.querySelectorAll('script[type="application/ld+json"]');
+    expect(scripts).toHaveLength(1);
+    const data = JSON.parse(scripts[0]?.textContent ?? "{}") as {
+      "@graph"?: { "@type"?: string; name?: string; url?: string; sameAs?: string[] }[];
     };
-    expect(data.name).toBe("PlantGeo");
-    expect(data.url).toBe("https://plantgeo.aevani.com");
-    expect(data.sameAs).toEqual(SISTER_SITES.map((site) => site.href));
+    const organization = data["@graph"]?.find((node) => node["@type"] === "Organization");
+    const website = data["@graph"]?.find((node) => node["@type"] === "WebSite");
+    expect(organization?.name).toBe("Escherbridge, LLC");
+    expect(organization?.url).toBe("https://plantgeo.aevani.com");
+    expect(organization?.sameAs).toEqual(SISTER_SITES.map((site) => site.href));
+    expect(website?.name).toBe("PlantGeo");
+    expect(data).toEqual(siteDiscoveryGraph);
   });
 
-  it("is mounted from the root layout", () => {
+  it("is mounted once from the root layout", () => {
     const source = readFileSync("src/app/layout.tsx", "utf8");
-    expect(source).toContain("<OrganizationJsonLd");
+    expect(source).toContain("<SiteDiscoveryJsonLd");
+    expect(source).not.toContain("OrganizationJsonLd");
   });
 });
