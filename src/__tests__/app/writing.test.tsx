@@ -12,20 +12,19 @@ describe("writing index", () => {
     render(<WritingIndexPage />);
     for (const essay of ESSAYS) {
       expect(screen.getByRole("link", { name: essay.title }).getAttribute("href")).toBe(
-        `/writing/${essay.slug}`
+        `/blog/${essay.slug}`
       );
     }
     render(<SiteFooter pathname="/about" />);
-    expect(screen.getByRole("link", { name: "Notes" }).getAttribute("href")).toBe("/writing");
+    expect(screen.getByRole("link", { name: "Blog" }).getAttribute("href")).toBe("/blog");
   });
 
-  it("adds the essay routes to the sitemap", () => {
+  it("lists the essays once, at their blog canonicals", () => {
     const urls = sitemap().map((entry) => entry.url);
     expect(urls).toContain("https://plantgeo.aevani.com/writing");
-    expect(urls).toContain("https://plantgeo.aevani.com/writing/not-forecast-beyond-today");
-    expect(urls).toContain(
-      "https://plantgeo.aevani.com/writing/plan-the-land-then-pick-the-tools"
-    );
+    expect(urls).toContain("https://plantgeo.aevani.com/blog/not-forecast-beyond-today");
+    expect(urls).toContain("https://plantgeo.aevani.com/blog/plan-the-land-then-pick-the-tools");
+    expect(urls).not.toContain("https://plantgeo.aevani.com/writing/not-forecast-beyond-today");
   });
 });
 

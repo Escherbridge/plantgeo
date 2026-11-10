@@ -4,7 +4,9 @@ import { SISTER_SITES } from "@/lib/sister-sites";
 import { cn } from "@/lib/utils";
 
 const FOOTER_LINKS = [
-  { href: "/writing", label: "Notes" },
+  { href: "/blog", label: "Blog" },
+  { href: "/news", label: "News" },
+  { href: "/site-types", label: "Site types" },
   { href: "/contact", label: "Contact" },
   { href: "/privacy", label: "Privacy" },
   { href: "/terms", label: "Terms" },
@@ -41,7 +43,7 @@ export function SiteFooter({ pathname }: { pathname: string }) {
           ))}
         </nav>
       </div>
-      <nav aria-label="Footer" className="flex h-11 shrink-0 items-center justify-end px-page-inset">
+      <nav aria-label="Footer" className="flex h-11 min-w-0 shrink-0 items-center justify-end overflow-x-auto px-page-inset">
         {FOOTER_LINKS.map((item) => {
           const current = isCurrent(pathname, item.href);
           return (
