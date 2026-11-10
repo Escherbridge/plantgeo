@@ -20,7 +20,7 @@ import {
 import { WATER_GAUGES_STREAM_FACT } from "@/lib/water-gauges-stream";
 
 export const metadata: Metadata = {
-  title: "About - PlantGeo",
+  title: "About PlantGeo — The whole map, unbundled",
   description:
     "PlantGeo is a 3D geospatial platform assembled entirely from open-source parts: MapLibre, deck.gl, Martin, PMTiles, Valhalla, Photon and PostGIS.",
 };
@@ -63,8 +63,7 @@ const parityIndex = [
   },
   {
     term: "Travel-time isochrones",
-    description:
-      "Valhalla isolines. Google Maps Platform has no first-party equivalent.",
+    description: "Valhalla isolines.",
     note: "Beyond parity",
   },
   {
@@ -383,6 +382,13 @@ export default function AboutPage() {
                 counterpart. We run those counterparts ourselves, put them behind
                 one coherent interface, and leave the seams visible.
               </EditorialLead>
+              <p className="mt-comfortable max-w-measure font-editorial-text text-body text-ink">
+                It is also a site-planning tool. An affiliate can invite someone to plan a plot on
+                this map, then — later — pick tools and systems from Aevani for that plan.{" "}
+                <EditorialLink href="https://aevani.com">Aevani&apos;s catalogue</EditorialLink> is
+                still a preview, and nothing on it is for sale. A referral share for that path has
+                not been set, so this page does not quote one.
+              </p>
 
               <div className="mt-comfortable flex flex-wrap gap-tight">
                 <EditorialActionLink href="/">Open the map</EditorialActionLink>

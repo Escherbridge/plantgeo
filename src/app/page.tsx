@@ -1,21 +1,18 @@
-"use client";
+import type { Metadata } from "next";
+import { CrawlableHome } from "@/components/home/CrawlableHome";
+import { HomeMap } from "@/components/home/HomeMap";
 
-import dynamic from "next/dynamic";
-import MapLayout from "@/components/layout/MapLayout";
-
-const MapView = dynamic(() => import("@/components/map/MapView"), {
-  ssr: false,
-  loading: () => (
-    <div className="flex h-screen w-full items-center justify-center bg-[hsl(var(--background))]">
-      <div className="text-[hsl(var(--foreground))]">Loading map...</div>
-    </div>
-  ),
-});
+export const metadata: Metadata = {
+  title: "PlantGeo — The whole map, unbundled",
+  description:
+    "An open-source 3D map for planning a site, assembled from parts we run ourselves. The default basemap is a Pacific Northwest extract. PlantGeo publishes no forecasts.",
+};
 
 export default function HomePage() {
   return (
-    <MapLayout>
-      <MapView />
-    </MapLayout>
+    <div className="home-document">
+      <HomeMap />
+      <CrawlableHome />
+    </div>
   );
 }
