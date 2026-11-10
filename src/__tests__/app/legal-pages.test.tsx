@@ -4,9 +4,12 @@ import { render, screen } from "@testing-library/react";
 import ContactPage from "@/app/contact/page";
 import PrivacyPage from "@/app/privacy/page";
 import TermsPage from "@/app/terms/page";
+import { readFileSync } from "node:fs";
 import { ApplicationShell } from "@/components/layout/ApplicationShell";
+import { OrganizationJsonLd } from "@/components/layout/OrganizationJsonLd";
 import { SiteFooter } from "@/components/layout/SiteFooter";
 import { AI_GENERATED_DISCLAIMER } from "@/lib/regional-intelligence";
+import { SISTER_SITES } from "@/lib/sister-sites";
 
 const navigation = vi.hoisted(() => ({ pathname: "/about" }));
 
@@ -95,6 +98,18 @@ describe("site footer", () => {
     expect(screen.getByRole("link", { name: "Privacy" }).getAttribute("aria-current")).toBe("page");
   });
 
+  it("lists sister sites under An Escherbridge project, as follow links", () => {
+    render(<SiteFooter pathname="/about" />);
+    expect(screen.getByText("An Escherbridge project")).toBeTruthy();
+    for (const site of SISTER_SITES) {
+      const link = screen.getByRole("link", { name: site.label });
+      expect(link.getAttribute("href")).toBe(site.href);
+      expect(link.getAttribute("rel") ?? "").not.toMatch(/nofollow/);
+      expect(site.href).not.toContain("plantgeo.aevani.com");
+    }
+    expect(screen.queryByRole("link", { name: /^PlantGeo/ })).toBeNull();
+  });
+
   it("mounts on a navigable route and stays off a frameless route", () => {
     navigation.pathname = "/about";
     const { unmount } = render(
@@ -112,5 +127,25 @@ describe("site footer", () => {
       </ApplicationShell>
     );
     expect(screen.queryByRole("navigation", { name: "Footer" })).toBeNull();
+  });
+});
+
+describe("organization JSON-LD", () => {
+  it("names PlantGeo and lists the sister origins as sameAs", () => {
+    const { container } = render(<OrganizationJsonLd />);
+    const script = container.querySelector('script[type="application/ld+json"]');
+    const data = JSON.parse(script?.textContent ?? "{}") as {
+      name?: string;
+      url?: string;
+      sameAs?: string[];
+    };
+    expect(data.name).toBe("PlantGeo");
+    expect(data.url).toBe("https://plantgeo.aevani.com");
+    expect(data.sameAs).toEqual(SISTER_SITES.map((site) => site.href));
+  });
+
+  it("is mounted from the root layout", () => {
+    const source = readFileSync(new URL("../../app/layout.tsx", import.meta.url), "utf8");
+    expect(source).toContain("<OrganizationJsonLd");
   });
 });

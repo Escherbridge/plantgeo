@@ -2,7 +2,9 @@ import type { Metadata } from "next";
 import { Archivo, IBM_Plex_Mono, Newsreader } from "next/font/google";
 import { Providers } from "@/lib/providers";
 import { ApplicationShell } from "@/components/layout/ApplicationShell";
+import { OrganizationJsonLd } from "@/components/layout/OrganizationJsonLd";
 import { Toaster } from "@/components/ui/toast";
+import { SITE_ORIGIN } from "@/lib/public-site";
 import "@/styles/globals.css";
 
 /** Grotesque for display, serif for reading, mono for labels. */
@@ -32,7 +34,6 @@ const editorialFontVariables = [
   editorialLabelFont.variable,
 ].join(" ");
 
-const SITE_ORIGIN = "https://plantgeo.aevani.com";
 const OG_IMAGE_URL = `${SITE_ORIGIN}/og.png`;
 
 export const metadata: Metadata = {
@@ -71,6 +72,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning className={editorialFontVariables}>
       <body className="antialiased">
+        <OrganizationJsonLd />
         <Providers>
           <ApplicationShell>{children}</ApplicationShell>
         </Providers>

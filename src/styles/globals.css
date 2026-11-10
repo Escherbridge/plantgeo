@@ -268,8 +268,8 @@ body {
 
 :root {
   --application-top-bar-height: 3.5rem;
-  /* 0 until `.application-shell-with-footer` mounts the legal footer.
-     That class sets 2.75rem, the same length as `h-11`. */
+  /* 0 until `.application-shell-with-footer` mounts the footer.
+     That class sets 5.5rem: a sister-site row plus the legal row, each `h-11`. */
   --application-site-footer-height: 0rem;
   --application-viewport-below-top-bar: calc(
     100dvh - var(--application-top-bar-height) - var(--application-site-footer-height)
@@ -571,7 +571,7 @@ body {
    the viewport here: a descendant that only changes the footer height does not
    reach the calc already declared on :root. */
 .application-shell-with-footer {
-  --application-site-footer-height: 2.75rem;
+  --application-site-footer-height: 5.5rem;
   --application-viewport-below-top-bar: calc(
     100dvh - var(--application-top-bar-height) - var(--application-site-footer-height)
   );
