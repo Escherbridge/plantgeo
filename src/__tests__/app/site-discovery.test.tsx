@@ -89,8 +89,20 @@ describe("site discovery metadata", () => {
     expect(graph[0]).toMatchObject({
       name: "Escherbridge, LLC",
       url: SITE_ORIGIN,
+      address: {
+        "@type": "PostalAddress",
+        addressLocality: "Boise",
+        addressRegion: "ID",
+        addressCountry: "US",
+      },
       sameAs: SISTER_SITES.map((site) => site.href),
     });
+    expect(Object.keys(graph[0]?.address ?? {}).sort()).toEqual([
+      "@type",
+      "addressCountry",
+      "addressLocality",
+      "addressRegion",
+    ]);
     expect(graph[1]).toMatchObject({
       name: "PlantGeo",
       url: SITE_ORIGIN,
@@ -103,5 +115,7 @@ describe("site discovery metadata", () => {
     }
     expect(Object.keys(graph[0] ?? {})).not.toContain("logo");
     expect(serialized).not.toContain('"logo"');
+    expect(serialized).not.toContain("streetAddress");
+    expect(serialized).not.toContain("postalCode");
   });
 });

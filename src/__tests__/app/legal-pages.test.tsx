@@ -1,15 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 
-import ContactPage from "@/app/contact/page";
+import ContactPage, { metadata as contactMetadata } from "@/app/contact/page";
 import PrivacyPage from "@/app/privacy/page";
 import TermsPage from "@/app/terms/page";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import path from "node:path";
 import { ApplicationShell } from "@/components/layout/ApplicationShell";
 import { SiteFooter } from "@/components/layout/SiteFooter";
 import { SiteDiscoveryJsonLd, siteDiscoveryGraph } from "@/lib/site-discovery";
 import { AI_GENERATED_DISCLAIMER } from "@/lib/regional-intelligence";
 import { SISTER_SITES } from "@/lib/sister-sites";
+import { OPERATOR_EMAIL, OPERATOR_LINE, OPERATOR_LOCATION } from "@/lib/site-operator";
 
 const navigation = vi.hoisted(() => ({ pathname: "/about" }));
 
@@ -25,14 +27,67 @@ vi.mock("next-auth/react", () => ({
 const GOVERNING_LAW =
   "These terms are governed by the laws of the State of Idaho, and any dispute will be resolved in the state or federal courts located in Ada County, Idaho.";
 
+const STREET_FORM =
+  /\b\d{1,6}\s+(?:[NSEW]\.?\s+)?[A-Za-z0-9.'-]+(?:\s+[A-Za-z0-9.'-]+){0,3}\s+(?:St|Street|Ave|Avenue|Ln|Lane|Rd|Road|Dr|Drive|Blvd|Boulevard|Way|Ct|Court|Pl|Place|Cir|Circle|Ter|Terrace|Hwy|Highway)\b/;
+const ZIP_FORM = /\b\d{5}(?:-\d{4})?(?![\d-])/;
+const POST_OFFICE_BOX = /\bP\.?\s*O\.?\s*Box\b/i;
+
+function expectNoPostalForm(text: string) {
+  expect(text).not.toMatch(STREET_FORM);
+  expect(text).not.toMatch(ZIP_FORM);
+  expect(text).not.toMatch(POST_OFFICE_BOX);
+}
+
+function line(text: string | null | undefined): string {
+  return (text ?? "").replace(/\s+/g, " ").trim();
+}
+
+function renderedOperatorLine(container: HTMLElement): string {
+  const paragraphs = [...container.querySelectorAll("p")].map((paragraph) => line(paragraph.textContent));
+  return paragraphs.find((paragraph) => paragraph === OPERATOR_LINE) ?? "";
+}
+
+const PRIVATE_PAGE_DIRS = new Set([
+  "(auth)",
+  "admin",
+  "api",
+  "dashboard",
+  "embed",
+  "invite",
+  "join",
+  "moderation",
+  "onboarding",
+]);
+
+function publicPageSources(): string[] {
+  const files: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir)) {
+      if (PRIVATE_PAGE_DIRS.has(entry)) continue;
+      const full = path.join(dir, entry);
+      if (statSync(full).isDirectory()) walk(full);
+      else if (entry.endsWith(".ts") || entry.endsWith(".tsx") || entry.endsWith(".md")) files.push(full);
+    }
+  };
+  walk("src/app");
+  walk("src/lib/content");
+  walk("src/lib/writing");
+  walk("src/components/layout");
+  files.push("src/lib/site-operator.ts", "src/lib/site-discovery.tsx");
+  return files.map((file) => readFileSync(file, "utf8"));
+}
+
 describe("legal pages", () => {
-  it("publishes the operator email, phone, and mailing address", () => {
+  it("publishes the operator email, phone, and city without a street address", () => {
     const { container } = render(<ContactPage />);
     const text = container.textContent ?? "";
     expect(screen.getByRole("heading", { level: 1, name: "Reach the operator." })).toBeTruthy();
     expect(text).toContain("Escherbridge, LLC");
     expect(text).toContain("Ahmed Zaher");
-    expect(text).toContain("1140 S Colorado Ln, Boise, ID");
+    expect(renderedOperatorLine(container)).toBe(OPERATOR_LINE);
+    expect(OPERATOR_LINE).toBe(`${OPERATOR_LOCATION}. ${OPERATOR_EMAIL}`);
+    expectNoPostalForm(text);
+    expectNoPostalForm(String(contactMetadata.description));
     expect(screen.getByRole("link", { name: "contact@escherbridge.com" }).getAttribute("href")).toBe(
       "mailto:contact@escherbridge.com"
     );
@@ -59,7 +114,8 @@ describe("legal pages", () => {
     expect(text).toMatch(/at least three records/);
     expect(text).toContain(AI_GENERATED_DISCLAIMER);
     expect(text).toContain("This site is operated by Escherbridge, LLC.");
-    expect(text).toContain("1140 S Colorado Ln, Boise, ID");
+    expect(renderedOperatorLine(container)).toBe(OPERATOR_LINE);
+    expectNoPostalForm(text);
     expect(text).toMatch(/privacy requests, and data requests/);
     expect(screen.getByRole("link", { name: "contact@escherbridge.com" }).getAttribute("href")).toBe(
       "mailto:contact@escherbridge.com"
@@ -77,7 +133,8 @@ describe("legal pages", () => {
     expect(text).toMatch(/pending review is visible to signed-in readers/);
     expect(text).toContain(AI_GENERATED_DISCLAIMER);
     expect(text).toContain("This site is operated by Escherbridge, LLC.");
-    expect(text).toContain("1140 S Colorado Ln, Boise, ID");
+    expect(renderedOperatorLine(container)).toBe(OPERATOR_LINE);
+    expectNoPostalForm(text);
     expect(text).toMatch(/privacy requests, and data requests/);
     expect(screen.getByRole("link", { name: "contact@escherbridge.com" }).getAttribute("href")).toBe(
       "mailto:contact@escherbridge.com"
@@ -86,6 +143,10 @@ describe("legal pages", () => {
     expect(text).not.toMatch(/arbitration|class action|jury/i);
     expect(text).not.toMatch(/alerts@plantgeo\.io/);
     expect(text).not.toMatch(/DRAFT:/);
+  });
+
+  it("rejects a street suffix, a five-digit ZIP, or a post-office box on public pages", () => {
+    for (const source of publicPageSources()) expectNoPostalForm(source);
   });
 });
 
@@ -138,9 +199,23 @@ describe("organization JSON-LD", () => {
     const data = JSON.parse(scripts[0]?.textContent ?? "{}") as {
       "@graph"?: { "@type"?: string; name?: string; url?: string; sameAs?: string[] }[];
     };
-    const organization = data["@graph"]?.find((node) => node["@type"] === "Organization");
+    const organization = data["@graph"]?.find((node) => node["@type"] === "Organization") as {
+      "@type"?: string;
+      name?: string;
+      url?: string;
+      sameAs?: string[];
+      address?: Record<string, string>;
+    };
     const website = data["@graph"]?.find((node) => node["@type"] === "WebSite");
     expect(organization?.name).toBe("Escherbridge, LLC");
+    expect(organization?.address).toEqual({
+      "@type": "PostalAddress",
+      addressLocality: "Boise",
+      addressRegion: "ID",
+      addressCountry: "US",
+    });
+    expect(organization?.address).not.toHaveProperty("streetAddress");
+    expect(organization?.address).not.toHaveProperty("postalCode");
     expect(organization?.url).toBe("https://plantgeo.aevani.com");
     expect(organization?.sameAs).toEqual(SISTER_SITES.map((site) => site.href));
     expect(website?.name).toBe("PlantGeo");

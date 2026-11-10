@@ -11,7 +11,7 @@ import { AI_GENERATED_DISCLAIMER } from "@/lib/regional-intelligence";
 import {
   OPERATOR_EMAIL,
   OPERATOR_LEGAL_NAME,
-  OPERATOR_MAILING_ADDRESS,
+  OPERATOR_LINE,
 } from "@/lib/site-operator";
 
 export const metadata: Metadata = {
@@ -235,9 +235,10 @@ export default function PrivacyPage() {
             requests, and data requests can be sent to{" "}
             <EditorialLink href={`mailto:${OPERATOR_EMAIL}`} prefetch={false}>
               {OPERATOR_EMAIL}
-            </EditorialLink>{" "}
-            or by mail to {OPERATOR_MAILING_ADDRESS}.
+            </EditorialLink>
+            .
           </p>
+          <p>{OPERATOR_LINE}</p>
         </EditorialProse>
       </EditorialSection>
 
