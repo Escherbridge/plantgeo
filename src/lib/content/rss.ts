@@ -1,8 +1,9 @@
+import { SITE_TYPES, siteTypePath } from "@/lib/content/site-types";
 import { absoluteSiteUrl } from "@/lib/public-site";
+import { blogPath, ESSAYS } from "@/lib/writing/essays";
 
 /** Head autodiscovery. Pages that set their own `alternates` must repeat this. */
 export const RSS_ALTERNATE = { "application/rss+xml": "/feed.xml" } as const;
-import { blogPath, ESSAYS } from "@/lib/writing/essays";
 
 function xmlText(value: string): string {
   return value
@@ -18,19 +19,39 @@ function rssDate(iso: string): string {
   return new Date(Date.UTC(year, month - 1, day)).toUTCString();
 }
 
-/** Blog posts only. News and site-type pages are not items until one is published. */
+interface FeedEntry {
+  title: string;
+  path: string;
+  date: string;
+  summary: string;
+}
+
+/** Blog posts and published site-type pages. News stays out until a post exists. */
 export function blogRssXml(): string {
-  const posts = [...ESSAYS].sort((a, b) => b.date.localeCompare(a.date) || a.slug.localeCompare(b.slug));
+  const posts: FeedEntry[] = [
+    ...ESSAYS.map((essay) => ({
+      title: essay.title,
+      path: blogPath(essay),
+      date: essay.date,
+      summary: essay.summary,
+    })),
+    ...SITE_TYPES.map((page) => ({
+      title: page.h1,
+      path: siteTypePath(page),
+      date: page.publishedAt,
+      summary: page.metaDescription,
+    })),
+  ].sort((a, b) => b.date.localeCompare(a.date) || a.path.localeCompare(b.path));
   const items = posts
-    .map((essay) => {
-      const url = absoluteSiteUrl(blogPath(essay));
+    .map((entry) => {
+      const url = absoluteSiteUrl(entry.path);
       return [
         "    <item>",
-        `      <title>${xmlText(essay.title)}</title>`,
+        `      <title>${xmlText(entry.title)}</title>`,
         `      <link>${xmlText(url)}</link>`,
         `      <guid isPermaLink="true">${xmlText(url)}</guid>`,
-        `      <pubDate>${rssDate(essay.date)}</pubDate>`,
-        `      <description>${xmlText(essay.summary)}</description>`,
+        `      <pubDate>${rssDate(entry.date)}</pubDate>`,
+        `      <description>${xmlText(entry.summary)}</description>`,
         "    </item>",
       ].join("\n");
     })
