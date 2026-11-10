@@ -14,7 +14,7 @@ const DISPLAY_ROOTS = [
 const ALLOWED_ORIGINS = new Map([
   ["https://openstreetmap.org", "map attribution link"],
   ["https://www.openstreetmap.org", "map attribution link"],
-  ["https://plantgeo.app", "first-party API documentation example"],
+  ["https://plantgeo.aevani.com", "first-party API documentation example"],
   ["https://plantgeo.io", "first-party application origin"],
   ["https://plantgeo.aevani.com", "first-party public site origin for social cards"],
   ["https://example.org", "non-network form placeholder"],

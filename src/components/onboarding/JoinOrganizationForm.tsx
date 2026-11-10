@@ -158,7 +158,7 @@ export function JoinOrganizationForm({ onCancel }: JoinOrganizationFormProps) {
               autoFocus
               value={rawInput}
               onChange={(e) => setRawInput(e.target.value)}
-              placeholder={mode === "invite" ? "https://plantgeo.app/invite/…" : "https://plantgeo.app/join/…"}
+              placeholder={mode === "invite" ? "https://plantgeo.aevani.com/invite/…" : "https://plantgeo.aevani.com/join/…"}
               className={inputClass}
             />
           </div>

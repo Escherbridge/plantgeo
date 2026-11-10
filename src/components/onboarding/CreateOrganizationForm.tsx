@@ -168,7 +168,7 @@ export function CreateOrganizationForm({ onCancel }: CreateOrganizationFormProps
               )}
             </div>
             <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
-              <span className="shrink-0 text-xs text-zinc-600">plantgeo.app/org/</span>
+              <span className="shrink-0 text-xs text-zinc-600">plantgeo.aevani.com/org/</span>
               <input
                 id="org-slug"
                 type="text"
