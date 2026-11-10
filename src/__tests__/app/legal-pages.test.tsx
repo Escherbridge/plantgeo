@@ -19,13 +19,28 @@ vi.mock("next-auth/react", () => ({
   signOut: vi.fn(),
 }));
 
+const GOVERNING_LAW =
+  "These terms are governed by the laws of the State of Idaho, and any dispute will be resolved in the state or federal courts located in Ada County, Idaho.";
+
 describe("legal pages", () => {
-  it("describes contact without publishing an address", () => {
+  it("publishes the operator email, phone, and mailing address", () => {
     const { container } = render(<ContactPage />);
-    expect(screen.getByRole("heading", { level: 1, name: "No public address is published." })).toBeTruthy();
-    expect(container.textContent).toMatch(/does not list a support email/i);
-    expect(container.textContent).not.toMatch(/@/);
-    expect(container.textContent).not.toMatch(/DRAFT:/);
+    const text = container.textContent ?? "";
+    expect(screen.getByRole("heading", { level: 1, name: "Reach the operator." })).toBeTruthy();
+    expect(text).toContain("Escherbridge, LLC");
+    expect(text).toContain("Ahmed Zaher");
+    expect(text).toContain("1140 S Colorado Ln, Boise, ID");
+    expect(screen.getByRole("link", { name: "contact@escherbridge.com" }).getAttribute("href")).toBe(
+      "mailto:contact@escherbridge.com"
+    );
+    expect(screen.getByRole("link", { name: "(509) 578-4603" }).getAttribute("href")).toBe(
+      "tel:+15095784603"
+    );
+    expect(text).toMatch(/does not collect a message/);
+    expect(text).toMatch(/24 hours/);
+    expect(text).not.toMatch(/alerts@plantgeo\.io/);
+    expect(text).not.toMatch(/Ada County/);
+    expect(text).not.toMatch(/DRAFT:/);
   });
 
   it("states the account, map, assistant, and browser practices the code implements", () => {
@@ -40,6 +55,14 @@ describe("legal pages", () => {
     expect(text).toMatch(/plantgeo-search/);
     expect(text).toMatch(/at least three records/);
     expect(text).toContain(AI_GENERATED_DISCLAIMER);
+    expect(text).toContain("This site is operated by Escherbridge, LLC.");
+    expect(text).toContain("1140 S Colorado Ln, Boise, ID");
+    expect(text).toMatch(/privacy requests, and data requests/);
+    expect(screen.getByRole("link", { name: "contact@escherbridge.com" }).getAttribute("href")).toBe(
+      "mailto:contact@escherbridge.com"
+    );
+    expect(text).not.toMatch(/alerts@plantgeo\.io/);
+    expect(text).not.toMatch(/Ada County/);
     expect(text).not.toMatch(/DRAFT:/);
   });
 
@@ -50,6 +73,15 @@ describe("legal pages", () => {
     expect(text).toMatch(/not forecast beyond today/);
     expect(text).toMatch(/pending review is visible to signed-in readers/);
     expect(text).toContain(AI_GENERATED_DISCLAIMER);
+    expect(text).toContain("This site is operated by Escherbridge, LLC.");
+    expect(text).toContain("1140 S Colorado Ln, Boise, ID");
+    expect(text).toMatch(/privacy requests, and data requests/);
+    expect(screen.getByRole("link", { name: "contact@escherbridge.com" }).getAttribute("href")).toBe(
+      "mailto:contact@escherbridge.com"
+    );
+    expect(text.split(GOVERNING_LAW)).toHaveLength(2);
+    expect(text).not.toMatch(/arbitration|class action|jury/i);
+    expect(text).not.toMatch(/alerts@plantgeo\.io/);
     expect(text).not.toMatch(/DRAFT:/);
   });
 });

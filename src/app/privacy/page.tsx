@@ -7,6 +7,11 @@ import {
   EditorialSection,
 } from "@/components/ui/editorial";
 import { AI_GENERATED_DISCLAIMER } from "@/lib/regional-intelligence";
+import {
+  OPERATOR_EMAIL,
+  OPERATOR_LEGAL_NAME,
+  OPERATOR_MAILING_ADDRESS,
+} from "@/lib/site-operator";
 
 export const metadata: Metadata = {
   title: "Privacy - PlantGeo",
@@ -220,6 +225,19 @@ export default function PrivacyPage() {
           </p>
         </EditorialProse>
         <EditorialDefinitionList items={deviceStores} className="mt-roomy" />
+      </EditorialSection>
+
+      <EditorialSection index="08" title="Operator" id="operator">
+        <EditorialProse>
+          <p>
+            This site is operated by {OPERATOR_LEGAL_NAME}. Questions, privacy
+            requests, and data requests can be sent to{" "}
+            <EditorialLink href={`mailto:${OPERATOR_EMAIL}`} prefetch={false}>
+              {OPERATOR_EMAIL}
+            </EditorialLink>{" "}
+            or by mail to {OPERATOR_MAILING_ADDRESS}.
+          </p>
+        </EditorialProse>
       </EditorialSection>
     </DocumentPage>
   );

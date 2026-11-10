@@ -5,21 +5,51 @@ import {
   EditorialProse,
   EditorialSection,
 } from "@/components/ui/editorial";
+import {
+  OPERATOR_CONTACT_NAME,
+  OPERATOR_EMAIL,
+  OPERATOR_LEGAL_NAME,
+  OPERATOR_MAILING_ADDRESS,
+  OPERATOR_PHONE_DISPLAY,
+  OPERATOR_PHONE_TEL,
+} from "@/lib/site-operator";
 
 export const metadata: Metadata = {
   title: "Contact - PlantGeo",
-  description:
-    "PlantGeo does not publish a support email, phone number, or postal address. Account mail is sent to an address already on the account.",
+  description: `${OPERATOR_LEGAL_NAME} operates PlantGeo. Contact ${OPERATOR_CONTACT_NAME} at ${OPERATOR_EMAIL}, ${OPERATOR_PHONE_DISPLAY}, or ${OPERATOR_MAILING_ADDRESS}. Account mail is sent to an address already on the account.`,
 };
 
 export default function ContactPage() {
   return (
     <DocumentPage
       eyebrow="Contact"
-      title="No public address is published."
-      lead="This page does not collect a message. The site does not list a support email, a phone number, or a postal address."
+      title="Reach the operator."
+      lead={`${OPERATOR_LEGAL_NAME} operates this site. This page does not collect a message.`}
     >
-      <EditorialSection index="01" title="Mail the site sends" id="mail">
+      <EditorialSection index="01" title="Public contact" id="contact">
+        <EditorialProse>
+          <p>
+            {OPERATOR_CONTACT_NAME} is the contact for {OPERATOR_LEGAL_NAME}.
+          </p>
+          <p>
+            Email{" "}
+            <EditorialLink href={`mailto:${OPERATOR_EMAIL}`} prefetch={false}>
+              {OPERATOR_EMAIL}
+            </EditorialLink>
+            .
+          </p>
+          <p>
+            Phone{" "}
+            <EditorialLink href={`tel:${OPERATOR_PHONE_TEL}`} prefetch={false}>
+              {OPERATOR_PHONE_DISPLAY}
+            </EditorialLink>
+            .
+          </p>
+          <p>Mail {OPERATOR_MAILING_ADDRESS}.</p>
+        </EditorialProse>
+      </EditorialSection>
+
+      <EditorialSection index="02" title="Mail the site sends" id="mail">
         <EditorialProse>
           <p>
             Account mail runs outward, to an address already stored. When an
@@ -38,7 +68,7 @@ export default function ContactPage() {
         </EditorialProse>
       </EditorialSection>
 
-      <EditorialSection index="02" title="Where a record lives" id="records">
+      <EditorialSection index="03" title="Where a record lives" id="records">
         <EditorialProse>
           <p>
             A public strategy request is already on the map, with its location,
