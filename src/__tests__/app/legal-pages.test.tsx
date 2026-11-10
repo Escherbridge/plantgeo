@@ -145,7 +145,7 @@ describe("organization JSON-LD", () => {
   });
 
   it("is mounted from the root layout", () => {
-    const source = readFileSync(new URL("../../app/layout.tsx", import.meta.url), "utf8");
+    const source = readFileSync("src/app/layout.tsx", "utf8");
     expect(source).toContain("<OrganizationJsonLd");
   });
 });
