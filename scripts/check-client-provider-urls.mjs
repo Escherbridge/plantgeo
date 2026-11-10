@@ -18,6 +18,7 @@ const ALLOWED_ORIGINS = new Map([
   ["https://plantgeo.io", "first-party application origin"],
   ["https://plantgeo.aevani.com", "first-party public site origin for social cards"],
   ["https://example.org", "non-network form placeholder"],
+  ["https://schema.org", "JSON-LD context for Organization and WebSite discovery metadata"],
 ]);
 
 const ALLOWED_PATH_PREFIXES = new Map([

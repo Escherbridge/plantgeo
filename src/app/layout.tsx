@@ -3,6 +3,7 @@ import { Archivo, IBM_Plex_Mono, Newsreader } from "next/font/google";
 import { Providers } from "@/lib/providers";
 import { ApplicationShell } from "@/components/layout/ApplicationShell";
 import { Toaster } from "@/components/ui/toast";
+import { SITE_ORIGIN, siteDiscoveryMetadata, SiteDiscoveryJsonLd } from "@/lib/site-discovery";
 import "@/styles/globals.css";
 
 /** Grotesque for display, serif for reading, mono for labels. */
@@ -32,10 +33,10 @@ const editorialFontVariables = [
   editorialLabelFont.variable,
 ].join(" ");
 
-const SITE_ORIGIN = "https://plantgeo.aevani.com";
 const OG_IMAGE_URL = `${SITE_ORIGIN}/og.png`;
 
 export const metadata: Metadata = {
+  ...siteDiscoveryMetadata,
   title: "PlantGeo - 3D Geospatial Platform",
   description:
     "Open-source 3D mapping platform for wildfire prevention, ecosystem monitoring, and geospatial intelligence",
@@ -48,6 +49,7 @@ export const metadata: Metadata = {
     apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
   },
   openGraph: {
+    ...siteDiscoveryMetadata.openGraph,
     images: [
       {
         url: OG_IMAGE_URL,
@@ -71,6 +73,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning className={editorialFontVariables}>
       <body className="antialiased">
+        <SiteDiscoveryJsonLd />
         <Providers>
           <ApplicationShell>{children}</ApplicationShell>
         </Providers>
