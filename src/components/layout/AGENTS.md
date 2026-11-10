@@ -29,7 +29,10 @@ The map is a full-viewport canvas whose floating UI starts at `top-4`
 (`TimeDatePill`, and the map manager's own column at `top-4 left-0`). A full-width
 opaque overlay would sit on top of
 both. So the bar occupies a real `3.5rem` band and the page below it measures the
-remainder.
+remainder. Routes that show the bar also show a fixed footer (`SiteFooter`,
+`2.75rem`). `.application-shell-with-footer` redeclares the viewport variable
+to subtract both bands. Barless routes leave the footer height at 0 and do not
+mount it.
 
 Neither `src/app/page.tsx` nor `MapLayout.tsx` was edited to achieve that. Two
 unlayered rules in `globals.css` re-measure any page root that asked for the
