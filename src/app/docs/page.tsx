@@ -208,7 +208,7 @@ export default function DocsPage() {
             request header.
           </p>
           <CodeBlock
-            code={`# All requests require this header\ncurl -H "x-api-key: pg_your_key_here" https://plantgeo.app/api/v1/layers`}
+            code={`# All requests require this header\ncurl -H "x-api-key: pg_your_key_here" https://plantgeo.aevani.com/api/v1/layers`}
           />
           <div className="rounded-md border border-[hsl(var(--border))] p-4 space-y-2">
             <h3 className="text-sm font-semibold text-[hsl(var(--foreground))]">
@@ -288,7 +288,7 @@ export default function DocsPage() {
   "numberMatched": 1
 }`}
             curlExample={`curl -H "x-api-key: pg_your_key" \\
-  "https://plantgeo.app/api/v1/features?limit=50&bbox=-122.5,37.7,-122.3,37.9"`}
+  "https://plantgeo.aevani.com/api/v1/features?limit=50&bbox=-122.5,37.7,-122.3,37.9"`}
           />
         </Section>
 
@@ -311,7 +311,7 @@ export default function DocsPage() {
   }
 ]`}
             curlExample={`curl -H "x-api-key: pg_your_key" \\
-  "https://plantgeo.app/api/v1/layers"`}
+  "https://plantgeo.aevani.com/api/v1/layers"`}
           />
         </Section>
 
@@ -348,7 +348,7 @@ export default function DocsPage() {
     "costing": "auto",
     "directions_options": {"units": "kilometers"}
   }' \\
-  "https://plantgeo.app/api/v1/route"`}
+  "https://plantgeo.aevani.com/api/v1/route"`}
           />
         </Section>
 
@@ -393,7 +393,7 @@ export default function DocsPage() {
   ]
 }`}
             curlExample={`curl -H "x-api-key: pg_your_key" \\
-  "https://plantgeo.app/api/v1/geocode?q=San+Francisco&limit=3"`}
+  "https://plantgeo.aevani.com/api/v1/geocode?q=San+Francisco&limit=3"`}
           />
         </Section>
 

@@ -115,7 +115,7 @@ function SettingsForm({ organization, isOwner }: { organization: OrganizationRow
           URL slug
         </label>
         <div className="flex items-center gap-2">
-          <span className="text-xs text-zinc-600">plantgeo.app/org/</span>
+          <span className="text-xs text-zinc-600">plantgeo.aevani.com/org/</span>
           <input
             id="settings-slug"
             value={slug}
