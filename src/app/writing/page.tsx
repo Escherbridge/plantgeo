@@ -7,7 +7,7 @@ import {
   EditorialPage,
   EditorialProse,
 } from "@/components/ui/editorial";
-import { ESSAYS, essayDisplayDate, essayPath } from "@/lib/writing/essays";
+import { blogPath, ESSAYS, essayDisplayDate } from "@/lib/writing/essays";
 
 export const metadata: Metadata = {
   title: "Notes — PlantGeo",
@@ -31,7 +31,7 @@ export default function WritingIndexPage() {
               </p>
               <h2 className="mt-tight font-editorial-display text-heading font-semibold text-ink">
                 <Link
-                  href={essayPath(essay)}
+                  href={blogPath(essay)}
                   className="underline decoration-accent decoration-2 underline-offset-4"
                 >
                   {essay.title}

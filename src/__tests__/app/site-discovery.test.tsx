@@ -63,11 +63,11 @@ describe("site discovery metadata", () => {
     const essay = await essayMetadata({
       params: Promise.resolve({ slug: "not-forecast-beyond-today" }),
     });
-    expect(essay.alternates?.canonical).toBe("/writing/not-forecast-beyond-today");
+    expect(essay.alternates?.canonical).toBe("/blog/not-forecast-beyond-today");
     const planning = await essayMetadata({
       params: Promise.resolve({ slug: "plan-the-land-then-pick-the-tools" }),
     });
-    expect(planning.alternates?.canonical).toBe("/writing/plan-the-land-then-pick-the-tools");
+    expect(planning.alternates?.canonical).toBe("/blog/plan-the-land-then-pick-the-tools");
   });
 
   it("points robots.txt at the sitemap on the public origin", () => {

@@ -91,4 +91,15 @@ export function essayPath(essay: Essay): string {
   return `/writing/${essay.slug}`;
 }
 
-export const WRITING_SITEMAP_PATHS = ["/writing", ...ESSAYS.map((essay) => essayPath(essay))] as const;
+/** Blog is the public URL for these essays. `/writing/[slug]` stays and uses the same canonical. */
+export function blogPath(essay: Essay): string {
+  return `/blog/${essay.slug}`;
+}
+
+export const PUBLISHED_MODULE_PATHS = [
+  "/blog",
+  "/news",
+  "/site-types",
+  "/writing",
+  ...ESSAYS.map((essay) => blogPath(essay)),
+] as const;

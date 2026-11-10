@@ -14,7 +14,10 @@ const SELF_PATH = "./";
 
 export const siteDiscoveryMetadata = {
   metadataBase: new URL(SITE_ORIGIN),
-  alternates: { canonical: SELF_PATH },
+  alternates: {
+    canonical: SELF_PATH,
+    types: { "application/rss+xml": "/feed.xml" },
+  },
   openGraph: { url: SELF_PATH },
 } as const satisfies Pick<Metadata, "metadataBase" | "alternates" | "openGraph">;
 

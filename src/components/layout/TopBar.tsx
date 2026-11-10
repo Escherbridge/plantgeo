@@ -15,6 +15,9 @@ const NAVIGATION_ITEMS = [
   { href: "/feed", label: "Feed" },
   { href: "/community", label: "Community" },
   { href: "/about", label: "About" },
+  { href: "/blog", label: "Blog" },
+  { href: "/news", label: "News" },
+  { href: "/site-types", label: "Site types" },
   { href: "/affiliate", label: "Become an affiliate" },
 ] as const;
 
