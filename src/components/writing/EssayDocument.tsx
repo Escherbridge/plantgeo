@@ -81,6 +81,8 @@ export function EssayDocument({ essay }: { essay: Essay }) {
           {" · "}
           <EditorialLink href="/site-types">Site types</EditorialLink>
           {" · "}
+          <EditorialLink href="/guides">Guides</EditorialLink>
+          {" · "}
           <EditorialLink href="/contact">Contact</EditorialLink>
           {" · "}
           <a
