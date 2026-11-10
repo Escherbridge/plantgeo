@@ -4,9 +4,12 @@ import { render, screen } from "@testing-library/react";
 import ContactPage from "@/app/contact/page";
 import PrivacyPage from "@/app/privacy/page";
 import TermsPage from "@/app/terms/page";
+import { readFileSync } from "node:fs";
 import { ApplicationShell } from "@/components/layout/ApplicationShell";
 import { SiteFooter } from "@/components/layout/SiteFooter";
+import { SiteDiscoveryJsonLd, siteDiscoveryGraph } from "@/lib/site-discovery";
 import { AI_GENERATED_DISCLAIMER } from "@/lib/regional-intelligence";
+import { SISTER_SITES } from "@/lib/sister-sites";
 
 const navigation = vi.hoisted(() => ({ pathname: "/about" }));
 
@@ -95,6 +98,18 @@ describe("site footer", () => {
     expect(screen.getByRole("link", { name: "Privacy" }).getAttribute("aria-current")).toBe("page");
   });
 
+  it("lists sister sites under An Escherbridge project, as follow links", () => {
+    render(<SiteFooter pathname="/about" />);
+    expect(screen.getByText("An Escherbridge project")).toBeTruthy();
+    for (const site of SISTER_SITES) {
+      const link = screen.getByRole("link", { name: site.label });
+      expect(link.getAttribute("href")).toBe(site.href);
+      expect(link.getAttribute("rel") ?? "").not.toMatch(/nofollow/);
+      expect(site.href).not.toContain("plantgeo.aevani.com");
+    }
+    expect(screen.queryByRole("link", { name: /^PlantGeo/ })).toBeNull();
+  });
+
   it("mounts on a navigable route and stays off a frameless route", () => {
     navigation.pathname = "/about";
     const { unmount } = render(
@@ -112,5 +127,29 @@ describe("site footer", () => {
       </ApplicationShell>
     );
     expect(screen.queryByRole("navigation", { name: "Footer" })).toBeNull();
+  });
+});
+
+describe("organization JSON-LD", () => {
+  it("keeps the sister origins on the single discovery graph", () => {
+    const { container } = render(<SiteDiscoveryJsonLd />);
+    const scripts = container.querySelectorAll('script[type="application/ld+json"]');
+    expect(scripts).toHaveLength(1);
+    const data = JSON.parse(scripts[0]?.textContent ?? "{}") as {
+      "@graph"?: { "@type"?: string; name?: string; url?: string; sameAs?: string[] }[];
+    };
+    const organization = data["@graph"]?.find((node) => node["@type"] === "Organization");
+    const website = data["@graph"]?.find((node) => node["@type"] === "WebSite");
+    expect(organization?.name).toBe("Escherbridge, LLC");
+    expect(organization?.url).toBe("https://plantgeo.aevani.com");
+    expect(organization?.sameAs).toEqual(SISTER_SITES.map((site) => site.href));
+    expect(website?.name).toBe("PlantGeo");
+    expect(data).toEqual(siteDiscoveryGraph);
+  });
+
+  it("is mounted once from the root layout", () => {
+    const source = readFileSync("src/app/layout.tsx", "utf8");
+    expect(source).toContain("<SiteDiscoveryJsonLd");
+    expect(source).not.toContain("OrganizationJsonLd");
   });
 });

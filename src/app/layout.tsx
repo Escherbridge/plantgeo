@@ -3,7 +3,8 @@ import { Archivo, IBM_Plex_Mono, Newsreader } from "next/font/google";
 import { Providers } from "@/lib/providers";
 import { ApplicationShell } from "@/components/layout/ApplicationShell";
 import { Toaster } from "@/components/ui/toast";
-import { SITE_ORIGIN, siteDiscoveryMetadata, SiteDiscoveryJsonLd } from "@/lib/site-discovery";
+import { SiteDiscoveryJsonLd, siteDiscoveryMetadata } from "@/lib/site-discovery";
+import { SITE_ORIGIN } from "@/lib/public-site";
 import "@/styles/globals.css";
 
 /** Grotesque for display, serif for reading, mono for labels. */

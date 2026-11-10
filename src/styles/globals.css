@@ -268,8 +268,8 @@ body {
 
 :root {
   --application-top-bar-height: 3.5rem;
-  /* 0 until `.application-shell-with-footer` mounts the legal footer.
-     That class sets 2.75rem, the same length as `h-11`. */
+  /* 0 until `.application-shell-with-footer` mounts the footer.
+     That class sets 5.5rem: a sister-site row plus the legal row, each `h-11`. */
   --application-site-footer-height: 0rem;
   --application-viewport-below-top-bar: calc(
     100dvh - var(--application-top-bar-height) - var(--application-site-footer-height)
@@ -571,8 +571,35 @@ body {
    the viewport here: a descendant that only changes the footer height does not
    reach the calc already declared on :root. */
 .application-shell-with-footer {
-  --application-site-footer-height: 2.75rem;
+  --application-site-footer-height: 5.5rem;
   --application-viewport-below-top-bar: calc(
     100dvh - var(--application-top-bar-height) - var(--application-site-footer-height)
   );
+}
+
+/* Visible until the map canvas mounts, then clipped like a skip link. */
+.home-crawlable {
+  position: fixed;
+  z-index: 30;
+  top: var(--application-top-bar-height);
+  right: 0;
+  bottom: var(--application-site-footer-height);
+  left: 0;
+  overflow-y: auto;
+  background: var(--editorial-color-paper);
+  color: var(--editorial-color-ink);
+}
+
+.home-document:has([data-map-ready]) .home-crawlable {
+  position: absolute;
+  inset: auto;
+  z-index: auto;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }

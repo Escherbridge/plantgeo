@@ -1,9 +1,15 @@
+import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import RootLayout, { metadata } from "@/app/layout";
 import { metadata as affiliateMetadata } from "@/app/affiliate/page";
 import { metadata as samplePlanMetadata } from "@/app/plan/sample/page";
-import { SITE_ORIGIN, siteDiscoveryGraph } from "@/lib/site-discovery";
+import { metadata as writingMetadata } from "@/app/writing/page";
+import { generateMetadata as essayMetadata } from "@/app/writing/[slug]/page";
+import robots from "@/app/robots";
+import { SITE_ORIGIN } from "@/lib/public-site";
+import { siteDiscoveryGraph } from "@/lib/site-discovery";
+import { SISTER_SITES } from "@/lib/sister-sites";
 
 vi.mock("next/font/google", () => ({
   Archivo: () => ({ variable: "font-display" }),
@@ -12,11 +18,11 @@ vi.mock("next/font/google", () => ({
 }));
 
 vi.mock("@/lib/providers", () => ({
-  Providers: ({ children }: { children: React.ReactNode }) => children,
+  Providers: ({ children }: { children: ReactNode }) => children,
 }));
 
 vi.mock("@/components/layout/ApplicationShell", () => ({
-  ApplicationShell: ({ children }: { children: React.ReactNode }) => children,
+  ApplicationShell: ({ children }: { children: ReactNode }) => children,
 }));
 
 vi.mock("@/components/ui/toast", () => ({
@@ -50,18 +56,32 @@ describe("site discovery metadata", () => {
     }
   });
 
-  it("keeps explicit route canonicals on the paths those pages already publish", () => {
+  it("keeps explicit route canonicals, including the writing essays", async () => {
     expect(affiliateMetadata.alternates?.canonical).toBe("/affiliate");
     expect(samplePlanMetadata.alternates?.canonical).toBe("/plan/sample");
+    expect(writingMetadata.alternates?.canonical).toBe("/writing");
+    const essay = await essayMetadata({
+      params: Promise.resolve({ slug: "not-forecast-beyond-today" }),
+    });
+    expect(essay.alternates?.canonical).toBe("/writing/not-forecast-beyond-today");
+    const planning = await essayMetadata({
+      params: Promise.resolve({ slug: "plan-the-land-then-pick-the-tools" }),
+    });
+    expect(planning.alternates?.canonical).toBe("/writing/plan-the-land-then-pick-the-tools");
   });
 
-  it("renders Organization and WebSite JSON-LD in the root document", () => {
+  it("points robots.txt at the sitemap on the public origin", () => {
+    expect(robots().sitemap).toBe(`${SITE_ORIGIN}/sitemap.xml`);
+    expect(robots().rules).toEqual({ userAgent: "*", allow: "/" });
+  });
+
+  it("renders one Organization and WebSite graph, with the sister sameAs list", () => {
     const html = renderToStaticMarkup(
       <RootLayout>
         <main>page</main>
       </RootLayout>,
     );
-    expect(html).toContain('type="application/ld+json"');
+    expect(html.match(/type="application\/ld\+json"/g)).toHaveLength(1);
     expect(html).toContain(JSON.stringify(siteDiscoveryGraph));
 
     const graph = siteDiscoveryGraph["@graph"];
@@ -69,6 +89,7 @@ describe("site discovery metadata", () => {
     expect(graph[0]).toMatchObject({
       name: "Escherbridge, LLC",
       url: SITE_ORIGIN,
+      sameAs: SISTER_SITES.map((site) => site.href),
     });
     expect(graph[1]).toMatchObject({
       name: "PlantGeo",
@@ -80,8 +101,7 @@ describe("site discovery metadata", () => {
     for (const host of FORBIDDEN_HOSTS) {
       expect(serialized).not.toContain(host);
     }
-    expect(serialized).not.toContain("sameAs");
-    expect(Object.keys(graph[0])).not.toContain("logo");
+    expect(Object.keys(graph[0] ?? {})).not.toContain("logo");
     expect(serialized).not.toContain('"logo"');
   });
 });
