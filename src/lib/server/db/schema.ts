@@ -667,3 +667,83 @@ export const teamJoinLinks = pgTable(
     index("team_join_links_team_idx").on(t.teamId),
   ]
 );
+
+// ============================================
+// Site plans and affiliate applications
+// Additive planning records. Geometry stays on site_plans and is not written
+// into geo.features. Guest edit tokens are stored only as SHA-256 hashes.
+// ============================================
+
+export type SitePlanBbox = {
+  west: number;
+  south: number;
+  east: number;
+  north: number;
+};
+
+export const sitePlans = pgTable(
+  "site_plans",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    publicId: text("public_id").notNull(),
+    title: text("title").notNull(),
+    description: text("description"),
+    isSample: boolean("is_sample").notNull().default(false),
+    sampleLabel: text("sample_label"),
+    bbox: jsonb("bbox").$type<SitePlanBbox>().notNull(),
+    viewport: jsonb("viewport").$type<Record<string, unknown>>(),
+    geometry: jsonb("geometry").$type<Record<string, unknown>>(),
+    refCode: text("ref_code"),
+    ownerUserId: uuid("owner_user_id").references(() => users.id),
+    guestTokenHash: text("guest_token_hash"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("site_plans_public_id_unique").on(table.publicId),
+    unique("site_plans_guest_token_hash_unique").on(table.guestTokenHash),
+    index("site_plans_ref_code_idx").on(table.refCode),
+    uniqueIndex("site_plans_one_sample")
+      .on(sql`(true)`)
+      .where(sql`${table.isSample} = true`),
+  ]
+);
+
+export const sitePlanItems = pgTable(
+  "site_plan_items",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    planId: uuid("plan_id")
+      .notNull()
+      .references(() => sitePlans.id, { onDelete: "cascade" }),
+    aevaniProductId: text("aevani_product_id").notNull(),
+    catalogSlug: text("catalog_slug"),
+    title: text("title").notNull(),
+    quantity: integer("quantity").notNull().default(1),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("site_plan_items_plan_product_unique").on(table.planId, table.aevaniProductId),
+    check("site_plan_items_quantity_positive", sql`${table.quantity} >= 1`),
+  ]
+);
+
+export const affiliateApplications = pgTable(
+  "affiliate_applications",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    name: text("name").notNull(),
+    email: text("email").notNull(),
+    organization: text("organization"),
+    role: text("role"),
+    website: text("website"),
+    message: text("message"),
+    status: text("status").notNull().default("pending"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("affiliate_applications_email_idx").on(table.email),
+    index("affiliate_applications_created_idx").on(table.createdAt),
+  ]
+);

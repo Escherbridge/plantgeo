@@ -15,6 +15,7 @@ const NAVIGATION_ITEMS = [
   { href: "/feed", label: "Feed" },
   { href: "/community", label: "Community" },
   { href: "/about", label: "About" },
+  { href: "/affiliate", label: "Become an affiliate" },
 ] as const;
 
 /** Appended for expert/admin sessions only — mirrors expertProcedure at src/lib/server/trpc/init.ts. */

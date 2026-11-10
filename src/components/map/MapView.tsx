@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useRef, useState, useCallback } from "react";
+import { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import maplibregl from "maplibre-gl";
 import { Protocol } from "pmtiles";
@@ -10,7 +10,8 @@ import { isClickOwnedByAnotherSurface } from "@/components/map/land-context/clic
 import { DataLoadingChip } from "@/components/map/DataLoadingChip";
 import { SyncIndicator } from "@/components/ui/SyncIndicator";
 import { getStyle, skyThemes } from "@/lib/map/styles";
-import { MAP_MAX_ZOOM } from "@/lib/map/camera-limits";
+import { MAP_MAX_ZOOM, clampCameraZoom } from "@/lib/map/camera-limits";
+import { holdPlanCamera } from "@/lib/map/plan-camera";
 import { MapProvider } from "@/lib/map/map-context";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MapFocus } from "./MapFocus";
@@ -148,8 +149,45 @@ function landContextOwnsClick(): boolean {
   return LAND_CONTEXT_GROUP_IDS.some((group) => Boolean(enabled[group]));
 }
 
-export default function MapView() {
+export default function MapView({
+  initialLongitude,
+  initialLatitude,
+  initialZoom,
+}: {
+  initialLongitude?: number;
+  initialLatitude?: number;
+  initialZoom?: number;
+} = {}) {
   const mapContainer = useRef<HTMLDivElement>(null);
+  const hasPlanCamera =
+    initialLongitude !== undefined &&
+    initialLatitude !== undefined &&
+    initialZoom !== undefined &&
+    Number.isFinite(initialLongitude) &&
+    Number.isFinite(initialLatitude) &&
+    Number.isFinite(initialZoom);
+  const planCameraRef = useRef<{ longitude: number; latitude: number; zoom: number } | null>(null);
+
+  // Layout effect, not a passive one: initMap and ServiceAreaLayer both read
+  // this from passive effects, and every layout effect has already finished.
+  useLayoutEffect(() => {
+    planCameraRef.current =
+      hasPlanCamera &&
+      initialLongitude !== undefined &&
+      initialLatitude !== undefined &&
+      initialZoom !== undefined
+        ? {
+            longitude: initialLongitude,
+            latitude: initialLatitude,
+            zoom: clampCameraZoom(initialZoom),
+          }
+        : null;
+    holdPlanCamera(planCameraRef.current !== null);
+    return () => {
+      planCameraRef.current = null;
+      holdPlanCamera(false);
+    };
+  }, [hasPlanCamera, initialLongitude, initialLatitude, initialZoom]);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const [mapInstance, setMapInstance] = useState<maplibregl.Map | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -211,11 +249,15 @@ export default function MapView() {
     // subscription would only cost renders -- see the note above the selectors.
     const viewport = useMapStore.getState().viewport;
     const focus = readMapFocus(new URLSearchParams(window.location.search));
+    const planCamera = planCameraRef.current;
     const m = new maplibregl.Map({
       container: mapContainer.current,
       style: getStyle(currentStyle),
-      center: [focus?.longitude ?? viewport.longitude, focus?.latitude ?? viewport.latitude],
-      zoom: focus?.zoom ?? viewport.zoom,
+      center: [
+        focus?.longitude ?? planCamera?.longitude ?? viewport.longitude,
+        focus?.latitude ?? planCamera?.latitude ?? viewport.latitude,
+      ],
+      zoom: focus?.zoom ?? planCamera?.zoom ?? viewport.zoom,
       // The one ceiling every source on this map actually supports -- see camera-limits.ts.
       // Mobile pinch-zoom overshoots far more easily than a mouse wheel, and with no ceiling
       // the camera could reach MapLibre's default z22 while even the deepest source (satellite,

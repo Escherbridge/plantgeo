@@ -66,3 +66,13 @@ caveat `0002_intervention_tiles_category` carries.
 For a future relational change, add one forward Drizzle migration and update
 the migration contract in the same review. The migration must land with the
 application code that requires it.
+
+## site plans
+
+`0006_site_plans_and_affiliate_applications` adds `site_plans`,
+`site_plan_items`, and `affiliate_applications`. The seeded
+`sample-ada-county` row is a demonstration camera, labeled as not a real
+customer, and it is the only row allowed to set `is_sample`. Guest edit
+tokens are stored as SHA-256 hashes. Draft geometry stays on `site_plans` and
+must not be written into `geo.features`. An affiliate application is a review
+request: the page issues no code and states no commission or payout terms.
