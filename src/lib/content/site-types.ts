@@ -71,7 +71,7 @@ export const SITE_TYPE_INDEX: SiteTypeIndex = {
     },
     {
       type: "paragraph",
-      text: "The map is the product, and [About](https://plantgeo.aevani.com/about) already says how the layers are framed. House notes: [Not forecast beyond today](https://plantgeo.aevani.com/blog/not-forecast-beyond-today) and [Plan the land, then pick the tools](https://plantgeo.aevani.com/blog/plan-the-land-then-pick-the-tools). If tools come after the plan, they come from [Aevani’s catalogue](https://aevani.com), which is not for sale yet. Site notes, when there are any, live in [News](/news).",
+      text: "The map is the product, and [About](https://plantgeo.aevani.com/about) already says how the layers are framed. House notes: [Not forecast beyond today](https://plantgeo.aevani.com/blog/not-forecast-beyond-today) and [Plan the land, then pick the tools](https://plantgeo.aevani.com/blog/plan-the-land-then-pick-the-tools). If tools come after the plan, they come from [Aevani’s catalogue](https://aevani.com), which is not for sale yet. Official-layer how-tos live in the [field guides](/guides). Site notes, when there are any, live in [News](/news).",
     },
     {
       type: "paragraph",

@@ -1,5 +1,6 @@
 import { absoluteSiteUrl, SITE_ORIGIN } from "@/lib/public-site";
 import { OPERATOR_LEGAL_NAME } from "@/lib/site-operator";
+import { GUIDE_AUTHOR, guidePath, type GuideArticle } from "@/lib/content/guides";
 import {
   SITE_TYPE_AUTHOR,
   siteTypePath,
@@ -47,43 +48,81 @@ function siteTypeCitationData(source: SiteTypeCitation) {
   };
 }
 
-/** Article plus Home → Site types → child. Citations carry dates the draft states. */
-export function siteTypeStructuredData(page: SiteTypeArticle) {
-  const pageUrl = absoluteSiteUrl(siteTypePath(page));
+function citedResearchArticle(input: {
+  author: string;
+  headline: string;
+  description: string;
+  datePublished: string;
+  dateModified: string;
+  pageUrl: string;
+  sectionName: string;
+  sectionUrl: string;
+  crumb: string;
+  sources: readonly SiteTypeCitation[];
+}) {
   return {
     "@context": "https://schema.org",
     "@graph": [
       {
         "@type": "Article",
-        headline: page.h1,
-        description: page.metaDescription,
-        datePublished: page.publishedAt,
-        dateModified: page.lastReviewed,
-        author: { "@type": "Organization", name: SITE_TYPE_AUTHOR },
+        headline: input.headline,
+        description: input.description,
+        datePublished: input.datePublished,
+        dateModified: input.dateModified,
+        author: { "@type": "Organization", name: input.author },
         publisher: {
           "@type": "Organization",
-          name: SITE_TYPE_AUTHOR,
+          name: input.author,
           legalName: OPERATOR_LEGAL_NAME,
         },
-        mainEntityOfPage: pageUrl,
+        mainEntityOfPage: input.pageUrl,
         image: `${SITE_ORIGIN}/og.png`,
-        citation: page.sources.map(siteTypeCitationData),
+        citation: input.sources.map(siteTypeCitationData),
       },
       {
         "@type": "BreadcrumbList",
         itemListElement: [
           { "@type": "ListItem", position: 1, name: "Home", item: absoluteSiteUrl("/") },
-          {
-            "@type": "ListItem",
-            position: 2,
-            name: "Site types",
-            item: absoluteSiteUrl("/site-types"),
-          },
-          { "@type": "ListItem", position: 3, name: page.crumb, item: pageUrl },
+          { "@type": "ListItem", position: 2, name: input.sectionName, item: input.sectionUrl },
+          { "@type": "ListItem", position: 3, name: input.crumb, item: input.pageUrl },
         ],
       },
     ],
   };
+}
+
+/** Article plus Home → Site types → child. Citations carry dates the draft states. */
+export function siteTypeStructuredData(page: SiteTypeArticle) {
+  const pageUrl = absoluteSiteUrl(siteTypePath(page));
+  return citedResearchArticle({
+    author: SITE_TYPE_AUTHOR,
+    headline: page.h1,
+    description: page.metaDescription,
+    datePublished: page.publishedAt,
+    dateModified: page.lastReviewed,
+    pageUrl,
+    sectionName: "Site types",
+    sectionUrl: absoluteSiteUrl("/site-types"),
+    crumb: page.crumb,
+    sources: page.sources,
+  });
+}
+
+/** Article plus Home → Guides → child. Citations carry dates the draft states. */
+export function guideStructuredData(page: GuideArticle) {
+  const pageUrl = absoluteSiteUrl(guidePath(page));
+  return citedResearchArticle({
+    author: GUIDE_AUTHOR,
+    headline: page.h1,
+    description: page.metaDescription,
+    datePublished: page.publishedAt,
+    dateModified: page.lastReviewed,
+    pageUrl,
+    sectionName: "Guides",
+    sectionUrl: absoluteSiteUrl("/guides"),
+    crumb: page.crumb,
+    sources: page.sources,
+  });
 }
 
 export function collectionStructuredData(input: {

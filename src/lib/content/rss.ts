@@ -1,3 +1,4 @@
+import { GUIDES, guidePath } from "@/lib/content/guides";
 import { SITE_TYPES, siteTypePath } from "@/lib/content/site-types";
 import { absoluteSiteUrl } from "@/lib/public-site";
 import { blogPath, ESSAYS } from "@/lib/writing/essays";
@@ -26,7 +27,7 @@ interface FeedEntry {
   summary: string;
 }
 
-/** Blog posts and published site-type pages. News stays out until a post exists. */
+/** Blog posts, site-type pages, and field guides. News stays out until a post exists. */
 export function blogRssXml(): string {
   const posts: FeedEntry[] = [
     ...ESSAYS.map((essay) => ({
@@ -38,6 +39,12 @@ export function blogRssXml(): string {
     ...SITE_TYPES.map((page) => ({
       title: page.h1,
       path: siteTypePath(page),
+      date: page.publishedAt,
+      summary: page.metaDescription,
+    })),
+    ...GUIDES.map((page) => ({
+      title: page.h1,
+      path: guidePath(page),
       date: page.publishedAt,
       summary: page.metaDescription,
     })),

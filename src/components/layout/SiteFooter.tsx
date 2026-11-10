@@ -7,6 +7,7 @@ const FOOTER_LINKS = [
   { href: "/blog", label: "Blog" },
   { href: "/news", label: "News" },
   { href: "/site-types", label: "Site types" },
+  { href: "/guides", label: "Guides" },
   { href: "/contact", label: "Contact" },
   { href: "/privacy", label: "Privacy" },
   { href: "/terms", label: "Terms" },

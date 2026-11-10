@@ -100,6 +100,7 @@ export const PUBLISHED_MODULE_PATHS = [
   "/blog",
   "/news",
   "/site-types",
+  "/guides",
   "/writing",
   ...ESSAYS.map((essay) => blogPath(essay)),
 ] as const;

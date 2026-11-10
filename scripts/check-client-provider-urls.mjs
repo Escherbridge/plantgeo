@@ -100,6 +100,27 @@ const ALLOWED_PATH_PREFIXES = new Map([
     "https://www.nrcs.usda.gov/resources/data-and-reports/soil-survey-geographic-database-ssurgo",
     "site-type citation: NRCS SSURGO landing page",
   ],
+  // Published citations on /guides. The pages link the source; nothing here is read as a layer.
+  ["https://www.fema.gov/flood-maps", "guide citation: FEMA Flood Maps"],
+  [
+    "https://www.fema.gov/glossary/flood-insurance-rate-map-firm",
+    "guide citation: FEMA FIRM glossary",
+  ],
+  [
+    "https://www.fema.gov/glossary/special-flood-hazard-area-sfha",
+    "guide citation: FEMA SFHA glossary",
+  ],
+  ["https://msc.fema.gov/portal/howto", "guide citation: FEMA MSC how-to"],
+  ["https://www.ready.gov/floods", "guide citation: Ready.gov floods"],
+  [
+    "https://www.fws.gov/program/national-wetlands-inventory",
+    "guide citation: National Wetlands Inventory",
+  ],
+  ["https://www.usgs.gov/3d-elevation-program", "guide citation: USGS 3DEP"],
+  [
+    "https://www.usgs.gov/programs/national-geospatial-program/national-map",
+    "guide citation: The National Map",
+  ],
 ]);
 
 const SOURCE_EXTENSION = /\.(?:[cm]?[jt]sx?)$/;
