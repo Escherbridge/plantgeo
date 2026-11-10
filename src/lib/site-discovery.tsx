@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { SITE_ORIGIN } from "@/lib/public-site";
 import { SISTER_SITES } from "@/lib/sister-sites";
-import { OPERATOR_LEGAL_NAME } from "@/lib/site-operator";
+import { OPERATOR_LEGAL_NAME, OPERATOR_POSTAL_ADDRESS } from "@/lib/site-operator";
 
 export const SITE_NAME = "PlantGeo";
 
@@ -34,6 +34,7 @@ export const siteDiscoveryGraph = {
       "@id": `${SITE_ORIGIN}/#organization`,
       name: OPERATOR_LEGAL_NAME,
       url: SITE_ORIGIN,
+      address: OPERATOR_POSTAL_ADDRESS,
       sameAs: SISTER_SITES.map((site) => site.href),
     },
     {

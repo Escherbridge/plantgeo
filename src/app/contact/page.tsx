@@ -9,14 +9,14 @@ import {
   OPERATOR_CONTACT_NAME,
   OPERATOR_EMAIL,
   OPERATOR_LEGAL_NAME,
-  OPERATOR_MAILING_ADDRESS,
+  OPERATOR_LOCATION,
   OPERATOR_PHONE_DISPLAY,
   OPERATOR_PHONE_TEL,
 } from "@/lib/site-operator";
 
 export const metadata: Metadata = {
   title: "Contact - PlantGeo",
-  description: `${OPERATOR_LEGAL_NAME} operates PlantGeo. Contact ${OPERATOR_CONTACT_NAME} at ${OPERATOR_EMAIL}, ${OPERATOR_PHONE_DISPLAY}, or ${OPERATOR_MAILING_ADDRESS}. Account mail is sent to an address already on the account.`,
+  description: `${OPERATOR_LEGAL_NAME} operates PlantGeo from ${OPERATOR_LOCATION}. Contact ${OPERATOR_CONTACT_NAME} at ${OPERATOR_EMAIL} or ${OPERATOR_PHONE_DISPLAY}. Account mail is sent to an address already on the account.`,
 };
 
 export default function ContactPage() {
@@ -32,11 +32,10 @@ export default function ContactPage() {
             {OPERATOR_CONTACT_NAME} is the contact for {OPERATOR_LEGAL_NAME}.
           </p>
           <p>
-            Email{" "}
+            {OPERATOR_LOCATION}.{" "}
             <EditorialLink href={`mailto:${OPERATOR_EMAIL}`} prefetch={false}>
               {OPERATOR_EMAIL}
             </EditorialLink>
-            .
           </p>
           <p>
             Phone{" "}
@@ -45,7 +44,6 @@ export default function ContactPage() {
             </EditorialLink>
             .
           </p>
-          <p>Mail {OPERATOR_MAILING_ADDRESS}.</p>
         </EditorialProse>
       </EditorialSection>
 
